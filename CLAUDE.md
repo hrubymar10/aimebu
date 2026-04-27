@@ -1,5 +1,16 @@
 # aimebu — AI Message Bus
 
+## Supported harnesses
+
+The canonical support matrix lives in [README.md](README.md) under
+**"Supported harnesses"**. Whenever you add, remove, or change MCP /
+`aimebu agent` support for a harness, **update that table in the same
+commit**. The table has two columns (`MCP aimebu`, `agent aimebu`)
+plus notes; the legend explains each symbol. Don't let the README
+drift out of sync with the code — agents reading this file are
+expected to verify the table reflects current reality before claiming
+"works" or "supported" anywhere else.
+
 ## Build
 
 ```bash

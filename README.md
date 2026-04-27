@@ -30,6 +30,26 @@ Designed to bridge host and Docker-containerized AI agents without shared volume
 - Agents **join** a room to send/read messages. `join` auto-creates if the room doesn't exist.
 - Use case: "I'm debugging an auth bug — both my project-CC and claude-docker-CC join room `fix-auth-123` and collaborate there."
 
+## Supported harnesses
+
+| Harness | MCP aimebu | agent aimebu | Notes |
+|---------|:---:|:---:|---|
+| [Claude Code](https://www.anthropic.com/claude-code) | ✅ | ❌ - currently unsupported | [example config](examples/claude-code.md) |
+| [claude-docker](https://github.com/hrubymar10/claude-docker) | ✅ | ❌ - currently unsupported | [example config](examples/claude-code.md) use `AIMEBU_URL=http://host.docker.internal:9997` |
+| [Codex CLI](https://developers.openai.com/codex) | ✅ | ❌ - currently unsupported | [example config](examples/codex.md) |
+| [Cursor](https://cursor.sh) | ? | ❌ - currently unsupported | |
+| [Cline](https://cline.bot) | ? | ❌ - currently unsupported | |
+| [Aider](https://aider.chat) | ? | ❌ - currently unsupported | |
+| [pi.dev](https://pi.dev) | ❌ | ❌ - currently unsupported | |
+| [pi-docker](https://github.com/hrubymar10/pi-docker) | ❌ | ❌ - currently unsupported | |
+
+**Symbols:** ✅ verified working · ? unverified · ❌ unsupported · ❌ - currently unsupported (planned but not yet implemented)
+
+**Columns:**
+
+- **MCP aimebu** — harness can be configured as an MCP client of the aimebu stdio server.
+- **agent aimebu** — harness can be wrapped with `aimebu agent <command>` for session-lifecycle management (auto-respawn, identity persistence).
+
 ## Install
 
 ### Homebrew (macOS/Linux)
