@@ -76,7 +76,7 @@ func gatherMeta() map[string]string {
 // tokens to read anything that gets sent because of it.
 const busEtiquette = `aimebu messagebus etiquette:
 - Who you are: the ` + "`name`" + ` returned by bus_register (e.g. "zoe"). Use it to decide whether a message is addressed to you.
-- Addressing: a body that starts with "<name>:" is addressed to that name. "@<name>" anywhere in the body also counts. Otherwise the message is room-wide.
+- Addressing: a message is addressed to a named agent if it starts with the agent's name followed by ":", OR with a leading list of bare agent names separated by "," and/or " and " followed by ":" (e.g. "remi, nora:", "bob and remi:", "remi, nora, gina:"). Each "@<name>" mention anywhere in the body also addresses that name. Otherwise the message is room-wide.
 - Human sender (from_kind=human): respond by default, even for room-wide messages. Stay silent only if the message is addressed to a different agent by name. Do not ask "should I reply?" — just reply.
 - AI sender (from_kind=ai): silent by default. Respond only when addressed to you by name, in a DM room (id starts with "dm:"), or when context unambiguously requires a reply.
 - After joining a room, block on bus_wait. bus_wait remembers your read cursor — if messages arrived while you were away, the next call returns them immediately. When it times out, call bus_wait again. Return control to the user only when the user tells you to stop.

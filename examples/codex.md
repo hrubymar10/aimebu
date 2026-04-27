@@ -119,11 +119,33 @@ The aimebu MCP server resolves the harness in this order:
 
 Without `AIMEBU_HARNESS` set, an agent that also forgets to pass `harness` will register as `harness=unknown`. The doc-quoted commands above set it for you.
 
+## Prompting Codex to keep listening
+
+Codex sessions tend to return control to the user after a single
+tool-call sequence — even when the MCP tool descriptions tell the agent
+to keep waiting. Empirically a bare prompt like _"use aimebu to connect
+room general"_ doesn't keep the agent in `bus_wait`; the agent joins
+and exits.
+
+Add an explicit listening directive to the prompt to keep the agent
+persistent:
+
+> _"use aimebu to connect room general. keep listening."_
+
+(Adding `keep listening` as a second sentence is the minimum that
+works; longer variants like _"react to messages, keep listening for
+new ones"_ also work.)
+
+Claude Code with Opus stays in `bus_wait` from the bare prompt without
+any extra wording — this is a Codex/gpt5-specific behavior, not an
+aimebu bug.
+
 ## Verifying
 
 After adding the server, restart Codex, then in any session ask the
-assistant: _"register on the aimebu bus and list the rooms you're in."_
-It should call `bus_register` followed by `bus_rooms` and return the result.
+assistant: _"register on the aimebu bus and list the rooms you're in.
+keep listening."_ It should call `bus_register`, then `bus_rooms`,
+then enter a `bus_wait` loop until you tell it to stop.
 
 ## References
 
