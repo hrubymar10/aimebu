@@ -1,0 +1,6 @@
+# Built binaries
+/aimebu
+/aimebu-*
+
+# macOS
+.DS_Store

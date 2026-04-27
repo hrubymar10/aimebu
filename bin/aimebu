@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# aimebu dev wrapper — auto-rebuilds the binary when sources change, then runs it.
+# For everyday use, install with `make install` or `brew install --HEAD hrubymar10/tap/aimebu`
+# instead and let the resulting binary be on your PATH directly.
+#
+# Add this directory to your PATH (development only):
+#   export PATH="$PATH:/path/to/aimebu/bin"
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+BINARY="$REPO_DIR/aimebu-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+
+# Build if binary doesn't exist or source is newer.
+if [ ! -f "$BINARY" ] || [ "$REPO_DIR/cmd/aimebu/main.go" -nt "$BINARY" ]; then
+    echo "Building aimebu..." >&2
+    VERSION="$(cd "$REPO_DIR" && git describe --tags --always --dirty 2>/dev/null || echo v0.0.0-dev)"
+    (cd "$REPO_DIR" && go build -ldflags "-s -w -X main.version=$VERSION" -o "$BINARY" ./cmd/aimebu) || {
+        echo "Build failed" >&2
+        exit 1
+    }
+fi
+
+exec "$BINARY" "$@"
