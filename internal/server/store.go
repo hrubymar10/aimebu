@@ -678,16 +678,19 @@ func (s *store) findOrCreateDM(agentA, agentB string) (*types.Room, error) {
 	dmID := "dm:" + ids[0] + ":" + ids[1]
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if _, ok := s.agents[agentA]; !ok {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("sender %q is not registered", agentA)
 	}
 	if _, ok := s.agents[agentB]; !ok {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("recipient %q is not registered on the bus", agentB)
 	}
 
+	// Existing DM room — return without broadcasting (no state change).
 	if room, ok := s.rooms[dmID]; ok {
+		s.mu.Unlock()
 		return room, nil
 	}
 
@@ -699,6 +702,11 @@ func (s *store) findOrCreateDM(agentA, agentB string) (*types.Room, error) {
 	}
 	s.rooms[dmID] = room
 	s.persist()
+	s.mu.Unlock()
+
+	// Broadcast room_update so WS clients see the new DM room without a
+	// manual refresh. Must be called WITHOUT holding s.mu.
+	s.broadcastRoomUpdate()
 	return room, nil
 }
 
