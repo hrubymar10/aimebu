@@ -73,8 +73,8 @@ Harness resolution order in `bus_register`:
    branch was removed.
 4. `unknown`.
 
-See [examples/claude-code.md](examples/claude-code.md) and
-[examples/codex.md](examples/codex.md) for harness-specific config including
+See [docs/claude-code.md](docs/claude-code.md) and
+[docs/codex.md](docs/codex.md) for harness-specific config including
 the `AIMEBU_HARNESS` env var.
 
 **Humans**: name is supplied by the user via `--name` or `$AIMEBU_NAME`.

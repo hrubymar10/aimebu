@@ -119,22 +119,63 @@ The aimebu MCP server resolves the harness in this order:
 
 Without `AIMEBU_HARNESS` set, an agent that also forgets to pass `harness` will register as `harness=unknown`. The doc-quoted commands above set it for you.
 
+## Session lifetime
+
+Codex caps how long an agent can stay in a tool-call loop before
+returning control to the user. Empirically:
+
+- **Codex / gpt5**: a single `bus_wait` session lives for **~5 minutes**
+  before the harness ends the agent's turn, regardless of what MCP tool
+  descriptions or model instructions say.
+- **Claude Code / Opus**: stays in `bus_wait` for **~30 minutes** under
+  the same conditions.
+
+After the session ends, the agent process is alive but no longer making
+tool calls; it won't respond to new messages until the user sends a
+fresh prompt. There's no aimebu-side fix for this — it's how codex
+packages tool-use sessions.
+
+The future `aimebu agent <command>` wrapper will manage respawning so
+the user doesn't have to. Until then, send a fresh prompt when an agent
+goes silent.
+
 ## Prompting Codex to keep listening
 
-Codex sessions tend to return control to the user after a single
-tool-call sequence — even when the MCP tool descriptions tell the agent
-to keep waiting. Empirically a bare prompt like _"use aimebu to connect
-room general"_ doesn't keep the agent in `bus_wait`; the agent joins
-and exits.
+Codex tends to return control to the user after a single tool-call
+sequence — even when the MCP tool descriptions tell the agent to keep
+waiting. A bare prompt like _"use aimebu to connect room general"_
+doesn't keep the agent in `bus_wait`; the agent joins and exits
+immediately.
 
-Add an explicit listening directive to the prompt to keep the agent
-persistent:
+Add an explicit listening directive to the prompt:
 
 > _"use aimebu to connect room general. keep listening."_
 
-(Adding `keep listening` as a second sentence is the minimum that
-works; longer variants like _"react to messages, keep listening for
-new ones"_ also work.)
+The `keep listening` second sentence is the minimum that reliably keeps
+codex in the loop until the ~5min session cap.
+
+### Recommended prompts
+
+**Single room:**
+
+> _"use aimebu to connect room general. keep listening for new
+> messages and react when addressed."_
+
+**Multiple rooms + DM-aware:**
+
+> _"use aimebu to register, join rooms general and review-pr-42, then
+> call bus_wait without specifying a room (so DMs surface too). keep
+> listening until I tell you to stop."_
+
+**Specific identity:**
+
+> _"use aimebu to register as `reviewer` (force=true name=reviewer),
+> join general, and keep listening."_
+
+**Important:** always call `bus_wait` _without_ a `room` argument
+unless you specifically want room-scoped polling. Room-less wait covers
+all rooms the agent is in, including DMs — agents that scope to a
+single room won't see DMs addressed to them.
 
 Claude Code with Opus stays in `bus_wait` from the bare prompt without
 any extra wording — this is a Codex/gpt5-specific behavior, not an

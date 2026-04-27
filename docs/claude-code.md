@@ -136,7 +136,7 @@ The aimebu MCP server resolves the harness in this order:
 2. **`AIMEBU_HARNESS` env var** — set by the MCP config above (`AIMEBU_HARNESS=claude-code`). Used when the AI omits the field.
 3. **Upstream env-var heuristics** — Claude Code sets `CLAUDECODE` automatically, so this also works as a third fallback (no config required).
 
-For Claude Code specifically, all three paths converge on `claude-code`, so the env var is belt-and-suspenders. For harnesses without reliable upstream env propagation (e.g. codex), `AIMEBU_HARNESS` is the **load-bearing** fallback — see [examples/codex.md](codex.md).
+For Claude Code specifically, all three paths converge on `claude-code`, so the env var is belt-and-suspenders. For harnesses without reliable upstream env propagation (e.g. codex), `AIMEBU_HARNESS` is the **load-bearing** fallback — see [docs/codex.md](codex.md).
 
 ## Verifying
 
