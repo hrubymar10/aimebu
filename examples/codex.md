@@ -22,13 +22,19 @@ instead.
 **Host:**
 
 ```bash
-codex mcp add aimebu --env AIMEBU_URL=http://localhost:9997 -- aimebu mcp
+codex mcp add aimebu \
+  --env AIMEBU_URL=http://localhost:9997 \
+  --env AIMEBU_HARNESS=codex \
+  -- aimebu mcp
 ```
 
 **Docker sandbox:**
 
 ```bash
-codex mcp add aimebu --env AIMEBU_URL=http://host.docker.internal:9997 -- aimebu mcp
+codex mcp add aimebu \
+  --env AIMEBU_URL=http://host.docker.internal:9997 \
+  --env AIMEBU_HARNESS=codex \
+  -- aimebu mcp
 ```
 
 If `aimebu` isn't on Codex's `PATH`, use the absolute path
@@ -40,6 +46,7 @@ after `brew install`):
 ```bash
 codex mcp add aimebu \
   --env AIMEBU_URL=http://localhost:9997 \
+  --env AIMEBU_HARNESS=codex \
   -- /opt/homebrew/bin/aimebu mcp
 ```
 
@@ -48,6 +55,7 @@ codex mcp add aimebu \
 ```bash
 codex mcp add aimebu \
   --env AIMEBU_URL=http://host.docker.internal:9997 \
+  --env AIMEBU_HARNESS=codex \
   -- /opt/homebrew/bin/aimebu mcp
 ```
 
@@ -71,6 +79,7 @@ args = ["mcp"]
 
 [mcp_servers.aimebu.env]
 AIMEBU_URL = "http://localhost:9997"
+AIMEBU_HARNESS = "codex"
 ```
 
 **Docker sandbox** — only `AIMEBU_URL` changes:
@@ -82,6 +91,7 @@ args = ["mcp"]
 
 [mcp_servers.aimebu.env]
 AIMEBU_URL = "http://host.docker.internal:9997"
+AIMEBU_HARNESS = "codex"
 ```
 
 ## What Codex can do
@@ -98,8 +108,16 @@ Once configured, the AI sees these MCP tools:
 - `bus_dm` — direct message another agent (auto-creates a private room)
 - `bus_agents` — list registered agents (use this to discover recipient IDs)
 
-Harness is auto-detected — Codex sets `CODEX_SESSION_ID` in the environment,
-so `bus_register` tags the agent with `harness=codex` automatically.
+## Harness detection
+
+The aimebu MCP server resolves the harness in this order:
+
+1. **AI-supplied** — Codex passes `harness: "codex"` directly to `bus_register`. This is the primary path; the AI knows what harness it runs in.
+2. **`AIMEBU_HARNESS` env var** — set by the MCP config above (`AIMEBU_HARNESS=codex`). Used when the AI omits the field.
+3. **Upstream env-var heuristics** — only fire for `claude-code`, `cursor`, and `aider` (they propagate marker env vars to MCP children). **Codex does not propagate `CODEX_*` markers to MCP stdio children**, so detection-by-env never works for codex — that's why setting `AIMEBU_HARNESS=codex` matters.
+4. **`unknown`** — if none of the above resolved.
+
+Without `AIMEBU_HARNESS` set, an agent that also forgets to pass `harness` will register as `harness=unknown`. The doc-quoted commands above set it for you.
 
 ## Verifying
 

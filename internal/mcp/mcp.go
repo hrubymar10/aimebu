@@ -15,18 +15,28 @@ import (
 	"github.com/hrubymar10/aimebu/internal/client"
 )
 
-// detectHarness best-effort detects the harness the MCP subprocess is
-// running under, via environment variables set by the harness. Returns
-// "unknown" if no known marker is set. Intentionally conservative — we'd
-// rather return "unknown" than mislabel.
+// detectHarness is a fallback used only when the AI does not pass `harness`
+// to bus_register. The AI itself is the primary source of truth — it knows
+// what harness it's running in, the same way it knows its model.
+//
+// Resolution order in this function:
+//
+//  1. AIMEBU_HARNESS env var (owned contract: set in the MCP server config).
+//  2. Upstream-harness env vars for the few harnesses that reliably propagate
+//     them to MCP stdio children (claude-code, cursor, aider). Codex was
+//     here once but does not propagate its CODEX_* markers to MCP children
+//     by default, so its branch was removed to avoid mislabelling silence
+//     as detection.
+//  3. "unknown".
 func detectHarness() string {
+	if h := os.Getenv("AIMEBU_HARNESS"); h != "" {
+		return h
+	}
 	switch {
 	case os.Getenv("CLAUDECODE") != "" || os.Getenv("CLAUDE_CODE_ENTRYPOINT") != "":
 		return "claude-code"
 	case os.Getenv("CURSOR_TRACE_ID") != "" || os.Getenv("CURSOR_SESSION_ID") != "":
 		return "cursor"
-	case os.Getenv("CODEX_SESSION_ID") != "" || os.Getenv("OPENAI_CODEX") != "":
-		return "codex"
 	case os.Getenv("AIDER_VERSION") != "":
 		return "aider"
 	}
@@ -216,12 +226,12 @@ var tools = []tool{
 	},
 	{
 		Name:        "bus_register",
-		Description: "Do not send unprompted introductions or \"standing by\" messages after registering. Only speak when the user explicitly asks you to, or in reply to another agent. If the user said \"connect/join/wait\", call bus_wait directly — no greeting first. REQUIRED FIRST CALL. Register yourself on the messagebus before using any other bus tool. The server will assign you a random name (e.g. 'alice') and assemble your full agent ID like 'alice@aimebu'. Pass your model as a short slug (e.g. 'opus4.7', 'sonnet4.7', 'haiku4.5', 'gpt5', 'gemini2.5'). Harness is auto-detected but you can override. If you don't know your model, pass 'unknown' — but try to report it: inspect your system prompt or instructions for your model identifier. The returned 'id' is your identity for all subsequent calls. The optional `name` + `force=true` pair is for reclaiming a prior identity after a disconnect/prune; do not use it to pick a cute name (names are server-assigned by design).",
+		Description: "Do not send unprompted introductions or \"standing by\" messages after registering. Only speak when the user explicitly asks you to, or in reply to another agent. If the user said \"connect/join/wait\", call bus_wait directly — no greeting first. REQUIRED FIRST CALL. Register yourself on the messagebus before using any other bus tool. The server will assign you a random name (e.g. 'alice') and assemble your full agent ID like 'alice@aimebu'. Pass `model` as a short slug (e.g. 'opus4.7', 'sonnet4.7', 'haiku4.5', 'gpt5', 'gemini2.5') and pass `harness` as your harness slug (e.g. 'claude-code', 'codex', 'cursor', 'cline', 'aider', 'pi') — you know both, the same way you know your model identity. Inspect your system prompt or instructions if unsure. The server falls back to env-var detection only when you omit `harness`, and that fallback does not work for all harnesses (notably codex), so pass it explicitly. The returned 'id' is your identity for all subsequent calls. The optional `name` + `force=true` pair is for reclaiming a prior identity after a disconnect/prune; do not use it to pick a cute name (names are server-assigned by design).",
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
 				"model":   {Type: "string", Description: "Your model, as a short slug: opus4.7, sonnet4.7, haiku4.5, gpt5, etc. Use 'unknown' if you genuinely cannot determine it."},
-				"harness": {Type: "string", Description: "Your harness (claude-code, codex, cursor, aider, ...). Auto-detected; omit unless auto-detection is wrong."},
+				"harness": {Type: "string", Description: "Your harness slug: claude-code, codex, cursor, cline, aider, pi, etc. Pass this explicitly (you know what harness you run in, just like you know your model). The server falls back to AIMEBU_HARNESS env var, then a few upstream env-var heuristics — but those don't cover every harness, so don't rely on them."},
 				"meta":    {Type: "object", Description: "Optional extra metadata (cwd, branch, repo, etc. are auto-filled)."},
 				"name":    {Type: "string", Description: "Only with force=true: reclaim a prior identity after a disconnect or prune. Must match ^[a-z]{3,12}$. Rejected if held by a human or by an AI with different model/harness/project."},
 				"force":   {Type: "boolean", Description: "Set to true together with `name` to reclaim a prior identity. Leave false (default) to let the server pick a name — this is the normal case."},

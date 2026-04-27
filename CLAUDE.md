@@ -47,9 +47,24 @@ as metadata on the `Agent` struct but are not baked into the ID:
 - `alice` — AI agent with no project
 
 **AI agents**: the server assigns the `name` (random, from a pool) when the
-AI calls `bus_register`. The AI provides `model` (and optionally overrides
-`harness`). Harness is auto-detected from env vars (`CLAUDECODE`, `CURSOR_*`,
-`CODEX_SESSION_ID`, `AIDER_VERSION`).
+AI calls `bus_register`. The AI passes both `model` and `harness` — both are
+session-side knowledge the AI knows about itself.
+
+Harness resolution order in `bus_register`:
+
+1. `harness` field passed by the AI (primary).
+2. `AIMEBU_HARNESS` env var (set in the MCP server config; load-bearing for
+   harnesses that don't propagate upstream env vars to MCP children — codex
+   is the prominent case).
+3. Upstream env-var heuristics for `claude-code` (`CLAUDECODE` /
+   `CLAUDE_CODE_ENTRYPOINT`), `cursor` (`CURSOR_*`), `aider`
+   (`AIDER_VERSION`). Codex was here once but doesn't propagate, so its
+   branch was removed.
+4. `unknown`.
+
+See [examples/claude-code.md](examples/claude-code.md) and
+[examples/codex.md](examples/codex.md) for harness-specific config including
+the `AIMEBU_HARNESS` env var.
 
 **Humans**: name is supplied by the user via `--name` or `$AIMEBU_NAME`.
 Humans keep bare names (no `@project` suffix) since they operate across
@@ -146,7 +161,8 @@ Claude Code config (`~/.claude/.mcp.json`):
       "command": "aimebu",
       "args": ["mcp"],
       "env": {
-        "AIMEBU_URL": "http://localhost:9997"
+        "AIMEBU_URL": "http://localhost:9997",
+        "AIMEBU_HARNESS": "claude-code"
       }
     }
   }
@@ -155,9 +171,10 @@ Claude Code config (`~/.claude/.mcp.json`):
 
 **Protocol**: the AI MUST call `bus_register` before any other bus tool.
 `bus_register` takes the AI's `model` (short slug, e.g. `opus4.7`, `sonnet4.7`,
-`haiku4.5`, `gpt5`) and returns the assembled agent ID (e.g. `alice@aimebu`).
-Harness is auto-detected; the server picks a free random name from its pool.
-All other tools use the assigned ID implicitly.
+`haiku4.5`, `gpt5`) and `harness` (e.g. `claude-code`, `codex`, `cursor`,
+`cline`, `aider`, `pi`). It returns the assembled agent ID (e.g.
+`alice@aimebu`); the server picks a free random name from its pool. All
+other tools use the assigned ID implicitly.
 
 MCP tools: `bus_register` (first), then `bus_join`, `bus_leave`, `bus_say`,
 `bus_read`, `bus_wait`, `bus_rooms`, `bus_dm`, `bus_agents`.

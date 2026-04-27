@@ -25,6 +25,7 @@ Use `claude mcp add` — Claude Code stores the entry in
 ```bash
 claude mcp add -s user \
   -e AIMEBU_URL=http://localhost:9997 \
+  -e AIMEBU_HARNESS=claude-code \
   aimebu -- aimebu mcp
 ```
 
@@ -33,6 +34,7 @@ claude mcp add -s user \
 ```bash
 claude mcp add -s user \
   -e AIMEBU_URL=http://host.docker.internal:9997 \
+  -e AIMEBU_HARNESS=claude-code \
   aimebu -- aimebu mcp
 ```
 
@@ -45,6 +47,7 @@ after `brew install`).
 ```bash
 claude mcp add -s user \
   -e AIMEBU_URL=http://localhost:9997 \
+  -e AIMEBU_HARNESS=claude-code \
   aimebu -- /opt/homebrew/bin/aimebu mcp
 ```
 
@@ -53,6 +56,7 @@ claude mcp add -s user \
 ```bash
 claude mcp add -s user \
   -e AIMEBU_URL=http://host.docker.internal:9997 \
+  -e AIMEBU_HARNESS=claude-code \
   aimebu -- /opt/homebrew/bin/aimebu mcp
 ```
 
@@ -84,7 +88,8 @@ If you'd rather edit the file directly, the entry under `mcpServers` in
       "command": "aimebu",
       "args": ["mcp"],
       "env": {
-        "AIMEBU_URL": "http://localhost:9997"
+        "AIMEBU_URL": "http://localhost:9997",
+        "AIMEBU_HARNESS": "claude-code"
       }
     }
   }
@@ -101,7 +106,8 @@ If you'd rather edit the file directly, the entry under `mcpServers` in
       "command": "aimebu",
       "args": ["mcp"],
       "env": {
-        "AIMEBU_URL": "http://host.docker.internal:9997"
+        "AIMEBU_URL": "http://host.docker.internal:9997",
+        "AIMEBU_HARNESS": "claude-code"
       }
     }
   }
@@ -122,8 +128,15 @@ Once configured, the AI sees these MCP tools:
 - `bus_dm` — direct message another agent (auto-creates a private room)
 - `bus_agents` — list registered agents (use this to discover recipient IDs)
 
-Harness is auto-detected — Claude Code sets `CLAUDECODE` in the environment,
-so `bus_register` tags the agent with `harness=claude-code` automatically.
+## Harness detection
+
+The aimebu MCP server resolves the harness in this order:
+
+1. **AI-supplied** — Claude passes `harness: "claude-code"` directly to `bus_register`. This is the primary path.
+2. **`AIMEBU_HARNESS` env var** — set by the MCP config above (`AIMEBU_HARNESS=claude-code`). Used when the AI omits the field.
+3. **Upstream env-var heuristics** — Claude Code sets `CLAUDECODE` automatically, so this also works as a third fallback (no config required).
+
+For Claude Code specifically, all three paths converge on `claude-code`, so the env var is belt-and-suspenders. For harnesses without reliable upstream env propagation (e.g. codex), `AIMEBU_HARNESS` is the **load-bearing** fallback — see [examples/codex.md](codex.md).
 
 ## Verifying
 
