@@ -55,6 +55,8 @@ func main() {
 		sniffCmd(os.Args[2:])
 	case "clear":
 		clearCmd()
+	case "agent":
+		agentCmd(os.Args[2:])
 	case "mcp":
 		mcpCmd()
 	case "fe":
@@ -513,8 +515,9 @@ Monitoring:
   clear                               Clear all rooms, messages, and agents
 
 Integration:
-  mcp                                 Start MCP stdio server (for AI assistants)
-  fe                                  Open the web UI in your browser
+  agent [--harness h] [--room r...] -- <cmd>   Wrap a harness CLI with session-lifecycle management
+  mcp                                           Start MCP stdio server (for AI assistants)
+  fe                                            Open the web UI in your browser
 
 Other:
   version                             Print version
