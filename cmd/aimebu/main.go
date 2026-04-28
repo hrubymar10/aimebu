@@ -167,7 +167,7 @@ func humanClient(args []string) (*client.Client, []string) {
 		project = filepath.Base(cwd)
 	}
 
-	meta := map[string]string{}
+	meta := map[string]string{"protocol": "cli"}
 	if cwd, err := os.Getwd(); err == nil {
 		meta["cwd"] = cwd
 	}
@@ -333,7 +333,7 @@ func registerCmd(args []string) {
 		project = filepath.Base(cwd)
 	}
 
-	meta := make(map[string]string)
+	meta := map[string]string{"protocol": "cli"}
 	for _, arg := range rest {
 		if k, v, ok := strings.Cut(arg, "="); ok {
 			meta[k] = v

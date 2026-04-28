@@ -363,7 +363,7 @@
       kind: 'human',
       name: agentID,
       project: 'web-ui',
-      meta: { via: 'web-ui' },
+      meta: { via: 'web-ui', protocol: 'fe' },
     }).then(function () {
       registered = true;
     }).catch(function (err) {

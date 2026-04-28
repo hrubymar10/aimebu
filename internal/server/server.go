@@ -448,19 +448,18 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			kind = "ai"
 		}
 
-		// Default protocol to "mcp" for agents that don't set it.
-		// The aimebu agent wrapper sets protocol="agent" via meta + env var.
-		if req.Meta == nil {
-			req.Meta = map[string]string{}
-		}
-		if req.Meta["protocol"] == "" {
-			req.Meta["protocol"] = "mcp"
-		}
-
 		var agent *types.Agent
 		var err error
 		switch kind {
 		case "ai":
+			// Default protocol to "mcp" for AI agents that don't set it.
+			// The aimebu agent wrapper sets protocol="agent" via meta + env var.
+			if req.Meta == nil {
+				req.Meta = map[string]string{}
+			}
+			if req.Meta["protocol"] == "" {
+				req.Meta["protocol"] = "mcp"
+			}
 			forceName := ""
 			if req.Force {
 				forceName = req.Name
