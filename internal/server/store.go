@@ -644,6 +644,21 @@ func (s *store) agentMessagesSince(agentID string, sinceID int64) []types.Messag
 	return out
 }
 
+// messageByID returns the message with the given global ID and true, or
+// the zero value and false if no such message exists.
+func (s *store) messageByID(id int64) (types.Message, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, msgs := range s.messages {
+		for _, m := range msgs {
+			if m.ID == id {
+				return m, true
+			}
+		}
+	}
+	return types.Message{}, false
+}
+
 func (s *store) allMessages(limit int) []types.Message {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

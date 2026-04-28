@@ -247,6 +247,17 @@ var tools = []tool{
 			Properties: map[string]property{},
 		},
 	},
+	{
+		Name:        "bus_message",
+		Description: "Fetch a single message by its global ID. You must be a member of the message's room; otherwise returns not_found. Use this when a user or agent references #NN in a message — call bus_message(id) to fetch the original content. Message IDs are shown as #NN badges in the web UI and appear as the `id` field in bus_read / bus_wait responses.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"id": {Type: "integer", Description: "Global message ID (the number from #NN)"},
+			},
+			Required: []string{"id"},
+		},
+	},
 }
 
 // ── Tool handlers ──────────────────────────────────────────────────
@@ -423,6 +434,16 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 
 	case "bus_agents":
 		return c.Get("/agents")
+
+	case "bus_message":
+		var p struct {
+			ID int64 `json:"id"`
+		}
+		_ = json.Unmarshal(args, &p)
+		if p.ID <= 0 {
+			return "", fmt.Errorf("id is required and must be a positive integer")
+		}
+		return c.Message(p.ID)
 
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)

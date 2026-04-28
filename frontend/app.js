@@ -62,6 +62,9 @@
 
   const mobileTabs = $('#mobile-tabs');
   const mdToggleBtn = $('#md-toggle-btn');
+  const msgSearchBtn = $('#msg-search-btn');
+  const msgSearchBar = $('#msg-search-bar');
+  const msgSearchInput = $('#msg-search-input');
 
   // ── Harness icons ────────────────────────────────────────────────
 
@@ -128,6 +131,19 @@
       s = s.replace(/(?<![="'(>])(https?:\/\/[^\s<>"]+)/g, function (_, url) {
         return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>';
       });
+      // Stash all existing <a>…</a> tags so the #NN pass can't corrupt URLs
+      // that contain fragment identifiers (e.g. https://x.com/path#42).
+      var linkHolders = [];
+      s = s.replace(/<a\b[^>]*>[\s\S]*?<\/a>/g, function (match) {
+        linkHolders.push(match);
+        return '\x01' + (linkHolders.length - 1) + '\x01';
+      });
+      // #NN message references — only match positive IDs (not #0)
+      s = s.replace(/(?<![="'(>])#([1-9]\d*)\b/g, function (_, id) {
+        return '<a class="msg-ref" data-msg-id="' + id + '">#' + id + '</a>';
+      });
+      // Restore stashed links
+      s = s.replace(/\x01(\d+)\x01/g, function (_, i) { return linkHolders[+i]; });
       return s;
     }
 
@@ -228,6 +244,46 @@
       mdToggleBtn.textContent = 'Raw';
       mdToggleBtn.classList.add('raw-mode');
     }
+  }
+
+  function scrollToMessage(id, triggerEl) {
+    var el = messageListEl.querySelector('[data-id="' + id + '"]');
+    if (!el) {
+      // Message exists (server confirmed) but is older than loaded window
+      if (triggerEl) {
+        triggerEl.classList.add('msg-ref-error');
+        triggerEl.title = 'Message out of view (load older)';
+        setTimeout(function () {
+          triggerEl.classList.remove('msg-ref-error');
+          triggerEl.title = '';
+        }, 2000);
+      }
+      return;
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    el.classList.add('msg-highlight');
+    setTimeout(function () { el.classList.remove('msg-highlight'); }, 1500);
+  }
+
+  function jumpToMessage(id, triggerEl) {
+    api('GET', '/messages/' + id + '?agent_id=' + encodeURIComponent(agentID))
+      .then(function (msg) {
+        if (msg.room_id !== activeRoomID) {
+          selectRoom(msg.room_id, msg.id);
+        } else {
+          scrollToMessage(msg.id, triggerEl);
+        }
+      })
+      .catch(function () {
+        if (triggerEl) {
+          triggerEl.classList.add('msg-ref-error');
+          triggerEl.title = 'Message not accessible';
+          setTimeout(function () {
+            triggerEl.classList.remove('msg-ref-error');
+            triggerEl.title = '';
+          }, 2000);
+        }
+      });
   }
 
   function relativeTime(isoString) {
@@ -661,8 +717,11 @@
 
   // ── Room selection ───────────────────────────────────────────────
 
-  function selectRoom(roomID) {
-    if (activeRoomID === roomID) return;
+  function selectRoom(roomID, scrollToMsgID) {
+    if (activeRoomID === roomID) {
+      if (scrollToMsgID) scrollToMessage(scrollToMsgID);
+      return;
+    }
     activeRoomID = roomID;
 
     // Show room view
@@ -675,6 +734,7 @@
     // Clear and fetch messages via HTTP (one-time load)
     renderMessages();
     fetchRoomMessages(roomID).then(function () {
+      if (scrollToMsgID) scrollToMessage(scrollToMsgID);
       // Pull presence snapshot after messages so read-receipt rendering
       // has the head message id available.
       return fetchRoomPresence(roomID);
@@ -839,6 +899,7 @@
             '<img src="' + msgIconSrc + '" class="harness-icon chat-msg-icon" alt="' + msgIconAlt + '" title="' + msgIconTitle + '" width="14" height="14">' +
             '<span class="chat-msg-from-name">' + esc(m.from) + '</span>' +
           '</span>' +
+          '<span class="chat-msg-id" data-msg-id="' + esc(String(m.id)) + '" title="Click to copy">#' + esc(String(m.id)) + '</span>' +
           '<span class="chat-msg-time" title="' + esc(m.created_at) + '">' + relativeTime(m.created_at) + '</span>' +
         '</div>' +
         '<div class="chat-msg-bubble">' +
@@ -1097,6 +1158,63 @@
     localStorage.setItem('aimebu.ui.markdownMode', markdownMode);
     updateMdToggleBtn();
     renderMessages();
+  });
+
+  // Message ID badge (copy) and #NN autolinks (jump) — event delegation
+  messageListEl.addEventListener('click', function (e) {
+    var badge = e.target.closest('.chat-msg-id');
+    if (badge) {
+      var msgId = badge.getAttribute('data-msg-id');
+      navigator.clipboard.writeText('#' + msgId).then(function () {
+        badge.classList.add('copied');
+        setTimeout(function () { badge.classList.remove('copied'); }, 800);
+      }).catch(function () {});
+      return;
+    }
+    var ref = e.target.closest('.msg-ref');
+    if (ref) {
+      e.preventDefault();
+      jumpToMessage(parseInt(ref.getAttribute('data-msg-id'), 10), ref);
+    }
+  });
+
+  // Message search bar toggle + submit
+  msgSearchBtn.addEventListener('click', function () {
+    var hidden = msgSearchBar.classList.toggle('hidden');
+    if (!hidden) {
+      msgSearchInput.focus();
+    }
+  });
+
+  msgSearchInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      msgSearchBar.classList.add('hidden');
+      return;
+    }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    var raw = msgSearchInput.value.trim().replace(/^#/, '');
+    var id = parseInt(raw, 10);
+    if (!id || id <= 0) {
+      msgSearchInput.classList.add('error');
+      setTimeout(function () { msgSearchInput.classList.remove('error'); }, 800);
+      return;
+    }
+    // Keep bar open until success/failure so the user sees error feedback
+    api('GET', '/messages/' + id + '?agent_id=' + encodeURIComponent(agentID))
+      .then(function (msg) {
+        msgSearchInput.value = '';
+        msgSearchBar.classList.add('hidden');
+        if (msg.room_id !== activeRoomID) {
+          selectRoom(msg.room_id, msg.id);
+        } else {
+          scrollToMessage(msg.id, null);
+        }
+      })
+      .catch(function () {
+        msgSearchInput.classList.add('error');
+        setTimeout(function () { msgSearchInput.classList.remove('error'); }, 800);
+      });
   });
 
   // Send message

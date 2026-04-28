@@ -1176,3 +1176,89 @@ body {
 .chat-msg-body.md-rendered em {
   font-style: italic;
 }
+
+/* ── Message ID badge ────────────────────────────────────────── */
+
+.chat-msg-id {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 1px 3px;
+  transition: color var(--transition), background var(--transition);
+  user-select: none;
+}
+
+.chat-msg-id:hover {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
+.chat-msg-id.copied {
+  color: var(--green-text);
+}
+
+/* ── Message reference autolinks ────────────────────────────── */
+
+.msg-ref {
+  color: var(--accent);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.msg-ref:hover {
+  text-decoration: underline;
+}
+
+.msg-ref.msg-ref-error {
+  color: var(--red);
+  text-decoration: line-through;
+}
+
+/* ── Message highlight flash ─────────────────────────────────── */
+
+@keyframes msgHighlight {
+  0%   { background: var(--accent-dim); }
+  100% { background: transparent; }
+}
+
+.msg-highlight .chat-msg-bubble {
+  animation: msgHighlight 1.5s ease forwards;
+}
+
+/* ── Message search bar ──────────────────────────────────────── */
+
+.msg-search-bar {
+  padding: 6px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.msg-search-bar.hidden {
+  display: none;
+}
+
+.msg-search-input {
+  width: 100%;
+  padding: 5px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.msg-search-input:focus {
+  border-color: var(--accent);
+}
+
+.msg-search-input.error {
+  border-color: var(--red);
+}

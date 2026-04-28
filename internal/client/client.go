@@ -81,6 +81,12 @@ func (c *Client) Delete(path string) (string, error) {
 	return string(out), nil
 }
 
+// Message fetches a single message by its global ID. The caller's AgentID
+// is passed for the membership check; returns the raw JSON response.
+func (c *Client) Message(id int64) (string, error) {
+	return c.Get(fmt.Sprintf("/messages/%d?agent_id=%s", id, c.AgentID))
+}
+
 func PrettyJSON(s string) string {
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, []byte(s), "", "  "); err != nil {

@@ -76,9 +76,13 @@
           </div>
           <div class="room-header-right">
             <div id="room-member-avatars" class="room-member-avatars"></div>
+            <button id="msg-search-btn" class="btn btn-sm btn-md-toggle" type="button" title="Go to message #…">#</button>
             <button id="md-toggle-btn" class="btn btn-sm btn-md-toggle" type="button">Rendered</button>
             <button id="leave-room-btn" class="btn btn-danger btn-sm" type="button">Leave</button>
           </div>
+        </div>
+        <div id="msg-search-bar" class="msg-search-bar hidden">
+          <input type="text" id="msg-search-input" class="msg-search-input" placeholder="Go to #…" autocomplete="off">
         </div>
         <div id="message-list" class="message-list">
           <div class="empty-state" id="messages-empty">No messages in this room yet.</div>

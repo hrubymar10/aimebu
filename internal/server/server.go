@@ -558,6 +558,30 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		}
 	})
 
+	// GET /messages/{id} — fetch a single message by its global ID.
+	// Requires the caller to be a member of the message's room; returns a
+	// uniform {error:"not_found"} for both missing messages and non-members
+	// so sequential IDs can't be enumerated to dump private rooms.
+	mux.HandleFunc("GET /messages/{id}", func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			jsonError(w, "not_found", http.StatusNotFound)
+			return
+		}
+		msg, ok := s.messageByID(id)
+		if !ok {
+			jsonError(w, "not_found", http.StatusNotFound)
+			return
+		}
+		agentID := r.URL.Query().Get("agent_id")
+		if !s.isMember(msg.RoomID, agentID) {
+			jsonError(w, "not_found", http.StatusNotFound)
+			return
+		}
+		jsonOK(w, msg)
+	})
+
 	// GET /messages — all messages (for sniff/monitoring)
 	mux.HandleFunc("GET /messages", func(w http.ResponseWriter, r *http.Request) {
 		limit := 100
