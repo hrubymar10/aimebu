@@ -29,6 +29,7 @@
   // (bus_wait without a room filter) — those apply to every room the agent
   // is in.
   let presence = {};
+  let markdownMode = localStorage.getItem('aimebu.ui.markdownMode') || 'rendered';
 
   // ── DOM refs ─────────────────────────────────────────────────────
 
@@ -60,6 +61,7 @@
   const allAgentsList = $('#all-agents-list');
 
   const mobileTabs = $('#mobile-tabs');
+  const mdToggleBtn = $('#md-toggle-btn');
 
   // ── Harness icons ────────────────────────────────────────────────
 
@@ -87,6 +89,145 @@
     const div = document.createElement('div');
     div.textContent = str || '';
     return div.innerHTML;
+  }
+
+  function renderMarkdown(rawText) {
+    if (!rawText) return '';
+    var html = esc(rawText);
+    var holders = [];
+
+    function stash(s) {
+      holders.push(s);
+      return '\x00' + (holders.length - 1) + '\x00';
+    }
+
+    // Extract fenced code blocks before any other transforms
+    html = html.replace(/```([a-zA-Z0-9]*)\n?([\s\S]*?)```/g, function (_, lang, code) {
+      var cls = lang.trim() ? ' class="lang-' + lang.trim() + '"' : '';
+      return stash('<pre class="md-pre"><code' + cls + '>' + code.replace(/\n$/, '') + '</code></pre>');
+    });
+
+    // Extract inline code spans
+    html = html.replace(/`([^`\n]+)`/g, function (_, code) {
+      return stash('<code class="md-code">' + code + '</code>');
+    });
+
+    function applyInline(s) {
+      s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+      s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
+      s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+      s = s.replace(/_([^_\n]+)_/g, '<em>$1</em>');
+      s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (_, text, href) {
+        if (!/^(https?:|mailto:)/i.test(href)) return text;
+        // esc() does not encode " or ' — percent-encode them so they can't break out of href=""
+        var safeHref = href.replace(/"/g, '%22').replace(/'/g, '%27');
+        return '<a href="' + safeHref + '" target="_blank" rel="noopener noreferrer">' + text + '</a>';
+      });
+      // Bare URLs — skip those already inside href="..." or link text (preceded by > from a tag)
+      s = s.replace(/(?<![="'(>])(https?:\/\/[^\s<>"]+)/g, function (_, url) {
+        return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + url + '</a>';
+      });
+      return s;
+    }
+
+    var lines = html.split('\n');
+    var out = [];
+    var i = 0;
+
+    while (i < lines.length) {
+      var line = lines[i];
+
+      // Stashed placeholder on its own line (fenced code block)
+      if (/^\x00\d+\x00$/.test(line.trim())) {
+        out.push({ type: 'block', html: line.trim() });
+        i++;
+        continue;
+      }
+
+      // Heading h1–h3
+      var hm = line.match(/^(#{1,3})\s(.+)$/);
+      if (hm) {
+        var lvl = hm[1].length;
+        out.push({ type: 'block', html: '<h' + lvl + ' class="md-h">' + applyInline(hm[2]) + '</h' + lvl + '>' });
+        i++;
+        continue;
+      }
+
+      // Blockquote
+      if (/^(&gt;|>)/.test(line)) {
+        var bqLines = [];
+        while (i < lines.length && /^(&gt;|>)/.test(lines[i])) {
+          bqLines.push(lines[i].replace(/^(&gt;|>)\s?/, ''));
+          i++;
+        }
+        out.push({ type: 'block', html: '<blockquote class="md-blockquote">' + applyInline(bqLines.join('<br>')) + '</blockquote>' });
+        continue;
+      }
+
+      // Unordered list
+      if (/^[-*]\s/.test(line)) {
+        var ulItems = [];
+        while (i < lines.length && /^[-*]\s/.test(lines[i])) {
+          ulItems.push('<li>' + applyInline(lines[i].replace(/^[-*]\s+/, '')) + '</li>');
+          i++;
+        }
+        out.push({ type: 'block', html: '<ul class="md-list">' + ulItems.join('') + '</ul>' });
+        continue;
+      }
+
+      // Ordered list
+      if (/^\d+\.\s/.test(line)) {
+        var olItems = [];
+        while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
+          olItems.push('<li>' + applyInline(lines[i].replace(/^\d+\.\s+/, '')) + '</li>');
+          i++;
+        }
+        out.push({ type: 'block', html: '<ol class="md-list">' + olItems.join('') + '</ol>' });
+        continue;
+      }
+
+      // Empty line — paragraph separator
+      if (line.trim() === '') {
+        out.push({ type: 'empty' });
+        i++;
+        continue;
+      }
+
+      // Normal inline text
+      out.push({ type: 'text', html: applyInline(line) });
+      i++;
+    }
+
+    var result = '';
+    for (var j = 0; j < out.length; j++) {
+      var item = out[j];
+      if (item.type === 'block') {
+        result += item.html;
+      } else if (item.type === 'empty') {
+        result += '<br>';
+      } else {
+        var nextIsText = j + 1 < out.length && out[j + 1].type === 'text';
+        result += item.html + (nextIsText ? '<br>' : '');
+      }
+    }
+
+    // Restore placeholders
+    result = result.replace(/\x00(\d+)\x00/g, function (_, k) {
+      return holders[+k];
+    });
+
+    return result;
+  }
+
+  function updateMdToggleBtn() {
+    if (markdownMode === 'rendered') {
+      mdToggleBtn.textContent = 'Rendered';
+      mdToggleBtn.classList.remove('raw-mode');
+    } else {
+      mdToggleBtn.textContent = 'Raw';
+      mdToggleBtn.classList.add('raw-mode');
+    }
   }
 
   function relativeTime(isoString) {
@@ -701,7 +842,9 @@
           '<span class="chat-msg-time" title="' + esc(m.created_at) + '">' + relativeTime(m.created_at) + '</span>' +
         '</div>' +
         '<div class="chat-msg-bubble">' +
-          '<div class="chat-msg-body">' + esc(m.body) + '</div>' +
+          '<div class="chat-msg-body' + (markdownMode === 'rendered' ? ' md-rendered' : '') + '">' +
+            (markdownMode === 'rendered' ? renderMarkdown(m.body) : esc(m.body)) +
+          '</div>' +
         '</div>' +
       '</div>'
     );
@@ -948,6 +1091,14 @@
     leaveRoom(activeRoomID);
   });
 
+  // Markdown / raw toggle
+  mdToggleBtn.addEventListener('click', function () {
+    markdownMode = markdownMode === 'rendered' ? 'raw' : 'rendered';
+    localStorage.setItem('aimebu.ui.markdownMode', markdownMode);
+    updateMdToggleBtn();
+    renderMessages();
+  });
+
   // Send message
   sendForm.addEventListener('submit', function (e) {
     e.preventDefault();
@@ -978,6 +1129,7 @@
   // ── Init ─────────────────────────────────────────────────────────
 
   setMobileTab('rooms');
+  updateMdToggleBtn();
 
   // If no persisted name yet, try to prefill from the server's $AIMEBU_NAME.
   var prefillPromise;
