@@ -258,6 +258,25 @@ var tools = []tool{
 			Required: []string{"id"},
 		},
 	},
+	{
+		Name:        "bus_macros_get",
+		Description: "Fetch all macros (global shared map + per-room overrides). Returns {macros: {key: body}, rooms: {roomID: {key: body}}}. Macros expand <KEY> tokens in messages before sending.",
+		InputSchema: inputSchema{
+			Type:       "object",
+			Properties: map[string]property{},
+		},
+	},
+	{
+		Name:        "bus_macros_set",
+		Description: "Update the global and/or per-room macro maps (broadcast to all clients). Pass only the field(s) you want to change — omitted fields are preserved. Pass an explicit empty map {} to clear that scope entirely. macros is the global shared map; rooms is a map of roomID → {key: body} for room-scoped overrides (room macros shadow global on expansion). Full replace within each passed field: included keys replace the entire scope, so fetch first with bus_macros_get if you only want to add/remove one key.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"macros": {Type: "object", Description: "Global macro map: {key: body}"},
+				"rooms":  {Type: "object", Description: "Per-room macro maps: {roomID: {key: body}}"},
+			},
+		},
+	},
 }
 
 // ── Tool handlers ──────────────────────────────────────────────────
@@ -444,6 +463,19 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			return "", fmt.Errorf("id is required and must be a positive integer")
 		}
 		return c.Message(p.ID)
+
+	case "bus_macros_get":
+		return c.Get("/macros")
+
+	case "bus_macros_set":
+		var p struct {
+			Macros map[string]string            `json:"macros"`
+			Rooms  map[string]map[string]string `json:"rooms"`
+		}
+		_ = json.Unmarshal(args, &p)
+		// Pass as-is — nil means "absent, preserve the other side".
+		// The server distinguishes nil (preserve) from {} (wipe).
+		return c.Put("/macros", p)
 
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)

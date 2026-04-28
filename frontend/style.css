@@ -1267,3 +1267,234 @@ body {
 .msg-search-input.error {
   border-color: var(--red);
 }
+
+/* ── Macros panel ────────────────────────────────────────────── */
+
+.macros-btn-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.macros-panel {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 16px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.macros-panel.hidden {
+  display: none;
+}
+
+.macros-panel-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.macros-panel-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.macros-panel-hint code {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 4px;
+  color: var(--accent);
+}
+
+.macros-panel-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.macros-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.macro-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.macro-key {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--accent);
+  flex-shrink: 0;
+  min-width: 90px;
+}
+
+.macro-body {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.macro-delete-btn {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.macro-add-form {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.macro-key-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  outline: none;
+  width: 110px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  transition: border-color var(--transition);
+}
+
+.macro-key-input:focus {
+  border-color: var(--accent);
+}
+
+.macro-key-input.error {
+  border-color: var(--red);
+}
+
+.macro-body-input {
+  flex: 1;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  outline: none;
+  resize: none;
+  line-height: 1.4;
+  transition: border-color var(--transition);
+}
+
+.macro-body-input:focus {
+  border-color: var(--accent);
+}
+
+/* ── Macros tabs ────────────────────────────────────────────────── */
+
+.macros-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.macros-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  padding: 4px 10px 6px;
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition);
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.macros-tab:hover {
+  color: var(--text-primary);
+}
+
+.macros-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Autocomplete popup ─────────────────────────────────────────── */
+
+.send-bar {
+  position: relative;
+}
+
+.ac-popup {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.ac-popup.hidden {
+  display: none;
+}
+
+.ac-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background var(--transition);
+}
+
+.ac-item:hover,
+.ac-item.active {
+  background: var(--bg-hover);
+}
+
+.ac-item-key {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+
+.ac-item-preview {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  font-size: 0.75rem;
+}

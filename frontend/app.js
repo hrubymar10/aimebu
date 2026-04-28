@@ -30,6 +30,15 @@
   // is in.
   let presence = {};
   let markdownMode = localStorage.getItem('aimebu.ui.markdownMode') || 'rendered';
+  let macros = {};           // { lowercasedKey: body } — global shared macros
+  let macroRooms = {};       // { roomID: { key: body } } — per-room overrides
+  let macrosScopeTab = 'global'; // 'global' | roomID — active macros panel tab
+  let macrosSaveTimer = null;
+
+  // Autocomplete state
+  let acItems = [];          // string[] — current candidate macro keys
+  let acSelected = -1;       // currently highlighted item index
+  let acHideTimer = null;    // debounce timer for blur→hide
 
   // ── DOM refs ─────────────────────────────────────────────────────
 
@@ -65,6 +74,17 @@
   const msgSearchBtn = $('#msg-search-btn');
   const msgSearchBar = $('#msg-search-bar');
   const msgSearchInput = $('#msg-search-input');
+
+  const macrosBtn = $('#macros-btn');
+  const macrosPanel = $('#macros-panel');
+  const macrosListEl = $('#macros-list');
+  const macroAddForm = $('#macro-add-form');
+  const macroKeyInput = $('#macro-key-input');
+  const macroBodyInput = $('#macro-body-input');
+  const macrosExportBtn = $('#macros-export-btn');
+  const macrosImportBtn = $('#macros-import-btn');
+  const macrosTabsEl = $('#macros-tabs');
+  const acPopupEl = $('#ac-popup');
 
   // ── Harness icons ────────────────────────────────────────────────
 
@@ -244,6 +264,196 @@
       mdToggleBtn.textContent = 'Raw';
       mdToggleBtn.classList.add('raw-mode');
     }
+  }
+
+  function expandMacros(body, roomID) {
+    // \<KEY> passes through as literal <KEY> (backslash stripped).
+    var ESCAPE = '\x02';
+    var s = body.replace(/\\</g, ESCAPE);
+    var roomMacros = (roomID && macroRooms[roomID]) || {};
+    // Recursive expansion, depth-capped to 8 to handle cycles.
+    var MAX_DEPTH = 8;
+    for (var i = 0; i < MAX_DEPTH; i++) {
+      var next = s.replace(/<([a-z][a-z0-9_-]*)>/gi, function (_, key) {
+        var k = key.toLowerCase();
+        // Room-scoped macros shadow global
+        var val = roomMacros[k] !== undefined ? roomMacros[k] : macros[k];
+        return val !== undefined ? val : '<' + key + '>';
+      });
+      if (next === s) break;
+      s = next;
+    }
+    return s.replace(/\x02/g, '<');
+  }
+
+  function getMergedMacros(roomID) {
+    var merged = {};
+    Object.keys(macros).forEach(function (k) { merged[k] = macros[k]; });
+    var rm = (roomID && macroRooms[roomID]) || {};
+    Object.keys(rm).forEach(function (k) { merged[k] = rm[k]; });
+    return merged;
+  }
+
+  function getAcPartial() {
+    var val = msgBodyInput.value;
+    var pos = msgBodyInput.selectionStart;
+    var before = val.substring(0, pos);
+    var lastOpen = -1;
+    for (var i = before.length - 1; i >= 0; i--) {
+      if (before[i] === '<' && (i === 0 || before[i - 1] !== '\\')) {
+        lastOpen = i;
+        break;
+      }
+      if (before[i] === '>') break;
+    }
+    if (lastOpen === -1) return null;
+    var partial = before.substring(lastOpen + 1);
+    if (!/^[a-zA-Z0-9_-]*$/.test(partial)) return null;
+    return partial;
+  }
+
+  function updateAcHighlight() {
+    acPopupEl.querySelectorAll('.ac-item').forEach(function (el, i) {
+      el.classList.toggle('active', i === acSelected);
+    });
+    // Scroll selected item into view
+    var active = acPopupEl.querySelector('.ac-item.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+
+  function updateAcPopup() {
+    var partial = getAcPartial();
+    if (partial === null) { hideAcPopup(); return; }
+    var merged = getMergedMacros(activeRoomID);
+    var lc = partial.toLowerCase();
+    var matches = Object.keys(merged).filter(function (k) {
+      return k.indexOf(lc) === 0;
+    }).sort();
+    if (matches.length === 0) { hideAcPopup(); return; }
+    acItems = matches;
+    acSelected = matches.length === 1 ? 0 : -1;
+    acPopupEl.innerHTML = matches.map(function (k, i) {
+      return (
+        '<div class="ac-item' + (i === acSelected ? ' active' : '') + '" data-key="' + esc(k) + '">' +
+          '<span class="ac-item-key">&lt;' + esc(k.toUpperCase()) + '&gt;</span>' +
+          '<span class="ac-item-preview">' + esc(truncate(merged[k], 40)) + '</span>' +
+        '</div>'
+      );
+    }).join('');
+    acPopupEl.querySelectorAll('.ac-item').forEach(function (el) {
+      el.addEventListener('mousedown', function (e) {
+        e.preventDefault(); // keep focus in textarea
+        insertAcItem(el.getAttribute('data-key'));
+      });
+    });
+    acPopupEl.classList.remove('hidden');
+  }
+
+  function hideAcPopup() {
+    acPopupEl.classList.add('hidden');
+    acItems = [];
+    acSelected = -1;
+  }
+
+  function insertAcItem(key) {
+    var val = msgBodyInput.value;
+    var pos = msgBodyInput.selectionStart;
+    var before = val.substring(0, pos);
+    var lastOpen = -1;
+    for (var i = before.length - 1; i >= 0; i--) {
+      if (before[i] === '<' && (i === 0 || before[i - 1] !== '\\')) {
+        lastOpen = i;
+        break;
+      }
+      if (before[i] === '>') break;
+    }
+    if (lastOpen === -1) { hideAcPopup(); return; }
+    var after = val.substring(pos);
+    var newVal = before.substring(0, lastOpen) + '<' + key + '>' + after;
+    msgBodyInput.value = newVal;
+    var newPos = lastOpen + key.length + 2;
+    msgBodyInput.setSelectionRange(newPos, newPos);
+    msgBodyInput.style.height = 'auto';
+    var h = Math.min(msgBodyInput.scrollHeight, 160);
+    msgBodyInput.style.height = h + 'px';
+    hideAcPopup();
+    msgBodyInput.focus();
+  }
+
+  function renderMacrosTabs() {
+    if (!macrosTabsEl) return;
+    // If scope is a room that's no longer active, reset to global
+    if (macrosScopeTab !== 'global' && macrosScopeTab !== activeRoomID) {
+      macrosScopeTab = 'global';
+    }
+    var tabs = [{ id: 'global', label: 'Global' }];
+    if (activeRoomID) tabs.push({ id: activeRoomID, label: '#' + activeRoomID });
+    macrosTabsEl.innerHTML = tabs.map(function (t) {
+      return (
+        '<button class="macros-tab' + (macrosScopeTab === t.id ? ' active' : '') +
+        '" data-tab="' + esc(t.id) + '" type="button">' + esc(t.label) + '</button>'
+      );
+    }).join('');
+    macrosTabsEl.querySelectorAll('.macros-tab').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        macrosScopeTab = btn.getAttribute('data-tab');
+        renderMacrosTabs();
+        renderMacrosList();
+      });
+    });
+  }
+
+  function renderMacrosList() {
+    var scope = macrosScopeTab === 'global'
+      ? macros
+      : (macroRooms[macrosScopeTab] || {});
+    var keys = Object.keys(scope).sort();
+    if (keys.length === 0) {
+      macrosListEl.innerHTML = '<div class="empty-state">No macros defined.</div>';
+      return;
+    }
+    macrosListEl.innerHTML = keys.map(function (k) {
+      return (
+        '<div class="macro-row">' +
+          '<span class="macro-key">&lt;' + esc(k.toUpperCase()) + '&gt;</span>' +
+          '<span class="macro-body">' + esc(scope[k]) + '</span>' +
+          '<button class="btn btn-sm btn-danger macro-delete-btn" data-key="' + esc(k) + '" type="button">&times;</button>' +
+        '</div>'
+      );
+    }).join('');
+    macrosListEl.querySelectorAll('.macro-delete-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var k = btn.getAttribute('data-key');
+        if (macrosScopeTab === 'global') {
+          delete macros[k];
+        } else {
+          var rm = macroRooms[macrosScopeTab] || {};
+          delete rm[k];
+          macroRooms[macrosScopeTab] = rm;
+        }
+        renderMacrosList();
+        scheduleMacrosSave();
+      });
+    });
+  }
+
+  function scheduleMacrosSave() {
+    if (macrosSaveTimer) clearTimeout(macrosSaveTimer);
+    macrosSaveTimer = setTimeout(function () {
+      api('PUT', '/macros', { macros: macros, rooms: macroRooms })
+        .catch(function (err) { console.error('Failed to save macros:', err); });
+    }, 500);
+  }
+
+  function loadMacros() {
+    return api('GET', '/macros')
+      .then(function (data) {
+        macros = data.macros || {};
+        macroRooms = data.rooms || {};
+        renderMacrosTabs();
+        renderMacrosList();
+      })
+      .catch(function () { macros = {}; macroRooms = {}; renderMacrosTabs(); renderMacrosList(); });
   }
 
   function scrollToMessage(id, triggerEl) {
@@ -517,6 +727,9 @@
       wsReconnectAttempts = 0;
       setConnected(true);
 
+      // Refresh macros in case a macros_updated event was missed during disconnect
+      loadMacros().catch(function () {});
+
       // Identify ourselves so the server can keep our agent alive
       wsSend({ type: 'hello', agent_id: agentID });
 
@@ -545,6 +758,9 @@
             break;
           case 'presence':
             handleWSPresence(frame.data);
+            break;
+          case 'macros_updated':
+            loadMacros().catch(function () {});
             break;
         }
       } catch (e) {
@@ -749,6 +965,9 @@
     // Update sidebar highlights
     renderRooms();
     renderRoomAgents();
+
+    // Refresh macros tabs (room tab appears/changes when active room changes)
+    renderMacrosTabs();
 
     // On mobile, switch to chat tab
     setMobileTab('chat');
@@ -1086,7 +1305,7 @@
       unreadCounts = {};
       readCursors = {};
       registerHuman().then(function () {
-        return fetchMyRooms();
+        fetchMyRooms().catch(function () {});
       }).catch(function () {});
     }
   });
@@ -1219,7 +1438,31 @@
 
   // Multiline composer: Enter submits, Shift+Enter inserts newline.
   // IME guard prevents submission mid-composition (CJK / dead-key input).
+  // When the autocomplete popup is open, arrow keys / Enter navigate it instead.
   msgBodyInput.addEventListener('keydown', function (e) {
+    if (!acPopupEl.classList.contains('hidden') && acItems.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        acSelected = (acSelected + 1) % acItems.length;
+        updateAcHighlight();
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        acSelected = (acSelected - 1 + acItems.length) % acItems.length;
+        updateAcHighlight();
+        return;
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && acSelected >= 0) {
+        e.preventDefault();
+        insertAcItem(acItems[acSelected]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        hideAcPopup();
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       sendForm.requestSubmit();
@@ -1232,18 +1475,116 @@
     var h = Math.min(msgBodyInput.scrollHeight, 160);
     msgBodyInput.style.height = h + 'px';
     msgBodyInput.style.overflowY = msgBodyInput.scrollHeight > 160 ? 'auto' : 'hidden';
+    updateAcPopup();
+  });
+
+  msgBodyInput.addEventListener('blur', function () {
+    acHideTimer = setTimeout(hideAcPopup, 150);
+  });
+
+  msgBodyInput.addEventListener('focus', function () {
+    clearTimeout(acHideTimer);
   });
 
   // Send message
   sendForm.addEventListener('submit', function (e) {
     e.preventDefault();
-    var body = msgBodyInput.value.trim();
+    var body = expandMacros(msgBodyInput.value.trim(), activeRoomID);
     if (!body) return;
+    hideAcPopup();
     sendMessage(body);
     msgBodyInput.value = '';
     msgBodyInput.style.height = '';
     msgBodyInput.style.overflowY = '';
     msgBodyInput.focus();
+  });
+
+  // Macros panel
+  macrosBtn.addEventListener('click', function () {
+    macrosPanel.classList.toggle('hidden');
+    if (!macrosPanel.classList.contains('hidden')) {
+      renderMacrosTabs();
+      renderMacrosList();
+      macroKeyInput.focus();
+    }
+  });
+
+  macroAddForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var key = macroKeyInput.value.trim().toLowerCase().replace(/\s+/g, '');
+    var body = macroBodyInput.value;
+    if (!/^[a-z][a-z0-9_-]*$/.test(key)) {
+      macroKeyInput.classList.add('error');
+      setTimeout(function () { macroKeyInput.classList.remove('error'); }, 800);
+      return;
+    }
+    var scope = macrosScopeTab === 'global'
+      ? macros
+      : (macroRooms[macrosScopeTab] || (macroRooms[macrosScopeTab] = {}));
+    if (scope[key] !== undefined) {
+      macroKeyInput.classList.add('error');
+      setTimeout(function () { macroKeyInput.classList.remove('error'); }, 800);
+      return;
+    }
+    scope[key] = body;
+    renderMacrosList();
+    scheduleMacrosSave();
+    macroKeyInput.value = '';
+    macroBodyInput.value = '';
+    macroKeyInput.focus();
+  });
+
+  macrosExportBtn.addEventListener('click', function () {
+    var scope = macrosScopeTab === 'global' ? macros : (macroRooms[macrosScopeTab] || {});
+    navigator.clipboard.writeText(JSON.stringify(scope, null, 2)).then(function () {
+      macrosExportBtn.textContent = 'Copied!';
+      setTimeout(function () { macrosExportBtn.textContent = 'Export'; }, 1500);
+    }).catch(function () {});
+  });
+
+  macrosImportBtn.addEventListener('click', function () {
+    navigator.clipboard.readText().then(function (text) {
+      var imported;
+      try { imported = JSON.parse(text); } catch (e) { alert('Invalid JSON'); return; }
+      if (typeof imported !== 'object' || Array.isArray(imported)) { alert('Expected a JSON object'); return; }
+      var scope = macrosScopeTab === 'global'
+        ? macros
+        : (macroRooms[macrosScopeTab] || (macroRooms[macrosScopeTab] = {}));
+      var added = 0, skipped = 0;
+      Object.keys(imported).forEach(function (k) {
+        var key = k.toLowerCase().trim();
+        if (/^[a-z][a-z0-9_-]*$/.test(key) && typeof imported[k] === 'string') {
+          if (scope[key] !== undefined) {
+            skipped++;
+          } else {
+            scope[key] = imported[k];
+            added++;
+          }
+        } else {
+          skipped++; // invalid key or non-string body
+        }
+      });
+      renderMacrosList();
+      scheduleMacrosSave();
+      macrosImportBtn.textContent = 'Imported ' + added + ' / skipped ' + skipped;
+      setTimeout(function () { macrosImportBtn.textContent = 'Import'; }, 2000);
+    }).catch(function () { alert('Could not read clipboard'); });
+  });
+
+  // Flush pending macros save on tab close (keepalive lets the request complete
+  // after the page unloads — use fetch+keepalive, not sendBeacon, because we
+  // need PUT not POST).
+  window.addEventListener('beforeunload', function () {
+    if (macrosSaveTimer) {
+      clearTimeout(macrosSaveTimer);
+      macrosSaveTimer = null;
+      fetch('/macros', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ macros: macros, rooms: macroRooms }),
+        keepalive: true,
+      });
+    }
   });
 
   // Mobile tabs
@@ -1290,7 +1631,8 @@
   prefillPromise.then(function () {
     return registerHuman().catch(function () {});
   }).then(function () {
-    return fetchMyRooms().catch(function () {});
+    fetchMyRooms().catch(function () {});
+    loadMacros().catch(function () {});
   }).finally(function () {
     connectWS();
   });

@@ -70,6 +70,19 @@ func (c *Client) GetWithTimeout(path string, timeout time.Duration) (string, err
 	return string(out), nil
 }
 
+func (c *Client) Put(path string, body interface{}) (string, error) {
+	data, _ := json.Marshal(body)
+	req, _ := http.NewRequest("PUT", c.BaseURL+path, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("aimebu unreachable (%s): %w", c.BaseURL, err)
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	return string(out), nil
+}
+
 func (c *Client) Delete(path string) (string, error) {
 	req, _ := http.NewRequest("DELETE", c.BaseURL+path, nil)
 	resp, err := http.DefaultClient.Do(req)

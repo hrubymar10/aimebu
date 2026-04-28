@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	_ "embed"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -18,6 +19,19 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/types"
 )
+
+//go:embed defaults_macros.json
+var defaultMacrosJSON []byte
+
+// macrosEnvelope is the canonical on-disk and API shape for macros.json.
+// SeenDefaults is internal state (persisted but not exposed via the HTTP API).
+// Older files used a per-user map[string]map[string]string (v1) or
+// {macros, seen_defaults} without rooms (v2); load() detects and migrates both.
+type macrosEnvelope struct {
+	Macros       map[string]string            `json:"macros"`
+	Rooms        map[string]map[string]string `json:"rooms,omitempty"`
+	SeenDefaults []string                     `json:"seen_defaults,omitempty"`
+}
 
 // reclaimNamePattern restricts `force`d names to the same shape as the
 // server-assigned pool — lowercase letters only, 3-12 chars. Keeps the ID
@@ -59,6 +73,11 @@ type store struct {
 
 	// Tracks when a room first became empty (for cleanup)
 	roomEmptySince map[string]time.Time
+
+	macrosMu     sync.RWMutex
+	macros       map[string]string            // global shared macro map
+	macroRooms   map[string]map[string]string // per-room macro maps
+	seenDefaults map[string]bool              // keys already offered via defaults (write-once)
 }
 
 func newStore(dir string) (*store, error) {
@@ -74,6 +93,9 @@ func newStore(dir string) (*store, error) {
 		roomSubs:       make(map[string][]chan types.Message),
 		openWaits:      make(map[string]map[string]int),
 		roomEmptySince: make(map[string]time.Time),
+		macros:         make(map[string]string),
+		macroRooms:     make(map[string]map[string]string),
+		seenDefaults:   make(map[string]bool),
 	}
 
 	if err := s.load(); err != nil {
@@ -210,6 +232,45 @@ func (s *store) load() error {
 		}
 		for i := range agents {
 			s.agents[agents[i].ID] = &agents[i]
+		}
+	}
+
+	// Macros — separate from schema-versioned state; survives schema wipes.
+	// Handles three historical shapes:
+	//   v1: per-user  {agentID: {key: body}}
+	//   v2: global    {macros: {key: body}, seen_defaults: [...]}
+	//   v3: global+rooms {macros: {...}, rooms: {roomID: {...}}, seen_defaults: [...]}
+	data, err = os.ReadFile(filepath.Join(s.dir, "macros.json"))
+	if err == nil {
+		var env macrosEnvelope
+		if json.Unmarshal(data, &env) == nil && env.Macros != nil {
+			// v2 or v3
+			s.macros = env.Macros
+			if env.Rooms != nil {
+				s.macroRooms = env.Rooms
+			}
+			for _, k := range env.SeenDefaults {
+				s.seenDefaults[k] = true
+			}
+		} else {
+			// v1 per-user shape: flatten with first-sorted-wins for conflicts.
+			var old map[string]map[string]string
+			if json.Unmarshal(data, &old) == nil && len(old) > 0 {
+				agentIDs := make([]string, 0, len(old))
+				for k := range old {
+					agentIDs = append(agentIDs, k)
+				}
+				sort.Strings(agentIDs)
+				for _, aid := range agentIDs {
+					for k, v := range old[aid] {
+						if _, exists := s.macros[k]; !exists {
+							s.macros[k] = v
+						} else {
+							log.Printf("macros: migration conflict on key %q (agent %s) — keeping first", k, aid)
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -1340,6 +1401,115 @@ func (s *store) cleanupEmptyRooms() {
 	s.mu.Unlock()
 
 	s.broadcastRoomUpdate()
+}
+
+// ── Macros ────────────────────────────────────────────────────────
+
+func (s *store) getEnvelope() macrosEnvelope {
+	s.macrosMu.RLock()
+	defer s.macrosMu.RUnlock()
+	globals := make(map[string]string, len(s.macros))
+	for k, v := range s.macros {
+		globals[k] = v
+	}
+	rooms := make(map[string]map[string]string, len(s.macroRooms))
+	for rid, rm := range s.macroRooms {
+		cp := make(map[string]string, len(rm))
+		for k, v := range rm {
+			cp[k] = v
+		}
+		rooms[rid] = cp
+	}
+	return macrosEnvelope{Macros: globals, Rooms: rooms}
+}
+
+func (s *store) setEnvelope(env macrosEnvelope) {
+	s.macrosMu.Lock()
+	// Absent field (nil) = preserve existing; explicit empty map = wipe.
+	// This lets MCP callers patch just globals or just rooms without clobbering
+	// the other side. The frontend always sends both maps (even as `{}`) so its
+	// full-replace semantics are unaffected.
+	if env.Macros != nil {
+		s.macros = env.Macros
+	}
+	if env.Rooms != nil {
+		s.macroRooms = env.Rooms
+	}
+	s.macrosMu.Unlock()
+	s.persistMacros()
+	s.broadcastMacrosUpdated()
+}
+
+func (s *store) persistMacros() {
+	s.macrosMu.RLock()
+	sdKeys := make([]string, 0, len(s.seenDefaults))
+	for k := range s.seenDefaults {
+		sdKeys = append(sdKeys, k)
+	}
+	sort.Strings(sdKeys)
+	var rooms map[string]map[string]string
+	if len(s.macroRooms) > 0 {
+		rooms = s.macroRooms
+	}
+	f := macrosEnvelope{Macros: s.macros, Rooms: rooms, SeenDefaults: sdKeys}
+	data, err := json.MarshalIndent(f, "", "  ")
+	s.macrosMu.RUnlock()
+	if err == nil {
+		atomicWrite(filepath.Join(s.dir, "macros.json"), data)
+	}
+}
+
+// applyDefaultMacros merges defaults_macros.json into the global macro map
+// once per key (write-once: keys already in seenDefaults are never touched).
+// Called on server startup after load(). Conflicts (key exists in user macros)
+// are silently skipped — the user's value wins.
+func (s *store) applyDefaultMacros() {
+	var defaults map[string]string
+	if json.Unmarshal(defaultMacrosJSON, &defaults) != nil || len(defaults) == 0 {
+		return
+	}
+	s.macrosMu.Lock()
+	changed := false
+	for k, v := range defaults {
+		if s.seenDefaults[k] {
+			continue
+		}
+		if _, exists := s.macros[k]; !exists {
+			s.macros[k] = v
+		}
+		s.seenDefaults[k] = true
+		changed = true
+	}
+	var data []byte
+	if changed {
+		sdKeys := make([]string, 0, len(s.seenDefaults))
+		for k := range s.seenDefaults {
+			sdKeys = append(sdKeys, k)
+		}
+		sort.Strings(sdKeys)
+		var rooms map[string]map[string]string
+		if len(s.macroRooms) > 0 {
+			rooms = s.macroRooms
+		}
+		f := macrosEnvelope{Macros: s.macros, Rooms: rooms, SeenDefaults: sdKeys}
+		data, _ = json.MarshalIndent(f, "", "  ")
+	}
+	s.macrosMu.Unlock()
+	if data != nil {
+		atomicWrite(filepath.Join(s.dir, "macros.json"), data)
+	}
+}
+
+func (s *store) broadcastMacrosUpdated() {
+	evt := MetaEvent{Type: "macros_updated", Data: map[string]any{}}
+	s.subMu.Lock()
+	for _, ch := range s.metaSubs {
+		select {
+		case ch <- evt:
+		default:
+		}
+	}
+	s.subMu.Unlock()
 }
 
 // ── Helpers ────────────────────────────────────────────────────────

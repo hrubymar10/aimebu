@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"syscall"
 	"time"
@@ -16,6 +17,8 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/types"
 )
+
+var macroKeyRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
@@ -593,6 +596,64 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		jsonOK(w, map[string]any{"messages": msgs})
 	})
 
+	// ── Macros ─────────────────────────────────────────────────────
+
+	// GET /macros — fetch global + per-room macros
+	mux.HandleFunc("GET /macros", func(w http.ResponseWriter, _ *http.Request) {
+		env := s.getEnvelope()
+		jsonOK(w, map[string]any{"macros": env.Macros, "rooms": env.Rooms})
+	})
+
+	// PUT /macros — full replace of global + per-room macros
+	mux.HandleFunc("PUT /macros", func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Macros map[string]string            `json:"macros"`
+			Rooms  map[string]map[string]string `json:"rooms"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(payload.Macros) > 256 {
+			jsonError(w, "too many global macros (max 256)", http.StatusBadRequest)
+			return
+		}
+		for k, v := range payload.Macros {
+			if !macroKeyRE.MatchString(k) {
+				jsonError(w, "invalid macro key: "+k, http.StatusBadRequest)
+				return
+			}
+			if len(v) > 16*1024 {
+				jsonError(w, "macro body too large (max 16KB): "+k, http.StatusBadRequest)
+				return
+			}
+		}
+		totalRoom := 0
+		for rid, rm := range payload.Rooms {
+			if len(rm) > 256 {
+				jsonError(w, "too many macros in room "+rid+" (max 256)", http.StatusBadRequest)
+				return
+			}
+			for k, v := range rm {
+				if !macroKeyRE.MatchString(k) {
+					jsonError(w, "invalid macro key in room "+rid+": "+k, http.StatusBadRequest)
+					return
+				}
+				if len(v) > 16*1024 {
+					jsonError(w, "macro body too large in room "+rid+" (max 16KB): "+k, http.StatusBadRequest)
+					return
+				}
+				totalRoom++
+			}
+		}
+		if totalRoom > 4096 {
+			jsonError(w, "too many room macros total (max 4096)", http.StatusBadRequest)
+			return
+		}
+		s.setEnvelope(macrosEnvelope{Macros: payload.Macros, Rooms: payload.Rooms})
+		jsonOK(w, map[string]string{"status": "ok"})
+	})
+
 	// DELETE /all — clear everything
 	mux.HandleFunc("DELETE /all", func(w http.ResponseWriter, _ *http.Request) {
 		s.clearAll()
@@ -621,6 +682,9 @@ func Run(addr, dataDir string, frontendFS fs.FS) error {
 		return fmt.Errorf("init store: %w", err)
 	}
 
+	// Merge bundled defaults into the global macro map (write-once per key).
+	s.applyDefaultMacros()
+
 	// Start background cleanup (stale agents after 30min, empty rooms after 60min)
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
@@ -636,7 +700,7 @@ func Run(addr, dataDir string, frontendFS fs.FS) error {
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
