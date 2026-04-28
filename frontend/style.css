@@ -780,7 +780,7 @@ body {
 .send-form {
   display: flex;
   gap: 8px;
-  align-items: center;
+  align-items: flex-end;
 }
 
 .msg-input {
@@ -794,6 +794,11 @@ body {
   font-family: var(--font-sans);
   outline: none;
   transition: border-color var(--transition);
+  resize: none;
+  overflow-y: hidden;
+  line-height: 1.4;
+  max-height: 160px;
+  field-sizing: content;
 }
 
 .msg-input:focus {

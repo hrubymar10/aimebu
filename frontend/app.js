@@ -1217,6 +1217,23 @@
       });
   });
 
+  // Multiline composer: Enter submits, Shift+Enter inserts newline.
+  // IME guard prevents submission mid-composition (CJK / dead-key input).
+  msgBodyInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      sendForm.requestSubmit();
+    }
+  });
+
+  // Auto-grow textarea (JS fallback for browsers without field-sizing: content).
+  msgBodyInput.addEventListener('input', function () {
+    msgBodyInput.style.height = 'auto';
+    var h = Math.min(msgBodyInput.scrollHeight, 160);
+    msgBodyInput.style.height = h + 'px';
+    msgBodyInput.style.overflowY = msgBodyInput.scrollHeight > 160 ? 'auto' : 'hidden';
+  });
+
   // Send message
   sendForm.addEventListener('submit', function (e) {
     e.preventDefault();
@@ -1224,6 +1241,8 @@
     if (!body) return;
     sendMessage(body);
     msgBodyInput.value = '';
+    msgBodyInput.style.height = '';
+    msgBodyInput.style.overflowY = '';
     msgBodyInput.focus();
   });
 
