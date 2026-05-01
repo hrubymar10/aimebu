@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -78,6 +79,8 @@ func agentCmd(args []string) {
 	harness := ""
 	var rooms []string
 	var command []string
+	agentDefName := ""
+	systemPrompt := ""
 
 	i := 0
 	for i < len(args) {
@@ -96,6 +99,20 @@ func agentCmd(args []string) {
 			}
 			rooms = append(rooms, args[i+1])
 			i += 2
+		case "--agent":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "aimebu agent: --agent requires a value")
+				os.Exit(1)
+			}
+			agentDefName = args[i+1]
+			i += 2
+		case "--system-prompt":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "aimebu agent: --system-prompt requires a value")
+				os.Exit(1)
+			}
+			systemPrompt = args[i+1]
+			i += 2
 		case "--":
 			command = args[i+1:]
 			i = len(args)
@@ -106,6 +123,12 @@ func agentCmd(args []string) {
 				i++
 			case strings.HasPrefix(args[i], "--room="):
 				rooms = append(rooms, strings.TrimPrefix(args[i], "--room="))
+				i++
+			case strings.HasPrefix(args[i], "--agent="):
+				agentDefName = strings.TrimPrefix(args[i], "--agent=")
+				i++
+			case strings.HasPrefix(args[i], "--system-prompt="):
+				systemPrompt = strings.TrimPrefix(args[i], "--system-prompt=")
 				i++
 			default:
 				fmt.Fprintf(os.Stderr, "aimebu agent: unknown flag: %s\n", args[i])
@@ -136,6 +159,8 @@ func agentCmd(args []string) {
 		os.Exit(1)
 	}
 
+	combinedSystemPrompt := agentResolveSystemPrompt(agentDefName, systemPrompt)
+
 	aimebuURL := os.Getenv("AIMEBU_URL")
 	if aimebuURL == "" {
 		aimebuURL = "http://localhost:9997"
@@ -151,8 +176,10 @@ func agentCmd(args []string) {
 	spawnTag := agentGenTag()
 	childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 
+	metaJSON := buildBootstrapMeta(spawnTag, agentDefName)
+
 	var pb strings.Builder
-	fmt.Fprintf(&pb, "You're an aimebu bus agent. Register via the bus_register MCP tool (model=<your model slug>, harness=%q, meta={\"protocol\":\"agent\",\"spawn_tag\":%q}). The server will assign you a name.\n\n", harness, spawnTag)
+	fmt.Fprintf(&pb, "You're an aimebu bus agent. Register via the bus_register MCP tool (model=<your model slug>, harness=%q, meta=%s). The server will assign you a name.\n\n", harness, metaJSON)
 	if len(rooms) > 0 {
 		fmt.Fprintf(&pb, "Join these rooms: %s.\n\n", strings.Join(rooms, ", "))
 	}
@@ -162,9 +189,12 @@ func agentCmd(args []string) {
 	if len(rooms) > 0 {
 		spawnLog += ", rooms=" + strings.Join(rooms, ",")
 	}
+	if agentDefName != "" {
+		spawnLog += ", persona=" + agentDefName
+	}
 	fmt.Fprintln(os.Stderr, spawnLog+")…")
 
-	bootstrapCmd, bootstrapBuf, err := agentBootstrapStart(command, pb.String(), childEnv)
+	bootstrapCmd, bootstrapBuf, err := agentBootstrapStart(command, pb.String(), childEnv, combinedSystemPrompt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aimebu agent: bootstrap failed: %v\n", err)
 		os.Exit(1)
@@ -196,7 +226,7 @@ func agentCmd(args []string) {
 	} else {
 		fmt.Fprintf(os.Stderr, "aimebu agent: session %s — listening\n", sessionID)
 	}
-	agentResumeLoop(command, sessionID, agentName, childEnv)
+	agentResumeLoop(command, sessionID, agentName, childEnv, combinedSystemPrompt)
 }
 
 // agentLookupName polls GET /agents until it finds an AI agent whose
@@ -264,13 +294,82 @@ func agentBuildEnv(aimebuURL, harness, spawnTag string) []string {
 	)
 }
 
+func buildBootstrapMeta(spawnTag, persona string) string {
+	m := map[string]string{
+		"protocol":  "agent",
+		"spawn_tag": spawnTag,
+	}
+	if persona != "" {
+		m["persona"] = persona
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+var agentNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+func agentResolveSystemPrompt(name, inline string) string {
+	body := ""
+	if name != "" {
+		if !agentNameRegex.MatchString(name) {
+			fmt.Fprintf(os.Stderr, "aimebu agent: invalid agent name %q (must match [a-zA-Z0-9_-]+)\n", name)
+			os.Exit(1)
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "aimebu agent: cannot resolve home dir: %v\n", err)
+			os.Exit(1)
+		}
+		path := filepath.Join(home, ".claude", "agents", name+".md")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "aimebu agent: agent definition not found at %s\n", path)
+			} else {
+				fmt.Fprintf(os.Stderr, "aimebu agent: cannot read agent definition %s: %v\n", path, err)
+			}
+			os.Exit(1)
+		}
+		body = strings.TrimSpace(stripLeadingFrontmatter(string(raw)))
+		if body == "" {
+			fmt.Fprintf(os.Stderr, "aimebu agent: agent definition %s has empty body\n", path)
+			os.Exit(1)
+		}
+	}
+
+	switch {
+	case body != "" && inline != "":
+		return body + "\n\n" + inline
+	case body != "":
+		return body
+	default:
+		return inline
+	}
+}
+
+func stripLeadingFrontmatter(s string) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+		return s
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], "\r") == "---" {
+			return strings.Join(lines[i+1:], "\n")
+		}
+	}
+	return s
+}
+
 type ccBootstrapResult struct {
 	SessionID string `json:"session_id"`
 }
 
-func agentBootstrapStart(command []string, prompt string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
-	args := make([]string, 0, 5+len(command)-1)
+func agentBootstrapStart(command []string, prompt string, env []string, systemPrompt string) (*exec.Cmd, *bytes.Buffer, error) {
+	args := make([]string, 0, 7+len(command)-1)
 	args = append(args, "-p", prompt, "--output-format", "json", "--dangerously-skip-permissions")
+	if systemPrompt != "" {
+		args = append(args, "--append-system-prompt", systemPrompt)
+	}
 	args = append(args, command[1:]...)
 
 	cmd := exec.Command(command[0], args...)
@@ -304,7 +403,7 @@ func agentBootstrapWait(cmd *exec.Cmd, buf *bytes.Buffer) (string, error) {
 	return "", nil
 }
 
-func agentResumeLoop(command []string, sessionID, agentName string, env []string) {
+func agentResumeLoop(command []string, sessionID, agentName string, env []string, systemPrompt string) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -312,8 +411,11 @@ func agentResumeLoop(command []string, sessionID, agentName string, env []string
 	backoff := time.Second
 
 	for {
-		args := make([]string, 0, 5+len(command)-1)
+		args := make([]string, 0, 7+len(command)-1)
 		args = append(args, "--resume", sessionID, "-p", "keep listening", "--dangerously-skip-permissions")
+		if systemPrompt != "" {
+			args = append(args, "--append-system-prompt", systemPrompt)
+		}
 		args = append(args, command[1:]...)
 
 		cmd := exec.Command(command[0], args...)
@@ -331,7 +433,7 @@ func agentResumeLoop(command []string, sessionID, agentName string, env []string
 
 		select {
 		case sig := <-sigCh:
-			agentGracefulShutdown(command, sessionID, env, sig, cmd, doneCh)
+			agentGracefulShutdown(command, sessionID, env, systemPrompt, sig, cmd, doneCh)
 			return
 		case err := <-doneCh:
 			if err == nil {
@@ -356,11 +458,14 @@ func agentResumeLoop(command []string, sessionID, agentName string, env []string
 	}
 }
 
-func agentGracefulShutdown(command []string, sessionID string, env []string, sig os.Signal, running *exec.Cmd, runDone <-chan error) {
+func agentGracefulShutdown(command []string, sessionID string, env []string, systemPrompt string, sig os.Signal, running *exec.Cmd, runDone <-chan error) {
 	fmt.Fprintf(os.Stderr, "\naimebu agent: %v received — asking agent to leave rooms\n", sig)
 
-	args := make([]string, 0, 5+len(command)-1)
+	args := make([]string, 0, 7+len(command)-1)
 	args = append(args, "--resume", sessionID, "-p", "leave all your rooms and exit cleanly", "--dangerously-skip-permissions")
+	if systemPrompt != "" {
+		args = append(args, "--append-system-prompt", systemPrompt)
+	}
 	args = append(args, command[1:]...)
 
 	leaveCmd := exec.Command(command[0], args...)
@@ -392,21 +497,29 @@ func agentGracefulShutdown(command []string, sessionID string, env []string, sig
 }
 
 func agentUsage() {
-	fmt.Fprintln(os.Stderr, `Usage: aimebu agent [--harness <h>] [--room <r>...] -- <command...>
+	fmt.Fprintln(os.Stderr, `Usage: aimebu agent [--harness <h>] [--room <r>...]
+                    [--agent <name>] [--system-prompt <text>]
+                    -- <command...>
 
 Wrap a harness CLI with session-lifecycle management. Bootstraps the harness
 with a bus-registration prompt, then auto-respawns via --resume when the
 session ends (solving the session-length-cap problem transparently).
 
 Options:
-  --harness <slug>   Harness slug. Auto-detected from command basename if omitted.
-  --room <id>        Room to join on startup (repeatable).
-  --                 Separator before the harness command (required).
+  --harness <slug>      Harness slug. Auto-detected from command basename if omitted.
+  --room <id>           Room to join on startup (repeatable).
+  --agent <name>        Persona to use, loaded from ~/.claude/agents/<name>.md
+                        (YAML frontmatter stripped). claude-code only.
+  --system-prompt <s>   Inline system prompt text. Combined with --agent if both
+                        given (agent body, blank line, then inline). claude-code only.
+  --                    Separator before the harness command (required).
 
 Supported harnesses (v1): claude-code (claude, claude-docker)
 
 Examples:
   aimebu agent -- claude
   aimebu agent --room general -- claude-docker
+  aimebu agent --agent senior-dev -- claude
+  aimebu agent --system-prompt "you are a parrot, repeat the last message" -- claude
   aimebu agent --harness claude-code --room dev --room general -- /usr/local/bin/claude`)
 }

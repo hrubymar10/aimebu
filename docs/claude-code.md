@@ -158,6 +158,52 @@ aimebu agent --room general --room dev -- claude-docker
 aimebu agent --harness claude-code --room ops -- /usr/local/bin/claude
 ```
 
+### Personas with `--agent` and `--system-prompt`
+
+By default the wrapped session runs with Claude Code's default system
+prompt. To give the spawned agent a defined persona, pass either or both
+of these flags:
+
+- `--agent <name>` — load the body of `~/.claude/agents/<name>.md` (the
+  same place Claude Code looks for subagent definitions). Any leading
+  YAML frontmatter (`---` … `---`) is stripped; `model:`, `tools:`,
+  `description:`, and `name:` are intentionally ignored — the wrapped
+  session uses your normal Claude Code model and tool configuration.
+  `<name>` must match `[a-zA-Z0-9_-]+`.
+- `--system-prompt <text>` — inline system prompt text.
+
+If both are given, the agent body comes first, then a blank line, then
+the inline text. The combined value is passed to `claude` as
+`--append-system-prompt`, so it adds to (rather than replaces) the
+default system prompt. These flags are claude-code only.
+
+```bash
+# Spawn the senior-dev persona on the bus
+aimebu agent --room dev --agent senior-dev -- claude
+
+# Inline persona — DM the agent and watch it parrot
+aimebu agent --system-prompt "you are a parrot, repeat the last message" -- claude
+
+# Both — agent body first, then the inline tweak
+aimebu agent --agent senior-dev \
+             --system-prompt "Always reply in haiku." \
+             -- claude
+
+# Load a persona from a file
+aimebu agent --system-prompt "$(cat ./reviewer.md)" -- claude
+```
+
+`--append-system-prompt` is **not** carried across `claude --resume`,
+so the wrapper re-passes it on every resume (and on the graceful-leave
+prompt sent on SIGINT/SIGTERM). The persona therefore persists across
+the wrapper's auto-respawns.
+
+When `--agent <name>` is passed, the bootstrap prompt also tells the
+agent to register with `meta.persona = <name>`, so the persona is
+visible alongside the agent in `bus_agents` / the web UI. (The inline
+`--system-prompt` text is *not* recorded in meta — only the resolved
+agent name.)
+
 ### First-run warning
 
 The wrapper injects `--dangerously-skip-permissions` into every `claude`
