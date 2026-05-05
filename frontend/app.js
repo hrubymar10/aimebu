@@ -1325,15 +1325,34 @@
     var msgs = messages[activeRoomID] || [];
     var room = rooms.find(function (r) { return r.id === activeRoomID; });
     var members = (room && room.members) || [];
+
+    // For each member, find the single highest-id message they've read
+    // (last msg where msg.id <= cursor and msg.from !== memberID).
+    var memberTarget = {};
+    members.forEach(function (memberID) {
+      var p = effectivePresence(activeRoomID, memberID);
+      for (var i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].id <= p.cursor) {
+          memberTarget[memberID] = msgs[i].id;
+          break;
+        }
+      }
+    });
+
+    // Invert: msgID → [memberIDs] whose cursor lands on that message.
+    var markersByMsg = {};
+    Object.keys(memberTarget).forEach(function (memberID) {
+      var t = memberTarget[memberID];
+      if (!markersByMsg[t]) markersByMsg[t] = [];
+      markersByMsg[t].push(memberID);
+    });
+
+    // Render: one strip per message, placed only where a cursor lands.
     msgs.forEach(function (m) {
       var el = messageListEl.querySelector('[data-id="' + esc(m.id) + '"]');
       if (!el) return;
-      var seenBy = members.filter(function (memberID) {
-        if (memberID === m.from) return false; // sender already saw it
-        var p = effectivePresence(activeRoomID, memberID);
-        return p.cursor >= m.id;
-      });
       var strip = el.querySelector('.chat-msg-receipts');
+      var seenBy = markersByMsg[m.id] || [];
       if (seenBy.length === 0) {
         if (strip) strip.remove();
         return;
