@@ -948,6 +948,9 @@ func (s *store) touchAgent(id string) {
 			broadcast = true
 		}
 	}
+	if broadcast {
+		s.persist()
+	}
 	s.mu.Unlock()
 
 	if broadcast {
