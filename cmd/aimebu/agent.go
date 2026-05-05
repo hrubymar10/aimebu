@@ -79,6 +79,7 @@ var harnessDetect = map[string]string{
 	"claude":        "claude-code",
 	"claude-docker": "claude-code",
 	"codex":         "codex",
+	"codex-docker":  "codex",
 	"cursor":        "cursor",
 	"cline":         "cline",
 	"aider":         "aider",
@@ -200,7 +201,7 @@ func agentCmd(args []string) {
 	case "claude-code", "codex":
 		// supported
 	default:
-		fmt.Fprintf(os.Stderr, "aimebu agent: harness %q is not yet supported.\nCurrently supported: claude-code (claude, claude-docker), codex.\n", harness)
+		fmt.Fprintf(os.Stderr, "aimebu agent: harness %q is not yet supported.\nCurrently supported: claude-code (claude, claude-docker), codex (codex, codex-docker).\n", harness)
 		os.Exit(1)
 	}
 
@@ -675,7 +676,7 @@ Options:
 Session state is persisted in ~/.aimebu/agent-sessions.json after each successful
 bootstrap so that --resume-id and --resume-name can look up prior sessions.
 
-Supported harnesses: claude-code (claude, claude-docker), codex
+Supported harnesses: claude-code (claude, claude-docker), codex (codex, codex-docker)
 
 Examples:
   aimebu agent -- claude
