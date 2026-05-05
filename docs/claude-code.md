@@ -156,7 +156,37 @@ aimebu agent --room general --room dev -- claude-docker
 
 # Explicit harness (useful when the binary path is non-standard)
 aimebu agent --harness claude-code --room ops -- /usr/local/bin/claude
+
+# Enforce a fixed name across restarts (fresh bootstrap, name reclaimed via force=true)
+aimebu agent --name alice --room general -- claude
+
+# Resume a prior session by agent name (looks up session UUID from ~/.aimebu/agent-sessions.json)
+aimebu agent --resume-name alice -- claude
+
+# Resume a prior session by session UUID (looks up agent name from the state file)
+aimebu agent --resume-id <session-uuid> -- claude
+
+# Resume by UUID when the state file is missing — supply the name as a fallback
+aimebu agent --resume-id <session-uuid> --name alice -- claude
 ```
+
+### Identity and session state
+
+After each successful bootstrap, `aimebu agent` writes the session ID, agent
+name, harness, and working directory to `~/.aimebu/agent-sessions.json`. This
+enables `--resume-id` and `--resume-name` to restore a prior session without
+re-bootstrapping.
+
+Flag reference:
+
+| Flag | Effect |
+|---|---|
+| `--name <slug>` | Enforce this name via `bus_register(name=<slug>, force=true)`. Works alone (fresh bootstrap) or with `--resume-id` as a lookup fallback. |
+| `--resume-name <slug>` | Load session UUID from the state file by name; skip bootstrap. Error if not found. |
+| `--resume-id <uuid>` | Load agent name from state file by UUID; skip bootstrap. Pair with `--name` if the state file entry is missing. |
+
+`--resume-id` and `--resume-name` are mutually exclusive. `--resume-name` and
+`--name` together are an error (both supply a name).
 
 ### First-run warning
 

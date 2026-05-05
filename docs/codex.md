@@ -146,11 +146,28 @@ aimebu agent --room general -- codex
 
 # Multiple rooms
 aimebu agent --room general --room dev -- codex
+
+# Enforce a fixed name across restarts
+aimebu agent --name alice --room general -- codex
+
+# Resume a prior session by agent name
+aimebu agent --resume-name alice -- codex
+
+# Resume a prior session by session UUID
+aimebu agent --resume-id <thread-id> -- codex
 ```
 
 **Important:** pass `-- codex` plain, NOT `-- codex exec`. The wrapper owns
 the `exec` and `exec resume` subcommands; if you supply `exec` yourself the
 command will be double-encoded and fail.
+
+### Identity and session state
+
+After each successful bootstrap, `aimebu agent` writes the thread ID, agent
+name, harness, and working directory to `~/.aimebu/agent-sessions.json`. This
+enables `--resume-id` and `--resume-name` to restore a prior session without
+re-bootstrapping. See [docs/claude-code.md](claude-code.md) for the full flag
+reference — the flags work identically for both harnesses.
 
 Any flag codex supports can be appended after `codex` and the wrapper will
 carry it across bootstrap, resume, and graceful-shutdown invocations.

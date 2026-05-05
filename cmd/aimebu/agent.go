@@ -13,10 +13,24 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
 )
+
+// agentNamePattern mirrors store.go's reclaimNamePattern.
+var agentNamePattern = regexp.MustCompile(`^[a-z]{3,12}$`)
+
+// agentSession is one entry in ~/.aimebu/agent-sessions.json.
+type agentSession struct {
+	CWD       string    `json:"cwd"`
+	Harness   string    `json:"harness"`
+	SessionID string    `json:"session_id"`
+	Name      string    `json:"name"`
+	Command   []string  `json:"command"`
+	LastUsed  time.Time `json:"last_used"`
+}
 
 const agentWarningMarker = "agent-warning-acknowledged"
 
@@ -78,6 +92,9 @@ func agentCmd(args []string) {
 	harness := ""
 	var rooms []string
 	var command []string
+	name := ""       // --name
+	resumeID := ""   // --resume-id
+	resumeName := "" // --resume-name
 
 	i := 0
 	for i < len(args) {
@@ -96,6 +113,27 @@ func agentCmd(args []string) {
 			}
 			rooms = append(rooms, args[i+1])
 			i += 2
+		case "--name":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "aimebu agent: --name requires a value")
+				os.Exit(1)
+			}
+			name = args[i+1]
+			i += 2
+		case "--resume-id":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "aimebu agent: --resume-id requires a value")
+				os.Exit(1)
+			}
+			resumeID = args[i+1]
+			i += 2
+		case "--resume-name":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "aimebu agent: --resume-name requires a value")
+				os.Exit(1)
+			}
+			resumeName = args[i+1]
+			i += 2
 		case "--":
 			command = args[i+1:]
 			i = len(args)
@@ -107,12 +145,39 @@ func agentCmd(args []string) {
 			case strings.HasPrefix(args[i], "--room="):
 				rooms = append(rooms, strings.TrimPrefix(args[i], "--room="))
 				i++
+			case strings.HasPrefix(args[i], "--name="):
+				name = strings.TrimPrefix(args[i], "--name=")
+				i++
+			case strings.HasPrefix(args[i], "--resume-id="):
+				resumeID = strings.TrimPrefix(args[i], "--resume-id=")
+				i++
+			case strings.HasPrefix(args[i], "--resume-name="):
+				resumeName = strings.TrimPrefix(args[i], "--resume-name=")
+				i++
 			default:
 				fmt.Fprintf(os.Stderr, "aimebu agent: unknown flag: %s\n", args[i])
 				agentUsage()
 				os.Exit(1)
 			}
 		}
+	}
+
+	// Validate flag combinations.
+	if resumeID != "" && resumeName != "" {
+		fmt.Fprintln(os.Stderr, "aimebu agent: --resume-id and --resume-name are mutually exclusive")
+		os.Exit(1)
+	}
+	if resumeName != "" && name != "" {
+		fmt.Fprintln(os.Stderr, "aimebu agent: --resume-name and --name cannot be used together")
+		os.Exit(1)
+	}
+	if name != "" && !agentNamePattern.MatchString(name) {
+		fmt.Fprintf(os.Stderr, "aimebu agent: --name %q must match [a-z]{3,12}\n", name)
+		os.Exit(1)
+	}
+	if resumeName != "" && !agentNamePattern.MatchString(resumeName) {
+		fmt.Fprintf(os.Stderr, "aimebu agent: --resume-name %q must match [a-z]{3,12}\n", resumeName)
+		os.Exit(1)
 	}
 
 	if len(command) == 0 {
@@ -143,6 +208,26 @@ func agentCmd(args []string) {
 	if aimebuURL == "" {
 		aimebuURL = "http://localhost:9997"
 	}
+
+	// --- Resume path: skip bootstrap entirely ---
+	if resumeID != "" || resumeName != "" {
+		sessions, err := agentLoadSessions()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "aimebu agent: failed to load sessions file: %v\n", err)
+			os.Exit(1)
+		}
+		entry, err := agentResolveResume(resumeID, resumeName, name, harness, sessions)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "aimebu agent:", err)
+			os.Exit(1)
+		}
+		childEnv := agentBuildEnv(aimebuURL, harness, "")
+		fmt.Fprintf(os.Stderr, "aimebu agent: resuming session %s as %s\n", entry.SessionID, entry.Name)
+		agentResumeLoop(harness, command, entry.SessionID, entry.Name, childEnv)
+		return
+	}
+
+	// --- Bootstrap path ---
 	httpc := &http.Client{Timeout: 5 * time.Second}
 	resp, err := httpc.Get(aimebuURL + "/health")
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -154,34 +239,36 @@ func agentCmd(args []string) {
 	spawnTag := agentGenTag()
 	childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 
-	var pb strings.Builder
-	fmt.Fprintf(&pb, "You're an aimebu bus agent. Register via the bus_register MCP tool (model=<your model slug>, harness=%q, meta={\"protocol\":\"agent\",\"spawn_tag\":%q}). The server will assign you a name.\n\n", harness, spawnTag)
-	if len(rooms) > 0 {
-		fmt.Fprintf(&pb, "Join these rooms: %s.\n\n", strings.Join(rooms, ", "))
-	}
-	pb.WriteString("Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.")
+	prompt := agentBuildBootstrapPrompt(harness, spawnTag, rooms, name)
 
 	spawnLog := fmt.Sprintf("aimebu agent: spawning %s (harness=%s", filepath.Base(command[0]), harness)
 	if len(rooms) > 0 {
 		spawnLog += ", rooms=" + strings.Join(rooms, ",")
 	}
+	if name != "" {
+		spawnLog += ", name=" + name
+	}
 	fmt.Fprintln(os.Stderr, spawnLog+")…")
 
-	bootstrapCmd, bootstrapBuf, err := agentBootstrapStart(harness, command, pb.String(), childEnv)
+	bootstrapCmd, bootstrapBuf, err := agentBootstrapStart(harness, command, prompt, childEnv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aimebu agent: bootstrap failed: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Look up the agent name in parallel with the bootstrap session running.
+	// When name is known up-front, skip the polling goroutine.
 	nameCh := make(chan string, 1)
-	go func() {
-		name := agentLookupName(aimebuURL, spawnTag)
+	if name != "" {
 		nameCh <- name
-		if name != "" {
-			fmt.Fprintf(os.Stderr, "aimebu agent: registered as %s\n", name)
-		}
-	}()
+	} else {
+		go func() {
+			n := agentLookupName(aimebuURL, spawnTag)
+			nameCh <- n
+			if n != "" {
+				fmt.Fprintf(os.Stderr, "aimebu agent: registered as %s\n", n)
+			}
+		}()
+	}
 
 	sessionID, err := agentBootstrapWait(harness, bootstrapCmd, bootstrapBuf)
 	if err != nil {
@@ -199,6 +286,19 @@ func agentCmd(args []string) {
 	} else {
 		fmt.Fprintf(os.Stderr, "aimebu agent: session %s — listening\n", sessionID)
 	}
+
+	if agentName != "" {
+		cwd, _ := os.Getwd()
+		_ = agentSaveSession(agentSession{
+			CWD:       cwd,
+			Harness:   harness,
+			SessionID: sessionID,
+			Name:      agentName,
+			Command:   command,
+			LastUsed:  time.Now().UTC(),
+		})
+	}
+
 	agentResumeLoop(harness, command, sessionID, agentName, childEnv)
 }
 
@@ -259,12 +359,128 @@ func agentBuildEnv(aimebuURL, harness, spawnTag string) []string {
 			out = append(out, e)
 		}
 	}
-	return append(out,
+	out = append(out,
 		"AIMEBU_URL="+aimebuURL,
 		"AIMEBU_HARNESS="+harness,
 		"AIMEBU_AGENT_PROTOCOL=agent",
-		"AIMEBU_AGENT_SPAWN_TAG="+spawnTag,
 	)
+	if spawnTag != "" {
+		out = append(out, "AIMEBU_AGENT_SPAWN_TAG="+spawnTag)
+	}
+	return out
+}
+
+// agentBuildBootstrapPrompt builds the prompt for the initial bootstrap session.
+// When forceName is set, the agent is instructed to reclaim that identity.
+func agentBuildBootstrapPrompt(harness, spawnTag string, rooms []string, forceName string) string {
+	var pb strings.Builder
+	if forceName != "" {
+		fmt.Fprintf(&pb, "You're an aimebu bus agent. Register via the bus_register MCP tool with name=%q, force=true, model=<your model slug>, harness=%q, meta={\"protocol\":\"agent\",\"spawn_tag\":%q}. This reclaims your prior identity.\n\n", forceName, harness, spawnTag)
+	} else {
+		fmt.Fprintf(&pb, "You're an aimebu bus agent. Register via the bus_register MCP tool (model=<your model slug>, harness=%q, meta={\"protocol\":\"agent\",\"spawn_tag\":%q}). The server will assign you a name.\n\n", harness, spawnTag)
+	}
+	if len(rooms) > 0 {
+		fmt.Fprintf(&pb, "Join these rooms: %s.\n\n", strings.Join(rooms, ", "))
+	}
+	pb.WriteString("Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.")
+	return pb.String()
+}
+
+// agentSessionsPath returns the path to the agent sessions state file.
+func agentSessionsPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".aimebu", "agent-sessions.json"), nil
+}
+
+// agentLoadSessions reads ~/.aimebu/agent-sessions.json.
+// Returns nil (not an error) if the file does not exist yet.
+func agentLoadSessions() ([]agentSession, error) {
+	path, err := agentSessionsPath()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var sessions []agentSession
+	if err := json.Unmarshal(data, &sessions); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return sessions, nil
+}
+
+// agentSaveSession upserts sess into ~/.aimebu/agent-sessions.json by name,
+// then writes atomically via a tmp file + rename.
+func agentSaveSession(sess agentSession) error {
+	path, err := agentSessionsPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	sessions, _ := agentLoadSessions() // ignore parse errors; start fresh if corrupt
+	updated := false
+	for i, s := range sessions {
+		if s.Name == sess.Name {
+			sessions[i] = sess
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		sessions = append(sessions, sess)
+	}
+	data, err := json.MarshalIndent(sessions, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// agentResolveResume resolves a resume entry from the sessions file given the
+// provided flags. resumeID and resumeName are mutually exclusive (caller validates).
+// harness is the harness resolved from flags/auto-detection; it is checked against
+// the stored entry's harness to catch mismatches (e.g. --harness codex with a
+// claude-code session UUID).
+func agentResolveResume(resumeID, resumeName, name, harness string, sessions []agentSession) (agentSession, error) {
+	if resumeID != "" {
+		for _, s := range sessions {
+			if s.SessionID == resumeID {
+				if s.Harness != "" && s.Harness != harness {
+					return agentSession{}, fmt.Errorf("session %q was created with harness %q but current harness is %q; check --harness flag", resumeID, s.Harness, harness)
+				}
+				return s, nil
+			}
+		}
+		if name != "" {
+			return agentSession{SessionID: resumeID, Name: name, Harness: harness}, nil
+		}
+		return agentSession{}, fmt.Errorf("no state-file entry for session %q; pass --name to supply identity", resumeID)
+	}
+	if resumeName != "" {
+		for _, s := range sessions {
+			if s.Name == resumeName {
+				if s.Harness != "" && s.Harness != harness {
+					return agentSession{}, fmt.Errorf("agent %q was registered with harness %q but current harness is %q; check --harness flag", resumeName, s.Harness, harness)
+				}
+				return s, nil
+			}
+		}
+		return agentSession{}, fmt.Errorf("no state-file entry for name %q; run without --resume-name to bootstrap fresh with --name %s", resumeName, resumeName)
+	}
+	return agentSession{}, fmt.Errorf("internal error: no resume flag set")
 }
 
 // agentBootstrapArgs returns argv (excluding command[0]) for the initial
@@ -438,22 +654,36 @@ func agentGracefulShutdown(harness string, command []string, sessionID string, e
 }
 
 func agentUsage() {
-	fmt.Fprintln(os.Stderr, `Usage: aimebu agent [--harness <h>] [--room <r>...] -- <command...>
+	fmt.Fprintln(os.Stderr, `Usage: aimebu agent [options] -- <command...>
 
 Wrap a harness CLI with session-lifecycle management. Bootstraps the harness
 with a bus-registration prompt, then auto-respawns via --resume when the
 session ends (solving the session-length-cap problem transparently).
 
 Options:
-  --harness <slug>   Harness slug. Auto-detected from command basename if omitted.
-  --room <id>        Room to join on startup (repeatable).
-  --                 Separator before the harness command (required).
+  --harness <slug>       Harness slug. Auto-detected from command basename if omitted.
+  --room <id>            Room to join on startup (repeatable).
+  --name <slug>          Enforce this agent name ([a-z]{3,12}) via force=true reclaim.
+                         Usable alone (fresh bootstrap with name continuity) or with
+                         --resume-id as an escape hatch when the state file is missing.
+  --resume-id <uuid>     Resume a prior session by session UUID. Loads the agent name
+                         from ~/.aimebu/agent-sessions.json; pass --name as fallback.
+  --resume-name <slug>   Resume a prior session by agent name. Loads the session UUID
+                         from ~/.aimebu/agent-sessions.json; errors if not found.
+  --                     Separator before the harness command (required).
+
+Session state is persisted in ~/.aimebu/agent-sessions.json after each successful
+bootstrap so that --resume-id and --resume-name can look up prior sessions.
 
 Supported harnesses: claude-code (claude, claude-docker), codex
 
 Examples:
   aimebu agent -- claude
   aimebu agent --room general -- claude-docker
+  aimebu agent --name alice --room general -- claude
+  aimebu agent --resume-name alice -- claude
+  aimebu agent --resume-id <uuid> -- claude
+  aimebu agent --resume-id <uuid> --name alice -- claude
   aimebu agent --harness claude-code --room dev --room general -- /usr/local/bin/claude
   aimebu agent --room general -- codex`)
 }
