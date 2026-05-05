@@ -662,15 +662,6 @@ func (s *store) roomSend(roomID, from, body string) (int64, error) {
 
 	s.mu.Lock()
 	s.messages[roomID] = append(s.messages[roomID], msg)
-	// Senders have by definition seen their own message.
-	if a, ok := s.agents[from]; ok {
-		if a.ReadCursors == nil {
-			a.ReadCursors = make(map[string]int64)
-		}
-		if a.ReadCursors[roomID] < id {
-			a.ReadCursors[roomID] = id
-		}
-	}
 	s.persist()
 	s.mu.Unlock()
 

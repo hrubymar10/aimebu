@@ -228,6 +228,14 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 				if s.advanceCursor(agentID, roomID, last) {
 					s.broadcastReadUpdate(agentID, roomID, last)
 				}
+				// Filter own messages: advance cursor past them but don't deliver.
+				filtered := msgs[:0]
+				for _, m := range msgs {
+					if m.From != agentID {
+						filtered = append(filtered, m)
+					}
+				}
+				msgs = filtered
 			}
 			jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
 			return
@@ -255,6 +263,9 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 					s.touchAgent(agentID)
 					if s.advanceCursor(agentID, roomID, msg.ID) {
 						s.broadcastReadUpdate(agentID, roomID, msg.ID)
+					}
+					if msg.From == agentID {
+						continue
 					}
 				}
 				jsonOK(w, map[string]any{"messages": []types.Message{msg}, "room": roomID})
@@ -314,7 +325,9 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		}
 		if len(msgs) > 0 {
 			if !sinceExplicit {
-				// Advance cursors for every room we returned messages from.
+				// Advance cursors for every room we returned messages from
+				// (including own messages — they advance the cursor but aren't
+				// delivered to the sender).
 				maxPerRoom := make(map[string]int64)
 				for _, m := range msgs {
 					if m.ID > maxPerRoom[m.RoomID] {
@@ -327,7 +340,14 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 					}
 				}
 			}
-			jsonOK(w, map[string]any{"messages": msgs, "agent": agentID})
+			// Filter own messages — applies regardless of sinceExplicit.
+			filtered := msgs[:0]
+			for _, m := range msgs {
+				if m.From != agentID {
+					filtered = append(filtered, m)
+				}
+			}
+			jsonOK(w, map[string]any{"messages": filtered, "agent": agentID})
 			return
 		}
 
@@ -363,6 +383,9 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 					if s.advanceCursor(agentID, msg.RoomID, msg.ID) {
 						s.broadcastReadUpdate(agentID, msg.RoomID, msg.ID)
 					}
+				}
+				if msg.From == agentID {
+					continue
 				}
 				jsonOK(w, map[string]any{"messages": []types.Message{msg}, "agent": agentID})
 				return

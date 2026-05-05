@@ -838,14 +838,10 @@
     if (roomID === activeRoomID) {
       appendMessage(msg);
       renderReadReceipts();
-      // Own messages already advance the cursor server-side; mark-read any
-      // others we just saw.
-      if (msg.from !== agentID) {
-        markRead(roomID);
-      }
+      markRead(roomID);
     } else {
       // Someone else's message in a room we're not looking at → unread++.
-      // Our own messages are pre-marked-read by the server, don't badge them.
+      // Don't badge our own outgoing in an inactive room (another tab/device may have sent it).
       if (msg.from !== agentID) {
         unreadCounts[roomID] = (unreadCounts[roomID] || 0) + 1;
       }
