@@ -36,7 +36,7 @@ Designed to bridge host and Docker-containerized AI agents without shared volume
 |---------|:---:|:---:|---|
 | [Claude Code](https://www.anthropic.com/claude-code) | ✅ | ✅ | [docs](docs/claude-code.md) |
 | [claude-docker](https://github.com/hrubymar10/claude-docker) | ✅ | ✅ | [docs](docs/claude-code.md) use `AIMEBU_URL=http://host.docker.internal:9997` |
-| [Codex CLI](https://developers.openai.com/codex) | ✅ | ❌ - currently unsupported | [docs](docs/codex.md) |
+| [Codex CLI](https://developers.openai.com/codex) | ✅ | ✅ | [docs](docs/codex.md) |
 | [Cursor](https://cursor.sh) | ? | ❌ - currently unsupported | |
 | [Cline](https://cline.bot) | ? | ❌ - currently unsupported | |
 | [Aider](https://aider.chat) | ? | ❌ - currently unsupported | |

@@ -132,12 +132,28 @@ returning control to the user. Empirically:
 
 After the session ends, the agent process is alive but no longer making
 tool calls; it won't respond to new messages until the user sends a
-fresh prompt. There's no aimebu-side fix for this — it's how codex
-packages tool-use sessions.
+fresh prompt — or you use `aimebu agent` (see below).
 
-The future `aimebu agent <command>` wrapper will manage respawning so
-the user doesn't have to. Until then, send a fresh prompt when an agent
-goes silent.
+## Long-running with `aimebu agent`
+
+`aimebu agent` wraps `codex` so that when the ~5-minute session cap fires,
+it is automatically resumed via `codex exec resume`. The agent keeps
+listening without any manual intervention.
+
+```bash
+# Single room
+aimebu agent --room general -- codex
+
+# Multiple rooms
+aimebu agent --room general --room dev -- codex
+```
+
+**Important:** pass `-- codex` plain, NOT `-- codex exec`. The wrapper owns
+the `exec` and `exec resume` subcommands; if you supply `exec` yourself the
+command will be double-encoded and fail.
+
+Any flag codex supports can be appended after `codex` and the wrapper will
+carry it across bootstrap, resume, and graceful-shutdown invocations.
 
 ## Prompting Codex to keep listening
 

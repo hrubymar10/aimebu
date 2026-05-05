@@ -131,8 +131,11 @@ func agentCmd(args []string) {
 		harness = h
 	}
 
-	if harness != "claude-code" {
-		fmt.Fprintf(os.Stderr, "aimebu agent: harness %q is not yet supported.\nCurrently supported: claude-code (claude, claude-docker).\n", harness)
+	switch harness {
+	case "claude-code", "codex":
+		// supported
+	default:
+		fmt.Fprintf(os.Stderr, "aimebu agent: harness %q is not yet supported.\nCurrently supported: claude-code (claude, claude-docker), codex.\n", harness)
 		os.Exit(1)
 	}
 
@@ -164,7 +167,7 @@ func agentCmd(args []string) {
 	}
 	fmt.Fprintln(os.Stderr, spawnLog+")…")
 
-	bootstrapCmd, bootstrapBuf, err := agentBootstrapStart(command, pb.String(), childEnv)
+	bootstrapCmd, bootstrapBuf, err := agentBootstrapStart(harness, command, pb.String(), childEnv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aimebu agent: bootstrap failed: %v\n", err)
 		os.Exit(1)
@@ -180,7 +183,7 @@ func agentCmd(args []string) {
 		}
 	}()
 
-	sessionID, err := agentBootstrapWait(bootstrapCmd, bootstrapBuf)
+	sessionID, err := agentBootstrapWait(harness, bootstrapCmd, bootstrapBuf)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aimebu agent: bootstrap failed: %v\n", err)
 		os.Exit(1)
@@ -196,7 +199,7 @@ func agentCmd(args []string) {
 	} else {
 		fmt.Fprintf(os.Stderr, "aimebu agent: session %s — listening\n", sessionID)
 	}
-	agentResumeLoop(command, sessionID, agentName, childEnv)
+	agentResumeLoop(harness, command, sessionID, agentName, childEnv)
 }
 
 // agentLookupName polls GET /agents until it finds an AI agent whose
@@ -264,14 +267,72 @@ func agentBuildEnv(aimebuURL, harness, spawnTag string) []string {
 	)
 }
 
-type ccBootstrapResult struct {
-	SessionID string `json:"session_id"`
+// agentBootstrapArgs returns argv (excluding command[0]) for the initial
+// non-interactive session. For codex, user flags must precede the positional
+// prompt; for claude-code, flags precede nothing (prompt is flagged via -p).
+func agentBootstrapArgs(harness, prompt string, userArgs []string) []string {
+	switch harness {
+	case "claude-code":
+		args := []string{"-p", prompt, "--output-format", "json", "--dangerously-skip-permissions"}
+		return append(args, userArgs...)
+	case "codex":
+		args := []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}
+		args = append(args, userArgs...)
+		return append(args, prompt)
+	}
+	return nil
 }
 
-func agentBootstrapStart(command []string, prompt string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
-	args := make([]string, 0, 5+len(command)-1)
-	args = append(args, "-p", prompt, "--output-format", "json", "--dangerously-skip-permissions")
-	args = append(args, command[1:]...)
+// agentResumeArgs returns argv for resuming an established session.
+func agentResumeArgs(harness, sessionID, prompt string, userArgs []string) []string {
+	switch harness {
+	case "claude-code":
+		args := []string{"--resume", sessionID, "-p", prompt, "--dangerously-skip-permissions"}
+		return append(args, userArgs...)
+	case "codex":
+		args := []string{"exec", "resume", sessionID, "--json", "--dangerously-bypass-approvals-and-sandbox"}
+		args = append(args, userArgs...)
+		return append(args, prompt)
+	}
+	return nil
+}
+
+// agentParseSessionID extracts the session/thread ID from bootstrap stdout.
+// Scans up to 20 lines to tolerate any harness preamble before the ID event.
+func agentParseSessionID(harness string, output []byte) (string, error) {
+	lines := 0
+	for line := range strings.SplitSeq(string(output), "\n") {
+		if lines >= 20 {
+			break
+		}
+		lines++
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		switch harness {
+		case "claude-code":
+			var r struct {
+				SessionID string `json:"session_id"`
+			}
+			if json.Unmarshal([]byte(line), &r) == nil && r.SessionID != "" {
+				return r.SessionID, nil
+			}
+		case "codex":
+			var r struct {
+				Type     string `json:"type"`
+				ThreadID string `json:"thread_id"`
+			}
+			if json.Unmarshal([]byte(line), &r) == nil && r.Type == "thread.started" && r.ThreadID != "" {
+				return r.ThreadID, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+func agentBootstrapStart(harness string, command []string, prompt string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
+	args := agentBootstrapArgs(harness, prompt, command[1:])
 
 	cmd := exec.Command(command[0], args...)
 	cmd.Env = env
@@ -286,25 +347,14 @@ func agentBootstrapStart(command []string, prompt string, env []string) (*exec.C
 	return cmd, buf, nil
 }
 
-func agentBootstrapWait(cmd *exec.Cmd, buf *bytes.Buffer) (string, error) {
+func agentBootstrapWait(harness string, cmd *exec.Cmd, buf *bytes.Buffer) (string, error) {
 	if err := cmd.Wait(); err != nil {
 		return "", err
 	}
-
-	var res ccBootstrapResult
-	for line := range strings.SplitSeq(buf.String(), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if err := json.Unmarshal([]byte(line), &res); err == nil && res.SessionID != "" {
-			return res.SessionID, nil
-		}
-	}
-	return "", nil
+	return agentParseSessionID(harness, buf.Bytes())
 }
 
-func agentResumeLoop(command []string, sessionID, agentName string, env []string) {
+func agentResumeLoop(harness string, command []string, sessionID, agentName string, env []string) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -312,9 +362,7 @@ func agentResumeLoop(command []string, sessionID, agentName string, env []string
 	backoff := time.Second
 
 	for {
-		args := make([]string, 0, 5+len(command)-1)
-		args = append(args, "--resume", sessionID, "-p", "keep listening", "--dangerously-skip-permissions")
-		args = append(args, command[1:]...)
+		args := agentResumeArgs(harness, sessionID, "keep listening", command[1:])
 
 		cmd := exec.Command(command[0], args...)
 		cmd.Env = env
@@ -331,7 +379,7 @@ func agentResumeLoop(command []string, sessionID, agentName string, env []string
 
 		select {
 		case sig := <-sigCh:
-			agentGracefulShutdown(command, sessionID, env, sig, cmd, doneCh)
+			agentGracefulShutdown(harness, command, sessionID, env, sig, cmd, doneCh)
 			return
 		case err := <-doneCh:
 			if err == nil {
@@ -356,12 +404,10 @@ func agentResumeLoop(command []string, sessionID, agentName string, env []string
 	}
 }
 
-func agentGracefulShutdown(command []string, sessionID string, env []string, sig os.Signal, running *exec.Cmd, runDone <-chan error) {
+func agentGracefulShutdown(harness string, command []string, sessionID string, env []string, sig os.Signal, running *exec.Cmd, runDone <-chan error) {
 	fmt.Fprintf(os.Stderr, "\naimebu agent: %v received — asking agent to leave rooms\n", sig)
 
-	args := make([]string, 0, 5+len(command)-1)
-	args = append(args, "--resume", sessionID, "-p", "leave all your rooms and exit cleanly", "--dangerously-skip-permissions")
-	args = append(args, command[1:]...)
+	args := agentResumeArgs(harness, sessionID, "leave all your rooms and exit cleanly", command[1:])
 
 	leaveCmd := exec.Command(command[0], args...)
 	leaveCmd.Env = env
@@ -403,10 +449,11 @@ Options:
   --room <id>        Room to join on startup (repeatable).
   --                 Separator before the harness command (required).
 
-Supported harnesses (v1): claude-code (claude, claude-docker)
+Supported harnesses: claude-code (claude, claude-docker), codex
 
 Examples:
   aimebu agent -- claude
   aimebu agent --room general -- claude-docker
-  aimebu agent --harness claude-code --room dev --room general -- /usr/local/bin/claude`)
+  aimebu agent --harness claude-code --room dev --room general -- /usr/local/bin/claude
+  aimebu agent --room general -- codex`)
 }
