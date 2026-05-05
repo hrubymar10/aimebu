@@ -11,7 +11,7 @@ type Message struct {
 	ID        int64  `json:"id"`
 	RoomID    string `json:"room_id"`
 	From      string `json:"from"`
-	FromKind  string `json:"from_kind,omitempty"` // "ai" or "human" — empty for legacy persisted messages
+	FromKind  string `json:"from_kind,omitempty"` // "ai", "human", or "system" — empty for legacy persisted messages
 	Body      string `json:"body"`
 	CreatedAt string `json:"created_at"`
 }

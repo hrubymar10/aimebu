@@ -337,6 +337,9 @@ func (s *store) createRoom(id, createdBy string) (*types.Room, error) {
 	if id == "" {
 		id = randomID()
 	}
+	if strings.HasPrefix(id, "_") {
+		return nil, fmt.Errorf("room ID %q is reserved", id)
+	}
 
 	s.mu.Lock()
 
@@ -399,6 +402,10 @@ func (s *store) deleteRoom(id string) bool {
 // ── Room membership ────────────────────────────────────────────────
 
 func (s *store) joinRoom(roomID, agentID string) (*types.Room, error) {
+	if strings.HasPrefix(roomID, "_") {
+		return nil, fmt.Errorf("room ID %q is reserved", roomID)
+	}
+
 	s.mu.Lock()
 
 	if _, ok := s.agents[agentID]; !ok {
@@ -431,6 +438,7 @@ func (s *store) joinRoom(roomID, agentID string) (*types.Room, error) {
 	s.mu.Unlock()
 
 	s.broadcastRoomUpdate()
+	s.emitSystemMessage(roomID, agentID+" joined")
 	return &cp, nil
 }
 
@@ -460,6 +468,7 @@ func (s *store) leaveRoom(roomID, agentID string) error {
 	s.mu.Unlock()
 
 	s.broadcastRoomUpdate()
+	s.emitSystemMessage(roomID, agentID+" left")
 	return nil
 }
 
@@ -522,6 +531,44 @@ func (s *store) isMember(roomID, agentID string) bool {
 }
 
 // ── Messages ───────────────────────────────────────────────────────
+
+// emitSystemMessage appends a system event into roomID and broadcasts it.
+// Does not require an agent membership check. Must NOT be called while s.mu is held.
+func (s *store) emitSystemMessage(roomID, body string) {
+	id := s.nextID.Add(1)
+	msg := types.Message{
+		ID:        id,
+		RoomID:    roomID,
+		From:      "_system",
+		FromKind:  "system",
+		Body:      body,
+		CreatedAt: now(),
+	}
+
+	s.mu.Lock()
+	if _, ok := s.rooms[roomID]; !ok {
+		s.mu.Unlock()
+		return
+	}
+	s.messages[roomID] = append(s.messages[roomID], msg)
+	s.persist()
+	s.mu.Unlock()
+
+	s.subMu.Lock()
+	for _, ch := range s.roomSubs[roomID] {
+		select {
+		case ch <- msg:
+		default:
+		}
+	}
+	for _, ch := range s.globalSubs {
+		select {
+		case ch <- msg:
+		default:
+		}
+	}
+	s.subMu.Unlock()
+}
 
 func (s *store) roomSend(roomID, from, body string) (int64, error) {
 	if !s.isMember(roomID, from) {
@@ -1348,6 +1395,19 @@ func (s *store) cleanupStaleAgents() {
 		return
 	}
 
+	// Capture room memberships before removal so we can emit per-room events.
+	removedRooms := make(map[string][]string)
+	for _, id := range removed {
+		for _, room := range s.rooms {
+			for _, m := range room.Members {
+				if m == id {
+					removedRooms[id] = append(removedRooms[id], room.ID)
+					break
+				}
+			}
+		}
+	}
+
 	for _, id := range removed {
 		delete(s.agents, id)
 		for _, room := range s.rooms {
@@ -1366,6 +1426,12 @@ func (s *store) cleanupStaleAgents() {
 
 	s.broadcastAgentUpdate()
 	s.broadcastRoomUpdate()
+
+	for _, id := range removed {
+		for _, roomID := range removedRooms[id] {
+			s.emitSystemMessage(roomID, id+" disconnected (stale)")
+		}
+	}
 }
 
 func (s *store) cleanupEmptyRooms() {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -140,6 +141,10 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		}
 		if req.From == "" || req.Body == "" {
 			jsonError(w, "from and body are required", http.StatusBadRequest)
+			return
+		}
+		if req.From == "_system" || strings.HasPrefix(roomID, "_") {
+			jsonError(w, "cannot send to reserved room or use reserved sender", http.StatusForbidden)
 			return
 		}
 		id, err := s.roomSend(roomID, req.From, req.Body)

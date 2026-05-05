@@ -375,6 +375,9 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
 		}
+		if strings.HasPrefix(p.Room, "_") {
+			return "", fmt.Errorf("room %q is read-only (system room)", p.Room)
+		}
 		return c.Post("/rooms/"+p.Room+"/send", map[string]string{
 			"from": c.AgentID,
 			"body": p.Body,

@@ -1111,6 +1111,11 @@
   }
 
   function chatMessageHTML(m) {
+    if (m.from_kind === 'system') {
+      return '<div class="chat-msg-system" data-id="' + esc(m.id) + '">' +
+        esc(m.body) + ' <span class="chat-msg-time" title="' + esc(m.created_at) + '">' + relativeTime(m.created_at) + '</span>' +
+        '</div>';
+    }
     var isSelf = m.from === agentID;
     var fromAgent = agents.find(function (a) { return a.id === m.from; });
     var msgIconSrc = agentIconSrc(fromAgent);
