@@ -726,12 +726,15 @@ func Run(addr, dataDir string, frontendFS fs.FS) error {
 	go func() {
 		<-done
 		log.Println("Shutting down...")
+		// best-effort: won't fire on SIGKILL or crash
+		s.emitSystemMessage("_system", "server stopping")
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
 	}()
 
 	log.Printf("aimebu listening on http://%s (data: %s)", addr, dataDir)
+	s.emitSystemMessage("_system", "server started")
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		return err
 	}

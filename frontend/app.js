@@ -32,6 +32,9 @@
   let markdownMode = localStorage.getItem('aimebu.ui.markdownMode') || 'rendered';
   let macros = {};           // { lowercasedKey: body } — global shared macros
   let macroRooms = {};       // { roomID: { key: body } } — per-room overrides
+  let systemEvents = [];     // Message[] — _system room events
+  let systemUnread = 0;      // unread count for broadcast panel
+  let systemSSE = null;      // EventSource for _system room
   let macrosScopeTab = 'global'; // 'global' | roomID — active macros panel tab
   let macrosSaveTimer = null;
 
@@ -64,6 +67,7 @@
   const leaveRoomBtn = $('#leave-room-btn');
   const messageListEl = $('#message-list');
   const sendForm = $('#send-form');
+  const systemRoomNotice = $('#system-room-notice');
   const msgBodyInput = $('#msg-body');
 
   const roomAgentsList = $('#room-agents-list');
@@ -74,6 +78,11 @@
   const msgSearchBtn = $('#msg-search-btn');
   const msgSearchBar = $('#msg-search-bar');
   const msgSearchInput = $('#msg-search-input');
+
+  const broadcastBtn = $('#broadcast-btn');
+  const broadcastBadge = $('#broadcast-badge');
+  const systemEventsPanel = $('#system-events-panel');
+  const systemEventsListEl = $('#system-events-list');
 
   const macrosBtn = $('#macros-btn');
   const macrosPanel = $('#macros-panel');
@@ -944,6 +953,11 @@
     noRoomView.classList.add('hidden');
     roomView.classList.remove('hidden');
 
+    // _system is read-only: hide composer, show notice
+    var isSystem = roomID === '_system';
+    sendForm.style.display = isSystem ? 'none' : '';
+    systemRoomNotice.style.display = isSystem ? '' : 'none';
+
     // Update header
     updateRoomHeader();
 
@@ -1012,7 +1026,7 @@
   // ── Render rooms ─────────────────────────────────────────────────
 
   function renderRooms() {
-    var channelRooms = rooms.filter(function (r) { return !isDM(r.id); });
+    var channelRooms = rooms.filter(function (r) { return !isDM(r.id) && r.id !== '_system'; });
     var dmRooms = rooms.filter(function (r) { return isDM(r.id); });
 
     function sortList(list) {
@@ -1034,13 +1048,14 @@
       var displayName = dm
         ? (members.length > 0 ? members.join(' · ') : r.id)
         : r.id;
+      var icon = dm ? '@' : '#';
       return (
         '<div class="room-item' +
           (isActive ? ' active' : '') +
           (dm ? ' dm' : '') +
           (hasUnread ? ' has-unread' : '') +
           '" data-room-id="' + esc(r.id) + '">' +
-          '<span class="room-item-icon">' + (dm ? '@' : '#') + '</span>' +
+          '<span class="room-item-icon">' + icon + '</span>' +
           '<div class="room-item-info">' +
             '<div class="room-item-top">' +
               '<span class="room-item-name">' + esc(displayName) + '</span>' +
@@ -1081,6 +1096,45 @@
       dmListEl.innerHTML = sortList(dmRooms).map(roomItemHTML).join('');
       attachClickHandlers(dmListEl);
     }
+  }
+
+  // ── System events panel ──────────────────────────────────────────
+
+  function renderSystemBadge() {
+    broadcastBadge.style.display = systemUnread > 0 ? '' : 'none';
+  }
+
+  function renderSystemPanel() {
+    if (systemEvents.length === 0) {
+      systemEventsListEl.innerHTML = '<div class="system-events-empty">No system events yet.</div>';
+      return;
+    }
+    var toShow = systemEvents.slice(-100).reverse();
+    systemEventsListEl.innerHTML = toShow.map(function (m) {
+      return '<div class="system-event-row">' +
+        '<span class="system-event-body">' + esc(m.body) + '</span>' +
+        '<span class="system-event-time" title="' + esc(m.created_at) + '">' + relativeTime(m.created_at) + '</span>' +
+        '</div>';
+    }).join('');
+  }
+
+  function connectSystemSSE() {
+    if (systemSSE) { systemSSE.close(); }
+    systemSSE = new EventSource('/rooms/_system/firehose');
+    systemSSE.onmessage = function (e) {
+      try {
+        var msg = JSON.parse(e.data);
+        if (!msg || !msg.id) return;
+        if (systemEvents.some(function (m) { return m.id === msg.id; })) return;
+        systemEvents.push(msg);
+        if (systemEventsPanel.classList.contains('hidden')) {
+          systemUnread++;
+          renderSystemBadge();
+        } else {
+          renderSystemPanel();
+        }
+      } catch (err) {}
+    };
   }
 
   // ── Render messages ──────────────────────────────────────────────
@@ -1517,6 +1571,25 @@
     msgBodyInput.focus();
   });
 
+  // Broadcast / system events panel
+  broadcastBtn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    var isOpen = !systemEventsPanel.classList.contains('hidden');
+    systemEventsPanel.classList.toggle('hidden', isOpen);
+    if (!isOpen) {
+      systemUnread = 0;
+      renderSystemBadge();
+      renderSystemPanel();
+    }
+  });
+
+  document.addEventListener('click', function (e) {
+    if (!systemEventsPanel.classList.contains('hidden') &&
+        !broadcastBtn.contains(e.target) && !systemEventsPanel.contains(e.target)) {
+      systemEventsPanel.classList.add('hidden');
+    }
+  });
+
   // Macros panel
   macrosBtn.addEventListener('click', function () {
     macrosPanel.classList.toggle('hidden');
@@ -1648,6 +1721,12 @@
   // registration fails (e.g. name clash with an AI) we still connect —
   // subsequent operations will retry via ensureRegistered and surface the
   // error to the user.
+  // Load initial system events (history) and start SSE listener
+  api('GET', '/rooms/_system/messages?limit=100').then(function (data) {
+    systemEvents = (data.messages || []).slice().reverse();
+  }).catch(function () {});
+  connectSystemSSE();
+
   prefillPromise.then(function () {
     return registerHuman().catch(function () {});
   }).then(function () {

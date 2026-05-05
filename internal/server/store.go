@@ -107,6 +107,9 @@ func newStore(dir string) (*store, error) {
 	// goroutine. Uses the same windows (30 min agent, 60 min empty room).
 	s.pruneOnStartup()
 
+	// Create the _system room if it doesn't exist yet (idempotent).
+	s.ensureSystemRoom()
+
 	return s, nil
 }
 
@@ -360,6 +363,9 @@ func (s *store) createRoom(id, createdBy string) (*types.Room, error) {
 	s.mu.Unlock()
 
 	s.broadcastRoomUpdate()
+	if !strings.HasPrefix(id, "_") && !isDM(id) {
+		s.emitSystemMessage("_system", "room "+id+" created")
+	}
 	return room, nil
 }
 
@@ -396,6 +402,9 @@ func (s *store) deleteRoom(id string) bool {
 	s.mu.Unlock()
 
 	s.broadcastRoomUpdate()
+	if !strings.HasPrefix(id, "_") && !isDM(id) {
+		s.emitSystemMessage("_system", "room "+id+" deleted")
+	}
 	return true
 }
 
@@ -414,6 +423,7 @@ func (s *store) joinRoom(roomID, agentID string) (*types.Room, error) {
 	}
 
 	room, exists := s.rooms[roomID]
+	newRoom := !exists
 	if !exists {
 		room = &types.Room{
 			ID:        roomID,
@@ -438,6 +448,9 @@ func (s *store) joinRoom(roomID, agentID string) (*types.Room, error) {
 	s.mu.Unlock()
 
 	s.broadcastRoomUpdate()
+	if newRoom && !strings.HasPrefix(roomID, "_") && !isDM(roomID) {
+		s.emitSystemMessage("_system", "room "+roomID+" created")
+	}
 	s.emitSystemMessage(roomID, agentID+" joined")
 	return &cp, nil
 }
@@ -470,6 +483,58 @@ func (s *store) leaveRoom(roomID, agentID string) error {
 	s.broadcastRoomUpdate()
 	s.emitSystemMessage(roomID, agentID+" left")
 	return nil
+}
+
+// ensureSystemRoom creates the _system room if it doesn't exist. Bypasses the
+// _ prefix block. Called from newStore after pruneOnStartup.
+func (s *store) ensureSystemRoom() {
+	s.mu.Lock()
+	if _, ok := s.rooms["_system"]; !ok {
+		s.rooms["_system"] = &types.Room{
+			ID:        "_system",
+			Members:   []string{},
+			CreatedAt: now(),
+			CreatedBy: "_system",
+		}
+		s.persist()
+	}
+	s.mu.Unlock()
+}
+
+// joinRoomInternal joins an agent to a room without the reserved-name guard
+// and without emitting a system event. Used for auto-joins (e.g. _system on
+// bus_register). Preserves the same idempotency as joinRoom.
+func (s *store) joinRoomInternal(roomID, agentID string) {
+	s.mu.Lock()
+
+	if _, ok := s.agents[agentID]; !ok {
+		s.mu.Unlock()
+		return
+	}
+
+	room, exists := s.rooms[roomID]
+	if !exists {
+		room = &types.Room{
+			ID:        roomID,
+			Members:   []string{},
+			CreatedAt: now(),
+			CreatedBy: agentID,
+		}
+		s.rooms[roomID] = room
+	}
+
+	for _, m := range room.Members {
+		if m == agentID {
+			s.mu.Unlock()
+			return // already a member
+		}
+	}
+
+	room.Members = append(room.Members, agentID)
+	s.persist()
+	s.mu.Unlock()
+
+	s.broadcastRoomUpdate()
 }
 
 // agentRoomViews lists the rooms an agent is a member of with unread count,
@@ -845,10 +910,10 @@ func (s *store) registerHuman(name, project string, meta map[string]string) (*ty
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if existing, ok := s.agents[name]; ok {
 		if existing.Kind != "human" {
+			s.mu.Unlock()
 			return nil, fmt.Errorf("name %q is in use by an AI agent", name)
 		}
 		existing.LastSeen = now()
@@ -865,14 +930,17 @@ func (s *store) registerHuman(name, project string, meta map[string]string) (*ty
 		}
 		s.persist()
 		cp := *existing
+		s.mu.Unlock()
 		go s.broadcastAgentUpdate()
-		return &cp, nil
+		s.joinRoomInternal("_system", name)
+		return &cp, nil // re-register: no new event
 	}
 
 	// Also reject if any AI agent is currently using this name (their full
 	// ID differs but their bare name matches — would cause confusion).
 	for _, a := range s.agents {
 		if a.Name == name {
+			s.mu.Unlock()
 			return nil, fmt.Errorf("name %q is in use by agent %q", name, a.ID)
 		}
 	}
@@ -889,7 +957,11 @@ func (s *store) registerHuman(name, project string, meta map[string]string) (*ty
 	s.agents[name] = agent
 	s.persist()
 	cp := *agent
+	s.mu.Unlock()
+
 	go s.broadcastAgentUpdate()
+	s.joinRoomInternal("_system", name)
+	s.emitSystemMessage("_system", name+" registered (human)")
 	return &cp, nil
 }
 
@@ -907,7 +979,6 @@ func (s *store) registerHuman(name, project string, meta map[string]string) (*ty
 // Returns the created (or reclaimed) agent (caller-safe copy).
 func (s *store) registerAI(model, harness, project string, meta map[string]string, forceName string) (*types.Agent, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if model == "" {
 		model = "unknown"
@@ -919,6 +990,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 	var name string
 	if forceName != "" {
 		if !reclaimNamePattern.MatchString(forceName) {
+			s.mu.Unlock()
 			return nil, fmt.Errorf("name %q must match [a-z]{3,12}", forceName)
 		}
 		for _, a := range s.agents {
@@ -926,6 +998,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 				continue
 			}
 			if a.Kind == "human" {
+				s.mu.Unlock()
 				return nil, fmt.Errorf("name %q is a human identity", forceName)
 			}
 			if a.Model == model && a.Harness == harness && a.Project == project {
@@ -940,9 +1013,12 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 				}
 				s.persist()
 				cp := *a
+				s.mu.Unlock()
 				go s.broadcastAgentUpdate()
-				return &cp, nil
+				s.joinRoomInternal("_system", a.ID)
+				return &cp, nil // reclaim: no new event
 			}
+			s.mu.Unlock()
 			return nil, fmt.Errorf("name %q is held by another AI agent", forceName)
 		}
 		name = forceName
@@ -954,6 +1030,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 
 		picked, ok := pickRandomName(taken)
 		if !ok {
+			s.mu.Unlock()
 			return nil, fmt.Errorf("name pool exhausted (%d agents registered)", len(s.agents))
 		}
 		name = picked
@@ -963,6 +1040,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 
 	// Extremely unlikely with random names, but guard anyway.
 	if _, exists := s.agents[id]; exists {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("generated ID %q already exists; retry", id)
 	}
 
@@ -980,7 +1058,11 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 	s.agents[id] = agent
 	s.persist()
 	cp := *agent
+	s.mu.Unlock()
+
 	go s.broadcastAgentUpdate()
+	s.joinRoomInternal("_system", id)
+	s.emitSystemMessage("_system", fmt.Sprintf("%s registered (%s/%s)", id, model, harness))
 	return &cp, nil
 }
 
@@ -1431,6 +1513,7 @@ func (s *store) cleanupStaleAgents() {
 		for _, roomID := range removedRooms[id] {
 			s.emitSystemMessage(roomID, id+" disconnected (stale)")
 		}
+		s.emitSystemMessage("_system", id+" pruned (stale)")
 	}
 }
 

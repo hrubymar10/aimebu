@@ -777,6 +777,14 @@ body {
   flex-shrink: 0;
 }
 
+.system-room-notice {
+  text-align: center;
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.8rem;
+  padding: 4px 0;
+}
+
 .send-form {
   display: flex;
   gap: 8px;
@@ -1497,4 +1505,100 @@ body {
   white-space: nowrap;
   flex: 1;
   font-size: 0.75rem;
+}
+
+/* ── Broadcast button + system events panel ─────────────────────── */
+
+.broadcast-wrap {
+  position: relative;
+}
+
+.broadcast-btn {
+  position: relative;
+}
+
+.broadcast-badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: 1.5px solid var(--bg-secondary);
+  pointer-events: none;
+}
+
+.system-events-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 360px;
+  max-height: 52vh;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  z-index: 300;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+}
+
+.system-events-panel.hidden {
+  display: none;
+}
+
+.system-events-header {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.system-events-list {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.system-event-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.system-event-row:last-child {
+  border-bottom: none;
+}
+
+.system-event-body {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.system-event-time {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.system-events-empty {
+  padding: 16px 12px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-align: center;
+  font-style: italic;
 }
