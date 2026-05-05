@@ -951,6 +951,7 @@
     renderMessages();
     fetchRoomMessages(roomID).then(function () {
       if (scrollToMsgID) scrollToMessage(scrollToMsgID);
+      else scrollToBottom(true);
       // Pull presence snapshot after messages so read-receipt rendering
       // has the head message id available.
       return fetchRoomPresence(roomID);
@@ -1093,12 +1094,20 @@
       return;
     }
 
+    var atBottom = (messageListEl.scrollHeight - messageListEl.scrollTop - messageListEl.clientHeight) < 50;
+    var prevScrollTop = messageListEl.scrollTop;
+    var prevScrollHeight = messageListEl.scrollHeight;
+
     messageListEl.innerHTML = msgs.map(function (m) {
       return chatMessageHTML(m);
     }).join('');
 
     renderReadReceipts();
-    scrollToBottom();
+    if (atBottom) {
+      scrollToBottom(true);
+    } else {
+      messageListEl.scrollTop = prevScrollTop + (messageListEl.scrollHeight - prevScrollHeight);
+    }
   }
 
   function chatMessageHTML(m) {
@@ -1133,6 +1142,8 @@
   function appendMessage(msg) {
     if (!activeRoomID || msg.room_id !== activeRoomID) return;
 
+    var atBottom = (messageListEl.scrollHeight - messageListEl.scrollTop - messageListEl.clientHeight) < 50;
+
     // Remove empty state if present
     var empty = messageListEl.querySelector('.empty-state');
     if (empty) empty.remove();
@@ -1143,10 +1154,12 @@
     el.classList.add('new-message');
     messageListEl.appendChild(el);
 
-    scrollToBottom();
+    if (atBottom) scrollToBottom(true);
   }
 
-  function scrollToBottom() {
+  function scrollToBottom(force) {
+    var nearBottom = (messageListEl.scrollHeight - messageListEl.scrollTop - messageListEl.clientHeight) < 50;
+    if (!force && !nearBottom) return;
     requestAnimationFrame(function () {
       messageListEl.scrollTop = messageListEl.scrollHeight;
     });
@@ -1598,7 +1611,9 @@
 
   // Update relative timestamps every 30 seconds (purely cosmetic)
   setInterval(function () {
-    renderMessages();
+    messageListEl.querySelectorAll('.chat-msg-time').forEach(function (el) {
+      el.textContent = relativeTime(el.title);
+    });
     renderRooms();
     renderAllAgents();
     renderRoomAgents();
