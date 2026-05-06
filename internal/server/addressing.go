@@ -54,16 +54,27 @@ type annotatedMessage struct {
 
 // annotate attaches addressing metadata to msgs as seen by agentName (the
 // short name, e.g. "worker"). isDM is derived per-message from m.RoomID.
+// knownAgents filters @mention captures to real agent names (pass nil to skip
+// filtering — useful in tests or when the agent list is unavailable).
 //
 // should_respond logic mirrors the MCP etiquette:
 //   - system messages: never respond.
 //   - human sender, room-wide (no addressed_to): respond.
 //   - human sender, addressed to others: do not respond.
 //   - ai sender or unknown: respond only if addressed_to_me or in a DM room.
-func annotate(msgs []types.Message, agentName string) []annotatedMessage {
+func annotate(msgs []types.Message, agentName string, knownAgents map[string]bool) []annotatedMessage {
 	out := make([]annotatedMessage, len(msgs))
 	for i, m := range msgs {
 		addressed := parseAddressedTo(m.Body)
+		if len(knownAgents) > 0 {
+			filtered := make([]string, 0, len(addressed))
+			for _, n := range addressed {
+				if knownAgents[n] {
+					filtered = append(filtered, n)
+				}
+			}
+			addressed = filtered
+		}
 		addrToMe := slices.Contains(addressed, agentName)
 		isDM := strings.HasPrefix(m.RoomID, "dm:")
 		var shouldRespond bool

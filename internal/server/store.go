@@ -1162,6 +1162,18 @@ func (s *store) listAgents() []types.Agent {
 	return agents
 }
 
+// knownAgentNames returns the short names of all currently-registered agents.
+// Used by annotate to filter @mention captures to real agent names.
+func (s *store) knownAgentNames() map[string]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	names := make(map[string]bool, len(s.agents))
+	for id := range s.agents {
+		names[agentShortName(id)] = true
+	}
+	return names
+}
+
 // ── SSE subscriptions ──────────────────────────────────────────────
 
 func (s *store) subscribeRoom(roomID string) chan types.Message {

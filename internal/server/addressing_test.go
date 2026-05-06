@@ -99,7 +99,7 @@ func TestAnnotate(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := annotate([]types.Message{tc.msg}, tc.agentName)
+			out := annotate([]types.Message{tc.msg}, tc.agentName, nil)
 			if len(out) != 1 {
 				t.Fatalf("expected 1 annotated message, got %d", len(out))
 			}
@@ -111,6 +111,49 @@ func TestAnnotate(t *testing.T) {
 				t.Errorf("ShouldRespond: got %v, want %v", a.ShouldRespond, tc.wantRespond)
 			}
 		})
+	}
+}
+
+func TestAnnotateKnownAgentsFilter(t *testing.T) {
+	known := map[string]bool{"worker": true, "reviewer": true, "leader": true}
+	msg := types.Message{
+		Body:     "see @latest example, then ping @worker @reviewer — agree?",
+		FromKind: "ai",
+		RoomID:   "general",
+	}
+	out := annotate([]types.Message{msg}, "worker", known)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(out))
+	}
+	a := out[0]
+	// Only real agents should appear in addressed_to; @latest must be filtered out.
+	for _, name := range a.AddressedTo {
+		if !known[name] {
+			t.Errorf("addressed_to contains non-agent %q", name)
+		}
+	}
+	if !a.AddressedToMe {
+		t.Error("AddressedToMe should be true for worker")
+	}
+	if !a.ShouldRespond {
+		t.Error("ShouldRespond should be true when ai addresses worker directly")
+	}
+}
+
+func TestParseAddressedToNoiseFiltering(t *testing.T) {
+	// Without a known-agent filter, @latest/@master/@v0 appear in the raw list.
+	// This test documents the raw behaviour; filtering happens in annotate.
+	body := "see `@latest` or @master, then @worker @reviewer"
+	got := parseAddressedTo(body)
+	found := map[string]bool{}
+	for _, n := range got {
+		found[n] = true
+	}
+	if !found["worker"] || !found["reviewer"] {
+		t.Errorf("real agents missing from raw parse: %v", got)
+	}
+	if !found["latest"] || !found["master"] {
+		t.Errorf("noise tokens missing from raw parse (expected before filtering): %v", got)
 	}
 }
 

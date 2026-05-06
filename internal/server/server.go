@@ -29,9 +29,9 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-func jsonOK(w http.ResponseWriter, data any) {
+func jsonOK(w http.ResponseWriter, data any) error {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(data)
+	return json.NewEncoder(w).Encode(data)
 }
 
 const busWaitTimeoutHint = "keep_waiting=true (status=\"still_waiting\") means no messages arrived yet, not that listening is over. Call bus_wait again now. Only return to the user if they explicitly told you to stop."
@@ -52,13 +52,13 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		jsonOK(w, room)
+		_ = jsonOK(w, room)
 	})
 
 	// GET /rooms — list all rooms
 	mux.HandleFunc("GET /rooms", func(w http.ResponseWriter, _ *http.Request) {
 		rooms := s.listRooms()
-		jsonOK(w, map[string]any{"rooms": rooms})
+		_ = jsonOK(w, map[string]any{"rooms": rooms})
 	})
 
 	// GET /rooms/{room_id} — room details + recent messages + per-member
@@ -73,7 +73,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		}
 		msgs := s.roomMessages(roomID, 50, 0)
 		presence := s.roomPresence(roomID)
-		jsonOK(w, map[string]any{
+		_ = jsonOK(w, map[string]any{
 			"room":             room,
 			"messages":         msgs,
 			"members_presence": presence,
@@ -87,7 +87,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			jsonError(w, "room not found", http.StatusNotFound)
 			return
 		}
-		jsonOK(w, map[string]string{"status": "deleted"})
+		_ = jsonOK(w, map[string]string{"status": "deleted"})
 	})
 
 	// ── Room membership ────────────────────────────────────────────
@@ -109,7 +109,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
 		}
-		jsonOK(w, room)
+		_ = jsonOK(w, room)
 	})
 
 	// POST /rooms/{room_id}/leave
@@ -128,7 +128,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		jsonOK(w, map[string]string{"status": "left", "room": roomID})
+		_ = jsonOK(w, map[string]string{"status": "left", "room": roomID})
 	})
 
 	// ── Room messages ──────────────────────────────────────────────
@@ -154,7 +154,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
 		}
-		jsonOK(w, map[string]any{"id": id, "room": roomID})
+		_ = jsonOK(w, map[string]any{"id": id, "room": roomID})
 	})
 
 	// GET /rooms/{room_id}/messages
@@ -182,9 +182,9 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 
 		msgs := s.roomMessages(roomID, limit, sinceID)
 		if agentID != "" {
-			jsonOK(w, map[string]any{"messages": annotate(msgs, agentShortName(agentID)), "room": roomID})
+			_ = jsonOK(w, map[string]any{"messages": annotate(msgs, agentShortName(agentID), s.knownAgentNames()), "room": roomID})
 		} else {
-			jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
+			_ = jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
 		}
 	})
 
@@ -232,22 +232,21 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		if msgs := s.messagesSince(roomID, sinceID); len(msgs) > 0 {
 			if agentID != "" {
 				last := msgs[len(msgs)-1].ID
-				if s.advanceCursor(agentID, roomID, last) {
-					s.broadcastReadUpdate(agentID, roomID, last)
-				}
-				// Filter own messages: advance cursor past them but don't deliver.
-				filtered := msgs[:0]
+				// Filter own messages; cursor advances past them even without delivery.
+				var filtered []types.Message
 				for _, m := range msgs {
 					if m.From != agentID {
 						filtered = append(filtered, m)
 					}
 				}
-				msgs = filtered
-			}
-			if agentID != "" {
-				jsonOK(w, map[string]any{"messages": annotate(msgs, agentShortName(agentID)), "room": roomID})
+				known := s.knownAgentNames()
+				if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentShortName(agentID), known), "room": roomID}); err == nil {
+					if s.advanceCursor(agentID, roomID, last) {
+						s.broadcastReadUpdate(agentID, roomID, last)
+					}
+				}
 			} else {
-				jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
+				_ = jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
 			}
 			return
 		}
@@ -264,6 +263,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		timer := time.NewTimer(time.Duration(timeoutSec) * time.Second)
 		defer timer.Stop()
 
+		known := s.knownAgentNames()
 		for {
 			select {
 			case msg := <-ch:
@@ -272,21 +272,29 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 				}
 				if agentID != "" {
 					s.touchAgent(agentID)
-					if s.advanceCursor(agentID, roomID, msg.ID) {
-						s.broadcastReadUpdate(agentID, roomID, msg.ID)
-					}
 					if msg.From == agentID {
+						// Self-message: advance cursor but don't deliver.
+						if s.advanceCursor(agentID, roomID, msg.ID) {
+							s.broadcastReadUpdate(agentID, roomID, msg.ID)
+						}
 						continue
 					}
 				}
+				if r.Context().Err() != nil {
+					return // client disconnected; preserve cursor so next reconnect replays
+				}
 				if agentID != "" {
-					jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID)), "room": roomID})
+					if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID), known), "room": roomID}); err == nil {
+						if s.advanceCursor(agentID, roomID, msg.ID) {
+							s.broadcastReadUpdate(agentID, roomID, msg.ID)
+						}
+					}
 				} else {
-					jsonOK(w, map[string]any{"messages": []types.Message{msg}, "room": roomID})
+					_ = jsonOK(w, map[string]any{"messages": []types.Message{msg}, "room": roomID})
 				}
 				return
 			case <-timer.C:
-				jsonOK(w, map[string]any{
+				_ = jsonOK(w, map[string]any{
 					"messages":     []types.Message{},
 					"room":         roomID,
 					"status":       "still_waiting",
@@ -339,30 +347,32 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			_ = cursors
 		}
 		if len(msgs) > 0 {
-			if !sinceExplicit {
-				// Advance cursors for every room we returned messages from
-				// (including own messages — they advance the cursor but aren't
-				// delivered to the sender).
-				maxPerRoom := make(map[string]int64)
-				for _, m := range msgs {
-					if m.ID > maxPerRoom[m.RoomID] {
-						maxPerRoom[m.RoomID] = m.ID
-					}
-				}
-				for roomID, top := range maxPerRoom {
-					if s.advanceCursor(agentID, roomID, top) {
-						s.broadcastReadUpdate(agentID, roomID, top)
-					}
-				}
-			}
 			// Filter own messages — applies regardless of sinceExplicit.
-			filtered := msgs[:0]
+			var filtered []types.Message
 			for _, m := range msgs {
 				if m.From != agentID {
 					filtered = append(filtered, m)
 				}
 			}
-			jsonOK(w, map[string]any{"messages": annotate(filtered, agentShortName(agentID)), "agent": agentID})
+			known := s.knownAgentNames()
+			if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentShortName(agentID), known), "agent": agentID}); err == nil {
+				if !sinceExplicit {
+					// Advance cursors for every room we returned messages from
+					// (including own messages — they advance the cursor but aren't
+					// delivered to the sender).
+					maxPerRoom := make(map[string]int64)
+					for _, m := range msgs {
+						if m.ID > maxPerRoom[m.RoomID] {
+							maxPerRoom[m.RoomID] = m.ID
+						}
+					}
+					for roomID, top := range maxPerRoom {
+						if s.advanceCursor(agentID, roomID, top) {
+							s.broadcastReadUpdate(agentID, roomID, top)
+						}
+					}
+				}
+			}
 			return
 		}
 
@@ -378,6 +388,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		timer := time.NewTimer(time.Duration(timeoutSec) * time.Second)
 		defer timer.Stop()
 
+		known := s.knownAgentNames()
 		for {
 			select {
 			case msg := <-ch:
@@ -394,18 +405,28 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 					}
 				}
 				s.touchAgent(agentID)
-				if !sinceExplicit {
-					if s.advanceCursor(agentID, msg.RoomID, msg.ID) {
-						s.broadcastReadUpdate(agentID, msg.RoomID, msg.ID)
-					}
-				}
 				if msg.From == agentID {
+					// Self-message: advance cursor but don't deliver.
+					if !sinceExplicit {
+						if s.advanceCursor(agentID, msg.RoomID, msg.ID) {
+							s.broadcastReadUpdate(agentID, msg.RoomID, msg.ID)
+						}
+					}
 					continue
 				}
-				jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID)), "agent": agentID})
+				if r.Context().Err() != nil {
+					return // client disconnected; preserve cursor so next reconnect replays
+				}
+				if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID), known), "agent": agentID}); err == nil {
+					if !sinceExplicit {
+						if s.advanceCursor(agentID, msg.RoomID, msg.ID) {
+							s.broadcastReadUpdate(agentID, msg.RoomID, msg.ID)
+						}
+					}
+				}
 				return
 			case <-timer.C:
-				jsonOK(w, map[string]any{
+				_ = jsonOK(w, map[string]any{
 					"messages":     []types.Message{},
 					"agent":        agentID,
 					"status":       "still_waiting",
@@ -473,7 +494,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
 		}
-		jsonOK(w, map[string]any{"id": id, "room": room.ID})
+		_ = jsonOK(w, map[string]any{"id": id, "room": room.ID})
 	})
 
 	// ── Agents ─────────────────────────────────────────────────────
@@ -522,7 +543,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			return
 		}
 
-		jsonOK(w, types.RegisterResponse{
+		_ = jsonOK(w, types.RegisterResponse{
 			ID:      agent.ID,
 			Name:    agent.Name,
 			Kind:    agent.Kind,
@@ -536,7 +557,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 	// GET /agents — list
 	mux.HandleFunc("GET /agents", func(w http.ResponseWriter, _ *http.Request) {
 		agents := s.listAgents()
-		jsonOK(w, map[string]any{"agents": agents})
+		_ = jsonOK(w, map[string]any{"agents": agents})
 	})
 
 	// GET /agents/{id}/rooms — rooms an agent is in, with per-agent unread
@@ -545,7 +566,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 	mux.HandleFunc("GET /agents/{id}/rooms", func(w http.ResponseWriter, r *http.Request) {
 		agentID := r.PathValue("id")
 		rooms := s.agentRoomViews(agentID)
-		jsonOK(w, map[string]any{"rooms": rooms, "agent": agentID})
+		_ = jsonOK(w, map[string]any{"rooms": rooms, "agent": agentID})
 	})
 
 	// POST /agents/{id}/read — explicit mark-read. Body: {room, message_id}.
@@ -570,7 +591,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		if s.advanceCursor(agentID, req.Room, target) {
 			s.broadcastReadUpdate(agentID, req.Room, target)
 		}
-		jsonOK(w, map[string]any{"agent": agentID, "room": req.Room, "read_cursor": target})
+		_ = jsonOK(w, map[string]any{"agent": agentID, "room": req.Room, "read_cursor": target})
 	})
 
 	// ── Global ─────────────────────────────────────────────────────
@@ -624,7 +645,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			jsonError(w, "not_found", http.StatusNotFound)
 			return
 		}
-		jsonOK(w, msg)
+		_ = jsonOK(w, msg)
 	})
 
 	// GET /messages — all messages (for sniff/monitoring)
@@ -636,7 +657,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			}
 		}
 		msgs := s.allMessages(limit)
-		jsonOK(w, map[string]any{"messages": msgs})
+		_ = jsonOK(w, map[string]any{"messages": msgs})
 	})
 
 	// ── Macros ─────────────────────────────────────────────────────
@@ -644,7 +665,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 	// GET /macros — fetch global + per-room macros
 	mux.HandleFunc("GET /macros", func(w http.ResponseWriter, _ *http.Request) {
 		env := s.getEnvelope()
-		jsonOK(w, map[string]any{"macros": env.Macros, "rooms": env.Rooms})
+		_ = jsonOK(w, map[string]any{"macros": env.Macros, "rooms": env.Rooms})
 	})
 
 	// PUT /macros — full replace of global + per-room macros
@@ -694,25 +715,25 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			return
 		}
 		s.setEnvelope(macrosEnvelope{Macros: payload.Macros, Rooms: payload.Rooms})
-		jsonOK(w, map[string]string{"status": "ok"})
+		_ = jsonOK(w, map[string]string{"status": "ok"})
 	})
 
 	// DELETE /all — clear conversation state; ?include_settings=true also wipes user settings (macros).
 	mux.HandleFunc("DELETE /all", func(w http.ResponseWriter, r *http.Request) {
 		includeSettings := r.URL.Query().Get("include_settings") == "true"
 		s.clearAll(includeSettings)
-		jsonOK(w, map[string]string{"status": "cleared"})
+		_ = jsonOK(w, map[string]string{"status": "cleared"})
 	})
 
 	// GET /default-name — returns $AIMEBU_NAME from the server's env so the
 	// web UI can prefill the "You are" field for first-time visitors.
 	mux.HandleFunc("GET /default-name", func(w http.ResponseWriter, _ *http.Request) {
-		jsonOK(w, map[string]string{"name": os.Getenv("AIMEBU_NAME")})
+		_ = jsonOK(w, map[string]string{"name": os.Getenv("AIMEBU_NAME")})
 	})
 
 	// GET /health
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
-		jsonOK(w, map[string]string{"status": "ok"})
+		_ = jsonOK(w, map[string]string{"status": "ok"})
 	})
 
 	// GET /ws — WebSocket endpoint for real-time push
