@@ -93,9 +93,20 @@ humans, and an embedded web UI for the dashboard.
 No tagged release yet — install from `master`:
 
 ```bash
+brew tap hrubymar10/tap
+brew install --HEAD aimebu
+brew services start aimebu   # auto-start on login (LaunchAgent / systemd)
+brew services run   aimebu   # one-off foreground-style start (no auto-start)
+```
+
+`aimebu` is currently a HEAD-only formula, so `brew install aimebu` will
+fail by design — use `--HEAD`.
+
+If you skip the explicit `brew tap`, first install will tap `hrubymar10/tap`
+automatically:
+
+```bash
 brew install --HEAD hrubymar10/tap/aimebu
-brew services start aimebu          # auto-start on login (LaunchAgent / systemd)
-brew services run   aimebu          # one-off foreground-style start (no auto-start)
 ```
 
 Once a release is cut, the `--HEAD` flag will no longer be needed.
