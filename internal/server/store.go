@@ -88,7 +88,7 @@ func newStore(dir string) (*store, error) {
 	s := &store{
 		dir:            dir,
 		rooms:          make(map[string]*types.Room),
-		messages:        make(map[string][]types.Message),
+		messages:       make(map[string][]types.Message),
 		agents:         make(map[string]*types.Agent),
 		roomSubs:       make(map[string][]chan types.Message),
 		openWaits:      make(map[string]map[string]int),
@@ -111,6 +111,17 @@ func newStore(dir string) (*store, error) {
 	s.ensureSystemRoom()
 
 	return s, nil
+}
+
+// PruneDataDir applies the same on-disk prune logic used by DELETE /all
+// without requiring the HTTP server to be running.
+func PruneDataDir(dir string, includeSettings bool) error {
+	s, err := newStore(dir)
+	if err != nil {
+		return err
+	}
+	s.clearAll(includeSettings)
+	return nil
 }
 
 // pruneOnStartup removes agents whose last_seen is past the stale window,

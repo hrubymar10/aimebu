@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -469,11 +471,8 @@ func pruneCmd(args []string) {
 	}
 
 	c := client.DefaultClient()
-	path := "/all"
-	if all {
-		path = "/all?include_settings=true"
-	}
-	result, err := c.Delete(path)
+	dataDir := server.DefaultDataDir()
+	result, err := pruneViaServerOrLocal(c, dataDir, all)
 	if err != nil {
 		fatal("prune", err)
 	}
@@ -481,13 +480,48 @@ func pruneCmd(args []string) {
 
 	// agent-sessions.json is always removed (conversation state); macros are
 	// only removed with -a (user settings).
-	home, err := os.UserHomeDir()
-	if err == nil {
-		sessPath := filepath.Join(home, ".aimebu", "agent-sessions.json")
-		if err := os.Remove(sessPath); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "warn: could not remove %s: %v\n", sessPath, err)
-		}
+	if err := pruneLocalSidecars(dataDir); err != nil {
+		fmt.Fprintf(os.Stderr, "warn: %v\n", err)
 	}
+}
+
+func pruneViaServerOrLocal(c *client.Client, dataDir string, all bool) (string, error) {
+	path := "/all"
+	if all {
+		path = "/all?include_settings=true"
+	}
+	result, err := c.Delete(path)
+	if err == nil {
+		return result, nil
+	}
+	if !client.IsUnreachable(err) || !pruneCanUseOfflineFallback(c.BaseURL) {
+		return "", err
+	}
+	if err := server.PruneDataDir(dataDir, all); err != nil {
+		return "", fmt.Errorf("offline prune: %w", err)
+	}
+	return `{"status":"cleared","mode":"offline"}`, nil
+}
+
+func pruneLocalSidecars(dataDir string) error {
+	sessPath := filepath.Join(dataDir, "agent-sessions.json")
+	if err := os.Remove(sessPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("could not remove %s: %w", sessPath, err)
+	}
+	return nil
+}
+
+func pruneCanUseOfflineFallback(baseURL string) bool {
+	u, err := neturl.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // ── MCP ────────────────────────────────────────────────────────────
@@ -574,6 +608,8 @@ Monitoring:
   prune [-y] [-a]                     Prune conversation history with confirmation prompt
                                         -y  skip confirmation
                                         -a  also wipe macros (user settings)
+                                        falls back to direct local cleanup when
+                                        AIMEBU_URL is loopback and the server is down
 
 Integration:
   agent [--harness h] [--room r...] -- <cmd>   Wrap a harness CLI with session-lifecycle management

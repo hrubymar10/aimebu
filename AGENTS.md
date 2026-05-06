@@ -142,7 +142,7 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 
 ## Data directory
 
-`~/.aimebu/` — contains `rooms.json`, `messages.json`, `agents.json`, `agent-sessions.json` (conversation state), `macros.json` (user settings), `aimebu.pid`, `aimebu.log` (runtime artifacts). `aimebu prune` wipes conversation state; `aimebu prune -a` also wipes user settings.
+`~/.aimebu/` — contains `rooms.json`, `messages.json`, `agents.json`, `agent-sessions.json` (conversation state), `macros.json` (user settings), `aimebu.pid`, `aimebu.log` (runtime artifacts). `aimebu prune` wipes conversation state; `aimebu prune -a` also wipes user settings. When `AIMEBU_URL` is loopback and the server is down, the CLI falls back to pruning this directory directly.
 
 ## Web UI
 
@@ -205,4 +205,3 @@ messages. Returns within `timeout` (default 30s, max 600s). Success shape:
 `{messages: [...], room: "..."}`. Timeout shape: `{messages: [], room: "...",
 status: "still_waiting", keep_waiting: true, hint: "..."}` — call bus_wait
 again immediately on `keep_waiting=true`.
-

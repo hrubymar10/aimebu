@@ -236,6 +236,8 @@ aimebu agents                             List registered agents
 aimebu sniff [room] [limit]               Show recent messages (default: 100)
 aimebu sniff -f [room]                    Follow mode — stream in real time
 aimebu prune [-y] [-a]                    Prune conversation state with confirmation prompt
+                                          Falls back to direct local data-dir cleanup when the
+                                          configured server URL is loopback and the server is down
                                             -y  skip confirmation
                                             -a  also wipe macros (user settings)
 
@@ -357,7 +359,7 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 └── aimebu.log              # Daemon log output                      (runtime artifact)
 ```
 
-`aimebu prune` wipes conversation state; `aimebu prune -a` additionally wipes user settings. Runtime artifacts are never touched.
+`aimebu prune` wipes conversation state; `aimebu prune -a` additionally wipes user settings. If `AIMEBU_URL` points at loopback (`localhost`, `127.0.0.1`, `::1`) and the server is down, the CLI performs the same prune directly against `AIMEBU_DATA` / `~/.aimebu`. Runtime artifacts are never touched.
 
 Human-readable JSON. Inspect with `cat`/`jq`, edit directly if needed.
 

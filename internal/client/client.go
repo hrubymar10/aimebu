@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,26 @@ import (
 
 	"github.com/goccy/go-json"
 )
+
+// UnreachableError reports a transport-level failure talking to the aimebu
+// server. Callers can detect it with errors.As / IsUnreachable.
+type UnreachableError struct {
+	BaseURL string
+	Err     error
+}
+
+func (e *UnreachableError) Error() string {
+	return fmt.Sprintf("aimebu unreachable (%s): %v", e.BaseURL, e.Err)
+}
+
+func (e *UnreachableError) Unwrap() error {
+	return e.Err
+}
+
+func IsUnreachable(err error) bool {
+	var target *UnreachableError
+	return errors.As(err, &target)
+}
 
 // Client holds the base URL and the caller's AgentID. AgentID starts empty
 // and is populated:
@@ -39,7 +60,7 @@ func (c *Client) Post(path string, body interface{}) (string, error) {
 	data, _ := json.Marshal(body)
 	resp, err := http.Post(c.BaseURL+path, "application/json", bytes.NewReader(data))
 	if err != nil {
-		return "", fmt.Errorf("aimebu unreachable (%s): %w", c.BaseURL, err)
+		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
 	}
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(resp.Body)
@@ -49,7 +70,7 @@ func (c *Client) Post(path string, body interface{}) (string, error) {
 func (c *Client) Get(path string) (string, error) {
 	resp, err := http.Get(c.BaseURL + path)
 	if err != nil {
-		return "", fmt.Errorf("aimebu unreachable (%s): %w", c.BaseURL, err)
+		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
 	}
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(resp.Body)
@@ -63,7 +84,7 @@ func (c *Client) GetWithTimeout(path string, timeout time.Duration) (string, err
 	httpClient := &http.Client{Timeout: timeout + 5*time.Second}
 	resp, err := httpClient.Get(c.BaseURL + path)
 	if err != nil {
-		return "", fmt.Errorf("aimebu unreachable (%s): %w", c.BaseURL, err)
+		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
 	}
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(resp.Body)
@@ -76,7 +97,7 @@ func (c *Client) Put(path string, body interface{}) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("aimebu unreachable (%s): %w", c.BaseURL, err)
+		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
 	}
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(resp.Body)
@@ -87,7 +108,7 @@ func (c *Client) Delete(path string) (string, error) {
 	req, _ := http.NewRequest("DELETE", c.BaseURL+path, nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("aimebu unreachable (%s): %w", c.BaseURL, err)
+		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
 	}
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(resp.Body)
