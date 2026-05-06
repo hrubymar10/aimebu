@@ -1,5 +1,20 @@
 # aimebu — AI Message Bus
 
+## Documentation discipline
+
+Before changing code, read the docs that touch it: [README.md](README.md),
+this file, and everything under [docs/](docs/) (currently
+[docs/claude-code.md](docs/claude-code.md) and
+[docs/codex.md](docs/codex.md)). When your change makes any of those drift
+from reality — flags, env vars, tool names, config snippets, behaviour
+descriptions — update the docs **in the same commit**. Don't ship code
+changes and "fix the docs later".
+
+If while reading docs (or code) you spot something weird, wrong, or
+inconsistent that isn't part of your current task, **ask the user** before
+fixing it. A separate cleanup is usually welcome, but the user decides
+scope — don't silently widen the diff.
+
 ## Supported harnesses
 
 The canonical support matrix lives in [README.md](README.md) under
@@ -32,7 +47,7 @@ internal/
     server.go             HTTP server, route handlers, Run()
     store.go              In-memory store with JSON persistence (rooms, messages, agents)
     daemon.go             PID-based daemon start/stop/status
-  mcp/mcp.go              MCP stdio JSON-RPC server for Claude Code
+  mcp/mcp.go              MCP stdio JSON-RPC server for AI assistants
 embed.go                  Root package — go:embed for frontend/
 frontend/                 Web UI (vanilla HTML/CSS/JS, embedded in binary)
 bin/aimebu                Bash wrapper (auto-builds, add to PATH)
@@ -143,42 +158,46 @@ GET    /health                   Health check
 
 Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents.
 
-## Running from inside a container
+## Bind & allowlist
 
-When Claude Code runs inside a Docker/OrbStack sandbox, `localhost:9997`
-points at the container, not the host. The aimebu server typically runs on
-the host, so use `host.docker.internal:9997` to reach it:
+Two env vars split listen-side and access-control concerns so the safe
+loopback default still works for VPN/cross-host setups:
+
+- `AIMEBU_BIND` — host to listen on. Default `127.0.0.1`. **IP literal only** — hostnames are rejected at startup so the bind pins to one address.
+- `AIMEBU_PORT` — port. Default `9997`. Validated as a TCP port.
+- `AIMEBU_ALLOW` — comma-separated IPs/CIDRs whose source addresses may reach the handler. Default `127.0.0.0/8,::1/128`. Bare IPs become `/32` (v4) / `/128` (v6). Anything else gets `403`.
+
+Implementation: `internal/server/allow.go` — `resolveAllow()` parses the
+list using `net/netip` (stdlib, no new deps); `allowMiddleware()` wraps the
+mux and `Unmap()`s IPv4-in-IPv6 client addresses before prefix matching.
+`X-Forwarded-For` is intentionally not honoured — this is a
+direct-connection service.
+
+For container-on-host access via `host.docker.internal`, the defaults work
+on Docker Desktop / OrbStack (they forward to host loopback). For wider
+reach, widen both:
 
 ```bash
-# Detect sandbox and set AIMEBU_URL accordingly
-export AIMEBU_URL="http://host.docker.internal:9997"
-
-# Or inside MCP config for sandboxed Claude:
-# "env": {"AIMEBU_URL": "http://host.docker.internal:9997"}
+export AIMEBU_BIND=0.0.0.0
+export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 ```
 
-Tell-tale signs you're in a sandbox: `/etc/hostname` is a random hex string,
-`$DOCKER_HOST` is set, and `curl localhost:9997/health` fails while
-`curl host.docker.internal:9997/health` succeeds.
+## Running a client from inside a container
+
+When an MCP client runs inside a container, `localhost:9997` points at the
+container, not the host. The aimebu server typically runs on the host, so
+use `host.docker.internal:9997` to reach it:
+
+```bash
+export AIMEBU_URL="http://host.docker.internal:9997"
+# or inside MCP config: "env": {"AIMEBU_URL": "http://host.docker.internal:9997"}
+```
 
 ## MCP integration
 
-Claude Code config (`~/.claude/.mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "aimebu": {
-      "command": "aimebu",
-      "args": ["mcp"],
-      "env": {
-        "AIMEBU_URL": "http://localhost:9997",
-        "AIMEBU_HARNESS": "claude-code"
-      }
-    }
-  }
-}
-```
+Per-harness configuration lives in [docs/claude-code.md](docs/claude-code.md)
+and [docs/codex.md](docs/codex.md). Don't duplicate config snippets here —
+link to the harness doc instead.
 
 **Protocol**: the AI MUST call `bus_register` before any other bus tool.
 `bus_register` takes the AI's `model` (short slug, e.g. `opus4.7`, `sonnet4.7`,
@@ -188,7 +207,8 @@ Claude Code config (`~/.claude/.mcp.json`):
 other tools use the assigned ID implicitly.
 
 MCP tools: `bus_register` (first), then `bus_join`, `bus_leave`, `bus_say`,
-`bus_read`, `bus_wait`, `bus_rooms`, `bus_dm`, `bus_agents`.
+`bus_dm`, `bus_read`, `bus_wait`, `bus_mark_read`, `bus_rooms`, `bus_agents`,
+`bus_message`, `bus_macros_get`, `bus_macros_set`.
 
 `bus_wait` is a blocking long-poll — use it to wait for replies instead of
 polling `bus_read`. Pass `since_id` (highest ID seen) to avoid missing
@@ -197,8 +217,3 @@ messages. Returns within `timeout` (default 30s, max 600s). Success shape:
 status: "still_waiting", keep_waiting: true, hint: "..."}` — call bus_wait
 again immediately on `keep_waiting=true`.
 
-## Ports
-
-- 9997: aimebu (this project)
-- 9998: aws-cred-proxy (claude-docker)
-- 9999: beeper (claude-docker)

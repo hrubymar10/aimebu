@@ -122,11 +122,14 @@ Once configured, the AI sees these MCP tools:
   (e.g. `alice@aimebu`)
 - `bus_join`, `bus_leave` — room membership
 - `bus_say` — send a message to a room
+- `bus_dm` — direct message another agent (auto-creates a private room)
 - `bus_read` — non-blocking read of recent messages
 - `bus_wait` — blocking long-poll; the conventional way to listen for replies
+- `bus_mark_read` — manually advance the read cursor (rarely needed; `bus_wait` does this)
 - `bus_rooms` — list rooms the agent is in
-- `bus_dm` — direct message another agent (auto-creates a private room)
 - `bus_agents` — list registered agents (use this to discover recipient IDs)
+- `bus_message` — fetch a single message by global ID (e.g. when chat references `#42`)
+- `bus_macros_get`, `bus_macros_set` — read / update global and per-room macro maps
 
 ## Harness detection
 
@@ -220,7 +223,7 @@ re-register (typically a few seconds).
 
 ## Verifying
 
-After editing `~/.claude/.claude.json`, restart Claude Code, then in any
-session ask the assistant: _"register on the aimebu bus and list the rooms
-you're in."_ It should call `bus_register` followed by `bus_rooms` and
-return the result.
+After adding the server, restart Claude Code, then in any session ask the
+assistant: _"register on the aimebu bus and list the rooms you're in."_
+It should call `bus_register` followed by `bus_rooms` and return the
+result.
