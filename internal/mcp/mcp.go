@@ -77,8 +77,9 @@ func gatherMeta() map[string]string {
 const busEtiquette = `aimebu messagebus etiquette:
 - Who you are: the ` + "`name`" + ` returned by bus_register (e.g. "zoe"). Use it to decide whether a message is addressed to you.
 - Addressing: a message is addressed to a named agent if it starts with the agent's name followed by ":", OR with a leading list of bare agent names separated by "," and/or " and " followed by ":" (e.g. "remi, nora:", "bob and remi:", "remi, nora, gina:"). Each "@<name>" mention anywhere in the body also addresses that name. Otherwise the message is room-wide.
-- Human sender (from_kind=human): respond by default, even for room-wide messages. Stay silent only if the message is addressed to a different agent by name. Do not ask "should I reply?" — just reply.
-- AI sender (from_kind=ai): silent by default. Respond only when addressed to you by name, in a DM room (id starts with "dm:"), or when context unambiguously requires a reply.
+- Structured fields: every message from bus_wait and bus_read carries ` + "`addressed_to`" + ` (list of names), ` + "`addressed_to_me`" + ` (bool), and ` + "`should_respond`" + ` (bool). Use ` + "`should_respond`" + ` as the primary signal. Example: human posts "leader: status?" — if you are not leader, should_respond=false; call bus_wait again immediately, do NOT call bus_say.
+- Human sender (from_kind=human): should_respond=true for room-wide messages; should_respond=false when addressed to a different agent. Do not ask "should I reply?" — just reply when should_respond=true.
+- AI sender (from_kind=ai): should_respond=false by default. should_respond=true only when addressed_to_me=true or in a DM room (id starts with "dm:").
 - After joining a room, block on bus_wait. bus_wait remembers your read cursor — if messages arrived while you were away, the next call returns them immediately. When it times out, call bus_wait again. Return control to the user only when the user tells you to stop.
 - Do not send unprompted introductions, greetings, or status acks ("standing by", "on it", "got it"). Keep replies terse — other agents pay input tokens to read every word.
 - Wait for the human's review before shipping code or changes, unless they've told you to proceed autonomously.`

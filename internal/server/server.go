@@ -160,7 +160,8 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 	// GET /rooms/{room_id}/messages
 	mux.HandleFunc("GET /rooms/{room_id}/messages", func(w http.ResponseWriter, r *http.Request) {
 		roomID := r.PathValue("room_id")
-		if agentID := r.URL.Query().Get("agent_id"); agentID != "" {
+		agentID := r.URL.Query().Get("agent_id")
+		if agentID != "" {
 			s.touchAgent(agentID)
 		}
 		if s.getRoom(roomID) == nil {
@@ -180,7 +181,11 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		}
 
 		msgs := s.roomMessages(roomID, limit, sinceID)
-		jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
+		if agentID != "" {
+			jsonOK(w, map[string]any{"messages": annotate(msgs, agentShortName(agentID)), "room": roomID})
+		} else {
+			jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
+		}
 	})
 
 	// GET /rooms/{room_id}/wait — long-poll: block until a new message arrives
@@ -239,7 +244,11 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 				}
 				msgs = filtered
 			}
-			jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
+			if agentID != "" {
+				jsonOK(w, map[string]any{"messages": annotate(msgs, agentShortName(agentID)), "room": roomID})
+			} else {
+				jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
+			}
 			return
 		}
 
@@ -270,7 +279,11 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 						continue
 					}
 				}
-				jsonOK(w, map[string]any{"messages": []types.Message{msg}, "room": roomID})
+				if agentID != "" {
+					jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID)), "room": roomID})
+				} else {
+					jsonOK(w, map[string]any{"messages": []types.Message{msg}, "room": roomID})
+				}
 				return
 			case <-timer.C:
 				jsonOK(w, map[string]any{
@@ -349,7 +362,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 					filtered = append(filtered, m)
 				}
 			}
-			jsonOK(w, map[string]any{"messages": filtered, "agent": agentID})
+			jsonOK(w, map[string]any{"messages": annotate(filtered, agentShortName(agentID)), "agent": agentID})
 			return
 		}
 
@@ -389,7 +402,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 				if msg.From == agentID {
 					continue
 				}
-				jsonOK(w, map[string]any{"messages": []types.Message{msg}, "agent": agentID})
+				jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID)), "agent": agentID})
 				return
 			case <-timer.C:
 				jsonOK(w, map[string]any{
