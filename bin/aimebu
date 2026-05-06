@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aimebu dev wrapper — auto-rebuilds the binary when sources change, then runs it.
+# aimebu dev wrapper — builds the binary on first use or when forced, then runs it.
 # For everyday use, prefer `go install github.com/hrubymar10/aimebu/cmd/aimebu@latest`
 # or `brew install --HEAD hrubymar10/tap/aimebu` instead.
 #
@@ -12,8 +12,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 BINARY="$REPO_DIR/aimebu-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
 
-# Build if binary doesn't exist or source is newer.
-if [ ! -f "$BINARY" ] || [ "$REPO_DIR/cmd/aimebu/main.go" -nt "$BINARY" ]; then
+# Build if binary doesn't exist or a rebuild is explicitly requested.
+# Set AIMEBU_FORCE_BUILD=1 to force a rebuild (e.g. after source changes).
+if [ ! -f "$BINARY" ] || [ -n "${AIMEBU_FORCE_BUILD:-}" ]; then
     echo "Building aimebu..." >&2
     VERSION="$(cd "$REPO_DIR" && git describe --tags --always --dirty 2>/dev/null || echo v0.0.0-dev)"
     (cd "$REPO_DIR" && go build -ldflags "-s -w -X main.version=$VERSION" -o "$BINARY" ./cmd/aimebu) || {

@@ -154,19 +154,12 @@ go install github.com/hrubymar10/aimebu/cmd/aimebu@<ref>
 
 ### Manual
 
-Pull the latest sources and run any `aimebu` command — the wrapper detects
-that the source is newer than the cached binary and rebuilds automatically:
+Pull the latest sources and force a rebuild:
 
 ```bash
 git pull
-aimebu version   # triggers rebuild if sources are newer
-```
-
-Optional fallback if the cached binary somehow has a stale timestamp:
-
-```bash
-rm <path-to-aimebu>/aimebu-*
-aimebu version   # rebuilds from scratch
+AIMEBU_FORCE_BUILD=1 aimebu version
+# or: rm <path-to-aimebu>/aimebu-*
 ```
 
 ## Quick start

@@ -28,15 +28,21 @@ drift out of sync with the code — agents reading this file are
 expected to verify the table reflects current reality before claiming
 "works" or "supported" anywhere else.
 
-## Build
+## Build / run during development
+
+Use `bin/aimebu` — builds on first run, then re-uses the cached binary.
 
 ```bash
-make build          # → ./aimebu-{os}-{arch} binary
-make install        # → $GOPATH/bin/aimebu
-make run            # build + run server foreground
+bin/aimebu server serve   # foreground server
+bin/aimebu server start   # daemon mode
 ```
 
-Or directly: `go build -o aimebu ./cmd/aimebu`
+To pick up source changes, force a rebuild:
+
+```bash
+AIMEBU_FORCE_BUILD=1 bin/aimebu version
+# or: rm <repo>/aimebu-*
+```
 
 ## Project structure
 
