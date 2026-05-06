@@ -117,20 +117,56 @@ Once a release is cut, the `--HEAD` flag will no longer be needed.
 go install github.com/hrubymar10/aimebu/cmd/aimebu@latest
 ```
 
-### Build from source
+### Manual
+
+Requires a working local Go toolchain — `bin/aimebu` is a self-building
+wrapper that compiles from source on first run.
 
 ```bash
 git clone https://github.com/hrubymar10/aimebu.git
-cd aimebu
-make build    # → ./aimebu-{os}-{arch}
-make install  # → $GOPATH/bin/aimebu
+export PATH="$PATH:<path-to-aimebu>/bin"
+aimebu version   # builds automatically on first run, then executes
 ```
 
-### PATH wrapper (development)
+Replace `<path-to-aimebu>` with the actual clone path, e.g.
+`$HOME/src/aimebu`.
+
+## Updating
+
+### Homebrew (HEAD formula)
 
 ```bash
-export PATH="$PATH:$HOME/xcode/aimebu/bin"
-aimebu version   # builds automatically, then runs
+brew upgrade --fetch-HEAD aimebu
+```
+
+> **Note:** plain `brew upgrade aimebu` is a no-op for HEAD formulas — the
+> installed and formula versions are both `HEAD` so brew sees nothing to
+> upgrade. Always pass `--fetch-HEAD`.
+
+### Go install
+
+Re-run with the same ref you originally used:
+
+```bash
+go install github.com/hrubymar10/aimebu/cmd/aimebu@<ref>
+# e.g. @latest, @master, or a specific tag like @v0.0.0
+```
+
+### Manual
+
+Pull the latest sources and run any `aimebu` command — the wrapper detects
+that the source is newer than the cached binary and rebuilds automatically:
+
+```bash
+git pull
+aimebu version   # triggers rebuild if sources are newer
+```
+
+Optional fallback if the cached binary somehow has a stale timestamp:
+
+```bash
+rm <path-to-aimebu>/aimebu-*
+aimebu version   # rebuilds from scratch
 ```
 
 ## Quick start

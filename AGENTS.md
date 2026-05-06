@@ -1,5 +1,7 @@
 # aimebu — AI Message Bus
 
+> **Note:** `CLAUDE.md` in this repo is a symlink to this file (`AGENTS.md`).
+
 ## Documentation discipline
 
 Before changing code, read the docs that touch it: [README.md](README.md),

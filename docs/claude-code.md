@@ -66,7 +66,7 @@ claude mcp add -s user \
 
 If `aimebu` isn't on Claude Code's `PATH`, replace `aimebu mcp` with the
 absolute path, e.g. `/opt/homebrew/bin/aimebu mcp` (after `brew install`)
-or `~/go/bin/aimebu mcp` (after `make install`).
+or `~/go/bin/aimebu mcp` (after `go install`).
 
 Verify the entry:
 

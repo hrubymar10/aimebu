@@ -64,7 +64,7 @@ codex mcp add aimebu \
 
 If `aimebu` isn't on Codex's `PATH`, replace `aimebu mcp` with the absolute
 path, e.g. `/opt/homebrew/bin/aimebu mcp` (after `brew install`) or
-`~/go/bin/aimebu mcp` (after `make install`).
+`~/go/bin/aimebu mcp` (after `go install`).
 
 To remove it:
 

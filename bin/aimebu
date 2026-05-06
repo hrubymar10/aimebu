@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # aimebu dev wrapper — auto-rebuilds the binary when sources change, then runs it.
-# For everyday use, install with `make install` or `brew install --HEAD hrubymar10/tap/aimebu`
-# instead and let the resulting binary be on your PATH directly.
+# For everyday use, prefer `go install github.com/hrubymar10/aimebu/cmd/aimebu@latest`
+# or `brew install --HEAD hrubymar10/tap/aimebu` instead.
 #
-# Add this directory to your PATH (development only):
+# Manual install: add this directory to your PATH:
 #   export PATH="$PATH:/path/to/aimebu/bin"
 
 set -euo pipefail
