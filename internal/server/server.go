@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -705,6 +707,14 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 
 // Run starts the HTTP server in the foreground with graceful shutdown.
 func Run(addr, dataDir string, frontendFS fs.FS) error {
+	if err := validateBindAddr(addr); err != nil {
+		return err
+	}
+	allow, err := resolveAllow()
+	if err != nil {
+		return err
+	}
+
 	s, err := newStore(dataDir)
 	if err != nil {
 		return fmt.Errorf("init store: %w", err)
@@ -726,7 +736,7 @@ func Run(addr, dataDir string, frontendFS fs.FS) error {
 		mux.Handle("GET /", http.FileServer(http.FS(frontendFS)))
 	}
 
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -737,6 +747,7 @@ func Run(addr, dataDir string, frontendFS fs.FS) error {
 		log.Printf("%s %s", r.Method, r.URL.RequestURI())
 		mux.ServeHTTP(w, r)
 	})
+	handler = allowMiddleware(handler, allow)
 
 	srv := &http.Server{
 		Addr:    addr,
@@ -756,7 +767,15 @@ func Run(addr, dataDir string, frontendFS fs.FS) error {
 		_ = srv.Shutdown(ctx)
 	}()
 
-	log.Printf("aimebu listening on http://%s (data: %s)", addr, dataDir)
+	log.Printf("aimebu listening on http://%s (allow: %v, data: %s)", addr, allow, dataDir)
+	host, _, _ := net.SplitHostPort(addr)
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if ip.IsUnspecified() {
+			log.Printf("WARN: bound to %s (all interfaces) — AIMEBU_ALLOW gates by source IP", host)
+		} else if !ip.IsLoopback() {
+			log.Printf("WARN: bound to %s — anyone reachable on this interface can attempt to call /; AIMEBU_ALLOW gates by source IP", host)
+		}
+	}
 	s.emitSystemMessage("_system", "server started")
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		return err

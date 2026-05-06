@@ -528,6 +528,7 @@ Environment:
   AIMEBU_NAME      Your human name (e.g. "martin"). Used instead of --name.
   AIMEBU_PORT      Server listen port (default: 9997)
   AIMEBU_BIND      Server bind address (default: 127.0.0.1)
+  AIMEBU_ALLOW     Comma-separated IPs/CIDRs allowed to connect (default: 127.0.0.0/8,::1/128)
   AIMEBU_DATA      Server data directory (default: ~/.aimebu)
 
 Note: The CLI is for humans. AI assistants use the MCP server (aimebu mcp),
