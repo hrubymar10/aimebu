@@ -53,8 +53,8 @@ func main() {
 		agentsCmd()
 	case "sniff":
 		sniffCmd(os.Args[2:])
-	case "clear":
-		clearCmd()
+	case "prune":
+		pruneCmd(os.Args[2:])
 	case "agent":
 		agentCmd(os.Args[2:])
 	case "mcp":
@@ -422,13 +422,72 @@ func sniffFollow(c *client.Client, room string) {
 	}
 }
 
-func clearCmd() {
+func pruneCmd(args []string) {
+	var autoYes, all bool
+	for _, a := range args {
+		switch a {
+		case "-y":
+			autoYes = true
+		case "-a":
+			all = true
+		}
+	}
+
+	if !autoYes {
+		stat, err := os.Stdin.Stat()
+		if err != nil || stat.Mode()&fs.ModeCharDevice == 0 {
+			fatal("prune", fmt.Errorf("stdin is not a terminal; use -y to bypass confirmation"))
+		}
+		if all {
+			fmt.Println("This will permanently delete EVERYTHING in ~/.aimebu/:")
+			fmt.Println("  • rooms.json          (all rooms and membership)")
+			fmt.Println("  • messages.json       (full conversation history)")
+			fmt.Println("  • agents.json         (all registered agents)")
+			fmt.Println("  • agent-sessions.json (aimebu agent resume state)")
+			fmt.Println("  • macros.json         (global + per-room macros)")
+			fmt.Println()
+			fmt.Println("Preserved:")
+			fmt.Println("  • aimebu.pid, aimebu.log (runtime artifacts)")
+		} else {
+			fmt.Println("This will permanently delete:")
+			fmt.Println("  • rooms.json          (all rooms and membership)")
+			fmt.Println("  • messages.json       (full conversation history)")
+			fmt.Println("  • agents.json         (all registered agents)")
+			fmt.Println("  • agent-sessions.json (aimebu agent resume state)")
+			fmt.Println()
+			fmt.Println("Preserved:")
+			fmt.Println("  • macros.json         (global + per-room macros)")
+			fmt.Println("  • aimebu.pid, aimebu.log (runtime artifacts)")
+		}
+		fmt.Print("\nAre you sure? [y/N]: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		if strings.ToLower(strings.TrimSpace(scanner.Text())) != "y" {
+			fmt.Println("Aborted.")
+			os.Exit(0)
+		}
+	}
+
 	c := client.DefaultClient()
-	result, err := c.Delete("/all")
+	path := "/all"
+	if all {
+		path = "/all?include_settings=true"
+	}
+	result, err := c.Delete(path)
 	if err != nil {
-		fatal("clear", err)
+		fatal("prune", err)
 	}
 	fmt.Println(client.PrettyJSON(result))
+
+	// agent-sessions.json is always removed (conversation state); macros are
+	// only removed with -a (user settings).
+	home, err := os.UserHomeDir()
+	if err == nil {
+		sessPath := filepath.Join(home, ".aimebu", "agent-sessions.json")
+		if err := os.Remove(sessPath); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "warn: could not remove %s: %v\n", sessPath, err)
+		}
+	}
 }
 
 // ── MCP ────────────────────────────────────────────────────────────
@@ -512,7 +571,9 @@ Agents:
 Monitoring:
   sniff [room] [limit]                Show recent messages (default: 100)
   sniff -f [room]                     Follow mode: stream messages in real time
-  clear                               Clear all rooms, messages, and agents
+  prune [-y] [-a]                     Prune conversation history with confirmation prompt
+                                        -y  skip confirmation
+                                        -a  also wipe macros (user settings)
 
 Integration:
   agent [--harness h] [--room r...] -- <cmd>   Wrap a harness CLI with session-lifecycle management

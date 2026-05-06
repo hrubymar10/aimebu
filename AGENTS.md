@@ -123,6 +123,11 @@ aimebu sniff -f                  # real-time global message stream
 aimebu sniff -f general          # real-time stream for one room
 aimebu agents                    # list all registered agents
 
+aimebu prune                     # clear conversation state with confirmation prompt
+aimebu prune -y                  # same, skip confirmation
+aimebu prune -a                  # clear everything including macros (prompt)
+aimebu prune -a -y               # clear everything without prompt
+
 aimebu mcp                       # start MCP server (for AI assistants)
 aimebu agent --room general -- claude   # long-running harness wrapper (auto-respawn)
 ```
@@ -137,7 +142,7 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 
 ## Data directory
 
-`~/.aimebu/` — contains `rooms.json`, `messages.json`, `agents.json`, `agent-sessions.json`, `aimebu.pid`, `aimebu.log`
+`~/.aimebu/` — contains `rooms.json`, `messages.json`, `agents.json`, `agent-sessions.json` (conversation state), `macros.json` (user settings), `aimebu.pid`, `aimebu.log` (runtime artifacts). `aimebu prune` wipes conversation state; `aimebu prune -a` also wipes user settings.
 
 ## Web UI
 

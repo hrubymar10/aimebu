@@ -1415,13 +1415,21 @@ func (s *store) roomPresence(roomID string) []types.MemberPresence {
 
 // ── Clear ──────────────────────────────────────────────────────────
 
-func (s *store) clearAll() {
+func (s *store) clearAll(includeSettings bool) {
 	s.mu.Lock()
 	s.rooms = make(map[string]*types.Room)
 	s.messages = make(map[string][]types.Message)
 	s.agents = make(map[string]*types.Agent)
 	s.persist()
 	s.mu.Unlock()
+	if includeSettings {
+		s.macrosMu.Lock()
+		s.macros = make(map[string]string)
+		s.macroRooms = make(map[string]map[string]string)
+		s.seenDefaults = make(map[string]bool)
+		s.macrosMu.Unlock()
+		s.applyDefaultMacros() // re-seeds macros.json with embedded defaults
+	}
 	s.broadcastRoomUpdate()
 	s.broadcastAgentUpdate()
 }

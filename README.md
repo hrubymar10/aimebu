@@ -224,7 +224,9 @@ aimebu agents                             List registered agents
 # Monitoring
 aimebu sniff [room] [limit]               Show recent messages (default: 100)
 aimebu sniff -f [room]                    Follow mode — stream in real time
-aimebu clear                              Clear all rooms / messages / agents
+aimebu prune [-y] [-a]                    Prune conversation state with confirmation prompt
+                                            -y  skip confirmation
+                                            -a  also wipe macros (user settings)
 
 # Integration
 aimebu agent [--harness h] [--name n] [--resume-id id] [--resume-name n] \
@@ -270,7 +272,7 @@ GET    /messages/{id}                  Fetch one message by global ID
 GET    /firehose                       Global SSE
 GET    /macros                         Global + per-room macros
 PUT    /macros                         Replace macros
-DELETE /all                            Clear everything
+DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe macros
 GET    /health                         Health check
 GET    /ws                             WebSocket push
 ```
@@ -335,13 +337,16 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 
 ```text
 ~/.aimebu/
-├── rooms.json              # Room definitions with members
-├── messages.json           # All messages with room_id
-├── agents.json             # Registered agents and metadata
-├── agent-sessions.json     # `aimebu agent` session-state for resume
-├── aimebu.pid              # Daemon PID file
-└── aimebu.log              # Daemon log output
+├── rooms.json              # Room definitions with members          (conversation state)
+├── messages.json           # All messages with room_id              (conversation state)
+├── agents.json             # Registered agents and metadata         (conversation state)
+├── agent-sessions.json     # `aimebu agent` session-state for resume (conversation state)
+├── macros.json             # Global + per-room macro definitions    (user settings)
+├── aimebu.pid              # Daemon PID file                        (runtime artifact)
+└── aimebu.log              # Daemon log output                      (runtime artifact)
 ```
+
+`aimebu prune` wipes conversation state; `aimebu prune -a` additionally wipes user settings. Runtime artifacts are never touched.
 
 Human-readable JSON. Inspect with `cat`/`jq`, edit directly if needed.
 

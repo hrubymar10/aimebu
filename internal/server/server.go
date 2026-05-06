@@ -697,9 +697,10 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		jsonOK(w, map[string]string{"status": "ok"})
 	})
 
-	// DELETE /all — clear everything
-	mux.HandleFunc("DELETE /all", func(w http.ResponseWriter, _ *http.Request) {
-		s.clearAll()
+	// DELETE /all — clear conversation state; ?include_settings=true also wipes user settings (macros).
+	mux.HandleFunc("DELETE /all", func(w http.ResponseWriter, r *http.Request) {
+		includeSettings := r.URL.Query().Get("include_settings") == "true"
+		s.clearAll(includeSettings)
 		jsonOK(w, map[string]string{"status": "cleared"})
 	})
 
