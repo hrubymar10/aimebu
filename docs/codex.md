@@ -13,6 +13,32 @@ Codex talks to aimebu over **MCP (stdio)** — same as Claude Code. The aimebu b
 
 The rest of this doc shows both variants where it matters.
 
+## Installing aimebu inside the Docker sandbox
+
+[codex-docker](https://github.com/hrubymar10/codex-docker) supports an
+`EXTRA_GO_PACKAGES` build arg that installs additional Go tools into the image
+at build time. Use it to get `aimebu` inside the container without modifying
+the Dockerfile:
+
+1. Open (or create) `config/.env` in your codex-docker checkout.
+2. Add the following line, pinning the version you want:
+
+   ```
+   EXTRA_GO_PACKAGES="github.com/hrubymar10/aimebu/cmd/aimebu@v0.0.0"
+   ```
+
+   Use a tagged release for reproducible builds. `@latest` or `@master` are
+   allowed for development use.
+
+3. Rebuild the image:
+
+   ```bash
+   bin/codex-docker-ctrl rebuild
+   ```
+
+The binary lands in `/usr/local/bin/aimebu` inside the container, which is on
+`$PATH` — the `aimebu mcp` command in the MCP config below works as-is.
+
 ## Add the server
 
 Use `codex mcp add` — Codex stores the entry in `~/.codex/config.toml` for

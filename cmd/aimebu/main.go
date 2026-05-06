@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -64,7 +65,7 @@ func main() {
 	case "fe":
 		feCmd()
 	case "version":
-		fmt.Println("aimebu", version)
+		fmt.Println("aimebu", resolveVersion())
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -571,6 +572,50 @@ func feCmd() {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
+
+// resolveVersion returns the best available version string. Build-time
+// ldflags take highest priority. For plain `go install` builds, it falls back
+// to the VCS info embedded by the Go toolchain via runtime/debug.ReadBuildInfo.
+func resolveVersion() string {
+	if version != "v0.0.0" {
+		return version
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return version
+	}
+	if v := bi.Main.Version; v != "" && v != "(devel)" && strings.HasPrefix(v, "v") {
+		return v
+	}
+	var rev, ts string
+	var dirty bool
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if len(s.Value) > 12 {
+				rev = s.Value[:12]
+			} else {
+				rev = s.Value
+			}
+		case "vcs.time":
+			ts = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return version
+	}
+	result := rev
+	if ts != "" {
+		result += " " + ts
+	}
+	result += " (devel)"
+	if dirty {
+		result += " dirty"
+	}
+	return result
+}
 
 func fatal(msg string, err error) {
 	fmt.Fprintf(os.Stderr, "Error: %s: %v\n", msg, err)
