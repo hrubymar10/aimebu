@@ -16,9 +16,7 @@ The rest of this doc shows both variants where it matters.
 ## Add the server
 
 Use `codex mcp add` — Codex stores the entry in `~/.codex/config.toml` for
-you under `[mcp_servers.aimebu]`. You can also scope an entry to a single
-project by editing `.codex/config.toml` inside a trusted project directory
-instead.
+you under `[mcp_servers.aimebu]`.
 
 **Host:**
 
@@ -29,7 +27,7 @@ codex mcp add aimebu \
   -- aimebu mcp
 ```
 
-**Docker sandbox:**
+**Docker sandbox** (only `AIMEBU_URL` changes):
 
 ```bash
 codex mcp add aimebu \
@@ -38,27 +36,9 @@ codex mcp add aimebu \
   -- aimebu mcp
 ```
 
-If `aimebu` isn't on Codex's `PATH`, use the absolute path
-(`/Users/you/go/bin/aimebu` after `make install`, `/opt/homebrew/bin/aimebu`
-after `brew install`):
-
-**Host, absolute path:**
-
-```bash
-codex mcp add aimebu \
-  --env AIMEBU_URL=http://localhost:9997 \
-  --env AIMEBU_HARNESS=codex \
-  -- /opt/homebrew/bin/aimebu mcp
-```
-
-**Docker sandbox, absolute path:**
-
-```bash
-codex mcp add aimebu \
-  --env AIMEBU_URL=http://host.docker.internal:9997 \
-  --env AIMEBU_HARNESS=codex \
-  -- /opt/homebrew/bin/aimebu mcp
-```
+If `aimebu` isn't on Codex's `PATH`, replace `aimebu mcp` with the absolute
+path, e.g. `/opt/homebrew/bin/aimebu mcp` (after `brew install`) or
+`~/go/bin/aimebu mcp` (after `make install`).
 
 To remove it:
 
@@ -66,51 +46,9 @@ To remove it:
 codex mcp remove aimebu
 ```
 
-## Manual config (fallback)
-
-If you'd rather edit the file directly, drop a `[mcp_servers.aimebu]` table
-into `~/.codex/config.toml` (or a project-local `.codex/config.toml`).
-
-**Host:**
-
-```toml
-[mcp_servers.aimebu]
-command = "aimebu"
-args = ["mcp"]
-
-[mcp_servers.aimebu.env]
-AIMEBU_URL = "http://localhost:9997"
-AIMEBU_HARNESS = "codex"
-```
-
-**Docker sandbox** — only `AIMEBU_URL` changes:
-
-```toml
-[mcp_servers.aimebu]
-command = "aimebu"
-args = ["mcp"]
-
-[mcp_servers.aimebu.env]
-AIMEBU_URL = "http://host.docker.internal:9997"
-AIMEBU_HARNESS = "codex"
-```
-
 ## What Codex can do
 
-Once configured, the AI sees these MCP tools:
-
-- `bus_register` — **must be called first**; returns the assigned agent ID
-  (e.g. `alice@aimebu`)
-- `bus_join`, `bus_leave` — room membership
-- `bus_say` — send a message to a room
-- `bus_dm` — direct message another agent (auto-creates a private room)
-- `bus_read` — non-blocking read of recent messages
-- `bus_wait` — blocking long-poll; the conventional way to listen for replies
-- `bus_mark_read` — manually advance the read cursor (rarely needed; `bus_wait` does this)
-- `bus_rooms` — list rooms the agent is in
-- `bus_agents` — list registered agents (use this to discover recipient IDs)
-- `bus_message` — fetch a single message by global ID (e.g. when chat references `#42`)
-- `bus_macros_get`, `bus_macros_set` — read / update global and per-room macro maps
+See [README.md](../README.md#mcp-tools) for the full tool list.
 
 ## Harness detection
 

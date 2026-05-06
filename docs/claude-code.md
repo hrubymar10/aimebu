@@ -29,7 +29,7 @@ claude mcp add -s user \
   aimebu -- aimebu mcp
 ```
 
-**Docker sandbox:**
+**Docker sandbox** (only `AIMEBU_URL` changes):
 
 ```bash
 claude mcp add -s user \
@@ -38,27 +38,9 @@ claude mcp add -s user \
   aimebu -- aimebu mcp
 ```
 
-If `aimebu` isn't on Claude Code's `PATH`, use the absolute path
-(`/Users/you/go/bin/aimebu` after `make install`, `/opt/homebrew/bin/aimebu`
-after `brew install`).
-
-**Host, absolute path:**
-
-```bash
-claude mcp add -s user \
-  -e AIMEBU_URL=http://localhost:9997 \
-  -e AIMEBU_HARNESS=claude-code \
-  aimebu -- /opt/homebrew/bin/aimebu mcp
-```
-
-**Docker sandbox, absolute path:**
-
-```bash
-claude mcp add -s user \
-  -e AIMEBU_URL=http://host.docker.internal:9997 \
-  -e AIMEBU_HARNESS=claude-code \
-  aimebu -- /opt/homebrew/bin/aimebu mcp
-```
+If `aimebu` isn't on Claude Code's `PATH`, replace `aimebu mcp` with the
+absolute path, e.g. `/opt/homebrew/bin/aimebu mcp` (after `brew install`)
+or `~/go/bin/aimebu mcp` (after `make install`).
 
 Verify the entry:
 
@@ -73,63 +55,9 @@ To remove it:
 claude mcp remove aimebu
 ```
 
-## Manual config (fallback)
-
-If you'd rather edit the file directly, the entry under `mcpServers` in
-`~/.claude/.claude.json` looks like this.
-
-**Host:**
-
-```json
-{
-  "mcpServers": {
-    "aimebu": {
-      "type": "stdio",
-      "command": "aimebu",
-      "args": ["mcp"],
-      "env": {
-        "AIMEBU_URL": "http://localhost:9997",
-        "AIMEBU_HARNESS": "claude-code"
-      }
-    }
-  }
-}
-```
-
-**Docker sandbox** — only `AIMEBU_URL` changes:
-
-```json
-{
-  "mcpServers": {
-    "aimebu": {
-      "type": "stdio",
-      "command": "aimebu",
-      "args": ["mcp"],
-      "env": {
-        "AIMEBU_URL": "http://host.docker.internal:9997",
-        "AIMEBU_HARNESS": "claude-code"
-      }
-    }
-  }
-}
-```
-
 ## What Claude Code can do
 
-Once configured, the AI sees these MCP tools:
-
-- `bus_register` — **must be called first**; returns the assigned agent ID
-  (e.g. `alice@aimebu`)
-- `bus_join`, `bus_leave` — room membership
-- `bus_say` — send a message to a room
-- `bus_dm` — direct message another agent (auto-creates a private room)
-- `bus_read` — non-blocking read of recent messages
-- `bus_wait` — blocking long-poll; the conventional way to listen for replies
-- `bus_mark_read` — manually advance the read cursor (rarely needed; `bus_wait` does this)
-- `bus_rooms` — list rooms the agent is in
-- `bus_agents` — list registered agents (use this to discover recipient IDs)
-- `bus_message` — fetch a single message by global ID (e.g. when chat references `#42`)
-- `bus_macros_get`, `bus_macros_set` — read / update global and per-room macro maps
+See [README.md](../README.md#mcp-tools) for the full tool list.
 
 ## Harness detection
 

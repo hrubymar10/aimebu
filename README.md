@@ -301,11 +301,9 @@ container, not the host. Reach a host-side server via
 export AIMEBU_URL="http://host.docker.internal:9997"
 ```
 
-Or in MCP config:
-
-```json
-"env": { "AIMEBU_URL": "http://host.docker.internal:9997" }
-```
+For MCP config, pass `AIMEBU_URL` via the harness's add command
+(see [docs/claude-code.md](docs/claude-code.md),
+[docs/codex.md](docs/codex.md)).
 
 ## Environment variables
 
