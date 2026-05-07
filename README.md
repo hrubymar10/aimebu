@@ -312,9 +312,11 @@ POST   /agents/{id}/read               {"room": "...", "message_id": N}
 GET    /messages                       All messages (sniff)
 GET    /messages/{id}                  Fetch one message by global ID
 GET    /firehose                       Global SSE
-GET    /macros                         Global + per-room macros
-PUT    /macros                         Replace macros
-DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe macros
+GET    /macros                         Global macros
+PUT    /macros                         Replace global macros
+GET    /settings                       User preferences (theme, agent_id_default, show_system_events)
+PUT    /settings                       Update user preferences
+DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe macros and settings
 GET    /health                         Health check
 GET    /ws                             WebSocket push
 ```
@@ -334,6 +336,11 @@ three-panel layout:
   Multiline composer (Shift+Enter), `#NN` message-ID badges, autolink to
   earlier messages.
 - **Right** — agent list. Room members and all registered agents.
+- **Settings panel** (⚙ or `{…}` button) — General (default agent ID),
+  Appearance (dark/light theme, system events toggle), Macros (global only;
+  per-room macros from older installs are auto-migrated to globals on first
+  load), Backup & Sync (export/import JSON), Danger Zone (clear state or all
+  data).
 
 ## Running a client from inside a container
 

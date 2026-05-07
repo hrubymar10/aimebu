@@ -25,11 +25,13 @@ var defaultMacrosJSON []byte
 
 // macrosEnvelope is the canonical on-disk and API shape for macros.json.
 // SeenDefaults is internal state (persisted but not exposed via the HTTP API).
-// Older files used a per-user map[string]map[string]string (v1) or
-// {macros, seen_defaults} without rooms (v2); load() detects and migrates both.
+// Older files used a per-user map[string]map[string]string (v1),
+// {macros, seen_defaults} without rooms (v2), or included a rooms field (v3).
+// load() detects and migrates all three; v3 rooms are merged into globals on
+// first load and never written back.
 type macrosEnvelope struct {
 	Macros       map[string]string            `json:"macros"`
-	Rooms        map[string]map[string]string `json:"rooms,omitempty"`
+	Rooms        map[string]map[string]string `json:"rooms,omitempty"` // read-only for migration; never written after merge
 	SeenDefaults []string                     `json:"seen_defaults,omitempty"`
 }
 
@@ -75,9 +77,11 @@ type store struct {
 	roomEmptySince map[string]time.Time
 
 	macrosMu     sync.RWMutex
-	macros       map[string]string            // global shared macro map
-	macroRooms   map[string]map[string]string // per-room macro maps
-	seenDefaults map[string]bool              // keys already offered via defaults (write-once)
+	macros       map[string]string // global shared macro map
+	seenDefaults map[string]bool   // keys already offered via defaults (write-once)
+
+	settingsMu sync.RWMutex
+	settings   Settings
 }
 
 func newStore(dir string) (*store, error) {
@@ -93,9 +97,8 @@ func newStore(dir string) (*store, error) {
 		roomSubs:       make(map[string][]chan types.Message),
 		openWaits:      make(map[string]map[string]int),
 		roomEmptySince: make(map[string]time.Time),
-		macros:         make(map[string]string),
-		macroRooms:     make(map[string]map[string]string),
-		seenDefaults:   make(map[string]bool),
+		macros:       make(map[string]string),
+		seenDefaults: make(map[string]bool),
 	}
 
 	if err := s.load(); err != nil {
@@ -249,6 +252,9 @@ func (s *store) load() error {
 		}
 	}
 
+	// Settings — persisted separately; survives schema wipes and prune (unless include_settings=true).
+	s.loadSettings()
+
 	// Macros — separate from schema-versioned state; survives schema wipes.
 	// Handles three historical shapes:
 	//   v1: per-user  {agentID: {key: body}}
@@ -260,8 +266,41 @@ func (s *store) load() error {
 		if json.Unmarshal(data, &env) == nil && env.Macros != nil {
 			// v2 or v3
 			s.macros = env.Macros
-			if env.Rooms != nil {
-				s.macroRooms = env.Rooms
+			// v3 migration: merge per-room macros into globals (deterministic:
+			// room IDs sorted, keys within each room sorted; global-wins on collision).
+			// After merge, rooms are never written back.
+			if len(env.Rooms) > 0 {
+				migrated, skippedGlobal, skippedClaimed := 0, 0, 0
+				preExisting := make(map[string]bool, len(s.macros))
+				for k := range s.macros {
+					preExisting[k] = true
+				}
+				roomIDs := make([]string, 0, len(env.Rooms))
+				for rid := range env.Rooms {
+					roomIDs = append(roomIDs, rid)
+				}
+				sort.Strings(roomIDs)
+				for _, rid := range roomIDs {
+					rm := env.Rooms[rid]
+					keys := make([]string, 0, len(rm))
+					for k := range rm {
+						keys = append(keys, k)
+					}
+					sort.Strings(keys)
+					for _, k := range keys {
+						if preExisting[k] {
+							skippedGlobal++
+							continue
+						}
+						if _, exists := s.macros[k]; exists {
+							skippedClaimed++
+							continue
+						}
+						s.macros[k] = rm[k]
+						migrated++
+					}
+				}
+				log.Printf("macros: migrated %d global macro(s) from legacy per-room scope (skipped: %d global-exists, %d already-claimed-by-earlier-room)", migrated, skippedGlobal, skippedClaimed)
 			}
 			for _, k := range env.SeenDefaults {
 				s.seenDefaults[k] = true
@@ -1496,10 +1535,10 @@ func (s *store) clearAll(includeSettings bool) {
 	if includeSettings {
 		s.macrosMu.Lock()
 		s.macros = make(map[string]string)
-		s.macroRooms = make(map[string]map[string]string)
 		s.seenDefaults = make(map[string]bool)
 		s.macrosMu.Unlock()
 		s.applyDefaultMacros() // re-seeds macros.json with embedded defaults
+		s.clearSettings()
 	}
 	s.broadcastRoomUpdate()
 	s.broadcastAgentUpdate()
@@ -1634,28 +1673,13 @@ func (s *store) getEnvelope() macrosEnvelope {
 	for k, v := range s.macros {
 		globals[k] = v
 	}
-	rooms := make(map[string]map[string]string, len(s.macroRooms))
-	for rid, rm := range s.macroRooms {
-		cp := make(map[string]string, len(rm))
-		for k, v := range rm {
-			cp[k] = v
-		}
-		rooms[rid] = cp
-	}
-	return macrosEnvelope{Macros: globals, Rooms: rooms}
+	return macrosEnvelope{Macros: globals}
 }
 
 func (s *store) setEnvelope(env macrosEnvelope) {
 	s.macrosMu.Lock()
-	// Absent field (nil) = preserve existing; explicit empty map = wipe.
-	// This lets MCP callers patch just globals or just rooms without clobbering
-	// the other side. The frontend always sends both maps (even as `{}`) so its
-	// full-replace semantics are unaffected.
 	if env.Macros != nil {
 		s.macros = env.Macros
-	}
-	if env.Rooms != nil {
-		s.macroRooms = env.Rooms
 	}
 	s.macrosMu.Unlock()
 	s.persistMacros()
@@ -1669,11 +1693,7 @@ func (s *store) persistMacros() {
 		sdKeys = append(sdKeys, k)
 	}
 	sort.Strings(sdKeys)
-	var rooms map[string]map[string]string
-	if len(s.macroRooms) > 0 {
-		rooms = s.macroRooms
-	}
-	f := macrosEnvelope{Macros: s.macros, Rooms: rooms, SeenDefaults: sdKeys}
+	f := macrosEnvelope{Macros: s.macros, SeenDefaults: sdKeys}
 	data, err := json.MarshalIndent(f, "", "  ")
 	s.macrosMu.RUnlock()
 	if err == nil {
@@ -1709,11 +1729,7 @@ func (s *store) applyDefaultMacros() {
 			sdKeys = append(sdKeys, k)
 		}
 		sort.Strings(sdKeys)
-		var rooms map[string]map[string]string
-		if len(s.macroRooms) > 0 {
-			rooms = s.macroRooms
-		}
-		f := macrosEnvelope{Macros: s.macros, Rooms: rooms, SeenDefaults: sdKeys}
+		f := macrosEnvelope{Macros: s.macros, SeenDefaults: sdKeys}
 		data, _ = json.MarshalIndent(f, "", "  ")
 	}
 	s.macrosMu.Unlock()

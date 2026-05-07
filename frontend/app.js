@@ -31,12 +31,12 @@
   let presence = {};
   let markdownMode = localStorage.getItem('aimebu.ui.markdownMode') || 'rendered';
   let macros = {};           // { lowercasedKey: body } — global shared macros
-  let macroRooms = {};       // { roomID: { key: body } } — per-room overrides
   let systemEvents = [];     // Message[] — _system room events
   let systemUnread = 0;      // unread count for broadcast panel
   let systemSSE = null;      // EventSource for _system room
-  let macrosScopeTab = 'global'; // 'global' | roomID — active macros panel tab
   let macrosSaveTimer = null;
+  let serverSettings = {};   // Settings from GET /settings
+  let macrosFilter = '';     // search filter for macros panel
 
   // Autocomplete state
   let acItems = [];          // string[] — current candidate macro keys
@@ -50,7 +50,16 @@
   const connectionStatus = $('#connection-status');
   const statusText = connectionStatus.querySelector('.status-text');
   const settingsBtn = $('#settings-btn');
-  const settingsDropdown = $('#settings-dropdown');
+  const settingsModal = $('#settings-modal');
+  const settingsOverlay = $('#settings-overlay');
+  const settingsCloseBtn = $('#settings-close-btn');
+  const settingsSectionTitle = $('#settings-section-title');
+  const themeToggleBtn = $('#theme-toggle-btn');
+  const macrosSearchInput = $('#macros-search-input');
+  const backupExportBtn = $('#backup-export-btn');
+  const backupImportBtn = $('#backup-import-btn');
+  const backupImportFile = $('#backup-import-file');
+  const clearStateBtn = $('#clear-state-btn');
   const clearAllBtn = $('#clear-all-btn');
 
   const joinRoomInput = $('#join-room-input');
@@ -84,16 +93,13 @@
   const systemEventsPanel = $('#system-events-panel');
   const systemEventsListEl = $('#system-events-list');
 
-  const macrosBtn = $('#macros-btn');
-  const macrosPanel = $('#macros-panel');
   const macrosListEl = $('#macros-list');
   const macroAddForm = $('#macro-add-form');
   const macroKeyInput = $('#macro-key-input');
   const macroBodyInput = $('#macro-body-input');
-  const macrosExportBtn = $('#macros-export-btn');
-  const macrosImportBtn = $('#macros-import-btn');
-  const macrosTabsEl = $('#macros-tabs');
   const acPopupEl = $('#ac-popup');
+  const agentIDDefaultInput = $('#agent-id-default-input');
+  const systemEventsToggleBtn = $('#system-events-toggle-btn');
 
   // ── Harness icons ────────────────────────────────────────────────
 
@@ -275,19 +281,16 @@
     }
   }
 
-  function expandMacros(body, roomID) {
+  function expandMacros(body) {
     // \<KEY> passes through as literal <KEY> (backslash stripped).
     var ESCAPE = '\x02';
     var s = body.replace(/\\</g, ESCAPE);
-    var roomMacros = (roomID && macroRooms[roomID]) || {};
     // Recursive expansion, depth-capped to 8 to handle cycles.
     var MAX_DEPTH = 8;
     for (var i = 0; i < MAX_DEPTH; i++) {
       var next = s.replace(/<([a-z][a-z0-9_-]*)>/gi, function (_, key) {
         var k = key.toLowerCase();
-        // Room-scoped macros shadow global
-        var val = roomMacros[k] !== undefined ? roomMacros[k] : macros[k];
-        return val !== undefined ? val : '<' + key + '>';
+        return macros[k] !== undefined ? macros[k] : '<' + key + '>';
       });
       if (next === s) break;
       s = next;
@@ -295,11 +298,9 @@
     return s.replace(/\x02/g, '<');
   }
 
-  function getMergedMacros(roomID) {
+  function getMergedMacros() {
     var merged = {};
     Object.keys(macros).forEach(function (k) { merged[k] = macros[k]; });
-    var rm = (roomID && macroRooms[roomID]) || {};
-    Object.keys(rm).forEach(function (k) { merged[k] = rm[k]; });
     return merged;
   }
 
@@ -333,7 +334,7 @@
   function updateAcPopup() {
     var partial = getAcPartial();
     if (partial === null) { hideAcPopup(); return; }
-    var merged = getMergedMacros(activeRoomID);
+    var merged = getMergedMacros();
     var lc = partial.toLowerCase();
     var matches = Object.keys(merged).filter(function (k) {
       return k.indexOf(lc) === 0;
@@ -389,57 +390,29 @@
     msgBodyInput.focus();
   }
 
-  function renderMacrosTabs() {
-    if (!macrosTabsEl) return;
-    // If scope is a room that's no longer active, reset to global
-    if (macrosScopeTab !== 'global' && macrosScopeTab !== activeRoomID) {
-      macrosScopeTab = 'global';
-    }
-    var tabs = [{ id: 'global', label: 'Global' }];
-    if (activeRoomID) tabs.push({ id: activeRoomID, label: '#' + activeRoomID });
-    macrosTabsEl.innerHTML = tabs.map(function (t) {
-      return (
-        '<button class="macros-tab' + (macrosScopeTab === t.id ? ' active' : '') +
-        '" data-tab="' + esc(t.id) + '" type="button">' + esc(t.label) + '</button>'
-      );
-    }).join('');
-    macrosTabsEl.querySelectorAll('.macros-tab').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        macrosScopeTab = btn.getAttribute('data-tab');
-        renderMacrosTabs();
-        renderMacrosList();
-      });
-    });
-  }
-
   function renderMacrosList() {
-    var scope = macrosScopeTab === 'global'
-      ? macros
-      : (macroRooms[macrosScopeTab] || {});
-    var keys = Object.keys(scope).sort();
+    if (!macrosListEl) return;
+    var lc = macrosFilter.toLowerCase();
+    var keys = Object.keys(macros).filter(function (k) {
+      return !lc || k.indexOf(lc) !== -1 || macros[k].toLowerCase().indexOf(lc) !== -1;
+    }).sort();
     if (keys.length === 0) {
-      macrosListEl.innerHTML = '<div class="empty-state">No macros defined.</div>';
+      macrosListEl.innerHTML = '<div class="empty-state">' +
+        (lc ? 'No macros match "' + esc(lc) + '".' : 'No macros defined.') + '</div>';
       return;
     }
     macrosListEl.innerHTML = keys.map(function (k) {
       return (
         '<div class="macro-row">' +
           '<span class="macro-key">&lt;' + esc(k.toUpperCase()) + '&gt;</span>' +
-          '<span class="macro-body">' + esc(scope[k]) + '</span>' +
+          '<span class="macro-body">' + esc(macros[k]) + '</span>' +
           '<button class="btn btn-sm btn-danger macro-delete-btn" data-key="' + esc(k) + '" type="button">&times;</button>' +
         '</div>'
       );
     }).join('');
     macrosListEl.querySelectorAll('.macro-delete-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        var k = btn.getAttribute('data-key');
-        if (macrosScopeTab === 'global') {
-          delete macros[k];
-        } else {
-          var rm = macroRooms[macrosScopeTab] || {};
-          delete rm[k];
-          macroRooms[macrosScopeTab] = rm;
-        }
+        delete macros[btn.getAttribute('data-key')];
         renderMacrosList();
         scheduleMacrosSave();
       });
@@ -449,7 +422,7 @@
   function scheduleMacrosSave() {
     if (macrosSaveTimer) clearTimeout(macrosSaveTimer);
     macrosSaveTimer = setTimeout(function () {
-      api('PUT', '/macros', { macros: macros, rooms: macroRooms })
+      api('PUT', '/macros', { macros: macros })
         .catch(function (err) { console.error('Failed to save macros:', err); });
     }, 500);
   }
@@ -458,11 +431,9 @@
     return api('GET', '/macros')
       .then(function (data) {
         macros = data.macros || {};
-        macroRooms = data.rooms || {};
-        renderMacrosTabs();
         renderMacrosList();
       })
-      .catch(function () { macros = {}; macroRooms = {}; renderMacrosTabs(); renderMacrosList(); });
+      .catch(function () { macros = {}; renderMacrosList(); });
   }
 
   function scrollToMessage(id, triggerEl) {
@@ -705,19 +676,153 @@
     });
   }
 
+  // ── Settings ─────────────────────────────────────────────────────
+
+  function applyTheme(theme) {
+    if (theme === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    if (themeToggleBtn) {
+      themeToggleBtn.textContent = (theme === 'light') ? 'Dark' : 'Light';
+    }
+  }
+
+  function applyShowSystemEvents(show) {
+    broadcastBtn.style.display = show ? '' : 'none';
+    if (systemEventsToggleBtn) {
+      systemEventsToggleBtn.textContent = show ? 'Hide' : 'Show';
+    }
+  }
+
+  function loadSettings() {
+    return api('GET', '/settings').then(function (data) {
+      serverSettings = data || {};
+      // localStorage shadows the server value so the browser keeps its last
+      // explicit choice even when the server default changes.
+      var localTheme = localStorage.getItem('aimebu.ui.theme');
+      applyTheme(localTheme || serverSettings.theme || 'dark');
+      // show_system_events: server default is true; false = hidden
+      applyShowSystemEvents(serverSettings.show_system_events !== false);
+      // agent_id_default: pre-fill topbar only when nothing was stored locally
+      if (!agentIDFromStorage && serverSettings.agent_id_default) {
+        agentID = serverSettings.agent_id_default;
+        agentIDInput.value = agentID;
+      }
+      if (agentIDDefaultInput) {
+        agentIDDefaultInput.value = serverSettings.agent_id_default || '';
+      }
+    }).catch(function () {});
+  }
+
+  function saveSettings(patch) {
+    Object.assign(serverSettings, patch);
+    return api('PUT', '/settings', serverSettings).catch(function (err) {
+      console.error('Failed to save settings:', err);
+    });
+  }
+
+  function openSettings(section) {
+    settingsModal.classList.remove('hidden');
+    if (section) {
+      activateSettingsSection(section);
+    }
+    renderMacrosList();
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeSettings() {
+    settingsModal.classList.add('hidden');
+    document.body.style.overflow = '';
+  }
+
+  function activateSettingsSection(section) {
+    settingsModal.querySelectorAll('.settings-nav-item').forEach(function (el) {
+      el.classList.toggle('active', el.getAttribute('data-section') === section);
+    });
+    settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
+      el.classList.toggle('active', el.getAttribute('data-section') === section);
+    });
+    var titles = { general: 'General', appearance: 'Appearance', macros: 'Macros', backup: 'Backup & Sync', danger: 'Danger Zone' };
+    if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
+  }
+
+  function exportBackup() {
+    var payload = { settings: serverSettings, macros: macros };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'aimebu-backup.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importBackup(file) {
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      var data;
+      try { data = JSON.parse(e.target.result); } catch (_) { alert('Invalid JSON file'); return; }
+      var promises = [];
+      if (data.settings && typeof data.settings === 'object') {
+        serverSettings = data.settings;
+        promises.push(api('PUT', '/settings', serverSettings));
+        var localTheme = localStorage.getItem('aimebu.ui.theme');
+        applyTheme(localTheme || serverSettings.theme || 'dark');
+        applyShowSystemEvents(serverSettings.show_system_events !== false);
+        if (agentIDDefaultInput) agentIDDefaultInput.value = serverSettings.agent_id_default || '';
+      }
+      if (data.macros && typeof data.macros === 'object') {
+        var imported = 0, skipped = 0;
+        Object.keys(data.macros).forEach(function (k) {
+          var key = k.toLowerCase().trim();
+          if (/^[a-z][a-z0-9_-]*$/.test(key) && typeof data.macros[k] === 'string') {
+            macros[key] = data.macros[k];
+            imported++;
+          } else {
+            skipped++;
+          }
+        });
+        promises.push(api('PUT', '/macros', { macros: macros }));
+        renderMacrosList();
+        if (backupImportBtn) {
+          backupImportBtn.textContent = 'Imported ' + imported + (skipped ? ' / skipped ' + skipped : '');
+          setTimeout(function () { backupImportBtn.textContent = 'Import JSON'; }, 2500);
+        }
+      }
+      Promise.all(promises).catch(function (err) { console.error('Import failed:', err); });
+    };
+    reader.readAsText(file);
+  }
+
+  function resetLocalState() {
+    rooms = [];
+    messages = {};
+    agents = [];
+    activeRoomID = null;
+    prevSubscribedRoom = null;
+    lastMessagePreview = {};
+    renderRooms();
+    showNoRoom();
+    renderAllAgents();
+    renderRoomAgents();
+  }
+
+  function clearState() {
+    return api('DELETE', '/all').then(resetLocalState);
+  }
+
   function clearAll() {
-    return api('DELETE', '/all').then(function () {
-      rooms = [];
-      messages = {};
-      agents = [];
-      activeRoomID = null;
-      prevSubscribedRoom = null;
-      lastMessagePreview = {};
-      renderRooms();
-      showNoRoom();
-      renderAllAgents();
-      renderRoomAgents();
-      // Server broadcasts room_update + agent_update via WS
+    return api('DELETE', '/all?include_settings=true').then(function () {
+      resetLocalState();
+      macros = {};
+      serverSettings = {};
+      localStorage.removeItem('aimebu.ui.theme');
+      applyTheme('dark');
+      applyShowSystemEvents(true);
+      renderMacrosList();
+      if (agentIDDefaultInput) agentIDDefaultInput.value = '';
     });
   }
 
@@ -976,9 +1081,6 @@
     // Update sidebar highlights
     renderRooms();
     renderRoomAgents();
-
-    // Refresh macros tabs (room tab appears/changes when active room changes)
-    renderMacrosTabs();
 
     // On mobile, switch to chat tab
     setMobileTab('chat');
@@ -1404,26 +1506,75 @@
     }
   });
 
-  // Settings dropdown
-  settingsBtn.addEventListener('click', function (e) {
-    e.stopPropagation();
-    settingsDropdown.classList.toggle('hidden');
+  // Settings modal open/close
+  settingsBtn.addEventListener('click', function () { openSettings('general'); });
+  settingsCloseBtn.addEventListener('click', closeSettings);
+  settingsOverlay.addEventListener('click', closeSettings);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !settingsModal.classList.contains('hidden')) closeSettings();
   });
 
-  document.addEventListener('click', function () {
-    settingsDropdown.classList.add('hidden');
-  });
-
-  settingsDropdown.addEventListener('click', function (e) {
-    e.stopPropagation();
-  });
-
-  // Clear all
-  clearAllBtn.addEventListener('click', function () {
-    if (!confirm('Clear all rooms, messages, and agents? This cannot be undone.')) return;
-    clearAll().catch(function (err) {
-      alert('Error: ' + err.message);
+  // Settings nav
+  settingsModal.querySelectorAll('.settings-nav-item').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      activateSettingsSection(btn.getAttribute('data-section'));
     });
+  });
+
+  // Theme toggle — writes to both localStorage (client-local) and server settings.
+  themeToggleBtn.addEventListener('click', function () {
+    var next = (serverSettings.theme === 'light') ? 'dark' : 'light';
+    localStorage.setItem('aimebu.ui.theme', next);
+    saveSettings({ theme: next });
+    applyTheme(next);
+  });
+
+  // System events visibility toggle
+  if (systemEventsToggleBtn) {
+    systemEventsToggleBtn.addEventListener('click', function () {
+      var current = serverSettings.show_system_events !== false;
+      var next = !current;
+      saveSettings({ show_system_events: next });
+      applyShowSystemEvents(next);
+    });
+  }
+
+  // Agent ID default — debounced PUT on change
+  var agentIDDefaultSaveTimer = null;
+  if (agentIDDefaultInput) {
+    agentIDDefaultInput.addEventListener('input', function () {
+      clearTimeout(agentIDDefaultSaveTimer);
+      agentIDDefaultSaveTimer = setTimeout(function () {
+        saveSettings({ agent_id_default: agentIDDefaultInput.value.trim() });
+      }, 600);
+    });
+  }
+
+  // Macros search filter
+  macrosSearchInput.addEventListener('input', function () {
+    macrosFilter = macrosSearchInput.value;
+    renderMacrosList();
+  });
+
+  // Backup & Sync
+  backupExportBtn.addEventListener('click', exportBackup);
+  backupImportBtn.addEventListener('click', function () { backupImportFile.click(); });
+  backupImportFile.addEventListener('change', function () {
+    if (backupImportFile.files.length > 0) {
+      importBackup(backupImportFile.files[0]);
+      backupImportFile.value = '';
+    }
+  });
+
+  // Danger zone
+  clearStateBtn.addEventListener('click', function () {
+    if (!confirm('Clear all rooms, messages, and agents? Macros and settings are preserved. This cannot be undone.')) return;
+    clearState().catch(function (err) { alert('Error: ' + err.message); });
+  });
+
+  clearAllBtn.addEventListener('click', function () {
+    if (!confirm('Clear everything including macros and settings? This cannot be undone.')) return;
+    clearAll().catch(function (err) { alert('Error: ' + err.message); });
   });
 
   // Join room
@@ -1576,7 +1727,7 @@
   // Send message
   sendForm.addEventListener('submit', function (e) {
     e.preventDefault();
-    var body = expandMacros(msgBodyInput.value.trim(), activeRoomID);
+    var body = expandMacros(msgBodyInput.value.trim());
     if (!body) return;
     hideAcPopup();
     sendMessage(body);
@@ -1605,16 +1756,6 @@
     }
   });
 
-  // Macros panel
-  macrosBtn.addEventListener('click', function () {
-    macrosPanel.classList.toggle('hidden');
-    if (!macrosPanel.classList.contains('hidden')) {
-      renderMacrosTabs();
-      renderMacrosList();
-      macroKeyInput.focus();
-    }
-  });
-
   macroAddForm.addEventListener('submit', function (e) {
     e.preventDefault();
     var key = macroKeyInput.value.trim().toLowerCase().replace(/\s+/g, '');
@@ -1624,57 +1765,17 @@
       setTimeout(function () { macroKeyInput.classList.remove('error'); }, 800);
       return;
     }
-    var scope = macrosScopeTab === 'global'
-      ? macros
-      : (macroRooms[macrosScopeTab] || (macroRooms[macrosScopeTab] = {}));
-    if (scope[key] !== undefined) {
+    if (macros[key] !== undefined) {
       macroKeyInput.classList.add('error');
       setTimeout(function () { macroKeyInput.classList.remove('error'); }, 800);
       return;
     }
-    scope[key] = body;
+    macros[key] = body;
     renderMacrosList();
     scheduleMacrosSave();
     macroKeyInput.value = '';
     macroBodyInput.value = '';
     macroKeyInput.focus();
-  });
-
-  macrosExportBtn.addEventListener('click', function () {
-    var scope = macrosScopeTab === 'global' ? macros : (macroRooms[macrosScopeTab] || {});
-    navigator.clipboard.writeText(JSON.stringify(scope, null, 2)).then(function () {
-      macrosExportBtn.textContent = 'Copied!';
-      setTimeout(function () { macrosExportBtn.textContent = 'Export'; }, 1500);
-    }).catch(function () {});
-  });
-
-  macrosImportBtn.addEventListener('click', function () {
-    navigator.clipboard.readText().then(function (text) {
-      var imported;
-      try { imported = JSON.parse(text); } catch (e) { alert('Invalid JSON'); return; }
-      if (typeof imported !== 'object' || Array.isArray(imported)) { alert('Expected a JSON object'); return; }
-      var scope = macrosScopeTab === 'global'
-        ? macros
-        : (macroRooms[macrosScopeTab] || (macroRooms[macrosScopeTab] = {}));
-      var added = 0, skipped = 0;
-      Object.keys(imported).forEach(function (k) {
-        var key = k.toLowerCase().trim();
-        if (/^[a-z][a-z0-9_-]*$/.test(key) && typeof imported[k] === 'string') {
-          if (scope[key] !== undefined) {
-            skipped++;
-          } else {
-            scope[key] = imported[k];
-            added++;
-          }
-        } else {
-          skipped++; // invalid key or non-string body
-        }
-      });
-      renderMacrosList();
-      scheduleMacrosSave();
-      macrosImportBtn.textContent = 'Imported ' + added + ' / skipped ' + skipped;
-      setTimeout(function () { macrosImportBtn.textContent = 'Import'; }, 2000);
-    }).catch(function () { alert('Could not read clipboard'); });
   });
 
   // Flush pending macros save on tab close (keepalive lets the request complete
@@ -1687,7 +1788,7 @@
       fetch('/macros', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ macros: macros, rooms: macroRooms }),
+        body: JSON.stringify({ macros: macros }),
         keepalive: true,
       });
     }
@@ -1741,6 +1842,8 @@
     systemEvents = (data.messages || []).slice().reverse();
   }).catch(function () {});
   connectSystemSSE();
+
+  loadSettings();
 
   prefillPromise.then(function () {
     return registerHuman().catch(function () {});

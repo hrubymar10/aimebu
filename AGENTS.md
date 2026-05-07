@@ -172,7 +172,7 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 
 ## Data directory
 
-`~/.aimebu/` — contains `rooms.json`, `messages.json`, `agents.json`, `agent-sessions.json` (conversation state), `macros.json` (user settings), `aimebu.pid`, `aimebu.log` (runtime artifacts). `aimebu prune` wipes conversation state; `aimebu prune -a` also wipes user settings. When `AIMEBU_URL` is loopback and the server is down, the CLI falls back to pruning this directory directly.
+`~/.aimebu/` — contains `rooms.json`, `messages.json`, `agents.json`, `agent-sessions.json` (conversation state), `macros.json` (global macros only; any legacy per-room macros from older installs are auto-merged into globals on first load), `settings.json` (UI preferences: theme, agent_id_default, show_system_events), `aimebu.pid`, `aimebu.log` (runtime artifacts). `aimebu prune` wipes conversation state; `aimebu prune -a` also wipes macros and settings. When `AIMEBU_URL` is loopback and the server is down, the CLI falls back to pruning this directory directly.
 
 ## Web UI
 

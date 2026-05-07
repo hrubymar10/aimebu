@@ -42,6 +42,34 @@
   --sidebar-right-w: 260px;
 }
 
+/* ── Light theme ─────────────────────────────────────────────── */
+
+[data-theme="light"] {
+  --bg-primary: #f6f8fa;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f0f2f5;
+  --bg-hover: #eaedf1;
+  --border: #d0d7de;
+  --border-hover: #b6bcc2;
+  --text-primary: #1f2328;
+  --text-secondary: #57606a;
+  --text-muted: #848d97;
+  --accent: #0969da;
+  --accent-hover: #0860ca;
+  --accent-dim: rgba(9, 105, 218, 0.1);
+  --accent-border: rgba(9, 105, 218, 0.2);
+  --green: #1a7f37;
+  --green-hover: #196f30;
+  --green-text: #1a7f37;
+  --red: #d1242f;
+  --red-bg: #cf222e;
+  --red-dim: rgba(209, 36, 47, 0.1);
+  --orange: #9a6700;
+  --purple: #8250df;
+  --purple-dim: rgba(130, 80, 223, 0.1);
+  --purple-border: rgba(130, 80, 223, 0.2);
+}
+
 html {
   font-size: 14px;
 }
@@ -174,49 +202,246 @@ body {
   background: var(--bg-tertiary);
 }
 
-.settings-dropdown {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 4px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 4px;
-  min-width: 160px;
-  z-index: 200;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+/* ── Settings modal ──────────────────────────────────────────── */
+
+.settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: stretch;
 }
 
-.settings-dropdown.hidden {
+.settings-modal.hidden {
   display: none;
 }
 
-.dropdown-item {
+.settings-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.settings-pane {
+  position: relative;
+  display: flex;
+  width: 760px;
+  max-width: 96vw;
+  height: 100%;
+  max-height: 100vh;
+  margin: auto;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  width: 180px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  padding: 16px 8px;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.settings-nav-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 4px 8px 10px;
+}
+
+.settings-nav-item {
   display: block;
   width: 100%;
-  padding: 8px 12px;
+  padding: 7px 10px;
   background: none;
   border: none;
-  color: var(--text-primary);
-  font-size: 0.8rem;
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
   font-family: var(--font-sans);
   text-align: left;
   cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+
+.settings-nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.settings-nav-item.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.settings-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-body-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.settings-section-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-close-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 2px 6px;
   border-radius: var(--radius);
-  transition: background var(--transition);
+  transition: background var(--transition), color var(--transition);
+  line-height: 1;
 }
 
-.dropdown-item:hover {
+.settings-close-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.settings-section {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.settings-section.active {
+  display: flex;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-row:last-child {
+  border-bottom: none;
+}
+
+.settings-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.settings-desc {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.settings-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.settings-text-input {
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  width: 180px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.settings-text-input:focus {
+  border-color: var(--accent);
+}
+
+.settings-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  padding: 10px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-hint code {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
   background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 4px;
+  color: var(--accent);
 }
 
-.dropdown-item.danger {
-  color: var(--red);
+/* Macros toolbar inside settings */
+
+.macros-toolbar {
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
 }
 
-.dropdown-item.danger:hover {
-  background: var(--red-dim);
+.macros-search-input {
+  width: 100%;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.macros-search-input:focus {
+  border-color: var(--accent);
 }
 
 /* Connection status */
@@ -1276,58 +1501,7 @@ body {
   border-color: var(--red);
 }
 
-/* ── Macros panel ────────────────────────────────────────────── */
-
-.macros-btn-label {
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-.macros-panel {
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-  padding: 10px 16px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 40vh;
-  overflow-y: auto;
-}
-
-.macros-panel.hidden {
-  display: none;
-}
-
-.macros-panel-top {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.macros-panel-hint {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  flex: 1;
-}
-
-.macros-panel-hint code {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 4px;
-  color: var(--accent);
-}
-
-.macros-panel-actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
+/* ── Macros in settings ───────────────────────────────────────── */
 
 .macros-list {
   display: flex;
@@ -1417,39 +1591,6 @@ body {
 
 .macro-body-input:focus {
   border-color: var(--accent);
-}
-
-/* ── Macros tabs ────────────────────────────────────────────────── */
-
-.macros-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 4px 12px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.macros-tab {
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-  padding: 4px 10px 6px;
-  cursor: pointer;
-  transition: color var(--transition), border-color var(--transition);
-  white-space: nowrap;
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.macros-tab:hover {
-  color: var(--text-primary);
-}
-
-.macros-tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
 }
 
 /* ── Autocomplete popup ─────────────────────────────────────────── */

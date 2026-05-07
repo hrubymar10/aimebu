@@ -28,39 +28,15 @@
           <div id="system-events-list" class="system-events-list"></div>
         </div>
       </div>
-      <button id="macros-btn" class="btn btn-icon" type="button" title="Macros — use &lt;KEY&gt; in messages">
-        <span class="macros-btn-label">{…}</span>
-      </button>
       <button id="settings-btn" class="btn btn-icon" type="button" title="Settings">
         <img src="/icons/settings.svg" width="16" height="16" alt="" aria-hidden="true">
       </button>
-      <div id="settings-dropdown" class="settings-dropdown hidden">
-        <button id="clear-all-btn" class="dropdown-item danger" type="button">Clear All Data</button>
-      </div>
       <span id="connection-status" class="status-indicator disconnected">
         <span class="status-dot"></span>
         <span class="status-text">Disconnected</span>
       </span>
     </div>
   </header>
-
-  <!-- Macros panel (global, below topbar) -->
-  <div id="macros-panel" class="macros-panel hidden">
-    <div class="macros-panel-top">
-      <span class="macros-panel-hint">Type <code>&lt;KEY&gt;</code> anywhere in a message — it expands before sending. Shared with everyone on this server.</span>
-      <div class="macros-panel-actions">
-        <button id="macros-export-btn" class="btn btn-sm" type="button">Export</button>
-        <button id="macros-import-btn" class="btn btn-sm" type="button">Import</button>
-      </div>
-    </div>
-    <div id="macros-tabs" class="macros-tabs"></div>
-    <div id="macros-list" class="macros-list"></div>
-    <form id="macro-add-form" class="macro-add-form">
-      <input type="text" id="macro-key-input" class="macro-key-input" placeholder="KEY" autocomplete="off" spellcheck="false">
-      <textarea id="macro-body-input" class="macro-body-input" rows="2" placeholder="Expansion text..."></textarea>
-      <button type="submit" class="btn btn-primary btn-sm">Add</button>
-    </form>
-  </div>
 
   <!-- 3-column layout -->
   <main class="app-layout">
@@ -154,6 +130,132 @@
     <button class="mobile-tab" data-tab="chat">Chat</button>
     <button class="mobile-tab" data-tab="agents">Agents</button>
   </nav>
+
+  <!-- Settings modal -->
+  <div id="settings-modal" class="settings-modal hidden" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="settings-overlay" id="settings-overlay"></div>
+    <div class="settings-pane">
+      <nav class="settings-nav">
+        <div class="settings-nav-title">Settings</div>
+        <button class="settings-nav-item active" data-section="general" type="button">General</button>
+        <button class="settings-nav-item" data-section="appearance" type="button">Appearance</button>
+        <button class="settings-nav-item" data-section="macros" type="button">Macros</button>
+        <button class="settings-nav-item" data-section="backup" type="button">Backup &amp; Sync</button>
+        <button class="settings-nav-item" data-section="danger" type="button">Danger Zone</button>
+      </nav>
+      <div class="settings-body">
+        <div class="settings-body-header">
+          <span class="settings-section-title" id="settings-section-title">General</span>
+          <button id="settings-close-btn" class="settings-close-btn" type="button" title="Close">✕</button>
+        </div>
+
+        <!-- General -->
+        <div class="settings-section active" data-section="general">
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label" for="agent-id-default-input">Default Agent ID</label>
+                <span class="settings-desc">Pre-fills the "You are:" input for new browsers without a stored value.</span>
+              </div>
+              <div class="settings-control">
+                <input type="text" id="agent-id-default-input" class="settings-text-input" placeholder="user@project" autocomplete="off" spellcheck="false">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Appearance -->
+        <div class="settings-section" data-section="appearance">
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Theme</label>
+                <span class="settings-desc">Switch between dark and light color themes.</span>
+              </div>
+              <div class="settings-control">
+                <button id="theme-toggle-btn" class="btn btn-sm" type="button">Light</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">System Events</label>
+                <span class="settings-desc">Show or hide the system events button in the toolbar.</span>
+              </div>
+              <div class="settings-control">
+                <button id="system-events-toggle-btn" class="btn btn-sm" type="button">Hide</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Macros -->
+        <div class="settings-section" data-section="macros">
+          <div class="settings-group">
+            <p class="settings-hint">Type <code>&lt;KEY&gt;</code> in a message to expand it. Shared with everyone on this server.</p>
+            <div class="macros-toolbar">
+              <input type="text" id="macros-search-input" class="macros-search-input" placeholder="Filter macros…" autocomplete="off">
+            </div>
+            <div id="macros-list" class="macros-list"></div>
+            <form id="macro-add-form" class="macro-add-form">
+              <input type="text" id="macro-key-input" class="macro-key-input" placeholder="KEY" autocomplete="off" spellcheck="false">
+              <textarea id="macro-body-input" class="macro-body-input" rows="2" placeholder="Expansion text..."></textarea>
+              <button type="submit" class="btn btn-primary btn-sm">Add</button>
+            </form>
+          </div>
+        </div>
+
+        <!-- Backup & Sync -->
+        <div class="settings-section" data-section="backup">
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Export</label>
+                <span class="settings-desc">Download macros and settings as a JSON file.</span>
+              </div>
+              <div class="settings-control">
+                <button id="backup-export-btn" class="btn btn-sm" type="button">Export JSON</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Import</label>
+                <span class="settings-desc">Restore macros and settings from a JSON file.</span>
+              </div>
+              <div class="settings-control">
+                <button id="backup-import-btn" class="btn btn-sm" type="button">Import JSON</button>
+                <input type="file" id="backup-import-file" accept=".json" style="display:none">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Danger Zone -->
+        <div class="settings-section" data-section="danger">
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Clear conversation state</label>
+                <span class="settings-desc">Removes all rooms, messages, and agents. Macros and settings are preserved.</span>
+              </div>
+              <div class="settings-control">
+                <button id="clear-state-btn" class="btn btn-sm btn-danger" type="button">Clear</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Clear all data</label>
+                <span class="settings-desc">Removes everything including macros and settings. Cannot be undone.</span>
+              </div>
+              <div class="settings-control">
+                <button id="clear-all-btn" class="btn btn-sm btn-danger" type="button">Clear All</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -224,6 +227,241 @@ func TestRegisterWithoutSpawnTagAlwaysFresh(t *testing.T) {
 	}
 	if first.Name == second.Name {
 		t.Error("registrations without tag should get distinct names")
+	}
+}
+
+// TestGetSettingsDefault verifies that GET /settings returns spec defaults when no
+// settings file exists: theme="dark", show_system_events=true.
+func TestGetSettingsDefault(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	resp, err := http.Get(srv.URL + "/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var s Settings
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		t.Fatal(err)
+	}
+	if s.Theme != "dark" {
+		t.Errorf("expected default theme=dark, got %q", s.Theme)
+	}
+	if s.AgentIDDefault != "" {
+		t.Errorf("expected empty agent_id_default, got %q", s.AgentIDDefault)
+	}
+	if s.ShowSystemEvents == nil || !*s.ShowSystemEvents {
+		t.Error("expected default show_system_events=true")
+	}
+}
+
+// TestGetSettingsAfterPartialPut verifies that fields not included in a PUT still
+// return their defaults.
+func TestGetSettingsAfterPartialPut(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	// PUT only agent_id_default — theme and show_system_events omitted.
+	body := bytes.NewBufferString(`{"agent_id_default":"martin"}`)
+	req, _ := http.NewRequest("PUT", srv.URL+"/settings", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /settings: expected 200, got %d", resp.StatusCode)
+	}
+
+	resp2, err := http.Get(srv.URL + "/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var s Settings
+	if err := json.NewDecoder(resp2.Body).Decode(&s); err != nil {
+		t.Fatal(err)
+	}
+	if s.AgentIDDefault != "martin" {
+		t.Errorf("expected agent_id_default=martin, got %q", s.AgentIDDefault)
+	}
+	// Fields not in the PUT body should still return defaults.
+	if s.Theme != "dark" {
+		t.Errorf("expected default theme=dark after partial PUT, got %q", s.Theme)
+	}
+	if s.ShowSystemEvents == nil || !*s.ShowSystemEvents {
+		t.Error("expected default show_system_events=true after partial PUT")
+	}
+}
+
+// TestPutAndGetSettings verifies that PUT /settings stores values and GET returns them.
+func TestPutAndGetSettings(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	body := bytes.NewBufferString(`{"theme":"light","agent_id_default":"alice","show_system_events":true}`)
+	req, _ := http.NewRequest("PUT", srv.URL+"/settings", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /settings: expected 200, got %d", resp.StatusCode)
+	}
+
+	resp2, err := http.Get(srv.URL + "/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var s Settings
+	if err := json.NewDecoder(resp2.Body).Decode(&s); err != nil {
+		t.Fatal(err)
+	}
+	if s.Theme != "light" {
+		t.Errorf("expected theme=light, got %q", s.Theme)
+	}
+	if s.AgentIDDefault != "alice" {
+		t.Errorf("expected agent_id_default=alice, got %q", s.AgentIDDefault)
+	}
+	if s.ShowSystemEvents == nil || !*s.ShowSystemEvents {
+		t.Error("expected show_system_events=true")
+	}
+}
+
+// TestPutSettingsInvalidTheme verifies that PUT /settings with an unknown theme returns 400.
+func TestPutSettingsInvalidTheme(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	body := bytes.NewBufferString(`{"theme":"neon"}`)
+	req, _ := http.NewRequest("PUT", srv.URL+"/settings", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid theme, got %d", resp.StatusCode)
+	}
+}
+
+// TestPutMacrosRejectsNonEmptyRooms verifies that PUT /macros with a non-empty rooms map returns 400.
+func TestPutMacrosRejectsNonEmptyRooms(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	body := bytes.NewBufferString(`{"macros":{},"rooms":{"general":{"key":"val"}}}`)
+	req, _ := http.NewRequest("PUT", srv.URL+"/macros", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for non-empty rooms, got %d", resp.StatusCode)
+	}
+}
+
+// TestPutMacrosAcceptsEmptyRooms verifies that PUT /macros with an empty rooms map is accepted.
+func TestPutMacrosAcceptsEmptyRooms(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	body := bytes.NewBufferString(`{"macros":{"hi":"hello"},"rooms":{}}`)
+	req, _ := http.NewRequest("PUT", srv.URL+"/macros", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for empty rooms, got %d", resp.StatusCode)
+	}
+}
+
+// writeSchemaFixture writes a valid schema.json so newStore doesn't early-exit.
+func writeSchemaFixture(t *testing.T, dir string) {
+	t.Helper()
+	schema := []byte(fmt.Sprintf(`{"version":%d}`, storeSchemaVersion))
+	if err := os.WriteFile(filepath.Join(dir, "schema.json"), schema, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMacrosMigrationOnLoad verifies that per-room macros from a v3 macros.json
+// are merged into globals on store load, and rooms disappear from the envelope.
+func TestMacrosMigrationOnLoad(t *testing.T) {
+	dir := t.TempDir()
+	writeSchemaFixture(t, dir)
+
+	// Write a v3 fixture: one global macro and one room macro with a unique key.
+	fixture := `{"macros":{"global-key":"global-val"},"rooms":{"general":{"room-key":"room-val"}}}`
+	if err := os.WriteFile(filepath.Join(dir, "macros.json"), []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env := s.getEnvelope()
+	if env.Macros["global-key"] != "global-val" {
+		t.Errorf("global-key not preserved: %v", env.Macros)
+	}
+	if env.Macros["room-key"] != "room-val" {
+		t.Errorf("room-key not migrated into globals: %v", env.Macros)
+	}
+	if len(env.Rooms) != 0 {
+		t.Errorf("rooms should be gone after migration: %v", env.Rooms)
+	}
+}
+
+// TestMacrosMigrationSkipsCollisions verifies collision handling:
+// - global wins over room on key conflict (skippedGlobal path)
+// - first-room wins over second-room on inter-room collision (skippedClaimed path)
+// - non-colliding keys from both rooms migrate successfully
+func TestMacrosMigrationSkipsCollisions(t *testing.T) {
+	dir := t.TempDir()
+	writeSchemaFixture(t, dir)
+
+	// "clash-global" is in both globals and room "aaa" → global wins.
+	// "clash-rooms" is in both "aaa" and "bbb" → "aaa" wins (sorted first).
+	// "unique-a" and "unique-b" have no conflicts → both migrate.
+	fixture := `{"macros":{"clash-global":"global-wins"},` +
+		`"rooms":{` +
+		`"aaa":{"clash-global":"room-loses","clash-rooms":"aaa-wins","unique-a":"val-a"},` +
+		`"bbb":{"clash-rooms":"bbb-loses","unique-b":"val-b"}` +
+		`}}`
+	if err := os.WriteFile(filepath.Join(dir, "macros.json"), []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env := s.getEnvelope()
+	if env.Macros["clash-global"] != "global-wins" {
+		t.Errorf("global value should win over room, got %q", env.Macros["clash-global"])
+	}
+	if env.Macros["clash-rooms"] != "aaa-wins" {
+		t.Errorf("first-room (aaa) should win over second-room (bbb), got %q", env.Macros["clash-rooms"])
+	}
+	if env.Macros["unique-a"] != "val-a" {
+		t.Errorf("unique-a should migrate, got %q", env.Macros["unique-a"])
+	}
+	if env.Macros["unique-b"] != "val-b" {
+		t.Errorf("unique-b should migrate, got %q", env.Macros["unique-b"])
+	}
+	if len(env.Rooms) != 0 {
+		t.Errorf("rooms should be gone after migration: %v", env.Rooms)
 	}
 }
 

@@ -664,13 +664,13 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 
 	// ── Macros ─────────────────────────────────────────────────────
 
-	// GET /macros — fetch global + per-room macros
+	// GET /macros — fetch global macros
 	mux.HandleFunc("GET /macros", func(w http.ResponseWriter, _ *http.Request) {
 		env := s.getEnvelope()
-		_ = jsonOK(w, map[string]any{"macros": env.Macros, "rooms": env.Rooms})
+		_ = jsonOK(w, map[string]any{"macros": env.Macros})
 	})
 
-	// PUT /macros — full replace of global + per-room macros
+	// PUT /macros — full replace of global macros.
 	mux.HandleFunc("PUT /macros", func(w http.ResponseWriter, r *http.Request) {
 		var payload struct {
 			Macros map[string]string            `json:"macros"`
@@ -678,6 +678,10 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(payload.Rooms) > 0 {
+			jsonError(w, "per-room macros are not supported; use global macros only", http.StatusBadRequest)
 			return
 		}
 		if len(payload.Macros) > 256 {
@@ -694,30 +698,28 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 				return
 			}
 		}
-		totalRoom := 0
-		for rid, rm := range payload.Rooms {
-			if len(rm) > 256 {
-				jsonError(w, "too many macros in room "+rid+" (max 256)", http.StatusBadRequest)
-				return
-			}
-			for k, v := range rm {
-				if !macroKeyRE.MatchString(k) {
-					jsonError(w, "invalid macro key in room "+rid+": "+k, http.StatusBadRequest)
-					return
-				}
-				if len(v) > 16*1024 {
-					jsonError(w, "macro body too large in room "+rid+" (max 16KB): "+k, http.StatusBadRequest)
-					return
-				}
-				totalRoom++
-			}
-		}
-		if totalRoom > 4096 {
-			jsonError(w, "too many room macros total (max 4096)", http.StatusBadRequest)
+		s.setEnvelope(macrosEnvelope{Macros: payload.Macros})
+		_ = jsonOK(w, map[string]string{"status": "ok"})
+	})
+
+	// GET /settings — fetch user preferences
+	mux.HandleFunc("GET /settings", func(w http.ResponseWriter, _ *http.Request) {
+		_ = jsonOK(w, s.getSettings())
+	})
+
+	// PUT /settings — update user preferences
+	mux.HandleFunc("PUT /settings", func(w http.ResponseWriter, r *http.Request) {
+		var set Settings
+		if err := json.NewDecoder(r.Body).Decode(&set); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		s.setEnvelope(macrosEnvelope{Macros: payload.Macros, Rooms: payload.Rooms})
-		_ = jsonOK(w, map[string]string{"status": "ok"})
+		if !validThemes[set.Theme] {
+			jsonError(w, `invalid theme: must be "dark", "light", or ""`, http.StatusBadRequest)
+			return
+		}
+		s.putSettings(set)
+		_ = jsonOK(w, s.getSettings())
 	})
 
 	// DELETE /all — clear conversation state; ?include_settings=true also wipes user settings (macros).
