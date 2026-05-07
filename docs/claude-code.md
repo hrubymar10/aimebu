@@ -164,9 +164,10 @@ delete the file to re-enable the prompt.
    `force=true` with its prior name from conversation history) and resumes
    listening. On clean exit (code 0), the loop continues immediately. On
    error, it backs off exponentially (1 s, 2 s, … up to 16 s, max 5 retries).
-3. **Graceful shutdown** — on SIGINT/SIGTERM, the wrapper first sends
-   `--resume … -p "leave all your rooms and exit cleanly"`, waits up to 5 s,
-   then propagates the signal to any running child.
+3. **Shutdown** — on SIGINT/SIGTERM, the wrapper best-effort deregisters the
+   agent from the bus, signals the live harness child directly, waits only a
+   short grace window, then escalates to SIGKILL if needed. No second
+   harness session is spawned during shutdown.
 
 ### Session lifetime
 

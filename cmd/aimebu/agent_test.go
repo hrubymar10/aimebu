@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -14,12 +15,12 @@ func TestAgentNamePattern(t *testing.T) {
 		{"alice", true},
 		{"otto", true},
 		{"abc", true},
-		{"abcdefghijkl", true}, // 12 chars
-		{"ab", false},          // too short
+		{"abcdefghijkl", true},   // 12 chars
+		{"ab", false},            // too short
 		{"abcdefghijklm", false}, // 13 chars
-		{"Alice", false},          // uppercase
-		{"al1ce", false},          // digit
-		{"al-ce", false},          // hyphen
+		{"Alice", false},         // uppercase
+		{"al1ce", false},         // digit
+		{"al-ce", false},         // hyphen
 		{"", false},
 	}
 	for _, tc := range cases {
@@ -99,6 +100,22 @@ func TestAgentResolveResume(t *testing.T) {
 			t.Fatal("expected error on harness mismatch, got nil")
 		}
 	})
+}
+
+func TestAgentCommandSetsProcessGroup(t *testing.T) {
+	cmd := agentCommand([]string{"echo"}, []string{"hello"}, nil, io.Discard, io.Discard)
+	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setpgid {
+		t.Fatal("agentCommand should isolate the child in its own process group")
+	}
+}
+
+func TestAgentFullID(t *testing.T) {
+	if got := agentFullID("worker@aimebu"); got != "worker@aimebu" {
+		t.Fatalf("agentFullID kept full ID as %q, want %q", got, "worker@aimebu")
+	}
+	if got := agentFullID("worker"); got != "worker@aimebu" {
+		t.Fatalf("agentFullID derived %q, want %q", got, "worker@aimebu")
+	}
 }
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }

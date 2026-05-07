@@ -27,6 +27,78 @@ func setupTestServer(t *testing.T) (*store, *httptest.Server) {
 	return s, srv
 }
 
+func TestDeleteAgentDeregistersAndRemovesMemberships(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "workerbee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "reviewpal")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.createRoom("ops", other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("ops", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("ops", other.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/agents/"+agent.ID, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE /agents returned %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+
+	for _, listed := range s.listAgents() {
+		if listed.ID == agent.ID {
+			t.Fatalf("agent %q still present after deregistration", agent.ID)
+		}
+	}
+
+	room := s.getRoom("ops")
+	if room == nil {
+		t.Fatal("room ops missing after deregistration")
+	}
+	for _, member := range room.Members {
+		if member == agent.ID {
+			t.Fatalf("agent %q still in room membership after deregistration", agent.ID)
+		}
+	}
+
+	systemMsgs := s.messages["_system"]
+	if len(systemMsgs) == 0 {
+		t.Fatal("expected _system deregistration event")
+	}
+	last := systemMsgs[len(systemMsgs)-1]
+	if last.Body != agent.ID+" deregistered" {
+		t.Fatalf("last _system message = %q, want %q", last.Body, agent.ID+" deregistered")
+	}
+}
+
+func TestDeleteAgentReturnsNotFoundForUnknownAgent(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/agents/nope@aimebu", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("DELETE /agents for unknown agent returned %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
 // TestRoomWaitCursorNotAdvancedOnContextCancel verifies that cancelling the
 // request context (simulating a harness timeout) does not advance the agent's
 // read cursor. A message posted after the disconnect must be replayed on the

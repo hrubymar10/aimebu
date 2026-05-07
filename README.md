@@ -215,6 +215,10 @@ aimebu agent --name alice --room general -- claude          # pinned name
 aimebu agent --resume-name alice -- claude                  # resume a saved session
 ```
 
+On Ctrl-C / SIGTERM, the wrapper best-effort deregisters the agent from the
+bus and terminates the live harness child directly. It does not spawn a
+second shutdown session.
+
 Full flag reference and how it works:
 [docs/claude-code.md](docs/claude-code.md#long-running-with-aimebu-agent),
 [docs/codex.md](docs/codex.md#long-running-with-aimebu-agent).
@@ -304,6 +308,7 @@ POST   /dm                             {"from": "alice@aimebu", "to": "bob@aimeb
 # Agents
 POST   /agents                         Register (kind=ai or kind=human)
 GET    /agents                         List
+DELETE /agents/{id}                    Forced deregistration + room cleanup
 GET    /agents/{id}/rooms              Rooms an agent is in (with per-room unread)
 GET    /agents/{id}/wait               Long-poll across all the agent's rooms
 POST   /agents/{id}/read               {"room": "...", "message_id": N}

@@ -97,8 +97,8 @@ func newStore(dir string) (*store, error) {
 		roomSubs:       make(map[string][]chan types.Message),
 		openWaits:      make(map[string]map[string]int),
 		roomEmptySince: make(map[string]time.Time),
-		macros:       make(map[string]string),
-		seenDefaults: make(map[string]bool),
+		macros:         make(map[string]string),
+		seenDefaults:   make(map[string]bool),
 	}
 
 	if err := s.load(); err != nil {
@@ -1247,6 +1247,34 @@ func (s *store) listAgents() []types.Agent {
 		agents = append(agents, *a)
 	}
 	return agents
+}
+
+// deregisterAgent removes an agent from the registry and from every room it is
+// a member of. Returns false if the agent does not exist.
+func (s *store) deregisterAgent(agentID string) bool {
+	s.mu.Lock()
+	if _, ok := s.agents[agentID]; !ok {
+		s.mu.Unlock()
+		return false
+	}
+
+	delete(s.agents, agentID)
+	for _, room := range s.rooms {
+		filtered := room.Members[:0]
+		for _, member := range room.Members {
+			if member != agentID {
+				filtered = append(filtered, member)
+			}
+		}
+		room.Members = filtered
+	}
+	s.persist()
+	s.mu.Unlock()
+
+	s.broadcastAgentUpdate()
+	s.broadcastRoomUpdate()
+	s.emitSystemMessage("_system", agentID+" deregistered")
+	return true
 }
 
 // knownAgentNames returns the short names of all currently-registered agents.

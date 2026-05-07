@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -113,6 +114,32 @@ func (c *Client) Delete(path string) (string, error) {
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(resp.Body)
 	return string(out), nil
+}
+
+// DeleteWithTimeout issues a DELETE with a caller-supplied client timeout.
+func (c *Client) DeleteWithTimeout(path string, timeout time.Duration) (string, error) {
+	httpClient := &http.Client{Timeout: timeout}
+	req, _ := http.NewRequest("DELETE", c.BaseURL+path, nil)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= http.StatusBadRequest {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = resp.Status
+		}
+		return "", fmt.Errorf("DELETE %s: %s", path, msg)
+	}
+	return string(out), nil
+}
+
+// DeleteAgent deregisters an agent from the bus using a short-lived client.
+func (c *Client) DeleteAgent(id string, timeout time.Duration) error {
+	_, err := c.DeleteWithTimeout("/agents/"+url.PathEscape(id), timeout)
+	return err
 }
 
 // Message fetches a single message by its global ID. The caller's AgentID

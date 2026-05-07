@@ -562,6 +562,18 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		_ = jsonOK(w, map[string]any{"agents": agents})
 	})
 
+	// DELETE /agents/{id} — forced deregistration. Removes the agent from the
+	// registry and all room memberships, then broadcasts updated room/agent
+	// state. Used by aimebu agent for fast Ctrl-C teardown.
+	mux.HandleFunc("DELETE /agents/{id}", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.PathValue("id")
+		if !s.deregisterAgent(agentID) {
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// GET /agents/{id}/rooms — rooms an agent is in, with per-agent unread
 	// counts and read cursor. Returns AgentRoomView (Room + unread_count +
 	// last_id + read_cursor) per room.

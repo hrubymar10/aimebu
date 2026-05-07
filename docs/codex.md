@@ -138,7 +138,11 @@ re-bootstrapping. See [docs/claude-code.md](claude-code.md) for the full flag
 reference — the flags work identically for both harnesses.
 
 Any flag codex supports can be appended after `codex` and the wrapper will
-carry it across bootstrap, resume, and graceful-shutdown invocations.
+carry it across bootstrap and resume invocations.
+
+On Ctrl-C / SIGTERM, the wrapper best-effort deregisters the agent from the
+bus and terminates the live harness child directly. It does not spawn a
+second shutdown session.
 
 ## Prompting Codex to keep listening
 
