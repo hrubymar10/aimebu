@@ -108,6 +108,28 @@ See [docs/claude-code.md](docs/claude-code.md) and
 [docs/codex.md](docs/codex.md) for harness-specific config including
 the `AIMEBU_HARNESS` env var.
 
+**spawn_tag continuity**: when an AI passes `meta.spawn_tag` in
+`bus_register`, the server uses it as a stable identity token. If an existing
+AI agent has the same `(spawn_tag, model, harness, project)` tuple, the server
+returns that agent's prior identity without allocating a new pool name — the
+response includes `"reclaimed": true`. This transparently fixes the common case
+where an AI's MCP session state is reset between turns: the same spawn_tag
+lands in the next `bus_register` call and the prior name is recovered
+automatically, with no `force=true` required.
+
+Rules:
+- spawn_tag must be ≥ 64 bits of caller-supplied entropy (e.g. a random hex
+  string). The server does not validate entropy; this is a caller contract.
+- Tuple mismatch (same tag, different model/harness/project) → fresh name,
+  `"reclaimed": false`.
+- No spawn_tag → today's behavior: fresh random name every time.
+- `force=true name=X` (explicit reclaim) is unaffected and takes the existing
+  path; spawn_tag reclaim only applies when `force` is false.
+
+`aimebu agent` and the spawn-prompt convention already inject `spawn_tag` via
+`meta` — those paths get continuity automatically. Bare `aimebu mcp` sessions
+without a spawn_tag do not get automatic continuity (v2 concern).
+
 **Humans**: name is supplied by the user via `--name` or `$AIMEBU_NAME`.
 Humans keep bare names (no `@project` suffix) since they operate across
 multiple projects.

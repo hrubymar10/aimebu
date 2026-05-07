@@ -967,6 +967,24 @@ func (s *store) registerHuman(name, project string, meta map[string]string) (*ty
 	return &cp, nil
 }
 
+// findBySpawnTagLocked returns the first AI agent whose meta["spawn_tag"]
+// matches tag AND whose (model, harness, project) tuple matches. Returns nil
+// if no such agent exists. Must be called with s.mu held (read or write).
+func (s *store) findBySpawnTagLocked(tag, model, harness, project string) *types.Agent {
+	for _, a := range s.agents {
+		if a.Kind != "ai" {
+			continue
+		}
+		if a.Meta["spawn_tag"] != tag {
+			continue
+		}
+		if a.Model == model && a.Harness == harness && a.Project == project {
+			return a
+		}
+	}
+	return nil
+}
+
 // registerAI registers an AI agent. Normally the server assigns a random
 // name from the pool and assembles the full ID from name/model/harness/
 // project. If forceName is non-empty, the caller is asking to reclaim that
@@ -978,8 +996,14 @@ func (s *store) registerHuman(name, project string, meta map[string]string) (*ty
 //   - if held by an AI with different model/harness/project → error
 //   - otherwise the forced name is used instead of picking from the pool
 //
-// Returns the created (or reclaimed) agent (caller-safe copy).
-func (s *store) registerAI(model, harness, project string, meta map[string]string, forceName string) (*types.Agent, error) {
+// Additionally, if meta["spawn_tag"] is present and forceName is empty, the
+// server attempts automatic reclaim: if an existing AI agent has the same
+// spawn_tag and (model, harness, project), that agent's identity is returned
+// without allocating a new pool name (reclaimed=true). Tag present but no
+// match → fresh name as usual (reclaimed=false).
+//
+// Returns the created (or reclaimed) agent, a reclaimed flag, and any error.
+func (s *store) registerAI(model, harness, project string, meta map[string]string, forceName string) (*types.Agent, bool, error) {
 	s.mu.Lock()
 
 	if model == "" {
@@ -993,7 +1017,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 	if forceName != "" {
 		if !reclaimNamePattern.MatchString(forceName) {
 			s.mu.Unlock()
-			return nil, fmt.Errorf("name %q must match [a-z]{3,12}", forceName)
+			return nil, false, fmt.Errorf("name %q must match [a-z]{3,12}", forceName)
 		}
 		for _, a := range s.agents {
 			if a.Name != forceName {
@@ -1001,7 +1025,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 			}
 			if a.Kind == "human" {
 				s.mu.Unlock()
-				return nil, fmt.Errorf("name %q is a human identity", forceName)
+				return nil, false, fmt.Errorf("name %q is a human identity", forceName)
 			}
 			if a.Model == model && a.Harness == harness && a.Project == project {
 				a.LastSeen = now()
@@ -1018,13 +1042,37 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 				s.mu.Unlock()
 				go s.broadcastAgentUpdate()
 				s.joinRoomInternal("_system", a.ID)
-				return &cp, nil // reclaim: no new event
+				return &cp, false, nil // explicit force-reclaim: reclaimed=false (caller already knew the name)
 			}
 			s.mu.Unlock()
-			return nil, fmt.Errorf("name %q is held by another AI agent", forceName)
+			return nil, false, fmt.Errorf("name %q is held by another AI agent", forceName)
 		}
 		name = forceName
 	} else {
+		// spawn_tag automatic reclaim: if spawn_tag is present in meta and an
+		// existing AI agent has the same (spawn_tag, model, harness, project),
+		// return that identity without allocating a new pool name.
+		if tag := meta["spawn_tag"]; tag != "" {
+			if existing := s.findBySpawnTagLocked(tag, model, harness, project); existing != nil {
+				existing.LastSeen = now()
+				if len(meta) > 0 {
+					if existing.Meta == nil {
+						existing.Meta = make(map[string]string)
+					}
+					for k, v := range meta {
+						existing.Meta[k] = v
+					}
+				}
+				s.persist()
+				cp := *existing
+				s.mu.Unlock()
+				go s.broadcastAgentUpdate()
+				s.joinRoomInternal("_system", existing.ID)
+				return &cp, true, nil // spawn_tag reclaim
+			}
+			// tag present but no matching agent → fall through to fresh name
+		}
+
 		taken := make(map[string]bool, len(s.agents))
 		for _, a := range s.agents {
 			taken[a.Name] = true
@@ -1033,7 +1081,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 		picked, ok := pickRandomName(taken)
 		if !ok {
 			s.mu.Unlock()
-			return nil, fmt.Errorf("name pool exhausted (%d agents registered)", len(s.agents))
+			return nil, false, fmt.Errorf("name pool exhausted (%d agents registered)", len(s.agents))
 		}
 		name = picked
 	}
@@ -1043,7 +1091,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 	// Extremely unlikely with random names, but guard anyway.
 	if _, exists := s.agents[id]; exists {
 		s.mu.Unlock()
-		return nil, fmt.Errorf("generated ID %q already exists; retry", id)
+		return nil, false, fmt.Errorf("generated ID %q already exists; retry", id)
 	}
 
 	agent := &types.Agent{
@@ -1065,7 +1113,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 	go s.broadcastAgentUpdate()
 	s.joinRoomInternal("_system", id)
 	s.emitSystemMessage("_system", fmt.Sprintf("%s registered (%s/%s)", id, model, harness))
-	return &cp, nil
+	return &cp, false, nil
 }
 
 func (s *store) touchAgent(id string) {

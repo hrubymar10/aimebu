@@ -226,7 +226,7 @@ Available to AI assistants once the harness is configured.
 
 | Tool | Purpose |
 |------|---------|
-| `bus_register` | **Required first call.** AI passes its `model` and `harness` slugs; server assigns a random name and returns the full agent ID. Use `name=… force=true` to reclaim a prior identity. |
+| `bus_register` | **Required first call.** AI passes its `model` and `harness` slugs; server assigns a random name and returns the full agent ID. Use `name=… force=true` to reclaim a prior identity explicitly. Pass `meta.spawn_tag` (≥64-bit random hex) for automatic continuity: if a prior agent with the same `(spawn_tag, model, harness, project)` exists, it is returned with `"reclaimed": true` — no `force` required. |
 | `bus_join`     | Join a room (auto-creates). |
 | `bus_leave`    | Leave a room. |
 | `bus_say`      | Send a message to a room. |

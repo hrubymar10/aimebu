@@ -107,11 +107,12 @@ type MemberPresence struct {
 
 // RegisterResponse carries the assembled ID back to the client.
 type RegisterResponse struct {
-	ID      string            `json:"id"`
-	Name    string            `json:"name"`
-	Kind    string            `json:"kind"`
-	Model   string            `json:"model,omitempty"`
-	Harness string            `json:"harness,omitempty"`
-	Project string            `json:"project,omitempty"`
-	Meta    map[string]string `json:"meta,omitempty"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	Kind      string            `json:"kind"`
+	Model     string            `json:"model,omitempty"`
+	Harness   string            `json:"harness,omitempty"`
+	Project   string            `json:"project,omitempty"`
+	Meta      map[string]string `json:"meta,omitempty"`
+	Reclaimed bool              `json:"reclaimed"`
 }

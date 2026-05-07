@@ -516,6 +516,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		}
 
 		var agent *types.Agent
+		var reclaimed bool
 		var err error
 		switch kind {
 		case "ai":
@@ -531,7 +532,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			if req.Force {
 				forceName = req.Name
 			}
-			agent, err = s.registerAI(req.Model, req.Harness, req.Project, req.Meta, forceName)
+			agent, reclaimed, err = s.registerAI(req.Model, req.Harness, req.Project, req.Meta, forceName)
 		case "human":
 			agent, err = s.registerHuman(req.Name, req.Project, req.Meta)
 		default:
@@ -544,13 +545,14 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		}
 
 		_ = jsonOK(w, types.RegisterResponse{
-			ID:      agent.ID,
-			Name:    agent.Name,
-			Kind:    agent.Kind,
-			Model:   agent.Model,
-			Harness: agent.Harness,
-			Project: agent.Project,
-			Meta:    agent.Meta,
+			ID:        agent.ID,
+			Name:      agent.Name,
+			Kind:      agent.Kind,
+			Model:     agent.Model,
+			Harness:   agent.Harness,
+			Project:   agent.Project,
+			Meta:      agent.Meta,
+			Reclaimed: reclaimed,
 		})
 	})
 

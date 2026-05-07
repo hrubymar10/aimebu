@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -34,11 +36,11 @@ func setupTestServer(t *testing.T) (*store, *httptest.Server) {
 func TestRoomWaitCursorNotAdvancedOnContextCancel(t *testing.T) {
 	s, srv := setupTestServer(t)
 
-	sender, err := s.registerAI("gpt5", "codex", "test", nil, "sndrone")
+	sender, _, err := s.registerAI("gpt5", "codex", "test", nil, "sndrone")
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiver, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "rcvrone")
+	receiver, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "rcvrone")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,11 +96,11 @@ func TestRoomWaitCursorNotAdvancedOnContextCancel(t *testing.T) {
 func TestRoomWaitCursorAdvancedOnDelivery(t *testing.T) {
 	s, srv := setupTestServer(t)
 
-	sender, err := s.registerAI("gpt5", "codex", "test", nil, "sndrtwo")
+	sender, _, err := s.registerAI("gpt5", "codex", "test", nil, "sndrtwo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiver, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "rcvrtwo")
+	receiver, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "rcvrtwo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,5 +145,137 @@ func TestRoomWaitCursorAdvancedOnDelivery(t *testing.T) {
 	cursorAfter := s.ensureRoomCursor(receiver.ID, "deliver-room")
 	if cursorAfter <= cursorBefore {
 		t.Errorf("cursor did not advance after delivery: was %d, now %d", cursorBefore, cursorAfter)
+	}
+}
+
+// TestRegisterReclaimsBySpawnTag verifies that registering twice with the same
+// (spawn_tag, model, harness, project) returns the same agent name.
+func TestRegisterReclaimsBySpawnTag(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	meta := map[string]string{"spawn_tag": "test-tag-abc123"}
+	first, reclaimed, err := s.registerAI("opus4.7", "claude-code", "proj", meta, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed {
+		t.Error("first registration should not be reclaimed")
+	}
+
+	second, reclaimed, err := s.registerAI("opus4.7", "claude-code", "proj", meta, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reclaimed {
+		t.Error("second registration should be reclaimed")
+	}
+	if first.Name != second.Name {
+		t.Errorf("expected same name on reclaim: got %q and %q", first.Name, second.Name)
+	}
+	if first.ID != second.ID {
+		t.Errorf("expected same ID on reclaim: got %q and %q", first.ID, second.ID)
+	}
+}
+
+// TestRegisterRejectsTagWithMismatchedTuple verifies that a spawn_tag present
+// in a prior registration does not cause reclaim when model/harness/project
+// differs — a fresh name is allocated instead.
+func TestRegisterRejectsTagWithMismatchedTuple(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	meta := map[string]string{"spawn_tag": "test-tag-def456"}
+	first, _, err := s.registerAI("opus4.7", "claude-code", "proj", meta, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Same tag, different model — should NOT reclaim.
+	second, reclaimed, err := s.registerAI("gpt5", "claude-code", "proj", meta, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed {
+		t.Error("mismatched tuple should not be reclaimed")
+	}
+	if first.Name == second.Name {
+		t.Error("mismatched tuple should allocate a fresh name, got the same name")
+	}
+}
+
+// TestRegisterWithoutSpawnTagAlwaysFresh verifies that two registrations
+// without a spawn_tag always allocate distinct names.
+func TestRegisterWithoutSpawnTagAlwaysFresh(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	first, reclaimed, err := s.registerAI("opus4.7", "claude-code", "proj", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed {
+		t.Error("first registration without tag should not be reclaimed")
+	}
+
+	second, reclaimed, err := s.registerAI("opus4.7", "claude-code", "proj", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed {
+		t.Error("second registration without tag should not be reclaimed")
+	}
+	if first.Name == second.Name {
+		t.Error("registrations without tag should get distinct names")
+	}
+}
+
+// TestRegisterReclaimedFlagInHTTPResponse verifies that the HTTP register
+// endpoint includes reclaimed=true in the JSON response on spawn_tag reclaim.
+func TestRegisterReclaimedFlagInHTTPResponse(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	body := func(extra map[string]any) []byte {
+		m := map[string]any{
+			"kind":    "ai",
+			"model":   "opus4.7",
+			"harness": "claude-code",
+			"project": "proj",
+			"meta":    map[string]string{"spawn_tag": "test-tag-http789"},
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		b, _ := json.Marshal(m)
+		return b
+	}
+
+	// First registration.
+	resp1, err := http.Post(srv.URL+"/agents", "application/json", bytes.NewReader(body(nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r1 struct {
+		Reclaimed bool `json:"reclaimed"`
+	}
+	if err := json.NewDecoder(resp1.Body).Decode(&r1); err != nil {
+		t.Fatal(err)
+	}
+	resp1.Body.Close()
+	if r1.Reclaimed {
+		t.Error("first registration should return reclaimed=false")
+	}
+
+	// Second registration with same spawn_tag — should reclaim.
+	resp2, err := http.Post(srv.URL+"/agents", "application/json", bytes.NewReader(body(nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r2 struct {
+		Reclaimed bool `json:"reclaimed"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&r2); err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if !r2.Reclaimed {
+		t.Error("second registration with same spawn_tag should return reclaimed=true")
 	}
 }
