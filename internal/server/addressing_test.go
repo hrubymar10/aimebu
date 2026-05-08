@@ -16,32 +16,26 @@ func TestParseAddressedTo(t *testing.T) {
 		{"hello everyone", nil},
 		{"", nil},
 
-		// Simple prefix
-		{"alice: what's up?", []string{"alice"}},
-		{"Alice: what's up?", []string{"alice"}}, // case-insensitive
-
-		// Multi-name prefix with comma
-		{"alice, bob: ready?", []string{"alice", "bob"}},
-		{"alice, bob, carol: ready?", []string{"alice", "bob", "carol"}},
-
-		// Multi-name prefix with "and"
-		{"alice and bob: ready?", []string{"alice", "bob"}},
-
-		// Mixed comma + and
-		{"alice, bob and carol: ready?", []string{"alice", "bob", "carol"}},
-
 		// @mention only
 		{"hey @alice, what do you think?", []string{"alice"}},
 		{"@alice @bob nice work", []string{"alice", "bob"}},
 
-		// Prefix + @mention (deduplication)
-		{"alice: @alice check this", []string{"alice"}},
+		// @mention deduplication
+		{"@alice check this @alice again", []string{"alice"}},
 
-		// @mention does NOT duplicate prefix names
-		{"alice, bob: see @carol", []string{"alice", "bob", "carol"}},
+		// Multiple @mentions
+		{"@alice @bob see @carol", []string{"alice", "bob", "carol"}},
 
-		// Bare name with no colon is room-wide
+		// Case-insensitive @mention
+		{"@Alice what's up?", []string{"alice"}},
+
+		// Bare name with no colon is room-wide (no @)
 		{"alice what's up?", nil},
+
+		// Regression: old IRC-style prefix syntax is now room-wide
+		{"alice: what's up?", nil},
+		{"alice, bob: ready?", nil},
+		{"alice and bob: ready?", nil},
 	}
 
 	for _, tc := range cases {
@@ -75,21 +69,23 @@ func TestAnnotate(t *testing.T) {
 	}{
 		// Human, room-wide → respond
 		{"human room-wide", human("hey all"), "alice", false, true},
-		// Human, addressed to me → respond
-		{"human addressed to me", human("alice: what's up?"), "alice", true, true},
-		// Human, addressed to other → don't respond
-		{"human addressed to other", human("bob: what's up?"), "alice", false, false},
+		// Human, addressed to me via @mention → respond
+		{"human addressed to me", human("@alice what's up?"), "alice", true, true},
+		// Human, addressed to other via @mention → don't respond
+		{"human addressed to other", human("@bob what's up?"), "alice", false, false},
 		// Human, multi-address includes me → respond
-		{"human multi-addr includes me", human("alice, bob: ready?"), "alice", true, true},
+		{"human multi-addr includes me", human("@alice @bob ready?"), "alice", true, true},
 		// Human, multi-address excludes me → don't respond
-		{"human multi-addr excludes me", human("bob, carol: ready?"), "alice", false, false},
+		{"human multi-addr excludes me", human("@bob @carol ready?"), "alice", false, false},
+		// Human, old IRC-style prefix is now room-wide → respond (not addressed)
+		{"human old prefix style room-wide", human("alice: what's up?"), "alice", false, true},
 
 		// AI, room-wide → don't respond
 		{"ai room-wide", ai("just FYI"), "alice", false, false},
-		// AI, addressed to me → respond
-		{"ai addressed to me", ai("alice: can you help?"), "alice", true, true},
-		// AI, addressed to other → don't respond
-		{"ai addressed to other", ai("bob: can you help?"), "alice", false, false},
+		// AI, addressed to me via @mention → respond
+		{"ai addressed to me", ai("@alice can you help?"), "alice", true, true},
+		// AI, addressed to other via @mention → don't respond
+		{"ai addressed to other", ai("@bob can you help?"), "alice", false, false},
 		// AI, in DM room → respond
 		{"ai DM room", dm("hey"), "alice", false, true},
 
