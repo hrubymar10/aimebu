@@ -39,7 +39,7 @@
   let macrosFilter = '';     // search filter for macros panel
 
   // Autocomplete state
-  let acItems = [];          // string[] — current candidate macro keys
+  let acItems = [];          // Array<{kind,insertText,displayKey,preview}> — ac candidates
   let acSelected = -1;       // currently highlighted item index
   let acHideTimer = null;    // debounce timer for blur→hide
 
@@ -308,22 +308,23 @@
     return merged;
   }
 
-  function getAcPartial() {
+  function getAcContext() {
     var val = msgBodyInput.value;
     var pos = msgBodyInput.selectionStart;
     var before = val.substring(0, pos);
-    var lastOpen = -1;
     for (var i = before.length - 1; i >= 0; i--) {
-      if (before[i] === '<' && (i === 0 || before[i - 1] !== '\\')) {
-        lastOpen = i;
-        break;
+      var ch = before[i];
+      if (ch === '<' && (i === 0 || before[i - 1] !== '\\')) {
+        var macroPartial = before.substring(i + 1);
+        return /^[a-zA-Z0-9_-]*$/.test(macroPartial) ? { kind: 'macro', partial: macroPartial, triggerPos: i } : null;
       }
-      if (before[i] === '>') break;
+      if (ch === '@' && (i === 0 || /\s/.test(before[i - 1]))) {
+        var mentionPartial = before.substring(i + 1);
+        return /^[a-z0-9_-]*$/.test(mentionPartial) ? { kind: 'mention', partial: mentionPartial, triggerPos: i } : null;
+      }
+      if (/[\s>]/.test(ch)) return null;
     }
-    if (lastOpen === -1) return null;
-    var partial = before.substring(lastOpen + 1);
-    if (!/^[a-zA-Z0-9_-]*$/.test(partial)) return null;
-    return partial;
+    return null;
   }
 
   function updateAcHighlight() {
@@ -336,28 +337,46 @@
   }
 
   function updateAcPopup() {
-    var partial = getAcPartial();
-    if (partial === null) { hideAcPopup(); return; }
-    var merged = getMergedMacros();
-    var lc = partial.toLowerCase();
-    var matches = Object.keys(merged).filter(function (k) {
-      return k.indexOf(lc) === 0;
-    }).sort();
-    if (matches.length === 0) { hideAcPopup(); return; }
-    acItems = matches;
-    acSelected = matches.length === 1 ? 0 : -1;
-    acPopupEl.innerHTML = matches.map(function (k, i) {
+    var ctx = getAcContext();
+    if (ctx === null) { hideAcPopup(); return; }
+    var items = [];
+    if (ctx.kind === 'macro') {
+      var merged = getMergedMacros();
+      var lc = ctx.partial.toLowerCase();
+      items = Object.keys(merged).filter(function (k) {
+        return k.indexOf(lc) === 0;
+      }).sort().map(function (k) {
+        return { kind: 'macro', insertText: '<' + k + '>', displayKey: '<' + k.toUpperCase() + '>', preview: truncate(merged[k], 40) };
+      });
+    } else {
+      var room = rooms.find(function (r) { return r.id === activeRoomID; });
+      var members = room ? (room.members || []) : [];
+      var lc = ctx.partial.toLowerCase();
+      items = members.map(function (memberID) {
+        var a = agents.find(function (a) { return a.id === memberID; });
+        var name = a ? a.name : memberID.split('@')[0];
+        var preview = a ? (a.kind === 'human' ? 'human' : ((a.model || 'unknown') + ' · ' + (a.harness || 'unknown'))) : 'unknown';
+        return { kind: 'mention', insertText: '@' + name, displayKey: '@' + name, preview: preview };
+      }).filter(function (item) {
+        return !lc || item.insertText.slice(1).indexOf(lc) === 0;
+      }).sort(function (a, b) { return a.insertText.localeCompare(b.insertText); });
+    }
+    if (items.length === 0) { hideAcPopup(); return; }
+    acItems = items;
+    acSelected = items.length === 1 ? 0 : -1;
+    acPopupEl.innerHTML = items.map(function (item, i) {
       return (
-        '<div class="ac-item' + (i === acSelected ? ' active' : '') + '" data-key="' + esc(k) + '">' +
-          '<span class="ac-item-key">&lt;' + esc(k.toUpperCase()) + '&gt;</span>' +
-          '<span class="ac-item-preview">' + esc(truncate(merged[k], 40)) + '</span>' +
+        '<div class="ac-item' + (i === acSelected ? ' active' : '') + '" data-idx="' + i + '">' +
+          '<span class="ac-item-key">' + esc(item.displayKey) + '</span>' +
+          '<span class="ac-item-preview">' + esc(item.preview) + '</span>' +
         '</div>'
       );
     }).join('');
     acPopupEl.querySelectorAll('.ac-item').forEach(function (el) {
       el.addEventListener('mousedown', function (e) {
-        e.preventDefault(); // keep focus in textarea
-        insertAcItem(el.getAttribute('data-key'));
+        e.preventDefault();
+        var idx = parseInt(el.getAttribute('data-idx'), 10);
+        insertAcItem(acItems[idx]);
       });
     });
     acPopupEl.classList.remove('hidden');
@@ -369,23 +388,26 @@
     acSelected = -1;
   }
 
-  function insertAcItem(key) {
+  function insertAcItem(item) {
     var val = msgBodyInput.value;
     var pos = msgBodyInput.selectionStart;
     var before = val.substring(0, pos);
-    var lastOpen = -1;
+    var triggerChar = item.kind === 'macro' ? '<' : '@';
+    var lastTrigger = -1;
     for (var i = before.length - 1; i >= 0; i--) {
-      if (before[i] === '<' && (i === 0 || before[i - 1] !== '\\')) {
-        lastOpen = i;
+      if (before[i] === triggerChar) {
+        if (triggerChar === '<' && i > 0 && before[i - 1] === '\\') continue;
+        if (triggerChar === '@' && i > 0 && !/\s/.test(before[i - 1])) break;
+        lastTrigger = i;
         break;
       }
-      if (before[i] === '>') break;
+      if (/[\s>]/.test(before[i])) break;
     }
-    if (lastOpen === -1) { hideAcPopup(); return; }
+    if (lastTrigger === -1) { hideAcPopup(); return; }
     var after = val.substring(pos);
-    var newVal = before.substring(0, lastOpen) + '<' + key + '>' + after;
+    var newVal = before.substring(0, lastTrigger) + item.insertText + after;
     msgBodyInput.value = newVal;
-    var newPos = lastOpen + key.length + 2;
+    var newPos = lastTrigger + item.insertText.length;
     msgBodyInput.setSelectionRange(newPos, newPos);
     msgBodyInput.style.height = 'auto';
     var h = Math.min(msgBodyInput.scrollHeight, 160);
