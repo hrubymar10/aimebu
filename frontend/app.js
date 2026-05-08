@@ -133,6 +133,10 @@
     return div.innerHTML;
   }
 
+  function escRe(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   function renderMarkdown(rawText) {
     if (!rawText) return '';
     var html = esc(rawText);
@@ -1277,6 +1281,55 @@
 
   // ── Render messages ──────────────────────────────────────────────
 
+  function buildHighlightRegex() {
+    var room = rooms.find(function (r) { return r.id === activeRoomID; });
+    var members = room ? (room.members || []) : [];
+    var memberNames = members.map(function (memberID) {
+      var a = agents.find(function (a) { return a.id === memberID; });
+      return a ? a.name : memberID.split('@')[0];
+    }).filter(Boolean);
+    if (memberNames.length === 0) return null;
+    var atNames = memberNames.slice().sort(function (a, b) { return b.length - a.length; }).map(escRe);
+    return new RegExp('@(' + atNames.join('|') + ')(?![a-z0-9])', 'gi');
+  }
+
+  function highlightNames(rootEl) {
+    var re = buildHighlightRegex();
+    if (!re) return;
+    var skipSel = 'code, pre, a, .mention';
+    var toReplace = [];
+    var walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        return node.parentElement && node.parentElement.closest(skipSel)
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    var node;
+    while ((node = walker.nextNode())) {
+      re.lastIndex = 0;
+      if (re.test(node.nodeValue)) toReplace.push(node);
+    }
+    toReplace.forEach(function (textNode) {
+      var frag = document.createDocumentFragment();
+      var text = textNode.nodeValue;
+      var last = 0;
+      re.lastIndex = 0;
+      var m;
+      while ((m = re.exec(text)) !== null) {
+        if (m.index > 0 && /[a-z0-9]/i.test(text[m.index - 1])) continue;
+        if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        var span = document.createElement('span');
+        span.className = 'mention';
+        span.textContent = m[0];
+        frag.appendChild(span);
+        last = m.index + m[0].length;
+      }
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      textNode.parentNode.replaceChild(frag, textNode);
+    });
+  }
+
   function renderMessages() {
     if (!activeRoomID) return;
     var msgs = messages[activeRoomID] || [];
@@ -1294,6 +1347,7 @@
       return chatMessageHTML(m);
     }).join('');
 
+    messageListEl.querySelectorAll('.chat-msg-body').forEach(function (b) { highlightNames(b); });
     renderReadReceipts();
     if (atBottom) {
       scrollToBottom(true);
@@ -1350,6 +1404,8 @@
     var el = temp.firstChild;
     el.classList.add('new-message');
     messageListEl.appendChild(el);
+    var msgBody = el.querySelector('.chat-msg-body');
+    if (msgBody) highlightNames(msgBody);
 
     if (atBottom) scrollToBottom(true);
   }

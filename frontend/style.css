@@ -940,6 +940,14 @@ body {
   word-break: break-word;
 }
 
+.mention {
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 0 2px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
 .chat-msg.self {
   align-self: flex-end;
 }
