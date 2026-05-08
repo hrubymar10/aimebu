@@ -43,6 +43,10 @@
   let acSelected = -1;       // currently highlighted item index
   let acHideTimer = null;    // debounce timer for blur→hide
 
+  // Composer history state (terminal-style ↑/↓)
+  let historyIdx = null;     // null = scratch; integer = index into getRecallCandidates()
+  let historyDraft = null;   // saved in-progress text during navigation
+
   // ── DOM refs ─────────────────────────────────────────────────────
 
   const $ = (sel) => document.querySelector(sel);
@@ -664,6 +668,18 @@
       });
   }
 
+  function getRecallCandidates() {
+    var arr = messages[activeRoomID] || [];
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i].from !== agentID) continue;
+      var b = arr[i].body;
+      if (out.length && out[out.length - 1] === b) continue;
+      out.push(b);
+    }
+    return out.slice(-200);
+  }
+
   function sendMessage(body) {
     if (!activeRoomID) return;
     return ensureRegistered().then(function () {
@@ -1049,6 +1065,8 @@
       return;
     }
     activeRoomID = roomID;
+    historyIdx = null;
+    historyDraft = null;
 
     // Show room view
     noRoomView.classList.add('hidden');
@@ -1701,6 +1719,45 @@
         return;
       }
     }
+    // Terminal-style ↑/↓ message history
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+        !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey &&
+        !e.isComposing) {
+      var ss = msgBodyInput.selectionStart, se = msgBodyInput.selectionEnd;
+      var len = msgBodyInput.value.length;
+      var atStart = ss === 0 && se === 0;
+      var atEnd = ss === len && se === len;
+      var isEmpty = len === 0;
+      if (e.key === 'ArrowUp' && (isEmpty || atStart)) {
+        var cands = getRecallCandidates();
+        if (cands.length > 0) {
+          e.preventDefault();
+          if (historyIdx === null) {
+            historyDraft = msgBodyInput.value;
+            historyIdx = cands.length - 1;
+          } else {
+            historyIdx = Math.max(historyIdx - 1, 0);
+          }
+          msgBodyInput.value = cands[historyIdx];
+          msgBodyInput.setSelectionRange(msgBodyInput.value.length, msgBodyInput.value.length);
+          msgBodyInput.dispatchEvent(new Event('input'));
+        }
+      } else if (e.key === 'ArrowDown' && (isEmpty || atEnd) && historyIdx !== null) {
+        var cands = getRecallCandidates();
+        e.preventDefault();
+        historyIdx++;
+        if (historyIdx >= cands.length) {
+          msgBodyInput.value = historyDraft !== null ? historyDraft : '';
+          historyDraft = null;
+          historyIdx = null;
+        } else {
+          msgBodyInput.value = cands[historyIdx];
+        }
+        msgBodyInput.setSelectionRange(msgBodyInput.value.length, msgBodyInput.value.length);
+        msgBodyInput.dispatchEvent(new Event('input'));
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       sendForm.requestSubmit();
@@ -1729,6 +1786,8 @@
     e.preventDefault();
     var body = expandMacros(msgBodyInput.value.trim());
     if (!body) return;
+    historyIdx = null;
+    historyDraft = null;
     hideAcPopup();
     sendMessage(body);
     msgBodyInput.value = '';
