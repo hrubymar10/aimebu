@@ -1366,7 +1366,12 @@ func (s *store) knownAgentNames() map[string]bool {
 func (s *store) legacyPrefixWarn(senderAgentID, body string) string {
 	names := s.knownAgentNames() // acquires and releases its own RLock
 	matchedName, matched := parseLegacyPrefix(body, names)
-	if !matched {
+	var warning string
+	if matched {
+		warning = fmt.Sprintf("'%s:' prefix detected — this does not address %s; write '@%s ...'. Also drop self-labels: 'from' already identifies you. (one-time warning per session.)", matchedName, matchedName, matchedName)
+	} else if matchedNames, ok := parseInlineLegacyPrefix(body, names); ok {
+		warning = fmt.Sprintf("'%s, %s —' inline addressing detected — write '@%s @%s ...' so addressed_to fires. (one-time warning per session.)", matchedNames[0], matchedNames[len(matchedNames)-1], matchedNames[0], matchedNames[len(matchedNames)-1])
+	} else {
 		return ""
 	}
 	s.mu.Lock()
@@ -1375,7 +1380,7 @@ func (s *store) legacyPrefixWarn(senderAgentID, body string) string {
 		return ""
 	}
 	s.warnedLegacy[senderAgentID] = true
-	return fmt.Sprintf("'%s:' prefix detected — this does not address %s; write '@%s ...'. Also drop self-labels: 'from' already identifies you. (one-time warning per session.)", matchedName, matchedName, matchedName)
+	return warning
 }
 
 // ── SSE subscriptions ──────────────────────────────────────────────

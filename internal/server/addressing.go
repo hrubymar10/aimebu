@@ -13,6 +13,9 @@ var (
 	mentionRe = regexp.MustCompile(`(?i)@([a-z][a-z0-9]*)`)
 	// legacyPrefixRe detects IRC-style "name:" speaker prefixes at the start of a body.
 	legacyPrefixRe = regexp.MustCompile(`(?i)^([a-z][a-z0-9]{2,11})\s*:`)
+	// inlinePrefixRe detects inline IRC-style "name1, name2 —" or
+	// "name1 and name2:" addressing at the start of a sentence/paragraph.
+	inlinePrefixRe = regexp.MustCompile(`(?i)(?:^|[.!?\n]\s*)([a-z][a-z0-9]{2,11})\s*(?:,\s*|\s+and\s+)([a-z][a-z0-9]{2,11})\s*(?:[—–\-]|:)`)
 )
 
 // parseAddressedTo returns the deduplicated list of short names a message body
@@ -106,6 +109,26 @@ func parseLegacyPrefix(body string, knownNames map[string]bool) (string, bool) {
 		return "", false
 	}
 	return name, true
+}
+
+// parseInlineLegacyPrefix detects inline IRC-style multi-addressee addressing
+// such as "worker, reviewer —" or "worker and reviewer:" at the start of a
+// sentence or paragraph. Returns the matched names in order only when both
+// tokens resolve to real registered agent short names.
+func parseInlineLegacyPrefix(body string, knownNames map[string]bool) ([]string, bool) {
+	m := inlinePrefixRe.FindStringSubmatch(body)
+	if m == nil {
+		return nil, false
+	}
+	first := strings.ToLower(m[1])
+	second := strings.ToLower(m[2])
+	if !knownNames[first] || !knownNames[second] {
+		return nil, false
+	}
+	if first == second {
+		return []string{first}, true
+	}
+	return []string{first, second}, true
 }
 
 // agentShortName extracts the name portion from an agent ID.

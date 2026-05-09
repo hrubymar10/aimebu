@@ -61,11 +61,11 @@ func TestAnnotate(t *testing.T) {
 	}
 
 	cases := []struct {
-		name          string
-		msg           types.Message
-		agentName     string
-		wantAddrToMe  bool
-		wantRespond   bool
+		name         string
+		msg          types.Message
+		agentName    string
+		wantAddrToMe bool
+		wantRespond  bool
 	}{
 		// Human, room-wide → respond
 		{"human room-wide", human("hey all"), "alice", false, true},
@@ -191,6 +191,35 @@ func TestParseLegacyPrefix(t *testing.T) {
 		if gotMatch != tc.wantMatch || gotName != tc.wantName {
 			t.Errorf("parseLegacyPrefix(%q) = (%q, %v), want (%q, %v)",
 				tc.body, gotName, gotMatch, tc.wantName, tc.wantMatch)
+		}
+	}
+}
+
+func TestParseInlineLegacyPrefix(t *testing.T) {
+	known := map[string]bool{"worker": true, "reviewer": true, "leader": true}
+
+	cases := []struct {
+		body      string
+		wantNames []string
+		wantMatch bool
+	}{
+		{"worker, reviewer — your take?", []string{"worker", "reviewer"}, true},
+		{"Preamble. worker, reviewer — your take?", []string{"worker", "reviewer"}, true},
+		{"Preamble\n\nworker, reviewer — your take?", []string{"worker", "reviewer"}, true},
+		{"worker and reviewer: thoughts?", []string{"worker", "reviewer"}, true},
+		{"worker, reviewer: thoughts?", []string{"worker", "reviewer"}, true},
+		{"Worker, Reviewer — case-insensitive", []string{"worker", "reviewer"}, true},
+		{"Hi alice, bob is wrong about that", nil, false},
+		{"Q: name, what do you think?", nil, false},
+		{"worker, NOTANAGENT — please review", nil, false},
+		{"@worker @reviewer please review", nil, false},
+	}
+
+	for _, tc := range cases {
+		gotNames, gotMatch := parseInlineLegacyPrefix(tc.body, known)
+		if gotMatch != tc.wantMatch || !reflect.DeepEqual(gotNames, tc.wantNames) {
+			t.Errorf("parseInlineLegacyPrefix(%q) = (%v, %v), want (%v, %v)",
+				tc.body, gotNames, gotMatch, tc.wantNames, tc.wantMatch)
 		}
 	}
 }

@@ -1481,6 +1481,16 @@ func TestLegacyPrefixWarning(t *testing.T) {
 		t.Errorf("first legacy prefix from agentB: expected a warning, got none")
 	}
 
+	// Reset warned state so we can exercise the inline multi-addressee warning.
+	s.mu.Lock()
+	s.warnedLegacy[agentB.ID] = false
+	s.mu.Unlock()
+
+	w3b := sendAndDecodeWarnings(agentB.ID, "Preamble.\n\n"+shortA+", "+shortB+" — your take?")
+	if len(w3b) == 0 {
+		t.Errorf("inline legacy prefix from agentB: expected a warning, got none")
+	}
+
 	// Non-legacy body → no warning.
 	w4 := sendAndDecodeWarnings(agentA.ID, "@"+agentShortName(agentB.ID)+" see this")
 	if len(w4) != 0 {
