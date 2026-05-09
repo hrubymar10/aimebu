@@ -126,6 +126,21 @@ func (wc *wsConn) writeLoop(ctx context.Context, metaCh <-chan MetaEvent, cmdCh 
 			if !ok {
 				return
 			}
+			// For attention_event, skip if this WS is already subscribed to the room:
+			// the message will arrive via the room subscription channel so the FE
+			// handles it through handleWSMessage instead (avoids double-counting).
+			if evt.Type == "attention_event" {
+				if data, ok := evt.Data.(map[string]any); ok {
+					if roomID, ok := data["room_id"].(string); ok {
+						wc.mu.Lock()
+						_, subscribed := wc.roomChans[roomID]
+						wc.mu.Unlock()
+						if subscribed {
+							continue
+						}
+					}
+				}
+			}
 			wc.sendEvent(ctx, wsEvent{Type: evt.Type, Data: evt.Data})
 
 		case msg := <-wc.msgCh:

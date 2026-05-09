@@ -76,17 +76,21 @@ func gatherMeta() map[string]string {
 // tokens to read anything that gets sent because of it.
 const busEtiquette = `aimebu messagebus etiquette:
 - Who you are: the ` + "`name`" + ` returned by bus_register (e.g. "zoe"). Use it to decide whether a message is addressed to you.
-- Addressing: use "@<name>" anywhere in the body to direct a message to a specific agent. Otherwise the message is room-wide and every agent may respond.
-  BAD: "alice: here is my analysis" → room-wide; alice won't see addressed_to_me=true.
-  GOOD: "@alice here is my analysis" → addressed; alice sees addressed_to_me=true.
-- Do not label your messages with your name or "from:" as a prefix. The "from" field already identifies you.
+- Addressing — CRITICAL. A message is addressed to a named agent ONLY via "@<name>" mention anywhere in the body. No other syntax works. Worked examples:
+  BAD:  "worker: @matin please review"  → addressed_to=[], matin gets should_respond=false (matin never sees it as addressed to them)
+  GOOD: "@matin please review"           → addressed_to=["matin"], matin gets should_respond=true
+  BAD:  "leader: here's my analysis"     → wastes tokens; from field already identifies the sender
+  GOOD: "here's my analysis"             → let the from field speak; don't repeat your own name
+  Old IRC-style "name:" prefixes are NOT parsed — they produce room-wide messages with no addressed_to. The server will warn you once if it detects this pattern.
+- Self-labeling: NEVER prefix your message with your own short name (e.g. "worker: ..."). The ` + "`from`" + ` field already identifies you. If you are role-switching, register under a different name — don't prefix.
 - Structured fields: every message from bus_wait and bus_read carries ` + "`addressed_to`" + ` (list of names), ` + "`addressed_to_me`" + ` (bool), and ` + "`should_respond`" + ` (bool). Use ` + "`should_respond`" + ` as the primary signal. Example: human posts "@leader status?" — if you are not leader, should_respond=false; call bus_wait again immediately, do NOT call bus_say.
 - Human sender (from_kind=human): should_respond=true for room-wide messages; should_respond=false when addressed to a different agent. Do not ask "should I reply?" — just reply when should_respond=true.
 - AI sender (from_kind=ai): should_respond=false by default. should_respond=true only when addressed_to_me=true or in a DM room (id starts with "dm:").
 - After joining a room, block on bus_wait. bus_wait remembers your read cursor — if messages arrived while you were away, the next call returns them immediately. When it times out, call bus_wait again. Return control to the user only when the user tells you to stop.
 - Do not send unprompted introductions, greetings, or status acks ("standing by", "on it", "got it"). Keep replies terse — other agents pay input tokens to read every word.
 - Wait for the human's review before shipping code or changes, unless they've told you to proceed autonomously.
-- Warnings: if a send response includes a "warnings" field, read those warnings and correct your messaging style immediately.`
+- Human attention signal: set ` + "`needs_attention=true`" + ` on bus_say or bus_dm when you need the human to review something. This sets ` + "`needs_human_attention=true`" + ` on the message, triggers a sound notification + visual highlight in the web UI, and auto-subscribes any registered human not yet in the room so they receive the message. Use sparingly — once per handoff, not on every reply.
+- After bus_say / bus_dm, check the JSON response for a top-level ` + "`warnings`" + ` array. If present, those are addressing mistakes — read them and adjust before your next send.`
 
 // ── JSON-RPC types ─────────────────────────────────────────────────
 
@@ -167,8 +171,9 @@ var tools = []tool{
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
-				"room": {Type: "string", Description: "Room ID"},
-				"body": {Type: "string", Description: "Message content"},
+				"room":            {Type: "string", Description: "Room ID"},
+				"body":            {Type: "string", Description: "Message content"},
+				"needs_attention": {Type: "boolean", Description: "Set to true when you need a human to review. Triggers sound + visual alert in the web UI and auto-subscribes any registered human not yet in the room. Use sparingly — once per handoff."},
 			},
 			Required: []string{"room", "body"},
 		},
@@ -223,8 +228,9 @@ var tools = []tool{
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
-				"to":   {Type: "string", Description: "Recipient's full agent ID (e.g. 'alice@aimebu' or 'martin')"},
-				"body": {Type: "string", Description: "Message content"},
+				"to":              {Type: "string", Description: "Recipient's full agent ID (e.g. 'alice@aimebu' or 'martin')"},
+				"body":            {Type: "string", Description: "Message content"},
+				"needs_attention": {Type: "boolean", Description: "Set to true when you need a human to review. Triggers sound + visual alert and auto-subscribes any registered human not yet in the DM room."},
 			},
 			Required: []string{"to", "body"},
 		},
@@ -374,8 +380,9 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 
 	case "bus_say":
 		var p struct {
-			Room string `json:"room"`
-			Body string `json:"body"`
+			Room           string `json:"room"`
+			Body           string `json:"body"`
+			NeedsAttention bool   `json:"needs_attention"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
@@ -383,9 +390,10 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 		if strings.HasPrefix(p.Room, "_") {
 			return "", fmt.Errorf("room %q is read-only (system room)", p.Room)
 		}
-		return c.Post("/rooms/"+p.Room+"/send", map[string]string{
-			"from": c.AgentID,
-			"body": p.Body,
+		return c.Post("/rooms/"+p.Room+"/send", map[string]any{
+			"from":            c.AgentID,
+			"body":            p.Body,
+			"needs_attention": p.NeedsAttention,
 		})
 
 	case "bus_read":
@@ -423,16 +431,18 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 
 	case "bus_dm":
 		var p struct {
-			To   string `json:"to"`
-			Body string `json:"body"`
+			To             string `json:"to"`
+			Body           string `json:"body"`
+			NeedsAttention bool   `json:"needs_attention"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
 		}
-		return c.Post("/dm", map[string]string{
-			"from": c.AgentID,
-			"to":   p.To,
-			"body": p.Body,
+		return c.Post("/dm", map[string]any{
+			"from":            c.AgentID,
+			"to":              p.To,
+			"body":            p.Body,
+			"needs_attention": p.NeedsAttention,
 		})
 
 	case "bus_wait":

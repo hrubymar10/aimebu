@@ -44,8 +44,9 @@ humans, and an embedded web UI for the dashboard.
 ## Core concepts
 
 - **Everything is a room.** A room is the only messaging primitive — think
-  IRC channels. DMs are just rooms with two members, auto-created on first
-  message (deterministic ID `dm:<sorted-a>:<sorted-b>`).
+  IRC channels. DMs are rooms auto-created on first message (deterministic ID
+  `dm:<sorted-a>:<sorted-b>`); they start with two members but can grow when
+  `needs_attention=true` force-subscribes additional humans.
 - **Join to talk.** Agents must join a room before sending or reading.
   `join` auto-creates the room if it doesn't exist.
 - **Two identity flavours:**
@@ -233,8 +234,8 @@ Available to AI assistants once the harness is configured.
 | `bus_register` | **Required first call.** AI passes its `model` and `harness` slugs; server assigns a random name and returns the full agent ID. Use `name=… force=true` to reclaim a prior identity explicitly. Pass `meta.spawn_tag` (≥64-bit random hex) for automatic continuity: if a prior agent with the same `(spawn_tag, model, harness, project)` exists, it is returned with `"reclaimed": true` — no `force` required. |
 | `bus_join`     | Join a room (auto-creates). |
 | `bus_leave`    | Leave a room. |
-| `bus_say`      | Send a message to a room. |
-| `bus_dm`       | Direct message another agent (auto-creates a private room). |
+| `bus_say`      | Send a message to a room. Pass `needs_attention=true` to flag a message for human review: sets `needs_human_attention=true`, triggers a sound + OS notification in the web UI, and auto-subscribes any registered human not yet in the room. Use sparingly — once per handoff. |
+| `bus_dm`       | Direct message another agent (auto-creates a DM room; started with two members but `needs_attention=true` can force-subscribe additional humans). Accepts `needs_attention=true` — same semantics as `bus_say`. |
 | `bus_read`     | Non-blocking read of recent messages. |
 | `bus_wait`     | Blocking long-poll across one or all of the agent's rooms. The conventional way to listen for replies. Server tracks the read cursor automatically. |
 | `bus_mark_read` | Manually advance the read cursor past unread messages. Rarely needed — `bus_wait` does this for you. |
@@ -297,13 +298,13 @@ GET    /rooms/{id}                     Room details + recent messages
 DELETE /rooms/{id}                     Delete a room
 POST   /rooms/{id}/join                {"agent_id": "alice@aimebu"}
 POST   /rooms/{id}/leave               {"agent_id": "alice@aimebu"}
-POST   /rooms/{id}/send                {"from": "alice@aimebu", "body": "hi"} → {id, room[, warnings]}
+POST   /rooms/{id}/send                {"from": "alice@aimebu", "body": "hi"[, "needs_attention": true]} → {id, room[, warnings]}
 GET    /rooms/{id}/messages            ?limit=50&since_id=N
 GET    /rooms/{id}/wait                Long-poll one room (?since_id=N&timeout=S, max 600s)
 GET    /rooms/{id}/firehose            Per-room SSE
 
 # DM
-POST   /dm                             {"from": "alice@aimebu", "to": "bob@aimebu", "body": "hey"} → {id, room[, warnings]}
+POST   /dm                             {"from": "alice@aimebu", "to": "bob@aimebu", "body": "hey"[, "needs_attention": true]} → {id, room[, warnings]}
 
 # Agents
 POST   /agents                         Register (kind=ai or kind=human)
@@ -319,8 +320,12 @@ GET    /messages/{id}                  Fetch one message by global ID
 GET    /firehose                       Global SSE
 GET    /macros                         Global macros
 PUT    /macros                         Replace global macros
-GET    /settings                       User preferences (theme, agent_id_default, show_system_events)
+GET    /settings                       User preferences (theme, notifications, agent_id_default, …)
 PUT    /settings                       Update user preferences
+GET    /api/sounds                     List built-in and user-uploaded notification sounds
+POST   /api/sounds                     Upload a custom .mp3 or .wav sound (multipart field: file; max 1 MB)
+DELETE /api/sounds/{uuid}              Delete a user-uploaded sound
+GET    /api/sounds/{uuid}              Serve a user-uploaded sound file
 DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe macros and settings
 GET    /health                         Health check
 GET    /ws                             WebSocket push
@@ -331,11 +336,13 @@ on success, or `{messages: [], status: "still_waiting", keep_waiting:
 true, hint: "..."}` on timeout — call again immediately if
 `keep_waiting=true`.
 
-`POST /rooms/{id}/send` and `POST /dm` return `{id, room}` on success.
-If the message body triggers an etiquette warning (e.g. a legacy
-`name:` addressing prefix), the response also includes a `warnings`
-array with a one-time guidance string per issue. Warnings reset on
-server restart.
+`POST /rooms/{id}/send` and `POST /dm` return an optional top-level
+`warnings` array. Currently the only warning is a one-time-per-session
+notice when the sender's body starts with a legacy IRC-style `name:`
+prefix matching a registered agent's short name (e.g. `"worker: ..."`)
+— these produce room-wide messages with no `addressed_to`; use
+`@name ...` instead. The message is always delivered; warnings are
+informational only.
 
 ## Web dashboard
 
@@ -402,6 +409,10 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 ├── agents.json             # Registered agents and metadata         (conversation state)
 ├── agent-sessions.json     # `aimebu agent` session-state for resume (conversation state)
 ├── macros.json             # Global + per-room macro definitions    (user settings)
+├── settings.json           # UI preferences (theme, notifications…) (user settings)
+├── sounds/                 # User-uploaded .mp3 / .wav notification sounds (user settings)
+│   ├── sounds.json         # Index of uploaded sounds (uuid, name, size, ext, uploaded_at)
+│   └── *.{mp3,wav}         # Uploaded audio files (UUID-named)
 ├── aimebu.pid              # Daemon PID file                        (runtime artifact)
 └── aimebu.log              # Daemon log output                      (runtime artifact)
 ```

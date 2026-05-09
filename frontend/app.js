@@ -37,6 +37,13 @@
   let macrosSaveTimer = null;
   let serverSettings = {};   // Settings from GET /settings
   let macrosFilter = '';     // search filter for macros panel
+  let initComplete = false;  // true after first WS open — guards notification playback
+  let maxSeenMsgID = 0;      // highest message id seen via WS or HTTP — replay guard
+  let attentionCounts = {};  // { roomID: number } — needs-attention messages per room
+  let attentionTimers = {};        // { roomID: timeoutID } — pending 3s fade timers
+  let attentionFocusListeners = {}; // { roomID: fn } — pending focus listener per room
+  let notifSounds = [];      // sound list from GET /api/sounds
+  let _audioCtx = null;      // shared AudioContext — lazy-init, never closed
 
   // Autocomplete state
   let acItems = [];          // Array<{kind,insertText,displayKey,preview}> — ac candidates
@@ -104,6 +111,17 @@
   const acPopupEl = $('#ac-popup');
   const agentIDDefaultInput = $('#agent-id-default-input');
   const systemEventsToggleBtn = $('#system-events-toggle-btn');
+  const notifEnabledBtn = $('#notif-enabled-btn');
+  const notifSoundSelect = $('#notif-sound-select');
+  const notifTestBtn = $('#notif-test-btn');
+  const notifVolumeSlider = $('#notif-volume-slider');
+  const notifVolumeLabel = $('#notif-volume-label');
+  const notifUploadBtn = $('#notif-upload-btn');
+  const notifUploadFile = $('#notif-upload-file');
+  const notifSoundsListEl = $('#notif-sounds-list');
+  const notifAudioStatusEl = $('#notif-audio-status');
+  const notifSysBtn = $('#notif-sys-btn');
+  const notifSysStatusEl = $('#notif-sys-status');
 
   // ── Harness icons ────────────────────────────────────────────────
 
@@ -457,6 +475,273 @@
     }, 500);
   }
 
+  // ── Notification sounds ──────────────────────────────────────────
+
+  function getAudioCtx() {
+    if (!_audioCtx) {
+      _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return _audioCtx;
+  }
+
+  function setAudioStatus(msg) {
+    if (notifAudioStatusEl) notifAudioStatusEl.textContent = msg;
+  }
+
+  function playBuiltinSound(name, vol) {
+    var ctx = getAudioCtx();
+    if (ctx.state === 'suspended') { ctx.resume(); }
+    var masterGain = ctx.createGain();
+    masterGain.gain.value = (vol / 100) * 0.35;
+    masterGain.connect(ctx.destination);
+
+    function tone(freq, start, dur) {
+      var osc = ctx.createOscillator();
+      var g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(1, ctx.currentTime + start);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+      osc.connect(g);
+      g.connect(masterGain);
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + dur);
+    }
+
+    if (name === 'chime') {
+      tone(880, 0,    0.25);
+      tone(659, 0.18, 0.25);
+      tone(523, 0.36, 0.35);
+    } else if (name === 'ding') {
+      tone(1047, 0, 0.5);
+    } else if (name === 'beep') {
+      var osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.value = 880;
+      osc.connect(masterGain);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.12);
+    } else if (name === 'knock') {
+      tone(220, 0,    0.06);
+      tone(200, 0.12, 0.06);
+    }
+  }
+
+  function playNotificationSound() {
+    if (serverSettings.notification_enabled === false) return;
+    var sound = serverSettings.notification_sound || 'builtin:chime';
+    var vol = serverSettings.notification_volume !== undefined ? serverSettings.notification_volume : 70;
+    if (sound.startsWith('builtin:')) {
+      try {
+        playBuiltinSound(sound.slice('builtin:'.length), vol);
+        var ctx = getAudioCtx();
+        setAudioStatus(ctx.state === 'running'
+          ? 'Last attempt: ok'
+          : 'Last attempt: scheduled — tap the page to unlock audio');
+      } catch (e) {
+        console.warn('[aimebu] playBuiltinSound error:', e);
+        setAudioStatus('Last attempt: error — ' + (e && e.message ? e.message : String(e)));
+      }
+      return;
+    }
+    if (sound.startsWith('user:')) {
+      var uuid = sound.slice('user:'.length);
+      var audio = new Audio('/api/sounds/' + encodeURIComponent(uuid));
+      audio.volume = vol / 100;
+      audio.play().then(function () {
+        setAudioStatus('Last attempt: ok');
+      }).catch(function (e) {
+        console.warn('[aimebu] audio.play() rejected:', e);
+        var blocked = e && e.name === 'NotAllowedError';
+        setAudioStatus(blocked
+          ? 'Last attempt: blocked — click anywhere on the page to unlock'
+          : 'Last attempt: error — ' + (e && e.message ? e.message : String(e)));
+      });
+    }
+  }
+
+  // ── System notifications (Notification API) ───────────────────────
+
+  function updateSysNotifStatus() {
+    if (!notifSysStatusEl || !notifSysBtn) return;
+    if (!('Notification' in window)) {
+      notifSysStatusEl.textContent = 'not supported';
+      notifSysBtn.disabled = true;
+      notifSysBtn.textContent = 'Not supported';
+      return;
+    }
+    var perm = Notification.permission;
+    notifSysStatusEl.textContent = perm;
+    notifSysBtn.textContent = perm === 'granted' ? 'Granted' : (perm === 'denied' ? 'Denied' : 'Enable');
+    notifSysBtn.disabled = perm === 'denied';
+  }
+
+  function requestSysNotifPermission() {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'denied') return;
+    Notification.requestPermission().then(function () {
+      updateSysNotifStatus();
+    });
+  }
+
+  function fireSystemNotification(msg, roomID) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    if (!document.hidden) return; // only when tab is not visible
+    var roomName = roomID || 'unknown room';
+    var bodyText = msg.body ? msg.body.slice(0, 80) : '';
+    var note = new Notification('Attention requested in ' + roomName, {
+      body: bodyText,
+      tag: roomID,
+      icon: '/icons/broadcast.svg',
+      silent: false,
+    });
+    note.onclick = function () {
+      window.focus();
+      if (roomID) openRoom(roomID);
+      note.close();
+    };
+  }
+
+  function updateSoundSelect() {
+    if (!notifSoundSelect) return;
+    var current = serverSettings.notification_sound || 'builtin:chime';
+    notifSoundSelect.innerHTML = notifSounds.map(function (s) {
+      return '<option value="' + esc(s.id) + '"' + (s.id === current ? ' selected' : '') + '>' + esc(s.name) + '</option>';
+    }).join('');
+  }
+
+  function renderNotifSoundsList() {
+    if (!notifSoundsListEl) return;
+    var userSounds = notifSounds.filter(function (s) { return s.kind === 'user'; });
+    if (userSounds.length === 0) {
+      notifSoundsListEl.innerHTML = '<div class="sound-list-empty">No custom sounds uploaded.</div>';
+      return;
+    }
+    notifSoundsListEl.innerHTML = userSounds.map(function (s) {
+      var kb = s.size ? Math.round(s.size / 1024) + ' KB' : '';
+      return (
+        '<div class="sound-row">' +
+          '<span class="sound-row-name" title="' + esc(s.name) + '">' + esc(s.name) + '</span>' +
+          (kb ? '<span class="sound-row-size">' + esc(kb) + '</span>' : '') +
+          '<button class="btn btn-sm btn-danger" data-del-uuid="' + esc(s.id.slice('user:'.length)) + '" type="button">&times;</button>' +
+        '</div>'
+      );
+    }).join('');
+    notifSoundsListEl.querySelectorAll('[data-del-uuid]').forEach(function (btn) {
+      btn.addEventListener('click', function () { deleteSound(btn.getAttribute('data-del-uuid')); });
+    });
+  }
+
+  function loadSounds() {
+    return api('GET', '/api/sounds').then(function (data) {
+      notifSounds = data.sounds || [];
+      updateSoundSelect();
+      renderNotifSoundsList();
+    }).catch(function () {});
+  }
+
+  function deleteSound(uuid) {
+    fetch('/api/sounds/' + encodeURIComponent(uuid), { method: 'DELETE' })
+      .then(function (r) {
+        if (!r.ok && r.status !== 404) return;
+        var deletedID = 'user:' + uuid;
+        notifSounds = notifSounds.filter(function (s) { return s.id !== deletedID; });
+        if (serverSettings.notification_sound === deletedID) {
+          saveSettings({ notification_sound: 'builtin:chime' });
+        }
+        updateSoundSelect();
+        renderNotifSoundsList();
+      })
+      .catch(function (err) { console.error('delete sound failed:', err); });
+  }
+
+  function uploadSound(file) {
+    var fd = new FormData();
+    fd.append('file', file);
+    fetch('/api/sounds', { method: 'POST', body: fd })
+      .then(function (r) {
+        if (!r.ok) return r.text().then(function (t) { throw new Error(t); });
+        return r.json();
+      })
+      .then(function (entry) {
+        notifSounds.push({ id: entry.id, name: entry.name, kind: 'user', size: entry.size });
+        updateSoundSelect();
+        renderNotifSoundsList();
+        if (notifUploadBtn) {
+          var orig = notifUploadBtn.textContent;
+          notifUploadBtn.textContent = 'Uploaded!';
+          setTimeout(function () { notifUploadBtn.textContent = orig; }, 1500);
+        }
+      })
+      .catch(function (err) {
+        alert('Upload failed: ' + err.message);
+      });
+  }
+
+  function applyNotificationSettings() {
+    var enabled = serverSettings.notification_enabled !== false;
+    if (notifEnabledBtn) notifEnabledBtn.textContent = enabled ? 'Enabled' : 'Disabled';
+    var vol = serverSettings.notification_volume !== undefined ? serverSettings.notification_volume : 70;
+    if (notifVolumeSlider) notifVolumeSlider.value = vol;
+    if (notifVolumeLabel) notifVolumeLabel.textContent = vol + '%';
+    updateSoundSelect();
+  }
+
+  function updateTitleAttention() {
+    var hasAny = Object.keys(attentionCounts).some(function (r) { return attentionCounts[r] > 0; });
+    document.title = hasAny ? '(!) aimebu' : 'aimebu';
+  }
+
+  // Schedule a 3-second fade for roomID's attention bell. If the window is
+  // currently unfocused, the timer is deferred until the next focus event so
+  // the bell stays visible while the user is away.
+  function scheduleAttentionFade(roomID) {
+    if (attentionTimers[roomID]) {
+      clearTimeout(attentionTimers[roomID]);
+      delete attentionTimers[roomID];
+    }
+    function startFade() {
+      attentionTimers[roomID] = setTimeout(function () {
+        delete attentionTimers[roomID];
+        attentionCounts[roomID] = 0;
+        updateTitleAttention();
+        renderRooms();
+      }, 3000);
+    }
+    if (document.hasFocus()) {
+      startFade();
+    } else {
+      // Remove any pending focus listener for this room before adding a new one
+      // to prevent unbounded listener accumulation during idle periods.
+      if (attentionFocusListeners[roomID]) {
+        window.removeEventListener('focus', attentionFocusListeners[roomID]);
+        delete attentionFocusListeners[roomID];
+      }
+      function onFocus() {
+        delete attentionFocusListeners[roomID];
+        startFade();
+      }
+      attentionFocusListeners[roomID] = onFocus;
+      window.addEventListener('focus', onFocus, { once: true });
+    }
+  }
+
+  // Rebuild attentionCounts for all rooms where we have cached messages.
+  // Called after message load or read-cursor updates so badges survive page reload
+  // and room switches. For rooms with no cached messages the count remains 0.
+  // Historical attention badges persist until the user visits that room.
+  function recomputeAttentionCounts() {
+    Object.keys(messages).forEach(function (roomID) {
+      var cursor = readCursors[roomID] || 0;
+      var count = 0;
+      (messages[roomID] || []).forEach(function (m) {
+        if (m.needs_human_attention && m.from !== agentID && m.id > cursor) count++;
+      });
+      attentionCounts[roomID] = count;
+    });
+    updateTitleAttention();
+  }
+
   function loadMacros() {
     return api('GET', '/macros')
       .then(function (data) {
@@ -615,6 +900,11 @@
         var last = messages[roomID][messages[roomID].length - 1];
         lastMessagePreview[roomID] = last.from + ': ' + last.body;
       }
+      // Advance watermark so WS reconnect replays of these messages don't ring.
+      messages[roomID].forEach(function (m) {
+        if (m.id > maxSeenMsgID) maxSeenMsgID = m.id;
+      });
+      recomputeAttentionCounts();
       renderMessages();
     }).catch(function (err) {
       console.error('Failed to fetch messages for room ' + roomID + ':', err);
@@ -641,10 +931,13 @@
       var list = data.rooms || [];
       unreadCounts = {};
       readCursors = {};
+      attentionCounts = {};
       list.forEach(function (r) {
         unreadCounts[r.id] = r.unread_count || 0;
         readCursors[r.id] = r.read_cursor || 0;
+        attentionCounts[r.id] = r.attention_unread_count || 0;
       });
+      updateTitleAttention();
       renderRooms();
     }).catch(function (err) {
       console.error('Failed to fetch agent rooms:', err);
@@ -662,6 +955,7 @@
     }).then(function (data) {
       unreadCounts[roomID] = 0;
       readCursors[roomID] = data.read_cursor || readCursors[roomID] || 0;
+      updateTitleAttention();
       renderRooms();
     }).catch(function (err) {
       console.error('Failed to mark-read:', err);
@@ -755,6 +1049,7 @@
       if (agentIDDefaultInput) {
         agentIDDefaultInput.value = serverSettings.agent_id_default || '';
       }
+      applyNotificationSettings();
     }).catch(function () {});
   }
 
@@ -786,7 +1081,7 @@
     settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
     });
-    var titles = { general: 'General', appearance: 'Appearance', macros: 'Macros', backup: 'Backup & Sync', danger: 'Danger Zone' };
+    var titles = { general: 'General', appearance: 'Appearance', notifications: 'Notifications', macros: 'Macros', backup: 'Backup & Sync', danger: 'Danger Zone' };
     if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
   }
 
@@ -860,9 +1155,12 @@
       resetLocalState();
       macros = {};
       serverSettings = {};
+      attentionCounts = {};
+      updateTitleAttention();
       localStorage.removeItem('aimebu.ui.theme');
       applyTheme('dark');
       applyShowSystemEvents(true);
+      applyNotificationSettings();
       renderMacrosList();
       if (agentIDDefaultInput) agentIDDefaultInput.value = '';
     });
@@ -882,6 +1180,7 @@
     ws.onopen = function () {
       wsReconnectAttempts = 0;
       setConnected(true);
+      initComplete = true;
 
       // Refresh macros in case a macros_updated event was missed during disconnect
       loadMacros().catch(function () {});
@@ -905,6 +1204,9 @@
             break;
           case 'room_update':
             handleWSRoomUpdate(frame.data);
+            break;
+          case 'attention_event':
+            handleWSAttentionEvent(frame.data);
             break;
           case 'agent_update':
             handleWSAgentUpdate(frame.data);
@@ -975,6 +1277,11 @@
     if (!messages[roomID]) messages[roomID] = [];
     // Deduplicate
     if (messages[roomID].some(function (m) { return m.id === msg.id; })) return;
+
+    // Track whether this id is higher than anything we've seen before (replay guard).
+    var isFirstSeen = msg.id > maxSeenMsgID;
+    if (msg.id > maxSeenMsgID) maxSeenMsgID = msg.id;
+
     messages[roomID].push(msg);
 
     // Update preview
@@ -992,6 +1299,16 @@
       if (msg.from !== agentID) {
         unreadCounts[roomID] = (unreadCounts[roomID] || 0) + 1;
       }
+    }
+
+    // Attention notification — active room gets the transient fade; inactive
+    // rooms keep their bell until explicitly opened.
+    if (msg.needs_human_attention && msg.from !== agentID && initComplete && isFirstSeen) {
+      attentionCounts[roomID] = (attentionCounts[roomID] || 0) + 1;
+      updateTitleAttention();
+      if (roomID === activeRoomID) scheduleAttentionFade(roomID);
+      playNotificationSound();
+      fireSystemNotification(msg, roomID);
     }
 
     // Update room list preview + unread badge
@@ -1077,6 +1394,26 @@
     renderRoomAgents();
   }
 
+  // Handles server-pushed attention_event: fires sound, bell, and OS notification
+  // for needs_attention=true messages in rooms this WS is not subscribed to.
+  // The server suppresses attention_event for rooms the WS is already subscribed to,
+  // so handleWSMessage handles those and there is no double-counting.
+  function handleWSAttentionEvent(data) {
+    var roomID = data.room_id;
+    var msg = data.message;
+    if (!roomID || !msg) return;
+    // Mirror the init + replay guards from handleWSMessage to prevent spurious
+    // alerts on reconnect and edge-case double-fire on rapid unsubscribe.
+    var isFirstSeen = msg.id > maxSeenMsgID;
+    if (msg.id > maxSeenMsgID) maxSeenMsgID = msg.id;
+    if (msg.from === agentID || !initComplete || !isFirstSeen) return;
+    attentionCounts[roomID] = (attentionCounts[roomID] || 0) + 1;
+    updateTitleAttention();
+    renderRooms();
+    playNotificationSound();
+    fireSystemNotification(msg, roomID);
+  }
+
   function handleWSAgentUpdate(data) {
     agents = data.agents || [];
     renderAllAgents();
@@ -1111,6 +1448,19 @@
     fetchRoomMessages(roomID).then(function () {
       if (scrollToMsgID) scrollToMessage(scrollToMsgID);
       else scrollToBottom(true);
+      // Clear attention after fetchRoomMessages has rebuilt counts from history
+      // so an in-flight markRead update cannot restore the bell for this room.
+      attentionCounts[roomID] = 0;
+      if (attentionTimers[roomID]) {
+        clearTimeout(attentionTimers[roomID]);
+        delete attentionTimers[roomID];
+      }
+      if (attentionFocusListeners[roomID]) {
+        window.removeEventListener('focus', attentionFocusListeners[roomID]);
+        delete attentionFocusListeners[roomID];
+      }
+      updateTitleAttention();
+      renderRooms();
       // Pull presence snapshot after messages so read-receipt rendering
       // has the head message id available.
       return fetchRoomPresence(roomID);
@@ -1187,6 +1537,7 @@
       var preview = lastMessagePreview[r.id] || '';
       var unread = unreadCounts[r.id] || 0;
       var hasUnread = unread > 0 && !isActive;
+      var attention = attentionCounts[r.id] || 0;
       var displayName = dm
         ? (members.length > 0 ? members.join(' · ') : r.id)
         : r.id;
@@ -1203,6 +1554,7 @@
               '<span class="room-item-name">' + esc(displayName) + '</span>' +
               '<span class="room-item-count">' + members.length + '</span>' +
               (hasUnread ? '<span class="room-item-unread">' + unread + '</span>' : '') +
+              (attention > 0 ? '<span class="room-item-attention">🔔 ' + attention + '</span>' : '') +
             '</div>' +
             (preview ? '<div class="room-item-preview">' + esc(truncate(preview, 40)) + '</div>' : '') +
           '</div>' +
@@ -1288,7 +1640,6 @@
       var a = agents.find(function (a) { return a.id === memberID; });
       return a ? a.name : memberID.split('@')[0];
     }).filter(Boolean);
-    if (memberNames.length === 0) return null;
     var atNames = memberNames.slice().sort(function (a, b) { return b.length - a.length; }).map(escRe);
     return new RegExp('@(' + atNames.join('|') + ')(?![a-z0-9])', 'gi');
   }
@@ -1318,6 +1669,13 @@
       var m;
       while ((m = re.exec(text)) !== null) {
         if (m.index > 0 && /[a-z0-9]/i.test(text[m.index - 1])) continue;
+        // \@mention → strip the backslash and render as plain text (no highlight)
+        if (m.index > 0 && text[m.index - 1] === '\\') {
+          frag.appendChild(document.createTextNode(text.slice(last, m.index - 1)));
+          frag.appendChild(document.createTextNode(m[0]));
+          last = m.index + m[0].length;
+          continue;
+        }
         if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
         var span = document.createElement('span');
         span.className = 'mention';
@@ -1372,12 +1730,13 @@
       ? (fromAgent.kind === 'human' ? 'human' : esc(fromAgent.harness || 'unknown'))
       : 'unknown';
     return (
-      '<div class="chat-msg' + (isSelf ? ' self' : '') + '" data-id="' + esc(m.id) + '">' +
+      '<div class="chat-msg' + (isSelf ? ' self' : '') + (m.needs_human_attention ? ' needs-attention' : '') + '" data-id="' + esc(m.id) + '">' +
         '<div class="chat-msg-header">' +
           '<span class="chat-msg-from">' +
             '<img src="' + msgIconSrc + '" class="harness-icon chat-msg-icon" alt="' + msgIconAlt + '" title="' + msgIconTitle + '" width="14" height="14">' +
             '<span class="chat-msg-from-name">' + esc(m.from) + '</span>' +
           '</span>' +
+          (m.needs_human_attention ? '<span class="chat-msg-attention-icon" title="Needs human attention">🔔</span>' : '') +
           '<span class="chat-msg-id" data-msg-id="' + esc(String(m.id)) + '" title="Click to copy">#' + esc(String(m.id)) + '</span>' +
           '<span class="chat-msg-time" title="' + esc(m.created_at) + '">' + relativeTime(m.created_at) + '</span>' +
         '</div>' +
@@ -1634,6 +1993,78 @@
       applyShowSystemEvents(next);
     });
   }
+
+  // Notification settings
+  if (notifEnabledBtn) {
+    notifEnabledBtn.addEventListener('click', function () {
+      var next = serverSettings.notification_enabled === false ? true : false;
+      saveSettings({ notification_enabled: next });
+      notifEnabledBtn.textContent = next ? 'Enabled' : 'Disabled';
+    });
+  }
+
+  if (notifSoundSelect) {
+    notifSoundSelect.addEventListener('change', function () {
+      saveSettings({ notification_sound: notifSoundSelect.value });
+    });
+  }
+
+  if (notifTestBtn) {
+    notifTestBtn.addEventListener('click', function () {
+      // Resume AudioContext on this gesture (definitive unlock)
+      if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
+      playNotificationSound();
+      // Request notification permission if not yet decided, then fire test notification
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().then(function () {
+          updateSysNotifStatus();
+          if (Notification.permission === 'granted') {
+            var n = new Notification('aimebu test notification', { body: 'Test alert — sound + notifications are working', icon: '/icons/broadcast.svg', tag: 'aimebu-test' });
+            setTimeout(function () { n.close(); }, 4000);
+          }
+        });
+      } else if ('Notification' in window && Notification.permission === 'granted') {
+        var n = new Notification('aimebu test notification', { body: 'Test alert — sound + notifications are working', icon: '/icons/broadcast.svg', tag: 'aimebu-test' });
+        setTimeout(function () { n.close(); }, 4000);
+      }
+    });
+  }
+
+  if (notifVolumeSlider) {
+    notifVolumeSlider.addEventListener('input', function () {
+      var v = parseInt(notifVolumeSlider.value, 10);
+      if (notifVolumeLabel) notifVolumeLabel.textContent = v + '%';
+      saveSettings({ notification_volume: v });
+    });
+  }
+
+  if (notifUploadBtn) {
+    notifUploadBtn.addEventListener('click', function () {
+      if (notifUploadFile) notifUploadFile.click();
+    });
+  }
+
+  if (notifUploadFile) {
+    notifUploadFile.addEventListener('change', function () {
+      if (notifUploadFile.files.length > 0) {
+        uploadSound(notifUploadFile.files[0]);
+        notifUploadFile.value = '';
+      }
+    });
+  }
+
+  if (notifSysBtn) {
+    notifSysBtn.addEventListener('click', requestSysNotifPermission);
+  }
+
+  // Resume a suspended AudioContext on first user gesture (Safari requires this)
+  function resumeAudioCtxOnGesture() {
+    if (_audioCtx && _audioCtx.state === 'suspended') {
+      _audioCtx.resume();
+    }
+  }
+  document.addEventListener('pointerdown', resumeAudioCtxOnGesture, { passive: true });
+  document.addEventListener('keydown', resumeAudioCtxOnGesture, { passive: true });
 
   // Agent ID default — debounced PUT on change
   var agentIDDefaultSaveTimer = null;
@@ -1981,6 +2412,10 @@
   connectSystemSSE();
 
   loadSettings();
+
+  updateSysNotifStatus();
+
+  loadSounds().catch(function () {});
 
   prefillPromise.then(function () {
     return registerHuman().catch(function () {});

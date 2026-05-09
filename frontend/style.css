@@ -377,6 +377,11 @@ body {
   color: var(--text-muted);
 }
 
+.settings-status {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 .settings-control {
   display: flex;
   align-items: center;
@@ -1750,4 +1755,110 @@ body {
   color: var(--text-muted);
   text-align: center;
   font-style: italic;
+}
+
+/* ── Needs human attention ──────────────────────────────────────── */
+
+.chat-msg.needs-attention .chat-msg-bubble {
+  border-left: 3px solid #e3a008;
+  background: rgba(227, 160, 8, 0.06);
+}
+
+.chat-msg-attention-icon {
+  font-size: 0.72rem;
+  margin-left: 5px;
+  color: #e3a008;
+  vertical-align: middle;
+}
+
+.room-item-attention {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #e3a008;
+  background: rgba(227, 160, 8, 0.15);
+  border: 1px solid rgba(227, 160, 8, 0.35);
+  padding: 1px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  min-width: 18px;
+  text-align: center;
+}
+
+/* ── Notification settings ──────────────────────────────────────── */
+
+.settings-select {
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color 0.15s;
+  cursor: pointer;
+}
+
+.settings-select:focus {
+  border-color: var(--accent);
+}
+
+.settings-volume-slider {
+  width: 110px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-volume-pct {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  min-width: 32px;
+  text-align: right;
+}
+
+/* User sound list */
+
+.sound-list {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 16px 8px;
+  background: var(--bg-secondary);
+  gap: 2px;
+}
+
+.sound-list-empty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 6px 0;
+}
+
+.sound-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sound-row:last-child {
+  border-bottom: none;
+}
+
+.sound-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-primary);
+}
+
+.sound-row-size {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }

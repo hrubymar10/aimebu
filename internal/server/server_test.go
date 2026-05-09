@@ -5,13 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 func setupTestServer(t *testing.T) (*store, *httptest.Server) {
@@ -154,7 +159,7 @@ func TestRoomWaitCursorNotAdvancedOnContextCancel(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Post a message after the disconnect — handler won't deliver it.
-	if _, err := s.roomSend("race-room", sender.ID, "@rcvrone hello after disconnect"); err != nil {
+	if _, err := s.roomSend("race-room", sender.ID, "@rcvrone hello after disconnect", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -207,7 +212,7 @@ func TestRoomWaitCursorAdvancedOnDelivery(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Post a message — handler should deliver it and advance the cursor.
-	if _, err := s.roomSend("deliver-room", sender.ID, "hello rcvrtwo"); err != nil {
+	if _, err := s.roomSend("deliver-room", sender.ID, "hello rcvrtwo", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -537,81 +542,6 @@ func TestMacrosMigrationSkipsCollisions(t *testing.T) {
 	}
 }
 
-// TestLegacyPrefixWarning verifies that sending with a legacy "name:" prefix returns a
-// one-time warning in the response JSON, and subsequent sends do not repeat it.
-func TestLegacyPrefixWarning(t *testing.T) {
-	s, srv := setupTestServer(t)
-
-	sender, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "talkone")
-	if err != nil {
-		t.Fatal(err)
-	}
-	recipient, _, err := s.registerAI("gpt5", "codex", "test", nil, "listenr")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.joinRoom("general", sender.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.joinRoom("general", recipient.ID); err != nil {
-		t.Fatal(err)
-	}
-
-	post := func(body string) *http.Response {
-		t.Helper()
-		bodyStr := fmt.Sprintf(`{"from":%q,"body":%q}`, sender.ID, body)
-		resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewBufferString(bodyStr))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return resp
-	}
-
-	// First send with legacy prefix — expect warning.
-	resp1 := post("listenr: here is my report")
-	defer resp1.Body.Close()
-	if resp1.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d", resp1.StatusCode)
-	}
-	var r1 struct {
-		ID       int64    `json:"id"`
-		Room     string   `json:"room"`
-		Warnings []string `json:"warnings"`
-	}
-	if err := json.NewDecoder(resp1.Body).Decode(&r1); err != nil {
-		t.Fatal(err)
-	}
-	if len(r1.Warnings) == 0 {
-		t.Error("expected a warning for legacy 'listenr:' prefix, got none")
-	}
-
-	// Second send with legacy prefix — warning must not repeat (once per session).
-	resp2 := post("listenr: another message")
-	defer resp2.Body.Close()
-	var r2 struct {
-		Warnings []string `json:"warnings"`
-	}
-	if err := json.NewDecoder(resp2.Body).Decode(&r2); err != nil {
-		t.Fatal(err)
-	}
-	if len(r2.Warnings) != 0 {
-		t.Errorf("expected no repeat warning, got %v", r2.Warnings)
-	}
-
-	// Send without legacy prefix — no warning.
-	resp3 := post("@listenr this is correct")
-	defer resp3.Body.Close()
-	var r3 struct {
-		Warnings []string `json:"warnings"`
-	}
-	if err := json.NewDecoder(resp3.Body).Decode(&r3); err != nil {
-		t.Fatal(err)
-	}
-	if len(r3.Warnings) != 0 {
-		t.Errorf("expected no warning for @mention style, got %v", r3.Warnings)
-	}
-}
-
 // TestRegisterReclaimedFlagInHTTPResponse verifies that the HTTP register
 // endpoint includes reclaimed=true in the JSON response on spawn_tag reclaim.
 func TestRegisterReclaimedFlagInHTTPResponse(t *testing.T) {
@@ -662,5 +592,796 @@ func TestRegisterReclaimedFlagInHTTPResponse(t *testing.T) {
 	resp2.Body.Close()
 	if !r2.Reclaimed {
 		t.Error("second registration with same spawn_tag should return reclaimed=true")
+	}
+}
+
+// ── NeedsHumanAttention round-trip ────────────────────────────────
+
+func TestNeedsHumanAttentionRoundTrip(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	// Register a human and create a room.
+	agent, err := s.registerHuman("tester", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Send a message with needs_attention=true via the explicit field.
+	sendBody, _ := json.Marshal(map[string]any{
+		"from":            agent.ID,
+		"body":            "consensus reached, please review",
+		"needs_attention": true,
+	})
+	resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send returned %d", resp.StatusCode)
+	}
+
+	// Fetch via GET /rooms/general/messages and verify the flag.
+	resp2, err := http.Get(srv.URL + "/rooms/general/messages")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data struct {
+		Messages []struct {
+			Body                string `json:"body"`
+			NeedsHumanAttention bool   `json:"needs_human_attention"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&data); err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+
+	if len(data.Messages) == 0 {
+		t.Fatal("expected at least one message")
+	}
+	if !data.Messages[0].NeedsHumanAttention {
+		t.Errorf("expected needs_human_attention=true, got false")
+	}
+
+	// Send without needs_attention — flag must be absent/false.
+	sendBody2, _ := json.Marshal(map[string]any{
+		"from": agent.ID,
+		"body": "just a normal message",
+	})
+	resp3, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(sendBody2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp3.Body.Close()
+
+	resp4, err := http.Get(srv.URL + "/rooms/general/messages?limit=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data2 struct {
+		Messages []struct {
+			NeedsHumanAttention bool `json:"needs_human_attention"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(resp4.Body).Decode(&data2); err != nil {
+		t.Fatal(err)
+	}
+	resp4.Body.Close()
+	if len(data2.Messages) > 0 && data2.Messages[0].NeedsHumanAttention {
+		t.Error("expected needs_human_attention=false for message without needs_attention field")
+	}
+}
+
+func TestNeedsAttentionForceSubscribesHumans(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	// Register an AI sender and a human who is NOT yet in the room.
+	ai, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "sndr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("humantester", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// AI joins the room; human does NOT.
+	if _, err := s.joinRoom("attention-room", ai.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// AI sends with needs_attention=true.
+	sendBody, _ := json.Marshal(map[string]any{
+		"from":            ai.ID,
+		"body":            "please review",
+		"needs_attention": true,
+	})
+	resp, err := http.Post(srv.URL+"/rooms/attention-room/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send returned %d", resp.StatusCode)
+	}
+
+	// Human must now be a member.
+	room := s.getRoom("attention-room")
+	if room == nil {
+		t.Fatal("room not found")
+	}
+	found := false
+	for _, m := range room.Members {
+		if m == human.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("human %q not auto-joined to room after needs_attention send", human.ID)
+	}
+}
+
+func TestNeedsAttentionForceSubscribeIdempotent(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	ai, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "sendtwo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("humantester2", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.joinRoom("idem-room", ai.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Human is already a member.
+	if _, err := s.joinRoom("idem-room", human.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Send with needs_attention=true — should not error or duplicate the member.
+	sendBody, _ := json.Marshal(map[string]any{
+		"from":            ai.ID,
+		"body":            "hey",
+		"needs_attention": true,
+	})
+	resp, err := http.Post(srv.URL+"/rooms/idem-room/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	room := s.getRoom("idem-room")
+	count := 0
+	for _, m := range room.Members {
+		if m == human.ID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("human appears %d times in members, want exactly 1", count)
+	}
+}
+
+func TestNeedsAttentionFalseNoForceSubscribe(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	ai, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "sendthree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("humantester3", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.joinRoom("no-attn-room", ai.ID); err != nil {
+		t.Fatal(err)
+	}
+	_ = human // registered but not in room
+
+	// Send WITHOUT needs_attention — human must NOT be auto-joined.
+	sendBody, _ := json.Marshal(map[string]any{
+		"from": ai.ID,
+		"body": "normal message",
+	})
+	resp, err := http.Post(srv.URL+"/rooms/no-attn-room/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	room := s.getRoom("no-attn-room")
+	for _, m := range room.Members {
+		if m == human.ID {
+			t.Errorf("human %q was incorrectly added to room without needs_attention", human.ID)
+		}
+	}
+}
+
+func TestNeedsAttentionWSDelivery(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	// Register a human. The human is NOT joined to any room.
+	human, err := s.registerHuman("wshumantester", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Connect human's WebSocket. Send hello but do NOT subscribe to any room.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		CompressionMode: websocket.CompressionDisabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+
+	hello, _ := json.Marshal(map[string]any{"type": "hello", "agent_id": human.ID})
+	if err := conn.Write(ctx, websocket.MessageText, hello); err != nil {
+		t.Fatal(err)
+	}
+
+	// Register an AI, join a room, send needs_attention=true.
+	ai, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "wsaisender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("attn-ws-room", ai.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	sendBody, _ := json.Marshal(map[string]any{
+		"from":            ai.ID,
+		"body":            "ping humans",
+		"needs_attention": true,
+	})
+	resp, err := http.Post(srv.URL+"/rooms/attn-ws-room/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// Read frames until we receive attention_event or the context times out.
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("WS read error before attention_event arrived: %v", err)
+		}
+		var frame struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(data, &frame); err != nil {
+			continue
+		}
+		if frame.Type == "attention_event" {
+			return // success
+		}
+	}
+}
+
+// ── Sound upload validation ────────────────────────────────────────
+
+func makeMultipartMP3(t *testing.T, filename string, data []byte) (*bytes.Buffer, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, err := w.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	return &buf, w.FormDataContentType()
+}
+
+// minimalMP3 is a single valid MPEG1 Layer3 frame header followed by silence.
+// Browsers parse this as valid audio. 4-byte header + 413 bytes of zeros = 417 bytes total.
+func minimalMP3() []byte {
+	data := make([]byte, 417)
+	data[0] = 0xFF // MPEG sync
+	data[1] = 0xFB // MPEG1, Layer3, 128kbps
+	data[2] = 0x90 // 44100Hz, stereo
+	data[3] = 0x00 // no copyright, original
+	return data
+}
+
+func TestSoundUploadValid(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	mp3 := minimalMP3()
+	body, ct := makeMultipartMP3(t, "test.mp3", mp3)
+
+	resp, err := http.Post(srv.URL+"/api/sounds", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, b)
+	}
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result["kind"] != "user" {
+		t.Errorf("expected kind=user, got %v", result["kind"])
+	}
+	if result["ext"] != "mp3" {
+		t.Errorf("expected ext=mp3 in upload response, got %v", result["ext"])
+	}
+}
+
+func TestSoundUploadBadExtension(t *testing.T) {
+	_, srv := setupTestServer(t)
+	body, ct := makeMultipartMP3(t, "sound.ogg", minimalMP3())
+	resp, err := http.Post(srv.URL+"/api/sounds", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad extension, got %d", resp.StatusCode)
+	}
+}
+
+// minimalWAV returns the smallest valid RIFF/WAVE header (12 bytes) padded to
+// 44 bytes so it looks like a real PCM chunk to lenient parsers.
+func minimalWAV() []byte {
+	data := make([]byte, 44)
+	copy(data[0:4], "RIFF")
+	// bytes 4–7: chunk size (little-endian) — arbitrary, we don't validate it
+	data[4] = 36
+	copy(data[8:12], "WAVE")
+	// fmt sub-chunk marker so a real decoder doesn't choke
+	copy(data[12:16], "fmt ")
+	data[16] = 16 // sub-chunk size = 16
+	data[20] = 1  // PCM format
+	data[22] = 1  // mono
+	data[24] = 0x44
+	data[25] = 0xAC // 44100 Hz
+	return data
+}
+
+func TestSoundUploadWAVValid(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	wav := minimalWAV()
+	body, ct := makeMultipartMP3(t, "alert.wav", wav)
+
+	resp, err := http.Post(srv.URL+"/api/sounds", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 201 for valid WAV, got %d: %s", resp.StatusCode, b)
+	}
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result["kind"] != "user" {
+		t.Errorf("expected kind=user, got %v", result["kind"])
+	}
+	if result["ext"] != "wav" {
+		t.Errorf("expected ext=wav in upload response, got %v", result["ext"])
+	}
+}
+
+func TestSoundUploadWAVBadHeader(t *testing.T) {
+	_, srv := setupTestServer(t)
+	garbage := []byte("this is not a wav file at all!!!!")
+	body, ct := makeMultipartMP3(t, "fake.wav", garbage)
+	resp, err := http.Post(srv.URL+"/api/sounds", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for WAV with bad header, got %d", resp.StatusCode)
+	}
+}
+
+func TestSoundUploadExtensionMismatch(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	// .mp3 extension but WAV bytes → 400
+	body, ct := makeMultipartMP3(t, "sound.mp3", minimalWAV())
+	resp, err := http.Post(srv.URL+"/api/sounds", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for .mp3 extension with WAV bytes, got %d", resp.StatusCode)
+	}
+
+	// .wav extension but MP3 bytes → 400
+	body2, ct2 := makeMultipartMP3(t, "sound.wav", minimalMP3())
+	resp2, err := http.Post(srv.URL+"/api/sounds", ct2, body2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for .wav extension with MP3 bytes, got %d", resp2.StatusCode)
+	}
+}
+
+func TestSoundUploadBadHeader(t *testing.T) {
+	_, srv := setupTestServer(t)
+	garbage := []byte("this is not an mp3 file at all!!")
+	body, ct := makeMultipartMP3(t, "fake.mp3", garbage)
+	resp, err := http.Post(srv.URL+"/api/sounds", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for bad header, got %d", resp.StatusCode)
+	}
+}
+
+func TestSoundUploadCountCap(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	// Pre-fill the sounds index to the cap.
+	s.soundsMu.Lock()
+	for i := 0; i < maxSoundFiles; i++ {
+		s.sounds = append(s.sounds, SoundEntry{
+			UUID:       fmt.Sprintf("fake%02d", i),
+			Name:       "placeholder",
+			Size:       100,
+			UploadedAt: now(),
+		})
+	}
+	s.soundsMu.Unlock()
+
+	body, ct := makeMultipartMP3(t, "extra.mp3", minimalMP3())
+	resp, err := http.Post(srv.URL+"/api/sounds", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("expected 409 when at cap, got %d", resp.StatusCode)
+	}
+}
+
+func TestSoundListAndDelete(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	// Upload one sound.
+	body, ct := makeMultipartMP3(t, "beep.mp3", minimalMP3())
+	resp, err := http.Post(srv.URL+"/api/sounds", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var uploaded map[string]any
+	json.NewDecoder(resp.Body).Decode(&uploaded)
+	resp.Body.Close()
+	id := uploaded["id"].(string) // "user:<uuid>"
+	uuid := strings.TrimPrefix(id, "user:")
+
+	// List — should contain the uploaded sound.
+	resp2, err := http.Get(srv.URL + "/api/sounds")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list struct {
+		Sounds []map[string]any `json:"sounds"`
+	}
+	json.NewDecoder(resp2.Body).Decode(&list)
+	resp2.Body.Close()
+	found := false
+	for _, s := range list.Sounds {
+		if s["id"] == id {
+			found = true
+			if s["ext"] != "mp3" {
+				t.Errorf("list entry %q: expected ext=mp3, got %v", id, s["ext"])
+			}
+		}
+	}
+	if !found {
+		t.Errorf("uploaded sound %q not found in list", id)
+	}
+
+	// Delete it.
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/sounds/"+uuid, nil)
+	resp3, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp3.Body.Close()
+	if resp3.StatusCode != http.StatusNoContent {
+		t.Errorf("expected 204 on delete, got %d", resp3.StatusCode)
+	}
+
+	// List again — should be gone.
+	resp4, err := http.Get(srv.URL + "/api/sounds")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list2 struct {
+		Sounds []map[string]any `json:"sounds"`
+	}
+	json.NewDecoder(resp4.Body).Decode(&list2)
+	resp4.Body.Close()
+	for _, s := range list2.Sounds {
+		if s["id"] == id {
+			t.Errorf("deleted sound %q still in list", id)
+		}
+	}
+}
+
+func TestSoundClearAllWipe(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	// Upload one sound.
+	body, ct := makeMultipartMP3(t, "chime.mp3", minimalMP3())
+	resp, err := http.Post(srv.URL+"/api/sounds", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload returned %d", resp.StatusCode)
+	}
+
+	// DELETE /all?include_settings=true — should wipe sounds.
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/all?include_settings=true", nil)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("clear-all returned %d", resp2.StatusCode)
+	}
+
+	// List sounds — should have no user sounds.
+	resp3, err := http.Get(srv.URL + "/api/sounds")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list struct {
+		Sounds []map[string]any `json:"sounds"`
+	}
+	json.NewDecoder(resp3.Body).Decode(&list)
+	resp3.Body.Close()
+	for _, s := range list.Sounds {
+		if s["kind"] == "user" {
+			t.Errorf("user sound %q survived prune -a", s["id"])
+		}
+	}
+}
+
+func TestAttentionUnreadCountInRoomView(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	// Register two agents: watcher (will check the room view) and sender.
+	watcher, err := s.registerHuman("watcher", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender, err := s.registerHuman("sender", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Both join two rooms.
+	for _, room := range []string{"alpha", "beta"} {
+		if _, err := s.joinRoom(room, watcher.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.joinRoom(room, sender.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Sender posts needs_attention=true in alpha, two normal messages in beta.
+	for _, tc := range []struct {
+		room, body     string
+		needsAttention bool
+	}{
+		{"alpha", "consensus reached", true},
+		{"beta", "just a normal message", false},
+		{"beta", "another normal message", false},
+	} {
+		b, _ := json.Marshal(map[string]any{"from": sender.ID, "body": tc.body, "needs_attention": tc.needsAttention})
+		resp, err := http.Post(srv.URL+"/rooms/"+tc.room+"/send", "application/json", bytes.NewReader(b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+
+	// GET /agents/watcher/rooms — should show attention_unread_count=1 for alpha, 0 for beta.
+	resp, err := http.Get(srv.URL + "/agents/" + watcher.ID + "/rooms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Rooms []struct {
+			ID                   string `json:"id"`
+			AttentionUnreadCount int    `json:"attention_unread_count"`
+		} `json:"rooms"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	counts := map[string]int{}
+	for _, r := range result.Rooms {
+		counts[r.ID] = r.AttentionUnreadCount
+	}
+	if counts["alpha"] != 1 {
+		t.Errorf("alpha attention_unread_count: got %d, want 1", counts["alpha"])
+	}
+	if counts["beta"] != 0 {
+		t.Errorf("beta attention_unread_count: got %d, want 0", counts["beta"])
+	}
+
+	// Advance watcher's cursor past the @humans message in alpha — count should drop to 0.
+	b, _ := json.Marshal(map[string]any{"room": "alpha", "message_id": 0})
+	resp2, err := http.Post(srv.URL+"/agents/"+watcher.ID+"/read", "application/json", bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+
+	resp3, err := http.Get(srv.URL + "/agents/" + watcher.ID + "/rooms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result2 struct {
+		Rooms []struct {
+			ID                   string `json:"id"`
+			AttentionUnreadCount int    `json:"attention_unread_count"`
+		} `json:"rooms"`
+	}
+	if err := json.NewDecoder(resp3.Body).Decode(&result2); err != nil {
+		t.Fatal(err)
+	}
+	resp3.Body.Close()
+
+	for _, r := range result2.Rooms {
+		if r.ID == "alpha" && r.AttentionUnreadCount != 0 {
+			t.Errorf("alpha attention_unread_count after mark-read: got %d, want 0", r.AttentionUnreadCount)
+		}
+	}
+
+	// Self-send: watcher sends a needs_attention message to a third room. Their own
+	// message must not contribute to their own attention_unread_count.
+	if _, err := s.joinRoom("gamma", watcher.ID); err != nil {
+		t.Fatal(err)
+	}
+	b2, _ := json.Marshal(map[string]any{"from": watcher.ID, "body": "flagged self-note", "needs_attention": true})
+	resp4, err := http.Post(srv.URL+"/rooms/gamma/send", "application/json", bytes.NewReader(b2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp4.Body.Close()
+
+	resp5, err := http.Get(srv.URL + "/agents/" + watcher.ID + "/rooms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result3 struct {
+		Rooms []struct {
+			ID                   string `json:"id"`
+			AttentionUnreadCount int    `json:"attention_unread_count"`
+		} `json:"rooms"`
+	}
+	if err := json.NewDecoder(resp5.Body).Decode(&result3); err != nil {
+		t.Fatal(err)
+	}
+	resp5.Body.Close()
+	for _, r := range result3.Rooms {
+		if r.ID == "gamma" && r.AttentionUnreadCount != 0 {
+			t.Errorf("gamma attention_unread_count for self-sent needs_attention: got %d, want 0", r.AttentionUnreadCount)
+		}
+	}
+}
+
+func TestLegacyPrefixWarning(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	// Register two AI agents via the store directly.
+	agentA, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentB, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Both join the room.
+	if _, err := s.joinRoom("general", agentA.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agentB.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	sendAndDecodeWarnings := func(from, body string) []string {
+		b, _ := json.Marshal(map[string]string{"from": from, "body": body})
+		resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Warnings []string `json:"warnings"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Warnings
+	}
+
+	shortA := agentShortName(agentA.ID)
+
+	// First legacy prefix from agentA → warning returned (lowercase).
+	w1 := sendAndDecodeWarnings(agentA.ID, shortA+": here is my analysis")
+	if len(w1) == 0 {
+		t.Errorf("first legacy prefix: expected a warning, got none")
+	}
+
+	// Reset warned state so we can test case-insensitivity end-to-end.
+	s.mu.Lock()
+	s.warnedLegacy[agentA.ID] = false
+	s.mu.Unlock()
+
+	// Mixed-case prefix → same warning (regex is case-insensitive).
+	capitalized := strings.ToUpper(shortA[:1]) + shortA[1:]
+	w1b := sendAndDecodeWarnings(agentA.ID, capitalized+": mixed case")
+	if len(w1b) == 0 {
+		t.Errorf("mixed-case legacy prefix: expected a warning, got none")
+	}
+
+	// Second legacy prefix from agentA → no warning (already warned).
+	w2 := sendAndDecodeWarnings(agentA.ID, shortA+": another one")
+	if len(w2) != 0 {
+		t.Errorf("second legacy prefix: expected no warning, got %v", w2)
+	}
+
+	// First legacy prefix from agentB → its own warning (independent state).
+	shortB := agentShortName(agentB.ID)
+	w3 := sendAndDecodeWarnings(agentB.ID, shortB+": my turn")
+	if len(w3) == 0 {
+		t.Errorf("first legacy prefix from agentB: expected a warning, got none")
+	}
+
+	// Non-legacy body → no warning.
+	w4 := sendAndDecodeWarnings(agentA.ID, "@"+agentShortName(agentB.ID)+" see this")
+	if len(w4) != 0 {
+		t.Errorf("@-addressed message: unexpected warning %v", w4)
+	}
+
+	// False-positive guard: "note:" is not an agent name → no warning.
+	w5 := sendAndDecodeWarnings(agentA.ID, "note: this is a plain label")
+	if len(w5) != 0 {
+		t.Errorf("false positive 'note:': unexpected warning %v", w5)
 	}
 }

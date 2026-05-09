@@ -8,12 +8,13 @@ type Room struct {
 }
 
 type Message struct {
-	ID        int64  `json:"id"`
-	RoomID    string `json:"room_id"`
-	From      string `json:"from"`
-	FromKind  string `json:"from_kind,omitempty"` // "ai", "human", or "system" — empty for legacy persisted messages
-	Body      string `json:"body"`
-	CreatedAt string `json:"created_at"`
+	ID                  int64  `json:"id"`
+	RoomID              string `json:"room_id"`
+	From                string `json:"from"`
+	FromKind            string `json:"from_kind,omitempty"` // "ai", "human", or "system" — empty for legacy persisted messages
+	Body                string `json:"body"`
+	CreatedAt           string `json:"created_at"`
+	NeedsHumanAttention bool   `json:"needs_human_attention,omitempty"`
 }
 
 type Agent struct {
@@ -49,14 +50,16 @@ type LeaveRequest struct {
 }
 
 type RoomSendRequest struct {
-	From string `json:"from"`
-	Body string `json:"body"`
+	From           string `json:"from"`
+	Body           string `json:"body"`
+	NeedsAttention bool   `json:"needs_attention,omitempty"`
 }
 
 type DMRequest struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-	Body string `json:"body"`
+	From           string `json:"from"`
+	To             string `json:"to"`
+	Body           string `json:"body"`
+	NeedsAttention bool   `json:"needs_attention,omitempty"`
 }
 
 // RegisterRequest is used by MCP clients. The server assigns the name and
@@ -82,9 +85,10 @@ type RegisterRequest struct {
 // agent's unread-message count and latest-message id for it.
 type AgentRoomView struct {
 	Room
-	UnreadCount int   `json:"unread_count"`
-	LastID      int64 `json:"last_id"`
-	ReadCursor  int64 `json:"read_cursor"`
+	UnreadCount          int   `json:"unread_count"`
+	AttentionUnreadCount int   `json:"attention_unread_count"`
+	LastID               int64 `json:"last_id"`
+	ReadCursor           int64 `json:"read_cursor"`
 }
 
 // MarkReadRequest is the body for POST /agents/{id}/read.

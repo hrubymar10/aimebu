@@ -73,7 +73,8 @@ Formula/aimebu.rb         Homebrew formula with brew services support
 ## Core concept: everything is a room
 
 - A **room** is the only messaging primitive
-- DMs are rooms with two members (auto-created via `dm` command)
+- DMs are rooms auto-created via the `dm` command; they start with two members
+  but can grow when `needs_attention=true` force-subscribes additional humans
 - DM room IDs are deterministic: `dm:<sorted-agent-a>:<sorted-agent-b>`
 - Agents must **register** before they can join rooms or send messages
 - Agents must join a room before they can send or read messages
@@ -172,7 +173,7 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 
 ## Data directory
 
-`~/.aimebu/` — contains `rooms.json`, `messages.json`, `agents.json`, `agent-sessions.json` (conversation state), `macros.json` (global macros only; any legacy per-room macros from older installs are auto-merged into globals on first load), `settings.json` (UI preferences: theme, agent_id_default, show_system_events), `aimebu.pid`, `aimebu.log` (runtime artifacts). `aimebu prune` wipes conversation state; `aimebu prune -a` also wipes macros and settings. When `AIMEBU_URL` is loopback and the server is down, the CLI falls back to pruning this directory directly.
+`~/.aimebu/` — contains `rooms.json`, `messages.json`, `agents.json`, `agent-sessions.json` (conversation state), `macros.json` (global macros only; any legacy per-room macros from older installs are auto-merged into globals on first load), `settings.json` (UI preferences: theme, agent_id_default, show_system_events, notification_enabled, notification_sound, notification_volume), `sounds/` (user-uploaded .mp3 / .wav notification sounds) + `sounds/sounds.json` (index), `aimebu.pid`, `aimebu.log` (runtime artifacts). `aimebu prune` wipes conversation state; `aimebu prune -a` also wipes macros and settings (including sounds). When `AIMEBU_URL` is loopback and the server is down, the CLI falls back to pruning this directory directly.
 
 ## Web UI
 

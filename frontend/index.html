@@ -139,6 +139,7 @@
         <div class="settings-nav-title">Settings</div>
         <button class="settings-nav-item active" data-section="general" type="button">General</button>
         <button class="settings-nav-item" data-section="appearance" type="button">Appearance</button>
+        <button class="settings-nav-item" data-section="notifications" type="button">Notifications</button>
         <button class="settings-nav-item" data-section="macros" type="button">Macros</button>
         <button class="settings-nav-item" data-section="backup" type="button">Backup &amp; Sync</button>
         <button class="settings-nav-item" data-section="danger" type="button">Danger Zone</button>
@@ -185,6 +186,73 @@
                 <button id="system-events-toggle-btn" class="btn btn-sm" type="button">Hide</button>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- Notifications -->
+        <div class="settings-section" data-section="notifications">
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Sound notifications</label>
+                <span class="settings-desc">Play a sound when a message requests human attention (<code>needs_attention</code>).</span>
+              </div>
+              <div class="settings-control">
+                <button id="notif-enabled-btn" class="btn btn-sm" type="button">Enabled</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Sound</label>
+                <span class="settings-desc">Notification tone to play.</span>
+              </div>
+              <div class="settings-control">
+                <select id="notif-sound-select" class="settings-select"></select>
+                <button id="notif-test-btn" class="btn btn-sm" type="button">Test</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Volume</label>
+                <span class="settings-desc">Notification volume.</span>
+              </div>
+              <div class="settings-control">
+                <input type="range" id="notif-volume-slider" class="settings-volume-slider" min="0" max="100" step="1" value="70">
+                <span id="notif-volume-label" class="settings-volume-pct">70%</span>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Audio status</label>
+                <span id="notif-audio-status" class="settings-status settings-desc"></span>
+              </div>
+            </div>
+          </div>
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">System notifications</label>
+                <span class="settings-desc">Show OS-level notifications when a <code>needs_attention</code> message arrives in a background tab.</span>
+              </div>
+              <div class="settings-control">
+                <button id="notif-sys-btn" class="btn btn-sm" type="button">Enable</button>
+                <span id="notif-sys-status" class="settings-status"></span>
+              </div>
+            </div>
+          </div>
+          <div class="settings-group">
+            <p class="settings-hint">Upload custom .mp3 / .wav sounds (max 1 MB each, 10 files total).</p>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Upload sound</label>
+                <span class="settings-desc">Add a custom .mp3 or .wav file.</span>
+              </div>
+              <div class="settings-control">
+                <button id="notif-upload-btn" class="btn btn-sm" type="button">Upload .mp3 / .wav</button>
+                <input type="file" id="notif-upload-file" accept=".mp3,audio/mpeg,.wav,audio/wav,audio/wave,audio/x-wav" style="display:none">
+              </div>
+            </div>
+            <div id="notif-sounds-list" class="sound-list"></div>
           </div>
         </div>
 

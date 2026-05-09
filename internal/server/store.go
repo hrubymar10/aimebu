@@ -47,6 +47,15 @@ type MetaEvent struct {
 	Data any    `json:"data"`
 }
 
+// SoundEntry describes a user-uploaded custom notification sound.
+type SoundEntry struct {
+	UUID       string `json:"uuid"`
+	Name       string `json:"name"`        // sanitized display name from the upload
+	Size       int64  `json:"size"`        // bytes on disk
+	UploadedAt string `json:"uploaded_at"` // RFC3339
+	Ext        string `json:"ext,omitempty"` // "mp3" or "wav"; empty means legacy mp3
+}
+
 type store struct {
 	dir    string
 	nextID atomic.Int64
@@ -82,6 +91,9 @@ type store struct {
 
 	settingsMu sync.RWMutex
 	settings   Settings
+
+	soundsMu sync.RWMutex
+	sounds   []SoundEntry // user-uploaded custom sounds
 
 	// warnedLegacy tracks agents that have already received the one-time
 	// legacy "name:" prefix warning. Runtime-only; resets on server restart.
@@ -259,6 +271,9 @@ func (s *store) load() error {
 
 	// Settings — persisted separately; survives schema wipes and prune (unless include_settings=true).
 	s.loadSettings()
+
+	// User sounds index — persisted in sounds/sounds.json; wiped when clearAll(includeSettings=true).
+	s.loadSounds()
 
 	// Macros — separate from schema-versioned state; survives schema wipes.
 	// Handles three historical shapes:
@@ -620,16 +635,21 @@ func (s *store) agentRoomViews(agentID string) []types.AgentRoomView {
 		}
 		head := s.roomHeadLocked(r.ID)
 		unread := 0
+		attentionUnread := 0
 		for _, m := range s.messages[r.ID] {
 			if m.ID > cursor {
 				unread++
+				if m.NeedsHumanAttention && m.From != agentID {
+					attentionUnread++
+				}
 			}
 		}
 		result = append(result, types.AgentRoomView{
-			Room:        *r,
-			UnreadCount: unread,
-			LastID:      head,
-			ReadCursor:  cursor,
+			Room:                 *r,
+			UnreadCount:          unread,
+			AttentionUnreadCount: attentionUnread,
+			LastID:               head,
+			ReadCursor:           cursor,
 		})
 	}
 	return result
@@ -690,9 +710,21 @@ func (s *store) emitSystemMessage(roomID, body string) {
 	s.subMu.Unlock()
 }
 
-func (s *store) roomSend(roomID, from, body string) (int64, error) {
+func (s *store) roomSend(roomID, from, body string, needsAttention bool) (int64, error) {
 	if !s.isMember(roomID, from) {
 		return 0, fmt.Errorf("agent %s is not a member of room %s", from, roomID)
+	}
+
+	// Force-subscribe all registered humans who are not yet room members when
+	// the sender signals needs_attention=true. Auto-join is idempotent (joinRoom
+	// returns early for existing members). DMs are not exempt — matin confirmed
+	// DMs are just narrower-scope rooms and multi-member is fine.
+	if needsAttention {
+		for _, a := range s.listAgents() {
+			if a.Kind == "human" && !s.isMember(roomID, a.ID) {
+				_, _ = s.joinRoom(roomID, a.ID)
+			}
+		}
 	}
 
 	// Look up sender kind so readers can apply different response policies
@@ -707,12 +739,13 @@ func (s *store) roomSend(roomID, from, body string) (int64, error) {
 
 	id := s.nextID.Add(1)
 	msg := types.Message{
-		ID:        id,
-		RoomID:    roomID,
-		From:      from,
-		FromKind:  fromKind,
-		Body:      body,
-		CreatedAt: now(),
+		ID:                  id,
+		RoomID:              roomID,
+		From:                from,
+		FromKind:            fromKind,
+		Body:                body,
+		CreatedAt:           now(),
+		NeedsHumanAttention: needsAttention,
 	}
 
 	s.mu.Lock()
@@ -736,6 +769,17 @@ func (s *store) roomSend(roomID, from, body string) (int64, error) {
 		select {
 		case ch <- msg:
 		default:
+		}
+	}
+	// Broadcast attention event to ALL meta subscribers so that humans whose WS
+	// is not subscribed to this room still receive the alert signal.
+	if needsAttention {
+		attEvt := MetaEvent{Type: "attention_event", Data: map[string]any{"room_id": roomID, "message": msg}}
+		for _, ch := range s.metaSubs {
+			select {
+			case ch <- attEvt:
+			default:
+			}
 		}
 	}
 	s.subMu.Unlock()
@@ -1294,11 +1338,12 @@ func (s *store) knownAgentNames() map[string]bool {
 	return names
 }
 
-// legacyPrefixWarn checks if body starts with a legacy "name:" IRC-style
-// prefix addressed to a known agent. If so, it returns a one-time guidance
-// string for the sending agent. Returns "" if no match or already warned.
+// legacyPrefixWarn checks whether body starts with a legacy IRC-style "name:"
+// prefix matching a registered agent's short name. On first detection per
+// sender it returns a one-time guidance string and marks the sender warned.
+// Subsequent calls for the same sender, or bodies that don't match, return "".
 func (s *store) legacyPrefixWarn(senderAgentID, body string) string {
-	names := s.knownAgentNames()
+	names := s.knownAgentNames() // acquires and releases its own RLock
 	matchedName, matched := parseLegacyPrefix(body, names)
 	if !matched {
 		return ""
@@ -1590,6 +1635,10 @@ func (s *store) clearAll(includeSettings bool) {
 		s.macrosMu.Unlock()
 		s.applyDefaultMacros() // re-seeds macros.json with embedded defaults
 		s.clearSettings()
+		s.soundsMu.Lock()
+		s.sounds = nil
+		s.soundsMu.Unlock()
+		_ = os.RemoveAll(s.soundsDir())
 	}
 	s.broadcastRoomUpdate()
 	s.broadcastAgentUpdate()
@@ -1816,4 +1865,163 @@ func randomID() string {
 // isDM reports whether a room ID is a DM room.
 func isDM(roomID string) bool {
 	return strings.HasPrefix(roomID, "dm:")
+}
+
+// ── User sounds ────────────────────────────────────────────────────
+
+const (
+	maxSoundFiles     = 10
+	maxSoundTotalSize = 20 * 1024 * 1024 // 20 MB
+	maxSoundFileSize  = 1 * 1024 * 1024  // 1 MB per file
+)
+
+func (s *store) soundsDir() string {
+	return filepath.Join(s.dir, "sounds")
+}
+
+func (s *store) soundsIndexPath() string {
+	return filepath.Join(s.soundsDir(), "sounds.json")
+}
+
+func (s *store) loadSounds() {
+	data, err := os.ReadFile(s.soundsIndexPath())
+	if err != nil {
+		return
+	}
+	var env struct {
+		Sounds []SoundEntry `json:"sounds"`
+	}
+	if json.Unmarshal(data, &env) == nil {
+		s.soundsMu.Lock()
+		s.sounds = env.Sounds
+		s.soundsMu.Unlock()
+	}
+}
+
+// persistSoundsLocked writes the sounds index to disk. Must be called with
+// soundsMu held (read or write). Does not acquire the lock.
+func (s *store) persistSoundsLocked() {
+	env := struct {
+		Sounds []SoundEntry `json:"sounds"`
+	}{Sounds: s.sounds}
+	data, err := json.MarshalIndent(env, "", "  ")
+	if err == nil {
+		atomicWrite(s.soundsIndexPath(), data)
+	}
+}
+
+
+func (s *store) listSounds() []SoundEntry {
+	s.soundsMu.RLock()
+	defer s.soundsMu.RUnlock()
+	out := make([]SoundEntry, len(s.sounds))
+	copy(out, s.sounds)
+	return out
+}
+
+// addSound stores an uploaded MP3 file and adds it to the index.
+// data must have already been validated (size, header).
+func (s *store) addSound(displayName string, data []byte, ext string) (SoundEntry, error) {
+	// Cap and total-size checks under write lock before touching the filesystem.
+	s.soundsMu.Lock()
+	if len(s.sounds) >= maxSoundFiles {
+		s.soundsMu.Unlock()
+		return SoundEntry{}, fmt.Errorf("sound limit reached (%d files); delete one first", maxSoundFiles)
+	}
+	var total int64
+	for _, e := range s.sounds {
+		total += e.Size
+	}
+	if total+int64(len(data)) > maxSoundTotalSize {
+		s.soundsMu.Unlock()
+		return SoundEntry{}, fmt.Errorf("total sound storage limit reached (%.0f MB)", float64(maxSoundTotalSize)/1024/1024)
+	}
+	s.soundsMu.Unlock()
+
+	// Write to disk outside the lock (no lock needed — UUID is unique).
+	uuid := randomUUID()
+	if err := os.MkdirAll(s.soundsDir(), 0o755); err != nil {
+		return SoundEntry{}, fmt.Errorf("create sounds dir: %w", err)
+	}
+	path := filepath.Join(s.soundsDir(), uuid+"."+ext)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return SoundEntry{}, fmt.Errorf("write sound file: %w", err)
+	}
+
+	entry := SoundEntry{
+		UUID:       uuid,
+		Name:       displayName,
+		Size:       int64(len(data)),
+		UploadedAt: now(),
+		Ext:        ext,
+	}
+
+	// Re-acquire write lock to append + persist. Re-check caps in case a concurrent
+	// upload raced past the first check between the unlock and this re-lock.
+	s.soundsMu.Lock()
+	if len(s.sounds) >= maxSoundFiles {
+		s.soundsMu.Unlock()
+		_ = os.Remove(path)
+		return SoundEntry{}, fmt.Errorf("sound limit reached (%d files); delete one first", maxSoundFiles)
+	}
+	var total2 int64
+	for _, e := range s.sounds {
+		total2 += e.Size
+	}
+	if total2+int64(len(data)) > maxSoundTotalSize {
+		s.soundsMu.Unlock()
+		_ = os.Remove(path)
+		return SoundEntry{}, fmt.Errorf("total sound storage limit reached (%.0f MB)", float64(maxSoundTotalSize)/1024/1024)
+	}
+	s.sounds = append(s.sounds, entry)
+	s.persistSoundsLocked()
+	s.soundsMu.Unlock()
+
+	return entry, nil
+}
+
+// deleteSound removes a user sound by UUID. Returns false if the UUID is unknown.
+func (s *store) deleteSound(uuid string) bool {
+	s.soundsMu.Lock()
+	defer s.soundsMu.Unlock()
+
+	for i, e := range s.sounds {
+		if e.UUID != uuid {
+			continue
+		}
+		s.sounds = append(s.sounds[:i], s.sounds[i+1:]...)
+		fileExt := e.Ext
+		if fileExt == "" {
+			fileExt = "mp3"
+		}
+		_ = os.Remove(filepath.Join(s.soundsDir(), uuid+"."+fileExt))
+		s.persistSoundsLocked()
+		return true
+	}
+	return false
+}
+
+// soundFilePath returns the on-disk path and extension ("mp3" or "wav") for a
+// user sound UUID, or ("", "") if unknown. Legacy entries with empty Ext are
+// treated as "mp3".
+func (s *store) soundFilePath(uuid string) (string, string) {
+	s.soundsMu.RLock()
+	defer s.soundsMu.RUnlock()
+	for _, e := range s.sounds {
+		if e.UUID == uuid {
+			ext := e.Ext
+			if ext == "" {
+				ext = "mp3"
+			}
+			return filepath.Join(s.soundsDir(), uuid+"."+ext), ext
+		}
+	}
+	return "", ""
+}
+
+// randomUUID returns a random 32-hex-char UUID-like string.
+func randomUUID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }

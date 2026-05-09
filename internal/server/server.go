@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/types"
@@ -35,6 +37,25 @@ func jsonOK(w http.ResponseWriter, data any) error {
 }
 
 const busWaitTimeoutHint = "keep_waiting=true (status=\"still_waiting\") means no messages arrived yet, not that listening is over. Call bus_wait again now. Only return to the user if they explicitly told you to stop."
+
+// validMP3Header checks that the first bytes of data look like an MP3 file:
+// either an ID3v2 tag ("ID3") or an MPEG sync word (0xFF followed by 0xE0–0xFF).
+func validMP3Header(data []byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+	if data[0] == 'I' && data[1] == 'D' && data[2] == '3' {
+		return true // ID3v2 tag
+	}
+	return data[0] == 0xFF && data[1] >= 0xE0 // MPEG sync word
+}
+
+// validWAVHeader checks that data starts with a RIFF/WAVE container header.
+func validWAVHeader(data []byte) bool {
+	return len(data) >= 12 &&
+		data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F' &&
+		data[8] == 'W' && data[9] == 'A' && data[10] == 'V' && data[11] == 'E'
+}
 
 func setupHandlers(mux *http.ServeMux, s *store) {
 
@@ -149,7 +170,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			jsonError(w, "cannot send to reserved room or use reserved sender", http.StatusForbidden)
 			return
 		}
-		id, err := s.roomSend(roomID, req.From, req.Body)
+		id, err := s.roomSend(roomID, req.From, req.Body, req.NeedsAttention)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
@@ -493,16 +514,16 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			return
 		}
 
-		id, err := s.roomSend(room.ID, req.From, req.Body)
+		id, err := s.roomSend(room.ID, req.From, req.Body, req.NeedsAttention)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
 		}
-		dmResp := map[string]any{"id": id, "room": room.ID}
+		resp := map[string]any{"id": id, "room": room.ID}
 		if warn := s.legacyPrefixWarn(req.From, req.Body); warn != "" {
-			dmResp["warnings"] = []string{warn}
+			resp["warnings"] = []string{warn}
 		}
-		_ = jsonOK(w, dmResp)
+		_ = jsonOK(w, resp)
 	})
 
 	// ── Agents ─────────────────────────────────────────────────────
@@ -738,6 +759,15 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			jsonError(w, `invalid theme: must be "dark", "light", or ""`, http.StatusBadRequest)
 			return
 		}
+		if set.NotificationVolume != nil {
+			v := *set.NotificationVolume
+			if v < 0 {
+				v = 0
+			} else if v > 100 {
+				v = 100
+			}
+			set.NotificationVolume = &v
+		}
 		s.putSettings(set)
 		_ = jsonOK(w, s.getSettings())
 	})
@@ -753,6 +783,155 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 	// web UI can prefill the "You are" field for first-time visitors.
 	mux.HandleFunc("GET /default-name", func(w http.ResponseWriter, _ *http.Request) {
 		_ = jsonOK(w, map[string]string{"name": os.Getenv("AIMEBU_NAME")})
+	})
+
+	// ── User notification sounds ────────────────────────────────────
+
+	// GET /api/sounds — list bundled (built-in) + user-uploaded sounds.
+	mux.HandleFunc("GET /api/sounds", func(w http.ResponseWriter, _ *http.Request) {
+		builtins := []map[string]string{
+			{"id": "builtin:chime", "name": "Chime", "kind": "builtin"},
+			{"id": "builtin:ding", "name": "Ding", "kind": "builtin"},
+			{"id": "builtin:beep", "name": "Beep", "kind": "builtin"},
+			{"id": "builtin:knock", "name": "Knock", "kind": "builtin"},
+		}
+		userSounds := s.listSounds()
+		var all []any
+		for _, b := range builtins {
+			all = append(all, b)
+		}
+		for _, u := range userSounds {
+			uExt := u.Ext
+			if uExt == "" {
+				uExt = "mp3"
+			}
+			all = append(all, map[string]any{
+				"id":          "user:" + u.UUID,
+				"name":        u.Name,
+				"kind":        "user",
+				"size":        u.Size,
+				"uploaded_at": u.UploadedAt,
+				"ext":         uExt,
+			})
+		}
+		_ = jsonOK(w, map[string]any{"sounds": all})
+	})
+
+	// POST /api/sounds — upload a custom notification sound (.mp3, max 1 MB).
+	// Multipart form field: "file" (the MP3). Returns the new sound entry.
+	mux.HandleFunc("POST /api/sounds", func(w http.ResponseWriter, r *http.Request) {
+		// Limit total body to slightly over 1 MB so we can give a clean error
+		// before reading the whole stream.
+		r.Body = http.MaxBytesReader(w, r.Body, maxSoundFileSize+4096)
+		if err := r.ParseMultipartForm(maxSoundFileSize + 4096); err != nil {
+			jsonError(w, "upload too large or malformed: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		f, hdr, err := r.FormFile("file")
+		if err != nil {
+			jsonError(w, "missing 'file' field", http.StatusBadRequest)
+			return
+		}
+		defer f.Close()
+
+		// Size guard (second line of defence after MaxBytesReader).
+		if hdr.Size > maxSoundFileSize {
+			jsonError(w, fmt.Sprintf("file too large (max %d KB)", maxSoundFileSize/1024), http.StatusRequestEntityTooLarge)
+			return
+		}
+
+		// Extension check.
+		lowerName := strings.ToLower(hdr.Filename)
+		isWAV := strings.HasSuffix(lowerName, ".wav")
+		isMP3 := strings.HasSuffix(lowerName, ".mp3")
+		if !isMP3 && !isWAV {
+			jsonError(w, "only .mp3 / .wav files are accepted", http.StatusBadRequest)
+			return
+		}
+
+		// Read file data.
+		data := make([]byte, hdr.Size)
+		if _, err := io.ReadFull(f, data); err != nil {
+			jsonError(w, "read error: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		// Validate file header matches declared extension.
+		if isWAV {
+			if !validWAVHeader(data) {
+				jsonError(w, "file does not appear to be a valid WAV", http.StatusBadRequest)
+				return
+			}
+		} else {
+			if !validMP3Header(data) {
+				jsonError(w, "file does not appear to be a valid MP3", http.StatusBadRequest)
+				return
+			}
+		}
+
+		ext := "mp3"
+		if isWAV {
+			ext = "wav"
+		}
+
+		// Sanitize display name: strip directory components, keep base name only.
+		displayName := filepath.Base(hdr.Filename)
+		if displayName == "." || displayName == "" {
+			displayName = "custom." + ext
+		}
+		// Truncate long names by rune count to avoid splitting multibyte sequences.
+		if utf8.RuneCountInString(displayName) > 64 {
+			displayName = string([]rune(displayName)[:64])
+		}
+
+		entry, err := s.addSound(displayName, data, ext)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = jsonOK(w, map[string]any{
+			"id":          "user:" + entry.UUID,
+			"name":        entry.Name,
+			"kind":        "user",
+			"size":        entry.Size,
+			"uploaded_at": entry.UploadedAt,
+			"ext":         entry.Ext,
+		})
+	})
+
+	// DELETE /api/sounds/{uuid} — delete a user-uploaded sound by UUID.
+	mux.HandleFunc("DELETE /api/sounds/{uuid}", func(w http.ResponseWriter, r *http.Request) {
+		uuid := r.PathValue("uuid")
+		if !s.deleteSound(uuid) {
+			jsonError(w, "sound not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// GET /api/sounds/{uuid} — serve a user-uploaded sound file.
+	mux.HandleFunc("GET /api/sounds/{uuid}", func(w http.ResponseWriter, r *http.Request) {
+		uuid := r.PathValue("uuid")
+		path, ext := s.soundFilePath(uuid)
+		if path == "" {
+			jsonError(w, "sound not found", http.StatusNotFound)
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			jsonError(w, "sound not found", http.StatusNotFound)
+			return
+		}
+		contentType := "audio/mpeg"
+		if ext == "wav" {
+			contentType = "audio/wav"
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Disposition", "inline")
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		_, _ = w.Write(data)
 	})
 
 	// GET /health
