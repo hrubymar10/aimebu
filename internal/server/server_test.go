@@ -537,6 +537,81 @@ func TestMacrosMigrationSkipsCollisions(t *testing.T) {
 	}
 }
 
+// TestLegacyPrefixWarning verifies that sending with a legacy "name:" prefix returns a
+// one-time warning in the response JSON, and subsequent sends do not repeat it.
+func TestLegacyPrefixWarning(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	sender, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "talkone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, _, err := s.registerAI("gpt5", "codex", "test", nil, "listenr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", sender.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", recipient.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	post := func(body string) *http.Response {
+		t.Helper()
+		bodyStr := fmt.Sprintf(`{"from":%q,"body":%q}`, sender.ID, body)
+		resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewBufferString(bodyStr))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	// First send with legacy prefix — expect warning.
+	resp1 := post("listenr: here is my report")
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp1.StatusCode)
+	}
+	var r1 struct {
+		ID       int64    `json:"id"`
+		Room     string   `json:"room"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.NewDecoder(resp1.Body).Decode(&r1); err != nil {
+		t.Fatal(err)
+	}
+	if len(r1.Warnings) == 0 {
+		t.Error("expected a warning for legacy 'listenr:' prefix, got none")
+	}
+
+	// Second send with legacy prefix — warning must not repeat (once per session).
+	resp2 := post("listenr: another message")
+	defer resp2.Body.Close()
+	var r2 struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&r2); err != nil {
+		t.Fatal(err)
+	}
+	if len(r2.Warnings) != 0 {
+		t.Errorf("expected no repeat warning, got %v", r2.Warnings)
+	}
+
+	// Send without legacy prefix — no warning.
+	resp3 := post("@listenr this is correct")
+	defer resp3.Body.Close()
+	var r3 struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.NewDecoder(resp3.Body).Decode(&r3); err != nil {
+		t.Fatal(err)
+	}
+	if len(r3.Warnings) != 0 {
+		t.Errorf("expected no warning for @mention style, got %v", r3.Warnings)
+	}
+}
+
 // TestRegisterReclaimedFlagInHTTPResponse verifies that the HTTP register
 // endpoint includes reclaimed=true in the JSON response on spawn_tag reclaim.
 func TestRegisterReclaimedFlagInHTTPResponse(t *testing.T) {

@@ -82,6 +82,10 @@ type store struct {
 
 	settingsMu sync.RWMutex
 	settings   Settings
+
+	// warnedLegacy tracks agents that have already received the one-time
+	// legacy "name:" prefix warning. Runtime-only; resets on server restart.
+	warnedLegacy map[string]bool
 }
 
 func newStore(dir string) (*store, error) {
@@ -99,6 +103,7 @@ func newStore(dir string) (*store, error) {
 		roomEmptySince: make(map[string]time.Time),
 		macros:         make(map[string]string),
 		seenDefaults:   make(map[string]bool),
+		warnedLegacy:   make(map[string]bool),
 	}
 
 	if err := s.load(); err != nil {
@@ -1287,6 +1292,24 @@ func (s *store) knownAgentNames() map[string]bool {
 		names[agentShortName(id)] = true
 	}
 	return names
+}
+
+// legacyPrefixWarn checks if body starts with a legacy "name:" IRC-style
+// prefix addressed to a known agent. If so, it returns a one-time guidance
+// string for the sending agent. Returns "" if no match or already warned.
+func (s *store) legacyPrefixWarn(senderAgentID, body string) string {
+	names := s.knownAgentNames()
+	matchedName, matched := parseLegacyPrefix(body, names)
+	if !matched {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.warnedLegacy[senderAgentID] {
+		return ""
+	}
+	s.warnedLegacy[senderAgentID] = true
+	return fmt.Sprintf("'%s:' prefix detected — this does not address %s; write '@%s ...'. Also drop self-labels: 'from' already identifies you. (one-time warning per session.)", matchedName, matchedName, matchedName)
 }
 
 // ── SSE subscriptions ──────────────────────────────────────────────

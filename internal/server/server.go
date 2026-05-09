@@ -154,7 +154,11 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
 		}
-		_ = jsonOK(w, map[string]any{"id": id, "room": roomID})
+		resp := map[string]any{"id": id, "room": roomID}
+		if warn := s.legacyPrefixWarn(req.From, req.Body); warn != "" {
+			resp["warnings"] = []string{warn}
+		}
+		_ = jsonOK(w, resp)
 	})
 
 	// GET /rooms/{room_id}/messages
@@ -494,7 +498,11 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
 		}
-		_ = jsonOK(w, map[string]any{"id": id, "room": room.ID})
+		dmResp := map[string]any{"id": id, "room": room.ID}
+		if warn := s.legacyPrefixWarn(req.From, req.Body); warn != "" {
+			dmResp["warnings"] = []string{warn}
+		}
+		_ = jsonOK(w, dmResp)
 	})
 
 	// ── Agents ─────────────────────────────────────────────────────

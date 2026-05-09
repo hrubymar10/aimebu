@@ -11,6 +11,8 @@ import (
 var (
 	// mentionRe finds @name mentions anywhere in the body.
 	mentionRe = regexp.MustCompile(`(?i)@([a-z][a-z0-9]*)`)
+	// legacyPrefixRe detects IRC-style "name:" speaker prefixes at the start of a body.
+	legacyPrefixRe = regexp.MustCompile(`(?i)^([a-z][a-z0-9]{2,11})\s*:`)
 )
 
 // parseAddressedTo returns the deduplicated list of short names a message body
@@ -87,6 +89,23 @@ func annotate(msgs []types.Message, agentName string, knownAgents map[string]boo
 		}
 	}
 	return out
+}
+
+// parseLegacyPrefix detects a legacy IRC-style "name:" speaker prefix at the
+// start of body. Returns (matchedName, true) when the prefix matches a name in
+// knownNames (lowercase short names of registered agents). Returns ("", false)
+// for @-addressed messages, ordinary prose labels like "Note:" or "URL:", and
+// any body that does not start with the pattern.
+func parseLegacyPrefix(body string, knownNames map[string]bool) (string, bool) {
+	m := legacyPrefixRe.FindStringSubmatch(body)
+	if m == nil {
+		return "", false
+	}
+	name := strings.ToLower(m[1])
+	if !knownNames[name] {
+		return "", false
+	}
+	return name, true
 }
 
 // agentShortName extracts the name portion from an agent ID.

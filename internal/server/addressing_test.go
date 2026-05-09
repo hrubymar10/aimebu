@@ -153,6 +153,48 @@ func TestParseAddressedToNoiseFiltering(t *testing.T) {
 	}
 }
 
+func TestParseLegacyPrefix(t *testing.T) {
+	known := map[string]bool{"worker": true, "reviewer": true, "leader": true}
+
+	cases := []struct {
+		body      string
+		wantName  string
+		wantMatch bool
+	}{
+		// Positive: exact matches
+		{"worker: here is my analysis", "worker", true},
+		{"Worker: here is my analysis", "worker", true},
+		{"WORKER: here is my analysis", "worker", true},
+		{"leader: finalizing now", "leader", true},
+		{"reviewer:no space after colon", "reviewer", true},
+
+		// Negative: not an agent name → no match
+		{"note: this is important", "", false},
+		{"url: https://example.com", "", false},
+		{"todo: fix this later", "", false},
+		{"fyi: heads up", "", false},
+
+		// Negative: @-addressed → no match (doesn't start with bare name:)
+		{"@worker please look at this", "", false},
+		{"hey everyone", "", false},
+		{"", "", false},
+
+		// Edge: name not in known set → no match even if pattern matches
+		{"phantom: some message", "", false},
+
+		// Edge: too short (< 3 chars after lowercase) → no match
+		{"ab: short", "", false},
+	}
+
+	for _, tc := range cases {
+		gotName, gotMatch := parseLegacyPrefix(tc.body, known)
+		if gotMatch != tc.wantMatch || gotName != tc.wantName {
+			t.Errorf("parseLegacyPrefix(%q) = (%q, %v), want (%q, %v)",
+				tc.body, gotName, gotMatch, tc.wantName, tc.wantMatch)
+		}
+	}
+}
+
 func TestAgentShortName(t *testing.T) {
 	cases := []struct {
 		id   string

@@ -76,13 +76,17 @@ func gatherMeta() map[string]string {
 // tokens to read anything that gets sent because of it.
 const busEtiquette = `aimebu messagebus etiquette:
 - Who you are: the ` + "`name`" + ` returned by bus_register (e.g. "zoe"). Use it to decide whether a message is addressed to you.
-- Addressing: a message is addressed to a named agent only via "@<name>" mention anywhere in the body (e.g. "@alice", "@bob"). Otherwise the message is room-wide. Old IRC-style "name:" prefixes are no longer parsed — they produce room-wide messages.
+- Addressing: use "@<name>" anywhere in the body to direct a message to a specific agent. Otherwise the message is room-wide and every agent may respond.
+  BAD: "alice: here is my analysis" → room-wide; alice won't see addressed_to_me=true.
+  GOOD: "@alice here is my analysis" → addressed; alice sees addressed_to_me=true.
+- Do not label your messages with your name or "from:" as a prefix. The "from" field already identifies you.
 - Structured fields: every message from bus_wait and bus_read carries ` + "`addressed_to`" + ` (list of names), ` + "`addressed_to_me`" + ` (bool), and ` + "`should_respond`" + ` (bool). Use ` + "`should_respond`" + ` as the primary signal. Example: human posts "@leader status?" — if you are not leader, should_respond=false; call bus_wait again immediately, do NOT call bus_say.
 - Human sender (from_kind=human): should_respond=true for room-wide messages; should_respond=false when addressed to a different agent. Do not ask "should I reply?" — just reply when should_respond=true.
 - AI sender (from_kind=ai): should_respond=false by default. should_respond=true only when addressed_to_me=true or in a DM room (id starts with "dm:").
 - After joining a room, block on bus_wait. bus_wait remembers your read cursor — if messages arrived while you were away, the next call returns them immediately. When it times out, call bus_wait again. Return control to the user only when the user tells you to stop.
 - Do not send unprompted introductions, greetings, or status acks ("standing by", "on it", "got it"). Keep replies terse — other agents pay input tokens to read every word.
-- Wait for the human's review before shipping code or changes, unless they've told you to proceed autonomously.`
+- Wait for the human's review before shipping code or changes, unless they've told you to proceed autonomously.
+- Warnings: if a send response includes a "warnings" field, read those warnings and correct your messaging style immediately.`
 
 // ── JSON-RPC types ─────────────────────────────────────────────────
 
