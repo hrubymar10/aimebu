@@ -50,9 +50,9 @@ type MetaEvent struct {
 // SoundEntry describes a user-uploaded custom notification sound.
 type SoundEntry struct {
 	UUID       string `json:"uuid"`
-	Name       string `json:"name"`        // sanitized display name from the upload
-	Size       int64  `json:"size"`        // bytes on disk
-	UploadedAt string `json:"uploaded_at"` // RFC3339
+	Name       string `json:"name"`          // sanitized display name from the upload
+	Size       int64  `json:"size"`          // bytes on disk
+	UploadedAt string `json:"uploaded_at"`   // RFC3339
 	Ext        string `json:"ext,omitempty"` // "mp3" or "wav"; empty means legacy mp3
 }
 
@@ -1019,7 +1019,7 @@ func (s *store) registerHuman(name, project string, meta map[string]string) (*ty
 			}
 		}
 		s.persist()
-		cp := *existing
+		cp := cloneAgentLocked(existing)
 		s.mu.Unlock()
 		go s.broadcastAgentUpdate()
 		s.joinRoomInternal("_system", name)
@@ -1046,7 +1046,7 @@ func (s *store) registerHuman(name, project string, meta map[string]string) (*ty
 	}
 	s.agents[name] = agent
 	s.persist()
-	cp := *agent
+	cp := cloneAgentLocked(agent)
 	s.mu.Unlock()
 
 	go s.broadcastAgentUpdate()
@@ -1126,7 +1126,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 					}
 				}
 				s.persist()
-				cp := *a
+				cp := cloneAgentLocked(a)
 				s.mu.Unlock()
 				go s.broadcastAgentUpdate()
 				s.joinRoomInternal("_system", a.ID)
@@ -1152,7 +1152,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 					}
 				}
 				s.persist()
-				cp := *existing
+				cp := cloneAgentLocked(existing)
 				s.mu.Unlock()
 				go s.broadcastAgentUpdate()
 				s.joinRoomInternal("_system", existing.ID)
@@ -1195,7 +1195,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 	}
 	s.agents[id] = agent
 	s.persist()
-	cp := *agent
+	cp := cloneAgentLocked(agent)
 	s.mu.Unlock()
 
 	go s.broadcastAgentUpdate()
@@ -1288,12 +1288,33 @@ func (s *store) advanceCursor(agentID, roomID string, to int64) bool {
 	return true
 }
 
+// cloneAgentLocked returns an agent snapshot whose mutable map fields no longer
+// alias live store state, so callers can JSON-marshal it after releasing s.mu
+// without risking concurrent map iteration panics. Caller must hold s.mu
+// (read or write) while invoking it.
+func cloneAgentLocked(a *types.Agent) types.Agent {
+	clone := *a
+	if a.Meta != nil {
+		clone.Meta = make(map[string]string, len(a.Meta))
+		for k, v := range a.Meta {
+			clone.Meta[k] = v
+		}
+	}
+	if a.ReadCursors != nil {
+		clone.ReadCursors = make(map[string]int64, len(a.ReadCursors))
+		for k, v := range a.ReadCursors {
+			clone.ReadCursors[k] = v
+		}
+	}
+	return clone
+}
+
 func (s *store) listAgents() []types.Agent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	agents := make([]types.Agent, 0, len(s.agents))
 	for _, a := range s.agents {
-		agents = append(agents, *a)
+		agents = append(agents, cloneAgentLocked(a))
 	}
 	return agents
 }
@@ -1909,7 +1930,6 @@ func (s *store) persistSoundsLocked() {
 		atomicWrite(s.soundsIndexPath(), data)
 	}
 }
-
 
 func (s *store) listSounds() []SoundEntry {
 	s.soundsMu.RLock()

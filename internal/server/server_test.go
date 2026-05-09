@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/hrubymar10/aimebu/internal/types"
 )
 
 func setupTestServer(t *testing.T) (*store, *httptest.Server) {
@@ -102,6 +103,113 @@ func TestDeleteAgentReturnsNotFoundForUnknownAgent(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("DELETE /agents for unknown agent returned %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}
+}
+
+func TestListAgentsConcurrentMutation(t *testing.T) {
+	s, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	agent, _, err := s.registerAI("gpt5", "codex", "test", map[string]string{
+		"protocol":  "agent",
+		"spawn_tag": "list-agents-race",
+	}, "workerbee")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed both mutable map fields so the snapshot path must clone them.
+	if !s.advanceCursor(agent.ID, "seed-room", 1) {
+		t.Fatal("expected initial cursor advance to seed read_cursors")
+	}
+
+	deadline := time.Now().Add(150 * time.Millisecond)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+
+	marshalWorker := func() {
+		defer wg.Done()
+		<-start
+		for time.Now().Before(deadline) {
+			evt := MetaEvent{Type: "agent_update", Data: map[string]any{"agents": s.listAgents()}}
+			if _, err := json.Marshal(evt); err != nil {
+				t.Errorf("marshal failed: %v", err)
+				return
+			}
+		}
+	}
+	cursorWorker := func(roomIdx int) {
+		defer wg.Done()
+		<-start
+		var cursor int64 = 2
+		roomID := fmt.Sprintf("race-room-%d", roomIdx)
+		for time.Now().Before(deadline) {
+			s.advanceCursor(agent.ID, roomID, cursor)
+			cursor++
+		}
+	}
+
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go marshalWorker()
+	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go cursorWorker(i)
+	}
+
+	close(start)
+	wg.Wait()
+}
+
+func TestRegisterResponseConcurrentMetaMutation(t *testing.T) {
+	s, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(150 * time.Millisecond)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+
+	registerWorker := func(workerIdx int) {
+		defer wg.Done()
+		<-start
+		for iter := 0; time.Now().Before(deadline); iter++ {
+			agent, _, err := s.registerAI("gpt5", "codex", "test", map[string]string{
+				"protocol":  "agent",
+				"spawn_tag": "register-race",
+				"seq":       fmt.Sprintf("%d-%d", workerIdx, iter),
+			}, "workerbee")
+			if err != nil {
+				t.Errorf("registerAI failed: %v", err)
+				return
+			}
+			resp := types.RegisterResponse{
+				ID:        agent.ID,
+				Name:      agent.Name,
+				Kind:      agent.Kind,
+				Model:     agent.Model,
+				Harness:   agent.Harness,
+				Project:   agent.Project,
+				Meta:      agent.Meta,
+				Reclaimed: false,
+			}
+			if _, err := json.Marshal(resp); err != nil {
+				t.Errorf("marshal register response failed: %v", err)
+				return
+			}
+		}
+	}
+
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go registerWorker(i)
+	}
+
+	close(start)
+	wg.Wait()
 }
 
 // TestRoomWaitCursorNotAdvancedOnContextCancel verifies that cancelling the
