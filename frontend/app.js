@@ -43,7 +43,9 @@
   let attentionTimers = {};        // { roomID: timeoutID } — pending 3s fade timers
   let attentionFocusListeners = {}; // { roomID: fn } — pending focus listener per room
   let notifSounds = [];      // sound list from GET /api/sounds
-  let _audioCtx = null;      // shared AudioContext — lazy-init, never closed
+  let notifAudioCache = {};  // { soundID: HTMLAudioElement } — lazily created
+  let notifAudioPrimed = false; // true after a trusted gesture warms audio playback
+  let notifAudioPriming = null; // in-flight prime promise — dedupes gesture races
   let notifPromptAttempted = false; // flipped only after a real prompt attempt or CTA display
   let pendingNotifPrompt = null; // { senderName } queued while the tab is hidden
   let messageDebugState = {
@@ -786,87 +788,153 @@
 
   // ── Notification sounds ──────────────────────────────────────────
 
-  function getAudioCtx() {
-    if (!_audioCtx) {
-      _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    return _audioCtx;
-  }
-
   function setAudioStatus(msg) {
     if (notifAudioStatusEl) notifAudioStatusEl.textContent = msg;
   }
 
-  function playBuiltinSound(name, vol) {
-    var ctx = getAudioCtx();
-    if (ctx.state === 'suspended') { ctx.resume(); }
-    var masterGain = ctx.createGain();
-    masterGain.gain.value = (vol / 100) * 0.35;
-    masterGain.connect(ctx.destination);
+  function currentNotificationSoundID() {
+    return serverSettings.notification_sound || 'builtin:chime';
+  }
 
-    function tone(freq, start, dur) {
-      var osc = ctx.createOscillator();
-      var g = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      g.gain.setValueAtTime(1, ctx.currentTime + start);
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
-      osc.connect(g);
-      g.connect(masterGain);
-      osc.start(ctx.currentTime + start);
-      osc.stop(ctx.currentTime + start + dur);
-    }
+  function notificationSoundVolume() {
+    return serverSettings.notification_volume !== undefined ? serverSettings.notification_volume : 70;
+  }
 
-    if (name === 'chime') {
-      tone(880, 0,    0.25);
-      tone(659, 0.18, 0.25);
-      tone(523, 0.36, 0.35);
-    } else if (name === 'ding') {
-      tone(1047, 0, 0.5);
-    } else if (name === 'beep') {
-      var osc = ctx.createOscillator();
-      osc.type = 'square';
-      osc.frequency.value = 880;
-      osc.connect(masterGain);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.12);
-    } else if (name === 'knock') {
-      tone(220, 0,    0.06);
-      tone(200, 0.12, 0.06);
+  function resolveNotificationSoundURL(soundID) {
+    if (!soundID || soundID === 'builtin:chime') return '/sounds-builtin/chime.wav';
+    if (soundID.startsWith('builtin:')) {
+      var name = soundID.slice('builtin:'.length);
+      if (name === 'chime' || name === 'ding' || name === 'beep' || name === 'knock') {
+        return '/sounds-builtin/' + encodeURIComponent(name) + '.wav';
+      }
+      return null;
     }
+    if (soundID.startsWith('user:')) {
+      return '/api/sounds/' + encodeURIComponent(soundID.slice('user:'.length));
+    }
+    return null;
+  }
+
+  function formatAudioError(err) {
+    return err && err.message ? err.message : String(err);
+  }
+
+  function updateNotificationAudioStatus() {
+    setAudioStatus(notifAudioPrimed ? 'primed — ready' : 'not primed yet');
+  }
+
+  function dropNotificationAudio(soundID) {
+    var audio = notifAudioCache[soundID];
+    if (!audio) return;
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+    delete notifAudioCache[soundID];
+  }
+
+  function getNotificationAudio(soundID, forceRefresh) {
+    if (forceRefresh) dropNotificationAudio(soundID);
+    var audio = notifAudioCache[soundID];
+    if (audio) return audio;
+    var url = resolveNotificationSoundURL(soundID);
+    if (!url) return null;
+    audio = new Audio(url);
+    audio.preload = 'auto';
+    notifAudioCache[soundID] = audio;
+    return audio;
+  }
+
+  function warmNotificationAudio(soundID, allowMutedPlay, forceRefresh) {
+    var audio = getNotificationAudio(soundID, forceRefresh);
+    if (!audio) return Promise.reject(new Error('unknown notification sound: ' + soundID));
+    audio.load();
+    if (!allowMutedPlay) {
+      updateNotificationAudioStatus();
+      return Promise.resolve(audio);
+    }
+    audio.pause();
+    audio.currentTime = 0;
+    audio.muted = true;
+    var p = audio.play();
+    if (!p || !p.then) {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      notifAudioPrimed = true;
+      setAudioStatus('primed — ready');
+      return Promise.resolve(audio);
+    }
+    return p.then(function () {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      notifAudioPrimed = true;
+      setAudioStatus('primed — ready');
+      return audio;
+    }).catch(function (err) {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      throw err;
+    });
+  }
+
+  function primeNotificationAudio(soundID, forceRefresh) {
+    if (notifAudioPriming) return notifAudioPriming;
+    notifAudioPriming = warmNotificationAudio(soundID || currentNotificationSoundID(), true, forceRefresh).catch(function (err) {
+      var blocked = err && err.name === 'NotAllowedError';
+      setAudioStatus(blocked
+        ? 'last attempt: blocked — click anywhere to unlock'
+        : 'last attempt: error — ' + formatAudioError(err));
+      return null;
+    }).finally(function () {
+      notifAudioPriming = null;
+    });
+    return notifAudioPriming;
+  }
+
+  function playNotificationAudioByID(soundID, vol, allowFallback) {
+    var audio = getNotificationAudio(soundID);
+    if (!audio) {
+      if (allowFallback && soundID !== 'builtin:chime') {
+        console.warn('[aimebu] unknown notification sound, falling back to chime:', soundID);
+        return playNotificationAudioByID('builtin:chime', vol, false);
+      }
+      var missing = new Error('unknown notification sound: ' + soundID);
+      setAudioStatus('last attempt: error — ' + formatAudioError(missing));
+      return Promise.reject(missing);
+    }
+    audio.pause();
+    audio.muted = false;
+    audio.currentTime = 0;
+    audio.volume = vol / 100;
+    var p = audio.play();
+    if (!p || !p.then) {
+      notifAudioPrimed = true;
+      setAudioStatus('last attempt: ok');
+      return Promise.resolve();
+    }
+    return p.then(function () {
+      notifAudioPrimed = true;
+      setAudioStatus('last attempt: ok');
+    }).catch(function (err) {
+      var blocked = err && err.name === 'NotAllowedError';
+      if (!blocked && allowFallback && soundID !== 'builtin:chime') {
+        console.warn('[aimebu] notification sound failed, falling back to chime:', soundID, err);
+        dropNotificationAudio(soundID);
+        return playNotificationAudioByID('builtin:chime', vol, false);
+      }
+      setAudioStatus(blocked
+        ? 'last attempt: blocked — click anywhere to unlock'
+        : 'last attempt: error — ' + formatAudioError(err));
+      return Promise.reject(err);
+    });
   }
 
   function playNotificationSound() {
     if (serverSettings.notification_enabled === false) return;
-    var sound = serverSettings.notification_sound || 'builtin:chime';
-    var vol = serverSettings.notification_volume !== undefined ? serverSettings.notification_volume : 70;
-    if (sound.startsWith('builtin:')) {
-      try {
-        playBuiltinSound(sound.slice('builtin:'.length), vol);
-        var ctx = getAudioCtx();
-        setAudioStatus(ctx.state === 'running'
-          ? 'Last attempt: ok'
-          : 'Last attempt: scheduled — tap the page to unlock audio');
-      } catch (e) {
-        console.warn('[aimebu] playBuiltinSound error:', e);
-        setAudioStatus('Last attempt: error — ' + (e && e.message ? e.message : String(e)));
-      }
-      return;
-    }
-    if (sound.startsWith('user:')) {
-      var uuid = sound.slice('user:'.length);
-      var audio = new Audio('/api/sounds/' + encodeURIComponent(uuid));
-      audio.volume = vol / 100;
-      audio.play().then(function () {
-        setAudioStatus('Last attempt: ok');
-      }).catch(function (e) {
-        console.warn('[aimebu] audio.play() rejected:', e);
-        var blocked = e && e.name === 'NotAllowedError';
-        setAudioStatus(blocked
-          ? 'Last attempt: blocked — click anywhere on the page to unlock'
-          : 'Last attempt: error — ' + (e && e.message ? e.message : String(e)));
-      });
-    }
+    playNotificationAudioByID(currentNotificationSoundID(), notificationSoundVolume(), true)
+      .catch(function () {});
   }
 
   // ── System notifications (Notification API) ───────────────────────
@@ -1007,6 +1075,7 @@
       notifSounds = data.sounds || [];
       updateSoundSelect();
       renderNotifSoundsList();
+      updateNotificationAudioStatus();
     }).catch(function () {});
   }
 
@@ -1015,9 +1084,17 @@
       .then(function (r) {
         if (!r.ok && r.status !== 404) return;
         var deletedID = 'user:' + uuid;
+        var wasSelected = currentNotificationSoundID() === deletedID;
         notifSounds = notifSounds.filter(function (s) { return s.id !== deletedID; });
-        if (serverSettings.notification_sound === deletedID) {
+        dropNotificationAudio(deletedID);
+        if (wasSelected) {
           saveSettings({ notification_sound: 'builtin:chime' });
+          dropNotificationAudio('builtin:chime');
+          if (notifAudioPrimed) {
+            primeNotificationAudio('builtin:chime', true);
+          } else {
+            updateNotificationAudioStatus();
+          }
         }
         updateSoundSelect();
         renderNotifSoundsList();
@@ -1055,6 +1132,7 @@
     if (notifVolumeSlider) notifVolumeSlider.value = vol;
     if (notifVolumeLabel) notifVolumeLabel.textContent = vol + '%';
     updateSoundSelect();
+    updateNotificationAudioStatus();
     if (!enabled) clearNotificationPromptBanner();
   }
 
@@ -2688,15 +2766,24 @@
 
   if (notifSoundSelect) {
     notifSoundSelect.addEventListener('change', function () {
-      saveSettings({ notification_sound: notifSoundSelect.value });
+      var next = notifSoundSelect.value;
+      var prev = currentNotificationSoundID();
+      saveSettings({ notification_sound: next });
+      dropNotificationAudio(prev);
+      dropNotificationAudio(next);
+      if (notifAudioPrimed) {
+        primeNotificationAudio(next, true);
+      } else {
+        updateNotificationAudioStatus();
+      }
     });
   }
 
   if (notifTestBtn) {
     notifTestBtn.addEventListener('click', function () {
-      // Resume AudioContext on this gesture (definitive unlock)
-      if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
-      playNotificationSound();
+      primeNotificationAudio(currentNotificationSoundID(), true).finally(function () {
+        playNotificationSound();
+      });
       if ('Notification' in window && Notification.permission === 'granted') {
         var n = new Notification('aimebu test notification', { body: 'Test alert — sound + notifications are working', icon: '/icons/broadcast.svg', tag: 'aimebu-test' });
         setTimeout(function () { n.close(); }, 4000);
@@ -2801,14 +2888,13 @@
     });
   }
 
-  // Resume a suspended AudioContext on first user gesture (Safari requires this)
-  function resumeAudioCtxOnGesture() {
-    if (_audioCtx && _audioCtx.state === 'suspended') {
-      _audioCtx.resume();
-    }
+  // Prime notification audio on first gesture so later attention pings play immediately.
+  function primeNotificationAudioOnGesture() {
+    if (notifAudioPrimed) return;
+    primeNotificationAudio(currentNotificationSoundID(), false);
   }
-  document.addEventListener('pointerdown', resumeAudioCtxOnGesture, { passive: true });
-  document.addEventListener('keydown', resumeAudioCtxOnGesture, { passive: true });
+  document.addEventListener('pointerdown', primeNotificationAudioOnGesture, { passive: true });
+  document.addEventListener('keydown', primeNotificationAudioOnGesture, { passive: true });
   document.addEventListener('visibilitychange', maybeShowPendingNotificationPrompt);
   window.addEventListener('focus', maybeShowPendingNotificationPrompt);
 
