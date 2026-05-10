@@ -270,6 +270,9 @@ func (s *store) load() error {
 		}
 		for i := range agents {
 			s.agents[agents[i].ID] = &agents[i]
+			if isReservedAgentName(agents[i].Name) {
+				log.Printf("warning: persisted agent %q has reserved name %q; @%s now resolves to a group token, not this agent", agents[i].ID, agents[i].Name, agents[i].Name)
+			}
 		}
 	}
 
@@ -719,6 +722,13 @@ func (s *store) roomSend(roomID, from, body string, needsAttention bool) (int64,
 		return 0, fmt.Errorf("agent %s is not a member of room %s", from, roomID)
 	}
 
+	ctx := s.addressingContext(types.Message{RoomID: roomID, From: from, Body: body})
+	rawTargets := parseAddressedTo(body)
+	targets := resolveAddressedTokens(rawTargets, ctx)
+	if len(rawTargets) > 0 && targets == nil {
+		targets = []string{}
+	}
+
 	// Force-subscribe all registered humans who are not yet room members when
 	// the sender signals needs_attention=true. Auto-join is idempotent (joinRoom
 	// returns early for existing members). DMs are not exempt — matin confirmed
@@ -749,6 +759,7 @@ func (s *store) roomSend(roomID, from, body string, needsAttention bool) (int64,
 		FromKind:            fromKind,
 		Body:                body,
 		CreatedAt:           now(),
+		Targets:             targets,
 		NeedsHumanAttention: needsAttention,
 	}
 
@@ -1002,6 +1013,9 @@ func (s *store) registerHuman(name, project string, meta map[string]string) (*ty
 	if name == "" {
 		return nil, fmt.Errorf("name is required for human registration")
 	}
+	if isReservedAgentName(name) {
+		return nil, fmt.Errorf("name %q is reserved", name)
+	}
 
 	s.mu.Lock()
 
@@ -1111,6 +1125,10 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 			s.mu.Unlock()
 			return nil, false, fmt.Errorf("name %q must match [a-z]{3,12}", forceName)
 		}
+		if isReservedAgentName(forceName) {
+			s.mu.Unlock()
+			return nil, false, fmt.Errorf("name %q is reserved", forceName)
+		}
 		for _, a := range s.agents {
 			if a.Name != forceName {
 				continue
@@ -1206,6 +1224,47 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 	s.joinRoomInternal("_system", id)
 	s.emitSystemMessage("_system", fmt.Sprintf("%s registered (%s/%s)", id, model, harness))
 	return &cp, false, nil
+}
+
+func (s *store) addressingContext(msg types.Message) addressingContext {
+	ctx := addressingContext{
+		SenderID:   msg.From,
+		KnownNames: make(map[string]bool),
+		Now:        time.Now().UTC(),
+	}
+
+	var memberIDs []string
+	s.mu.RLock()
+	for _, agent := range s.agents {
+		ctx.KnownNames[strings.ToLower(agent.Name)] = true
+	}
+	if room, ok := s.rooms[msg.RoomID]; ok {
+		memberIDs = append(memberIDs, room.Members...)
+	}
+	ctx.RoomAgents = make([]roomAgentContext, 0, len(memberIDs))
+	for _, memberID := range memberIDs {
+		agent, ok := s.agents[memberID]
+		if !ok {
+			continue
+		}
+		lastSeen, _ := time.Parse(time.RFC3339, agent.LastSeen)
+		ctx.RoomAgents = append(ctx.RoomAgents, roomAgentContext{
+			ID:       agent.ID,
+			Name:     agent.Name,
+			Kind:     agent.Kind,
+			LastSeen: lastSeen,
+		})
+	}
+	s.mu.RUnlock()
+
+	s.waitMu.RLock()
+	for i := range ctx.RoomAgents {
+		scopes := s.openWaits[ctx.RoomAgents[i].ID]
+		ctx.RoomAgents[i].Waiting = scopes[msg.RoomID] > 0 || scopes[""] > 0
+	}
+	s.waitMu.RUnlock()
+
+	return ctx
 }
 
 func (s *store) touchAgent(id string) {
@@ -1405,11 +1464,12 @@ func (s *store) legacyPrefixWarn(senderAgentID, body string) string {
 
 // attentionMissWarn returns a one-time warning when a sender addresses a human
 // with a likely blocking request but omits needs_attention=true.
-func (s *store) attentionMissWarn(senderAgentID, body string, needsAttention bool, extraAddressees []string) string {
+func (s *store) attentionMissWarn(roomID, senderAgentID, body string, needsAttention bool, extraAddressees []string) string {
 	if needsAttention {
 		return ""
 	}
-	addressedTo := parseAddressedTo(body)
+	msg := types.Message{RoomID: roomID, From: senderAgentID, Body: body}
+	addressedTo := resolveAddressedTo(body, s.addressingContext(msg))
 	knownAgents := s.knownAgentNames()
 	if name, matched := parseLegacyPrefix(body, knownAgents); matched {
 		addressedTo = append(addressedTo, name)

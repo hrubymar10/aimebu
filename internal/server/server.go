@@ -180,7 +180,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		if warn := s.legacyPrefixWarn(req.From, req.Body); warn != "" {
 			warnings = append(warnings, warn)
 		}
-		if warn := s.attentionMissWarn(req.From, req.Body, req.NeedsAttention, nil); warn != "" {
+		if warn := s.attentionMissWarn(roomID, req.From, req.Body, req.NeedsAttention, nil); warn != "" {
 			warnings = append(warnings, warn)
 		}
 		if len(warnings) > 0 {
@@ -214,7 +214,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 
 		msgs := s.roomMessages(roomID, limit, sinceID)
 		if agentID != "" {
-			_ = jsonOK(w, map[string]any{"messages": annotate(msgs, agentShortName(agentID), s.knownAgentNames()), "room": roomID})
+			_ = jsonOK(w, map[string]any{"messages": annotate(msgs, agentShortName(agentID), s.addressingContext), "room": roomID})
 		} else {
 			_ = jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
 		}
@@ -271,8 +271,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 						filtered = append(filtered, m)
 					}
 				}
-				known := s.knownAgentNames()
-				if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentShortName(agentID), known), "room": roomID}); err == nil {
+				if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentShortName(agentID), s.addressingContext), "room": roomID}); err == nil {
 					if s.advanceCursor(agentID, roomID, last) {
 						s.broadcastReadUpdate(agentID, roomID, last)
 					}
@@ -295,7 +294,6 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		timer := time.NewTimer(time.Duration(timeoutSec) * time.Second)
 		defer timer.Stop()
 
-		known := s.knownAgentNames()
 		for {
 			select {
 			case msg := <-ch:
@@ -316,7 +314,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 					return // client disconnected; preserve cursor so next reconnect replays
 				}
 				if agentID != "" {
-					if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID), known), "room": roomID}); err == nil {
+					if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID), s.addressingContext), "room": roomID}); err == nil {
 						if s.advanceCursor(agentID, roomID, msg.ID) {
 							s.broadcastReadUpdate(agentID, roomID, msg.ID)
 						}
@@ -386,8 +384,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 					filtered = append(filtered, m)
 				}
 			}
-			known := s.knownAgentNames()
-			if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentShortName(agentID), known), "agent": agentID}); err == nil {
+			if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentShortName(agentID), s.addressingContext), "agent": agentID}); err == nil {
 				if !sinceExplicit {
 					// Advance cursors for every room we returned messages from
 					// (including own messages — they advance the cursor but aren't
@@ -420,7 +417,6 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		timer := time.NewTimer(time.Duration(timeoutSec) * time.Second)
 		defer timer.Stop()
 
-		known := s.knownAgentNames()
 		for {
 			select {
 			case msg := <-ch:
@@ -449,7 +445,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 				if r.Context().Err() != nil {
 					return // client disconnected; preserve cursor so next reconnect replays
 				}
-				if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID), known), "agent": agentID}); err == nil {
+				if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID), s.addressingContext), "agent": agentID}); err == nil {
 					if !sinceExplicit {
 						if s.advanceCursor(agentID, msg.RoomID, msg.ID) {
 							s.broadcastReadUpdate(agentID, msg.RoomID, msg.ID)
@@ -531,7 +527,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		if warn := s.legacyPrefixWarn(req.From, req.Body); warn != "" {
 			warnings = append(warnings, warn)
 		}
-		if warn := s.attentionMissWarn(req.From, req.Body, req.NeedsAttention, []string{agentShortName(req.To)}); warn != "" {
+		if warn := s.attentionMissWarn(room.ID, req.From, req.Body, req.NeedsAttention, []string{agentShortName(req.To)}); warn != "" {
 			warnings = append(warnings, warn)
 		}
 		if len(warnings) > 0 {

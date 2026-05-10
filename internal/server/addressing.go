@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/hrubymar10/aimebu/internal/types"
 )
@@ -16,6 +17,31 @@ var (
 	// inlinePrefixRe detects inline IRC-style "name1, name2 —" or
 	// "name1 and name2:" addressing at the start of a sentence/paragraph.
 	inlinePrefixRe = regexp.MustCompile(`(?i)(?:^|[.!?\n]\s*)([a-z][a-z0-9]{2,11})\s*(?:,\s*|\s+and\s+)([a-z][a-z0-9]{2,11})\s*(?:[—–\-]|:)`)
+)
+
+const hereRecentWindow = 5 * time.Minute
+
+var (
+	groupMentionKinds = map[string]string{
+		"channel":  "channel",
+		"here":     "here",
+		"humans":   "humans",
+		"ais":      "ais",
+		"everyone": "everyone",
+		"all":      "everyone",
+	}
+	reservedAgentNames = map[string]bool{
+		"human":    true,
+		"humans":   true,
+		"ai":       true,
+		"ais":      true,
+		"everyone": true,
+		"all":      true,
+		"here":     true,
+		"channel":  true,
+		"system":   true,
+		"_system":  true,
+	}
 )
 
 var attentionMissPhrases = []string{
@@ -35,6 +61,21 @@ var attentionMissPhrases = []string{
 type maskedView struct {
 	masked  string
 	escaped string
+}
+
+type roomAgentContext struct {
+	ID       string
+	Name     string
+	Kind     string
+	LastSeen time.Time
+	Waiting  bool
+}
+
+type addressingContext struct {
+	SenderID   string
+	KnownNames map[string]bool
+	RoomAgents []roomAgentContext
+	Now        time.Time
 }
 
 // maskCodeForAddressing replaces code-region content with whitespace-preserving
@@ -204,8 +245,10 @@ func stripEscapedMentions(body string) string {
 	return b.String()
 }
 
-// parseAddressedTo returns the deduplicated list of short names a message body
-// is addressed to via @name mentions. Returns nil for room-wide messages.
+// parseAddressedTo returns the deduplicated list of raw @tokens captured from
+// live prose (outside code, outside escaped \@literal forms). The returned
+// tokens are lowercased and may include group tags such as "here" or
+// "everyone"; room-aware resolution happens later.
 func parseAddressedTo(body string) []string {
 	view := maskCodeForAddressing(body)
 	var names []string
@@ -223,6 +266,73 @@ func parseAddressedTo(body string) []string {
 	return names
 }
 
+func isReservedAgentName(name string) bool {
+	return reservedAgentNames[strings.ToLower(name)]
+}
+
+func resolveAddressedTo(body string, ctx addressingContext) []string {
+	return resolveAddressedTokens(parseAddressedTo(body), ctx)
+}
+
+func resolveAddressedTokens(raw []string, ctx addressingContext) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var names []string
+	seen := map[string]bool{}
+	senderName := strings.ToLower(agentShortName(ctx.SenderID))
+	add := func(name string) {
+		name = strings.ToLower(name)
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+
+	for _, token := range raw {
+		switch groupMentionKinds[token] {
+		case "channel", "everyone":
+			for _, agent := range ctx.RoomAgents {
+				if strings.EqualFold(agent.Name, senderName) {
+					continue
+				}
+				add(agent.Name)
+			}
+		case "humans":
+			for _, agent := range ctx.RoomAgents {
+				if strings.EqualFold(agent.Name, senderName) || agent.Kind != "human" {
+					continue
+				}
+				add(agent.Name)
+			}
+		case "ais":
+			for _, agent := range ctx.RoomAgents {
+				if strings.EqualFold(agent.Name, senderName) || agent.Kind != "ai" {
+					continue
+				}
+				add(agent.Name)
+			}
+		case "here":
+			for _, agent := range ctx.RoomAgents {
+				if strings.EqualFold(agent.Name, senderName) {
+					continue
+				}
+				if agent.Waiting || (!agent.LastSeen.IsZero() && ctx.Now.Sub(agent.LastSeen) < hereRecentWindow) {
+					add(agent.Name)
+				}
+			}
+		default:
+			if len(ctx.KnownNames) == 0 || ctx.KnownNames[token] {
+				add(token)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return names
+}
+
 // annotatedMessage is a types.Message with per-agent addressing guidance
 // attached. Fields are computed at read time so agents can act on structured
 // data instead of re-parsing etiquette prose.
@@ -235,26 +345,23 @@ type annotatedMessage struct {
 
 // annotate attaches addressing metadata to msgs as seen by agentName (the
 // short name, e.g. "worker"). isDM is derived per-message from m.RoomID.
-// knownAgents filters @mention captures to real agent names (pass nil to skip
-// filtering — useful in tests or when the agent list is unavailable).
+// contextFor supplies the room-aware resolver context for each message.
 //
 // should_respond logic mirrors the MCP etiquette:
 //   - system messages: never respond.
 //   - human sender, room-wide (no addressed_to): respond.
 //   - human sender, addressed to others: do not respond.
 //   - ai sender or unknown: respond only if addressed_to_me or in a DM room.
-func annotate(msgs []types.Message, agentName string, knownAgents map[string]bool) []annotatedMessage {
+func annotate(msgs []types.Message, agentName string, contextFor func(types.Message) addressingContext) []annotatedMessage {
 	out := make([]annotatedMessage, len(msgs))
 	for i, m := range msgs {
-		addressed := parseAddressedTo(m.Body)
-		if len(knownAgents) > 0 {
-			filtered := make([]string, 0, len(addressed))
-			for _, n := range addressed {
-				if knownAgents[n] {
-					filtered = append(filtered, n)
-				}
-			}
-			addressed = filtered
+		ctx := addressingContext{}
+		if contextFor != nil {
+			ctx = contextFor(m)
+		}
+		addressed := m.Targets
+		if addressed == nil {
+			addressed = resolveAddressedTo(m.Body, ctx)
 		}
 		addrToMe := slices.Contains(addressed, agentName)
 		isDM := strings.HasPrefix(m.RoomID, "dm:")

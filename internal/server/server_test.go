@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -784,6 +785,285 @@ func TestNeedsHumanAttentionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestReservedAgentNamesRejected(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	humanReserved := []string{"human", "humans", "ai", "ais", "everyone", "all", "here", "channel", "system", "_system"}
+	for _, name := range humanReserved {
+		if _, err := s.registerHuman(name, "", nil); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("registerHuman(%q) error = %v, want reserved-name rejection", name, err)
+		}
+	}
+
+	aiReserved := []string{"human", "humans", "ais", "everyone", "all", "here", "channel", "system"}
+	for _, name := range aiReserved {
+		if _, _, err := s.registerAI("gpt5", "codex", "test", nil, name); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Fatalf("registerAI(forceName=%q) error = %v, want reserved-name rejection", name, err)
+		}
+	}
+
+	for _, name := range namePool {
+		if isReservedAgentName(name) {
+			t.Fatalf("name pool contains reserved token %q", name)
+		}
+	}
+}
+
+func TestRoomScopedGroupMentionsAnnotateMessages(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	sender, _, err := s.registerAI("gpt5", "codex", "test", nil, "sender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, member := range []string{sender.ID, reviewer.ID, human.ID} {
+		if _, err := s.joinRoom("general", member); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sendBody, _ := json.Marshal(map[string]any{
+		"from": sender.ID,
+		"body": "@humans please review",
+	})
+	resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send returned %d", resp.StatusCode)
+	}
+
+	type annotated struct {
+		Body          string   `json:"body"`
+		AddressedTo   []string `json:"addressed_to"`
+		AddressedToMe bool     `json:"addressed_to_me"`
+		ShouldRespond bool     `json:"should_respond"`
+	}
+	var humanView struct {
+		Messages []annotated `json:"messages"`
+	}
+	resp, err = http.Get(srv.URL + "/rooms/general/messages?agent_id=" + human.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&humanView); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(humanView.Messages) == 0 {
+		t.Fatal("expected at least one annotated message for human")
+	}
+	var gotHuman annotated
+	foundHuman := false
+	for _, msg := range humanView.Messages {
+		if msg.Body == "@humans please review" {
+			gotHuman = msg
+			foundHuman = true
+			break
+		}
+	}
+	if !foundHuman {
+		t.Fatalf("human view did not contain target message: %+v", humanView.Messages)
+	}
+	if !reflect.DeepEqual(gotHuman.AddressedTo, []string{"matin"}) {
+		t.Fatalf("human addressed_to = %v, want [matin]", gotHuman.AddressedTo)
+	}
+	if !gotHuman.AddressedToMe || !gotHuman.ShouldRespond {
+		t.Fatalf("human flags = addressed_to_me:%v should_respond:%v, want true/true", gotHuman.AddressedToMe, gotHuman.ShouldRespond)
+	}
+
+	var reviewerView struct {
+		Messages []annotated `json:"messages"`
+	}
+	resp, err = http.Get(srv.URL + "/rooms/general/messages?agent_id=" + reviewer.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&reviewerView); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(reviewerView.Messages) == 0 {
+		t.Fatal("expected at least one annotated message for reviewer")
+	}
+	var gotReviewer annotated
+	foundReviewer := false
+	for _, msg := range reviewerView.Messages {
+		if msg.Body == "@humans please review" {
+			gotReviewer = msg
+			foundReviewer = true
+			break
+		}
+	}
+	if !foundReviewer {
+		t.Fatalf("reviewer view did not contain target message: %+v", reviewerView.Messages)
+	}
+	if len(gotReviewer.AddressedTo) != 1 || gotReviewer.AddressedTo[0] != "matin" {
+		t.Fatalf("reviewer addressed_to = %v, want [matin]", gotReviewer.AddressedTo)
+	}
+	if gotReviewer.AddressedToMe || gotReviewer.ShouldRespond {
+		t.Fatalf("reviewer flags = addressed_to_me:%v should_respond:%v, want false/false", gotReviewer.AddressedToMe, gotReviewer.ShouldRespond)
+	}
+}
+
+func TestDMGroupMentionsResolveWithinDMMembers(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	sender, _, err := s.registerAI("gpt5", "codex", "test", nil, "sender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"from": sender.ID,
+		"to":   human.ID,
+		"body": "@everyone please review",
+	})
+	resp, err := http.Post(srv.URL+"/dm", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sendResp struct {
+		Room string `json:"room"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sendResp); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	var out struct {
+		Messages []struct {
+			AddressedTo   []string `json:"addressed_to"`
+			AddressedToMe bool     `json:"addressed_to_me"`
+			ShouldRespond bool     `json:"should_respond"`
+		} `json:"messages"`
+	}
+	resp, err = http.Get(srv.URL + "/rooms/" + sendResp.Room + "/messages?agent_id=" + human.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(out.Messages) == 0 {
+		t.Fatal("expected annotated DM message")
+	}
+	got := out.Messages[0]
+	if !reflect.DeepEqual(got.AddressedTo, []string{"matin"}) {
+		t.Fatalf("dm addressed_to = %v, want [matin]", got.AddressedTo)
+	}
+	if !got.AddressedToMe || !got.ShouldRespond {
+		t.Fatalf("dm flags = addressed_to_me:%v should_respond:%v, want true/true", got.AddressedToMe, got.ShouldRespond)
+	}
+}
+
+func TestHistoricalGroupTargetsFreezeAtSendTime(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	sender, _, err := s.registerAI("gpt5", "codex", "test", nil, "sender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late, err := s.registerHuman("alex", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, member := range []string{sender.ID, reviewer.ID, human.ID} {
+		if _, err := s.joinRoom("general", member); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sendBody, _ := json.Marshal(map[string]any{
+		"from": sender.ID,
+		"body": "@channel frozen targets",
+	})
+	resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if err := s.leaveRoom("general", reviewer.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", late.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	var out struct {
+		Messages []struct {
+			Body          string   `json:"body"`
+			AddressedTo   []string `json:"addressed_to"`
+			AddressedToMe bool     `json:"addressed_to_me"`
+			ShouldRespond bool     `json:"should_respond"`
+		} `json:"messages"`
+	}
+	resp, err = http.Get(srv.URL + "/rooms/general/messages?agent_id=" + late.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	type annotatedMessageView struct {
+		Body          string
+		AddressedTo   []string
+		AddressedToMe bool
+		ShouldRespond bool
+	}
+	var frozen annotatedMessageView
+	found := false
+	for _, msg := range out.Messages {
+		if msg.Body == "@channel frozen targets" {
+			frozen = annotatedMessageView{
+				Body:          msg.Body,
+				AddressedTo:   append([]string{}, msg.AddressedTo...),
+				AddressedToMe: msg.AddressedToMe,
+				ShouldRespond: msg.ShouldRespond,
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("late joiner view did not contain target message: %+v", out.Messages)
+	}
+	if !reflect.DeepEqual(frozen.AddressedTo, []string{"reviewer", "matin"}) {
+		t.Fatalf("frozen addressed_to = %v, want [reviewer matin]", frozen.AddressedTo)
+	}
+	if frozen.AddressedToMe || frozen.ShouldRespond {
+		t.Fatalf("late joiner flags = addressed_to_me:%v should_respond:%v, want false/false", frozen.AddressedToMe, frozen.ShouldRespond)
+	}
+}
+
 func TestNeedsAttentionForceSubscribesHumans(t *testing.T) {
 	s, srv := setupTestServer(t)
 
@@ -831,6 +1111,74 @@ func TestNeedsAttentionForceSubscribesHumans(t *testing.T) {
 	if !found {
 		t.Errorf("human %q not auto-joined to room after needs_attention send", human.ID)
 	}
+}
+
+func TestNeedsAttentionDoesNotWidenFrozenGroupTargets(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	ai, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "sndr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("humantester", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.joinRoom("attention-scope-room", ai.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	sendBody, _ := json.Marshal(map[string]any{
+		"from":            ai.ID,
+		"body":            "@humans please review",
+		"needs_attention": true,
+	})
+	resp, err := http.Post(srv.URL+"/rooms/attention-scope-room/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send returned %d", resp.StatusCode)
+	}
+
+	room := s.getRoom("attention-scope-room")
+	found := false
+	for _, member := range room.Members {
+		if member == human.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("human %q not auto-joined to room after needs_attention send", human.ID)
+	}
+
+	var out struct {
+		Messages []struct {
+			Body        string   `json:"body"`
+			AddressedTo []string `json:"addressed_to"`
+		} `json:"messages"`
+	}
+	resp, err = http.Get(srv.URL + "/rooms/attention-scope-room/messages?agent_id=" + human.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	for _, msg := range out.Messages {
+		if msg.Body == "@humans please review" {
+			if len(msg.AddressedTo) != 0 {
+				t.Fatalf("frozen targets widened after auto-join: got %v, want empty", msg.AddressedTo)
+			}
+			return
+		}
+	}
+	t.Fatalf("did not find group mention message in room history: %+v", out.Messages)
 }
 
 func TestNeedsAttentionForceSubscribeIdempotent(t *testing.T) {
@@ -1562,6 +1910,18 @@ func TestAttentionWarnings(t *testing.T) {
 	}
 	if !strings.Contains(w1[0], "not a carve-out") {
 		t.Fatalf("warning should block rationalization, got %q", w1[0])
+	}
+
+	resetAttention(sender.ID)
+	w1b := sendAndDecodeWarnings(map[string]any{
+		"from": sender.ID,
+		"body": "@humans please approve this plan",
+	})
+	if len(w1b) != 1 {
+		t.Fatalf("@humans attention miss: got %v, want one warning", w1b)
+	}
+	if !strings.Contains(w1b[0], "@matin addressed with a request for action") {
+		t.Fatalf("unexpected @humans warning text: %q", w1b[0])
 	}
 
 	w2 := sendAndDecodeWarnings(map[string]any{

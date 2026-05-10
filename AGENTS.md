@@ -232,9 +232,10 @@ link to the harness doc instead.
 `alice@aimebu`); the server picks a free random name from its pool. All
 other tools use the assigned ID implicitly.
 
-Addressing semantics: only `@name` in non-code prose counts as a live mention.
-Wrap a name in backticks (for example `` `@leader` ``) or write `\@leader`
-to show it literally without addressing anyone.
+Addressing semantics: live mentions in non-code prose are `@name` plus the
+room-scoped group tags `@channel`, `@here`, `@humans`, `@ais`, `@everyone`,
+and `@all`. Wrap a mention in backticks (for example `` `@leader` ``) or
+write `\@leader` / `\@here` to show it literally without addressing anyone.
 
 See [README.md](README.md#mcp-tools) for the full tool list.
 

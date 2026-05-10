@@ -55,6 +55,14 @@
   // Composer history state (terminal-style ↑/↓)
   let historyIdx = null;     // null = scratch; integer = index into getRecallCandidates()
   let historyDraft = null;   // saved in-progress text during navigation
+  const specialMentionItems = [
+    { token: 'everyone', preview: 'all members of this room' },
+    { token: 'all', preview: 'alias for @everyone' },
+    { token: 'channel', preview: 'all members of this room' },
+    { token: 'here', preview: 'active room members' },
+    { token: 'humans', preview: 'human members of this room' },
+    { token: 'ais', preview: 'AI members of this room' }
+  ];
 
   // ── DOM refs ─────────────────────────────────────────────────────
 
@@ -632,7 +640,17 @@
       var room = rooms.find(function (r) { return r.id === activeRoomID; });
       var members = room ? (room.members || []) : [];
       var lc = ctx.partial.toLowerCase();
-      items = members.map(function (memberID) {
+      var specials = specialMentionItems.filter(function (item) {
+        return !lc || item.token.indexOf(lc) === 0;
+      }).map(function (item) {
+        return {
+          kind: 'mention',
+          insertText: '@' + item.token,
+          displayKey: '@' + item.token,
+          preview: item.preview
+        };
+      });
+      var membersList = members.map(function (memberID) {
         var a = agents.find(function (a) { return a.id === memberID; });
         var name = a ? a.name : memberID.split('@')[0];
         var preview = a ? (a.kind === 'human' ? 'human' : ((a.model || 'unknown') + ' · ' + (a.harness || 'unknown'))) : 'unknown';
@@ -640,6 +658,7 @@
       }).filter(function (item) {
         return !lc || item.insertText.slice(1).indexOf(lc) === 0;
       }).sort(function (a, b) { return a.insertText.localeCompare(b.insertText); });
+      items = specials.concat(membersList);
     }
     if (items.length === 0) { hideAcPopup(); return; }
     acItems = items;
@@ -1972,7 +1991,16 @@
       var a = agents.find(function (a) { return a.id === memberID; });
       return a ? a.name : memberID.split('@')[0];
     }).filter(Boolean);
-    var atNames = memberNames.slice().sort(function (a, b) { return b.length - a.length; }).map(escRe);
+    var seen = {};
+    var names = [];
+    memberNames.concat(specialMentionItems.map(function (item) { return item.token; })).forEach(function (name) {
+      var key = name.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      names.push(key);
+    });
+    if (names.length === 0) return null;
+    var atNames = names.sort(function (a, b) { return b.length - a.length; }).map(escRe);
     return new RegExp('@(' + atNames.join('|') + ')(?![a-z0-9])', 'gi');
   }
 

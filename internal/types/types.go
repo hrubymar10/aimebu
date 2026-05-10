@@ -8,13 +8,14 @@ type Room struct {
 }
 
 type Message struct {
-	ID                  int64  `json:"id"`
-	RoomID              string `json:"room_id"`
-	From                string `json:"from"`
-	FromKind            string `json:"from_kind,omitempty"` // "ai", "human", or "system" — empty for legacy persisted messages
-	Body                string `json:"body"`
-	CreatedAt           string `json:"created_at"`
-	NeedsHumanAttention bool   `json:"needs_human_attention,omitempty"`
+	ID                  int64    `json:"id"`
+	RoomID              string   `json:"room_id"`
+	From                string   `json:"from"`
+	FromKind            string   `json:"from_kind,omitempty"` // "ai", "human", or "system" — empty for legacy persisted messages
+	Body                string   `json:"body"`
+	CreatedAt           string   `json:"created_at"`
+	Targets             []string `json:"targets"`
+	NeedsHumanAttention bool     `json:"needs_human_attention,omitempty"`
 }
 
 type Agent struct {

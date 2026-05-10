@@ -3,6 +3,7 @@ package server
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/hrubymar10/aimebu/internal/types"
 )
@@ -161,7 +162,9 @@ func TestAnnotateKnownAgentsFilter(t *testing.T) {
 		FromKind: "ai",
 		RoomID:   "general",
 	}
-	out := annotate([]types.Message{msg}, "worker", known)
+	out := annotate([]types.Message{msg}, "worker", func(types.Message) addressingContext {
+		return addressingContext{KnownNames: known}
+	})
 	if len(out) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(out))
 	}
@@ -177,6 +180,51 @@ func TestAnnotateKnownAgentsFilter(t *testing.T) {
 	}
 	if !a.ShouldRespond {
 		t.Error("ShouldRespond should be true when ai addresses worker directly")
+	}
+}
+
+func TestResolveAddressedToGroupMentions(t *testing.T) {
+	now := time.Date(2026, time.May, 10, 15, 0, 0, 0, time.UTC)
+	ctx := addressingContext{
+		SenderID: "worker@aimebu",
+		KnownNames: map[string]bool{
+			"worker":   true,
+			"reviewer": true,
+			"matin":    true,
+			"alex":     true,
+		},
+		RoomAgents: []roomAgentContext{
+			{ID: "worker@aimebu", Name: "worker", Kind: "ai", Waiting: true, LastSeen: now},
+			{ID: "reviewer@aimebu", Name: "reviewer", Kind: "ai", Waiting: true, LastSeen: now.Add(-10 * time.Minute)},
+			{ID: "matin", Name: "matin", Kind: "human", Waiting: false, LastSeen: now.Add(-4 * time.Minute)},
+			{ID: "alex", Name: "alex", Kind: "human", Waiting: false, LastSeen: now.Add(-10 * time.Minute)},
+		},
+		Now: now,
+	}
+
+	cases := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{"channel", "@channel", []string{"reviewer", "matin", "alex"}},
+		{"humans", "@humans", []string{"matin", "alex"}},
+		{"ais", "@ais", []string{"reviewer"}},
+		{"everyone alias", "@everyone", []string{"reviewer", "matin", "alex"}},
+		{"all alias", "@all", []string{"reviewer", "matin", "alex"}},
+		{"here waiting or recent", "@here", []string{"reviewer", "matin"}},
+		{"mixed direct and group", "@reviewer @humans", []string{"reviewer", "matin", "alex"}},
+		{"escaped literal", "\\@channel @reviewer", []string{"reviewer"}},
+		{"code literal", "`@here` @reviewer", []string{"reviewer"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveAddressedTo(tc.body, ctx)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("resolveAddressedTo(%q) = %v, want %v", tc.body, got, tc.want)
+			}
+		})
 	}
 }
 

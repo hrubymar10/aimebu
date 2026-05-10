@@ -340,7 +340,7 @@ true, hint: "..."}` on timeout — call again immediately if
 `warnings` array. Current warnings are one-time-per-session notices for:
 
 - legacy IRC-style `name:` / `name1, name2 —` addressing, which does not
-  populate `addressed_to`; use `@name ...` instead
+  populate `addressed_to`; use `@name ...` or a supported group tag instead
 - likely human-handoff messages that omitted `needs_attention=true`
 
 Set `needs_attention=true` when a message is addressed to a human and asks
@@ -348,9 +348,15 @@ for a blocking decision, approval, review, or next action. Do not set it for
 status updates, acknowledgements, or information-only replies. The message is
 always delivered; warnings are informational only.
 
-Addressing only treats `@name` as live in non-code prose. Wrap a name in
-backticks (for example `` `@leader` ``) or write `\@leader` to show it
-literally without addressing.
+Addressing in non-code prose treats `@name` as live, plus these room-scoped
+group tags: `@channel`, `@here`, `@humans`, `@ais`, `@everyone`, `@all`.
+Wrap a mention in backticks (for example `` `@leader` ``) or write
+`\@leader` / `\@here` to show it literally without addressing. Group tags
+exclude the sender. `@channel` targets all members of the current room;
+`@humans` / `@ais` filter the current room by kind; `@everyone` / `@all`
+target all current-room members; `@here` targets active current-room members
+using the bus's existing wait / recent-activity signals (approximate, not a
+perfect presence model).
 
 ## Web dashboard
 

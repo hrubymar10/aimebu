@@ -76,7 +76,7 @@ func gatherMeta() map[string]string {
 // tokens to read anything that gets sent because of it.
 const busEtiquette = `aimebu messagebus etiquette:
 - Who you are: the ` + "`name`" + ` returned by bus_register (e.g. "zoe"). Use it to decide whether a message is addressed to you.
-- Addressing — CRITICAL. A message is addressed to a named agent ONLY via "@<name>" mention anywhere in the non-code body. No other syntax works. Wrap a name in backticks (e.g. ` + "`@leader`" + `) or write ` + "`\\@leader`" + ` to show it literally without addressing. Worked examples:
+- Addressing — CRITICAL. Live addressing works only in non-code prose via ` + "`@<name>`" + ` or these special group tags: ` + "`@channel`" + `, ` + "`@here`" + `, ` + "`@humans`" + `, ` + "`@ais`" + `, ` + "`@everyone`" + `, ` + "`@all`" + `. Wrap a mention in backticks (e.g. ` + "`@leader`" + `) or write ` + "`\\@leader`" + ` / ` + "`\\@here`" + ` to show it literally without addressing. Group semantics: ` + "`@channel`" + ` = all members of the current room; ` + "`@here`" + ` = active room members (approximated from bus waits + recent websocket activity); ` + "`@humans`" + ` / ` + "`@ais`" + ` = human / AI members of the current room; ` + "`@everyone`" + ` / ` + "`@all`" + ` = all members of the current room. Group tags exclude the sender. Worked examples:
   BAD:  "worker: @matin please review"  → addressed_to=[], matin gets should_respond=false (matin never sees it as addressed to them)
   GOOD: "@matin please review"           → addressed_to=["matin"], matin gets should_respond=true
   BAD:  "leader: here's my analysis"     → wastes tokens; from field already identifies the sender
@@ -86,6 +86,7 @@ const busEtiquette = `aimebu messagebus etiquette:
 - Structured fields: every message from bus_wait and bus_read carries ` + "`addressed_to`" + ` (list of names), ` + "`addressed_to_me`" + ` (bool), and ` + "`should_respond`" + ` (bool). Use ` + "`should_respond`" + ` as the primary signal. Example: human posts "@leader status?" — if you are not leader, should_respond=false; call bus_wait again immediately, do NOT call bus_say.
 - Human sender (from_kind=human): should_respond=true for room-wide messages; should_respond=false when addressed to a different agent. Do not ask "should I reply?" — just reply when should_respond=true.
 - AI sender (from_kind=ai): should_respond=false by default. should_respond=true only when addressed_to_me=true or in a DM room (id starts with "dm:").
+- Use ` + "`@everyone`" + ` / ` + "`@all`" + ` sparingly in busy rooms. Prefer narrower tags when possible.
 - After joining a room, block on bus_wait. bus_wait remembers your read cursor — if messages arrived while you were away, the next call returns them immediately. When it times out, call bus_wait again. Return control to the user only when the user tells you to stop.
 - Do not send unprompted introductions, greetings, or status acks ("standing by", "on it", "got it"). Keep replies terse — other agents pay input tokens to read every word.
 - Wait for the human's review before shipping code or changes, unless they've told you to proceed autonomously.
@@ -486,7 +487,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 
 	case "bus_macros_set":
 		var p struct {
-			Macros map[string]string            `json:"macros"`
+			Macros map[string]string `json:"macros"`
 		}
 		_ = json.Unmarshal(args, &p)
 		return c.Put("/macros", p)
