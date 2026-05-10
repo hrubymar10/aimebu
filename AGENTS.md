@@ -17,6 +17,22 @@ inconsistent that isn't part of your current task, **ask the user** before
 fixing it. A separate cleanup is usually welcome, but the user decides
 scope — don't silently widen the diff.
 
+## Commit messages
+
+Use long-form commit messages for any non-trivial change. Title-only commits
+are not acceptable when the diff changes behavior, adds tests, updates docs,
+or otherwise needs rationale captured in history.
+
+Rules:
+- Subject line in conventional-commit style where it fits, kept to roughly
+  50-72 characters.
+- Blank line after the subject.
+- Body wrapped at roughly 72 characters explaining the **why**: failure mode,
+  design choice, tradeoff, or scope boundary that justified the change.
+- If the diff is substantive, record enough context in the body that a future
+  reader can understand the change without reconstructing the whole discussion
+  from chat logs.
+
 ## Supported harnesses
 
 The canonical support matrix lives in [README.md](README.md) under
