@@ -207,6 +207,9 @@ body {
 .settings-modal {
   position: fixed;
   inset: 0;
+  /* Give descendant percentage heights a definite viewport-sized box to resolve against. */
+  width: 100vw;
+  height: 100vh;
   z-index: 400;
   display: flex;
   align-items: stretch;
@@ -289,6 +292,8 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* Let the active settings section shrink so its own overflow-y can scroll. */
+  min-height: 0;
 }
 
 .settings-body-header {
@@ -330,6 +335,8 @@ body {
   padding: 20px;
   overflow-y: auto;
   flex: 1;
+  /* Nested flex columns also need min-height: 0 so this overflow container can scroll. */
+  min-height: 0;
 }
 
 .settings-section.active {
@@ -343,6 +350,8 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  /* overflow:hidden makes flex min-height:auto collapse to 0, so pin this group at content size and let the section above scroll. */
+  flex-shrink: 0;
 }
 
 .settings-row {
@@ -1535,6 +1544,52 @@ body {
   gap: 4px;
 }
 
+.macros-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.macros-import-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.macros-import-fallback.hidden {
+  display: none;
+}
+
+.macros-import-textarea {
+  width: 100%;
+  min-height: 120px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.macros-import-textarea:focus {
+  border-color: var(--accent);
+}
+
+.macros-import-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .macro-row {
   display: flex;
   align-items: flex-start;
@@ -1574,6 +1629,19 @@ body {
   gap: 8px;
   align-items: flex-end;
   flex-shrink: 0;
+}
+
+@media (max-width: 700px) {
+  .macros-actions,
+  .macros-import-actions,
+  .macro-add-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .macro-key-input {
+    width: 100%;
+  }
 }
 
 .macro-key-input {

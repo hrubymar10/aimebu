@@ -67,6 +67,12 @@
   const settingsSectionTitle = $('#settings-section-title');
   const themeToggleBtn = $('#theme-toggle-btn');
   const macrosSearchInput = $('#macros-search-input');
+  const macrosCopyBtn = $('#macros-copy-btn');
+  const macrosImportBtn = $('#macros-import-btn');
+  const macrosImportFallback = $('#macros-import-fallback');
+  const macrosImportTextarea = $('#macros-import-textarea');
+  const macrosImportApplyBtn = $('#macros-import-apply-btn');
+  const macrosImportCancelBtn = $('#macros-import-cancel-btn');
   const backupExportBtn = $('#backup-export-btn');
   const backupImportBtn = $('#backup-import-btn');
   const backupImportFile = $('#backup-import-file');
@@ -153,6 +159,167 @@
 
   function escRe(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function setTemporaryLabel(button, text, ms) {
+    if (!button) return;
+    if (!button.dataset.defaultLabel) button.dataset.defaultLabel = button.textContent;
+    button.textContent = text;
+    clearTimeout(button._resetTimer);
+    button._resetTimer = setTimeout(function () {
+      button.textContent = button.dataset.defaultLabel;
+    }, ms || 2500);
+  }
+
+  function flashTitleHint(el, text, ms) {
+    if (!el) return;
+    var original = el.getAttribute('title') || '';
+    el.setAttribute('title', text);
+    clearTimeout(el._titleResetTimer);
+    el._titleResetTimer = setTimeout(function () {
+      if (original) el.setAttribute('title', original);
+      else el.removeAttribute('title');
+    }, ms || 2500);
+  }
+
+  function fallbackCopyText(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      return document.execCommand('copy');
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).catch(function () {
+        if (fallbackCopyText(text)) return;
+        throw new Error('clipboard write failed');
+      });
+    }
+    return fallbackCopyText(text) ? Promise.resolve() : Promise.reject(new Error('clipboard write unavailable'));
+  }
+
+  function normalizeMacroKey(key) {
+    return String(key || '').trim().toLowerCase();
+  }
+
+  function macroBodySize(value) {
+    return new TextEncoder().encode(value).length;
+  }
+
+  function validateMacroMap(rawMap) {
+    var source = rawMap && typeof rawMap === 'object' && !Array.isArray(rawMap) ? rawMap : {};
+    var keys = Object.keys(source);
+    var next = {};
+    var invalid = 0;
+    keys.forEach(function (originalKey) {
+      var key = normalizeMacroKey(originalKey);
+      var value = source[originalKey];
+      if (!/^[a-z][a-z0-9_-]*$/.test(key) || typeof value !== 'string' || macroBodySize(value) > 16 * 1024 || next[key] !== undefined) {
+        invalid++;
+        return;
+      }
+      next[key] = value;
+    });
+    return {
+      macros: next,
+      invalid: invalid,
+    };
+  }
+
+  function parseImportedMacros(rawText) {
+    var parsed;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (_) {
+      throw new Error('Invalid JSON');
+    }
+    var importedFromBackup = false;
+    var candidate = parsed;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.macros && typeof parsed.macros === 'object' && !Array.isArray(parsed.macros)) {
+      candidate = parsed.macros;
+      importedFromBackup = true;
+    }
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new Error('Expected a macros JSON object');
+    }
+    var validated = validateMacroMap(candidate);
+    var totalEntries = Object.keys(candidate).length;
+    if (totalEntries > 256) {
+      throw new Error('Too many macros (max 256)');
+    }
+    return {
+      importedFromBackup: importedFromBackup,
+      macros: validated.macros,
+      invalid: validated.invalid,
+      totalEntries: totalEntries,
+    };
+  }
+
+  function hideMacrosImportFallback() {
+    if (!macrosImportFallback) return;
+    macrosImportFallback.classList.add('hidden');
+    if (macrosImportTextarea) macrosImportTextarea.value = '';
+  }
+
+  function showMacrosImportFallback() {
+    if (!macrosImportFallback) return;
+    macrosImportFallback.classList.remove('hidden');
+    if (macrosImportTextarea) macrosImportTextarea.focus();
+  }
+
+  function persistMacros(nextMacros) {
+    macros = nextMacros;
+    renderMacrosList();
+    return api('PUT', '/macros', { macros: macros });
+  }
+
+  function describeMacroMerge(incomingMacros) {
+    var addCount = 0;
+    var updateCount = 0;
+    Object.keys(incomingMacros).forEach(function (key) {
+      if (macros[key] === undefined) addCount++;
+      else if (macros[key] !== incomingMacros[key]) updateCount++;
+    });
+    return { addCount: addCount, updateCount: updateCount };
+  }
+
+  function applyImportedMacros(rawText, sourceButton) {
+    var parsed = parseImportedMacros(rawText);
+    var incomingKeys = Object.keys(parsed.macros);
+    var counts = describeMacroMerge(parsed.macros);
+    var nextTotal = Object.keys(macros).length + counts.addCount;
+    if (nextTotal > 256) {
+      throw new Error('Import would exceed the 256 macro limit');
+    }
+    var details = [];
+    if (parsed.importedFromBackup) {
+      details.push('Detected full backup JSON — importing only the macros subset (' + incomingKeys.length + ' entries).');
+    }
+    details.push('Add ' + counts.addCount + ' new, update ' + counts.updateCount + ' existing (key match -> overwrite), skip ' + parsed.invalid + ' invalid. Continue?');
+    if (!confirm(details.join('\n'))) return Promise.resolve(false);
+    var merged = {};
+    Object.keys(macros).forEach(function (key) { merged[key] = macros[key]; });
+    incomingKeys.forEach(function (key) { merged[key] = parsed.macros[key]; });
+    return persistMacros(merged).then(function () {
+      hideMacrosImportFallback();
+      if (sourceButton) {
+        var label = 'Imported ' + incomingKeys.length;
+        if (parsed.invalid) label += ' / skipped ' + parsed.invalid;
+        setTemporaryLabel(sourceButton, label, 2500);
+      }
+      return true;
+    });
   }
 
   function renderMarkdown(rawText) {
@@ -509,9 +676,12 @@
     }
     if (lastTrigger === -1) { hideAcPopup(); return; }
     var after = val.substring(pos);
-    var newVal = before.substring(0, lastTrigger) + item.insertText + after;
+    var nextChar = after.charAt(0);
+    var needsSpace = !nextChar || (!/\s/.test(nextChar) && !/[,.!?;:)\]\}>]/.test(nextChar));
+    var insertText = item.insertText + (needsSpace ? ' ' : '');
+    var newVal = before.substring(0, lastTrigger) + insertText + after;
     msgBodyInput.value = newVal;
-    var newPos = lastTrigger + item.insertText.length;
+    var newPos = lastTrigger + insertText.length;
     msgBodyInput.setSelectionRange(newPos, newPos);
     msgBodyInput.style.height = 'auto';
     var h = Math.min(msgBodyInput.scrollHeight, 160);
@@ -1163,7 +1333,7 @@
     settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
     });
-    var titles = { general: 'General', appearance: 'Appearance', notifications: 'Notifications', macros: 'Macros', backup: 'Backup & Sync', danger: 'Danger Zone' };
+    var titles = { general: 'General', appearance: 'Appearance', notifications: 'Notifications', macros: 'Macros', danger: 'Danger Zone' };
     if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
   }
 
@@ -1193,15 +1363,11 @@
         if (agentIDDefaultInput) agentIDDefaultInput.value = serverSettings.agent_id_default || '';
       }
       if (data.macros && typeof data.macros === 'object') {
-        var imported = 0, skipped = 0;
-        Object.keys(data.macros).forEach(function (k) {
-          var key = k.toLowerCase().trim();
-          if (/^[a-z][a-z0-9_-]*$/.test(key) && typeof data.macros[k] === 'string') {
-            macros[key] = data.macros[k];
-            imported++;
-          } else {
-            skipped++;
-          }
+        var validated = validateMacroMap(data.macros);
+        var imported = Object.keys(validated.macros).length;
+        var skipped = validated.invalid;
+        Object.keys(validated.macros).forEach(function (key) {
+          macros[key] = validated.macros[key];
         });
         promises.push(api('PUT', '/macros', { macros: macros }));
         renderMacrosList();
@@ -2175,6 +2341,58 @@
     }
   });
 
+  if (macrosCopyBtn) {
+    macrosCopyBtn.addEventListener('click', function () {
+      var payload = JSON.stringify(macros, null, 2);
+      copyText(payload).then(function () {
+        setTemporaryLabel(macrosCopyBtn, 'Copied', 2000);
+      }).catch(function (err) {
+        console.error('Failed to copy macros JSON:', err);
+        setTemporaryLabel(macrosCopyBtn, 'Copy failed', 2500);
+      });
+    });
+  }
+
+  if (macrosImportBtn) {
+    macrosImportBtn.addEventListener('click', function () {
+      if (!navigator.clipboard || !navigator.clipboard.readText) {
+        showMacrosImportFallback();
+        setTemporaryLabel(macrosImportBtn, 'Paste below', 2500);
+        return;
+      }
+      navigator.clipboard.readText().then(function (text) {
+        if (!text.trim()) throw new Error('Clipboard is empty');
+        return applyImportedMacros(text, macrosImportBtn);
+      }).then(function (imported) {
+        if (imported) hideMacrosImportFallback();
+      }).catch(function (err) {
+        console.error('Failed to read macros JSON from clipboard:', err);
+        showMacrosImportFallback();
+        setTemporaryLabel(macrosImportBtn, err.message === 'Clipboard is empty' ? 'Clipboard empty' : 'Paste below', 2500);
+      });
+    });
+  }
+
+  if (macrosImportApplyBtn) {
+    macrosImportApplyBtn.addEventListener('click', function () {
+      var raw = macrosImportTextarea.value.trim();
+      if (!raw) {
+        setTemporaryLabel(macrosImportApplyBtn, 'Paste JSON first', 2500);
+        return;
+      }
+      applyImportedMacros(raw, macrosImportApplyBtn).catch(function (err) {
+        console.error('Failed to import pasted macros JSON:', err);
+        setTemporaryLabel(macrosImportApplyBtn, err.message, 2500);
+      });
+    });
+  }
+
+  if (macrosImportCancelBtn) {
+    macrosImportCancelBtn.addEventListener('click', function () {
+      hideMacrosImportFallback();
+    });
+  }
+
   // Danger zone
   clearStateBtn.addEventListener('click', function () {
     if (!confirm('Clear all rooms, messages, and agents? Macros and settings are preserved. This cannot be undone.')) return;
@@ -2231,10 +2449,13 @@
     var badge = e.target.closest('.chat-msg-id');
     if (badge) {
       var msgId = badge.getAttribute('data-msg-id');
-      navigator.clipboard.writeText('#' + msgId).then(function () {
+      copyText('#' + msgId).then(function () {
         badge.classList.add('copied');
         setTimeout(function () { badge.classList.remove('copied'); }, 800);
-      }).catch(function () {});
+      }).catch(function (err) {
+        console.error('Failed to copy message reference:', err);
+        flashTitleHint(badge, 'Copy failed', 2500);
+      });
       return;
     }
     var ref = e.target.closest('.msg-ref');
