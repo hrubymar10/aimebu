@@ -14,8 +14,9 @@ type Settings struct {
 	AgentIDDefault      string `json:"agent_id_default,omitempty"`
 	Theme               string `json:"theme,omitempty"` // "" | "dark" | "light"
 	ShowSystemEvents    *bool  `json:"show_system_events,omitempty"`
+	DebugButtonEnabled  *bool  `json:"debug_button_enabled,omitempty"`
 	NotificationEnabled *bool  `json:"notification_enabled,omitempty"`
-	NotificationSound   string `json:"notification_sound,omitempty"` // "builtin:<name>" or "user:<uuid>"
+	NotificationSound   string `json:"notification_sound,omitempty"`  // "builtin:<name>" or "user:<uuid>"
 	NotificationVolume  *int   `json:"notification_volume,omitempty"` // 0–100
 }
 
@@ -41,6 +42,10 @@ func (s *store) getSettings() Settings {
 	if set.ShowSystemEvents == nil {
 		t := true
 		set.ShowSystemEvents = &t
+	}
+	if set.DebugButtonEnabled == nil {
+		f := false
+		set.DebugButtonEnabled = &f
 	}
 	if set.NotificationEnabled == nil {
 		t := true

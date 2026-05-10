@@ -1782,6 +1782,13 @@ func (s *store) roomPresence(roomID string) []types.MemberPresence {
 	return out
 }
 
+func (s *store) hasAgent(agentID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.agents[agentID]
+	return ok
+}
+
 // ── Clear ──────────────────────────────────────────────────────────
 
 func (s *store) clearAll(includeSettings bool) {

@@ -325,11 +325,11 @@ POST   /agents/{id}/read               {"room": "...", "message_id": N}
 
 # Messages / firehose / misc
 GET    /messages                       All messages (sniff)
-GET    /messages/{id}                  Fetch one message by global ID
+GET    /messages/{id}                  Fetch one message by global ID (`?agent_id=` returns viewer-annotated fields for any registered agent)
 GET    /firehose                       Global SSE
 GET    /macros                         Global macros
 PUT    /macros                         Replace global macros
-GET    /settings                       User preferences (theme, notifications, agent_id_default, …)
+GET    /settings                       User preferences (theme, debug inspector toggle, notifications, agent_id_default, …)
 PUT    /settings                       Update user preferences
 GET    /api/sounds                     List built-in and user-uploaded notification sounds
 POST   /api/sounds                     Upload a custom .mp3 or .wav sound (multipart field: file; max 1 MB)
@@ -378,7 +378,8 @@ three-panel layout:
   earlier messages.
 - **Right** — agent list. Room members and all registered agents.
 - **Settings panel** (⚙ or `{…}` button) — General (default agent ID),
-  Appearance (dark/light theme, system events toggle), Macros (global only;
+  Appearance (dark/light theme, system events toggle), Debug (message debug
+  button toggle, off by default), Notifications, Macros (global only;
   per-room macros from older installs are auto-migrated to globals on first
   load), Backup & Sync (export/import JSON), Danger Zone (clear state or all
   data).
@@ -432,7 +433,7 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 ├── agents.json             # Registered agents and metadata         (conversation state)
 ├── agent-sessions.json     # `aimebu agent` session-state for resume (conversation state)
 ├── macros.json             # Global + per-room macro definitions    (user settings)
-├── settings.json           # UI preferences (theme, notifications…) (user settings)
+├── settings.json           # UI preferences (theme, debug inspector, notifications…) (user settings)
 ├── sounds/                 # User-uploaded .mp3 / .wav notification sounds (user settings)
 │   ├── sounds.json         # Index of uploaded sounds (uuid, name, size, ext, uploaded_at)
 │   └── *.{mp3,wav}         # Uploaded audio files (UUID-named)

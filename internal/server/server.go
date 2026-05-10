@@ -678,9 +678,10 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 	})
 
 	// GET /messages/{id} — fetch a single message by its global ID.
-	// Requires the caller to be a member of the message's room; returns a
-	// uniform {error:"not_found"} for both missing messages and non-members
-	// so sequential IDs can't be enumerated to dump private rooms.
+	// When agent_id is provided, the response includes viewer-annotated
+	// fields for that registered agent's POV, even if the agent is not a
+	// member of the room. This keeps the per-message debug inspector aligned
+	// with the bus-wide agent picker in the web UI.
 	mux.HandleFunc("GET /messages/{id}", func(w http.ResponseWriter, r *http.Request) {
 		idStr := r.PathValue("id")
 		id, err := strconv.ParseInt(idStr, 10, 64)
@@ -694,8 +695,13 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			return
 		}
 		agentID := r.URL.Query().Get("agent_id")
-		if !s.isMember(msg.RoomID, agentID) {
+		if agentID != "" && !s.hasAgent(agentID) {
 			jsonError(w, "not_found", http.StatusNotFound)
+			return
+		}
+		annotated := annotate([]types.Message{msg}, agentShortName(agentID), s.addressingContext)
+		if len(annotated) == 1 {
+			_ = jsonOK(w, annotated[0])
 			return
 		}
 		_ = jsonOK(w, msg)

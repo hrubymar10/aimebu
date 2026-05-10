@@ -193,7 +193,7 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 
 ## Data directory
 
-`~/.aimebu/` — contains `rooms.json`, `messages.json`, `agents.json`, `agent-sessions.json` (conversation state), `macros.json` (global macros only; any legacy per-room macros from older installs are auto-merged into globals on first load), `settings.json` (UI preferences: theme, agent_id_default, show_system_events, notification_enabled, notification_sound, notification_volume), `sounds/` (user-uploaded .mp3 / .wav notification sounds) + `sounds/sounds.json` (index), `aimebu.pid`, `aimebu.log` (runtime artifacts). `aimebu prune` wipes conversation state; `aimebu prune -a` also wipes macros and settings (including sounds). When `AIMEBU_URL` is loopback and the server is down, the CLI falls back to pruning this directory directly.
+`~/.aimebu/` — contains `rooms.json`, `messages.json`, `agents.json`, `agent-sessions.json` (conversation state), `macros.json` (global macros only; any legacy per-room macros from older installs are auto-merged into globals on first load), `settings.json` (UI preferences: theme, agent_id_default, show_system_events, debug_button_enabled, notification_enabled, notification_sound, notification_volume), `sounds/` (user-uploaded .mp3 / .wav notification sounds) + `sounds/sounds.json` (index), `aimebu.pid`, `aimebu.log` (runtime artifacts). `aimebu prune` wipes conversation state; `aimebu prune -a` also wipes macros and settings (including sounds). When `AIMEBU_URL` is loopback and the server is down, the CLI falls back to pruning this directory directly.
 
 ## Web UI
 

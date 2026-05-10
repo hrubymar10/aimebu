@@ -46,6 +46,14 @@
   let _audioCtx = null;      // shared AudioContext — lazy-init, never closed
   let notifPromptAttempted = false; // flipped only after a real prompt attempt or CTA display
   let pendingNotifPrompt = null; // { senderName } queued while the tab is hidden
+  let messageDebugState = {
+    open: false,
+    messageID: null,
+    selectedViewerID: '',
+    povCacheByMessageID: {},
+    loading: false,
+    error: '',
+  };
 
   // Autocomplete state
   let acItems = [];          // Array<{kind,insertText,displayKey,preview}> — ac candidates
@@ -76,6 +84,7 @@
   const settingsCloseBtn = $('#settings-close-btn');
   const settingsSectionTitle = $('#settings-section-title');
   const themeToggleBtn = $('#theme-toggle-btn');
+  const debugToggleBtn = $('#debug-toggle-btn');
   const macrosSearchInput = $('#macros-search-input');
   const macrosCopyBtn = $('#macros-copy-btn');
   const macrosImportBtn = $('#macros-import-btn');
@@ -123,6 +132,16 @@
   const broadcastBadge = $('#broadcast-badge');
   const systemEventsPanel = $('#system-events-panel');
   const systemEventsListEl = $('#system-events-list');
+  const messageDebugModal = $('#message-debug-modal');
+  const messageDebugOverlay = $('#message-debug-overlay');
+  const messageDebugCloseBtn = $('#message-debug-close-btn');
+  const messageDebugMessageSelect = $('#message-debug-message-select');
+  const messageDebugPrevBtn = $('#message-debug-prev-btn');
+  const messageDebugNextBtn = $('#message-debug-next-btn');
+  const messageDebugViewerSelect = $('#message-debug-viewer-select');
+  const messageDebugStored = $('#message-debug-stored');
+  const messageDebugViewer = $('#message-debug-viewer');
+  const messageDebugStatus = $('#message-debug-status');
 
   const macrosListEl = $('#macros-list');
   const macroAddForm = $('#macro-add-form');
@@ -1143,6 +1162,274 @@
       });
   }
 
+  function extractViewerFields(msg) {
+    return {
+      addressed_to: Array.isArray(msg && msg.addressed_to) ? msg.addressed_to.slice() : [],
+      addressed_to_me: !!(msg && msg.addressed_to_me),
+      should_respond: !!(msg && msg.should_respond),
+    };
+  }
+
+  function extractStoredFields(msg) {
+    return {
+      id: msg.id,
+      room_id: msg.room_id,
+      from: msg.from,
+      from_kind: msg.from_kind || '',
+      body: msg.body || '',
+      created_at: msg.created_at || '',
+      needs_human_attention: !!msg.needs_human_attention,
+      targets: Array.isArray(msg.targets) ? msg.targets.slice() : [],
+    };
+  }
+
+  function shouldShowDebugButton() {
+    return !!serverSettings.debug_button_enabled;
+  }
+
+  function availableViewerOptions(selectedViewerID) {
+    var options = agents.slice().sort(function (a, b) {
+      return a.id.localeCompare(b.id);
+    });
+    if (selectedViewerID && !options.some(function (agent) { return agent.id === selectedViewerID; })) {
+      options.unshift({ id: selectedViewerID });
+    }
+    return options.map(function (agent) {
+      return {
+        id: agent.id,
+        label: agent.id,
+      };
+    });
+  }
+
+  function availableDebugMessages() {
+    return (messages[activeRoomID] || []).slice();
+  }
+
+  function currentDebugMessage() {
+    return findMessageInRoom(activeRoomID, messageDebugState.messageID);
+  }
+
+  function currentDebugMessageIndex() {
+    var debugMessages = availableDebugMessages();
+    for (var i = 0; i < debugMessages.length; i++) {
+      if (debugMessages[i].id === messageDebugState.messageID) return i;
+    }
+    return -1;
+  }
+
+  function ensureDebugCache(msg, viewerID) {
+    if (!msg) return null;
+    var msgKey = String(msg.id);
+    if (!messageDebugState.povCacheByMessageID[msgKey]) {
+      messageDebugState.povCacheByMessageID[msgKey] = {};
+    }
+    if (viewerID) {
+      messageDebugState.povCacheByMessageID[msgKey][viewerID] = extractViewerFields(msg);
+    }
+    return messageDebugState.povCacheByMessageID[msgKey];
+  }
+
+  function currentDebugViewerFields() {
+    var msg = currentDebugMessage();
+    if (!msg) return null;
+    var cache = ensureDebugCache(msg);
+    return cache[messageDebugState.selectedViewerID] || null;
+  }
+
+  function debugValueHTML(field, value) {
+    if (field === 'body') {
+      return '<pre class="chat-msg-debug-pre">' + esc(String(value || '')) + '</pre>';
+    }
+    if (Array.isArray(value)) {
+      return value.length === 0
+        ? '<span class="chat-msg-debug-empty">[]</span>'
+        : '<code class="chat-msg-debug-code">' + esc(JSON.stringify(value)) + '</code>';
+    }
+    if (typeof value === 'boolean') {
+      return '<span class="chat-msg-debug-bool ' + (value ? 'true' : 'false') + '">' + (value ? 'true' : 'false') + '</span>';
+    }
+    if (value === null || value === undefined) {
+      return '<span class="chat-msg-debug-empty">null</span>';
+    }
+    if (value === '') {
+      return '<code class="chat-msg-debug-code">""</code>';
+    }
+    return '<code class="chat-msg-debug-code">' + esc(String(value)) + '</code>';
+  }
+
+  function debugRowsHTML(fields, order) {
+    return order.map(function (field) {
+      return (
+        '<div class="chat-msg-debug-row">' +
+          '<div class="chat-msg-debug-key">' + esc(field) + '</div>' +
+          '<div class="chat-msg-debug-value">' + debugValueHTML(field, fields[field]) + '</div>' +
+        '</div>'
+      );
+    }).join('');
+  }
+
+  function renderMessageDebugModal() {
+    if (!messageDebugModal) return;
+
+    if (!messageDebugState.open) {
+      messageDebugModal.classList.add('hidden');
+      document.body.style.overflow = settingsModal.classList.contains('hidden') ? '' : 'hidden';
+      return;
+    }
+
+    var msg = currentDebugMessage();
+    var debugMessages = availableDebugMessages();
+    var viewerID = messageDebugState.selectedViewerID || agentID;
+    var viewerFields = currentDebugViewerFields();
+
+    messageDebugModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+
+    if (messageDebugMessageSelect) {
+      messageDebugMessageSelect.innerHTML = debugMessages.map(function (item) {
+        return '<option value="' + esc(String(item.id)) + '"' + (item.id === messageDebugState.messageID ? ' selected' : '') + '>#' + esc(String(item.id)) + '</option>';
+      }).join('');
+    }
+    var debugIndex = currentDebugMessageIndex();
+    if (messageDebugPrevBtn) messageDebugPrevBtn.disabled = debugIndex <= 0;
+    if (messageDebugNextBtn) messageDebugNextBtn.disabled = debugIndex < 0 || debugIndex >= debugMessages.length - 1;
+
+    if (messageDebugViewerSelect) {
+      messageDebugViewerSelect.innerHTML = availableViewerOptions(viewerID).map(function (option) {
+        return '<option value="' + esc(option.id) + '"' + (option.id === viewerID ? ' selected' : '') + '>' + esc(option.label) + '</option>';
+      }).join('');
+    }
+
+    if (!msg) {
+      if (messageDebugStored) messageDebugStored.innerHTML = '';
+      if (messageDebugViewer) messageDebugViewer.innerHTML = '';
+      if (messageDebugStatus) {
+        messageDebugStatus.textContent = 'The selected message is not available in the active room window.';
+        messageDebugStatus.classList.remove('hidden');
+      }
+      return;
+    }
+
+    if (messageDebugStored) {
+      messageDebugStored.innerHTML = debugRowsHTML(extractStoredFields(msg), ['id', 'room_id', 'from', 'from_kind', 'body', 'created_at', 'needs_human_attention', 'targets']);
+    }
+
+    if (messageDebugViewer) {
+      if (viewerFields) {
+        messageDebugViewer.innerHTML = debugRowsHTML(viewerFields, ['addressed_to', 'addressed_to_me', 'should_respond']);
+      } else if (messageDebugState.loading) {
+        messageDebugViewer.innerHTML = '<div class="chat-msg-debug-status">Loading viewer-specific fields...</div>';
+      } else {
+        messageDebugViewer.innerHTML = '<div class="chat-msg-debug-status">No viewer-specific fields loaded.</div>';
+      }
+    }
+
+    if (messageDebugStatus) {
+      if (messageDebugState.error) {
+        messageDebugStatus.textContent = messageDebugState.error;
+        messageDebugStatus.classList.remove('hidden');
+        messageDebugStatus.classList.add('error');
+      } else {
+        messageDebugStatus.textContent = '';
+        messageDebugStatus.classList.add('hidden');
+        messageDebugStatus.classList.remove('error');
+      }
+    }
+  }
+
+  function findMessageInRoom(roomID, messageID) {
+    var roomMessages = messages[roomID] || [];
+    for (var i = 0; i < roomMessages.length; i++) {
+      if (roomMessages[i].id === messageID) return roomMessages[i];
+    }
+    return null;
+  }
+
+  function closeMessageDebugModal() {
+    messageDebugState.open = false;
+    messageDebugState.messageID = null;
+    messageDebugState.selectedViewerID = '';
+    messageDebugState.povCacheByMessageID = {};
+    messageDebugState.loading = false;
+    messageDebugState.error = '';
+    renderMessageDebugModal();
+  }
+
+  function openMessageDebugModal(messageID) {
+    var msg = findMessageInRoom(activeRoomID, messageID);
+    if (!msg) return;
+    messageDebugState.open = true;
+    messageDebugState.messageID = messageID;
+    messageDebugState.selectedViewerID = messageDebugState.selectedViewerID || agentID;
+    messageDebugState.loading = false;
+    messageDebugState.error = '';
+    ensureDebugCache(msg, agentID);
+    if (!messageDebugState.povCacheByMessageID[String(messageID)][messageDebugState.selectedViewerID]) {
+      loadMessageDebugViewer(messageID, messageDebugState.selectedViewerID);
+      return;
+    }
+    renderMessageDebugModal();
+  }
+
+  function selectDebugMessage(messageID) {
+    var msg = findMessageInRoom(activeRoomID, messageID);
+    if (!msg) return;
+    messageDebugState.messageID = messageID;
+    messageDebugState.loading = false;
+    messageDebugState.error = '';
+    ensureDebugCache(msg, agentID);
+    if (!messageDebugState.povCacheByMessageID[String(messageID)][messageDebugState.selectedViewerID]) {
+      loadMessageDebugViewer(messageID, messageDebugState.selectedViewerID);
+      return;
+    }
+    renderMessageDebugModal();
+  }
+
+  function stepDebugMessage(delta) {
+    var debugMessages = availableDebugMessages();
+    var index = currentDebugMessageIndex();
+    if (index < 0) return;
+    var nextIndex = index + delta;
+    if (nextIndex < 0 || nextIndex >= debugMessages.length) return;
+    selectDebugMessage(debugMessages[nextIndex].id);
+  }
+
+  function loadMessageDebugViewer(messageID, viewerID) {
+    if (!viewerID) return;
+    messageDebugState.selectedViewerID = viewerID;
+    messageDebugState.error = '';
+    var msg = findMessageInRoom(activeRoomID, messageID);
+    if (!msg) {
+      renderMessageDebugModal();
+      return;
+    }
+    var cache = ensureDebugCache(msg, agentID);
+    if (cache[viewerID]) {
+      messageDebugState.loading = false;
+      renderMessageDebugModal();
+      return;
+    }
+    messageDebugState.loading = true;
+    renderMessageDebugModal();
+    api('GET', '/messages/' + messageID + '?agent_id=' + encodeURIComponent(viewerID))
+      .then(function (msg) {
+        ensureDebugCache(msg, viewerID);
+        messageDebugState.loading = false;
+        messageDebugState.error = '';
+        if (messageDebugState.selectedViewerID === viewerID && messageDebugState.messageID === messageID) {
+          renderMessageDebugModal();
+        }
+      })
+      .catch(function (err) {
+        messageDebugState.loading = false;
+        messageDebugState.error = err && err.message ? err.message : 'Failed to load message debug info';
+        if (messageDebugState.selectedViewerID === viewerID && messageDebugState.messageID === messageID) {
+          renderMessageDebugModal();
+        }
+      });
+  }
+
   function relativeTime(isoString) {
     if (!isoString) return 'never';
     const now = Date.now();
@@ -1384,6 +1671,14 @@
     }
   }
 
+  function applyDebugButtonSetting(enabled) {
+    if (debugToggleBtn) {
+      debugToggleBtn.textContent = enabled ? 'Enabled' : 'Disabled';
+    }
+    if (!enabled) closeMessageDebugModal();
+    renderMessages();
+  }
+
   function loadSettings() {
     return api('GET', '/settings').then(function (data) {
       serverSettings = data || {};
@@ -1401,6 +1696,7 @@
       if (agentIDDefaultInput) {
         agentIDDefaultInput.value = serverSettings.agent_id_default || '';
       }
+      applyDebugButtonSetting(!!serverSettings.debug_button_enabled);
       applyNotificationSettings();
     }).catch(function () {});
   }
@@ -1423,7 +1719,7 @@
 
   function closeSettings() {
     settingsModal.classList.add('hidden');
-    document.body.style.overflow = '';
+    document.body.style.overflow = messageDebugState.open ? 'hidden' : '';
   }
 
   function activateSettingsSection(section) {
@@ -1433,7 +1729,7 @@
     settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
     });
-    var titles = { general: 'General', appearance: 'Appearance', notifications: 'Notifications', macros: 'Macros', danger: 'Danger Zone' };
+    var titles = { general: 'General', appearance: 'Appearance', debug: 'Debug', notifications: 'Notifications', macros: 'Macros', danger: 'Danger Zone' };
     if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
   }
 
@@ -1460,6 +1756,7 @@
         var localTheme = localStorage.getItem('aimebu.ui.theme');
         applyTheme(localTheme || serverSettings.theme || 'dark');
         applyShowSystemEvents(serverSettings.show_system_events !== false);
+        applyDebugButtonSetting(!!serverSettings.debug_button_enabled);
         if (agentIDDefaultInput) agentIDDefaultInput.value = serverSettings.agent_id_default || '';
       }
       if (data.macros && typeof data.macros === 'object') {
@@ -1492,6 +1789,7 @@
     showNoRoom();
     renderAllAgents();
     renderRoomAgents();
+    closeMessageDebugModal();
   }
 
   function clearState() {
@@ -1508,6 +1806,7 @@
       localStorage.removeItem('aimebu.ui.theme');
       applyTheme('dark');
       applyShowSystemEvents(true);
+      applyDebugButtonSetting(false);
       applyNotificationSettings();
       renderMacrosList();
       if (agentIDDefaultInput) agentIDDefaultInput.value = '';
@@ -1741,6 +2040,7 @@
     renderRooms();
     updateRoomHeader();
     renderRoomAgents();
+    renderMessageDebugModal();
   }
 
   // Handles server-pushed attention_event: fires sound, bell, and OS notification
@@ -1768,6 +2068,7 @@
     agents = data.agents || [];
     renderAllAgents();
     renderRoomAgents();
+    renderMessageDebugModal();
   }
 
   // ── Room selection ───────────────────────────────────────────────
@@ -1777,6 +2078,7 @@
       if (scrollToMsgID) scrollToMessage(scrollToMsgID);
       return;
     }
+    closeMessageDebugModal();
     activeRoomID = roomID;
     historyIdx = null;
     historyDraft = null;
@@ -1832,6 +2134,7 @@
   }
 
   function showNoRoom() {
+    closeMessageDebugModal();
     activeRoomID = null;
     noRoomView.classList.remove('hidden');
     roomView.classList.add('hidden');
@@ -2072,12 +2375,18 @@
     } else {
       messageListEl.scrollTop = prevScrollTop + (messageListEl.scrollHeight - prevScrollHeight);
     }
+    renderMessageDebugModal();
   }
 
   function chatMessageHTML(m) {
+    var showDebugButton = shouldShowDebugButton();
     if (m.from_kind === 'system') {
       return '<div class="chat-msg-system" data-id="' + esc(m.id) + '">' +
-        esc(m.body) + ' <span class="chat-msg-time" title="' + esc(m.created_at) + '">' + relativeTime(m.created_at) + '</span>' +
+        '<div class="chat-msg-system-row">' +
+          '<span class="chat-msg-system-body">' + esc(m.body) + '</span>' +
+          '<span class="chat-msg-time" title="' + esc(m.created_at) + '">' + relativeTime(m.created_at) + '</span>' +
+          (showDebugButton ? '<button class="icon-button chat-msg-debug-toggle" type="button" data-msg-id="' + esc(String(m.id)) + '" aria-label="Open debug inspector" title="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button>' : '') +
+        '</div>' +
         '</div>';
     }
     var isSelf = m.from === agentID;
@@ -2098,6 +2407,7 @@
           '</span>' +
           (m.needs_human_attention ? '<span class="chat-msg-attention-icon" title="Needs human attention">🔔</span>' : '') +
           '<span class="chat-msg-id" data-msg-id="' + esc(String(m.id)) + '" title="Click to copy">#' + esc(String(m.id)) + '</span>' +
+          (showDebugButton ? '<button class="icon-button chat-msg-debug-toggle" type="button" data-msg-id="' + esc(String(m.id)) + '" aria-label="Open debug inspector" title="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button>' : '') +
           '<span class="chat-msg-time" title="' + esc(m.created_at) + '">' + relativeTime(m.created_at) + '</span>' +
         '</div>' +
         '<div class="chat-msg-bubble">' +
@@ -2127,6 +2437,7 @@
     if (msgBody) highlightNames(msgBody);
 
     if (atBottom) scrollToBottom(true);
+    renderMessageDebugModal();
   }
 
   function scrollToBottom(force) {
@@ -2326,6 +2637,10 @@
   settingsCloseBtn.addEventListener('click', closeSettings);
   settingsOverlay.addEventListener('click', closeSettings);
   document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !messageDebugModal.classList.contains('hidden')) {
+      closeMessageDebugModal();
+      return;
+    }
     if (e.key === 'Escape' && !settingsModal.classList.contains('hidden')) closeSettings();
   });
 
@@ -2351,6 +2666,14 @@
       var next = !current;
       saveSettings({ show_system_events: next });
       applyShowSystemEvents(next);
+    });
+  }
+
+  if (debugToggleBtn) {
+    debugToggleBtn.addEventListener('click', function () {
+      var next = !serverSettings.debug_button_enabled;
+      saveSettings({ debug_button_enabled: next });
+      applyDebugButtonSetting(next);
     });
   }
 
@@ -2449,6 +2772,33 @@
 
   if (notifPromptDismissBtn) {
     notifPromptDismissBtn.addEventListener('click', clearNotificationPromptBanner);
+  }
+
+  if (messageDebugOverlay) {
+    messageDebugOverlay.addEventListener('click', closeMessageDebugModal);
+  }
+  if (messageDebugCloseBtn) {
+    messageDebugCloseBtn.addEventListener('click', closeMessageDebugModal);
+  }
+  if (messageDebugMessageSelect) {
+    messageDebugMessageSelect.addEventListener('change', function () {
+      selectDebugMessage(parseInt(messageDebugMessageSelect.value, 10));
+    });
+  }
+  if (messageDebugPrevBtn) {
+    messageDebugPrevBtn.addEventListener('click', function () {
+      stepDebugMessage(-1);
+    });
+  }
+  if (messageDebugNextBtn) {
+    messageDebugNextBtn.addEventListener('click', function () {
+      stepDebugMessage(1);
+    });
+  }
+  if (messageDebugViewerSelect) {
+    messageDebugViewerSelect.addEventListener('change', function () {
+      loadMessageDebugViewer(messageDebugState.messageID, messageDebugViewerSelect.value);
+    });
   }
 
   // Resume a suspended AudioContext on first user gesture (Safari requires this)
@@ -2594,6 +2944,12 @@
 
   // Message ID badge (copy) and #NN autolinks (jump) — event delegation
   messageListEl.addEventListener('click', function (e) {
+    var debugToggle = e.target.closest('.chat-msg-debug-toggle');
+    if (debugToggle) {
+      e.preventDefault();
+      openMessageDebugModal(parseInt(debugToggle.getAttribute('data-msg-id'), 10));
+      return;
+    }
     var badge = e.target.closest('.chat-msg-id');
     if (badge) {
       var msgId = badge.getAttribute('data-msg-id');

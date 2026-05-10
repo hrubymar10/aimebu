@@ -442,6 +442,9 @@ func TestGetSettingsDefault(t *testing.T) {
 	if s.ShowSystemEvents == nil || !*s.ShowSystemEvents {
 		t.Error("expected default show_system_events=true")
 	}
+	if s.DebugButtonEnabled == nil || *s.DebugButtonEnabled {
+		t.Error("expected default debug_button_enabled=false")
+	}
 }
 
 // TestGetSettingsAfterPartialPut verifies that fields not included in a PUT still
@@ -481,13 +484,16 @@ func TestGetSettingsAfterPartialPut(t *testing.T) {
 	if s.ShowSystemEvents == nil || !*s.ShowSystemEvents {
 		t.Error("expected default show_system_events=true after partial PUT")
 	}
+	if s.DebugButtonEnabled == nil || *s.DebugButtonEnabled {
+		t.Error("expected default debug_button_enabled=false after partial PUT")
+	}
 }
 
 // TestPutAndGetSettings verifies that PUT /settings stores values and GET returns them.
 func TestPutAndGetSettings(t *testing.T) {
 	_, srv := setupTestServer(t)
 
-	body := bytes.NewBufferString(`{"theme":"light","agent_id_default":"alice","show_system_events":true}`)
+	body := bytes.NewBufferString(`{"theme":"light","agent_id_default":"alice","show_system_events":true,"debug_button_enabled":true}`)
 	req, _ := http.NewRequest("PUT", srv.URL+"/settings", body)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -516,6 +522,9 @@ func TestPutAndGetSettings(t *testing.T) {
 	}
 	if s.ShowSystemEvents == nil || !*s.ShowSystemEvents {
 		t.Error("expected show_system_events=true")
+	}
+	if s.DebugButtonEnabled == nil || !*s.DebugButtonEnabled {
+		t.Error("expected debug_button_enabled=true")
 	}
 }
 
@@ -1061,6 +1070,105 @@ func TestHistoricalGroupTargetsFreezeAtSendTime(t *testing.T) {
 	}
 	if frozen.AddressedToMe || frozen.ShouldRespond {
 		t.Fatalf("late joiner flags = addressed_to_me:%v should_respond:%v, want false/false", frozen.AddressedToMe, frozen.ShouldRespond)
+	}
+}
+
+func TestGetMessageByIDReturnsViewerAnnotatedFields(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	sender, _, err := s.registerAI("gpt5", "codex", "test", nil, "sender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer, _, err := s.registerAI("haiku4.5", "claude-code", "test", nil, "observer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, member := range []string{sender.ID, reviewer.ID, human.ID} {
+		if _, err := s.joinRoom("general", member); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sendBody, _ := json.Marshal(map[string]any{
+		"from": sender.ID,
+		"body": "@humans please review",
+	})
+	resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sendResp struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sendResp); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	type annotatedMessage struct {
+		ID             int64    `json:"id"`
+		RoomID         string   `json:"room_id"`
+		Body           string   `json:"body"`
+		AddressedTo    []string `json:"addressed_to"`
+		AddressedToMe  bool     `json:"addressed_to_me"`
+		ShouldRespond  bool     `json:"should_respond"`
+		From           string   `json:"from"`
+		NeedsAttention bool     `json:"needs_human_attention"`
+		CreatedAt      string   `json:"created_at"`
+	}
+
+	fetch := func(agent string) annotatedMessage {
+		t.Helper()
+		resp, err := http.Get(srv.URL + fmt.Sprintf("/messages/%d?agent_id=%s", sendResp.ID, agent))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /messages/{id} for %s returned %d", agent, resp.StatusCode)
+		}
+		var out annotatedMessage
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	humanView := fetch(human.ID)
+	if humanView.ID != sendResp.ID || humanView.RoomID != "general" || humanView.Body != "@humans please review" {
+		t.Fatalf("human view core fields = %+v", humanView)
+	}
+	if !reflect.DeepEqual(humanView.AddressedTo, []string{"matin"}) {
+		t.Fatalf("human addressed_to = %v, want [matin]", humanView.AddressedTo)
+	}
+	if !humanView.AddressedToMe || !humanView.ShouldRespond {
+		t.Fatalf("human flags = addressed_to_me:%v should_respond:%v, want true/true", humanView.AddressedToMe, humanView.ShouldRespond)
+	}
+
+	reviewerView := fetch(reviewer.ID)
+	if !reflect.DeepEqual(reviewerView.AddressedTo, []string{"matin"}) {
+		t.Fatalf("reviewer addressed_to = %v, want [matin]", reviewerView.AddressedTo)
+	}
+	if reviewerView.AddressedToMe || reviewerView.ShouldRespond {
+		t.Fatalf("reviewer flags = addressed_to_me:%v should_respond:%v, want false/false", reviewerView.AddressedToMe, reviewerView.ShouldRespond)
+	}
+
+	observerView := fetch(observer.ID)
+	if !reflect.DeepEqual(observerView.AddressedTo, []string{"matin"}) {
+		t.Fatalf("observer addressed_to = %v, want [matin]", observerView.AddressedTo)
+	}
+	if observerView.AddressedToMe || observerView.ShouldRespond {
+		t.Fatalf("observer flags = addressed_to_me:%v should_respond:%v, want false/false", observerView.AddressedToMe, observerView.ShouldRespond)
 	}
 }
 

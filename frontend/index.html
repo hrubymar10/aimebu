@@ -146,6 +146,7 @@
         <div class="settings-nav-title">Settings</div>
         <button class="settings-nav-item active" data-section="general" type="button">General</button>
         <button class="settings-nav-item" data-section="appearance" type="button">Appearance</button>
+        <button class="settings-nav-item" data-section="debug" type="button">Debug</button>
         <button class="settings-nav-item" data-section="notifications" type="button">Notifications</button>
         <button class="settings-nav-item" data-section="macros" type="button">Macros</button>
         <button class="settings-nav-item" data-section="danger" type="button">Danger Zone</button>
@@ -190,6 +191,21 @@
               </div>
               <div class="settings-control">
                 <button id="system-events-toggle-btn" class="btn btn-sm" type="button">Hide</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Debug -->
+        <div class="settings-section" data-section="debug">
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Message debug button</label>
+                <span class="settings-desc">Show the bug-icon affordance that opens the message debug inspector modal.</span>
+              </div>
+              <div class="settings-control">
+                <button id="debug-toggle-btn" class="btn btn-sm" type="button">Disabled</button>
               </div>
             </div>
           </div>
@@ -351,6 +367,52 @@
           </div>
         </div>
 
+      </div>
+    </div>
+  </div>
+
+  <div id="message-debug-modal" class="settings-modal hidden" role="dialog" aria-modal="true" aria-label="Message debug inspector">
+    <div class="settings-overlay" id="message-debug-overlay"></div>
+    <div class="settings-pane message-debug-pane">
+      <div class="settings-body">
+        <div class="settings-body-header message-debug-header">
+          <div class="message-debug-header-left">
+            <div class="message-debug-title-row">
+              <span class="icon-mask icon-mask-bug message-debug-title-icon" aria-hidden="true"></span>
+              <span class="settings-section-title">Message debug info</span>
+            </div>
+            <div class="message-debug-nav-group">
+              <button id="message-debug-prev-btn" class="icon-button message-debug-nav-btn" type="button" aria-label="previous" title="previous">
+                <span class="icon-mask icon-mask-left" aria-hidden="true"></span>
+              </button>
+              <label class="message-debug-picker-label" for="message-debug-message-select">
+                <span>Viewing</span>
+                <select id="message-debug-message-select" class="settings-select"></select>
+              </label>
+              <button id="message-debug-next-btn" class="icon-button message-debug-nav-btn" type="button" aria-label="next" title="next">
+                <span class="icon-mask icon-mask-right" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
+          <div class="message-debug-header-right">
+            <label class="message-debug-picker-label" for="message-debug-viewer-select">
+              <span>Viewing as</span>
+              <select id="message-debug-viewer-select" class="settings-select"></select>
+            </label>
+            <button id="message-debug-close-btn" class="settings-close-btn" type="button" title="Close">✕</button>
+          </div>
+        </div>
+        <div class="settings-section active message-debug-section-shell">
+          <div id="message-debug-status" class="chat-msg-debug-status hidden"></div>
+          <div class="chat-msg-debug-section">
+            <div class="chat-msg-debug-section-title">Stored fields</div>
+            <div id="message-debug-stored"></div>
+          </div>
+          <div class="chat-msg-debug-section">
+            <div class="chat-msg-debug-section-title">Viewer-derived fields</div>
+            <div id="message-debug-viewer"></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
