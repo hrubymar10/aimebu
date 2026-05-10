@@ -271,7 +271,7 @@ var tools = []tool{
 	},
 	{
 		Name:        "bus_macros_get",
-		Description: "Fetch all macros (global shared map + per-room overrides). Returns {macros: {key: body}, rooms: {roomID: {key: body}}}. Macros expand <KEY> tokens in messages before sending.",
+		Description: "Fetch all macros. Returns {macros: {key: body}}. The web composer expands <KEY> entries using these definitions when selected from autocomplete; the server stores message bodies verbatim.",
 		InputSchema: inputSchema{
 			Type:       "object",
 			Properties: map[string]property{},
@@ -279,12 +279,11 @@ var tools = []tool{
 	},
 	{
 		Name:        "bus_macros_set",
-		Description: "Update the global and/or per-room macro maps (broadcast to all clients). Pass only the field(s) you want to change — omitted fields are preserved. Pass an explicit empty map {} to clear that scope entirely. macros is the global shared map; rooms is a map of roomID → {key: body} for room-scoped overrides (room macros shadow global on expansion). Full replace within each passed field: included keys replace the entire scope, so fetch first with bus_macros_get if you only want to add/remove one key.",
+		Description: "Update the global macro map (broadcast to all clients). Pass an explicit empty map {} to clear all macros. Full replace: included keys replace the entire scope, so fetch first with bus_macros_get if you only want to add or remove one key.",
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
 				"macros": {Type: "object", Description: "Global macro map: {key: body}"},
-				"rooms":  {Type: "object", Description: "Per-room macro maps: {roomID: {key: body}}"},
 			},
 		},
 	},
@@ -488,11 +487,8 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 	case "bus_macros_set":
 		var p struct {
 			Macros map[string]string            `json:"macros"`
-			Rooms  map[string]map[string]string `json:"rooms"`
 		}
 		_ = json.Unmarshal(args, &p)
-		// Pass as-is — nil means "absent, preserve the other side".
-		// The server distinguishes nil (preserve) from {} (wipe).
 		return c.Put("/macros", p)
 
 	default:

@@ -626,7 +626,7 @@
       items = Object.keys(merged).filter(function (k) {
         return k.indexOf(lc) === 0;
       }).sort().map(function (k) {
-        return { kind: 'macro', insertText: '<' + k + '>', displayKey: '<' + k.toUpperCase() + '>', preview: truncate(merged[k], 40) };
+        return { kind: 'macro', macroKey: k, displayKey: '<' + k.toUpperCase() + '>', preview: truncate(merged[k], 40) };
       });
     } else {
       var room = rooms.find(function (r) { return r.id === activeRoomID; });
@@ -687,7 +687,10 @@
     var after = val.substring(pos);
     var nextChar = after.charAt(0);
     var needsSpace = !nextChar || (!/\s/.test(nextChar) && !/[,.!?;:)\]\}>]/.test(nextChar));
-    var insertText = item.insertText + (needsSpace ? ' ' : '');
+    var insertText = item.kind === 'macro'
+      ? expandMacros('<' + item.macroKey + '>')
+      : item.insertText;
+    insertText += needsSpace ? ' ' : '';
     var newVal = before.substring(0, lastTrigger) + insertText + after;
     msgBodyInput.value = newVal;
     var newPos = lastTrigger + insertText.length;
@@ -2706,7 +2709,7 @@
   // Send message
   sendForm.addEventListener('submit', function (e) {
     e.preventDefault();
-    var body = expandMacros(msgBodyInput.value.trim());
+    var body = msgBodyInput.value.trim();
     if (!body) return;
     historyIdx = null;
     historyDraft = null;

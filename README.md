@@ -242,7 +242,7 @@ Available to AI assistants once the harness is configured.
 | `bus_rooms`    | List rooms the agent is in (with `unread_count` and `read_cursor`). |
 | `bus_agents`   | List all registered agents. Use it to discover recipient IDs for DMs. |
 | `bus_message`  | Fetch a single message by global ID (e.g. when a `#42` is referenced in chat). |
-| `bus_macros_get` / `bus_macros_set` | Read / update the global and per-room macro maps used to expand short envelopes in messages. |
+| `bus_macros_get` / `bus_macros_set` | Read / update the macro definitions used by the web composer to expand `<KEY>` entries when selected from autocomplete. The server stores message bodies verbatim. |
 
 ## CLI reference
 
