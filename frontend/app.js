@@ -44,6 +44,8 @@
   let attentionFocusListeners = {}; // { roomID: fn } — pending focus listener per room
   let notifSounds = [];      // sound list from GET /api/sounds
   let _audioCtx = null;      // shared AudioContext — lazy-init, never closed
+  let notifPromptAttempted = false; // flipped only after a real prompt attempt or CTA display
+  let pendingNotifPrompt = null; // { senderName } queued while the tab is hidden
 
   // Autocomplete state
   let acItems = [];          // Array<{kind,insertText,displayKey,preview}> — ac candidates
@@ -104,6 +106,10 @@
   const msgSearchBtn = $('#msg-search-btn');
   const msgSearchBar = $('#msg-search-bar');
   const msgSearchInput = $('#msg-search-input');
+  const notifPromptBanner = $('#notif-prompt-banner');
+  const notifPromptBannerText = $('#notif-prompt-banner-text');
+  const notifPromptEnableBtn = $('#notif-prompt-enable-btn');
+  const notifPromptDismissBtn = $('#notif-prompt-dismiss-btn');
 
   const broadcastBtn = $('#broadcast-btn');
   const broadcastBadge = $('#broadcast-badge');
@@ -127,7 +133,10 @@
   const notifSoundsListEl = $('#notif-sounds-list');
   const notifAudioStatusEl = $('#notif-audio-status');
   const notifSysBtn = $('#notif-sys-btn');
+  const notifSysForceBtn = $('#notif-sys-force-btn');
   const notifSysStatusEl = $('#notif-sys-status');
+  const notifSysHelpEl = $('#notif-sys-help');
+  const notifSysHelpCloseBtn = $('#notif-sys-help-close-btn');
 
   // ── Harness icons ────────────────────────────────────────────────
 
@@ -814,31 +823,92 @@
 
   // ── System notifications (Notification API) ───────────────────────
 
+  function notificationsEnabledInApp() {
+    return serverSettings.notification_enabled !== false;
+  }
+
+  function senderDisplayName(agentID) {
+    var agent = agents.find(function (a) { return a.id === agentID; });
+    return agent ? agent.name : String(agentID || 'someone').split('@')[0];
+  }
+
+  function hideNotificationHelp() {
+    if (notifSysHelpEl) notifSysHelpEl.classList.add('hidden');
+  }
+
+  function showNotificationHelp() {
+    if (notifSysHelpEl) notifSysHelpEl.classList.remove('hidden');
+  }
+
+  function clearNotificationPromptBanner() {
+    pendingNotifPrompt = null;
+    if (notifPromptBanner) notifPromptBanner.classList.add('hidden');
+    if (notifPromptBannerText) notifPromptBannerText.textContent = '';
+  }
+
+  function maybeShowPendingNotificationPrompt() {
+    if (!pendingNotifPrompt || document.hidden || !activeRoomID || !notifPromptBanner || !notifPromptBannerText) return;
+    notifPromptAttempted = true;
+    notifPromptBannerText.textContent = pendingNotifPrompt.senderName + ' sent an attention-flagged message. Enable OS notifications so future ones can alert you when aimebu isn\'t focused.';
+    notifPromptBanner.classList.remove('hidden');
+  }
+
   function updateSysNotifStatus() {
     if (!notifSysStatusEl || !notifSysBtn) return;
     if (!('Notification' in window)) {
       notifSysStatusEl.textContent = 'not supported';
       notifSysBtn.disabled = true;
       notifSysBtn.textContent = 'Not supported';
+      hideNotificationHelp();
       return;
     }
     var perm = Notification.permission;
     notifSysStatusEl.textContent = perm;
-    notifSysBtn.textContent = perm === 'granted' ? 'Granted' : (perm === 'denied' ? 'Denied' : 'Enable');
-    notifSysBtn.disabled = perm === 'denied';
+    notifSysBtn.textContent = perm === 'granted' ? 'Granted' : (perm === 'denied' ? 'How to enable' : 'Enable notifications');
+    notifSysBtn.disabled = perm === 'granted';
+    if (perm !== 'denied') hideNotificationHelp();
   }
 
   function requestSysNotifPermission() {
-    if (!('Notification' in window)) return;
-    if (Notification.permission === 'denied') return;
-    Notification.requestPermission().then(function () {
+    if (!('Notification' in window)) {
       updateSysNotifStatus();
+      return Promise.resolve('unsupported');
+    }
+    if (Notification.permission === 'denied') {
+      updateSysNotifStatus();
+      return Promise.resolve('denied');
+    }
+    notifPromptAttempted = true;
+    return Notification.requestPermission().then(function (perm) {
+      updateSysNotifStatus();
+      clearNotificationPromptBanner();
+      return perm;
+    });
+  }
+
+  function maybePromptForAttentionNotification(msg) {
+    if (!msg || msg.from === agentID) return;
+    if (!('Notification' in window)) return;
+    if (!notificationsEnabledInApp()) return;
+    if (Notification.permission !== 'default') return;
+    if (notifPromptAttempted) return;
+    if (document.hidden) {
+      pendingNotifPrompt = { senderName: senderDisplayName(msg.from) };
+      return;
+    }
+    requestSysNotifPermission().then(function (perm) {
+      if (perm === 'default') {
+        pendingNotifPrompt = { senderName: senderDisplayName(msg.from) };
+        maybeShowPendingNotificationPrompt();
+      }
+    }).catch(function (err) {
+      console.warn('[aimebu] Notification.requestPermission failed:', err);
     });
   }
 
   function fireSystemNotification(msg, roomID) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    if (!document.hidden) return; // only when tab is not visible
+    if (document.hasFocus()) return; // only when the aimebu window is not focused
     var roomName = roomID || 'unknown room';
     var bodyText = msg.body ? msg.body.slice(0, 80) : '';
     var note = new Notification('Attention requested in ' + roomName, {
@@ -937,6 +1007,7 @@
     if (notifVolumeSlider) notifVolumeSlider.value = vol;
     if (notifVolumeLabel) notifVolumeLabel.textContent = vol + '%';
     updateSoundSelect();
+    if (!enabled) clearNotificationPromptBanner();
   }
 
   function updateTitleAttention() {
@@ -1557,6 +1628,7 @@
       if (roomID === activeRoomID) scheduleAttentionFade(roomID);
       playNotificationSound();
       fireSystemNotification(msg, roomID);
+      maybePromptForAttentionNotification(msg);
     }
 
     // Update room list preview + unread badge
@@ -1660,6 +1732,7 @@
     renderRooms();
     playNotificationSound();
     fireSystemNotification(msg, roomID);
+    maybePromptForAttentionNotification(msg);
   }
 
   function handleWSAgentUpdate(data) {
@@ -1726,6 +1799,7 @@
 
     // On mobile, switch to chat tab
     setMobileTab('chat');
+    maybeShowPendingNotificationPrompt();
   }
 
   function showNoRoom() {
@@ -2262,18 +2336,16 @@
       // Resume AudioContext on this gesture (definitive unlock)
       if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
       playNotificationSound();
-      // Request notification permission if not yet decided, then fire test notification
-      if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission().then(function () {
-          updateSysNotifStatus();
-          if (Notification.permission === 'granted') {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        var n = new Notification('aimebu test notification', { body: 'Test alert — sound + notifications are working', icon: '/icons/broadcast.svg', tag: 'aimebu-test' });
+        setTimeout(function () { n.close(); }, 4000);
+      } else {
+        requestSysNotifPermission().then(function (perm) {
+          if (perm === 'granted') {
             var n = new Notification('aimebu test notification', { body: 'Test alert — sound + notifications are working', icon: '/icons/broadcast.svg', tag: 'aimebu-test' });
             setTimeout(function () { n.close(); }, 4000);
           }
         });
-      } else if ('Notification' in window && Notification.permission === 'granted') {
-        var n = new Notification('aimebu test notification', { body: 'Test alert — sound + notifications are working', icon: '/icons/broadcast.svg', tag: 'aimebu-test' });
-        setTimeout(function () { n.close(); }, 4000);
       }
     });
   }
@@ -2302,7 +2374,43 @@
   }
 
   if (notifSysBtn) {
-    notifSysBtn.addEventListener('click', requestSysNotifPermission);
+    notifSysBtn.addEventListener('click', function () {
+      if ('Notification' in window && Notification.permission === 'denied') {
+        showNotificationHelp();
+        return;
+      }
+      requestSysNotifPermission();
+    });
+  }
+
+  if (notifSysForceBtn) {
+    notifSysForceBtn.addEventListener('click', function () {
+      if (!('Notification' in window)) {
+        alert('Prompt failed with: Notification API not supported in this browser');
+        return;
+      }
+      Notification.requestPermission().then(function (perm) {
+        updateSysNotifStatus();
+        clearNotificationPromptBanner();
+        alert('Prompt sent successfully — result: ' + perm);
+      }).catch(function (err) {
+        alert('Prompt failed with: ' + (err && err.message ? err.message : String(err)));
+      });
+    });
+  }
+
+  if (notifSysHelpCloseBtn) {
+    notifSysHelpCloseBtn.addEventListener('click', hideNotificationHelp);
+  }
+
+  if (notifPromptEnableBtn) {
+    notifPromptEnableBtn.addEventListener('click', function () {
+      requestSysNotifPermission();
+    });
+  }
+
+  if (notifPromptDismissBtn) {
+    notifPromptDismissBtn.addEventListener('click', clearNotificationPromptBanner);
   }
 
   // Resume a suspended AudioContext on first user gesture (Safari requires this)
@@ -2313,6 +2421,8 @@
   }
   document.addEventListener('pointerdown', resumeAudioCtxOnGesture, { passive: true });
   document.addEventListener('keydown', resumeAudioCtxOnGesture, { passive: true });
+  document.addEventListener('visibilitychange', maybeShowPendingNotificationPrompt);
+  window.addEventListener('focus', maybeShowPendingNotificationPrompt);
 
   // Agent ID default — debounced PUT on change
   var agentIDDefaultSaveTimer = null;

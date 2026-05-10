@@ -91,6 +91,13 @@
         <div id="msg-search-bar" class="msg-search-bar hidden">
           <input type="text" id="msg-search-input" class="msg-search-input" placeholder="Go to #…" autocomplete="off">
         </div>
+        <div id="notif-prompt-banner" class="notif-prompt-banner hidden">
+          <span id="notif-prompt-banner-text" class="notif-prompt-banner-text"></span>
+          <div class="notif-prompt-banner-actions">
+            <button id="notif-prompt-enable-btn" class="btn btn-sm btn-primary" type="button">Enable</button>
+            <button id="notif-prompt-dismiss-btn" class="btn btn-sm" type="button">Dismiss</button>
+          </div>
+        </div>
         <div id="message-list" class="message-list">
           <div class="empty-state" id="messages-empty">No messages in this room yet.</div>
         </div>
@@ -231,11 +238,26 @@
             <div class="settings-row">
               <div class="settings-row-info">
                 <label class="settings-label">System notifications</label>
-                <span class="settings-desc">Show OS-level notifications when a <code>needs_attention</code> message arrives in a background tab.</span>
+                <span class="settings-desc">Show OS-level notifications when a <code>needs_attention</code> message arrives and aimebu isn't focused.</span>
               </div>
               <div class="settings-control">
                 <button id="notif-sys-btn" class="btn btn-sm" type="button">Enable</button>
+                <button id="notif-sys-force-btn" class="btn btn-sm" type="button">Force prompt</button>
                 <span id="notif-sys-status" class="settings-status"></span>
+              </div>
+            </div>
+            <div id="notif-sys-help" class="macros-import-fallback hidden">
+              <label class="settings-label">How to enable notifications again</label>
+              <span class="settings-desc">If notifications are blocked, re-enable them in your browser or OS settings, then refresh aimebu and try again.</span>
+              <ul class="notif-help-list">
+                <li>Safari: review localhost notification permissions and System Settings -> Notifications -> Safari -> Allow Notifications.</li>
+                <li>Chrome/Chromium: open localhost site settings or visit <code>chrome://settings/content/notifications</code> and allow localhost.</li>
+                <li>Firefox: open localhost site permissions or visit <code>about:preferences#privacy</code> and allow notifications.</li>
+                <li>macOS: also check System Settings -> Notifications -> your browser is enabled.</li>
+                <li>After changing settings, refresh this page and click <strong>Enable notifications</strong> again.</li>
+              </ul>
+              <div class="macros-import-actions">
+                <button id="notif-sys-help-close-btn" class="btn btn-sm" type="button">Close</button>
               </div>
             </div>
           </div>
