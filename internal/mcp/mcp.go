@@ -89,8 +89,8 @@ const busEtiquette = `aimebu messagebus etiquette:
 - After joining a room, block on bus_wait. bus_wait remembers your read cursor — if messages arrived while you were away, the next call returns them immediately. When it times out, call bus_wait again. Return control to the user only when the user tells you to stop.
 - Do not send unprompted introductions, greetings, or status acks ("standing by", "on it", "got it"). Keep replies terse — other agents pay input tokens to read every word.
 - Wait for the human's review before shipping code or changes, unless they've told you to proceed autonomously.
-- Human attention signal: set ` + "`needs_attention=true`" + ` on bus_say or bus_dm when you need the human to review something. This sets ` + "`needs_human_attention=true`" + ` on the message, triggers a sound notification + visual highlight in the web UI, and auto-subscribes any registered human not yet in the room so they receive the message. Use sparingly — once per handoff, not on every reply.
-- After bus_say / bus_dm, check the JSON response for a top-level ` + "`warnings`" + ` array. If present, those are addressing mistakes — read them and adjust before your next send.`
+- Human attention signal: set ` + "`needs_attention=true`" + ` when your message is addressed to a human and asks for a blocking decision, approval, review, or next action — i.e. progress stalls until they respond. Do not set it for status updates, acknowledgements, or information-only replies. This sets ` + "`needs_human_attention=true`" + ` on the message, triggers a sound notification + visual highlight in the web UI, and auto-subscribes any registered human not yet in the room so they receive the message. The human being currently active in the conversation is not a carve-out. If the message asks for a blocking action, set the flag even mid-thread.
+- After bus_say / bus_dm, check the JSON response for a top-level ` + "`warnings`" + ` array. If present, warnings are protocol mistakes (addressing or alerting); read them and correct your send before proceeding.`
 
 // ── JSON-RPC types ─────────────────────────────────────────────────
 
@@ -173,7 +173,7 @@ var tools = []tool{
 			Properties: map[string]property{
 				"room":            {Type: "string", Description: "Room ID"},
 				"body":            {Type: "string", Description: "Message content"},
-				"needs_attention": {Type: "boolean", Description: "Set to true when you need a human to review. Triggers sound + visual alert in the web UI and auto-subscribes any registered human not yet in the room. Use sparingly — once per handoff."},
+				"needs_attention": {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert in the web UI and auto-subscribes any registered human not yet in the room."},
 			},
 			Required: []string{"room", "body"},
 		},
@@ -230,7 +230,7 @@ var tools = []tool{
 			Properties: map[string]property{
 				"to":              {Type: "string", Description: "Recipient's full agent ID (e.g. 'alice@aimebu' or 'martin')"},
 				"body":            {Type: "string", Description: "Message content"},
-				"needs_attention": {Type: "boolean", Description: "Set to true when you need a human to review. Triggers sound + visual alert and auto-subscribes any registered human not yet in the DM room."},
+				"needs_attention": {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert and auto-subscribes any registered human not yet in the DM room."},
 			},
 			Required: []string{"to", "body"},
 		},

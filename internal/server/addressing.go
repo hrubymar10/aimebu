@@ -18,6 +18,20 @@ var (
 	inlinePrefixRe = regexp.MustCompile(`(?i)(?:^|[.!?\n]\s*)([a-z][a-z0-9]{2,11})\s*(?:,\s*|\s+and\s+)([a-z][a-z0-9]{2,11})\s*(?:[—–\-]|:)`)
 )
 
+var attentionMissPhrases = []string{
+	"please review",
+	"please approve",
+	"please decide",
+	"please confirm",
+	"please check",
+	"please look at",
+	"let me know",
+	"your call",
+	"go-ahead",
+	"sign off",
+	"sign-off",
+}
+
 // parseAddressedTo returns the deduplicated list of short names a message body
 // is addressed to via @name mentions. Returns nil for room-wide messages.
 func parseAddressedTo(body string) []string {
@@ -129,6 +143,20 @@ func parseInlineLegacyPrefix(body string, knownNames map[string]bool) ([]string,
 		return []string{first}, true
 	}
 	return []string{first, second}, true
+}
+
+// parseAttentionMiss returns the first high-signal handoff phrase found in the
+// body. The phrase list is intentionally conservative. Known limitation: this
+// simple substring match does not try to distinguish quoted prose from a live
+// request (e.g. `matin said: "please approve"`).
+func parseAttentionMiss(body string) (string, bool) {
+	lower := strings.ToLower(body)
+	for _, phrase := range attentionMissPhrases {
+		if strings.Contains(lower, phrase) {
+			return phrase, true
+		}
+	}
+	return "", false
 }
 
 // agentShortName extracts the name portion from an agent ID.

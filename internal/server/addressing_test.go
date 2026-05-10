@@ -224,6 +224,35 @@ func TestParseInlineLegacyPrefix(t *testing.T) {
 	}
 }
 
+func TestParseAttentionMiss(t *testing.T) {
+	for _, phrase := range attentionMissPhrases {
+		body := "@matin " + phrase + " this plan"
+		gotPhrase, gotMatch := parseAttentionMiss(body)
+		if !gotMatch || gotPhrase != phrase {
+			t.Errorf("parseAttentionMiss(%q) = (%q, %v), want (%q, true)", body, gotPhrase, gotMatch, phrase)
+		}
+	}
+
+	cases := []struct {
+		body       string
+		wantPhrase string
+		wantMatch  bool
+	}{
+		{"@matin Please Look At the diff", "please look at", true},
+		{"@matin status update: build is green", "", false},
+		{"@matin what time is it?", "", false},
+		{"matin said: \"please approve\"", "please approve", true},
+	}
+
+	for _, tc := range cases {
+		gotPhrase, gotMatch := parseAttentionMiss(tc.body)
+		if gotMatch != tc.wantMatch || gotPhrase != tc.wantPhrase {
+			t.Errorf("parseAttentionMiss(%q) = (%q, %v), want (%q, %v)",
+				tc.body, gotPhrase, gotMatch, tc.wantPhrase, tc.wantMatch)
+		}
+	}
+}
+
 func TestAgentShortName(t *testing.T) {
 	cases := []struct {
 		id   string

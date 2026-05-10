@@ -176,8 +176,15 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			return
 		}
 		resp := map[string]any{"id": id, "room": roomID}
+		var warnings []string
 		if warn := s.legacyPrefixWarn(req.From, req.Body); warn != "" {
-			resp["warnings"] = []string{warn}
+			warnings = append(warnings, warn)
+		}
+		if warn := s.attentionMissWarn(req.From, req.Body, req.NeedsAttention, nil); warn != "" {
+			warnings = append(warnings, warn)
+		}
+		if len(warnings) > 0 {
+			resp["warnings"] = warnings
 		}
 		_ = jsonOK(w, resp)
 	})
@@ -520,8 +527,15 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 			return
 		}
 		resp := map[string]any{"id": id, "room": room.ID}
+		var warnings []string
 		if warn := s.legacyPrefixWarn(req.From, req.Body); warn != "" {
-			resp["warnings"] = []string{warn}
+			warnings = append(warnings, warn)
+		}
+		if warn := s.attentionMissWarn(req.From, req.Body, req.NeedsAttention, []string{agentShortName(req.To)}); warn != "" {
+			warnings = append(warnings, warn)
+		}
+		if len(warnings) > 0 {
+			resp["warnings"] = warnings
 		}
 		_ = jsonOK(w, resp)
 	})

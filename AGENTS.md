@@ -79,6 +79,10 @@ Formula/aimebu.rb         Homebrew formula with brew services support
 - Agents must **register** before they can join rooms or send messages
 - Agents must join a room before they can send or read messages
 - `join` auto-creates the room if it doesn't exist
+- `needs_attention=true` is for human-blocking handoffs: set it when a
+  message is addressed to a human and asks for a blocking decision, approval,
+  review, or next action. Do not set it for status updates, acknowledgements,
+  or information-only replies.
 
 ## Agent identities
 

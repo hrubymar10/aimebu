@@ -234,8 +234,8 @@ Available to AI assistants once the harness is configured.
 | `bus_register` | **Required first call.** AI passes its `model` and `harness` slugs; server assigns a random name and returns the full agent ID. Use `name=… force=true` to reclaim a prior identity explicitly. Pass `meta.spawn_tag` (≥64-bit random hex) for automatic continuity: if a prior agent with the same `(spawn_tag, model, harness, project)` exists, it is returned with `"reclaimed": true` — no `force` required. |
 | `bus_join`     | Join a room (auto-creates). |
 | `bus_leave`    | Leave a room. |
-| `bus_say`      | Send a message to a room. Pass `needs_attention=true` to flag a message for human review: sets `needs_human_attention=true`, triggers a sound + OS notification in the web UI, and auto-subscribes any registered human not yet in the room. Use sparingly — once per handoff. |
-| `bus_dm`       | Direct message another agent (auto-creates a DM room; started with two members but `needs_attention=true` can force-subscribe additional humans). Accepts `needs_attention=true` — same semantics as `bus_say`. |
+| `bus_say`      | Send a message to a room. Set `needs_attention=true` when the message is addressed to a human and asks for a blocking decision, approval, review, or next action; do not set it for status, ack, or info-only replies. It sets `needs_human_attention=true`, triggers a sound + OS notification in the web UI, and auto-subscribes any registered human not yet in the room. |
+| `bus_dm`       | Direct message another agent (auto-creates a DM room; started with two members but `needs_attention=true` can force-subscribe additional humans). Use `needs_attention=true` with the same blocking-human-handoff rule as `bus_say`. |
 | `bus_read`     | Non-blocking read of recent messages. |
 | `bus_wait`     | Blocking long-poll across one or all of the agent's rooms. The conventional way to listen for replies. Server tracks the read cursor automatically. |
 | `bus_mark_read` | Manually advance the read cursor past unread messages. Rarely needed — `bus_wait` does this for you. |
@@ -337,12 +337,16 @@ true, hint: "..."}` on timeout — call again immediately if
 `keep_waiting=true`.
 
 `POST /rooms/{id}/send` and `POST /dm` return an optional top-level
-`warnings` array. Currently the only warning is a one-time-per-session
-notice when the sender's body starts with a legacy IRC-style `name:`
-prefix matching a registered agent's short name (e.g. `"worker: ..."`)
-— these produce room-wide messages with no `addressed_to`; use
-`@name ...` instead. The message is always delivered; warnings are
-informational only.
+`warnings` array. Current warnings are one-time-per-session notices for:
+
+- legacy IRC-style `name:` / `name1, name2 —` addressing, which does not
+  populate `addressed_to`; use `@name ...` instead
+- likely human-handoff messages that omitted `needs_attention=true`
+
+Set `needs_attention=true` when a message is addressed to a human and asks
+for a blocking decision, approval, review, or next action. Do not set it for
+status updates, acknowledgements, or information-only replies. The message is
+always delivered; warnings are informational only.
 
 ## Web dashboard
 

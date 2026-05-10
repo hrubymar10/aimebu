@@ -1503,3 +1503,169 @@ func TestLegacyPrefixWarning(t *testing.T) {
 		t.Errorf("false positive 'note:': unexpected warning %v", w5)
 	}
 }
+
+func TestAttentionWarnings(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	sender, _, err := s.registerAI("gpt5", "codex", "test", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, member := range []string{sender.ID, reviewer.ID, human.ID} {
+		if _, err := s.joinRoom("general", member); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sendAndDecodeWarnings := func(payload map[string]any) []string {
+		b, _ := json.Marshal(payload)
+		resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			Warnings []string `json:"warnings"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Warnings
+	}
+	resetAttention := func(agentID string) {
+		s.mu.Lock()
+		s.warnedAttention[agentID] = false
+		s.mu.Unlock()
+	}
+
+	w1 := sendAndDecodeWarnings(map[string]any{
+		"from": sender.ID,
+		"body": "@matin please approve this plan",
+	})
+	if len(w1) != 1 {
+		t.Fatalf("first attention miss: got %v, want one warning", w1)
+	}
+	if !strings.Contains(w1[0], "@matin addressed with a request for action") {
+		t.Fatalf("unexpected warning text: %q", w1[0])
+	}
+	if !strings.Contains(w1[0], "immediately re-send the message with needs_attention=true") {
+		t.Fatalf("warning should direct immediate recovery, got %q", w1[0])
+	}
+	if !strings.Contains(w1[0], "not a carve-out") {
+		t.Fatalf("warning should block rationalization, got %q", w1[0])
+	}
+
+	w2 := sendAndDecodeWarnings(map[string]any{
+		"from": sender.ID,
+		"body": "@matin sign off on this",
+	})
+	if len(w2) != 0 {
+		t.Fatalf("second attention miss from same sender: got %v, want none", w2)
+	}
+
+	resetAttention(sender.ID)
+	w3 := sendAndDecodeWarnings(map[string]any{
+		"from":            sender.ID,
+		"body":            "@matin please approve this plan",
+		"needs_attention": true,
+	})
+	if len(w3) != 0 {
+		t.Fatalf("needs_attention=true should suppress warning, got %v", w3)
+	}
+
+	resetAttention(sender.ID)
+	w4 := sendAndDecodeWarnings(map[string]any{
+		"from": sender.ID,
+		"body": "@worker please review the diff",
+	})
+	if len(w4) != 0 {
+		t.Fatalf("AI addressee should not warn, got %v", w4)
+	}
+
+	resetAttention(sender.ID)
+	w5 := sendAndDecodeWarnings(map[string]any{
+		"from": sender.ID,
+		"body": "@matin what time is it?",
+	})
+	if len(w5) != 0 {
+		t.Fatalf("question mark alone should not warn, got %v", w5)
+	}
+
+	resetAttention(sender.ID)
+	w6 := sendAndDecodeWarnings(map[string]any{
+		"from": sender.ID,
+		"body": "please approve this",
+	})
+	if len(w6) != 0 {
+		t.Fatalf("no addressee should not warn, got %v", w6)
+	}
+
+	s.mu.Lock()
+	s.warnedAttention[sender.ID] = false
+	s.warnedLegacy[sender.ID] = true
+	s.mu.Unlock()
+
+	w7 := sendAndDecodeWarnings(map[string]any{
+		"from": sender.ID,
+		"body": "@matin let me know your call on B",
+	})
+	if len(w7) != 1 {
+		t.Fatalf("legacy warning state should not suppress attention warning, got %v", w7)
+	}
+
+	s.mu.Lock()
+	s.warnedAttention[reviewer.ID] = false
+	s.warnedLegacy[reviewer.ID] = false
+	s.mu.Unlock()
+
+	w8 := sendAndDecodeWarnings(map[string]any{
+		"from": reviewer.ID,
+		"body": "matin: please approve this plan",
+	})
+	if len(w8) != 2 {
+		t.Fatalf("expected both legacy and attention warnings, got %v", w8)
+	}
+}
+
+func TestAttentionWarningForHumanDM(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	sender, _, err := s.registerAI("gpt5", "codex", "test", nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"from": sender.ID,
+		"to":   human.ID,
+		"body": "please approve this plan",
+	})
+	resp, err := http.Post(srv.URL+"/dm", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var out struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Warnings) != 1 {
+		t.Fatalf("human DM should warn once, got %v", out.Warnings)
+	}
+}

@@ -98,6 +98,9 @@ type store struct {
 	// warnedLegacy tracks agents that have already received the one-time
 	// legacy "name:" prefix warning. Runtime-only; resets on server restart.
 	warnedLegacy map[string]bool
+	// warnedAttention tracks agents that have already received the one-time
+	// missing needs_attention warning. Runtime-only; resets on server restart.
+	warnedAttention map[string]bool
 }
 
 func newStore(dir string) (*store, error) {
@@ -106,16 +109,17 @@ func newStore(dir string) (*store, error) {
 	}
 
 	s := &store{
-		dir:            dir,
-		rooms:          make(map[string]*types.Room),
-		messages:       make(map[string][]types.Message),
-		agents:         make(map[string]*types.Agent),
-		roomSubs:       make(map[string][]chan types.Message),
-		openWaits:      make(map[string]map[string]int),
-		roomEmptySince: make(map[string]time.Time),
-		macros:         make(map[string]string),
-		seenDefaults:   make(map[string]bool),
-		warnedLegacy:   make(map[string]bool),
+		dir:             dir,
+		rooms:           make(map[string]*types.Room),
+		messages:        make(map[string][]types.Message),
+		agents:          make(map[string]*types.Agent),
+		roomSubs:        make(map[string][]chan types.Message),
+		openWaits:       make(map[string]map[string]int),
+		roomEmptySince:  make(map[string]time.Time),
+		macros:          make(map[string]string),
+		seenDefaults:    make(map[string]bool),
+		warnedLegacy:    make(map[string]bool),
+		warnedAttention: make(map[string]bool),
 	}
 
 	if err := s.load(); err != nil {
@@ -1359,6 +1363,22 @@ func (s *store) knownAgentNames() map[string]bool {
 	return names
 }
 
+// knownHumanNames returns the short names of all currently-registered human
+// agents. Used by the needs_attention warning heuristic to distinguish human
+// handoffs from AI-to-AI requests.
+func (s *store) knownHumanNames() map[string]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	names := make(map[string]bool)
+	for id, agent := range s.agents {
+		if agent.Kind != "human" {
+			continue
+		}
+		names[agentShortName(id)] = true
+	}
+	return names
+}
+
 // legacyPrefixWarn checks whether body starts with a legacy IRC-style "name:"
 // prefix matching a registered agent's short name. On first detection per
 // sender it returns a one-time guidance string and marks the sender warned.
@@ -1381,6 +1401,63 @@ func (s *store) legacyPrefixWarn(senderAgentID, body string) string {
 	}
 	s.warnedLegacy[senderAgentID] = true
 	return warning
+}
+
+// attentionMissWarn returns a one-time warning when a sender addresses a human
+// with a likely blocking request but omits needs_attention=true.
+func (s *store) attentionMissWarn(senderAgentID, body string, needsAttention bool, extraAddressees []string) string {
+	if needsAttention {
+		return ""
+	}
+	addressedTo := parseAddressedTo(body)
+	knownAgents := s.knownAgentNames()
+	if name, matched := parseLegacyPrefix(body, knownAgents); matched {
+		addressedTo = append(addressedTo, name)
+	}
+	if names, matched := parseInlineLegacyPrefix(body, knownAgents); matched {
+		addressedTo = append(addressedTo, names...)
+	}
+	addressedTo = append(addressedTo, extraAddressees...)
+
+	if len(addressedTo) == 0 {
+		return ""
+	}
+
+	seen := make(map[string]bool, len(addressedTo))
+	deduped := addressedTo[:0]
+	for _, name := range addressedTo {
+		name = strings.ToLower(name)
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		deduped = append(deduped, name)
+	}
+	addressedTo = deduped
+
+	humanNames := s.knownHumanNames()
+	var humanTarget string
+	for _, name := range addressedTo {
+		if humanNames[name] {
+			humanTarget = name
+			break
+		}
+	}
+	if humanTarget == "" {
+		return ""
+	}
+	phrase, matched := parseAttentionMiss(body)
+	if !matched {
+		return ""
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.warnedAttention[senderAgentID] {
+		return ""
+	}
+	s.warnedAttention[senderAgentID] = true
+	return fmt.Sprintf("@%s addressed with a request for action (%q) but needs_attention=false. If this was a blocking handoff, immediately re-send the message with needs_attention=true so the human gets the alert. Do not rationalize this warning away — the human being currently active in the thread is not a carve-out. (one-time warning per session.)", humanTarget, phrase)
 }
 
 // ── SSE subscriptions ──────────────────────────────────────────────
