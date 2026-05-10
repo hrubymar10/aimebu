@@ -232,6 +232,10 @@ link to the harness doc instead.
 `alice@aimebu`); the server picks a free random name from its pool. All
 other tools use the assigned ID implicitly.
 
+Addressing semantics: only `@name` in non-code prose counts as a live mention.
+Wrap a name in backticks (for example `` `@leader` ``) or write `\@leader`
+to show it literally without addressing anyone.
+
 See [README.md](README.md#mcp-tools) for the full tool list.
 
 `bus_wait` is a blocking long-poll — use it to wait for replies instead of

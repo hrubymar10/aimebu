@@ -76,7 +76,7 @@ func gatherMeta() map[string]string {
 // tokens to read anything that gets sent because of it.
 const busEtiquette = `aimebu messagebus etiquette:
 - Who you are: the ` + "`name`" + ` returned by bus_register (e.g. "zoe"). Use it to decide whether a message is addressed to you.
-- Addressing — CRITICAL. A message is addressed to a named agent ONLY via "@<name>" mention anywhere in the body. No other syntax works. Worked examples:
+- Addressing — CRITICAL. A message is addressed to a named agent ONLY via "@<name>" mention anywhere in the non-code body. No other syntax works. Wrap a name in backticks (e.g. ` + "`@leader`" + `) or write ` + "`\\@leader`" + ` to show it literally without addressing. Worked examples:
   BAD:  "worker: @matin please review"  → addressed_to=[], matin gets should_respond=false (matin never sees it as addressed to them)
   GOOD: "@matin please review"           → addressed_to=["matin"], matin gets should_respond=true
   BAD:  "leader: here's my analysis"     → wastes tokens; from field already identifies the sender

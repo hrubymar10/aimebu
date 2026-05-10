@@ -36,12 +36,56 @@ func TestParseAddressedTo(t *testing.T) {
 		{"alice: what's up?", nil},
 		{"alice, bob: ready?", nil},
 		{"alice and bob: ready?", nil},
+
+		// Code/escape literalization
+		{"`@alice` stays literal", nil},
+		{"```\n@alice\n```", nil},
+		{"~~~\n@alice\n~~~", nil},
+		{"hello @alice and `@bob`", []string{"alice"}},
+		{"\\@alice stays literal", nil},
 	}
 
 	for _, tc := range cases {
 		got := parseAddressedTo(tc.body)
 		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("parseAddressedTo(%q) = %v, want %v", tc.body, got, tc.want)
+		}
+	}
+}
+
+func TestMaskCodeForAddressing(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		wantMasked string
+	}{
+		{"inline backticks", "hello `@leader` there", "hello `       ` there"},
+		{"triple fence", "```\n@leader\n```", "```\n       \n   "},
+		{"tilde fence", "~~~\n@leader\n~~~", "~~~\n       \n   "},
+		{"indented block", "lead\n\n    @leader", "lead\n\n           "},
+	}
+
+	for _, tc := range cases {
+		view := maskCodeForAddressing(tc.body)
+		if view.masked != tc.wantMasked {
+			t.Errorf("%s: masked = %q, want %q", tc.name, view.masked, tc.wantMasked)
+		}
+	}
+}
+
+func TestMaskCodeForAddressingIndentedNegatives(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"paragraph continuation", "text\n    @leader"},
+		{"list continuation", "- item\n    @leader"},
+	}
+
+	for _, tc := range cases {
+		view := maskCodeForAddressing(tc.body)
+		if view.masked != tc.body {
+			t.Errorf("%s: got %q, want unchanged %q", tc.name, view.masked, tc.body)
 		}
 	}
 }
@@ -137,9 +181,9 @@ func TestAnnotateKnownAgentsFilter(t *testing.T) {
 }
 
 func TestParseAddressedToNoiseFiltering(t *testing.T) {
-	// Without a known-agent filter, @latest/@master/@v0 appear in the raw list.
-	// This test documents the raw behaviour; filtering happens in annotate.
-	body := "see `@latest` or @master, then @worker @reviewer"
+	// Without a known-agent filter, non-agent tokens outside code still appear in
+	// the raw list. Code-contained tokens are now masked before mention parsing.
+	body := "see `@latest` or @master, then @worker @reviewer \\@leader"
 	got := parseAddressedTo(body)
 	found := map[string]bool{}
 	for _, n := range got {
@@ -148,8 +192,8 @@ func TestParseAddressedToNoiseFiltering(t *testing.T) {
 	if !found["worker"] || !found["reviewer"] {
 		t.Errorf("real agents missing from raw parse: %v", got)
 	}
-	if !found["latest"] || !found["master"] {
-		t.Errorf("noise tokens missing from raw parse (expected before filtering): %v", got)
+	if found["latest"] || !found["master"] || found["leader"] {
+		t.Errorf("unexpected raw parse contents after masking/escape handling: %v", got)
 	}
 }
 
@@ -176,6 +220,8 @@ func TestParseLegacyPrefix(t *testing.T) {
 
 		// Negative: @-addressed → no match (doesn't start with bare name:)
 		{"@worker please look at this", "", false},
+		{"`worker: please look`", "", false},
+		{"```\nworker: please look\n```", "", false},
 		{"hey everyone", "", false},
 		{"", "", false},
 
@@ -213,6 +259,7 @@ func TestParseInlineLegacyPrefix(t *testing.T) {
 		{"Q: name, what do you think?", nil, false},
 		{"worker, NOTANAGENT — please review", nil, false},
 		{"@worker @reviewer please review", nil, false},
+		{"```\nworker, reviewer — your take?\n```", nil, false},
 	}
 
 	for _, tc := range cases {
@@ -242,6 +289,9 @@ func TestParseAttentionMiss(t *testing.T) {
 		{"@matin status update: build is green", "", false},
 		{"@matin what time is it?", "", false},
 		{"matin said: \"please approve\"", "please approve", true},
+		{"@matin `please approve`", "", false},
+		{"@matin\n```\nplease approve\n```", "", false},
+		{"\\@matin please approve", "please approve", true},
 	}
 
 	for _, tc := range cases {

@@ -1609,6 +1609,24 @@ func TestAttentionWarnings(t *testing.T) {
 		t.Fatalf("no addressee should not warn, got %v", w6)
 	}
 
+	resetAttention(sender.ID)
+	w6b := sendAndDecodeWarnings(map[string]any{
+		"from": sender.ID,
+		"body": "\\@matin please approve this",
+	})
+	if len(w6b) != 0 {
+		t.Fatalf("escaped addressee should not warn, got %v", w6b)
+	}
+
+	resetAttention(sender.ID)
+	w6c := sendAndDecodeWarnings(map[string]any{
+		"from": sender.ID,
+		"body": "@matin `please approve`",
+	})
+	if len(w6c) != 0 {
+		t.Fatalf("attention phrase inside inline code should not warn, got %v", w6c)
+	}
+
 	s.mu.Lock()
 	s.warnedAttention[sender.ID] = false
 	s.warnedLegacy[sender.ID] = true

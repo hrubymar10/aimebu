@@ -170,6 +170,10 @@
       var cls = lang.trim() ? ' class="lang-' + lang.trim() + '"' : '';
       return stash('<pre class="md-pre"><code' + cls + '>' + code.replace(/\n$/, '') + '</code></pre>');
     });
+    html = html.replace(/~~~([a-zA-Z0-9]*)\n?([\s\S]*?)~~~/g, function (_, lang, code) {
+      var cls = lang.trim() ? ' class="lang-' + lang.trim() + '"' : '';
+      return stash('<pre class="md-pre"><code' + cls + '>' + code.replace(/\n$/, '') + '</code></pre>');
+    });
 
     // Extract inline code spans
     html = html.replace(/`([^`\n]+)`/g, function (_, code) {
@@ -219,6 +223,20 @@
       if (/^\x00\d+\x00$/.test(line.trim())) {
         out.push({ type: 'block', html: line.trim() });
         i++;
+        continue;
+      }
+
+      // Narrow CommonMark-style indented code block: line starts after BOF or
+      // a blank line, then the run continues while indentation holds.
+      if (hasIndentedPrefix(line) && (i === 0 || lines[i - 1].trim() === '')) {
+        var indented = [];
+        while (i < lines.length) {
+          if (lines[i].trim() === '') break;
+          if (!hasIndentedPrefix(lines[i])) break;
+          indented.push(lines[i]);
+          i++;
+        }
+        out.push({ type: 'block', html: '<pre class="md-pre"><code>' + indented.join('\n') + '</code></pre>' });
         continue;
       }
 
@@ -295,6 +313,70 @@
     });
 
     return result;
+  }
+
+  function hasIndentedPrefix(line) {
+    return /^\t/.test(line) || /^ {4}/.test(line);
+  }
+
+  function rewriteIndentedCodeBlocks(html, renderBlock) {
+    var lines = html.split('\n');
+    var out = [];
+    var i = 0;
+
+    while (i < lines.length) {
+      var line = lines[i];
+      var prev = i === 0 ? '' : lines[i - 1];
+      if (!hasIndentedPrefix(line) || (i > 0 && prev.trim() !== '')) {
+        out.push(line);
+        i++;
+        continue;
+      }
+      var block = [];
+      while (i < lines.length) {
+        var cur = lines[i];
+        if (cur.trim() === '') {
+          block.push(cur);
+          i++;
+          break;
+        }
+        if (!hasIndentedPrefix(cur)) break;
+        block.push(cur);
+        i++;
+      }
+      out.push(renderBlock(block.join('\n')));
+    }
+    return out.join('\n');
+  }
+
+  function renderPlainWithCodeMarkers(rawText) {
+    if (!rawText) return '';
+    var html = esc(rawText);
+    var holders = [];
+
+    function stash(s) {
+      holders.push(s);
+      return '\x00' + (holders.length - 1) + '\x00';
+    }
+
+    html = html.replace(/```([a-zA-Z0-9]*)\n?([\s\S]*?)```/g, function (_, lang, code) {
+      var text = '```' + (lang || '') + '\n' + code + '```';
+      return stash('<span class="raw-code raw-code-block">' + text + '</span>');
+    });
+    html = html.replace(/~~~([a-zA-Z0-9]*)\n?([\s\S]*?)~~~/g, function (_, lang, code) {
+      var text = '~~~' + (lang || '') + '\n' + code + '~~~';
+      return stash('<span class="raw-code raw-code-block">' + text + '</span>');
+    });
+    html = rewriteIndentedCodeBlocks(html, function (block) {
+      return stash('<span class="raw-code raw-code-block">' + block + '</span>');
+    });
+    html = html.replace(/`([^`\n]+)`/g, function (_, code) {
+      return stash('<code class="raw-code">' + code + '</code>');
+    });
+
+    return html.replace(/\x00(\d+)\x00/g, function (_, i) {
+      return holders[+i];
+    });
   }
 
   function updateMdToggleBtn() {
@@ -1647,7 +1729,7 @@
   function highlightNames(rootEl) {
     var re = buildHighlightRegex();
     if (!re) return;
-    var skipSel = 'code, pre, a, .mention';
+    var skipSel = 'code, pre, a, .mention, .raw-code';
     var toReplace = [];
     var walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
       acceptNode: function (node) {
@@ -1742,7 +1824,7 @@
         '</div>' +
         '<div class="chat-msg-bubble">' +
           '<div class="chat-msg-body' + (markdownMode === 'rendered' ? ' md-rendered' : '') + '">' +
-            (markdownMode === 'rendered' ? renderMarkdown(m.body) : esc(m.body)) +
+            (markdownMode === 'rendered' ? renderMarkdown(m.body) : renderPlainWithCodeMarkers(m.body)) +
           '</div>' +
         '</div>' +
       '</div>'

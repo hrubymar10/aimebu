@@ -32,9 +32,182 @@ var attentionMissPhrases = []string{
 	"sign-off",
 }
 
+type maskedView struct {
+	masked  string
+	escaped string
+}
+
+// maskCodeForAddressing replaces code-region content with whitespace-preserving
+// placeholders so downstream regexes see only live prose. Covered in v1:
+// fenced blocks (``` and ~~~), inline backticks, and narrow CommonMark-style
+// indented code blocks (preceded by BOF/blank line, then continuing while
+// indentation holds). Escaped mentions (\@name) are preserved here and handled
+// by stripEscapedMentions after masking.
+func maskCodeForAddressing(body string) maskedView {
+	lines := strings.Split(body, "\n")
+	maskedLines := make([]string, len(lines))
+	lineMaps := make([]string, len(lines))
+
+	inFence := false
+	fenceDelim := ""
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inFence && isFenceStart(trimmed) {
+			inFence = true
+			fenceDelim = trimmed[:3]
+			maskedLines[i] = maskInlineCode(line)
+			lineMaps[i] = line
+			continue
+		}
+		if inFence {
+			maskedLines[i] = maskLineContent(line)
+			lineMaps[i] = maskLineContent(line)
+			if isFenceEnd(trimmed, fenceDelim) {
+				inFence = false
+				fenceDelim = ""
+			}
+			continue
+		}
+		maskedLines[i] = maskInlineCode(line)
+		lineMaps[i] = line
+	}
+
+	applyIndentedCodeMask(maskedLines, lineMaps)
+
+	masked := strings.Join(maskedLines, "\n")
+	return maskedView{
+		masked:  masked,
+		escaped: stripEscapedMentions(masked),
+	}
+}
+
+func isFenceStart(trimmed string) bool {
+	return isFenceDelimiter(trimmed, "```") || isFenceDelimiter(trimmed, "~~~")
+}
+
+func isFenceEnd(trimmed, delim string) bool {
+	return isFenceDelimiter(trimmed, delim)
+}
+
+func isFenceDelimiter(trimmed, delim string) bool {
+	if !strings.HasPrefix(trimmed, delim) {
+		return false
+	}
+	rest := trimmed[len(delim):]
+	if rest == "" {
+		return true
+	}
+	for _, r := range rest {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func maskInlineCode(line string) string {
+	var b strings.Builder
+	b.Grow(len(line))
+	inCode := false
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		if ch == '`' {
+			inCode = !inCode
+			b.WriteByte('`')
+			continue
+		}
+		if inCode {
+			if ch == '\t' {
+				b.WriteByte('\t')
+			} else {
+				b.WriteByte(' ')
+			}
+			continue
+		}
+		b.WriteByte(ch)
+	}
+	return b.String()
+}
+
+func maskLineContent(line string) string {
+	var b strings.Builder
+	b.Grow(len(line))
+	for i := 0; i < len(line); i++ {
+		if line[i] == '\t' {
+			b.WriteByte('\t')
+		} else {
+			b.WriteByte(' ')
+		}
+	}
+	return b.String()
+}
+
+func applyIndentedCodeMask(maskedLines, lineMaps []string) {
+	inIndented := false
+	for i, line := range lineMaps {
+		blank := strings.TrimSpace(line) == ""
+		if inIndented {
+			if blank {
+				maskedLines[i] = line
+				inIndented = false
+				continue
+			}
+			if hasIndentedCodePrefix(line) {
+				maskedLines[i] = maskIndentedCodeLine(line)
+				continue
+			}
+			inIndented = false
+		}
+		if blank {
+			maskedLines[i] = line
+			continue
+		}
+		if !hasIndentedCodePrefix(line) {
+			continue
+		}
+		if i > 0 && strings.TrimSpace(lineMaps[i-1]) != "" {
+			continue
+		}
+		maskedLines[i] = maskIndentedCodeLine(line)
+		inIndented = true
+	}
+}
+
+func hasIndentedCodePrefix(line string) bool {
+	if strings.HasPrefix(line, "\t") {
+		return true
+	}
+	return strings.HasPrefix(line, "    ")
+}
+
+func maskIndentedCodeLine(line string) string {
+	if strings.HasPrefix(line, "\t") {
+		return "\t" + maskLineContent(line[1:])
+	}
+	if strings.HasPrefix(line, "    ") {
+		return "    " + maskLineContent(line[4:])
+	}
+	return maskLineContent(line)
+}
+
+func stripEscapedMentions(body string) string {
+	var b strings.Builder
+	b.Grow(len(body))
+	for i := 0; i < len(body); i++ {
+		if body[i] == '\\' && i+1 < len(body) && body[i+1] == '@' {
+			b.WriteString("  ")
+			i++
+			continue
+		}
+		b.WriteByte(body[i])
+	}
+	return b.String()
+}
+
 // parseAddressedTo returns the deduplicated list of short names a message body
 // is addressed to via @name mentions. Returns nil for room-wide messages.
 func parseAddressedTo(body string) []string {
+	view := maskCodeForAddressing(body)
 	var names []string
 	seen := map[string]bool{}
 	add := func(n string) {
@@ -44,7 +217,7 @@ func parseAddressedTo(body string) []string {
 			names = append(names, n)
 		}
 	}
-	for _, m := range mentionRe.FindAllStringSubmatch(body, -1) {
+	for _, m := range mentionRe.FindAllStringSubmatch(view.escaped, -1) {
 		add(m[1])
 	}
 	return names
@@ -114,7 +287,8 @@ func annotate(msgs []types.Message, agentName string, knownAgents map[string]boo
 // for @-addressed messages, ordinary prose labels like "Note:" or "URL:", and
 // any body that does not start with the pattern.
 func parseLegacyPrefix(body string, knownNames map[string]bool) (string, bool) {
-	m := legacyPrefixRe.FindStringSubmatch(body)
+	view := maskCodeForAddressing(body)
+	m := legacyPrefixRe.FindStringSubmatch(view.escaped)
 	if m == nil {
 		return "", false
 	}
@@ -130,7 +304,8 @@ func parseLegacyPrefix(body string, knownNames map[string]bool) (string, bool) {
 // sentence or paragraph. Returns the matched names in order only when both
 // tokens resolve to real registered agent short names.
 func parseInlineLegacyPrefix(body string, knownNames map[string]bool) ([]string, bool) {
-	m := inlinePrefixRe.FindStringSubmatch(body)
+	view := maskCodeForAddressing(body)
+	m := inlinePrefixRe.FindStringSubmatch(view.escaped)
 	if m == nil {
 		return nil, false
 	}
@@ -150,7 +325,8 @@ func parseInlineLegacyPrefix(body string, knownNames map[string]bool) ([]string,
 // simple substring match does not try to distinguish quoted prose from a live
 // request (e.g. `matin said: "please approve"`).
 func parseAttentionMiss(body string) (string, bool) {
-	lower := strings.ToLower(body)
+	view := maskCodeForAddressing(body)
+	lower := strings.ToLower(view.escaped)
 	for _, phrase := range attentionMissPhrases {
 		if strings.Contains(lower, phrase) {
 			return phrase, true

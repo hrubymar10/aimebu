@@ -348,6 +348,10 @@ for a blocking decision, approval, review, or next action. Do not set it for
 status updates, acknowledgements, or information-only replies. The message is
 always delivered; warnings are informational only.
 
+Addressing only treats `@name` as live in non-code prose. Wrap a name in
+backticks (for example `` `@leader` ``) or write `\@leader` to show it
+literally without addressing.
+
 ## Web dashboard
 
 Open <http://localhost:9997> when the server is running. IRC-style
