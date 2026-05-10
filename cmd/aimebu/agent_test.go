@@ -2,6 +2,8 @@ package main
 
 import (
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +117,146 @@ func TestAgentFullID(t *testing.T) {
 	}
 	if got := agentFullID("worker"); got != "worker@aimebu" {
 		t.Fatalf("agentFullID derived %q, want %q", got, "worker@aimebu")
+	}
+}
+
+func TestAgentClassifyChildResult(t *testing.T) {
+	t.Run("registration lost", func(t *testing.T) {
+		got := agentClassifyChildResult("codex", nil, []byte("Error: not registered — call bus_register first"))
+		if got != agentRecoveryRegistrationLost {
+			t.Fatalf("got %q, want %q", got, agentRecoveryRegistrationLost)
+		}
+	})
+
+	t.Run("server unreachable", func(t *testing.T) {
+		got := agentClassifyChildResult("claude-code", nil, []byte("dial tcp 127.0.0.1:9997: connect: connection refused"))
+		if got != agentRecoveryServerUnreachable {
+			t.Fatalf("got %q, want %q", got, agentRecoveryServerUnreachable)
+		}
+	})
+
+	t.Run("codex thread missing", func(t *testing.T) {
+		stderr := []byte("ERROR codex_core::session: failed to record rollout items:\nthread 1234-abcd not found\n")
+		got := agentClassifyChildResult("codex", nil, stderr)
+		if got != agentRecoveryCodexThreadMissing {
+			t.Fatalf("got %q, want %q", got, agentRecoveryCodexThreadMissing)
+		}
+	})
+
+	t.Run("normal end", func(t *testing.T) {
+		got := agentClassifyChildResult("codex", []byte(`{"type":"turn.completed"}`), nil)
+		if got != agentRecoveryNormalEnd {
+			t.Fatalf("got %q, want %q", got, agentRecoveryNormalEnd)
+		}
+	})
+}
+
+func TestAgentRoomsContainExpected(t *testing.T) {
+	actual := []struct {
+		ID string `json:"id"`
+	}{
+		{ID: "general"},
+		{ID: "dev"},
+	}
+	if !agentRoomsContainExpected(actual, []string{"general"}) {
+		t.Fatal("expected room match")
+	}
+	if agentRoomsContainExpected(actual, []string{"ops"}) {
+		t.Fatal("unexpected room match")
+	}
+}
+
+func TestAgentPreflight(t *testing.T) {
+	makeServer := func(roomPayload string, agentsPayload string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/health":
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			case "/agents/worker@aimebu/rooms":
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(roomPayload))
+			case "/agents":
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(agentsPayload))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+	}
+
+	t.Run("healthy and present in expected room", func(t *testing.T) {
+		srv := makeServer(`{"rooms":[{"id":"general"}]}`, `{"agents":[{"id":"worker@aimebu"}]}`)
+		defer srv.Close()
+		got := agentPreflight(srv.URL, "worker@aimebu", []string{"general"})
+		if got != agentRecoveryNormalEnd {
+			t.Fatalf("got %q, want %q", got, agentRecoveryNormalEnd)
+		}
+	})
+
+	t.Run("missing expected room means registration lost", func(t *testing.T) {
+		srv := makeServer(`{"rooms":[{"id":"dev"}]}`, `{"agents":[{"id":"worker@aimebu"}]}`)
+		defer srv.Close()
+		got := agentPreflight(srv.URL, "worker@aimebu", []string{"general"})
+		if got != agentRecoveryRegistrationLost {
+			t.Fatalf("got %q, want %q", got, agentRecoveryRegistrationLost)
+		}
+	})
+
+	t.Run("zero-room sessions fall back to agents list", func(t *testing.T) {
+		srv := makeServer(`{"rooms":[]}`, `{"agents":[{"id":"worker@aimebu"}]}`)
+		defer srv.Close()
+		got := agentPreflight(srv.URL, "worker@aimebu", nil)
+		if got != agentRecoveryNormalEnd {
+			t.Fatalf("got %q, want %q", got, agentRecoveryNormalEnd)
+		}
+	})
+
+	t.Run("zero-room sessions detect missing registration", func(t *testing.T) {
+		srv := makeServer(`{"rooms":[]}`, `{"agents":[]}`)
+		defer srv.Close()
+		got := agentPreflight(srv.URL, "worker@aimebu", nil)
+		if got != agentRecoveryRegistrationLost {
+			t.Fatalf("got %q, want %q", got, agentRecoveryRegistrationLost)
+		}
+	})
+}
+
+func TestAgentAdvanceFailure(t *testing.T) {
+	last := agentRecoveryNormalEnd
+	count := 0
+
+	count = agentAdvanceFailure(agentRecoveryRegistrationLost, &last, count)
+	if count != 1 || last != agentRecoveryRegistrationLost {
+		t.Fatalf("first failure => count=%d last=%q, want 1/%q", count, last, agentRecoveryRegistrationLost)
+	}
+
+	count = agentAdvanceFailure(agentRecoveryRegistrationLost, &last, count)
+	if count != 2 {
+		t.Fatalf("second identical failure => count=%d, want 2", count)
+	}
+
+	count = agentAdvanceFailure(agentRecoveryServerUnreachable, &last, count)
+	if count != 1 || last != agentRecoveryServerUnreachable {
+		t.Fatalf("class switch => count=%d last=%q, want 1/%q", count, last, agentRecoveryServerUnreachable)
+	}
+
+	count = agentAdvanceFailure(agentRecoveryNormalEnd, &last, count)
+	if count != 0 || last != agentRecoveryNormalEnd {
+		t.Fatalf("normal end => count=%d last=%q, want 0/%q", count, last, agentRecoveryNormalEnd)
+	}
+}
+
+func TestAgentBuildRecoveryPrompt(t *testing.T) {
+	prompt := agentBuildRecoveryPrompt("codex", "", "worker", []string{"general", "dev"})
+	if !contains(prompt, `name="worker", force=true`) {
+		t.Fatalf("prompt %q does not include forced reclaim", prompt)
+	}
+	if !contains(prompt, `meta={"protocol":"agent"}`) {
+		t.Fatalf("prompt %q does not include protocol-only meta", prompt)
+	}
+	if !contains(prompt, "Join these rooms: general, dev.") {
+		t.Fatalf("prompt %q does not include room joins", prompt)
 	}
 }
 

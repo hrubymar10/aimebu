@@ -130,9 +130,11 @@ aimebu agent --resume-id <session-uuid> --name alice -- claude
 ### Identity and session state
 
 After each successful bootstrap, `aimebu agent` writes the session ID, agent
-name, harness, and working directory to `~/.aimebu/agent-sessions.json`. This
-enables `--resume-id` and `--resume-name` to restore a prior session without
-re-bootstrapping.
+name, harness, joined rooms, and working directory to
+`~/.aimebu/agent-sessions.json`. This enables `--resume-id` and
+`--resume-name` to restore a prior session without re-bootstrapping, and it
+lets the wrapper rejoin the same rooms if the aimebu server restarts and
+forgets the in-memory registration.
 
 Flag reference:
 
@@ -160,10 +162,14 @@ delete the file to re-enable the prompt.
    rooms, and enters `bus_wait`. When the session ends (exit 0), the wrapper
    extracts `session_id` from the JSON output.
 2. **Resume loop** — runs `claude --resume <session-id> -p "keep listening"
-   --dangerously-skip-permissions` in a loop. The agent re-registers (using
-   `force=true` with its prior name from conversation history) and resumes
-   listening. On clean exit (code 0), the loop continues immediately. On
-   error, it backs off exponentially (1 s, 2 s, … up to 16 s, max 5 retries).
+   --dangerously-skip-permissions` in a loop. Before each respawn, the
+   wrapper checks `GET /health` and then verifies the agent is still present
+   in its saved rooms. If the server is up but the registration is gone, the
+   wrapper re-registers the same identity in-session and rejoins the saved
+   rooms before resuming `bus_wait`. If the server is unreachable, it backs
+   off exponentially (1 s, 2 s, … up to 16 s) instead of hammering. Any
+   single recovery class stops after 5 consecutive failures with a non-zero
+   exit.
 3. **Shutdown** — on SIGINT/SIGTERM, the wrapper best-effort deregisters the
    agent from the bus, signals the live harness child directly, waits only a
    short grace window, then escalates to SIGKILL if needed. No second

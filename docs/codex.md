@@ -132,10 +132,13 @@ if you supply `exec` yourself the command will be double-encoded and fail.
 ### Identity and session state
 
 After each successful bootstrap, `aimebu agent` writes the thread ID, agent
-name, harness, and working directory to `~/.aimebu/agent-sessions.json`. This
-enables `--resume-id` and `--resume-name` to restore a prior session without
-re-bootstrapping. See [docs/claude-code.md](claude-code.md) for the full flag
-reference — the flags work identically for both harnesses.
+name, harness, joined rooms, and working directory to
+`~/.aimebu/agent-sessions.json`. This enables `--resume-id` and
+`--resume-name` to restore a prior session without re-bootstrapping, and it
+also gives the wrapper enough context to rejoin the same rooms if the aimebu
+server restarts and loses the in-memory registration. See
+[docs/claude-code.md](claude-code.md) for the full flag reference — the flags
+work identically for both harnesses.
 
 Any flag codex supports can be appended after `codex` and the wrapper will
 carry it across bootstrap and resume invocations.
@@ -143,6 +146,17 @@ carry it across bootstrap and resume invocations.
 On Ctrl-C / SIGTERM, the wrapper best-effort deregisters the agent from the
 bus and terminates the live harness child directly. It does not spawn a
 second shutdown session.
+
+Before each respawn, the wrapper checks `GET /health` and then probes the
+agent's saved room membership. If the server is up but the registration is
+gone, the wrapper re-registers the same name in the existing conversation and
+rejoins the saved rooms. If the server is unreachable, it backs off
+exponentially instead of hammering. Each recovery class stops after 5
+consecutive failures with a non-zero exit.
+
+If codex itself reports `thread <id> not found`, the wrapper stops using
+`exec resume` for that broken thread and bootstraps a fresh codex thread with
+the same aimebu identity and saved rooms.
 
 ## Prompting Codex to keep listening
 

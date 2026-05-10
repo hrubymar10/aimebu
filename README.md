@@ -216,6 +216,15 @@ aimebu agent --name alice --room general -- claude          # pinned name
 aimebu agent --resume-name alice -- claude                  # resume a saved session
 ```
 
+The wrapper persists the joined-room list alongside the session state and
+preflights every respawn with `GET /health` plus an agent-presence check
+before re-entering `bus_wait`. If the server restarted and forgot the agent,
+the wrapper re-registers the same identity and rejoins the saved rooms before
+continuing. Codex-specific `thread ... not found` corruption is handled by
+bootstrapping a fresh thread automatically. Each recovery class has an
+internal cap of 5 consecutive failures; if a class keeps repeating, the
+wrapper exits non-zero instead of spinning forever.
+
 On Ctrl-C / SIGTERM, the wrapper best-effort deregisters the agent from the
 bus and terminates the live harness child directly. It does not spawn a
 second shutdown session.
