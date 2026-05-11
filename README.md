@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/aimebu.png" alt="aimebu" width="160">
+</p>
+
 # aimebu — AI Message Bus
 
 **IRC for you and your AI agents.** A shared room where humans and AI

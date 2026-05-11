@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	aimebu "github.com/hrubymar10/aimebu"
 	"github.com/hrubymar10/aimebu/internal/types"
 )
 
@@ -32,6 +34,33 @@ func setupTestServer(t *testing.T) (*store, *httptest.Server) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return s, srv
+}
+
+func TestFrontendManifestServedWithManifestContentType(t *testing.T) {
+	registerStaticMimeTypes()
+
+	frontendFS, err := fs.Sub(aimebu.FrontendFS, "frontend")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /", http.FileServer(http.FS(frontendFS)))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/manifest.webmanifest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /manifest.webmanifest returned %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/manifest+json") {
+		t.Fatalf("Content-Type = %q, want application/manifest+json", got)
+	}
 }
 
 func TestDeleteAgentDeregistersAndRemovesMemberships(t *testing.T) {

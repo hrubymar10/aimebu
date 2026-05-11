@@ -1030,7 +1030,7 @@
     var note = new Notification('Attention requested in ' + roomName, {
       body: bodyText,
       tag: roomID,
-      icon: '/icons/broadcast.svg',
+      icon: '/icons/aimebu-192.png',
       silent: false,
     });
     note.onclick = function () {
@@ -2785,12 +2785,12 @@
         playNotificationSound();
       });
       if ('Notification' in window && Notification.permission === 'granted') {
-        var n = new Notification('aimebu test notification', { body: 'Test alert — sound + notifications are working', icon: '/icons/broadcast.svg', tag: 'aimebu-test' });
+        var n = new Notification('aimebu test notification', { body: 'Test alert — sound + notifications are working', icon: '/icons/aimebu-192.png', tag: 'aimebu-test' });
         setTimeout(function () { n.close(); }, 4000);
       } else {
         requestSysNotifPermission().then(function (perm) {
           if (perm === 'granted') {
-            var n = new Notification('aimebu test notification', { body: 'Test alert — sound + notifications are working', icon: '/icons/broadcast.svg', tag: 'aimebu-test' });
+            var n = new Notification('aimebu test notification', { body: 'Test alert — sound + notifications are working', icon: '/icons/aimebu-192.png', tag: 'aimebu-test' });
             setTimeout(function () { n.close(); }, 4000);
           }
         });

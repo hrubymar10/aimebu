@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/netip"
@@ -24,6 +25,10 @@ import (
 )
 
 var macroKeyRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+
+func registerStaticMimeTypes() {
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
@@ -987,6 +992,7 @@ func Run(addr, dataDir string, frontendFS fs.FS) error {
 
 	// Serve embedded frontend at /
 	if frontendFS != nil {
+		registerStaticMimeTypes()
 		mux.Handle("GET /", http.FileServer(http.FS(frontendFS)))
 	}
 

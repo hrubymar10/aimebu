@@ -121,8 +121,13 @@ body {
 
 .topbar-left {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
+  flex-shrink: 0;
+}
+
+.logo-mark {
+  display: block;
   flex-shrink: 0;
 }
 
@@ -147,6 +152,7 @@ body {
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -0.02em;
+  line-height: 1;
 }
 
 .logo-subtitle {
