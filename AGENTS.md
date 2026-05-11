@@ -83,7 +83,6 @@ internal/
 embed.go                  Root package — go:embed for frontend/
 frontend/                 Web UI (vanilla HTML/CSS/JS, embedded in binary)
 bin/aimebu                Bash wrapper (auto-builds, add to PATH)
-Formula/aimebu.rb         Homebrew formula with brew services support
 ```
 
 ## Core concept: everything is a room
