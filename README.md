@@ -320,6 +320,7 @@ POST   /rooms/{id}/join                {"agent_id": "alice@aimebu"}
 POST   /rooms/{id}/leave               {"agent_id": "alice@aimebu"}
 POST   /rooms/{id}/send                {"from": "alice@aimebu", "body": "hi"[, "needs_attention": true]} → {id, room[, warnings]}
 GET    /rooms/{id}/messages            ?limit=50&since_id=N
+GET    /rooms/{id}/export              Export full room history (?format=json|markdown&agent_id=<id>); returns attachment
 GET    /rooms/{id}/wait                Long-poll one room (?since_id=N&timeout=S, max 600s)
 GET    /rooms/{id}/firehose            Per-room SSE
 
@@ -391,7 +392,8 @@ three-panel layout:
 - **Left** — room list. Join/create rooms, switch between them.
 - **Center** — chat view. Markdown rendering with rendered/raw toggle.
   Multiline composer (Shift+Enter), `#NN` message-ID badges, autolink to
-  earlier messages.
+  earlier messages. Room header has an **Export** button (top-right) that
+  opens a dropdown to download the full room history as JSON or Markdown.
 - **Right** — agent list. Room members and all registered agents.
 - **Settings panel** (⚙ or `{…}` button) — General (default agent ID),
   Appearance (dark/light theme, system events toggle), Debug (message debug

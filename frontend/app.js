@@ -113,6 +113,9 @@
   const roomMemberCount = $('#room-member-count');
   const roomMemberAvatars = $('#room-member-avatars');
   const leaveRoomBtn = $('#leave-room-btn');
+  const exportBtn = $('#export-btn');
+  const exportMenu = $('#export-menu');
+  const exportWrap = exportBtn ? exportBtn.closest('.export-wrap') : null;
   const messageListEl = $('#message-list');
   const sendForm = $('#send-form');
   const systemRoomNotice = $('#system-room-notice');
@@ -2253,10 +2256,12 @@
     noRoomView.classList.add('hidden');
     roomView.classList.remove('hidden');
 
-    // _system is read-only: hide composer, show notice
+    // _system is read-only: hide composer, show notice, hide export (not applicable)
     var isSystem = roomID === '_system';
     sendForm.style.display = isSystem ? 'none' : '';
     systemRoomNotice.style.display = isSystem ? '' : 'none';
+    if (exportWrap) exportWrap.style.display = isSystem ? 'none' : '';
+    exportMenu.classList.add('hidden');
 
     // Update header
     updateRoomHeader();
@@ -3116,6 +3121,22 @@
   leaveRoomBtn.addEventListener('click', function () {
     if (!activeRoomID) return;
     leaveRoom(activeRoomID);
+  });
+
+  // Export room
+  exportBtn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    exportMenu.classList.toggle('hidden');
+  });
+  exportMenu.addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-format]');
+    if (!btn || !activeRoomID) return;
+    var format = btn.getAttribute('data-format');
+    window.location.href = '/rooms/' + encodeURIComponent(activeRoomID) + '/export?format=' + format + '&agent_id=' + encodeURIComponent(agentID);
+    exportMenu.classList.add('hidden');
+  });
+  document.addEventListener('click', function () {
+    exportMenu.classList.add('hidden');
   });
 
   // Markdown / raw toggle

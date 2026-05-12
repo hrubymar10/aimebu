@@ -884,6 +884,46 @@ body {
   flex-shrink: 0;
 }
 
+.export-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.export-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 100;
+  min-width: 140px;
+  background: var(--bg-secondary, #2a2a2a);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 6px;
+  padding: 4px 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.export-menu button {
+  display: block;
+  width: 100%;
+  padding: 7px 14px;
+  background: none;
+  border: none;
+  color: var(--text-primary, #e0e0e0);
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.export-menu button:hover {
+  background: var(--bg-hover, #3a3a3a);
+}
+
+.export-menu.hidden {
+  display: none;
+}
+
 .room-member-avatars {
   display: flex;
   gap: 4px;

@@ -91,6 +91,13 @@
             <div id="room-member-avatars" class="room-member-avatars"></div>
             <button id="msg-search-btn" class="btn btn-sm btn-md-toggle" type="button" title="Go to message #…">#</button>
             <button id="md-toggle-btn" class="btn btn-sm btn-md-toggle" type="button">Rendered</button>
+            <div class="export-wrap">
+              <button id="export-btn" class="btn btn-sm btn-md-toggle" type="button" title="Export room">Export</button>
+              <div id="export-menu" class="export-menu hidden">
+                <button data-format="markdown" type="button">Markdown (.md)</button>
+                <button data-format="json" type="button">JSON (.json)</button>
+              </div>
+            </div>
             <button id="leave-room-btn" class="btn btn-danger btn-sm" type="button">Leave</button>
           </div>
         </div>

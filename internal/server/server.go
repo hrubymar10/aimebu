@@ -232,6 +232,9 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo) {
 		}
 	})
 
+	// GET /rooms/{room_id}/export — download full room history as JSON or Markdown
+	mux.HandleFunc("GET /rooms/{room_id}/export", handleExportRoom(s))
+
 	// GET /rooms/{room_id}/wait — long-poll: block until a new message arrives
 	// in this room (messages with ID > since_id), or until timeout.
 	// Query: since_id (int, default 0), timeout (seconds, default 30, max 600).
