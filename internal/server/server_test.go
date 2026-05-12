@@ -25,12 +25,17 @@ import (
 
 func setupTestServer(t *testing.T) (*store, *httptest.Server) {
 	t.Helper()
+	return setupTestServerWithBuild(t, BuildInfo{})
+}
+
+func setupTestServerWithBuild(t *testing.T, build BuildInfo) (*store, *httptest.Server) {
+	t.Helper()
 	s, err := newStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	setupHandlers(mux, s)
+	setupHandlers(mux, s, build)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return s, srv
@@ -2182,5 +2187,30 @@ func TestAttentionWarningForHumanDM(t *testing.T) {
 	}
 	if len(out.Warnings) != 1 {
 		t.Fatalf("human DM should warn once, got %v", out.Warnings)
+	}
+}
+
+func TestBuildInfoEndpoint(t *testing.T) {
+	build := BuildInfo{Version: "test-v1.2.3", GoVersion: "go1.99.0"}
+	_, srv := setupTestServerWithBuild(t, build)
+
+	resp, err := http.Get(srv.URL + "/buildinfo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /buildinfo: status %d", resp.StatusCode)
+	}
+
+	var got BuildInfo
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != build.Version {
+		t.Fatalf("version = %q, want %q", got.Version, build.Version)
+	}
+	if got.GoVersion != build.GoVersion {
+		t.Fatalf("go_version = %q, want %q", got.GoVersion, build.GoVersion)
 	}
 }

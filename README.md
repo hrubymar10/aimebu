@@ -352,6 +352,7 @@ DELETE /api/sounds/{uuid}              Delete a user-uploaded sound
 GET    /api/sounds/{uuid}              Serve a user-uploaded sound file
 DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe macros, prompts, and settings
 GET    /health                         Health check
+GET    /buildinfo                      Server version and Go runtime version (read-only)
 GET    /ws                             WebSocket push
 ```
 

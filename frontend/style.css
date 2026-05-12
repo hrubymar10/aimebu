@@ -161,6 +161,14 @@ body {
   font-weight: 400;
 }
 
+.build-version {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  opacity: 0.6;
+  letter-spacing: 0.02em;
+  font-family: var(--font-mono, monospace);
+}
+
 .agent-id-label {
   font-size: 0.75rem;
   color: var(--text-secondary);
@@ -1371,7 +1379,7 @@ body {
     display: none;
   }
 
-  .logo-subtitle {
+  .logo-subtitle, .build-version {
     display: none;
   }
 }

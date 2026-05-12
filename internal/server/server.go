@@ -63,7 +63,13 @@ func validWAVHeader(data []byte) bool {
 		data[8] == 'W' && data[9] == 'A' && data[10] == 'V' && data[11] == 'E'
 }
 
-func setupHandlers(mux *http.ServeMux, s *store) {
+// BuildInfo carries the version and runtime details exposed via GET /buildinfo.
+type BuildInfo struct {
+	Version   string `json:"version"`
+	GoVersion string `json:"go_version"`
+}
+
+func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo) {
 
 	// ── Rooms ──────────────────────────────────────────────────────
 
@@ -1002,6 +1008,11 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		_ = jsonOK(w, map[string]string{"status": "ok"})
 	})
 
+	// GET /buildinfo — server version and Go runtime version
+	mux.HandleFunc("GET /buildinfo", func(w http.ResponseWriter, _ *http.Request) {
+		_ = jsonOK(w, build)
+	})
+
 	// GET /ws — WebSocket endpoint for real-time push
 	mux.HandleFunc("GET /ws", handleWS(s))
 }
@@ -1009,7 +1020,7 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 // Run starts the HTTP server in the foreground with graceful shutdown.
 // promptDefaults is the compiled-in default body for each prompt key; pass nil
 // to use empty defaults (useful in tests).
-func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]string) error {
+func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]string, build BuildInfo) error {
 	if err := validateBindAddr(addr); err != nil {
 		return err
 	}
@@ -1041,7 +1052,7 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	s.startCleanup(cleanupCtx)
 
 	mux := http.NewServeMux()
-	setupHandlers(mux, s)
+	setupHandlers(mux, s, build)
 
 	// Serve embedded frontend at /
 	if frontendFS != nil {

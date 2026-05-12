@@ -109,7 +109,11 @@ func serverCmd(args []string) {
 		for k, v := range AgentBuiltinSpawnDefaults() {
 			promptDefaults[k] = v
 		}
-		if err := server.Run(addr, rootDir, frontendFS, promptDefaults); err != nil {
+		build := server.BuildInfo{
+			Version:   resolveVersion(),
+			GoVersion: runtime.Version(),
+		}
+		if err := server.Run(addr, rootDir, frontendFS, promptDefaults, build); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

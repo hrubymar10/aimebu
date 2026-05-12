@@ -3403,6 +3403,14 @@
 
   loadSettings();
 
+  api('GET', '/buildinfo').then(function (info) {
+    var el = document.getElementById('build-version');
+    if (!el || !info) return;
+    el.textContent = info.version || '';
+    var parts = [info.version, info.go_version].filter(Boolean);
+    if (parts.length) el.title = parts.join(' · ');
+  }).catch(function () {});
+
   updateSysNotifStatus();
 
   loadSounds().catch(function () {});
