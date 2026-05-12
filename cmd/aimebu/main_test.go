@@ -27,6 +27,7 @@ func TestPruneViaServerOrLocalFallsBackOffline(t *testing.T) {
 	writeTestFile(t, filepath.Join(serverDir, "messages.json"), `[{"id":1,"room_id":"general","sender_id":"martin","body":"hi"}]`)
 	writeTestFile(t, filepath.Join(serverDir, "agents.json"), `[{"id":"martin","name":"martin"}]`)
 	writeTestFile(t, filepath.Join(agentsDir, "agent-sessions.json"), `[{"session_id":"s1","name":"alice"}]`)
+	writeTestFile(t, filepath.Join(agentsDir, "agent-warning-acknowledged"), "yes")
 	writeTestFile(t, filepath.Join(serverDir, "macros.json"), `{"macros":{"zzz_custom_only_for_test":"body"}}`)
 
 	result, err := pruneViaServerOrLocal(&client.Client{BaseURL: unusedLoopbackURL(t)}, rootDir, true)
@@ -36,7 +37,7 @@ func TestPruneViaServerOrLocalFallsBackOffline(t *testing.T) {
 	if !strings.Contains(result, `"mode":"offline"`) {
 		t.Fatalf("expected offline result, got %s", result)
 	}
-	if err := pruneLocalSidecars(rootDir); err != nil {
+	if err := pruneLocalSidecars(rootDir, true); err != nil {
 		t.Fatalf("pruneLocalSidecars returned error: %v", err)
 	}
 
@@ -60,6 +61,9 @@ func TestPruneViaServerOrLocalFallsBackOffline(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(agentsDir, "agent-sessions.json")); !os.IsNotExist(err) {
 		t.Fatalf("agent-sessions.json should be removed, got err=%v", err)
 	}
+	if _, err := os.Stat(filepath.Join(agentsDir, "agent-warning-acknowledged")); !os.IsNotExist(err) {
+		t.Fatalf("agent-warning-acknowledged should be removed by prune -a, got err=%v", err)
+	}
 
 	macrosData, err := os.ReadFile(filepath.Join(serverDir, "macros.json"))
 	if err != nil {
@@ -81,6 +85,7 @@ func TestPruneViaServerOrLocalDoesNotMigrateReachableLegacyServer(t *testing.T) 
 	writeTestFile(t, filepath.Join(rootDir, "agents.json"), `[{"id":"martin"}]`)
 	writeTestFile(t, filepath.Join(rootDir, "macros.json"), `{"macros":{"zzz_custom_only_for_test":"body"}}`)
 	writeTestFile(t, filepath.Join(rootDir, "agent-sessions.json"), `[{"session_id":"s1","name":"alice"}]`)
+	writeTestFile(t, filepath.Join(rootDir, "agent-warning-acknowledged"), "yes")
 
 	sawDelete := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +109,7 @@ func TestPruneViaServerOrLocalDoesNotMigrateReachableLegacyServer(t *testing.T) 
 	if !sawDelete {
 		t.Fatal("expected reachable server delete path to be used")
 	}
-	if err := pruneLocalSidecars(rootDir); err != nil {
+	if err := pruneLocalSidecars(rootDir, true); err != nil {
 		t.Fatalf("pruneLocalSidecars returned error: %v", err)
 	}
 
@@ -119,8 +124,66 @@ func TestPruneViaServerOrLocalDoesNotMigrateReachableLegacyServer(t *testing.T) 
 	if _, err := os.Stat(filepath.Join(rootDir, "agent-sessions.json")); !os.IsNotExist(err) {
 		t.Fatalf("legacy agent-sessions.json should be removed, got err=%v", err)
 	}
+	if _, err := os.Stat(filepath.Join(rootDir, "agent-warning-acknowledged")); !os.IsNotExist(err) {
+		t.Fatalf("legacy agent-warning-acknowledged should be removed by prune -a, got err=%v", err)
+	}
 	if _, err := os.Stat(filepath.Join(rootDir, "agents", "agent-sessions.json")); !os.IsNotExist(err) {
 		t.Fatalf("new-layout agent-sessions.json should not be created, got err=%v", err)
+	}
+}
+
+func TestPruneLocalSidecarsPreservesWarningMarkerWithoutIncludeSettings(t *testing.T) {
+	rootDir := t.TempDir()
+	legacyMarker := filepath.Join(rootDir, "agent-warning-acknowledged")
+	newMarker := filepath.Join(rootDir, "agents", "agent-warning-acknowledged")
+
+	writeTestFile(t, filepath.Join(rootDir, "agent-sessions.json"), `[{"session_id":"s1","name":"alice"}]`)
+	writeTestFile(t, filepath.Join(rootDir, "agents", "agent-sessions.json"), `[{"session_id":"s2","name":"bob"}]`)
+	writeTestFile(t, legacyMarker, "yes")
+	writeTestFile(t, newMarker, "yes")
+
+	if err := pruneLocalSidecars(rootDir, false); err != nil {
+		t.Fatalf("pruneLocalSidecars returned error: %v", err)
+	}
+
+	for _, path := range []string{
+		filepath.Join(rootDir, "agent-sessions.json"),
+		filepath.Join(rootDir, "agents", "agent-sessions.json"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s should be removed, got err=%v", path, err)
+		}
+	}
+	for _, path := range []string{legacyMarker, newMarker} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s should be preserved by plain prune, got err=%v", path, err)
+		}
+	}
+}
+
+func TestPruneLocalSidecarsRemovesWarningMarkerWithIncludeSettings(t *testing.T) {
+	rootDir := t.TempDir()
+	legacyMarker := filepath.Join(rootDir, "agent-warning-acknowledged")
+	newMarker := filepath.Join(rootDir, "agents", "agent-warning-acknowledged")
+
+	writeTestFile(t, filepath.Join(rootDir, "agent-sessions.json"), `[{"session_id":"s1","name":"alice"}]`)
+	writeTestFile(t, filepath.Join(rootDir, "agents", "agent-sessions.json"), `[{"session_id":"s2","name":"bob"}]`)
+	writeTestFile(t, legacyMarker, "yes")
+	writeTestFile(t, newMarker, "yes")
+
+	if err := pruneLocalSidecars(rootDir, true); err != nil {
+		t.Fatalf("pruneLocalSidecars returned error: %v", err)
+	}
+
+	for _, path := range []string{
+		filepath.Join(rootDir, "agent-sessions.json"),
+		filepath.Join(rootDir, "agents", "agent-sessions.json"),
+		legacyMarker,
+		newMarker,
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s should be removed by prune -a, got err=%v", path, err)
+		}
 	}
 }
 

@@ -39,6 +39,32 @@ func TestDaemonStatusUsesLegacyPIDWithoutMigratingStore(t *testing.T) {
 	}
 }
 
+func TestDaemonStatusFallsBackToLiveLegacyPIDWhenServerPIDIsStale(t *testing.T) {
+	rootDir := t.TempDir()
+	serverPIDPath := filepath.Join(rootDir, "server", "aimebu.pid")
+	legacyPIDPath := filepath.Join(rootDir, "aimebu.pid")
+
+	writeDaemonFile(t, serverPIDPath, "999999")
+	writeDaemonFile(t, legacyPIDPath, strconv.Itoa(os.Getpid()))
+
+	running, pid, err := DaemonStatus(rootDir)
+	if err != nil {
+		t.Fatalf("DaemonStatus() error = %v", err)
+	}
+	if !running {
+		t.Fatal("DaemonStatus() = not running, want running")
+	}
+	if pid != os.Getpid() {
+		t.Fatalf("DaemonStatus() pid = %d, want %d", pid, os.Getpid())
+	}
+	if _, err := os.Stat(serverPIDPath); !os.IsNotExist(err) {
+		t.Fatalf("stale server pid file should be removed, got err=%v", err)
+	}
+	if _, err := os.Stat(legacyPIDPath); err != nil {
+		t.Fatalf("legacy pid file should remain, got err=%v", err)
+	}
+}
+
 func writeDaemonFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

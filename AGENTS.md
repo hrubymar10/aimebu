@@ -211,12 +211,13 @@ holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
 `agents.json`, `macros.json`, `settings.json`, `sounds/`, `aimebu.pid`,
 `aimebu.log`) and `agents/` holds agent-CLI state
 (`agent-sessions.json`, `agent-warning-acknowledged`). `aimebu prune`
-wipes conversation state; `aimebu prune -a` also wipes macros and settings
-(including sounds). When `AIMEBU_URL` is loopback and the server is down,
-the CLI falls back to pruning this config root directly. Legacy flat-layout
-state is migrated into `server/` / `agents/` on first authoritative use by
-`server serve`, `server start`, the offline-prune fallback, or `aimebu agent`;
-unknown root files are left alone.
+wipes conversation state, including `agents/agent-sessions.json`;
+`aimebu prune -a` also wipes user settings, including macros, sounds, and
+`agents/agent-warning-acknowledged`. When `AIMEBU_URL` is loopback and the
+server is down, the CLI falls back to pruning this config root directly.
+Legacy flat-layout state is migrated into `server/` / `agents/` on first
+authoritative use by `server serve`, `server start`, the offline-prune
+fallback, or `aimebu agent`; unknown root files are left alone.
 
 ## Web UI
 

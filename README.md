@@ -462,7 +462,13 @@ migrates known root-level files into `server/` and `agents/` automatically.
 `aimebu prune`, and `aimebu agent` trigger the relevant migration before they
 take ownership of state. Unknown files at the root are left alone.
 
-`aimebu prune` wipes conversation state; `aimebu prune -a` additionally wipes user settings. If `AIMEBU_URL` points at loopback (`localhost`, `127.0.0.1`, `::1`) and the server is down, the CLI performs the same prune directly against `AIMEBU_CONFIG_DIR` / `~/.aimebu`. Runtime artifacts are never touched.
+`aimebu prune` wipes conversation state, including
+`agents/agent-sessions.json`; `aimebu prune -a` additionally wipes user
+settings, including macros, sounds, and
+`agents/agent-warning-acknowledged`. If `AIMEBU_URL` points at loopback
+(`localhost`, `127.0.0.1`, `::1`) and the server is down, the CLI performs
+the same prune directly against `AIMEBU_CONFIG_DIR` / `~/.aimebu`. Runtime
+artifacts are never touched.
 
 Human-readable JSON. Inspect with `cat`/`jq`, edit directly if needed.
 

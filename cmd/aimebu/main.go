@@ -468,6 +468,7 @@ func pruneCmd(args []string) {
 			fmt.Println("  • server/messages.json       (full conversation history)")
 			fmt.Println("  • server/agents.json         (all registered agents)")
 			fmt.Println("  • agents/agent-sessions.json (aimebu agent resume state)")
+			fmt.Println("  • agents/agent-warning-acknowledged (first-run warning acknowledgement)")
 			fmt.Println("  • server/macros.json         (global + per-room macros)")
 			fmt.Println()
 			fmt.Println("Preserved:")
@@ -480,6 +481,7 @@ func pruneCmd(args []string) {
 			fmt.Println("  • agents/agent-sessions.json (aimebu agent resume state)")
 			fmt.Println()
 			fmt.Println("Preserved:")
+			fmt.Println("  • agents/agent-warning-acknowledged (first-run warning acknowledgement)")
 			fmt.Println("  • server/macros.json         (global + per-room macros)")
 			fmt.Println("  • server/aimebu.pid, server/aimebu.log (runtime artifacts)")
 		}
@@ -500,9 +502,9 @@ func pruneCmd(args []string) {
 	}
 	fmt.Println(client.PrettyJSON(result))
 
-	// agent-sessions.json is always removed (conversation state); macros are
-	// only removed with -a (user settings).
-	if err := pruneLocalSidecars(rootDir); err != nil {
+	// agent-sessions.json is always removed (conversation state); user-setting
+	// markers are only removed with -a.
+	if err := pruneLocalSidecars(rootDir, all); err != nil {
 		fmt.Fprintf(os.Stderr, "warn: %v\n", err)
 	}
 }
@@ -532,7 +534,7 @@ func pruneViaServerOrLocal(c *client.Client, rootDir string, all bool) (string, 
 	return `{"status":"cleared","mode":"offline"}`, nil
 }
 
-func pruneLocalSidecars(rootDir string) error {
+func pruneLocalSidecars(rootDir string, includeSettings bool) error {
 	for _, sessPath := range []string{
 		filepath.Join(rootDir, "agent-sessions.json"),
 		filepath.Join(rootDir, "agents", "agent-sessions.json"),
@@ -541,6 +543,20 @@ func pruneLocalSidecars(rootDir string) error {
 			return fmt.Errorf("could not remove %s: %w", sessPath, err)
 		}
 	}
+
+	if !includeSettings {
+		return nil
+	}
+
+	for _, markerPath := range []string{
+		filepath.Join(rootDir, "agent-warning-acknowledged"),
+		filepath.Join(rootDir, "agents", "agent-warning-acknowledged"),
+	} {
+		if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("could not remove %s: %w", markerPath, err)
+		}
+	}
+
 	return nil
 }
 

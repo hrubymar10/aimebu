@@ -23,12 +23,26 @@ func logFile(serverDir string) string {
 	return filepath.Join(serverDir, "aimebu.log")
 }
 
-func resolvePIDFile(rootDir string) string {
+func resolveActivePID(rootDir string) (path string, running bool, pid int, err error) {
 	serverPID := pidFile(filepath.Join(rootDir, "server"))
-	if _, err := os.Stat(serverPID); err == nil {
-		return serverPID
+	running, pid, err = daemonStatusFromPIDFile(serverPID)
+	if err != nil {
+		return "", false, 0, err
 	}
-	return legacyPIDFile(rootDir)
+	if running {
+		return serverPID, true, pid, nil
+	}
+
+	legacyPID := legacyPIDFile(rootDir)
+	running, pid, err = daemonStatusFromPIDFile(legacyPID)
+	if err != nil {
+		return "", false, 0, err
+	}
+	if running {
+		return legacyPID, true, pid, nil
+	}
+
+	return serverPID, false, 0, nil
 }
 
 // DaemonStart launches `aimebu server serve` as a background process.
@@ -97,8 +111,7 @@ func DaemonStart(selfBin, addr, rootDir string) error {
 
 // DaemonStop sends SIGTERM to the daemon and waits for it to exit.
 func DaemonStop(rootDir string) error {
-	pidPath := resolvePIDFile(rootDir)
-	running, pid, err := daemonStatusFromPIDFile(pidPath)
+	pidPath, running, pid, err := resolveActivePID(rootDir)
 	if err != nil {
 		return err
 	}
@@ -134,7 +147,8 @@ func DaemonStop(rootDir string) error {
 
 // DaemonStatus checks if the daemon is running.
 func DaemonStatus(rootDir string) (running bool, pid int, err error) {
-	return daemonStatusFromPIDFile(resolvePIDFile(rootDir))
+	_, running, pid, err = resolveActivePID(rootDir)
+	return running, pid, err
 }
 
 func daemonStatusFromPIDFile(pidPath string) (running bool, pid int, err error) {
