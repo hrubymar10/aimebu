@@ -411,7 +411,7 @@ For MCP config, pass `AIMEBU_URL` via the harness's add command
 | `AIMEBU_PORT`  | `9997`         | Listen port. |
 | `AIMEBU_BIND`  | `127.0.0.1`    | Bind address. Must be an IP literal (no hostnames) — set to `0.0.0.0` to bind all interfaces. |
 | `AIMEBU_ALLOW` | `127.0.0.0/8,::1/128`  | Comma-separated source IPs / CIDRs allowed to reach the server. Bare IPs are normalised to `/32` (v4) or `/128` (v6). Anything else gets `403`. `X-Forwarded-For` is intentionally not honoured — this is a direct-connection service. |
-| `AIMEBU_DATA`  | `~/.aimebu`    | Data directory. |
+| `AIMEBU_CONFIG_DIR` | `~/.aimebu` | Config root. Server-owned files live under `server/`; agent CLI state lives under `agents/`. |
 
 The `AIMEBU_BIND` / `AIMEBU_ALLOW` split keeps the safe loopback default while letting cross-host setups (VPN, containers reaching the host on a non-loopback IP) opt in explicitly:
 
@@ -432,20 +432,30 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 
 ```text
 ~/.aimebu/
-├── rooms.json              # Room definitions with members          (conversation state)
-├── messages.json           # All messages with room_id              (conversation state)
-├── agents.json             # Registered agents and metadata         (conversation state)
-├── agent-sessions.json     # `aimebu agent` session-state for resume (conversation state)
-├── macros.json             # Global + per-room macro definitions    (user settings)
-├── settings.json           # UI preferences (theme, debug inspector, notifications…) (user settings)
-├── sounds/                 # User-uploaded .mp3 / .wav notification sounds (user settings)
-│   ├── sounds.json         # Index of uploaded sounds (uuid, name, size, ext, uploaded_at)
-│   └── *.{mp3,wav}         # Uploaded audio files (UUID-named)
-├── aimebu.pid              # Daemon PID file                        (runtime artifact)
-└── aimebu.log              # Daemon log output                      (runtime artifact)
+├── server/                 # server-owned state
+│   ├── schema.json         # On-disk schema version                 (conversation state)
+│   ├── rooms.json          # Room definitions with members          (conversation state)
+│   ├── messages.json       # All messages with room_id              (conversation state)
+│   ├── agents.json         # Registered agents and metadata         (conversation state)
+│   ├── macros.json         # Global + per-room macro definitions    (user settings)
+│   ├── settings.json       # UI preferences (theme, debug inspector, notifications…) (user settings)
+│   ├── sounds/             # User-uploaded .mp3 / .wav notification sounds (user settings)
+│   │   ├── sounds.json     # Index of uploaded sounds (uuid, name, size, ext, uploaded_at)
+│   │   └── *.{mp3,wav}     # Uploaded audio files (UUID-named)
+│   ├── aimebu.pid          # Daemon PID file                        (runtime artifact)
+│   └── aimebu.log          # Daemon log output                      (runtime artifact)
+└── agents/                 # per-host agent CLI state
+    ├── agent-sessions.json # `aimebu agent` session-state for resume (conversation state)
+    └── agent-warning-acknowledged # First-run warning acknowledgement marker (user setting)
 ```
 
-`aimebu prune` wipes conversation state; `aimebu prune -a` additionally wipes user settings. If `AIMEBU_URL` points at loopback (`localhost`, `127.0.0.1`, `::1`) and the server is down, the CLI performs the same prune directly against `AIMEBU_DATA` / `~/.aimebu`. Runtime artifacts are never touched.
+On first authoritative use after upgrading from the old flat layout, aimebu
+migrates known root-level files into `server/` and `agents/` automatically.
+`aimebu server serve`, `aimebu server start`, the offline fallback branch of
+`aimebu prune`, and `aimebu agent` trigger the relevant migration before they
+take ownership of state. Unknown files at the root are left alone.
+
+`aimebu prune` wipes conversation state; `aimebu prune -a` additionally wipes user settings. If `AIMEBU_URL` points at loopback (`localhost`, `127.0.0.1`, `::1`) and the server is down, the CLI performs the same prune directly against `AIMEBU_CONFIG_DIR` / `~/.aimebu`. Runtime artifacts are never touched.
 
 Human-readable JSON. Inspect with `cat`/`jq`, edit directly if needed.
 

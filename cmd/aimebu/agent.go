@@ -21,12 +21,13 @@ import (
 	"time"
 
 	aimebuclient "github.com/hrubymar10/aimebu/internal/client"
+	"github.com/hrubymar10/aimebu/internal/config"
 )
 
 // agentNamePattern mirrors store.go's reclaimNamePattern.
 var agentNamePattern = regexp.MustCompile(`^[a-z]{3,12}$`)
 
-// agentSession is one entry in ~/.aimebu/agent-sessions.json.
+// agentSession is one entry in agents/agent-sessions.json.
 type agentSession struct {
 	CWD       string    `json:"cwd"`
 	Harness   string    `json:"harness"`
@@ -67,21 +68,26 @@ agents you don't fully trust.
 You are responsible for any risks and harms this may cause.
 
 Type "yes" to acknowledge and proceed (this prompt won't appear
-again — delete ~/.aimebu/agent-warning-acknowledged to re-enable):`
+again — delete %s to re-enable):`
+
+// agentInit migrates agent-owned state once per process startup. Migration
+// failures are warnings, not fatal, so transient FS issues do not brick
+// aimebu agent before the user can even answer the warning prompt.
+func agentInit() {
+	if err := config.MigrateAgents(config.Root()); err != nil {
+		fmt.Fprintf(os.Stderr, "aimebu agent: failed to migrate agent state: %v\n", err)
+	}
+}
 
 // agentCheckWarning checks for the first-run acknowledgement marker and
 // prompts the user if it is absent. Exits if the user declines.
 func agentCheckWarning() {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return // can't check; skip
-	}
-	marker := filepath.Join(home, ".aimebu", agentWarningMarker)
+	marker := filepath.Join(config.AgentsDir(), agentWarningMarker)
 	if _, err := os.Stat(marker); err == nil {
 		return // already acknowledged
 	}
 
-	fmt.Fprintln(os.Stderr, agentWarningText)
+	fmt.Fprintf(os.Stderr, agentWarningText+"\n", marker)
 	fmt.Fprint(os.Stderr, "> ")
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -112,6 +118,7 @@ var harnessDetect = map[string]string{
 }
 
 func agentCmd(args []string) {
+	agentInit()
 	agentCheckWarning()
 
 	harness := ""
@@ -441,21 +448,14 @@ func agentWriteListenInstructions(pb *strings.Builder, rooms []string) {
 }
 
 // agentSessionsPath returns the path to the agent sessions state file.
-func agentSessionsPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".aimebu", "agent-sessions.json"), nil
+func agentSessionsPath() string {
+	return filepath.Join(config.AgentsDir(), "agent-sessions.json")
 }
 
-// agentLoadSessions reads ~/.aimebu/agent-sessions.json.
+// agentLoadSessions reads agents/agent-sessions.json.
 // Returns nil (not an error) if the file does not exist yet.
 func agentLoadSessions() ([]agentSession, error) {
-	path, err := agentSessionsPath()
-	if err != nil {
-		return nil, err
-	}
+	path := agentSessionsPath()
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -470,13 +470,10 @@ func agentLoadSessions() ([]agentSession, error) {
 	return sessions, nil
 }
 
-// agentSaveSession upserts sess into ~/.aimebu/agent-sessions.json by name,
+// agentSaveSession upserts sess into agents/agent-sessions.json by name,
 // then writes atomically via a tmp file + rename.
 func agentSaveSession(sess agentSession) error {
-	path, err := agentSessionsPath()
-	if err != nil {
-		return err
-	}
+	path := agentSessionsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -1082,13 +1079,16 @@ Options:
                          Usable alone (fresh bootstrap with name continuity) or with
                          --resume-id as an escape hatch when the state file is missing.
   --resume-id <uuid>     Resume a prior session by session UUID. Loads the agent name
-                         from ~/.aimebu/agent-sessions.json; pass --name as fallback.
+                         from agents/agent-sessions.json in the aimebu config dir;
+                         pass --name as fallback.
   --resume-name <slug>   Resume a prior session by agent name. Loads the session UUID
-                         from ~/.aimebu/agent-sessions.json; errors if not found.
+                         from agents/agent-sessions.json in the aimebu config dir;
+                         errors if not found.
   --                     Separator before the harness command (required).
 
-Session state is persisted in ~/.aimebu/agent-sessions.json after each successful
-bootstrap so that --resume-id and --resume-name can look up prior sessions.
+Session state is persisted in agents/agent-sessions.json under the aimebu
+config dir after each successful bootstrap so that --resume-id and
+--resume-name can look up prior sessions.
 
 Supported harnesses: claude-code (claude, claude-docker), codex (codex, codex-docker)
 

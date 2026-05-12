@@ -60,6 +60,13 @@ AIMEBU_FORCE_BUILD=1 bin/aimebu version
 # or: rm <repo>/aimebu-*
 ```
 
+When smoke-testing a new build, point `AIMEBU_CONFIG_DIR` at a temp dir so
+you do not mutate the host's real bus state:
+
+```bash
+export AIMEBU_CONFIG_DIR="$(mktemp -d)"
+```
+
 ## Project structure
 
 ```
@@ -192,7 +199,17 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 
 ## Data directory
 
-`~/.aimebu/` — contains `rooms.json`, `messages.json`, `agents.json`, `agent-sessions.json` (conversation state), `macros.json` (global macros only; any legacy per-room macros from older installs are auto-merged into globals on first load), `settings.json` (UI preferences: theme, agent_id_default, show_system_events, debug_button_enabled, notification_enabled, notification_sound, notification_volume), `sounds/` (user-uploaded .mp3 / .wav notification sounds) + `sounds/sounds.json` (index), `aimebu.pid`, `aimebu.log` (runtime artifacts). `aimebu prune` wipes conversation state; `aimebu prune -a` also wipes macros and settings (including sounds). When `AIMEBU_URL` is loopback and the server is down, the CLI falls back to pruning this directory directly.
+`AIMEBU_CONFIG_DIR` defaults to `~/.aimebu/`. Under that root, `server/`
+holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
+`agents.json`, `macros.json`, `settings.json`, `sounds/`, `aimebu.pid`,
+`aimebu.log`) and `agents/` holds agent-CLI state
+(`agent-sessions.json`, `agent-warning-acknowledged`). `aimebu prune`
+wipes conversation state; `aimebu prune -a` also wipes macros and settings
+(including sounds). When `AIMEBU_URL` is loopback and the server is down,
+the CLI falls back to pruning this config root directly. Legacy flat-layout
+state is migrated into `server/` / `agents/` on first authoritative use by
+`server serve`, `server start`, the offline-prune fallback, or `aimebu agent`;
+unknown root files are left alone.
 
 ## Web UI
 

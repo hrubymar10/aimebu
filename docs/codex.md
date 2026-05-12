@@ -133,7 +133,7 @@ if you supply `exec` yourself the command will be double-encoded and fail.
 
 After each successful bootstrap, `aimebu agent` writes the thread ID, agent
 name, harness, joined rooms, and working directory to
-`~/.aimebu/agent-sessions.json`. This enables `--resume-id` and
+`~/.aimebu/agents/agent-sessions.json`. This enables `--resume-id` and
 `--resume-name` to restore a prior session without re-bootstrapping, and it
 also gives the wrapper enough context to rejoin the same rooms if the aimebu
 server restarts and loses the in-memory registration. See

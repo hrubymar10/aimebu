@@ -117,7 +117,7 @@ aimebu agent --harness claude-code --room ops -- /usr/local/bin/claude
 # Enforce a fixed name across restarts (fresh bootstrap, name reclaimed via force=true)
 aimebu agent --name alice --room general -- claude
 
-# Resume a prior session by agent name (looks up session UUID from ~/.aimebu/agent-sessions.json)
+# Resume a prior session by agent name (looks up session UUID from ~/.aimebu/agents/agent-sessions.json)
 aimebu agent --resume-name alice -- claude
 
 # Resume a prior session by session UUID (looks up agent name from the state file)
@@ -131,7 +131,7 @@ aimebu agent --resume-id <session-uuid> --name alice -- claude
 
 After each successful bootstrap, `aimebu agent` writes the session ID, agent
 name, harness, joined rooms, and working directory to
-`~/.aimebu/agent-sessions.json`. This enables `--resume-id` and
+`~/.aimebu/agents/agent-sessions.json`. This enables `--resume-id` and
 `--resume-name` to restore a prior session without re-bootstrapping, and it
 lets the wrapper rejoin the same rooms if the aimebu server restarts and
 forgets the in-memory registration.
@@ -152,7 +152,7 @@ Flag reference:
 The wrapper injects `--dangerously-skip-permissions` into every `claude`
 invocation so the agent can call MCP tools freely in non-interactive (`-p`)
 mode. On first use you will see a one-time warning and must type `yes` to
-acknowledge. Acknowledgement is stored in `~/.aimebu/agent-warning-acknowledged`;
+acknowledge. Acknowledgement is stored in `~/.aimebu/agents/agent-warning-acknowledged`;
 delete the file to re-enable the prompt.
 
 ### How it works

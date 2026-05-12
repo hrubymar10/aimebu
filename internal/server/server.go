@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/config"
 	"github.com/hrubymar10/aimebu/internal/types"
 )
 
@@ -965,10 +966,14 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 }
 
 // Run starts the HTTP server in the foreground with graceful shutdown.
-func Run(addr, dataDir string, frontendFS fs.FS) error {
+func Run(addr, rootDir string, frontendFS fs.FS) error {
 	if err := validateBindAddr(addr); err != nil {
 		return err
 	}
+	if err := config.MigrateServer(rootDir); err != nil {
+		return fmt.Errorf("migrate server config: %w", err)
+	}
+	dataDir := filepath.Join(rootDir, "server")
 	allow, err := resolveAllow()
 	if err != nil {
 		return err
@@ -1054,14 +1059,4 @@ func DefaultAddr() string {
 		bind = "127.0.0.1"
 	}
 	return bind + ":" + port
-}
-
-// DefaultDataDir returns the data directory from env vars.
-func DefaultDataDir() string {
-	dataDir := os.Getenv("AIMEBU_DATA")
-	if dataDir == "" {
-		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, ".aimebu")
-	}
-	return dataDir
 }

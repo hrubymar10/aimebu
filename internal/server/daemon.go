@@ -11,26 +11,39 @@ import (
 	"time"
 )
 
-func pidFile(dataDir string) string {
-	return filepath.Join(dataDir, "aimebu.pid")
+func pidFile(serverDir string) string {
+	return filepath.Join(serverDir, "aimebu.pid")
 }
 
-func logFile(dataDir string) string {
-	return filepath.Join(dataDir, "aimebu.log")
+func legacyPIDFile(rootDir string) string {
+	return filepath.Join(rootDir, "aimebu.pid")
+}
+
+func logFile(serverDir string) string {
+	return filepath.Join(serverDir, "aimebu.log")
+}
+
+func resolvePIDFile(rootDir string) string {
+	serverPID := pidFile(filepath.Join(rootDir, "server"))
+	if _, err := os.Stat(serverPID); err == nil {
+		return serverPID
+	}
+	return legacyPIDFile(rootDir)
 }
 
 // DaemonStart launches `aimebu server serve` as a background process.
-func DaemonStart(selfBin, addr, dataDir string) error {
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+func DaemonStart(selfBin, addr, rootDir string) error {
+	serverDir := filepath.Join(rootDir, "server")
+	if err := os.MkdirAll(serverDir, 0o755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
 
 	// Check if already running
-	if running, pid, _ := DaemonStatus(dataDir); running {
+	if running, pid, _ := DaemonStatus(rootDir); running {
 		return fmt.Errorf("aimebu already running (pid %d)", pid)
 	}
 
-	lf, err := os.OpenFile(logFile(dataDir), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	lf, err := os.OpenFile(logFile(serverDir), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
@@ -41,7 +54,8 @@ func DaemonStart(selfBin, addr, dataDir string) error {
 	cmd.Env = append(os.Environ(),
 		"AIMEBU_BIND="+addrHost(addr),
 		"AIMEBU_PORT="+addrPort(addr),
-		"AIMEBU_DATA="+dataDir,
+		"AIMEBU_CONFIG_DIR="+rootDir,
+		"AIMEBU_DAEMON_CHILD=1",
 	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
@@ -52,15 +66,15 @@ func DaemonStart(selfBin, addr, dataDir string) error {
 	lf.Close()
 
 	pid := cmd.Process.Pid
-	if err := os.WriteFile(pidFile(dataDir), []byte(strconv.Itoa(pid)), 0o644); err != nil {
+	if err := os.WriteFile(pidFile(serverDir), []byte(strconv.Itoa(pid)), 0o644); err != nil {
 		return fmt.Errorf("write pid file: %w", err)
 	}
 
 	// Wait briefly and confirm it's alive + healthy
 	time.Sleep(200 * time.Millisecond)
 	if !processAlive(pid) {
-		_ = os.Remove(pidFile(dataDir))
-		return fmt.Errorf("daemon exited immediately — check %s", logFile(dataDir))
+		_ = os.Remove(pidFile(serverDir))
+		return fmt.Errorf("daemon exited immediately — check %s", logFile(serverDir))
 	}
 
 	// Try hitting health endpoint
@@ -82,8 +96,9 @@ func DaemonStart(selfBin, addr, dataDir string) error {
 }
 
 // DaemonStop sends SIGTERM to the daemon and waits for it to exit.
-func DaemonStop(dataDir string) error {
-	running, pid, err := DaemonStatus(dataDir)
+func DaemonStop(rootDir string) error {
+	pidPath := resolvePIDFile(rootDir)
+	running, pid, err := daemonStatusFromPIDFile(pidPath)
 	if err != nil {
 		return err
 	}
@@ -103,7 +118,7 @@ func DaemonStop(dataDir string) error {
 	// Wait up to 5s for exit
 	for i := 0; i < 50; i++ {
 		if !processAlive(pid) {
-			_ = os.Remove(pidFile(dataDir))
+			_ = os.Remove(pidPath)
 			fmt.Printf("aimebu stopped (was pid %d)\n", pid)
 			return nil
 		}
@@ -112,14 +127,18 @@ func DaemonStop(dataDir string) error {
 
 	// Force kill
 	_ = proc.Signal(syscall.SIGKILL)
-	_ = os.Remove(pidFile(dataDir))
+	_ = os.Remove(pidPath)
 	fmt.Printf("aimebu killed (was pid %d)\n", pid)
 	return nil
 }
 
 // DaemonStatus checks if the daemon is running.
-func DaemonStatus(dataDir string) (running bool, pid int, err error) {
-	data, err := os.ReadFile(pidFile(dataDir))
+func DaemonStatus(rootDir string) (running bool, pid int, err error) {
+	return daemonStatusFromPIDFile(resolvePIDFile(rootDir))
+}
+
+func daemonStatusFromPIDFile(pidPath string) (running bool, pid int, err error) {
+	data, err := os.ReadFile(pidPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, 0, nil
@@ -129,12 +148,12 @@ func DaemonStatus(dataDir string) (running bool, pid int, err error) {
 
 	pid, err = strconv.Atoi(string(data))
 	if err != nil {
-		_ = os.Remove(pidFile(dataDir))
+		_ = os.Remove(pidPath)
 		return false, 0, nil
 	}
 
 	if !processAlive(pid) {
-		_ = os.Remove(pidFile(dataDir))
+		_ = os.Remove(pidPath)
 		return false, 0, nil
 	}
 

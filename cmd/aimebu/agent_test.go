@@ -4,9 +4,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/config"
 )
 
 func TestAgentNamePattern(t *testing.T) {
@@ -257,6 +261,40 @@ func TestAgentBuildRecoveryPrompt(t *testing.T) {
 	}
 	if !contains(prompt, "Join these rooms: general, dev.") {
 		t.Fatalf("prompt %q does not include room joins", prompt)
+	}
+}
+
+func TestAgentInitMigratesLegacyState(t *testing.T) {
+	rootDir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", rootDir)
+	writeAgentFile(t, filepath.Join(rootDir, "agent-sessions.json"), `[{"session_id":"s1","name":"alice"}]`)
+	writeAgentFile(t, filepath.Join(rootDir, "agent-warning-acknowledged"), "yes")
+
+	agentInit()
+
+	path := agentSessionsPath()
+	if want := filepath.Join(config.AgentsDir(), "agent-sessions.json"); path != want {
+		t.Fatalf("agentSessionsPath() = %q, want %q", path, want)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read migrated session file: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != `[{"session_id":"s1","name":"alice"}]` {
+		t.Fatalf("migrated sessions = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(config.AgentsDir(), agentWarningMarker)); err != nil {
+		t.Fatalf("warning marker not migrated: %v", err)
+	}
+}
+
+func writeAgentFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 

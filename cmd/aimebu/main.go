@@ -17,6 +17,7 @@ import (
 
 	aimebu "github.com/hrubymar10/aimebu"
 	"github.com/hrubymar10/aimebu/internal/client"
+	"github.com/hrubymar10/aimebu/internal/config"
 	"github.com/hrubymar10/aimebu/internal/mcp"
 	"github.com/hrubymar10/aimebu/internal/server"
 )
@@ -74,6 +75,17 @@ func main() {
 	}
 }
 
+func prepareServerOwnership(rootDir string) error {
+	running, pid, err := server.DaemonStatus(rootDir)
+	if err != nil {
+		return err
+	}
+	if running {
+		return fmt.Errorf("aimebu is already running (pid %d)", pid)
+	}
+	return config.MigrateServer(rootDir)
+}
+
 // ── Server ─────────────────────────────────────────────────────────
 
 func serverCmd(args []string) {
@@ -82,33 +94,41 @@ func serverCmd(args []string) {
 		os.Exit(1)
 	}
 
+	rootDir := config.Root()
 	addr := server.DefaultAddr()
-	dataDir := server.DefaultDataDir()
 
 	switch args[0] {
 	case "serve":
+		if os.Getenv("AIMEBU_DAEMON_CHILD") == "" {
+			if err := prepareServerOwnership(rootDir); err != nil {
+				fatal("serve", err)
+			}
+		}
 		frontendFS, _ := fs.Sub(aimebu.FrontendFS, "frontend")
-		if err := server.Run(addr, dataDir, frontendFS); err != nil {
+		if err := server.Run(addr, rootDir, frontendFS); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
 	case "start":
+		if err := prepareServerOwnership(rootDir); err != nil {
+			fatal("start", err)
+		}
 		selfBin, err := os.Executable()
 		if err != nil {
 			fatal("resolve executable path", err)
 		}
-		if err := server.DaemonStart(selfBin, addr, dataDir); err != nil {
+		if err := server.DaemonStart(selfBin, addr, rootDir); err != nil {
 			fatal("start", err)
 		}
 
 	case "stop":
-		if err := server.DaemonStop(dataDir); err != nil {
+		if err := server.DaemonStop(rootDir); err != nil {
 			fatal("stop", err)
 		}
 
 	case "status":
-		running, pid, err := server.DaemonStatus(dataDir)
+		running, pid, err := server.DaemonStatus(rootDir)
 		if err != nil {
 			fatal("status", err)
 		}
@@ -441,26 +461,27 @@ func pruneCmd(args []string) {
 		if err != nil || stat.Mode()&fs.ModeCharDevice == 0 {
 			fatal("prune", fmt.Errorf("stdin is not a terminal; use -y to bypass confirmation"))
 		}
+		rootDir := config.Root()
 		if all {
-			fmt.Println("This will permanently delete EVERYTHING in ~/.aimebu/:")
-			fmt.Println("  • rooms.json          (all rooms and membership)")
-			fmt.Println("  • messages.json       (full conversation history)")
-			fmt.Println("  • agents.json         (all registered agents)")
-			fmt.Println("  • agent-sessions.json (aimebu agent resume state)")
-			fmt.Println("  • macros.json         (global + per-room macros)")
+			fmt.Printf("This will permanently delete EVERYTHING under %s:\n", rootDir)
+			fmt.Println("  • server/rooms.json          (all rooms and membership)")
+			fmt.Println("  • server/messages.json       (full conversation history)")
+			fmt.Println("  • server/agents.json         (all registered agents)")
+			fmt.Println("  • agents/agent-sessions.json (aimebu agent resume state)")
+			fmt.Println("  • server/macros.json         (global + per-room macros)")
 			fmt.Println()
 			fmt.Println("Preserved:")
-			fmt.Println("  • aimebu.pid, aimebu.log (runtime artifacts)")
+			fmt.Println("  • server/aimebu.pid, server/aimebu.log (runtime artifacts)")
 		} else {
 			fmt.Println("This will permanently delete:")
-			fmt.Println("  • rooms.json          (all rooms and membership)")
-			fmt.Println("  • messages.json       (full conversation history)")
-			fmt.Println("  • agents.json         (all registered agents)")
-			fmt.Println("  • agent-sessions.json (aimebu agent resume state)")
+			fmt.Println("  • server/rooms.json          (all rooms and membership)")
+			fmt.Println("  • server/messages.json       (full conversation history)")
+			fmt.Println("  • server/agents.json         (all registered agents)")
+			fmt.Println("  • agents/agent-sessions.json (aimebu agent resume state)")
 			fmt.Println()
 			fmt.Println("Preserved:")
-			fmt.Println("  • macros.json         (global + per-room macros)")
-			fmt.Println("  • aimebu.pid, aimebu.log (runtime artifacts)")
+			fmt.Println("  • server/macros.json         (global + per-room macros)")
+			fmt.Println("  • server/aimebu.pid, server/aimebu.log (runtime artifacts)")
 		}
 		fmt.Print("\nAre you sure? [y/N]: ")
 		scanner := bufio.NewScanner(os.Stdin)
@@ -471,9 +492,9 @@ func pruneCmd(args []string) {
 		}
 	}
 
+	rootDir := config.Root()
 	c := client.DefaultClient()
-	dataDir := server.DefaultDataDir()
-	result, err := pruneViaServerOrLocal(c, dataDir, all)
+	result, err := pruneViaServerOrLocal(c, rootDir, all)
 	if err != nil {
 		fatal("prune", err)
 	}
@@ -481,12 +502,12 @@ func pruneCmd(args []string) {
 
 	// agent-sessions.json is always removed (conversation state); macros are
 	// only removed with -a (user settings).
-	if err := pruneLocalSidecars(dataDir); err != nil {
+	if err := pruneLocalSidecars(rootDir); err != nil {
 		fmt.Fprintf(os.Stderr, "warn: %v\n", err)
 	}
 }
 
-func pruneViaServerOrLocal(c *client.Client, dataDir string, all bool) (string, error) {
+func pruneViaServerOrLocal(c *client.Client, rootDir string, all bool) (string, error) {
 	path := "/all"
 	if all {
 		path = "/all?include_settings=true"
@@ -498,16 +519,27 @@ func pruneViaServerOrLocal(c *client.Client, dataDir string, all bool) (string, 
 	if !client.IsUnreachable(err) || !pruneCanUseOfflineFallback(c.BaseURL) {
 		return "", err
 	}
-	if err := server.PruneDataDir(dataDir, all); err != nil {
+	if err := config.MigrateServer(rootDir); err != nil {
+		return "", fmt.Errorf("offline prune: migrate server config: %w", err)
+	}
+	if err := config.MigrateAgents(rootDir); err != nil {
+		return "", fmt.Errorf("offline prune: migrate agent config: %w", err)
+	}
+	serverDir := filepath.Join(rootDir, "server")
+	if err := server.PruneDataDir(serverDir, all); err != nil {
 		return "", fmt.Errorf("offline prune: %w", err)
 	}
 	return `{"status":"cleared","mode":"offline"}`, nil
 }
 
-func pruneLocalSidecars(dataDir string) error {
-	sessPath := filepath.Join(dataDir, "agent-sessions.json")
-	if err := os.Remove(sessPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("could not remove %s: %w", sessPath, err)
+func pruneLocalSidecars(rootDir string) error {
+	for _, sessPath := range []string{
+		filepath.Join(rootDir, "agent-sessions.json"),
+		filepath.Join(rootDir, "agents", "agent-sessions.json"),
+	} {
+		if err := os.Remove(sessPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("could not remove %s: %w", sessPath, err)
+		}
 	}
 	return nil
 }
@@ -671,7 +703,7 @@ Environment:
   AIMEBU_PORT      Server listen port (default: 9997)
   AIMEBU_BIND      Server bind address (default: 127.0.0.1)
   AIMEBU_ALLOW     Comma-separated IPs/CIDRs allowed to connect (default: 127.0.0.0/8,::1/128)
-  AIMEBU_DATA      Server data directory (default: ~/.aimebu)
+  AIMEBU_CONFIG_DIR  Config root directory (default: ~/.aimebu)
 
 Note: The CLI is for humans. AI assistants use the MCP server (aimebu mcp),
 which assigns names automatically via bus_register.
