@@ -226,6 +226,43 @@ is migrated into `server/` / `agents/` on first authoritative use by
 
 Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents.
 
+### Headless browser verification
+
+When running inside a dockerized dev container, use Chromium +
+puppeteer-core to verify UI changes. **Do not** use `open <url>` — it
+does not work in headless and verifies nothing.
+
+Quick availability check:
+
+```bash
+which chromium && npm ls -g puppeteer-core
+```
+
+If both are present, run a one-shot Puppeteer script:
+
+```js
+const puppeteer = require('puppeteer-core');
+const b = await puppeteer.launch({
+  executablePath: '/usr/bin/chromium',
+  headless: true,
+  args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+});
+const p = await b.newPage();
+await p.goto('http://localhost:9997');
+// assertions / screenshots here
+await b.close();
+```
+
+The three Chromium flags are required: `--no-sandbox` /
+`--disable-setuid-sandbox` because Chromium's sandbox needs kernel
+privileges the container doesn't grant; `--disable-dev-shm-usage`
+because `/dev/shm` is size-constrained and Chromium otherwise crashes
+silently on page load.
+
+If `require('puppeteer-core')` fails, use
+`require('/usr/local/lib/node_modules/puppeteer-core')` until your
+container image includes `NODE_PATH=/usr/local/lib/node_modules`.
+
 ## Bind & allowlist
 
 Two env vars split listen-side and access-control concerns so the safe
