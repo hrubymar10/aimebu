@@ -167,6 +167,13 @@ AIMEBU_FORCE_BUILD=1 aimebu version
 # or: rm <path-to-aimebu>/aimebu-*
 ```
 
+Only the literal value `AIMEBU_FORCE_BUILD=1` triggers a forced build —
+any other value (including `0`) leaves the cached binary in place. When
+forced, the dev wrapper builds into a unique tmp binary under
+`${TMPDIR:-/tmp}` for that run instead of overwriting the repo-local
+cache file. Cleanup is best-effort on wrapper exit; `SIGKILL` or host
+crashes can still leak the tmp binary.
+
 ## Quick start
 
 ### 1. Start the server

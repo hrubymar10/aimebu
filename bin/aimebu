@@ -11,16 +11,63 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 BINARY="$REPO_DIR/aimebu-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+FORCE_BUILD="${AIMEBU_FORCE_BUILD:-}"
+TEMP_BINARY=""
+pid=""
+
+cleanup() {
+    if [ -n "$TEMP_BINARY" ]; then
+        rm -f "$TEMP_BINARY"
+    fi
+}
+
+forward_signal() {
+    if [ -n "$pid" ]; then
+        kill "-$1" "$pid" 2>/dev/null || true
+    fi
+}
 
 # Build if binary doesn't exist or a rebuild is explicitly requested.
-# Set AIMEBU_FORCE_BUILD=1 to force a rebuild (e.g. after source changes).
-if [ ! -f "$BINARY" ] || [ -n "${AIMEBU_FORCE_BUILD:-}" ]; then
+# Set AIMEBU_FORCE_BUILD=1 to force a rebuild into a per-run tmp binary.
+# Any other value (including 0) leaves the cached binary in place.
+# Cleanup is best-effort; SIGKILL or host crashes can leak the tmp file.
+if [ "$FORCE_BUILD" = "1" ]; then
+    BINARY="$(mktemp "${TMPDIR:-/tmp}/aimebu-XXXXXX")"
+    TEMP_BINARY="$BINARY"
+    trap cleanup EXIT
+    trap 'forward_signal INT' INT
+    trap 'forward_signal TERM' TERM
+fi
+
+if [ ! -f "$BINARY" ] || [ "$FORCE_BUILD" = "1" ]; then
     echo "Building aimebu..." >&2
     VERSION="$(cd "$REPO_DIR" && git describe --tags --always --dirty 2>/dev/null || echo v0.0.0-dev)"
     (cd "$REPO_DIR" && go build -ldflags "-s -w -X main.version=$VERSION" -o "$BINARY" ./cmd/aimebu) || {
         echo "Build failed" >&2
         exit 1
     }
+fi
+
+if [ "$FORCE_BUILD" = "1" ]; then
+    # <&0 keeps the child's stdin pointing at the wrapper's stdin. Without
+    # it, bash redirects asynchronous commands' stdin to /dev/null when job
+    # control is off (as in any non-interactive script), which breaks
+    # interactive prompts like the aimebu agent first-run acknowledgement.
+    "$BINARY" "$@" <&0 &
+    pid=$!
+    status=0
+    while true; do
+        if wait "$pid"; then
+            status=0
+            break
+        fi
+        status=$?
+        if ! kill -0 "$pid" 2>/dev/null; then
+            break
+        fi
+    done
+    trap - INT TERM
+    exit "$status"
 fi
 
 exec "$BINARY" "$@"

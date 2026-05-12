@@ -60,6 +60,13 @@ AIMEBU_FORCE_BUILD=1 bin/aimebu version
 # or: rm <repo>/aimebu-*
 ```
 
+Only the literal value `AIMEBU_FORCE_BUILD=1` triggers a forced build —
+any other value (including `0`) leaves the cached binary in place. When
+forced, `bin/aimebu` builds into a unique tmp binary under
+`${TMPDIR:-/tmp}` for that run instead of overwriting the repo-local
+cache file. The wrapper removes the tmp binary on normal exit as best
+effort; `SIGKILL` or a host crash can still leak it.
+
 When smoke-testing a new build, point `AIMEBU_CONFIG_DIR` at a temp dir so
 you do not mutate the host's real bus state:
 
