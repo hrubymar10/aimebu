@@ -254,7 +254,8 @@ func TestAgentAdvanceFailure(t *testing.T) {
 }
 
 func TestAgentBuildRecoveryPrompt(t *testing.T) {
-	prompt := agentBuildRecoveryPrompt("codex", "", "worker", []string{"general", "dev"})
+	// Pass an unreachable URL so it falls back to the compiled default template.
+	prompt := agentBuildRecoveryPrompt("http://127.0.0.1:0", "codex", "", "worker", []string{"general", "dev"})
 	if !contains(prompt, `name="worker", force=true`) {
 		t.Fatalf("prompt %q does not include forced reclaim", prompt)
 	}
@@ -264,6 +265,39 @@ func TestAgentBuildRecoveryPrompt(t *testing.T) {
 	if !contains(prompt, "Join these rooms: general, dev.") {
 		t.Fatalf("prompt %q does not include room joins", prompt)
 	}
+}
+
+// TestAgentSpawnPrompt_TokenSubstitution verifies that agentApplyPromptTokens
+// correctly substitutes all four tokens, leaves unknown tokens literal, and
+// handles empty forceName/roomsSection without breaking output.
+func TestAgentSpawnPrompt_TokenSubstitution(t *testing.T) {
+	t.Run("all four tokens substituted", func(t *testing.T) {
+		tmpl := `harness={{harness}} meta={{meta_json}} force={{force_name}} rooms={{rooms_section}}`
+		got := agentApplyPromptTokens(tmpl, "claude-code", `{"k":"v"}`, "alice", "Join these rooms: dev.\n\n")
+		want := `harness="claude-code" meta={"k":"v"} force="alice" rooms=Join these rooms: dev.` + "\n\n"
+		if got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("unknown token left literal", func(t *testing.T) {
+		tmpl := `before {{unknown_token}} after`
+		got := agentApplyPromptTokens(tmpl, "codex", `{}`, "", "")
+		if !contains(got, "{{unknown_token}}") {
+			t.Fatalf("unknown token was removed from %q", got)
+		}
+	})
+
+	t.Run("empty forceName and roomsSection produce valid output", func(t *testing.T) {
+		tmpl := agentBootstrapTemplate
+		got := agentApplyPromptTokens(tmpl, "codex", `{"protocol":"agent"}`, "", "")
+		if contains(got, "{{") {
+			t.Fatalf("unreplaced token in output: %q", got)
+		}
+		if len(got) == 0 {
+			t.Fatal("output is empty")
+		}
+	})
 }
 
 func TestAgentInitMigratesLegacyState(t *testing.T) {

@@ -1,0 +1,128 @@
+[
+  {
+    "key": "bus_etiquette",
+    "label": "Bus Etiquette",
+    "group": "etiquette",
+    "description": "Sent to every connecting MCP client as initialize.instructions. Lands in the model's system prompt on connect. Changes apply to new connections only.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_register",
+    "label": "bus_register",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_register.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_join",
+    "label": "bus_join",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_join.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_leave",
+    "label": "bus_leave",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_leave.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_say",
+    "label": "bus_say",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_say.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_read",
+    "label": "bus_read",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_read.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_wait",
+    "label": "bus_wait",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_wait.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_rooms",
+    "label": "bus_rooms",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_rooms.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_mark_read",
+    "label": "bus_mark_read",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_mark_read.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_dm",
+    "label": "bus_dm",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_dm.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_agents",
+    "label": "bus_agents",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_agents.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_message",
+    "label": "bus_message",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_message.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_macros_get",
+    "label": "bus_macros_get",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_macros_get.",
+    "tokens": []
+  },
+  {
+    "key": "tool.bus_macros_set",
+    "label": "bus_macros_set",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_macros_set.",
+    "tokens": []
+  },
+  {
+    "key": "agent.bootstrap",
+    "label": "Agent Bootstrap Prompt",
+    "group": "spawn_prompts",
+    "description": "Prompt for a fresh agent spawn (no prior identity). Available tokens: {{harness}} (quoted harness slug), {{meta_json}} (raw meta JSON), {{rooms_section}} (expands to 'Join these rooms: X.\\n\\n' or empty string).",
+    "tokens": ["{{harness}}", "{{meta_json}}", "{{rooms_section}}"]
+  },
+  {
+    "key": "agent.bootstrap_reclaim",
+    "label": "Agent Bootstrap Prompt (Reclaim)",
+    "group": "spawn_prompts",
+    "description": "Prompt for a fresh agent spawn that reclaims a prior identity. Available tokens: {{force_name}} (quoted name), {{harness}} (quoted harness slug), {{meta_json}} (raw meta JSON), {{rooms_section}}.",
+    "tokens": ["{{force_name}}", "{{harness}}", "{{meta_json}}", "{{rooms_section}}"]
+  },
+  {
+    "key": "agent.recovery",
+    "label": "Agent Recovery Prompt",
+    "group": "spawn_prompts",
+    "description": "Prompt used when recovering a stale agent session mid-run. Available tokens: {{force_name}} (quoted name), {{harness}} (quoted harness slug), {{meta_json}} (raw meta JSON), {{rooms_section}}.",
+    "tokens": ["{{force_name}}", "{{harness}}", "{{meta_json}}", "{{rooms_section}}"]
+  },
+  {
+    "key": "error.not_registered",
+    "label": "Not Registered Error",
+    "group": "errors",
+    "description": "Error returned to the AI when any tool other than bus_register is called before registering.",
+    "tokens": []
+  }
+]

@@ -794,6 +794,47 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 		_ = jsonOK(w, s.getSettings())
 	})
 
+	// ── Prompts ─────────────────────────────────────────────────────
+
+	// GET /settings/prompts — list all prompts with effective bodies + metadata
+	mux.HandleFunc("GET /settings/prompts", func(w http.ResponseWriter, _ *http.Request) {
+		_ = jsonOK(w, s.listPrompts())
+	})
+
+	// PUT /settings/prompts/{key} — set a user override for a prompt
+	mux.HandleFunc("PUT /settings/prompts/{key}", func(w http.ResponseWriter, r *http.Request) {
+		key := r.PathValue("key")
+		var payload struct {
+			Value string `json:"value"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !s.setPrompt(key, payload.Value) {
+			jsonError(w, "unknown prompt key", http.StatusNotFound)
+			return
+		}
+		_ = jsonOK(w, map[string]string{"status": "ok"})
+	})
+
+	// DELETE /settings/prompts/{key} — revert a single prompt to its compiled default
+	mux.HandleFunc("DELETE /settings/prompts/{key}", func(w http.ResponseWriter, r *http.Request) {
+		key := r.PathValue("key")
+		if !promptCatalogSet[key] {
+			jsonError(w, "unknown prompt key", http.StatusNotFound)
+			return
+		}
+		s.deletePrompt(key)
+		_ = jsonOK(w, map[string]string{"status": "ok"})
+	})
+
+	// DELETE /settings/prompts — revert all prompts to compiled defaults
+	mux.HandleFunc("DELETE /settings/prompts", func(w http.ResponseWriter, _ *http.Request) {
+		s.deleteAllPrompts()
+		_ = jsonOK(w, map[string]string{"status": "ok"})
+	})
+
 	// DELETE /all — clear conversation state; ?include_settings=true also wipes user settings (macros).
 	mux.HandleFunc("DELETE /all", func(w http.ResponseWriter, r *http.Request) {
 		includeSettings := r.URL.Query().Get("include_settings") == "true"
@@ -966,7 +1007,9 @@ func setupHandlers(mux *http.ServeMux, s *store) {
 }
 
 // Run starts the HTTP server in the foreground with graceful shutdown.
-func Run(addr, rootDir string, frontendFS fs.FS) error {
+// promptDefaults is the compiled-in default body for each prompt key; pass nil
+// to use empty defaults (useful in tests).
+func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]string) error {
 	if err := validateBindAddr(addr); err != nil {
 		return err
 	}
@@ -982,6 +1025,11 @@ func Run(addr, rootDir string, frontendFS fs.FS) error {
 	s, err := newStore(dataDir)
 	if err != nil {
 		return fmt.Errorf("init store: %w", err)
+	}
+
+	// Register compiled-in prompt defaults so the store can serve them.
+	if promptDefaults != nil {
+		SetPromptDefaults(promptDefaults)
 	}
 
 	// Merge bundled defaults into the global macro map (write-once per key).

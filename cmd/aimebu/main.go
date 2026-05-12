@@ -105,7 +105,11 @@ func serverCmd(args []string) {
 			}
 		}
 		frontendFS, _ := fs.Sub(aimebu.FrontendFS, "frontend")
-		if err := server.Run(addr, rootDir, frontendFS); err != nil {
+		promptDefaults := mcp.BuiltinPromptDefaults()
+		for k, v := range AgentBuiltinSpawnDefaults() {
+			promptDefaults[k] = v
+		}
+		if err := server.Run(addr, rootDir, frontendFS, promptDefaults); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

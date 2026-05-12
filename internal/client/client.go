@@ -42,6 +42,9 @@ type Client struct {
 	BaseURL   string
 	AgentID   string
 	AgentName string
+	// Prompts caches the configured prompt bodies fetched on MCP initialize.
+	// nil means not yet fetched; callers should use a compiled default when nil.
+	Prompts map[string]string
 }
 
 // DefaultClient returns a client with BaseURL set from $AIMEBU_URL (default

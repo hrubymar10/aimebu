@@ -1,6 +1,13 @@
 package mcp
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/client"
+)
 
 func TestDetectHarness(t *testing.T) {
 	// Clear all env vars detectHarness may consult, then re-set per case.
@@ -58,5 +65,51 @@ func TestDetectHarness(t *testing.T) {
 				t.Fatalf("detectHarness() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestMCP_InitializeReturnsOverriddenEtiquette proves that handle("initialize")
+// reads the bus_etiquette prompt from the server rather than the compiled
+// constant. This is the end-to-end wiring test: store override → fetchPrompts
+// → promptVal → instructions field in the initialize response.
+func TestMCP_InitializeReturnsOverriddenEtiquette(t *testing.T) {
+	const overrideBody = "custom etiquette for testing"
+
+	// Serve a fake /settings/prompts that returns an override for bus_etiquette.
+	overrideEntries := []map[string]any{
+		{"key": "bus_etiquette", "body": overrideBody, "overridden": true},
+	}
+	overrideJSON, _ := json.Marshal(overrideEntries)
+
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/settings/prompts" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(overrideJSON)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL}
+	resp := handle(c, request{
+		JSONRPC: "2.0",
+		Method:  "initialize",
+		ID:      json.RawMessage(`1`),
+	})
+
+	if resp == nil {
+		t.Fatal("handle returned nil for initialize")
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result is not a map: %T", resp.Result)
+	}
+	instructions, ok := result["instructions"].(string)
+	if !ok {
+		t.Fatalf("instructions is not a string: %T", result["instructions"])
+	}
+	if instructions != overrideBody {
+		t.Fatalf("instructions = %q, want override %q", instructions, overrideBody)
 	}
 }

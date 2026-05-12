@@ -290,7 +290,7 @@ func agentCmd(args []string) {
 
 	childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 
-	prompt := agentBuildBootstrapPrompt(harness, spawnTag, rooms, name)
+	prompt := agentBuildBootstrapPrompt(aimebuURL, harness, spawnTag, rooms, name)
 
 	spawnLog := fmt.Sprintf("aimebu agent: spawning %s (harness=%s", filepath.Base(command[0]), harness)
 	if len(rooms) > 0 {
@@ -423,24 +423,102 @@ func agentEnvValue(env []string, key string) string {
 	return ""
 }
 
-// agentBuildBootstrapPrompt builds the prompt for the initial bootstrap session.
-// When forceName is set, the agent is instructed to reclaim that identity.
-func agentBuildBootstrapPrompt(harness, spawnTag string, rooms []string, forceName string) string {
-	var pb strings.Builder
-	if forceName != "" {
-		fmt.Fprintf(&pb, "You're an aimebu bus agent. Register via the bus_register MCP tool with name=%q, force=true, model=<your model slug>, harness=%q, meta=%s. This reclaims your prior identity.\n\n", forceName, harness, agentPromptMetaJSON(spawnTag))
-	} else {
-		fmt.Fprintf(&pb, "You're an aimebu bus agent. Register via the bus_register MCP tool (model=<your model slug>, harness=%q, meta=%s). The server will assign you a name.\n\n", harness, agentPromptMetaJSON(spawnTag))
+// ── Spawn prompt templates ─────────────────────────────────────────
+// These are the compiled-in defaults. The running server may override any of
+// these via /settings/prompts; agentFetchPromptTemplate falls back to the
+// compiled default if the server is unreachable or the key is unknown.
+//
+// Tokens substituted at runtime by agentApplyPromptTokens:
+//   {{force_name}}    — quoted agent name (fmt.Sprintf("%q", name))
+//   {{harness}}       — quoted harness slug (fmt.Sprintf("%q", harness))
+//   {{meta_json}}     — raw meta JSON (e.g. {"protocol":"agent","spawn_tag":"…"})
+//   {{rooms_section}} — "Join these rooms: X.\n\n" when rooms are set, else ""
+
+const agentBootstrapTemplate = `You're an aimebu bus agent. Register via the bus_register MCP tool (model=<your model slug>, harness={{harness}}, meta={{meta_json}}). The server will assign you a name.
+
+{{rooms_section}}Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.`
+
+const agentBootstrapReclaimTemplate = `You're an aimebu bus agent. Register via the bus_register MCP tool with name={{force_name}}, force=true, model=<your model slug>, harness={{harness}}, meta={{meta_json}}. This reclaims your prior identity.
+
+{{rooms_section}}Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.`
+
+const agentRecoveryTemplate = `You're an aimebu bus agent recovering a stale bus session. Register via the bus_register MCP tool with name={{force_name}}, force=true, model=<your model slug>, harness={{harness}}, meta={{meta_json}}. This reclaims your prior identity.
+
+{{rooms_section}}Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.`
+
+// AgentBuiltinSpawnDefaults returns the compiled-in default bodies for the
+// three agent spawn prompt keys. Called from main.go to register defaults
+// with the server before it starts.
+func AgentBuiltinSpawnDefaults() map[string]string {
+	return map[string]string{
+		"agent.bootstrap":         agentBootstrapTemplate,
+		"agent.bootstrap_reclaim": agentBootstrapReclaimTemplate,
+		"agent.recovery":          agentRecoveryTemplate,
 	}
-	agentWriteListenInstructions(&pb, rooms)
-	return pb.String()
 }
 
-func agentBuildRecoveryPrompt(harness, spawnTag, forceName string, rooms []string) string {
-	var pb strings.Builder
-	fmt.Fprintf(&pb, "You're an aimebu bus agent recovering a stale bus session. Register via the bus_register MCP tool with name=%q, force=true, model=<your model slug>, harness=%q, meta=%s. This reclaims your prior identity.\n\n", forceName, harness, agentPromptMetaJSON(spawnTag))
-	agentWriteListenInstructions(&pb, rooms)
-	return pb.String()
+// agentFetchPromptTemplate fetches the configured template for key from the
+// running server. Falls back to fallback if the server is unreachable or the
+// key is not found.
+func agentFetchPromptTemplate(aimebuURL, key, fallback string) string {
+	// Use a short timeout so a wedged server degrades to the compiled default
+	// rather than blocking agent startup indefinitely.
+	httpClient := &http.Client{Timeout: 3 * time.Second}
+	resp, err := httpClient.Get(aimebuURL + "/settings/prompts")
+	if err != nil {
+		return fallback
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var entries []struct {
+		Key  string `json:"key"`
+		Body string `json:"body"`
+	}
+	if json.Unmarshal(body, &entries) != nil {
+		return fallback
+	}
+	for _, e := range entries {
+		if e.Key == key {
+			return e.Body // empty string is a valid user override
+		}
+	}
+	return fallback
+}
+
+// agentApplyPromptTokens substitutes {{tokens}} in a prompt template.
+func agentApplyPromptTokens(template, harness, metaJSON, forceName, roomsSection string) string {
+	r := strings.NewReplacer(
+		"{{harness}}", fmt.Sprintf("%q", harness),
+		"{{meta_json}}", metaJSON,
+		"{{force_name}}", fmt.Sprintf("%q", forceName),
+		"{{rooms_section}}", roomsSection,
+	)
+	return r.Replace(template)
+}
+
+// agentBuildBootstrapPrompt builds the prompt for the initial bootstrap session.
+// When forceName is set, the agent is instructed to reclaim that identity.
+func agentBuildBootstrapPrompt(aimebuURL, harness, spawnTag string, rooms []string, forceName string) string {
+	roomsSection := ""
+	if len(rooms) > 0 {
+		roomsSection = "Join these rooms: " + strings.Join(rooms, ", ") + ".\n\n"
+	}
+	var tmpl string
+	if forceName != "" {
+		tmpl = agentFetchPromptTemplate(aimebuURL, "agent.bootstrap_reclaim", agentBootstrapReclaimTemplate)
+	} else {
+		tmpl = agentFetchPromptTemplate(aimebuURL, "agent.bootstrap", agentBootstrapTemplate)
+	}
+	return agentApplyPromptTokens(tmpl, harness, agentPromptMetaJSON(spawnTag), forceName, roomsSection)
+}
+
+func agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, forceName string, rooms []string) string {
+	roomsSection := ""
+	if len(rooms) > 0 {
+		roomsSection = "Join these rooms: " + strings.Join(rooms, ", ") + ".\n\n"
+	}
+	tmpl := agentFetchPromptTemplate(aimebuURL, "agent.recovery", agentRecoveryTemplate)
+	return agentApplyPromptTokens(tmpl, harness, agentPromptMetaJSON(spawnTag), forceName, roomsSection)
 }
 
 func agentPromptMetaJSON(spawnTag string) string {
@@ -453,13 +531,6 @@ func agentPromptMetaJSON(spawnTag string) string {
 		return `{"protocol":"agent"}`
 	}
 	return string(data)
-}
-
-func agentWriteListenInstructions(pb *strings.Builder, rooms []string) {
-	if len(rooms) > 0 {
-		fmt.Fprintf(pb, "Join these rooms: %s.\n\n", strings.Join(rooms, ", "))
-	}
-	pb.WriteString("Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.")
 }
 
 // agentSessionsPath returns the path to the agent sessions state file.
@@ -768,7 +839,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 		prompt := "keep listening"
 		runMode := "resume"
 		if recoveryClass == agentRecoveryRegistrationLost {
-			prompt = agentBuildRecoveryPrompt(harness, spawnTag, agentName, rooms)
+			prompt = agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, agentName, rooms)
 			fmt.Fprintf(os.Stderr, "aimebu agent: registration missing for %s, re-registering in-session\n", agentFullID(agentName))
 			agentLogRecoveryDecision(debug, recoveryClass, "preflight room membership missing", consecutiveFailureCount, 0)
 		}
@@ -826,7 +897,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 				if consecutiveFailureCount > agentRecoveryFailureCap {
 					agentFatalRecovery(outcome, sessionID, agentName)
 				}
-				recoveryPrompt := agentBuildRecoveryPrompt(harness, spawnTag, agentName, rooms)
+				recoveryPrompt := agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, agentName, rooms)
 				fmt.Fprintf(os.Stderr, "aimebu agent: codex thread %s vanished, bootstrapping a fresh thread (%d/%d)\n", sessionID, consecutiveFailureCount, agentRecoveryFailureCap)
 				newSessionID, recoveredName, bootErr := agentBootstrapSession(harness, command, recoveryPrompt, env, aimebuURL, spawnTag, agentName, sigCh, debug)
 				if errors.Is(bootErr, agentErrInterrupted) {

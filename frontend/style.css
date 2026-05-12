@@ -1961,6 +1961,138 @@ body {
   border-color: var(--accent);
 }
 
+/* ── Prompts ─────────────────────────────────────────────────────── */
+
+.prompts-reconnect-warning {
+  background: rgba(220, 38, 38, 0.12);
+  border: 1px solid rgba(220, 38, 38, 0.4);
+  border-radius: var(--radius);
+  color: #ef4444;
+  font-size: 0.8rem;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.prompts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.prompt-group {
+  margin-bottom: 16px;
+}
+
+.prompt-group-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  padding: 6px 0 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.prompt-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+}
+
+.prompt-row:last-child {
+  border-bottom: none;
+}
+
+.prompt-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.prompt-key {
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.prompt-modified-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  background: rgba(234, 179, 8, 0.15);
+  color: #ca8a04;
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.prompt-tokens {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
+.prompt-desc {
+  font-size: 0.73rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.prompt-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-input, var(--bg-tertiary));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  outline: none;
+  resize: vertical;
+  line-height: 1.45;
+  transition: border-color var(--transition);
+}
+
+.prompt-textarea:focus {
+  border-color: var(--accent);
+}
+
+.prompt-row.prompt-overridden .prompt-textarea {
+  border-color: rgba(234, 179, 8, 0.5);
+}
+
+.prompt-row-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.prompts-reset-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.prompts-empty {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.btn-danger {
+  background: rgba(220, 38, 38, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(220, 38, 38, 0.35);
+}
+
+.btn-danger:hover {
+  background: rgba(220, 38, 38, 0.25);
+}
+
 /* ── Autocomplete popup ─────────────────────────────────────────── */
 
 .send-bar {

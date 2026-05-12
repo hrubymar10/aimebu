@@ -342,11 +342,15 @@ GET    /macros                         Global macros
 PUT    /macros                         Replace global macros
 GET    /settings                       User preferences (theme, debug inspector toggle, notifications, agent_id_default, …)
 PUT    /settings                       Update user preferences
+GET    /settings/prompts               All configurable prompts with current body + metadata
+PUT    /settings/prompts/{key}         Override a prompt (body: {"value": "…"})
+DELETE /settings/prompts/{key}         Revert one prompt to its compiled default
+DELETE /settings/prompts              Revert all prompts to compiled defaults
 GET    /api/sounds                     List built-in and user-uploaded notification sounds
 POST   /api/sounds                     Upload a custom .mp3 or .wav sound (multipart field: file; max 1 MB)
 DELETE /api/sounds/{uuid}              Delete a user-uploaded sound
 GET    /api/sounds/{uuid}              Serve a user-uploaded sound file
-DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe macros and settings
+DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe macros, prompts, and settings
 GET    /health                         Health check
 GET    /ws                             WebSocket push
 ```
@@ -392,8 +396,9 @@ three-panel layout:
   Appearance (dark/light theme, system events toggle), Debug (message debug
   button toggle, off by default), Notifications, Macros (global only;
   per-room macros from older installs are auto-migrated to globals on first
-  load), Backup & Sync (export/import JSON), Danger Zone (clear state or all
-  data).
+  load), Prompts (override per-key MCP etiquette text, tool descriptions, and
+  spawn prompts; changes apply on next agent reconnect), Backup & Sync
+  (export/import JSON), Danger Zone (clear state or all data).
 
 ## Running a client from inside a container
 
@@ -446,6 +451,7 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 │   ├── messages.json       # All messages with room_id              (conversation state)
 │   ├── agents.json         # Registered agents and metadata         (conversation state)
 │   ├── macros.json         # Global + per-room macro definitions    (user settings)
+│   ├── prompts.json        # Per-key prompt overrides (empty = all defaults) (user settings)
 │   ├── settings.json       # UI preferences (theme, debug inspector, notifications…) (user settings)
 │   ├── sounds/             # User-uploaded .mp3 / .wav notification sounds (user settings)
 │   │   ├── sounds.json     # Index of uploaded sounds (uuid, name, size, ext, uploaded_at)
@@ -467,7 +473,7 @@ take ownership of state. Unknown files at the root are left alone.
 
 `aimebu prune` wipes conversation state, including
 `agents/agent-sessions.json`; `aimebu prune -a` additionally wipes user
-settings, including macros, sounds, and
+settings, including macros, prompt overrides, sounds, and
 `agents/agent-warning-acknowledged`. If `AIMEBU_URL` points at loopback
 (`localhost`, `127.0.0.1`, `::1`) and the server is down, the CLI performs
 the same prune directly against `AIMEBU_CONFIG_DIR` / `~/.aimebu`. Runtime

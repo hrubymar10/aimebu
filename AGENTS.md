@@ -189,7 +189,7 @@ aimebu agents                    # list all registered agents
 
 aimebu prune                     # clear conversation state with confirmation prompt
 aimebu prune -y                  # same, skip confirmation
-aimebu prune -a                  # clear everything including macros (prompt)
+aimebu prune -a                  # clear everything including macros and prompt overrides (prompt)
 aimebu prune -a -y               # clear everything without prompt
 
 aimebu mcp                       # start MCP server (for AI assistants)
@@ -213,7 +213,8 @@ holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
 (`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
 `aimebu prune` wipes conversation state, including
 `agents/agent-sessions.json`; `aimebu prune -a` also wipes user settings,
-including macros, sounds, and `agents/agent-warning-acknowledged`. Runtime
+including macros, prompt overrides, sounds, and
+`agents/agent-warning-acknowledged`. Runtime
 diagnostics (`server/aimebu.log`, `agents/agent-logs/`) are preserved by
 both prune modes. When `AIMEBU_URL` is loopback and the server is down, the
 CLI falls back to pruning this config root directly. Legacy flat-layout state

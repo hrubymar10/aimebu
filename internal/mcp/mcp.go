@@ -290,18 +290,64 @@ var tools = []tool{
 	},
 }
 
+// ── Dynamic prompts ────────────────────────────────────────────────
+
+// fetchPrompts fetches all configured prompt bodies from the running server
+// and returns a key→body map. Returns nil on any error; callers should fall
+// back to compiled defaults when nil.
+func fetchPrompts(c *client.Client) map[string]string {
+	body, err := c.Get("/settings/prompts")
+	if err != nil {
+		return nil
+	}
+	var entries []struct {
+		Key  string `json:"key"`
+		Body string `json:"body"`
+	}
+	if json.Unmarshal([]byte(body), &entries) != nil {
+		return nil
+	}
+	m := make(map[string]string, len(entries))
+	for _, e := range entries {
+		m[e.Key] = e.Body // empty string is a valid user override (blanks the prompt)
+	}
+	return m
+}
+
+// promptVal returns the value for key from the prompts map, falling back to
+// fallback when the map is nil or the key is absent.
+func promptVal(prompts map[string]string, key, fallback string) string {
+	if prompts != nil {
+		if v, ok := prompts[key]; ok {
+			return v
+		}
+	}
+	return fallback
+}
+
+// buildTools returns the tools slice with descriptions overridden from prompts.
+func buildTools(prompts map[string]string) []tool {
+	out := make([]tool, len(tools))
+	for i, t := range tools {
+		t.Description = promptVal(prompts, "tool."+t.Name, t.Description)
+		out[i] = t
+	}
+	return out
+}
+
 // ── Tool handlers ──────────────────────────────────────────────────
 
 // notRegisteredError builds a user-facing error telling the caller to run
-// bus_register first. Returned when the client has no AgentID yet.
-func notRegisteredError() error {
-	return fmt.Errorf("not registered — call bus_register first. Pass your model (e.g. 'opus4.7', 'sonnet4.7') and the server will assign you a name")
+// bus_register first. Uses the configured error message if available.
+func notRegisteredError(c *client.Client) error {
+	const fallback = "not registered — call bus_register first. Pass your model (e.g. 'opus4.7', 'sonnet4.7') and the server will assign you a name"
+	return fmt.Errorf("%s", promptVal(c.Prompts, "error.not_registered", fallback))
 }
 
 func handleToolCall(c *client.Client, name string, args json.RawMessage) (string, error) {
 	// All tools except bus_register require a registered identity.
 	if name != "bus_register" && name != "bus_agents" && c.AgentID == "" {
-		return "", notRegisteredError()
+		return "", notRegisteredError(c)
 	}
 
 	switch name {
@@ -502,6 +548,9 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 func handle(c *client.Client, req request) *response {
 	switch req.Method {
 	case "initialize":
+		// Fetch configured prompts once per MCP connection and cache them.
+		// Falls back to compiled defaults if the server is unreachable.
+		c.Prompts = fetchPrompts(c)
 		return &response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -509,7 +558,7 @@ func handle(c *client.Client, req request) *response {
 				"protocolVersion": "2024-11-05",
 				"capabilities":    map[string]any{"tools": map[string]any{}},
 				"serverInfo":      map[string]any{"name": "aimebu", "version": "2.0.0"},
-				"instructions":    busEtiquette,
+				"instructions":    promptVal(c.Prompts, "bus_etiquette", busEtiquette),
 			},
 		}
 
@@ -520,7 +569,7 @@ func handle(c *client.Client, req request) *response {
 		return &response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result:  map[string]any{"tools": tools},
+			Result:  map[string]any{"tools": buildTools(c.Prompts)},
 		}
 
 	case "tools/call":

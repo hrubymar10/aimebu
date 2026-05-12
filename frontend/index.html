@@ -154,6 +154,7 @@
         <button class="settings-nav-item" data-section="debug" type="button">Debug</button>
         <button class="settings-nav-item" data-section="notifications" type="button">Notifications</button>
         <button class="settings-nav-item" data-section="macros" type="button">Macros</button>
+        <button class="settings-nav-item" data-section="prompts" type="button">Prompts</button>
         <button class="settings-nav-item" data-section="danger" type="button">Danger Zone</button>
       </nav>
       <div class="settings-body">
@@ -324,6 +325,19 @@
               <textarea id="macro-body-input" class="macro-body-input" rows="2" placeholder="Expansion text..."></textarea>
               <button type="submit" class="btn btn-primary btn-sm">Add</button>
             </form>
+          </div>
+        </div>
+
+        <!-- Prompts -->
+        <div class="settings-section" data-section="prompts">
+          <div class="settings-group">
+            <div class="prompts-reconnect-warning">
+              Changes apply to <strong>new agent instances only</strong>. Already-connected agents keep the prompts they loaded at handshake.
+            </div>
+            <div id="prompts-list" class="prompts-list"></div>
+            <div class="prompts-reset-row">
+              <button id="prompts-reset-all-btn" class="btn btn-sm btn-danger" type="button">Reset all to defaults</button>
+            </div>
           </div>
         </div>
 

@@ -89,6 +89,9 @@ type store struct {
 	macros       map[string]string // global shared macro map
 	seenDefaults map[string]bool   // keys already offered via defaults (write-once)
 
+	promptsMu sync.RWMutex
+	prompts   map[string]string // user overrides only; compiled defaults are the fallback
+
 	settingsMu sync.RWMutex
 	settings   Settings
 
@@ -118,6 +121,7 @@ func newStore(dir string) (*store, error) {
 		roomEmptySince:  make(map[string]time.Time),
 		macros:          make(map[string]string),
 		seenDefaults:    make(map[string]bool),
+		prompts:         make(map[string]string),
 		warnedLegacy:    make(map[string]bool),
 		warnedAttention: make(map[string]bool),
 	}
@@ -278,6 +282,9 @@ func (s *store) load() error {
 
 	// Settings — persisted separately; survives schema wipes and prune (unless include_settings=true).
 	s.loadSettings()
+
+	// Prompt overrides — survives schema wipes and conversation prune; wiped by prune -a.
+	s.loadPrompts()
 
 	// User sounds index — persisted in sounds/sounds.json; wiped when clearAll(includeSettings=true).
 	s.loadSounds()
@@ -1804,6 +1811,7 @@ func (s *store) clearAll(includeSettings bool) {
 		s.seenDefaults = make(map[string]bool)
 		s.macrosMu.Unlock()
 		s.applyDefaultMacros() // re-seeds macros.json with embedded defaults
+		s.clearPrompts()
 		s.clearSettings()
 		s.soundsMu.Lock()
 		s.sounds = nil

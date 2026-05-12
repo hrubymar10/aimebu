@@ -31,6 +31,7 @@
   let presence = {};
   let markdownMode = localStorage.getItem('aimebu.ui.markdownMode') || 'rendered';
   let macros = {};           // { lowercasedKey: body } — global shared macros
+  let promptEntries = [];    // PromptEntry[] from GET /settings/prompts
   let systemEvents = [];     // Message[] — _system room events
   let systemUnread = 0;      // unread count for broadcast panel
   let systemSSE = null;      // EventSource for _system room
@@ -146,6 +147,8 @@
   const messageDebugStatus = $('#message-debug-status');
 
   const macrosListEl = $('#macros-list');
+  const promptsListEl = $('#prompts-list');
+  const promptsResetAllBtn = $('#prompts-reset-all-btn');
   const macroAddForm = $('#macro-add-form');
   const macroKeyInput = $('#macro-key-input');
   const macroBodyInput = $('#macro-body-input');
@@ -1200,6 +1203,90 @@
       .catch(function () { macros = {}; renderMacrosList(); });
   }
 
+  // ── Prompts ──────────────────────────────────────────────────────
+
+  var GROUP_LABELS = {
+    etiquette: 'Etiquette',
+    tool_descriptions: 'Tool Descriptions',
+    spawn_prompts: 'Spawn Prompts',
+    errors: 'Errors'
+  };
+
+  function renderPromptsList() {
+    if (!promptsListEl) return;
+    if (!promptEntries.length) {
+      promptsListEl.innerHTML = '<p class="prompts-empty">No prompts loaded.</p>';
+      return;
+    }
+
+    var groups = {};
+    var groupOrder = [];
+    promptEntries.forEach(function (e) {
+      if (!groups[e.group]) {
+        groups[e.group] = [];
+        groupOrder.push(e.group);
+      }
+      groups[e.group].push(e);
+    });
+
+    var html = '';
+    groupOrder.forEach(function (g) {
+      html += '<div class="prompt-group">';
+      html += '<div class="prompt-group-label">' + esc(GROUP_LABELS[g] || g) + '</div>';
+      groups[g].forEach(function (e) {
+        html += '<div class="prompt-row' + (e.overridden ? ' prompt-overridden' : '') + '" data-key="' + esc(e.key) + '">';
+        html += '<div class="prompt-row-header">';
+        html += '<span class="prompt-key">' + esc(e.label) + '</span>';
+        if (e.overridden) html += '<span class="prompt-modified-badge">Modified</span>';
+        if (e.tokens && e.tokens.length) {
+          html += '<span class="prompt-tokens">Tokens: ' + e.tokens.map(function (t) { return '<code>' + esc(t) + '</code>'; }).join(', ') + '</span>';
+        }
+        html += '</div>';
+        html += '<div class="prompt-desc">' + esc(e.description) + '</div>';
+        html += '<textarea class="prompt-textarea" data-key="' + esc(e.key) + '" rows="5">' + esc(e.body) + '</textarea>';
+        html += '<div class="prompt-row-actions">';
+        html += '<button class="btn btn-sm btn-primary prompt-save-btn" type="button" data-key="' + esc(e.key) + '">Save</button>';
+        if (e.overridden) {
+          html += '<button class="btn btn-sm prompt-revert-btn" type="button" data-key="' + esc(e.key) + '">Revert to default</button>';
+        }
+        html += '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+    });
+    promptsListEl.innerHTML = html;
+
+    promptsListEl.querySelectorAll('.prompt-save-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-key');
+        var ta = promptsListEl.querySelector('textarea[data-key="' + key + '"]');
+        if (!ta) return;
+        api('PUT', '/settings/prompts/' + encodeURIComponent(key), { value: ta.value })
+          .then(function () { return loadPrompts(); })
+          .catch(function (err) { console.error('save prompt', err); });
+      });
+    });
+
+    promptsListEl.querySelectorAll('.prompt-revert-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-key');
+        if (!confirm('Revert "' + key + '" to its compiled default?')) return;
+        api('DELETE', '/settings/prompts/' + encodeURIComponent(key))
+          .then(function () { return loadPrompts(); })
+          .catch(function (err) { console.error('revert prompt', err); });
+      });
+    });
+  }
+
+  function loadPrompts() {
+    return api('GET', '/settings/prompts')
+      .then(function (data) {
+        promptEntries = Array.isArray(data) ? data : [];
+        renderPromptsList();
+      })
+      .catch(function () { promptEntries = []; renderPromptsList(); });
+  }
+
   function scrollToMessage(id, triggerEl) {
     var el = messageListEl.querySelector('[data-id="' + id + '"]');
     if (!el) {
@@ -1792,6 +1879,7 @@
       activateSettingsSection(section);
     }
     renderMacrosList();
+    loadPrompts();
     document.body.style.overflow = 'hidden';
   }
 
@@ -1807,7 +1895,7 @@
     settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
     });
-    var titles = { general: 'General', appearance: 'Appearance', debug: 'Debug', notifications: 'Notifications', macros: 'Macros', danger: 'Danger Zone' };
+    var titles = { general: 'General', appearance: 'Appearance', debug: 'Debug', notifications: 'Notifications', macros: 'Macros', prompts: 'Prompts', danger: 'Danger Zone' };
     if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
   }
 
@@ -2974,6 +3062,16 @@
   if (macrosImportCancelBtn) {
     macrosImportCancelBtn.addEventListener('click', function () {
       hideMacrosImportFallback();
+    });
+  }
+
+  // Prompts reset-all
+  if (promptsResetAllBtn) {
+    promptsResetAllBtn.addEventListener('click', function () {
+      if (!confirm('Reset all prompt overrides to compiled defaults? This cannot be undone.')) return;
+      api('DELETE', '/settings/prompts')
+        .then(function () { return loadPrompts(); })
+        .catch(function (err) { alert('Error: ' + err.message); });
     });
   }
 
