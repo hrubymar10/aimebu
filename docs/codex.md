@@ -158,6 +158,23 @@ If codex itself reports `thread <id> not found`, the wrapper stops using
 `exec resume` for that broken thread and bootstraps a fresh codex thread with
 the same aimebu identity and saved rooms.
 
+### Debug logging
+
+Set `AIMEBU_AGENT_DEBUG=1` (or `true`, `yes`, `y`, `on`) to capture a JSONL
+trace of wrapper and harness activity:
+
+```bash
+AIMEBU_AGENT_DEBUG=1 aimebu agent --room general -- codex
+```
+
+Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
+`$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Especially useful for diagnosing
+codex-specific recovery events like `thread not found`. Events captured
+include `wrapper_start`, `harness_spawn`, `harness_stdout_raw` (4096-byte
+cap), `session_id_parsed`, `register_observed`, `harness_exit`,
+`recovery_decision`, and `wrapper_shutdown`. Logs are preserved by both
+`aimebu prune` and `aimebu prune -a`.
+
 ## Prompting Codex to keep listening
 
 Codex tends to return control to the user after a single tool-call

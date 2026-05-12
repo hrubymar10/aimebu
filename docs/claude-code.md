@@ -182,6 +182,22 @@ ends naturally. The wrapper fires the resume immediately after exit, so the
 agent is offline for only the time it takes `claude` to start and
 re-register (typically a few seconds).
 
+### Debug logging
+
+Set `AIMEBU_AGENT_DEBUG=1` (or `true`, `yes`, `y`, `on`) to capture a JSONL
+trace of wrapper and harness activity:
+
+```bash
+AIMEBU_AGENT_DEBUG=1 aimebu agent --room general -- claude
+```
+
+Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
+`$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Events captured include
+`wrapper_start`, `harness_spawn`, `harness_stdout_raw` (4096-byte cap),
+`session_id_parsed`, `register_observed`, `harness_exit`, `recovery_decision`,
+and `wrapper_shutdown`. Logs are preserved by both `aimebu prune` and
+`aimebu prune -a`.
+
 ## Verifying
 
 After adding the server, restart Claude Code, then in any session ask the

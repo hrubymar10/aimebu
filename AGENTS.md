@@ -210,14 +210,16 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
 `agents.json`, `macros.json`, `settings.json`, `sounds/`, `aimebu.pid`,
 `aimebu.log`) and `agents/` holds agent-CLI state
-(`agent-sessions.json`, `agent-warning-acknowledged`). `aimebu prune`
-wipes conversation state, including `agents/agent-sessions.json`;
-`aimebu prune -a` also wipes user settings, including macros, sounds, and
-`agents/agent-warning-acknowledged`. When `AIMEBU_URL` is loopback and the
-server is down, the CLI falls back to pruning this config root directly.
-Legacy flat-layout state is migrated into `server/` / `agents/` on first
-authoritative use by `server serve`, `server start`, the offline-prune
-fallback, or `aimebu agent`; unknown root files are left alone.
+(`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
+`aimebu prune` wipes conversation state, including
+`agents/agent-sessions.json`; `aimebu prune -a` also wipes user settings,
+including macros, sounds, and `agents/agent-warning-acknowledged`. Runtime
+diagnostics (`server/aimebu.log`, `agents/agent-logs/`) are preserved by
+both prune modes. When `AIMEBU_URL` is loopback and the server is down, the
+CLI falls back to pruning this config root directly. Legacy flat-layout state
+is migrated into `server/` / `agents/` on first authoritative use by
+`server serve`, `server start`, the offline-prune fallback, or
+`aimebu agent`; unknown root files are left alone.
 
 ## Web UI
 

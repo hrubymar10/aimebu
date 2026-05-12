@@ -241,6 +241,15 @@ func agentCmd(args []string) {
 		aimebuURL = "http://localhost:9997"
 	}
 
+	spawnTag := agentGenTag()
+	resumeMode := "bootstrap"
+	switch {
+	case resumeID != "":
+		resumeMode = "resume-id"
+	case resumeName != "":
+		resumeMode = "resume-name"
+	}
+
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
@@ -257,13 +266,20 @@ func agentCmd(args []string) {
 			fmt.Fprintln(os.Stderr, "aimebu agent:", err)
 			os.Exit(1)
 		}
-		childEnv := agentBuildEnv(aimebuURL, harness, "")
+		debug := newAgentDebugLog(entry.Name, spawnTag)
+		defer debug.close()
+		agentLogWrapperStart(debug, args, harness, entry.Rooms, spawnTag, resumeMode, aimebuURL, os.Getenv("AIMEBU_HARNESS"))
+		childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 		fmt.Fprintf(os.Stderr, "aimebu agent: resuming session %s as %s\n", entry.SessionID, entry.Name)
-		agentResumeLoop(harness, command, entry.SessionID, entry.Name, entry.Rooms, childEnv, aimebuURL, sigCh)
+		agentResumeLoop(harness, command, entry.SessionID, entry.Name, entry.Rooms, childEnv, aimebuURL, sigCh, debug)
 		return
 	}
 
 	// --- Bootstrap path ---
+	debug := newAgentDebugLog(name, spawnTag)
+	defer debug.close()
+	agentLogWrapperStart(debug, args, harness, rooms, spawnTag, resumeMode, aimebuURL, os.Getenv("AIMEBU_HARNESS"))
+
 	httpc := &http.Client{Timeout: 5 * time.Second}
 	resp, err := httpc.Get(aimebuURL + "/health")
 	if err != nil || resp.StatusCode != http.StatusOK {
@@ -272,7 +288,6 @@ func agentCmd(args []string) {
 	}
 	resp.Body.Close()
 
-	spawnTag := agentGenTag()
 	childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 
 	prompt := agentBuildBootstrapPrompt(harness, spawnTag, rooms, name)
@@ -286,7 +301,7 @@ func agentCmd(args []string) {
 	}
 	fmt.Fprintln(os.Stderr, spawnLog+")…")
 
-	sessionID, agentName, err := agentBootstrapSession(harness, command, prompt, childEnv, aimebuURL, spawnTag, name, sigCh)
+	sessionID, agentName, err := agentBootstrapSession(harness, command, prompt, childEnv, aimebuURL, spawnTag, name, sigCh, debug)
 	if errors.Is(err, agentErrInterrupted) {
 		return
 	}
@@ -314,7 +329,7 @@ func agentCmd(args []string) {
 		})
 	}
 
-	agentResumeLoop(harness, command, sessionID, agentName, rooms, childEnv, aimebuURL, sigCh)
+	agentResumeLoop(harness, command, sessionID, agentName, rooms, childEnv, aimebuURL, sigCh, debug)
 }
 
 // agentLookupName polls GET /agents until it finds an AI agent whose
@@ -566,13 +581,14 @@ func agentResumeArgs(harness, sessionID, prompt string, userArgs []string) []str
 
 // agentParseSessionID extracts the session/thread ID from bootstrap stdout.
 // Scans up to 20 lines to tolerate any harness preamble before the ID event.
-func agentParseSessionID(harness string, output []byte) (string, error) {
+func agentParseSessionID(harness string, output []byte) (string, int, error) {
 	lines := 0
 	for line := range strings.SplitSeq(string(output), "\n") {
 		if lines >= 20 {
 			break
 		}
 		lines++
+		lineIndex := lines
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -583,7 +599,7 @@ func agentParseSessionID(harness string, output []byte) (string, error) {
 				SessionID string `json:"session_id"`
 			}
 			if json.Unmarshal([]byte(line), &r) == nil && r.SessionID != "" {
-				return r.SessionID, nil
+				return r.SessionID, lineIndex, nil
 			}
 		case "codex":
 			var r struct {
@@ -591,11 +607,11 @@ func agentParseSessionID(harness string, output []byte) (string, error) {
 				ThreadID string `json:"thread_id"`
 			}
 			if json.Unmarshal([]byte(line), &r) == nil && r.Type == "thread.started" && r.ThreadID != "" {
-				return r.ThreadID, nil
+				return r.ThreadID, lineIndex, nil
 			}
 		}
 	}
-	return "", nil
+	return "", -1, nil
 }
 
 func agentCommand(command, args, env []string, stdout io.Writer, stderr io.Writer) *exec.Cmd {
@@ -622,34 +638,43 @@ func agentFullID(agentName string) string {
 	return agentName + "@" + project
 }
 
-func agentBootstrapStart(harness string, command []string, prompt string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
+func agentBootstrapStart(harness string, command []string, prompt string, env []string, debug *agentDebugLog) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer, *agentDebugStdoutWriter, error) {
 	args := agentBootstrapArgs(harness, prompt, command[1:])
 
 	buf := &bytes.Buffer{}
-	cmd := agentCommand(command, args, env, io.MultiWriter(os.Stdout, buf), os.Stderr)
+	stderrBuf := &bytes.Buffer{}
+	stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(os.Stdout, buf))
+	cmd := agentCommand(command, args, env, stdoutWriter, io.MultiWriter(os.Stderr, stderrBuf))
 
 	if err := cmd.Start(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return cmd, buf, nil
+	agentLogHarnessSpawn(debug, command, args)
+	return cmd, buf, stderrBuf, stdoutWriter, nil
 }
 
-func agentBootstrapSession(harness string, command []string, prompt string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal) (string, string, error) {
-	bootstrapCmd, bootstrapBuf, err := agentBootstrapStart(harness, command, prompt, env)
+func agentBootstrapSession(harness string, command []string, prompt string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog) (string, string, error) {
+	startedAt := time.Now()
+	bootstrapCmd, bootstrapBuf, stderrBuf, stdoutWriter, err := agentBootstrapStart(harness, command, prompt, env, debug)
 	if err != nil {
 		return "", "", err
 	}
 
 	nameCh := make(chan string, 1)
-	if knownName != "" {
+	if knownName != "" && !debug.enabled {
+		// Fast path: no observability needed, skip the poll goroutine.
 		nameCh <- knownName
 	} else {
 		go func() {
 			n := agentLookupName(aimebuURL, spawnTag, 30*time.Second)
-			nameCh <- n
 			if n != "" {
 				fmt.Fprintf(os.Stderr, "aimebu agent: registered as %s\n", n)
+				agentLogRegisterObserved(debug, n, time.Since(startedAt))
 			}
+			if n == "" {
+				n = knownName
+			}
+			nameCh <- n
 		}()
 	}
 
@@ -658,7 +683,7 @@ func agentBootstrapSession(harness string, command []string, prompt string, env 
 
 	var waitErr error
 	select {
-	case <-sigCh:
+	case sig := <-sigCh:
 		shutdownName := knownName
 		if shutdownName == "" {
 			select {
@@ -669,22 +694,43 @@ func agentBootstrapSession(harness string, command []string, prompt string, env 
 		if shutdownName == "" {
 			shutdownName = agentLookupName(aimebuURL, spawnTag, time.Second)
 		}
-		agentGracefulShutdown(aimebuURL, spawnTag, shutdownName, bootstrapCmd, doneCh, sigCh)
+		agentGracefulShutdown(aimebuURL, spawnTag, shutdownName, bootstrapCmd, doneCh, sigCh, debug, sig)
 		return "", shutdownName, agentErrInterrupted
 	case waitErr = <-doneCh:
 	}
+	stdoutWriter.Flush()
+	agentLogHarnessExit(debug, waitErr, time.Since(startedAt), stderrBuf.Bytes())
 	if waitErr != nil {
 		return "", "", waitErr
 	}
-	sessionID, err := agentParseSessionID(harness, bootstrapBuf.Bytes())
+	sessionID, lineIndex, err := agentParseSessionID(harness, bootstrapBuf.Bytes())
 	if sessionID == "" {
 		return "", "", fmt.Errorf("could not extract session UUID from output; cannot resume")
 	}
-	agentName := <-nameCh
+	agentLogSessionIDParsed(debug, harness, sessionID, lineIndex)
+	var agentName string
+	switch {
+	case knownName == "":
+		agentName = <-nameCh
+	case debug.enabled:
+		select {
+		case n := <-nameCh:
+			if n != "" {
+				agentName = n
+			} else {
+				agentName = knownName
+			}
+		case <-time.After(time.Second):
+			agentName = knownName
+		}
+	default:
+		agentName = <-nameCh
+	}
+	_ = debug.setAgentName(agentName)
 	return sessionID, agentName, nil
 }
 
-func agentResumeLoop(harness string, command []string, sessionID, agentName string, rooms, env []string, aimebuURL string, sigCh <-chan os.Signal) {
+func agentResumeLoop(harness string, command []string, sessionID, agentName string, rooms, env []string, aimebuURL string, sigCh <-chan os.Signal, debug *agentDebugLog) {
 	retries := 0
 	backoff := time.Second
 	lastFailure := agentRecoveryNormalEnd
@@ -700,6 +746,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 			recoveryClass = agentPreflight(aimebuURL, agentFullID(agentName), rooms)
 			if recoveryClass == agentRecoveryServerUnreachable {
 				consecutiveFailureCount = agentAdvanceFailure(recoveryClass, &lastFailure, consecutiveFailureCount)
+				agentLogRecoveryDecision(debug, recoveryClass, "preflight health check failed", consecutiveFailureCount, backoff)
 				if consecutiveFailureCount > agentRecoveryFailureCap {
 					agentFatalRecovery(recoveryClass, sessionID, agentName)
 				}
@@ -723,31 +770,38 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 		if recoveryClass == agentRecoveryRegistrationLost {
 			prompt = agentBuildRecoveryPrompt(harness, spawnTag, agentName, rooms)
 			fmt.Fprintf(os.Stderr, "aimebu agent: registration missing for %s, re-registering in-session\n", agentFullID(agentName))
+			agentLogRecoveryDecision(debug, recoveryClass, "preflight room membership missing", consecutiveFailureCount, 0)
 		}
 
 		args := agentResumeArgs(harness, sessionID, prompt, command[1:])
 		stdoutBuf := &bytes.Buffer{}
 		stderrBuf := &bytes.Buffer{}
-		cmd := agentCommand(command, args, env, io.MultiWriter(os.Stdout, stdoutBuf), io.MultiWriter(os.Stderr, stderrBuf))
+		stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(os.Stdout, stdoutBuf))
+		cmd := agentCommand(command, args, env, stdoutWriter, io.MultiWriter(os.Stderr, stderrBuf))
+		startedAt := time.Now()
 
 		if err := cmd.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "aimebu agent: spawn failed: %v\n", err)
 			os.Exit(1)
 		}
+		agentLogHarnessSpawn(debug, command, args)
 
 		doneCh := make(chan error, 1)
 		go func() { doneCh <- cmd.Wait() }()
 
 		select {
-		case <-sigCh:
-			agentGracefulShutdown(aimebuURL, "", agentName, cmd, doneCh, sigCh)
+		case sig := <-sigCh:
+			agentGracefulShutdown(aimebuURL, "", agentName, cmd, doneCh, sigCh, debug, sig)
 			return
 		case err := <-doneCh:
+			stdoutWriter.Flush()
+			agentLogHarnessExit(debug, err, time.Since(startedAt), stderrBuf.Bytes())
 			outcome := agentClassifyChildResult(harness, stdoutBuf.Bytes(), stderrBuf.Bytes())
 
 			switch outcome {
 			case agentRecoveryServerUnreachable:
 				consecutiveFailureCount = agentAdvanceFailure(outcome, &lastFailure, consecutiveFailureCount)
+				agentLogRecoveryDecision(debug, outcome, "child output reported server unreachable", consecutiveFailureCount, backoff)
 				if consecutiveFailureCount > agentRecoveryFailureCap {
 					agentFatalRecovery(outcome, sessionID, agentName)
 				}
@@ -760,6 +814,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 				continue
 			case agentRecoveryRegistrationLost:
 				consecutiveFailureCount = agentAdvanceFailure(outcome, &lastFailure, consecutiveFailureCount)
+				agentLogRecoveryDecision(debug, outcome, "child output reported missing bus registration", consecutiveFailureCount, 0)
 				if consecutiveFailureCount > agentRecoveryFailureCap {
 					agentFatalRecovery(outcome, sessionID, agentName)
 				}
@@ -767,12 +822,13 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 				continue
 			case agentRecoveryCodexThreadMissing:
 				consecutiveFailureCount = agentAdvanceFailure(outcome, &lastFailure, consecutiveFailureCount)
+				agentLogRecoveryDecision(debug, outcome, "codex reported missing thread during resume", consecutiveFailureCount, backoff)
 				if consecutiveFailureCount > agentRecoveryFailureCap {
 					agentFatalRecovery(outcome, sessionID, agentName)
 				}
 				recoveryPrompt := agentBuildRecoveryPrompt(harness, spawnTag, agentName, rooms)
 				fmt.Fprintf(os.Stderr, "aimebu agent: codex thread %s vanished, bootstrapping a fresh thread (%d/%d)\n", sessionID, consecutiveFailureCount, agentRecoveryFailureCap)
-				newSessionID, recoveredName, bootErr := agentBootstrapSession(harness, command, recoveryPrompt, env, aimebuURL, spawnTag, agentName, sigCh)
+				newSessionID, recoveredName, bootErr := agentBootstrapSession(harness, command, recoveryPrompt, env, aimebuURL, spawnTag, agentName, sigCh, debug)
 				if errors.Is(bootErr, agentErrInterrupted) {
 					return
 				}
@@ -1017,7 +1073,7 @@ func agentStopChild(running *exec.Cmd, runDone <-chan error, sigCh <-chan os.Sig
 	}
 }
 
-func agentGracefulShutdown(aimebuURL, spawnTag, agentName string, running *exec.Cmd, runDone <-chan error, sigCh <-chan os.Signal) {
+func agentGracefulShutdown(aimebuURL, spawnTag, agentName string, running *exec.Cmd, runDone <-chan error, sigCh <-chan os.Signal, debug *agentDebugLog, signal os.Signal) {
 	fmt.Fprintln(os.Stderr, "\naimebu agent: shutting down...")
 
 	attemptedID := agentFullID(agentName)
@@ -1063,6 +1119,18 @@ func agentGracefulShutdown(aimebuURL, spawnTag, agentName string, running *exec.
 	if deleteErr != nil {
 		fmt.Fprintf(os.Stderr, "aimebu agent: deregister failed: %v\n", deleteErr)
 	}
+	result := "ok"
+	switch {
+	case deleteErr != nil:
+		result = deleteErr.Error()
+	case deleteTimedOut:
+		result = "delete timed out"
+	}
+	signalName := "unknown"
+	if signal != nil {
+		signalName = signal.String()
+	}
+	agentLogWrapperShutdown(debug, signalName, attemptedID, result)
 }
 
 func agentUsage() {
@@ -1089,6 +1157,10 @@ Options:
 Session state is persisted in agents/agent-sessions.json under the aimebu
 config dir after each successful bootstrap so that --resume-id and
 --resume-name can look up prior sessions.
+
+Set AIMEBU_AGENT_DEBUG=1 (or true/yes/y/on) to write JSONL debug logs to
+agents/agent-logs/<agent-name>.log under the aimebu config dir.
+Logs are runtime diagnostics and are preserved by both prune and prune -a.
 
 Supported harnesses: claude-code (claude, claude-docker), codex (codex, codex-docker)
 

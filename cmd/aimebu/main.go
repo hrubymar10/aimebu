@@ -473,6 +473,7 @@ func pruneCmd(args []string) {
 			fmt.Println()
 			fmt.Println("Preserved:")
 			fmt.Println("  • server/aimebu.pid, server/aimebu.log (runtime artifacts)")
+			fmt.Println("  • agents/agent-logs/                   (runtime diagnostics, opt-in via AIMEBU_AGENT_DEBUG)")
 		} else {
 			fmt.Println("This will permanently delete:")
 			fmt.Println("  • server/rooms.json          (all rooms and membership)")
@@ -484,6 +485,7 @@ func pruneCmd(args []string) {
 			fmt.Println("  • agents/agent-warning-acknowledged (first-run warning acknowledgement)")
 			fmt.Println("  • server/macros.json         (global + per-room macros)")
 			fmt.Println("  • server/aimebu.pid, server/aimebu.log (runtime artifacts)")
+			fmt.Println("  • agents/agent-logs/                   (runtime diagnostics, opt-in via AIMEBU_AGENT_DEBUG)")
 		}
 		fmt.Print("\nAre you sure? [y/N]: ")
 		scanner := bufio.NewScanner(os.Stdin)

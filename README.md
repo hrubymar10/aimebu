@@ -434,6 +434,7 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 | `AIMEBU_URL`     | `http://localhost:9997`  | Server URL the CLI / MCP server hits. |
 | `AIMEBU_NAME`    | _(unset)_                | Your human name — alternative to `--name`. Also advertised as the default name at `GET /default-name` (used by the web UI). |
 | `AIMEBU_HARNESS` | _(unset)_                | Harness slug for `aimebu mcp`. Load-bearing for harnesses that don't propagate marker env vars (notably codex). Set in MCP config; AI can also pass it directly to `bus_register`. |
+| `AIMEBU_AGENT_DEBUG` | _(unset)_ | Set to `1`, `true`, `yes`, `y`, or `on` to enable JSONL debug logging for `aimebu agent`. Off by default. See [Debug logging](#debug-logging). |
 
 ## Data storage
 
@@ -453,7 +454,9 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 │   └── aimebu.log          # Daemon log output                      (runtime artifact)
 └── agents/                 # per-host agent CLI state
     ├── agent-sessions.json # `aimebu agent` session-state for resume (conversation state)
-    └── agent-warning-acknowledged # First-run warning acknowledgement marker (user setting)
+    ├── agent-warning-acknowledged # First-run warning acknowledgement marker (user setting)
+    └── agent-logs/         # per-agent JSONL debug logs (runtime artifact, opt-in via AIMEBU_AGENT_DEBUG)
+        └── <name>.log      # one file per agent name; pre-register: _pre-register-<spawn_tag>.log
 ```
 
 On first authoritative use after upgrading from the old flat layout, aimebu
@@ -468,9 +471,34 @@ settings, including macros, sounds, and
 `agents/agent-warning-acknowledged`. If `AIMEBU_URL` points at loopback
 (`localhost`, `127.0.0.1`, `::1`) and the server is down, the CLI performs
 the same prune directly against `AIMEBU_CONFIG_DIR` / `~/.aimebu`. Runtime
-artifacts are never touched.
+artifacts (`server/aimebu.log`, `server/aimebu.pid`, `agents/agent-logs/`)
+are never touched by either prune mode.
 
 Human-readable JSON. Inspect with `cat`/`jq`, edit directly if needed.
+
+## Debug logging
+
+`aimebu agent` supports opt-in JSONL debug logging to help diagnose wrapper
+and harness behaviour. Enable it by setting `AIMEBU_AGENT_DEBUG=1` (or
+`true`, `yes`, `y`, `on`) before starting the wrapper:
+
+```bash
+AIMEBU_AGENT_DEBUG=1 aimebu agent --room general -- claude
+```
+
+One JSONL file is written per agent name under
+`agents/agent-logs/<name>.log` in the aimebu config dir (default
+`~/.aimebu/agents/agent-logs/<name>.log`). Before the agent registers and
+gets a name, events go to `_pre-register-<spawn_tag>.log` in the same
+directory; that file is merged into `<name>.log` once registration is
+observed.
+
+Events captured: `wrapper_start`, `harness_spawn`, `harness_stdout_raw`
+(4096-byte line cap), `session_id_parsed`, `register_observed`,
+`harness_exit`, `recovery_decision`, `wrapper_shutdown`.
+
+Debug logs are runtime diagnostics and are preserved by both `aimebu prune`
+and `aimebu prune -a`.
 
 ## License
 

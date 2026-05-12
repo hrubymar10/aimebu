@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -299,3 +301,242 @@ func writeAgentFile(t *testing.T, path, body string) {
 }
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
+
+func TestAgentDebugLogRenamesPreRegisterFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "yes")
+
+	debug := newAgentDebugLog("", "feedbeefcafebabe")
+	if debug == nil || !debug.enabled {
+		t.Fatal("expected debug logging to be enabled")
+	}
+	debug.log("wrapper_start", map[string]any{"resume_mode": "bootstrap"})
+
+	finalPath := filepath.Join(dir, "agents", "agent-logs", "worker.log")
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(finalPath, []byte("{\"event\":\"existing\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	preRegisterPath := filepath.Join(dir, "agents", "agent-logs", "_pre-register-feedbeefcafebabe.log")
+	if _, err := os.Stat(preRegisterPath); err != nil {
+		t.Fatalf("expected pre-register log %s: %v", preRegisterPath, err)
+	}
+
+	if err := debug.setAgentName("worker@aimebu"); err != nil {
+		t.Fatal(err)
+	}
+	debug.log("register_observed", map[string]any{"agent_id": "worker@aimebu"})
+	if err := debug.close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(finalPath); err != nil {
+		t.Fatalf("expected final log %s: %v", finalPath, err)
+	}
+	if _, err := os.Stat(preRegisterPath); !os.IsNotExist(err) {
+		t.Fatalf("expected pre-register log to be renamed away, stat err=%v", err)
+	}
+
+	records := readAgentDebugRecords(t, finalPath)
+	if len(records) != 3 {
+		t.Fatalf("expected 3 debug records, got %d", len(records))
+	}
+	if got := records[0]["event"]; got != "existing" {
+		t.Fatalf("first event = %v, want existing", got)
+	}
+	if got := records[1]["event"]; got != "wrapper_start" {
+		t.Fatalf("second event = %v, want wrapper_start", got)
+	}
+	if got := records[2]["event"]; got != "register_observed" {
+		t.Fatalf("third event = %v, want register_observed", got)
+	}
+	if _, ok := records[1]["ts"].(string); !ok {
+		t.Fatalf("wrapper_start record missing ts string: %#v", records[1])
+	}
+}
+
+func TestAgentBootstrapSessionDebugLogging(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+
+	spawnTag := "abc123def4567890"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agents":[{"id":"worker@aimebu","kind":"ai","meta":{"spawn_tag":"abc123def4567890"}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	harnessDir := t.TempDir()
+	harnessPath := filepath.Join(harnessDir, "fake-codex.sh")
+	script := "#!/bin/sh\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"thread-123\"}\\n'\nprintf '{\"type\":\"note\",\"message\":\"ready\"}\\n'\n"
+	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	debug := newAgentDebugLog("", spawnTag)
+	agentLogWrapperStart(debug, []string{"--room", "general", "--", "codex"}, "codex", []string{"general"}, spawnTag, "bootstrap", server.URL, "codex")
+
+	env := agentBuildEnv(server.URL, "codex", spawnTag)
+	sessionID, agentID, err := agentBootstrapSession("codex", []string{harnessPath}, "keep listening", env, server.URL, spawnTag, "", make(chan os.Signal, 1), debug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "thread-123" {
+		t.Fatalf("sessionID = %q, want thread-123", sessionID)
+	}
+	if agentID != "worker@aimebu" {
+		t.Fatalf("agentID = %q, want worker@aimebu", agentID)
+	}
+	if err := debug.close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(dir, "agents", "agent-logs", "worker.log")
+	records := readAgentDebugRecords(t, logPath)
+	events := debugEventNames(records)
+	wantSequence := []string{"wrapper_start", "harness_spawn", "harness_stdout_raw", "harness_exit", "session_id_parsed"}
+	assertEventSubsequence(t, events, wantSequence)
+	if !contains(eventsCSV(events), "register_observed") {
+		t.Fatalf("expected register_observed event in %v", events)
+	}
+
+	sessionRecord := firstDebugEvent(records, "session_id_parsed")
+	if got := sessionRecord["parsed_id"]; got != "thread-123" {
+		t.Fatalf("parsed_id = %v, want thread-123", got)
+	}
+	if got := sessionRecord["source_line_index"]; got != float64(1) {
+		t.Fatalf("source_line_index = %v, want 1", got)
+	}
+
+	exitRecord := firstDebugEvent(records, "harness_exit")
+	if got := exitRecord["exit_code"]; got != float64(0) {
+		t.Fatalf("exit_code = %v, want 0", got)
+	}
+
+	stdoutRecord := firstDebugEvent(records, "harness_stdout_raw")
+	if got := stdoutRecord["line"]; got != `{"type":"thread.started","thread_id":"thread-123"}` {
+		t.Fatalf("first stdout line = %v", got)
+	}
+}
+
+// TestAgentDebugLogsResumeFailureEvents is a logger-level fixture, not a loop
+// integration test. It verifies that agentLogHarnessExit and
+// agentLogRecoveryDecision produce the correct JSONL records. A regression
+// where agentResumeLoop stops calling these functions would not be caught here;
+// that would require a full harness mock exercising the loop's doneCh path.
+func TestAgentDebugLogsResumeFailureEvents(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+
+	debug := newAgentDebugLog("worker", "resumetag")
+	if debug == nil || !debug.enabled {
+		t.Fatal("expected debug logging to be enabled")
+	}
+
+	// Simulate the sequence agentResumeLoop emits when a harness exits and the
+	// child output indicates the server became unreachable.
+	agentLogHarnessExit(debug, nil, 250*time.Millisecond, []byte("connection refused to 127.0.0.1:9997"))
+	agentLogRecoveryDecision(debug, agentRecoveryServerUnreachable, "child output reported server unreachable", 1, time.Second)
+
+	if err := debug.close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(dir, "agents", "agent-logs", "worker.log")
+	records := readAgentDebugRecords(t, logPath)
+	events := debugEventNames(records)
+
+	if !contains(eventsCSV(events), "harness_exit") {
+		t.Fatalf("expected harness_exit in %v", events)
+	}
+	if !contains(eventsCSV(events), "recovery_decision") {
+		t.Fatalf("expected recovery_decision in %v", events)
+	}
+
+	exit := firstDebugEvent(records, "harness_exit")
+	if got := exit["exit_code"]; got != float64(0) {
+		t.Fatalf("exit_code = %v, want 0", got)
+	}
+	if got, ok := exit["stderr_tail"].(string); !ok || !contains(got, "connection refused") {
+		t.Fatalf("stderr_tail = %v, want string containing 'connection refused'", exit["stderr_tail"])
+	}
+
+	decision := firstDebugEvent(records, "recovery_decision")
+	if got := decision["class"]; got != string(agentRecoveryServerUnreachable) {
+		t.Fatalf("class = %v, want %v", got, agentRecoveryServerUnreachable)
+	}
+	if got := decision["retry_count"]; got != float64(1) {
+		t.Fatalf("retry_count = %v, want 1", got)
+	}
+	if got := decision["backoff_ms"]; got != float64(time.Second.Milliseconds()) {
+		t.Fatalf("backoff_ms = %v, want %v", got, time.Second.Milliseconds())
+	}
+}
+
+func readAgentDebugRecords(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	var records []map[string]any
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var record map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			t.Fatalf("unmarshal %q: %v", scanner.Text(), err)
+		}
+		records = append(records, record)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return records
+}
+
+func debugEventNames(records []map[string]any) []string {
+	out := make([]string, 0, len(records))
+	for _, record := range records {
+		if name, ok := record["event"].(string); ok {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func assertEventSubsequence(t *testing.T, events []string, want []string) {
+	t.Helper()
+	pos := 0
+	for _, event := range events {
+		if pos < len(want) && event == want[pos] {
+			pos++
+		}
+	}
+	if pos != len(want) {
+		t.Fatalf("event sequence %v does not contain subsequence %v", events, want)
+	}
+}
+
+func firstDebugEvent(records []map[string]any, name string) map[string]any {
+	for _, record := range records {
+		if record["event"] == name {
+			return record
+		}
+	}
+	return nil
+}
+
+func eventsCSV(events []string) string { return strings.Join(events, ",") }
