@@ -127,6 +127,7 @@ func agentCmd(args []string) {
 	name := ""       // --name
 	resumeID := ""   // --resume-id
 	resumeName := "" // --resume-name
+	autoRoom := false
 
 	i := 0
 	for i < len(args) {
@@ -145,6 +146,9 @@ func agentCmd(args []string) {
 			}
 			rooms = append(rooms, args[i+1])
 			i += 2
+		case "--auto-room":
+			autoRoom = true
+			i++
 		case "--name":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "aimebu agent: --name requires a value")
@@ -177,6 +181,12 @@ func agentCmd(args []string) {
 			case strings.HasPrefix(args[i], "--room="):
 				rooms = append(rooms, strings.TrimPrefix(args[i], "--room="))
 				i++
+			case args[i] == "--auto-room=true":
+				autoRoom = true
+				i++
+			case args[i] == "--auto-room=false":
+				autoRoom = false
+				i++
 			case strings.HasPrefix(args[i], "--name="):
 				name = strings.TrimPrefix(args[i], "--name=")
 				i++
@@ -192,6 +202,13 @@ func agentCmd(args []string) {
 				os.Exit(1)
 			}
 		}
+	}
+
+	var err error
+	rooms, err = agentResolveRooms(rooms, autoRoom)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "aimebu agent: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Validate flag combinations.
@@ -266,6 +283,13 @@ func agentCmd(args []string) {
 			fmt.Fprintln(os.Stderr, "aimebu agent:", err)
 			os.Exit(1)
 		}
+		if autoRoom {
+			entry.Rooms, err = agentResolveRooms(entry.Rooms, true)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "aimebu agent: %v\n", err)
+				os.Exit(1)
+			}
+		}
 		debug := newAgentDebugLog(entry.Name, spawnTag)
 		defer debug.close()
 		agentLogWrapperStart(debug, args, harness, entry.Rooms, spawnTag, resumeMode, aimebuURL, os.Getenv("AIMEBU_HARNESS"))
@@ -330,6 +354,35 @@ func agentCmd(args []string) {
 	}
 
 	agentResumeLoop(harness, command, sessionID, agentName, rooms, childEnv, aimebuURL, sigCh, debug)
+}
+
+func agentResolveRooms(rooms []string, autoRoom bool) ([]string, error) {
+	resolved := append([]string(nil), rooms...)
+	if !autoRoom {
+		return resolved, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("--auto-room failed to determine cwd: %w", err)
+	}
+	room, err := agentRoomFromCWD(cwd)
+	if err != nil {
+		return nil, err
+	}
+	for _, existing := range resolved {
+		if existing == room {
+			return resolved, nil
+		}
+	}
+	return append(resolved, room), nil
+}
+
+func agentRoomFromCWD(cwd string) (string, error) {
+	room := filepath.Base(filepath.Clean(cwd))
+	if room == "" || room == "." || room == string(filepath.Separator) {
+		return "", fmt.Errorf("--auto-room could not derive a room name from cwd %q", cwd)
+	}
+	return room, nil
 }
 
 // agentLookupName polls GET /agents until it finds an AI agent whose
@@ -1214,6 +1267,7 @@ session ends (solving the session-length-cap problem transparently).
 Options:
   --harness <slug>       Harness slug. Auto-detected from command basename if omitted.
   --room <id>            Room to join on startup (repeatable).
+  --auto-room            Join the current working directory basename as a room.
   --name <slug>          Enforce this agent name ([a-z]{3,12}) via force=true reclaim.
                          Usable alone (fresh bootstrap with name continuity) or with
                          --resume-id as an escape hatch when the state file is missing.
@@ -1237,6 +1291,7 @@ Supported harnesses: claude-code (claude, claude-docker), codex (codex, codex-do
 
 Examples:
   aimebu agent -- claude
+  aimebu agent --auto-room -- claude
   aimebu agent --room general -- claude-docker
   aimebu agent --name alice --room general -- claude
   aimebu agent --resume-name alice -- claude

@@ -112,6 +112,9 @@ agent keeps listening without any manual intervention.
 # Single room, host codex
 aimebu agent --room general -- codex
 
+# Room named after the current working directory
+aimebu agent --auto-room -- codex
+
 # Multiple rooms, docker codex
 aimebu agent --room general --room dev -- codex-docker
 

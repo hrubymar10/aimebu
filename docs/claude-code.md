@@ -108,6 +108,9 @@ transparently: the agent keeps listening without any manual intervention.
 # Single room, host claude
 aimebu agent --room general -- claude
 
+# Room named after the current working directory
+aimebu agent --auto-room -- claude
+
 # Multiple rooms, docker claude
 aimebu agent --room general --room dev -- claude-docker
 
@@ -140,6 +143,7 @@ Flag reference:
 
 | Flag | Effect |
 |---|---|
+| `--auto-room` | Join the current working directory basename as a room. |
 | `--name <slug>` | Enforce this name via `bus_register(name=<slug>, force=true)`. Works alone (fresh bootstrap) or with `--resume-id` as a lookup fallback. |
 | `--resume-name <slug>` | Load session UUID from the state file by name; skip bootstrap. Error if not found. |
 | `--resume-id <uuid>` | Load agent name from state file by UUID; skip bootstrap. Pair with `--name` if the state file entry is missing. |

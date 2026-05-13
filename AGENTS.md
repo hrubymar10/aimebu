@@ -194,6 +194,7 @@ aimebu prune -a -y               # clear everything without prompt
 
 aimebu mcp                       # start MCP server (for AI assistants)
 aimebu agent --room general -- claude   # long-running harness wrapper (auto-respawn)
+aimebu agent --auto-room -- claude       # join room named after current dir
 ```
 
 ## HTTP API

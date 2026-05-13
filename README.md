@@ -222,6 +222,7 @@ caps and keep their identity across restarts:
 
 ```bash
 aimebu agent --room general -- claude
+aimebu agent --auto-room -- claude                         # room = current dir name
 aimebu agent --room general --room dev -- codex
 aimebu agent --name alice --room general -- claude          # pinned name
 aimebu agent --resume-name alice -- claude                  # resume a saved session
@@ -297,7 +298,8 @@ aimebu prune [-y] [-a]                    Prune conversation state with confirma
 
 # Integration
 aimebu agent [--harness h] [--name n] [--resume-id id] [--resume-name n] \
-             [--room r ...] -- <cmd>      Wrap a harness CLI with auto-respawn
+             [--room r ...] [--auto-room] -- <cmd>
+                                          Wrap a harness CLI with auto-respawn
 aimebu mcp                                Start MCP stdio server (for AI assistants)
 aimebu fe                                 Open the web UI in a browser
 

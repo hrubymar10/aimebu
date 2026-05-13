@@ -715,7 +715,8 @@ Monitoring:
                                         AIMEBU_URL is loopback and the server is down
 
 Integration:
-  agent [--harness h] [--room r...] -- <cmd>   Wrap a harness CLI with session-lifecycle management
+  agent [--harness h] [--room r...] [--auto-room] -- <cmd>
+                                                Wrap a harness CLI with session-lifecycle management
   mcp                                           Start MCP stdio server (for AI assistants)
   fe                                            Open the web UI in your browser
 

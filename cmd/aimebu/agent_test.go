@@ -39,6 +39,56 @@ func TestAgentNamePattern(t *testing.T) {
 	}
 }
 
+func TestAgentRoomFromCWD(t *testing.T) {
+	got, err := agentRoomFromCWD(filepath.Join(string(filepath.Separator), "Users", "martin", "aimebu"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "aimebu" {
+		t.Fatalf("got %q, want aimebu", got)
+	}
+
+	if _, err := agentRoomFromCWD(string(filepath.Separator)); err == nil {
+		t.Fatal("expected error for filesystem root")
+	}
+	if _, err := agentRoomFromCWD("."); err == nil {
+		t.Fatal("expected error for relative current directory marker")
+	}
+}
+
+func TestAgentResolveRoomsAutoRoom(t *testing.T) {
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "project-room")
+	if err := os.Mkdir(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(projectDir)
+
+	got, err := agentResolveRooms([]string{"general"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "general,project-room" {
+		t.Fatalf("got rooms %v, want [general project-room]", got)
+	}
+
+	got, err = agentResolveRooms(nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "project-room" {
+		t.Fatalf("got rooms %v, want single auto room project-room", got)
+	}
+
+	got, err = agentResolveRooms([]string{"project-room"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "project-room" {
+		t.Fatalf("got rooms %v, want single deduped project-room", got)
+	}
+}
+
 func TestAgentResolveResume(t *testing.T) {
 	sessions := []agentSession{
 		{SessionID: "uuid-alice", Name: "alice", Harness: "claude-code", CWD: "/proj", LastUsed: time.Now()},
