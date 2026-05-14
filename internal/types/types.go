@@ -48,6 +48,7 @@ type JoinRequest struct {
 
 type LeaveRequest struct {
 	AgentID string `json:"agent_id"`
+	Kicked  bool   `json:"kicked,omitempty"`
 }
 
 type RoomSendRequest struct {

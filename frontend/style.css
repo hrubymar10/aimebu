@@ -1349,6 +1349,42 @@ body {
   color: var(--text-muted);
 }
 
+.agent-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.agent-action-btn {
+  font-size: 0.6rem;
+  font-family: var(--font-mono);
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-height: 24px;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+  white-space: nowrap;
+}
+
+.agent-action-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+
+.agent-deregister-btn:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.agent-leave-btn:hover {
+  color: var(--orange);
+  border-color: var(--orange);
+}
+
 /* ── Mobile Tabs ─────────────────────────────────────────────── */
 
 .mobile-tabs {

@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -29,6 +32,66 @@ var macroKeyRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 func registerStaticMimeTypes() {
 	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
+
+func frontendFileServer(frontendFS fs.FS) http.Handler {
+	fileServer := http.FileServer(http.FS(frontendFS))
+	etag, hasETag := frontendBundleETag(frontendFS)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isMutableFrontendPath(r.URL.Path) {
+			w.Header().Set("Cache-Control", "no-cache")
+			if hasETag {
+				w.Header().Set("ETag", etag)
+			}
+		}
+		fileServer.ServeHTTP(w, r)
+	})
+}
+
+func isMutableFrontendPath(path string) bool {
+	if path == "" || path == "/" {
+		return true
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".html", ".js", ".css":
+		return true
+	default:
+		return false
+	}
+}
+
+func frontendBundleETag(frontendFS fs.FS) (string, bool) {
+	var paths []string
+	if err := fs.WalkDir(frontendFS, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		paths = append(paths, path)
+		return nil
+	}); err != nil {
+		log.Printf("Warning: could not hash frontend bundle: %v", err)
+		return "", false
+	}
+	sort.Strings(paths)
+
+	h := sha1.New()
+	for _, path := range paths {
+		data, err := fs.ReadFile(frontendFS, path)
+		if err != nil {
+			log.Printf("Warning: could not hash frontend bundle: %v", err)
+			return "", false
+		}
+		_, _ = h.Write([]byte(path))
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write(data)
+		_, _ = h.Write([]byte{0})
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	return `"fe-` + sum[:12] + `"`, true
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
@@ -157,7 +220,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo) {
 			jsonError(w, "agent_id is required", http.StatusBadRequest)
 			return
 		}
-		if err := s.leaveRoom(roomID, req.AgentID); err != nil {
+		if err := s.leaveRoomWithEvent(roomID, req.AgentID, req.Kicked); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -514,21 +577,28 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo) {
 
 	// ── DM ─────────────────────────────────────────────────────────
 
-	// POST /dm — send a DM (auto-creates private room)
+	// POST /dm — open or send a DM (auto-creates private room).
+	// body is optional: omit or send "" to create/return the DM room without
+	// sending a message (useful for opening a DM channel from the UI).
 	mux.HandleFunc("POST /dm", func(w http.ResponseWriter, r *http.Request) {
 		var req types.DMRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.From == "" || req.To == "" || req.Body == "" {
-			jsonError(w, "from, to, and body are required", http.StatusBadRequest)
+		if req.From == "" || req.To == "" {
+			jsonError(w, "from and to are required", http.StatusBadRequest)
 			return
 		}
 
 		room, err := s.findOrCreateDM(req.From, req.To)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusForbidden)
+			return
+		}
+
+		if req.Body == "" {
+			_ = jsonOK(w, map[string]any{"room": room.ID})
 			return
 		}
 
@@ -1060,7 +1130,7 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	// Serve embedded frontend at /
 	if frontendFS != nil {
 		registerStaticMimeTypes()
-		mux.Handle("GET /", http.FileServer(http.FS(frontendFS)))
+		mux.Handle("GET /", frontendFileServer(frontendFS))
 	}
 
 	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

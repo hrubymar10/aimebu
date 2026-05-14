@@ -41,6 +41,18 @@ func setupTestServerWithBuild(t *testing.T, build BuildInfo) (*store, *httptest.
 	return s, srv
 }
 
+func hasRoomMember(room *types.Room, agentID string) bool {
+	if room == nil {
+		return false
+	}
+	for _, member := range room.Members {
+		if member == agentID {
+			return true
+		}
+	}
+	return false
+}
+
 func TestFrontendManifestServedWithManifestContentType(t *testing.T) {
 	registerStaticMimeTypes()
 
@@ -65,6 +77,52 @@ func TestFrontendManifestServedWithManifestContentType(t *testing.T) {
 	}
 	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/manifest+json") {
 		t.Fatalf("Content-Type = %q, want application/manifest+json", got)
+	}
+}
+
+func TestStaticAssetsHaveNoCacheHeader(t *testing.T) {
+	registerStaticMimeTypes()
+
+	frontendFS, err := fs.Sub(aimebu.FrontendFS, "frontend")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /", frontendFileServer(frontendFS))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	for _, path := range []string{"/", "/app.js"} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s returned %d, want %d", path, resp.StatusCode, http.StatusOK)
+		}
+		if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
+			t.Fatalf("GET %s Cache-Control = %q, want no-cache", path, got)
+		}
+		if got := resp.Header.Get("ETag"); !strings.HasPrefix(got, `"fe-`) {
+			t.Fatalf("GET %s ETag = %q, want frontend content hash", path, got)
+		}
+	}
+
+	resp, err := http.Get(srv.URL + "/icons/aimebu-192.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /icons/aimebu-192.png returned %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "" {
+		t.Fatalf("icon Cache-Control = %q, want empty", got)
+	}
+	if got := resp.Header.Get("ETag"); got != "" {
+		t.Fatalf("icon ETag = %q, want empty", got)
 	}
 }
 
@@ -137,6 +195,47 @@ func TestDeleteAgentReturnsNotFoundForUnknownAgent(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("DELETE /agents for unknown agent returned %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestKickRoomMemberEmitsKickedSystemMessage(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.createRoom("general", human.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"agent_id": agent.ID,
+		"kicked":   true,
+	})
+	resp, err := http.Post(srv.URL+"/rooms/general/leave", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /rooms/general/leave returned %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	msgs := s.roomMessages("general", 100, 0)
+	if len(msgs) == 0 {
+		t.Fatal("expected system message after kick")
+	}
+	first := msgs[0]
+	if first.From != "_system" || first.Body != agent.ID+" was kicked" {
+		t.Fatalf("newest message = (%q, %q), want (_system, %q)", first.From, first.Body, agent.ID+" was kicked")
 	}
 }
 
@@ -1013,6 +1112,223 @@ func TestDMGroupMentionsResolveWithinDMMembers(t *testing.T) {
 	}
 	if !got.AddressedToMe || !got.ShouldRespond {
 		t.Fatalf("dm flags = addressed_to_me:%v should_respond:%v, want true/true", got.AddressedToMe, got.ShouldRespond)
+	}
+}
+
+func TestDMBodylessCreatesRoomWithBothMembers(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	alice, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.registerHuman("bob", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"from": alice.ID,
+		"to":   bob.ID,
+		// body intentionally omitted (zero value)
+	})
+	resp, err := http.Post(srv.URL+"/dm", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /dm (bodyless) returned %d, want 200", resp.StatusCode)
+	}
+
+	var out struct {
+		Room string `json:"room"`
+		ID   *int64 `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Room == "" {
+		t.Fatal("expected room in response")
+	}
+	if out.ID != nil {
+		t.Fatalf("bodyless DM should not return message id, got %d", *out.ID)
+	}
+
+	// Both parties must be members of the returned room.
+	room := s.getRoom(out.Room)
+	if room == nil {
+		t.Fatalf("room %q not found in store", out.Room)
+	}
+	hasMember := func(id string) bool {
+		for _, m := range room.Members {
+			if m == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasMember(alice.ID) {
+		t.Errorf("alice not a member of DM room %q", out.Room)
+	}
+	if !hasMember(bob.ID) {
+		t.Errorf("bob not a member of DM room %q", out.Room)
+	}
+
+	// No messages should have been emitted.
+	msgs := s.roomMessages(out.Room, 100, 0)
+	if len(msgs) != 0 {
+		t.Fatalf("bodyless DM emitted %d message(s), want 0", len(msgs))
+	}
+}
+
+func TestDMReopensAfterKick(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	alice, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.registerHuman("bob", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"from": alice.ID,
+		"to":   bob.ID,
+	})
+	resp, err := http.Post(srv.URL+"/dm", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var openResp struct {
+		Room string `json:"room"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&openResp); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if openResp.Room == "" {
+		t.Fatal("expected room in response")
+	}
+
+	if err := s.leaveRoom(openResp.Room, bob.ID); err != nil {
+		t.Fatal(err)
+	}
+	room := s.getRoom(openResp.Room)
+	if room == nil {
+		t.Fatalf("room %q not found in store", openResp.Room)
+	}
+	if hasRoomMember(room, bob.ID) {
+		t.Fatalf("bob should have been removed from DM room %q", openResp.Room)
+	}
+
+	before := len(s.roomMessages(openResp.Room, 100, 0))
+	resp, err = http.Post(srv.URL+"/dm", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reopenResp struct {
+		Room string `json:"room"`
+		ID   *int64 `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&reopenResp); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if reopenResp.Room != openResp.Room {
+		t.Fatalf("reopened room = %q, want %q", reopenResp.Room, openResp.Room)
+	}
+	if reopenResp.ID != nil {
+		t.Fatalf("bodyless DM reopen should not return message id, got %d", *reopenResp.ID)
+	}
+
+	room = s.getRoom(reopenResp.Room)
+	if !hasRoomMember(room, alice.ID) {
+		t.Errorf("alice not a member of reopened DM room %q", reopenResp.Room)
+	}
+	if !hasRoomMember(room, bob.ID) {
+		t.Errorf("bob not a member of reopened DM room %q", reopenResp.Room)
+	}
+	msgs := s.roomMessages(reopenResp.Room, 100, 0)
+	if len(msgs) != before+1 {
+		t.Fatalf("bodyless DM reopen emitted %d new message(s), want 1", len(msgs)-before)
+	}
+	first := msgs[0]
+	if first.From != "_system" || first.Body != bob.ID+" joined" {
+		t.Fatalf("newest message = (%q, %q), want (_system, %q)", first.From, first.Body, bob.ID+" joined")
+	}
+}
+
+func TestDMBodylessUnregisteredRecipient(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	alice, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"from": alice.ID,
+		"to":   "nobody@ghost",
+	})
+	resp, err := http.Post(srv.URL+"/dm", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("POST /dm with unregistered recipient returned %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestDMBodyNonEmptyStillSends(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	alice, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.registerHuman("bob", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"from": alice.ID,
+		"to":   bob.ID,
+		"body": "hello bob",
+	})
+	resp, err := http.Post(srv.URL+"/dm", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /dm (with body) returned %d, want 200", resp.StatusCode)
+	}
+
+	var out struct {
+		Room string `json:"room"`
+		ID   int64  `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Room == "" {
+		t.Fatal("expected room in response")
+	}
+	if out.ID == 0 {
+		t.Fatal("expected message id in response for non-empty body")
+	}
+
+	msgs := s.roomMessages(out.Room, 100, 0)
+	if len(msgs) == 0 {
+		t.Fatal("expected message in room after DM with body")
+	}
+	if msgs[len(msgs)-1].Body != "hello bob" {
+		t.Fatalf("message body = %q, want %q", msgs[len(msgs)-1].Body, "hello bob")
 	}
 }
 

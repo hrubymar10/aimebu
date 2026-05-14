@@ -1662,6 +1662,7 @@
     if (body) opts.body = JSON.stringify(body);
     return fetch(path, opts).then(function (r) {
       if (!r.ok) return r.text().then(function (t) { throw new Error('HTTP ' + r.status + ': ' + t); });
+      if (r.status === 204) return null;
       return r.json();
     });
   }
@@ -2636,7 +2637,7 @@
     });
 
     allAgentsList.innerHTML = sorted.map(function (a) {
-      return agentCardHTML(a);
+      return agentCardHTML(a, 'global');
     }).join('');
   }
 
@@ -2655,20 +2656,24 @@
     roomAgentsList.innerHTML = room.members.map(function (memberID) {
       var agent = agents.find(function (a) { return a.id === memberID; });
       if (agent) {
-        return agentCardHTML(agent);
+        return agentCardHTML(agent, 'room');
       }
+      var leaveBtn = memberID !== agentID
+        ? '<div class="agent-actions"><button class="agent-action-btn agent-leave-btn" data-agent-id="' + esc(memberID) + '" title="Kick ' + esc(memberID) + ' from room" aria-label="Kick ' + esc(memberID) + ' from room">Kick</button></div>'
+        : '';
       return (
         '<div class="agent-card">' +
           '<div class="agent-id">' +
             '<span class="agent-online-dot offline"></span>' +
             esc(memberID) +
           '</div>' +
+          leaveBtn +
         '</div>'
       );
     }).join('');
   }
 
-  function agentCardHTML(a) {
+  function agentCardHTML(a, context) {
     var status = agentStatus(a.last_seen);
     var meta = a.meta || {};
     var metaKeys = Object.keys(meta);
@@ -2702,6 +2707,15 @@
     var iconTitle = a.kind === 'human' ? 'human' : esc((a.model || 'unknown') + ' · ' + (a.harness || 'unknown'));
     var iconAlt = a.kind === 'human' ? 'human' : esc(a.harness || 'unknown');
     var iconTag = '<img src="' + iconSrc + '" class="harness-icon" alt="' + iconAlt + '" title="' + iconTitle + '" width="14" height="14">';
+    var actionBtns = '';
+    if (a.id !== agentID) {
+      var dmBtn = '<button class="agent-action-btn agent-dm-btn" data-agent-id="' + esc(a.id) + '" title="Open DM with ' + esc(a.id) + '" aria-label="Open DM with ' + esc(a.id) + '">DM</button>';
+      var kickLabel = context === 'room' ? 'Kick' : 'Deregister';
+      var kickClass = context === 'room' ? 'agent-leave-btn' : 'agent-deregister-btn';
+      var kickAction = context === 'room' ? 'Kick ' + a.id + ' from room' : 'Deregister ' + a.id;
+      var kickBtn = '<button class="agent-action-btn ' + kickClass + '" data-agent-id="' + esc(a.id) + '" title="' + esc(kickAction) + '" aria-label="' + esc(kickAction) + '">' + esc(kickLabel) + '</button>';
+      actionBtns = '<div class="agent-actions">' + dmBtn + kickBtn + '</div>';
+    }
     return (
       '<div class="agent-card">' +
         '<div class="agent-id">' +
@@ -2712,6 +2726,7 @@
         '</div>' +
         (metaTags ? '<div class="agent-meta">' + metaTags + '</div>' : '') +
         '<div class="agent-lastseen">Last seen: ' + relativeTime(a.last_seen) + '</div>' +
+        actionBtns +
       '</div>'
     );
   }
@@ -3117,10 +3132,42 @@
     }
   });
 
-  // Leave room
+  // Leave current room
   leaveRoomBtn.addEventListener('click', function () {
     if (!activeRoomID) return;
     leaveRoom(activeRoomID);
+  });
+
+  // Agent card actions — event delegation on both agent list containers.
+  // Handles DM, per-room leave, and global deregister buttons rendered by agentCardHTML.
+  [roomAgentsList, allAgentsList].forEach(function (container) {
+    container.addEventListener('click', function (e) {
+      var dmBtn = e.target.closest('.agent-dm-btn');
+      var leaveBtn = e.target.closest('.agent-leave-btn');
+      var deregBtn = e.target.closest('.agent-deregister-btn');
+
+      if (dmBtn) {
+        var targetID = dmBtn.getAttribute('data-agent-id');
+        dmBtn.disabled = true;
+        api('POST', '/dm', { from: agentID, to: targetID, body: '' })
+          .then(function (data) { selectRoom(data.room); })
+          .catch(function (err) { alert('Failed to open DM: ' + err.message); })
+          .finally(function () { dmBtn.disabled = false; });
+
+      } else if (leaveBtn) {
+        var targetID = leaveBtn.getAttribute('data-agent-id');
+        if (!activeRoomID) return;
+        if (!confirm('Kick ' + targetID + ' from room "' + activeRoomID + '"?')) return;
+        api('POST', '/rooms/' + encodeURIComponent(activeRoomID) + '/leave', { agent_id: targetID, kicked: true })
+          .catch(function (err) { alert('Failed to kick agent from room: ' + err.message); });
+
+      } else if (deregBtn) {
+        var targetID = deregBtn.getAttribute('data-agent-id');
+        if (!confirm('Permanently deregister ' + targetID + ' from all rooms?')) return;
+        api('DELETE', '/agents/' + encodeURIComponent(targetID))
+          .catch(function (err) { alert('Failed to deregister agent: ' + err.message); });
+      }
+    });
   });
 
   // Export room
