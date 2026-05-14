@@ -958,7 +958,7 @@ func TestRoomScopedGroupMentionsAnnotateMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reviewer, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "reviewer")
+	reviewer, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "reviewpal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1339,7 +1339,7 @@ func TestHistoricalGroupTargetsFreezeAtSendTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reviewer, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "reviewer")
+	reviewer, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "reviewpal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1415,8 +1415,8 @@ func TestHistoricalGroupTargetsFreezeAtSendTime(t *testing.T) {
 	if !found {
 		t.Fatalf("late joiner view did not contain target message: %+v", out.Messages)
 	}
-	if !reflect.DeepEqual(frozen.AddressedTo, []string{"reviewer", "matin"}) {
-		t.Fatalf("frozen addressed_to = %v, want [reviewer matin]", frozen.AddressedTo)
+	if !reflect.DeepEqual(frozen.AddressedTo, []string{"reviewpal", "matin"}) {
+		t.Fatalf("frozen addressed_to = %v, want [reviewpal matin]", frozen.AddressedTo)
 	}
 	if frozen.AddressedToMe || frozen.ShouldRespond {
 		t.Fatalf("late joiner flags = addressed_to_me:%v should_respond:%v, want false/false", frozen.AddressedToMe, frozen.ShouldRespond)
@@ -1430,7 +1430,7 @@ func TestGetMessageByIDReturnsViewerAnnotatedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reviewer, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "reviewer")
+	reviewer, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "reviewpal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2528,5 +2528,310 @@ func TestBuildInfoEndpoint(t *testing.T) {
 	}
 	if got.GoVersion != build.GoVersion {
 		t.Fatalf("go_version = %q, want %q", got.GoVersion, build.GoVersion)
+	}
+}
+
+// ── Roles HTTP tests ──────────────────────────────────────────────
+
+func setupRolesServer(t *testing.T) (*store, *httptest.Server) {
+	t.Helper()
+	SetRoleDefaults(map[string]string{
+		"leader":        "lead the team",
+		"worker":        "do the work",
+		"reviewer":      "review it",
+		"sec-reviewer":  "review security",
+		"test-reviewer": "review tests",
+		"ux-reviewer":   "review UX",
+	})
+	return setupTestServer(t)
+}
+
+func TestRolesHTTP_GetReturnsAllCatalogEntries(t *testing.T) {
+	_, srv := setupRolesServer(t)
+
+	resp, err := http.Get(srv.URL + "/roles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /roles: status %d", resp.StatusCode)
+	}
+	var roles []RoleEntry
+	if err := json.NewDecoder(resp.Body).Decode(&roles); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(roles) != 6 {
+		t.Fatalf("expected 6 catalog entries, got %d", len(roles))
+	}
+	for _, r := range roles {
+		if r.Key == "leader" && r.Icon == "" {
+			t.Fatalf("expected default leader emoji in GET /roles")
+		}
+	}
+}
+
+func TestRolesHTTP_PutOverrideAndGet(t *testing.T) {
+	_, srv := setupRolesServer(t)
+
+	body := bytes.NewBufferString(`{"roles":{"leader":{"label":"Lead","description":"runs the room","icon":"👑","body":"new leader body"}}}`)
+	req, _ := http.NewRequest("PUT", srv.URL+"/roles", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /roles: status %d", resp.StatusCode)
+	}
+
+	resp2, err := http.Get(srv.URL + "/roles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var roles []RoleEntry
+	if err := json.NewDecoder(resp2.Body).Decode(&roles); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var found bool
+	for _, r := range roles {
+		if r.Key == "leader" && r.Overridden && r.Body == "new leader body" && r.Label == "leader" && r.Description == "runs the room" && r.Icon == "👑" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("PUT override not reflected in GET /roles; got %+v", roles)
+	}
+}
+
+func TestRolesHTTP_PutInvalidKeyReturns400(t *testing.T) {
+	_, srv := setupRolesServer(t)
+
+	body := bytes.NewBufferString(`{"roles":{"BAD KEY":"body"}}`)
+	req, _ := http.NewRequest("PUT", srv.URL+"/roles", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for bad key, got %d", resp.StatusCode)
+	}
+}
+
+func TestRolesHTTP_DeleteSingleRevertsOverride(t *testing.T) {
+	s, srv := setupRolesServer(t)
+
+	agent, _, _ := s.registerAI("gpt5", "codex", "test", nil, "")
+	s.joinRoom("testroom", agent.ID)
+	s.assignRole("testroom", agent.ID, "leader")
+
+	// Override leader
+	body := bytes.NewBufferString(`{"roles":{"leader":"overridden"}}`)
+	req, _ := http.NewRequest("PUT", srv.URL+"/roles", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := http.DefaultClient.Do(req)
+	resp.Body.Close()
+
+	// Delete override
+	req2, _ := http.NewRequest("DELETE", srv.URL+"/roles/leader", nil)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("DELETE /roles/leader: status %d", resp2.StatusCode)
+	}
+
+	// Verify reverted
+	resp3, _ := http.Get(srv.URL + "/roles")
+	defer resp3.Body.Close()
+	var roles []RoleEntry
+	json.NewDecoder(resp3.Body).Decode(&roles)
+	for _, r := range roles {
+		if r.Key == "leader" && r.Overridden {
+			t.Fatalf("leader should no longer be overridden after DELETE")
+		}
+	}
+
+	room := s.getRoom("testroom")
+	if room.Roles[agent.ID] != "leader" {
+		t.Fatalf("catalog revert should preserve assignment, got %q", room.Roles[agent.ID])
+	}
+}
+
+func TestRolesHTTP_DeleteAllRejectsWhenAssigned(t *testing.T) {
+	s, srv := setupRolesServer(t)
+
+	// Register an agent, join room, assign role
+	agent, _, _ := s.registerAI("gpt5", "codex", "test", nil, "")
+	s.joinRoom("testroom", agent.ID)
+	s.assignRole("testroom", agent.ID, "worker")
+
+	// DELETE /roles without force should return 409
+	req, _ := http.NewRequest("DELETE", srv.URL+"/roles", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 conflict, got %d", resp.StatusCode)
+	}
+
+	// DELETE /roles?force=true should succeed
+	req2, _ := http.NewRequest("DELETE", srv.URL+"/roles?force=true", nil)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("DELETE /roles?force=true: status %d", resp2.StatusCode)
+	}
+}
+
+func TestRolesHTTP_PostRoomRole_HappyPath(t *testing.T) {
+	s, srv := setupRolesServer(t)
+
+	agent, _, _ := s.registerAI("gpt5", "codex", "test", nil, "")
+	s.joinRoom("testroom", agent.ID)
+
+	body := bytes.NewBufferString(`{"agent_id":"` + agent.ID + `","role_key":"worker"}`)
+	req, _ := http.NewRequest("POST", srv.URL+"/rooms/testroom/roles", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /rooms/testroom/roles: status %d", resp.StatusCode)
+	}
+
+	var room types.Room
+	if err := json.NewDecoder(resp.Body).Decode(&room); err != nil {
+		t.Fatalf("decode room: %v", err)
+	}
+	if room.Roles[agent.ID] != "worker" {
+		t.Fatalf("expected worker role, got %q", room.Roles[agent.ID])
+	}
+
+	roleResp, err := http.Get(srv.URL + "/rooms/testroom/roles/" + agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer roleResp.Body.Close()
+	var roleInfo map[string]any
+	if err := json.NewDecoder(roleResp.Body).Decode(&roleInfo); err != nil {
+		t.Fatalf("decode role info: %v", err)
+	}
+	if roleInfo["icon"] == "" {
+		t.Fatalf("expected role lookup to include icon, got %#v", roleInfo)
+	}
+}
+
+func TestRolesHTTP_PostRoomRole_RejectsHuman(t *testing.T) {
+	s, srv := setupRolesServer(t)
+
+	if _, err := s.registerHuman("matin", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	joinBody := bytes.NewBufferString(`{"agent_id":"matin"}`)
+	joinReq, _ := http.NewRequest("POST", srv.URL+"/rooms/testroom/join", joinBody)
+	joinReq.Header.Set("Content-Type", "application/json")
+	joinResp, err := http.DefaultClient.Do(joinReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joinResp.Body.Close()
+
+	body := bytes.NewBufferString(`{"agent_id":"matin","role_key":"leader"}`)
+	req, _ := http.NewRequest("POST", srv.URL+"/rooms/testroom/roles", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for human role assignment, got %d", resp.StatusCode)
+	}
+}
+
+func TestRolesHTTP_PostRoomRole_NonMemberReturns400(t *testing.T) {
+	s, srv := setupRolesServer(t)
+
+	// Agent not in testroom
+	agent, _, _ := s.registerAI("gpt5", "codex", "test", nil, "")
+	s.joinRoom("otherroom", agent.ID)
+
+	body := bytes.NewBufferString(`{"agent_id":"` + agent.ID + `","role_key":"worker"}`)
+	req, _ := http.NewRequest("POST", srv.URL+"/rooms/testroom/roles", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	// Room doesn't exist → 404; agent not member → 400 depending on room creation
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("expected non-200 for non-member agent, got %d", resp.StatusCode)
+	}
+}
+
+func TestRolesHTTP_PostRoomRole_BadRoomReturns404(t *testing.T) {
+	_, srv := setupRolesServer(t)
+
+	body := bytes.NewBufferString(`{"agent_id":"nobody","role_key":"worker"}`)
+	req, _ := http.NewRequest("POST", srv.URL+"/rooms/nonexistent/roles", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for bad room, got %d", resp.StatusCode)
+	}
+}
+
+func TestRolesHTTP_PutConflictOnRemovedAssignedCustomRole(t *testing.T) {
+	s, srv := setupRolesServer(t)
+
+	// Add a custom role and assign it
+	s.setCustomRole("my-role", "My Role", "", "", "do stuff")
+	agent, _, _ := s.registerAI("gpt5", "codex", "test", nil, "")
+	s.joinRoom("testroom", agent.ID)
+	s.assignRole("testroom", agent.ID, "my-role")
+
+	// PUT that omits my-role should return 409
+	body := bytes.NewBufferString(`{"roles":{}}`)
+	req, _ := http.NewRequest("PUT", srv.URL+"/roles", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 conflict, got %d", resp.StatusCode)
+	}
+
+	// With force=true should succeed
+	body2 := bytes.NewBufferString(`{"roles":{}}`)
+	req2, _ := http.NewRequest("PUT", srv.URL+"/roles?force=true", body2)
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /roles?force=true: status %d", resp2.StatusCode)
 	}
 }

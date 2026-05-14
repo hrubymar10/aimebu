@@ -305,7 +305,7 @@ func TestAgentAdvanceFailure(t *testing.T) {
 
 func TestAgentBuildRecoveryPrompt(t *testing.T) {
 	// Pass an unreachable URL so it falls back to the compiled default template.
-	prompt := agentBuildRecoveryPrompt("http://127.0.0.1:0", "codex", "", "worker", []string{"general", "dev"})
+	prompt := agentBuildRecoveryPrompt("http://127.0.0.1:0", "codex", "", "worker", []string{"general", "dev"}, "")
 	if !contains(prompt, `name="worker", force=true`) {
 		t.Fatalf("prompt %q does not include forced reclaim", prompt)
 	}
@@ -317,13 +317,26 @@ func TestAgentBuildRecoveryPrompt(t *testing.T) {
 	}
 }
 
+func TestAgentBuildBootstrapPromptAssumeRole(t *testing.T) {
+	prompt := agentBuildBootstrapPrompt("http://127.0.0.1:0", "codex", "", []string{"general"}, "", "reviewer")
+	if !contains(prompt, `role_key "reviewer"`) {
+		t.Fatalf("prompt %q does not include assume-role key", prompt)
+	}
+	if contains(prompt, "assign yourself that room role") == false {
+		t.Fatalf("prompt %q does not explain role assignment semantics", prompt)
+	}
+	if !contains(prompt, "immediately send one concise room message") {
+		t.Fatalf("prompt %q does not surface assignment failure", prompt)
+	}
+}
+
 // TestAgentSpawnPrompt_TokenSubstitution verifies that agentApplyPromptTokens
-// correctly substitutes all four tokens, leaves unknown tokens literal, and
+// correctly substitutes prompt tokens, leaves unknown tokens literal, and
 // handles empty forceName/roomsSection without breaking output.
 func TestAgentSpawnPrompt_TokenSubstitution(t *testing.T) {
 	t.Run("all four tokens substituted", func(t *testing.T) {
 		tmpl := `harness={{harness}} meta={{meta_json}} force={{force_name}} rooms={{rooms_section}}`
-		got := agentApplyPromptTokens(tmpl, "claude-code", `{"k":"v"}`, "alice", "Join these rooms: dev.\n\n")
+		got := agentApplyPromptTokens(tmpl, "claude-code", `{"k":"v"}`, "alice", "Join these rooms: dev.\n\n", "")
 		want := `harness="claude-code" meta={"k":"v"} force="alice" rooms=Join these rooms: dev.` + "\n\n"
 		if got != want {
 			t.Fatalf("got %q, want %q", got, want)
@@ -332,7 +345,7 @@ func TestAgentSpawnPrompt_TokenSubstitution(t *testing.T) {
 
 	t.Run("unknown token left literal", func(t *testing.T) {
 		tmpl := `before {{unknown_token}} after`
-		got := agentApplyPromptTokens(tmpl, "codex", `{}`, "", "")
+		got := agentApplyPromptTokens(tmpl, "codex", `{}`, "", "", "")
 		if !contains(got, "{{unknown_token}}") {
 			t.Fatalf("unknown token was removed from %q", got)
 		}
@@ -340,7 +353,7 @@ func TestAgentSpawnPrompt_TokenSubstitution(t *testing.T) {
 
 	t.Run("empty forceName and roomsSection produce valid output", func(t *testing.T) {
 		tmpl := agentBootstrapTemplate
-		got := agentApplyPromptTokens(tmpl, "codex", `{"protocol":"agent"}`, "", "")
+		got := agentApplyPromptTokens(tmpl, "codex", `{"protocol":"agent"}`, "", "", "")
 		if contains(got, "{{") {
 			t.Fatalf("unreplaced token in output: %q", got)
 		}

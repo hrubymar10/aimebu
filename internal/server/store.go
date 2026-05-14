@@ -98,6 +98,10 @@ type store struct {
 	soundsMu sync.RWMutex
 	sounds   []SoundEntry // user-uploaded custom sounds
 
+	rolesMu        sync.RWMutex
+	rolesOverrides map[string]roleOverrideEntry // catalog key → metadata/body override
+	rolesCustom    map[string]customRoleEntry   // custom key → metadata/body override
+
 	// warnedLegacy tracks agents that have already received the one-time
 	// legacy "name:" prefix warning. Runtime-only; resets on server restart.
 	warnedLegacy map[string]bool
@@ -122,6 +126,8 @@ func newStore(dir string) (*store, error) {
 		macros:          make(map[string]string),
 		seenDefaults:    make(map[string]bool),
 		prompts:         make(map[string]string),
+		rolesOverrides:  make(map[string]roleOverrideEntry),
+		rolesCustom:     make(map[string]customRoleEntry),
 		warnedLegacy:    make(map[string]bool),
 		warnedAttention: make(map[string]bool),
 	}
@@ -170,12 +176,14 @@ func (s *store) pruneOnStartup() {
 		}
 	}
 
-	// Drop removed agents from room memberships.
+	// Drop removed agents from room memberships and roles.
 	for _, room := range s.rooms {
 		filtered := room.Members[:0]
 		for _, m := range room.Members {
 			if !removedAgents[m] {
 				filtered = append(filtered, m)
+			} else if room.Roles != nil {
+				delete(room.Roles, m)
 			}
 		}
 		room.Members = filtered
@@ -285,6 +293,9 @@ func (s *store) load() error {
 
 	// Prompt overrides — survives schema wipes and conversation prune; wiped by prune -a.
 	s.loadPrompts()
+
+	// Role overrides and custom roles — survives schema wipes and conversation prune; wiped by prune -a.
+	s.loadRoles()
 
 	// User sounds index — persisted in sounds/sounds.json; wiped when clearAll(includeSettings=true).
 	s.loadSounds()
@@ -572,6 +583,11 @@ func (s *store) leaveRoomWithEvent(roomID, agentID string, kicked bool) error {
 		return fmt.Errorf("agent %s is not in room %s", agentID, roomID)
 	}
 
+	// Remove from roles on leave
+	if room.Roles != nil {
+		delete(room.Roles, agentID)
+	}
+
 	s.persist()
 	s.mu.Unlock()
 
@@ -713,6 +729,10 @@ func (s *store) isMember(roomID, agentID string) bool {
 // emitSystemMessage appends a system event into roomID and broadcasts it.
 // Does not require an agent membership check. Must NOT be called while s.mu is held.
 func (s *store) emitSystemMessage(roomID, body string) {
+	s.emitSystemMessageTo(roomID, body, nil)
+}
+
+func (s *store) emitSystemMessageTo(roomID, body string, targets []string) {
 	id := s.nextID.Add(1)
 	msg := types.Message{
 		ID:        id,
@@ -721,6 +741,7 @@ func (s *store) emitSystemMessage(roomID, body string) {
 		FromKind:  "system",
 		Body:      body,
 		CreatedAt: now(),
+		Targets:   targets,
 	}
 
 	s.mu.Lock()
@@ -1206,6 +1227,11 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 			s.mu.Unlock()
 			return nil, false, fmt.Errorf("name %q is held by another AI agent", forceName)
 		}
+		s.mu.Unlock()
+		if s.roleKeyExists(forceName) {
+			return nil, false, fmt.Errorf("name %q collides with a role key", forceName)
+		}
+		s.mu.Lock()
 		name = forceName
 	} else {
 		// spawn_tag automatic reclaim: if spawn_tag is present in meta and an
@@ -1236,6 +1262,14 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 		for _, a := range s.agents {
 			taken[a.Name] = true
 		}
+		s.rolesMu.RLock()
+		for _, e := range roleCatalog {
+			taken[e.Key] = true
+		}
+		for k := range s.rolesCustom {
+			taken[k] = true
+		}
+		s.rolesMu.RUnlock()
 
 		picked, ok := pickRandomName(taken)
 		if !ok {
@@ -1279,16 +1313,24 @@ func (s *store) addressingContext(msg types.Message) addressingContext {
 	ctx := addressingContext{
 		SenderID:   msg.From,
 		KnownNames: make(map[string]bool),
+		RoleNames:  make(map[string][]string),
 		Now:        time.Now().UTC(),
 	}
 
 	var memberIDs []string
+	var roles map[string]string
 	s.mu.RLock()
 	for _, agent := range s.agents {
 		ctx.KnownNames[strings.ToLower(agent.Name)] = true
 	}
 	if room, ok := s.rooms[msg.RoomID]; ok {
 		memberIDs = append(memberIDs, room.Members...)
+		if len(room.Roles) > 0 {
+			roles = make(map[string]string, len(room.Roles))
+			for agentID, roleKey := range room.Roles {
+				roles[agentID] = roleKey
+			}
+		}
 	}
 	ctx.RoomAgents = make([]roomAgentContext, 0, len(memberIDs))
 	for _, memberID := range memberIDs {
@@ -1303,6 +1345,11 @@ func (s *store) addressingContext(msg types.Message) addressingContext {
 			Kind:     agent.Kind,
 			LastSeen: lastSeen,
 		})
+		if agent.Kind == "ai" {
+			if roleKey := strings.ToLower(roles[memberID]); roleKey != "" && !isReservedAgentName(roleKey) {
+				ctx.RoleNames[roleKey] = append(ctx.RoleNames[roleKey], strings.ToLower(agent.Name))
+			}
+		}
 	}
 	s.mu.RUnlock()
 
@@ -1418,15 +1465,23 @@ func cloneAgentLocked(a *types.Agent) types.Agent {
 			clone.ReadCursors[k] = v
 		}
 	}
+	if a.Warnings != nil {
+		clone.Warnings = append([]string(nil), a.Warnings...)
+	}
 	return clone
 }
 
 func (s *store) listAgents() []types.Agent {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	agents := make([]types.Agent, 0, len(s.agents))
 	for _, a := range s.agents {
 		agents = append(agents, cloneAgentLocked(a))
+	}
+	s.mu.RUnlock()
+	for i := range agents {
+		if agents[i].Kind == "ai" && s.roleKeyExists(agents[i].Name) {
+			agents[i].Warnings = append(agents[i].Warnings, roleNameCollisionWarning(agents[i].Name))
+		}
 	}
 	return agents
 }
@@ -1854,6 +1909,7 @@ func (s *store) clearAll(includeSettings bool) {
 		s.macrosMu.Unlock()
 		s.applyDefaultMacros() // re-seeds macros.json with embedded defaults
 		s.clearPrompts()
+		s.clearRoles()
 		s.clearSettings()
 		s.soundsMu.Lock()
 		s.sounds = nil
@@ -1927,6 +1983,9 @@ func (s *store) cleanupStaleAgents() {
 					room.Members = append(room.Members[:i], room.Members[i+1:]...)
 					break
 				}
+			}
+			if room.Roles != nil {
+				delete(room.Roles, id)
 			}
 		}
 	}

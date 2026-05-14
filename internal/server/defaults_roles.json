@@ -1,0 +1,8 @@
+[
+  {"key":"leader","emoji":"👑","cardinality":"singleton","description":"Coordinates collaboration, consolidates plans and reviews, and owns human approval handoffs."},
+  {"key":"worker","emoji":"🛠️","cardinality":"multi","description":"Implements approved plans, reports implementation context, and applies review fixes to one clean feature commit."},
+  {"key":"reviewer","emoji":"🔎","cardinality":"multi","description":"Reviews independently for correctness, regressions, tests, and risk before sign-off."},
+  {"key":"sec-reviewer","emoji":"🛡️","cardinality":"multi","extends":"reviewer","description":"Reviews security-sensitive changes for authorization, input handling, secrets, and abuse risk."},
+  {"key":"test-reviewer","emoji":"🧪","cardinality":"multi","extends":"reviewer","description":"Reviews test coverage, verification quality, edge cases, and regression risk."},
+  {"key":"ux-reviewer","emoji":"🎨","cardinality":"multi","extends":"reviewer","description":"Reviews user-facing flows, accessibility, copy, and interaction quality."}
+]

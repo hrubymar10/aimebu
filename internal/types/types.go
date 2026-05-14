@@ -1,10 +1,21 @@
 package types
 
 type Room struct {
-	ID        string   `json:"id"`
-	Members   []string `json:"members"`
-	CreatedAt string   `json:"created_at"`
-	CreatedBy string   `json:"created_by"`
+	ID        string            `json:"id"`
+	Members   []string          `json:"members"`
+	CreatedAt string            `json:"created_at"`
+	CreatedBy string            `json:"created_by"`
+	Roles     map[string]string `json:"roles,omitempty"` // agent_id → role_key
+}
+
+// RoleInfo is the role data embedded in bus_join responses when the joining
+// agent already has a role assigned in the room.
+type RoleInfo struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Emoji string `json:"emoji,omitempty"`
+	Icon  string `json:"icon,omitempty"`
+	Body  string `json:"body"`
 }
 
 type Message struct {
@@ -26,6 +37,7 @@ type Agent struct {
 	Harness      string            `json:"harness,omitempty"` // always present for kind=ai (may be "unknown")
 	Project      string            `json:"project,omitempty"`
 	Meta         map[string]string `json:"meta,omitempty"`
+	Warnings     []string          `json:"warnings,omitempty"`
 	RegisteredAt string            `json:"registered_at"`
 	LastSeen     string            `json:"last_seen"`
 	// ReadCursors tracks the highest message ID this agent has read per room.
@@ -121,4 +133,5 @@ type RegisterResponse struct {
 	Project   string            `json:"project,omitempty"`
 	Meta      map[string]string `json:"meta,omitempty"`
 	Reclaimed bool              `json:"reclaimed"`
+	Warnings  []string          `json:"warnings,omitempty"`
 }

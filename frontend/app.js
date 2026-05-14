@@ -32,6 +32,7 @@
   let markdownMode = localStorage.getItem('aimebu.ui.markdownMode') || 'rendered';
   let macros = {};           // { lowercasedKey: body } — global shared macros
   let promptEntries = [];    // PromptEntry[] from GET /settings/prompts
+  let roleEntries = [];      // RoleEntry[] from GET /roles
   let systemEvents = [];     // Message[] — _system room events
   let systemUnread = 0;      // unread count for broadcast panel
   let systemSSE = null;      // EventSource for _system room
@@ -74,6 +75,7 @@
     { token: 'humans', preview: 'human members of this room' },
     { token: 'ais', preview: 'AI members of this room' }
   ];
+  const roleEmojiChoices = ['👑', '🛠️', '🔎', '🛡️', '🧪', '🎨', '📚', '🧭', '🚦', '🧰', '✅', '⚠️', '💬', '📦'];
 
   // ── DOM refs ─────────────────────────────────────────────────────
 
@@ -113,6 +115,7 @@
   const roomMemberCount = $('#room-member-count');
   const roomMemberAvatars = $('#room-member-avatars');
   const leaveRoomBtn = $('#leave-room-btn');
+  const roomSettingsBtn = $('#room-settings-btn');
   const exportBtn = $('#export-btn');
   const exportMenu = $('#export-menu');
   const exportWrap = exportBtn ? exportBtn.closest('.export-wrap') : null;
@@ -152,6 +155,18 @@
   const macrosListEl = $('#macros-list');
   const promptsListEl = $('#prompts-list');
   const promptsResetAllBtn = $('#prompts-reset-all-btn');
+  const rolesListEl = $('#roles-list');
+  const rolesResetAllBtn = $('#roles-reset-all-btn');
+  const roleAddForm = $('#role-add-form');
+  const roleKeyInput = $('#role-key-input');
+  const roleEmojiInput = $('#role-emoji-input');
+  const roleDescInput = $('#role-desc-input');
+  const roleBodyInput = $('#role-body-input');
+  const roomSettingsModal = $('#room-settings-modal');
+  const roomSettingsOverlay = $('#room-settings-overlay');
+  const roomSettingsCloseBtn = $('#room-settings-close-btn');
+  const roomSettingsTitle = $('#room-settings-title');
+  const roomSettingsMembers = $('#room-settings-members');
   const macroAddForm = $('#macro-add-form');
   const macroKeyInput = $('#macro-key-input');
   const macroBodyInput = $('#macro-body-input');
@@ -685,7 +700,10 @@
       }).filter(function (item) {
         return !lc || item.insertText.slice(1).indexOf(lc) === 0;
       }).sort(function (a, b) { return a.insertText.localeCompare(b.insertText); });
-      items = specials.concat(membersList);
+      var roleList = assignedRoleMentionItems(room).filter(function (item) {
+        return !lc || item.insertText.slice(1).indexOf(lc) === 0;
+      });
+      items = specials.concat(roleList).concat(membersList);
     }
     if (items.length === 0) { hideAcPopup(); return; }
     acItems = items;
@@ -1290,6 +1308,207 @@
       .catch(function () { promptEntries = []; renderPromptsList(); });
   }
 
+  function roleEntryByKey(key) {
+    for (var i = 0; i < roleEntries.length; i++) {
+      if (roleEntries[i].key === key) return roleEntries[i];
+    }
+    return null;
+  }
+
+  function rolePayloadObject(e, updates) {
+    updates = updates || {};
+    return {
+      description: updates.description !== undefined ? updates.description : (e.description || ''),
+      emoji: updates.emoji !== undefined ? updates.emoji : (e.emoji || e.icon || ''),
+      body: updates.body !== undefined ? updates.body : (e.body || ''),
+      cardinality: updates.cardinality !== undefined ? updates.cardinality : (e.cardinality || 'multi'),
+      extends: updates.extends !== undefined ? updates.extends : (e.extends || '')
+    };
+  }
+
+  // Build the complete PUT /roles payload that preserves all currently overridden
+  // catalog roles and custom roles, replacing changedKey with updates.
+  // Pass changedKey=null/updates=null to get just the current preservation map.
+  function buildRolesPayload(changedKey, updates) {
+    var payload = {};
+    roleEntries.forEach(function (e) {
+      if (e.key === changedKey || e.overridden || e.is_custom) {
+        payload[e.key] = rolePayloadObject(e, e.key === changedKey ? updates : null);
+      }
+    });
+    return payload;
+  }
+
+  function roleBadgeHTML(roleKey) {
+    if (!roleKey) return '';
+    var role = roleEntryByKey(roleKey);
+    var emoji = role ? (role.emoji || role.icon || '') : '';
+    if (!emoji) return '';
+    return '<span class="role-emoji-badge" title="' + esc(roleKey) + '" aria-label="' + esc(roleKey) + '">' + esc(emoji) + '</span>';
+  }
+
+  function assignedRoleMentionItems(room) {
+    if (!room || !room.roles) return [];
+    var reserved = {};
+    specialMentionItems.forEach(function (item) {
+      reserved[item.token] = true;
+    });
+    (room.members || []).forEach(function (memberID) {
+      var agent = agents.find(function (a) { return a.id === memberID; });
+      var name = agent ? agent.name : memberID.split('@')[0];
+      if (name) reserved[name.toLowerCase()] = true;
+    });
+    var byRole = {};
+    Object.keys(room.roles).forEach(function (agentIDVal) {
+      var roleKey = room.roles[agentIDVal];
+      if (!roleKey) return;
+      if (reserved[roleKey.toLowerCase()]) return;
+      var agent = agents.find(function (a) { return a.id === agentIDVal; });
+      if (!agent || agent.kind !== 'ai') return;
+      if (!byRole[roleKey]) byRole[roleKey] = [];
+      byRole[roleKey].push(agent.name || agentIDVal.split('@')[0]);
+    });
+    return Object.keys(byRole).sort().map(function (roleKey) {
+      var role = roleEntryByKey(roleKey);
+      var emoji = role && (role.emoji || role.icon) ? (role.emoji || role.icon) + ' ' : '';
+      return {
+        kind: 'mention',
+        insertText: '@' + roleKey,
+        displayKey: '@' + roleKey,
+        preview: emoji + roleKey + ' -> ' + byRole[roleKey].join(', ')
+      };
+    });
+  }
+
+  function roleEmojiPickerHTML(key, current) {
+    return '<div class="role-emoji-picker" data-key="' + esc(key) + '">' +
+      roleEmojiChoices.map(function (emoji) {
+        return '<button class="role-emoji-choice' + (emoji === current ? ' active' : '') + '" type="button" data-key="' + esc(key) + '" data-emoji="' + esc(emoji) + '">' + esc(emoji) + '</button>';
+      }).join('') +
+    '</div>';
+  }
+
+  function roleHolderInRoom(room, roleKey) {
+    if (!room || !room.roles || !roleKey) return '';
+    var holders = Object.keys(room.roles);
+    for (var i = 0; i < holders.length; i++) {
+      if (room.roles[holders[i]] === roleKey) return holders[i];
+    }
+    return '';
+  }
+
+  function agentDisplayName(agentIDVal) {
+    var agent = agents.find(function (a) { return a.id === agentIDVal; });
+    return agent ? (agent.name || agent.id) : agentIDVal;
+  }
+
+  function renderRolesList() {
+    if (!rolesListEl) return;
+    if (!roleEntries.length) {
+      rolesListEl.innerHTML = '<p class="roles-empty">No roles loaded.</p>';
+      return;
+    }
+    var html = '';
+    roleEntries.forEach(function (e) {
+      html += '<div class="role-row' + (e.overridden ? ' role-overridden' : '') + (e.is_custom ? ' role-custom' : '') + '" data-key="' + esc(e.key) + '">';
+      html += '<div class="role-row-header">';
+      html += '<span class="role-key">' + esc(e.key) + '</span>';
+      if (e.overridden) html += '<span class="role-modified-badge">Modified</span>';
+      if (e.is_custom) html += '<span class="role-custom-badge">Custom</span>';
+      html += '</div>';
+      html += '<div class="role-meta-grid">';
+      html += '<label class="role-field-label role-emoji-field">Emoji<input class="role-field-input role-emoji-edit" data-key="' + esc(e.key) + '" value="' + esc(e.emoji || e.icon || '') + '" maxlength="16"></label>';
+      html += '<label class="role-field-label role-cardinality-field">Cardinality<select class="role-field-input role-cardinality-edit" data-key="' + esc(e.key) + '"><option value="multi"' + ((e.cardinality || 'multi') === 'multi' ? ' selected' : '') + '>multi</option><option value="singleton"' + (e.cardinality === 'singleton' ? ' selected' : '') + '>singleton</option></select></label>';
+      html += '<label class="role-field-label role-extends-field">Extends<input class="role-field-input role-extends-edit" data-key="' + esc(e.key) + '" value="' + esc(e.extends || '') + '" placeholder="base role key"></label>';
+      html += '</div>';
+      html += roleEmojiPickerHTML(e.key, e.emoji || e.icon || '');
+      html += '<label class="role-field-label">Description<input class="role-field-input role-desc-edit" data-key="' + esc(e.key) + '" value="' + esc(e.description || '') + '"></label>';
+      html += '<label class="role-field-label">Instructions</label>';
+      html += '<textarea class="role-textarea" data-key="' + esc(e.key) + '" rows="4">' + esc(e.body) + '</textarea>';
+      if (e.resolved_body && e.resolved_body !== e.body) {
+        html += '<details class="role-resolved-preview"><summary>Resolved prompt preview</summary><pre>' + esc(e.resolved_body) + '</pre></details>';
+      }
+      html += '<div class="role-row-actions">';
+      html += '<button class="btn btn-sm btn-primary role-save-btn" type="button" data-key="' + esc(e.key) + '">Save</button>';
+      if (e.overridden) {
+        html += '<button class="btn btn-sm role-revert-btn" type="button" data-key="' + esc(e.key) + '">Revert to default</button>';
+      }
+      if (e.is_custom) {
+        html += '<button class="btn btn-sm btn-danger role-delete-btn" type="button" data-key="' + esc(e.key) + '">Delete</button>';
+      }
+      html += '</div>';
+      html += '</div>';
+    });
+    rolesListEl.innerHTML = html;
+
+    rolesListEl.querySelectorAll('.role-save-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-key');
+        var ta = rolesListEl.querySelector('textarea[data-key="' + key + '"]');
+        var descInput = rolesListEl.querySelector('.role-desc-edit[data-key="' + key + '"]');
+        var emojiInput = rolesListEl.querySelector('.role-emoji-edit[data-key="' + key + '"]');
+        var cardinalityInput = rolesListEl.querySelector('.role-cardinality-edit[data-key="' + key + '"]');
+        var extendsInput = rolesListEl.querySelector('.role-extends-edit[data-key="' + key + '"]');
+        if (!ta) return;
+        api('PUT', '/roles', { roles: buildRolesPayload(key, {
+          description: descInput ? descInput.value.trim() : '',
+          emoji: emojiInput ? emojiInput.value.trim() : '',
+          body: ta.value,
+          cardinality: cardinalityInput ? cardinalityInput.value : 'multi',
+          extends: extendsInput ? extendsInput.value.trim() : ''
+        }) })
+          .then(function () { return loadRoles(); })
+          .catch(function (err) { console.error('save role', err); });
+      });
+    });
+
+    rolesListEl.querySelectorAll('.role-emoji-choice').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-key');
+        var emoji = btn.getAttribute('data-emoji') || '';
+        var input = rolesListEl.querySelector('.role-emoji-edit[data-key="' + key + '"]');
+        if (input) input.value = emoji;
+        var picker = rolesListEl.querySelector('.role-emoji-picker[data-key="' + key + '"]');
+        if (picker) {
+          picker.querySelectorAll('.role-emoji-choice').forEach(function (choice) {
+            choice.classList.toggle('active', choice.getAttribute('data-emoji') === emoji);
+          });
+        }
+      });
+    });
+
+    rolesListEl.querySelectorAll('.role-revert-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-key');
+        if (!confirm('Revert "' + key + '" to its default?')) return;
+        api('DELETE', '/roles/' + encodeURIComponent(key))
+          .then(function () { return loadRoles(); })
+          .catch(function (err) { console.error('revert role', err); });
+      });
+    });
+
+    rolesListEl.querySelectorAll('.role-delete-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.getAttribute('data-key');
+        if (!confirm('Delete custom role "' + key + '"? This will unassign it from all rooms.')) return;
+        api('DELETE', '/roles/' + encodeURIComponent(key) + '?force=true')
+          .then(function () { return loadRoles(); })
+          .catch(function (err) { console.error('delete role', err); });
+      });
+    });
+  }
+
+  function loadRoles() {
+    return api('GET', '/roles')
+      .then(function (data) {
+        roleEntries = Array.isArray(data) ? data : [];
+        renderRolesList();
+        renderRoomAgents(); // refresh member list to update role emoji
+        renderRoomSettings();
+      })
+      .catch(function () { roleEntries = []; renderRolesList(); });
+  }
+
   function scrollToMessage(id, triggerEl) {
     var el = messageListEl.querySelector('[data-id="' + id + '"]');
     if (!el) {
@@ -1884,12 +2103,26 @@
     }
     renderMacrosList();
     loadPrompts();
+    loadRoles();
     document.body.style.overflow = 'hidden';
   }
 
   function closeSettings() {
     settingsModal.classList.add('hidden');
-    document.body.style.overflow = messageDebugState.open ? 'hidden' : '';
+    document.body.style.overflow = (messageDebugState.open || (roomSettingsModal && !roomSettingsModal.classList.contains('hidden'))) ? 'hidden' : '';
+  }
+
+  function openRoomSettings() {
+    if (!activeRoomID || !roomSettingsModal) return;
+    renderRoomSettings();
+    roomSettingsModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeRoomSettings() {
+    if (!roomSettingsModal) return;
+    roomSettingsModal.classList.add('hidden');
+    document.body.style.overflow = (messageDebugState.open || !settingsModal.classList.contains('hidden')) ? 'hidden' : '';
   }
 
   function activateSettingsSection(section) {
@@ -1959,6 +2192,7 @@
     showNoRoom();
     renderAllAgents();
     renderRoomAgents();
+    renderRoomSettings();
     closeMessageDebugModal();
   }
 
@@ -2036,6 +2270,9 @@
             break;
           case 'macros_updated':
             loadMacros().catch(function () {});
+            break;
+          case 'roles_updated':
+            loadRoles().catch(function () {});
             break;
         }
       } catch (e) {
@@ -2210,6 +2447,7 @@
     renderRooms();
     updateRoomHeader();
     renderRoomAgents();
+    renderRoomSettings();
     renderMessageDebugModal();
   }
 
@@ -2238,6 +2476,7 @@
     agents = data.agents || [];
     renderAllAgents();
     renderRoomAgents();
+    renderRoomSettings();
     renderMessageDebugModal();
   }
 
@@ -2299,6 +2538,7 @@
     // Update sidebar highlights
     renderRooms();
     renderRoomAgents();
+    renderRoomSettings();
 
     // On mobile, switch to chat tab
     setMobileTab('chat');
@@ -2307,10 +2547,12 @@
 
   function showNoRoom() {
     closeMessageDebugModal();
+    closeRoomSettings();
     activeRoomID = null;
     noRoomView.classList.remove('hidden');
     roomView.classList.add('hidden');
     roomAgentsList.innerHTML = '<div class="empty-state">Select a room to see members.</div>';
+    renderRoomSettings();
     renderRooms();
   }
 
@@ -2322,6 +2564,7 @@
     var dm = isDM(room.id);
     roomIconEl.textContent = dm ? '@' : '#';
     roomIconEl.className = 'room-header-icon' + (dm ? ' dm' : '');
+    if (roomSettingsBtn) roomSettingsBtn.disabled = room.id === '_system';
     if (dm) {
       var others = (room.members || []).filter(function (m) { return m !== agentID; });
       roomNameEl.textContent = others.length > 0 ? others[0] : room.id;
@@ -2468,7 +2711,8 @@
     }).filter(Boolean);
     var seen = {};
     var names = [];
-    memberNames.concat(specialMentionItems.map(function (item) { return item.token; })).forEach(function (name) {
+    var roleNames = assignedRoleMentionItems(room).map(function (item) { return item.insertText.slice(1); });
+    memberNames.concat(specialMentionItems.map(function (item) { return item.token; })).concat(roleNames).forEach(function (name) {
       var key = name.toLowerCase();
       if (seen[key]) return;
       seen[key] = true;
@@ -2476,7 +2720,7 @@
     });
     if (names.length === 0) return null;
     var atNames = names.sort(function (a, b) { return b.length - a.length; }).map(escRe);
-    return new RegExp('@(' + atNames.join('|') + ')(?![a-z0-9])', 'gi');
+    return new RegExp('@(' + atNames.join('|') + ')(?![a-z0-9_-])', 'gi');
   }
 
   function highlightNames(rootEl) {
@@ -2570,11 +2814,15 @@
     var msgIconAlt = fromAgent
       ? (fromAgent.kind === 'human' ? 'human' : esc(fromAgent.harness || 'unknown'))
       : 'unknown';
+    var room = rooms.find(function (r) { return r.id === m.room_id; });
+    var msgRoleKey = room && room.roles ? (room.roles[m.from] || '') : '';
+    var msgRoleTag = roleBadgeHTML(msgRoleKey);
     return (
       '<div class="chat-msg' + (isSelf ? ' self' : '') + (m.needs_human_attention ? ' needs-attention' : '') + '" data-id="' + esc(m.id) + '">' +
         '<div class="chat-msg-header">' +
           '<span class="chat-msg-from">' +
             '<img src="' + msgIconSrc + '" class="harness-icon chat-msg-icon" alt="' + msgIconAlt + '" title="' + msgIconTitle + '" width="14" height="14">' +
+            msgRoleTag +
             '<span class="chat-msg-from-name">' + esc(m.from) + '</span>' +
           '</span>' +
           (m.needs_human_attention ? '<span class="chat-msg-attention-icon" title="Needs human attention">🔔</span>' : '') +
@@ -2658,6 +2906,7 @@
       if (agent) {
         return agentCardHTML(agent, 'room');
       }
+      var roleKey = (room.roles && room.roles[memberID]) || '';
       var leaveBtn = memberID !== agentID
         ? '<div class="agent-actions"><button class="agent-action-btn agent-leave-btn" data-agent-id="' + esc(memberID) + '" title="Kick ' + esc(memberID) + ' from room" aria-label="Kick ' + esc(memberID) + ' from room">Kick</button></div>'
         : '';
@@ -2665,12 +2914,76 @@
         '<div class="agent-card">' +
           '<div class="agent-id">' +
             '<span class="agent-online-dot offline"></span>' +
+            roleBadgeHTML(roleKey) +
             esc(memberID) +
           '</div>' +
           leaveBtn +
         '</div>'
       );
     }).join('');
+  }
+
+  function renderRoomSettings() {
+    if (!roomSettingsMembers) return;
+    if (!activeRoomID) {
+      roomSettingsMembers.innerHTML = '<div class="empty-state">Select a room first.</div>';
+      return;
+    }
+    var room = rooms.find(function (r) { return r.id === activeRoomID; });
+    if (!room) {
+      roomSettingsMembers.innerHTML = '<div class="empty-state">Room not found.</div>';
+      return;
+    }
+    if (roomSettingsTitle) roomSettingsTitle.textContent = 'Room Settings: ' + room.id;
+    var members = (room.members || []).filter(function (memberID) {
+      var agent = agents.find(function (a) { return a.id === memberID; });
+      return agent && agent.kind === 'ai';
+    });
+    if (!members.length) {
+      roomSettingsMembers.innerHTML = '<div class="empty-state">No AI agents in this room.</div>';
+      return;
+    }
+    roomSettingsMembers.innerHTML = members.map(function (memberID) {
+      var roleKey = (room.roles && room.roles[memberID]) || '';
+      var role = roleEntryByKey(roleKey);
+      var roleLabel = role ? role.key : '';
+      var options = '<option value="">No role</option>';
+      roleEntries.forEach(function (re) {
+        var label = ((re.emoji || re.icon) ? (re.emoji || re.icon) + ' ' : '') + re.key;
+        var holder = (re.cardinality === 'singleton') ? roleHolderInRoom(room, re.key) : '';
+        var disabled = holder && holder !== memberID && re.key !== roleKey;
+        if (disabled) label += ' (held by ' + agentDisplayName(holder) + ')';
+        options += '<option value="' + esc(re.key) + '"' + (re.key === roleKey ? ' selected' : '') + (disabled ? ' disabled' : '') + '>' + esc(label) + '</option>';
+      });
+      return (
+        '<div class="room-settings-member">' +
+          '<div class="room-settings-member-id">' +
+            roleBadgeHTML(roleKey) +
+            '<span>' + esc(memberID) + '</span>' +
+            (roleLabel ? '<span class="room-settings-role-label">' + esc(roleLabel) + '</span>' : '') +
+          '</div>' +
+          '<select class="room-role-select" data-agent-id="' + esc(memberID) + '">' + options + '</select>' +
+        '</div>'
+      );
+    }).join('');
+
+    roomSettingsMembers.querySelectorAll('.room-role-select').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        var agentIDVal = sel.getAttribute('data-agent-id');
+        var roleKey = sel.value;
+        api('POST', '/rooms/' + encodeURIComponent(activeRoomID) + '/roles', {
+          agent_id: agentIDVal,
+          role_key: roleKey
+        }).then(function (updatedRoom) {
+          rooms = rooms.map(function (r) { return r.id === updatedRoom.id ? updatedRoom : r; });
+          renderRoomAgents();
+          renderRoomSettings();
+        }).catch(function (err) {
+          console.error('assign role', err);
+          alert('Failed to assign role: ' + err.message);
+        });
+      });
+    });
   }
 
   function agentCardHTML(a, context) {
@@ -2707,6 +3020,12 @@
     var iconTitle = a.kind === 'human' ? 'human' : esc((a.model || 'unknown') + ' · ' + (a.harness || 'unknown'));
     var iconAlt = a.kind === 'human' ? 'human' : esc(a.harness || 'unknown');
     var iconTag = '<img src="' + iconSrc + '" class="harness-icon" alt="' + iconAlt + '" title="' + iconTitle + '" width="14" height="14">';
+    var roleKey = '';
+    if (activeRoomID) {
+      var roleRoom = rooms.find(function (r) { return r.id === activeRoomID; });
+      if (roleRoom && roleRoom.roles) roleKey = roleRoom.roles[a.id] || '';
+    }
+    var roleTag = roleBadgeHTML(roleKey);
     var actionBtns = '';
     if (a.id !== agentID) {
       var dmBtn = '<button class="agent-action-btn agent-dm-btn" data-agent-id="' + esc(a.id) + '" title="Open DM with ' + esc(a.id) + '" aria-label="Open DM with ' + esc(a.id) + '">DM</button>';
@@ -2722,6 +3041,7 @@
           '<span class="agent-online-dot ' + status + '"></span>' +
           presenceTag +
           iconTag +
+          roleTag +
           esc(a.id) +
         '</div>' +
         (metaTags ? '<div class="agent-meta">' + metaTags + '</div>' : '') +
@@ -2822,9 +3142,16 @@
   settingsBtn.addEventListener('click', function () { openSettings('general'); });
   settingsCloseBtn.addEventListener('click', closeSettings);
   settingsOverlay.addEventListener('click', closeSettings);
+  if (roomSettingsBtn) roomSettingsBtn.addEventListener('click', openRoomSettings);
+  if (roomSettingsCloseBtn) roomSettingsCloseBtn.addEventListener('click', closeRoomSettings);
+  if (roomSettingsOverlay) roomSettingsOverlay.addEventListener('click', closeRoomSettings);
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && !messageDebugModal.classList.contains('hidden')) {
       closeMessageDebugModal();
+      return;
+    }
+    if (e.key === 'Escape' && roomSettingsModal && !roomSettingsModal.classList.contains('hidden')) {
+      closeRoomSettings();
       return;
     }
     if (e.key === 'Escape' && !settingsModal.classList.contains('hidden')) closeSettings();
@@ -3091,6 +3418,39 @@
       if (!confirm('Reset all prompt overrides to compiled defaults? This cannot be undone.')) return;
       api('DELETE', '/settings/prompts')
         .then(function () { return loadPrompts(); })
+        .catch(function (err) { alert('Error: ' + err.message); });
+    });
+  }
+
+  // Roles reset-all
+  if (rolesResetAllBtn) {
+    rolesResetAllBtn.addEventListener('click', function () {
+      if (!confirm('Reset all role overrides to defaults and delete custom roles? This will unassign roles from all rooms. Cannot be undone.')) return;
+      api('DELETE', '/roles?force=true')
+        .then(function () { return loadRoles(); })
+        .catch(function (err) { alert('Error: ' + err.message); });
+    });
+  }
+
+  // Role add form
+  if (roleAddForm) {
+    roleAddForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var key = (roleKeyInput ? roleKeyInput.value.trim() : '');
+      var emoji = (roleEmojiInput ? roleEmojiInput.value.trim() : '');
+      var desc = (roleDescInput ? roleDescInput.value.trim() : '');
+      var body = (roleBodyInput ? roleBodyInput.value : '');
+      if (!key) return;
+      var payload = buildRolesPayload(null, null);
+      payload[key] = { description: desc, emoji: emoji, body: body, cardinality: 'multi' };
+      api('PUT', '/roles', { roles: payload })
+        .then(function () {
+          if (roleKeyInput) roleKeyInput.value = '';
+          if (roleEmojiInput) roleEmojiInput.value = '';
+          if (roleDescInput) roleDescInput.value = '';
+          if (roleBodyInput) roleBodyInput.value = '';
+          return loadRoles();
+        })
         .catch(function (err) { alert('Error: ' + err.message); });
     });
   }
@@ -3437,6 +3797,7 @@
     renderRooms();
     renderAllAgents();
     renderRoomAgents();
+    renderRoomSettings();
   }, 30000);
 
   // ── Init ─────────────────────────────────────────────────────────
@@ -3486,8 +3847,11 @@
   prefillPromise.then(function () {
     return registerHuman().catch(function () {});
   }).then(function () {
-    fetchMyRooms().catch(function () {});
-    loadMacros().catch(function () {});
+    return Promise.all([
+      fetchMyRooms().catch(function () {}),
+      loadMacros().catch(function () {}),
+      loadRoles().catch(function () {})
+    ]);
   }).finally(function () {
     connectWS();
   });

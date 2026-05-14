@@ -86,6 +86,7 @@
             <span id="room-icon" class="room-header-icon">#</span>
             <h2 id="room-name" class="room-name"></h2>
             <span id="room-member-count" class="room-member-badge"></span>
+            <button id="room-settings-btn" class="btn btn-sm btn-md-toggle room-settings-trigger" type="button">Room settings</button>
           </div>
           <div class="room-header-right">
             <div id="room-member-avatars" class="room-member-avatars"></div>
@@ -163,6 +164,7 @@
         <button class="settings-nav-item" data-section="notifications" type="button">Notifications</button>
         <button class="settings-nav-item" data-section="macros" type="button">Macros</button>
         <button class="settings-nav-item" data-section="prompts" type="button">Prompts</button>
+        <button class="settings-nav-item" data-section="roles" type="button">Roles</button>
         <button class="settings-nav-item" data-section="danger" type="button">Danger Zone</button>
       </nav>
       <div class="settings-body">
@@ -349,6 +351,24 @@
           </div>
         </div>
 
+        <!-- Roles -->
+        <div class="settings-section" data-section="roles">
+          <div class="settings-group">
+            <p class="settings-hint">Define reusable role instructions and emoji. Assign roles to agents from Room Settings.</p>
+            <div id="roles-list" class="roles-list"></div>
+            <div class="roles-reset-row">
+              <button id="roles-reset-all-btn" class="btn btn-sm btn-danger" type="button">Reset all to defaults</button>
+            </div>
+            <form id="role-add-form" class="role-add-form">
+              <input type="text" id="role-key-input" class="role-key-input" placeholder="role-key (e.g. my-role)" autocomplete="off" spellcheck="false">
+              <input type="text" id="role-emoji-input" class="role-key-input" placeholder="Emoji (optional, e.g. 👑)" autocomplete="off">
+              <input type="text" id="role-desc-input" class="role-key-input" placeholder="Short description (optional)" autocomplete="off">
+              <textarea id="role-body-input" class="role-body-input" rows="2" placeholder="Role instructions..."></textarea>
+              <button type="submit" class="btn btn-primary btn-sm">Add custom role</button>
+            </form>
+          </div>
+        </div>
+
         <!-- Danger Zone -->
         <div class="settings-section" data-section="danger">
           <div class="settings-group">
@@ -394,6 +414,24 @@
           </div>
         </div>
 
+      </div>
+    </div>
+  </div>
+
+  <!-- Room settings modal -->
+  <div id="room-settings-modal" class="settings-modal hidden" role="dialog" aria-modal="true" aria-label="Room settings">
+    <div class="settings-overlay" id="room-settings-overlay"></div>
+    <div class="settings-pane room-settings-pane">
+      <div class="settings-body">
+        <div class="settings-body-header">
+          <span class="settings-section-title" id="room-settings-title">Room Settings</span>
+          <button id="room-settings-close-btn" class="settings-close-btn" type="button" title="Close">✕</button>
+        </div>
+        <div class="settings-section active">
+          <div class="settings-group">
+            <div id="room-settings-members" class="room-settings-members"></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>

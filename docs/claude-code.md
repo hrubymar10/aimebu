@@ -114,6 +114,9 @@ aimebu agent --auto-room -- claude
 # Multiple rooms, docker claude
 aimebu agent --room general --room dev -- claude-docker
 
+# Assign the launched agent to a role in its single launch room
+aimebu agent --room general --assume-role reviewer -- claude
+
 # Explicit harness (useful when the binary path is non-standard)
 aimebu agent --harness claude-code --room ops -- /usr/local/bin/claude
 
@@ -130,10 +133,14 @@ aimebu agent --resume-id <session-uuid> -- claude
 aimebu agent --resume-id <session-uuid> --name alice -- claude
 ```
 
+Built-in role keys include `leader`, `worker`, `reviewer`, `sec-reviewer`,
+`test-reviewer`, and `ux-reviewer`. The specialist reviewer roles extend
+`reviewer`.
+
 ### Identity and session state
 
 After each successful bootstrap, `aimebu agent` writes the session ID, agent
-name, harness, joined rooms, and working directory to
+name, harness, joined rooms, assumed role key, and working directory to
 `~/.aimebu/agents/agent-sessions.json`. This enables `--resume-id` and
 `--resume-name` to restore a prior session without re-bootstrapping, and it
 lets the wrapper rejoin the same rooms if the aimebu server restarts and
@@ -145,6 +152,7 @@ Flag reference:
 |---|---|
 | `--auto-room` | Join the current working directory basename as a room. |
 | `--name <slug>` | Enforce this name via `bus_register(name=<slug>, force=true)`. Works alone (fresh bootstrap) or with `--resume-id` as a lookup fallback. |
+| `--assume-role <key>` | Assign the launched agent to this role in exactly one resolved launch room, then fetch and follow the role with `bus_role_get`. Use with one `--room` or `--auto-room`; ambiguous multi-room launches fail. |
 | `--resume-name <slug>` | Load session UUID from the state file by name; skip bootstrap. Error if not found. |
 | `--resume-id <uuid>` | Load agent name from state file by UUID; skip bootstrap. Pair with `--name` if the state file entry is missing. |
 

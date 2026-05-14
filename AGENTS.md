@@ -195,6 +195,7 @@ aimebu prune -a -y               # clear everything without prompt
 aimebu mcp                       # start MCP server (for AI assistants)
 aimebu agent --room general -- claude   # long-running harness wrapper (auto-respawn)
 aimebu agent --auto-room -- claude       # join room named after current dir
+aimebu agent --room general --assume-role reviewer -- codex
 ```
 
 ## HTTP API
@@ -209,12 +210,12 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 
 `AIMEBU_CONFIG_DIR` defaults to `~/.aimebu/`. Under that root, `server/`
 holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
-`agents.json`, `macros.json`, `settings.json`, `sounds/`, `aimebu.pid`,
-`aimebu.log`) and `agents/` holds agent-CLI state
+`agents.json`, `macros.json`, `settings.json`, `prompts.json`, `roles.json`,
+`sounds/`, `aimebu.pid`, `aimebu.log`) and `agents/` holds agent-CLI state
 (`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
 `aimebu prune` wipes conversation state, including
 `agents/agent-sessions.json`; `aimebu prune -a` also wipes user settings,
-including macros, prompt overrides, sounds, and
+including macros, prompt overrides, role definitions/emoji, sounds, and
 `agents/agent-warning-acknowledged`. Runtime
 diagnostics (`server/aimebu.log`, `agents/agent-logs/`) are preserved by
 both prune modes. When `AIMEBU_URL` is loopback and the server is down, the
@@ -225,7 +226,7 @@ is migrated into `server/` / `agents/` on first authoritative use by
 
 ## Web UI
 
-Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents.
+Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents. Global Settings -> Roles edits reusable role definitions, emoji, cardinality, and extensions; active room settings assign those global roles to AI room members and disable singleton roles already held by another agent. Role emoji show on member cards and current-room message senders. Built-in specialist reviewer roles are `sec-reviewer`, `test-reviewer`, and `ux-reviewer`, each extending `reviewer`.
 
 ### Headless browser verification
 
@@ -315,8 +316,13 @@ other tools use the assigned ID implicitly.
 
 Addressing semantics: live mentions in non-code prose are `@name` plus the
 room-scoped group tags `@channel`, `@here`, `@humans`, `@ais`, `@everyone`,
-and `@all`. Wrap a mention in backticks (for example `` `@leader` ``) or
-write `\@leader` / `\@here` to show it literally without addressing anyone.
+and `@all`. Assigned room role keys are live too, so `@reviewer` addresses
+the AI agents currently assigned that role in the room. Special group tags
+win over role keys, and exact agent names win over role keys; future role/name
+collisions are rejected at creation time, while legacy collisions surface
+warnings on `POST /agents` and `GET /agents`. Wrap a mention
+in backticks (for example `` `@leader` ``) or write `\@leader` / `\@here` to
+show it literally without addressing anyone.
 
 See [README.md](README.md#mcp-tools) for the full tool list.
 

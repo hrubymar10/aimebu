@@ -76,7 +76,7 @@ func gatherMeta() map[string]string {
 // tokens to read anything that gets sent because of it.
 const busEtiquette = `aimebu messagebus etiquette:
 - Who you are: the ` + "`name`" + ` returned by bus_register (e.g. "zoe"). Use it to decide whether a message is addressed to you.
-- Addressing — CRITICAL. Live addressing works only in non-code prose via ` + "`@<name>`" + ` or these special group tags: ` + "`@channel`" + `, ` + "`@here`" + `, ` + "`@humans`" + `, ` + "`@ais`" + `, ` + "`@everyone`" + `, ` + "`@all`" + `. Wrap a mention in backticks (e.g. ` + "`@leader`" + `) or write ` + "`\\@leader`" + ` / ` + "`\\@here`" + ` to show it literally without addressing. Group semantics: ` + "`@channel`" + ` = all members of the current room; ` + "`@here`" + ` = active room members (approximated from bus waits + recent websocket activity); ` + "`@humans`" + ` / ` + "`@ais`" + ` = human / AI members of the current room; ` + "`@everyone`" + ` / ` + "`@all`" + ` = all members of the current room. Group tags exclude the sender. Worked examples:
+- Addressing — CRITICAL. Live addressing works only in non-code prose via ` + "`@<name>`" + `, assigned room role keys such as ` + "`@reviewer`" + `, or these special group tags: ` + "`@channel`" + `, ` + "`@here`" + `, ` + "`@humans`" + `, ` + "`@ais`" + `, ` + "`@everyone`" + `, ` + "`@all`" + `. Exact agent names and special group tags take precedence over role keys; new role/name collisions are rejected, while legacy collisions keep exact-name precedence. Wrap a mention in backticks (e.g. ` + "`@leader`" + `) or write ` + "`\\@leader`" + ` / ` + "`\\@here`" + ` to show it literally without addressing. Group semantics: ` + "`@channel`" + ` = all members of the current room; ` + "`@here`" + ` = active room members (approximated from bus waits + recent websocket activity); ` + "`@humans`" + ` / ` + "`@ais`" + ` = human / AI members of the current room; ` + "`@everyone`" + ` / ` + "`@all`" + ` = all members of the current room. Group tags exclude the sender. Worked examples:
   BAD:  "worker: @matin please review"  → addressed_to=[], matin gets should_respond=false (matin never sees it as addressed to them)
   GOOD: "@matin please review"           → addressed_to=["matin"], matin gets should_respond=true
   BAD:  "leader: here's my analysis"     → wastes tokens; from field already identifies the sender
@@ -86,6 +86,7 @@ const busEtiquette = `aimebu messagebus etiquette:
 - Structured fields: every message from bus_wait and bus_read carries ` + "`addressed_to`" + ` (list of names), ` + "`addressed_to_me`" + ` (bool), and ` + "`should_respond`" + ` (bool). Use ` + "`should_respond`" + ` as the primary signal. Example: human posts "@leader status?" — if you are not leader, should_respond=false; call bus_wait again immediately, do NOT call bus_say.
 - Human sender (from_kind=human): should_respond=true for room-wide messages; should_respond=false when addressed to a different agent. Do not ask "should I reply?" — just reply when should_respond=true.
 - AI sender (from_kind=ai): should_respond=false by default. should_respond=true only when addressed_to_me=true or in a DM room (id starts with "dm:").
+- System sender (from_kind=system): should_respond=true only when addressed_to_me=true. For a targeted role assignment message such as "alice@aimebu was assigned as Reviewer", call ` + "`bus_role_get`" + ` for that room, internalize the returned role instructions, and do not post an acknowledgement unless a human explicitly asks. For a targeted "role cleared" message, call ` + "`bus_role_get`" + `, observe the empty role, and likewise do not ack.
 - Use ` + "`@everyone`" + ` / ` + "`@all`" + ` sparingly in busy rooms. Prefer narrower tags when possible.
 - After joining a room, block on bus_wait. bus_wait remembers your read cursor — if messages arrived while you were away, the next call returns them immediately. When it times out, call bus_wait again. Return control to the user only when the user tells you to stop.
 - Do not send unprompted introductions, greetings, or status acks ("standing by", "on it", "got it"). Keep replies terse — other agents pay input tokens to read every word.
@@ -288,6 +289,30 @@ var tools = []tool{
 			},
 		},
 	},
+	{
+		Name:        "bus_role_assign",
+		Description: "Assign or change a role for an AI agent in a room. Emits a concise addressed system message; use bus_role_get for the full instructions. Pass empty role_key to unassign.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"room":     {Type: "string", Description: "Room ID"},
+				"agent_id": {Type: "string", Description: "Full agent ID to assign (e.g. 'alice@aimebu')"},
+				"role_key": {Type: "string", Description: "Role key (e.g. 'leader', 'worker', 'reviewer'). Empty string to unassign."},
+			},
+			Required: []string{"room", "agent_id", "role_key"},
+		},
+	},
+	{
+		Name:        "bus_role_get",
+		Description: "Get your currently assigned role in a room, including the key, emoji, and full resolved role instructions.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"room": {Type: "string", Description: "Room ID"},
+			},
+			Required: []string{"room"},
+		},
+	},
 }
 
 // ── Dynamic prompts ────────────────────────────────────────────────
@@ -409,9 +434,46 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
 		}
-		return c.Post("/rooms/"+p.Room+"/join", map[string]string{
+		resp, err := c.Post("/rooms/"+p.Room+"/join", map[string]string{
 			"agent_id": c.AgentID,
 		})
+		if err != nil {
+			return resp, err
+		}
+		// Enrich with your_role if the agent has a role in this room
+		var room struct {
+			Roles map[string]string `json:"roles"`
+		}
+		if json.Unmarshal([]byte(resp), &room) == nil && len(room.Roles) > 0 {
+			if roleKey, ok := room.Roles[c.AgentID]; ok && roleKey != "" {
+				roleResp, err2 := c.Get("/rooms/" + p.Room + "/roles/" + c.AgentID)
+				if err2 == nil {
+					var roleInfo struct {
+						Key   string `json:"role_key"`
+						Label string `json:"label"`
+						Icon  string `json:"icon"`
+						Emoji string `json:"emoji"`
+						Body  string `json:"body"`
+					}
+					if json.Unmarshal([]byte(roleResp), &roleInfo) == nil && roleInfo.Key != "" {
+						var fullRoom map[string]any
+						if json.Unmarshal([]byte(resp), &fullRoom) == nil {
+							fullRoom["your_role"] = map[string]string{
+								"key":   roleInfo.Key,
+								"label": roleInfo.Label,
+								"icon":  roleInfo.Icon,
+								"emoji": roleInfo.Emoji,
+								"body":  roleInfo.Body,
+							}
+							if enriched, err3 := json.Marshal(fullRoom); err3 == nil {
+								return string(enriched), nil
+							}
+						}
+					}
+				}
+			}
+		}
+		return resp, nil
 
 	case "bus_leave":
 		var p struct {
@@ -537,6 +599,29 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 		}
 		_ = json.Unmarshal(args, &p)
 		return c.Put("/macros", p)
+
+	case "bus_role_assign":
+		var p struct {
+			Room    string `json:"room"`
+			AgentID string `json:"agent_id"`
+			RoleKey string `json:"role_key"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return "", fmt.Errorf("invalid args: %w", err)
+		}
+		return c.Post("/rooms/"+p.Room+"/roles", map[string]any{
+			"agent_id": p.AgentID,
+			"role_key": p.RoleKey,
+		})
+
+	case "bus_role_get":
+		var p struct {
+			Room string `json:"room"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return "", fmt.Errorf("invalid args: %w", err)
+		}
+		return c.Get("/rooms/" + p.Room + "/roles/" + c.AgentID)
 
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)

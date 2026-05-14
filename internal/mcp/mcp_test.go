@@ -3,6 +3,7 @@ package mcp
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-json"
@@ -68,6 +69,21 @@ func TestDetectHarness(t *testing.T) {
 	}
 }
 
+func TestBusEtiquetteCoversRoleAssignmentWakeup(t *testing.T) {
+	for _, want := range []string{
+		"assigned room role keys",
+		"Exact agent names and special group tags take precedence over role keys",
+		"System sender (from_kind=system): should_respond=true only when addressed_to_me=true",
+		"call `bus_role_get` for that room",
+		`targeted "role cleared" message`,
+		"do not post an acknowledgement",
+	} {
+		if !strings.Contains(busEtiquette, want) {
+			t.Fatalf("bus etiquette missing %q", want)
+		}
+	}
+}
+
 // TestMCP_InitializeReturnsOverriddenEtiquette proves that handle("initialize")
 // reads the bus_etiquette prompt from the server rather than the compiled
 // constant. This is the end-to-end wiring test: store override → fetchPrompts
@@ -111,5 +127,124 @@ func TestMCP_InitializeReturnsOverriddenEtiquette(t *testing.T) {
 	}
 	if instructions != overrideBody {
 		t.Fatalf("instructions = %q, want override %q", instructions, overrideBody)
+	}
+}
+
+// ── Roles MCP tool tests ──────────────────────────────────────────
+
+func TestMCP_RoleAssign_PostsToServer(t *testing.T) {
+	var gotPath, gotBody string
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		b, _ := json.Marshal(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"testroom","members":["alice@aimebu"],"created_at":"2026-01-01T00:00:00Z","created_by":"test","roles":{"alice@aimebu":"worker"}}`))
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
+	args, _ := json.Marshal(map[string]string{
+		"room":     "testroom",
+		"agent_id": "alice@aimebu",
+		"role_key": "worker",
+	})
+	result, err := handleToolCall(c, "bus_role_assign", args)
+	if err != nil {
+		t.Fatalf("handleToolCall bus_role_assign: %v", err)
+	}
+	if gotPath != "/rooms/testroom/roles" {
+		t.Fatalf("expected POST to /rooms/testroom/roles, got %s", gotPath)
+	}
+	_ = gotBody
+	if result == "" {
+		t.Fatal("expected non-empty result")
+	}
+}
+
+func TestMCP_RoleGet_ReturnsRoleWhenAssigned(t *testing.T) {
+	roleResp := `{"role_key":"worker","label":"Worker","icon":"🛠️","body":"do the work"}`
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(roleResp))
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
+	args, _ := json.Marshal(map[string]string{"room": "testroom"})
+	result, err := handleToolCall(c, "bus_role_get", args)
+	if err != nil {
+		t.Fatalf("handleToolCall bus_role_get: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(result), &got); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if got["role_key"] != "worker" {
+		t.Fatalf("expected role_key=worker, got %v", got["role_key"])
+	}
+	if got["icon"] != "🛠️" {
+		t.Fatalf("expected icon, got %v", got["icon"])
+	}
+}
+
+func TestMCP_RoleGet_ReturnsEmptyWhenUnassigned(t *testing.T) {
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"role_key":"","label":"","body":""}`))
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
+	args, _ := json.Marshal(map[string]string{"room": "testroom"})
+	result, err := handleToolCall(c, "bus_role_get", args)
+	if err != nil {
+		t.Fatalf("handleToolCall bus_role_get: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(result), &got); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if got["role_key"] != "" {
+		t.Fatalf("expected empty role_key, got %v", got["role_key"])
+	}
+}
+
+func TestMCP_JoinEnrichesWithYourRole(t *testing.T) {
+	roleResp := `{"role_key":"leader","label":"Leader","icon":"👑","body":"lead the team"}`
+	// The fake server must handle both /rooms/{room}/join and /rooms/{room}/roles/{agentID}
+	joinResp := `{"id":"testroom","members":["alice@aimebu"],"created_at":"2026-01-01T00:00:00Z","created_by":"test","roles":{"alice@aimebu":"leader"}}`
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" {
+			w.Write([]byte(roleResp))
+		} else {
+			w.Write([]byte(joinResp))
+		}
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
+	args, _ := json.Marshal(map[string]string{"room": "testroom"})
+	result, err := handleToolCall(c, "bus_join", args)
+	if err != nil {
+		t.Fatalf("handleToolCall bus_join: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(result), &got); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	yourRole, ok := got["your_role"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected your_role in join response, got %T: %v", got["your_role"], got)
+	}
+	if yourRole["key"] != "leader" {
+		t.Fatalf("your_role.key = %v, want leader", yourRole["key"])
+	}
+	if yourRole["body"] != "lead the team" {
+		t.Fatalf("your_role.body = %v, want 'lead the team'", yourRole["body"])
+	}
+	if yourRole["icon"] != "👑" {
+		t.Fatalf("your_role.icon = %v, want icon", yourRole["icon"])
 	}
 }

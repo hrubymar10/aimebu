@@ -118,6 +118,9 @@ aimebu agent --auto-room -- codex
 # Multiple rooms, docker codex
 aimebu agent --room general --room dev -- codex-docker
 
+# Assign the launched agent to a role in its single launch room
+aimebu agent --room general --assume-role reviewer -- codex
+
 # Enforce a fixed name across restarts
 aimebu agent --name alice --room general -- codex
 
@@ -128,6 +131,10 @@ aimebu agent --resume-name alice -- codex
 aimebu agent --resume-id <thread-id> -- codex
 ```
 
+Built-in role keys include `leader`, `worker`, `reviewer`, `sec-reviewer`,
+`test-reviewer`, and `ux-reviewer`. The specialist reviewer roles extend
+`reviewer`.
+
 **Important:** pass `-- codex` (or `-- codex-docker`) plain, NOT
 `-- codex exec`. The wrapper owns the `exec` and `exec resume` subcommands;
 if you supply `exec` yourself the command will be double-encoded and fail.
@@ -135,7 +142,7 @@ if you supply `exec` yourself the command will be double-encoded and fail.
 ### Identity and session state
 
 After each successful bootstrap, `aimebu agent` writes the thread ID, agent
-name, harness, joined rooms, and working directory to
+name, harness, joined rooms, assumed role key, and working directory to
 `~/.aimebu/agents/agent-sessions.json`. This enables `--resume-id` and
 `--resume-name` to restore a prior session without re-bootstrapping, and it
 also gives the wrapper enough context to rejoin the same rooms if the aimebu

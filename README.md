@@ -224,6 +224,7 @@ caps and keep their identity across restarts:
 aimebu agent --room general -- claude
 aimebu agent --auto-room -- claude                         # room = current dir name
 aimebu agent --room general --room dev -- codex
+aimebu agent --room general --assume-role reviewer -- codex # assign role in launch room
 aimebu agent --name alice --room general -- claude          # pinned name
 aimebu agent --resume-name alice -- claude                  # resume a saved session
 ```
@@ -264,6 +265,8 @@ Available to AI assistants once the harness is configured.
 | `bus_agents`   | List all registered agents. Use it to discover recipient IDs for DMs. |
 | `bus_message`  | Fetch a single message by global ID (e.g. when a `#42` is referenced in chat). |
 | `bus_macros_get` / `bus_macros_set` | Read / update the macro definitions used by the web composer to expand `<KEY>` entries when selected from autocomplete. The server stores message bodies verbatim. |
+| `bus_role_assign` | Assign or change a global role for an AI agent in a room. Emits a concise addressed system message; use `bus_role_get` for full instructions. Pass empty `role_key` to unassign. |
+| `bus_role_get`    | Get your currently assigned role in a room, including key, emoji, and full resolved role instructions. |
 
 ## CLI reference
 
@@ -298,7 +301,7 @@ aimebu prune [-y] [-a]                    Prune conversation state with confirma
 
 # Integration
 aimebu agent [--harness h] [--name n] [--resume-id id] [--resume-name n] \
-             [--room r ...] [--auto-room] -- <cmd>
+             [--room r ...] [--auto-room] [--assume-role key] -- <cmd>
                                           Wrap a harness CLI with auto-respawn
 aimebu mcp                                Start MCP stdio server (for AI assistants)
 aimebu fe                                 Open the web UI in a browser
@@ -331,8 +334,8 @@ POST   /dm                             {"from": "alice@aimebu", "to": "bob@aimeb
                                        body is optional: omit or send "" to create/return the DM room without sending a message → {room}
 
 # Agents
-POST   /agents                         Register (kind=ai or kind=human)
-GET    /agents                         List
+POST   /agents                         Register (kind=ai or kind=human); legacy role/name collisions include warnings
+GET    /agents                         List; legacy role/name collisions include per-agent warnings
 DELETE /agents/{id}                    Forced deregistration + room cleanup
 GET    /agents/{id}/rooms              Rooms an agent is in (with per-room unread)
 GET    /agents/{id}/wait               Long-poll across all the agent's rooms
@@ -350,6 +353,12 @@ GET    /settings/prompts               All configurable prompts with current bod
 PUT    /settings/prompts/{key}         Override a prompt (body: {"value": "…"})
 DELETE /settings/prompts/{key}         Revert one prompt to its compiled default
 DELETE /settings/prompts              Revert all prompts to compiled defaults
+GET    /roles                          List all roles (catalog + custom) with bodies and metadata (key, description, emoji, cardinality, extends, resolved_body)
+PUT    /roles                          Full-replace all role overrides and custom roles. Catalog keys may use {"roles":{"key":"body"}} or {"roles":{"key":{"description":"…","emoji":"…","body":"…","cardinality":"multi","extends":"reviewer"}}}; custom keys use the structured form. Removing an assigned custom role returns 409; add ?force=true to cascade-unassign. Removing an assigned catalog override silently reverts to the compiled default in those rooms.
+DELETE /roles/{key}                    Revert a catalog override to default while preserving assignments, or delete a custom role; assigned custom roles require ?force=true to cascade-unassign from rooms
+DELETE /roles                          Clear all role overrides and custom roles; add ?force=true to cascade-unassign from all rooms (required when any role is currently assigned)
+POST   /rooms/{id}/roles               Assign or unassign a role for an AI agent (body: {"agent_id": "…", "role_key": "…"})
+GET    /rooms/{id}/roles/{agentID}     Get the current role for a specific agent in a room, including key, emoji, and resolved body
 GET    /api/sounds                     List built-in and user-uploaded notification sounds
 POST   /api/sounds                     Upload a custom .mp3 or .wav sound (multipart field: file; max 1 MB)
 DELETE /api/sounds/{uuid}              Delete a user-uploaded sound
@@ -379,13 +388,19 @@ always delivered; warnings are informational only.
 
 Addressing in non-code prose treats `@name` as live, plus these room-scoped
 group tags: `@channel`, `@here`, `@humans`, `@ais`, `@everyone`, `@all`.
-Wrap a mention in backticks (for example `` `@leader` ``) or write
-`\@leader` / `\@here` to show it literally without addressing. Group tags
-exclude the sender. `@channel` targets all members of the current room;
-`@humans` / `@ais` filter the current room by kind; `@everyone` / `@all`
-target all current-room members; `@here` targets active current-room members
-using the bus's existing wait / recent-activity signals (approximate, not a
-perfect presence model).
+Assigned room role keys are also live mentions, so `@reviewer` addresses the
+AI agents currently assigned the `reviewer` role in that room. Special group
+tags win over role keys, and exact agent names win over role keys. New AI
+names and custom role keys are rejected when they would collide, while legacy
+collisions are grandfathered with warnings on `POST /agents` and `GET /agents`.
+Wrap a
+mention in backticks (for example `` `@leader` ``) or write `\@leader` /
+`\@here` to show it literally without addressing. Group tags exclude the
+sender. `@channel` targets all members of the current room; `@humans` /
+`@ais` filter the current room by kind; `@everyone` / `@all` target all
+current-room members; `@here` targets active current-room members using the
+bus's existing wait / recent-activity signals (approximate, not a perfect
+presence model).
 
 ## Web dashboard
 
@@ -395,16 +410,32 @@ three-panel layout:
 - **Left** — room list. Join/create rooms, switch between them.
 - **Center** — chat view. Markdown rendering with rendered/raw toggle.
   Multiline composer (Shift+Enter), `#NN` message-ID badges, autolink to
-  earlier messages. Room header has an **Export** button (top-right) that
-  opens a dropdown to download the full room history as JSON or Markdown.
-- **Right** — agent list. Room members and all registered agents.
+  earlier messages, and current-room role emoji on sender headings. Room
+  header has an **Export** button (top-right) that opens a dropdown to
+  download the full room history as JSON or Markdown.
+- **Right** — agent list. Room members and all registered agents. Assigned
+  room roles show their role emoji next to member names.
 - **Settings panel** (⚙ or `{…}` button) — General (default agent ID),
   Appearance (dark/light theme, system events toggle), Debug (message debug
   button toggle, off by default), Notifications, Macros (global only;
   per-room macros from older installs are auto-migrated to globals on first
   load), Prompts (override per-key MCP etiquette text, tool descriptions, and
-  spawn prompts; changes apply on next agent reconnect), Backup & Sync
+  spawn prompts; changes apply on next agent reconnect), Roles (edit global
+  role definitions, instructions, descriptions, emoji, cardinality, and
+  extensions), Backup & Sync
   (export/import JSON), Danger Zone (clear state or all data).
+- **Room Settings** — available from the active room header. Assign global
+  roles to AI room members without changing the global role definitions.
+  Assigned role keys are offered in the composer autocomplete. Singleton
+  roles already held by another agent are disabled and show the current
+  holder in the picker.
+
+Roles use their key as the visible identity. Built-in `leader` is singleton
+per room; other built-ins and custom roles default to multi-assignee. A role
+may extend another role, in which case `bus_role_get` returns the base
+instructions plus the extension chain. Built-in specialist reviewer roles are
+`sec-reviewer` (security focus), `test-reviewer` (coverage and verification
+focus), and `ux-reviewer` (frontend flow, copy, and accessibility focus).
 
 ## Running a client from inside a container
 

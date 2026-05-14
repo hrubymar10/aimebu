@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -668,6 +669,11 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo) {
 			return
 		}
 
+		var warnings []string
+		if agent.Kind == "ai" && s.roleKeyExists(agent.Name) {
+			warnings = append(warnings, roleNameCollisionWarning(agent.Name))
+		}
+
 		_ = jsonOK(w, types.RegisterResponse{
 			ID:        agent.ID,
 			Name:      agent.Name,
@@ -677,6 +683,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo) {
 			Project:   agent.Project,
 			Meta:      agent.Meta,
 			Reclaimed: reclaimed,
+			Warnings:  warnings,
 		})
 	})
 
@@ -914,6 +921,218 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo) {
 		_ = jsonOK(w, map[string]string{"status": "ok"})
 	})
 
+	// ── Roles ─────────────────────────────────────────────────────────
+
+	// GET /roles — list all roles with effective bodies + metadata
+	mux.HandleFunc("GET /roles", func(w http.ResponseWriter, _ *http.Request) {
+		_ = jsonOK(w, s.listRoles())
+	})
+
+	// PUT /roles — full-replace. Catalog keys take a string body or a structured
+	// {"description","emoji","body","cardinality","extends"} object. Custom keys
+	// accept the same structured object. Atomically replaces all overrides and
+	// custom roles; validates everything before applying any change.
+	mux.HandleFunc("PUT /roles", func(w http.ResponseWriter, r *http.Request) {
+		var raw struct {
+			Roles map[string]json.RawMessage `json:"roles"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(raw.Roles) > 64 {
+			jsonError(w, "too many roles (max 64)", http.StatusBadRequest)
+			return
+		}
+		// Validate all entries upfront
+		entries := make([]replaceRolesEntry, 0, len(raw.Roles))
+		for k, v := range raw.Roles {
+			if !roleKeyRE.MatchString(k) {
+				jsonError(w, "invalid role key: "+k, http.StatusBadRequest)
+				return
+			}
+			var entry replaceRolesEntry
+			entry.key = k
+			entry.isCustom = !roleCatalogSet[k]
+			// Try string first, then structured object
+			var bodyStr string
+			if err := json.Unmarshal(v, &bodyStr); err == nil {
+				entry.body = bodyStr
+				if catalogEntry, ok := roleCatalogEntryFor(k); ok {
+					entry.description = catalogEntry.Description
+					if catalogEntry.Emoji != "" {
+						entry.emoji = catalogEntry.Emoji
+					} else {
+						entry.emoji = catalogEntry.Icon
+					}
+					entry.cardinality = catalogEntry.Cardinality
+					entry.extends = catalogEntry.Extends
+				}
+			} else {
+				var obj struct {
+					Label       string `json:"label"`
+					Description string `json:"description"`
+					Emoji       string `json:"emoji"`
+					Icon        string `json:"icon"`
+					Body        string `json:"body"`
+					Cardinality string `json:"cardinality"`
+					Extends     string `json:"extends"`
+				}
+				if err := json.Unmarshal(v, &obj); err != nil {
+					jsonError(w, "invalid value for key "+k+": must be a string body or {description,emoji,body,cardinality,extends}", http.StatusBadRequest)
+					return
+				}
+				entry.body = obj.Body
+				entry.description = obj.Description
+				if obj.Emoji != "" {
+					entry.emoji = obj.Emoji
+				} else {
+					entry.emoji = obj.Icon
+				}
+				entry.cardinality = obj.Cardinality
+				entry.extends = obj.Extends
+				if !entry.isCustom {
+					if catalogEntry, ok := roleCatalogEntryFor(k); ok {
+						if entry.emoji == "" {
+							if catalogEntry.Emoji != "" {
+								entry.emoji = catalogEntry.Emoji
+							} else {
+								entry.emoji = catalogEntry.Icon
+							}
+						}
+						if entry.cardinality == "" {
+							entry.cardinality = catalogEntry.Cardinality
+						}
+					}
+				}
+			}
+			if len(entry.body) > 16*1024 {
+				jsonError(w, "role body too large (max 16KB): "+k, http.StatusBadRequest)
+				return
+			}
+			icon, err := normalizeRoleEmoji(entry.emoji)
+			if err != nil {
+				jsonError(w, "invalid role emoji for key "+k+": "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			entry.emoji = icon
+			cardinality, err := normalizeRoleCardinality(entry.cardinality)
+			if err != nil {
+				jsonError(w, "invalid role cardinality for key "+k+": "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			entry.cardinality = cardinality
+			if entry.extends != "" && !roleKeyRE.MatchString(entry.extends) {
+				jsonError(w, "invalid role extends for key "+k, http.StatusBadRequest)
+				return
+			}
+			entries = append(entries, entry)
+		}
+		// Apply atomically
+		force := r.URL.Query().Get("force") == "true"
+		if err := s.replaceRoles(entries, force); err != nil {
+			if errors.Is(err, ErrRolesConflict) {
+				jsonError(w, err.Error(), http.StatusConflict)
+			} else {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+			}
+			return
+		}
+		_ = jsonOK(w, map[string]string{"status": "ok"})
+	})
+
+	// DELETE /roles/{key} — revert a catalog override or delete a custom role
+	mux.HandleFunc("DELETE /roles/{key}", func(w http.ResponseWriter, r *http.Request) {
+		key := r.PathValue("key")
+		force := r.URL.Query().Get("force") == "true"
+		if !s.roleExists(key) {
+			jsonError(w, "unknown role key", http.StatusNotFound)
+			return
+		}
+		if err := s.deleteRoleOverride(key, force); err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		_ = jsonOK(w, map[string]string{"status": "ok"})
+	})
+
+	// DELETE /roles — clear all role overrides and custom roles.
+	// Respects ?force=true to cascade-unassign; without it returns 409 if any
+	// room has role assignments.
+	mux.HandleFunc("DELETE /roles", func(w http.ResponseWriter, r *http.Request) {
+		force := r.URL.Query().Get("force") == "true"
+		if err := s.deleteAllRoleOverrides(force); err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		_ = jsonOK(w, map[string]string{"status": "ok"})
+	})
+
+	// POST /rooms/{id}/roles — assign or unassign a role for an AI agent.
+	// Returns the updated room so callers can re-render without a second fetch.
+	mux.HandleFunc("POST /rooms/{id}/roles", func(w http.ResponseWriter, r *http.Request) {
+		roomID := r.PathValue("id")
+		var req struct {
+			AgentID string `json:"agent_id"`
+			RoleKey string `json:"role_key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.AgentID == "" {
+			jsonError(w, "agent_id is required", http.StatusBadRequest)
+			return
+		}
+		if req.RoleKey != "" && !s.roleExists(req.RoleKey) {
+			jsonError(w, "unknown role key: "+req.RoleKey, http.StatusBadRequest)
+			return
+		}
+		if err := s.assignRole(roomID, req.AgentID, req.RoleKey); err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, ErrRoomNotFound) {
+				status = http.StatusNotFound
+			} else if errors.Is(err, ErrRoleAssignmentConflict) {
+				status = http.StatusConflict
+			}
+			jsonError(w, err.Error(), status)
+			return
+		}
+		room := s.getRoom(roomID)
+		_ = jsonOK(w, room)
+	})
+
+	// GET /rooms/{id}/roles/{agentID} — get the role for a specific agent in a room
+	mux.HandleFunc("GET /rooms/{id}/roles/{agentID}", func(w http.ResponseWriter, r *http.Request) {
+		roomID := r.PathValue("id")
+		agentID := r.PathValue("agentID")
+		room := s.getRoom(roomID)
+		if room == nil {
+			jsonError(w, "room not found", http.StatusNotFound)
+			return
+		}
+		roleKey := room.Roles[agentID]
+		resp := map[string]any{
+			"room":     roomID,
+			"agent_id": agentID,
+			"role_key": roleKey,
+			"label":    "",
+			"icon":     "",
+			"emoji":    "",
+			"body":     "",
+		}
+		if roleKey != "" {
+			body, _ := s.getRole(roleKey)
+			resp["body"] = body
+			label := s.getRoleLabel(roleKey)
+			resp["label"] = label
+			emoji := s.getRoleIcon(roleKey)
+			resp["icon"] = emoji
+			resp["emoji"] = emoji
+		}
+		_ = jsonOK(w, resp)
+	})
+
 	// DELETE /all — clear conversation state; ?include_settings=true also wipes user settings (macros).
 	mux.HandleFunc("DELETE /all", func(w http.ResponseWriter, r *http.Request) {
 		includeSettings := r.URL.Query().Get("include_settings") == "true"
@@ -1115,6 +1334,48 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	if promptDefaults != nil {
 		SetPromptDefaults(promptDefaults)
 	}
+
+	// Register compiled-in role defaults — full prose adapted from the
+	// room-collaboration protocol documented in AGENTS.md.
+	SetRoleDefaults(map[string]string{
+		"leader": `You are the leader for this room.
+
+Your job is to keep the collaboration process orderly and decision-ready. For new tasks, first frame the problem by describing symptoms, gaps, scope hints, and relevant files without proposing solutions. Then post your own independent plan. Wait for all other planners to post their independent plans before discussion starts.
+
+During discussion, drive the team toward a concrete plan. If no consensus emerges after five rounds, summarize each position for the human. Once a plan is finalized, hand it to the human for approval with needs_attention=true, explicitly noting how it differs from the initial independent plans.
+
+After approval, hand implementation to the appropriate implementer role or agent. During code review, post your review independently of any assigned review roles, then consolidate all reviews into one prioritized fix list. If reviewers disagree, surface the tie to the human.
+
+Keep history clean: one commit per feature unless the human approves otherwise. Push only when explicitly instructed by the human. After sign-off, hand the final status to the human with needs_attention=true when their next action is required.`,
+
+		"worker": `You are the worker for this room.
+
+Your job is to turn the approved plan into correct, working code. Do not start implementation until the leader posts the human-approved final plan and explicitly hands implementation to you. Keep edits focused on that plan and the supporting code needed to make it work.
+
+If implementation reveals surprises, fallbacks, or necessary deviations, report them as implementation notes, not review findings. When ready for review, report the exact branch/commit state, tests run, and any implementation notes, then ping the leader and relevant reviewers. Do not self-review.
+
+While reviews are pending, you may answer factual clarification questions. Wait until all independent reviews are posted before applying fixes. Apply the consolidated fix list from the leader. If a feature commit already exists, amend it so the branch keeps one clean feature commit. Push only when explicitly instructed by the human or leader.`,
+
+		"reviewer": `You are the reviewer for this room.
+
+Your job is to provide an independent assessment of correctness and risk. Review only after an implementer asks for code review, and do not read the leader's review before posting your own.
+
+Lead with actionable findings, ordered by severity, with concrete file/line references or behavior descriptions. Focus on bugs, regressions, missing tests, docs drift, integration risks, and divergence from the approved plan. Distinguish blockers from non-blocking concerns. If no blockers remain, say that clearly and note any residual risk.
+
+After fixes, re-review until the leader's consolidated fix list is addressed without introducing unrelated changes. Do not defer issues casually; deferral is only legitimate when the fix needs a new dependency requiring human approval, missing critical information, or would expand the diff by more than roughly 30 percent.`,
+
+		"sec-reviewer": `Additional focus: security.
+
+Look specifically for authorization bypasses, privilege boundary mistakes, injection or parsing hazards, unsafe file/network access, secret exposure, unsafe defaults, and abuse cases. Keep the review tied to exploitable or realistically risky behavior, and distinguish concrete security findings from general hardening ideas.`,
+
+		"test-reviewer": `Additional focus: tests and verification.
+
+Look specifically for missing regression coverage, weak assertions, untested edge cases, flaky or slow test design, fixture drift, and gaps between the claimed verification and the behavior changed. Recommend focused tests that would catch the failure mode rather than broad coverage for its own sake.`,
+
+		"ux-reviewer": `Additional focus: user experience.
+
+Look specifically at user-facing flows, accessibility, responsive layout, visual hierarchy, copy clarity, error states, and interaction feedback. Call out confusing or cramped UI and behavior that makes the user's next action unclear.`,
+	})
 
 	// Merge bundled defaults into the global macro map (write-once per key).
 	s.applyDefaultMacros()

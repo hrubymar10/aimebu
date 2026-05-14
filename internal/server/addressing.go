@@ -11,7 +11,7 @@ import (
 
 var (
 	// mentionRe finds @name mentions anywhere in the body.
-	mentionRe = regexp.MustCompile(`(?i)@([a-z][a-z0-9]*)`)
+	mentionRe = regexp.MustCompile(`(?i)@([a-z][a-z0-9_-]*)`)
 	// legacyPrefixRe detects IRC-style "name:" speaker prefixes at the start of a body.
 	legacyPrefixRe = regexp.MustCompile(`(?i)^([a-z][a-z0-9]{2,11})\s*:`)
 	// inlinePrefixRe detects inline IRC-style "name1, name2 —" or
@@ -74,6 +74,7 @@ type roomAgentContext struct {
 type addressingContext struct {
 	SenderID   string
 	KnownNames map[string]bool
+	RoleNames  map[string][]string
 	RoomAgents []roomAgentContext
 	Now        time.Time
 }
@@ -324,6 +325,13 @@ func resolveAddressedTokens(raw []string, ctx addressingContext) []string {
 		default:
 			if len(ctx.KnownNames) == 0 || ctx.KnownNames[token] {
 				add(token)
+			} else if len(ctx.RoleNames) > 0 {
+				for _, name := range ctx.RoleNames[token] {
+					if strings.EqualFold(name, senderName) {
+						continue
+					}
+					add(name)
+				}
 			}
 		}
 	}
@@ -348,7 +356,7 @@ type annotatedMessage struct {
 // contextFor supplies the room-aware resolver context for each message.
 //
 // should_respond logic mirrors the MCP etiquette:
-//   - system messages: never respond.
+//   - system messages: respond only when explicitly targeted.
 //   - human sender, room-wide (no addressed_to): respond.
 //   - human sender, addressed to others: do not respond.
 //   - ai sender or unknown: respond only if addressed_to_me or in a DM room.
@@ -368,7 +376,7 @@ func annotate(msgs []types.Message, agentName string, contextFor func(types.Mess
 		var shouldRespond bool
 		switch m.FromKind {
 		case "system":
-			shouldRespond = false
+			shouldRespond = addrToMe
 		case "human":
 			if len(addressed) == 0 {
 				shouldRespond = true

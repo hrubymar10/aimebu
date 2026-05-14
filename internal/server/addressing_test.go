@@ -101,6 +101,9 @@ func TestAnnotate(t *testing.T) {
 	system := func(body string) types.Message {
 		return types.Message{Body: body, FromKind: "system", RoomID: "general"}
 	}
+	targetedSystem := func(body string, targets ...string) types.Message {
+		return types.Message{Body: body, FromKind: "system", RoomID: "general", Targets: targets}
+	}
 	dm := func(body string) types.Message {
 		return types.Message{Body: body, FromKind: "ai", RoomID: "dm:alice:bob"}
 	}
@@ -134,8 +137,11 @@ func TestAnnotate(t *testing.T) {
 		// AI, in DM room → respond
 		{"ai DM room", dm("hey"), "alice", false, true},
 
-		// System → never respond
+		// Untargeted system messages are informational.
 		{"system message", system("server started"), "alice", false, false},
+		// Targeted system messages wake only their explicit target.
+		{"targeted system message to me", targetedSystem("alice@aimebu was assigned as Reviewer", "alice"), "alice", true, true},
+		{"targeted system message to other", targetedSystem("alice@aimebu was assigned as Reviewer", "alice"), "bob", false, false},
 	}
 
 	for _, tc := range cases {
@@ -225,6 +231,45 @@ func TestResolveAddressedToGroupMentions(t *testing.T) {
 				t.Fatalf("resolveAddressedTo(%q) = %v, want %v", tc.body, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestResolveAddressedToRoleMentions(t *testing.T) {
+	ctx := addressingContext{
+		SenderID: "leader@aimebu",
+		KnownNames: map[string]bool{
+			"leader": true,
+			"alice":  true,
+		},
+		RoleNames: map[string][]string{
+			"reviewer": {"alice", "bob"},
+			"leader":   {"carol"}, // agent-name precedence should win.
+			"here":     {"dana"},  // special group precedence should win.
+		},
+		RoomAgents: []roomAgentContext{
+			{ID: "leader@aimebu", Name: "leader", Kind: "ai", Waiting: true},
+			{ID: "alice@aimebu", Name: "alice", Kind: "ai", Waiting: true},
+			{ID: "bob@aimebu", Name: "bob", Kind: "ai", Waiting: true},
+			{ID: "carol@aimebu", Name: "carol", Kind: "ai", Waiting: true},
+			{ID: "dana@aimebu", Name: "dana", Kind: "ai", Waiting: true},
+		},
+		Now: time.Date(2026, time.May, 10, 15, 0, 0, 0, time.UTC),
+	}
+
+	if got, want := resolveAddressedTo("@reviewer", ctx), []string{"alice", "bob"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("role mention = %v, want %v", got, want)
+	}
+	if got, want := resolveAddressedTo("@leader", ctx), []string{"leader"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("agent-name precedence = %v, want %v", got, want)
+	}
+	if got, want := resolveAddressedTo("@here", ctx), []string{"alice", "bob", "carol", "dana"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("reserved group should resolve as group, got %v, want %v", got, want)
+	}
+
+	msg := types.Message{RoomID: "room", From: "matin", FromKind: "human", Body: "@reviewer please review"}
+	out := annotate([]types.Message{msg}, "bob", func(types.Message) addressingContext { return ctx })
+	if !out[0].AddressedToMe || !out[0].ShouldRespond {
+		t.Fatalf("role-addressed bob should respond: %+v", out[0])
 	}
 }
 
