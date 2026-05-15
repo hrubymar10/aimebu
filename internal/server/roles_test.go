@@ -25,6 +25,71 @@ func TestRolesCatalogLoad(t *testing.T) {
 	}
 }
 
+func TestDefaultRolesIncludeThreeWayIndependentPlanning(t *testing.T) {
+	defaults := defaultRoleBodies()
+	for _, key := range []string{"leader", "worker", "reviewer"} {
+		body := defaults[key]
+		for _, want := range []string{
+			"independent initial plan",
+			"Do not read the other roles' plans before posting yours",
+			"If you arrive late and another plan is already on the bus",
+			"Wait for the initial plans of all others in room to be posted before discussion starts",
+			"Always wait for all other agents to finish their current response",
+			"Do not start a new round while another agent is still mid-message",
+			"Do not casually defer scope",
+			"Set needs_attention=true only when",
+		} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s default body missing %q:\n%s", key, want, body)
+			}
+		}
+	}
+
+	if !strings.Contains(defaults["worker"], "Do not start implementation until") {
+		t.Fatalf("worker default lost implementation handoff gate:\n%s", defaults["worker"])
+	}
+	if !strings.Contains(defaults["reviewer"], "Review only after an implementer asks for code review") {
+		t.Fatalf("reviewer default lost review-phase gate:\n%s", defaults["reviewer"])
+	}
+	if !strings.Contains(defaults["leader"], "each of the three initial plans") {
+		t.Fatalf("leader default lost per-plan divergence audit:\n%s", defaults["leader"])
+	}
+	if !strings.Contains(defaults["reviewer"], "Code review is performed by review roles and coordination roles") {
+		t.Fatalf("reviewer default lost CR boundary statement:\n%s", defaults["reviewer"])
+	}
+	if !strings.Contains(defaults["reviewer"], "do not read other reviews before posting your own") {
+		t.Fatalf("reviewer default lost role-neutral CR independence:\n%s", defaults["reviewer"])
+	}
+}
+
+func TestSpecialistReviewersInheritDefaultPlanningProtocol(t *testing.T) {
+	dir := t.TempDir()
+	SetRoleDefaults(defaultRoleBodies())
+	s, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"sec-reviewer", "test-reviewer", "ux-reviewer"} {
+		body, ok := s.getRole(key)
+		if !ok {
+			t.Fatalf("expected %s role", key)
+		}
+		if !strings.Contains(body, "independent initial plan") {
+			t.Fatalf("%s should inherit reviewer planning protocol, got:\n%s", key, body)
+		}
+		if !strings.Contains(body, "Always wait for all other agents to finish their current response") {
+			t.Fatalf("%s should inherit reviewer sync rule, got:\n%s", key, body)
+		}
+		if !strings.Contains(body, "Do not casually defer scope") {
+			t.Fatalf("%s should inherit reviewer scope discipline, got:\n%s", key, body)
+		}
+		if !strings.Contains(body, "Set needs_attention=true only when") {
+			t.Fatalf("%s should inherit reviewer attention discipline, got:\n%s", key, body)
+		}
+	}
+}
+
 func TestRolesSetAndGet(t *testing.T) {
 	dir := t.TempDir()
 	SetRoleDefaults(map[string]string{

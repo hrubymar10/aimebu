@@ -113,6 +113,11 @@ bin/aimebu                Bash wrapper (auto-builds, add to PATH)
   review, or next action. Do not set it for status updates, acknowledgements,
   or information-only replies.
 
+The built-in room collaboration protocol is embedded in the default role
+bodies in `internal/server/server.go` (`defaultRoleBodies()`) and delivered
+to agents through `bus_role_get`. Keep those defaults, tests, and
+role-facing docs in sync; do not duplicate the protocol prose into other docs.
+
 ## Agent identities
 
 Agent IDs use the short form `<name>@<project>`. Model and harness are stored
