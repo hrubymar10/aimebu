@@ -2897,6 +2897,21 @@ body {
   gap: 8px;
 }
 
+.room-settings-danger-zone {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-group-heading {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .room-settings-member {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(150px, 220px);

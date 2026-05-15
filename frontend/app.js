@@ -178,6 +178,7 @@
   const roomSettingsCloseBtn = $('#room-settings-close-btn');
   const roomSettingsTitle = $('#room-settings-title');
   const roomSettingsMembers = $('#room-settings-members');
+  const roomSettingsRemoveBtn = $('#room-settings-remove-btn');
   const macroAddForm = $('#macro-add-form');
   const macroKeyInput = $('#macro-key-input');
   const macroBodyInput = $('#macro-body-input');
@@ -2195,6 +2196,32 @@
     document.body.style.overflow = (messageDebugState.open || !settingsModal.classList.contains('hidden')) ? 'hidden' : '';
   }
 
+  function handleLocalRoomRemoval(roomID) {
+    closeRoomSettings();
+    rooms = rooms.filter(function (r) { return r.id !== roomID; });
+    delete messages[roomID];
+    delete presence[roomID];
+    delete attentionCounts[roomID];
+    if (attentionTimers[roomID]) {
+      clearTimeout(attentionTimers[roomID]);
+      delete attentionTimers[roomID];
+    }
+    if (attentionFocusListeners[roomID]) {
+      window.removeEventListener('focus', attentionFocusListeners[roomID]);
+      delete attentionFocusListeners[roomID];
+    }
+    delete unreadCounts[roomID];
+    delete readCursors[roomID];
+    delete lastMessagePreview[roomID];
+
+    if (activeRoomID === roomID) {
+      wsUnsubscribeRoom(roomID);
+      showNoRoom();
+      return;
+    }
+    renderRooms();
+  }
+
   function activateSettingsSection(section) {
     settingsModal.querySelectorAll('.settings-nav-item').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
@@ -3000,15 +3027,19 @@
   function renderRoomSettings() {
     if (!roomSettingsMembers) return;
     if (!activeRoomID) {
+      if (roomSettingsTitle) roomSettingsTitle.textContent = 'Room Settings';
+      if (roomSettingsRemoveBtn) roomSettingsRemoveBtn.disabled = true;
       roomSettingsMembers.innerHTML = '<div class="empty-state">Select a room first.</div>';
       return;
     }
     var room = rooms.find(function (r) { return r.id === activeRoomID; });
     if (!room) {
+      if (roomSettingsRemoveBtn) roomSettingsRemoveBtn.disabled = true;
       roomSettingsMembers.innerHTML = '<div class="empty-state">Room not found.</div>';
       return;
     }
     if (roomSettingsTitle) roomSettingsTitle.textContent = 'Room Settings: ' + room.id;
+    if (roomSettingsRemoveBtn) roomSettingsRemoveBtn.disabled = room.id === '_system';
     var members = (room.members || []).filter(function (memberID) {
       var agent = agents.find(function (a) { return a.id === memberID; });
       return agent && agent.kind === 'ai';
@@ -3316,6 +3347,25 @@
   if (roomSettingsBtn) roomSettingsBtn.addEventListener('click', openRoomSettings);
   if (roomSettingsCloseBtn) roomSettingsCloseBtn.addEventListener('click', closeRoomSettings);
   if (roomSettingsOverlay) roomSettingsOverlay.addEventListener('click', closeRoomSettings);
+  if (roomSettingsRemoveBtn) roomSettingsRemoveBtn.addEventListener('click', function () {
+    if (!activeRoomID || activeRoomID === '_system') return;
+    var removedRoomID = activeRoomID;
+    if (!confirm('Remove room "' + removedRoomID + '"? This deletes the room and its messages for everyone.')) return;
+
+    roomSettingsRemoveBtn.disabled = true;
+    api('DELETE', '/rooms/' + encodeURIComponent(removedRoomID)).then(function () {
+      handleLocalRoomRemoval(removedRoomID);
+    }).catch(function (err) {
+      if (/404/.test(String(err && err.message))) {
+        handleLocalRoomRemoval(removedRoomID);
+        return;
+      }
+      console.error('remove room', err);
+      alert('Failed to remove room: ' + (err && err.message ? err.message : err));
+    }).finally(function () {
+      roomSettingsRemoveBtn.disabled = !activeRoomID || activeRoomID === '_system';
+    });
+  });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && !messageDebugModal.classList.contains('hidden')) {
       closeMessageDebugModal();
