@@ -135,12 +135,6 @@
       <div id="room-agents-list" class="agent-list">
         <div class="empty-state">Select a room to see members.</div>
       </div>
-      <div class="sidebar-header sidebar-header-divider">
-        <h2 class="section-title">All Agents</h2>
-      </div>
-      <div id="all-agents-list" class="agent-list">
-        <div class="empty-state" id="agents-empty">No agents registered.</div>
-      </div>
     </aside>
   </main>
 
@@ -158,6 +152,7 @@
       <nav class="settings-nav">
         <div class="settings-nav-title">Settings</div>
         <button class="settings-nav-item active" data-section="general" type="button">General</button>
+        <button class="settings-nav-item" data-section="agents" type="button">Agents</button>
         <button class="settings-nav-item" data-section="notifications" type="button">Notifications</button>
         <button class="settings-nav-item" data-section="macros" type="button">Macros</button>
         <button class="settings-nav-item" data-section="prompts" type="button">Prompts</button>
@@ -220,6 +215,13 @@
                 <button id="debug-toggle-btn" class="btn btn-sm" type="button">Disabled</button>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- Agents -->
+        <div class="settings-section" data-section="agents">
+          <div id="all-agents-list" class="agent-list settings-agent-list">
+            <div class="empty-state" id="agents-empty">No agents registered.</div>
           </div>
         </div>
 

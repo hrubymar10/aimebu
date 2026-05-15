@@ -1452,6 +1452,13 @@ body {
   min-height: 0;
 }
 
+.settings-section .settings-agent-list {
+  flex: 0 0 auto;
+  overflow: visible;
+  padding: 0;
+  min-height: 0;
+}
+
 .agent-card {
   background: var(--bg-tertiary);
   border: 1px solid var(--border);

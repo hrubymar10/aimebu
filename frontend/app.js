@@ -2131,7 +2131,7 @@
     settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
     });
-    var titles = { general: 'General', notifications: 'Notifications', macros: 'Macros', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
+    var titles = { general: 'General', agents: 'Agents', notifications: 'Notifications', macros: 'Macros', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
     if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
   }
 
@@ -3502,7 +3502,10 @@
         var targetID = dmBtn.getAttribute('data-agent-id');
         dmBtn.disabled = true;
         api('POST', '/dm', { from: agentID, to: targetID, body: '' })
-          .then(function (data) { selectRoom(data.room); })
+          .then(function (data) {
+            selectRoom(data.room);
+            if (!settingsModal.classList.contains('hidden')) closeSettings();
+          })
           .catch(function (err) { alert('Failed to open DM: ' + err.message); })
           .finally(function () { dmBtn.disabled = false; });
 
