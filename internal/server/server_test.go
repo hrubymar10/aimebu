@@ -626,38 +626,76 @@ func TestGetSettingsAfterPartialPut(t *testing.T) {
 func TestPutAndGetSettings(t *testing.T) {
 	_, srv := setupTestServer(t)
 
-	body := bytes.NewBufferString(`{"theme":"light","agent_id_default":"alice","show_system_events":true,"debug_button_enabled":true}`)
-	req, _ := http.NewRequest("PUT", srv.URL+"/settings", body)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	for _, theme := range []string{"light", "red-dark", "red-light", "blue-dark", "blue-light", "green-dark", "green-light", "high-contrast-dark", "high-contrast-light"} {
+		t.Run(theme, func(t *testing.T) {
+			body := bytes.NewBufferString(`{"theme":"` + theme + `","agent_id_default":"alice","show_system_events":true,"debug_button_enabled":true}`)
+			req, _ := http.NewRequest("PUT", srv.URL+"/settings", body)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("PUT /settings: expected 200, got %d", resp.StatusCode)
+			}
+
+			resp2, err := http.Get(srv.URL + "/settings")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp2.Body.Close()
+			var s Settings
+			if err := json.NewDecoder(resp2.Body).Decode(&s); err != nil {
+				t.Fatal(err)
+			}
+			if s.Theme != theme {
+				t.Errorf("expected theme=%s, got %q", theme, s.Theme)
+			}
+			if s.AgentIDDefault != "alice" {
+				t.Errorf("expected agent_id_default=alice, got %q", s.AgentIDDefault)
+			}
+			if s.ShowSystemEvents == nil || !*s.ShowSystemEvents {
+				t.Error("expected show_system_events=true")
+			}
+			if s.DebugButtonEnabled == nil || !*s.DebugButtonEnabled {
+				t.Error("expected debug_button_enabled=true")
+			}
+		})
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT /settings: expected 200, got %d", resp.StatusCode)
+}
+
+// TestLegacyRedThemeMigration verifies that the former red theme loads as red-dark.
+func TestLegacyRedThemeMigration(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"theme":"red"}`), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	resp2, err := http.Get(srv.URL + "/settings")
+	s, err := newStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp2.Body.Close()
-	var s Settings
-	if err := json.NewDecoder(resp2.Body).Decode(&s); err != nil {
+
+	if got := s.getSettings().Theme; got != "red-dark" {
+		t.Fatalf("expected legacy red theme to migrate to red-dark, got %q", got)
+	}
+}
+
+// TestLegacyHighContrastCyanMigration verifies that the test-only cyan variant loads as high-contrast-dark.
+func TestLegacyHighContrastCyanMigration(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"theme":"high-contrast-dark-cyan"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if s.Theme != "light" {
-		t.Errorf("expected theme=light, got %q", s.Theme)
+
+	s, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if s.AgentIDDefault != "alice" {
-		t.Errorf("expected agent_id_default=alice, got %q", s.AgentIDDefault)
-	}
-	if s.ShowSystemEvents == nil || !*s.ShowSystemEvents {
-		t.Error("expected show_system_events=true")
-	}
-	if s.DebugButtonEnabled == nil || !*s.DebugButtonEnabled {
-		t.Error("expected debug_button_enabled=true")
+
+	if got := s.getSettings().Theme; got != "high-contrast-dark" {
+		t.Fatalf("expected legacy cyan high-contrast theme to migrate to high-contrast-dark, got %q", got)
 	}
 }
 

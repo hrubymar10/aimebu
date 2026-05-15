@@ -88,7 +88,7 @@
   const settingsOverlay = $('#settings-overlay');
   const settingsCloseBtn = $('#settings-close-btn');
   const settingsSectionTitle = $('#settings-section-title');
-  const themeToggleBtn = $('#theme-toggle-btn');
+  const themeSelect = $('#theme-select');
   const debugToggleBtn = $('#debug-toggle-btn');
   const macrosSearchInput = $('#macros-search-input');
   const macrosCopyBtn = $('#macros-copy-btn');
@@ -113,7 +113,6 @@
   const roomIconEl = $('#room-icon');
   const roomNameEl = $('#room-name');
   const roomMemberCount = $('#room-member-count');
-  const roomMemberAvatars = $('#room-member-avatars');
   const leaveRoomBtn = $('#leave-room-btn');
   const roomSettingsBtn = $('#room-settings-btn');
   const exportBtn = $('#export-btn');
@@ -2042,13 +2041,13 @@
   // ── Settings ─────────────────────────────────────────────────────
 
   function applyTheme(theme) {
-    if (theme === 'light') {
-      document.documentElement.setAttribute('data-theme', 'light');
+    if (theme && theme !== 'dark') {
+      document.documentElement.setAttribute('data-theme', theme);
     } else {
       document.documentElement.removeAttribute('data-theme');
     }
-    if (themeToggleBtn) {
-      themeToggleBtn.textContent = (theme === 'light') ? 'Dark' : 'Light';
+    if (themeSelect) {
+      themeSelect.value = theme;
     }
   }
 
@@ -2132,7 +2131,7 @@
     settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
     });
-    var titles = { general: 'General', appearance: 'Appearance', debug: 'Debug', notifications: 'Notifications', macros: 'Macros', prompts: 'Prompts', danger: 'Danger Zone' };
+    var titles = { general: 'General', notifications: 'Notifications', macros: 'Macros', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
     if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
   }
 
@@ -2574,14 +2573,6 @@
     var members = room.members || [];
     roomMemberCount.textContent = members.length + ' member' + (members.length !== 1 ? 's' : '');
 
-    // Render avatars (max 6)
-    var shown = members.slice(0, 6);
-    roomMemberAvatars.innerHTML = shown.map(function (m) {
-      return '<span class="member-avatar" title="' + esc(m) + '">' + esc(initials(m)) + '</span>';
-    }).join('');
-    if (members.length > 6) {
-      roomMemberAvatars.innerHTML += '<span class="member-avatar" title="' + (members.length - 6) + ' more">+' + (members.length - 6) + '</span>';
-    }
   }
 
   // ── Render rooms ─────────────────────────────────────────────────
@@ -2616,6 +2607,7 @@
           (isActive ? ' active' : '') +
           (dm ? ' dm' : '') +
           (hasUnread ? ' has-unread' : '') +
+          (attention > 0 ? ' has-attention' : '') +
           '" data-room-id="' + esc(r.id) + '">' +
           '<span class="room-item-icon">' + icon + '</span>' +
           '<div class="room-item-info">' +
@@ -3164,9 +3156,9 @@
     });
   });
 
-  // Theme toggle — writes to both localStorage (client-local) and server settings.
-  themeToggleBtn.addEventListener('click', function () {
-    var next = (serverSettings.theme === 'light') ? 'dark' : 'light';
+  // Theme select — writes to both localStorage (client-local) and server settings.
+  themeSelect.addEventListener('change', function () {
+    var next = themeSelect.value;
     localStorage.setItem('aimebu.ui.theme', next);
     saveSettings({ theme: next });
     applyTheme(next);

@@ -242,7 +242,6 @@ func (s *store) load() error {
 		log.Printf("Schema version mismatch — wiping data dir for clean start")
 		s.wipeDataFiles()
 		s.writeSchema()
-		return nil
 	}
 	// Rooms
 	data, err := os.ReadFile(filepath.Join(s.dir, "rooms.json"))

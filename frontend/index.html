@@ -89,7 +89,6 @@
             <button id="room-settings-btn" class="btn btn-sm btn-md-toggle room-settings-trigger" type="button">Room settings</button>
           </div>
           <div class="room-header-right">
-            <div id="room-member-avatars" class="room-member-avatars"></div>
             <button id="msg-search-btn" class="btn btn-sm btn-md-toggle" type="button" title="Go to message #…">#</button>
             <button id="md-toggle-btn" class="btn btn-sm btn-md-toggle" type="button">Rendered</button>
             <div class="export-wrap">
@@ -159,8 +158,6 @@
       <nav class="settings-nav">
         <div class="settings-nav-title">Settings</div>
         <button class="settings-nav-item active" data-section="general" type="button">General</button>
-        <button class="settings-nav-item" data-section="appearance" type="button">Appearance</button>
-        <button class="settings-nav-item" data-section="debug" type="button">Debug</button>
         <button class="settings-nav-item" data-section="notifications" type="button">Notifications</button>
         <button class="settings-nav-item" data-section="macros" type="button">Macros</button>
         <button class="settings-nav-item" data-section="prompts" type="button">Prompts</button>
@@ -185,19 +182,24 @@
                 <input type="text" id="agent-id-default-input" class="settings-text-input" placeholder="user@project" autocomplete="off" spellcheck="false">
               </div>
             </div>
-          </div>
-        </div>
-
-        <!-- Appearance -->
-        <div class="settings-section" data-section="appearance">
-          <div class="settings-group">
             <div class="settings-row">
               <div class="settings-row-info">
                 <label class="settings-label">Theme</label>
-                <span class="settings-desc">Switch between dark and light color themes.</span>
+                <span class="settings-desc">Choose a color theme.</span>
               </div>
               <div class="settings-control">
-                <button id="theme-toggle-btn" class="btn btn-sm" type="button">Light</button>
+                <select id="theme-select" class="settings-select">
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                  <option value="red-dark">Red Dark</option>
+                  <option value="red-light">Red Light</option>
+                  <option value="blue-dark">Blue Dark</option>
+                  <option value="blue-light">Blue Light</option>
+                  <option value="green-dark">Green Dark</option>
+                  <option value="green-light">Green Light</option>
+                  <option value="high-contrast-dark">High Contrast Dark</option>
+                  <option value="high-contrast-light">High Contrast Light</option>
+                </select>
               </div>
             </div>
             <div class="settings-row">
@@ -209,12 +211,6 @@
                 <button id="system-events-toggle-btn" class="btn btn-sm" type="button">Hide</button>
               </div>
             </div>
-          </div>
-        </div>
-
-        <!-- Debug -->
-        <div class="settings-section" data-section="debug">
-          <div class="settings-group">
             <div class="settings-row">
               <div class="settings-row-info">
                 <label class="settings-label">Message debug button</label>

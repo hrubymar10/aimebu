@@ -12,7 +12,7 @@ import (
 // explicit false/zero — nil → server-side default is applied in getSettings().
 type Settings struct {
 	AgentIDDefault      string `json:"agent_id_default,omitempty"`
-	Theme               string `json:"theme,omitempty"` // "" | "dark" | "light"
+	Theme               string `json:"theme,omitempty"` // "" | "dark" | "light" | "red-dark" | "red-light" | "blue-dark" | "blue-light" | "green-dark" | "green-light" | "high-contrast-dark" | "high-contrast-light"
 	ShowSystemEvents    *bool  `json:"show_system_events,omitempty"`
 	DebugButtonEnabled  *bool  `json:"debug_button_enabled,omitempty"`
 	NotificationEnabled *bool  `json:"notification_enabled,omitempty"`
@@ -20,7 +20,19 @@ type Settings struct {
 	NotificationVolume  *int   `json:"notification_volume,omitempty"` // 0–100
 }
 
-var validThemes = map[string]bool{"": true, "dark": true, "light": true}
+var validThemes = map[string]bool{
+	"":                    true,
+	"dark":                true,
+	"light":               true,
+	"red-dark":            true,
+	"red-light":           true,
+	"blue-dark":           true,
+	"blue-light":          true,
+	"green-dark":          true,
+	"green-light":         true,
+	"high-contrast-dark":  true,
+	"high-contrast-light": true,
+}
 
 func (s *store) loadSettings() {
 	data, err := os.ReadFile(filepath.Join(s.dir, "settings.json"))
@@ -30,6 +42,13 @@ func (s *store) loadSettings() {
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
 	_ = json.Unmarshal(data, &s.settings)
+	// Legacy theme migration: prior "red" maps to "red-dark".
+	if s.settings.Theme == "red" {
+		s.settings.Theme = "red-dark"
+	}
+	if s.settings.Theme == "high-contrast-dark-cyan" {
+		s.settings.Theme = "high-contrast-dark"
+	}
 }
 
 func (s *store) getSettings() Settings {
