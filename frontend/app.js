@@ -58,6 +58,11 @@
     loading: false,
     error: '',
   };
+  let rightSidebarMode = 'members';
+  let profileAgentID = '';
+  let profileContext = 'room';
+  let leftCollapsed = localStorage.getItem('aimebu_left_collapsed') === 'true';
+  let rightCollapsed = localStorage.getItem('aimebu_right_collapsed') === 'true';
 
   // Autocomplete state
   let acItems = [];          // Array<{kind,insertText,displayKey,preview}> — ac candidates
@@ -123,6 +128,13 @@
   const systemRoomNotice = $('#system-room-notice');
   const msgBodyInput = $('#msg-body');
 
+  const appLayout = $('.app-layout');
+  const sidebarLeft = $('.sidebar-left');
+  const sidebarRight = $('.sidebar-right');
+  const leftSidebarToggle = $('#left-sidebar-toggle');
+  const rightSidebarToggle = $('#right-sidebar-toggle');
+  const rightSidebarTitle = $('#right-sidebar-title');
+  const rightProfilePanel = $('#right-profile-panel');
   const roomAgentsList = $('#room-agents-list');
   const allAgentsList = $('#all-agents-list');
 
@@ -1401,6 +1413,65 @@
     return agent ? (agent.name || agent.id) : agentIDVal;
   }
 
+  function agentByID(agentIDVal) {
+    return agents.find(function (a) { return a.id === agentIDVal; }) || null;
+  }
+
+  function activeRoom() {
+    return rooms.find(function (r) { return r.id === activeRoomID; }) || null;
+  }
+
+  function roomRoleKey(room, agentIDVal) {
+    return room && room.roles ? (room.roles[agentIDVal] || '') : '';
+  }
+
+  function agentPresenceHTML(agentIDVal, room) {
+    if (!room || !room.members || room.members.indexOf(agentIDVal) === -1) return '';
+    var p = effectivePresence(room.id, agentIDVal);
+    var head = roomHead(room.id);
+    var cls, title;
+    if (p.waiting) {
+      cls = 'waiting';
+      title = 'Listening live (bus_wait open)';
+    } else if (head > 0 && p.cursor < head) {
+      cls = 'behind';
+      title = 'Behind head (not currently waiting), cursor at #' + p.cursor + ' of #' + head;
+    } else {
+      cls = 'idle';
+      title = 'Caught up, not waiting';
+    }
+    return '<span class="agent-presence-dot ' + cls + '" title="' + esc(title) + '"></span>';
+  }
+
+  function agentPresenceText(agentIDVal, room) {
+    if (!room || !room.members || room.members.indexOf(agentIDVal) === -1) return '';
+    var p = effectivePresence(room.id, agentIDVal);
+    var head = roomHead(room.id);
+    if (p.waiting) return 'Listening live';
+    if (head > 0 && p.cursor < head) return 'Behind head (#' + p.cursor + ' of #' + head + ')';
+    return 'Caught up';
+  }
+
+  function resolveMentionAgentID(name) {
+    if (!name) return '';
+    var key = name.toLowerCase();
+    if (specialMentionItems.some(function (item) { return item.token === key; })) return '';
+    var room = activeRoom();
+    if (assignedRoleMentionItems(room).some(function (item) { return item.insertText.slice(1).toLowerCase() === key; })) return '';
+    var roomMembers = room ? (room.members || []) : [];
+    for (var i = 0; i < roomMembers.length; i++) {
+      var memberID = roomMembers[i];
+      var member = agentByID(memberID);
+      var memberName = member ? member.name : memberID.split('@')[0];
+      if (memberName && memberName.toLowerCase() === key && member) return member.id;
+    }
+    for (var j = 0; j < agents.length; j++) {
+      var a = agents[j];
+      if ((a.name && a.name.toLowerCase() === key) || a.id.toLowerCase() === key) return a.id;
+    }
+    return '';
+  }
+
   function renderRolesList() {
     if (!rolesListEl) return;
     if (!roleEntries.length) {
@@ -2548,6 +2619,7 @@
     closeMessageDebugModal();
     closeRoomSettings();
     activeRoomID = null;
+    closeProfilePanel();
     noRoomView.classList.remove('hidden');
     roomView.classList.add('hidden');
     roomAgentsList.innerHTML = '<div class="empty-state">Select a room to see members.</div>';
@@ -2751,6 +2823,15 @@
         var span = document.createElement('span');
         span.className = 'mention';
         span.textContent = m[0];
+        var mentionAgentID = resolveMentionAgentID(m[1]);
+        if (mentionAgentID) {
+          span.classList.add('agent-profile-link');
+          span.setAttribute('data-profile-agent-id', mentionAgentID);
+          span.setAttribute('data-profile-context', 'room');
+          span.setAttribute('tabindex', '0');
+          span.setAttribute('role', 'button');
+          span.setAttribute('aria-label', 'Show profile for ' + mentionAgentID);
+        }
         frag.appendChild(span);
         last = m.index + m[0].length;
       }
@@ -2809,13 +2890,16 @@
     var room = rooms.find(function (r) { return r.id === m.room_id; });
     var msgRoleKey = room && room.roles ? (room.roles[m.from] || '') : '';
     var msgRoleTag = roleBadgeHTML(msgRoleKey);
+    var senderAttrs = fromAgent
+      ? ' class="chat-msg-from-name agent-profile-link" data-profile-agent-id="' + esc(fromAgent.id) + '" data-profile-context="room" tabindex="0" role="button" aria-label="Show profile for ' + esc(fromAgent.id) + '"'
+      : ' class="chat-msg-from-name"';
     return (
       '<div class="chat-msg' + (isSelf ? ' self' : '') + (m.needs_human_attention ? ' needs-attention' : '') + '" data-id="' + esc(m.id) + '">' +
         '<div class="chat-msg-header">' +
           '<span class="chat-msg-from">' +
             '<img src="' + msgIconSrc + '" class="harness-icon chat-msg-icon" alt="' + msgIconAlt + '" title="' + msgIconTitle + '" width="14" height="14">' +
             msgRoleTag +
-            '<span class="chat-msg-from-name">' + esc(m.from) + '</span>' +
+            '<span' + senderAttrs + '>' + esc(m.from) + '</span>' +
           '</span>' +
           (m.needs_human_attention ? '<span class="chat-msg-attention-icon" title="Needs human attention">🔔</span>' : '') +
           '<span class="chat-msg-id" data-msg-id="' + esc(String(m.id)) + '" title="Click to copy">#' + esc(String(m.id)) + '</span>' +
@@ -2884,6 +2968,7 @@
   function renderRoomAgents() {
     if (!activeRoomID) {
       roomAgentsList.innerHTML = '<div class="empty-state">Select a room to see members.</div>';
+      renderRightSidebar();
       return;
     }
 
@@ -2894,25 +2979,22 @@
     }
 
     roomAgentsList.innerHTML = room.members.map(function (memberID) {
-      var agent = agents.find(function (a) { return a.id === memberID; });
+      var agent = agentByID(memberID);
       if (agent) {
         return agentCardHTML(agent, 'room');
       }
       var roleKey = (room.roles && room.roles[memberID]) || '';
-      var leaveBtn = memberID !== agentID
-        ? '<div class="agent-actions"><button class="agent-action-btn agent-leave-btn" data-agent-id="' + esc(memberID) + '" title="Kick ' + esc(memberID) + ' from room" aria-label="Kick ' + esc(memberID) + ' from room">Kick</button></div>'
-        : '';
       return (
-        '<div class="agent-card">' +
+        '<div class="agent-card agent-card-compact">' +
           '<div class="agent-id">' +
             '<span class="agent-online-dot offline"></span>' +
             roleBadgeHTML(roleKey) +
-            esc(memberID) +
+            '<span class="agent-id-text">' + esc(memberID) + '</span>' +
           '</div>' +
-          leaveBtn +
         '</div>'
       );
     }).join('');
+    renderRightSidebar();
   }
 
   function renderRoomSettings() {
@@ -2980,67 +3062,164 @@
 
   function agentCardHTML(a, context) {
     var status = agentStatus(a.last_seen);
-    var meta = a.meta || {};
-    var metaKeys = Object.keys(meta);
-    var metaTags = metaKeys.map(function (k) {
-      return '<span class="meta-tag" title="' + esc(k) + '"><span class="meta-key">' + esc(k) + '</span> ' + esc(meta[k]) + '</span>';
-    }).join('');
-    // Presence dot: only meaningful inside a specific room, so only render
-    // when we're viewing a room AND this agent is a member.
-    var presenceTag = '';
-    if (activeRoomID) {
-      var room = rooms.find(function (r) { return r.id === activeRoomID; });
-      var isMember = room && room.members && room.members.indexOf(a.id) !== -1;
-      if (isMember) {
-        var p = effectivePresence(activeRoomID, a.id);
-        var head = roomHead(activeRoomID);
-        var cls, title;
-        if (p.waiting) {
-          cls = 'waiting';
-          title = 'Listening live (bus_wait open)';
-        } else if (head > 0 && p.cursor < head) {
-          cls = 'behind';
-          title = 'Behind head (not currently waiting) — cursor at #' + p.cursor + ' of #' + head;
-        } else {
-          cls = 'idle';
-          title = 'Caught up, not waiting';
-        }
-        presenceTag = '<span class="agent-presence-dot ' + cls + '" title="' + esc(title) + '"></span>';
-      }
-    }
+    var room = activeRoomID ? activeRoom() : null;
+    var presenceTag = context === 'room' ? agentPresenceHTML(a.id, room) : '';
     var iconSrc = agentIconSrc(a);
     var iconTitle = a.kind === 'human' ? 'human' : esc((a.model || 'unknown') + ' · ' + (a.harness || 'unknown'));
     var iconAlt = a.kind === 'human' ? 'human' : esc(a.harness || 'unknown');
     var iconTag = '<img src="' + iconSrc + '" class="harness-icon" alt="' + iconAlt + '" title="' + iconTitle + '" width="14" height="14">';
-    var roleKey = '';
-    if (activeRoomID) {
-      var roleRoom = rooms.find(function (r) { return r.id === activeRoomID; });
-      if (roleRoom && roleRoom.roles) roleKey = roleRoom.roles[a.id] || '';
-    }
+    var roleKey = roomRoleKey(room, a.id);
     var roleTag = roleBadgeHTML(roleKey);
-    var actionBtns = '';
-    if (a.id !== agentID) {
-      var dmBtn = '<button class="agent-action-btn agent-dm-btn" data-agent-id="' + esc(a.id) + '" title="Open DM with ' + esc(a.id) + '" aria-label="Open DM with ' + esc(a.id) + '">DM</button>';
-      var kickLabel = context === 'room' ? 'Kick' : 'Deregister';
-      var kickClass = context === 'room' ? 'agent-leave-btn' : 'agent-deregister-btn';
-      var kickAction = context === 'room' ? 'Kick ' + a.id + ' from room' : 'Deregister ' + a.id;
-      var kickBtn = '<button class="agent-action-btn ' + kickClass + '" data-agent-id="' + esc(a.id) + '" title="' + esc(kickAction) + '" aria-label="' + esc(kickAction) + '">' + esc(kickLabel) + '</button>';
-      actionBtns = '<div class="agent-actions">' + dmBtn + kickBtn + '</div>';
-    }
+    var actionBtns = agentCardActionsHTML(a, context, room);
     return (
-      '<div class="agent-card">' +
+      '<div class="agent-card agent-card-compact agent-profile-link" data-agent-id="' + esc(a.id) + '" data-profile-agent-id="' + esc(a.id) + '" data-profile-context="' + esc(context) + '" tabindex="0" role="button" aria-label="Show profile for ' + esc(a.id) + '">' +
         '<div class="agent-id">' +
           '<span class="agent-online-dot ' + status + '"></span>' +
           presenceTag +
           iconTag +
           roleTag +
-          esc(a.id) +
+          '<span class="agent-id-text">' + esc(a.id) + '</span>' +
         '</div>' +
-        (metaTags ? '<div class="agent-meta">' + metaTags + '</div>' : '') +
-        '<div class="agent-lastseen">Last seen: ' + relativeTime(a.last_seen) + '</div>' +
         actionBtns +
       '</div>'
     );
+  }
+
+  function agentActionButtonsHTML(a, context, room) {
+    if (!a || a.id === agentID) return '';
+    var buttons = [
+      '<button class="agent-action-btn agent-dm-btn" data-agent-id="' + esc(a.id) + '" title="Open DM with ' + esc(a.id) + '" aria-label="Open DM with ' + esc(a.id) + '">DM</button>'
+    ];
+    if (context === 'room' && room && room.members && room.members.indexOf(a.id) !== -1) {
+      buttons.push('<button class="agent-action-btn agent-leave-btn" data-agent-id="' + esc(a.id) + '" title="Kick ' + esc(a.id) + ' from room" aria-label="Kick ' + esc(a.id) + ' from room">Kick</button>');
+    } else if (context === 'global') {
+      buttons.push('<button class="agent-action-btn agent-deregister-btn" data-agent-id="' + esc(a.id) + '" title="Deregister ' + esc(a.id) + '" aria-label="Deregister ' + esc(a.id) + '">Deregister</button>');
+    }
+    return buttons.join('');
+  }
+
+  function agentCardActionsHTML(a, context, room) {
+    var actions = agentActionButtonsHTML(a, context, room);
+    return actions ? '<div class="agent-actions agent-card-actions">' + actions + '</div>' : '';
+  }
+
+  function profileContextRoom(context) {
+    if (context === 'global') return null;
+    return activeRoom();
+  }
+
+  function openProfilePanel(agentIDVal, context) {
+    if (!agentByID(agentIDVal)) return;
+    if (rightCollapsed) {
+      rightCollapsed = false;
+      localStorage.setItem('aimebu_right_collapsed', 'false');
+      applySidebarCollapseState();
+    }
+    rightSidebarMode = 'profile';
+    profileAgentID = agentIDVal;
+    profileContext = context || 'room';
+    renderRightSidebar();
+    if (window.innerWidth <= 900) setMobileTab('agents');
+  }
+
+  function closeProfilePanel() {
+    rightSidebarMode = 'members';
+    profileAgentID = '';
+    profileContext = 'room';
+    renderRightSidebar();
+  }
+
+  function rightProfileHTML(a) {
+    var room = profileContextRoom(profileContext);
+    var roleKey = roomRoleKey(room || activeRoom(), a.id);
+    var role = roleEntryByKey(roleKey);
+    var status = agentStatus(a.last_seen);
+    var statusLabel = status === 'active' ? 'Online' : (status === 'stale' ? 'Recently active' : 'Offline');
+    var presenceText = agentPresenceText(a.id, room || activeRoom());
+    var runtime = a.kind === 'human' ? 'human' : ((a.model || 'unknown') + ' · ' + (a.harness || 'unknown'));
+    var meta = a.meta || {};
+    var metaKeys = Object.keys(meta).sort();
+    var metaRows = metaKeys.map(function (k) {
+      return '<div class="right-profile-meta-row"><dt>' + esc(k) + '</dt><dd>' + esc(String(meta[k])) + '</dd></div>';
+    }).join('');
+    var actions = agentActionButtonsHTML(a, profileContext, room);
+    return (
+      '<div class="right-profile-card" aria-label="Agent profile: ' + esc(a.id) + '">' +
+        '<div class="right-profile-header">' +
+          '<img src="' + agentIconSrc(a) + '" class="right-profile-icon" alt="' + esc(a.kind === 'human' ? 'human' : (a.harness || 'unknown')) + '" width="40" height="40">' +
+          '<div class="right-profile-title">' +
+            '<div class="right-profile-id">' + esc(a.id) + '</div>' +
+            '<div class="right-profile-subtitle">' + esc(a.name || a.id.split('@')[0] || a.id) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="right-profile-facts">' +
+          '<div><span>Status</span><strong>' + esc(statusLabel) + '</strong></div>' +
+          (presenceText ? '<div><span>Presence</span><strong>' + esc(presenceText) + '</strong></div>' : '') +
+          '<div><span>Last seen</span><strong>' + esc(relativeTime(a.last_seen)) + '</strong></div>' +
+          '<div><span>Runtime</span><strong>' + esc(runtime) + '</strong></div>' +
+          (roleKey ? '<div><span>Role</span><strong>' + roleBadgeHTML(roleKey) + esc(role ? role.key : roleKey) + '</strong></div>' : '') +
+        '</div>' +
+        (metaRows ? '<dl class="right-profile-meta">' + metaRows + '</dl>' : '') +
+        (actions ? '<div class="agent-actions right-profile-actions">' + actions + '</div>' : '') +
+      '</div>'
+    );
+  }
+
+  function renderRightSidebar() {
+    if (!sidebarRight || !rightProfilePanel) return;
+    var profileOpen = rightSidebarMode === 'profile' && !!profileAgentID;
+    var agent = profileOpen ? agentByID(profileAgentID) : null;
+    if (profileOpen && !agent) {
+      rightSidebarMode = 'members';
+      profileAgentID = '';
+      profileOpen = false;
+    }
+    sidebarRight.setAttribute('data-mode', profileOpen ? 'profile' : 'members');
+    if (rightSidebarTitle) rightSidebarTitle.textContent = profileOpen ? 'Agent Profile' : 'Room Members';
+    if (profileOpen) {
+      rightProfilePanel.setAttribute('aria-label', 'Agent profile: ' + profileAgentID);
+      rightProfilePanel.innerHTML = rightProfileHTML(agent);
+    } else {
+      rightProfilePanel.innerHTML = '';
+    }
+    applyRightToggleState();
+  }
+
+  function applyRightToggleState() {
+    if (!rightSidebarToggle) return;
+    if (rightSidebarMode === 'profile') {
+      rightSidebarToggle.textContent = '×';
+      rightSidebarToggle.setAttribute('aria-label', 'Close profile');
+      rightSidebarToggle.setAttribute('title', 'Close profile');
+      return;
+    }
+    rightSidebarToggle.textContent = rightCollapsed ? '‹' : '›';
+    rightSidebarToggle.setAttribute('aria-label', rightCollapsed ? 'Expand agents sidebar' : 'Collapse agents sidebar');
+    rightSidebarToggle.setAttribute('title', rightCollapsed ? 'Expand agents sidebar' : 'Collapse agents sidebar');
+  }
+
+  function applySidebarCollapseState() {
+    if (!appLayout) return;
+    appLayout.classList.toggle('left-collapsed', leftCollapsed);
+    appLayout.classList.toggle('right-collapsed', rightCollapsed);
+    if (leftSidebarToggle) {
+      leftSidebarToggle.textContent = leftCollapsed ? '›' : '‹';
+      leftSidebarToggle.setAttribute('aria-label', leftCollapsed ? 'Expand rooms sidebar' : 'Collapse rooms sidebar');
+      leftSidebarToggle.setAttribute('title', leftCollapsed ? 'Expand rooms sidebar' : 'Collapse rooms sidebar');
+    }
+    applyRightToggleState();
+  }
+
+  function toggleLeftSidebar() {
+    leftCollapsed = !leftCollapsed;
+    localStorage.setItem('aimebu_left_collapsed', String(leftCollapsed));
+    applySidebarCollapseState();
+  }
+
+  function toggleRightSidebar() {
+    rightCollapsed = !rightCollapsed;
+    localStorage.setItem('aimebu_right_collapsed', String(rightCollapsed));
+    applySidebarCollapseState();
   }
 
   // renderReadReceipts appends a small avatar strip to each chat message
@@ -3490,39 +3669,76 @@
     leaveRoom(activeRoomID);
   });
 
-  // Agent card actions — event delegation on both agent list containers.
-  // Handles DM, per-room leave, and global deregister buttons rendered by agentCardHTML.
-  [roomAgentsList, allAgentsList].forEach(function (container) {
-    container.addEventListener('click', function (e) {
-      var dmBtn = e.target.closest('.agent-dm-btn');
-      var leaveBtn = e.target.closest('.agent-leave-btn');
-      var deregBtn = e.target.closest('.agent-deregister-btn');
-
-      if (dmBtn) {
-        var targetID = dmBtn.getAttribute('data-agent-id');
-        dmBtn.disabled = true;
-        api('POST', '/dm', { from: agentID, to: targetID, body: '' })
-          .then(function (data) {
-            selectRoom(data.room);
-            if (!settingsModal.classList.contains('hidden')) closeSettings();
-          })
-          .catch(function (err) { alert('Failed to open DM: ' + err.message); })
-          .finally(function () { dmBtn.disabled = false; });
-
-      } else if (leaveBtn) {
-        var targetID = leaveBtn.getAttribute('data-agent-id');
-        if (!activeRoomID) return;
-        if (!confirm('Kick ' + targetID + ' from room "' + activeRoomID + '"?')) return;
-        api('POST', '/rooms/' + encodeURIComponent(activeRoomID) + '/leave', { agent_id: targetID, kicked: true })
-          .catch(function (err) { alert('Failed to kick agent from room: ' + err.message); });
-
-      } else if (deregBtn) {
-        var targetID = deregBtn.getAttribute('data-agent-id');
-        if (!confirm('Permanently deregister ' + targetID + ' from all rooms?')) return;
-        api('DELETE', '/agents/' + encodeURIComponent(targetID))
-          .catch(function (err) { alert('Failed to deregister agent: ' + err.message); });
-      }
+  if (leftSidebarToggle) leftSidebarToggle.addEventListener('click', toggleLeftSidebar);
+  if (rightSidebarToggle) {
+    rightSidebarToggle.addEventListener('click', function () {
+      if (rightSidebarMode === 'profile') closeProfilePanel();
+      else toggleRightSidebar();
     });
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && rightSidebarMode === 'profile') {
+      closeProfilePanel();
+      return;
+    }
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (e.target.closest('button, a, input, select, textarea')) return;
+    var trigger = e.target.closest('[data-profile-agent-id]');
+    if (!trigger) return;
+    e.preventDefault();
+    openProfilePanel(trigger.getAttribute('data-profile-agent-id'), trigger.getAttribute('data-profile-context') || 'room');
+  });
+
+  // Agent actions are delegated globally because buttons can live in the
+  // right sidebar cards, settings cards, or the right-sidebar profile view.
+  document.addEventListener('click', function (e) {
+    var dmBtn = e.target.closest('.agent-dm-btn');
+    var leaveBtn = e.target.closest('.agent-leave-btn');
+    var deregBtn = e.target.closest('.agent-deregister-btn');
+
+    if (dmBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      var dmTargetID = dmBtn.getAttribute('data-agent-id');
+      dmBtn.disabled = true;
+      api('POST', '/dm', { from: agentID, to: dmTargetID, body: '' })
+        .then(function (data) {
+          closeProfilePanel();
+          selectRoom(data.room);
+          if (!settingsModal.classList.contains('hidden')) closeSettings();
+        })
+        .catch(function (err) { alert('Failed to open DM: ' + err.message); })
+        .finally(function () { dmBtn.disabled = false; });
+      return;
+    }
+
+    if (leaveBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      var leaveTargetID = leaveBtn.getAttribute('data-agent-id');
+      if (!activeRoomID) return;
+      if (!confirm('Kick ' + leaveTargetID + ' from room "' + activeRoomID + '"?')) return;
+      api('POST', '/rooms/' + encodeURIComponent(activeRoomID) + '/leave', { agent_id: leaveTargetID, kicked: true })
+        .then(closeProfilePanel)
+        .catch(function (err) { alert('Failed to kick agent from room: ' + err.message); });
+      return;
+    }
+
+    if (deregBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      var deregTargetID = deregBtn.getAttribute('data-agent-id');
+      if (!confirm('Permanently deregister ' + deregTargetID + ' from all rooms?')) return;
+      api('DELETE', '/agents/' + encodeURIComponent(deregTargetID))
+        .then(closeProfilePanel)
+        .catch(function (err) { alert('Failed to deregister agent: ' + err.message); });
+      return;
+    }
+
+    var profileTrigger = e.target.closest('[data-profile-agent-id]');
+    if (!profileTrigger) return;
+    openProfilePanel(profileTrigger.getAttribute('data-profile-agent-id'), profileTrigger.getAttribute('data-profile-context') || 'room');
   });
 
   // Export room
@@ -3798,6 +4014,8 @@
   // ── Init ─────────────────────────────────────────────────────────
 
   setMobileTab('rooms');
+  applySidebarCollapseState();
+  renderRightSidebar();
   updateMdToggleBtn();
 
   // If no persisted name yet, try to prefill from the server's $AIMEBU_NAME.
