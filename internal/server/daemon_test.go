@@ -65,6 +65,29 @@ func TestDaemonStatusFallsBackToLiveLegacyPIDWhenServerPIDIsStale(t *testing.T) 
 	}
 }
 
+func TestDaemonInsecureSkipVerifyEnabled(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want bool
+	}{
+		{"", false},
+		{"0", false},
+		{"false", false},
+		{"1", true},
+		{"true", true},
+		{"YES", true},
+		{" on ", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			t.Setenv("AIMEBU_INSECURE_SKIP_VERIFY", tc.raw)
+			if got := daemonInsecureSkipVerifyEnabled(); got != tc.want {
+				t.Fatalf("daemonInsecureSkipVerifyEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func writeDaemonFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

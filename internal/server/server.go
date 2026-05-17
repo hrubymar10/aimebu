@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -1437,9 +1438,35 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	})
 	handler = allowMiddleware(handler, allow)
 
-	srv := &http.Server{
+	httpSrv := &http.Server{
 		Addr:    addr,
 		Handler: handler,
+	}
+	tlsConfig, err := resolveServerTLSConfig()
+	if err != nil {
+		return err
+	}
+	servers := []serverListener{
+		{srv: httpSrv, scheme: "http"},
+	}
+	if tlsConfig.Enabled {
+		tlsPort, err := resolveServerTLSPort()
+		if err != nil {
+			return err
+		}
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return fmt.Errorf("split listen address %q: %w", addr, err)
+		}
+		servers = append(servers, serverListener{
+			srv: &http.Server{
+				Addr:    net.JoinHostPort(host, tlsPort),
+				Handler: handler,
+			},
+			scheme:   "https",
+			certFile: tlsConfig.CertFile,
+			keyFile:  tlsConfig.KeyFile,
+		})
 	}
 
 	done := make(chan os.Signal, 1)
@@ -1450,12 +1477,10 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 		log.Println("Shutting down...")
 		// best-effort: won't fire on SIGKILL or crash
 		s.emitSystemMessage("_system", "server stopping")
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
+		shutdownServers(servers)
 	}()
 
-	log.Printf("aimebu listening on http://%s (allow: %v, data: %s)", addr, allow, dataDir)
+	log.Printf("aimebu listening on %s (allow: %v, data: %s)", listenerSummary(servers), allow, dataDir)
 	host, _, _ := net.SplitHostPort(addr)
 	if ip, err := netip.ParseAddr(host); err == nil {
 		if ip.IsUnspecified() {
@@ -1465,10 +1490,33 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 		}
 	}
 	s.emitSystemMessage("_system", "server started")
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		return err
+
+	errCh := make(chan error, len(servers))
+	var wg sync.WaitGroup
+	for _, listener := range servers {
+		listener := listener
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- listener.serve()
+		}()
 	}
-	return nil
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+
+	var firstErr error
+	for err := range errCh {
+		if err == nil || err == http.ErrServerClosed {
+			continue
+		}
+		if firstErr == nil {
+			firstErr = err
+			shutdownServers(servers)
+		}
+	}
+	return firstErr
 }
 
 // DefaultAddr returns the listen address from env vars.
@@ -1482,4 +1530,34 @@ func DefaultAddr() string {
 		bind = "127.0.0.1"
 	}
 	return bind + ":" + port
+}
+
+type serverListener struct {
+	srv      *http.Server
+	scheme   string
+	certFile string
+	keyFile  string
+}
+
+func (l serverListener) serve() error {
+	if l.scheme == "https" {
+		return l.srv.ListenAndServeTLS(l.certFile, l.keyFile)
+	}
+	return l.srv.ListenAndServe()
+}
+
+func shutdownServers(listeners []serverListener) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, listener := range listeners {
+		_ = listener.srv.Shutdown(ctx)
+	}
+}
+
+func listenerSummary(listeners []serverListener) string {
+	parts := make([]string, 0, len(listeners))
+	for _, listener := range listeners {
+		parts = append(parts, listener.scheme+"://"+listener.srv.Addr)
+	}
+	return strings.Join(parts, " + ")
 }

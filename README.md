@@ -186,6 +186,10 @@ aimebu server serve              # foreground (Ctrl-C to stop)
 
 Open the dashboard at <http://localhost:9997>.
 
+For direct HTTPS without a reverse proxy, set `AIMEBU_TLS_CERT` and
+`AIMEBU_TLS_KEY` to readable PEM files before starting the server. HTTP stays
+on `AIMEBU_PORT`; HTTPS listens on `AIMEBU_TLS_PORT`. See [TLS setup](docs/tls.md).
+
 ### 2. As a human (CLI)
 
 ```bash
@@ -476,6 +480,9 @@ For MCP config, pass `AIMEBU_URL` via the harness's add command
 | `AIMEBU_PORT`  | `9997`         | Listen port. |
 | `AIMEBU_BIND`  | `127.0.0.1`    | Bind address. Must be an IP literal (no hostnames) — set to `0.0.0.0` to bind all interfaces. |
 | `AIMEBU_ALLOW` | `127.0.0.0/8,::1/128`  | Comma-separated source IPs / CIDRs allowed to reach the server. Bare IPs are normalised to `/32` (v4) or `/128` (v6). Anything else gets `403`. `X-Forwarded-For` is intentionally not honoured — this is a direct-connection service. |
+| `AIMEBU_TLS_CERT` | _(unset)_ | Path to a readable PEM certificate file. Must be set together with `AIMEBU_TLS_KEY`; when both are set, the server keeps HTTP on `AIMEBU_PORT` and also listens with HTTPS on `AIMEBU_TLS_PORT`. |
+| `AIMEBU_TLS_KEY` | _(unset)_ | Path to a readable PEM private key file. Must be set together with `AIMEBU_TLS_CERT`. |
+| `AIMEBU_TLS_PORT` | `9996` | HTTPS listen port when TLS is configured. |
 | `AIMEBU_CONFIG_DIR` | `~/.aimebu` | Config root. Server-owned files live under `server/`; agent CLI state lives under `agents/`. |
 
 The `AIMEBU_BIND` / `AIMEBU_ALLOW` split keeps the safe loopback default while letting cross-host setups (VPN, containers reaching the host on a non-loopback IP) opt in explicitly:
@@ -494,6 +501,7 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 | `AIMEBU_HARNESS` | _(unset)_                | Harness slug for `aimebu mcp`. Load-bearing for harnesses that don't propagate marker env vars (notably codex). Set in MCP config; AI can also pass it directly to `bus_register`. |
 | `AIMEBU_AGENT_DEBUG` | _(unset)_ | Set to `1`, `true`, `yes`, `y`, or `on` to enable JSONL debug logging for `aimebu agent`. Off by default. See [Debug logging](#debug-logging). |
 | `AIMEBU_USAGES_REFRESH` | _(unset)_ | Override provider usage refresh interval in seconds. Minimum `15`; default setting is `120`. |
+| `AIMEBU_INSECURE_SKIP_VERIFY` | _(unset)_ | Development-only escape hatch for self-signed HTTPS servers. When set to `1`, `true`, `yes`, `y`, or `on`, aimebu client requests disable TLS certificate verification and print a warning. |
 
 See [docs/usages.md](docs/usages.md) for shared usage snapshot behavior,
 provider setup surfaces, refresh cooldowns, stale-cache semantics, and

@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -9,9 +10,11 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/envflags"
 )
 
 // UnreachableError reports a transport-level failure talking to the aimebu
@@ -47,6 +50,27 @@ type Client struct {
 	Prompts map[string]string
 }
 
+var insecureSkipVerifyWarnOnce sync.Once
+
+func insecureSkipVerifyEnabled() bool {
+	return envflags.Enabled("AIMEBU_INSECURE_SKIP_VERIFY")
+}
+
+func httpClient(timeout time.Duration) *http.Client {
+	if !insecureSkipVerifyEnabled() {
+		if timeout == 0 {
+			return http.DefaultClient
+		}
+		return &http.Client{Timeout: timeout}
+	}
+	insecureSkipVerifyWarnOnce.Do(func() {
+		fmt.Fprintln(os.Stderr, "WARNING: AIMEBU_INSECURE_SKIP_VERIFY is enabled; TLS certificate verification is disabled for aimebu client requests.")
+	})
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // Explicit opt-in development flag for self-signed certs.
+	return &http.Client{Timeout: timeout, Transport: tr}
+}
+
 // DefaultClient returns a client with BaseURL set from $AIMEBU_URL (default
 // http://localhost:9997) and an empty AgentID. Callers are responsible for
 // populating AgentID before using any tool that requires it.
@@ -62,7 +86,7 @@ func DefaultClient() *Client {
 
 func (c *Client) Post(path string, body interface{}) (string, error) {
 	data, _ := json.Marshal(body)
-	resp, err := http.Post(c.BaseURL+path, "application/json", bytes.NewReader(data))
+	resp, err := httpClient(0).Post(c.BaseURL+path, "application/json", bytes.NewReader(data))
 	if err != nil {
 		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
 	}
@@ -72,7 +96,7 @@ func (c *Client) Post(path string, body interface{}) (string, error) {
 }
 
 func (c *Client) Get(path string) (string, error) {
-	resp, err := http.Get(c.BaseURL + path)
+	resp, err := httpClient(0).Get(c.BaseURL + path)
 	if err != nil {
 		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
 	}
@@ -85,8 +109,7 @@ func (c *Client) Get(path string) (string, error) {
 // the server-side long-poll timeout, so the server has a chance to return
 // cleanly before the client aborts.
 func (c *Client) GetWithTimeout(path string, timeout time.Duration) (string, error) {
-	httpClient := &http.Client{Timeout: timeout + 5*time.Second}
-	resp, err := httpClient.Get(c.BaseURL + path)
+	resp, err := httpClient(timeout + 5*time.Second).Get(c.BaseURL + path)
 	if err != nil {
 		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
 	}
@@ -99,7 +122,7 @@ func (c *Client) Put(path string, body interface{}) (string, error) {
 	data, _ := json.Marshal(body)
 	req, _ := http.NewRequest("PUT", c.BaseURL+path, bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient(0).Do(req)
 	if err != nil {
 		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
 	}
@@ -110,7 +133,7 @@ func (c *Client) Put(path string, body interface{}) (string, error) {
 
 func (c *Client) Delete(path string) (string, error) {
 	req, _ := http.NewRequest("DELETE", c.BaseURL+path, nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient(0).Do(req)
 	if err != nil {
 		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
 	}
@@ -121,9 +144,8 @@ func (c *Client) Delete(path string) (string, error) {
 
 // DeleteWithTimeout issues a DELETE with a caller-supplied client timeout.
 func (c *Client) DeleteWithTimeout(path string, timeout time.Duration) (string, error) {
-	httpClient := &http.Client{Timeout: timeout}
 	req, _ := http.NewRequest("DELETE", c.BaseURL+path, nil)
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient(timeout).Do(req)
 	if err != nil {
 		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
 	}

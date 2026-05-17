@@ -7,12 +7,13 @@
 Before changing code, read the docs that touch it: [README.md](README.md),
 this file, and everything under [docs/](docs/) (currently
 [docs/claude-code.md](docs/claude-code.md),
-[docs/codex.md](docs/codex.md), and
-[docs/github-copilot.md](docs/github-copilot.md), and
-[docs/ollama-cloud.md](docs/ollama-cloud.md)). When your change makes any of those drift
-from reality — flags, env vars, tool names, config snippets, behaviour
-descriptions — update the docs **in the same commit**. Don't ship code
-changes and "fix the docs later".
+[docs/codex.md](docs/codex.md),
+[docs/github-copilot.md](docs/github-copilot.md),
+[docs/ollama-cloud.md](docs/ollama-cloud.md), [docs/tls.md](docs/tls.md),
+and [docs/usages.md](docs/usages.md)). When your change makes any of those
+drift from reality — flags, env vars, tool names, config snippets, behaviour
+descriptions — update the docs **in the same commit**. Don't ship code changes
+and "fix the docs later".
 
 If while reading docs (or code) you spot something weird, wrong, or
 inconsistent that isn't part of your current task, **ask the user** before
@@ -92,6 +93,7 @@ internal/
     daemon.go             PID-based daemon start/stop/status
     allow.go              IP allowlist middleware (AIMEBU_ALLOW)
     allow_test.go
+    tls.go                Optional caller-supplied TLS cert/key support
     names.go              Agent name pool
     ws.go                 WebSocket push handler
     defaults_macros.json  Default macro definitions
@@ -291,12 +293,26 @@ loopback default still works for VPN/cross-host setups:
 - `AIMEBU_BIND` — host to listen on. Default `127.0.0.1`. **IP literal only** — hostnames are rejected at startup so the bind pins to one address.
 - `AIMEBU_PORT` — port. Default `9997`. Validated as a TCP port.
 - `AIMEBU_ALLOW` — comma-separated IPs/CIDRs whose source addresses may reach the handler. Default `127.0.0.0/8,::1/128`. Bare IPs become `/32` (v4) / `/128` (v6). Anything else gets `403`.
+- `AIMEBU_TLS_CERT` / `AIMEBU_TLS_KEY` — readable PEM certificate and key
+  files. Set both to keep HTTP on `AIMEBU_PORT` and add HTTPS on
+  `AIMEBU_TLS_PORT`; set neither to keep plain HTTP only. Setting only one, or
+  pointing either at a missing/unreadable file, fails startup loudly.
+- `AIMEBU_TLS_PORT` — HTTPS port when TLS is configured. Default `9996`.
+  Validated as a TCP port.
+- `AIMEBU_INSECURE_SKIP_VERIFY` — client-side development escape hatch for
+  self-signed HTTPS servers. Values `1`, `true`, `yes`, `y`, and `on` disable
+  certificate verification for aimebu client requests and print a warning.
 
 Implementation: `internal/server/allow.go` — `resolveAllow()` parses the
 list using `net/netip` (stdlib, no new deps); `allowMiddleware()` wraps the
 mux and `Unmap()`s IPv4-in-IPv6 client addresses before prefix matching.
 `X-Forwarded-For` is intentionally not honoured — this is a
 direct-connection service.
+
+TLS option A lives in `internal/server/tls.go`: aimebu only consumes
+caller-supplied cert/key files. It does not mint self-signed certificates or
+run ACME. See [docs/tls.md](docs/tls.md) for mkcert, Caddy, and nginx
+recipes.
 
 For container-on-host access via `host.docker.internal`, the defaults work
 on Docker Desktop / OrbStack (they forward to host loopback). For wider

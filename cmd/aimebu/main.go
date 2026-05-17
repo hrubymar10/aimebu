@@ -733,7 +733,11 @@ Environment:
   AIMEBU_PORT      Server listen port (default: 9997)
   AIMEBU_BIND      Server bind address (default: 127.0.0.1)
   AIMEBU_ALLOW     Comma-separated IPs/CIDRs allowed to connect (default: 127.0.0.0/8,::1/128)
+  AIMEBU_TLS_CERT  TLS certificate PEM path; set with AIMEBU_TLS_KEY for HTTPS
+  AIMEBU_TLS_KEY   TLS private key PEM path; set with AIMEBU_TLS_CERT for HTTPS
+  AIMEBU_TLS_PORT  HTTPS listen port when TLS is configured (default: 9996)
   AIMEBU_CONFIG_DIR  Config root directory (default: ~/.aimebu)
+  AIMEBU_INSECURE_SKIP_VERIFY  Disable client TLS verification for development self-signed certs
   AIMEBU_USAGES_REFRESH  Override usage refresh interval in seconds (minimum 15)
 
 Note: The CLI is for humans. AI assistants use the MCP server (aimebu mcp),

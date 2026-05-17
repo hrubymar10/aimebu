@@ -1,7 +1,9 @@
 package server
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -9,6 +11,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/envflags"
 )
 
 func pidFile(serverDir string) string {
@@ -56,6 +60,10 @@ func DaemonStart(selfBin, addr, rootDir string) error {
 	if running, pid, _ := DaemonStatus(rootDir); running {
 		return fmt.Errorf("aimebu already running (pid %d)", pid)
 	}
+	tlsConfig, err := resolveServerTLSConfig()
+	if err != nil {
+		return err
+	}
 
 	lf, err := os.OpenFile(logFile(serverDir), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -91,14 +99,30 @@ func DaemonStart(selfBin, addr, rootDir string) error {
 		return fmt.Errorf("daemon exited immediately — check %s", logFile(serverDir))
 	}
 
-	// Try hitting health endpoint
-	healthURL := fmt.Sprintf("http://%s/health", addr)
+	// Try hitting health endpoint. When TLS is enabled, the daemon serves
+	// HTTPS on AIMEBU_TLS_PORT while keeping HTTP on AIMEBU_PORT.
+	scheme := "http"
+	healthAddr := addr
+	if tlsConfig.Enabled {
+		scheme = "https"
+		tlsPort, err := resolveServerTLSPort()
+		if err != nil {
+			return err
+		}
+		healthAddr = net.JoinHostPort(addrHost(addr), tlsPort)
+	}
+	healthURL := fmt.Sprintf("%s://%s/health", scheme, healthAddr)
+	httpClient := daemonHealthClient()
 	for i := 0; i < 10; i++ {
-		resp, err := http.Get(healthURL)
+		resp, err := httpClient.Get(healthURL)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
-				fmt.Printf("aimebu started (pid %d, http://%s)\n", pid, addr)
+				if tlsConfig.Enabled {
+					fmt.Printf("aimebu started (pid %d, http://%s + https://%s)\n", pid, addr, healthAddr)
+				} else {
+					fmt.Printf("aimebu started (pid %d, http://%s)\n", pid, addr)
+				}
 				return nil
 			}
 		}
@@ -107,6 +131,19 @@ func DaemonStart(selfBin, addr, rootDir string) error {
 
 	fmt.Printf("aimebu started (pid %d) — health check pending\n", pid)
 	return nil
+}
+
+func daemonHealthClient() *http.Client {
+	if !daemonInsecureSkipVerifyEnabled() {
+		return http.DefaultClient
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // Explicit opt-in development flag for daemon health checks.
+	return &http.Client{Transport: tr}
+}
+
+func daemonInsecureSkipVerifyEnabled() bool {
+	return envflags.Enabled("AIMEBU_INSECURE_SKIP_VERIFY")
 }
 
 // DaemonStop sends SIGTERM to the daemon and waits for it to exit.
