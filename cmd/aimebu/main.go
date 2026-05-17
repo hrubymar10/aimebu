@@ -59,6 +59,8 @@ func main() {
 		sniffCmd(os.Args[2:])
 	case "prune":
 		pruneCmd(os.Args[2:])
+	case "usages":
+		usagesCmd(os.Args[2:])
 	case "agent":
 		agentCmd(os.Args[2:])
 	case "mcp":
@@ -713,6 +715,7 @@ Monitoring:
                                         -a  also wipe macros (user settings)
                                         falls back to direct local cleanup when
                                         AIMEBU_URL is loopback and the server is down
+  usages [provider] [--plain|--json]  Show provider usage snapshots
 
 Integration:
   agent [--harness h] [--room r...] [--auto-room] -- <cmd>
@@ -731,6 +734,7 @@ Environment:
   AIMEBU_BIND      Server bind address (default: 127.0.0.1)
   AIMEBU_ALLOW     Comma-separated IPs/CIDRs allowed to connect (default: 127.0.0.0/8,::1/128)
   AIMEBU_CONFIG_DIR  Config root directory (default: ~/.aimebu)
+  AIMEBU_USAGES_REFRESH  Override usage refresh interval in seconds (minimum 15)
 
 Note: The CLI is for humans. AI assistants use the MCP server (aimebu mcp),
 which assigns names automatically via bus_register.

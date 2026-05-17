@@ -263,6 +263,42 @@ func TestPruneCanUseOfflineFallback(t *testing.T) {
 	}
 }
 
+func TestUsagesCLIEmptyRegistryServerOff(t *testing.T) {
+	cli := buildTestCLI(t)
+	rootDir := t.TempDir()
+	env := append(os.Environ(), "AIMEBU_CONFIG_DIR="+rootDir)
+
+	plain := exec.Command(cli, "usages")
+	plain.Env = env
+	plainOut, err := plain.CombinedOutput()
+	if err != nil {
+		t.Fatalf("usages plain failed: %v\n%s", err, plainOut)
+	}
+	if got := strings.TrimSpace(string(plainOut)); got != "No usage providers enabled." {
+		t.Fatalf("plain output = %q", got)
+	}
+
+	jsonCmd := exec.Command(cli, "usages", "--json")
+	jsonCmd.Env = env
+	jsonOut, err := jsonCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("usages json failed: %v\n%s", err, jsonOut)
+	}
+	if got := strings.TrimSpace(string(jsonOut)); got != `{"snapshots":{},"settings":{"refresh_interval_sec":120,"min_refresh_sec":15,"env_override":false,"percent_display":"left"},"providers":[{"key":"codex","label":"Codex","enabled":false,"available":true},{"key":"claude-code","label":"Claude Code","enabled":false,"available":true},{"key":"github-copilot","label":"GitHub Copilot","enabled":false,"available":true},{"key":"ollama-cloud","label":"Ollama Cloud","enabled":false,"available":true}]}` {
+		t.Fatalf("json output = %q", got)
+	}
+
+	bad := exec.Command(cli, "usages", "bogus")
+	bad.Env = env
+	badOut, err := bad.CombinedOutput()
+	if err == nil {
+		t.Fatalf("unknown provider succeeded: %s", badOut)
+	}
+	if !strings.Contains(string(badOut), `unknown provider "bogus"`) {
+		t.Fatalf("unknown provider output = %s", badOut)
+	}
+}
+
 func unusedLoopbackURL(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

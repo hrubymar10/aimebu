@@ -27,6 +27,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/config"
 	"github.com/hrubymar10/aimebu/internal/types"
+	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
 var macroKeyRE = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
@@ -133,7 +134,7 @@ type BuildInfo struct {
 	GoVersion string `json:"go_version"`
 }
 
-func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo) {
+func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *usages.Manager) {
 
 	// ── Rooms ──────────────────────────────────────────────────────
 
@@ -1307,6 +1308,10 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo) {
 
 	// GET /ws — WebSocket endpoint for real-time push
 	mux.HandleFunc("GET /ws", handleWS(s))
+
+	if usageManager != nil {
+		usages.Routes{Manager: usageManager}.Mount(mux)
+	}
 }
 
 func defaultRoleBodies() map[string]string {
@@ -1406,7 +1411,12 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	s.startCleanup(cleanupCtx)
 
 	mux := http.NewServeMux()
-	setupHandlers(mux, s, build)
+	usageManager := usages.NewManager(usages.NewStoreAt(filepath.Join(rootDir, "usages")), usages.DefaultRegistry())
+	usageManager.SetUpdateHook(func(resp usages.Response) {
+		s.broadcastMeta(MetaEvent{Type: "usages_updated", Data: resp})
+	})
+	usageManager.Start(cleanupCtx)
+	setupHandlers(mux, s, build, usageManager)
 
 	// Serve embedded frontend at /
 	if frontendFS != nil {

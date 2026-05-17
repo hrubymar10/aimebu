@@ -6,8 +6,10 @@
 
 Before changing code, read the docs that touch it: [README.md](README.md),
 this file, and everything under [docs/](docs/) (currently
-[docs/claude-code.md](docs/claude-code.md) and
-[docs/codex.md](docs/codex.md)). When your change makes any of those drift
+[docs/claude-code.md](docs/claude-code.md),
+[docs/codex.md](docs/codex.md), and
+[docs/github-copilot.md](docs/github-copilot.md), and
+[docs/ollama-cloud.md](docs/ollama-cloud.md)). When your change makes any of those drift
 from reality — flags, env vars, tool names, config snippets, behaviour
 descriptions — update the docs **in the same commit**. Don't ship code
 changes and "fix the docs later".
@@ -191,6 +193,11 @@ aimebu read general              # read messages (no name needed)
 aimebu sniff -f                  # real-time global message stream
 aimebu sniff -f general          # real-time stream for one room
 aimebu agents                    # list all registered agents
+aimebu usages                    # print provider usage snapshots
+aimebu usages codex --json       # one provider as normalized JSON
+aimebu usages claude-code --json # Claude Code usage as normalized JSON
+aimebu usages github-copilot     # GitHub Copilot usage via device flow
+aimebu usages ollama-cloud       # Ollama Cloud usage via pasted Cookie header
 
 aimebu prune                     # clear conversation state with confirmation prompt
 aimebu prune -y                  # same, skip confirmation
@@ -218,20 +225,26 @@ holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
 `agents.json`, `macros.json`, `settings.json`, `prompts.json`, `roles.json`,
 `sounds/`, `aimebu.pid`, `aimebu.log`) and `agents/` holds agent-CLI state
 (`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
+`usages/` holds provider usage state: `config.json` (0600, refresh interval,
+percent display, provider order, enabled flags, provider secrets), `cache.json` (0644, last successful
+snapshots, no secrets), and `.lock` (stable flock target for server/CLI
+refresh coordination).
 `aimebu prune` wipes conversation state, including
 `agents/agent-sessions.json`; `aimebu prune -a` also wipes user settings,
 including macros, prompt overrides, role definitions/emoji, sounds, and
 `agents/agent-warning-acknowledged`. Runtime
 diagnostics (`server/aimebu.log`, `agents/agent-logs/`) are preserved by
-both prune modes. When `AIMEBU_URL` is loopback and the server is down, the
-CLI falls back to pruning this config root directly. Legacy flat-layout state
-is migrated into `server/` / `agents/` on first authoritative use by
-`server serve`, `server start`, the offline-prune fallback, or
-`aimebu agent`; unknown root files are left alone.
+both prune modes. Provider usage state under `usages/` is independent of
+conversation prune; clear Copilot tokens or Ollama Cloud cookies from
+Settings -> Usages. When `AIMEBU_URL` is loopback and the server is down,
+the CLI falls back to pruning this config root directly. Legacy flat-layout
+state is migrated into `server/` / `agents/` on first authoritative use by
+`server serve`, `server start`, the offline-prune fallback, or `aimebu agent`;
+unknown root files are left alone.
 
 ## Web UI
 
-Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents. Global Settings -> Roles edits reusable role definitions, emoji, cardinality, and extensions; active room settings assign those global roles to AI room members and disable singleton roles already held by another agent. Role emoji show on member cards and current-room message senders. Built-in specialist reviewer roles are `sec-reviewer`, `test-reviewer`, and `ux-reviewer`, each extending `reviewer`.
+Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents. Global Settings -> Roles edits reusable role definitions, emoji, cardinality, and extensions; Global Settings -> Usages configures provider usage refresh interval, percent display, provider ordering and enablement, GitHub Copilot device flow, and Ollama Cloud cookie setup. Active room settings assign those global roles to AI room members and disable singleton roles already held by another agent. Role emoji show on member cards and current-room message senders. Built-in specialist reviewer roles are `sec-reviewer`, `test-reviewer`, and `ux-reviewer`, each extending `reviewer`.
 
 ### Headless browser verification
 

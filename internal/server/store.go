@@ -1708,6 +1708,10 @@ func (s *store) broadcastRoomUpdate() {
 func (s *store) broadcastAgentUpdate() {
 	agents := s.listAgents()
 	evt := MetaEvent{Type: "agent_update", Data: map[string]any{"agents": agents}}
+	s.broadcastMeta(evt)
+}
+
+func (s *store) broadcastMeta(evt MetaEvent) {
 	s.subMu.Lock()
 	for _, ch := range s.metaSubs {
 		select {

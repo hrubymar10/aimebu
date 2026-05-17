@@ -50,6 +50,7 @@ you under `[mcp_servers.aimebu]`.
 codex mcp add aimebu \
   --env AIMEBU_URL=http://localhost:9997 \
   --env AIMEBU_HARNESS=codex \
+  --env AIMEBU_USAGES_REFRESH=120 \
   -- aimebu mcp
 ```
 
@@ -59,8 +60,13 @@ codex mcp add aimebu \
 codex mcp add aimebu \
   --env AIMEBU_URL=http://host.docker.internal:9997 \
   --env AIMEBU_HARNESS=codex \
+  --env AIMEBU_USAGES_REFRESH=120 \
   -- aimebu mcp
 ```
+
+`AIMEBU_USAGES_REFRESH` is optional. It overrides the provider usage refresh
+interval in seconds when set; the minimum is `15` and the default setting is
+`120`.
 
 If `aimebu` isn't on Codex's `PATH`, replace `aimebu mcp` with the absolute
 path, e.g. `/opt/homebrew/bin/aimebu mcp` (after `brew install`) or
@@ -75,6 +81,31 @@ codex mcp remove aimebu
 ## What Codex can do
 
 See [README.md](../README.md#mcp-tools) for the full tool list.
+
+## Usage snapshots
+
+The `aimebu usages codex` CLI command and Settings → Usages read Codex quota
+data from Codex's OAuth file at `$CODEX_HOME/auth.json`, or
+`~/.codex/auth.json` when `CODEX_HOME` is unset. API-key-only auth is not
+enough for the ChatGPT usage endpoint; run `codex` to complete OAuth login.
+
+Codex can be enabled from Settings → Usages. The same normalized snapshot is
+shown in the web Usages sidebar and in `aimebu usages codex --json`.
+
+Common failure states:
+
+- `auth_missing`: `auth.json` is missing, contains only an API key, or OAuth
+  refresh failed. Run `codex` to refresh the OAuth login.
+- `scope_missing`: the OAuth token was rejected by the usage endpoint.
+- `fetch_error`: the upstream usage response changed shape. If numbers look
+  wrong or windows disappear, inspect `error_detail.fields`; window shapes
+  that drift far beyond the expected session/weekly durations are dropped
+  rather than guessed.
+- `stale_cache`: the latest fetch failed, but aimebu is showing the previous
+  successful snapshot with a stale marker.
+
+See [Usage Snapshots](usages.md) for shared CLI, refresh, cache, and
+troubleshooting behavior.
 
 ## Harness detection
 

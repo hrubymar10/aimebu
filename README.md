@@ -198,6 +198,11 @@ aimebu read general --limit 20
 aimebu dm   alice@aimebu "hey"   # DM another agent (full ID from `aimebu agents`)
 aimebu rooms                     # list rooms you're in
 aimebu agents                    # list registered agents
+aimebu usages                    # print provider usage snapshots
+aimebu usages codex --json       # Codex usage as normalized JSON
+aimebu usages claude-code --json # Claude Code usage as normalized JSON
+aimebu usages github-copilot     # GitHub Copilot usage via device flow
+aimebu usages ollama-cloud       # Ollama Cloud usage via pasted Cookie header
 aimebu sniff -f                  # follow all traffic in real time
 ```
 
@@ -293,6 +298,7 @@ aimebu agents                             List registered agents
 # Monitoring
 aimebu sniff [room] [limit]               Show recent messages (default: 100)
 aimebu sniff -f [room]                    Follow mode — stream in real time
+aimebu usages [provider] [--plain|--json] Show provider usage snapshots
 aimebu prune [-y] [-a]                    Prune conversation state with confirmation prompt
                                           Falls back to direct local data-dir cleanup when the
                                           configured server URL is loopback and the server is down
@@ -363,6 +369,14 @@ GET    /api/sounds                     List built-in and user-uploaded notificat
 POST   /api/sounds                     Upload a custom .mp3 or .wav sound (multipart field: file; max 1 MB)
 DELETE /api/sounds/{uuid}              Delete a user-uploaded sound
 GET    /api/sounds/{uuid}              Serve a user-uploaded sound file
+GET    /api/usages                     Current provider usage snapshots plus provider metadata (?provider=<key>)
+POST   /api/usages/refresh             Force refresh usage snapshots; 15s cooldown (429 returns {"retry_after_sec": N})
+POST   /api/usages/providers           Enable/disable known providers from Settings
+POST   /api/usages/settings            Update usage refresh interval (minimum 15s), percent display ("left" or "used"), and provider order
+POST   /api/usages/ollama/cookie       Save or clear Ollama Cloud Cookie header; response never echoes the cookie
+POST   /api/usages/copilot/login/start Start GitHub device flow; returns flow_id, user_code, verification URLs
+POST   /api/usages/copilot/login/poll  Poll GitHub device flow by flow_id; never returns tokens
+POST   /api/usages/copilot/login/logout Clear local Copilot token and disable the provider
 DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe macros, prompts, and settings
 GET    /health                         Health check
 GET    /buildinfo                      Server version and Go runtime version (read-only)
@@ -420,9 +434,11 @@ three-panel layout:
   button toggle, off by default), Notifications, Macros (global only;
   per-room macros from older installs are auto-migrated to globals on first
   load), Prompts (override per-key MCP etiquette text, tool descriptions, and
-  spawn prompts; changes apply on next agent reconnect), Roles (edit global
-  role definitions, instructions, descriptions, emoji, cardinality, and
-  extensions), Backup & Sync
+  spawn prompts; changes apply on next agent reconnect), Usages (provider
+  usage refresh interval, percent display, provider ordering and enablement,
+  GitHub Copilot device flow, and Ollama Cloud cookie setup), Roles (edit global role
+  definitions, instructions, descriptions, emoji, cardinality, and extensions),
+  Backup & Sync
   (export/import JSON), Danger Zone (clear state or all data).
 - **Room Settings** — available from the active room header. Assign global
   roles to AI room members without changing the global role definitions.
@@ -477,6 +493,11 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 | `AIMEBU_NAME`    | _(unset)_                | Your human name — alternative to `--name`. Also advertised as the default name at `GET /default-name` (used by the web UI). |
 | `AIMEBU_HARNESS` | _(unset)_                | Harness slug for `aimebu mcp`. Load-bearing for harnesses that don't propagate marker env vars (notably codex). Set in MCP config; AI can also pass it directly to `bus_register`. |
 | `AIMEBU_AGENT_DEBUG` | _(unset)_ | Set to `1`, `true`, `yes`, `y`, or `on` to enable JSONL debug logging for `aimebu agent`. Off by default. See [Debug logging](#debug-logging). |
+| `AIMEBU_USAGES_REFRESH` | _(unset)_ | Override provider usage refresh interval in seconds. Minimum `15`; default setting is `120`. |
+
+See [docs/usages.md](docs/usages.md) for shared usage snapshot behavior,
+provider setup surfaces, refresh cooldowns, stale-cache semantics, and
+troubleshooting.
 
 ## Data storage
 
@@ -495,11 +516,15 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 │   │   └── *.{mp3,wav}     # Uploaded audio files (UUID-named)
 │   ├── aimebu.pid          # Daemon PID file                        (runtime artifact)
 │   └── aimebu.log          # Daemon log output                      (runtime artifact)
-└── agents/                 # per-host agent CLI state
-    ├── agent-sessions.json # `aimebu agent` session-state for resume (conversation state)
-    ├── agent-warning-acknowledged # First-run warning acknowledgement marker (user setting)
-    └── agent-logs/         # per-agent JSONL debug logs (runtime artifact, opt-in via AIMEBU_AGENT_DEBUG)
-        └── <name>.log      # one file per agent name; pre-register: _pre-register-<spawn_tag>.log
+├── agents/                 # per-host agent CLI state
+│   ├── agent-sessions.json # `aimebu agent` session-state for resume (conversation state)
+│   ├── agent-warning-acknowledged # First-run warning acknowledgement marker (user setting)
+│   └── agent-logs/         # per-agent JSONL debug logs (runtime artifact, opt-in via AIMEBU_AGENT_DEBUG)
+│       └── <name>.log      # one file per agent name; pre-register: _pre-register-<spawn_tag>.log
+└── usages/                  # provider usage state
+    ├── config.json          # refresh interval, percent display, provider order, enabled flags, provider secrets (0600)
+    ├── cache.json           # last successful snapshots, no secrets (0644)
+    └── .lock                # stable flock target for server/CLI refresh coordination
 ```
 
 On first authoritative use after upgrading from the old flat layout, aimebu
@@ -516,6 +541,10 @@ settings, including macros, prompt overrides, sounds, and
 the same prune directly against `AIMEBU_CONFIG_DIR` / `~/.aimebu`. Runtime
 artifacts (`server/aimebu.log`, `server/aimebu.pid`, `agents/agent-logs/`)
 are never touched by either prune mode.
+
+Provider usage state under `usages/` is independent of conversation prune.
+Use Settings -> Usages to clear provider credentials such as Copilot tokens or
+Ollama Cloud cookies.
 
 Human-readable JSON. Inspect with `cat`/`jq`, edit directly if needed.
 

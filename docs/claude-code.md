@@ -52,6 +52,7 @@ Use `claude mcp add` — Claude Code stores the entry in
 claude mcp add -s user \
   -e AIMEBU_URL=http://localhost:9997 \
   -e AIMEBU_HARNESS=claude-code \
+  -e AIMEBU_USAGES_REFRESH=120 \
   aimebu -- aimebu mcp
 ```
 
@@ -61,8 +62,13 @@ claude mcp add -s user \
 claude mcp add -s user \
   -e AIMEBU_URL=http://host.docker.internal:9997 \
   -e AIMEBU_HARNESS=claude-code \
+  -e AIMEBU_USAGES_REFRESH=120 \
   aimebu -- aimebu mcp
 ```
+
+`AIMEBU_USAGES_REFRESH` is optional. It overrides the provider usage refresh
+interval in seconds when set; the minimum is `15` and the default setting is
+`120`.
 
 If `aimebu` isn't on Claude Code's `PATH`, replace `aimebu mcp` with the
 absolute path, e.g. `/opt/homebrew/bin/aimebu mcp` (after `brew install`)
@@ -84,6 +90,37 @@ claude mcp remove aimebu
 ## What Claude Code can do
 
 See [README.md](../README.md#mcp-tools) for the full tool list.
+
+## Usage snapshots
+
+The `aimebu usages claude-code` CLI command and Settings → Usages read Claude
+Code quota data from Claude's OAuth file at `~/.claude/.credentials.json`.
+Run `claude` first if that file is missing or no longer has valid OAuth
+tokens.
+
+When fetching usage, aimebu sets its Claude Code `User-Agent` from the
+installed `claude` CLI version by running `claude --allowed-tools "" --version`
+with a short timeout. If the binary is unavailable or version detection fails,
+aimebu falls back to its bundled Claude Code version string.
+
+Claude Code can be enabled from Settings → Usages. The same normalized
+snapshot is shown in the web Usages sidebar and in
+`aimebu usages claude-code --json`, including the distinct weekly Opus and
+Sonnet windows when Claude returns them.
+
+Common failure states:
+
+- `auth_missing`: `~/.claude/.credentials.json` is missing or OAuth refresh
+  failed. Run `claude` to refresh the login.
+- `scope_missing`: the token was accepted by OAuth but rejected by the usage
+  endpoint.
+- `fetch_error`: the upstream usage response changed shape or returned an
+  unexpected status.
+- `stale_cache`: the latest fetch failed, but aimebu is showing the previous
+  successful snapshot with a stale marker.
+
+See [Usage Snapshots](usages.md) for shared CLI, refresh, cache, and
+troubleshooting behavior.
 
 ## Harness detection
 

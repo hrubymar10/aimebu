@@ -35,7 +35,7 @@ func setupTestServerWithBuild(t *testing.T, build BuildInfo) (*store, *httptest.
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	setupHandlers(mux, s, build)
+	setupHandlers(mux, s, build, nil)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return s, srv

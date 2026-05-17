@@ -24,6 +24,16 @@
       <input type="text" id="agent-id-input" class="agent-id-input" value="user@web-ui" spellcheck="false">
     </div>
     <div class="topbar-right">
+      <div class="usages-wrap">
+        <button id="usages-btn" class="btn btn-icon usages-btn" type="button" title="Usages" aria-label="Usages">
+          <svg class="usages-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 19V5" stroke="var(--usage-icon-stroke)" stroke-width="2" stroke-linecap="round"/>
+            <path d="M9 19V9" stroke="var(--usage-icon-stroke)" stroke-width="2" stroke-linecap="round"/>
+            <path d="M14 19V3" stroke="var(--usage-icon-stroke)" stroke-width="2" stroke-linecap="round"/>
+            <path d="M19 19v-7" stroke="var(--usage-icon-stroke)" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
       <div class="broadcast-wrap">
         <button id="broadcast-btn" class="btn btn-icon broadcast-btn" type="button" title="System events">
           <img src="/icons/broadcast.svg" width="14" height="18" alt="" aria-hidden="true">
@@ -132,12 +142,18 @@
     <aside class="sidebar-right" data-mode="members">
       <div class="sidebar-header">
         <h2 id="right-sidebar-title" class="section-title">Room Members</h2>
-        <button id="right-sidebar-toggle" class="sidebar-collapse-btn" type="button" aria-label="Collapse agents sidebar" title="Collapse agents sidebar">›</button>
+        <button id="usages-refresh-btn" class="sidebar-header-btn usages-refresh-btn" type="button" title="Refresh usages" aria-label="Refresh usages">
+          <span class="usages-refresh-glyph" aria-hidden="true"></span>
+        </button>
+        <button id="right-sidebar-toggle" class="sidebar-collapse-btn sidebar-header-btn" type="button" aria-label="Collapse agents sidebar" title="Collapse agents sidebar">›</button>
       </div>
       <div id="room-agents-list" class="agent-list">
         <div class="empty-state">Select a room to see members.</div>
       </div>
       <div id="right-profile-panel" class="right-profile-panel" role="region" aria-label="Agent profile"></div>
+      <div id="right-usages-panel" class="right-usages-panel" role="region" aria-label="Usage snapshots">
+        <div class="usages-empty">No usage providers enabled.</div>
+      </div>
     </aside>
   </main>
 
@@ -157,6 +173,7 @@
         <button class="settings-nav-item active" data-section="general" type="button">General</button>
         <button class="settings-nav-item" data-section="agents" type="button">Agents</button>
         <button class="settings-nav-item" data-section="notifications" type="button">Notifications</button>
+        <button class="settings-nav-item" data-section="usages" type="button">Usages</button>
         <button class="settings-nav-item" data-section="macros" type="button">Macros</button>
         <button class="settings-nav-item" data-section="prompts" type="button">Prompts</button>
         <button class="settings-nav-item" data-section="roles" type="button">Roles</button>
@@ -307,6 +324,34 @@
               </div>
             </div>
             <div id="notif-sounds-list" class="sound-list"></div>
+          </div>
+        </div>
+
+        <div class="settings-section" data-section="usages">
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label" for="usages-refresh-input">Refresh interval</label>
+                <span class="settings-desc">Seconds between provider refreshes. Minimum 15, default 120.</span>
+              </div>
+              <div class="settings-control">
+                <input type="number" id="usages-refresh-input" class="settings-text-input usages-refresh-input" min="15" step="1" value="120">
+                <span id="usages-env-badge" class="settings-status usages-env-badge hidden">Overridden by env</span>
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label">Percent display</label>
+                <span class="settings-desc">Usage bars can show remaining quota or consumed quota.</span>
+              </div>
+              <div class="settings-control">
+                <div class="usages-percent-toggle" role="group" aria-label="Percent display">
+                  <button class="usages-percent-option" type="button" data-percent-display="left">Left</button>
+                  <button class="usages-percent-option" type="button" data-percent-display="used">Used</button>
+                </div>
+              </div>
+            </div>
+            <div id="usages-provider-rows"></div>
           </div>
         </div>
 

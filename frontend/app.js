@@ -50,6 +50,13 @@
   let notifAudioPriming = null; // in-flight prime promise — dedupes gesture races
   let notifPromptAttempted = false; // flipped only after a real prompt attempt or CTA display
   let pendingNotifPrompt = null; // { senderName } queued while the tab is hidden
+  let usageProviders = [];
+  let usageSnapshots = {};
+  let usagePercentDisplay = 'left';
+  let usageCooldownTimer = null;
+  const usageProviderFallbackOrder = ['codex', 'claude-code', 'github-copilot', 'ollama-cloud'];
+  let copilotLoginState = { status: 'disconnected', enterpriseHost: '', flowId: '', interval: 5, timer: null, error: '' };
+  let ollamaCookieEditorOpen = false;
   let messageDebugState = {
     open: false,
     messageID: null,
@@ -135,6 +142,7 @@
   const rightSidebarToggle = $('#right-sidebar-toggle');
   const rightSidebarTitle = $('#right-sidebar-title');
   const rightProfilePanel = $('#right-profile-panel');
+  const rightUsagesPanel = $('#right-usages-panel');
   const roomAgentsList = $('#room-agents-list');
   const allAgentsList = $('#all-agents-list');
 
@@ -199,6 +207,11 @@
   const notifSysStatusEl = $('#notif-sys-status');
   const notifSysHelpEl = $('#notif-sys-help');
   const notifSysHelpCloseBtn = $('#notif-sys-help-close-btn');
+  const usagesBtn = $('#usages-btn');
+  const usagesRefreshBtn = $('#usages-refresh-btn');
+  const usagesRefreshInput = $('#usages-refresh-input');
+  const usagesEnvBadge = $('#usages-env-badge');
+  const usagesProviderRows = $('#usages-provider-rows');
 
   // ── Harness icons ────────────────────────────────────────────────
 
@@ -1951,10 +1964,519 @@
     };
     if (body) opts.body = JSON.stringify(body);
     return fetch(path, opts).then(function (r) {
-      if (!r.ok) return r.text().then(function (t) { throw new Error('HTTP ' + r.status + ': ' + t); });
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          var parsed = null;
+          if (t) {
+            try { parsed = JSON.parse(t); } catch (_) {}
+          }
+          var msg = parsed && (parsed.error || parsed.message) ? (parsed.error || parsed.message) : t;
+          var err = new Error('HTTP ' + r.status + (msg ? ': ' + msg : ''));
+          err.status = r.status;
+          err.body = parsed;
+          err.responseText = t;
+          throw err;
+        });
+      }
       if (r.status === 204) return null;
       return r.json();
     });
+  }
+
+  function renderUsages(resp) {
+    var snapshots = (resp && resp.snapshots) || {};
+    usageSnapshots = snapshots;
+    if (resp && resp.settings) {
+      usagePercentDisplay = resp.settings.percent_display === 'used' ? 'used' : 'left';
+    }
+    if (resp && Array.isArray(resp.providers)) {
+      usageProviders = resp.providers;
+      renderUsageProviderRows(usageProviders);
+    }
+    renderUsagesSidebar();
+  }
+
+  function canonicalUsageProviders() {
+    var rowsByKey = {};
+    var order = [];
+    (usageProviders || []).forEach(function (row) {
+      if (!row || !row.key || rowsByKey[row.key]) return;
+      rowsByKey[row.key] = row;
+      order.push(row.key);
+    });
+    if (!order.length) order = usageProviderFallbackOrder.slice();
+    usageProviderFallbackOrder.forEach(function (key) {
+      if (order.indexOf(key) === -1) order.push(key);
+    });
+    return order.map(function (key) {
+      return rowsByKey[key] || { key: key, label: providerLabel(key), enabled: !!usageSnapshots[key], available: true };
+    });
+  }
+
+  function renderUsagesSidebar() {
+    if (!rightUsagesPanel) return;
+    var rows = canonicalUsageProviders();
+    var enabledCount = rows.filter(function (row) { return !!row.enabled; }).length;
+    var empty = enabledCount ? '' : '<div class="usages-empty">' +
+      '<div>No usage providers enabled.</div>' +
+      '<button class="btn btn-sm usages-settings-shortcut" type="button">Open Settings → Usages</button>' +
+    '</div>';
+    rightUsagesPanel.innerHTML = empty + '<div class="usages-sidebar-list">' + rows.map(function (row) {
+      return renderUsageTile(row, usageSnapshots[row.key] || { provider: row.key, status: row.enabled ? 'not_configured' : 'not_enabled' });
+    }).join('') + '</div>';
+  }
+
+  function usageProviderIcon(key) {
+    if (key === 'codex' || key === 'claude-code' || key === 'github-copilot' || key === 'ollama-cloud') {
+      return '<span class="usages-provider-mask usages-provider-mask-' + esc(key) + '" aria-hidden="true"></span>';
+    }
+    return '<span aria-hidden="true">AI</span>';
+  }
+
+  function usageProviderIconClass(key) {
+    return 'usages-provider-icon usages-provider-icon-' + String(key || 'unknown').replace(/[^a-z0-9_-]/gi, '-');
+  }
+
+  function renderUsageTile(row, snap) {
+    var available = row.available !== false;
+    var enabled = !!row.enabled;
+    if (!available || !enabled) {
+      var state = available ? 'Not enabled' : 'Unavailable';
+      var detail = available ? 'Configure in Settings → Usages' : 'Available in upcoming release';
+      return '<button class="usages-provider-tile usages-provider-tile-inactive usages-settings-shortcut" type="button" data-provider="' + esc(row.key) + '">' +
+        '<span class="' + esc(usageProviderIconClass(row.key)) + '">' + usageProviderIcon(row.key) + '</span>' +
+        '<span><strong>' + esc(row.label || row.key) + '</strong><em>' + esc(state + ' — ' + detail) + '</em></span>' +
+      '</button>';
+    }
+    var label = row.label || providerLabel(snap.provider);
+    var updated = snap.last_refresh_at ? 'Updated ' + formatRelativeAge(snap.last_refresh_at) + ' ago' : statusLabel(snap.status || 'Not configured');
+    var plan = snap.plan || statusLabel(snap.status);
+    var windows = (snap.windows || []).map(function (w) { return renderUsageWindowRow(w); }).join('');
+    if (!windows) {
+      windows = '<div class="usages-empty usages-empty-compact">No window data yet.</div>';
+    }
+    return '<div class="usages-provider-tile" data-provider="' + esc(snap.provider || row.key) + '">' +
+      '<div class="usages-provider-heading">' +
+        '<div class="usages-provider-title"><span class="' + esc(usageProviderIconClass(snap.provider || row.key)) + '">' + usageProviderIcon(snap.provider || row.key) + '</span><div><div class="usages-provider-name">' + esc(label) + '</div><div class="usages-provider-updated">' + esc(updated) + '</div></div></div>' +
+        '<span class="usages-plan-badge">' + esc(plan || '-') + '</span>' +
+      '</div>' +
+      usageStaleLine(snap) +
+      windows +
+      renderCreditsRow(snap.credits) +
+      usageErrorLine(snap) +
+    '</div>';
+  }
+
+  function providerLabel(key) {
+    var found = usageProviders.find(function (p) { return p.key === key; });
+    return found ? found.label : key;
+  }
+
+  function renderUsageWindowRow(w) {
+    if (!w) return '';
+    var pct = Number(w.percent_used);
+    var display = usagePercentValue(pct);
+    var fill = Number.isFinite(display) ? Math.max(0, Math.min(100, display)) : 0;
+    var label = usagePercentDisplay === 'used' ? 'used' : 'left';
+    var reset = w.reset_at ? resetText(w.key, w.reset_at) : '';
+    return '<div class="usages-window-row">' +
+      '<div class="usages-window-top"><span>' + esc(windowLabel(w.key)) + '</span></div>' +
+      '<div class="usages-progress" aria-label="' + esc(windowLabel(w.key)) + ' usage"><span style="width:' + fill.toFixed(2) + '%"></span></div>' +
+      '<div class="usages-window-meta"><strong>' + esc(formatPercent(display) + ' ' + label) + '</strong><span>' + esc(reset) + '</span></div>' +
+    '</div>';
+  }
+
+  function usagePercentValue(percentUsed) {
+    if (!Number.isFinite(percentUsed)) return NaN;
+    return usagePercentDisplay === 'used' ? percentUsed : 100 - percentUsed;
+  }
+
+  function formatPercent(value) {
+    if (!Number.isFinite(value)) return '-';
+    var rounded = Math.max(0, Math.min(100, value));
+    return rounded.toFixed(rounded % 1 ? 1 : 0) + '%';
+  }
+
+  function formatResetCountdown(value) {
+    var ms = Date.parse(value);
+    if (!Number.isFinite(ms)) return '-';
+    var sec = Math.max(0, Math.round((ms - Date.now()) / 1000));
+    var days = Math.floor(sec / 86400);
+    var hours = Math.floor((sec % 86400) / 3600);
+    var mins = Math.floor((sec % 3600) / 60);
+    if (days > 0) return days + 'd ' + hours + 'h';
+    if (hours > 0) return hours + 'h ' + mins + 'm';
+    return mins + 'm';
+  }
+
+  function resetText(key, value) {
+    var ms = Date.parse(value);
+    if (key === 'weekly' && Number.isFinite(ms) && ms - Date.now() < 3600000) {
+      return 'Lasts until reset';
+    }
+    return 'Resets in ' + formatResetCountdown(value);
+  }
+
+  function windowLabel(key) {
+    if (key === 'session') return 'Session';
+    if (key === 'weekly') return 'Weekly';
+    if (key === 'weekly_opus') return 'Weekly (Opus)';
+    if (key === 'weekly_sonnet') return 'Weekly (Sonnet)';
+    if (key === 'premium') return 'Premium interactions';
+    if (key === 'chat') return 'Chat';
+    return key || 'Window';
+  }
+
+  function statusLabel(status) {
+    return String(status || 'unknown').replace(/_/g, ' ');
+  }
+
+  function renderCreditsRow(credits) {
+    if (!credits) return '';
+    var value = Number(credits.balance);
+    var text = Number.isFinite(value) ? value.toFixed(2) : '-';
+    return '<div class="usages-credits-row"><span>' + esc(credits.label || 'Credits') + '</span><strong>' + esc(text) + '</strong></div>';
+  }
+
+  function formatRelativeAge(value) {
+    var ms = Date.parse(value);
+    if (!Number.isFinite(ms)) return 'just now';
+    var sec = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (sec < 60) return sec + 's';
+    var mins = Math.floor(sec / 60);
+    if (mins < 60) return mins + 'm';
+    var hours = Math.floor(mins / 60);
+    if (hours < 24) return hours + 'h';
+    return Math.floor(hours / 24) + 'd';
+  }
+
+  function usageStaleLine(snap) {
+    if (!snap || !snap.stale) return '';
+    var fetched = snap.last_refresh_at ? new Date(snap.last_refresh_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'unknown';
+    return '<div class="usages-stale-line">Stale, last fetched ' + esc(fetched) + '</div>';
+  }
+
+  function usageErrorLine(snap) {
+    if (!snap || (!snap.error && !snap.stale)) return '';
+    var text = snap.error;
+    if (!text) return '';
+    return '<div class="usages-error-line">' + esc(text) + '</div>';
+  }
+
+  function loadUsages() {
+    return api('GET', '/api/usages').then(function (resp) {
+      renderUsages(resp);
+      if (resp && resp.settings) renderUsageSettings(resp.settings);
+      return resp;
+    }).catch(function (err) {
+      if (rightUsagesPanel) rightUsagesPanel.innerHTML = '<div class="usages-empty">Failed to load usages.</div>';
+      console.error('usages', err);
+    });
+  }
+
+  function renderUsageSettings(settings) {
+    if (!settings) return;
+    if (usagesRefreshInput) usagesRefreshInput.value = settings.refresh_interval_sec || 120;
+    if (usagesEnvBadge) usagesEnvBadge.classList.toggle('hidden', !settings.env_override);
+    usagePercentDisplay = settings.percent_display === 'used' ? 'used' : 'left';
+    document.querySelectorAll('.usages-percent-option').forEach(function (btn) {
+      btn.classList.toggle('active', btn.getAttribute('data-percent-display') === usagePercentDisplay);
+    });
+  }
+
+  function renderUsageProviderRows(rows) {
+    if (!usagesProviderRows) return;
+    rows = rows || usageProviders || [];
+    usagesProviderRows.innerHTML = rows.map(function (row, idx) {
+      if (row.key === 'github-copilot') return renderCopilotProviderRow(row, idx, rows.length);
+      if (row.key === 'ollama-cloud') return renderOllamaProviderRow(row, idx, rows.length);
+      var available = !!row.available;
+      var enabled = !!row.enabled;
+      return '<div class="settings-row' + (available ? '' : ' usages-provider-row-disabled') + '">' +
+        '<div class="settings-row-info">' +
+          '<label class="settings-label">' + esc(row.label) + '</label>' +
+          '<span class="settings-desc">' + esc(available ? 'Show this provider in the usage sidebar and CLI.' : 'Available in upcoming release.') + '</span>' +
+        '</div>' +
+        '<div class="settings-control usages-provider-control">' + usageProviderOrderControls(row, idx, rows.length) + '<label class="usages-provider-toggle" aria-label="' + esc(row.label) + ' provider">' +
+          '<input type="checkbox" data-provider="' + esc(row.key) + '"' + (enabled ? ' checked' : '') + (available ? '' : ' disabled') + '>' +
+          '<span></span>' +
+        '</label></div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function usageProviderOrderControls(row, idx, total) {
+    var label = row && row.label ? row.label : row.key;
+    return '<div class="usages-provider-order" aria-label="Provider order">' +
+      '<button class="btn btn-icon usages-provider-order-btn" type="button" data-usage-provider-move="' + esc(row.key) + '" data-direction="up" title="Move ' + esc(label) + ' up" aria-label="Move ' + esc(label) + ' up"' + (idx <= 0 ? ' disabled' : '') + '>↑</button>' +
+      '<button class="btn btn-icon usages-provider-order-btn" type="button" data-usage-provider-move="' + esc(row.key) + '" data-direction="down" title="Move ' + esc(label) + ' down" aria-label="Move ' + esc(label) + ' down"' + (idx >= total - 1 ? ' disabled' : '') + '>↓</button>' +
+    '</div>';
+  }
+
+  function renderCopilotProviderRow(row, idx, total) {
+    var available = !!row.available;
+    var signedIn = !!row.enabled;
+    if (!copilotLoginState.enterpriseHost && row.enterprise_host) copilotLoginState.enterpriseHost = row.enterprise_host;
+    var status = signedIn && copilotLoginState.status === 'disconnected' ? 'signed_in' : copilotLoginState.status;
+    var control = '';
+    if (!available) {
+      control = '<span class="settings-status">Available in upcoming release.</span>';
+    } else if (status === 'signed_in') {
+      control = '<span class="settings-status">Signed in</span><button class="btn btn-sm copilot-logout-btn" type="button">Sign out</button>';
+    } else if (status === 'code_pending' || status === 'polling') {
+      var code = copilotLoginState.userCode || '';
+      var link = copilotLoginState.verificationURIComplete || copilotLoginState.verificationURI || '#';
+      control = '<div class="copilot-login-flow">' +
+        '<div class="copilot-code">' + esc(code) + '</div>' +
+        '<div class="copilot-actions"><a class="btn btn-sm" href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">Open verification page</a>' +
+        '<button class="btn btn-sm copilot-copy-code" type="button">Copy code</button>' +
+        '<button class="btn btn-sm copilot-cancel-btn" type="button">Cancel</button></div>' +
+        '<span class="settings-status">' + esc(status === 'polling' ? 'Waiting for GitHub...' : 'Code ready') + '</span>' +
+      '</div>';
+    } else {
+      var label = status === 'error' ? 'Try again' : 'Sign in with GitHub';
+      control = '<button class="btn btn-sm copilot-login-btn" type="button">' + esc(label) + '</button>';
+    }
+    var error = status === 'error' && copilotLoginState.error ? '<span class="usages-error-line">' + esc(copilotLoginState.error) + '</span>' : '';
+    return '<div class="settings-row copilot-provider-row' + (available ? '' : ' usages-provider-row-disabled') + '">' +
+      '<div class="settings-row-info">' +
+        '<label class="settings-label">GitHub Copilot</label>' +
+        '<span class="settings-desc">Sign in with GitHub device flow and fetch Copilot quota.</span>' +
+        error +
+      '</div>' +
+      '<div class="settings-control copilot-settings-control">' + usageProviderOrderControls(row, idx, total) +
+        '<input type="text" class="settings-text-input copilot-enterprise-input" placeholder="https://github.example.com" value="' + esc(copilotLoginState.enterpriseHost || '') + '"' + (signedIn ? ' disabled' : '') + '>' +
+        control +
+      '</div>' +
+    '</div>';
+  }
+
+  function renderOllamaProviderRow(row, idx, total) {
+    var available = !!row.available;
+    var configured = !!row.cookie_configured || !!row.enabled;
+    var snap = usageSnapshots['ollama-cloud'] || {};
+    var status = snap.status || (configured ? 'saved' : 'not_configured');
+    var hasError = status === 'auth_missing' || status === 'fetch_error';
+    var showEditor = available && (!configured || hasError || ollamaCookieEditorOpen);
+    var statusText = 'Cookie not configured';
+    if (!available) {
+      statusText = 'Available in upcoming release.';
+    } else if (hasError) {
+      statusText = snap.error || 'Ollama Cloud fetch failed. Update the cookie.';
+    } else if (configured) {
+      statusText = 'Cookie configured' + (snap.last_refresh_at ? ' (last fetched ' + new Date(snap.last_refresh_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ')' : '');
+    }
+    var editor = '';
+    if (showEditor) {
+      editor = '<textarea class="settings-text-input ollama-cookie-input" rows="3" autocomplete="off" spellcheck="false" placeholder="Paste the Cookie header from ollama.com/settings"></textarea>' +
+        '<div class="ollama-actions"><button class="btn btn-sm ollama-cookie-save-btn" type="button">Save</button>' +
+        (configured ? '<button class="btn btn-sm ollama-cookie-cancel-btn" type="button">Cancel</button>' : '') + '</div>';
+    } else if (configured) {
+      editor = '<div class="ollama-actions"><button class="btn btn-sm ollama-cookie-update-btn" type="button">Update cookie</button><button class="btn btn-sm ollama-cookie-clear-btn" type="button">Clear</button></div>';
+    }
+    return '<div class="settings-row ollama-provider-row' + (available ? '' : ' usages-provider-row-disabled') + '">' +
+      '<div class="settings-row-info">' +
+        '<label class="settings-label">Ollama Cloud</label>' +
+        '<span class="settings-desc">Paste a settings-page Cookie header; the stored value is never shown again.</span>' +
+        '<span class="settings-status">' + esc(statusText) + '</span>' +
+      '</div>' +
+      '<div class="settings-control ollama-settings-control">' + usageProviderOrderControls(row, idx, total) + editor + '</div>' +
+    '</div>';
+  }
+
+  function saveUsageProviderToggle(provider, enabled) {
+    api('POST', '/api/usages/providers', { provider: provider, enabled: enabled })
+      .then(function () { return loadUsages(); })
+      .catch(function (err) {
+        alert('Failed to save usage provider: ' + (err && err.message ? err.message : err));
+        loadUsages();
+      });
+  }
+
+  function moveUsageProvider(provider, direction) {
+    var rows = usageProviders || [];
+    var order = rows.map(function (row) { return row.key; });
+    var idx = order.indexOf(provider);
+    if (idx === -1) return;
+    var next = direction === 'up' ? idx - 1 : idx + 1;
+    if (next < 0 || next >= order.length) return;
+    var tmp = order[idx];
+    order[idx] = order[next];
+    order[next] = tmp;
+    saveUsageProviderOrder(order);
+  }
+
+  function saveUsageProviderOrder(order) {
+    api('POST', '/api/usages/settings', { provider_order: order })
+      .then(function (resp) {
+        if (resp && resp.settings) renderUsageSettings(resp.settings);
+        return loadUsages();
+      })
+      .catch(function (err) {
+        alert('Failed to save provider order: ' + (err && err.message ? err.message : err));
+        loadUsages();
+      });
+  }
+
+  function startCopilotLogin() {
+    var input = usagesProviderRows && usagesProviderRows.querySelector('.copilot-enterprise-input');
+    copilotLoginState.enterpriseHost = input ? input.value.trim() : '';
+    copilotLoginState.status = 'polling';
+    renderUsageProviderRows(usageProviders);
+    api('POST', '/api/usages/copilot/login/start', { enterprise_host: copilotLoginState.enterpriseHost })
+      .then(function (resp) {
+        copilotLoginState.status = 'code_pending';
+        copilotLoginState.flowId = resp.flow_id;
+        copilotLoginState.userCode = resp.user_code;
+        copilotLoginState.verificationURI = resp.verification_uri;
+        copilotLoginState.verificationURIComplete = resp.verification_uri_complete;
+        copilotLoginState.interval = resp.interval || 5;
+        copilotLoginState.error = '';
+        renderUsageProviderRows(usageProviders);
+        scheduleCopilotPoll(500);
+      })
+      .catch(function (err) {
+        copilotLoginState.status = 'error';
+        copilotLoginState.error = err && err.message ? err.message : String(err);
+        renderUsageProviderRows(usageProviders);
+      });
+  }
+
+  function scheduleCopilotPoll(delayMs) {
+    if (copilotLoginState.timer) clearTimeout(copilotLoginState.timer);
+    copilotLoginState.timer = setTimeout(pollCopilotLogin, delayMs == null ? Math.max(1, copilotLoginState.interval || 5) * 1000 : delayMs);
+  }
+
+  function pollCopilotLogin() {
+    if (!copilotLoginState.flowId) return;
+    copilotLoginState.status = 'polling';
+    renderUsageProviderRows(usageProviders);
+    api('POST', '/api/usages/copilot/login/poll', { flow_id: copilotLoginState.flowId })
+      .then(function (resp) {
+        var status = resp.status || 'pending';
+        if (status === 'success') {
+          if (copilotLoginState.timer) clearTimeout(copilotLoginState.timer);
+          copilotLoginState = { status: 'signed_in', enterpriseHost: copilotLoginState.enterpriseHost, flowId: '', interval: 5, timer: null, error: '' };
+          return loadUsages();
+        }
+        if (status === 'pending' || status === 'slow_down') {
+          copilotLoginState.status = 'code_pending';
+          copilotLoginState.interval = resp.interval || copilotLoginState.interval || 5;
+          renderUsageProviderRows(usageProviders);
+          scheduleCopilotPoll(Math.max(1, resp.retry_after || copilotLoginState.interval) * 1000);
+          return;
+        }
+        copilotLoginState.status = 'error';
+        copilotLoginState.error = status === 'expired' ? 'Code expired. Start sign in again.' : status === 'denied' ? 'GitHub sign in was denied.' : (resp.error || 'GitHub sign in failed.');
+        renderUsageProviderRows(usageProviders);
+      })
+      .catch(function (err) {
+        copilotLoginState.status = 'error';
+        copilotLoginState.error = err && err.message ? err.message : String(err);
+        renderUsageProviderRows(usageProviders);
+      });
+  }
+
+  function logoutCopilot() {
+    api('POST', '/api/usages/copilot/login/logout', {})
+      .then(function () {
+        if (copilotLoginState.timer) clearTimeout(copilotLoginState.timer);
+        copilotLoginState = { status: 'disconnected', enterpriseHost: copilotLoginState.enterpriseHost, flowId: '', interval: 5, timer: null, error: '' };
+        return loadUsages();
+      })
+      .catch(function (err) {
+        alert('Failed to sign out of GitHub Copilot: ' + (err && err.message ? err.message : err));
+      });
+  }
+
+  function saveOllamaCookie() {
+    var input = usagesProviderRows && usagesProviderRows.querySelector('.ollama-cookie-input');
+    var cookie = input ? input.value : '';
+    api('POST', '/api/usages/ollama/cookie', { cookie: cookie })
+      .then(function () {
+        if (input) input.value = '';
+        ollamaCookieEditorOpen = false;
+        return loadUsages();
+      })
+      .catch(function (err) {
+        alert('Failed to save Ollama Cloud cookie: ' + (err && err.message ? err.message : err));
+        if (input) input.value = '';
+      });
+  }
+
+  function clearOllamaCookie() {
+    api('POST', '/api/usages/ollama/cookie', { cookie: '' })
+      .then(function () {
+        ollamaCookieEditorOpen = false;
+        return loadUsages();
+      })
+      .catch(function (err) {
+        alert('Failed to clear Ollama Cloud cookie: ' + (err && err.message ? err.message : err));
+      });
+  }
+
+  function saveUsageRefreshInterval() {
+    if (!usagesRefreshInput) return;
+    var value = parseInt(usagesRefreshInput.value, 10);
+    if (!Number.isFinite(value) || value < 15) value = 15;
+    usagesRefreshInput.value = value;
+    api('POST', '/api/usages/settings', { refresh_interval_sec: value, percent_display: usagePercentDisplay })
+      .then(function (resp) {
+        if (resp && resp.settings) renderUsageSettings(resp.settings);
+      })
+      .catch(function (err) {
+        alert('Failed to save usage refresh interval: ' + (err && err.message ? err.message : err));
+      });
+  }
+
+  function startUsageRefreshCooldown(seconds) {
+    if (!usagesRefreshBtn) return;
+    if (usageCooldownTimer) clearTimeout(usageCooldownTimer);
+    var remaining = Math.max(1, seconds || 15);
+    function tick() {
+      usagesRefreshBtn.disabled = true;
+      usagesRefreshBtn.textContent = String(remaining);
+      remaining--;
+      if (remaining < 0) {
+        usagesRefreshBtn.disabled = false;
+        usagesRefreshBtn.innerHTML = '<span class="usages-refresh-glyph" aria-hidden="true"></span>';
+      } else {
+        usageCooldownTimer = setTimeout(tick, 1000);
+      }
+    }
+    tick();
+  }
+
+  function saveUsagePercentDisplay(value) {
+    usagePercentDisplay = value === 'used' ? 'used' : 'left';
+    var interval = usagesRefreshInput ? parseInt(usagesRefreshInput.value, 10) : 120;
+    if (!Number.isFinite(interval) || interval < 15) interval = 15;
+    api('POST', '/api/usages/settings', { refresh_interval_sec: interval, percent_display: usagePercentDisplay })
+      .then(function (resp) {
+        if (resp && resp.settings) renderUsageSettings(resp.settings);
+        return loadUsages();
+      })
+      .catch(function (err) {
+        alert('Failed to save percent display: ' + (err && err.message ? err.message : err));
+      });
+  }
+
+  function forceRefreshUsages() {
+    if (!usagesRefreshBtn || usagesRefreshBtn.disabled) return;
+    api('POST', '/api/usages/refresh', {})
+      .then(function (resp) {
+        renderUsages(resp);
+        startUsageRefreshCooldown(15);
+      })
+      .catch(function (err) {
+        var retryAfter = err && err.body && err.body.retry_after_sec;
+        if (Number.isFinite(Number(retryAfter)) && Number(retryAfter) > 0) {
+          startUsageRefreshCooldown(Number(retryAfter));
+          return;
+        }
+        var msg = String(err && err.message || err);
+        alert('Failed to refresh usages: ' + msg);
+      });
   }
 
   // registerHuman tells the server this UI user is a human with the current
@@ -2229,8 +2751,9 @@
     settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
     });
-    var titles = { general: 'General', agents: 'Agents', notifications: 'Notifications', macros: 'Macros', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
+    var titles = { general: 'General', agents: 'Agents', notifications: 'Notifications', usages: 'Usages', macros: 'Macros', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
     if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
+    if (section === 'usages') loadUsages();
   }
 
   function exportBackup() {
@@ -2370,6 +2893,10 @@
             break;
           case 'roles_updated':
             loadRoles().catch(function () {});
+            break;
+          case 'usages_updated':
+            renderUsages(frame.data);
+            if (frame.data && frame.data.settings) renderUsageSettings(frame.data.settings);
             break;
         }
       } catch (e) {
@@ -3160,6 +3687,25 @@
     renderRightSidebar();
   }
 
+  function openUsagesPanel() {
+    if (rightCollapsed) {
+      rightCollapsed = false;
+      localStorage.setItem('aimebu_right_collapsed', 'false');
+      applySidebarCollapseState();
+    }
+    rightSidebarMode = 'usages';
+    profileAgentID = '';
+    profileContext = 'room';
+    renderRightSidebar();
+    loadUsages();
+    if (window.innerWidth <= 900) setMobileTab('agents');
+  }
+
+  function closeUsagesPanel() {
+    rightSidebarMode = 'members';
+    renderRightSidebar();
+  }
+
   function rightProfileHTML(a) {
     var room = profileContextRoom(profileContext);
     var roleKey = roomRoleKey(room || activeRoom(), a.id);
@@ -3199,29 +3745,31 @@
   function renderRightSidebar() {
     if (!sidebarRight || !rightProfilePanel) return;
     var profileOpen = rightSidebarMode === 'profile' && !!profileAgentID;
+    var usagesOpen = rightSidebarMode === 'usages';
     var agent = profileOpen ? agentByID(profileAgentID) : null;
     if (profileOpen && !agent) {
       rightSidebarMode = 'members';
       profileAgentID = '';
       profileOpen = false;
     }
-    sidebarRight.setAttribute('data-mode', profileOpen ? 'profile' : 'members');
-    if (rightSidebarTitle) rightSidebarTitle.textContent = profileOpen ? 'Agent Profile' : 'Room Members';
+    sidebarRight.setAttribute('data-mode', usagesOpen ? 'usages' : (profileOpen ? 'profile' : 'members'));
+    if (rightSidebarTitle) rightSidebarTitle.textContent = usagesOpen ? 'Usages' : (profileOpen ? 'Agent Profile' : 'Room Members');
     if (profileOpen) {
       rightProfilePanel.setAttribute('aria-label', 'Agent profile: ' + profileAgentID);
       rightProfilePanel.innerHTML = rightProfileHTML(agent);
     } else {
       rightProfilePanel.innerHTML = '';
     }
+    if (usagesOpen) renderUsagesSidebar();
     applyRightToggleState();
   }
 
   function applyRightToggleState() {
     if (!rightSidebarToggle) return;
-    if (rightSidebarMode === 'profile') {
+    if (rightSidebarMode === 'profile' || rightSidebarMode === 'usages') {
       rightSidebarToggle.textContent = '×';
-      rightSidebarToggle.setAttribute('aria-label', 'Close profile');
-      rightSidebarToggle.setAttribute('title', 'Close profile');
+      rightSidebarToggle.setAttribute('aria-label', rightSidebarMode === 'profile' ? 'Close profile' : 'Close usages');
+      rightSidebarToggle.setAttribute('title', rightSidebarMode === 'profile' ? 'Close profile' : 'Close usages');
       return;
     }
     rightSidebarToggle.textContent = rightCollapsed ? '‹' : '›';
@@ -3384,6 +3932,76 @@
       activateSettingsSection(btn.getAttribute('data-section'));
     });
   });
+
+  if (usagesBtn) {
+    usagesBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      openUsagesPanel();
+    });
+  }
+  if (usagesRefreshBtn) usagesRefreshBtn.addEventListener('click', forceRefreshUsages);
+  if (rightUsagesPanel) rightUsagesPanel.addEventListener('click', function (e) {
+    if (!e.target.closest('.usages-settings-shortcut')) return;
+    openSettings('usages');
+  });
+  if (usagesRefreshInput) usagesRefreshInput.addEventListener('change', saveUsageRefreshInterval);
+  document.querySelectorAll('.usages-percent-option').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      saveUsagePercentDisplay(btn.getAttribute('data-percent-display'));
+    });
+  });
+  if (usagesProviderRows) {
+    usagesProviderRows.addEventListener('change', function (e) {
+      var input = e.target && e.target.closest ? e.target.closest('input[data-provider]') : null;
+      if (!input || input.disabled) return;
+      saveUsageProviderToggle(input.getAttribute('data-provider'), input.checked);
+    });
+    usagesProviderRows.addEventListener('input', function (e) {
+      var input = e.target && e.target.closest ? e.target.closest('.copilot-enterprise-input') : null;
+      if (input) copilotLoginState.enterpriseHost = input.value;
+    });
+    usagesProviderRows.addEventListener('click', function (e) {
+      var move = e.target && e.target.closest ? e.target.closest('button[data-usage-provider-move]') : null;
+      var login = e.target && e.target.closest ? e.target.closest('.copilot-login-btn') : null;
+      var logout = e.target && e.target.closest ? e.target.closest('.copilot-logout-btn') : null;
+      var cancel = e.target && e.target.closest ? e.target.closest('.copilot-cancel-btn') : null;
+      var copy = e.target && e.target.closest ? e.target.closest('.copilot-copy-code') : null;
+      var ollamaSave = e.target && e.target.closest ? e.target.closest('.ollama-cookie-save-btn') : null;
+      var ollamaClear = e.target && e.target.closest ? e.target.closest('.ollama-cookie-clear-btn') : null;
+      var ollamaUpdate = e.target && e.target.closest ? e.target.closest('.ollama-cookie-update-btn') : null;
+      var ollamaCancel = e.target && e.target.closest ? e.target.closest('.ollama-cookie-cancel-btn') : null;
+      if (move && !move.disabled) {
+        moveUsageProvider(move.getAttribute('data-usage-provider-move'), move.getAttribute('data-direction'));
+        return;
+      }
+      if (login) startCopilotLogin();
+      if (logout) logoutCopilot();
+      if (ollamaSave) saveOllamaCookie();
+      if (ollamaClear) clearOllamaCookie();
+      if (ollamaUpdate) {
+        ollamaCookieEditorOpen = true;
+        renderUsageProviderRows(usageProviders);
+      }
+      if (ollamaCancel) {
+        ollamaCookieEditorOpen = false;
+        renderUsageProviderRows(usageProviders);
+      }
+      if (cancel) {
+        if (copilotLoginState.timer) clearTimeout(copilotLoginState.timer);
+        copilotLoginState.status = 'disconnected';
+        copilotLoginState.flowId = '';
+        renderUsageProviderRows(usageProviders);
+      }
+      if (copy) {
+        copyText(copilotLoginState.userCode || '').then(function () {
+          setTemporaryLabel(copy, 'Copied', 1200);
+        }).catch(function () {
+          setTemporaryLabel(copy, 'Copy failed', 1200);
+        });
+      }
+    });
+  }
+  renderUsageProviderRows();
 
   // Theme select — writes to both localStorage (client-local) and server settings.
   themeSelect.addEventListener('change', function () {
@@ -3723,6 +4341,7 @@
   if (rightSidebarToggle) {
     rightSidebarToggle.addEventListener('click', function () {
       if (rightSidebarMode === 'profile') closeProfilePanel();
+      else if (rightSidebarMode === 'usages') closeUsagesPanel();
       else toggleRightSidebar();
     });
   }
@@ -3730,6 +4349,10 @@
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && rightSidebarMode === 'profile') {
       closeProfilePanel();
+      return;
+    }
+    if (e.key === 'Escape' && rightSidebarMode === 'usages') {
+      closeUsagesPanel();
       return;
     }
     if (e.key !== 'Enter' && e.key !== ' ') return;
