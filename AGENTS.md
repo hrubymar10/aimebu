@@ -231,14 +231,15 @@ holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
 percent display, provider order, enabled flags, provider secrets), `cache.json` (0644, last successful
 snapshots, no secrets), and `.lock` (stable flock target for server/CLI
 refresh coordination).
-`aimebu prune` wipes conversation state, including
-`agents/agent-sessions.json`; `aimebu prune -a` also wipes user settings,
-including macros, prompt overrides, role definitions/emoji, sounds, and
-`agents/agent-warning-acknowledged`. Runtime
-diagnostics (`server/aimebu.log`, `agents/agent-logs/`) are preserved by
-both prune modes. Provider usage state under `usages/` is independent of
-conversation prune; clear Copilot tokens or Ollama Cloud cookies from
-Settings -> Usages. When `AIMEBU_URL` is loopback and the server is down,
+`aimebu prune` wipes conversation state and local agent diagnostics,
+including `agents/agent-sessions.json` and `agents/agent-logs/*`;
+`aimebu prune -a` also wipes user settings, including macros, prompt
+overrides, role definitions/emoji, sounds, and
+`agents/agent-warning-acknowledged`. Runtime diagnostics
+(`server/aimebu.log`) are preserved by both prune modes. Provider usage state
+under `usages/` is independent of conversation prune; clear Copilot tokens or
+Ollama Cloud cookies from Settings -> Usages. When `AIMEBU_URL` is loopback
+and the server is down,
 the CLI falls back to pruning this config root directly. Legacy flat-layout
 state is migrated into `server/` / `agents/` on first authoritative use by
 `server serve`, `server start`, the offline-prune fallback, or `aimebu agent`;

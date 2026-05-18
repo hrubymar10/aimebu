@@ -244,7 +244,7 @@ Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
 `$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Events captured include
 `wrapper_start`, `harness_spawn`, `harness_stdout_raw` (4096-byte cap),
 `session_id_parsed`, `register_observed`, `harness_exit`, `recovery_decision`,
-and `wrapper_shutdown`. Logs are preserved by both `aimebu prune` and
+and `wrapper_shutdown`. Logs are removed by both `aimebu prune` and
 `aimebu prune -a`.
 
 ## Verifying

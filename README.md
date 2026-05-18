@@ -541,14 +541,14 @@ migrates known root-level files into `server/` and `agents/` automatically.
 `aimebu prune`, and `aimebu agent` trigger the relevant migration before they
 take ownership of state. Unknown files at the root are left alone.
 
-`aimebu prune` wipes conversation state, including
-`agents/agent-sessions.json`; `aimebu prune -a` additionally wipes user
-settings, including macros, prompt overrides, sounds, and
-`agents/agent-warning-acknowledged`. If `AIMEBU_URL` points at loopback
-(`localhost`, `127.0.0.1`, `::1`) and the server is down, the CLI performs
-the same prune directly against `AIMEBU_CONFIG_DIR` / `~/.aimebu`. Runtime
-artifacts (`server/aimebu.log`, `server/aimebu.pid`, `agents/agent-logs/`)
-are never touched by either prune mode.
+`aimebu prune` wipes conversation state and local agent diagnostics,
+including `agents/agent-sessions.json` and `agents/agent-logs/*`;
+`aimebu prune -a` additionally wipes user settings, including macros, prompt
+overrides, sounds, and `agents/agent-warning-acknowledged`. If `AIMEBU_URL`
+points at loopback (`localhost`, `127.0.0.1`, `::1`) and the server is down,
+the CLI performs the same prune directly against `AIMEBU_CONFIG_DIR` /
+`~/.aimebu`. Runtime artifacts (`server/aimebu.log`, `server/aimebu.pid`) are
+preserved by both prune modes.
 
 Provider usage state under `usages/` is independent of conversation prune.
 Use Settings -> Usages to clear provider credentials such as Copilot tokens or
@@ -577,7 +577,7 @@ Events captured: `wrapper_start`, `harness_spawn`, `harness_stdout_raw`
 (4096-byte line cap), `session_id_parsed`, `register_observed`,
 `harness_exit`, `recovery_decision`, `wrapper_shutdown`.
 
-Debug logs are runtime diagnostics and are preserved by both `aimebu prune`
+Debug logs are runtime diagnostics and are removed by both `aimebu prune`
 and `aimebu prune -a`.
 
 ## License

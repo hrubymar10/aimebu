@@ -480,22 +480,22 @@ func pruneCmd(args []string) {
 			fmt.Println("  • agents/agent-sessions.json (aimebu agent resume state)")
 			fmt.Println("  • agents/agent-warning-acknowledged (first-run warning acknowledgement)")
 			fmt.Println("  • server/macros.json         (global + per-room macros)")
+			fmt.Println("  • agents/agent-logs/*        (runtime diagnostics, opt-in via AIMEBU_AGENT_DEBUG)")
 			fmt.Println()
 			fmt.Println("Preserved:")
 			fmt.Println("  • server/aimebu.pid, server/aimebu.log (runtime artifacts)")
-			fmt.Println("  • agents/agent-logs/                   (runtime diagnostics, opt-in via AIMEBU_AGENT_DEBUG)")
 		} else {
 			fmt.Println("This will permanently delete:")
 			fmt.Println("  • server/rooms.json          (all rooms and membership)")
 			fmt.Println("  • server/messages.json       (full conversation history)")
 			fmt.Println("  • server/agents.json         (all registered agents)")
 			fmt.Println("  • agents/agent-sessions.json (aimebu agent resume state)")
+			fmt.Println("  • agents/agent-logs/*        (runtime diagnostics, opt-in via AIMEBU_AGENT_DEBUG)")
 			fmt.Println()
 			fmt.Println("Preserved:")
 			fmt.Println("  • agents/agent-warning-acknowledged (first-run warning acknowledgement)")
 			fmt.Println("  • server/macros.json         (global + per-room macros)")
 			fmt.Println("  • server/aimebu.pid, server/aimebu.log (runtime artifacts)")
-			fmt.Println("  • agents/agent-logs/                   (runtime diagnostics, opt-in via AIMEBU_AGENT_DEBUG)")
 		}
 		fmt.Print("\nAre you sure? [y/N]: ")
 		scanner := bufio.NewScanner(os.Stdin)
@@ -514,7 +514,7 @@ func pruneCmd(args []string) {
 	}
 	fmt.Println(client.PrettyJSON(result))
 
-	// agent-sessions.json is always removed (conversation state); user-setting
+	// agent-sessions.json and debug logs are always removed; user-setting
 	// markers are only removed with -a.
 	if err := pruneLocalSidecars(rootDir, all); err != nil {
 		fmt.Fprintf(os.Stderr, "warn: %v\n", err)
@@ -556,6 +556,10 @@ func pruneLocalSidecars(rootDir string, includeSettings bool) error {
 		}
 	}
 
+	if err := removeDirContents(filepath.Join(rootDir, "agents", "agent-logs")); err != nil {
+		return fmt.Errorf("could not remove agent logs: %w", err)
+	}
+
 	if !includeSettings {
 		return nil
 	}
@@ -569,6 +573,23 @@ func pruneLocalSidecars(rootDir string, includeSettings bool) error {
 		}
 	}
 
+	return nil
+}
+
+func removeDirContents(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

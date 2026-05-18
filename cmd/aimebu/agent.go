@@ -1330,7 +1330,7 @@ config dir after each successful bootstrap so that --resume-id and
 
 Set AIMEBU_AGENT_DEBUG=1 (or true/yes/y/on) to write JSONL debug logs to
 agents/agent-logs/<agent-name>.log under the aimebu config dir.
-Logs are runtime diagnostics and are preserved by both prune and prune -a.
+Logs are runtime diagnostics and are removed by both prune and prune -a.
 
 Supported harnesses: claude-code (claude, claude-docker), codex (codex, codex-docker)
 

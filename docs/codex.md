@@ -213,7 +213,7 @@ Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
 codex-specific recovery events like `thread not found`. Events captured
 include `wrapper_start`, `harness_spawn`, `harness_stdout_raw` (4096-byte
 cap), `session_id_parsed`, `register_observed`, `harness_exit`,
-`recovery_decision`, and `wrapper_shutdown`. Logs are preserved by both
+`recovery_decision`, and `wrapper_shutdown`. Logs are removed by both
 `aimebu prune` and `aimebu prune -a`.
 
 ## Prompting Codex to keep listening
