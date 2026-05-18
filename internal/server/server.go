@@ -869,6 +869,10 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, `invalid theme: must be "dark", "light", or ""`, http.StatusBadRequest)
 			return
 		}
+		if err := validateRetentionSettings(set); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		if set.NotificationVolume != nil {
 			v := *set.NotificationVolume
 			if v < 0 {
@@ -878,7 +882,11 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			}
 			set.NotificationVolume = &v
 		}
+		oldCleanupInterval := s.cleanupInterval()
 		s.putSettings(set)
+		if s.cleanupInterval() != oldCleanupInterval {
+			s.requestCleanupReset()
+		}
 		_ = jsonOK(w, s.getSettings())
 	})
 
@@ -1406,7 +1414,7 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	// Merge bundled defaults into the global macro map (write-once per key).
 	s.applyDefaultMacros()
 
-	// Start background cleanup (stale agents after 30min, empty rooms after 60min)
+	// Start background cleanup using settings-backed retention windows.
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
 	s.startCleanup(cleanupCtx)

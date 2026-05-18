@@ -706,6 +706,10 @@ body {
   border-color: var(--accent);
 }
 
+.retention-number-input {
+  max-width: 160px;
+}
+
 .settings-hint {
   font-size: 0.75rem;
   color: var(--text-muted);

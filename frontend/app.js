@@ -212,6 +212,11 @@
   const usagesRefreshInput = $('#usages-refresh-input');
   const usagesEnvBadge = $('#usages-env-badge');
   const usagesProviderRows = $('#usages-provider-rows');
+  const retentionStaleAgentInput = $('#retention-stale-agent-input');
+  const retentionEmptyRoomInput = $('#retention-empty-room-input');
+  const retentionCleanupIntervalInput = $('#retention-cleanup-interval-input');
+  const retentionMessageSecondsInput = $('#retention-message-seconds-input');
+  const retentionMessageCountInput = $('#retention-message-count-input');
 
   // ── Harness icons ────────────────────────────────────────────────
 
@@ -2660,6 +2665,40 @@
     renderMessages();
   }
 
+  function applyRetentionSettings() {
+    if (retentionStaleAgentInput) retentionStaleAgentInput.value = serverSettings.stale_agent_window_seconds || 1800;
+    if (retentionEmptyRoomInput) retentionEmptyRoomInput.value = serverSettings.empty_room_window_seconds || 3600;
+    if (retentionCleanupIntervalInput) retentionCleanupIntervalInput.value = serverSettings.cleanup_interval_seconds || 60;
+    if (retentionMessageSecondsInput) retentionMessageSecondsInput.value = serverSettings.message_retention_seconds || 0;
+    if (retentionMessageCountInput) retentionMessageCountInput.value = serverSettings.message_retention_count || 0;
+  }
+
+  function saveRetentionSetting(field, input) {
+    if (!input) return;
+    input.setCustomValidity('');
+    var value = parseInt(input.value, 10);
+    if (!Number.isFinite(value)) return;
+    var ok = input.checkValidity();
+    if (field === 'message_retention_seconds' && !(value === 0 || (value >= 60 && value <= 2592000))) {
+      input.setCustomValidity('Use 0 for unlimited, or a value from 60 to 2592000.');
+      ok = false;
+    }
+    if (field === 'message_retention_count' && !(value === 0 || (value >= 1 && value <= 1000000))) {
+      input.setCustomValidity('Use 0 for unlimited, or a value from 1 to 1000000.');
+      ok = false;
+    }
+    if (!ok) {
+      input.reportValidity();
+      applyRetentionSettings();
+      return;
+    }
+    var patch = {};
+    patch[field] = value;
+    saveSettings(patch).then(function () {
+      applyRetentionSettings();
+    });
+  }
+
   function loadSettings() {
     return api('GET', '/settings').then(function (data) {
       serverSettings = data || {};
@@ -2679,6 +2718,7 @@
       }
       applyDebugButtonSetting(!!serverSettings.debug_button_enabled);
       applyNotificationSettings();
+      applyRetentionSettings();
     }).catch(function () {});
   }
 
@@ -2751,7 +2791,7 @@
     settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
     });
-    var titles = { general: 'General', agents: 'Agents', notifications: 'Notifications', usages: 'Usages', macros: 'Macros', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
+    var titles = { general: 'General', retention: 'Retention', agents: 'Agents', notifications: 'Notifications', usages: 'Usages', macros: 'Macros', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
     if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
     if (section === 'usages') loadUsages();
   }
@@ -4028,6 +4068,21 @@
       applyDebugButtonSetting(next);
     });
   }
+
+  [
+    [retentionStaleAgentInput, 'stale_agent_window_seconds'],
+    [retentionEmptyRoomInput, 'empty_room_window_seconds'],
+    [retentionCleanupIntervalInput, 'cleanup_interval_seconds'],
+    [retentionMessageSecondsInput, 'message_retention_seconds'],
+    [retentionMessageCountInput, 'message_retention_count']
+  ].forEach(function (entry) {
+    var input = entry[0];
+    var field = entry[1];
+    if (!input) return;
+    input.addEventListener('change', function () {
+      saveRetentionSetting(field, input);
+    });
+  });
 
   // Notification settings
   if (notifEnabledBtn) {

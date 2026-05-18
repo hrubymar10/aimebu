@@ -84,6 +84,7 @@ type store struct {
 
 	// Tracks when a room first became empty (for cleanup)
 	roomEmptySince map[string]time.Time
+	cleanupResetCh chan struct{}
 
 	macrosMu     sync.RWMutex
 	macros       map[string]string // global shared macro map
@@ -123,6 +124,7 @@ func newStore(dir string) (*store, error) {
 		roomSubs:        make(map[string][]chan types.Message),
 		openWaits:       make(map[string]map[string]int),
 		roomEmptySince:  make(map[string]time.Time),
+		cleanupResetCh:  make(chan struct{}, 1),
 		macros:          make(map[string]string),
 		seenDefaults:    make(map[string]bool),
 		prompts:         make(map[string]string),
@@ -138,7 +140,7 @@ func newStore(dir string) (*store, error) {
 
 	// Apply cleanup rules once at startup so restarts don't accumulate
 	// agents/rooms/messages that would have been pruned by the background
-	// goroutine. Uses the same windows (30 min agent, 60 min empty room).
+	// goroutine. Uses the configured retention windows.
 	s.pruneOnStartup()
 
 	// Create the _system room if it doesn't exist yet (idempotent).
@@ -162,7 +164,8 @@ func PruneDataDir(dir string, includeSettings bool) error {
 // and rooms that are empty (after the agent prune). Messages attached to
 // deleted rooms are also removed. Called once from newStore.
 func (s *store) pruneOnStartup() {
-	agentCutoff := time.Now().UTC().Add(-30 * time.Minute)
+	now := time.Now().UTC()
+	agentCutoff := now.Add(-s.staleAgentWindow())
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -189,16 +192,15 @@ func (s *store) pruneOnStartup() {
 		room.Members = filtered
 	}
 
-	// Drop rooms that are now empty. (We don't have the 15-min grace here
-	// since roomEmptySince isn't persisted — on restart, any empty room is
-	// considered stale enough to prune. This is slightly more aggressive
-	// than the runtime rule, but acceptable on cold start.)
+	// Drop rooms that are now empty. roomEmptySince isn't persisted, so on
+	// restart any empty room is considered stale enough to prune.
 	for id, room := range s.rooms {
 		if len(room.Members) == 0 {
 			delete(s.rooms, id)
 			delete(s.messages, id)
 		}
 	}
+	s.cleanupMessagesLocked(now)
 
 	s.persist()
 
@@ -1925,17 +1927,19 @@ func (s *store) clearAll(includeSettings bool) {
 
 // ── Cleanup ───────────────────────────────────────────────────────
 
-// startCleanup runs periodic cleanup of stale agents and empty rooms.
-// - Agents with no activity for 30 minutes are removed.
-// - Rooms with no members for 60 minutes are removed.
+// startCleanup runs periodic cleanup of stale agents, empty rooms, and old
+// messages using the retention settings from settings.json.
 func (s *store) startCleanup(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(s.cleanupInterval())
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
 				s.cleanupStaleAgents()
 				s.cleanupEmptyRooms()
+				s.cleanupMessages()
+			case <-s.cleanupResetCh:
+				ticker.Reset(s.cleanupInterval())
 			case <-ctx.Done():
 				ticker.Stop()
 				return
@@ -1945,7 +1949,7 @@ func (s *store) startCleanup(ctx context.Context) {
 }
 
 func (s *store) cleanupStaleAgents() {
-	cutoff := time.Now().UTC().Add(-30 * time.Minute)
+	cutoff := time.Now().UTC().Add(-s.staleAgentWindow())
 
 	s.mu.Lock()
 
@@ -2009,7 +2013,7 @@ func (s *store) cleanupStaleAgents() {
 }
 
 func (s *store) cleanupEmptyRooms() {
-	cutoff := time.Now().UTC().Add(-60 * time.Minute)
+	cutoff := time.Now().UTC().Add(-s.emptyRoomWindow())
 
 	s.mu.Lock()
 
@@ -2044,6 +2048,63 @@ func (s *store) cleanupEmptyRooms() {
 	s.mu.Unlock()
 
 	s.broadcastRoomUpdate()
+}
+
+func (s *store) cleanupMessages() {
+	now := time.Now().UTC()
+
+	s.mu.Lock()
+	changed := s.cleanupMessagesLocked(now)
+	if changed {
+		s.persist()
+	}
+	s.mu.Unlock()
+}
+
+func (s *store) cleanupMessagesLocked(now time.Time) bool {
+	retentionWindow := s.messageRetentionWindow()
+	retentionCount := s.messageRetentionCount()
+	if retentionWindow == 0 && retentionCount == 0 {
+		return false
+	}
+
+	var cutoff time.Time
+	if retentionWindow > 0 {
+		cutoff = now.Add(-retentionWindow)
+	}
+
+	changed := false
+	for roomID, roomMessages := range s.messages {
+		start := 0
+		if retentionWindow > 0 {
+			for start < len(roomMessages) {
+				createdAt, err := time.Parse(time.RFC3339, roomMessages[start].CreatedAt)
+				if err != nil || !createdAt.Before(cutoff) {
+					break
+				}
+				start++
+			}
+		}
+		if retentionCount > 0 {
+			countStart := len(roomMessages) - retentionCount
+			if countStart > start {
+				start = countStart
+			}
+		}
+		if start > 0 {
+			kept := append([]types.Message(nil), roomMessages[start:]...)
+			s.messages[roomID] = kept
+			changed = true
+		}
+	}
+	return changed
+}
+
+func (s *store) requestCleanupReset() {
+	select {
+	case s.cleanupResetCh <- struct{}{}:
+	default:
+	}
 }
 
 // ── Macros ────────────────────────────────────────────────────────

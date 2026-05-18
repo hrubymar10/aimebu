@@ -357,7 +357,7 @@ GET    /messages/{id}                  Fetch one message by global ID (`?agent_i
 GET    /firehose                       Global SSE
 GET    /macros                         Global macros
 PUT    /macros                         Replace global macros
-GET    /settings                       User preferences (theme, debug inspector toggle, notifications, agent_id_default, …)
+GET    /settings                       User preferences (theme, debug inspector toggle, notifications, agent_id_default, retention windows, …)
 PUT    /settings                       Update user preferences
 GET    /settings/prompts               All configurable prompts with current body + metadata
 PUT    /settings/prompts/{key}         Override a prompt (body: {"value": "…"})
@@ -386,6 +386,15 @@ GET    /health                         Health check
 GET    /buildinfo                      Server version and Go runtime version (read-only)
 GET    /ws                             WebSocket push
 ```
+
+Retention settings use integer seconds in `/settings`:
+`stale_agent_window_seconds` defaults to `1800` and allows `60..2592000`,
+`empty_room_window_seconds` defaults to `3600` and allows `60..2592000`,
+`cleanup_interval_seconds` defaults to `60` and allows `10..3600`,
+`message_retention_seconds` defaults to `0` for unlimited or allows
+`60..2592000`, and `message_retention_count` defaults to `0` for unlimited or
+allows `1..1000000`. Message retention is opt-in; when enabled, clients with
+read cursors older than pruned messages may observe gaps in history.
 
 `/rooms/{id}/wait` and `/agents/{id}/wait` return `{messages: [...]}`
 on success, or `{messages: [], status: "still_waiting", keep_waiting:
@@ -435,7 +444,9 @@ three-panel layout:
   room roles show their role emoji next to member names.
 - **Settings panel** (⚙ or `{…}` button) — General (default agent ID),
   Appearance (dark/light theme, system events toggle), Debug (message debug
-  button toggle, off by default), Notifications, Macros (global only;
+  button toggle, off by default), Retention (stale-agent, empty-room,
+  cleanup interval, and global message age/count limits), Notifications,
+  Macros (global only;
   per-room macros from older installs are auto-migrated to globals on first
   load), Prompts (override per-key MCP etiquette text, tool descriptions, and
   spawn prompts; changes apply on next agent reconnect), Usages (provider
@@ -518,7 +529,7 @@ troubleshooting.
 │   ├── agents.json         # Registered agents and metadata         (conversation state)
 │   ├── macros.json         # Global + per-room macro definitions    (user settings)
 │   ├── prompts.json        # Per-key prompt overrides (empty = all defaults) (user settings)
-│   ├── settings.json       # UI preferences (theme, debug inspector, notifications…) (user settings)
+│   ├── settings.json       # UI preferences and retention settings       (user settings)
 │   ├── sounds/             # User-uploaded .mp3 / .wav notification sounds (user settings)
 │   │   ├── sounds.json     # Index of uploaded sounds (uuid, name, size, ext, uploaded_at)
 │   │   └── *.{mp3,wav}     # Uploaded audio files (UUID-named)

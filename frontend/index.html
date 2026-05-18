@@ -171,6 +171,7 @@
       <nav class="settings-nav">
         <div class="settings-nav-title">Settings</div>
         <button class="settings-nav-item active" data-section="general" type="button">General</button>
+        <button class="settings-nav-item" data-section="retention" type="button">Retention</button>
         <button class="settings-nav-item" data-section="agents" type="button">Agents</button>
         <button class="settings-nav-item" data-section="notifications" type="button">Notifications</button>
         <button class="settings-nav-item" data-section="usages" type="button">Usages</button>
@@ -233,6 +234,57 @@
               </div>
               <div class="settings-control">
                 <button id="debug-toggle-btn" class="btn btn-sm" type="button">Disabled</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Retention -->
+        <div class="settings-section" data-section="retention">
+          <div class="settings-group">
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label" for="retention-stale-agent-input">Stale agents</label>
+                <span class="settings-desc">Seconds before inactive agents are pruned. Default 1800. Range 60-2592000.</span>
+              </div>
+              <div class="settings-control">
+                <input type="number" id="retention-stale-agent-input" class="settings-text-input retention-number-input" min="60" max="2592000" step="1" value="1800">
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label" for="retention-empty-room-input">Empty rooms</label>
+                <span class="settings-desc">Seconds before empty rooms are deleted. Default 3600. Range 60-2592000.</span>
+              </div>
+              <div class="settings-control">
+                <input type="number" id="retention-empty-room-input" class="settings-text-input retention-number-input" min="60" max="2592000" step="1" value="3600">
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label" for="retention-cleanup-interval-input">Cleanup interval</label>
+                <span class="settings-desc">Seconds between cleanup sweeps. Default 60. Range 10-3600.</span>
+              </div>
+              <div class="settings-control">
+                <input type="number" id="retention-cleanup-interval-input" class="settings-text-input retention-number-input" min="10" max="3600" step="1" value="60">
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label" for="retention-message-seconds-input">Message age</label>
+                <span class="settings-desc">Seconds to keep messages. Default 0 means unlimited; otherwise range 60-2592000.</span>
+              </div>
+              <div class="settings-control">
+                <input type="number" id="retention-message-seconds-input" class="settings-text-input retention-number-input" min="0" max="2592000" step="1" value="0">
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label" for="retention-message-count-input">Message count</label>
+                <span class="settings-desc">Messages to keep per room. Default 0 means unlimited; otherwise range 1-1000000.</span>
+              </div>
+              <div class="settings-control">
+                <input type="number" id="retention-message-count-input" class="settings-text-input retention-number-input" min="0" max="1000000" step="1" value="0">
               </div>
             </div>
           </div>

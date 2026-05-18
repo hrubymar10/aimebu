@@ -227,6 +227,8 @@ holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
 `agents.json`, `macros.json`, `settings.json`, `prompts.json`, `roles.json`,
 `sounds/`, `aimebu.pid`, `aimebu.log`) and `agents/` holds agent-CLI state
 (`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
+`settings.json` stores UI preferences plus global retention settings for
+stale agents, empty rooms, cleanup cadence, and message age/count limits.
 `usages/` holds provider usage state: `config.json` (0600, refresh interval,
 percent display, provider order, enabled flags, provider secrets), `cache.json` (0644, last successful
 snapshots, no secrets), and `.lock` (stable flock target for server/CLI
