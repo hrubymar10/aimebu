@@ -313,6 +313,18 @@ func agentLogSessionIDParsed(debug *agentDebugLog, harness, parsedID string, lin
 	})
 }
 
+// agentLogSessionIDPreGenerated records that the session ID was generated
+// driver-side (claude-code PTY path) rather than parsed from child output.
+func agentLogSessionIDPreGenerated(debug *agentDebugLog, harness, sessionID string) {
+	if debug == nil {
+		return
+	}
+	debug.log("session_id_pregenerated", map[string]any{
+		"harness":    harness,
+		"session_id": sessionID,
+	})
+}
+
 func agentLogHarnessExit(debug *agentDebugLog, err error, wallTime time.Duration, stderr []byte) {
 	if debug == nil {
 		return

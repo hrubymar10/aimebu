@@ -229,6 +229,10 @@ tell it to stop.
 `aimebu agent` wraps a harness CLI so agents auto-respawn past their session
 caps and keep their identity across restarts:
 
+Configure the harness MCP server first (step 3). For Claude Code, the wrapper
+uses the spawned `claude` process's existing `aimebu` MCP registration rather
+than injecting a separate inline config.
+
 ```bash
 aimebu agent --room general -- claude
 aimebu agent --auto-room -- claude                         # room = current dir name
@@ -585,8 +589,9 @@ directory; that file is merged into `<name>.log` once registration is
 observed.
 
 Events captured: `wrapper_start`, `harness_spawn`, `harness_stdout_raw`
-(4096-byte line cap), `session_id_parsed`, `register_observed`,
-`harness_exit`, `recovery_decision`, `wrapper_shutdown`.
+(4096-byte line cap), `session_id_parsed`, `session_id_pregenerated`,
+`register_observed`, `pty_prompt_write`, `harness_exit`,
+`recovery_decision`, `wrapper_shutdown`.
 
 Debug logs are runtime diagnostics and are removed by both `aimebu prune`
 and `aimebu prune -a`.

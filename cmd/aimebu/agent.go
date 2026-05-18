@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -54,6 +55,22 @@ const (
 	agentRecoveryFailureCap = 5
 	agentRecoveryMaxBackoff = 16 * time.Second
 )
+
+var agentRegistrationLookupTimeout = 30 * time.Second
+
+func agentRegistrationMissingError(harness string) error {
+	listCommand := "the harness MCP server list"
+	docsPath := "the harness documentation"
+	switch harness {
+	case "claude-code":
+		listCommand = "claude mcp list"
+		docsPath = "docs/claude-code.md"
+	case "codex":
+		listCommand = "codex mcp list"
+		docsPath = "docs/codex.md"
+	}
+	return fmt.Errorf("spawned %s session did not call `bus_register` -- verify `%s` shows aimebu and points at an executable reachable from the harness process. See %s", harness, listCommand, docsPath)
+}
 
 var (
 	agentErrInterrupted        = errors.New("agent interrupted")
@@ -398,10 +415,8 @@ func agentResolveRooms(rooms []string, autoRoom bool) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, existing := range resolved {
-		if existing == room {
-			return resolved, nil
-		}
+	if slices.Contains(resolved, room) {
+		return resolved, nil
 	}
 	return append(resolved, room), nil
 }
@@ -474,20 +489,39 @@ func agentGenTag() string {
 	return hex.EncodeToString(b)
 }
 
+// claudeCodeAuthEnvVars holds the CLAUDE_CODE_* env vars that must not be
+// stripped — they carry authentication credentials the child process needs.
+var claudeCodeAuthEnvVars = map[string]bool{
+	"CLAUDE_CODE_OAUTH_TOKEN": true,
+	"CLAUDE_CODE_USE_BEDROCK": true,
+	"CLAUDE_CODE_USE_VERTEX":  true,
+}
+
 func agentBuildEnv(aimebuURL, harness, spawnTag string) []string {
-	out := make([]string, 0, len(os.Environ())+4)
+	out := make([]string, 0, len(os.Environ())+5)
 	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "AIMEBU_URL=") &&
-			!strings.HasPrefix(e, "AIMEBU_HARNESS=") &&
-			!strings.HasPrefix(e, "AIMEBU_AGENT_PROTOCOL=") &&
-			!strings.HasPrefix(e, "AIMEBU_AGENT_SPAWN_TAG=") {
-			out = append(out, e)
+		key, _, _ := strings.Cut(e, "=")
+		// Strip keys set explicitly below.
+		switch key {
+		case "AIMEBU_URL", "AIMEBU_HARNESS", "AIMEBU_AGENT_PROTOCOL", "AIMEBU_AGENT_SPAWN_TAG", "MCP_CONNECTION_NONBLOCKING":
+			continue
 		}
+		// Strip CLAUDE_CODE_* env vars to prevent nested-session identity leaks,
+		// except auth credentials which the child process needs.
+		if strings.HasPrefix(key, "CLAUDE_CODE_") && !claudeCodeAuthEnvVars[key] {
+			continue
+		}
+		// Strip vars that leak debugger state into child processes.
+		if key == "NODE_OPTIONS" || key == "VSCODE_INSPECTOR_OPTIONS" {
+			continue
+		}
+		out = append(out, e)
 	}
 	out = append(out,
 		"AIMEBU_URL="+aimebuURL,
 		"AIMEBU_HARNESS="+harness,
 		"AIMEBU_AGENT_PROTOCOL=agent",
+		"MCP_CONNECTION_NONBLOCKING=true",
 	)
 	if spawnTag != "" {
 		out = append(out, "AIMEBU_AGENT_SPAWN_TAG="+spawnTag)
@@ -495,11 +529,52 @@ func agentBuildEnv(aimebuURL, harness, spawnTag string) []string {
 	return out
 }
 
+// agentGenSessionID returns a random UUID v4 string for use as --session-id.
+// Session IDs are pre-generated driver-side (VS Code extension pattern) so
+// they are known before the child process runs and no output parsing is needed.
+func agentGenSessionID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		ns := time.Now().UnixNano()
+		for i := range b {
+			b[i] = byte(ns >> uint(i*4))
+		}
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// agentParseCodexThreadID scans the first 20 lines of codex bootstrap output
+// for the thread.started event. Returns the thread ID and the 1-based line
+// index, or ("", -1) if not found.
+func agentParseCodexThreadID(output []byte) (string, int) {
+	n := 0
+	for line := range strings.SplitSeq(string(output), "\n") {
+		if n >= 20 {
+			break
+		}
+		n++
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var r struct {
+			Type     string `json:"type"`
+			ThreadID string `json:"thread_id"`
+		}
+		if json.Unmarshal([]byte(line), &r) == nil && r.Type == "thread.started" && r.ThreadID != "" {
+			return r.ThreadID, n
+		}
+	}
+	return "", -1
+}
+
 func agentEnvValue(env []string, key string) string {
 	prefix := key + "="
 	for _, entry := range env {
-		if strings.HasPrefix(entry, prefix) {
-			return strings.TrimPrefix(entry, prefix)
+		if v, ok := strings.CutPrefix(entry, prefix); ok {
+			return v
 		}
 	}
 	return ""
@@ -716,12 +791,26 @@ func agentResolveResume(resumeID, resumeName, name, harness string, sessions []a
 }
 
 // agentBootstrapArgs returns argv (excluding command[0]) for the initial
-// non-interactive session. For codex, user flags must precede the positional
-// prompt; for claude-code, flags precede nothing (prompt is flagged via -p).
-func agentBootstrapArgs(harness, prompt string, userArgs []string) []string {
+// session bootstrap.
+//
+// For claude-code: PTY interactive mode. Prompt is written to the PTY
+// after the ❯ ready canary is seen, not via argv. Session ID is pre-generated
+// driver-side (--session-id confirmed to work in interactive mode). No
+// stream-json flags: PTY mode runs the normal interactive UI; turn completion
+// is signalled by process exit (context-cap hit), not per-turn result events.
+// The spawned Claude process must already have an aimebu MCP server registered
+// in its own config; we do not inject --mcp-config here because that shadows
+// user config and breaks sandboxed wrappers whose filesystem differs from the
+// parent wrapper.
+//
+// For codex: prompt is the final positional argument.
+func agentBootstrapArgs(harness, prompt, sessionID, aimebuURL string, userArgs []string) []string {
 	switch harness {
 	case "claude-code":
-		args := []string{"-p", prompt, "--output-format", "json", "--dangerously-skip-permissions"}
+		args := []string{
+			"--session-id", sessionID,
+			"--dangerously-skip-permissions",
+		}
 		return append(args, userArgs...)
 	case "codex":
 		args := []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}
@@ -732,10 +821,18 @@ func agentBootstrapArgs(harness, prompt string, userArgs []string) []string {
 }
 
 // agentResumeArgs returns argv for resuming an established session.
-func agentResumeArgs(harness, sessionID, prompt string, userArgs []string) []string {
+//
+// For claude-code: PTY interactive mode. --resume carries the session
+// ID; prompt is written to the PTY after the ❯ ready canary. No stream-json
+// flags.
+// For codex: prompt is the final positional argument.
+func agentResumeArgs(harness, sessionID, prompt, aimebuURL string, userArgs []string) []string {
 	switch harness {
 	case "claude-code":
-		args := []string{"--resume", sessionID, "-p", prompt, "--dangerously-skip-permissions"}
+		args := []string{
+			"--resume", sessionID,
+			"--dangerously-skip-permissions",
+		}
 		return append(args, userArgs...)
 	case "codex":
 		args := []string{"exec", "resume", sessionID, "--json", "--dangerously-bypass-approvals-and-sandbox"}
@@ -743,41 +840,6 @@ func agentResumeArgs(harness, sessionID, prompt string, userArgs []string) []str
 		return append(args, prompt)
 	}
 	return nil
-}
-
-// agentParseSessionID extracts the session/thread ID from bootstrap stdout.
-// Scans up to 20 lines to tolerate any harness preamble before the ID event.
-func agentParseSessionID(harness string, output []byte) (string, int, error) {
-	lines := 0
-	for line := range strings.SplitSeq(string(output), "\n") {
-		if lines >= 20 {
-			break
-		}
-		lines++
-		lineIndex := lines
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		switch harness {
-		case "claude-code":
-			var r struct {
-				SessionID string `json:"session_id"`
-			}
-			if json.Unmarshal([]byte(line), &r) == nil && r.SessionID != "" {
-				return r.SessionID, lineIndex, nil
-			}
-		case "codex":
-			var r struct {
-				Type     string `json:"type"`
-				ThreadID string `json:"thread_id"`
-			}
-			if json.Unmarshal([]byte(line), &r) == nil && r.Type == "thread.started" && r.ThreadID != "" {
-				return r.ThreadID, lineIndex, nil
-			}
-		}
-	}
-	return "", -1, nil
 }
 
 func agentCommand(command, args, env []string, stdout io.Writer, stderr io.Writer) *exec.Cmd {
@@ -804,8 +866,8 @@ func agentFullID(agentName string) string {
 	return agentName + "@" + project
 }
 
-func agentBootstrapStart(harness string, command []string, prompt string, env []string, debug *agentDebugLog) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer, *agentDebugStdoutWriter, error) {
-	args := agentBootstrapArgs(harness, prompt, command[1:])
+func agentBootstrapStart(harness string, command []string, prompt, sessionID, aimebuURL string, env []string, debug *agentDebugLog) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer, *agentDebugStdoutWriter, error) {
+	args := agentBootstrapArgs(harness, prompt, sessionID, aimebuURL, command[1:])
 
 	buf := &bytes.Buffer{}
 	stderrBuf := &bytes.Buffer{}
@@ -820,29 +882,30 @@ func agentBootstrapStart(harness string, command []string, prompt string, env []
 }
 
 func agentBootstrapSession(harness string, command []string, prompt string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog) (string, string, error) {
+	// claude-code uses PTY interactive mode.
+	if harness == "claude-code" {
+		return agentBootstrapSessionPTY(harness, command, prompt, env, aimebuURL, spawnTag, knownName, sigCh, debug)
+	}
+
 	startedAt := time.Now()
-	bootstrapCmd, bootstrapBuf, stderrBuf, stdoutWriter, err := agentBootstrapStart(harness, command, prompt, env, debug)
+
+	// Codex: sessionID is extracted from stdout.
+	preSessionID := ""
+
+	bootstrapCmd, bootstrapBuf, stderrBuf, stdoutWriter, err := agentBootstrapStart(harness, command, prompt, preSessionID, aimebuURL, env, debug)
 	if err != nil {
 		return "", "", err
 	}
 
 	nameCh := make(chan string, 1)
-	if knownName != "" && !debug.enabled {
-		// Fast path: no observability needed, skip the poll goroutine.
-		nameCh <- knownName
-	} else {
-		go func() {
-			n := agentLookupName(aimebuURL, spawnTag, 30*time.Second)
-			if n != "" {
-				fmt.Fprintf(os.Stderr, "aimebu agent: registered as %s\n", n)
-				agentLogRegisterObserved(debug, n, time.Since(startedAt))
-			}
-			if n == "" {
-				n = knownName
-			}
-			nameCh <- n
-		}()
-	}
+	go func() {
+		n := agentLookupName(aimebuURL, spawnTag, agentRegistrationLookupTimeout)
+		if n != "" {
+			fmt.Fprintf(os.Stderr, "aimebu agent: registered as %s\n", n)
+			agentLogRegisterObserved(debug, n, time.Since(startedAt))
+		}
+		nameCh <- n
+	}()
 
 	doneCh := make(chan error, 1)
 	go func() { doneCh <- bootstrapCmd.Wait() }()
@@ -866,37 +929,34 @@ func agentBootstrapSession(harness string, command []string, prompt string, env 
 	}
 	stdoutWriter.Flush()
 	agentLogHarnessExit(debug, waitErr, time.Since(startedAt), stderrBuf.Bytes())
+
 	if waitErr != nil {
 		return "", "", waitErr
 	}
-	sessionID, lineIndex, err := agentParseSessionID(harness, bootstrapBuf.Bytes())
+
+	// Codex: extract thread ID from bootstrap stdout.
+	var lineIdx int
+	sessionID, lineIdx := agentParseCodexThreadID(bootstrapBuf.Bytes())
 	if sessionID == "" {
 		return "", "", fmt.Errorf("could not extract session UUID from output; cannot resume")
 	}
-	agentLogSessionIDParsed(debug, harness, sessionID, lineIndex)
-	var agentName string
-	switch {
-	case knownName == "":
-		agentName = <-nameCh
-	case debug.enabled:
-		select {
-		case n := <-nameCh:
-			if n != "" {
-				agentName = n
-			} else {
-				agentName = knownName
-			}
-		case <-time.After(time.Second):
-			agentName = knownName
-		}
-	default:
-		agentName = <-nameCh
+	agentLogSessionIDParsed(debug, harness, sessionID, lineIdx)
+
+	agentName := <-nameCh
+	if agentName == "" {
+		return "", "", agentRegistrationMissingError(harness)
 	}
 	_ = debug.setAgentName(agentName)
 	return sessionID, agentName, nil
 }
 
 func agentResumeLoop(harness string, command []string, sessionID, agentName string, rooms []string, assumeRole string, env []string, aimebuURL string, sigCh <-chan os.Signal, debug *agentDebugLog) {
+	// claude-code uses PTY interactive mode.
+	if harness == "claude-code" {
+		agentResumeLoopPTY(harness, command, sessionID, agentName, rooms, assumeRole, env, aimebuURL, sigCh, debug)
+		return
+	}
+
 	retries := 0
 	backoff := time.Second
 	lastFailure := agentRecoveryNormalEnd
@@ -939,7 +999,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 			agentLogRecoveryDecision(debug, recoveryClass, "preflight room membership missing", consecutiveFailureCount, 0)
 		}
 
-		args := agentResumeArgs(harness, sessionID, prompt, command[1:])
+		args := agentResumeArgs(harness, sessionID, prompt, aimebuURL, command[1:])
 		stdoutBuf := &bytes.Buffer{}
 		stderrBuf := &bytes.Buffer{}
 		stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(os.Stdout, stdoutBuf))

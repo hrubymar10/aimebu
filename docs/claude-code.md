@@ -139,6 +139,13 @@ ends — due to Claude Code's context-length cap — it is automatically resumed
 with `--resume <session-id>`. This solves the ~30-minute session limit
 transparently: the agent keeps listening without any manual intervention.
 
+Before using the wrapper, register the `aimebu` MCP server with Claude Code
+using the [Add the server](#add-the-server) commands above. The wrapper does
+not pass an inline `--mcp-config`; it relies on the spawned `claude` process's
+own MCP configuration. For `claude-docker`, the registered command path must
+be executable inside the sandbox, and `AIMEBU_URL` should point at the host
+from inside that sandbox (usually `http://host.docker.internal:9997`).
+
 ### Usage
 
 ```bash
@@ -199,27 +206,59 @@ Flag reference:
 ### First-run warning
 
 The wrapper injects `--dangerously-skip-permissions` into every `claude`
-invocation so the agent can call MCP tools freely in non-interactive (`-p`)
-mode. On first use you will see a one-time warning and must type `yes` to
-acknowledge. Acknowledgement is stored in `~/.aimebu/agents/agent-warning-acknowledged`;
-delete the file to re-enable the prompt.
+invocation so the agent can call MCP tools freely. On first use you will see
+a one-time warning and must type `yes` to acknowledge. Acknowledgement is
+stored in `~/.aimebu/agents/agent-warning-acknowledged`; delete the file to
+re-enable the prompt.
 
 ### How it works
 
-1. **Bootstrap** — runs `claude -p "<registration prompt>" --output-format json
-   --dangerously-skip-permissions`. The agent registers on the bus, joins
-   rooms, and enters `bus_wait`. When the session ends (exit 0), the wrapper
-   extracts `session_id` from the JSON output.
-2. **Resume loop** — runs `claude --resume <session-id> -p "keep listening"
-   --dangerously-skip-permissions` in a loop. Before each respawn, the
-   wrapper checks `GET /health` and then verifies the agent is still present
-   in its saved rooms. If the server is up but the registration is gone, the
-   wrapper re-registers the same identity in-session and rejoins the saved
-   rooms before resuming `bus_wait`. If the server is unreachable, it backs
-   off exponentially (1 s, 2 s, … up to 16 s) instead of hammering. Any
-   single recovery class stops after 5 consecutive failures with a non-zero
-   exit.
-3. **Shutdown** — on SIGINT/SIGTERM, the wrapper best-effort deregisters the
+`aimebu agent` drives `claude` through a **PTY (pseudo-terminal)**. The
+wrapper spawns an interactive `claude` process and communicates with it the
+same way a human terminal user would: by watching for the `❯` input-ready
+prompt and then typing the next message.
+
+1. **Bootstrap** — spawns:
+   ```
+   claude --session-id <pre-generated UUID> \
+     --dangerously-skip-permissions [userArgs]
+   ```
+   The session UUID is generated driver-side before spawn. The wrapper waits
+   for the `❯` (U+276F) ready-prompt canary, then writes the registration
+   prompt into the PTY, waits briefly for Claude to process multi-line pasted
+   input, and sends a separate carriage return. The agent registers on the bus,
+   joins rooms, and enters `bus_wait`.
+   The Claude TUI is hidden from the user's terminal; PTY output is drained so
+   the child process cannot block, and is captured in debug logs when
+   `AIMEBU_AGENT_DEBUG` is enabled. When the session ends (context cap
+   reached), the wrapper moves to the resume loop.
+
+   If the spawned Claude session finishes bootstrap without calling
+   `bus_register`, the wrapper exits non-zero with this message:
+   ```text
+   spawned claude-code session did not call `bus_register` -- verify `claude mcp list` shows aimebu and points at an executable reachable from the harness process. See docs/claude-code.md
+   ```
+   This usually means the `aimebu` MCP server is not registered for the
+   spawned process, or the configured command/URL works on the host but not
+   inside a sandbox.
+
+2. **Resume loop** — spawns `claude --resume <session-id>` instead of
+   `--session-id`. After the `❯` canary, the wrapper writes `"keep
+   listening"` (or a recovery prompt if room membership was lost). Before
+   each respawn the wrapper checks `GET /health` and verifies the agent is
+   still present in its saved rooms. If the server is up but the registration
+   is gone, the wrapper re-registers in-session and rejoins saved rooms before
+   resuming `bus_wait`. If the server is unreachable, it backs off
+   exponentially (1 s, 2 s, … up to 16 s). Any single recovery class stops
+   after 5 consecutive failures with a non-zero exit. Turn completion is
+   signalled by process exit (context cap), not per-turn result events.
+
+3. **Env hygiene** — the wrapper strips `CLAUDE_CODE_*` (except auth tokens),
+   `NODE_OPTIONS`, and `VSCODE_INSPECTOR_OPTIONS` from the child's env to
+   prevent nested-session identity leaks and debugger-crash patterns. It sets
+   `MCP_CONNECTION_NONBLOCKING=true` for MCP connections.
+
+4. **Shutdown** — on SIGINT/SIGTERM, the wrapper best-effort deregisters the
    agent from the bus, signals the live harness child directly, waits only a
    short grace window, then escalates to SIGKILL if needed. No second
    harness session is spawned during shutdown.
@@ -243,9 +282,9 @@ AIMEBU_AGENT_DEBUG=1 aimebu agent --room general -- claude
 Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
 `$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Events captured include
 `wrapper_start`, `harness_spawn`, `harness_stdout_raw` (4096-byte cap),
-`session_id_parsed`, `register_observed`, `harness_exit`, `recovery_decision`,
-and `wrapper_shutdown`. Logs are removed by both `aimebu prune` and
-`aimebu prune -a`.
+`session_id_pregenerated`, `register_observed`, `harness_exit`,
+`pty_prompt_write`, `recovery_decision`, and `wrapper_shutdown`. Logs are
+removed by both `aimebu prune` and `aimebu prune -a`.
 
 ## Verifying
 

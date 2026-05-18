@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -399,6 +400,173 @@ func writeAgentFile(t *testing.T, path, body string) {
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
+// ── PTY interactive mode tests ───────────────────────────────────────────────
+
+func TestAgentBootstrapArgsClaudeCode(t *testing.T) {
+	sessionID := "test-session-uuid"
+	args := agentBootstrapArgs("claude-code", "the prompt text", sessionID, "http://localhost:9997", []string{"--extra"})
+	joined := strings.Join(args, " ")
+
+	for _, must := range []string{
+		"--session-id test-session-uuid",
+		"--dangerously-skip-permissions",
+		"--extra",
+	} {
+		if !contains(joined, must) {
+			t.Errorf("bootstrap args missing %q; got: %s", must, joined)
+		}
+	}
+	// PTY mode: no stream-json flags; prompt goes through the PTY after the ❯ canary.
+	for _, forbidden := range []string{
+		"--output-format",
+		"--input-format",
+		"--verbose",
+		"-p ",
+		" -p",
+		"--resume",
+		"--mcp-config",
+	} {
+		if contains(joined, forbidden) {
+			t.Errorf("bootstrap args must not contain %q; got: %s", forbidden, joined)
+		}
+	}
+}
+
+func TestAgentResumeArgsClaudeCode(t *testing.T) {
+	sessionID := "test-session-uuid"
+	args := agentResumeArgs("claude-code", sessionID, "keep listening", "http://localhost:9997", nil)
+	joined := strings.Join(args, " ")
+
+	for _, must := range []string{
+		"--resume test-session-uuid",
+		"--dangerously-skip-permissions",
+	} {
+		if !contains(joined, must) {
+			t.Errorf("resume args missing %q; got: %s", must, joined)
+		}
+	}
+	// PTY mode: no stream-json flags; "keep listening" goes through the PTY after
+	// the ❯ canary. --session-id must NOT appear alongside --resume.
+	for _, forbidden := range []string{
+		"--output-format",
+		"--input-format",
+		"--verbose",
+		"-p ",
+		" -p",
+		"--session-id",
+		"--mcp-config",
+	} {
+		if contains(joined, forbidden) {
+			t.Errorf("resume args must not contain %q; got: %s", forbidden, joined)
+		}
+	}
+}
+
+func TestAgentClaudeCodeArgsDoNotInjectMCPConfig(t *testing.T) {
+	bootstrap := agentBootstrapArgs("claude-code", "prompt", "sid", "http://localhost:9997", nil)
+	resume := agentResumeArgs("claude-code", "sid", "keep listening", "http://localhost:9997", nil)
+
+	for name, args := range map[string][]string{"bootstrap": bootstrap, "resume": resume} {
+		for _, arg := range args {
+			if arg == "--mcp-config" {
+				t.Fatalf("%s args must not inject --mcp-config: %v", name, args)
+			}
+		}
+	}
+}
+
+func TestAgentPTYCanaryConstant(t *testing.T) {
+	// agentPTYCanary must be the UTF-8 encoding of U+276F (❯), the character
+	// claude's interactive mode emits when it is ready for input.
+	const wantRune = '❯'
+	if agentPTYCanary != string(wantRune) {
+		t.Errorf("agentPTYCanary = %q, want %q (U+276F)", agentPTYCanary, string(wantRune))
+	}
+}
+
+func TestAgentPTYBackoff(t *testing.T) {
+	d := time.Second
+	d = agentPTYBackoff(d)
+	if d != 2*time.Second {
+		t.Fatalf("first double: got %v, want 2s", d)
+	}
+	for range 20 {
+		d = agentPTYBackoff(d)
+	}
+	if d != agentRecoveryMaxBackoff {
+		t.Fatalf("after many doublings: got %v, want %v (agentRecoveryMaxBackoff)", d, agentRecoveryMaxBackoff)
+	}
+}
+
+func TestAgentBuildEnvStripping(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "vscode")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "token-value")
+	t.Setenv("NODE_OPTIONS", "--inspect-brk")
+	t.Setenv("VSCODE_INSPECTOR_OPTIONS", "some-value")
+	// Inherited MCP_CONNECTION_NONBLOCKING must be overwritten to "true".
+	t.Setenv("MCP_CONNECTION_NONBLOCKING", "false")
+
+	env := agentBuildEnv("http://localhost:9997", "claude-code", "abc123")
+
+	envMap := make(map[string]string)
+	for _, e := range env {
+		k, v, _ := strings.Cut(e, "=")
+		envMap[k] = v
+	}
+
+	for _, stripped := range []string{"CLAUDE_CODE_ENTRYPOINT", "NODE_OPTIONS", "VSCODE_INSPECTOR_OPTIONS"} {
+		if _, ok := envMap[stripped]; ok {
+			t.Errorf("%s should be stripped but is present", stripped)
+		}
+	}
+	if envMap["CLAUDE_CODE_OAUTH_TOKEN"] != "token-value" {
+		t.Error("CLAUDE_CODE_OAUTH_TOKEN (auth var) must be preserved")
+	}
+	if envMap["MCP_CONNECTION_NONBLOCKING"] != "true" {
+		t.Errorf("MCP_CONNECTION_NONBLOCKING = %q, want true (inherited false must be overwritten)", envMap["MCP_CONNECTION_NONBLOCKING"])
+	}
+}
+
+func TestAgentPTYWritePromptSendsSeparateEnter(t *testing.T) {
+	oldDelay := agentPTYSubmitDelay
+	agentPTYSubmitDelay = 0
+	defer func() { agentPTYSubmitDelay = oldDelay }()
+
+	var buf bytes.Buffer
+	agentPTYWritePrompt(&buf, "line one\nline two", nil)
+
+	want := "line one\nline two\r"
+	if got := buf.String(); got != want {
+		t.Fatalf("prompt bytes = %q, want %q", got, want)
+	}
+}
+
+// TestAgentNoSessionIDParsingForClaudeCode is a regression guard: the old
+// protocol extracted session_id from JSON output (-p path). The PTY path
+// pre-generates the session ID driver-side, so neither -p nor any output
+// parsing should appear in claude-code bootstrap args.
+func TestAgentNoSessionIDParsingForClaudeCode(t *testing.T) {
+	sid := "pre-generated-uuid-abc"
+	args := agentBootstrapArgs("claude-code", "prompt", sid, "http://localhost:9997", nil)
+
+	// Pre-generated ID must appear as --session-id value.
+	found := false
+	for i, a := range args {
+		if a == "--session-id" && i+1 < len(args) && args[i+1] == sid {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("pre-generated session ID not found in --session-id arg")
+	}
+	// -p must not be present (was the old parse-from-output path's delivery vehicle).
+	for _, a := range args {
+		if a == "-p" {
+			t.Fatal("claude-code bootstrap must not use -p; session ID is pre-generated")
+		}
+	}
+}
+
 func TestAgentDebugLogRenamesPreRegisterFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("AIMEBU_CONFIG_DIR", dir)
@@ -523,6 +691,80 @@ func TestAgentBootstrapSessionDebugLogging(t *testing.T) {
 	stdoutRecord := firstDebugEvent(records, "harness_stdout_raw")
 	if got := stdoutRecord["line"]; got != `{"type":"thread.started","thread_id":"thread-123"}` {
 		t.Fatalf("first stdout line = %v", got)
+	}
+}
+
+func TestAgentBootstrapSessionRequiresRegistration(t *testing.T) {
+	oldTimeout := agentRegistrationLookupTimeout
+	agentRegistrationLookupTimeout = 10 * time.Millisecond
+	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agents":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	harnessDir := t.TempDir()
+	codexPath := filepath.Join(harnessDir, "fake-codex.sh")
+	codexScript := "#!/bin/sh\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"thread-123\"}\\n'\n"
+	if err := os.WriteFile(codexPath, []byte(codexScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	claudePath := filepath.Join(harnessDir, "fake-claude.sh")
+	claudeScript := "#!/bin/sh\nprintf '\\342\\235\\257'\nsleep 0.05\n"
+	if err := os.WriteFile(claudePath, []byte(claudeScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		harness   string
+		command   string
+		knownName string
+		wantHint  string
+	}{
+		{name: "codex fresh bootstrap", harness: "codex", command: codexPath, wantHint: "codex mcp list"},
+		{name: "codex recovery with known name", harness: "codex", command: codexPath, knownName: "worker", wantHint: "codex mcp list"},
+		{name: "claude pty fresh bootstrap", harness: "claude-code", command: claudePath, wantHint: "claude mcp list"},
+		{name: "claude pty recovery with known name", harness: "claude-code", command: claudePath, knownName: "worker", wantHint: "claude mcp list"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := agentBootstrapSession(
+				tc.harness,
+				[]string{tc.command},
+				"register please",
+				agentBuildEnv(server.URL, tc.harness, "missingregister1234"),
+				server.URL,
+				"missingregister1234",
+				tc.knownName,
+				make(chan os.Signal, 1),
+				nil,
+			)
+			if err == nil {
+				t.Fatal("expected missing registration error")
+			}
+			if got := err.Error(); !contains(got, "bus_register") || !contains(got, tc.wantHint) {
+				t.Fatalf("error %q does not explain missing MCP registration", got)
+			}
+		})
+	}
+}
+
+func TestAgentRegistrationMissingErrorIsHarnessAware(t *testing.T) {
+	codexErr := agentRegistrationMissingError("codex").Error()
+	if !contains(codexErr, "codex mcp list") || !contains(codexErr, "docs/codex.md") {
+		t.Fatalf("codex error is not codex-specific: %q", codexErr)
+	}
+
+	claudeErr := agentRegistrationMissingError("claude-code").Error()
+	if !contains(claudeErr, "claude mcp list") || !contains(claudeErr, "docs/claude-code.md") {
+		t.Fatalf("claude error is not claude-specific: %q", claudeErr)
 	}
 }
 

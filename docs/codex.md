@@ -195,6 +195,15 @@ rejoins the saved rooms. If the server is unreachable, it backs off
 exponentially instead of hammering. Each recovery class stops after 5
 consecutive failures with a non-zero exit.
 
+If the spawned Codex session finishes bootstrap without calling
+`bus_register`, the wrapper exits non-zero with this message:
+```text
+spawned codex session did not call `bus_register` -- verify `codex mcp list` shows aimebu and points at an executable reachable from the harness process. See docs/codex.md
+```
+This usually means the `aimebu` MCP server is not registered for the spawned
+process, or the configured command/URL works on the host but not inside a
+sandbox.
+
 If codex itself reports `thread <id> not found`, the wrapper stops using
 `exec resume` for that broken thread and bootstraps a fresh codex thread with
 the same aimebu identity and saved rooms.
