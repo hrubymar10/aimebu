@@ -34,6 +34,7 @@ type agentSession struct {
 	Harness    string    `json:"harness"`
 	SessionID  string    `json:"session_id"`
 	Name       string    `json:"name"`
+	Model      string    `json:"model,omitempty"`
 	Rooms      []string  `json:"rooms,omitempty"`
 	AssumeRole string    `json:"assume_role,omitempty"`
 	Command    []string  `json:"command"`
@@ -68,6 +69,9 @@ func agentRegistrationMissingError(harness string) error {
 	case "codex":
 		listCommand = "codex mcp list"
 		docsPath = "docs/codex.md"
+	case "pi":
+		listCommand = "cat ~/.pi/agent/mcp.json"
+		docsPath = "docs/pi.md"
 	}
 	return fmt.Errorf("spawned %s session did not call `bus_register` -- verify `%s` shows aimebu and points at an executable reachable from the harness process. See %s", harness, listCommand, docsPath)
 }
@@ -148,6 +152,7 @@ func agentCmd(args []string) {
 	resumeName := "" // --resume-name
 	autoRoom := false
 	assumeRole := ""
+	modelSlug := ""
 
 	i := 0
 	for i < len(args) {
@@ -182,6 +187,13 @@ func agentCmd(args []string) {
 				os.Exit(1)
 			}
 			assumeRole = args[i+1]
+			i += 2
+		case "--model":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "aimebu agent: --model requires a value")
+				os.Exit(1)
+			}
+			modelSlug = args[i+1]
 			i += 2
 		case "--resume-id":
 			if i+1 >= len(args) {
@@ -219,6 +231,9 @@ func agentCmd(args []string) {
 				i++
 			case strings.HasPrefix(args[i], "--assume-role="):
 				assumeRole = strings.TrimPrefix(args[i], "--assume-role=")
+				i++
+			case strings.HasPrefix(args[i], "--model="):
+				modelSlug = strings.TrimPrefix(args[i], "--model=")
 				i++
 			case strings.HasPrefix(args[i], "--resume-id="):
 				resumeID = strings.TrimPrefix(args[i], "--resume-id=")
@@ -284,10 +299,10 @@ func agentCmd(args []string) {
 	}
 
 	switch harness {
-	case "claude-code", "codex":
+	case "claude-code", "codex", "pi":
 		// supported
 	default:
-		fmt.Fprintf(os.Stderr, "aimebu agent: harness %q is not yet supported.\nCurrently supported: claude-code (claude, claude-docker), codex (codex, codex-docker).\n", harness)
+		fmt.Fprintf(os.Stderr, "aimebu agent: harness %q is not yet supported.\nCurrently supported: claude-code (claude, claude-docker), codex (codex, codex-docker), pi (pi, pi-docker).\n", harness)
 		os.Exit(1)
 	}
 
@@ -331,6 +346,12 @@ func agentCmd(args []string) {
 		if assumeRole == "" {
 			assumeRole = entry.AssumeRole
 		}
+		if modelSlug == "" {
+			modelSlug = entry.Model
+		}
+		if harness == "pi" && modelSlug == "" {
+			modelSlug = agentHarvestPiDefaultModel(os.Environ())
+		}
 		if assumeRole != "" && len(entry.Rooms) != 1 {
 			fmt.Fprintln(os.Stderr, "aimebu agent: --assume-role requires exactly one saved launch room")
 			os.Exit(1)
@@ -340,7 +361,7 @@ func agentCmd(args []string) {
 		agentLogWrapperStart(debug, args, harness, entry.Rooms, spawnTag, resumeMode, aimebuURL, os.Getenv("AIMEBU_HARNESS"))
 		childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 		fmt.Fprintf(os.Stderr, "aimebu agent: resuming session %s as %s\n", entry.SessionID, entry.Name)
-		agentResumeLoop(harness, command, entry.SessionID, entry.Name, entry.Rooms, assumeRole, childEnv, aimebuURL, sigCh, debug)
+		agentResumeLoop(harness, command, entry.SessionID, entry.Name, entry.Rooms, assumeRole, modelSlug, childEnv, aimebuURL, sigCh, debug)
 		return
 	}
 
@@ -359,7 +380,11 @@ func agentCmd(args []string) {
 
 	childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 
-	prompt := agentBuildBootstrapPrompt(aimebuURL, harness, spawnTag, rooms, name, assumeRole)
+	if harness == "pi" && modelSlug == "" {
+		modelSlug = agentHarvestPiDefaultModel(os.Environ())
+	}
+
+	prompt := agentBuildBootstrapPrompt(aimebuURL, harness, spawnTag, rooms, name, assumeRole, modelSlug)
 
 	spawnLog := fmt.Sprintf("aimebu agent: spawning %s (harness=%s", filepath.Base(command[0]), harness)
 	if len(rooms) > 0 {
@@ -370,7 +395,7 @@ func agentCmd(args []string) {
 	}
 	fmt.Fprintln(os.Stderr, spawnLog+")…")
 
-	sessionID, agentName, err := agentBootstrapSession(harness, command, prompt, childEnv, aimebuURL, spawnTag, name, sigCh, debug)
+	sessionID, agentName, err := agentBootstrapSession(harness, command, prompt, modelSlug, childEnv, aimebuURL, spawnTag, name, sigCh, debug)
 	if errors.Is(err, agentErrInterrupted) {
 		return
 	}
@@ -392,6 +417,7 @@ func agentCmd(args []string) {
 			Harness:    harness,
 			SessionID:  sessionID,
 			Name:       agentName,
+			Model:      modelSlug,
 			Rooms:      append([]string(nil), rooms...),
 			AssumeRole: assumeRole,
 			Command:    command,
@@ -399,7 +425,7 @@ func agentCmd(args []string) {
 		})
 	}
 
-	agentResumeLoop(harness, command, sessionID, agentName, rooms, assumeRole, childEnv, aimebuURL, sigCh, debug)
+	agentResumeLoop(harness, command, sessionID, agentName, rooms, assumeRole, modelSlug, childEnv, aimebuURL, sigCh, debug)
 }
 
 func agentResolveRooms(rooms []string, autoRoom bool) ([]string, error) {
@@ -580,6 +606,38 @@ func agentEnvValue(env []string, key string) string {
 	return ""
 }
 
+func agentHarvestPiDefaultModel(env []string) string {
+	agentDir := ""
+	for _, entry := range env {
+		if v, ok := strings.CutPrefix(entry, "PI_CODING_AGENT_DIR="); ok {
+			agentDir = strings.TrimSpace(v)
+			break
+		}
+	}
+	if agentDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return ""
+		}
+		agentDir = filepath.Join(home, ".pi", "agent")
+	}
+	data, err := os.ReadFile(filepath.Join(agentDir, "settings.json"))
+	if err != nil {
+		return ""
+	}
+	var settings struct {
+		DefaultModel string `json:"defaultModel"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return ""
+	}
+	model := strings.TrimSpace(settings.DefaultModel)
+	if model == "" {
+		return ""
+	}
+	return model
+}
+
 // ── Spawn prompt templates ─────────────────────────────────────────
 // These are the compiled-in defaults. The running server may override any of
 // these via /settings/prompts; agentFetchPromptTemplate falls back to the
@@ -591,16 +649,20 @@ func agentEnvValue(env []string, key string) string {
 //   {{meta_json}}     — raw meta JSON (e.g. {"protocol":"agent","spawn_tag":"…"})
 //   {{rooms_section}} — "Join these rooms: X.\n\n" when rooms are set, else ""
 //   {{assume_role_section}} — optional role-consumption instructions.
+//   {{model_instruction}} — optional instruction for harnesses with wrapper-known model metadata.
 
 const agentBootstrapTemplate = `You're an aimebu bus agent. Register via the bus_register MCP tool (model=<your model slug>, harness={{harness}}, meta={{meta_json}}). The server will assign you a name.
+{{model_instruction}}
 
 {{rooms_section}}{{assume_role_section}}Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.`
 
 const agentBootstrapReclaimTemplate = `You're an aimebu bus agent. Register via the bus_register MCP tool with name={{force_name}}, force=true, model=<your model slug>, harness={{harness}}, meta={{meta_json}}. This reclaims your prior identity.
+{{model_instruction}}
 
 {{rooms_section}}{{assume_role_section}}Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.`
 
 const agentRecoveryTemplate = `You're an aimebu bus agent recovering a stale bus session. Register via the bus_register MCP tool with name={{force_name}}, force=true, model=<your model slug>, harness={{harness}}, meta={{meta_json}}. This reclaims your prior identity.
+{{model_instruction}}
 
 {{rooms_section}}{{assume_role_section}}Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.`
 
@@ -644,15 +706,20 @@ func agentFetchPromptTemplate(aimebuURL, key, fallback string) string {
 }
 
 // agentApplyPromptTokens substitutes {{tokens}} in a prompt template.
-func agentApplyPromptTokens(template, harness, metaJSON, forceName, roomsSection, assumeRoleSection string) string {
+func agentApplyPromptTokens(template, harness, metaJSON, forceName, roomsSection, assumeRoleSection, modelInstruction string) string {
 	r := strings.NewReplacer(
 		"{{harness}}", fmt.Sprintf("%q", harness),
 		"{{meta_json}}", metaJSON,
 		"{{force_name}}", fmt.Sprintf("%q", forceName),
 		"{{rooms_section}}", roomsSection,
 		"{{assume_role_section}}", assumeRoleSection,
+		"{{model_instruction}}", modelInstruction,
 	)
-	return r.Replace(template)
+	out := r.Replace(template)
+	if modelInstruction != "" && !strings.Contains(template, "{{model_instruction}}") {
+		out = strings.TrimRight(out, "\n") + "\n" + modelInstruction
+	}
+	return out
 }
 
 func agentAssumeRoleSection(roleKey string, rooms []string) string {
@@ -668,7 +735,7 @@ func agentAssumeRoleSection(roleKey string, rooms []string) string {
 
 // agentBuildBootstrapPrompt builds the prompt for the initial bootstrap session.
 // When forceName is set, the agent is instructed to reclaim that identity.
-func agentBuildBootstrapPrompt(aimebuURL, harness, spawnTag string, rooms []string, forceName, assumeRole string) string {
+func agentBuildBootstrapPrompt(aimebuURL, harness, spawnTag string, rooms []string, forceName, assumeRole, modelSlug string) string {
 	roomsSection := ""
 	if len(rooms) > 0 {
 		roomsSection = "Join these rooms: " + strings.Join(rooms, ", ") + ".\n\n"
@@ -679,16 +746,24 @@ func agentBuildBootstrapPrompt(aimebuURL, harness, spawnTag string, rooms []stri
 	} else {
 		tmpl = agentFetchPromptTemplate(aimebuURL, "agent.bootstrap", agentBootstrapTemplate)
 	}
-	return agentApplyPromptTokens(tmpl, harness, agentPromptMetaJSON(spawnTag), forceName, roomsSection, agentAssumeRoleSection(assumeRole, rooms))
+	return agentApplyPromptTokens(tmpl, harness, agentPromptMetaJSON(spawnTag), forceName, roomsSection, agentAssumeRoleSection(assumeRole, rooms), agentModelInstruction(modelSlug))
 }
 
-func agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, forceName string, rooms []string, assumeRole string) string {
+func agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, forceName string, rooms []string, assumeRole, modelSlug string) string {
 	roomsSection := ""
 	if len(rooms) > 0 {
 		roomsSection = "Join these rooms: " + strings.Join(rooms, ", ") + ".\n\n"
 	}
 	tmpl := agentFetchPromptTemplate(aimebuURL, "agent.recovery", agentRecoveryTemplate)
-	return agentApplyPromptTokens(tmpl, harness, agentPromptMetaJSON(spawnTag), forceName, roomsSection, agentAssumeRoleSection(assumeRole, rooms))
+	return agentApplyPromptTokens(tmpl, harness, agentPromptMetaJSON(spawnTag), forceName, roomsSection, agentAssumeRoleSection(assumeRole, rooms), agentModelInstruction(modelSlug))
+}
+
+func agentModelInstruction(modelSlug string) string {
+	modelSlug = strings.TrimSpace(modelSlug)
+	if modelSlug == "" {
+		return ""
+	}
+	return "For this wrapped session, pass model=" + fmt.Sprintf("%q", modelSlug) + " exactly when calling bus_register.\n"
 }
 
 func agentPromptMetaJSON(spawnTag string) string {
@@ -803,8 +878,8 @@ func agentResolveResume(resumeID, resumeName, name, harness string, sessions []a
 // user config and breaks sandboxed wrappers whose filesystem differs from the
 // parent wrapper.
 //
-// For codex: prompt is the final positional argument.
-func agentBootstrapArgs(harness, prompt, sessionID, aimebuURL string, userArgs []string) []string {
+// For codex and pi: prompt is the final positional argument.
+func agentBootstrapArgs(harness, prompt, sessionID, aimebuURL string, userArgs []string, modelSlug string) []string {
 	switch harness {
 	case "claude-code":
 		args := []string{
@@ -816,6 +891,13 @@ func agentBootstrapArgs(harness, prompt, sessionID, aimebuURL string, userArgs [
 		args := []string{"exec", "--json", "--dangerously-bypass-approvals-and-sandbox"}
 		args = append(args, userArgs...)
 		return append(args, prompt)
+	case "pi":
+		args := []string{"--mode", "json"}
+		if modelSlug != "" {
+			args = append(args, "--model", modelSlug)
+		}
+		args = append(args, userArgs...)
+		return append(args, prompt)
 	}
 	return nil
 }
@@ -825,8 +907,8 @@ func agentBootstrapArgs(harness, prompt, sessionID, aimebuURL string, userArgs [
 // For claude-code: PTY interactive mode. --resume carries the session
 // ID; prompt is written to the PTY after the ❯ ready canary. No stream-json
 // flags.
-// For codex: prompt is the final positional argument.
-func agentResumeArgs(harness, sessionID, prompt, aimebuURL string, userArgs []string) []string {
+// For codex and pi: prompt is the final positional argument.
+func agentResumeArgs(harness, sessionID, prompt, aimebuURL string, userArgs []string, modelSlug string) []string {
 	switch harness {
 	case "claude-code":
 		args := []string{
@@ -836,6 +918,13 @@ func agentResumeArgs(harness, sessionID, prompt, aimebuURL string, userArgs []st
 		return append(args, userArgs...)
 	case "codex":
 		args := []string{"exec", "resume", sessionID, "--json", "--dangerously-bypass-approvals-and-sandbox"}
+		args = append(args, userArgs...)
+		return append(args, prompt)
+	case "pi":
+		args := []string{"--resume", "--session", sessionID, "--mode", "json"}
+		if modelSlug != "" {
+			args = append(args, "--model", modelSlug)
+		}
 		args = append(args, userArgs...)
 		return append(args, prompt)
 	}
@@ -849,6 +938,16 @@ func agentCommand(command, args, env []string, stdout io.Writer, stderr io.Write
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return cmd
+}
+
+func agentParseSessionID(harness string, output []byte) (string, int) {
+	switch harness {
+	case "codex":
+		return agentParseCodexThreadID(output)
+	case "pi":
+		return agentParsePiSessionID(output)
+	}
+	return "", -1
 }
 
 func agentFullID(agentName string) string {
@@ -866,8 +965,8 @@ func agentFullID(agentName string) string {
 	return agentName + "@" + project
 }
 
-func agentBootstrapStart(harness string, command []string, prompt, sessionID, aimebuURL string, env []string, debug *agentDebugLog) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer, *agentDebugStdoutWriter, error) {
-	args := agentBootstrapArgs(harness, prompt, sessionID, aimebuURL, command[1:])
+func agentBootstrapStart(harness string, command []string, prompt, sessionID, aimebuURL, modelSlug string, env []string, debug *agentDebugLog) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer, *agentDebugStdoutWriter, error) {
+	args := agentBootstrapArgs(harness, prompt, sessionID, aimebuURL, command[1:], modelSlug)
 
 	buf := &bytes.Buffer{}
 	stderrBuf := &bytes.Buffer{}
@@ -881,7 +980,7 @@ func agentBootstrapStart(harness string, command []string, prompt, sessionID, ai
 	return cmd, buf, stderrBuf, stdoutWriter, nil
 }
 
-func agentBootstrapSession(harness string, command []string, prompt string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog) (string, string, error) {
+func agentBootstrapSession(harness string, command []string, prompt string, modelSlug string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog) (string, string, error) {
 	// claude-code uses PTY interactive mode.
 	if harness == "claude-code" {
 		return agentBootstrapSessionPTY(harness, command, prompt, env, aimebuURL, spawnTag, knownName, sigCh, debug)
@@ -892,7 +991,7 @@ func agentBootstrapSession(harness string, command []string, prompt string, env 
 	// Codex: sessionID is extracted from stdout.
 	preSessionID := ""
 
-	bootstrapCmd, bootstrapBuf, stderrBuf, stdoutWriter, err := agentBootstrapStart(harness, command, prompt, preSessionID, aimebuURL, env, debug)
+	bootstrapCmd, bootstrapBuf, stderrBuf, stdoutWriter, err := agentBootstrapStart(harness, command, prompt, preSessionID, aimebuURL, modelSlug, env, debug)
 	if err != nil {
 		return "", "", err
 	}
@@ -934,9 +1033,8 @@ func agentBootstrapSession(harness string, command []string, prompt string, env 
 		return "", "", waitErr
 	}
 
-	// Codex: extract thread ID from bootstrap stdout.
 	var lineIdx int
-	sessionID, lineIdx := agentParseCodexThreadID(bootstrapBuf.Bytes())
+	sessionID, lineIdx := agentParseSessionID(harness, bootstrapBuf.Bytes())
 	if sessionID == "" {
 		return "", "", fmt.Errorf("could not extract session UUID from output; cannot resume")
 	}
@@ -950,7 +1048,7 @@ func agentBootstrapSession(harness string, command []string, prompt string, env 
 	return sessionID, agentName, nil
 }
 
-func agentResumeLoop(harness string, command []string, sessionID, agentName string, rooms []string, assumeRole string, env []string, aimebuURL string, sigCh <-chan os.Signal, debug *agentDebugLog) {
+func agentResumeLoop(harness string, command []string, sessionID, agentName string, rooms []string, assumeRole, modelSlug string, env []string, aimebuURL string, sigCh <-chan os.Signal, debug *agentDebugLog) {
 	// claude-code uses PTY interactive mode.
 	if harness == "claude-code" {
 		agentResumeLoopPTY(harness, command, sessionID, agentName, rooms, assumeRole, env, aimebuURL, sigCh, debug)
@@ -994,12 +1092,12 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 		prompt := "keep listening"
 		runMode := "resume"
 		if recoveryClass == agentRecoveryRegistrationLost {
-			prompt = agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, agentName, rooms, assumeRole)
+			prompt = agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, agentName, rooms, assumeRole, modelSlug)
 			fmt.Fprintf(os.Stderr, "aimebu agent: registration missing for %s, re-registering in-session\n", agentFullID(agentName))
 			agentLogRecoveryDecision(debug, recoveryClass, "preflight room membership missing", consecutiveFailureCount, 0)
 		}
 
-		args := agentResumeArgs(harness, sessionID, prompt, aimebuURL, command[1:])
+		args := agentResumeArgs(harness, sessionID, prompt, aimebuURL, command[1:], modelSlug)
 		stdoutBuf := &bytes.Buffer{}
 		stderrBuf := &bytes.Buffer{}
 		stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(os.Stdout, stdoutBuf))
@@ -1052,9 +1150,9 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 				if consecutiveFailureCount > agentRecoveryFailureCap {
 					agentFatalRecovery(outcome, sessionID, agentName)
 				}
-				recoveryPrompt := agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, agentName, rooms, assumeRole)
+				recoveryPrompt := agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, agentName, rooms, assumeRole, modelSlug)
 				fmt.Fprintf(os.Stderr, "aimebu agent: codex thread %s vanished, bootstrapping a fresh thread (%d/%d)\n", sessionID, consecutiveFailureCount, agentRecoveryFailureCap)
-				newSessionID, recoveredName, bootErr := agentBootstrapSession(harness, command, recoveryPrompt, env, aimebuURL, spawnTag, agentName, sigCh, debug)
+				newSessionID, recoveredName, bootErr := agentBootstrapSession(harness, command, recoveryPrompt, modelSlug, env, aimebuURL, spawnTag, agentName, sigCh, debug)
 				if errors.Is(bootErr, agentErrInterrupted) {
 					return
 				}
@@ -1077,6 +1175,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 					Harness:    harness,
 					SessionID:  sessionID,
 					Name:       agentName,
+					Model:      modelSlug,
 					Rooms:      append([]string(nil), rooms...),
 					AssumeRole: assumeRole,
 					Command:    command,
@@ -1376,6 +1475,8 @@ Options:
                          --resume-id as an escape hatch when the state file is missing.
   --assume-role <key>    Assign this agent to a role in the single launch room.
                          Requires exactly one resolved --room/--auto-room.
+  --model <slug>         Model slug to record for harnesses that need one-time
+                         wrapper-supplied model metadata (currently pi).
   --resume-id <uuid>     Resume a prior session by session UUID. Loads the agent name
                          from agents/agent-sessions.json in the aimebu config dir;
                          pass --name as fallback.
@@ -1392,7 +1493,7 @@ Set AIMEBU_AGENT_DEBUG=1 (or true/yes/y/on) to write JSONL debug logs to
 agents/agent-logs/<agent-name>.log under the aimebu config dir.
 Logs are runtime diagnostics and are removed by both prune and prune -a.
 
-Supported harnesses: claude-code (claude, claude-docker), codex (codex, codex-docker)
+Supported harnesses: claude-code (claude, claude-docker), codex (codex, codex-docker), pi (pi, pi-docker)
 
 Examples:
   aimebu agent -- claude
@@ -1403,5 +1504,6 @@ Examples:
   aimebu agent --resume-id <uuid> -- claude
   aimebu agent --resume-id <uuid> --name alice -- claude
   aimebu agent --harness claude-code --room dev --room general -- /usr/local/bin/claude
-  aimebu agent --room general -- codex`)
+  aimebu agent --room general -- codex
+  aimebu agent --model ollama-cloud/gemma4:31b --room general -- pi`)
 }

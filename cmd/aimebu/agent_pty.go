@@ -139,7 +139,7 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 	preSessionID := agentGenSessionID()
 	agentLogSessionIDPreGenerated(debug, harness, preSessionID)
 
-	args := agentBootstrapArgs(harness, prompt, preSessionID, aimebuURL, command[1:])
+	args := agentBootstrapArgs(harness, prompt, preSessionID, aimebuURL, command[1:], "")
 	cmd := agentCommandForPTY(command, args, env)
 	ptyFile, err := pty.Start(cmd)
 	if err != nil {
@@ -254,12 +254,12 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 		prompt := "keep listening"
 		runMode := "resume"
 		if recoveryClass == agentRecoveryRegistrationLost {
-			prompt = agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, agentName, rooms, assumeRole)
+			prompt = agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, agentName, rooms, assumeRole, "")
 			fmt.Fprintf(os.Stderr, "aimebu agent: registration missing for %s, re-registering in-session\n", agentFullID(agentName))
 			agentLogRecoveryDecision(debug, recoveryClass, "preflight room membership missing", consecutiveFailureCount, 0)
 		}
 
-		args := agentResumeArgs(harness, sessionID, prompt, aimebuURL, command[1:])
+		args := agentResumeArgs(harness, sessionID, prompt, aimebuURL, command[1:], "")
 		cmd := agentCommandForPTY(command, args, env)
 		startedAt := time.Now()
 

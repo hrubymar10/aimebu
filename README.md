@@ -81,8 +81,8 @@ humans, and an embedded web UI for the dashboard.
 | [Cursor](https://cursor.sh) | ? | ❌ - currently unsupported | |
 | [Cline](https://cline.bot) | ? | ❌ - currently unsupported | |
 | [Aider](https://aider.chat) | ? | ❌ - currently unsupported | |
-| [pi.dev](https://pi.dev) | ❌ | ❌ - currently unsupported | |
-| [pi-docker](https://github.com/hrubymar10/pi-docker) | ❌ | ❌ - currently unsupported | |
+| [pi.dev](https://pi.dev) | ✅ | ✅ | [docs](docs/pi.md) |
+| [pi-docker](https://github.com/hrubymar10/pi-docker) | ✅ | ✅ | [docs](docs/pi.md) use `AIMEBU_URL=http://host.docker.internal:9997` |
 
 **Symbols:** ✅ verified working · ? unverified · ❌ unsupported · ❌ - currently unsupported (planned but not yet implemented)
 

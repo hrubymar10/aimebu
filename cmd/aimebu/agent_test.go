@@ -306,7 +306,7 @@ func TestAgentAdvanceFailure(t *testing.T) {
 
 func TestAgentBuildRecoveryPrompt(t *testing.T) {
 	// Pass an unreachable URL so it falls back to the compiled default template.
-	prompt := agentBuildRecoveryPrompt("http://127.0.0.1:0", "codex", "", "worker", []string{"general", "dev"}, "")
+	prompt := agentBuildRecoveryPrompt("http://127.0.0.1:0", "codex", "", "worker", []string{"general", "dev"}, "", "")
 	if !contains(prompt, `name="worker", force=true`) {
 		t.Fatalf("prompt %q does not include forced reclaim", prompt)
 	}
@@ -319,7 +319,7 @@ func TestAgentBuildRecoveryPrompt(t *testing.T) {
 }
 
 func TestAgentBuildBootstrapPromptAssumeRole(t *testing.T) {
-	prompt := agentBuildBootstrapPrompt("http://127.0.0.1:0", "codex", "", []string{"general"}, "", "reviewer")
+	prompt := agentBuildBootstrapPrompt("http://127.0.0.1:0", "codex", "", []string{"general"}, "", "reviewer", "")
 	if !contains(prompt, `role_key "reviewer"`) {
 		t.Fatalf("prompt %q does not include assume-role key", prompt)
 	}
@@ -337,7 +337,7 @@ func TestAgentBuildBootstrapPromptAssumeRole(t *testing.T) {
 func TestAgentSpawnPrompt_TokenSubstitution(t *testing.T) {
 	t.Run("all four tokens substituted", func(t *testing.T) {
 		tmpl := `harness={{harness}} meta={{meta_json}} force={{force_name}} rooms={{rooms_section}}`
-		got := agentApplyPromptTokens(tmpl, "claude-code", `{"k":"v"}`, "alice", "Join these rooms: dev.\n\n", "")
+		got := agentApplyPromptTokens(tmpl, "claude-code", `{"k":"v"}`, "alice", "Join these rooms: dev.\n\n", "", "")
 		want := `harness="claude-code" meta={"k":"v"} force="alice" rooms=Join these rooms: dev.` + "\n\n"
 		if got != want {
 			t.Fatalf("got %q, want %q", got, want)
@@ -346,7 +346,7 @@ func TestAgentSpawnPrompt_TokenSubstitution(t *testing.T) {
 
 	t.Run("unknown token left literal", func(t *testing.T) {
 		tmpl := `before {{unknown_token}} after`
-		got := agentApplyPromptTokens(tmpl, "codex", `{}`, "", "", "")
+		got := agentApplyPromptTokens(tmpl, "codex", `{}`, "", "", "", "")
 		if !contains(got, "{{unknown_token}}") {
 			t.Fatalf("unknown token was removed from %q", got)
 		}
@@ -354,7 +354,7 @@ func TestAgentSpawnPrompt_TokenSubstitution(t *testing.T) {
 
 	t.Run("empty forceName and roomsSection produce valid output", func(t *testing.T) {
 		tmpl := agentBootstrapTemplate
-		got := agentApplyPromptTokens(tmpl, "codex", `{"protocol":"agent"}`, "", "", "")
+		got := agentApplyPromptTokens(tmpl, "codex", `{"protocol":"agent"}`, "", "", "", "")
 		if contains(got, "{{") {
 			t.Fatalf("unreplaced token in output: %q", got)
 		}
@@ -404,7 +404,7 @@ func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func TestAgentBootstrapArgsClaudeCode(t *testing.T) {
 	sessionID := "test-session-uuid"
-	args := agentBootstrapArgs("claude-code", "the prompt text", sessionID, "http://localhost:9997", []string{"--extra"})
+	args := agentBootstrapArgs("claude-code", "the prompt text", sessionID, "http://localhost:9997", []string{"--extra"}, "")
 	joined := strings.Join(args, " ")
 
 	for _, must := range []string{
@@ -434,7 +434,7 @@ func TestAgentBootstrapArgsClaudeCode(t *testing.T) {
 
 func TestAgentResumeArgsClaudeCode(t *testing.T) {
 	sessionID := "test-session-uuid"
-	args := agentResumeArgs("claude-code", sessionID, "keep listening", "http://localhost:9997", nil)
+	args := agentResumeArgs("claude-code", sessionID, "keep listening", "http://localhost:9997", nil, "")
 	joined := strings.Join(args, " ")
 
 	for _, must := range []string{
@@ -463,8 +463,8 @@ func TestAgentResumeArgsClaudeCode(t *testing.T) {
 }
 
 func TestAgentClaudeCodeArgsDoNotInjectMCPConfig(t *testing.T) {
-	bootstrap := agentBootstrapArgs("claude-code", "prompt", "sid", "http://localhost:9997", nil)
-	resume := agentResumeArgs("claude-code", "sid", "keep listening", "http://localhost:9997", nil)
+	bootstrap := agentBootstrapArgs("claude-code", "prompt", "sid", "http://localhost:9997", nil, "")
+	resume := agentResumeArgs("claude-code", "sid", "keep listening", "http://localhost:9997", nil, "")
 
 	for name, args := range map[string][]string{"bootstrap": bootstrap, "resume": resume} {
 		for _, arg := range args {
@@ -547,7 +547,7 @@ func TestAgentPTYWritePromptSendsSeparateEnter(t *testing.T) {
 // parsing should appear in claude-code bootstrap args.
 func TestAgentNoSessionIDParsingForClaudeCode(t *testing.T) {
 	sid := "pre-generated-uuid-abc"
-	args := agentBootstrapArgs("claude-code", "prompt", sid, "http://localhost:9997", nil)
+	args := agentBootstrapArgs("claude-code", "prompt", sid, "http://localhost:9997", nil, "")
 
 	// Pre-generated ID must appear as --session-id value.
 	found := false
@@ -652,7 +652,7 @@ func TestAgentBootstrapSessionDebugLogging(t *testing.T) {
 	agentLogWrapperStart(debug, []string{"--room", "general", "--", "codex"}, "codex", []string{"general"}, spawnTag, "bootstrap", server.URL, "codex")
 
 	env := agentBuildEnv(server.URL, "codex", spawnTag)
-	sessionID, agentID, err := agentBootstrapSession("codex", []string{harnessPath}, "keep listening", env, server.URL, spawnTag, "", make(chan os.Signal, 1), debug)
+	sessionID, agentID, err := agentBootstrapSession("codex", []string{harnessPath}, "keep listening", "", env, server.URL, spawnTag, "", make(chan os.Signal, 1), debug)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -694,6 +694,47 @@ func TestAgentBootstrapSessionDebugLogging(t *testing.T) {
 	}
 }
 
+func TestAgentBootstrapSessionFakePi(t *testing.T) {
+	oldTimeout := agentRegistrationLookupTimeout
+	agentRegistrationLookupTimeout = 50 * time.Millisecond
+	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+
+	spawnTag := "abc123def4567890"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agents":[{"id":"piper@aimebu","kind":"ai","meta":{"spawn_tag":"abc123def4567890"}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	env := agentBuildEnv(server.URL, "pi", spawnTag)
+	sessionID, agentID, err := agentBootstrapSession(
+		"pi",
+		[]string{filepath.Join("testdata", "fake-pi.sh")},
+		"register please",
+		"ollama-cloud/gemma4:31b",
+		env,
+		server.URL,
+		spawnTag,
+		"",
+		make(chan os.Signal, 1),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "pi-session-123" {
+		t.Fatalf("sessionID = %q, want pi-session-123", sessionID)
+	}
+	if agentID != "piper@aimebu" {
+		t.Fatalf("agentID = %q, want piper@aimebu", agentID)
+	}
+}
+
 func TestAgentBootstrapSessionRequiresRegistration(t *testing.T) {
 	oldTimeout := agentRegistrationLookupTimeout
 	agentRegistrationLookupTimeout = 10 * time.Millisecond
@@ -721,6 +762,7 @@ func TestAgentBootstrapSessionRequiresRegistration(t *testing.T) {
 	if err := os.WriteFile(claudePath, []byte(claudeScript), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	piPath := filepath.Join("testdata", "fake-pi.sh")
 
 	for _, tc := range []struct {
 		name      string
@@ -733,12 +775,14 @@ func TestAgentBootstrapSessionRequiresRegistration(t *testing.T) {
 		{name: "codex recovery with known name", harness: "codex", command: codexPath, knownName: "worker", wantHint: "codex mcp list"},
 		{name: "claude pty fresh bootstrap", harness: "claude-code", command: claudePath, wantHint: "claude mcp list"},
 		{name: "claude pty recovery with known name", harness: "claude-code", command: claudePath, knownName: "worker", wantHint: "claude mcp list"},
+		{name: "pi fresh bootstrap", harness: "pi", command: piPath, wantHint: "cat ~/.pi/agent/mcp.json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := agentBootstrapSession(
 				tc.harness,
 				[]string{tc.command},
 				"register please",
+				"",
 				agentBuildEnv(server.URL, tc.harness, "missingregister1234"),
 				server.URL,
 				"missingregister1234",
@@ -765,6 +809,104 @@ func TestAgentRegistrationMissingErrorIsHarnessAware(t *testing.T) {
 	claudeErr := agentRegistrationMissingError("claude-code").Error()
 	if !contains(claudeErr, "claude mcp list") || !contains(claudeErr, "docs/claude-code.md") {
 		t.Fatalf("claude error is not claude-specific: %q", claudeErr)
+	}
+
+	piErr := agentRegistrationMissingError("pi").Error()
+	if !contains(piErr, "cat ~/.pi/agent/mcp.json") || !contains(piErr, "docs/pi.md") {
+		t.Fatalf("pi error is not pi-specific: %q", piErr)
+	}
+}
+
+func TestAgentPiArgs(t *testing.T) {
+	bootstrap := agentBootstrapArgs("pi", "register now", "", "http://localhost:9997", []string{"--no-tools"}, "ollama-cloud/gemma4:31b")
+	if got := strings.Join(bootstrap, " "); got != "--mode json --model ollama-cloud/gemma4:31b --no-tools register now" {
+		t.Fatalf("bootstrap args = %q", got)
+	}
+
+	bootstrapNoModel := agentBootstrapArgs("pi", "register now", "", "http://localhost:9997", nil, "")
+	if got := strings.Join(bootstrapNoModel, " "); got != "--mode json register now" {
+		t.Fatalf("bootstrap args without model = %q", got)
+	}
+
+	resume := agentResumeArgs("pi", "pi-session-123", "keep listening", "http://localhost:9997", []string{"--no-tools"}, "ollama-cloud/gemma4:31b")
+	if got := strings.Join(resume, " "); got != "--resume --session pi-session-123 --mode json --model ollama-cloud/gemma4:31b --no-tools keep listening" {
+		t.Fatalf("resume args = %q", got)
+	}
+}
+
+func TestAgentHarvestPiDefaultModel(t *testing.T) {
+	dir := t.TempDir()
+	agentDir := filepath.Join(dir, "agent")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("settings model", func(t *testing.T) {
+		writeAgentFile(t, filepath.Join(agentDir, "settings.json"), `{"defaultProvider":"ollama-cloud","defaultModel":"gemma4:31b"}`)
+		got := agentHarvestPiDefaultModel([]string{"PI_CODING_AGENT_DIR=" + agentDir})
+		if got != "gemma4:31b" {
+			t.Fatalf("got %q, want gemma4:31b", got)
+		}
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		got := agentHarvestPiDefaultModel([]string{"PI_CODING_AGENT_DIR=" + filepath.Join(dir, "missing")})
+		if got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+
+	t.Run("malformed json", func(t *testing.T) {
+		badDir := filepath.Join(dir, "bad")
+		writeAgentFile(t, filepath.Join(badDir, "settings.json"), `{bad`)
+		got := agentHarvestPiDefaultModel([]string{"PI_CODING_AGENT_DIR=" + badDir})
+		if got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+
+	t.Run("partial settings", func(t *testing.T) {
+		partialDir := filepath.Join(dir, "partial")
+		writeAgentFile(t, filepath.Join(partialDir, "settings.json"), `{"defaultProvider":"ollama-cloud"}`)
+		got := agentHarvestPiDefaultModel([]string{"PI_CODING_AGENT_DIR=" + partialDir})
+		if got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+
+	t.Run("settings model without provider", func(t *testing.T) {
+		noProviderDir := filepath.Join(dir, "no-provider")
+		writeAgentFile(t, filepath.Join(noProviderDir, "settings.json"), `{"defaultModel":"gemma4:31b"}`)
+		got := agentHarvestPiDefaultModel([]string{"PI_CODING_AGENT_DIR=" + noProviderDir})
+		if got != "gemma4:31b" {
+			t.Fatalf("got %q, want gemma4:31b", got)
+		}
+	})
+}
+
+func TestAgentBootstrapPromptPiHarvestedModel(t *testing.T) {
+	prompt := agentBuildBootstrapPrompt("http://127.0.0.1:0", "pi", "", []string{"general"}, "", "", "gemma4:31b")
+	if !contains(prompt, `pass model="gemma4:31b" exactly`) {
+		t.Fatalf("prompt %q does not include harvested pi model slug", prompt)
+	}
+	if contains(prompt, "ollama-cloud/gemma4:31b") {
+		t.Fatalf("prompt %q unexpectedly includes provider-prefixed pi model", prompt)
+	}
+}
+
+func TestAgentPiJSONEvents(t *testing.T) {
+	output := []byte("not json\n{\"type\":\"session\",\"version\":3,\"id\":\"pi-session-123\",\"cwd\":\"/tmp\"}\n{\"type\":\"message_update\"}\n{\"type\":\"agent_end\",\"messages\":[]}\n")
+	id, line := agentParsePiSessionID(output)
+	if id != "pi-session-123" || line != 2 {
+		t.Fatalf("got id=%q line=%d, want pi-session-123 line 2", id, line)
+	}
+	if !agentPiHasAgentEnd(output) {
+		t.Fatal("expected agent_end detection")
+	}
+
+	id, line = agentParsePiSessionID([]byte("{\"type\":\"agent_end\"}\n"))
+	if id != "" || line != -1 {
+		t.Fatalf("got id=%q line=%d, want empty/-1", id, line)
 	}
 }
 

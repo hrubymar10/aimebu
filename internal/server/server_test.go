@@ -2686,7 +2686,10 @@ func TestRolesHTTP_DeleteSingleRevertsOverride(t *testing.T) {
 	}
 
 	// Verify reverted
-	resp3, _ := http.Get(srv.URL + "/roles")
+	resp3, err := http.Get(srv.URL + "/roles")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp3.Body.Close()
 	var roles []RoleEntry
 	json.NewDecoder(resp3.Body).Decode(&roles)

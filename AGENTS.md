@@ -9,11 +9,11 @@ this file, and everything under [docs/](docs/) (currently
 [docs/claude-code.md](docs/claude-code.md),
 [docs/codex.md](docs/codex.md),
 [docs/github-copilot.md](docs/github-copilot.md),
-[docs/ollama-cloud.md](docs/ollama-cloud.md), [docs/tls.md](docs/tls.md),
-and [docs/usages.md](docs/usages.md)). When your change makes any of those
-drift from reality — flags, env vars, tool names, config snippets, behaviour
-descriptions — update the docs **in the same commit**. Don't ship code changes
-and "fix the docs later".
+[docs/ollama-cloud.md](docs/ollama-cloud.md), [docs/pi.md](docs/pi.md),
+[docs/tls.md](docs/tls.md), and [docs/usages.md](docs/usages.md)). When your
+change makes any of those drift from reality — flags, env vars, tool names,
+config snippets, behaviour descriptions — update the docs **in the same
+commit**. Don't ship code changes and "fix the docs later".
 
 If while reading docs (or code) you spot something weird, wrong, or
 inconsistent that isn't part of your current task, **ask the user** before

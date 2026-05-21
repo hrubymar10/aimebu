@@ -14,7 +14,7 @@ import (
 
 // wsCmd is a command from the WebSocket client.
 type wsCmd struct {
-	Type    string   `json:"type"`              // "hello", "subscribe", "unsubscribe"
+	Type    string   `json:"type"`               // "hello", "subscribe", "unsubscribe"
 	AgentID string   `json:"agent_id,omitempty"` // for "hello"
 	Rooms   []string `json:"rooms,omitempty"`    // for "subscribe"/"unsubscribe"
 }

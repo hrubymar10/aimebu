@@ -27,8 +27,8 @@ func exportFilename(roomID, format string) string {
 }
 
 type exportEnvelope struct {
-	Room     exportRoomMeta   `json:"room"`
-	Messages []types.Message  `json:"messages"`
+	Room     exportRoomMeta  `json:"room"`
+	Messages []types.Message `json:"messages"`
 }
 
 type exportRoomMeta struct {
