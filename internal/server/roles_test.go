@@ -353,6 +353,48 @@ func TestAssignRoleSingletonConflict(t *testing.T) {
 	}
 }
 
+func TestDeregisterAgentClearsRoleBindings(t *testing.T) {
+	dir := t.TempDir()
+	SetRoleDefaults(map[string]string{"leader": "lead", "worker": "work", "reviewer": "review"})
+	s, _ := newStore(dir)
+
+	first, _, _ := s.registerAI("gpt5", "codex", "test", nil, "alpha")
+	second, _, _ := s.registerAI("gpt5", "codex", "test", nil, "bravo")
+	_, _ = s.joinRoom("room", first.ID)
+	_, _ = s.joinRoom("room", second.ID)
+
+	if err := s.assignRole("room", first.ID, "leader"); err != nil {
+		t.Fatalf("assign first leader: %v", err)
+	}
+	room := s.getRoom("room")
+	if room.Roles[first.ID] != "leader" {
+		t.Fatalf("expected first agent to hold leader role, got %q", room.Roles[first.ID])
+	}
+
+	if ok := s.deregisterAgent(first.ID); !ok {
+		t.Fatalf("deregister first agent")
+	}
+	room = s.getRoom("room")
+	if _, ok := room.Roles[first.ID]; ok {
+		t.Fatalf("expected first agent role binding to be cleared, got %v", room.Roles)
+	}
+
+	if err := s.assignRole("room", second.ID, "leader"); err != nil {
+		t.Fatalf("assign second leader after deregistration: %v", err)
+	}
+
+	var foundVacate bool
+	for _, msg := range s.messagesSince("room", 0) {
+		if msg.Body == "role \"leader\" vacated: "+first.ID+" deregistered" {
+			foundVacate = true
+			break
+		}
+	}
+	if !foundVacate {
+		t.Fatalf("expected role vacate system message")
+	}
+}
+
 func TestResolvedRoleBodyExtendsBase(t *testing.T) {
 	dir := t.TempDir()
 	SetRoleDefaults(map[string]string{"leader": "lead", "worker": "work", "reviewer": "base review"})

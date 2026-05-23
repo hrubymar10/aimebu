@@ -1490,14 +1490,20 @@ func (s *store) listAgents() []types.Agent {
 // deregisterAgent removes an agent from the registry and from every room it is
 // a member of. Returns false if the agent does not exist.
 func (s *store) deregisterAgent(agentID string) bool {
+	type vacatedRole struct {
+		roomID  string
+		roleKey string
+	}
+
 	s.mu.Lock()
 	if _, ok := s.agents[agentID]; !ok {
 		s.mu.Unlock()
 		return false
 	}
 
+	var vacated []vacatedRole
 	delete(s.agents, agentID)
-	for _, room := range s.rooms {
+	for roomID, room := range s.rooms {
 		filtered := room.Members[:0]
 		for _, member := range room.Members {
 			if member != agentID {
@@ -1505,12 +1511,19 @@ func (s *store) deregisterAgent(agentID string) bool {
 			}
 		}
 		room.Members = filtered
+		if roleKey, ok := room.Roles[agentID]; ok {
+			delete(room.Roles, agentID)
+			vacated = append(vacated, vacatedRole{roomID: roomID, roleKey: roleKey})
+		}
 	}
 	s.persist()
 	s.mu.Unlock()
 
 	s.broadcastAgentUpdate()
 	s.broadcastRoomUpdate()
+	for _, role := range vacated {
+		s.emitSystemMessage(role.roomID, fmt.Sprintf("role %q vacated: %s deregistered", role.roleKey, agentID))
+	}
 	s.emitSystemMessage("_system", agentID+" deregistered")
 	return true
 }
