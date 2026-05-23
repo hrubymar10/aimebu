@@ -54,6 +54,17 @@ func (codexProvider) Fetch(ctx context.Context, store *Store) (Snapshot, error) 
 	}
 
 	raw, detail, status, err := fetchCodexUsage(ctx, creds)
+	if err != nil && status == StatusAuthMissing && creds.RefreshToken != "" {
+		refreshed, refreshDetail, refreshErr := refreshCodexAuth(ctx, creds)
+		if refreshErr != nil {
+			return codexStatus(StatusAuthMissing, refreshErr.Error(), refreshDetail), nil
+		}
+		creds = refreshed
+		if err := saveCodexAuth(authPath, creds); err != nil {
+			return codexStatus(StatusAuthMissing, "Codex auth refresh could not be saved.", nil), nil
+		}
+		raw, detail, status, err = fetchCodexUsage(ctx, creds)
+	}
 	if err != nil {
 		snap := codexStatus(status, err.Error(), detail)
 		if status == StatusFetchError {
@@ -161,7 +172,7 @@ func refreshCodexAuth(ctx context.Context, creds codexCredentials) (codexCredent
 		return creds, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := usageHTTPClient.Do(req)
 	if err != nil {
 		return creds, nil, errors.New("Codex OAuth refresh request failed.")
 	}
@@ -289,16 +300,18 @@ func fetchCodexUsage(ctx context.Context, creds codexCredentials) (codexUsageRaw
 	if creds.AccountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", creds.AccountID)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := usageHTTPClient.Do(req)
 	if err != nil {
-		return codexUsageRaw{}, nil, StatusFetchError, errors.New("Codex usage request failed.")
+		return codexUsageRaw{}, nil, usageRequestStatus(err), errors.New("Codex usage request failed.")
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode <= 299:
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return codexUsageRaw{}, jsonShapeDetail("usage", data), StatusScopeMissing, fmt.Errorf("Codex usage endpoint rejected the OAuth token with HTTP %d.", resp.StatusCode)
+	case resp.StatusCode == http.StatusUnauthorized:
+		return codexUsageRaw{}, jsonShapeDetail("usage", data), StatusAuthMissing, fmt.Errorf("Codex usage endpoint rejected the OAuth token with HTTP %d.", resp.StatusCode)
+	case resp.StatusCode == http.StatusForbidden:
+		return codexUsageRaw{}, jsonShapeDetail("usage", data), StatusScopeMissing, fmt.Errorf("Codex usage endpoint rejected the OAuth scope with HTTP %d.", resp.StatusCode)
 	default:
 		return codexUsageRaw{}, jsonShapeDetail("usage", data), StatusFetchError, fmt.Errorf("Codex usage endpoint returned HTTP %d.", resp.StatusCode)
 	}

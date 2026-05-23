@@ -95,8 +95,9 @@ shown in the web Usages sidebar and in `aimebu usages codex --json`.
 Common failure states:
 
 - `auth_missing`: `auth.json` is missing, contains only an API key, or OAuth
-  refresh failed. Run `codex` to refresh the OAuth login.
-- `scope_missing`: the OAuth token was rejected by the usage endpoint.
+  refresh failed. A `401` from the usage endpoint triggers one refresh retry
+  before this state is shown. Run `codex` to refresh the OAuth login.
+- `scope_missing`: the OAuth token lacks access to the usage endpoint.
 - `fetch_error`: the upstream usage response changed shape. If numbers look
   wrong or windows disappear, inspect `error_detail.fields`; window shapes
   that drift far beyond the expected session/weekly durations are dropped

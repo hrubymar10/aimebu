@@ -17,6 +17,12 @@ After saving, aimebu only shows whether a cookie is configured; it never
 returns the cookie through the HTTP API, CLI, cache, websocket payloads, or the
 Settings UI.
 
+When a pasted header contains multiple recognized Ollama session cookies,
+aimebu tries the full header first, then retries distinct session-cookie
+candidates before treating a signed-out settings page as an expired login.
+This helps with browser headers that contain both stale and current session
+cookies.
+
 If the cookie expires, Ollama Cloud snapshots show `auth_missing`. Paste a
 fresh `Cookie` header from a signed-in browser session to resume updates.
 

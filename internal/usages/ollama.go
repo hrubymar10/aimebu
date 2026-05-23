@@ -41,7 +41,7 @@ var (
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaSignedOutAnchor = regexp.MustCompile(`(?is)(sign in to ollama|log in to ollama|/auth/login|/auth/signin)`)
 
-	ollamaHTTPClient = http.DefaultClient
+	ollamaHTTPClient = newUsageHTTPClient()
 )
 
 type ollamaCloudProvider struct{}
@@ -63,30 +63,36 @@ func (ollamaCloudProvider) Fetch(ctx context.Context, store *Store) (Snapshot, e
 	if err != nil {
 		return ollamaStatus(StatusAuthMissing, "Ollama Cloud cookie is missing a recognized session cookie.", detail), nil
 	}
-	body, detail, status, err := fetchOllamaSettingsHTML(ctx, normalized)
-	if err != nil {
-		snap := ollamaStatus(status, err.Error(), detail)
-		if status == StatusFetchError {
+	var signedOutErr error
+	var signedOutDetail *ErrorDetail
+	for _, candidate := range ollamaCookieCandidates(normalized) {
+		body, detail, status, err := fetchOllamaSettingsHTML(ctx, candidate)
+		if err != nil {
+			snap := ollamaStatus(status, err.Error(), detail)
+			if status == StatusFetchError {
+				return Snapshot{}, &SnapshotError{Snapshot: snap, Err: err}
+			}
+			return snap, nil
+		}
+		snap, detail, err := parseOllamaSettingsHTML(body)
+		if err != nil {
+			if detail != nil && detail.Fields["page"] == "signed_out" {
+				signedOutErr = err
+				signedOutDetail = detail
+				continue
+			}
+			snap = ollamaStatus(StatusFetchError, err.Error(), detail)
 			return Snapshot{}, &SnapshotError{Snapshot: snap, Err: err}
+		}
+		if detail != nil && len(detail.Fields) > 0 {
+			snap.ErrorDetail = detail
 		}
 		return snap, nil
 	}
-	snap, detail, err := parseOllamaSettingsHTML(body)
-	if err != nil {
-		status := StatusFetchError
-		if detail != nil && detail.Fields["page"] == "signed_out" {
-			status = StatusAuthMissing
-		}
-		snap = ollamaStatus(status, err.Error(), detail)
-		if status == StatusFetchError {
-			return Snapshot{}, &SnapshotError{Snapshot: snap, Err: err}
-		}
-		return snap, nil
+	if signedOutErr != nil {
+		return ollamaStatus(StatusAuthMissing, signedOutErr.Error(), signedOutDetail), nil
 	}
-	if detail != nil && len(detail.Fields) > 0 {
-		snap.ErrorDetail = detail
-	}
-	return snap, nil
+	return ollamaStatus(StatusFetchError, "Ollama Cloud settings page did not return usage data.", nil), nil
 }
 
 func parseOllamaCookieInput(input string) (map[string]string, error) {
@@ -204,6 +210,57 @@ func serializeOllamaCookies(pairs map[string]string) string {
 	return strings.Join(parts, "; ")
 }
 
+func ollamaCookieCandidates(normalized string) []string {
+	pairs := map[string]string{}
+	for _, part := range strings.Split(normalized, ";") {
+		name, value, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		value = strings.TrimSpace(value)
+		if name != "" {
+			pairs[name] = value
+		}
+	}
+	candidates := []string{normalized}
+	seen := map[string]bool{normalized: true}
+	add := func(candidate string) {
+		if candidate == "" || seen[candidate] {
+			return
+		}
+		seen[candidate] = true
+		candidates = append(candidates, candidate)
+	}
+
+	keys := make([]string, 0, len(pairs))
+	for name := range pairs {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		value := pairs[name]
+		if isOllamaSessionCookieName(name) && !strings.Contains(name, ".session-token.") {
+			add(serializeOllamaCookies(map[string]string{name: value}))
+		}
+	}
+	for _, base := range []string{"__Secure-next-auth.session-token", "next-auth.session-token"} {
+		chunked := map[string]string{}
+		if value, ok := pairs[base]; ok {
+			chunked[base] = value
+		}
+		for name, value := range pairs {
+			if strings.HasPrefix(name, base+".") {
+				chunked[name] = value
+			}
+		}
+		if len(chunked) > 0 {
+			add(serializeOllamaCookies(chunked))
+		}
+	}
+	return candidates
+}
+
 func fetchOllamaSettingsHTML(ctx context.Context, cookie string) ([]byte, *ErrorDetail, Status, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ollamaSettingsURL, nil)
 	if err != nil {
@@ -217,7 +274,7 @@ func fetchOllamaSettingsHTML(ctx context.Context, cookie string) ([]byte, *Error
 	req.Header.Set("Referer", ollamaSettingsURL)
 	resp, err := ollamaHTTPClient.Do(req)
 	if err != nil {
-		return nil, nil, StatusFetchError, errors.New("Ollama Cloud settings request failed.")
+		return nil, nil, usageRequestStatus(err), errors.New("Ollama Cloud settings request failed.")
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

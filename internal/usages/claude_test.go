@@ -125,8 +125,44 @@ func TestClaudeProviderFetchesAndNormalizesUsage(t *testing.T) {
 	if snap.Windows[0].PercentUsed != 47.5 {
 		t.Fatalf("session percent = %v, want 47.5", snap.Windows[0].PercentUsed)
 	}
-	if snap.Credits == nil || snap.Credits.Label != "Extra usage" || snap.Credits.Balance != 12.34 {
+	if snap.Credits == nil || snap.Credits.Label != "Extra usage monthly cap" || snap.Credits.Balance != 12.34 || snap.Credits.SpendLimit != 50 {
 		t.Fatalf("credits = %+v", snap.Credits)
+	}
+}
+
+func TestClaudeUsageRequestTimeout(t *testing.T) {
+	resetClaudeCodeVersionCache(t)
+	t.Setenv("PATH", t.TempDir())
+	withTimeoutHTTPTransport(t, timeoutRoundTrip)
+	_, _, status, _, err := fetchClaudeUsage(context.Background(), claudeCredentials{AccessToken: "access-secret"})
+	if err == nil {
+		t.Fatal("fetchClaudeUsage succeeded")
+	}
+	if status != StatusTimeout {
+		t.Fatalf("status = %s, want %s", status, StatusTimeout)
+	}
+}
+
+func TestClaudeUsageRetriesEmptyValuesOnce(t *testing.T) {
+	resetClaudeCodeVersionCache(t)
+	t.Setenv("PATH", t.TempDir())
+	calls := 0
+	withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return httpJSON(200, `{}`), nil
+		}
+		return httpJSON(200, `{"five_hour":{"utilization":4,"resets_at":"2030-01-01T00:00:00Z"}}`), nil
+	})
+	raw, _, _, _, err := fetchClaudeUsage(context.Background(), claudeCredentials{AccessToken: "access-secret"})
+	if err != nil {
+		t.Fatalf("fetchClaudeUsage: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+	if raw.FiveHour == nil || raw.FiveHour.Utilization == nil || *raw.FiveHour.Utilization != 4 {
+		t.Fatalf("raw = %+v", raw)
 	}
 }
 
@@ -306,15 +342,34 @@ func TestNormalizeClaudeUsageDetailsMissingWeeklyFallback(t *testing.T) {
 	}
 }
 
-func TestClaudeExtraUsageBalanceUnits(t *testing.T) {
-	if got := claudeExtraUsageBalance(1234, claudeCredentials{SubscriptionType: "team"}); got != 12.34 {
-		t.Fatalf("team balance = %v, want 12.34", got)
+func TestClaudeExtraUsageAmountUsesMinorUnits(t *testing.T) {
+	if got := claudeExtraUsageAmount(1234); got != 12.34 {
+		t.Fatalf("amount = %v, want 12.34", got)
 	}
-	if got := claudeExtraUsageBalance(1234, claudeCredentials{SubscriptionType: "Claude Enterprise"}); got != 1234 {
-		t.Fatalf("enterprise subscription balance = %v, want 1234", got)
+}
+
+func TestNormalizeClaudeUsageSupportsSpendLimitOnly(t *testing.T) {
+	used := 763.0
+	limit := 2000.0
+	enabled := true
+	snap, detail, err := normalizeClaudeUsage(claudeUsageRaw{
+		ExtraUsage: &claudeExtraUsageRaw{
+			IsEnabled:    &enabled,
+			UsedCredits:  &used,
+			MonthlyLimit: &limit,
+		},
+	}, claudeCredentials{SubscriptionType: "team"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := claudeExtraUsageBalance(1234, claudeCredentials{RateLimitTier: "enterprise-tier"}); got != 1234 {
-		t.Fatalf("enterprise tier balance = %v, want 1234", got)
+	if detail != nil {
+		t.Fatalf("detail = %+v", detail)
+	}
+	if len(snap.Windows) != 0 {
+		t.Fatalf("windows = %+v, want none", snap.Windows)
+	}
+	if snap.Credits == nil || snap.Credits.Balance != 7.63 || snap.Credits.SpendLimit != 20 {
+		t.Fatalf("credits = %+v", snap.Credits)
 	}
 }
 

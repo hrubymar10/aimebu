@@ -168,7 +168,7 @@ func refreshClaudeAuth(ctx context.Context, creds claudeCredentials) (claudeCred
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := usageHTTPClient.Do(req)
 	if err != nil {
 		return creds, nil, errors.New("Claude OAuth refresh request failed.")
 	}
@@ -317,11 +317,27 @@ type claudeWindowRaw struct {
 }
 
 type claudeExtraUsageRaw struct {
-	IsEnabled   *bool    `json:"is_enabled"`
-	UsedCredits *float64 `json:"used_credits"`
+	IsEnabled    *bool    `json:"is_enabled"`
+	UsedCredits  *float64 `json:"used_credits"`
+	MonthlyLimit *float64 `json:"monthly_limit"`
+	Utilization  *float64 `json:"utilization"`
+	Currency     string   `json:"currency"`
 }
 
 func fetchClaudeUsage(ctx context.Context, creds claudeCredentials) (claudeUsageRaw, *ErrorDetail, Status, bool, error) {
+	var lastRaw claudeUsageRaw
+	var lastDetail *ErrorDetail
+	for attempt := 0; attempt < 2; attempt++ {
+		raw, detail, status, unauthorized, err := fetchClaudeUsageOnce(ctx, creds)
+		if err != nil || unauthorized || raw.hasValues() {
+			return raw, detail, status, unauthorized, err
+		}
+		lastRaw, lastDetail = raw, detail
+	}
+	return lastRaw, lastDetail, "", false, nil
+}
+
+func fetchClaudeUsageOnce(ctx context.Context, creds claudeCredentials) (claudeUsageRaw, *ErrorDetail, Status, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeUsageURL, nil)
 	if err != nil {
 		return claudeUsageRaw{}, nil, StatusFetchError, false, err
@@ -331,9 +347,9 @@ func fetchClaudeUsage(ctx context.Context, creds claudeCredentials) (claudeUsage
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-beta", claudeOAuthBetaHeader)
 	req.Header.Set("User-Agent", claudeCodeUserAgent())
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := usageHTTPClient.Do(req)
 	if err != nil {
-		return claudeUsageRaw{}, nil, StatusFetchError, false, errors.New("Claude usage request failed.")
+		return claudeUsageRaw{}, nil, usageRequestStatus(err), false, errors.New("Claude usage request failed.")
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -351,6 +367,18 @@ func fetchClaudeUsage(ctx context.Context, creds claudeCredentials) (claudeUsage
 		return claudeUsageRaw{}, jsonShapeDetail("usage", data), StatusFetchError, false, errors.New("Claude usage response could not be decoded.")
 	}
 	return raw, nil, "", false, nil
+}
+
+func (raw claudeUsageRaw) hasValues() bool {
+	for _, w := range []*claudeWindowRaw{raw.FiveHour, raw.SevenDay, raw.SevenDayOAuthApps, raw.SevenDayOpus, raw.SevenDaySonnet} {
+		if w != nil && w.Utilization != nil {
+			return true
+		}
+	}
+	return raw.ExtraUsage != nil &&
+		raw.ExtraUsage.IsEnabled != nil &&
+		*raw.ExtraUsage.IsEnabled &&
+		(raw.ExtraUsage.UsedCredits != nil || raw.ExtraUsage.MonthlyLimit != nil)
 }
 
 func normalizeClaudeUsage(raw claudeUsageRaw, creds claudeCredentials) (Snapshot, *ErrorDetail, error) {
@@ -388,36 +416,32 @@ func normalizeClaudeUsage(raw claudeUsageRaw, creds claudeCredentials) (Snapshot
 	addWindow("weekly_opus", "seven_day_opus", raw.SevenDayOpus)
 	addWindow("weekly_sonnet", "seven_day_sonnet", raw.SevenDaySonnet)
 	ordered := orderWindows(windows, []string{"session", "weekly", "weekly_opus", "weekly_sonnet"})
-	if len(ordered) == 0 {
-		return Snapshot{}, detailOrNil(detail), errors.New("Claude usage response did not include recognized rate-limit windows.")
-	}
 	snap := Snapshot{
 		Provider: ProviderClaudeCode,
 		Status:   StatusOK,
 		Plan:     claudePlan(creds),
 		Windows:  ordered,
 	}
-	if raw.ExtraUsage != nil && raw.ExtraUsage.IsEnabled != nil && *raw.ExtraUsage.IsEnabled && raw.ExtraUsage.UsedCredits != nil {
-		// Non-enterprise OAuth accounts report minor units; enterprise reports major units.
-		snap.Credits = &Credits{Label: "Extra usage", Balance: claudeExtraUsageBalance(*raw.ExtraUsage.UsedCredits, creds)}
+	if raw.ExtraUsage != nil && raw.ExtraUsage.IsEnabled != nil && *raw.ExtraUsage.IsEnabled {
+		credits := &Credits{Label: "Extra usage monthly cap"}
+		if raw.ExtraUsage.UsedCredits != nil {
+			credits.Balance = claudeExtraUsageAmount(*raw.ExtraUsage.UsedCredits)
+		}
+		if raw.ExtraUsage.MonthlyLimit != nil {
+			credits.SpendLimit = claudeExtraUsageAmount(*raw.ExtraUsage.MonthlyLimit)
+		}
+		if raw.ExtraUsage.UsedCredits != nil || raw.ExtraUsage.MonthlyLimit != nil {
+			snap.Credits = credits
+		}
+	}
+	if len(ordered) == 0 && snap.Credits == nil {
+		return Snapshot{}, detailOrNil(detail), errors.New("Claude usage response did not include recognized rate-limit windows.")
 	}
 	return snap, detailOrNil(detail), nil
 }
 
-func claudeExtraUsageBalance(usedCredits float64, creds claudeCredentials) float64 {
-	if claudeIsEnterprise(creds) {
-		return usedCredits
-	}
-	return usedCredits / 100
-}
-
-func claudeIsEnterprise(creds claudeCredentials) bool {
-	for _, value := range []string{creds.SubscriptionType, creds.RateLimitTier} {
-		if strings.Contains(strings.ToLower(value), "enterprise") {
-			return true
-		}
-	}
-	return false
+func claudeExtraUsageAmount(value float64) float64 {
+	return value / 100
 }
 
 func orderWindows(windows []Window, keys []string) []Window {

@@ -205,9 +205,9 @@ func fetchCopilotUsage(ctx context.Context, token, apiBase string) (copilotUsage
 	}
 	req.Header.Set("Authorization", "token "+token)
 	addCopilotHeaders(req.Header)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := usageHTTPClient.Do(req)
 	if err != nil {
-		return copilotUsageRaw{}, nil, StatusFetchError, errors.New("GitHub Copilot usage request failed.")
+		return copilotUsageRaw{}, nil, usageRequestStatus(err), errors.New("GitHub Copilot usage request failed.")
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -532,7 +532,7 @@ func requestCopilotDeviceCode(ctx context.Context) (copilotDeviceStartResponse, 
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := usageHTTPClient.Do(req)
 	if err != nil {
 		return copilotDeviceStartResponse{}, errors.New("GitHub device-code request failed.")
 	}
@@ -562,7 +562,7 @@ func requestCopilotAccessToken(ctx context.Context, deviceCode string) (string, 
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := usageHTTPClient.Do(req)
 	if err != nil {
 		return "", "", errors.New("GitHub device-token request failed.")
 	}

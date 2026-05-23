@@ -66,12 +66,18 @@ aimebu returns the previous plan, windows, and credits with:
 The CLI marks these rows with `(stale)`. The web sidebar shows the stale state
 and error instead of presenting cached values as fresh.
 
+Credit snapshots can include both current spend and a spend limit. The CLI
+prints those as `used/limit`; the web sidebar shows the same pair in the
+provider's credits row.
+
 ## Troubleshooting
 
 - `auth_missing`: authenticate in the provider's own CLI or complete the
   provider setup in Settings -> Usages.
 - `scope_missing`: the token was accepted but lacks access to the usage
   endpoint. Re-authenticate or check the account's plan/enterprise policy.
+- `timeout`: a provider request exceeded aimebu's per-request timeout. The
+  provider may be slow or unreachable; retry later.
 - `fetch_error`: upstream returned an unexpected status or shape. The
   `error_detail.fields` map records field names and types only, never values.
 - `stale_cache`: the latest fetch failed but cached values are still shown.

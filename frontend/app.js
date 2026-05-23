@@ -2139,7 +2139,11 @@
   function renderCreditsRow(credits) {
     if (!credits) return '';
     var value = Number(credits.balance);
+    var limit = Number(credits.spend_limit);
     var text = Number.isFinite(value) ? value.toFixed(2) : '-';
+    if (Number.isFinite(limit) && limit > 0) {
+      text += ' / ' + limit.toFixed(2);
+    }
     return '<div class="usages-credits-row"><span>' + esc(credits.label || 'Credits') + '</span><strong>' + esc(text) + '</strong></div>';
   }
 

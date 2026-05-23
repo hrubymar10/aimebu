@@ -67,7 +67,7 @@ func printUsagesPlain(resp usages.Response) {
 		fmt.Println("No usage providers enabled.")
 		return
 	}
-	const rowFormat = "%-18s %-20s %-32s %-34s %-10s\n"
+	const rowFormat = "%-18s %-20s %-32s %-34s %-16s\n"
 	keys := make([]string, 0, len(resp.Snapshots))
 	for key := range resp.Snapshots {
 		keys = append(keys, key)
@@ -87,6 +87,9 @@ func printUsagesPlain(resp usages.Response) {
 		credits := "-"
 		if s.Credits != nil {
 			credits = fmt.Sprintf("%.2f", s.Credits.Balance)
+			if s.Credits.SpendLimit > 0 {
+				credits = fmt.Sprintf("%.2f/%.2f", s.Credits.Balance, s.Credits.SpendLimit)
+			}
 		}
 		plan := s.Plan
 		if plan == "" {
@@ -101,7 +104,7 @@ func printUsagesPlain(resp usages.Response) {
 			plainCell(status, 20),
 			plainCell(plan, 32),
 			plainCell(windowsText, 34),
-			plainCell(credits, 10),
+			plainCell(credits, 16),
 		)
 	}
 }

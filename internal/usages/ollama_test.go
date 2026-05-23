@@ -178,6 +178,80 @@ func TestOllamaFetchRequestAndStatusMapping(t *testing.T) {
 	}
 }
 
+func TestOllamaSettingsRequestTimeout(t *testing.T) {
+	old := ollamaHTTPClient
+	defer func() { ollamaHTTPClient = old }()
+	ollamaHTTPClient = &http.Client{Timeout: time.Millisecond, Transport: roundTripFunc(timeoutRoundTrip)}
+
+	_, _, status, err := fetchOllamaSettingsHTML(context.Background(), "session=abc")
+	if err == nil {
+		t.Fatal("fetchOllamaSettingsHTML succeeded")
+	}
+	if status != StatusTimeout {
+		t.Fatalf("status = %s, want %s", status, StatusTimeout)
+	}
+}
+
+func TestOllamaFetchRetriesSessionCookieCandidates(t *testing.T) {
+	old := ollamaHTTPClient
+	defer func() { ollamaHTTPClient = old }()
+
+	var cookies []string
+	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		cookie := req.Header.Get("Cookie")
+		cookies = append(cookies, cookie)
+		body := `<h1>Sign in to Ollama</h1><form action="/auth/login"><input type="password"></form>`
+		if cookie == "__Secure-session=valid" {
+			body = `<span>Cloud Usage</span><span>Pro</span><div>Session usage <span>1% used</span></div>`
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+	})}
+
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderOllamaCloud] = ProviderConfig{Enabled: true, Cookie: "session=stale; __Secure-session=valid"}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := NewOllamaCloudProvider().Fetch(context.Background(), store)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if snap.Status != StatusOK || snap.Plan != "Pro" {
+		t.Fatalf("snapshot = %#v", snap)
+	}
+	if got, want := strings.Join(cookies, "|"), "__Secure-session=valid; session=stale|__Secure-session=valid"; got != want {
+		t.Fatalf("cookies = %q, want %q", got, want)
+	}
+}
+
+func TestOllamaFetchKeepsSignedOutWhenCandidatesFail(t *testing.T) {
+	old := ollamaHTTPClient
+	defer func() { ollamaHTTPClient = old }()
+
+	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`<h1>Sign in to Ollama</h1><form action="/auth/login"><input type="password"></form>`)),
+			Header:     http.Header{},
+		}, nil
+	})}
+
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderOllamaCloud] = ProviderConfig{Enabled: true, Cookie: "session=expired; __Secure-session=expired"}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := NewOllamaCloudProvider().Fetch(context.Background(), store)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if snap.Status != StatusAuthMissing || snap.ErrorDetail == nil || snap.ErrorDetail.Fields["page"] != "signed_out" {
+		t.Fatalf("snapshot = %#v", snap)
+	}
+}
+
 func TestOllamaCookieEndpointSanitizesAndClears(t *testing.T) {
 	store := NewStoreAt(t.TempDir())
 	m := NewManager(store, DefaultRegistry())

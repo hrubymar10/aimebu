@@ -108,6 +108,17 @@ func TestCopilotProviderFetchesAndNormalizesUsage(t *testing.T) {
 	}
 }
 
+func TestCopilotUsageRequestTimeout(t *testing.T) {
+	withTimeoutHTTPTransport(t, timeoutRoundTrip)
+	_, _, status, err := fetchCopilotUsage(context.Background(), "access-secret", copilotDefaultAPIHost)
+	if err == nil {
+		t.Fatal("fetchCopilotUsage succeeded")
+	}
+	if status != StatusTimeout {
+		t.Fatalf("status = %s, want %s", status, StatusTimeout)
+	}
+}
+
 func TestCopilotQuotaFallbackShapes(t *testing.T) {
 	var raw copilotUsageRaw
 	if err := json.Unmarshal([]byte(`{

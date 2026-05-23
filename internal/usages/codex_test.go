@@ -23,9 +23,21 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func withHTTPTransport(t *testing.T, fn roundTripFunc) {
 	t.Helper()
-	old := http.DefaultClient.Transport
-	http.DefaultClient.Transport = fn
-	t.Cleanup(func() { http.DefaultClient.Transport = old })
+	old := usageHTTPClient
+	usageHTTPClient = &http.Client{Timeout: usageHTTPTimeout, Transport: fn}
+	t.Cleanup(func() { usageHTTPClient = old })
+}
+
+func withTimeoutHTTPTransport(t *testing.T, fn roundTripFunc) {
+	t.Helper()
+	old := usageHTTPClient
+	usageHTTPClient = &http.Client{Timeout: time.Millisecond, Transport: fn}
+	t.Cleanup(func() { usageHTTPClient = old })
+}
+
+func timeoutRoundTrip(req *http.Request) (*http.Response, error) {
+	<-req.Context().Done()
+	return nil, req.Context().Err()
 }
 
 func writeCodexAuthFixture(t *testing.T, root string, body string) {
@@ -91,6 +103,17 @@ func TestCodexProviderFetchesAndNormalizesUsage(t *testing.T) {
 	}
 	if snap.Credits == nil || snap.Credits.Balance != 123.45 {
 		t.Fatalf("credits = %+v", snap.Credits)
+	}
+}
+
+func TestCodexUsageRequestTimeout(t *testing.T) {
+	withTimeoutHTTPTransport(t, timeoutRoundTrip)
+	_, _, status, err := fetchCodexUsage(context.Background(), codexCredentials{AccessToken: "access-secret"})
+	if err == nil {
+		t.Fatal("fetchCodexUsage succeeded")
+	}
+	if status != StatusTimeout {
+		t.Fatalf("status = %s, want %s", status, StatusTimeout)
 	}
 }
 
@@ -211,6 +234,57 @@ func TestCodexProviderRefreshesStaleAuth(t *testing.T) {
 		}
 	}
 	assertMode(t, filepath.Join(root, "auth.json"), 0o600)
+}
+
+func TestCodexProviderRefreshesAfterUnauthorizedUsage(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", root)
+	writeCodexAuthFixture(t, root, `{
+  "tokens": {"access_token": "old-access", "refresh_token": "old-refresh"},
+  "last_refresh": "`+time.Now().UTC().Format(time.RFC3339)+`"
+}`)
+	usageCalls := 0
+	withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case codexUsageURL:
+			usageCalls++
+			if usageCalls == 1 {
+				if got := req.Header.Get("Authorization"); got != "Bearer old-access" {
+					t.Fatalf("first Authorization = %q", got)
+				}
+				return httpJSON(http.StatusUnauthorized, `{"error":"expired"}`), nil
+			}
+			if got := req.Header.Get("Authorization"); got != "Bearer new-access" {
+				t.Fatalf("second Authorization = %q", got)
+			}
+			return httpJSON(200, `{"rate_limit":{"primary_window":{"used_percent":1,"reset_at":1892851200,"limit_window_seconds":18000}}}`), nil
+		case codexRefreshURL:
+			data, _ := io.ReadAll(req.Body)
+			if !strings.Contains(string(data), `"refresh_token":"old-refresh"`) {
+				t.Fatalf("refresh body = %s", data)
+			}
+			return httpJSON(200, `{"access_token":"new-access","refresh_token":"new-refresh"}`), nil
+		default:
+			t.Fatalf("unexpected URL %s", req.URL)
+			return nil, nil
+		}
+	})
+	snap, err := NewCodexProvider().Fetch(context.Background(), NewStoreAt(t.TempDir()))
+	if err != nil || snap.Status != StatusOK {
+		t.Fatalf("Fetch = %+v err=%v", snap, err)
+	}
+	if usageCalls != 2 {
+		t.Fatalf("usage calls = %d, want 2", usageCalls)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "auth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"new-access", "new-refresh"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("auth file missing %q: %s", want, data)
+		}
+	}
 }
 
 func TestCodexAuthRefreshPreservesUnknownFieldsAndTokenCasing(t *testing.T) {

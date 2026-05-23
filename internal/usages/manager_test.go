@@ -192,6 +192,27 @@ func TestManagerStaleCacheSurvivesRepeatedFailures(t *testing.T) {
 	}
 }
 
+func TestManagerTimeoutKeepsPreviousSnapshotStale(t *testing.T) {
+	old := time.Unix(100, 0)
+	clock := &fakeClock{now: old.Add(time.Hour)}
+	m := NewManager(NewStoreAt(t.TempDir()), NewRegistry(&fakeProvider{key: ProviderCodex, block: make(chan struct{})}))
+	m.SetClock(clock)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	entry := m.fetchOne(ctx, ProviderCodex, CacheEntry{
+		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Plan: "old"},
+		LastRefreshAt: &old,
+	})
+
+	if entry.Snapshot.Status != StatusStaleCache || !entry.Snapshot.Stale || entry.Snapshot.Plan != "old" {
+		t.Fatalf("snapshot = %+v", entry.Snapshot)
+	}
+	if entry.LastRefreshAt == nil || !entry.LastRefreshAt.Equal(old) {
+		t.Fatalf("last refresh = %+v, want %v", entry.LastRefreshAt, old)
+	}
+}
+
 func TestManagerRedactsConfiguredSecretsFromFreshErrors(t *testing.T) {
 	store := NewStoreAt(t.TempDir())
 	cfg := DefaultConfig()

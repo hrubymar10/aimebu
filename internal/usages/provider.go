@@ -47,8 +47,9 @@ type Window struct {
 }
 
 type Credits struct {
-	Label   string  `json:"label,omitempty"`
-	Balance float64 `json:"balance,omitempty"`
+	Label      string  `json:"label,omitempty"`
+	Balance    float64 `json:"balance"`
+	SpendLimit float64 `json:"spend_limit,omitempty"`
 }
 
 type ErrorDetail struct {
