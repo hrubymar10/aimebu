@@ -164,13 +164,13 @@ aimebu agent --room general --assume-role reviewer -- claude
 # Explicit harness (useful when the binary path is non-standard)
 aimebu agent --harness claude-code --room ops -- /usr/local/bin/claude
 
-# Enforce a fixed name across restarts (fresh bootstrap, name reclaimed via force=true)
+# Force-claim a fixed project-scoped slug on fresh bootstrap
 aimebu agent --name alice --room general -- claude
 
-# Resume a prior session by agent name (looks up session UUID from ~/.aimebu/agents/agent-sessions.json)
+# Resume a prior session by slug in the current project
 aimebu agent --resume-name alice -- claude
 
-# Resume a prior session by session UUID (looks up agent name from the state file)
+# Resume a prior session by session UUID (looks up agent full ID from the state file)
 aimebu agent --resume-id <session-uuid> -- claude
 
 # Resume by UUID when the state file is missing — supply the name as a fallback
@@ -184,9 +184,11 @@ Built-in role keys include `leader`, `worker`, `reviewer`, `sec-reviewer`,
 ### Identity and session state
 
 After each successful bootstrap, `aimebu agent` writes the session ID, agent
-name, harness, joined rooms, assumed role key, and working directory to
+full ID, harness, joined rooms, assumed role key, and working directory to
 `~/.aimebu/agents/agent-sessions.json`. This enables `--resume-id` and
-`--resume-name` to restore a prior session without re-bootstrapping, and it
+`--resume-name` to restore a prior session without re-bootstrapping.
+`--resume-name <slug>` is scoped to the current working-directory project, so
+`alice@project-a` and `alice@project-b` do not collide. The saved full ID also
 lets the wrapper rejoin the same rooms if the aimebu server restarts and
 forgets the in-memory registration.
 
@@ -195,10 +197,10 @@ Flag reference:
 | Flag | Effect |
 |---|---|
 | `--auto-room` | Join the current working directory basename as a room. |
-| `--name <slug>` | Enforce this name via `bus_register(name=<slug>, force=true)`. Works alone (fresh bootstrap) or with `--resume-id` as a lookup fallback. |
+| `--name <slug>` | Force-claim this slug under the current project via `bus_register(name=<slug>, force=true)`. Works alone (fresh bootstrap) or with `--resume-id` as a lookup fallback. |
 | `--assume-role <key>` | Assign the launched agent to this role in exactly one resolved launch room, then fetch and follow the role with `bus_role_get`. Use with one `--room` or `--auto-room`; ambiguous multi-room launches fail. |
-| `--resume-name <slug>` | Load session UUID from the state file by name; skip bootstrap. Error if not found. |
-| `--resume-id <uuid>` | Load agent name from state file by UUID; skip bootstrap. Pair with `--name` if the state file entry is missing. |
+| `--resume-name <slug>` | Load session UUID from the state file by slug in the current project; skip bootstrap. Error if not found. |
+| `--resume-id <uuid>` | Load agent full ID from state file by UUID; skip bootstrap. Pair with `--name` if the state file entry is missing. |
 
 `--resume-id` and `--resume-name` are mutually exclusive. `--resume-name` and
 `--name` together are an error (both supply a name).

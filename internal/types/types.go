@@ -81,10 +81,9 @@ type DMRequest struct {
 // but must be present (the server normalizes missing values to "unknown").
 //
 // For kind=ai, `Name` is normally ignored (server picks from a pool). Setting
-// Force=true together with Name reclaims a prior identity after a prune or
-// disconnect: idempotent if the AI with the same model/harness/project
-// already holds the name, rejected if the name is held by a human or by a
-// different AI.
+// Force=true together with Name force-claims that slug in the current project:
+// idempotent if the AI with the same model/harness/project already holds the
+// assembled full ID, rejected if that same full ID is held by a different AI.
 type RegisterRequest struct {
 	Kind    string            `json:"kind"`              // "ai" or "human"
 	Name    string            `json:"name,omitempty"`    // always used for human; only honored for ai when Force=true
@@ -92,7 +91,7 @@ type RegisterRequest struct {
 	Harness string            `json:"harness,omitempty"` // only for kind=ai
 	Project string            `json:"project,omitempty"` // included in ID (e.g. @aimebu)
 	Meta    map[string]string `json:"meta,omitempty"`    // additional context (cwd, branch, repo, etc.)
-	Force   bool              `json:"force,omitempty"`   // reclaim a prior ai identity by Name (only honored for kind=ai)
+	Force   bool              `json:"force,omitempty"`   // force-claim an ai slug by Name in Project (only honored for kind=ai)
 }
 
 // AgentRoomView is a room as seen by a specific agent: the room plus that

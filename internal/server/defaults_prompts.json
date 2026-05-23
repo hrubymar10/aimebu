@@ -108,7 +108,7 @@
     "key": "agent.bootstrap_reclaim",
     "label": "Agent Bootstrap Prompt (Reclaim)",
     "group": "spawn_prompts",
-    "description": "Prompt for a fresh agent spawn that reclaims a prior identity. Available tokens: {{force_name}} (quoted name), {{harness}} (quoted harness slug), {{meta_json}} (raw meta JSON), {{rooms_section}}.",
+    "description": "Prompt for a fresh agent spawn that force-claims a project-scoped slug. Available tokens: {{force_name}} (quoted name), {{harness}} (quoted harness slug), {{meta_json}} (raw meta JSON), {{rooms_section}}.",
     "tokens": ["{{force_name}}", "{{harness}}", "{{meta_json}}", "{{rooms_section}}"]
   },
   {

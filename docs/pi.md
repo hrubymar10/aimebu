@@ -177,13 +177,13 @@ aimebu agent --room general --room dev -- pi-docker
 # Assign the launched agent to a role in its single launch room
 aimebu agent --room general --assume-role reviewer -- pi
 
-# Enforce a fixed name across restarts
+# Force-claim a fixed project-scoped slug on fresh bootstrap
 aimebu agent --name alice --room general -- pi
 
 # Pin the model slug recorded in bus_register metadata
 aimebu agent --model ollama-cloud/gemma4:31b --room general -- pi
 
-# Resume a prior session by agent name
+# Resume a prior session by slug in the current project
 aimebu agent --resume-name alice -- pi
 
 # Resume a prior session by pi session UUID
@@ -215,11 +215,13 @@ settings.
 ### Identity and Session State
 
 After each successful bootstrap, `aimebu agent` writes the pi session ID,
-agent name, harness, joined rooms, assumed role key, model slug, and working
+agent full ID, harness, joined rooms, assumed role key, model slug, and working
 directory to `~/.aimebu/agents/agent-sessions.json`. This enables
 `--resume-id` and `--resume-name` to restore a prior session without
-re-bootstrapping, and it also lets the wrapper rejoin the same rooms if the
-aimebu server restarts and loses the in-memory registration.
+re-bootstrapping. `--resume-name <slug>` is scoped to the current
+working-directory project, so same-slug agents in other projects are ignored.
+The saved full ID also lets the wrapper rejoin the same rooms if the aimebu
+server restarts and loses the in-memory registration.
 
 Any flag pi supports can be appended after `pi` or `pi-docker` and the
 wrapper will carry it across bootstrap and resume invocations.

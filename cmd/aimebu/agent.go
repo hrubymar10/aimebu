@@ -656,12 +656,12 @@ const agentBootstrapTemplate = `You're an aimebu bus agent. Register via the bus
 
 {{rooms_section}}{{assume_role_section}}Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.`
 
-const agentBootstrapReclaimTemplate = `You're an aimebu bus agent. Register via the bus_register MCP tool with name={{force_name}}, force=true, model=<your model slug>, harness={{harness}}, meta={{meta_json}}. This reclaims your prior identity.
+const agentBootstrapReclaimTemplate = `You're an aimebu bus agent. Register via the bus_register MCP tool with name={{force_name}}, force=true, model=<your model slug>, harness={{harness}}, meta={{meta_json}}. This force-claims that slug in the current project.
 {{model_instruction}}
 
 {{rooms_section}}{{assume_role_section}}Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.`
 
-const agentRecoveryTemplate = `You're an aimebu bus agent recovering a stale bus session. Register via the bus_register MCP tool with name={{force_name}}, force=true, model=<your model slug>, harness={{harness}}, meta={{meta_json}}. This reclaims your prior identity.
+const agentRecoveryTemplate = `You're an aimebu bus agent recovering a stale bus session. Register via the bus_register MCP tool with name={{force_name}}, force=true, model=<your model slug>, harness={{harness}}, meta={{meta_json}}. This force-claims that slug in the current project so the wrapper can recover the saved full identity.
 {{model_instruction}}
 
 {{rooms_section}}{{assume_role_section}}Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.`
@@ -734,7 +734,8 @@ func agentAssumeRoleSection(roleKey string, rooms []string) string {
 }
 
 // agentBuildBootstrapPrompt builds the prompt for the initial bootstrap session.
-// When forceName is set, the agent is instructed to reclaim that identity.
+// When forceName is set, the agent is instructed to force-claim that
+// project-scoped slug.
 func agentBuildBootstrapPrompt(aimebuURL, harness, spawnTag string, rooms []string, forceName, assumeRole, modelSlug string) string {
 	roomsSection := ""
 	if len(rooms) > 0 {
@@ -801,8 +802,8 @@ func agentLoadSessions() ([]agentSession, error) {
 	return sessions, nil
 }
 
-// agentSaveSession upserts sess into agents/agent-sessions.json by name,
-// then writes atomically via a tmp file + rename.
+// agentSaveSession upserts sess into agents/agent-sessions.json by full
+// identity, then writes atomically via a tmp file + rename.
 func agentSaveSession(sess agentSession) error {
 	path := agentSessionsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -811,7 +812,7 @@ func agentSaveSession(sess agentSession) error {
 	sessions, _ := agentLoadSessions() // ignore parse errors; start fresh if corrupt
 	updated := false
 	for i, s := range sessions {
-		if s.Name == sess.Name {
+		if agentSessionsSameIdentity(s, sess) {
 			sessions[i] = sess
 			updated = true
 			break
@@ -829,6 +830,62 @@ func agentSaveSession(sess agentSession) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func agentSessionProject(sess agentSession) string {
+	if strings.Contains(sess.Name, "@") {
+		parts := strings.SplitN(sess.Name, "@", 2)
+		if parts[1] != "" {
+			return parts[1]
+		}
+	}
+	if sess.CWD == "" {
+		return ""
+	}
+	project := filepath.Base(filepath.Clean(sess.CWD))
+	if project == "." || project == string(filepath.Separator) {
+		return ""
+	}
+	return project
+}
+
+func agentSessionSlug(sess agentSession) string {
+	if i := strings.IndexByte(sess.Name, '@'); i > 0 {
+		return sess.Name[:i]
+	}
+	return sess.Name
+}
+
+func agentSessionFullID(sess agentSession) string {
+	if sess.Name == "" || strings.Contains(sess.Name, "@") {
+		return sess.Name
+	}
+	project := agentSessionProject(sess)
+	if project == "" {
+		return sess.Name
+	}
+	return sess.Name + "@" + project
+}
+
+func agentSessionsSameIdentity(a, b agentSession) bool {
+	aID := agentSessionFullID(a)
+	bID := agentSessionFullID(b)
+	if aID == "" || bID == "" {
+		return false
+	}
+	return aID == bID
+}
+
+func agentCurrentProject() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	project := filepath.Base(filepath.Clean(cwd))
+	if project == "." || project == string(filepath.Separator) {
+		return ""
+	}
+	return project
 }
 
 // agentResolveResume resolves a resume entry from the sessions file given the
@@ -852,8 +909,9 @@ func agentResolveResume(resumeID, resumeName, name, harness string, sessions []a
 		return agentSession{}, fmt.Errorf("no state-file entry for session %q; pass --name to supply identity", resumeID)
 	}
 	if resumeName != "" {
+		currentProject := agentCurrentProject()
 		for _, s := range sessions {
-			if s.Name == resumeName {
+			if agentSessionSlug(s) == resumeName && (currentProject == "" || agentSessionProject(s) == currentProject) {
 				if s.Harness != "" && s.Harness != harness {
 					return agentSession{}, fmt.Errorf("agent %q was registered with harness %q but current harness is %q; check --harness flag", resumeName, s.Harness, harness)
 				}
@@ -1470,19 +1528,19 @@ Options:
   --harness <slug>       Harness slug. Auto-detected from command basename if omitted.
   --room <id>            Room to join on startup (repeatable).
   --auto-room            Join the current working directory basename as a room.
-  --name <slug>          Enforce this agent name ([a-z]{3,12}) via force=true reclaim.
+  --name <slug>          Force-claim this project-scoped slug ([a-z]{3,12}).
                          Usable alone (fresh bootstrap with name continuity) or with
                          --resume-id as an escape hatch when the state file is missing.
   --assume-role <key>    Assign this agent to a role in the single launch room.
                          Requires exactly one resolved --room/--auto-room.
   --model <slug>         Model slug to record for harnesses that need one-time
                          wrapper-supplied model metadata (currently pi).
-  --resume-id <uuid>     Resume a prior session by session UUID. Loads the agent name
+  --resume-id <uuid>     Resume a prior session by session UUID. Loads the agent full ID
                          from agents/agent-sessions.json in the aimebu config dir;
                          pass --name as fallback.
-  --resume-name <slug>   Resume a prior session by agent name. Loads the session UUID
-                         from agents/agent-sessions.json in the aimebu config dir;
-                         errors if not found.
+  --resume-name <slug>   Resume a prior session by slug in the current project. Loads
+                         the session UUID from agents/agent-sessions.json in the
+                         aimebu config dir; errors if not found.
   --                     Separator before the harness command (required).
 
 Session state is persisted in agents/agent-sessions.json under the aimebu

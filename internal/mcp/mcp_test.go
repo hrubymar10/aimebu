@@ -72,7 +72,7 @@ func TestDetectHarness(t *testing.T) {
 func TestBusEtiquetteCoversRoleAssignmentWakeup(t *testing.T) {
 	for _, want := range []string{
 		"assigned room role keys",
-		"Exact agent names and special group tags take precedence over role keys",
+		"Exact in-room slugs and special group tags take precedence over role keys",
 		"System sender (from_kind=system): should_respond=true only when addressed_to_me=true",
 		"call `bus_role_get` for that room",
 		`targeted "role cleared" message`,

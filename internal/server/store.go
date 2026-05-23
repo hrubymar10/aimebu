@@ -109,6 +109,9 @@ type store struct {
 	// warnedAttention tracks agents that have already received the one-time
 	// missing needs_attention warning. Runtime-only; resets on server restart.
 	warnedAttention map[string]bool
+	// warnedAmbiguousMention tracks agents that have already received the
+	// one-time ambiguous @slug warning. Runtime-only; resets on server restart.
+	warnedAmbiguousMention map[string]bool
 }
 
 func newStore(dir string) (*store, error) {
@@ -117,21 +120,22 @@ func newStore(dir string) (*store, error) {
 	}
 
 	s := &store{
-		dir:             dir,
-		rooms:           make(map[string]*types.Room),
-		messages:        make(map[string][]types.Message),
-		agents:          make(map[string]*types.Agent),
-		roomSubs:        make(map[string][]chan types.Message),
-		openWaits:       make(map[string]map[string]int),
-		roomEmptySince:  make(map[string]time.Time),
-		cleanupResetCh:  make(chan struct{}, 1),
-		macros:          make(map[string]string),
-		seenDefaults:    make(map[string]bool),
-		prompts:         make(map[string]string),
-		rolesOverrides:  make(map[string]roleOverrideEntry),
-		rolesCustom:     make(map[string]customRoleEntry),
-		warnedLegacy:    make(map[string]bool),
-		warnedAttention: make(map[string]bool),
+		dir:                    dir,
+		rooms:                  make(map[string]*types.Room),
+		messages:               make(map[string][]types.Message),
+		agents:                 make(map[string]*types.Agent),
+		roomSubs:               make(map[string][]chan types.Message),
+		openWaits:              make(map[string]map[string]int),
+		roomEmptySince:         make(map[string]time.Time),
+		cleanupResetCh:         make(chan struct{}, 1),
+		macros:                 make(map[string]string),
+		seenDefaults:           make(map[string]bool),
+		prompts:                make(map[string]string),
+		rolesOverrides:         make(map[string]roleOverrideEntry),
+		rolesCustom:            make(map[string]customRoleEntry),
+		warnedLegacy:           make(map[string]bool),
+		warnedAttention:        make(map[string]bool),
+		warnedAmbiguousMention: make(map[string]bool),
 	}
 
 	if err := s.load(); err != nil {
@@ -1163,14 +1167,14 @@ func (s *store) findBySpawnTagLocked(tag, model, harness, project string) *types
 }
 
 // registerAI registers an AI agent. Normally the server assigns a random
-// name from the pool and assembles the full ID from name/model/harness/
-// project. If forceName is non-empty, the caller is asking to reclaim that
-// specific name (e.g. after a prune or disconnect). Reclaim rules:
+// slug from the pool and assembles the full ID from slug/project. If
+// forceName is non-empty, the caller is asking to force-claim that slug in
+// the current project. Reclaim rules:
 //   - name must match ^[a-z]{3,12}$ (same shape as pool names)
-//   - if held by a human → error
-//   - if held by an AI with same model+harness+project → idempotent: return
-//     the existing agent with last_seen touched
-//   - if held by an AI with different model/harness/project → error
+//   - if current-project full ID is held by an AI with same model+harness+
+//     project → idempotent: return the existing agent with last_seen touched
+//   - if current-project full ID is held by an AI with different
+//     model/harness/project → error
 //   - otherwise the forced name is used instead of picking from the pool
 //
 // Additionally, if meta["spawn_tag"] is present and forceName is empty, the
@@ -1200,14 +1204,8 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 			s.mu.Unlock()
 			return nil, false, fmt.Errorf("name %q is reserved", forceName)
 		}
-		for _, a := range s.agents {
-			if a.Name != forceName {
-				continue
-			}
-			if a.Kind == "human" {
-				s.mu.Unlock()
-				return nil, false, fmt.Errorf("name %q is a human identity", forceName)
-			}
+		forceID := assembleID("ai", forceName, model, harness, project)
+		if a, ok := s.agents[forceID]; ok {
 			if a.Model == model && a.Harness == harness && a.Project == project {
 				a.LastSeen = now()
 				if len(meta) > 0 {
@@ -1226,7 +1224,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 				return &cp, false, nil // explicit force-reclaim: reclaimed=false (caller already knew the name)
 			}
 			s.mu.Unlock()
-			return nil, false, fmt.Errorf("name %q is held by another AI agent", forceName)
+			return nil, false, fmt.Errorf("name %q is held by another AI agent in project %q", forceName, project)
 		}
 		s.mu.Unlock()
 		if s.roleKeyExists(forceName) {
@@ -1261,7 +1259,9 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 
 		taken := make(map[string]bool, len(s.agents))
 		for _, a := range s.agents {
-			taken[a.Name] = true
+			if a.Kind == "ai" && a.Project == project {
+				taken[a.Name] = true
+			}
 		}
 		s.rolesMu.RLock()
 		for _, e := range roleCatalog {
@@ -1578,6 +1578,26 @@ func (s *store) legacyPrefixWarn(senderAgentID, body string) string {
 	}
 	s.warnedLegacy[senderAgentID] = true
 	return warning
+}
+
+// ambiguousMentionWarn returns a one-time warning when @slug matches multiple
+// current-room members. The message is still sent, but that ambiguous slug is
+// left unresolved in addressed_to; use @slug@project to disambiguate.
+func (s *store) ambiguousMentionWarn(roomID, senderAgentID, body string) string {
+	msg := types.Message{RoomID: roomID, From: senderAgentID, Body: body}
+	raw := parseAddressedTo(body)
+	ambiguous := ambiguousMentionTokens(raw, s.addressingContext(msg))
+	if len(ambiguous) == 0 {
+		return ""
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.warnedAmbiguousMention[senderAgentID] {
+		return ""
+	}
+	s.warnedAmbiguousMention[senderAgentID] = true
+	return fmt.Sprintf("@%s is ambiguous in room %s because multiple members share that slug; write the full @slug@project form. (one-time warning per session.)", ambiguous[0], roomID)
 }
 
 // attentionMissWarn returns a one-time warning when a sender addresses a human

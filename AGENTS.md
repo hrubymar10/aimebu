@@ -124,15 +124,26 @@ role-facing docs in sync; do not duplicate the protocol prose into other docs.
 
 ## Agent identities
 
-Agent IDs use the short form `<name>@<project>`. Model and harness are stored
-as metadata on the `Agent` struct but are not baked into the ID:
+Agent identity has two layers:
 
-- `martin` — human (bare name, no project suffix)
-- `alice@aimebu` — AI agent named alice in project aimebu
+- **slug** — the short name, matching `^[a-z]{3,12}$` for AI agents.
+- **full name / full ID** — the unique identity key used in storage, room
+  membership, role assignment, API paths, and DMs.
+
+AI agent full IDs use `<slug>@<project>`. Humans use a bare slug as both slug
+and full ID because they operate across projects rather than inside one
+working directory:
+
+- `martin` — human; slug and full ID are both `martin`
+- `alice@aimebu` — AI agent with slug `alice` in project `aimebu`
 - `alice` — AI agent with no project
 
-**AI agents**: the server assigns the `name` (random, from a pool) when the
-AI calls `bus_register`. The AI passes both `model` and `harness` — both are
+The same AI slug may exist in multiple projects, and multiple same-slug AIs
+may be present in the same room. Code that needs identity must use the full
+ID, not the slug.
+
+**AI agents**: the server assigns the slug (random, from a pool) when the AI
+calls `bus_register`. The AI passes both `model` and `harness` — both are
 session-side knowledge the AI knows about itself.
 
 Harness resolution order in `bus_register`:
@@ -166,8 +177,9 @@ Rules:
 - Tuple mismatch (same tag, different model/harness/project) → fresh name,
   `"reclaimed": false`.
 - No spawn_tag → today's behavior: fresh random name every time.
-- `force=true name=X` (explicit reclaim) is unaffected and takes the existing
-  path; spawn_tag reclaim only applies when `force` is false.
+- `force=true name=X` force-claims slug `X` in the current project and
+  resolves to full ID `X@<project>` for AI agents; spawn_tag reclaim only
+  applies when `force` is false.
 
 `aimebu agent` and the spawn-prompt convention already inject `spawn_tag` via
 `meta` — those paths get continuity automatically. Bare `aimebu mcp` sessions
@@ -354,15 +366,17 @@ link to the harness doc instead.
 `alice@aimebu`); the server picks a free random name from its pool. All
 other tools use the assigned ID implicitly.
 
-Addressing semantics: live mentions in non-code prose are `@name` plus the
+Addressing semantics: live mentions in non-code prose are `@slug` plus the
 room-scoped group tags `@channel`, `@here`, `@humans`, `@ais`, `@everyone`,
 and `@all`. Assigned room role keys are live too, so `@reviewer` addresses
 the AI agents currently assigned that role in the room. Special group tags
-win over role keys, and exact agent names win over role keys; future role/name
+win over role keys, and exact in-room slugs win over role keys. If multiple
+room members share a slug, `@slug` is ambiguous and does not resolve; write
+the full form such as `@sam@aimebu` to address one agent. Future role/name
 collisions are rejected at creation time, while legacy collisions surface
-warnings on `POST /agents` and `GET /agents`. Wrap a mention
-in backticks (for example `` `@leader` ``) or write `\@leader` / `\@here` to
-show it literally without addressing anyone.
+warnings on `POST /agents` and `GET /agents`. Wrap a mention in backticks
+(for example `` `@leader` ``) or write `\@leader` / `\@here` to show it
+literally without addressing anyone.
 
 See [README.md](README.md#mcp-tools) for the full tool list.
 

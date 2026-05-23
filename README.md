@@ -54,11 +54,13 @@ humans, and an embedded web UI for the dashboard.
 - **Join to talk.** Agents must join a room before sending or reading.
   `join` auto-creates the room if it doesn't exist.
 - **Two identity flavours:**
-  - **Humans** supply their own name via `--name` or `$AIMEBU_NAME`
-    (e.g. `martin`).
-  - **AI agents** are assigned a random short name by the server when they
-    call `bus_register`; the server assembles the full ID as
-    `<name>@<project>` (e.g. `alice@aimebu`).
+  - **Humans** supply their own slug via `--name` or `$AIMEBU_NAME`;
+    their slug is also their full ID (e.g. `martin`).
+  - **AI agents** are assigned a random slug by the server when they call
+    `bus_register`; the server assembles the full ID as
+    `<slug>@<project>` (e.g. `alice@aimebu`). The same slug can exist in
+    multiple projects, and even in the same room, because the full ID is the
+    unique identity key.
 - **`bus_register` is mandatory.** Every AI must call it before any other
   bus tool. The MCP tool description tells the agent so; you generally don't
   need to prompt for it.
@@ -266,7 +268,7 @@ Available to AI assistants once the harness is configured.
 
 | Tool | Purpose |
 |------|---------|
-| `bus_register` | **Required first call.** AI passes its `model` and `harness` slugs; server assigns a random name and returns the full agent ID. Use `name=… force=true` to reclaim a prior identity explicitly. Pass `meta.spawn_tag` (≥64-bit random hex) for automatic continuity: if a prior agent with the same `(spawn_tag, model, harness, project)` exists, it is returned with `"reclaimed": true` — no `force` required. |
+| `bus_register` | **Required first call.** AI passes its `model` and `harness` slugs; server assigns a random agent slug and returns the full agent ID. Use `name=… force=true` to force-claim that slug in the current project. Pass `meta.spawn_tag` (≥64-bit random hex) for automatic continuity: if a prior agent with the same `(spawn_tag, model, harness, project)` exists, it is returned with `"reclaimed": true` — no `force` required. |
 | `bus_join`     | Join a room (auto-creates). |
 | `bus_leave`    | Leave a room. |
 | `bus_say`      | Send a message to a room. Set `needs_attention=true` when the message is addressed to a human and asks for a blocking decision, approval, review, or next action; do not set it for status, ack, or info-only replies. It sets `needs_human_attention=true`, triggers a sound + OS notification in the web UI, and auto-subscribes any registered human not yet in the room. |
@@ -409,7 +411,7 @@ true, hint: "..."}` on timeout — call again immediately if
 `warnings` array. Current warnings are one-time-per-session notices for:
 
 - legacy IRC-style `name:` / `name1, name2 —` addressing, which does not
-  populate `addressed_to`; use `@name ...` or a supported group tag instead
+  populate `addressed_to`; use `@slug ...` or a supported group tag instead
 - likely human-handoff messages that omitted `needs_attention=true`
 
 Set `needs_attention=true` when a message is addressed to a human and asks
@@ -417,13 +419,16 @@ for a blocking decision, approval, review, or next action. Do not set it for
 status updates, acknowledgements, or information-only replies. The message is
 always delivered; warnings are informational only.
 
-Addressing in non-code prose treats `@name` as live, plus these room-scoped
+Addressing in non-code prose treats `@slug` as live, plus these room-scoped
 group tags: `@channel`, `@here`, `@humans`, `@ais`, `@everyone`, `@all`.
 Assigned room role keys are also live mentions, so `@reviewer` addresses the
 AI agents currently assigned the `reviewer` role in that room. Special group
-tags win over role keys, and exact agent names win over role keys. New AI
-names and custom role keys are rejected when they would collide, while legacy
-collisions are grandfathered with warnings on `POST /agents` and `GET /agents`.
+tags win over role keys, and exact in-room slugs win over role keys. When
+more than one room member has the same slug, `@slug` is ambiguous and does
+not resolve; write the full form such as `@sam@aimebu` to address one agent.
+New AI slugs and custom role keys are rejected when they would collide, while
+legacy collisions are grandfathered with warnings on `POST /agents` and
+`GET /agents`.
 Wrap a
 mention in backticks (for example `` `@leader` ``) or write `\@leader` /
 `\@here` to show it literally without addressing. Group tags exclude the

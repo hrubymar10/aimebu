@@ -2,7 +2,6 @@ package server
 
 import (
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -10,8 +9,8 @@ import (
 )
 
 var (
-	// mentionRe finds @name mentions anywhere in the body.
-	mentionRe = regexp.MustCompile(`(?i)@([a-z][a-z0-9_-]*)`)
+	// mentionRe finds @slug and @slug@project mentions anywhere in the body.
+	mentionRe = regexp.MustCompile(`(?i)@([a-z][a-z0-9_-]*(?:@[a-z0-9_.-]+)?)`)
 	// legacyPrefixRe detects IRC-style "name:" speaker prefixes at the start of a body.
 	legacyPrefixRe = regexp.MustCompile(`(?i)^([a-z][a-z0-9]{2,11})\s*:`)
 	// inlinePrefixRe detects inline IRC-style "name1, name2 —" or
@@ -281,7 +280,12 @@ func resolveAddressedTokens(raw []string, ctx addressingContext) []string {
 	}
 	var names []string
 	seen := map[string]bool{}
-	senderName := strings.ToLower(agentShortName(ctx.SenderID))
+	senderSlug := strings.ToLower(agentShortName(ctx.SenderID))
+	senderID := strings.ToLower(ctx.SenderID)
+	slugCounts := make(map[string]int, len(ctx.RoomAgents))
+	for _, agent := range ctx.RoomAgents {
+		slugCounts[strings.ToLower(agent.Name)]++
+	}
 	add := func(name string) {
 		name = strings.ToLower(name)
 		if !seen[name] {
@@ -289,45 +293,63 @@ func resolveAddressedTokens(raw []string, ctx addressingContext) []string {
 			names = append(names, name)
 		}
 	}
+	addAgent := func(agent roomAgentContext) {
+		if slugCounts[strings.ToLower(agent.Name)] > 1 {
+			add(agent.ID)
+			return
+		}
+		add(agent.Name)
+	}
 
 	for _, token := range raw {
 		switch groupMentionKinds[token] {
 		case "channel", "everyone":
 			for _, agent := range ctx.RoomAgents {
-				if strings.EqualFold(agent.Name, senderName) {
+				if strings.EqualFold(agent.ID, senderID) {
 					continue
 				}
-				add(agent.Name)
+				addAgent(agent)
 			}
 		case "humans":
 			for _, agent := range ctx.RoomAgents {
-				if strings.EqualFold(agent.Name, senderName) || agent.Kind != "human" {
+				if strings.EqualFold(agent.ID, senderID) || agent.Kind != "human" {
 					continue
 				}
-				add(agent.Name)
+				addAgent(agent)
 			}
 		case "ais":
 			for _, agent := range ctx.RoomAgents {
-				if strings.EqualFold(agent.Name, senderName) || agent.Kind != "ai" {
+				if strings.EqualFold(agent.ID, senderID) || agent.Kind != "ai" {
 					continue
 				}
-				add(agent.Name)
+				addAgent(agent)
 			}
 		case "here":
 			for _, agent := range ctx.RoomAgents {
-				if strings.EqualFold(agent.Name, senderName) {
+				if strings.EqualFold(agent.ID, senderID) {
 					continue
 				}
 				if agent.Waiting || (!agent.LastSeen.IsZero() && ctx.Now.Sub(agent.LastSeen) < hereRecentWindow) {
-					add(agent.Name)
+					addAgent(agent)
 				}
 			}
 		default:
-			if len(ctx.KnownNames) == 0 || ctx.KnownNames[token] {
+			if strings.Contains(token, "@") {
+				for _, agent := range ctx.RoomAgents {
+					if strings.EqualFold(agent.ID, token) {
+						add(agent.ID)
+						break
+					}
+				}
+			} else if matches := roomAgentsBySlug(ctx.RoomAgents, token); len(matches) == 1 {
+				add(matches[0].Name)
+			} else if len(matches) > 1 {
+				continue
+			} else if len(ctx.KnownNames) == 0 || ctx.KnownNames[token] {
 				add(token)
 			} else if len(ctx.RoleNames) > 0 {
 				for _, name := range ctx.RoleNames[token] {
-					if strings.EqualFold(name, senderName) {
+					if strings.EqualFold(name, senderSlug) {
 						continue
 					}
 					add(name)
@@ -341,6 +363,50 @@ func resolveAddressedTokens(raw []string, ctx addressingContext) []string {
 	return names
 }
 
+func roomAgentsBySlug(agents []roomAgentContext, slug string) []roomAgentContext {
+	var matches []roomAgentContext
+	for _, agent := range agents {
+		if strings.EqualFold(agent.Name, slug) {
+			matches = append(matches, agent)
+		}
+	}
+	return matches
+}
+
+func ambiguousMentionTokens(raw []string, ctx addressingContext) []string {
+	if len(raw) == 0 || len(ctx.RoomAgents) == 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, token := range raw {
+		if strings.Contains(token, "@") || groupMentionKinds[token] != "" {
+			continue
+		}
+		if len(ctx.RoleNames) > 0 && len(ctx.RoleNames[token]) > 0 {
+			continue
+		}
+		if len(roomAgentsBySlug(ctx.RoomAgents, token)) < 2 {
+			continue
+		}
+		if !seen[token] {
+			seen[token] = true
+			out = append(out, token)
+		}
+	}
+	return out
+}
+
+func addressedMatchesAgent(target, agentID string) bool {
+	if strings.EqualFold(target, agentID) {
+		return true
+	}
+	if !strings.Contains(target, "@") && strings.EqualFold(target, agentShortName(agentID)) {
+		return true
+	}
+	return false
+}
+
 // annotatedMessage is a types.Message with per-agent addressing guidance
 // attached. Fields are computed at read time so agents can act on structured
 // data instead of re-parsing etiquette prose.
@@ -351,8 +417,9 @@ type annotatedMessage struct {
 	ShouldRespond bool     `json:"should_respond"`
 }
 
-// annotate attaches addressing metadata to msgs as seen by agentName (the
-// short name, e.g. "worker"). isDM is derived per-message from m.RoomID.
+// annotate attaches addressing metadata to msgs as seen by agentID. The
+// viewer may be a full AI ID (worker@aimebu) or a legacy short name
+// (worker). isDM is derived per-message from m.RoomID.
 // contextFor supplies the room-aware resolver context for each message.
 //
 // should_respond logic mirrors the MCP etiquette:
@@ -360,7 +427,7 @@ type annotatedMessage struct {
 //   - human sender, room-wide (no addressed_to): respond.
 //   - human sender, addressed to others: do not respond.
 //   - ai sender or unknown: respond only if addressed_to_me or in a DM room.
-func annotate(msgs []types.Message, agentName string, contextFor func(types.Message) addressingContext) []annotatedMessage {
+func annotate(msgs []types.Message, agentID string, contextFor func(types.Message) addressingContext) []annotatedMessage {
 	out := make([]annotatedMessage, len(msgs))
 	for i, m := range msgs {
 		ctx := addressingContext{}
@@ -371,7 +438,13 @@ func annotate(msgs []types.Message, agentName string, contextFor func(types.Mess
 		if addressed == nil {
 			addressed = resolveAddressedTo(m.Body, ctx)
 		}
-		addrToMe := slices.Contains(addressed, agentName)
+		addrToMe := false
+		for _, target := range addressed {
+			if addressedMatchesAgent(target, agentID) {
+				addrToMe = true
+				break
+			}
+		}
 		isDM := strings.HasPrefix(m.RoomID, "dm:")
 		var shouldRespond bool
 		switch m.FromKind {

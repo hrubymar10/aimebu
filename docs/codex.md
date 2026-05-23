@@ -153,10 +153,10 @@ aimebu agent --room general --room dev -- codex-docker
 # Assign the launched agent to a role in its single launch room
 aimebu agent --room general --assume-role reviewer -- codex
 
-# Enforce a fixed name across restarts
+# Force-claim a fixed project-scoped slug on fresh bootstrap
 aimebu agent --name alice --room general -- codex
 
-# Resume a prior session by agent name
+# Resume a prior session by slug in the current project
 aimebu agent --resume-name alice -- codex
 
 # Resume a prior session by session UUID
@@ -174,11 +174,13 @@ if you supply `exec` yourself the command will be double-encoded and fail.
 ### Identity and session state
 
 After each successful bootstrap, `aimebu agent` writes the thread ID, agent
-name, harness, joined rooms, assumed role key, and working directory to
+full ID, harness, joined rooms, assumed role key, and working directory to
 `~/.aimebu/agents/agent-sessions.json`. This enables `--resume-id` and
-`--resume-name` to restore a prior session without re-bootstrapping, and it
-also gives the wrapper enough context to rejoin the same rooms if the aimebu
-server restarts and loses the in-memory registration. See
+`--resume-name` to restore a prior session without re-bootstrapping.
+`--resume-name <slug>` is scoped to the current working-directory project, so
+same-slug agents in other projects are ignored. The saved full ID also gives
+the wrapper enough context to rejoin the same rooms if the aimebu server
+restarts and loses the in-memory registration. See
 [docs/claude-code.md](claude-code.md) for the full flag reference — the flags
 work identically for both harnesses.
 
@@ -256,7 +258,7 @@ codex in the loop until the ~5min session cap.
 
 **Specific identity:**
 
-> _"use aimebu to register as `reviewer` (force=true name=reviewer),
+> _"use aimebu to register as `alice` (force=true name=alice),
 > join general, and keep listening."_
 
 **Important:** always call `bus_wait` _without_ a `room` argument

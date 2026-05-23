@@ -258,6 +258,9 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		if warn := s.legacyPrefixWarn(req.From, req.Body); warn != "" {
 			warnings = append(warnings, warn)
 		}
+		if warn := s.ambiguousMentionWarn(roomID, req.From, req.Body); warn != "" {
+			warnings = append(warnings, warn)
+		}
 		if warn := s.attentionMissWarn(roomID, req.From, req.Body, req.NeedsAttention, nil); warn != "" {
 			warnings = append(warnings, warn)
 		}
@@ -292,7 +295,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 
 		msgs := s.roomMessages(roomID, limit, sinceID)
 		if agentID != "" {
-			_ = jsonOK(w, map[string]any{"messages": annotate(msgs, agentShortName(agentID), s.addressingContext), "room": roomID})
+			_ = jsonOK(w, map[string]any{"messages": annotate(msgs, agentID, s.addressingContext), "room": roomID})
 		} else {
 			_ = jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
 		}
@@ -352,7 +355,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 						filtered = append(filtered, m)
 					}
 				}
-				if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentShortName(agentID), s.addressingContext), "room": roomID}); err == nil {
+				if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentID, s.addressingContext), "room": roomID}); err == nil {
 					if s.advanceCursor(agentID, roomID, last) {
 						s.broadcastReadUpdate(agentID, roomID, last)
 					}
@@ -395,7 +398,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 					return // client disconnected; preserve cursor so next reconnect replays
 				}
 				if agentID != "" {
-					if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID), s.addressingContext), "room": roomID}); err == nil {
+					if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentID, s.addressingContext), "room": roomID}); err == nil {
 						if s.advanceCursor(agentID, roomID, msg.ID) {
 							s.broadcastReadUpdate(agentID, roomID, msg.ID)
 						}
@@ -465,7 +468,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 					filtered = append(filtered, m)
 				}
 			}
-			if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentShortName(agentID), s.addressingContext), "agent": agentID}); err == nil {
+			if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentID, s.addressingContext), "agent": agentID}); err == nil {
 				if !sinceExplicit {
 					// Advance cursors for every room we returned messages from
 					// (including own messages — they advance the cursor but aren't
@@ -526,7 +529,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 				if r.Context().Err() != nil {
 					return // client disconnected; preserve cursor so next reconnect replays
 				}
-				if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentShortName(agentID), s.addressingContext), "agent": agentID}); err == nil {
+				if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentID, s.addressingContext), "agent": agentID}); err == nil {
 					if !sinceExplicit {
 						if s.advanceCursor(agentID, msg.RoomID, msg.ID) {
 							s.broadcastReadUpdate(agentID, msg.RoomID, msg.ID)
@@ -613,6 +616,9 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		resp := map[string]any{"id": id, "room": room.ID}
 		var warnings []string
 		if warn := s.legacyPrefixWarn(req.From, req.Body); warn != "" {
+			warnings = append(warnings, warn)
+		}
+		if warn := s.ambiguousMentionWarn(room.ID, req.From, req.Body); warn != "" {
 			warnings = append(warnings, warn)
 		}
 		if warn := s.attentionMissWarn(room.ID, req.From, req.Body, req.NeedsAttention, []string{agentShortName(req.To)}); warn != "" {
@@ -793,7 +799,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, "not_found", http.StatusNotFound)
 			return
 		}
-		annotated := annotate([]types.Message{msg}, agentShortName(agentID), s.addressingContext)
+		annotated := annotate([]types.Message{msg}, agentID, s.addressingContext)
 		if len(annotated) == 1 {
 			_ = jsonOK(w, annotated[0])
 			return

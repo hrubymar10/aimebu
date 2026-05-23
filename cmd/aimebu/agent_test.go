@@ -91,9 +91,17 @@ func TestAgentResolveRoomsAutoRoom(t *testing.T) {
 }
 
 func TestAgentResolveResume(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectDir := filepath.Join(t.TempDir(), filepath.Base(cwd))
+	if err := os.Mkdir(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	sessions := []agentSession{
-		{SessionID: "uuid-alice", Name: "alice", Harness: "claude-code", CWD: "/proj", LastUsed: time.Now()},
-		{SessionID: "uuid-bob", Name: "bob", Harness: "codex", CWD: "/proj", LastUsed: time.Now()},
+		{SessionID: "uuid-alice", Name: "alice", Harness: "claude-code", CWD: projectDir, LastUsed: time.Now()},
+		{SessionID: "uuid-bob", Name: "bob", Harness: "codex", CWD: projectDir, LastUsed: time.Now()},
 	}
 
 	t.Run("resume-id hit", func(t *testing.T) {
@@ -143,6 +151,31 @@ func TestAgentResolveResume(t *testing.T) {
 		}
 		if got := err.Error(); !contains(got, "carol") {
 			t.Errorf("error %q does not mention the name", got)
+		}
+	})
+
+	t.Run("resume-name scoped to current project", func(t *testing.T) {
+		dir := t.TempDir()
+		alphaDir := filepath.Join(dir, "alpha")
+		betaDir := filepath.Join(dir, "beta")
+		if err := os.Mkdir(alphaDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(betaDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		scoped := []agentSession{
+			{SessionID: "uuid-alpha", Name: "sam@alpha", Harness: "codex", CWD: alphaDir, LastUsed: time.Now()},
+			{SessionID: "uuid-beta", Name: "sam@beta", Harness: "codex", CWD: betaDir, LastUsed: time.Now()},
+		}
+
+		t.Chdir(betaDir)
+		e, err := agentResolveResume("", "sam", "", "codex", scoped)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.SessionID != "uuid-beta" {
+			t.Errorf("got session %q, want uuid-beta", e.SessionID)
 		}
 	})
 
