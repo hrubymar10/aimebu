@@ -41,6 +41,58 @@ func setupTestServerWithBuild(t *testing.T, build BuildInfo) (*store, *httptest.
 	return s, srv
 }
 
+func TestServerBaseContextCancelsRoomWait(t *testing.T) {
+	s, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "waiter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.createRoom("shutdown-room", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.advanceCursor(agent.ID, "shutdown-room", s.roomHead("shutdown-room"))
+
+	mux := http.NewServeMux()
+	setupHandlers(mux, s, BuildInfo{}, nil)
+
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+	srv := httptest.NewUnstartedServer(mux)
+	srv.Config.BaseContext = serverBaseContext(serverCtx)
+	srv.Start()
+	t.Cleanup(srv.Close)
+	t.Cleanup(serverCancel)
+
+	done := make(chan error, 1)
+	go func() {
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/rooms/shutdown-room/wait?agent_id="+agent.ID+"&timeout=60", nil)
+		if err != nil {
+			done <- err
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		done <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	start := time.Now()
+	serverCancel()
+
+	select {
+	case <-done:
+		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+			t.Fatalf("room wait returned after %s, want under 500ms", elapsed)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("room wait did not return after base context cancellation")
+	}
+}
+
 func hasRoomMember(room *types.Room, agentID string) bool {
 	if room == nil {
 		return false

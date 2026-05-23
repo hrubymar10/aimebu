@@ -1418,6 +1418,8 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
 	s.startCleanup(cleanupCtx)
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+	defer serverCancel()
 
 	mux := http.NewServeMux()
 	usageManager := usages.NewManager(usages.NewStoreAt(filepath.Join(rootDir, "usages")), usages.DefaultRegistry())
@@ -1447,8 +1449,9 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	handler = allowMiddleware(handler, allow)
 
 	httpSrv := &http.Server{
-		Addr:    addr,
-		Handler: handler,
+		Addr:        addr,
+		Handler:     handler,
+		BaseContext: serverBaseContext(serverCtx),
 	}
 	tlsConfig, err := resolveServerTLSConfig()
 	if err != nil {
@@ -1468,8 +1471,9 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 		}
 		servers = append(servers, serverListener{
 			srv: &http.Server{
-				Addr:    net.JoinHostPort(host, tlsPort),
-				Handler: handler,
+				Addr:        net.JoinHostPort(host, tlsPort),
+				Handler:     handler,
+				BaseContext: serverBaseContext(serverCtx),
 			},
 			scheme:   "https",
 			certFile: tlsConfig.CertFile,
@@ -1485,6 +1489,7 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 		log.Println("Shutting down...")
 		// best-effort: won't fire on SIGKILL or crash
 		s.emitSystemMessage("_system", "server stopping")
+		serverCancel()
 		shutdownServers(servers)
 	}()
 
@@ -1521,10 +1526,17 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 		}
 		if firstErr == nil {
 			firstErr = err
+			serverCancel()
 			shutdownServers(servers)
 		}
 	}
 	return firstErr
+}
+
+func serverBaseContext(ctx context.Context) func(net.Listener) context.Context {
+	return func(_ net.Listener) context.Context {
+		return ctx
+	}
 }
 
 // DefaultAddr returns the listen address from env vars.
