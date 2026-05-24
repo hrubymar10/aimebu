@@ -207,7 +207,7 @@ func fetchCopilotUsage(ctx context.Context, token, apiBase string) (copilotUsage
 	addCopilotHeaders(req.Header)
 	resp, err := usageHTTPClient.Do(req)
 	if err != nil {
-		return copilotUsageRaw{}, nil, usageRequestStatus(err), errors.New("GitHub Copilot usage request failed.")
+		return copilotUsageRaw{}, nil, usageRequestStatus(err), fmt.Errorf("GitHub Copilot usage request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

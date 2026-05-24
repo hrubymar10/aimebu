@@ -56,8 +56,9 @@ unknown entries are ignored and missing known providers are appended.
 
 ## Stale Cache
 
-When a provider fetch fails after a previous successful snapshot exists,
-aimebu returns the previous plan, windows, and credits with:
+When a provider fetch fails from a transient transport or server-side problem
+after a previous successful snapshot exists, aimebu returns the previous plan,
+windows, and credits with:
 
 - `status: "stale_cache"`
 - `stale: true`
@@ -65,6 +66,12 @@ aimebu returns the previous plan, windows, and credits with:
 
 The CLI marks these rows with `(stale)`. The web sidebar shows the stale state
 and error instead of presenting cached values as fresh.
+
+Stale-cache preservation covers timeouts, canceled refreshes, DNS failures,
+connection failures or resets, and HTTP 5xx responses. Credential and
+permission failures such as `auth_missing` and `scope_missing` replace the
+cached snapshot so expired or unauthorized auth does not look like live quota
+data.
 
 Credit snapshots can include both current spend and a spend limit. The CLI
 prints those as `used/limit`; the web sidebar shows the same pair in the

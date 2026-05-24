@@ -274,7 +274,7 @@ func fetchOllamaSettingsHTML(ctx context.Context, cookie string) ([]byte, *Error
 	req.Header.Set("Referer", ollamaSettingsURL)
 	resp, err := ollamaHTTPClient.Do(req)
 	if err != nil {
-		return nil, nil, usageRequestStatus(err), errors.New("Ollama Cloud settings request failed.")
+		return nil, nil, usageRequestStatus(err), fmt.Errorf("Ollama Cloud settings request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

@@ -3,7 +3,11 @@ package usages
 import (
 	"context"
 	"errors"
+	"net"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -393,7 +397,7 @@ func (m *Manager) fetchOne(ctx context.Context, key string, previous CacheEntry)
 		status = StatusTimeout
 		errSnapshot.Status = status
 	}
-	if previous.Snapshot.Provider != "" && (previous.Snapshot.Status == StatusOK || previous.Snapshot.Status == StatusStaleCache) {
+	if shouldPreservePreviousSnapshot(err, errSnapshot, previous) {
 		snap = previous.Snapshot
 		snap.Status = StatusStaleCache
 		snap.Stale = true
@@ -405,6 +409,66 @@ func (m *Manager) fetchOne(ctx context.Context, key string, previous CacheEntry)
 	snap = errSnapshot
 	snap.LastRefreshAt = &now
 	return CacheEntry{Snapshot: snap, LastRefreshAt: &now}
+}
+
+func shouldPreservePreviousSnapshot(err error, errSnapshot Snapshot, previous CacheEntry) bool {
+	if previous.Snapshot.Provider == "" {
+		return false
+	}
+	if previous.Snapshot.Status != StatusOK && previous.Snapshot.Status != StatusStaleCache {
+		return false
+	}
+	if errSnapshot.Status == StatusTimeout {
+		return true
+	}
+	if errSnapshot.Status != StatusFetchError {
+		return false
+	}
+	return isTransientTransportError(err) || hasTransientHTTPStatus(errSnapshot.ErrorDetail)
+}
+
+func isTransientTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	for _, target := range []error{
+		syscall.ECONNABORTED,
+		syscall.ECONNREFUSED,
+		syscall.ECONNRESET,
+		syscall.EHOSTDOWN,
+		syscall.EHOSTUNREACH,
+		syscall.ENETDOWN,
+		syscall.ENETUNREACH,
+	} {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTransientHTTPStatus(detail *ErrorDetail) bool {
+	if detail == nil {
+		return false
+	}
+	for _, value := range detail.Fields {
+		codeText, ok := strings.CutPrefix(value, "http_")
+		if !ok {
+			continue
+		}
+		code, err := strconv.Atoi(codeText)
+		if err == nil && code >= 500 && code <= 599 {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) checkForceCooldown(provider string) int {

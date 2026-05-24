@@ -302,7 +302,7 @@ func fetchCodexUsage(ctx context.Context, creds codexCredentials) (codexUsageRaw
 	}
 	resp, err := usageHTTPClient.Do(req)
 	if err != nil {
-		return codexUsageRaw{}, nil, usageRequestStatus(err), errors.New("Codex usage request failed.")
+		return codexUsageRaw{}, nil, usageRequestStatus(err), fmt.Errorf("Codex usage request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

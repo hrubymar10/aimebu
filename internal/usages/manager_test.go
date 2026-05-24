@@ -3,8 +3,11 @@ package usages
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -129,33 +132,77 @@ func TestManagerForceCooldown(t *testing.T) {
 	}
 }
 
-func TestManagerStaleCache(t *testing.T) {
-	store := NewStoreAt(t.TempDir())
-	cfg := DefaultConfig()
-	cfg.Providers[ProviderCodex] = ProviderConfig{Enabled: true}
-	cfg.RefreshIntervalSec = MinRefreshSec
-	if err := store.SaveConfig(cfg); err != nil {
-		t.Fatal(err)
-	}
+func TestManagerDNSFailureKeepsPreviousSnapshotStale(t *testing.T) {
 	old := time.Unix(100, 0)
-	cache := EmptyCache()
-	cache.Snapshots[ProviderCodex] = CacheEntry{
+	clock := &fakeClock{now: old.Add(time.Hour)}
+	m := NewManager(NewStoreAt(t.TempDir()), NewRegistry(&fakeProvider{
+		key: ProviderCodex,
+		err: &net.DNSError{Err: "no such host", Name: "usage.example"},
+	}))
+	m.SetClock(clock)
+
+	entry := m.fetchOne(context.Background(), ProviderCodex, CacheEntry{
 		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Plan: "old"},
 		LastRefreshAt: &old,
+	})
+
+	if entry.Snapshot.Status != StatusStaleCache || !entry.Snapshot.Stale || entry.Snapshot.Plan != "old" {
+		t.Fatalf("snapshot = %+v", entry.Snapshot)
 	}
-	if err := store.SaveCache(cache); err != nil {
-		t.Fatal(err)
+	if entry.LastRefreshAt == nil || !entry.LastRefreshAt.Equal(old) {
+		t.Fatalf("last refresh = %+v, want %v", entry.LastRefreshAt, old)
 	}
+}
+
+func TestManagerConnectionResetKeepsPreviousSnapshotStale(t *testing.T) {
+	old := time.Unix(100, 0)
 	clock := &fakeClock{now: old.Add(time.Hour)}
-	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderCodex, err: errors.New("boom")}))
+	m := NewManager(NewStoreAt(t.TempDir()), NewRegistry(&fakeProvider{
+		key: ProviderCodex,
+		err: fmt.Errorf("read tcp: %w", syscall.ECONNRESET),
+	}))
 	m.SetClock(clock)
-	resp, err := m.Snapshot(context.Background(), ProviderCodex)
-	if err != nil {
-		t.Fatalf("Snapshot: %v", err)
+
+	entry := m.fetchOne(context.Background(), ProviderCodex, CacheEntry{
+		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Plan: "old"},
+		LastRefreshAt: &old,
+	})
+
+	if entry.Snapshot.Status != StatusStaleCache || !entry.Snapshot.Stale || entry.Snapshot.Plan != "old" {
+		t.Fatalf("snapshot = %+v", entry.Snapshot)
 	}
-	snap := resp.Snapshots[ProviderCodex]
-	if snap.Status != StatusStaleCache || !snap.Stale || snap.Plan != "old" {
-		t.Fatalf("snapshot = %+v", snap)
+	if entry.LastRefreshAt == nil || !entry.LastRefreshAt.Equal(old) {
+		t.Fatalf("last refresh = %+v, want %v", entry.LastRefreshAt, old)
+	}
+}
+
+func TestManagerTransientServerErrorKeepsPreviousSnapshotStale(t *testing.T) {
+	old := time.Unix(100, 0)
+	clock := &fakeClock{now: old.Add(time.Hour)}
+	m := NewManager(NewStoreAt(t.TempDir()), NewRegistry(&fakeProvider{
+		key: ProviderCodex,
+		err: &SnapshotError{
+			Snapshot: Snapshot{
+				Provider:    ProviderCodex,
+				Status:      StatusFetchError,
+				Error:       "Codex usage endpoint returned HTTP 503.",
+				ErrorDetail: fieldDetail("usage", "http_503"),
+			},
+			Err: errors.New("Codex usage endpoint returned HTTP 503."),
+		},
+	}))
+	m.SetClock(clock)
+
+	entry := m.fetchOne(context.Background(), ProviderCodex, CacheEntry{
+		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Plan: "old"},
+		LastRefreshAt: &old,
+	})
+
+	if entry.Snapshot.Status != StatusStaleCache || !entry.Snapshot.Stale || entry.Snapshot.Plan != "old" {
+		t.Fatalf("snapshot = %+v", entry.Snapshot)
+	}
+	if entry.LastRefreshAt == nil || !entry.LastRefreshAt.Equal(old) {
+		t.Fatalf("last refresh = %+v, want %v", entry.LastRefreshAt, old)
 	}
 }
 
@@ -177,7 +224,7 @@ func TestManagerStaleCacheSurvivesRepeatedFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock := &fakeClock{now: old.Add(time.Hour)}
-	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderCodex, err: errors.New("boom")}))
+	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderCodex, err: &net.DNSError{Err: "no such host", Name: "usage.example"}}))
 	m.SetClock(clock)
 	if _, err := m.Snapshot(context.Background(), ProviderCodex); err != nil {
 		t.Fatalf("first Snapshot: %v", err)
@@ -189,6 +236,32 @@ func TestManagerStaleCacheSurvivesRepeatedFailures(t *testing.T) {
 	snap := resp.Snapshots[ProviderCodex]
 	if snap.Status != StatusStaleCache || !snap.Stale || snap.Plan != "old" {
 		t.Fatalf("snapshot = %+v", snap)
+	}
+}
+
+func TestManagerAuthFailureDropsPreviousSnapshot(t *testing.T) {
+	old := time.Unix(100, 0)
+	now := old.Add(time.Hour)
+	clock := &fakeClock{now: now}
+	m := NewManager(NewStoreAt(t.TempDir()), NewRegistry(&fakeProvider{
+		key: ProviderCodex,
+		err: &SnapshotError{
+			Snapshot: Snapshot{Provider: ProviderCodex, Status: StatusAuthMissing, Error: "OAuth token was rejected."},
+			Err:      errors.New("OAuth token was rejected."),
+		},
+	}))
+	m.SetClock(clock)
+
+	entry := m.fetchOne(context.Background(), ProviderCodex, CacheEntry{
+		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Plan: "old"},
+		LastRefreshAt: &old,
+	})
+
+	if entry.Snapshot.Status != StatusAuthMissing || entry.Snapshot.Stale || entry.Snapshot.Plan != "" {
+		t.Fatalf("snapshot = %+v", entry.Snapshot)
+	}
+	if entry.LastRefreshAt == nil || !entry.LastRefreshAt.Equal(now) {
+		t.Fatalf("last refresh = %+v, want %v", entry.LastRefreshAt, now)
 	}
 }
 

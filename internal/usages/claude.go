@@ -349,7 +349,7 @@ func fetchClaudeUsageOnce(ctx context.Context, creds claudeCredentials) (claudeU
 	req.Header.Set("User-Agent", claudeCodeUserAgent())
 	resp, err := usageHTTPClient.Do(req)
 	if err != nil {
-		return claudeUsageRaw{}, nil, usageRequestStatus(err), false, errors.New("Claude usage request failed.")
+		return claudeUsageRaw{}, nil, usageRequestStatus(err), false, fmt.Errorf("Claude usage request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
