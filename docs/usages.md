@@ -12,7 +12,7 @@ Supported providers:
 | `codex` | Codex OAuth file at `$CODEX_HOME/auth.json`, or `~/.codex/auth.json` | Enable in Settings -> Usages |
 | `claude-code` | Claude Code OAuth file at `~/.claude/.credentials.json` | Enable in Settings -> Usages |
 | `github-copilot` | GitHub device flow token stored locally by aimebu | Settings -> Usages -> Sign in with GitHub |
-| `ollama-cloud` | Browser `Cookie` header from `https://ollama.com/settings` | Settings -> Usages -> Ollama Cloud cookie |
+| `ollama-cloud` | Browser `Cookie` header from `https://ollama.com/settings`, or Ollama API key | Settings -> Usages -> Ollama Cloud credentials |
 
 Provider secrets are stored in `~/.aimebu/usages/config.json` with file mode
 `0600`. `~/.aimebu/usages/cache.json` stores only redacted last successful

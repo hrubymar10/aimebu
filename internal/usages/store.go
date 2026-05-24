@@ -23,6 +23,8 @@ const (
 type ProviderConfig struct {
 	Enabled        bool   `json:"enabled"`
 	Token          string `json:"token,omitempty"`
+	APIKey         string `json:"api_key,omitempty"`
+	AuthMode       string `json:"auth_mode,omitempty"`
 	EnterpriseHost string `json:"enterprise_host,omitempty"`
 	Cookie         string `json:"cookie,omitempty"`
 }
@@ -165,7 +167,7 @@ func (s *Store) SaveCache(cache Cache) error {
 	}
 	var secrets []string
 	for _, pc := range cfg.Providers {
-		secrets = append(secrets, pc.Token, pc.Cookie)
+		secrets = append(secrets, pc.Token, pc.APIKey, pc.Cookie)
 	}
 	for key, entry := range cache.Snapshots {
 		entry.Snapshot = entry.Snapshot.Redacted(secrets...)

@@ -2293,31 +2293,41 @@
 
   function renderOllamaProviderRow(row, idx, total) {
     var available = !!row.available;
-    var configured = !!row.cookie_configured || !!row.enabled;
+    var configured = !!row.cookie_configured || !!row.api_key_configured || !!row.enabled;
+    var authMode = row.auth_mode || 'auto';
     var snap = usageSnapshots['ollama-cloud'] || {};
     var status = snap.status || (configured ? 'saved' : 'not_configured');
     var hasError = status === 'auth_missing' || status === 'fetch_error';
     var showEditor = available && (!configured || hasError || ollamaCookieEditorOpen);
-    var statusText = 'Cookie not configured';
+    var methods = [];
+    if (row.cookie_configured) methods.push('cookie');
+    if (row.api_key_configured) methods.push('API key');
+    var statusText = 'Credentials not configured';
     if (!available) {
       statusText = 'Available in upcoming release.';
     } else if (hasError) {
-      statusText = snap.error || 'Ollama Cloud fetch failed. Update the cookie.';
+      statusText = snap.error || 'Ollama Cloud fetch failed. Update credentials.';
     } else if (configured) {
-      statusText = 'Cookie configured' + (snap.last_refresh_at ? ' (last fetched ' + new Date(snap.last_refresh_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ')' : '');
+      statusText = (methods.length ? methods.join(' + ') : 'Credentials') + ' configured' + (snap.last_refresh_at ? ' (last fetched ' + new Date(snap.last_refresh_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ')' : '');
     }
     var editor = '';
     if (showEditor) {
-      editor = '<textarea class="settings-text-input ollama-cookie-input" rows="3" autocomplete="off" spellcheck="false" placeholder="Paste the Cookie header from ollama.com/settings"></textarea>' +
+      editor = '<select class="settings-text-input ollama-auth-mode-select">' +
+          '<option value="auto"' + (authMode === 'auto' ? ' selected' : '') + '>Auto</option>' +
+          '<option value="cookie"' + (authMode === 'cookie' ? ' selected' : '') + '>Cookie</option>' +
+          '<option value="api_key"' + (authMode === 'api_key' ? ' selected' : '') + '>API key</option>' +
+        '</select>' +
+        '<input type="password" class="settings-text-input ollama-api-key-input" autocomplete="off" placeholder="' + (row.api_key_configured ? 'API key configured' : 'Paste an API key from ollama.com/settings/keys') + '">' +
+        '<textarea class="settings-text-input ollama-cookie-input" rows="3" autocomplete="off" spellcheck="false" placeholder="' + (row.cookie_configured ? 'Cookie configured' : 'Paste the Cookie header from ollama.com/settings') + '"></textarea>' +
         '<div class="ollama-actions"><button class="btn btn-sm ollama-cookie-save-btn" type="button">Save</button>' +
         (configured ? '<button class="btn btn-sm ollama-cookie-cancel-btn" type="button">Cancel</button>' : '') + '</div>';
     } else if (configured) {
-      editor = '<div class="ollama-actions"><button class="btn btn-sm ollama-cookie-update-btn" type="button">Update cookie</button><button class="btn btn-sm ollama-cookie-clear-btn" type="button">Clear</button></div>';
+      editor = '<div class="ollama-actions"><button class="btn btn-sm ollama-cookie-update-btn" type="button">Update credentials</button><button class="btn btn-sm ollama-cookie-clear-btn" type="button">Clear</button></div>';
     }
     return '<div class="settings-row ollama-provider-row' + (available ? '' : ' usages-provider-row-disabled') + '">' +
       '<div class="settings-row-info">' +
         '<label class="settings-label">Ollama Cloud</label>' +
-        '<span class="settings-desc">Paste a settings-page Cookie header; the stored value is never shown again.</span>' +
+        '<span class="settings-desc">Use a Cookie header for quota windows, or an API key to verify Cloud access.</span>' +
         '<span class="settings-status">' + esc(statusText) + '</span>' +
       '</div>' +
       '<div class="settings-control ollama-settings-control">' + usageProviderOrderControls(row, idx, total) + editor + '</div>' +
@@ -2430,28 +2440,33 @@
   }
 
   function saveOllamaCookie() {
-    var input = usagesProviderRows && usagesProviderRows.querySelector('.ollama-cookie-input');
-    var cookie = input ? input.value : '';
-    api('POST', '/api/usages/ollama/cookie', { cookie: cookie })
+    var cookieInput = usagesProviderRows && usagesProviderRows.querySelector('.ollama-cookie-input');
+    var apiKeyInput = usagesProviderRows && usagesProviderRows.querySelector('.ollama-api-key-input');
+    var modeSelect = usagesProviderRows && usagesProviderRows.querySelector('.ollama-auth-mode-select');
+    var payload = { auth_mode: modeSelect ? modeSelect.value : 'auto' };
+    if (cookieInput && cookieInput.value.trim()) payload.cookie = cookieInput.value;
+    if (apiKeyInput && apiKeyInput.value.trim()) payload.api_key = apiKeyInput.value;
+    api('POST', '/api/usages/ollama/config', payload)
       .then(function () {
-        if (input) input.value = '';
+        if (cookieInput) cookieInput.value = '';
+        if (apiKeyInput) apiKeyInput.value = '';
         ollamaCookieEditorOpen = false;
         return loadUsages();
       })
       .catch(function (err) {
-        alert('Failed to save Ollama Cloud cookie: ' + (err && err.message ? err.message : err));
-        if (input) input.value = '';
+        alert('Failed to save Ollama Cloud credentials: ' + (err && err.message ? err.message : err));
+        if (apiKeyInput) apiKeyInput.value = '';
       });
   }
 
   function clearOllamaCookie() {
-    api('POST', '/api/usages/ollama/cookie', { cookie: '' })
+    api('POST', '/api/usages/ollama/config', { auth_mode: 'auto', api_key: '', cookie: '' })
       .then(function () {
         ollamaCookieEditorOpen = false;
         return loadUsages();
       })
       .catch(function (err) {
-        alert('Failed to clear Ollama Cloud cookie: ' + (err && err.message ? err.message : err));
+        alert('Failed to clear Ollama Cloud credentials: ' + (err && err.message ? err.message : err));
       });
   }
 

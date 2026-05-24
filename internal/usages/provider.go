@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -88,6 +89,8 @@ type ProviderInfo struct {
 	Enabled          bool   `json:"enabled"`
 	Available        bool   `json:"available"`
 	EnterpriseHost   string `json:"enterprise_host,omitempty"`
+	AuthMode         string `json:"auth_mode,omitempty"`
+	APIKeyConfigured bool   `json:"api_key_configured,omitempty"`
 	CookieConfigured bool   `json:"cookie_configured,omitempty"`
 }
 
@@ -201,10 +204,22 @@ func ProviderInfos(cfg Config, registry *Registry) []ProviderInfo {
 			Enabled:          pc.Enabled,
 			Available:        registry.HasProvider(key),
 			EnterpriseHost:   pc.EnterpriseHost,
+			AuthMode:         ollamaProviderAuthMode(key, pc),
+			APIKeyConfigured: key == ProviderOllamaCloud && strings.TrimSpace(pc.APIKey) != "",
 			CookieConfigured: key == ProviderOllamaCloud && pc.Cookie != "",
 		})
 	}
 	return out
+}
+
+func ollamaProviderAuthMode(key string, pc ProviderConfig) string {
+	if key != ProviderOllamaCloud {
+		return ""
+	}
+	if strings.TrimSpace(pc.AuthMode) == "" {
+		return ""
+	}
+	return normalizeOllamaAuthMode(pc.AuthMode)
 }
 
 func unknownProviderError(key string) error {

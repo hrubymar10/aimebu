@@ -208,7 +208,7 @@ aimebu usages                    # print provider usage snapshots
 aimebu usages codex --json       # Codex usage as normalized JSON
 aimebu usages claude-code --json # Claude Code usage as normalized JSON
 aimebu usages github-copilot     # GitHub Copilot usage via device flow
-aimebu usages ollama-cloud       # Ollama Cloud usage via pasted Cookie header
+aimebu usages ollama-cloud       # Ollama Cloud usage via Cookie header or API key
 aimebu sniff -f                  # follow all traffic in real time
 ```
 
@@ -384,6 +384,7 @@ POST   /api/usages/refresh             Force refresh usage snapshots; 15s cooldo
 POST   /api/usages/providers           Enable/disable known providers from Settings
 POST   /api/usages/settings            Update usage refresh interval (minimum 15s), percent display ("left" or "used"), and provider order
 POST   /api/usages/ollama/cookie       Save or clear Ollama Cloud Cookie header; response never echoes the cookie
+POST   /api/usages/ollama/config       Save or clear Ollama Cloud auth mode, API key, and Cookie header; response never echoes secrets
 POST   /api/usages/copilot/login/start Start GitHub device flow; returns flow_id, user_code, verification URLs
 POST   /api/usages/copilot/login/poll  Poll GitHub device flow by flow_id; never returns tokens
 POST   /api/usages/copilot/login/logout Clear local Copilot token and disable the provider
@@ -460,7 +461,7 @@ three-panel layout:
   load), Prompts (override per-key MCP etiquette text, tool descriptions, and
   spawn prompts; changes apply on next agent reconnect), Usages (provider
   usage refresh interval, percent display, provider ordering and enablement,
-  GitHub Copilot device flow, and Ollama Cloud cookie setup), Roles (edit global role
+  GitHub Copilot device flow, and Ollama Cloud credential setup), Roles (edit global role
   definitions, instructions, descriptions, emoji, cardinality, and extensions),
   Backup & Sync
   (export/import JSON), Danger Zone (clear state or all data).
@@ -572,7 +573,7 @@ preserved by both prune modes.
 
 Provider usage state under `usages/` is independent of conversation prune.
 Use Settings -> Usages to clear provider credentials such as Copilot tokens or
-Ollama Cloud cookies.
+Ollama Cloud cookies and API keys.
 
 Human-readable JSON. Inspect with `cat`/`jq`, edit directly if needed.
 

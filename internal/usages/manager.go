@@ -146,6 +146,10 @@ func (m *Manager) SetProviderEnabled(ctx context.Context, provider string, enabl
 }
 
 func (m *Manager) SetOllamaCookie(ctx context.Context, cookie string) (Config, error) {
+	return m.SetOllamaConfig(ctx, "", nil, &cookie)
+}
+
+func (m *Manager) SetOllamaConfig(ctx context.Context, authMode string, apiKey *string, cookie *string) (Config, error) {
 	var cfg Config
 	err := m.store.WithLock(func() error {
 		var err error
@@ -154,19 +158,39 @@ func (m *Manager) SetOllamaCookie(ctx context.Context, cookie string) (Config, e
 			return err
 		}
 		pc := cfg.Providers[ProviderOllamaCloud]
-		if cookie == "" {
-			pc.Cookie = ""
-			pc.Enabled = false
+		if authMode != "" {
+			pc.AuthMode = normalizeOllamaAuthMode(authMode)
 		} else {
-			normalized, detail, err := normalizeOllamaCookieHeader(cookie)
-			if err != nil {
-				if detail != nil {
-					return &SnapshotError{Snapshot: Snapshot{Provider: ProviderOllamaCloud, Status: StatusAuthMissing, Error: err.Error(), ErrorDetail: detail}, Err: err}
+			pc.AuthMode = normalizeOllamaAuthMode(pc.AuthMode)
+		}
+		if apiKey != nil {
+			pc.APIKey = normalizeOllamaAPIKey(*apiKey)
+		}
+		if cookie != nil {
+			rawCookie := strings.TrimSpace(*cookie)
+			if rawCookie == "" {
+				pc.Cookie = ""
+			} else {
+				normalized, detail, err := normalizeOllamaCookieHeader(rawCookie)
+				if err != nil {
+					if detail != nil {
+						return &SnapshotError{Snapshot: Snapshot{Provider: ProviderOllamaCloud, Status: StatusAuthMissing, Error: err.Error(), ErrorDetail: detail}, Err: err}
+					}
+					return err
 				}
-				return err
+				pc.Cookie = normalized
 			}
-			pc.Cookie = normalized
-			pc.Enabled = true
+		}
+		if pc.AuthMode == "" {
+			pc.AuthMode = OllamaAuthAuto
+		}
+		switch pc.AuthMode {
+		case OllamaAuthCookie:
+			pc.Enabled = pc.Cookie != ""
+		case OllamaAuthAPIKey:
+			pc.Enabled = pc.APIKey != ""
+		default:
+			pc.Enabled = pc.Cookie != "" || pc.APIKey != ""
 		}
 		cfg.Providers[ProviderOllamaCloud] = pc
 		if err := m.store.SaveConfig(cfg); err != nil {
@@ -488,9 +512,9 @@ func (m *Manager) checkForceCooldown(provider string) int {
 }
 
 func configSecrets(cfg Config) []string {
-	secrets := make([]string, 0, len(cfg.Providers)*2)
+	secrets := make([]string, 0, len(cfg.Providers)*3)
 	for _, pc := range cfg.Providers {
-		secrets = append(secrets, pc.Token, pc.Cookie)
+		secrets = append(secrets, pc.Token, pc.APIKey, pc.Cookie)
 	}
 	return secrets
 }

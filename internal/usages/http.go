@@ -21,6 +21,7 @@ func (r Routes) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/usages/providers", r.handleProvider)
 	mux.HandleFunc("POST /api/usages/settings", r.handleSettings)
 	mux.HandleFunc("POST /api/usages/ollama/cookie", r.handleOllamaCookie)
+	mux.HandleFunc("POST /api/usages/ollama/config", r.handleOllamaConfig)
 	mux.HandleFunc("POST /api/usages/copilot/login/start", r.handleCopilotLoginStart)
 	mux.HandleFunc("POST /api/usages/copilot/login/poll", r.handleCopilotLoginPoll)
 	mux.HandleFunc("POST /api/usages/copilot/login/logout", r.handleCopilotLoginLogout)
@@ -35,6 +36,20 @@ func (r Routes) handleOllamaCookie(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	cfg, err := r.Manager.SetOllamaCookie(req.Context(), body.Cookie)
+	writeUsageJSON(w, map[string]any{"config": sanitizeUsageConfig(cfg)}, err)
+}
+
+func (r Routes) handleOllamaConfig(w http.ResponseWriter, req *http.Request) {
+	var body struct {
+		AuthMode string  `json:"auth_mode"`
+		APIKey   *string `json:"api_key"`
+		Cookie   *string `json:"cookie"`
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeUsageStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
+		return
+	}
+	cfg, err := r.Manager.SetOllamaConfig(req.Context(), body.AuthMode, body.APIKey, body.Cookie)
 	writeUsageJSON(w, map[string]any{"config": sanitizeUsageConfig(cfg)}, err)
 }
 
@@ -172,6 +187,7 @@ func (r Routes) handleCopilotLoginLogout(w http.ResponseWriter, req *http.Reques
 func sanitizeUsageConfig(cfg Config) Config {
 	for key, pc := range cfg.Providers {
 		pc.Token = ""
+		pc.APIKey = ""
 		pc.Cookie = ""
 		cfg.Providers[key] = pc
 	}

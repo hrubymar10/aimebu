@@ -192,6 +192,88 @@ func TestOllamaSettingsRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestOllamaAPIKeyFetchRequestAndStatusMapping(t *testing.T) {
+	old := ollamaHTTPClient
+	defer func() { ollamaHTTPClient = old }()
+	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet || req.URL.String() != ollamaTagsURL {
+			t.Fatalf("request = %s %s", req.Method, req.URL)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer api-secret" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		if got := req.Header.Get("Accept"); got != "application/json" {
+			t.Fatalf("Accept = %q", got)
+		}
+		return httpJSON(http.StatusOK, `{"models":[{"name":"gpt-oss:120b"}]}`), nil
+	})}
+	body, _, status, err := fetchOllamaTags(context.Background(), "api-secret")
+	if err != nil || status != "" || len(body) == 0 {
+		t.Fatalf("fetch err=%v status=%s body=%q", err, status, body)
+	}
+
+	for code, want := range map[int]Status{http.StatusUnauthorized: StatusAuthMissing, http.StatusForbidden: StatusAuthMissing, http.StatusInternalServerError: StatusFetchError} {
+		ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return httpJSON(code, `{"message":"raw-live-value"}`), nil
+		})}
+		_, _, got, err := fetchOllamaTags(context.Background(), "api-secret")
+		if err == nil || got != want {
+			t.Fatalf("status %d => got status=%s err=%v, want %s", code, got, err, want)
+		}
+	}
+}
+
+func TestOllamaFetchUsesAPIKeyMode(t *testing.T) {
+	old := ollamaHTTPClient
+	defer func() { ollamaHTTPClient = old }()
+	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != ollamaTagsURL {
+			t.Fatalf("request URL = %s, want tags API", req.URL)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer api-secret" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		return httpJSON(http.StatusOK, `{"models":[{}]}`), nil
+	})}
+
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderOllamaCloud] = ProviderConfig{Enabled: true, AuthMode: OllamaAuthAPIKey, APIKey: "api-secret"}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := NewOllamaCloudProvider().Fetch(context.Background(), store)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if snap.Status != StatusOK || snap.Plan != "API key verified" || len(snap.Windows) != 0 {
+		t.Fatalf("snapshot = %#v", snap)
+	}
+}
+
+func TestOllamaFetchRejectsAPIKey(t *testing.T) {
+	old := ollamaHTTPClient
+	defer func() { ollamaHTTPClient = old }()
+	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return httpJSON(http.StatusUnauthorized, `{"error":"bad-key"}`), nil
+	})}
+
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderOllamaCloud] = ProviderConfig{Enabled: true, AuthMode: OllamaAuthAPIKey, APIKey: "bad-secret"}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := NewOllamaCloudProvider().Fetch(context.Background(), store)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if snap.Status != StatusAuthMissing {
+		t.Fatalf("snapshot = %#v", snap)
+	}
+	assertNoOllamaSecret(t, jsonString(t, snap), "bad-key", "bad-secret")
+}
+
 func TestOllamaFetchRetriesSessionCookieCandidates(t *testing.T) {
 	old := ollamaHTTPClient
 	defer func() { ollamaHTTPClient = old }()
@@ -222,6 +304,75 @@ func TestOllamaFetchRetriesSessionCookieCandidates(t *testing.T) {
 	}
 	if got, want := strings.Join(cookies, "|"), "__Secure-session=valid; session=stale|__Secure-session=valid"; got != want {
 		t.Fatalf("cookies = %q, want %q", got, want)
+	}
+}
+
+func TestOllamaAutoUsesCookieBeforeAPIKey(t *testing.T) {
+	old := ollamaHTTPClient
+	defer func() { ollamaHTTPClient = old }()
+
+	var urls []string
+	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		urls = append(urls, req.URL.String())
+		if req.URL.String() == ollamaTagsURL {
+			t.Fatal("API key should not be used when cookie succeeds")
+		}
+		return httpJSON(http.StatusOK, `<span>Cloud Usage</span><span>Pro</span><div>Session usage <span>1% used</span></div>`), nil
+	})}
+
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderOllamaCloud] = ProviderConfig{Enabled: true, AuthMode: OllamaAuthAuto, Cookie: "session=valid", APIKey: "api-secret"}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := NewOllamaCloudProvider().Fetch(context.Background(), store)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if snap.Status != StatusOK || snap.Plan != "Pro" || len(snap.Windows) == 0 {
+		t.Fatalf("snapshot = %#v", snap)
+	}
+	if got := strings.Join(urls, "|"); got != ollamaSettingsURL {
+		t.Fatalf("urls = %q, want settings only", got)
+	}
+}
+
+func TestOllamaAutoFallsBackToAPIKey(t *testing.T) {
+	old := ollamaHTTPClient
+	defer func() { ollamaHTTPClient = old }()
+
+	var urls []string
+	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		urls = append(urls, req.URL.String())
+		if req.URL.String() == ollamaSettingsURL {
+			return httpJSON(http.StatusInternalServerError, `settings failed`), nil
+		}
+		if req.URL.String() == ollamaTagsURL {
+			if got := req.Header.Get("Authorization"); got != "Bearer api-secret" {
+				t.Fatalf("Authorization = %q", got)
+			}
+			return httpJSON(http.StatusOK, `{"models":[{}]}`), nil
+		}
+		t.Fatalf("unexpected URL %s", req.URL)
+		return nil, nil
+	})}
+
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderOllamaCloud] = ProviderConfig{Enabled: true, AuthMode: OllamaAuthAuto, Cookie: "session=valid", APIKey: "api-secret"}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := NewOllamaCloudProvider().Fetch(context.Background(), store)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if snap.Status != StatusOK || snap.Plan != "API key verified" {
+		t.Fatalf("snapshot = %#v", snap)
+	}
+	if got := strings.Join(urls, "|"); got != ollamaSettingsURL+"|"+ollamaTagsURL {
+		t.Fatalf("urls = %q", got)
 	}
 }
 
@@ -288,10 +439,47 @@ func TestOllamaCookieEndpointSanitizesAndClears(t *testing.T) {
 	}
 }
 
+func TestOllamaConfigEndpointSanitizesAndClears(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	m := NewManager(store, DefaultRegistry())
+	mux := http.NewServeMux()
+	Routes{Manager: m}.Mount(mux)
+
+	resp := httptest.NewRecorder()
+	mux.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/api/usages/ollama/config", strings.NewReader(`{"auth_mode":"auto","api_key":"api-secret-value","cookie":"Cookie: session=cookie-secret-value"}`)))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("save status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	assertNoOllamaSecret(t, resp.Body.String(), "api-secret-value", "cookie-secret-value")
+	cfg, err := store.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := cfg.Providers[ProviderOllamaCloud]
+	if !pc.Enabled || pc.AuthMode != OllamaAuthAuto || pc.APIKey != "api-secret-value" || !strings.Contains(pc.Cookie, "cookie-secret-value") {
+		t.Fatalf("saved config = %#v", pc)
+	}
+
+	resp = httptest.NewRecorder()
+	mux.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/api/usages/ollama/config", strings.NewReader(`{"auth_mode":"auto","api_key":"","cookie":""}`)))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("clear status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	cfg, err = store.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc = cfg.Providers[ProviderOllamaCloud]
+	if pc.Enabled || pc.APIKey != "" || pc.Cookie != "" {
+		t.Fatalf("cleared config = %#v", pc)
+	}
+}
+
 func TestOllamaCookieRedactionThroughManagerCacheAndHTTP(t *testing.T) {
 	old := ollamaHTTPClient
 	defer func() { ollamaHTTPClient = old }()
 	secret := "session=ollama-secret-value-1234567890"
+	apiSecret := "api-secret-value-1234567890"
 	upstreamBody := "upstream included ollama-secret-value-1234567890"
 	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusInternalServerError, Body: io.NopCloser(strings.NewReader(upstreamBody)), Header: http.Header{}}, nil
@@ -299,7 +487,7 @@ func TestOllamaCookieRedactionThroughManagerCacheAndHTTP(t *testing.T) {
 
 	store := NewStoreAt(t.TempDir())
 	cfg := DefaultConfig()
-	cfg.Providers[ProviderOllamaCloud] = ProviderConfig{Enabled: true, Cookie: secret}
+	cfg.Providers[ProviderOllamaCloud] = ProviderConfig{Enabled: true, AuthMode: OllamaAuthCookie, APIKey: apiSecret, Cookie: secret}
 	if err := store.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +498,7 @@ func TestOllamaCookieRedactionThroughManagerCacheAndHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertNoOllamaSecret(t, string(cacheData), secret, upstreamBody)
+	assertNoOllamaSecret(t, string(cacheData), secret, apiSecret, upstreamBody)
 
 	mux := http.NewServeMux()
 	Routes{Manager: m}.Mount(mux)
@@ -324,7 +512,7 @@ func TestOllamaCookieRedactionThroughManagerCacheAndHTTP(t *testing.T) {
 		if resp.Code != http.StatusOK {
 			t.Fatalf("%s %s status=%d body=%s", req.Method, req.URL.Path, resp.Code, resp.Body.String())
 		}
-		assertNoOllamaSecret(t, resp.Body.String(), secret, upstreamBody)
+		assertNoOllamaSecret(t, resp.Body.String(), secret, apiSecret, upstreamBody)
 		if req.URL.Path == "/api/usages/ollama/cookie" {
 			assertNoOllamaSecret(t, resp.Body.String(), "next-secret-value", upstreamBody)
 		}

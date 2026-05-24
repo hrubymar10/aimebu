@@ -12,13 +12,20 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 const (
 	ollamaSettingsURL = "https://ollama.com/settings"
+	ollamaTagsURL     = "https://ollama.com/api/tags"
 	// This tracks a currently shipping Chrome-like user agent for the settings page.
 	ollamaUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 	ollamaAccept    = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+	OllamaAuthAuto   = "auto"
+	OllamaAuthCookie = "cookie"
+	OllamaAuthAPIKey = "api_key"
 )
 
 var (
@@ -55,7 +62,33 @@ func (ollamaCloudProvider) Fetch(ctx context.Context, store *Store) (Snapshot, e
 	if err != nil {
 		return ollamaStatus(StatusFetchError, "Ollama Cloud usage config could not be read.", nil), nil
 	}
-	cookie := strings.TrimSpace(cfg.Providers[ProviderOllamaCloud].Cookie)
+	pc := cfg.Providers[ProviderOllamaCloud]
+	authMode := normalizeOllamaAuthMode(pc.AuthMode)
+	cookie := strings.TrimSpace(pc.Cookie)
+	apiKey := normalizeOllamaAPIKey(pc.APIKey)
+	switch authMode {
+	case OllamaAuthCookie:
+		return fetchOllamaWithCookie(ctx, cookie)
+	case OllamaAuthAPIKey:
+		return fetchOllamaWithAPIKey(ctx, apiKey)
+	default:
+		if cookie != "" {
+			snap, err := fetchOllamaWithCookie(ctx, cookie)
+			if err == nil && snap.Status == StatusOK {
+				return snap, nil
+			}
+			if apiKey == "" {
+				return snap, err
+			}
+		}
+		if apiKey != "" {
+			return fetchOllamaWithAPIKey(ctx, apiKey)
+		}
+		return ollamaStatus(StatusAuthMissing, "Ollama Cloud cookie or API key is not configured.", fieldDetail("config.ollama-cloud.auth", "missing")), nil
+	}
+}
+
+func fetchOllamaWithCookie(ctx context.Context, cookie string) (Snapshot, error) {
 	if cookie == "" {
 		return ollamaStatus(StatusAuthMissing, "Ollama Cloud cookie is not configured.", fieldDetail("config.ollama-cloud.cookie", "missing")), nil
 	}
@@ -93,6 +126,42 @@ func (ollamaCloudProvider) Fetch(ctx context.Context, store *Store) (Snapshot, e
 		return ollamaStatus(StatusAuthMissing, signedOutErr.Error(), signedOutDetail), nil
 	}
 	return ollamaStatus(StatusFetchError, "Ollama Cloud settings page did not return usage data.", nil), nil
+}
+
+func fetchOllamaWithAPIKey(ctx context.Context, apiKey string) (Snapshot, error) {
+	if apiKey == "" {
+		return ollamaStatus(StatusAuthMissing, "Ollama Cloud API key is not configured.", fieldDetail("config.ollama-cloud.api_key", "missing")), nil
+	}
+	_, detail, status, err := fetchOllamaTags(ctx, apiKey)
+	if err != nil {
+		snap := ollamaStatus(status, err.Error(), detail)
+		if status == StatusFetchError {
+			return Snapshot{}, &SnapshotError{Snapshot: snap, Err: err}
+		}
+		return snap, nil
+	}
+	return Snapshot{Provider: ProviderOllamaCloud, Status: StatusOK, Plan: "API key verified"}, nil
+}
+
+func normalizeOllamaAuthMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case OllamaAuthCookie, "web":
+		return OllamaAuthCookie
+	case OllamaAuthAPIKey, "api":
+		return OllamaAuthAPIKey
+	default:
+		return OllamaAuthAuto
+	}
+}
+
+func normalizeOllamaAPIKey(input string) string {
+	value := strings.TrimSpace(input)
+	if len(value) >= 2 {
+		if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+			value = value[1 : len(value)-1]
+		}
+	}
+	return strings.TrimSpace(value)
 }
 
 func parseOllamaCookieInput(input string) (map[string]string, error) {
@@ -286,6 +355,36 @@ func fetchOllamaSettingsHTML(ctx context.Context, cookie string) ([]byte, *Error
 	default:
 		return nil, fieldDetail("settings", fmt.Sprintf("http_%d", resp.StatusCode)), StatusFetchError, fmt.Errorf("Ollama Cloud settings endpoint returned HTTP %d.", resp.StatusCode)
 	}
+}
+
+func fetchOllamaTags(ctx context.Context, apiKey string) ([]byte, *ErrorDetail, Status, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ollamaTagsURL, nil)
+	if err != nil {
+		return nil, nil, StatusFetchError, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "aimebu")
+	resp, err := ollamaHTTPClient.Do(req)
+	if err != nil {
+		return nil, nil, usageRequestStatus(err), fmt.Errorf("Ollama Cloud API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode == http.StatusOK:
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return nil, jsonShapeDetail("tags", data), StatusAuthMissing, errors.New("Ollama Cloud API key was rejected.")
+	default:
+		return nil, jsonShapeDetail("tags", data), StatusFetchError, fmt.Errorf("Ollama Cloud API endpoint returned HTTP %d.", resp.StatusCode)
+	}
+	var raw struct {
+		Models []json.RawMessage `json:"models"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, jsonShapeDetail("tags", data), StatusFetchError, errors.New("Ollama Cloud API response could not be decoded.")
+	}
+	return data, nil, "", nil
 }
 
 func parseOllamaSettingsHTML(data []byte) (Snapshot, *ErrorDetail, error) {

@@ -211,7 +211,7 @@ aimebu usages                    # print provider usage snapshots
 aimebu usages codex --json       # one provider as normalized JSON
 aimebu usages claude-code --json # Claude Code usage as normalized JSON
 aimebu usages github-copilot     # GitHub Copilot usage via device flow
-aimebu usages ollama-cloud       # Ollama Cloud usage via pasted Cookie header
+aimebu usages ollama-cloud       # Ollama Cloud usage via Cookie header or API key
 
 aimebu prune                     # clear conversation state with confirmation prompt
 aimebu prune -y                  # same, skip confirmation
@@ -255,7 +255,7 @@ overrides, role definitions/emoji, sounds, and
 `agents/agent-warning-acknowledged`. Runtime diagnostics
 (`server/aimebu.log`) are preserved by both prune modes. Provider usage state
 under `usages/` is independent of conversation prune; clear Copilot tokens or
-Ollama Cloud cookies from Settings -> Usages. When `AIMEBU_URL` is loopback
+Ollama Cloud cookies or API keys from Settings -> Usages. When `AIMEBU_URL` is loopback
 and the server is down,
 the CLI falls back to pruning this config root directly. Legacy flat-layout
 state is migrated into `server/` / `agents/` on first authoritative use by
@@ -264,7 +264,7 @@ unknown root files are left alone.
 
 ## Web UI
 
-Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents. Global Settings -> Roles edits reusable role definitions, emoji, cardinality, and extensions; Global Settings -> Usages configures provider usage refresh interval, percent display, provider ordering and enablement, GitHub Copilot device flow, and Ollama Cloud cookie setup. Active room settings assign those global roles to AI room members and disable singleton roles already held by another agent. Role emoji show on member cards and current-room message senders. Built-in specialist reviewer roles are `sec-reviewer`, `test-reviewer`, and `ux-reviewer`, each extending `reviewer`.
+Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents. Global Settings -> Roles edits reusable role definitions, emoji, cardinality, and extensions; Global Settings -> Usages configures provider usage refresh interval, percent display, provider ordering and enablement, GitHub Copilot device flow, and Ollama Cloud credential setup. Active room settings assign those global roles to AI room members and disable singleton roles already held by another agent. Role emoji show on member cards and current-room message senders. Built-in specialist reviewer roles are `sec-reviewer`, `test-reviewer`, and `ux-reviewer`, each extending `reviewer`.
 
 ### Headless browser verification
 
