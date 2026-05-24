@@ -26,17 +26,19 @@
     <div class="topbar-right">
       <div class="usages-wrap">
         <button id="usages-btn" class="btn btn-icon usages-btn" type="button" title="Usages" aria-label="Usages">
-          <svg class="usages-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M4 19V5" stroke="var(--usage-icon-stroke)" stroke-width="2" stroke-linecap="round"/>
-            <path d="M9 19V9" stroke="var(--usage-icon-stroke)" stroke-width="2" stroke-linecap="round"/>
-            <path d="M14 19V3" stroke="var(--usage-icon-stroke)" stroke-width="2" stroke-linecap="round"/>
-            <path d="M19 19v-7" stroke="var(--usage-icon-stroke)" stroke-width="2" stroke-linecap="round"/>
+          <svg class="topbar-icon topbar-usages-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 19V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M9 19V9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M14 19V3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M19 19v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
           </svg>
         </button>
       </div>
       <div class="broadcast-wrap">
         <button id="broadcast-btn" class="btn btn-icon broadcast-btn" type="button" title="System events">
-          <img src="/icons/broadcast.svg" width="14" height="18" alt="" aria-hidden="true">
+          <svg class="topbar-icon topbar-broadcast-icon" width="14" height="18" viewBox="0 0 400 512" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-width="25" stroke-linecap="round" stroke-linejoin="round" d="M222,240l92,248 -180-126 108-53m-84,0 108,53-180,126 92-248M80,318a172,172 0 1,1 240,0M130,266a100,100 0 1,1 140,0M199,144a50,50 0 1,0 2,0"/>
+          </svg>
           <span id="broadcast-badge" class="broadcast-badge" style="display:none"></span>
         </button>
         <div id="system-events-panel" class="system-events-panel hidden">
@@ -45,7 +47,10 @@
         </div>
       </div>
       <button id="settings-btn" class="btn btn-icon" type="button" title="Settings">
-        <img src="/icons/settings.svg" width="16" height="16" alt="" aria-hidden="true">
+        <svg class="topbar-icon topbar-settings-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M8 4.754a3.246 3.246 0 100 6.492 3.246 3.246 0 000-6.492zM5.754 8a2.246 2.246 0 114.492 0 2.246 2.246 0 01-4.492 0z"/>
+          <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 01-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 01-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 01.52 1.255l-.16.292c-.892 1.64.902 3.434 2.541 2.54l.292-.159a.873.873 0 011.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 011.255-.52l.292.16c1.64.892 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 01.52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 01-.52-1.255l.16-.292c.892-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 01-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 002.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 001.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 00-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 00-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 00-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291a1.873 1.873 0 00-1.116-2.693l-.318-.094c-.835-.246-.835-1.428 0-1.674l.319-.094a1.873 1.873 0 001.115-2.692l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 002.692-1.116l.094-.318z"/>
+        </svg>
       </button>
       <span id="connection-status" class="status-indicator disconnected">
         <span class="status-dot"></span>

@@ -42,23 +42,6 @@
   --sidebar-right-w: 260px;
 }
 
-:root,
-[data-theme="light"],
-[data-theme="red-light"],
-[data-theme="blue-light"],
-[data-theme="green-light"],
-[data-theme="high-contrast-light"] {
-  --usage-icon-stroke: #12324a;
-}
-
-[data-theme="red-dark"],
-[data-theme="blue-dark"],
-[data-theme="green-dark"],
-[data-theme="high-contrast-dark"],
-html:not([data-theme]) {
-  --usage-icon-stroke: #d7e6f5;
-}
-
 /* ── Light theme ─────────────────────────────────────────────── */
 
 [data-theme="light"] {
@@ -491,6 +474,11 @@ body {
   border-color: var(--border-hover);
   color: var(--text-primary);
   background: var(--bg-tertiary);
+}
+
+.topbar-icon {
+  display: block;
+  flex-shrink: 0;
 }
 
 /* ── Settings modal ──────────────────────────────────────────── */
@@ -3141,11 +3129,9 @@ body {
   position: relative;
 }
 
-.usages-icon {
-  display: block;
+.topbar-usages-icon {
   width: 17px;
   height: 17px;
-  flex: 0 0 17px;
 }
 
 .usages-env-badge.hidden {
