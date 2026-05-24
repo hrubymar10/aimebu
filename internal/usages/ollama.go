@@ -30,7 +30,7 @@ const (
 
 var (
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
-	ollamaPlanAnchor = regexp.MustCompile(`(?is)Cloud Usage\s*</span>\s*<span[^>]*>([^<]+)</span>`)
+	ollamaPlanAnchor = regexp.MustCompile(`(?is)Cloud Usage\s*</span\s*>\s*<span[^>]*>([^<]+)</span\s*>`)
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaEmailAnchor = regexp.MustCompile(`(?is)id=["']header-email["'][^>]*>([^<]+)<`)
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
@@ -39,6 +39,7 @@ var (
 	ollamaHourlyAnchor = "Hourly usage"
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaWeeklyAnchor = "Weekly usage"
+	ollamaUsageAnchors = []string{ollamaSessionAnchor, ollamaHourlyAnchor, ollamaWeeklyAnchor}
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaPercentAnchor = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*%\s*used`)
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
@@ -405,7 +406,7 @@ func parseOllamaSettingsHTML(data []byte) (Snapshot, *ErrorDetail, error) {
 		if ollamaSignedOutAnchor.MatchString(html) {
 			return Snapshot{}, fieldDetail("page", "signed_out"), errors.New("Ollama Cloud settings page requires sign in.")
 		}
-		if strings.Contains(html, "Cloud Usage") {
+		if strings.Contains(strings.ToLower(html), "cloud usage") {
 			detail.Fields["windows"] = "missing"
 			return Snapshot{Provider: ProviderOllamaCloud, Status: StatusOK, Plan: strings.TrimSpace(plan)}, detailOrNil(detail), nil
 		}
@@ -421,11 +422,7 @@ func parseOllamaUsageBlock(key string, labels []string, html string, detail *Err
 		if index < 0 {
 			continue
 		}
-		end := index + len(label) + 800
-		if end > len(html) {
-			end = len(html)
-		}
-		window := html[index:end]
+		window := ollamaUsageBlock(html, label, index)
 		percent, ok := parseOllamaPercent(window)
 		if !ok {
 			continue
@@ -443,6 +440,24 @@ func parseOllamaUsageBlock(key string, labels []string, html string, detail *Err
 		return Window{Key: key, PercentUsed: clampOllamaPercent(percent), ResetAt: reset}, true
 	}
 	return Window{}, false
+}
+
+func ollamaUsageBlock(html string, currentLabel string, start int) string {
+	end := len(html)
+	for _, label := range ollamaUsageAnchors {
+		if label == currentLabel {
+			continue
+		}
+		next := strings.Index(html[start+1:], label)
+		if next < 0 {
+			continue
+		}
+		next += start + 1
+		if next < end {
+			end = next
+		}
+	}
+	return html[start:end]
 }
 
 func parseOllamaPercent(text string) (float64, bool) {

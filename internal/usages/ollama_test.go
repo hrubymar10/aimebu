@@ -82,6 +82,172 @@ func TestParseOllamaSettingsHTML(t *testing.T) {
 		t.Fatalf("weekly = %#v", snap.Windows[1])
 	}
 
+	longMeter := strings.Repeat(`<span class="usage-meter-segment" style="left: 1%"></span>`, 30)
+	sectioned := `<span>Cloud Usage</span><span>Pro</span>` +
+		`<section><span>Session usage</span><span>4.1% used</span><div class="usage-meter">` + longMeter + `</div>` +
+		`<div class="local-time" data-time="2026-05-24T22:00:00Z">Resets in 3 hours</div></section>` +
+		`<section><span>Weekly usage</span><span style="width: 14.1%"></span><div class="usage-meter">` + longMeter + `</div>` +
+		`<div class="local-time" data-time="2026-05-25T00:00:00Z">Resets in 5 hours</div></section>`
+	snap, detail, err = parseOllamaSettingsHTML([]byte(sectioned))
+	if err != nil {
+		t.Fatalf("parse sectioned: %v detail=%#v", err, detail)
+	}
+	if len(snap.Windows) != 2 {
+		t.Fatalf("sectioned windows = %#v", snap.Windows)
+	}
+	if snap.Windows[0].Key != "session" || snap.Windows[0].PercentUsed != 4.1 ||
+		snap.Windows[0].ResetAt == nil || snap.Windows[0].ResetAt.Format(time.RFC3339) != "2026-05-24T22:00:00Z" {
+		t.Fatalf("sectioned session = %#v", snap.Windows[0])
+	}
+	if snap.Windows[1].Key != "weekly" || snap.Windows[1].PercentUsed != 14.1 ||
+		snap.Windows[1].ResetAt == nil || snap.Windows[1].ResetAt.Format(time.RFC3339) != "2026-05-25T00:00:00Z" {
+		t.Fatalf("sectioned weekly = %#v", snap.Windows[1])
+	}
+	if detail != nil {
+		if _, ok := detail.Fields["session.reset_at"]; ok {
+			t.Fatalf("sectioned detail = %#v", detail)
+		}
+		if _, ok := detail.Fields["weekly.reset_at"]; ok {
+			t.Fatalf("sectioned detail = %#v", detail)
+		}
+	}
+
+	labeledTrack := `<h2 class="text-xl font-medium flex items-center space-x-2">
+    <span>Cloud usage</span>
+    <span
+      class="text-xs font-normal px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600 capitalize"
+      >pro</span
+    >
+  </h2>
+  <div>
+    <div class="flex justify-between mb-2">
+      <span class="text-sm ">Session usage</span>
+      <span class="text-sm ">
+        5% used
+      </span>
+    </div>
+    <div class="usage-meter" data-usage-meter>
+      <div class="usage-meter__bubble" data-usage-bubble aria-hidden="true">
+        <span class="usage-meter__bubble-model" data-usage-model></span>
+        <span class="usage-meter__bubble-requests" data-usage-requests></span>
+      </div>
+      <div
+        class="usage-meter__track"
+        data-usage-track
+        aria-label="Session usage 5% used"
+      >
+        <div
+          class="usage-meter__fill"
+          style="width: 5%; "
+        >
+          <button
+            type="button"
+            class="usage-meter__segment"
+            style="width: 100%; background: #5ac8fa"
+            data-model="gemma4:31b"
+            data-requests="302"
+            aria-label="gemma4:31b: 302 requests"
+          ></button>
+        </div>
+      </div>
+    </div>
+    <div
+      class="text-xs text-neutral-500 mt-1 local-time"
+      data-time="2026-05-24T22:00:00Z"
+    >
+      Resets in 2 hours
+    </div>
+  </div>
+
+  <div>
+    <div class="flex justify-between mb-2">
+      <span class="text-sm">Weekly usage</span>
+      <span class="text-sm "
+        >14.2% used</span
+      >
+    </div>
+    <div class="usage-meter" data-usage-meter>
+      <div class="usage-meter__bubble" data-usage-bubble aria-hidden="true">
+        <span class="usage-meter__bubble-model" data-usage-model></span>
+        <span class="usage-meter__bubble-requests" data-usage-requests></span>
+      </div>
+      <div
+        class="usage-meter__track"
+        data-usage-track
+        aria-label="Weekly usage 14.2% used"
+      >
+        <div
+          class="usage-meter__fill"
+          style="width: 14.2%"
+        >
+          <button
+            type="button"
+            class="usage-meter__segment"
+            style="width: 100%; background: #5ac8fa"
+            data-model="gemma4:31b"
+            data-requests="2726"
+            aria-label="gemma4:31b: 2726 requests"
+          ></button>
+        </div>
+      </div>
+    </div>
+    <div
+      class="text-xs text-neutral-500 mt-1 local-time"
+      data-time="2026-05-25T00:00:00Z"
+    >
+      Resets in 4 hours
+    </div>
+  </div>`
+	snap, detail, err = parseOllamaSettingsHTML([]byte(labeledTrack))
+	if err != nil {
+		t.Fatalf("parse labeled track: %v detail=%#v", err, detail)
+	}
+	if len(snap.Windows) != 2 {
+		t.Fatalf("labeled track windows = %#v", snap.Windows)
+	}
+	if snap.Plan != "pro" {
+		t.Fatalf("labeled track plan = %q", snap.Plan)
+	}
+	if snap.Windows[0].Key != "session" || snap.Windows[0].PercentUsed != 5 ||
+		snap.Windows[0].ResetAt == nil || snap.Windows[0].ResetAt.Format(time.RFC3339) != "2026-05-24T22:00:00Z" {
+		t.Fatalf("labeled track session = %#v", snap.Windows[0])
+	}
+	if snap.Windows[1].Key != "weekly" || snap.Windows[1].PercentUsed != 14.2 ||
+		snap.Windows[1].ResetAt == nil || snap.Windows[1].ResetAt.Format(time.RFC3339) != "2026-05-25T00:00:00Z" {
+		t.Fatalf("labeled track weekly = %#v", snap.Windows[1])
+	}
+
+	weeklyResetOnly := `<span>Cloud Usage</span><span>Pro</span>` +
+		`<div>Session usage <span>4% used</span></div>` +
+		`<div>Weekly usage <span>14% used</span><time data-time="2026-05-25T00:00:00Z"></time></div>`
+	snap, detail, err = parseOllamaSettingsHTML([]byte(weeklyResetOnly))
+	if err != nil {
+		t.Fatalf("parse weekly reset only: %v detail=%#v", err, detail)
+	}
+	if len(snap.Windows) != 2 {
+		t.Fatalf("weekly reset only windows = %#v", snap.Windows)
+	}
+	if snap.Windows[0].Key != "session" || snap.Windows[0].ResetAt != nil ||
+		detail == nil || detail.Fields["session.reset_at"] != "missing" {
+		t.Fatalf("weekly reset only session=%#v detail=%#v", snap.Windows[0], detail)
+	}
+	if snap.Windows[1].Key != "weekly" || snap.Windows[1].ResetAt == nil ||
+		snap.Windows[1].ResetAt.Format(time.RFC3339) != "2026-05-25T00:00:00Z" {
+		t.Fatalf("weekly reset only weekly=%#v detail=%#v", snap.Windows[1], detail)
+	}
+
+	noResets := `<span>Cloud Usage</span><span>Pro</span>` +
+		`<div>Session usage <span>4% used</span></div>` +
+		`<div>Weekly usage <span>14% used</span></div>`
+	snap, detail, err = parseOllamaSettingsHTML([]byte(noResets))
+	if err != nil {
+		t.Fatalf("parse no resets: %v detail=%#v", err, detail)
+	}
+	if len(snap.Windows) != 2 || snap.Windows[0].ResetAt != nil || snap.Windows[1].ResetAt != nil ||
+		detail == nil || detail.Fields["session.reset_at"] != "missing" || detail.Fields["weekly.reset_at"] != "missing" {
+		t.Fatalf("no resets snap=%#v detail=%#v", snap, detail)
+	}
+
 	hourly := `<span>Cloud Usage</span><span>Free</span><div>Hourly usage <span style="width: 101%"></span></div>`
 	snap, detail, err = parseOllamaSettingsHTML([]byte(hourly))
 	if err != nil {
@@ -110,6 +276,16 @@ func TestParseOllamaSettingsHTML(t *testing.T) {
 	}
 	if len(snap.Windows) != 0 || detail == nil || detail.Fields["windows"] != "missing" {
 		t.Fatalf("no bars snap=%#v detail=%#v", snap, detail)
+	}
+
+	lowerNoBars := `<span>Cloud usage</span><p>No active quota bars.</p>`
+	snap, detail, err = parseOllamaSettingsHTML([]byte(lowerNoBars))
+	if err != nil {
+		t.Fatalf("parse lower no bars: %v", err)
+	}
+	if snap.Status != StatusOK || snap.Plan != "" || len(snap.Windows) != 0 ||
+		detail == nil || detail.Fields["windows"] != "missing" {
+		t.Fatalf("lower no bars snap=%#v detail=%#v", snap, detail)
 	}
 
 	invalidReset := `<span>Cloud Usage</span><span>Pro</span><div>Session usage <span>4% used</span><time data-time="soon"></time></div>`
