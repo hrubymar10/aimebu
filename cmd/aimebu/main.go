@@ -61,6 +61,8 @@ func main() {
 		pruneCmd(os.Args[2:])
 	case "usages":
 		usagesCmd(os.Args[2:])
+	case "fleet":
+		fleetCmd(os.Args[2:])
 	case "agent":
 		agentCmd(os.Args[2:])
 	case "mcp":
@@ -480,6 +482,7 @@ func pruneCmd(args []string) {
 			fmt.Println("  • agents/agent-sessions.json (aimebu agent resume state)")
 			fmt.Println("  • agents/agent-warning-acknowledged (first-run warning acknowledgement)")
 			fmt.Println("  • server/macros.json         (global + per-room macros)")
+			fmt.Println("  • server/fleet.json          (fleet command bundles)")
 			fmt.Println("  • agents/agent-logs/*        (runtime diagnostics, opt-in via AIMEBU_AGENT_DEBUG)")
 			fmt.Println()
 			fmt.Println("Preserved:")
@@ -495,6 +498,7 @@ func pruneCmd(args []string) {
 			fmt.Println("Preserved:")
 			fmt.Println("  • agents/agent-warning-acknowledged (first-run warning acknowledgement)")
 			fmt.Println("  • server/macros.json         (global + per-room macros)")
+			fmt.Println("  • server/fleet.json          (fleet command bundles)")
 			fmt.Println("  • server/aimebu.pid, server/aimebu.log (runtime artifacts)")
 		}
 		fmt.Print("\nAre you sure? [y/N]: ")
@@ -731,9 +735,10 @@ Agents:
 Monitoring:
   sniff [room] [limit]                Show recent messages (default: 100)
   sniff -f [room]                     Follow mode: stream messages in real time
+  fleet [name] [path]                 List fleets, or launch one against path/cwd
   prune [-y] [-a]                     Prune conversation history with confirmation prompt
                                         -y  skip confirmation
-                                        -a  also wipe macros (user settings)
+                                        -a  also wipe macros and fleets (user settings)
                                         falls back to direct local cleanup when
                                         AIMEBU_URL is loopback and the server is down
   usages [provider] [--plain|--json]  Show provider usage snapshots

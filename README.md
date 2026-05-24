@@ -209,6 +209,7 @@ aimebu usages codex --json       # Codex usage as normalized JSON
 aimebu usages claude-code --json # Claude Code usage as normalized JSON
 aimebu usages github-copilot     # GitHub Copilot usage via device flow
 aimebu usages ollama-cloud       # Ollama Cloud usage via Cookie header or API key
+aimebu fleet default             # launch a named agent-command bundle in cwd
 aimebu sniff -f                  # follow all traffic in real time
 ```
 
@@ -309,11 +310,12 @@ aimebu agents                             List registered agents
 aimebu sniff [room] [limit]               Show recent messages (default: 100)
 aimebu sniff -f [room]                    Follow mode — stream in real time
 aimebu usages [provider] [--plain|--json] Show provider usage snapshots
+aimebu fleet [name] [path]                List fleets, or launch one against path/cwd
 aimebu prune [-y] [-a]                    Prune conversation state with confirmation prompt
                                           Falls back to direct local data-dir cleanup when the
                                           configured server URL is loopback and the server is down
                                             -y  skip confirmation
-                                            -a  also wipe macros (user settings)
+                                            -a  also wipe macros and fleets (user settings)
 
 # Integration
 aimebu agent [--harness h] [--name n] [--resume-id id] [--resume-name n] \
@@ -363,6 +365,14 @@ GET    /messages/{id}                  Fetch one message by global ID (`?agent_i
 GET    /firehose                       Global SSE
 GET    /macros                         Global macros
 PUT    /macros                         Replace global macros
+GET    /fleets                         List configured fleet command bundles
+PUT    /fleets                         Replace all fleets (body: {"version":1,"fleets":{...}})
+GET    /fleets/{name}                  Fetch one fleet
+PUT    /fleets/{name}                  Upsert one fleet (body: {"agents":[{"command":"...","wrap_terminal":true,"auto_set_cwd":false}]})
+DELETE /fleets/{name}                  Delete one fleet
+DELETE /fleets                         Clear all fleets
+GET    /fleets/{name}/export           Export one fleet as importable JSON
+POST   /fleets/import                  Import fleets; collisions are renamed with -2/-3 suffixes
 GET    /settings                       User preferences (theme, debug inspector toggle, notifications, agent_id_default, retention windows, …)
 PUT    /settings                       Update user preferences
 GET    /settings/prompts               All configurable prompts with current body + metadata
@@ -388,7 +398,7 @@ POST   /api/usages/ollama/config       Save or clear Ollama Cloud auth mode, API
 POST   /api/usages/copilot/login/start Start GitHub device flow; returns flow_id, user_code, verification URLs
 POST   /api/usages/copilot/login/poll  Poll GitHub device flow by flow_id; never returns tokens
 POST   /api/usages/copilot/login/logout Clear local Copilot token and disable the provider
-DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe macros, prompts, and settings
+DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe macros, fleets, prompts, roles, sounds, and settings
 GET    /health                         Health check
 GET    /buildinfo                      Server version and Go runtime version (read-only)
 GET    /ws                             WebSocket push
@@ -458,7 +468,8 @@ three-panel layout:
   cleanup interval, and global message age/count limits), Notifications,
   Macros (global only;
   per-room macros from older installs are auto-migrated to globals on first
-  load), Prompts (override per-key MCP etiquette text, tool descriptions, and
+  load), Fleets (edit reusable command bundles for `aimebu fleet`), Prompts
+  (override per-key MCP etiquette text, tool descriptions, and
   spawn prompts; changes apply on next agent reconnect), Usages (provider
   usage refresh interval, percent display, provider ordering and enablement,
   GitHub Copilot device flow, and Ollama Cloud credential setup), Roles (edit global role
@@ -538,6 +549,7 @@ troubleshooting.
 │   ├── messages.json       # All messages with room_id              (conversation state)
 │   ├── agents.json         # Registered agents and metadata         (conversation state)
 │   ├── macros.json         # Global + per-room macro definitions    (user settings)
+│   ├── fleet.json          # Named fleet command bundles (0600)     (user settings)
 │   ├── prompts.json        # Per-key prompt overrides (empty = all defaults) (user settings)
 │   ├── settings.json       # UI preferences and retention settings       (user settings)
 │   ├── sounds/             # User-uploaded .mp3 / .wav notification sounds (user settings)
@@ -564,8 +576,9 @@ take ownership of state. Unknown files at the root are left alone.
 
 `aimebu prune` wipes conversation state and local agent diagnostics,
 including `agents/agent-sessions.json` and `agents/agent-logs/*`;
-`aimebu prune -a` additionally wipes user settings, including macros, prompt
-overrides, sounds, and `agents/agent-warning-acknowledged`. If `AIMEBU_URL`
+`aimebu prune -a` additionally wipes user settings, including macros, fleet
+command bundles, prompt overrides, sounds, and
+`agents/agent-warning-acknowledged`. If `AIMEBU_URL`
 points at loopback (`localhost`, `127.0.0.1`, `::1`) and the server is down,
 the CLI performs the same prune directly against `AIMEBU_CONFIG_DIR` /
 `~/.aimebu`. Runtime artifacts (`server/aimebu.log`, `server/aimebu.pid`) are

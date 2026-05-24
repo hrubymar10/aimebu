@@ -30,6 +30,7 @@ func TestPruneViaServerOrLocalFallsBackOffline(t *testing.T) {
 	writeTestFile(t, filepath.Join(agentsDir, "agent-warning-acknowledged"), "yes")
 	writeTestFile(t, filepath.Join(agentsDir, "agent-logs", "alice.log"), `{"event":"wrapper_start"}`)
 	writeTestFile(t, filepath.Join(serverDir, "macros.json"), `{"macros":{"zzz_custom_only_for_test":"body"}}`)
+	writeTestFile(t, filepath.Join(serverDir, "fleet.json"), `{"version":1,"fleets":{"default":{"agents":[{"command":"echo hi"}]}}}`)
 
 	result, err := pruneViaServerOrLocal(&client.Client{BaseURL: unusedLoopbackURL(t)}, rootDir, true)
 	if err != nil {
@@ -76,6 +77,9 @@ func TestPruneViaServerOrLocalFallsBackOffline(t *testing.T) {
 	}
 	if !strings.Contains(string(macrosData), `"macros"`) {
 		t.Fatalf("macros.json should remain a macros envelope, got %s", macrosData)
+	}
+	if _, err := os.Stat(filepath.Join(serverDir, "fleet.json")); !os.IsNotExist(err) {
+		t.Fatalf("fleet.json should be removed by prune -a, got err=%v", err)
 	}
 }
 

@@ -10,6 +10,7 @@ func TestMigrateServerMovesKnownFiles(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, filepath.Join(root, "rooms.json"), "[]")
 	writeConfigFile(t, filepath.Join(root, "macros.json"), "{}")
+	writeConfigFile(t, filepath.Join(root, "fleet.json"), "{}")
 	writeConfigFile(t, filepath.Join(root, "notes.txt"), "leave me")
 
 	if err := MigrateServer(root); err != nil {
@@ -18,6 +19,7 @@ func TestMigrateServerMovesKnownFiles(t *testing.T) {
 
 	assertConfigFile(t, filepath.Join(root, "server", "rooms.json"), "[]")
 	assertConfigFile(t, filepath.Join(root, "server", "macros.json"), "{}")
+	assertConfigFile(t, filepath.Join(root, "server", "fleet.json"), "{}")
 	assertConfigFile(t, filepath.Join(root, "notes.txt"), "leave me")
 	if _, err := os.Stat(filepath.Join(root, "rooms.json")); !os.IsNotExist(err) {
 		t.Fatalf("legacy rooms.json should be gone, err=%v", err)

@@ -2539,6 +2539,24 @@ body {
 }
 
 @media (max-width: 700px) {
+  .settings-pane {
+    width: 100vw;
+    max-width: 100vw;
+  }
+
+  .settings-nav {
+    width: 118px;
+    padding: 12px 6px;
+  }
+
+  .settings-body-header {
+    padding: 12px 14px 10px;
+  }
+
+  .settings-section {
+    padding: 12px;
+  }
+
   .message-debug-header,
   .message-debug-header-left,
   .message-debug-header-right,
@@ -2560,6 +2578,9 @@ body {
   }
 
   .macros-actions,
+  .fleets-actions,
+  .fleet-card-header,
+  .fleet-card-actions,
   .macros-import-actions,
   .notif-prompt-banner,
   .notif-prompt-banner-actions,
@@ -2570,6 +2591,11 @@ body {
 
   .macro-key-input {
     width: 100%;
+  }
+
+  .fleet-name-input,
+  .fleet-command-input {
+    min-width: 0;
   }
 }
 
@@ -2614,6 +2640,179 @@ body {
 
 .macro-body-input:focus {
   border-color: var(--accent);
+}
+
+/* ── Fleets ─────────────────────────────────────────────────────── */
+
+.fleets-actions,
+.fleet-card-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.fleets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fleet-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  box-sizing: border-box;
+  padding: 12px;
+}
+
+.fleet-card-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fleet-name-input {
+  min-width: 160px;
+  flex: 1;
+  box-sizing: border-box;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.fleet-name-input:focus,
+.fleet-command-input:focus {
+  border-color: var(--accent);
+}
+
+.fleet-name-input.error {
+  border-color: var(--red);
+}
+
+.fleet-help {
+  margin: 8px 0 10px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.fleet-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fleet-agent-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+}
+
+.fleet-agent-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fleet-agent-meta {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.fleet-command-label {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.fleet-command-input {
+  width: 100%;
+  min-height: 70px;
+  min-width: 0;
+  box-sizing: border-box;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  padding: 7px 8px;
+  resize: vertical;
+  outline: none;
+}
+
+.fleet-agent-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.25;
+}
+
+.settings-checkbox input {
+  flex-shrink: 0;
+}
+
+.settings-hint-inline {
+  color: var(--text-muted);
+}
+
+.fleet-command-preview {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fleet-command-preview-label {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.fleet-command-preview-code {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 6px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 700px) {
+  .settings-checkbox {
+    align-items: flex-start;
+  }
 }
 
 /* ── Prompts ─────────────────────────────────────────────────────── */

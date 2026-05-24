@@ -880,6 +880,95 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		_ = jsonOK(w, map[string]string{"status": "ok"})
 	})
 
+	// ── Fleets ─────────────────────────────────────────────────────
+
+	// GET /fleets — fetch all configured fleets.
+	mux.HandleFunc("GET /fleets", func(w http.ResponseWriter, _ *http.Request) {
+		_ = jsonOK(w, s.listFleets())
+	})
+
+	// PUT /fleets — full replace of all fleets.
+	mux.HandleFunc("PUT /fleets", func(w http.ResponseWriter, r *http.Request) {
+		var payload fleetsEnvelope
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.replaceFleets(payload); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = jsonOK(w, map[string]string{"status": "ok"})
+	})
+
+	// GET /fleets/{name} — fetch one fleet.
+	mux.HandleFunc("GET /fleets/{name}", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		fleet, ok := s.getFleet(name)
+		if !ok {
+			jsonError(w, "fleet not found", http.StatusNotFound)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"name": name, "fleet": fleet})
+	})
+
+	// PUT /fleets/{name} — upsert one fleet.
+	mux.HandleFunc("PUT /fleets/{name}", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		var payload Fleet
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.setFleet(name, payload); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = jsonOK(w, map[string]string{"status": "ok"})
+	})
+
+	// DELETE /fleets/{name} — remove one fleet.
+	mux.HandleFunc("DELETE /fleets/{name}", func(w http.ResponseWriter, r *http.Request) {
+		if !s.deleteFleet(r.PathValue("name")) {
+			jsonError(w, "fleet not found", http.StatusNotFound)
+			return
+		}
+		_ = jsonOK(w, map[string]string{"status": "ok"})
+	})
+
+	// DELETE /fleets — clear all fleets.
+	mux.HandleFunc("DELETE /fleets", func(w http.ResponseWriter, _ *http.Request) {
+		s.clearFleets()
+		_ = jsonOK(w, map[string]string{"status": "ok"})
+	})
+
+	// GET /fleets/{name}/export — download one fleet in the importable envelope.
+	mux.HandleFunc("GET /fleets/{name}/export", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		fleet, ok := s.getFleet(name)
+		if !ok {
+			jsonError(w, "fleet not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="aimebu-fleet-%s.json"`, name))
+		_ = jsonOK(w, fleetsEnvelope{Version: 1, Fleets: map[string]Fleet{name: fleet}})
+	})
+
+	// POST /fleets/import — merge an importable fleet envelope.
+	mux.HandleFunc("POST /fleets/import", func(w http.ResponseWriter, r *http.Request) {
+		var payload fleetsEnvelope
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		imported, err := s.importFleets(payload)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = jsonOK(w, imported)
+	})
+
 	// GET /settings — fetch user preferences
 	mux.HandleFunc("GET /settings", func(w http.ResponseWriter, _ *http.Request) {
 		_ = jsonOK(w, s.getSettings())
@@ -1170,7 +1259,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		_ = jsonOK(w, resp)
 	})
 
-	// DELETE /all — clear conversation state; ?include_settings=true also wipes user settings (macros).
+	// DELETE /all — clear conversation state; ?include_settings=true also wipes user settings.
 	mux.HandleFunc("DELETE /all", func(w http.ResponseWriter, r *http.Request) {
 		includeSettings := r.URL.Query().Get("include_settings") == "true"
 		s.clearAll(includeSettings)

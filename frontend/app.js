@@ -31,6 +31,7 @@
   let presence = {};
   let markdownMode = localStorage.getItem('aimebu.ui.markdownMode') || 'rendered';
   let macros = {};           // { lowercasedKey: body } — global shared macros
+  let fleets = {};           // { name: { agents: [{ command }] } }
   let promptEntries = [];    // PromptEntry[] from GET /settings/prompts
   let roleEntries = [];      // RoleEntry[] from GET /roles
   let systemEvents = [];     // Message[] — _system room events
@@ -109,6 +110,13 @@
   const macrosImportTextarea = $('#macros-import-textarea');
   const macrosImportApplyBtn = $('#macros-import-apply-btn');
   const macrosImportCancelBtn = $('#macros-import-cancel-btn');
+  const fleetAddBtn = $('#fleet-add-btn');
+  const fleetCopyAllBtn = $('#fleet-copy-all-btn');
+  const fleetImportBtn = $('#fleet-import-btn');
+  const fleetImportFallback = $('#fleet-import-fallback');
+  const fleetImportTextarea = $('#fleet-import-textarea');
+  const fleetImportApplyBtn = $('#fleet-import-apply-btn');
+  const fleetImportCancelBtn = $('#fleet-import-cancel-btn');
   const backupExportBtn = $('#backup-export-btn');
   const backupImportBtn = $('#backup-import-btn');
   const backupImportFile = $('#backup-import-file');
@@ -172,6 +180,7 @@
   const messageDebugStatus = $('#message-debug-status');
 
   const macrosListEl = $('#macros-list');
+  const fleetsListEl = $('#fleets-list');
   const promptsListEl = $('#prompts-list');
   const promptsResetAllBtn = $('#prompts-reset-all-btn');
   const rolesListEl = $('#roles-list');
@@ -838,6 +847,191 @@
       api('PUT', '/macros', { macros: macros })
         .catch(function (err) { console.error('Failed to save macros:', err); });
     }, 500);
+  }
+
+  // ── Fleets ──────────────────────────────────────────────────────
+
+  function sortedFleetNames() {
+    return Object.keys(fleets || {}).sort();
+  }
+
+  function validFleetName(name) {
+    return /^[a-z0-9][a-z0-9_.-]{0,63}$/.test(name || '');
+  }
+
+  function normalizeFleet(fleet) {
+    var agents = Array.isArray(fleet && fleet.agents) ? fleet.agents : [];
+    return {
+      agents: agents.map(function (agent) {
+        return {
+          command: String((agent && agent.command) || ''),
+          wrap_terminal: true,
+          auto_set_cwd: fleetAgentChecked(agent, 'auto_set_cwd')
+        };
+      }).slice(0, 16)
+    };
+  }
+
+  function fleetAgentChecked(agent, key) {
+    return !agent || agent[key] !== false;
+  }
+
+  function fleetPreviewCommand(agent) {
+    var command = String((agent && agent.command) || '');
+    if (fleetAgentChecked(agent, 'auto_set_cwd')) {
+      command = 'cd ${AIMEBU_FLEET_PATH} && ' + command;
+    }
+    if (fleetAgentChecked(agent, 'wrap_terminal')) {
+      command = command.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      return "osascript -e 'tell application \"Terminal\" to do script \"" + command + "\"'";
+    }
+    return command;
+  }
+
+  function updateFleetPreviewForInput(input) {
+    var fleetName = input.getAttribute('data-fleet');
+    var idx = parseInt(input.getAttribute('data-index'), 10);
+    var row = input.closest('.fleet-agent-row');
+    var preview = row ? row.querySelector('.fleet-command-preview-code') : null;
+    if (!preview || !fleets[fleetName] || !fleets[fleetName].agents[idx]) return;
+    fleets[fleetName].agents[idx].command = input.value;
+    preview.textContent = fleetPreviewCommand(fleets[fleetName].agents[idx]);
+  }
+
+  function fleetEnvelope(selectedName) {
+    var payload = { version: 1, fleets: {} };
+    if (selectedName) {
+      if (fleets[selectedName]) payload.fleets[selectedName] = normalizeFleet(fleets[selectedName]);
+      return payload;
+    }
+    sortedFleetNames().forEach(function (name) {
+      payload.fleets[name] = normalizeFleet(fleets[name]);
+    });
+    return payload;
+  }
+
+  function saveFleets(sourceButton) {
+    return api('PUT', '/fleets', fleetEnvelope()).then(function () {
+      if (sourceButton) setTemporaryLabel(sourceButton, 'Saved', 1200);
+    }).catch(function (err) {
+      alert('Failed to save fleets: ' + (err && err.message ? err.message : err));
+      return loadFleets();
+    });
+  }
+
+  function hideFleetImportFallback() {
+    if (!fleetImportFallback) return;
+    fleetImportFallback.classList.add('hidden');
+    if (fleetImportTextarea) fleetImportTextarea.value = '';
+  }
+
+  function showFleetImportFallback() {
+    if (!fleetImportFallback) return;
+    fleetImportFallback.classList.remove('hidden');
+    if (fleetImportTextarea) fleetImportTextarea.focus();
+  }
+
+  function parseImportedFleets(rawText) {
+    var parsed;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (_) {
+      throw new Error('Invalid JSON');
+    }
+    var payload = parsed && parsed.fleets ? parsed : { version: 1, fleets: parsed };
+    if (!payload || !payload.fleets || typeof payload.fleets !== 'object' || Array.isArray(payload.fleets)) {
+      throw new Error('Expected a fleets JSON envelope');
+    }
+    return payload;
+  }
+
+  function applyImportedFleets(rawText, sourceButton) {
+    var payload = parseImportedFleets(rawText);
+    var fleetCount = Object.keys(payload.fleets).length;
+    return api('POST', '/fleets/import', payload)
+      .then(loadFleets)
+      .then(function () {
+        hideFleetImportFallback();
+        if (sourceButton) setTemporaryLabel(sourceButton, 'Imported ' + fleetCount, 2500);
+        return true;
+      });
+  }
+
+  function renderFleetsList() {
+    if (!fleetsListEl) return;
+    var names = sortedFleetNames();
+    if (names.length === 0) {
+      fleetsListEl.innerHTML = '<div class="empty-state">No fleets configured.</div>';
+      return;
+    }
+    fleetsListEl.innerHTML = names.map(function (name) {
+      var fleet = fleets[name] || { agents: [] };
+      var agents = Array.isArray(fleet.agents) ? fleet.agents : [];
+      var rows = agents.map(function (agent, idx) {
+        var wrapChecked = fleetAgentChecked(agent, 'wrap_terminal') ? ' checked' : '';
+        var cwdChecked = fleetAgentChecked(agent, 'auto_set_cwd') ? ' checked' : '';
+        return '<div class="fleet-agent-row" data-fleet="' + esc(name) + '" data-index="' + idx + '">' +
+          '<div class="fleet-agent-header">' +
+            '<div class="fleet-agent-meta">Agent ' + idx + '</div>' +
+            '<button class="btn btn-sm btn-danger fleet-agent-delete-btn" type="button" data-fleet="' + esc(name) + '" data-index="' + idx + '">Remove</button>' +
+          '</div>' +
+          '<div class="fleet-agent-options">' +
+            '<label class="settings-checkbox" title="Wraps the agent command in \'osascript -e &quot;tell application \\&quot;Terminal\\&quot; to do script \\&quot;...\\&quot;&quot;\' so each agent opens its own Terminal.app window. Required in v1."><input type="checkbox" class="fleet-agent-wrap" disabled' + wrapChecked + '> Open in Terminal window <span class="settings-hint-inline">(v1: required)</span></label>' +
+            '<label class="settings-checkbox" title="Prepends \'cd ${AIMEBU_FLEET_PATH} &amp;&amp; \' to the agent command so it runs in the target directory. Uncheck if your command already handles its own working directory."><input type="checkbox" class="fleet-agent-cwd"' + cwdChecked + '> Auto-set cwd</label>' +
+          '</div>' +
+          '<label class="fleet-command-label" title="The command to run inside the Terminal window. Use placeholders ${AIMEBU_FLEET_PATH}, ${AIMEBU_FLEET_NAME}, ${AIMEBU_FLEET_AGENT_INDEX} as needed. Example: aimebu agent --auto-room --assume-role leader -- claude-docker">Agent command:</label>' +
+          '<textarea class="fleet-command-input" rows="3" data-fleet="' + esc(name) + '" data-index="' + idx + '" spellcheck="false" title="The command to run inside the Terminal window. Use placeholders ${AIMEBU_FLEET_PATH}, ${AIMEBU_FLEET_NAME}, ${AIMEBU_FLEET_AGENT_INDEX} as needed. Example: aimebu agent --auto-room --assume-role leader -- claude-docker">' + esc(agent.command || '') + '</textarea>' +
+          '<div class="fleet-command-preview"><div class="fleet-command-preview-label" title="What aimebu will actually execute via \'sh -c\' after applying the two options above. Placeholders shown unresolved.">Final command:</div><code class="fleet-command-preview-code">' + esc(fleetPreviewCommand(agent)) + '</code></div>' +
+        '</div>';
+      }).join('');
+      return '<div class="fleet-card" data-fleet="' + esc(name) + '">' +
+        '<div class="fleet-card-header">' +
+          '<input class="fleet-name-input" data-fleet="' + esc(name) + '" value="' + esc(name) + '" spellcheck="false">' +
+          '<div class="fleet-card-actions">' +
+            '<button class="btn btn-sm fleet-add-agent-btn" type="button" data-fleet="' + esc(name) + '">Add agent</button>' +
+            '<button class="btn btn-sm fleet-copy-btn" type="button" data-fleet="' + esc(name) + '">Copy fleet</button>' +
+            '<button class="btn btn-sm btn-danger fleet-delete-btn" type="button" data-fleet="' + esc(name) + '">Delete</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="fleet-help">Use <code>${AIMEBU_FLEET_PATH}</code>, <code>${AIMEBU_FLEET_NAME}</code>, or <code>${AIMEBU_FLEET_AGENT_INDEX}</code>. aimebu replaces these strings before running the command.</div>' +
+        '<div class="fleet-agents">' + rows + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function loadFleets() {
+    return api('GET', '/fleets')
+      .then(function (data) {
+        fleets = (data && data.fleets) || {};
+        renderFleetsList();
+      })
+      .catch(function () { fleets = {}; renderFleetsList(); });
+  }
+
+  function addFleet() {
+    var base = 'default';
+    var name = base;
+    var i = 2;
+    while (fleets[name]) {
+      name = base + '-' + i++;
+    }
+    fleets[name] = { agents: [{ command: '', wrap_terminal: true, auto_set_cwd: true }] };
+    renderFleetsList();
+  }
+
+  function renameFleet(oldName, newName, input) {
+    newName = (newName || '').trim();
+    if (newName === oldName) return;
+    if (!validFleetName(newName) || fleets[newName]) {
+      if (input) input.classList.add('error');
+      setTimeout(function () { if (input) input.classList.remove('error'); }, 900);
+      if (input) input.value = oldName;
+      return;
+    }
+    fleets[newName] = fleets[oldName];
+    delete fleets[oldName];
+    renderFleetsList();
+    saveFleets();
   }
 
   // ── Notification sounds ──────────────────────────────────────────
@@ -2785,6 +2979,7 @@
       activateSettingsSection(section);
     }
     renderMacrosList();
+    loadFleets();
     loadPrompts();
     loadRoles();
     document.body.style.overflow = 'hidden';
@@ -2841,13 +3036,14 @@
     settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
     });
-    var titles = { general: 'General', retention: 'Retention', agents: 'Agents', notifications: 'Notifications', usages: 'Usages', macros: 'Macros', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
+    var titles = { general: 'General', retention: 'Retention', agents: 'Agents', notifications: 'Notifications', usages: 'Usages', macros: 'Macros', fleets: 'Fleets', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
     if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
     if (section === 'usages') loadUsages();
+    if (section === 'fleets') loadFleets();
   }
 
   function exportBackup() {
-    var payload = { settings: serverSettings, macros: macros };
+    var payload = { settings: serverSettings, macros: macros, fleets: fleets };
     var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
@@ -2886,6 +3082,9 @@
           setTimeout(function () { backupImportBtn.textContent = 'Import JSON'; }, 2500);
         }
       }
+      if (data.fleets && typeof data.fleets === 'object') {
+        promises.push(api('POST', '/fleets/import', { version: 1, fleets: data.fleets }).then(loadFleets));
+      }
       Promise.all(promises).catch(function (err) { console.error('Import failed:', err); });
     };
     reader.readAsText(file);
@@ -2914,6 +3113,7 @@
     return api('DELETE', '/all?include_settings=true').then(function () {
       resetLocalState();
       macros = {};
+      fleets = {};
       serverSettings = {};
       attentionCounts = {};
       updateTitleAttention();
@@ -2923,6 +3123,7 @@
       applyDebugButtonSetting(false);
       applyNotificationSettings();
       renderMacrosList();
+      renderFleetsList();
       if (agentIDDefaultInput) agentIDDefaultInput.value = '';
     });
   }
@@ -2983,6 +3184,9 @@
             break;
           case 'roles_updated':
             loadRoles().catch(function () {});
+            break;
+          case 'fleets_updated':
+            loadFleets().catch(function () {});
             break;
           case 'usages_updated':
             renderUsages(frame.data);
@@ -4359,6 +4563,142 @@
     });
   }
 
+  if (fleetAddBtn) fleetAddBtn.addEventListener('click', addFleet);
+  if (fleetCopyAllBtn) fleetCopyAllBtn.addEventListener('click', function () {
+    copyText(JSON.stringify(fleetEnvelope(), null, 2)).then(function () {
+      setTemporaryLabel(fleetCopyAllBtn, 'Copied', 2000);
+    }).catch(function (err) {
+      console.error('Failed to copy fleets JSON:', err);
+      setTemporaryLabel(fleetCopyAllBtn, 'Copy failed', 2500);
+    });
+  });
+  if (fleetImportBtn) fleetImportBtn.addEventListener('click', function () {
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      showFleetImportFallback();
+      setTemporaryLabel(fleetImportBtn, 'Paste below', 2500);
+      return;
+    }
+    navigator.clipboard.readText().then(function (text) {
+      if (!text.trim()) throw new Error('Clipboard is empty');
+      return applyImportedFleets(text, fleetImportBtn);
+    }).then(function (imported) {
+      if (imported) hideFleetImportFallback();
+    }).catch(function (err) {
+      console.error('Failed to read fleets JSON from clipboard:', err);
+      showFleetImportFallback();
+      setTemporaryLabel(fleetImportBtn, err.message === 'Clipboard is empty' ? 'Clipboard empty' : 'Paste below', 2500);
+    });
+  });
+  if (fleetImportApplyBtn) {
+    fleetImportApplyBtn.addEventListener('click', function () {
+      var raw = fleetImportTextarea.value.trim();
+      if (!raw) {
+        setTemporaryLabel(fleetImportApplyBtn, 'Paste JSON first', 2500);
+        return;
+      }
+      applyImportedFleets(raw, fleetImportApplyBtn).catch(function (err) {
+        console.error('Failed to import pasted fleets JSON:', err);
+        setTemporaryLabel(fleetImportApplyBtn, err.message, 2500);
+      });
+    });
+  }
+  if (fleetImportCancelBtn) {
+    fleetImportCancelBtn.addEventListener('click', function () {
+      hideFleetImportFallback();
+    });
+  }
+  if (fleetImportTextarea) {
+    fleetImportTextarea.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') hideFleetImportFallback();
+    });
+  }
+  if (fleetImportApplyBtn && !fleetImportTextarea) {
+    fleetImportApplyBtn.addEventListener('click', function () {
+      setTemporaryLabel(fleetImportApplyBtn, 'Paste JSON first', 2500);
+    });
+  }
+  if (fleetsListEl) {
+    fleetsListEl.addEventListener('input', function (e) {
+      var commandInput = e.target.closest('.fleet-command-input');
+      if (commandInput) updateFleetPreviewForInput(commandInput);
+    });
+    fleetsListEl.addEventListener('change', function (e) {
+      var nameInput = e.target.closest('.fleet-name-input');
+      if (nameInput) {
+        renameFleet(nameInput.getAttribute('data-fleet'), nameInput.value, nameInput);
+        return;
+      }
+      var cwdInput = e.target.closest('.fleet-agent-cwd');
+      if (cwdInput) {
+        var row = cwdInput.closest('.fleet-agent-row');
+        if (!row) return;
+        var cwdName = row.getAttribute('data-fleet');
+        var cwdIdx = parseInt(row.getAttribute('data-index'), 10);
+        if (fleets[cwdName] && fleets[cwdName].agents[cwdIdx]) {
+          fleets[cwdName].agents[cwdIdx].auto_set_cwd = cwdInput.checked;
+          var previewInput = row.querySelector('.fleet-command-input');
+          if (previewInput) updateFleetPreviewForInput(previewInput);
+          saveFleets();
+        }
+        return;
+      }
+      var commandInput = e.target.closest('.fleet-command-input');
+      if (commandInput) {
+        var fleetName = commandInput.getAttribute('data-fleet');
+        var idx = parseInt(commandInput.getAttribute('data-index'), 10);
+        if (fleets[fleetName] && fleets[fleetName].agents[idx]) {
+          fleets[fleetName].agents[idx].command = commandInput.value;
+          saveFleets();
+        }
+      }
+    });
+    fleetsListEl.addEventListener('click', function (e) {
+      var addBtn = e.target.closest('.fleet-add-agent-btn');
+      if (addBtn) {
+        var addName = addBtn.getAttribute('data-fleet');
+        if (!fleets[addName]) return;
+        fleets[addName].agents = Array.isArray(fleets[addName].agents) ? fleets[addName].agents : [];
+        if (fleets[addName].agents.length >= 16) {
+          setTemporaryLabel(addBtn, 'Max 16', 1600);
+          return;
+        }
+        fleets[addName].agents.push({ command: '', wrap_terminal: true, auto_set_cwd: true });
+        renderFleetsList();
+        return;
+      }
+      var removeAgentBtn = e.target.closest('.fleet-agent-delete-btn');
+      if (removeAgentBtn) {
+        var rmName = removeAgentBtn.getAttribute('data-fleet');
+        var rmIdx = parseInt(removeAgentBtn.getAttribute('data-index'), 10);
+        if (fleets[rmName] && Array.isArray(fleets[rmName].agents)) {
+          fleets[rmName].agents.splice(rmIdx, 1);
+          renderFleetsList();
+          saveFleets();
+        }
+        return;
+      }
+      var copyBtnFleet = e.target.closest('.fleet-copy-btn');
+      if (copyBtnFleet) {
+        var copyName = copyBtnFleet.getAttribute('data-fleet');
+        copyText(JSON.stringify(fleetEnvelope(copyName), null, 2)).then(function () {
+          setTemporaryLabel(copyBtnFleet, 'Copied', 2000);
+        }).catch(function (err) {
+          console.error('Failed to copy fleet JSON:', err);
+          setTemporaryLabel(copyBtnFleet, 'Copy failed', 2500);
+        });
+        return;
+      }
+      var deleteBtn = e.target.closest('.fleet-delete-btn');
+      if (deleteBtn) {
+        var delName = deleteBtn.getAttribute('data-fleet');
+        if (!confirm('Delete fleet "' + delName + '"?')) return;
+        delete fleets[delName];
+        renderFleetsList();
+        saveFleets();
+      }
+    });
+  }
+
   // Prompts reset-all
   if (promptsResetAllBtn) {
     promptsResetAllBtn.addEventListener('click', function () {
@@ -4404,12 +4744,12 @@
 
   // Danger zone
   clearStateBtn.addEventListener('click', function () {
-    if (!confirm('Clear all rooms, messages, and agents? Macros and settings are preserved. This cannot be undone.')) return;
+    if (!confirm('Clear all rooms, messages, and agents? Macros, fleets, and settings are preserved. This cannot be undone.')) return;
     clearState().catch(function (err) { alert('Error: ' + err.message); });
   });
 
   clearAllBtn.addEventListener('click', function () {
-    if (!confirm('Clear everything including macros and settings? This cannot be undone.')) return;
+    if (!confirm('Clear everything including macros, fleets, and settings? This cannot be undone.')) return;
     clearAll().catch(function (err) { alert('Error: ' + err.message); });
   });
 
@@ -4844,6 +5184,7 @@
     return Promise.all([
       fetchMyRooms().catch(function () {}),
       loadMacros().catch(function () {}),
+      loadFleets().catch(function () {}),
       loadRoles().catch(function () {})
     ]);
   }).finally(function () {

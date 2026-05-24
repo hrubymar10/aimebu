@@ -96,6 +96,9 @@ type store struct {
 	settingsMu sync.RWMutex
 	settings   Settings
 
+	fleetsMu sync.RWMutex
+	fleets   map[string]Fleet
+
 	soundsMu sync.RWMutex
 	sounds   []SoundEntry // user-uploaded custom sounds
 
@@ -131,6 +134,7 @@ func newStore(dir string) (*store, error) {
 		macros:                 make(map[string]string),
 		seenDefaults:           make(map[string]bool),
 		prompts:                make(map[string]string),
+		fleets:                 make(map[string]Fleet),
 		rolesOverrides:         make(map[string]roleOverrideEntry),
 		rolesCustom:            make(map[string]customRoleEntry),
 		warnedLegacy:           make(map[string]bool),
@@ -304,6 +308,9 @@ func (s *store) load() error {
 	// Role overrides and custom roles — survives schema wipes and conversation prune; wiped by prune -a.
 	s.loadRoles()
 
+	// Fleets — named user command bundles; survives schema wipes and conversation prune; wiped by prune -a.
+	s.loadFleets()
+
 	// User sounds index — persisted in sounds/sounds.json; wiped when clearAll(includeSettings=true).
 	s.loadSounds()
 
@@ -417,8 +424,12 @@ func (s *store) persist() {
 // atomicWrite writes data to a temp file, flushes to disk, and renames it
 // to the target path, preventing data corruption if the process crashes.
 func atomicWrite(path string, data []byte) {
+	atomicWriteMode(path, data, 0o644)
+}
+
+func atomicWriteMode(path string, data []byte, mode os.FileMode) {
 	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		log.Printf("Warning: failed to create %s: %v", tmp, err)
 		return
@@ -2051,6 +2062,7 @@ func (s *store) clearAll(includeSettings bool) {
 		s.clearPrompts()
 		s.clearRoles()
 		s.clearSettings()
+		s.clearFleets()
 		s.soundsMu.Lock()
 		s.sounds = nil
 		s.soundsMu.Unlock()

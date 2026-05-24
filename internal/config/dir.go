@@ -17,6 +17,7 @@ var (
 		"messages.json",
 		"agents.json",
 		"macros.json",
+		"fleet.json",
 		"settings.json",
 		"sounds",
 		"aimebu.pid",

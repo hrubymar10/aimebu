@@ -181,6 +181,7 @@
         <button class="settings-nav-item" data-section="notifications" type="button">Notifications</button>
         <button class="settings-nav-item" data-section="usages" type="button">Usages</button>
         <button class="settings-nav-item" data-section="macros" type="button">Macros</button>
+        <button class="settings-nav-item" data-section="fleets" type="button">Fleets</button>
         <button class="settings-nav-item" data-section="prompts" type="button">Prompts</button>
         <button class="settings-nav-item" data-section="roles" type="button">Roles</button>
         <button class="settings-nav-item" data-section="danger" type="button">Danger Zone</button>
@@ -441,6 +442,28 @@
           </div>
         </div>
 
+        <!-- Fleets -->
+        <div class="settings-section" data-section="fleets">
+          <div class="settings-group">
+            <p class="settings-hint">Commands run with your full shell privileges. Import only fleets you trust.</p>
+            <div class="fleets-actions">
+              <button id="fleet-add-btn" class="btn btn-sm btn-primary" type="button">Add fleet</button>
+              <button id="fleet-copy-all-btn" class="btn btn-sm" type="button">Copy fleets JSON</button>
+              <button id="fleet-import-btn" class="btn btn-sm" type="button">Import fleets JSON</button>
+            </div>
+            <div id="fleet-import-fallback" class="macros-import-fallback hidden">
+              <label class="settings-label" for="fleet-import-textarea">Paste fleets JSON</label>
+              <span class="settings-desc">Used when clipboard read is unavailable. Accepts a single-fleet or all-fleets JSON envelope.</span>
+              <textarea id="fleet-import-textarea" class="macros-import-textarea" rows="6" placeholder="{&quot;version&quot;:1,&quot;fleets&quot;:{}}"></textarea>
+              <div class="macros-import-actions">
+                <button id="fleet-import-apply-btn" class="btn btn-sm btn-primary" type="button">Import pasted JSON</button>
+                <button id="fleet-import-cancel-btn" class="btn btn-sm" type="button">Cancel</button>
+              </div>
+            </div>
+            <div id="fleets-list" class="fleets-list"></div>
+          </div>
+        </div>
+
         <!-- Prompts -->
         <div class="settings-section" data-section="prompts">
           <div class="settings-group">
@@ -477,8 +500,8 @@
           <div class="settings-group">
             <div class="settings-row">
               <div class="settings-row-info">
-                <label class="settings-label">Export settings + macros</label>
-                <span class="settings-desc">Download macros and settings as a JSON file.</span>
+                <label class="settings-label">Export settings + macros + fleets</label>
+                <span class="settings-desc">Download macros, fleets, and settings as a JSON file.</span>
               </div>
               <div class="settings-control">
                 <button id="backup-export-btn" class="btn btn-sm" type="button">Export JSON</button>
@@ -486,8 +509,8 @@
             </div>
             <div class="settings-row">
               <div class="settings-row-info">
-                <label class="settings-label">Import settings + macros</label>
-                <span class="settings-desc">Restore macros and settings from a JSON file.</span>
+                <label class="settings-label">Import settings + macros + fleets</label>
+                <span class="settings-desc">Restore macros, fleets, and settings from a JSON file.</span>
               </div>
               <div class="settings-control">
                 <button id="backup-import-btn" class="btn btn-sm" type="button">Import JSON</button>
@@ -499,7 +522,7 @@
             <div class="settings-row">
               <div class="settings-row-info">
                 <label class="settings-label">Clear conversation state</label>
-                <span class="settings-desc">Removes all rooms, messages, and agents. Macros and settings are preserved.</span>
+                <span class="settings-desc">Removes all rooms, messages, and agents. Macros, fleets, and settings are preserved.</span>
               </div>
               <div class="settings-control">
                 <button id="clear-state-btn" class="btn btn-sm btn-danger" type="button">Clear</button>
@@ -508,7 +531,7 @@
             <div class="settings-row">
               <div class="settings-row-info">
                 <label class="settings-label">Clear all data</label>
-                <span class="settings-desc">Removes everything including macros and settings. Cannot be undone.</span>
+                <span class="settings-desc">Removes everything including macros, fleets, and settings. Cannot be undone.</span>
               </div>
               <div class="settings-control">
                 <button id="clear-all-btn" class="btn btn-sm btn-danger" type="button">Clear All</button>
