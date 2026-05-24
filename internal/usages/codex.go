@@ -38,10 +38,11 @@ func (codexProvider) Fetch(ctx context.Context, store *Store) (Snapshot, error) 
 	if err != nil {
 		return codexStatus(StatusAuthMissing, "Codex auth path unavailable.", nil), nil
 	}
-	creds, detail, err := loadCodexAuth(authPath)
+	auth, detail, err := loadCodexAuthSnapshot(authPath)
 	if err != nil {
 		return codexStatus(StatusAuthMissing, err.Error(), detail), nil
 	}
+	creds := auth.Credentials
 	if creds.needsRefresh(time.Now()) {
 		refreshed, detail, err := refreshCodexAuth(ctx, creds)
 		if err != nil {
@@ -51,9 +52,20 @@ func (codexProvider) Fetch(ctx context.Context, store *Store) (Snapshot, error) 
 		if err := saveCodexAuth(authPath, creds); err != nil {
 			return codexStatus(StatusAuthMissing, "Codex auth refresh could not be saved.", nil), nil
 		}
+		auth.Fingerprint = codexAuthFingerprint(authPath)
 	}
 
 	raw, detail, status, err := fetchCodexUsage(ctx, creds)
+	if err != nil && status == StatusAuthMissing && creds.RefreshToken != "" {
+		reloaded, reloadDetail, changed, reloadErr := reloadCodexAuthIfChanged(authPath, auth.Fingerprint)
+		if changed {
+			if reloadErr != nil {
+				return codexStatus(StatusAuthMissing, reloadErr.Error(), reloadDetail), nil
+			}
+			creds = reloaded
+			raw, detail, status, err = fetchCodexUsage(ctx, creds)
+		}
+	}
 	if err != nil && status == StatusAuthMissing && creds.RefreshToken != "" {
 		refreshed, refreshDetail, refreshErr := refreshCodexAuth(ctx, creds)
 		if refreshErr != nil {
@@ -126,6 +138,26 @@ func codexAuthPath() (string, error) {
 	return filepath.Join(home, ".codex", "auth.json"), nil
 }
 
+type codexAuthSnapshot struct {
+	Credentials codexCredentials
+	Fingerprint []byte
+}
+
+func loadCodexAuthSnapshot(path string) (codexAuthSnapshot, *ErrorDetail, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return codexAuthSnapshot{}, fieldDetail("auth.json", "missing"), errors.New("Codex auth.json not found. Run `codex` to log in.")
+		}
+		return codexAuthSnapshot{}, nil, errors.New("Codex auth.json could not be read.")
+	}
+	creds, detail, err := parseCodexAuthData(data)
+	if err != nil {
+		return codexAuthSnapshot{}, detail, err
+	}
+	return codexAuthSnapshot{Credentials: creds, Fingerprint: append([]byte(nil), data...)}, nil, nil
+}
+
 func loadCodexAuth(path string) (codexCredentials, *ErrorDetail, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -134,6 +166,10 @@ func loadCodexAuth(path string) (codexCredentials, *ErrorDetail, error) {
 		}
 		return codexCredentials{}, nil, errors.New("Codex auth.json could not be read.")
 	}
+	return parseCodexAuthData(data)
+}
+
+func parseCodexAuthData(data []byte) (codexCredentials, *ErrorDetail, error) {
 	var raw codexAuthFile
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return codexCredentials{}, fieldDetail("auth.json", "invalid_json"), errors.New("Codex auth.json could not be decoded.")
@@ -154,6 +190,29 @@ func loadCodexAuth(path string) (codexCredentials, *ErrorDetail, error) {
 		creds.LastRefresh = t
 	}
 	return creds, nil, nil
+}
+
+func reloadCodexAuthIfChanged(path string, previous []byte) (codexCredentials, *ErrorDetail, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return codexCredentials{}, fieldDetail("auth.json", "missing"), false, errors.New("Codex auth.json not found. Run `codex` to log in.")
+		}
+		return codexCredentials{}, nil, false, errors.New("Codex auth.json could not be read.")
+	}
+	if bytes.Equal(data, previous) {
+		return codexCredentials{}, nil, false, nil
+	}
+	creds, detail, err := parseCodexAuthData(data)
+	return creds, detail, true, err
+}
+
+func codexAuthFingerprint(path string) []byte {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return append([]byte(nil), data...)
 }
 
 func refreshCodexAuth(ctx context.Context, creds codexCredentials) (codexCredentials, *ErrorDetail, error) {

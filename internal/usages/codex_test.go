@@ -287,6 +287,49 @@ func TestCodexProviderRefreshesAfterUnauthorizedUsage(t *testing.T) {
 	}
 }
 
+func TestCodexProviderRetriesRewrittenAuthAfterUnauthorizedUsage(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", root)
+	writeCodexAuthFixture(t, root, `{
+  "tokens": {"access_token": "old-access", "refresh_token": "old-refresh"},
+  "last_refresh": "`+time.Now().UTC().Format(time.RFC3339)+`"
+}`)
+	usageCalls := 0
+	withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case codexUsageURL:
+			usageCalls++
+			if usageCalls == 1 {
+				if got := req.Header.Get("Authorization"); got != "Bearer old-access" {
+					t.Fatalf("first Authorization = %q", got)
+				}
+				writeCodexAuthFixture(t, root, `{
+  "tokens": {"access_token": "external-access", "refresh_token": "external-refresh"},
+  "last_refresh": "`+time.Now().UTC().Format(time.RFC3339)+`"
+}`)
+				return httpJSON(http.StatusUnauthorized, `{"error":"expired"}`), nil
+			}
+			if got := req.Header.Get("Authorization"); got != "Bearer external-access" {
+				t.Fatalf("second Authorization = %q", got)
+			}
+			return httpJSON(200, `{"rate_limit":{"primary_window":{"used_percent":1,"reset_at":1892851200,"limit_window_seconds":18000}}}`), nil
+		case codexRefreshURL:
+			t.Fatal("refresh endpoint should not be called after auth.json was rewritten")
+			return nil, nil
+		default:
+			t.Fatalf("unexpected URL %s", req.URL)
+			return nil, nil
+		}
+	})
+	snap, err := NewCodexProvider().Fetch(context.Background(), NewStoreAt(t.TempDir()))
+	if err != nil || snap.Status != StatusOK {
+		t.Fatalf("Fetch = %+v err=%v", snap, err)
+	}
+	if usageCalls != 2 {
+		t.Fatalf("usage calls = %d, want 2", usageCalls)
+	}
+}
+
 func TestCodexAuthRefreshPreservesUnknownFieldsAndTokenCasing(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CODEX_HOME", root)
