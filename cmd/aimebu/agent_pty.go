@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -148,9 +149,12 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 	_ = pty.Setsize(ptyFile, &pty.Winsize{Rows: agentPTYRows, Cols: agentPTYCols})
 	agentLogHarnessSpawn(debug, command, args)
 
-	ptyOutput := agentPTYOutputWriter(debug)
+	agentID := newAgentIDProvider("")
+	stateWriter := startAgentStatePusher(context.Background(), aimebuURL, agentID, newStateDetector(harness))
+	ptyOutput := newAgentDebugStdoutWriter(debug, stateWriter)
 	// Wait for the ❯ canary while keeping the TUI hidden from the user.
 	if err := agentPTYWaitCanary(ptyFile, ptyOutput, agentPTYStartupTimeout); err != nil {
+		_ = stateWriter.Close()
 		_ = ptyFile.Close()
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 		return "", "", err
@@ -159,13 +163,14 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 	agentPTYWritePrompt(ptyFile, prompt, debug)
 
 	// Background goroutine drains the PTY for the rest of the session.
-	go agentPTYCopyOut(ptyFile, agentPTYOutputWriter(debug))
+	go agentPTYCopyOut(ptyFile, newAgentDebugStdoutWriter(debug, stateWriter))
 
 	// Poll for agent-name registration in parallel.
 	nameCh := make(chan string, 1)
 	go func() {
 		n := agentLookupName(aimebuURL, spawnTag, agentRegistrationLookupTimeout)
 		if n != "" {
+			agentID.Set(agentFullID(n))
 			fmt.Fprintf(os.Stderr, "aimebu agent: registered as %s\n", n)
 			agentLogRegisterObserved(debug, n, time.Since(startedAt))
 		}
@@ -178,6 +183,7 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 	var waitErr error
 	select {
 	case sig := <-sigCh:
+		_ = stateWriter.Close()
 		shutdownName := knownName
 		if shutdownName == "" {
 			select {
@@ -207,13 +213,17 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 		}
 	}
 	if waitErr != nil {
+		_ = stateWriter.Close()
 		return "", "", waitErr
 	}
 
 	agentName := <-nameCh
 	if agentName == "" {
+		_ = stateWriter.Close()
 		return "", "", agentRegistrationMissingError(harness)
 	}
+	agentID.Set(agentFullID(agentName))
+	_ = stateWriter.Close()
 	_ = debug.setAgentName(agentName)
 	return preSessionID, agentName, nil
 }
@@ -242,8 +252,9 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 				consecutiveFailureCount = agentAdvanceFailure(recoveryClass, &lastFailure, consecutiveFailureCount)
 				agentLogRecoveryDecision(debug, recoveryClass, "preflight health check failed", consecutiveFailureCount, backoff)
 				if consecutiveFailureCount > agentRecoveryFailureCap {
-					agentFatalRecovery(recoveryClass, sessionID, agentName)
+					agentFatalRecovery(aimebuURL, recoveryClass, sessionID, agentName)
 				}
+				agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 				fmt.Fprintf(os.Stderr, "aimebu agent: server unreachable before respawn, retry %d/%d in %v\n", consecutiveFailureCount, agentRecoveryFailureCap, backoff)
 				time.Sleep(backoff)
 				backoff = agentPTYBackoff(backoff)
@@ -268,8 +279,10 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 			retries++
 			if retries > agentRecoveryFailureCap {
 				fmt.Fprintf(os.Stderr, "aimebu agent: too many consecutive harness failures, giving up\n")
+				agentPushState(aimebuURL, agentFullID(agentName), "error")
 				os.Exit(1)
 			}
+			agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 			fmt.Fprintf(os.Stderr, "aimebu agent: PTY spawn failed on %s (retry %d/%d in %v): %v\n", runMode, retries, agentRecoveryFailureCap, backoff, err)
 			time.Sleep(backoff)
 			backoff = agentPTYBackoff(backoff)
@@ -278,15 +291,19 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 		_ = pty.Setsize(ptyFile, &pty.Winsize{Rows: agentPTYRows, Cols: agentPTYCols})
 		agentLogHarnessSpawn(debug, command, args)
 
-		ptyOutput := agentPTYOutputWriter(debug)
+		stateWriter := startAgentStatePusher(context.Background(), aimebuURL, newAgentIDProvider(agentFullID(agentName)), newStateDetector(harness))
+		ptyOutput := newAgentDebugStdoutWriter(debug, stateWriter)
 		// Wait for ❯ before writing the prompt, keeping the TUI hidden.
 		if err := agentPTYWaitCanary(ptyFile, ptyOutput, agentPTYStartupTimeout); err != nil {
+			_ = stateWriter.Close()
 			_ = ptyFile.Close()
 			retries++
 			if retries > agentRecoveryFailureCap {
 				fmt.Fprintf(os.Stderr, "aimebu agent: too many consecutive harness failures, giving up\n")
+				agentPushState(aimebuURL, agentFullID(agentName), "error")
 				os.Exit(1)
 			}
+			agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 			fmt.Fprintf(os.Stderr, "aimebu agent: PTY canary timeout on %s (retry %d/%d in %v): %v\n", runMode, retries, agentRecoveryFailureCap, backoff, err)
 			time.Sleep(backoff)
 			backoff = agentPTYBackoff(backoff)
@@ -295,18 +312,20 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 		ptyOutput.Flush()
 		agentPTYWritePrompt(ptyFile, prompt, debug)
 
-		go agentPTYCopyOut(ptyFile, agentPTYOutputWriter(debug))
+		go agentPTYCopyOut(ptyFile, newAgentDebugStdoutWriter(debug, stateWriter))
 
 		doneCh := make(chan error, 1)
 		go func() { doneCh <- cmd.Wait() }()
 
 		select {
 		case sig := <-sigCh:
+			_ = stateWriter.Close()
 			agentGracefulShutdown(aimebuURL, "", agentName, cmd, doneCh, sigCh, debug, sig)
 			_ = ptyFile.Close()
 			return
 		case err = <-doneCh:
 			_ = ptyFile.Close()
+			_ = stateWriter.Close()
 			agentLogHarnessExit(debug, err, time.Since(startedAt), nil)
 
 			// PTY mode: rely on exit code; no result-event rescue.
@@ -320,13 +339,16 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 				} else {
 					fmt.Fprintf(os.Stderr, "aimebu agent: session %s ended, resuming…\n", sessionID)
 				}
+				agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 				continue
 			}
 			retries++
 			if retries > agentRecoveryFailureCap {
 				fmt.Fprintf(os.Stderr, "aimebu agent: too many consecutive harness failures, giving up\n")
+				agentPushState(aimebuURL, agentFullID(agentName), "error")
 				os.Exit(1)
 			}
+			agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 			fmt.Fprintf(os.Stderr, "aimebu agent: %s failed (exit %d), retry %d/%d in %v\n",
 				runMode, agentExitCode(err), retries, agentRecoveryFailureCap, backoff)
 			time.Sleep(backoff)

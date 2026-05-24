@@ -1932,6 +1932,37 @@
     return 'offline';
   }
 
+  function agentStateMeta(state) {
+    switch (state) {
+      case 'thinking':
+        return { label: 'thinking', className: 'thinking', title: 'thinking' };
+      case 'tool_call':
+        return { label: 'tool', className: 'tool-call', title: 'running tool' };
+      case 'idle':
+        return { label: 'idle', className: 'idle', title: 'idle' };
+      case 'bootstrapping':
+        return { label: 'starting', className: 'bootstrapping', title: 'bootstrapping' };
+      case 'respawning':
+        return { label: 'respawn', className: 'respawning', title: 'respawning' };
+      case 'error':
+        return { label: 'error', className: 'error', title: 'error' };
+      case 'stopped':
+        return { label: 'stopped', className: 'stopped', title: 'stopped' };
+      case 'stale':
+        return { label: 'stale', className: 'stale', title: 'stale' };
+      default:
+        return null;
+    }
+  }
+
+  function agentStateBadgeHTML(a) {
+    var meta = agentStateMeta(a && a.state);
+    if (!meta) return '';
+    var title = meta.title;
+    if (a.state_at) title += ' since ' + relativeTime(a.state_at);
+    return '<span class="agent-state-badge agent-state-' + esc(meta.className) + '" title="' + esc(title) + '">' + esc(meta.label) + '</span>';
+  }
+
   function isDM(roomID) {
     return roomID && roomID.startsWith('dm:');
   }
@@ -3672,6 +3703,7 @@
     var iconTag = '<img src="' + iconSrc + '" class="harness-icon" alt="' + iconAlt + '" title="' + iconTitle + '" width="14" height="14">';
     var roleKey = roomRoleKey(room, a.id);
     var roleTag = roleBadgeHTML(roleKey);
+    var stateTag = agentStateBadgeHTML(a);
     var actionBtns = agentCardActionsHTML(a, context, room);
     return (
       '<div class="agent-card agent-card-compact agent-profile-link" data-agent-id="' + esc(a.id) + '" data-profile-agent-id="' + esc(a.id) + '" data-profile-context="' + esc(context) + '" tabindex="0" role="button" aria-label="Show profile for ' + esc(a.id) + '">' +
@@ -3680,6 +3712,7 @@
           presenceTag +
           iconTag +
           roleTag +
+          stateTag +
           '<span class="agent-id-text">' + esc(a.id) + '</span>' +
         '</div>' +
         actionBtns +
@@ -3812,8 +3845,9 @@
     if (!rightSidebarToggle) return;
     if (rightSidebarMode === 'profile' || rightSidebarMode === 'usages') {
       rightSidebarToggle.textContent = '×';
-      rightSidebarToggle.setAttribute('aria-label', rightSidebarMode === 'profile' ? 'Close profile' : 'Close usages');
-      rightSidebarToggle.setAttribute('title', rightSidebarMode === 'profile' ? 'Close profile' : 'Close usages');
+      var label = rightSidebarMode === 'profile' ? 'Close profile' : 'Close usages';
+      rightSidebarToggle.setAttribute('aria-label', label);
+      rightSidebarToggle.setAttribute('title', label);
       return;
     }
     rightSidebarToggle.textContent = rightCollapsed ? '‹' : '›';

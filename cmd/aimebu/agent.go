@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -361,6 +362,7 @@ func agentCmd(args []string) {
 		agentLogWrapperStart(debug, args, harness, entry.Rooms, spawnTag, resumeMode, aimebuURL, os.Getenv("AIMEBU_HARNESS"))
 		childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 		fmt.Fprintf(os.Stderr, "aimebu agent: resuming session %s as %s\n", entry.SessionID, entry.Name)
+		agentPushState(aimebuURL, agentFullID(entry.Name), "bootstrapping")
 		agentResumeLoop(harness, command, entry.SessionID, entry.Name, entry.Rooms, assumeRole, modelSlug, childEnv, aimebuURL, sigCh, debug)
 		return
 	}
@@ -1023,19 +1025,22 @@ func agentFullID(agentName string) string {
 	return agentName + "@" + project
 }
 
-func agentBootstrapStart(harness string, command []string, prompt, sessionID, aimebuURL, modelSlug string, env []string, debug *agentDebugLog) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer, *agentDebugStdoutWriter, error) {
+func agentBootstrapStart(harness string, command []string, prompt, sessionID, aimebuURL, modelSlug string, env []string, debug *agentDebugLog) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer, *agentDebugStdoutWriter, *agentIDProvider, io.WriteCloser, error) {
 	args := agentBootstrapArgs(harness, prompt, sessionID, aimebuURL, command[1:], modelSlug)
 
 	buf := &bytes.Buffer{}
 	stderrBuf := &bytes.Buffer{}
-	stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(os.Stdout, buf))
+	agentID := newAgentIDProvider("")
+	stateWriter := startAgentStatePusher(context.Background(), aimebuURL, agentID, newStateDetector(harness))
+	stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(os.Stdout, buf, stateWriter))
 	cmd := agentCommand(command, args, env, stdoutWriter, io.MultiWriter(os.Stderr, stderrBuf))
 
 	if err := cmd.Start(); err != nil {
-		return nil, nil, nil, nil, err
+		_ = stateWriter.Close()
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	agentLogHarnessSpawn(debug, command, args)
-	return cmd, buf, stderrBuf, stdoutWriter, nil
+	return cmd, buf, stderrBuf, stdoutWriter, agentID, stateWriter, nil
 }
 
 func agentBootstrapSession(harness string, command []string, prompt string, modelSlug string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog) (string, string, error) {
@@ -1049,7 +1054,7 @@ func agentBootstrapSession(harness string, command []string, prompt string, mode
 	// Codex: sessionID is extracted from stdout.
 	preSessionID := ""
 
-	bootstrapCmd, bootstrapBuf, stderrBuf, stdoutWriter, err := agentBootstrapStart(harness, command, prompt, preSessionID, aimebuURL, modelSlug, env, debug)
+	bootstrapCmd, bootstrapBuf, stderrBuf, stdoutWriter, agentID, stateWriter, err := agentBootstrapStart(harness, command, prompt, preSessionID, aimebuURL, modelSlug, env, debug)
 	if err != nil {
 		return "", "", err
 	}
@@ -1058,6 +1063,7 @@ func agentBootstrapSession(harness string, command []string, prompt string, mode
 	go func() {
 		n := agentLookupName(aimebuURL, spawnTag, agentRegistrationLookupTimeout)
 		if n != "" {
+			agentID.Set(agentFullID(n))
 			fmt.Fprintf(os.Stderr, "aimebu agent: registered as %s\n", n)
 			agentLogRegisterObserved(debug, n, time.Since(startedAt))
 		}
@@ -1070,6 +1076,7 @@ func agentBootstrapSession(harness string, command []string, prompt string, mode
 	var waitErr error
 	select {
 	case sig := <-sigCh:
+		_ = stateWriter.Close()
 		shutdownName := knownName
 		if shutdownName == "" {
 			select {
@@ -1088,20 +1095,25 @@ func agentBootstrapSession(harness string, command []string, prompt string, mode
 	agentLogHarnessExit(debug, waitErr, time.Since(startedAt), stderrBuf.Bytes())
 
 	if waitErr != nil {
+		_ = stateWriter.Close()
 		return "", "", waitErr
 	}
 
 	var lineIdx int
 	sessionID, lineIdx := agentParseSessionID(harness, bootstrapBuf.Bytes())
 	if sessionID == "" {
+		_ = stateWriter.Close()
 		return "", "", fmt.Errorf("could not extract session UUID from output; cannot resume")
 	}
 	agentLogSessionIDParsed(debug, harness, sessionID, lineIdx)
 
 	agentName := <-nameCh
 	if agentName == "" {
+		_ = stateWriter.Close()
 		return "", "", agentRegistrationMissingError(harness)
 	}
+	agentID.Set(agentFullID(agentName))
+	_ = stateWriter.Close()
 	_ = debug.setAgentName(agentName)
 	return sessionID, agentName, nil
 }
@@ -1130,8 +1142,9 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 				consecutiveFailureCount = agentAdvanceFailure(recoveryClass, &lastFailure, consecutiveFailureCount)
 				agentLogRecoveryDecision(debug, recoveryClass, "preflight health check failed", consecutiveFailureCount, backoff)
 				if consecutiveFailureCount > agentRecoveryFailureCap {
-					agentFatalRecovery(recoveryClass, sessionID, agentName)
+					agentFatalRecovery(aimebuURL, recoveryClass, sessionID, agentName)
 				}
+				agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 				fmt.Fprintf(os.Stderr, "aimebu agent: server unreachable before respawn, retry %d/%d in %v\n", consecutiveFailureCount, agentRecoveryFailureCap, backoff)
 				time.Sleep(backoff)
 				backoff *= 2
@@ -1158,7 +1171,8 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 		args := agentResumeArgs(harness, sessionID, prompt, aimebuURL, command[1:], modelSlug)
 		stdoutBuf := &bytes.Buffer{}
 		stderrBuf := &bytes.Buffer{}
-		stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(os.Stdout, stdoutBuf))
+		stateWriter := startAgentStatePusher(context.Background(), aimebuURL, newAgentIDProvider(agentFullID(agentName)), newStateDetector(harness))
+		stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(os.Stdout, stdoutBuf, stateWriter))
 		cmd := agentCommand(command, args, env, stdoutWriter, io.MultiWriter(os.Stderr, stderrBuf))
 		startedAt := time.Now()
 
@@ -1173,10 +1187,12 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 
 		select {
 		case sig := <-sigCh:
+			_ = stateWriter.Close()
 			agentGracefulShutdown(aimebuURL, "", agentName, cmd, doneCh, sigCh, debug, sig)
 			return
 		case err := <-doneCh:
 			stdoutWriter.Flush()
+			_ = stateWriter.Close()
 			agentLogHarnessExit(debug, err, time.Since(startedAt), stderrBuf.Bytes())
 			outcome := agentClassifyChildResult(harness, stdoutBuf.Bytes(), stderrBuf.Bytes())
 
@@ -1185,8 +1201,9 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 				consecutiveFailureCount = agentAdvanceFailure(outcome, &lastFailure, consecutiveFailureCount)
 				agentLogRecoveryDecision(debug, outcome, "child output reported server unreachable", consecutiveFailureCount, backoff)
 				if consecutiveFailureCount > agentRecoveryFailureCap {
-					agentFatalRecovery(outcome, sessionID, agentName)
+					agentFatalRecovery(aimebuURL, outcome, sessionID, agentName)
 				}
+				agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 				fmt.Fprintf(os.Stderr, "aimebu agent: server became unreachable during %s, retry %d/%d in %v\n", runMode, consecutiveFailureCount, agentRecoveryFailureCap, backoff)
 				time.Sleep(backoff)
 				backoff *= 2
@@ -1198,16 +1215,18 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 				consecutiveFailureCount = agentAdvanceFailure(outcome, &lastFailure, consecutiveFailureCount)
 				agentLogRecoveryDecision(debug, outcome, "child output reported missing bus registration", consecutiveFailureCount, 0)
 				if consecutiveFailureCount > agentRecoveryFailureCap {
-					agentFatalRecovery(outcome, sessionID, agentName)
+					agentFatalRecovery(aimebuURL, outcome, sessionID, agentName)
 				}
+				agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 				fmt.Fprintf(os.Stderr, "aimebu agent: %s lost its bus registration, retrying in-session (%d/%d)\n", agentFullID(agentName), consecutiveFailureCount, agentRecoveryFailureCap)
 				continue
 			case agentRecoveryCodexThreadMissing:
 				consecutiveFailureCount = agentAdvanceFailure(outcome, &lastFailure, consecutiveFailureCount)
 				agentLogRecoveryDecision(debug, outcome, "codex reported missing thread during resume", consecutiveFailureCount, backoff)
 				if consecutiveFailureCount > agentRecoveryFailureCap {
-					agentFatalRecovery(outcome, sessionID, agentName)
+					agentFatalRecovery(aimebuURL, outcome, sessionID, agentName)
 				}
+				agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 				recoveryPrompt := agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, agentName, rooms, assumeRole, modelSlug)
 				fmt.Fprintf(os.Stderr, "aimebu agent: codex thread %s vanished, bootstrapping a fresh thread (%d/%d)\n", sessionID, consecutiveFailureCount, agentRecoveryFailureCap)
 				newSessionID, recoveredName, bootErr := agentBootstrapSession(harness, command, recoveryPrompt, modelSlug, env, aimebuURL, spawnTag, agentName, sigCh, debug)
@@ -1254,13 +1273,16 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 				} else {
 					fmt.Fprintf(os.Stderr, "aimebu agent: session %s ended, resuming…\n", sessionID)
 				}
+				agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 				continue
 			}
 			retries++
 			if retries > agentRecoveryFailureCap {
 				fmt.Fprintf(os.Stderr, "aimebu agent: too many consecutive harness failures, giving up\n")
+				agentPushState(aimebuURL, agentFullID(agentName), "error")
 				os.Exit(1)
 			}
+			agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 			fmt.Fprintf(os.Stderr, "aimebu agent: exit error (%v), retry %d/%d in %v\n", err, retries, agentRecoveryFailureCap, backoff)
 			time.Sleep(backoff)
 			backoff *= 2
@@ -1285,7 +1307,7 @@ func agentAdvanceFailure(class agentRecoveryClass, last *agentRecoveryClass, cou
 	return count
 }
 
-func agentFatalRecovery(class agentRecoveryClass, sessionID, agentName string) {
+func agentFatalRecovery(aimebuURL string, class agentRecoveryClass, sessionID, agentName string) {
 	switch class {
 	case agentRecoveryRegistrationLost:
 		fmt.Fprintf(os.Stderr, "aimebu agent: registration recovery failed %d consecutive times for %s (session %s); giving up\n", agentRecoveryFailureCap, agentFullID(agentName), sessionID)
@@ -1296,6 +1318,7 @@ func agentFatalRecovery(class agentRecoveryClass, sessionID, agentName string) {
 	default:
 		fmt.Fprintf(os.Stderr, "aimebu agent: unrecoverable wrapper state (%s); giving up\n", class)
 	}
+	agentPushState(aimebuURL, agentFullID(agentName), "error")
 	os.Exit(1)
 }
 
@@ -1423,6 +1446,31 @@ func agentDeleteRegistration(aimebuURL, agentID string, timeout time.Duration) e
 	return c.DeleteAgent(agentID, timeout)
 }
 
+// agentPushState posts a wrapper-known lifecycle state to the bus. It is
+// intentionally best-effort so state visibility never blocks recovery.
+func agentPushState(aimebuURL, agentID, state string) {
+	agentID = agentFullID(agentID)
+	if aimebuURL == "" || agentID == "" || state == "" {
+		return
+	}
+	payload, err := json.Marshal(map[string]string{"state": state})
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(aimebuURL, "/")+"/agents/"+url.PathEscape(agentID)+"/state", bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c := &http.Client{Timeout: 250 * time.Millisecond}
+	resp, err := c.Do(req)
+	if err != nil {
+		return
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+}
+
 func agentSignalProcessGroup(cmd *exec.Cmd, sig syscall.Signal) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
@@ -1464,6 +1512,7 @@ func agentGracefulShutdown(aimebuURL, spawnTag, agentName string, running *exec.
 	if attemptedID == "" && spawnTag != "" {
 		attemptedID = agentLookupName(aimebuURL, spawnTag, time.Second)
 	}
+	agentPushState(aimebuURL, attemptedID, "stopped")
 
 	deleteDone := make(chan error, 1)
 	if attemptedID != "" {

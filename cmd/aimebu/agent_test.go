@@ -90,6 +90,88 @@ func TestAgentResolveRoomsAutoRoom(t *testing.T) {
 	}
 }
 
+func TestAgentPushStateFireAndForgetSendsExpectedBody(t *testing.T) {
+	seen := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/agents/worker@aimebu/state" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("content-type = %q", got)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		if body["state"] != "respawning" {
+			t.Errorf("state = %q, want respawning", body["state"])
+		}
+		seen <- struct{}{}
+	}))
+	defer srv.Close()
+
+	agentPushState(srv.URL, "worker@aimebu", "respawning")
+
+	select {
+	case <-seen:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("server did not receive state push")
+	}
+}
+
+func TestAgentPushStateShortNameUsesFullAgentID(t *testing.T) {
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "aimebu")
+	if err := os.Mkdir(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(projectDir)
+
+	seen := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.URL.Path
+	}))
+	defer srv.Close()
+
+	agentPushState(srv.URL, "worker", "respawning")
+
+	select {
+	case got := <-seen:
+		if got != "/agents/worker@aimebu/state" {
+			t.Fatalf("path = %q, want /agents/worker@aimebu/state", got)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("server did not receive state push")
+	}
+}
+
+func TestAgentPushStateServerUnreachableSwallowsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close()
+
+	agentPushState(url, "worker@aimebu", "respawning")
+}
+
+func TestAgentPushStateEmptyArgsAreNoop(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		calls++
+	}))
+	defer srv.Close()
+
+	agentPushState("", "worker@aimebu", "respawning")
+	agentPushState(srv.URL, "", "respawning")
+	agentPushState(srv.URL, "worker@aimebu", "")
+
+	if calls != 0 {
+		t.Fatalf("expected no calls, got %d", calls)
+	}
+}
+
 func TestAgentResolveResume(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {

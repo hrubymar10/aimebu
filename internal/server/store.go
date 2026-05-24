@@ -286,6 +286,8 @@ func (s *store) load() error {
 			return fmt.Errorf("parse agents: %w", err)
 		}
 		for i := range agents {
+			agents[i].State = ""
+			agents[i].StateAt = time.Time{}
 			s.agents[agents[i].ID] = &agents[i]
 			if isReservedAgentName(agents[i].Name) {
 				log.Printf("warning: persisted agent %q has reserved name %q; @%s now resolves to a group token, not this agent", agents[i].ID, agents[i].Name, agents[i].Name)
@@ -402,7 +404,10 @@ func (s *store) persist() {
 	// Agents
 	agents := make([]types.Agent, 0, len(s.agents))
 	for _, a := range s.agents {
-		agents = append(agents, *a)
+		cp := *a
+		cp.State = ""
+		cp.StateAt = time.Time{}
+		agents = append(agents, cp)
 	}
 	if data, err := json.MarshalIndent(agents, "", "  "); err == nil {
 		atomicWrite(filepath.Join(s.dir, "agents.json"), data)
@@ -1385,6 +1390,80 @@ func (s *store) touchAgent(id string) {
 	}
 }
 
+func isValidAgentState(state string) bool {
+	switch state {
+	case types.AgentStateBootstrapping,
+		types.AgentStateIdle,
+		types.AgentStateThinking,
+		types.AgentStateToolCall,
+		types.AgentStateRespawning,
+		types.AgentStateError,
+		types.AgentStateStopped,
+		types.AgentStateStale:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *store) setAgentState(agentID, state string) bool {
+	now := time.Now().UTC()
+	updated := false
+
+	s.mu.Lock()
+	if a, ok := s.agents[agentID]; ok {
+		if a.Kind != "ai" {
+			s.mu.Unlock()
+			return true
+		}
+		if a.State != state {
+			updated = true
+		}
+		a.State = state
+		a.StateAt = now
+	} else {
+		s.mu.Unlock()
+		return false
+	}
+	s.mu.Unlock()
+
+	if updated {
+		s.broadcastAgentUpdate()
+	}
+	return true
+}
+
+func (s *store) deriveAgentStates(now time.Time) {
+	changed := false
+	s.mu.Lock()
+	for _, a := range s.agents {
+		if a.Kind != "ai" {
+			if a.State != "" || !a.StateAt.IsZero() {
+				a.State = ""
+				a.StateAt = time.Time{}
+				changed = true
+			}
+			continue
+		}
+		next := ""
+		if lastSeen, err := time.Parse(time.RFC3339, a.LastSeen); err == nil && now.Sub(lastSeen) > time.Minute {
+			if a.State != types.AgentStateStopped && a.State != types.AgentStateError {
+				next = types.AgentStateStale
+			}
+		}
+		if next != "" && a.State != next {
+			a.State = next
+			a.StateAt = now
+			changed = true
+		}
+	}
+	s.mu.Unlock()
+
+	if changed {
+		s.broadcastAgentUpdate()
+	}
+}
+
 // roomHead returns the highest message ID currently in the room, or 0 if
 // the room has no messages. Caller must hold s.mu (read or write).
 func (s *store) roomHeadLocked(roomID string) int64 {
@@ -1479,12 +1558,26 @@ func (s *store) listAgents() []types.Agent {
 		agents = append(agents, cloneAgentLocked(a))
 	}
 	s.mu.RUnlock()
+	s.applyAgentWaitStateOverlay(agents)
 	for i := range agents {
 		if agents[i].Kind == "ai" && s.roleKeyExists(agents[i].Name) {
 			agents[i].Warnings = append(agents[i].Warnings, roleNameCollisionWarning(agents[i].Name))
 		}
 	}
 	return agents
+}
+
+func (s *store) applyAgentWaitStateOverlay(agents []types.Agent) {
+	s.waitMu.RLock()
+	defer s.waitMu.RUnlock()
+	for i := range agents {
+		if agents[i].Kind != "ai" {
+			continue
+		}
+		if len(s.openWaits[agents[i].ID]) > 0 {
+			agents[i].State = types.AgentStateIdle
+		}
+	}
 }
 
 // deregisterAgent removes an agent from the registry and from every room it is
@@ -1801,6 +1894,7 @@ func (s *store) enterWait(agentID, roomID string) {
 	}
 	s.waitMu.Lock()
 	scopes := s.openWaits[agentID]
+	hadOpenWait := len(scopes) > 0
 	if scopes == nil {
 		scopes = make(map[string]int)
 		s.openWaits[agentID] = scopes
@@ -1815,6 +1909,9 @@ func (s *store) enterWait(agentID, roomID string) {
 		cur = -1
 	}
 	s.broadcastPresence(agentID, roomID, cur, true)
+	if !hadOpenWait {
+		s.broadcastAgentUpdate()
+	}
 }
 
 // leaveWait decrements the per-scope counter and, when that specific scope
@@ -1827,6 +1924,7 @@ func (s *store) leaveWait(agentID, roomID string) {
 	s.waitMu.Lock()
 	scopes := s.openWaits[agentID]
 	scopeRemaining := -1
+	hasOpenWait := len(scopes) > 0
 	if scopes != nil && scopes[roomID] > 0 {
 		scopes[roomID]--
 		scopeRemaining = scopes[roomID]
@@ -1837,6 +1935,7 @@ func (s *store) leaveWait(agentID, roomID string) {
 			delete(s.openWaits, agentID)
 		}
 	}
+	hasOpenWait = hasOpenWait && len(s.openWaits[agentID]) > 0
 	s.waitMu.Unlock()
 	if scopeRemaining == 0 {
 		cur := s.cursorFor(agentID, roomID)
@@ -1844,6 +1943,9 @@ func (s *store) leaveWait(agentID, roomID string) {
 			cur = -1
 		}
 		s.broadcastPresence(agentID, roomID, cur, false)
+		if !hasOpenWait {
+			s.broadcastAgentUpdate()
+		}
 	}
 }
 
@@ -1971,6 +2073,7 @@ func (s *store) startCleanup(ctx context.Context) {
 				s.cleanupStaleAgents()
 				s.cleanupEmptyRooms()
 				s.cleanupMessages()
+				s.deriveAgentStates(time.Now().UTC())
 			case <-s.cleanupResetCh:
 				ticker.Reset(s.cleanupInterval())
 			case <-ctx.Done():

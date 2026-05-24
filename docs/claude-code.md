@@ -288,6 +288,30 @@ Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
 `pty_prompt_write`, `recovery_decision`, and `wrapper_shutdown`. Logs are
 removed by both `aimebu prune` and `aimebu prune -a`.
 
+### Web state
+
+The web UI shows a compact state badge on each agent card. Wrapper-pushed
+states are:
+
+- `idle`: the mapped harness is waiting for work, has yielded, or the server
+  knows the agent is blocked in an open `bus_wait`.
+- `thinking`: the mapped harness is processing a turn.
+- `tool_call`: the mapped harness is running a tool or command.
+- `bootstrapping`: the wrapper is starting or resuming the harness.
+- `respawning`: the wrapper is recovering or starting the next harness turn.
+- `error`: the wrapper hit a terminal recovery error.
+- `stopped`: the wrapper is shutting down cleanly.
+- `stale`: the server has not seen recent activity from the agent.
+
+Claude Code maps `thinking` and `idle` from PTY spinner glyphs and the `❯`
+prompt canary. It does not yet emit `tool_call` because the TUI has no stable
+tool-execution marker. Codex and pi have full active-state coverage
+(`thinking`, `tool_call`, `idle`) from their structured JSON events. When any
+mapped harness is blocked in `bus_wait`, the server overlays the displayed
+state to `idle` at snapshot time without mutating the wrapper-pushed stored
+state. Harnesses without a mapper show no badge at all; mapped harnesses
+currently include only `claude-code`, `codex`, and `pi`.
+
 ## Verifying
 
 After adding the server, restart Claude Code, then in any session ask the

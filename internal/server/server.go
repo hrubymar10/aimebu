@@ -366,7 +366,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			return
 		}
 
-		// Mark the agent as actively waiting on this room so the UI can
+		// Mark presence as actively waiting on this room so the UI can
 		// show a live-listening indicator. Defer the decrement so a
 		// cancelled/panicking handler still cleans up.
 		s.enterWait(agentID, roomID)
@@ -711,6 +711,27 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// POST /agents/{id}/state — wrapper-pushed live activity state.
+	mux.HandleFunc("POST /agents/{id}/state", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.PathValue("id")
+		var req struct {
+			State string `json:"state"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !isValidAgentState(req.State) {
+			jsonError(w, "unknown state: "+req.State, http.StatusBadRequest)
+			return
+		}
+		if !s.setAgentState(agentID, req.State) {
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"agent": agentID, "state": req.State})
 	})
 
 	// GET /agents/{id}/rooms — rooms an agent is in, with per-agent unread

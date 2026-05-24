@@ -41,6 +41,49 @@ func setupTestServerWithBuild(t *testing.T, build BuildInfo) (*store, *httptest.
 	return s, srv
 }
 
+func findListedAgent(t *testing.T, s *store, agentID string) types.Agent {
+	t.Helper()
+	for _, agent := range s.listAgents() {
+		if agent.ID == agentID {
+			return agent
+		}
+	}
+	t.Fatalf("agent %q not found", agentID)
+	return types.Agent{}
+}
+
+func assertAgentUpdateState(t *testing.T, sub <-chan MetaEvent, agentID, want string) {
+	t.Helper()
+	deadline := time.After(100 * time.Millisecond)
+	for {
+		select {
+		case evt := <-sub:
+			if evt.Type != "agent_update" {
+				continue
+			}
+			data, ok := evt.Data.(map[string]any)
+			if !ok {
+				t.Fatalf("agent_update data = %T, want map[string]any", evt.Data)
+			}
+			agents, ok := data["agents"].([]types.Agent)
+			if !ok {
+				t.Fatalf("agent_update agents = %T, want []types.Agent", data["agents"])
+			}
+			for _, agent := range agents {
+				if agent.ID == agentID {
+					if agent.State != want {
+						t.Fatalf("agent_update state = %q, want %q", agent.State, want)
+					}
+					return
+				}
+			}
+			t.Fatalf("agent %q not found in agent_update", agentID)
+		case <-deadline:
+			t.Fatalf("timed out waiting for agent_update state %q", want)
+		}
+	}
+}
+
 func TestServerBaseContextCancelsRoomWait(t *testing.T) {
 	s, err := newStore(t.TempDir())
 	if err != nil {
@@ -248,6 +291,328 @@ func TestDeleteAgentReturnsNotFoundForUnknownAgent(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("DELETE /agents for unknown agent returned %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}
+}
+
+func TestSetAgentStateKnownStateUpdatesAndBroadcasts(t *testing.T) {
+	s, _ := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "stateful")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := s.subscribeMeta()
+	defer s.unsubscribeMeta(sub)
+
+	if !s.setAgentState(agent.ID, types.AgentStateThinking) {
+		t.Fatal("setAgentState returned false")
+	}
+
+	agents := s.listAgents()
+	var got *types.Agent
+	for i := range agents {
+		if agents[i].ID == agent.ID {
+			got = &agents[i]
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("agent not found")
+	}
+	if got.State != types.AgentStateThinking {
+		t.Fatalf("state = %q, want %q", got.State, types.AgentStateThinking)
+	}
+	if got.StateAt.IsZero() {
+		t.Fatal("expected state_at to be set")
+	}
+
+	select {
+	case evt := <-sub:
+		if evt.Type != "agent_update" {
+			t.Fatalf("event type = %q, want agent_update", evt.Type)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected agent_update broadcast")
+	}
+}
+
+func TestSetAgentStateAcceptsNewVocabulary(t *testing.T) {
+	s, srv := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "stateok")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, state := range []string{types.AgentStateIdle, types.AgentStateThinking, types.AgentStateToolCall} {
+		resp, err := http.Post(srv.URL+"/agents/"+agent.ID+"/state", "application/json", strings.NewReader(fmt.Sprintf(`{"state":%q}`, state)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("POST state %q returned %d, want %d", state, resp.StatusCode, http.StatusOK)
+		}
+	}
+}
+
+func TestSetAgentStateUnknownStateRejected(t *testing.T) {
+	s, srv := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "statebad")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Post(srv.URL+"/agents/"+agent.ID+"/state", "application/json", strings.NewReader(`{"state":"confused"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("POST state returned %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func TestSetAgentStateRejectsOldVocabulary(t *testing.T) {
+	s, srv := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "stateold")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, state := range []string{"waiting", "working"} {
+		resp, err := http.Post(srv.URL+"/agents/"+agent.ID+"/state", "application/json", strings.NewReader(fmt.Sprintf(`{"state":%q}`, state)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("POST old state %q returned %d, want %d", state, resp.StatusCode, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestSetAgentStateUnknownAgentReturns404(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	resp, err := http.Post(srv.URL+"/agents/nope@aimebu/state", "application/json", strings.NewReader(`{"state":"idle"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("POST state returned %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestAgentStateDerivesStaleAfterTimeout(t *testing.T) {
+	s, _ := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "staleone")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	s.mu.Lock()
+	s.agents[agent.ID].LastSeen = now.Add(-2 * time.Minute).Format(time.RFC3339)
+	s.mu.Unlock()
+
+	s.deriveAgentStates(now)
+	for _, got := range s.listAgents() {
+		if got.ID == agent.ID {
+			if got.State != types.AgentStateStale {
+				t.Fatalf("state = %q, want %q", got.State, types.AgentStateStale)
+			}
+			return
+		}
+	}
+	t.Fatal("agent not found")
+}
+
+func TestAgentStateNoLongerDerivedFromBusTraffic(t *testing.T) {
+	s, _ := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "busstate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.createRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.roomSend("general", agent.ID, "hello", false); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, got := range s.listAgents() {
+		if got.ID == agent.ID {
+			if got.State != "" {
+				t.Fatalf("state = %q, want empty", got.State)
+			}
+			return
+		}
+	}
+	t.Fatal("agent not found")
+}
+
+func TestAgentEffectiveStateOverridesToIdleDuringBusWait(t *testing.T) {
+	s, _ := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "waitidle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.setAgentState(agent.ID, types.AgentStateThinking) {
+		t.Fatal("setAgentState returned false")
+	}
+
+	s.enterWait(agent.ID, "")
+	got := findListedAgent(t, s, agent.ID)
+	if got.State != types.AgentStateIdle {
+		t.Fatalf("state during bus_wait = %q, want %q", got.State, types.AgentStateIdle)
+	}
+
+	s.mu.RLock()
+	storedState := s.agents[agent.ID].State
+	s.mu.RUnlock()
+	if storedState != types.AgentStateThinking {
+		t.Fatalf("stored state = %q, want %q", storedState, types.AgentStateThinking)
+	}
+
+	s.leaveWait(agent.ID, "")
+	got = findListedAgent(t, s, agent.ID)
+	if got.State != types.AgentStateThinking {
+		t.Fatalf("state after bus_wait = %q, want %q", got.State, types.AgentStateThinking)
+	}
+}
+
+func TestAgentEffectiveStateBroadcastsOnBusWaitTransitions(t *testing.T) {
+	s, _ := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "waitcast")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.setAgentState(agent.ID, types.AgentStateToolCall) {
+		t.Fatal("setAgentState returned false")
+	}
+	sub := s.subscribeMeta()
+	defer s.unsubscribeMeta(sub)
+
+	s.enterWait(agent.ID, "")
+	assertAgentUpdateState(t, sub, agent.ID, types.AgentStateIdle)
+
+	s.leaveWait(agent.ID, "")
+	assertAgentUpdateState(t, sub, agent.ID, types.AgentStateToolCall)
+}
+
+func TestAgentEffectiveStateNoBusWaitReturnsStoredState(t *testing.T) {
+	s, _ := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "nowait")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.setAgentState(agent.ID, types.AgentStateToolCall) {
+		t.Fatal("setAgentState returned false")
+	}
+
+	got := findListedAgent(t, s, agent.ID)
+	if got.State != types.AgentStateToolCall {
+		t.Fatalf("state = %q, want %q", got.State, types.AgentStateToolCall)
+	}
+}
+
+func TestAgentEffectiveStateHumansUnaffectedByBusWait(t *testing.T) {
+	s, _ := setupTestServer(t)
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.enterWait(human.ID, "")
+	defer s.leaveWait(human.ID, "")
+
+	got := findListedAgent(t, s, human.ID)
+	if got.State != "" {
+		t.Fatalf("human state = %q, want empty", got.State)
+	}
+	if !got.StateAt.IsZero() {
+		t.Fatal("human state_at should be zero")
+	}
+}
+
+func TestSetAgentStateNoOpForHuman(t *testing.T) {
+	s, _ := setupTestServer(t)
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !s.setAgentState(human.ID, types.AgentStateRespawning) {
+		t.Fatal("setAgentState returned false for existing human agent")
+	}
+
+	for _, got := range s.listAgents() {
+		if got.ID == human.ID {
+			if got.State != "" {
+				t.Fatalf("human state = %q, want empty", got.State)
+			}
+			if !got.StateAt.IsZero() {
+				t.Fatal("human state_at should be zero")
+			}
+			return
+		}
+	}
+	t.Fatal("human agent not found")
+}
+
+func TestDeriveAgentStatesSkipsHumans(t *testing.T) {
+	s, _ := setupTestServer(t)
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	s.mu.Lock()
+	s.agents[human.ID].LastSeen = now.Add(-2 * time.Minute).Format(time.RFC3339)
+	s.mu.Unlock()
+
+	s.deriveAgentStates(now)
+
+	for _, got := range s.listAgents() {
+		if got.ID == human.ID {
+			if got.State != "" {
+				t.Fatalf("human state = %q, want empty", got.State)
+			}
+			return
+		}
+	}
+	t.Fatal("human agent not found")
+}
+
+func TestDeriveAgentStatesClearsExistingHumanState(t *testing.T) {
+	s, _ := setupTestServer(t)
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.mu.Lock()
+	s.agents[human.ID].State = types.AgentStateThinking
+	s.agents[human.ID].StateAt = time.Now().UTC()
+	s.mu.Unlock()
+
+	s.deriveAgentStates(time.Now().UTC())
+
+	for _, got := range s.listAgents() {
+		if got.ID == human.ID {
+			if got.State != "" {
+				t.Fatalf("human state = %q, want empty", got.State)
+			}
+			if !got.StateAt.IsZero() {
+				t.Fatal("human state_at should be zero")
+			}
+			return
+		}
+	}
+	t.Fatal("human agent not found")
 }
 
 func TestKickRoomMemberEmitsKickedSystemMessage(t *testing.T) {

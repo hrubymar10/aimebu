@@ -1672,6 +1672,65 @@ body {
   50%      { opacity: 0.45; }
 }
 
+.agent-state-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  line-height: 1;
+  font-weight: 600;
+}
+
+.agent-state-thinking {
+  color: var(--orange);
+  border-color: rgba(210, 153, 34, 0.42);
+  background: rgba(210, 153, 34, 0.12);
+}
+
+.agent-state-tool-call {
+  color: #c084fc;
+  border-color: rgba(192, 132, 252, 0.42);
+  background: rgba(192, 132, 252, 0.12);
+}
+
+.agent-state-idle {
+  color: var(--green-text);
+  border-color: rgba(63, 185, 80, 0.35);
+  background: rgba(63, 185, 80, 0.1);
+}
+
+.agent-state-bootstrapping {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-dim);
+}
+
+.agent-state-respawning {
+  color: var(--orange);
+  border-color: rgba(210, 153, 34, 0.42);
+  background: rgba(210, 153, 34, 0.12);
+}
+
+.agent-state-error {
+  color: var(--red);
+  border-color: rgba(248, 81, 73, 0.42);
+  background: var(--red-dim);
+}
+
+.agent-state-stopped,
+.agent-state-stale {
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: var(--bg-secondary);
+}
+
 /* Read-receipt avatar strip under a chat message. */
 .chat-msg-receipts {
   display: flex;

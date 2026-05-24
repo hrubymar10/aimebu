@@ -1,5 +1,7 @@
 package types
 
+import "time"
+
 type Room struct {
 	ID        string            `json:"id"`
 	Members   []string          `json:"members"`
@@ -37,6 +39,8 @@ type Agent struct {
 	Harness      string            `json:"harness,omitempty"` // always present for kind=ai (may be "unknown")
 	Project      string            `json:"project,omitempty"`
 	Meta         map[string]string `json:"meta,omitempty"`
+	State        string            `json:"state,omitempty"`
+	StateAt      time.Time         `json:"state_at,omitempty"`
 	Warnings     []string          `json:"warnings,omitempty"`
 	RegisteredAt string            `json:"registered_at"`
 	LastSeen     string            `json:"last_seen"`
@@ -46,6 +50,17 @@ type Agent struct {
 	// agent so a pruned-then-reclaimed identity keeps its read state.
 	ReadCursors map[string]int64 `json:"read_cursors,omitempty"`
 }
+
+const (
+	AgentStateBootstrapping = "bootstrapping"
+	AgentStateIdle          = "idle"
+	AgentStateThinking      = "thinking"
+	AgentStateToolCall      = "tool_call"
+	AgentStateRespawning    = "respawning"
+	AgentStateError         = "error"
+	AgentStateStopped       = "stopped"
+	AgentStateStale         = "stale"
+)
 
 // Request types
 
