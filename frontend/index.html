@@ -101,20 +101,60 @@
           <div class="room-header-left">
             <span id="room-icon" class="room-header-icon">#</span>
             <h2 id="room-name" class="room-name"></h2>
-            <span id="room-member-count" class="room-member-badge"></span>
-            <button id="room-settings-btn" class="btn btn-sm btn-md-toggle room-settings-trigger" type="button">Room settings</button>
+            <span id="room-member-count" class="room-member-badge" role="img" title="0 members" aria-label="0 members">
+              <svg class="room-header-action-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="2"/>
+                <path d="M22 21v-2a4 4 0 00-3-3.87" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M16 3.13a4 4 0 010 7.75" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span id="room-member-count-num">0</span>
+            </span>
+            <button id="room-settings-btn" class="btn btn-sm btn-md-toggle btn-icon-sm room-settings-trigger" type="button" title="Room settings" aria-label="Room settings">
+              <svg class="room-header-action-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <path d="M8 4.754a3.246 3.246 0 100 6.492 3.246 3.246 0 000-6.492zM5.754 8a2.246 2.246 0 114.492 0 2.246 2.246 0 01-4.492 0z"/>
+                <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 01-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 01-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 01.52 1.255l-.16.292c-.892 1.64.902 3.434 2.541 2.54l.292-.159a.873.873 0 011.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 011.255-.52l.292.16c1.64.892 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 01.52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 01-.52-1.255l.16-.292c.892-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 01-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 002.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 001.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 00-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 00-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 00-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291a1.873 1.873 0 00-1.116-2.693l-.318-.094c-.835-.246-.835-1.428 0-1.674l.319-.094a1.873 1.873 0 001.115-2.692l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 002.692-1.116l.094-.318z"/>
+              </svg>
+            </button>
           </div>
           <div class="room-header-right">
-            <button id="msg-search-btn" class="btn btn-sm btn-md-toggle" type="button" title="Go to message #…">#</button>
-            <button id="md-toggle-btn" class="btn btn-sm btn-md-toggle" type="button">Rendered</button>
+            <button id="msg-search-btn" class="btn btn-sm btn-md-toggle btn-icon-sm" type="button" title="Go to message #…" aria-label="Go to message">
+              <svg class="room-header-action-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M4 9h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M4 15h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M10 3L8 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M16 3l-2 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <button id="md-toggle-btn" class="btn btn-sm btn-md-toggle btn-icon-sm md-toggle-rendered" type="button" title="Switch to raw" aria-label="Switch to raw">
+              <svg class="room-header-action-icon md-toggle-icon md-toggle-icon-rendered" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              <svg class="room-header-action-icon md-toggle-icon md-toggle-icon-raw" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M16 18l6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M8 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
             <div class="export-wrap">
-              <button id="export-btn" class="btn btn-sm btn-md-toggle" type="button" title="Export room">Export</button>
+              <button id="export-btn" class="btn btn-sm btn-md-toggle btn-icon-sm" type="button" title="Export room" aria-label="Export room">
+                <svg class="room-header-action-icon" width="16" height="16" viewBox="0 0 490.009 490.009" fill="currentColor" aria-hidden="true">
+                  <path d="M253.354,342.609c4.3,2,9.4,1.4,13-1.6l193.2-160c2.8-2.3,4.4-5.8,4.4-9.4c0-3.7-1.6-7.1-4.5-9.4l-193.1-159.4c-3.7-3-8.7-3.7-13-1.6c-4.3,2-7,6.3-7,11.1v83.7c-221.5,8-220.6,176-220.2,257.4v9.7c0,5.6,3.7,10.4,9.1,11.8c1,0.3,2.1,0.4,3.1,0.4c4.3,0,8.4-2.3,10.7-6.2c65.4-115.2,119.2-120.8,197.3-121.1v83.5C246.354,336.209,249.055,340.509,253.354,342.609z M50.855,319.909c1.1-35.5,5.8-77.8,25.2-113.6c30.8-57,90.5-85.2,182.6-86.1c6.7-0.1,12.1-5.5,12.1-12.2v-69.8l161.7,133.4l-161.6,133.8v-69.7c0-3.2-1.3-6.4-3.6-8.7s-5.4-3.6-8.7-3.6C172.855,223.509,113.755,228.609,50.855,319.909z"/>
+                  <path d="M461.555,477.809v-226c0-6.8-5.5-12.3-12.3-12.3s-12.3,5.5-12.3,12.3v213.7h-386.3v-41.6c0-6.8-5.5-12.3-12.3-12.3s-12.3,5.5-12.3,12.3v53.8c0,6.8,5.5,12.3,12.3,12.3h410.9C456.055,490.009,461.555,484.509,461.555,477.809z"/>
+                </svg>
+              </button>
               <div id="export-menu" class="export-menu hidden">
                 <button data-format="markdown" type="button">Markdown (.md)</button>
                 <button data-format="json" type="button">JSON (.json)</button>
               </div>
             </div>
-            <button id="leave-room-btn" class="btn btn-danger btn-sm" type="button">Leave</button>
+            <button id="leave-room-btn" class="btn btn-danger btn-sm btn-icon-sm" type="button" title="Leave room" aria-label="Leave room">
+              <svg class="room-header-action-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M16 17l5-5-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M21 12H9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
           </div>
         </div>
         <div id="msg-search-bar" class="msg-search-bar hidden">

@@ -133,6 +133,7 @@
   const roomIconEl = $('#room-icon');
   const roomNameEl = $('#room-name');
   const roomMemberCount = $('#room-member-count');
+  const roomMemberCountNum = $('#room-member-count-num');
   const leaveRoomBtn = $('#leave-room-btn');
   const roomSettingsBtn = $('#room-settings-btn');
   const exportBtn = $('#export-btn');
@@ -646,11 +647,17 @@
 
   function updateMdToggleBtn() {
     if (markdownMode === 'rendered') {
-      mdToggleBtn.textContent = 'Rendered';
+      mdToggleBtn.title = 'Switch to raw';
+      mdToggleBtn.setAttribute('aria-label', 'Switch to raw');
       mdToggleBtn.classList.remove('raw-mode');
+      mdToggleBtn.classList.remove('md-toggle-raw');
+      mdToggleBtn.classList.add('md-toggle-rendered');
     } else {
-      mdToggleBtn.textContent = 'Raw';
+      mdToggleBtn.title = 'Switch to rendered';
+      mdToggleBtn.setAttribute('aria-label', 'Switch to rendered');
       mdToggleBtn.classList.add('raw-mode');
+      mdToggleBtn.classList.remove('md-toggle-rendered');
+      mdToggleBtn.classList.add('md-toggle-raw');
     }
   }
 
@@ -3491,7 +3498,10 @@
       roomNameEl.textContent = room.id;
     }
     var members = room.members || [];
-    roomMemberCount.textContent = members.length + ' member' + (members.length !== 1 ? 's' : '');
+    var memberLabel = members.length + ' member' + (members.length !== 1 ? 's' : '');
+    roomMemberCountNum.textContent = members.length;
+    roomMemberCount.title = memberLabel;
+    roomMemberCount.setAttribute('aria-label', memberLabel);
 
   }
 

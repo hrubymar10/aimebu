@@ -801,6 +801,13 @@ body {
   font-size: 0.75rem;
 }
 
+.btn-icon-sm {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  gap: 0;
+}
+
 .btn-primary {
   background: var(--green);
   border-color: var(--green);
@@ -1185,7 +1192,8 @@ body {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
 }
 
 .room-header-icon {
@@ -1200,6 +1208,7 @@ body {
 }
 
 .room-name {
+  min-width: 0;
   font-size: 1rem;
   font-weight: 600;
   color: var(--text-primary);
@@ -1209,19 +1218,28 @@ body {
 }
 
 .room-member-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 0.65rem;
   font-weight: 600;
   color: var(--text-muted);
   background: var(--bg-tertiary);
-  padding: 2px 8px;
-  border-radius: 10px;
+  min-height: 28px;
+  padding: 2px 7px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.room-header-action-icon {
+  display: block;
   flex-shrink: 0;
 }
 
 .room-settings-trigger {
   flex-shrink: 0;
-  white-space: nowrap;
 }
 
 .room-header-right {
@@ -2039,6 +2057,12 @@ body {
 
   .room-header {
     padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .room-header-left,
+  .room-header-right {
+    gap: 6px;
   }
 
   .send-bar {
@@ -2071,7 +2095,15 @@ body {
 
 .btn-md-toggle.raw-mode {
   color: var(--text-muted);
-  font-style: italic;
+}
+
+.md-toggle-icon {
+  display: none;
+}
+
+.md-toggle-rendered .md-toggle-icon-raw,
+.md-toggle-raw .md-toggle-icon-rendered {
+  display: block;
 }
 
 /* ── Markdown rendered content ──────────────────────────────── */
