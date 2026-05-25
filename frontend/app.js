@@ -4079,9 +4079,19 @@
       rightSidebarToggle.setAttribute('title', label);
       return;
     }
-    rightSidebarToggle.textContent = rightCollapsed ? '‹' : '›';
+    renderChevronIcon(rightSidebarToggle, rightCollapsed ? 'left' : 'right');
     rightSidebarToggle.setAttribute('aria-label', rightCollapsed ? 'Expand agents sidebar' : 'Collapse agents sidebar');
     rightSidebarToggle.setAttribute('title', rightCollapsed ? 'Expand agents sidebar' : 'Collapse agents sidebar');
+  }
+
+  function renderChevronIcon(button, direction) {
+    var points = direction === 'left' ? '15 18 9 12 15 6' : '9 18 15 12 9 6';
+    button.innerHTML = [
+      '<svg class="room-header-action-icon" width="13" height="13" viewBox="0 0 24 24"',
+      ' fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"',
+      ' stroke-linejoin="round" aria-hidden="true"><polyline points="' + points + '">',
+      '</polyline></svg>',
+    ].join('');
   }
 
   function applySidebarCollapseState() {
@@ -4089,7 +4099,7 @@
     appLayout.classList.toggle('left-collapsed', leftCollapsed);
     appLayout.classList.toggle('right-collapsed', rightCollapsed);
     if (leftSidebarToggle) {
-      leftSidebarToggle.textContent = leftCollapsed ? '›' : '‹';
+      renderChevronIcon(leftSidebarToggle, leftCollapsed ? 'right' : 'left');
       leftSidebarToggle.setAttribute('aria-label', leftCollapsed ? 'Expand rooms sidebar' : 'Collapse rooms sidebar');
       leftSidebarToggle.setAttribute('title', leftCollapsed ? 'Expand rooms sidebar' : 'Collapse rooms sidebar');
     }

@@ -65,7 +65,11 @@
     <aside class="sidebar-left">
       <div class="sidebar-header">
         <h2 class="section-title">Rooms</h2>
-        <button id="left-sidebar-toggle" class="sidebar-collapse-btn" type="button" aria-label="Collapse rooms sidebar" title="Collapse rooms sidebar">‹</button>
+        <button id="left-sidebar-toggle" class="btn btn-icon-sm sidebar-collapse-btn" type="button" aria-label="Collapse rooms sidebar" title="Collapse rooms sidebar">
+          <svg class="room-header-action-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+        </button>
       </div>
       <div class="join-room-bar">
         <input type="text" id="join-room-input" class="join-room-input" placeholder="Room ID to join or create...">
@@ -186,11 +190,15 @@
     <!-- Right sidebar: Agents -->
     <aside class="sidebar-right" data-mode="members">
       <div class="sidebar-header">
-        <h2 id="right-sidebar-title" class="section-title">Room Members</h2>
-        <button id="usages-refresh-btn" class="sidebar-header-btn usages-refresh-btn" type="button" title="Refresh usages" aria-label="Refresh usages">
+        <button id="right-sidebar-toggle" class="btn btn-icon-sm sidebar-collapse-btn sidebar-header-btn" type="button" aria-label="Collapse agents sidebar" title="Collapse agents sidebar">
+          <svg class="room-header-action-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+        <button id="usages-refresh-btn" class="btn btn-icon-sm sidebar-header-btn usages-refresh-btn" type="button" title="Refresh usages" aria-label="Refresh usages">
           <span class="usages-refresh-glyph" aria-hidden="true"></span>
         </button>
-        <button id="right-sidebar-toggle" class="sidebar-collapse-btn sidebar-header-btn" type="button" aria-label="Collapse agents sidebar" title="Collapse agents sidebar">›</button>
+        <h2 id="right-sidebar-title" class="section-title">Room Members</h2>
       </div>
       <div id="room-agents-list" class="agent-list">
         <div class="empty-state">Select a room to see members.</div>
