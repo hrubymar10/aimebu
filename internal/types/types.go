@@ -29,6 +29,7 @@ type Message struct {
 	CreatedAt           string   `json:"created_at"`
 	Targets             []string `json:"targets"`
 	NeedsHumanAttention bool     `json:"needs_human_attention,omitempty"`
+	ProposedAnswers     []string `json:"proposed_answers,omitempty"`
 }
 
 type Agent struct {
@@ -79,16 +80,18 @@ type LeaveRequest struct {
 }
 
 type RoomSendRequest struct {
-	From           string `json:"from"`
-	Body           string `json:"body"`
-	NeedsAttention bool   `json:"needs_attention,omitempty"`
+	From            string   `json:"from"`
+	Body            string   `json:"body"`
+	NeedsAttention  bool     `json:"needs_attention,omitempty"`
+	ProposedAnswers []string `json:"proposed_answers,omitempty"`
 }
 
 type DMRequest struct {
-	From           string `json:"from"`
-	To             string `json:"to"`
-	Body           string `json:"body"`
-	NeedsAttention bool   `json:"needs_attention,omitempty"`
+	From            string   `json:"from"`
+	To              string   `json:"to"`
+	Body            string   `json:"body"`
+	NeedsAttention  bool     `json:"needs_attention,omitempty"`
+	ProposedAnswers []string `json:"proposed_answers,omitempty"`
 }
 
 // RegisterRequest is used by MCP clients. The server assigns the name and

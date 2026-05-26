@@ -38,6 +38,7 @@ func TestDefaultRolesIncludeThreeWayIndependentPlanning(t *testing.T) {
 			"Do not start a new round while another agent is still mid-message",
 			"Do not casually defer scope",
 			"Set needs_attention=true only when",
+			"include 2-4 short proposed_answers",
 		} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("%s default body missing %q:\n%s", key, want, body)

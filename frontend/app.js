@@ -43,6 +43,7 @@
   let initComplete = false;  // true after first WS open — guards notification playback
   let maxSeenMsgID = 0;      // highest message id seen via WS or HTTP — replay guard
   let attentionCounts = {};  // { roomID: number } — needs-attention messages per room
+  let answeredProposedAnswers = {}; // { messageID: true } — local v1 double-send guard
   let attentionTimers = {};        // { roomID: timeoutID } — pending 3s fade timers
   let attentionFocusListeners = {}; // { roomID: fn } — pending focus listener per room
   let notifSounds = [];      // sound list from GET /api/sounds
@@ -1633,6 +1634,12 @@
     return agent ? (agent.name || agent.id) : agentIDVal;
   }
 
+  function agentSlug(agentIDVal) {
+    var agent = agentByID(agentIDVal);
+    if (agent && agent.name) return agent.name;
+    return String(agentIDVal || '').split('@')[0];
+  }
+
   function agentByID(agentIDVal) {
     return agents.find(function (a) { return a.id === agentIDVal; }) || null;
   }
@@ -1704,6 +1711,31 @@
     if (key === 'humans') return me.kind === 'human';
     if (key === 'ais') return me.kind === 'ai';
     return roomRoleKey(room, me.id).toLowerCase() === key;
+  }
+
+  function targetMatchesViewer(target) {
+    if (!target || !agentID || agentID === 'user') return false;
+    var key = String(target).toLowerCase();
+    if (key === String(agentID).toLowerCase()) return true;
+    return key.indexOf('@') === -1 && key === agentSlug(agentID).toLowerCase();
+  }
+
+  function messageTargetsViewer(m, room) {
+    if (!m || !agentID || agentID === 'user' || m.from === agentID) return false;
+    if (m.addressed_to_me) return true;
+    if (Array.isArray(m.targets) && m.targets.some(targetMatchesViewer)) return true;
+    if (Array.isArray(m.addressed_to) && m.addressed_to.some(targetMatchesViewer)) return true;
+    return room && String(room.id || '').indexOf('dm:') === 0 && (room.members || []).indexOf(agentID) !== -1;
+  }
+
+  function mentionForAuthor(authorID, room) {
+    var slug = agentSlug(authorID);
+    var members = room ? (room.members || []) : [];
+    var collisions = 0;
+    members.forEach(function (memberID) {
+      if (agentSlug(memberID).toLowerCase() === slug.toLowerCase()) collisions++;
+    });
+    return '@' + (collisions > 1 ? authorID : slug);
   }
 
   function renderRolesList() {
@@ -2781,7 +2813,9 @@
   }
 
   function fetchRoomMessages(roomID) {
-    return api('GET', '/rooms/' + encodeURIComponent(roomID) + '/messages?limit=100').then(function (data) {
+    var path = '/rooms/' + encodeURIComponent(roomID) + '/messages?limit=100';
+    if (agentID && agentID !== 'user') path += '&agent_id=' + encodeURIComponent(agentID);
+    return api('GET', path).then(function (data) {
       messages[roomID] = data.messages || [];
       // Reverse so oldest first (API returns newest first)
       messages[roomID].reverse();
@@ -3764,6 +3798,7 @@
     var room = rooms.find(function (r) { return r.id === m.room_id; });
     var msgRoleKey = room && room.roles ? (room.roles[m.from] || '') : '';
     var msgRoleTag = roleBadgeHTML(msgRoleKey);
+    var proposedAnswers = proposedAnswersHTML(m, room);
     var senderAttrs = fromAgent
       ? ' class="chat-msg-from-name agent-profile-link" data-profile-agent-id="' + esc(fromAgent.id) + '" data-profile-context="room" tabindex="0" role="button" aria-label="Show profile for ' + esc(fromAgent.id) + '"'
       : ' class="chat-msg-from-name"';
@@ -3785,8 +3820,21 @@
             (markdownMode === 'rendered' ? renderMarkdown(m.body) : renderPlainWithCodeMarkers(m.body)) +
           '</div>' +
         '</div>' +
+        proposedAnswers +
       '</div>'
     );
+  }
+
+  function proposedAnswersHTML(m, room) {
+    var answers = Array.isArray(m.proposed_answers) ? m.proposed_answers : [];
+    if (!answers.length || !messageTargetsViewer(m, room)) return '';
+    var disabled = !!answeredProposedAnswers[String(m.id)];
+    var html = '<div class="proposed-answers' + (disabled ? ' answered' : '') + '" data-msg-id="' + esc(String(m.id)) + '">';
+    answers.forEach(function (answer, idx) {
+      html += '<button class="proposed-answer-btn" type="button" data-msg-id="' + esc(String(m.id)) + '" data-answer-index="' + esc(String(idx)) + '"' + (disabled ? ' disabled' : '') + '>' + esc(answer) + '</button>';
+    });
+    html += '</div>';
+    return html;
   }
 
   function appendMessage(msg) {
@@ -4928,6 +4976,33 @@
     if (debugToggle) {
       e.preventDefault();
       openMessageDebugModal(parseInt(debugToggle.getAttribute('data-msg-id'), 10));
+      return;
+    }
+    var answerBtn = e.target.closest('.proposed-answer-btn');
+    if (answerBtn) {
+      e.preventDefault();
+      var answerMsgID = parseInt(answerBtn.getAttribute('data-msg-id'), 10);
+      var answerIdx = parseInt(answerBtn.getAttribute('data-answer-index'), 10);
+      var msg = (messages[activeRoomID] || []).find(function (m) { return m.id === answerMsgID; });
+      var answers = msg && Array.isArray(msg.proposed_answers) ? msg.proposed_answers : [];
+      if (!msg || answerIdx < 0 || answerIdx >= answers.length) return;
+      var room = activeRoom();
+      var reply = mentionForAuthor(msg.from, room) + ' ' + answers[answerIdx];
+      if (e.shiftKey) {
+        msgBodyInput.value = reply;
+        answeredProposedAnswers[String(answerMsgID)] = true;
+        renderMessages();
+        msgBodyInput.focus();
+        msgBodyInput.setSelectionRange(msgBodyInput.value.length, msgBodyInput.value.length);
+        resizeMsgInput();
+        updateAcPopup();
+        return;
+      }
+      sendMessage(reply).then(function (res) {
+        if (!res) return;
+        answeredProposedAnswers[String(answerMsgID)] = true;
+        renderMessages();
+      });
       return;
     }
     var badge = e.target.closest('.chat-msg-id');

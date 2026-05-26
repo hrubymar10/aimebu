@@ -3,6 +3,7 @@ package mcp
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -252,6 +253,86 @@ func TestMCP_BusSayIncludesUnreadFooter(t *testing.T) {
 	}
 	if !strings.Contains(content[0].Text, "2 unread total") {
 		t.Fatalf("bus_say response missing unread footer:\n%s", content[0].Text)
+	}
+}
+
+func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rooms/general/send":
+			var got struct {
+				From            string   `json:"from"`
+				Body            string   `json:"body"`
+				NeedsAttention  bool     `json:"needs_attention"`
+				ProposedAnswers []string `json:"proposed_answers"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"Proceed", "Hold"}
+			if got.From != "alice@aimebu" || got.Body != "@martin approve?" || !got.NeedsAttention {
+				t.Fatalf("forwarded send = %+v", got)
+			}
+			if !reflect.DeepEqual(got.ProposedAnswers, want) {
+				t.Fatalf("proposed_answers = %#v, want %#v", got.ProposedAnswers, want)
+			}
+			w.Write([]byte(`{"id":1,"room":"general"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/rooms":
+			w.Write([]byte(`{"agent":"alice@aimebu","rooms":[]}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu", AgentName: "alice"}
+	args, _ := json.Marshal(map[string]any{
+		"room":             "general",
+		"body":             "@martin approve?",
+		"needs_attention":  true,
+		"proposed_answers": []string{"Proceed", "Hold"},
+	})
+	if _, err := handleToolCall(c, "bus_say", args); err != nil {
+		t.Fatalf("handleToolCall bus_say: %v", err)
+	}
+}
+
+func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/dm":
+			var got struct {
+				From            string   `json:"from"`
+				To              string   `json:"to"`
+				Body            string   `json:"body"`
+				ProposedAnswers []string `json:"proposed_answers"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"Proceed", "Revise"}
+			if got.From != "alice@aimebu" || got.To != "martin" || !reflect.DeepEqual(got.ProposedAnswers, want) {
+				t.Fatalf("forwarded dm = %+v, want answers %#v", got, want)
+			}
+			w.Write([]byte(`{"id":1,"room":"dm:alice@aimebu:martin"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/rooms":
+			w.Write([]byte(`{"agent":"alice@aimebu","rooms":[]}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu", AgentName: "alice"}
+	args, _ := json.Marshal(map[string]any{
+		"to":               "martin",
+		"body":             "approve?",
+		"proposed_answers": []string{"Proceed", "Revise"},
+	})
+	if _, err := handleToolCall(c, "bus_dm", args); err != nil {
+		t.Fatalf("handleToolCall bus_dm: %v", err)
 	}
 }
 

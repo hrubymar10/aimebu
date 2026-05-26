@@ -1447,6 +1447,45 @@ body {
   border-color: var(--green-text);
 }
 
+.proposed-answers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  max-width: 100%;
+}
+
+.chat-msg.self .proposed-answers {
+  justify-content: flex-end;
+}
+
+.proposed-answer-btn {
+  min-height: 28px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  padding: 4px 9px;
+  font: 600 0.72rem var(--font-sans);
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.proposed-answer-btn:hover:not(:disabled),
+.proposed-answer-btn:focus-visible:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.proposed-answer-btn:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
 /* System messages (join/leave) */
 
 .chat-msg-system {

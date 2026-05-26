@@ -790,7 +790,30 @@ func (s *store) emitSystemMessageTo(roomID, body string, targets []string) {
 	s.subMu.Unlock()
 }
 
-func (s *store) roomSend(roomID, from, body string, needsAttention bool) (int64, error) {
+const maxProposedAnswers = 4
+
+func cleanProposedAnswers(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, min(len(in), maxProposedAnswers))
+	for _, answer := range in {
+		answer = strings.TrimSpace(answer)
+		if answer == "" {
+			continue
+		}
+		out = append(out, answer)
+		if len(out) == maxProposedAnswers {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (s *store) roomSend(roomID, from, body string, needsAttention bool, proposedAnswers ...[]string) (int64, error) {
 	if !s.isMember(roomID, from) {
 		return 0, fmt.Errorf("agent %s is not a member of room %s", from, roomID)
 	}
@@ -834,6 +857,9 @@ func (s *store) roomSend(roomID, from, body string, needsAttention bool) (int64,
 		CreatedAt:           now(),
 		Targets:             targets,
 		NeedsHumanAttention: needsAttention,
+	}
+	if len(proposedAnswers) > 0 {
+		msg.ProposedAnswers = cleanProposedAnswers(proposedAnswers[0])
 	}
 
 	s.mu.Lock()

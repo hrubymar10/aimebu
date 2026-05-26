@@ -1382,6 +1382,79 @@ func TestNeedsHumanAttentionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestProposedAnswersRoundTripAndCleanup(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	agent, err := s.registerHuman("tester", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	sendBody, _ := json.Marshal(map[string]any{
+		"from":             agent.ID,
+		"body":             "@tester choose",
+		"proposed_answers": []string{" Proceed ", "", "Revise", "Hold", "Extra"},
+	})
+	resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send returned %d", resp.StatusCode)
+	}
+
+	resp2, err := http.Get(srv.URL + "/rooms/general/messages?agent_id=" + agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var data struct {
+		Messages []struct {
+			ProposedAnswers []string `json:"proposed_answers"`
+			AddressedToMe   bool     `json:"addressed_to_me"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Messages) == 0 {
+		t.Fatal("expected at least one message")
+	}
+	want := []string{"Proceed", "Revise", "Hold", "Extra"}
+	if !reflect.DeepEqual(data.Messages[0].ProposedAnswers, want) {
+		t.Fatalf("proposed_answers = %#v, want %#v", data.Messages[0].ProposedAnswers, want)
+	}
+	if !data.Messages[0].AddressedToMe {
+		t.Fatal("expected addressed_to_me=true for addressed proposed-answer message")
+	}
+}
+
+func TestLegacyMessagesLoadWithoutProposedAnswers(t *testing.T) {
+	dir := t.TempDir()
+	schema, _ := json.Marshal(map[string]int{"version": storeSchemaVersion})
+	if err := os.WriteFile(filepath.Join(dir, "schema.json"), schema, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "messages.json"), []byte(`[{"id":1,"room_id":"general","from":"alice","body":"legacy","created_at":"2026-01-01T00:00:00Z","targets":null}]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := s.roomMessages("general", 10, 0)
+	if len(msgs) != 1 {
+		t.Fatalf("loaded messages = %d, want 1", len(msgs))
+	}
+	if len(msgs[0].ProposedAnswers) != 0 {
+		t.Fatalf("legacy proposed_answers = %#v, want empty", msgs[0].ProposedAnswers)
+	}
+}
+
 func TestReservedAgentNamesRejected(t *testing.T) {
 	s, _ := setupTestServer(t)
 

@@ -173,9 +173,10 @@ var tools = []tool{
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
-				"room":            {Type: "string", Description: "Room ID"},
-				"body":            {Type: "string", Description: "Message content"},
-				"needs_attention": {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert in the web UI and auto-subscribes any registered human not yet in the room."},
+				"room":             {Type: "string", Description: "Room ID"},
+				"body":             {Type: "string", Description: "Message content"},
+				"needs_attention":  {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert in the web UI and auto-subscribes any registered human not yet in the room."},
+				"proposed_answers": {Type: "array", Items: &propRef{Type: "string"}, Description: "Optional short answer buttons for the addressed recipient. Use 2-4 concise choices on human-blocking decision requests, such as Proceed, Revise, or Hold."},
 			},
 			Required: []string{"room", "body"},
 		},
@@ -230,9 +231,10 @@ var tools = []tool{
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
-				"to":              {Type: "string", Description: "Recipient's full agent ID (e.g. 'alice@aimebu' or 'martin')"},
-				"body":            {Type: "string", Description: "Message content"},
-				"needs_attention": {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert and auto-subscribes any registered human not yet in the DM room."},
+				"to":               {Type: "string", Description: "Recipient's full agent ID (e.g. 'alice@aimebu' or 'martin')"},
+				"body":             {Type: "string", Description: "Message content"},
+				"needs_attention":  {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert and auto-subscribes any registered human not yet in the DM room."},
+				"proposed_answers": {Type: "array", Items: &propRef{Type: "string"}, Description: "Optional short answer buttons for the addressed recipient. Use 2-4 concise choices on human-blocking decision requests, such as Proceed, Revise, or Hold."},
 			},
 			Required: []string{"to", "body"},
 		},
@@ -488,9 +490,10 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 
 	case "bus_say":
 		var p struct {
-			Room           string `json:"room"`
-			Body           string `json:"body"`
-			NeedsAttention bool   `json:"needs_attention"`
+			Room            string   `json:"room"`
+			Body            string   `json:"body"`
+			NeedsAttention  bool     `json:"needs_attention"`
+			ProposedAnswers []string `json:"proposed_answers"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
@@ -499,9 +502,10 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			return "", fmt.Errorf("room %q is read-only (system room)", p.Room)
 		}
 		return c.Post("/rooms/"+p.Room+"/send", map[string]any{
-			"from":            c.AgentID,
-			"body":            p.Body,
-			"needs_attention": p.NeedsAttention,
+			"from":             c.AgentID,
+			"body":             p.Body,
+			"needs_attention":  p.NeedsAttention,
+			"proposed_answers": p.ProposedAnswers,
 		})
 
 	case "bus_read":
@@ -539,18 +543,20 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 
 	case "bus_dm":
 		var p struct {
-			To             string `json:"to"`
-			Body           string `json:"body"`
-			NeedsAttention bool   `json:"needs_attention"`
+			To              string   `json:"to"`
+			Body            string   `json:"body"`
+			NeedsAttention  bool     `json:"needs_attention"`
+			ProposedAnswers []string `json:"proposed_answers"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
 		}
 		return c.Post("/dm", map[string]any{
-			"from":            c.AgentID,
-			"to":              p.To,
-			"body":            p.Body,
-			"needs_attention": p.NeedsAttention,
+			"from":             c.AgentID,
+			"to":               p.To,
+			"body":             p.Body,
+			"needs_attention":  p.NeedsAttention,
+			"proposed_answers": p.ProposedAnswers,
 		})
 
 	case "bus_wait":
