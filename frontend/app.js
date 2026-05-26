@@ -3318,7 +3318,11 @@
     // the badge doesn't linger after the user is literally watching it.
     if (roomID === activeRoomID) {
       appendMessage(msg);
-      renderReadReceipts();
+      if (msg.from_kind !== 'system') {
+        renderMessages();
+      } else {
+        renderReadReceipts();
+      }
       markRead(roomID);
     } else {
       // Someone else's message in a room we're not looking at → unread++.
@@ -3828,7 +3832,9 @@
   function proposedAnswersHTML(m, room) {
     var answers = Array.isArray(m.proposed_answers) ? m.proposed_answers : [];
     if (!answers.length || !messageTargetsViewer(m, room)) return '';
-    var disabled = !!answeredProposedAnswers[String(m.id)];
+    var roomMessages = messages[m.room_id] || [];
+    var superseded = roomMessages.some(function (n) { return n.id > m.id && n.from_kind !== 'system'; });
+    var disabled = superseded || !!answeredProposedAnswers[String(m.id)];
     var html = '<div class="proposed-answers' + (disabled ? ' answered' : '') + '" data-msg-id="' + esc(String(m.id)) + '">';
     answers.forEach(function (answer, idx) {
       html += '<button class="proposed-answer-btn" type="button" data-msg-id="' + esc(String(m.id)) + '" data-answer-index="' + esc(String(idx)) + '"' + (disabled ? ' disabled' : '') + '>' + esc(answer) + '</button>';

@@ -434,7 +434,9 @@ Messages may include `proposed_answers`, a JSON array of short answer strings.
 The server trims empty entries and stores at most four answers. The web UI
 shows those answers as quick-reply buttons only to addressed recipients; click
 auto-sends `@author <answer>`, while Shift-click fills the composer instead
-so the recipient can edit before sending.
+so the recipient can edit before sending. Buttons remain active only while
+their message is the latest non-system message in the room; any newer human
+or AI message disables them, while join/leave/system events do not.
 
 Addressing in non-code prose treats `@slug` as live, plus these room-scoped
 group tags: `@channel`, `@here`, `@humans`, `@ais`, `@everyone`, `@all`.
