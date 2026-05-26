@@ -1692,6 +1692,20 @@
     return '';
   }
 
+  function mentionTargetsViewer(token, room) {
+    if (!token || !agentID || agentID === 'user') return false;
+    var key = token.toLowerCase();
+    var me = agentByID(agentID);
+    if (!me) return false;
+    if (resolveMentionAgentID(key) === me.id) return true;
+    var members = room ? (room.members || []) : [];
+    if (members.indexOf(me.id) === -1) return false;
+    if (key === 'everyone' || key === 'all' || key === 'channel' || key === 'here') return true;
+    if (key === 'humans') return me.kind === 'human';
+    if (key === 'ais') return me.kind === 'ai';
+    return roomRoleKey(room, me.id).toLowerCase() === key;
+  }
+
   function renderRolesList() {
     if (!rolesListEl) return;
     if (!roleEntries.length) {
@@ -3648,6 +3662,7 @@
   function highlightNames(rootEl) {
     var re = buildHighlightRegex();
     if (!re) return;
+    var room = activeRoom();
     var skipSel = 'code, pre, a, .mention, .raw-code';
     var toReplace = [];
     var walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, {
@@ -3681,6 +3696,7 @@
         var span = document.createElement('span');
         span.className = 'mention';
         span.textContent = m[0];
+        if (mentionTargetsViewer(m[1], room)) span.classList.add('mention-self');
         var mentionAgentID = resolveMentionAgentID(m[1]);
         if (mentionAgentID) {
           span.classList.add('agent-profile-link');
