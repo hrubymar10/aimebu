@@ -48,8 +48,14 @@ func TestDefaultRolesIncludeThreeWayIndependentPlanning(t *testing.T) {
 	if !strings.Contains(defaults["worker"], "Do not start implementation until") {
 		t.Fatalf("worker default lost implementation handoff gate:\n%s", defaults["worker"])
 	}
+	if !strings.Contains(defaults["worker"], "bus_read checkpoints at natural breakpoints") {
+		t.Fatalf("worker default lost implementation checkpoint-read guidance:\n%s", defaults["worker"])
+	}
 	if !strings.Contains(defaults["reviewer"], "Review only after an implementer asks for code review") {
 		t.Fatalf("reviewer default lost review-phase gate:\n%s", defaults["reviewer"])
+	}
+	if !strings.Contains(defaults["reviewer"], "bus_read checkpoints at natural breaks") {
+		t.Fatalf("reviewer default lost long-review checkpoint-read guidance:\n%s", defaults["reviewer"])
 	}
 	if !strings.Contains(defaults["leader"], "each of the three initial plans") {
 		t.Fatalf("leader default lost per-plan divergence audit:\n%s", defaults["leader"])

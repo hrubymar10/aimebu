@@ -210,6 +210,51 @@ func TestMCP_RoleGet_ReturnsEmptyWhenUnassigned(t *testing.T) {
 	}
 }
 
+func TestMCP_BusSayIncludesUnreadFooter(t *testing.T) {
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rooms/general/send":
+			w.Write([]byte(`{"id":42,"room":"general"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/rooms":
+			w.Write([]byte(`{"agent":"alice@aimebu","rooms":[{"id":"general","unread_count":2}]}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu", AgentName: "alice"}
+	args, _ := json.Marshal(map[string]any{
+		"room": "general",
+		"body": "implementation note",
+	})
+	params, _ := json.Marshal(map[string]any{
+		"name":      "bus_say",
+		"arguments": json.RawMessage(args),
+	})
+	resp := handle(c, request{
+		JSONRPC: "2.0",
+		Method:  "tools/call",
+		ID:      json.RawMessage(`1`),
+		Params:  params,
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("tools/call returned error: %+v", resp)
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result is not a map: %T", resp.Result)
+	}
+	content, ok := result["content"].([]textContent)
+	if !ok || len(content) != 1 {
+		t.Fatalf("content = %#v, want one text item", result["content"])
+	}
+	if !strings.Contains(content[0].Text, "2 unread total") {
+		t.Fatalf("bus_say response missing unread footer:\n%s", content[0].Text)
+	}
+}
+
 func TestMCP_JoinEnrichesWithYourRole(t *testing.T) {
 	roleResp := `{"role_key":"leader","label":"Leader","icon":"👑","body":"lead the team"}`
 	// The fake server must handle both /rooms/{room}/join and /rooms/{room}/roles/{agentID}

@@ -1461,6 +1461,8 @@ After the room leader's framing kickoff, post your own independent initial plan 
 
 Your job is to turn the approved plan into correct, working code. Do not start implementation until the room leader posts the human-approved final plan and explicitly hands implementation to you. Keep edits focused on that plan and the supporting code needed to make it work.
 
+During multi-step implementation, stay reachable with quick non-blocking bus_read checkpoints at natural breakpoints: after each meaningful edit or implementation step, before starting any command you expect to run longer than roughly one minute, and after that command returns. If a checkpoint shows that the human or room leader directly addressed you, sent needs_attention, or asked something clearly blocking your current work, answer concisely and then resume. Otherwise keep working without posting status acknowledgements. For long validation, prefer smaller commands or backgrounding where practical so you can checkpoint between them; a single foreground command can still be a temporary blind spot.
+
 If implementation reveals surprises, fallbacks, or necessary deviations, report them as implementation notes, not review findings. When ready for review, report the exact branch/commit state, tests run, and any implementation notes, then ping the room leader and others for review. Do not self-review.
 
 While reviews are pending, you may answer factual clarification questions. Wait until all independent reviews are posted before applying fixes. Apply the consolidated fix list from the room leader. If a feature commit already exists, amend it so the branch keeps one clean feature commit. Push only when explicitly instructed by the human or room leader.
@@ -1476,6 +1478,8 @@ After the room leader's framing kickoff, post your own independent initial plan 
 Your job is to provide an independent assessment of correctness and risk. Review only after an implementer asks for code review, and do not read other reviews before posting your own. Code review is performed by review roles and coordination roles; implementers do not self-review.
 
 Lead with actionable findings, ordered by severity, with concrete file/line references or behavior descriptions. Focus on bugs, regressions, missing tests, docs drift, integration risks, and divergence from the approved plan. Distinguish blockers from non-blocking concerns. If no blockers remain, say that clearly and note any residual risk.
+
+During long review passes, stay reachable with quick non-blocking bus_read checkpoints at natural breaks. Answer concise direct human, leader, or needs_attention messages, then resume review; ignore non-blocking chatter until your review is posted.
 
 After fixes, re-review until the consolidated fix list is addressed without introducing unrelated changes.
 
