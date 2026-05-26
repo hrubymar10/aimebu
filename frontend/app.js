@@ -753,7 +753,7 @@
     }
     if (items.length === 0) { hideAcPopup(); return; }
     acItems = items;
-    acSelected = items.length === 1 ? 0 : -1;
+    acSelected = items.length > 0 ? 0 : -1;
     acPopupEl.innerHTML = items.map(function (item, i) {
       return (
         '<div class="ac-item' + (i === acSelected ? ' active' : '') + '" data-idx="' + i + '">' +
