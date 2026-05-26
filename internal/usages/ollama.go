@@ -342,7 +342,7 @@ func fetchOllamaSettingsHTML(ctx context.Context, cookie string) ([]byte, *Error
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Origin", "https://ollama.com")
 	req.Header.Set("Referer", ollamaSettingsURL)
-	resp, err := ollamaHTTPClient.Do(req)
+	resp, err := doWithRetry(ctx, ollamaHTTPClient, req, RetryPolicy{MaxRetries: 1})
 	if err != nil {
 		return nil, nil, usageRequestStatus(err), fmt.Errorf("Ollama Cloud settings request failed: %w", err)
 	}
@@ -366,7 +366,7 @@ func fetchOllamaTags(ctx context.Context, apiKey string) ([]byte, *ErrorDetail, 
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "aimebu")
-	resp, err := ollamaHTTPClient.Do(req)
+	resp, err := doWithRetry(ctx, ollamaHTTPClient, req, RetryPolicy{MaxRetries: 1})
 	if err != nil {
 		return nil, nil, usageRequestStatus(err), fmt.Errorf("Ollama Cloud API request failed: %w", err)
 	}

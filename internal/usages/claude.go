@@ -347,7 +347,7 @@ func fetchClaudeUsageOnce(ctx context.Context, creds claudeCredentials) (claudeU
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-beta", claudeOAuthBetaHeader)
 	req.Header.Set("User-Agent", claudeCodeUserAgent())
-	resp, err := usageHTTPClient.Do(req)
+	resp, err := doWithRetry(ctx, usageHTTPClient, req, RetryPolicy{MaxRetries: 1})
 	if err != nil {
 		return claudeUsageRaw{}, nil, usageRequestStatus(err), false, fmt.Errorf("Claude usage request failed: %w", err)
 	}

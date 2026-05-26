@@ -547,7 +547,7 @@ func TestOllamaAutoFallsBackToAPIKey(t *testing.T) {
 	if snap.Status != StatusOK || snap.Plan != "API key verified" {
 		t.Fatalf("snapshot = %#v", snap)
 	}
-	if got := strings.Join(urls, "|"); got != ollamaSettingsURL+"|"+ollamaTagsURL {
+	if got := strings.Join(urls, "|"); got != ollamaSettingsURL+"|"+ollamaSettingsURL+"|"+ollamaTagsURL {
 		t.Fatalf("urls = %q", got)
 	}
 }

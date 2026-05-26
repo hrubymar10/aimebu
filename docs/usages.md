@@ -46,6 +46,15 @@ cooldown. During cooldown the endpoint returns HTTP `429` with:
 {"retry_after_sec": 15}
 ```
 
+## Transient-Failure Handling
+
+Provider usage fetches retry once for idempotent HTTP methods (`GET`, `HEAD`,
+and `OPTIONS`) when a transient transport failure occurs or the provider
+returns HTTP `408`, `429`, `500`, `502`, `503`, or `504`. The retry uses
+exponential backoff starting at one second, caps delay at ten seconds, honors
+`Retry-After` when present, and stops immediately if the request context is
+canceled. Non-idempotent auth and device-flow `POST` requests are not retried.
+
 ## Provider Ordering
 
 Settings -> Usages includes up/down controls for the provider rows. The saved

@@ -205,7 +205,7 @@ func fetchCopilotUsage(ctx context.Context, token, apiBase string) (copilotUsage
 	}
 	req.Header.Set("Authorization", "token "+token)
 	addCopilotHeaders(req.Header)
-	resp, err := usageHTTPClient.Do(req)
+	resp, err := doWithRetry(ctx, usageHTTPClient, req, RetryPolicy{MaxRetries: 1})
 	if err != nil {
 		return copilotUsageRaw{}, nil, usageRequestStatus(err), fmt.Errorf("GitHub Copilot usage request failed: %w", err)
 	}

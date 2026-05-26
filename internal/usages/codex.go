@@ -359,7 +359,7 @@ func fetchCodexUsage(ctx context.Context, creds codexCredentials) (codexUsageRaw
 	if creds.AccountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", creds.AccountID)
 	}
-	resp, err := usageHTTPClient.Do(req)
+	resp, err := doWithRetry(ctx, usageHTTPClient, req, RetryPolicy{MaxRetries: 1})
 	if err != nil {
 		return codexUsageRaw{}, nil, usageRequestStatus(err), fmt.Errorf("Codex usage request failed: %w", err)
 	}
