@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
 	"fmt"
@@ -22,6 +23,12 @@ import (
 
 //go:embed defaults_macros.json
 var defaultMacrosJSON []byte
+
+var staleDefaultMacroDigests = map[string][]string{
+	"do-cr": {
+		"b9da1cdbf66c5c2842fb54dfff3188609e376e9bf5a88c32b71dc68bd517d4c8",
+	},
+}
 
 // macrosEnvelope is the canonical on-disk and API shape for macros.json.
 // SeenDefaults is internal state (persisted but not exposed via the HTTP API).
@@ -2318,13 +2325,71 @@ func (s *store) persistMacros() {
 	}
 }
 
+func defaultMacros() map[string]string {
+	var defaults map[string]string
+	if json.Unmarshal(defaultMacrosJSON, &defaults) != nil {
+		return nil
+	}
+	return defaults
+}
+
+func macroSHA256(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
+// migrateStaleDefaultMacros updates persisted macro defaults only when the
+// user's current body matches a known stale shipped digest. Customized macros
+// are left untouched because their digests will not match.
+func (s *store) migrateStaleDefaultMacros() {
+	defaults := defaultMacros()
+	if len(defaults) == 0 || len(staleDefaultMacroDigests) == 0 {
+		return
+	}
+
+	s.macrosMu.Lock()
+	changed := false
+	for key, staleDigests := range staleDefaultMacroDigests {
+		current, exists := s.macros[key]
+		if !exists {
+			continue
+		}
+		defaultBody, exists := defaults[key]
+		if !exists {
+			continue
+		}
+		currentDigest := macroSHA256(current)
+		for _, staleDigest := range staleDigests {
+			if currentDigest == staleDigest {
+				s.macros[key] = defaultBody
+				changed = true
+				break
+			}
+		}
+	}
+	var data []byte
+	if changed {
+		sdKeys := make([]string, 0, len(s.seenDefaults))
+		for k := range s.seenDefaults {
+			sdKeys = append(sdKeys, k)
+		}
+		sort.Strings(sdKeys)
+		f := macrosEnvelope{Macros: s.macros, SeenDefaults: sdKeys}
+		data, _ = json.MarshalIndent(f, "", "  ")
+	}
+	s.macrosMu.Unlock()
+	if data != nil {
+		atomicWrite(filepath.Join(s.dir, "macros.json"), data)
+	}
+}
+
 // applyDefaultMacros merges defaults_macros.json into the global macro map
 // once per key (write-once: keys already in seenDefaults are never touched).
 // Called on server startup after load(). Conflicts (key exists in user macros)
 // are silently skipped — the user's value wins.
 func (s *store) applyDefaultMacros() {
-	var defaults map[string]string
-	if json.Unmarshal(defaultMacrosJSON, &defaults) != nil || len(defaults) == 0 {
+	defaults := defaultMacros()
+	if len(defaults) == 0 {
 		return
 	}
 	s.macrosMu.Lock()

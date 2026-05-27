@@ -1531,6 +1531,9 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	// room-collaboration protocol returned by bus_role_get unless overridden.
 	SetRoleDefaults(defaultRoleBodies())
 
+	// Migrate uncustomized stale defaults before the write-once default seeding.
+	s.migrateStaleDefaultMacros()
+
 	// Merge bundled defaults into the global macro map (write-once per key).
 	s.applyDefaultMacros()
 

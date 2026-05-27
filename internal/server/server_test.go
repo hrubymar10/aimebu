@@ -1248,6 +1248,127 @@ func TestMacrosMigrationSkipsCollisions(t *testing.T) {
 	}
 }
 
+func TestStaleDefaultMacroMigration(t *testing.T) {
+	oldDigests := staleDefaultMacroDigests
+	staleDefaultMacroDigests = map[string][]string{
+		"do-cr": {macroSHA256("stale default")},
+	}
+	t.Cleanup(func() {
+		staleDefaultMacroDigests = oldDigests
+	})
+
+	defaults := defaultMacros()
+	if defaults["do-cr"] == "" {
+		t.Fatal("missing do-cr default")
+	}
+
+	dir := t.TempDir()
+	writeSchemaFixture(t, dir)
+	fixture := `{"macros":{"do-cr":"stale default"},"seen_defaults":["do-cr"]}`
+	if err := os.WriteFile(filepath.Join(dir, "macros.json"), []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.migrateStaleDefaultMacros()
+	env := s.getEnvelope()
+	if env.Macros["do-cr"] != defaults["do-cr"] {
+		t.Fatalf("stale do-cr macro was not migrated")
+	}
+
+	firstPersisted, err := os.ReadFile(filepath.Join(dir, "macros.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.migrateStaleDefaultMacros()
+	secondPersisted, err := os.ReadFile(filepath.Join(dir, "macros.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(firstPersisted, secondPersisted) {
+		t.Fatal("migration should be idempotent after replacing the stale body")
+	}
+}
+
+func TestStaleDefaultMacroMigrationPreservesCustomizedMacro(t *testing.T) {
+	oldDigests := staleDefaultMacroDigests
+	staleDefaultMacroDigests = map[string][]string{
+		"do-cr": {macroSHA256("stale default")},
+	}
+	t.Cleanup(func() {
+		staleDefaultMacroDigests = oldDigests
+	})
+
+	dir := t.TempDir()
+	writeSchemaFixture(t, dir)
+	fixture := `{"macros":{"do-cr":"customized body"},"seen_defaults":["do-cr"]}`
+	if err := os.WriteFile(filepath.Join(dir, "macros.json"), []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.migrateStaleDefaultMacros()
+	env := s.getEnvelope()
+	if env.Macros["do-cr"] != "customized body" {
+		t.Fatalf("customized macro should be preserved, got %q", env.Macros["do-cr"])
+	}
+}
+
+func TestStaleDefaultMacroMigrationLeavesCurrentDefaultAlone(t *testing.T) {
+	oldDigests := staleDefaultMacroDigests
+	staleDefaultMacroDigests = map[string][]string{
+		"do-cr": {macroSHA256("stale default")},
+	}
+	t.Cleanup(func() {
+		staleDefaultMacroDigests = oldDigests
+	})
+
+	defaults := defaultMacros()
+	if defaults["do-cr"] == "" {
+		t.Fatal("missing do-cr default")
+	}
+
+	dir := t.TempDir()
+	writeSchemaFixture(t, dir)
+	env := macrosEnvelope{
+		Macros:       map[string]string{"do-cr": defaults["do-cr"]},
+		SeenDefaults: []string{"do-cr"},
+	}
+	data, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "macros.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := os.ReadFile(filepath.Join(dir, "macros.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.migrateStaleDefaultMacros()
+	after, err := os.ReadFile(filepath.Join(dir, "macros.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("already-current default should be a no-op")
+	}
+}
+
 // TestRegisterReclaimedFlagInHTTPResponse verifies that the HTTP register
 // endpoint includes reclaimed=true in the JSON response on spawn_tag reclaim.
 func TestRegisterReclaimedFlagInHTTPResponse(t *testing.T) {
