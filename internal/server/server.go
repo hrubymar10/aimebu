@@ -1,11 +1,16 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"io/fs"
 	"log"
@@ -129,6 +134,70 @@ func validWAVHeader(data []byte) bool {
 		data[8] == 'W' && data[9] == 'A' && data[10] == 'V' && data[11] == 'E'
 }
 
+func allowedAttachmentMime(mimeType string) bool {
+	switch mimeType {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func sanitizeAttachmentName(filename, ext string) string {
+	name := filepath.Base(filename)
+	if name == "." || strings.TrimSpace(name) == "" {
+		name = "attachment." + ext
+	}
+	if utf8.RuneCountInString(name) > 96 {
+		name = string([]rune(name)[:96])
+	}
+	return name
+}
+
+func attachmentDimensions(mimeType string, data []byte) (int, int, error) {
+	if mimeType == "image/webp" {
+		return webpDimensions(data)
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return 0, 0, err
+	}
+	return cfg.Width, cfg.Height, nil
+}
+
+func webpDimensions(data []byte) (int, int, error) {
+	if len(data) < 30 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
+		return 0, 0, errors.New("invalid webp header")
+	}
+	chunk := string(data[12:16])
+	switch chunk {
+	case "VP8X":
+		if len(data) < 30 {
+			return 0, 0, errors.New("short vp8x header")
+		}
+		w := 1 + int(data[24]) + int(data[25])<<8 + int(data[26])<<16
+		h := 1 + int(data[27]) + int(data[28])<<8 + int(data[29])<<16
+		return w, h, nil
+	case "VP8L":
+		if len(data) < 25 || data[20] != 0x2f {
+			return 0, 0, errors.New("short vp8l header")
+		}
+		b0, b1, b2, b3 := int(data[21]), int(data[22]), int(data[23]), int(data[24])
+		w := 1 + (((b1 & 0x3f) << 8) | b0)
+		h := 1 + ((b3 << 6) | (b2 >> 2) | ((b1 & 0xc0) << 2))
+		return w, h, nil
+	case "VP8 ":
+		if len(data) < 30 {
+			return 0, 0, errors.New("short vp8 header")
+		}
+		w := int(data[26]) | int(data[27]&0x3f)<<8
+		h := int(data[28]) | int(data[29]&0x3f)<<8
+		return w, h, nil
+	default:
+		return 0, 0, errors.New("unsupported webp header")
+	}
+}
+
 // BuildInfo carries the version and runtime details exposed via GET /buildinfo.
 type BuildInfo struct {
 	Version   string `json:"version"`
@@ -240,15 +309,15 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.From == "" || req.Body == "" {
-			jsonError(w, "from and body are required", http.StatusBadRequest)
+		if req.From == "" || (req.Body == "" && len(req.Attachments) == 0) {
+			jsonError(w, "from and body or attachments are required", http.StatusBadRequest)
 			return
 		}
 		if req.From == "_system" || strings.HasPrefix(roomID, "_") {
 			jsonError(w, "cannot send to reserved room or use reserved sender", http.StatusForbidden)
 			return
 		}
-		id, err := s.roomSend(roomID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions)
+		id, err := s.roomSend(roomID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions, req.Attachments)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
@@ -603,12 +672,12 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			return
 		}
 
-		if req.Body == "" {
+		if req.Body == "" && len(req.Attachments) == 0 {
 			_ = jsonOK(w, map[string]any{"room": room.ID})
 			return
 		}
 
-		id, err := s.roomSend(room.ID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions)
+		id, err := s.roomSend(room.ID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions, req.Attachments)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
@@ -1270,6 +1339,88 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 	// web UI can prefill the "You are" field for first-time visitors.
 	mux.HandleFunc("GET /default-name", func(w http.ResponseWriter, _ *http.Request) {
 		_ = jsonOK(w, map[string]string{"name": os.Getenv("AIMEBU_NAME")})
+	})
+
+	// ── Image attachments ───────────────────────────────────────────
+
+	mux.HandleFunc("POST /api/attachments", func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxAttachmentFileSize+4096)
+		if err := r.ParseMultipartForm(maxAttachmentFileSize + 4096); err != nil {
+			jsonError(w, "upload too large or malformed: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		f, hdr, err := r.FormFile("file")
+		if err != nil {
+			jsonError(w, "missing 'file' field", http.StatusBadRequest)
+			return
+		}
+		defer f.Close()
+		data, err := io.ReadAll(io.LimitReader(f, maxAttachmentFileSize+1))
+		if err != nil {
+			jsonError(w, "read error: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(data) > maxAttachmentFileSize {
+			jsonError(w, fmt.Sprintf("file too large (max %d MB)", maxAttachmentFileSize/1024/1024), http.StatusRequestEntityTooLarge)
+			return
+		}
+		sniffLen := min(len(data), 512)
+		mimeType := http.DetectContentType(data[:sniffLen])
+		if !allowedAttachmentMime(mimeType) {
+			jsonError(w, "only png, jpeg, gif, and webp images are accepted", http.StatusBadRequest)
+			return
+		}
+		width, height, err := attachmentDimensions(mimeType, data)
+		if err != nil {
+			jsonError(w, "image dimensions could not be decoded", http.StatusBadRequest)
+			return
+		}
+		name := sanitizeAttachmentName(hdr.Filename, attachmentExt(mimeType))
+		attachment, err := s.addAttachment(name, mimeType, data, width, height)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(attachment)
+	})
+
+	mux.HandleFunc("DELETE /api/attachments/{uuid}", func(w http.ResponseWriter, r *http.Request) {
+		uuid := r.PathValue("uuid")
+		found, deleted := s.deleteAttachment(uuid)
+		if !found {
+			jsonError(w, "attachment not found", http.StatusNotFound)
+			return
+		}
+		if !deleted {
+			jsonError(w, "attachment is referenced by a message", http.StatusConflict)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("GET /api/attachments/{uuid}", func(w http.ResponseWriter, r *http.Request) {
+		uuid := r.PathValue("uuid")
+		if !validUUID(uuid) {
+			jsonError(w, "attachment not found", http.StatusNotFound)
+			return
+		}
+		entry, path, ok := s.attachmentFilePath(uuid)
+		if !ok {
+			jsonError(w, "attachment not found", http.StatusNotFound)
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			jsonError(w, "attachment not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", entry.Mime)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, strings.ReplaceAll(entry.Name, `"`, "")))
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		_, _ = w.Write(data)
 	})
 
 	// ── User notification sounds ────────────────────────────────────

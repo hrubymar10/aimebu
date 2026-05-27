@@ -78,6 +78,9 @@ func renderMarkdown(w http.ResponseWriter, room *types.Room, msgs []types.Messag
 		for line := range strings.SplitSeq(m.Body, "\n") {
 			fmt.Fprintf(&b, "> %s\n", line)
 		}
+		for _, a := range m.Attachments {
+			fmt.Fprintf(&b, "\n- Attachment: [%s](/api/attachments/%s) (%s, %d bytes)\n", a.Name, a.ID, a.Mime, a.Size)
+		}
 		b.WriteString("\n")
 	}
 

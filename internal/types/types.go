@@ -31,11 +31,21 @@ type Message struct {
 	NeedsHumanAttention bool           `json:"needs_human_attention,omitempty"`
 	ProposedAnswers     []string       `json:"proposed_answers,omitempty"`
 	OpenQuestions       []OpenQuestion `json:"open_questions,omitempty"`
+	Attachments         []Attachment   `json:"attachments,omitempty"`
 }
 
 type OpenQuestion struct {
 	Question string   `json:"question"`
 	Options  []string `json:"options"`
+}
+
+type Attachment struct {
+	ID     string `json:"id"`
+	Mime   string `json:"mime,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Size   int64  `json:"size,omitempty"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
 }
 
 type Agent struct {
@@ -91,6 +101,7 @@ type RoomSendRequest struct {
 	NeedsAttention  bool           `json:"needs_attention,omitempty"`
 	ProposedAnswers []string       `json:"proposed_answers,omitempty"`
 	OpenQuestions   []OpenQuestion `json:"open_questions,omitempty"`
+	Attachments     []Attachment   `json:"attachments,omitempty"`
 }
 
 type DMRequest struct {
@@ -100,6 +111,7 @@ type DMRequest struct {
 	NeedsAttention  bool           `json:"needs_attention,omitempty"`
 	ProposedAnswers []string       `json:"proposed_answers,omitempty"`
 	OpenQuestions   []OpenQuestion `json:"open_questions,omitempty"`
+	Attachments     []Attachment   `json:"attachments,omitempty"`
 }
 
 // RegisterRequest is used by MCP clients. The server assigns the name and

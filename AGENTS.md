@@ -245,6 +245,9 @@ holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
 (`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
 `settings.json` stores UI preferences plus global retention settings for
 stale agents, empty rooms, cleanup cadence, and message age/count limits.
+Image attachments are conversation content. Uploaded blobs and their registry
+live under `server/attachments/`; messages store attachment metadata and URLs
+only, not embedded image bytes.
 `usages/` holds provider usage state: `config.json` (0600, refresh interval,
 percent display, provider order, enabled flags, provider secrets), `cache.json` (0644, last successful
 snapshots, no secrets), and `.lock` (stable flock target for server/CLI
@@ -266,6 +269,12 @@ unknown root files are left alone.
 ## Web UI
 
 Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents. The chat view renders addressed proposed-answer buttons and addressed Open Questions modals from structured `open_questions` message fields. Global Settings -> Fleets edits reusable command bundles for `aimebu fleet`; Global Settings -> Roles edits reusable role definitions, emoji, cardinality, and extensions; Global Settings -> Usages configures provider usage refresh interval, percent display, provider ordering and enablement, GitHub Copilot device flow, and Ollama Cloud credential setup. Active room settings assign those global roles to AI room members and disable singleton roles already held by another agent. Role emoji show on member cards and current-room message senders. Built-in specialist reviewer roles are `sec-reviewer`, `test-reviewer`, and `ux-reviewer`, each extending `reviewer`.
+
+The web composer supports image attachments by paste, drag-drop, and file
+picker. Uploads go through `POST /api/attachments` immediately, send is
+disabled while uploads are in flight, sent messages carry registry-backed
+attachment metadata, and inline thumbnails open in a mobile-friendly
+lightbox.
 
 ### Headless browser verification
 

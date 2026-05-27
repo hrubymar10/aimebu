@@ -177,7 +177,14 @@
         <div id="send-bar" class="send-bar">
           <div id="ac-popup" class="ac-popup hidden"></div>
           <div id="system-room-notice" class="system-room-notice" style="display:none">Read-only — system events appear here automatically.</div>
+          <div id="attachment-pending-list" class="attachment-pending-list hidden"></div>
           <form id="send-form" class="send-form">
+            <button id="attachment-picker-btn" class="btn btn-md-toggle btn-icon-sm attachment-picker-btn" type="button" title="Attach image" aria-label="Attach image">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l9.6-9.6a4 4 0 0 1 5.7 5.7l-9.6 9.6a2 2 0 0 1-2.8-2.8l8.8-8.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <input id="attachment-file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
             <textarea id="msg-body" class="msg-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
             <button type="submit" class="btn btn-primary btn-send" title="Send">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -672,6 +679,16 @@
       </div>
       <div id="open-questions-modal-body" class="open-questions-modal-body"></div>
       <div id="open-questions-modal-footer" class="open-questions-modal-footer"></div>
+    </div>
+  </div>
+  <div id="attachment-lightbox-modal" class="attachment-lightbox-modal hidden" role="dialog" aria-modal="true" aria-label="Attachment preview">
+    <div id="attachment-lightbox-overlay" class="attachment-lightbox-overlay"></div>
+    <div class="attachment-lightbox-pane">
+      <div class="attachment-lightbox-header">
+        <span id="attachment-lightbox-title" class="attachment-lightbox-title"></span>
+        <button id="attachment-lightbox-close-btn" class="settings-close-btn" type="button" title="Close">✕</button>
+      </div>
+      <img id="attachment-lightbox-img" class="attachment-lightbox-img" alt="">
     </div>
   </div>
   <script src="app.js"></script>

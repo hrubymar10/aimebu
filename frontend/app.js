@@ -47,6 +47,7 @@
   let answeredOpenQuestions = {}; // { messageID: true } — local multi-question send guard
   let openQuestionDrafts = {}; // { messageID: { [questionIndex]: { selector, value } } }
   let openQuestionModalState = { open: false, messageID: null, currentIndex: 0 };
+  let pendingAttachments = []; // {localID,status,error,attachment,file,url}
   let attentionTimers = {};        // { roomID: timeoutID } — pending 3s fade timers
   let attentionFocusListeners = {}; // { roomID: fn } — pending focus listener per room
   let notifSounds = [];      // sound list from GET /api/sounds
@@ -144,9 +145,14 @@
   const exportMenu = $('#export-menu');
   const exportWrap = exportBtn ? exportBtn.closest('.export-wrap') : null;
   const messageListEl = $('#message-list');
+  const sendBar = $('#send-bar');
   const sendForm = $('#send-form');
   const systemRoomNotice = $('#system-room-notice');
+  const attachmentPendingList = $('#attachment-pending-list');
+  const attachmentPickerBtn = $('#attachment-picker-btn');
+  const attachmentFileInput = $('#attachment-file-input');
   const msgBodyInput = $('#msg-body');
+  const sendButton = sendForm ? sendForm.querySelector('.btn-send') : null;
 
   const appLayout = $('.app-layout');
   const sidebarLeft = $('.sidebar-left');
@@ -190,6 +196,11 @@
   const openQuestionsModalSubtitle = $('#open-questions-modal-subtitle');
   const openQuestionsModalBody = $('#open-questions-modal-body');
   const openQuestionsModalFooter = $('#open-questions-modal-footer');
+  const attachmentLightboxModal = $('#attachment-lightbox-modal');
+  const attachmentLightboxOverlay = $('#attachment-lightbox-overlay');
+  const attachmentLightboxCloseBtn = $('#attachment-lightbox-close-btn');
+  const attachmentLightboxTitle = $('#attachment-lightbox-title');
+  const attachmentLightboxImg = $('#attachment-lightbox-img');
 
   const macrosListEl = $('#macros-list');
   const fleetsListEl = $('#fleets-list');
@@ -2082,7 +2093,8 @@
   function updateBodyModalLock() {
     var settingsOpen = settingsModal && !settingsModal.classList.contains('hidden');
     var roomSettingsOpen = roomSettingsModal && !roomSettingsModal.classList.contains('hidden');
-    document.body.style.overflow = (settingsOpen || roomSettingsOpen || messageDebugState.open || openQuestionModalState.open) ? 'hidden' : '';
+    var attachmentOpen = attachmentLightboxModal && !attachmentLightboxModal.classList.contains('hidden');
+    document.body.style.overflow = (settingsOpen || roomSettingsOpen || messageDebugState.open || openQuestionModalState.open || attachmentOpen) ? 'hidden' : '';
   }
 
   function closeMessageDebugModal() {
@@ -2940,12 +2952,162 @@
     return out.slice(-200);
   }
 
-  function sendMessage(body) {
+  function attachmentURL(id) {
+    return '/api/attachments/' + encodeURIComponent(id);
+  }
+
+  function attachmentSummary(a) {
+    var bits = [];
+    if (a.mime) bits.push(a.mime.replace(/^image\//, '').toUpperCase());
+    if (a.size) bits.push(formatBytes(a.size));
+    return bits.join(' · ');
+  }
+
+  function formatBytes(size) {
+    if (!size) return '0 B';
+    if (size < 1024) return size + ' B';
+    if (size < 1024 * 1024) return Math.round(size / 1024) + ' KB';
+    return (size / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  function hasAttachmentUploadsInFlight() {
+    return pendingAttachments.some(function (item) { return item.status === 'uploading'; });
+  }
+
+  function readyPendingAttachments() {
+    return pendingAttachments
+      .filter(function (item) { return item.status === 'ready' && item.attachment; })
+      .map(function (item) { return { id: item.attachment.id }; });
+  }
+
+  function updateSendAvailability() {
+    if (sendButton) sendButton.disabled = hasAttachmentUploadsInFlight();
+  }
+
+  function renderPendingAttachments() {
+    if (!attachmentPendingList) return;
+    if (!pendingAttachments.length) {
+      attachmentPendingList.classList.add('hidden');
+      attachmentPendingList.innerHTML = '';
+      updateSendAvailability();
+      return;
+    }
+    attachmentPendingList.classList.remove('hidden');
+    attachmentPendingList.innerHTML = pendingAttachments.map(function (item) {
+      var name = item.attachment ? item.attachment.name : item.file.name;
+      var status = item.status === 'uploading' ? 'Uploading...' : item.status === 'error' ? item.error : attachmentSummary(item.attachment);
+      return (
+        '<div class="attachment-pending-item ' + esc(item.status) + '" data-local-id="' + esc(item.localID) + '">' +
+          '<img src="' + esc(item.url) + '" alt="" class="attachment-pending-thumb">' +
+          '<div class="attachment-pending-meta"><div class="attachment-pending-name">' + esc(name) + '</div><div class="attachment-pending-status">' + esc(status || '') + '</div></div>' +
+          '<button class="attachment-remove-btn" type="button" title="Remove attachment" aria-label="Remove attachment">×</button>' +
+        '</div>'
+      );
+    }).join('');
+    updateSendAvailability();
+  }
+
+  function uploadAttachmentItem(item) {
+    var fd = new FormData();
+    fd.append('file', item.file, item.file.name);
+    return fetch('/api/attachments', { method: 'POST', body: fd })
+      .then(function (r) {
+        if (!r.ok) {
+          return r.text().then(function (t) { throw new Error(t || ('HTTP ' + r.status)); });
+        }
+        return r.json();
+      })
+      .then(function (attachment) {
+        item.status = 'ready';
+        item.attachment = attachment;
+        renderPendingAttachments();
+      })
+      .catch(function (err) {
+        item.status = 'error';
+        item.error = err && err.message ? err.message.replace(/^.*"error":"?/, '').replace(/"?}$/, '') : 'Upload failed';
+        renderPendingAttachments();
+      });
+  }
+
+  function addAttachmentFiles(fileList) {
+    var files = Array.from(fileList || []).filter(function (file) {
+      return file && /^image\/(png|jpeg|gif|webp)$/.test(file.type || '');
+    });
+    if (!files.length) return;
+    files.forEach(function (file) {
+      if (pendingAttachments.length >= 4) return;
+      var item = {
+        localID: String(Date.now()) + '-' + String(Math.random()).slice(2),
+        status: 'uploading',
+        file: file,
+        url: URL.createObjectURL(file),
+      };
+      pendingAttachments.push(item);
+      uploadAttachmentItem(item);
+    });
+    renderPendingAttachments();
+  }
+
+  function removePendingAttachment(localID) {
+    var idx = pendingAttachments.findIndex(function (item) { return item.localID === localID; });
+    if (idx < 0) return;
+    var item = pendingAttachments[idx];
+    pendingAttachments.splice(idx, 1);
+    if (item.url) URL.revokeObjectURL(item.url);
+    if (item.attachment && item.attachment.id) {
+      fetch(attachmentURL(item.attachment.id), { method: 'DELETE' }).catch(function () {});
+    }
+    renderPendingAttachments();
+  }
+
+  function clearPendingAttachments() {
+    pendingAttachments.forEach(function (item) {
+      if (item.url) URL.revokeObjectURL(item.url);
+    });
+    pendingAttachments = [];
+    renderPendingAttachments();
+  }
+
+  function attachmentsHTML(m) {
+    var attachments = Array.isArray(m.attachments) ? m.attachments : [];
+    if (!attachments.length) return '';
+    var html = '<div class="message-attachments">';
+    attachments.forEach(function (a) {
+      var ratio = a.width && a.height ? ' style="aspect-ratio:' + esc(String(a.width)) + '/' + esc(String(a.height)) + '"' : '';
+      html += '<button class="message-attachment" type="button" data-attachment-id="' + esc(a.id) + '" data-attachment-name="' + esc(a.name || 'attachment') + '" data-attachment-mime="' + esc(a.mime || '') + '" data-attachment-size="' + esc(String(a.size || 0)) + '">';
+      html += '<img src="' + esc(attachmentURL(a.id)) + '" alt="' + esc(a.name || 'attachment') + '"' + ratio + '>';
+      html += '<span>' + esc(a.name || 'attachment') + '</span>';
+      html += '</button>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function openAttachmentLightbox(id, name) {
+    if (!attachmentLightboxModal) return;
+    attachmentLightboxModal.classList.remove('hidden');
+    if (attachmentLightboxTitle) attachmentLightboxTitle.textContent = name || 'Attachment';
+    if (attachmentLightboxImg) {
+      attachmentLightboxImg.src = attachmentURL(id);
+      attachmentLightboxImg.alt = name || 'Attachment';
+    }
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeAttachmentLightbox() {
+    if (!attachmentLightboxModal) return;
+    attachmentLightboxModal.classList.add('hidden');
+    if (attachmentLightboxImg) attachmentLightboxImg.src = '';
+    updateBodyModalLock();
+  }
+
+  function sendMessage(body, attachments) {
     if (!activeRoomID) return;
     return ensureRegistered().then(function () {
       return api('POST', '/rooms/' + encodeURIComponent(activeRoomID) + '/send', {
         from: agentID,
         body: body,
+        attachments: attachments || undefined,
       });
     }).catch(function (err) {
       console.error('Failed to send message:', err);
@@ -3822,6 +3984,7 @@
     var msgRoleTag = roleBadgeHTML(msgRoleKey);
     var proposedAnswers = proposedAnswersHTML(m, room);
     var openQuestions = openQuestionsHTML(m, room);
+    var attachments = attachmentsHTML(m);
     var senderAttrs = fromAgent
       ? ' class="chat-msg-from-name agent-profile-link" data-profile-agent-id="' + esc(fromAgent.id) + '" data-profile-context="room" tabindex="0" role="button" aria-label="Show profile for ' + esc(fromAgent.id) + '"'
       : ' class="chat-msg-from-name"';
@@ -3842,6 +4005,7 @@
           '<div class="chat-msg-body' + (markdownMode === 'rendered' ? ' md-rendered' : '') + '">' +
             (markdownMode === 'rendered' ? renderMarkdown(m.body) : renderPlainWithCodeMarkers(m.body)) +
           '</div>' +
+          attachments +
         '</div>' +
         proposedAnswers +
         openQuestions +
@@ -4607,6 +4771,10 @@
     });
   });
   document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && attachmentLightboxModal && !attachmentLightboxModal.classList.contains('hidden')) {
+      closeAttachmentLightbox();
+      return;
+    }
     if (e.key === 'Escape' && openQuestionsModal && !openQuestionsModal.classList.contains('hidden')) {
       closeOpenQuestionsModal();
       return;
@@ -4938,6 +5106,8 @@
       refreshOpenQuestionsModalIndicators();
     });
   }
+  if (attachmentLightboxOverlay) attachmentLightboxOverlay.addEventListener('click', closeAttachmentLightbox);
+  if (attachmentLightboxCloseBtn) attachmentLightboxCloseBtn.addEventListener('click', closeAttachmentLightbox);
 
   // Prime notification audio on first gesture so later attention pings play immediately.
   function primeNotificationAudioOnGesture() {
@@ -5218,6 +5388,51 @@
     clearAll().catch(function (err) { alert('Error: ' + err.message); });
   });
 
+  if (attachmentPickerBtn && attachmentFileInput) {
+    attachmentPickerBtn.addEventListener('click', function () {
+      attachmentFileInput.click();
+    });
+    attachmentFileInput.addEventListener('change', function () {
+      addAttachmentFiles(attachmentFileInput.files);
+      attachmentFileInput.value = '';
+    });
+  }
+  if (attachmentPendingList) {
+    attachmentPendingList.addEventListener('click', function (e) {
+      var btn = e.target.closest('.attachment-remove-btn');
+      if (!btn) return;
+      var item = btn.closest('.attachment-pending-item');
+      if (item) removePendingAttachment(item.getAttribute('data-local-id'));
+    });
+  }
+  if (sendBar) {
+    sendBar.addEventListener('paste', function (e) {
+      if (!e.clipboardData || !e.clipboardData.items) return;
+      var files = [];
+      Array.from(e.clipboardData.items).forEach(function (item) {
+        if (item.kind === 'file') {
+          var file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      });
+      if (files.length) addAttachmentFiles(files);
+    });
+    sendBar.addEventListener('dragover', function (e) {
+      if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+      e.preventDefault();
+      sendBar.classList.add('drag-attachment');
+    });
+    sendBar.addEventListener('dragleave', function () {
+      sendBar.classList.remove('drag-attachment');
+    });
+    sendBar.addEventListener('drop', function (e) {
+      if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+      e.preventDefault();
+      sendBar.classList.remove('drag-attachment');
+      addAttachmentFiles(e.dataTransfer.files);
+    });
+  }
+
   // Join room
   function handleJoinRoom() {
     var roomID = joinRoomInput.value.trim();
@@ -5353,6 +5568,12 @@
 
   // Message ID badge (copy) and #NN autolinks (jump) — event delegation
   messageListEl.addEventListener('click', function (e) {
+    var attachmentBtn = e.target.closest('.message-attachment');
+    if (attachmentBtn) {
+      e.preventDefault();
+      openAttachmentLightbox(attachmentBtn.getAttribute('data-attachment-id'), attachmentBtn.getAttribute('data-attachment-name'));
+      return;
+    }
     var debugToggle = e.target.closest('.chat-msg-debug-toggle');
     if (debugToggle) {
       e.preventDefault();
@@ -5542,11 +5763,15 @@
   sendForm.addEventListener('submit', function (e) {
     e.preventDefault();
     var body = msgBodyInput.value.trim();
-    if (!body) return;
+    var attachments = readyPendingAttachments();
+    if (!body && !attachments.length) return;
+    if (hasAttachmentUploadsInFlight()) return;
     historyIdx = null;
     historyDraft = null;
     hideAcPopup();
-    sendMessage(body);
+    sendMessage(body, attachments).then(function (res) {
+      if (res) clearPendingAttachments();
+    });
     msgBodyInput.value = '';
     msgBodyInput.style.height = '';
     msgBodyInput.style.overflowY = '';

@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"io/fs"
 	"mime/multipart"
@@ -39,6 +42,55 @@ func setupTestServerWithBuild(t *testing.T, build BuildInfo) (*store, *httptest.
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return s, srv
+}
+
+func testPNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, color.RGBA{R: 0x33, G: 0x99, B: 0xcc, A: 0xff})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func uploadAttachment(t *testing.T, srv *httptest.Server, filename string, data []byte) (types.Attachment, *http.Response) {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/attachments", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return types.Attachment{}, resp
+	}
+	defer resp.Body.Close()
+	var attachment types.Attachment
+	if err := json.NewDecoder(resp.Body).Decode(&attachment); err != nil {
+		t.Fatal(err)
+	}
+	return attachment, resp
 }
 
 func findListedAgent(t *testing.T, s *store, agentID string) types.Agent {
@@ -81,6 +133,178 @@ func assertAgentUpdateState(t *testing.T, sub <-chan MetaEvent, agentID, want st
 		case <-deadline:
 			t.Fatalf("timed out waiting for agent_update state %q", want)
 		}
+	}
+}
+
+func TestAttachmentUploadSendRoundTripAndPersistence(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "sender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	uploaded, resp := uploadAttachment(t, srv, "screen.png", testPNG(t, 7, 5))
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("upload returned %d: %s", resp.StatusCode, body)
+	}
+	if uploaded.Mime != "image/png" || uploaded.Width != 7 || uploaded.Height != 5 || uploaded.Size == 0 {
+		t.Fatalf("uploaded metadata = %+v", uploaded)
+	}
+
+	sendBody := map[string]any{
+		"from": agent.ID,
+		"body": "",
+		"attachments": []map[string]any{{
+			"id":     uploaded.ID,
+			"name":   "browser-lie.jpg",
+			"mime":   "text/plain",
+			"size":   1,
+			"width":  99,
+			"height": 99,
+		}},
+	}
+	data, _ := json.Marshal(sendBody)
+	resp, err = http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send returned %d, want 200", resp.StatusCode)
+	}
+
+	msgs := s.messagesSince("general", 0)
+	got := msgs[len(msgs)-1].Attachments
+	if len(got) != 1 {
+		t.Fatalf("message attachments = %d, want 1", len(got))
+	}
+	if got[0].Name != "screen.png" || got[0].Mime != "image/png" || got[0].Width != 7 || got[0].Height != 5 {
+		t.Fatalf("message used client metadata, got %+v", got[0])
+	}
+
+	reloaded, err := newStore(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadedMsgs := reloaded.messagesSince("general", 0)
+	if len(reloadedMsgs) == 0 || len(reloadedMsgs[len(reloadedMsgs)-1].Attachments) != 1 {
+		t.Fatalf("reloaded messages missing attachment metadata")
+	}
+	if _, path, ok := reloaded.attachmentFilePath(uploaded.ID); !ok {
+		t.Fatalf("reloaded attachment registry missing %s", uploaded.ID)
+	} else if _, err := os.Stat(path); err != nil {
+		t.Fatalf("reloaded attachment file missing: %v", err)
+	}
+}
+
+func TestAttachmentValidationAndCaps(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "sender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, resp := uploadAttachment(t, srv, "not-an-image.png", []byte("plain text"))
+	if resp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("text upload returned %d, want 400: %s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	tooMany := make([]types.Attachment, 5)
+	for i := range tooMany {
+		tooMany[i] = types.Attachment{ID: fmt.Sprintf("%032x", i+1)}
+	}
+	if _, err := s.roomSend("general", agent.ID, "too many", false, nil, nil, tooMany); err == nil || !strings.Contains(err.Error(), "too many attachments") {
+		t.Fatalf("roomSend too many err = %v, want cap error", err)
+	}
+}
+
+func TestAttachmentCleanupAndPrune(t *testing.T) {
+	s, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploaded, err := s.addAttachment("old.png", "image/png", testPNG(t, 3, 2), 3, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.attachmentsMu.Lock()
+	entry := s.attachments[uploaded.ID]
+	entry.UploadedAt = time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339)
+	s.attachments[uploaded.ID] = entry
+	s.persistAttachmentsLocked()
+	s.attachmentsMu.Unlock()
+	if _, path, ok := s.attachmentFilePath(uploaded.ID); !ok {
+		t.Fatal("attachment missing before cleanup")
+	} else if _, err := os.Stat(path); err != nil {
+		t.Fatalf("attachment file missing before cleanup: %v", err)
+	}
+
+	s.cleanupAttachments(time.Now().UTC())
+	if _, _, ok := s.attachmentFilePath(uploaded.ID); ok {
+		t.Fatal("stale unreferenced attachment still in registry")
+	}
+
+	strayID := randomUUID()
+	strayPath := filepath.Join(s.attachmentsDir(), strayID+".png")
+	if err := os.MkdirAll(s.attachmentsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(strayPath, testPNG(t, 1, 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-2 * time.Hour)
+	if err := os.Chtimes(strayPath, old, old); err != nil {
+		t.Fatal(err)
+	}
+	missingID := randomUUID()
+	s.attachmentsMu.Lock()
+	s.attachments[missingID] = AttachmentEntry{
+		ID:         missingID,
+		Name:       "missing.png",
+		Mime:       "image/png",
+		Size:       12,
+		Width:      1,
+		Height:     1,
+		UploadedAt: old.Format(time.RFC3339),
+		Ext:        "png",
+	}
+	s.persistAttachmentsLocked()
+	s.attachmentsMu.Unlock()
+
+	s.cleanupAttachments(time.Now().UTC())
+	if _, err := os.Stat(strayPath); !os.IsNotExist(err) {
+		t.Fatalf("stale stray file err = %v, want not exist", err)
+	}
+	if _, _, ok := s.attachmentFilePath(missingID); ok {
+		t.Fatal("stale missing-file registry entry survived cleanup")
+	}
+
+	kept, err := s.addAttachment("kept.png", "image/png", testPNG(t, 2, 2), 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := s.attachmentFilePath(kept.ID); !ok {
+		t.Fatal("attachment missing before prune")
+	}
+	s.clearAll(false)
+	if _, _, ok := s.attachmentFilePath(kept.ID); ok {
+		t.Fatal("attachment registry survived prune")
+	}
+	if _, err := os.Stat(s.attachmentsDir()); !os.IsNotExist(err) {
+		t.Fatalf("attachments dir after prune err = %v, want not exist", err)
 	}
 }
 
@@ -438,7 +662,7 @@ func TestAgentStateNoLongerDerivedFromBusTraffic(t *testing.T) {
 	if _, err := s.joinRoom("general", agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("general", agent.ID, "hello", false, nil, nil); err != nil {
+	if _, err := s.roomSend("general", agent.ID, "hello", false, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -818,7 +1042,7 @@ func TestRoomWaitCursorNotAdvancedOnContextCancel(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Post a message after the disconnect — handler won't deliver it.
-	if _, err := s.roomSend("race-room", sender.ID, "@rcvrone hello after disconnect", false, nil, nil); err != nil {
+	if _, err := s.roomSend("race-room", sender.ID, "@rcvrone hello after disconnect", false, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -871,7 +1095,7 @@ func TestRoomWaitCursorAdvancedOnDelivery(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Post a message — handler should deliver it and advance the cursor.
-	if _, err := s.roomSend("deliver-room", sender.ID, "hello rcvrtwo", false, nil, nil); err != nil {
+	if _, err := s.roomSend("deliver-room", sender.ID, "hello rcvrtwo", false, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 

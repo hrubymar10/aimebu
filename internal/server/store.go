@@ -63,6 +63,17 @@ type SoundEntry struct {
 	Ext        string `json:"ext,omitempty"` // "mp3" or "wav"; empty means legacy mp3
 }
 
+type AttachmentEntry struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Mime       string `json:"mime"`
+	Size       int64  `json:"size"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+	UploadedAt string `json:"uploaded_at"`
+	Ext        string `json:"ext"`
+}
+
 type store struct {
 	dir    string
 	nextID atomic.Int64
@@ -109,6 +120,9 @@ type store struct {
 	soundsMu sync.RWMutex
 	sounds   []SoundEntry // user-uploaded custom sounds
 
+	attachmentsMu sync.RWMutex
+	attachments   map[string]AttachmentEntry
+
 	rolesMu        sync.RWMutex
 	rolesOverrides map[string]roleOverrideEntry // catalog key → metadata/body override
 	rolesCustom    map[string]customRoleEntry   // custom key → metadata/body override
@@ -142,6 +156,7 @@ func newStore(dir string) (*store, error) {
 		seenDefaults:           make(map[string]bool),
 		prompts:                make(map[string]string),
 		fleets:                 make(map[string]Fleet),
+		attachments:            make(map[string]AttachmentEntry),
 		rolesOverrides:         make(map[string]roleOverrideEntry),
 		rolesCustom:            make(map[string]customRoleEntry),
 		warnedLegacy:           make(map[string]bool),
@@ -157,6 +172,7 @@ func newStore(dir string) (*store, error) {
 	// agents/rooms/messages that would have been pruned by the background
 	// goroutine. Uses the configured retention windows.
 	s.pruneOnStartup()
+	s.cleanupAttachments(time.Now().UTC())
 
 	// Create the _system room if it doesn't exist yet (idempotent).
 	s.ensureSystemRoom()
@@ -320,6 +336,9 @@ func (s *store) load() error {
 
 	// User sounds index — persisted in sounds/sounds.json; wiped when clearAll(includeSettings=true).
 	s.loadSounds()
+
+	// Image attachment registry — conversation state; regular prune wipes it.
+	s.loadAttachments()
 
 	// Macros — separate from schema-versioned state; survives schema wipes.
 	// Handles three historical shapes:
@@ -871,9 +890,13 @@ func truncateRunes(s string, max int) string {
 	return string(r[:max])
 }
 
-func (s *store) roomSend(roomID, from, body string, needsAttention bool, proposedAnswers []string, openQuestions []types.OpenQuestion) (int64, error) {
+func (s *store) roomSend(roomID, from, body string, needsAttention bool, proposedAnswers []string, openQuestions []types.OpenQuestion, attachments []types.Attachment) (int64, error) {
 	if !s.isMember(roomID, from) {
 		return 0, fmt.Errorf("agent %s is not a member of room %s", from, roomID)
+	}
+	resolvedAttachments, err := s.resolveAttachments(attachments)
+	if err != nil {
+		return 0, err
 	}
 
 	ctx := s.addressingContext(types.Message{RoomID: roomID, From: from, Body: body})
@@ -918,6 +941,7 @@ func (s *store) roomSend(roomID, from, body string, needsAttention bool, propose
 	}
 	msg.ProposedAnswers = cleanProposedAnswers(proposedAnswers)
 	msg.OpenQuestions = cleanOpenQuestions(openQuestions)
+	msg.Attachments = resolvedAttachments
 
 	s.mu.Lock()
 	s.messages[roomID] = append(s.messages[roomID], msg)
@@ -2136,6 +2160,10 @@ func (s *store) clearAll(includeSettings bool) {
 	s.agents = make(map[string]*types.Agent)
 	s.persist()
 	s.mu.Unlock()
+	s.attachmentsMu.Lock()
+	s.attachments = make(map[string]AttachmentEntry)
+	s.attachmentsMu.Unlock()
+	_ = os.RemoveAll(s.attachmentsDir())
 	if includeSettings {
 		s.macrosMu.Lock()
 		s.macros = make(map[string]string)
@@ -2290,6 +2318,7 @@ func (s *store) cleanupMessages() {
 		s.persist()
 	}
 	s.mu.Unlock()
+	s.cleanupAttachments(now)
 }
 
 func (s *store) cleanupMessagesLocked(now time.Time) bool {
@@ -2650,9 +2679,278 @@ func (s *store) soundFilePath(uuid string) (string, string) {
 	return "", ""
 }
 
+// ── Image attachments ──────────────────────────────────────────────
+
+const (
+	maxAttachmentFileSize    = 5 * 1024 * 1024
+	maxMessageAttachments    = 4
+	attachmentOrphanGrace    = time.Hour
+	attachmentRegistryFile   = "attachments.json"
+	attachmentDefaultFileExt = "bin"
+)
+
+func (s *store) attachmentsDir() string {
+	return filepath.Join(s.dir, "attachments")
+}
+
+func (s *store) attachmentsIndexPath() string {
+	return filepath.Join(s.attachmentsDir(), attachmentRegistryFile)
+}
+
+func attachmentExt(mime string) string {
+	switch mime {
+	case "image/png":
+		return "png"
+	case "image/jpeg":
+		return "jpg"
+	case "image/gif":
+		return "gif"
+	case "image/webp":
+		return "webp"
+	default:
+		return attachmentDefaultFileExt
+	}
+}
+
+func attachmentMeta(entry AttachmentEntry) types.Attachment {
+	return types.Attachment{
+		ID:     entry.ID,
+		Mime:   entry.Mime,
+		Name:   entry.Name,
+		Size:   entry.Size,
+		Width:  entry.Width,
+		Height: entry.Height,
+	}
+}
+
+func (s *store) loadAttachments() {
+	data, err := os.ReadFile(s.attachmentsIndexPath())
+	if err != nil {
+		return
+	}
+	var env struct {
+		Attachments []AttachmentEntry `json:"attachments"`
+	}
+	if json.Unmarshal(data, &env) != nil {
+		return
+	}
+	s.attachmentsMu.Lock()
+	for _, entry := range env.Attachments {
+		if entry.ID == "" {
+			continue
+		}
+		if entry.Ext == "" {
+			entry.Ext = attachmentExt(entry.Mime)
+		}
+		s.attachments[entry.ID] = entry
+	}
+	s.attachmentsMu.Unlock()
+}
+
+func (s *store) persistAttachmentsLocked() {
+	entries := make([]AttachmentEntry, 0, len(s.attachments))
+	for _, entry := range s.attachments {
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].UploadedAt < entries[j].UploadedAt
+	})
+	env := struct {
+		Attachments []AttachmentEntry `json:"attachments"`
+	}{Attachments: entries}
+	if data, err := json.MarshalIndent(env, "", "  "); err == nil {
+		atomicWrite(s.attachmentsIndexPath(), data)
+	}
+}
+
+func (s *store) addAttachment(displayName, mime string, data []byte, width, height int) (types.Attachment, error) {
+	if len(data) > maxAttachmentFileSize {
+		return types.Attachment{}, fmt.Errorf("file too large (max %d MB)", maxAttachmentFileSize/1024/1024)
+	}
+	id := randomUUID()
+	ext := attachmentExt(mime)
+	if err := os.MkdirAll(s.attachmentsDir(), 0o755); err != nil {
+		return types.Attachment{}, fmt.Errorf("create attachments dir: %w", err)
+	}
+	path := filepath.Join(s.attachmentsDir(), id+"."+ext)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return types.Attachment{}, fmt.Errorf("write attachment file: %w", err)
+	}
+	entry := AttachmentEntry{
+		ID:         id,
+		Name:       displayName,
+		Mime:       mime,
+		Size:       int64(len(data)),
+		Width:      width,
+		Height:     height,
+		UploadedAt: now(),
+		Ext:        ext,
+	}
+	s.attachmentsMu.Lock()
+	s.attachments[id] = entry
+	s.persistAttachmentsLocked()
+	s.attachmentsMu.Unlock()
+	return attachmentMeta(entry), nil
+}
+
+func (s *store) attachmentFilePath(id string) (AttachmentEntry, string, bool) {
+	s.attachmentsMu.RLock()
+	defer s.attachmentsMu.RUnlock()
+	entry, ok := s.attachments[id]
+	if !ok {
+		return AttachmentEntry{}, "", false
+	}
+	ext := entry.Ext
+	if ext == "" {
+		ext = attachmentExt(entry.Mime)
+	}
+	return entry, filepath.Join(s.attachmentsDir(), id+"."+ext), true
+}
+
+func (s *store) resolveAttachments(in []types.Attachment) ([]types.Attachment, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > maxMessageAttachments {
+		return nil, fmt.Errorf("too many attachments (max %d)", maxMessageAttachments)
+	}
+	out := make([]types.Attachment, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	s.attachmentsMu.RLock()
+	defer s.attachmentsMu.RUnlock()
+	for _, ref := range in {
+		id := strings.TrimSpace(ref.ID)
+		if !validUUID(id) {
+			return nil, fmt.Errorf("invalid attachment id %q", id)
+		}
+		if seen[id] {
+			continue
+		}
+		entry, ok := s.attachments[id]
+		if !ok {
+			return nil, fmt.Errorf("attachment %s not found", id)
+		}
+		out = append(out, attachmentMeta(entry))
+		seen[id] = true
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func (s *store) attachmentReferenced(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, roomMessages := range s.messages {
+		for _, msg := range roomMessages {
+			for _, attachment := range msg.Attachments {
+				if attachment.ID == id {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (s *store) deleteAttachment(id string) (bool, bool) {
+	if !validUUID(id) {
+		return false, false
+	}
+	if s.attachmentReferenced(id) {
+		return true, false
+	}
+	s.attachmentsMu.Lock()
+	defer s.attachmentsMu.Unlock()
+	entry, ok := s.attachments[id]
+	if !ok {
+		return false, false
+	}
+	delete(s.attachments, id)
+	ext := entry.Ext
+	if ext == "" {
+		ext = attachmentExt(entry.Mime)
+	}
+	_ = os.Remove(filepath.Join(s.attachmentsDir(), id+"."+ext))
+	s.persistAttachmentsLocked()
+	return true, true
+}
+
+func (s *store) cleanupAttachments(now time.Time) {
+	referenced := make(map[string]bool)
+	s.mu.RLock()
+	for _, roomMessages := range s.messages {
+		for _, msg := range roomMessages {
+			for _, attachment := range msg.Attachments {
+				referenced[attachment.ID] = true
+			}
+		}
+	}
+	s.mu.RUnlock()
+
+	cutoff := now.Add(-attachmentOrphanGrace)
+	changed := false
+	s.attachmentsMu.Lock()
+	for id, entry := range s.attachments {
+		if referenced[id] {
+			continue
+		}
+		uploadedAt, err := time.Parse(time.RFC3339, entry.UploadedAt)
+		if err == nil && uploadedAt.After(cutoff) {
+			continue
+		}
+		ext := entry.Ext
+		if ext == "" {
+			ext = attachmentExt(entry.Mime)
+		}
+		_ = os.Remove(filepath.Join(s.attachmentsDir(), id+"."+ext))
+		delete(s.attachments, id)
+		changed = true
+	}
+	if changed {
+		s.persistAttachmentsLocked()
+	}
+	s.attachmentsMu.Unlock()
+
+	entries, err := os.ReadDir(s.attachmentsDir())
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == attachmentRegistryFile {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		stem := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		if !referenced[stem] {
+			_, _, known := s.attachmentFilePath(stem)
+			if !known {
+				_ = os.Remove(filepath.Join(s.attachmentsDir(), entry.Name()))
+			}
+		}
+	}
+}
+
 // randomUUID returns a random 32-hex-char UUID-like string.
 func randomUUID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func validUUID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for _, r := range id {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }

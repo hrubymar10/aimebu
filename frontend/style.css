@@ -1388,6 +1388,53 @@ body {
   word-break: break-word;
 }
 
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.message-attachment {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: min(180px, 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  padding: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.message-attachment:hover,
+.message-attachment:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  outline: none;
+}
+
+.message-attachment img {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+}
+
+.message-attachment span {
+  min-width: 0;
+  color: var(--text-muted);
+  font: 0.7rem var(--font-sans);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mention {
   color: var(--accent);
   background: var(--accent-dim);
@@ -1830,6 +1877,89 @@ body {
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  transition: background var(--transition);
+}
+
+.send-bar.drag-attachment {
+  background: var(--accent-dim);
+}
+
+.attachment-pending-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.attachment-pending-list.hidden {
+  display: none;
+}
+
+.attachment-pending-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 26px;
+  align-items: center;
+  gap: 8px;
+  width: min(280px, 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  padding: 6px;
+}
+
+.attachment-pending-item.error {
+  border-color: var(--red);
+}
+
+.attachment-pending-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius);
+  object-fit: cover;
+  background: var(--bg-primary);
+}
+
+.attachment-pending-meta {
+  min-width: 0;
+}
+
+.attachment-pending-name,
+.attachment-pending-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-pending-name {
+  color: var(--text-primary);
+  font: 700 0.74rem var(--font-sans);
+}
+
+.attachment-pending-status {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font: 0.68rem var(--font-sans);
+}
+
+.attachment-pending-item.error .attachment-pending-status {
+  color: var(--red);
+}
+
+.attachment-remove-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.attachment-remove-btn:hover,
+.attachment-remove-btn:focus-visible {
+  border-color: var(--red);
+  color: var(--red);
+  outline: none;
 }
 
 .system-room-notice {
@@ -1844,6 +1974,13 @@ body {
   display: flex;
   gap: 8px;
   align-items: flex-end;
+}
+
+.attachment-picker-btn {
+  width: 34px;
+  height: 38px;
+  padding: 0;
+  flex-shrink: 0;
 }
 
 .msg-input {
@@ -1883,6 +2020,80 @@ body {
 .btn-send svg {
   width: 16px;
   height: 16px;
+}
+
+.attachment-lightbox-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 460;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attachment-lightbox-modal.hidden {
+  display: none;
+}
+
+.attachment-lightbox-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.attachment-lightbox-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(960px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-primary);
+  box-shadow: 0 18px 56px rgba(0, 0, 0, 0.52);
+  overflow: hidden;
+}
+
+.attachment-lightbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.attachment-lightbox-title {
+  min-width: 0;
+  color: var(--text-primary);
+  font: 700 0.84rem var(--font-sans);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-lightbox-img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 92px);
+  object-fit: contain;
+  background: var(--bg-secondary);
+}
+
+@media (max-width: 640px) {
+  .attachment-lightbox-pane {
+    width: 100vw;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .attachment-lightbox-img {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+  }
 }
 
 /* ── Right Sidebar ───────────────────────────────────────────── */

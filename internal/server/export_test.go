@@ -20,10 +20,10 @@ func TestExportRoom_JSON_RoundTrip(t *testing.T) {
 	if _, err := s.joinRoom("general", alice.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("general", alice.ID, "hello world", false, nil, nil); err != nil {
+	if _, err := s.roomSend("general", alice.ID, "hello world", false, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("general", alice.ID, "second message", false, nil, nil); err != nil {
+	if _, err := s.roomSend("general", alice.ID, "second message", false, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -86,7 +86,7 @@ func TestExportRoom_Markdown_Content(t *testing.T) {
 	if _, err := s.joinRoom("chat", bob.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("chat", bob.ID, "hi there", false, nil, nil); err != nil {
+	if _, err := s.roomSend("chat", bob.ID, "hi there", false, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -123,6 +123,39 @@ func TestExportRoom_Markdown_Content(t *testing.T) {
 	// message ID must appear in the header line
 	if !strings.Contains(md, " #") {
 		t.Error("markdown missing message ID (#NN) in header")
+	}
+}
+
+func TestExportRoom_AttachmentMetadataOnly(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "sender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("chat", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := s.addAttachment("screen.png", "image/png", testPNG(t, 4, 3), 4, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.roomSend("chat", agent.ID, "see image", false, nil, nil, []types.Attachment{{ID: attachment.ID}}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/rooms/chat/export?format=markdown&agent_id=" + agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	md := string(body)
+	if !strings.Contains(md, "/api/attachments/"+attachment.ID) {
+		t.Fatalf("markdown export missing attachment URL: %s", md)
+	}
+	if strings.Contains(md, "data:image") || strings.Contains(md, "iVBOR") {
+		t.Fatalf("markdown export appears to embed image bytes: %s", md)
 	}
 }
 
