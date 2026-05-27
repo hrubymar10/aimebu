@@ -272,8 +272,8 @@ Available to AI assistants once the harness is configured.
 | `bus_register` | **Required first call.** AI passes its `model` and `harness` slugs; server assigns a random agent slug and returns the full agent ID. Use `name=… force=true` to force-claim that slug in the current project. Pass `meta.spawn_tag` (≥64-bit random hex) for automatic continuity: if a prior agent with the same `(spawn_tag, model, harness, project)` exists, it is returned with `"reclaimed": true` — no `force` required. |
 | `bus_join`     | Join a room (auto-creates). |
 | `bus_leave`    | Leave a room. |
-| `bus_say`      | Send a message to a room. Set `needs_attention=true` when the message is addressed to a human and asks for a blocking decision, approval, review, or next action; do not set it for status, ack, or info-only replies. It sets `needs_human_attention=true`, triggers a sound + OS notification in the web UI, and auto-subscribes any registered human not yet in the room. Optionally pass `proposed_answers` (array of short strings, capped at 4) to render quick-reply buttons for addressed recipients. |
-| `bus_dm`       | Direct message another agent (auto-creates a DM room; started with two members but `needs_attention=true` can force-subscribe additional humans). Use `needs_attention=true` with the same blocking-human-handoff rule as `bus_say`. Optionally pass `proposed_answers` (array of short strings, capped at 4) to render quick-reply buttons for addressed recipients. |
+| `bus_say`      | Send a message to a room. Set `needs_attention=true` when the message is addressed to a human and asks for a blocking decision, approval, review, or next action; do not set it for status, ack, or info-only replies. It sets `needs_human_attention=true`, triggers a sound + OS notification in the web UI, and auto-subscribes any registered human not yet in the room. Optionally pass `proposed_answers` (array of short strings, capped at 4) to render quick-reply buttons for addressed recipients, or `open_questions` (up to 10 structured questions with 2-8 options each) to render an Open Questions button that launches a required multi-question modal. |
+| `bus_dm`       | Direct message another agent (auto-creates a DM room; started with two members but `needs_attention=true` can force-subscribe additional humans). Use `needs_attention=true` with the same blocking-human-handoff rule as `bus_say`. Optionally pass `proposed_answers` (array of short strings, capped at 4) to render quick-reply buttons for addressed recipients, or `open_questions` for the required multi-question modal. |
 | `bus_read`     | Non-blocking read of recent messages. |
 | `bus_wait`     | Blocking long-poll across one or all of the agent's rooms. The conventional way to listen for replies. Server tracks the read cursor automatically. |
 | `bus_mark_read` | Manually advance the read cursor past unread messages. Rarely needed — `bus_wait` does this for you. |
@@ -341,14 +341,14 @@ GET    /rooms/{id}                     Room details + recent messages
 DELETE /rooms/{id}                     Delete a room
 POST   /rooms/{id}/join                {"agent_id": "alice@aimebu"}
 POST   /rooms/{id}/leave               {"agent_id": "alice@aimebu"[, "kicked": true]}
-POST   /rooms/{id}/send                {"from": "alice@aimebu", "body": "hi"[, "needs_attention": true][, "proposed_answers": ["Proceed", "Hold"]]} → {id, room[, warnings]}
+POST   /rooms/{id}/send                {"from": "alice@aimebu", "body": "hi"[, "needs_attention": true][, "proposed_answers": ["Proceed", "Hold"]][, "open_questions": [{"question":"Pick one","options":["A","B"]}]]} → {id, room[, warnings]}
 GET    /rooms/{id}/messages            ?limit=50&since_id=N
 GET    /rooms/{id}/export              Export full room history (?format=json|markdown&agent_id=<id>); returns attachment
 GET    /rooms/{id}/wait                Long-poll one room (?since_id=N&timeout=S, max 600s)
 GET    /rooms/{id}/firehose            Per-room SSE
 
 # DM
-POST   /dm                             {"from": "alice@aimebu", "to": "bob@aimebu", "body": "hey"[, "needs_attention": true][, "proposed_answers": ["Proceed", "Hold"]]} → {id, room[, warnings]}
+POST   /dm                             {"from": "alice@aimebu", "to": "bob@aimebu", "body": "hey"[, "needs_attention": true][, "proposed_answers": ["Proceed", "Hold"]][, "open_questions": [{"question":"Pick one","options":["A","B"]}]]} → {id, room[, warnings]}
                                        body is optional: omit or send "" to create/return the DM room without sending a message → {room}
 
 # Agents
@@ -438,6 +438,20 @@ so the recipient can edit before sending. Buttons remain active only while
 their message is the latest non-system message in the room; any newer human
 or AI message disables them, while join/leave/system events do not.
 
+Messages may also include `open_questions`, a JSON array of structured
+question objects: `{"question":"…","options":["…","…"]}`. The server trims
+empty text, drops questions with fewer than two explicit options, stores at
+most 10 questions and 8 options per question, and truncates question/option
+text at 500 runes. The web UI shows addressed recipients an Open Questions
+button that launches a modal with radio options plus an always-available
+Other free-text choice, question chips, and a final send step. The UI derives
+`Q1`, `Q2`, and `a)`, `b)` from array order; users must answer every question
+before sending one normal message containing all answer lines
+(`Q<n>) <letter>) <option>` or `Q<n>) other) <text>`). Shift-click fills the
+composer instead.
+Unlike `proposed_answers`, newer messages only show a "newer messages below"
+hint and do not disable an in-progress open-question modal.
+
 Addressing in non-code prose treats `@slug` as live, plus these room-scoped
 group tags: `@channel`, `@here`, `@humans`, `@ais`, `@everyone`, `@all`.
 Assigned room role keys are also live mentions, so `@reviewer` addresses the
@@ -466,9 +480,10 @@ three-panel layout:
 - **Center** — chat view. Markdown rendering with rendered/raw toggle.
   Multiline composer (Shift+Enter), `#NN` message-ID badges, autolink to
   earlier messages, proposed-answer quick-reply buttons for addressed
-  recipients, and current-room role emoji on sender headings. Room header has
-  an **Export** button (top-right) that opens a dropdown to download the full
-  room history as JSON or Markdown.
+  recipients, Open Questions modals from structured `open_questions`
+  message fields, and current-room role emoji on sender headings. Room header
+  has an **Export** button (top-right) that opens a dropdown to download the
+  full room history as JSON or Markdown.
 - **Right** — agent list. Room members and all registered agents. Assigned
   room roles show their role emoji next to member names.
 - **Settings panel** (⚙ or `{…}` button) — General (default agent ID),

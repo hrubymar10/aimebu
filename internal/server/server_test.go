@@ -438,7 +438,7 @@ func TestAgentStateNoLongerDerivedFromBusTraffic(t *testing.T) {
 	if _, err := s.joinRoom("general", agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("general", agent.ID, "hello", false); err != nil {
+	if _, err := s.roomSend("general", agent.ID, "hello", false, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -818,7 +818,7 @@ func TestRoomWaitCursorNotAdvancedOnContextCancel(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Post a message after the disconnect — handler won't deliver it.
-	if _, err := s.roomSend("race-room", sender.ID, "@rcvrone hello after disconnect", false); err != nil {
+	if _, err := s.roomSend("race-room", sender.ID, "@rcvrone hello after disconnect", false, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -871,7 +871,7 @@ func TestRoomWaitCursorAdvancedOnDelivery(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Post a message — handler should deliver it and advance the cursor.
-	if _, err := s.roomSend("deliver-room", sender.ID, "hello rcvrtwo", false); err != nil {
+	if _, err := s.roomSend("deliver-room", sender.ID, "hello rcvrtwo", false, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1554,6 +1554,86 @@ func TestProposedAnswersRoundTripAndCleanup(t *testing.T) {
 	}
 }
 
+func TestOpenQuestionsRoundTripCleanupAndPersistence(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	agent, err := s.registerHuman("tester", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	longText := strings.Repeat("x", maxOpenQuestionTextRunes+10)
+	sendBody, _ := json.Marshal(map[string]any{
+		"from": agent.ID,
+		"body": "@tester choose",
+		"open_questions": []map[string]any{
+			{"question": " First? ", "options": []string{" A ", "", "B", "C", "D", "E", "F", "G", "H", "I"}},
+			{"question": "drop one option", "options": []string{"only"}},
+			{"question": "", "options": []string{"A", "B"}},
+			{"question": longText, "options": []string{longText, "B"}},
+		},
+	})
+	resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send returned %d", resp.StatusCode)
+	}
+
+	resp2, err := http.Get(srv.URL + "/rooms/general/messages?agent_id=" + agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var data struct {
+		Messages []struct {
+			OpenQuestions []types.OpenQuestion `json:"open_questions"`
+			AddressedToMe bool                 `json:"addressed_to_me"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Messages) == 0 {
+		t.Fatal("expected at least one message")
+	}
+	wantFirstOptions := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+	got := data.Messages[0].OpenQuestions
+	if len(got) != 2 {
+		t.Fatalf("open_questions len = %d, want 2: %#v", len(got), got)
+	}
+	if got[0].Question != "First?" || !reflect.DeepEqual(got[0].Options, wantFirstOptions) {
+		t.Fatalf("first open question = %#v, want question First? options %#v", got[0], wantFirstOptions)
+	}
+	if len([]rune(got[1].Question)) != maxOpenQuestionTextRunes || len([]rune(got[1].Options[0])) != maxOpenQuestionTextRunes {
+		t.Fatalf("long open question was not truncated to %d runes: %#v", maxOpenQuestionTextRunes, got[1])
+	}
+	if !data.Messages[0].AddressedToMe {
+		t.Fatal("expected addressed_to_me=true for addressed open-question message")
+	}
+
+	reloaded, err := newStore(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := reloaded.roomMessages("general", 10, 0)
+	var persisted []types.OpenQuestion
+	for _, msg := range msgs {
+		if msg.From == agent.ID {
+			persisted = msg.OpenQuestions
+			break
+		}
+	}
+	if !reflect.DeepEqual(persisted, got) {
+		t.Fatalf("persisted open_questions = %#v, want %#v", msgs, got)
+	}
+}
+
 func TestLegacyMessagesLoadWithoutProposedAnswers(t *testing.T) {
 	dir := t.TempDir()
 	schema, _ := json.Marshal(map[string]int{"version": storeSchemaVersion})
@@ -1573,6 +1653,9 @@ func TestLegacyMessagesLoadWithoutProposedAnswers(t *testing.T) {
 	}
 	if len(msgs[0].ProposedAnswers) != 0 {
 		t.Fatalf("legacy proposed_answers = %#v, want empty", msgs[0].ProposedAnswers)
+	}
+	if len(msgs[0].OpenQuestions) != 0 {
+		t.Fatalf("legacy open_questions = %#v, want empty", msgs[0].OpenQuestions)
 	}
 }
 

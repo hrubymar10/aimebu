@@ -9,6 +9,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/client"
+	"github.com/hrubymar10/aimebu/internal/types"
 )
 
 func TestDetectHarness(t *testing.T) {
@@ -262,10 +263,11 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/rooms/general/send":
 			var got struct {
-				From            string   `json:"from"`
-				Body            string   `json:"body"`
-				NeedsAttention  bool     `json:"needs_attention"`
-				ProposedAnswers []string `json:"proposed_answers"`
+				From            string               `json:"from"`
+				Body            string               `json:"body"`
+				NeedsAttention  bool                 `json:"needs_attention"`
+				ProposedAnswers []string             `json:"proposed_answers"`
+				OpenQuestions   []types.OpenQuestion `json:"open_questions"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Fatal(err)
@@ -276,6 +278,10 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got.ProposedAnswers, want) {
 				t.Fatalf("proposed_answers = %#v, want %#v", got.ProposedAnswers, want)
+			}
+			wantQuestions := []types.OpenQuestion{{Question: "Pick one", Options: []string{"A", "B"}}}
+			if !reflect.DeepEqual(got.OpenQuestions, wantQuestions) {
+				t.Fatalf("open_questions = %#v, want %#v", got.OpenQuestions, wantQuestions)
 			}
 			w.Write([]byte(`{"id":1,"room":"general"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/rooms":
@@ -292,6 +298,7 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 		"body":             "@martin approve?",
 		"needs_attention":  true,
 		"proposed_answers": []string{"Proceed", "Hold"},
+		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Options: []string{"A", "B"}}},
 	})
 	if _, err := handleToolCall(c, "bus_say", args); err != nil {
 		t.Fatalf("handleToolCall bus_say: %v", err)
@@ -304,10 +311,11 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/dm":
 			var got struct {
-				From            string   `json:"from"`
-				To              string   `json:"to"`
-				Body            string   `json:"body"`
-				ProposedAnswers []string `json:"proposed_answers"`
+				From            string               `json:"from"`
+				To              string               `json:"to"`
+				Body            string               `json:"body"`
+				ProposedAnswers []string             `json:"proposed_answers"`
+				OpenQuestions   []types.OpenQuestion `json:"open_questions"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Fatal(err)
@@ -315,6 +323,10 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 			want := []string{"Proceed", "Revise"}
 			if got.From != "alice@aimebu" || got.To != "martin" || !reflect.DeepEqual(got.ProposedAnswers, want) {
 				t.Fatalf("forwarded dm = %+v, want answers %#v", got, want)
+			}
+			wantQuestions := []types.OpenQuestion{{Question: "Pick one", Options: []string{"A", "B"}}}
+			if !reflect.DeepEqual(got.OpenQuestions, wantQuestions) {
+				t.Fatalf("open_questions = %#v, want %#v", got.OpenQuestions, wantQuestions)
 			}
 			w.Write([]byte(`{"id":1,"room":"dm:alice@aimebu:martin"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/rooms":
@@ -330,6 +342,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 		"to":               "martin",
 		"body":             "approve?",
 		"proposed_answers": []string{"Proceed", "Revise"},
+		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Options: []string{"A", "B"}}},
 	})
 	if _, err := handleToolCall(c, "bus_dm", args); err != nil {
 		t.Fatalf("handleToolCall bus_dm: %v", err)

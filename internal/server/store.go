@@ -797,7 +797,12 @@ func (s *store) emitSystemMessageTo(roomID, body string, targets []string) {
 	s.subMu.Unlock()
 }
 
-const maxProposedAnswers = 4
+const (
+	maxProposedAnswers       = 4
+	maxOpenQuestions         = 10
+	maxOpenQuestionOptions   = 8
+	maxOpenQuestionTextRunes = 500
+)
 
 func cleanProposedAnswers(in []string) []string {
 	if len(in) == 0 {
@@ -820,7 +825,53 @@ func cleanProposedAnswers(in []string) []string {
 	return out
 }
 
-func (s *store) roomSend(roomID, from, body string, needsAttention bool, proposedAnswers ...[]string) (int64, error) {
+func cleanOpenQuestions(in []types.OpenQuestion) []types.OpenQuestion {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]types.OpenQuestion, 0, min(len(in), maxOpenQuestions))
+	for _, q := range in {
+		question := truncateRunes(strings.TrimSpace(q.Question), maxOpenQuestionTextRunes)
+		if question == "" {
+			continue
+		}
+		options := make([]string, 0, min(len(q.Options), maxOpenQuestionOptions))
+		for _, opt := range q.Options {
+			opt = truncateRunes(strings.TrimSpace(opt), maxOpenQuestionTextRunes)
+			if opt == "" {
+				continue
+			}
+			options = append(options, opt)
+			if len(options) == maxOpenQuestionOptions {
+				break
+			}
+		}
+		if len(options) < 2 {
+			continue
+		}
+		out = append(out, types.OpenQuestion{Question: question, Options: options})
+		if len(out) == maxOpenQuestions {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
+}
+
+func (s *store) roomSend(roomID, from, body string, needsAttention bool, proposedAnswers []string, openQuestions []types.OpenQuestion) (int64, error) {
 	if !s.isMember(roomID, from) {
 		return 0, fmt.Errorf("agent %s is not a member of room %s", from, roomID)
 	}
@@ -865,9 +916,8 @@ func (s *store) roomSend(roomID, from, body string, needsAttention bool, propose
 		Targets:             targets,
 		NeedsHumanAttention: needsAttention,
 	}
-	if len(proposedAnswers) > 0 {
-		msg.ProposedAnswers = cleanProposedAnswers(proposedAnswers[0])
-	}
+	msg.ProposedAnswers = cleanProposedAnswers(proposedAnswers)
+	msg.OpenQuestions = cleanOpenQuestions(openQuestions)
 
 	s.mu.Lock()
 	s.messages[roomID] = append(s.messages[roomID], msg)

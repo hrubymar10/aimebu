@@ -21,15 +21,21 @@ type RoleInfo struct {
 }
 
 type Message struct {
-	ID                  int64    `json:"id"`
-	RoomID              string   `json:"room_id"`
-	From                string   `json:"from"`
-	FromKind            string   `json:"from_kind,omitempty"` // "ai", "human", or "system" — empty for legacy persisted messages
-	Body                string   `json:"body"`
-	CreatedAt           string   `json:"created_at"`
-	Targets             []string `json:"targets"`
-	NeedsHumanAttention bool     `json:"needs_human_attention,omitempty"`
-	ProposedAnswers     []string `json:"proposed_answers,omitempty"`
+	ID                  int64          `json:"id"`
+	RoomID              string         `json:"room_id"`
+	From                string         `json:"from"`
+	FromKind            string         `json:"from_kind,omitempty"` // "ai", "human", or "system" — empty for legacy persisted messages
+	Body                string         `json:"body"`
+	CreatedAt           string         `json:"created_at"`
+	Targets             []string       `json:"targets"`
+	NeedsHumanAttention bool           `json:"needs_human_attention,omitempty"`
+	ProposedAnswers     []string       `json:"proposed_answers,omitempty"`
+	OpenQuestions       []OpenQuestion `json:"open_questions,omitempty"`
+}
+
+type OpenQuestion struct {
+	Question string   `json:"question"`
+	Options  []string `json:"options"`
 }
 
 type Agent struct {
@@ -80,18 +86,20 @@ type LeaveRequest struct {
 }
 
 type RoomSendRequest struct {
-	From            string   `json:"from"`
-	Body            string   `json:"body"`
-	NeedsAttention  bool     `json:"needs_attention,omitempty"`
-	ProposedAnswers []string `json:"proposed_answers,omitempty"`
+	From            string         `json:"from"`
+	Body            string         `json:"body"`
+	NeedsAttention  bool           `json:"needs_attention,omitempty"`
+	ProposedAnswers []string       `json:"proposed_answers,omitempty"`
+	OpenQuestions   []OpenQuestion `json:"open_questions,omitempty"`
 }
 
 type DMRequest struct {
-	From            string   `json:"from"`
-	To              string   `json:"to"`
-	Body            string   `json:"body"`
-	NeedsAttention  bool     `json:"needs_attention,omitempty"`
-	ProposedAnswers []string `json:"proposed_answers,omitempty"`
+	From            string         `json:"from"`
+	To              string         `json:"to"`
+	Body            string         `json:"body"`
+	NeedsAttention  bool           `json:"needs_attention,omitempty"`
+	ProposedAnswers []string       `json:"proposed_answers,omitempty"`
+	OpenQuestions   []OpenQuestion `json:"open_questions,omitempty"`
 }
 
 // RegisterRequest is used by MCP clients. The server assigns the name and

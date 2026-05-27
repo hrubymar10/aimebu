@@ -13,6 +13,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/client"
+	"github.com/hrubymar10/aimebu/internal/types"
 )
 
 // detectHarness is a fallback used only when the AI does not pass `harness`
@@ -130,13 +131,18 @@ type inputSchema struct {
 }
 
 type property struct {
-	Type        string   `json:"type"`
-	Description string   `json:"description,omitempty"`
-	Items       *propRef `json:"items,omitempty"`
+	Type        string              `json:"type"`
+	Description string              `json:"description,omitempty"`
+	Items       *propRef            `json:"items,omitempty"`
+	Properties  map[string]property `json:"properties,omitempty"`
+	Required    []string            `json:"required,omitempty"`
 }
 
 type propRef struct {
-	Type string `json:"type"`
+	Type       string              `json:"type"`
+	Items      *propRef            `json:"items,omitempty"`
+	Properties map[string]property `json:"properties,omitempty"`
+	Required   []string            `json:"required,omitempty"`
 }
 
 type textContent struct {
@@ -177,6 +183,10 @@ var tools = []tool{
 				"body":             {Type: "string", Description: "Message content"},
 				"needs_attention":  {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert in the web UI and auto-subscribes any registered human not yet in the room."},
 				"proposed_answers": {Type: "array", Items: &propRef{Type: "string"}, Description: "Optional short answer buttons for the addressed recipient. Use 2-4 concise choices on human-blocking decision requests, such as Proceed, Revise, or Hold."},
+				"open_questions": {Type: "array", Description: "Optional structured multi-question choice form for addressed human readers. Use instead of prose Q1/Q2 blocks. Provide up to 10 questions; each question has question text and 2-8 option strings. The UI adds an Other free-text choice and derives Q numbers/letters from array order.", Items: &propRef{Type: "object", Required: []string{"question", "options"}, Properties: map[string]property{
+					"question": {Type: "string", Description: "Question text."},
+					"options":  {Type: "array", Items: &propRef{Type: "string"}, Description: "Choice labels; provide 2-8 non-empty options."},
+				}}},
 			},
 			Required: []string{"room", "body"},
 		},
@@ -235,6 +245,10 @@ var tools = []tool{
 				"body":             {Type: "string", Description: "Message content"},
 				"needs_attention":  {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert and auto-subscribes any registered human not yet in the DM room."},
 				"proposed_answers": {Type: "array", Items: &propRef{Type: "string"}, Description: "Optional short answer buttons for the addressed recipient. Use 2-4 concise choices on human-blocking decision requests, such as Proceed, Revise, or Hold."},
+				"open_questions": {Type: "array", Description: "Optional structured multi-question choice form for addressed human readers. Use instead of prose Q1/Q2 blocks. Provide up to 10 questions; each question has question text and 2-8 option strings. The UI adds an Other free-text choice and derives Q numbers/letters from array order.", Items: &propRef{Type: "object", Required: []string{"question", "options"}, Properties: map[string]property{
+					"question": {Type: "string", Description: "Question text."},
+					"options":  {Type: "array", Items: &propRef{Type: "string"}, Description: "Choice labels; provide 2-8 non-empty options."},
+				}}},
 			},
 			Required: []string{"to", "body"},
 		},
@@ -490,10 +504,11 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 
 	case "bus_say":
 		var p struct {
-			Room            string   `json:"room"`
-			Body            string   `json:"body"`
-			NeedsAttention  bool     `json:"needs_attention"`
-			ProposedAnswers []string `json:"proposed_answers"`
+			Room            string               `json:"room"`
+			Body            string               `json:"body"`
+			NeedsAttention  bool                 `json:"needs_attention"`
+			ProposedAnswers []string             `json:"proposed_answers"`
+			OpenQuestions   []types.OpenQuestion `json:"open_questions"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
@@ -506,6 +521,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			"body":             p.Body,
 			"needs_attention":  p.NeedsAttention,
 			"proposed_answers": p.ProposedAnswers,
+			"open_questions":   p.OpenQuestions,
 		})
 
 	case "bus_read":
@@ -543,10 +559,11 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 
 	case "bus_dm":
 		var p struct {
-			To              string   `json:"to"`
-			Body            string   `json:"body"`
-			NeedsAttention  bool     `json:"needs_attention"`
-			ProposedAnswers []string `json:"proposed_answers"`
+			To              string               `json:"to"`
+			Body            string               `json:"body"`
+			NeedsAttention  bool                 `json:"needs_attention"`
+			ProposedAnswers []string             `json:"proposed_answers"`
+			OpenQuestions   []types.OpenQuestion `json:"open_questions"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
@@ -557,6 +574,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			"body":             p.Body,
 			"needs_attention":  p.NeedsAttention,
 			"proposed_answers": p.ProposedAnswers,
+			"open_questions":   p.OpenQuestions,
 		})
 
 	case "bus_wait":

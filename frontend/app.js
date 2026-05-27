@@ -44,6 +44,9 @@
   let maxSeenMsgID = 0;      // highest message id seen via WS or HTTP — replay guard
   let attentionCounts = {};  // { roomID: number } — needs-attention messages per room
   let answeredProposedAnswers = {}; // { messageID: true } — local v1 double-send guard
+  let answeredOpenQuestions = {}; // { messageID: true } — local multi-question send guard
+  let openQuestionDrafts = {}; // { messageID: { [questionIndex]: { selector, value } } }
+  let openQuestionModalState = { open: false, messageID: null, currentIndex: 0 };
   let attentionTimers = {};        // { roomID: timeoutID } — pending 3s fade timers
   let attentionFocusListeners = {}; // { roomID: fn } — pending focus listener per room
   let notifSounds = [];      // sound list from GET /api/sounds
@@ -180,6 +183,13 @@
   const messageDebugStored = $('#message-debug-stored');
   const messageDebugViewer = $('#message-debug-viewer');
   const messageDebugStatus = $('#message-debug-status');
+  const openQuestionsModal = $('#open-questions-modal');
+  const openQuestionsModalOverlay = $('#open-questions-modal-overlay');
+  const openQuestionsModalCloseBtn = $('#open-questions-modal-close-btn');
+  const openQuestionsModalTitle = $('#open-questions-modal-title');
+  const openQuestionsModalSubtitle = $('#open-questions-modal-subtitle');
+  const openQuestionsModalBody = $('#open-questions-modal-body');
+  const openQuestionsModalFooter = $('#open-questions-modal-footer');
 
   const macrosListEl = $('#macros-list');
   const fleetsListEl = $('#fleets-list');
@@ -1997,7 +2007,7 @@
 
     if (!messageDebugState.open) {
       messageDebugModal.classList.add('hidden');
-      document.body.style.overflow = settingsModal.classList.contains('hidden') ? '' : 'hidden';
+      updateBodyModalLock();
       return;
     }
 
@@ -2007,7 +2017,7 @@
     var viewerFields = currentDebugViewerFields();
 
     messageDebugModal.classList.remove('hidden');
-    document.body.style.overflow = 'hidden';
+    updateBodyModalLock();
 
     if (messageDebugMessageSelect) {
       messageDebugMessageSelect.innerHTML = debugMessages.map(function (item) {
@@ -2067,6 +2077,12 @@
       if (roomMessages[i].id === messageID) return roomMessages[i];
     }
     return null;
+  }
+
+  function updateBodyModalLock() {
+    var settingsOpen = settingsModal && !settingsModal.classList.contains('hidden');
+    var roomSettingsOpen = roomSettingsModal && !roomSettingsModal.classList.contains('hidden');
+    document.body.style.overflow = (settingsOpen || roomSettingsOpen || messageDebugState.open || openQuestionModalState.open) ? 'hidden' : '';
   }
 
   function closeMessageDebugModal() {
@@ -3037,25 +3053,25 @@
     loadFleets();
     loadPrompts();
     loadRoles();
-    document.body.style.overflow = 'hidden';
+    updateBodyModalLock();
   }
 
   function closeSettings() {
     settingsModal.classList.add('hidden');
-    document.body.style.overflow = (messageDebugState.open || (roomSettingsModal && !roomSettingsModal.classList.contains('hidden'))) ? 'hidden' : '';
+    updateBodyModalLock();
   }
 
   function openRoomSettings() {
     if (!activeRoomID || !roomSettingsModal) return;
     renderRoomSettings();
     roomSettingsModal.classList.remove('hidden');
-    document.body.style.overflow = 'hidden';
+    updateBodyModalLock();
   }
 
   function closeRoomSettings() {
     if (!roomSettingsModal) return;
     roomSettingsModal.classList.add('hidden');
-    document.body.style.overflow = (messageDebugState.open || !settingsModal.classList.contains('hidden')) ? 'hidden' : '';
+    updateBodyModalLock();
   }
 
   function handleLocalRoomRemoval(roomID) {
@@ -3758,6 +3774,7 @@
 
     if (msgs.length === 0) {
       messageListEl.innerHTML = '<div class="empty-state">No messages in this room yet.</div>';
+      renderOpenQuestionsModal();
       return;
     }
 
@@ -3777,6 +3794,7 @@
       messageListEl.scrollTop = prevScrollTop + (messageListEl.scrollHeight - prevScrollHeight);
     }
     renderMessageDebugModal();
+    renderOpenQuestionsModal();
   }
 
   function chatMessageHTML(m) {
@@ -3803,6 +3821,7 @@
     var msgRoleKey = room && room.roles ? (room.roles[m.from] || '') : '';
     var msgRoleTag = roleBadgeHTML(msgRoleKey);
     var proposedAnswers = proposedAnswersHTML(m, room);
+    var openQuestions = openQuestionsHTML(m, room);
     var senderAttrs = fromAgent
       ? ' class="chat-msg-from-name agent-profile-link" data-profile-agent-id="' + esc(fromAgent.id) + '" data-profile-context="room" tabindex="0" role="button" aria-label="Show profile for ' + esc(fromAgent.id) + '"'
       : ' class="chat-msg-from-name"';
@@ -3825,6 +3844,7 @@
           '</div>' +
         '</div>' +
         proposedAnswers +
+        openQuestions +
       '</div>'
     );
   }
@@ -3841,6 +3861,291 @@
     });
     html += '</div>';
     return html;
+  }
+
+  function openQuestionDraftHasAnswer(draft) {
+    if (!draft || !draft.selector) return false;
+    if (draft.selector === 'other') return !!String(draft.value || '').trim();
+    return true;
+  }
+
+  function openQuestionsAnsweredCount(messageID) {
+    var drafts = openQuestionDrafts[String(messageID)] || {};
+    var count = 0;
+    Object.keys(drafts).forEach(function (key) {
+      if (openQuestionDraftHasAnswer(drafts[key])) count++;
+    });
+    return count;
+  }
+
+  function openQuestionOptionLetter(idx) {
+    return String.fromCharCode(97 + idx);
+  }
+
+  function openQuestionsHTML(m, room) {
+    if (!messageTargetsViewer(m, room)) return '';
+    var questions = Array.isArray(m.open_questions) ? m.open_questions : [];
+    if (!questions || !questions.length) return '';
+
+    var msgID = String(m.id);
+    var answered = !!answeredOpenQuestions[msgID];
+    var roomMessages = messages[m.room_id] || [];
+    var superseded = roomMessages.some(function (n) { return n.id > m.id && n.from_kind !== 'system'; });
+    var answeredCount = openQuestionsAnsweredCount(msgID);
+    var html = '<div class="open-questions-trigger' + (answered ? ' answered' : '') + '" data-msg-id="' + esc(msgID) + '">';
+    if (superseded && !answered) {
+      html += '<div class="open-questions-hint">Newer messages below</div>';
+    }
+    html += '<button class="open-questions-open" type="button" data-msg-id="' + esc(msgID) + '"' + (answered ? ' disabled' : '') + '>';
+    html += answered ? 'Answered' : 'Open Questions';
+    html += '<span class="open-questions-count">' + esc(String(answeredCount)) + '/' + esc(String(questions.length)) + '</span>';
+    html += '</button>';
+    html += '</div>';
+    return html;
+  }
+
+  function composeOpenQuestionsReply(msgID) {
+    var msg = (messages[activeRoomID] || []).find(function (m) { return String(m.id) === String(msgID); });
+    var questions = msg && Array.isArray(msg.open_questions) ? msg.open_questions : null;
+    if (!msg || !questions) return '';
+    var drafts = openQuestionDrafts[String(msgID)] || {};
+    var lines = [];
+    questions.forEach(function (q, qIdx) {
+      var draft = drafts[String(qIdx)];
+      if (!openQuestionDraftHasAnswer(draft)) return;
+      if (draft.selector === 'other') {
+        lines.push('Q' + (qIdx + 1) + ') other) ' + String(draft.value || '').trim());
+        return;
+      }
+      var optIdx = (q.options || []).findIndex(function (_, idx) { return openQuestionOptionLetter(idx) === draft.selector; });
+      if (optIdx >= 0) lines.push('Q' + (qIdx + 1) + ') ' + draft.selector + ') ' + q.options[optIdx]);
+    });
+    return lines.join('\n');
+  }
+
+  function currentOpenQuestionMessage() {
+    if (!openQuestionModalState.messageID) return null;
+    return findMessageInRoom(activeRoomID, parseInt(openQuestionModalState.messageID, 10));
+  }
+
+  function currentOpenQuestionList() {
+    var msg = currentOpenQuestionMessage();
+    return msg && Array.isArray(msg.open_questions) ? msg.open_questions : [];
+  }
+
+  function openQuestionAllAnswered(msgID, questions) {
+    return openQuestionsAnsweredCount(msgID) === questions.length;
+  }
+
+  function currentOpenQuestionSuperseded(msg) {
+    if (!msg) return false;
+    var roomMessages = messages[msg.room_id] || [];
+    return roomMessages.some(function (n) { return n.id > msg.id && n.from_kind !== 'system'; });
+  }
+
+  function setOpenQuestionDraft(msgID, qIdx, selector, value) {
+    var key = String(msgID);
+    if (!openQuestionDrafts[key]) openQuestionDrafts[key] = {};
+    openQuestionDrafts[key][String(qIdx)] = {
+      selector: selector,
+      value: value || '',
+    };
+  }
+
+  function refreshOpenQuestionsTrigger(msgID, questions) {
+    document.querySelectorAll('.open-questions-trigger').forEach(function (trigger) {
+      if (trigger.getAttribute('data-msg-id') !== String(msgID)) return;
+      var count = trigger.querySelector('.open-questions-count');
+      if (count) count.textContent = openQuestionsAnsweredCount(msgID) + '/' + questions.length;
+    });
+  }
+
+  function refreshOpenQuestionsModalIndicators() {
+    var msgID = openQuestionModalState.messageID;
+    var questions = currentOpenQuestionList();
+    if (!msgID || !questions.length) return;
+    var answeredCount = openQuestionsAnsweredCount(msgID);
+    var allAnswered = answeredCount === questions.length;
+    refreshOpenQuestionsTrigger(msgID, questions);
+    if (openQuestionsModalFooter) {
+      var progress = openQuestionsModalFooter.querySelector('.open-questions-progress');
+      if (progress) progress.textContent = answeredCount + '/' + questions.length + ' answered';
+    }
+    if (openQuestionsModalBody) {
+      openQuestionsModalBody.querySelectorAll('.open-questions-step[data-q-index]').forEach(function (step) {
+        var idx = step.getAttribute('data-q-index');
+        var stepDraft = (openQuestionDrafts[String(msgID)] || {})[String(idx)];
+        step.classList.toggle('answered', openQuestionDraftHasAnswer(stepDraft));
+      });
+      var sendStep = openQuestionsModalBody.querySelector('.open-questions-send-step');
+      if (sendStep) {
+        sendStep.disabled = !allAnswered;
+        sendStep.classList.toggle('answered', allAnswered);
+      }
+      var sendBtn = openQuestionsModalBody.querySelector('.open-questions-send');
+      if (sendBtn) sendBtn.disabled = !allAnswered || !!answeredOpenQuestions[String(msgID)];
+    }
+    if (openQuestionsModalFooter) {
+      var nextBtn = openQuestionsModalFooter.querySelector('.open-questions-next');
+      if (nextBtn) {
+        var qIdx = openQuestionModalState.currentIndex;
+        nextBtn.disabled = qIdx >= questions.length || (qIdx === questions.length - 1 && !allAnswered);
+      }
+    }
+  }
+
+  function renderOpenQuestionsModal(focusOther) {
+    if (!openQuestionsModal) return;
+
+    if (!openQuestionModalState.open) {
+      openQuestionsModal.classList.add('hidden');
+      updateBodyModalLock();
+      return;
+    }
+
+    var msg = currentOpenQuestionMessage();
+    var questions = currentOpenQuestionList();
+    if (!msg || !questions.length) {
+      closeOpenQuestionsModal();
+      return;
+    }
+
+    var msgID = String(msg.id);
+    var allAnswered = openQuestionAllAnswered(msgID, questions);
+    var qIdx = Math.max(0, Math.min(openQuestionModalState.currentIndex, questions.length));
+    openQuestionModalState.currentIndex = qIdx;
+    var onSendSheet = qIdx === questions.length;
+    var q = onSendSheet ? null : (questions[qIdx] || {});
+    var draft = onSendSheet ? {} : ((openQuestionDrafts[msgID] || {})[String(qIdx)] || {});
+    var otherSelected = draft.selector === 'other';
+    var currentAnswered = onSendSheet || openQuestionDraftHasAnswer(draft);
+    var superseded = currentOpenQuestionSuperseded(msg);
+    var name = 'open-question-modal-' + msgID + '-' + qIdx;
+
+    openQuestionsModal.classList.remove('hidden');
+    updateBodyModalLock();
+    if (openQuestionsModalTitle) openQuestionsModalTitle.textContent = 'Open Questions';
+    if (openQuestionsModalSubtitle) {
+      openQuestionsModalSubtitle.textContent = onSendSheet ? 'Ready to send from #' + msgID : 'Q' + (qIdx + 1) + ' of ' + questions.length + ' from #' + msgID;
+    }
+
+    var body = '';
+    if (superseded && !answeredOpenQuestions[msgID]) {
+      body += '<div class="open-questions-modal-hint">Newer messages below</div>';
+    }
+    body += '<div class="open-questions-steps" role="tablist" aria-label="Questions">';
+    questions.forEach(function (_, idx) {
+      var stepDraft = (openQuestionDrafts[msgID] || {})[String(idx)];
+      var stepAnswered = openQuestionDraftHasAnswer(stepDraft);
+      body += '<button class="open-questions-step' + (idx === qIdx ? ' active' : '') + (stepAnswered ? ' answered' : '') + '" type="button" data-q-index="' + esc(String(idx)) + '" aria-label="Question ' + esc(String(idx + 1)) + '">' + esc(String(idx + 1)) + '</button>';
+    });
+    body += '<button class="open-questions-step open-questions-send-step' + (onSendSheet ? ' active' : '') + (allAnswered ? ' answered' : '') + '" type="button" data-send-step="true" aria-label="Send answers"' + (!allAnswered ? ' disabled' : '') + '><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>';
+    body += '</div>';
+    if (onSendSheet) {
+      body += '<div class="open-question-send-sheet">';
+      body += '<div class="open-question-send-title">' + esc(String(openQuestionsAnsweredCount(msgID))) + '/' + esc(String(questions.length)) + ' answered</div>';
+      body += '<button class="btn btn-primary open-questions-send" type="button"' + (!allAnswered || answeredOpenQuestions[msgID] ? ' disabled' : '') + '>Send answers</button>';
+      body += '</div>';
+    } else {
+      body += '<fieldset class="open-question-sheet" data-msg-id="' + esc(msgID) + '" data-q-index="' + esc(String(qIdx)) + '">';
+      body += '<legend>Q' + esc(String(qIdx + 1)) + ') ' + esc(q.question || '') + '</legend>';
+      body += '<div class="open-question-options">';
+      (q.options || []).forEach(function (opt, optIdx) {
+        var letter = openQuestionOptionLetter(optIdx);
+        var inputID = name + '-' + letter;
+        var checked = draft.selector === letter;
+        body += '<label class="open-question-option" for="' + esc(inputID) + '">';
+        body += '<input id="' + esc(inputID) + '" type="radio" name="' + esc(name) + '" value="' + esc(letter) + '" data-selector="' + esc(letter) + '"' + (checked ? ' checked' : '') + '>';
+        body += '<span><strong>' + esc(letter) + ')</strong> ' + esc(opt) + '</span>';
+        body += '</label>';
+      });
+      var otherID = name + '-other';
+      body += '<label class="open-question-option open-question-other" for="' + esc(otherID) + '">';
+      body += '<input id="' + esc(otherID) + '" type="radio" name="' + esc(name) + '" value="other" data-selector="other"' + (otherSelected ? ' checked' : '') + '>';
+      body += '<span>Other</span>';
+      body += '<input class="open-question-other-input" type="text" data-q-index="' + esc(String(qIdx)) + '" value="' + esc(draft.value || '') + '" placeholder="Type answer"' + (!otherSelected ? ' disabled' : '') + '>';
+      body += '</label>';
+      body += '</div>';
+      body += '</fieldset>';
+    }
+    if (openQuestionsModalBody) openQuestionsModalBody.innerHTML = body;
+
+    if (openQuestionsModalFooter) {
+      openQuestionsModalFooter.innerHTML =
+        '<button class="btn btn-sm open-questions-back" type="button"' + (qIdx === 0 ? ' disabled' : '') + '>Back</button>' +
+        '<div class="open-questions-progress">' + esc(String(openQuestionsAnsweredCount(msgID))) + '/' + esc(String(questions.length)) + ' answered</div>' +
+        '<button class="btn btn-sm open-questions-next" type="button"' + (qIdx >= questions.length || (qIdx === questions.length - 1 && !allAnswered) ? ' disabled' : '') + '>Next</button>';
+    }
+
+    if (focusOther && otherSelected && openQuestionsModalBody) {
+      var otherInput = openQuestionsModalBody.querySelector('.open-question-other-input');
+      if (otherInput) {
+        otherInput.focus();
+        otherInput.setSelectionRange(otherInput.value.length, otherInput.value.length);
+      }
+    } else if (!currentAnswered && openQuestionsModalBody) {
+      var firstRadio = openQuestionsModalBody.querySelector('input[type="radio"]');
+      if (firstRadio) firstRadio.focus();
+    }
+  }
+
+  function openOpenQuestionsModal(msgID) {
+    if (answeredOpenQuestions[String(msgID)]) return;
+    var msg = findMessageInRoom(activeRoomID, parseInt(msgID, 10));
+    if (!msg || !Array.isArray(msg.open_questions) || !msg.open_questions.length) return;
+    openQuestionModalState.open = true;
+    openQuestionModalState.messageID = String(msgID);
+    var questions = msg.open_questions;
+    var current = openQuestionAllAnswered(String(msgID), questions)
+      ? questions.length
+      : Math.max(0, Math.min(openQuestionModalState.currentIndex || 0, questions.length - 1));
+    for (var i = 0; i < questions.length; i++) {
+      if (!openQuestionDraftHasAnswer((openQuestionDrafts[String(msgID)] || {})[String(i)])) {
+        current = i;
+        break;
+      }
+    }
+    openQuestionModalState.currentIndex = current;
+    renderOpenQuestionsModal();
+  }
+
+  function closeOpenQuestionsModal() {
+    openQuestionModalState.open = false;
+    openQuestionModalState.messageID = null;
+    openQuestionModalState.currentIndex = 0;
+    renderOpenQuestionsModal();
+  }
+
+  function setOpenQuestionModalIndex(idx) {
+    var questions = currentOpenQuestionList();
+    if (!questions.length) return;
+    openQuestionModalState.currentIndex = Math.max(0, Math.min(idx, questions.length));
+    renderOpenQuestionsModal(true);
+  }
+
+  function submitOpenQuestionsModal(e) {
+    var msgID = openQuestionModalState.messageID;
+    var questions = currentOpenQuestionList();
+    if (!msgID || !openQuestionAllAnswered(msgID, questions)) return;
+    var reply = composeOpenQuestionsReply(msgID);
+    if (!reply) return;
+    if (e && e.shiftKey) {
+      msgBodyInput.value = reply;
+      answeredOpenQuestions[String(msgID)] = true;
+      closeOpenQuestionsModal();
+      renderMessages();
+      msgBodyInput.focus();
+      msgBodyInput.setSelectionRange(msgBodyInput.value.length, msgBodyInput.value.length);
+      resizeMsgInput();
+      updateAcPopup();
+      return;
+    }
+    sendMessage(reply).then(function (res) {
+      if (!res) return;
+      answeredOpenQuestions[String(msgID)] = true;
+      closeOpenQuestionsModal();
+      renderMessages();
+    });
   }
 
   function appendMessage(msg) {
@@ -4302,6 +4607,10 @@
     });
   });
   document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && openQuestionsModal && !openQuestionsModal.classList.contains('hidden')) {
+      closeOpenQuestionsModal();
+      return;
+    }
     if (e.key === 'Escape' && !messageDebugModal.classList.contains('hidden')) {
       closeMessageDebugModal();
       return;
@@ -4561,6 +4870,72 @@
   if (messageDebugViewerSelect) {
     messageDebugViewerSelect.addEventListener('change', function () {
       loadMessageDebugViewer(messageDebugState.messageID, messageDebugViewerSelect.value);
+    });
+  }
+  if (openQuestionsModalOverlay) {
+    openQuestionsModalOverlay.addEventListener('click', closeOpenQuestionsModal);
+  }
+  if (openQuestionsModalCloseBtn) {
+    openQuestionsModalCloseBtn.addEventListener('click', closeOpenQuestionsModal);
+  }
+  if (openQuestionsModal) {
+    openQuestionsModal.addEventListener('click', function (e) {
+      var step = e.target.closest('.open-questions-step');
+      if (step) {
+        e.preventDefault();
+        if (step.hasAttribute('data-send-step')) {
+          submitOpenQuestionsModal(e);
+          return;
+        }
+        setOpenQuestionModalIndex(parseInt(step.getAttribute('data-q-index'), 10));
+        return;
+      }
+      var back = e.target.closest('.open-questions-back');
+      if (back) {
+        e.preventDefault();
+        setOpenQuestionModalIndex(openQuestionModalState.currentIndex - 1);
+        return;
+      }
+      var next = e.target.closest('.open-questions-next');
+      if (next) {
+        e.preventDefault();
+        setOpenQuestionModalIndex(openQuestionModalState.currentIndex + 1);
+        return;
+      }
+      var send = e.target.closest('.open-questions-send');
+      if (send) {
+        e.preventDefault();
+        submitOpenQuestionsModal(e);
+      }
+    });
+    openQuestionsModal.addEventListener('change', function (e) {
+      if (!e.target.matches('.open-question-sheet input[type="radio"]')) return;
+      var msgID = openQuestionModalState.messageID;
+      var qIdx = openQuestionModalState.currentIndex;
+      var selector = e.target.getAttribute('data-selector') || e.target.value;
+      var otherInput = openQuestionsModal.querySelector('.open-question-other-input');
+      var value = selector === 'other' && otherInput ? otherInput.value : '';
+      setOpenQuestionDraft(msgID, qIdx, selector, value);
+      refreshOpenQuestionsModalIndicators();
+      if (selector === 'other') {
+        renderOpenQuestionsModal(true);
+        return;
+      }
+      var questions = currentOpenQuestionList();
+      if (qIdx < questions.length - 1) {
+        setOpenQuestionModalIndex(qIdx + 1);
+      } else if (openQuestionAllAnswered(msgID, questions)) {
+        setOpenQuestionModalIndex(questions.length);
+      } else {
+        renderOpenQuestionsModal();
+      }
+    });
+    openQuestionsModal.addEventListener('input', function (e) {
+      if (!e.target.matches('.open-question-other-input')) return;
+      var radio = openQuestionsModal.querySelector('.open-question-sheet input[data-selector="other"]');
+      if (radio && !radio.checked) radio.checked = true;
+      setOpenQuestionDraft(openQuestionModalState.messageID, openQuestionModalState.currentIndex, 'other', e.target.value);
+      refreshOpenQuestionsModalIndicators();
     });
   }
 
@@ -5009,6 +5384,12 @@
         answeredProposedAnswers[String(answerMsgID)] = true;
         renderMessages();
       });
+      return;
+    }
+    var openQuestionOpen = e.target.closest('.open-questions-open');
+    if (openQuestionOpen) {
+      e.preventDefault();
+      openOpenQuestionsModal(openQuestionOpen.getAttribute('data-msg-id'));
       return;
     }
     var badge = e.target.closest('.chat-msg-id');

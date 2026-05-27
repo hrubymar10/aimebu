@@ -248,7 +248,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, "cannot send to reserved room or use reserved sender", http.StatusForbidden)
 			return
 		}
-		id, err := s.roomSend(roomID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers)
+		id, err := s.roomSend(roomID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
@@ -608,7 +608,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			return
 		}
 
-		id, err := s.roomSend(room.ID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers)
+		id, err := s.roomSend(room.ID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
@@ -1453,6 +1453,8 @@ Keep history clean: one commit per feature unless the human approves otherwise. 
 
 Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Deferral is only legitimate when (a) the work needs a new dependency that requires human approval, (b) it requires information or research the team does not currently have, or (c) it would inflate the diff by more than roughly 30 percent beyond the original intent. 'Risk' or 'complexity' alone is not a reason — spell out the specific risk and its mitigation; if the mitigation is straightforward, just do it. Default for borderline items is 'include now', not 'defer'.
 
+For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include only question text and option strings; the UI derives numbering/letters and adds Other.
+
 Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.`,
 
 		"worker": `You are the worker for this room.
@@ -1469,6 +1471,8 @@ While reviews are pending, you may answer factual clarification questions. Wait 
 
 Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Deferral is only legitimate when (a) the work needs a new dependency that requires human approval, (b) it requires information or research the team does not currently have, or (c) it would inflate the diff by more than roughly 30 percent beyond the original intent. 'Risk' or 'complexity' alone is not a reason — spell out the specific risk and its mitigation; if the mitigation is straightforward, just do it. Default for borderline items is 'include now', not 'defer'.
 
+For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include only question text and option strings; the UI derives numbering/letters and adds Other.
+
 Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.`,
 
 		"reviewer": `You are the reviewer for this room.
@@ -1484,6 +1488,8 @@ During long review passes, stay reachable with quick non-blocking bus_read check
 After fixes, re-review until the consolidated fix list is addressed without introducing unrelated changes.
 
 Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Deferral is only legitimate when (a) the work needs a new dependency that requires human approval, (b) it requires information or research the team does not currently have, or (c) it would inflate the diff by more than roughly 30 percent beyond the original intent. 'Risk' or 'complexity' alone is not a reason — spell out the specific risk and its mitigation; if the mitigation is straightforward, just do it. Default for borderline items is 'include now', not 'defer'.
+
+For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include only question text and option strings; the UI derives numbering/letters and adds Other.
 
 Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.`,
 
