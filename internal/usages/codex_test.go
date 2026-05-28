@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +104,81 @@ func TestCodexProviderFetchesAndNormalizesUsage(t *testing.T) {
 	}
 	if snap.Credits == nil || snap.Credits.Balance != 123.45 {
 		t.Fatalf("credits = %+v", snap.Credits)
+	}
+}
+
+func TestNormalizeCodexUsageIncludesSparkAdditionalWindows(t *testing.T) {
+	var raw codexUsageRaw
+	if err := json.Unmarshal([]byte(`{
+  "plan_type": "pro",
+  "rate_limit": {
+    "primary_window": {"used_percent": 22, "reset_at": 1892851200, "limit_window_seconds": 18000},
+    "secondary_window": {"used_percent": 43, "reset_at": 1893456000, "limit_window_seconds": 604800}
+  },
+  "additional_rate_limits": [
+    {
+      "limit_name": "GPT-5.3-Codex-Spark",
+      "metered_feature": "gpt_5_3_codex_spark",
+      "rate_limit": {
+        "primary_window": {"used_percent": 30, "reset_at": 1892854800, "limit_window_seconds": 18000},
+        "secondary_window": {"used_percent": 100, "reset_at": 1893459600, "limit_window_seconds": 604800}
+      }
+    }
+  ]
+}`), &raw); err != nil {
+		t.Fatal(err)
+	}
+	snap, detail, err := normalizeCodexUsage(raw, codexCredentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail != nil {
+		t.Fatalf("detail = %+v", detail)
+	}
+	gotKeys := make([]string, 0, len(snap.Windows))
+	for _, w := range snap.Windows {
+		gotKeys = append(gotKeys, w.Key)
+	}
+	wantKeys := []string{"session", "weekly", "codex_spark", "codex_spark_weekly"}
+	if !reflect.DeepEqual(gotKeys, wantKeys) {
+		t.Fatalf("window keys = %v, want %v", gotKeys, wantKeys)
+	}
+	if snap.Windows[2].PercentUsed != 30 || snap.Windows[3].PercentUsed != 100 {
+		t.Fatalf("spark windows = %+v", snap.Windows[2:])
+	}
+}
+
+func TestNormalizeCodexUsageIgnoresMalformedAdditionalLimits(t *testing.T) {
+	var raw codexUsageRaw
+	if err := json.Unmarshal([]byte(`{
+  "rate_limit": {
+    "primary_window": {"used_percent": 22, "reset_at": 1892851200, "limit_window_seconds": 18000}
+  },
+  "additional_rate_limits": [
+    "bad",
+    {
+      "limit_name": "GPT-5.3-Codex-Spark Weekly",
+      "metered_feature": "gpt_5_3_codex_spark",
+      "rate_limit": {
+        "primary_window": {"used_percent": 80, "reset_at": 1893459600, "limit_window_seconds": 604800}
+      }
+    },
+    42
+  ]
+}`), &raw); err != nil {
+		t.Fatal(err)
+	}
+	snap, _, err := normalizeCodexUsage(raw, codexCredentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotKeys := make([]string, 0, len(snap.Windows))
+	for _, w := range snap.Windows {
+		gotKeys = append(gotKeys, w.Key)
+	}
+	wantKeys := []string{"session", "codex_spark_weekly"}
+	if !reflect.DeepEqual(gotKeys, wantKeys) {
+		t.Fatalf("window keys = %v, want %v", gotKeys, wantKeys)
 	}
 }
 
@@ -448,6 +524,9 @@ func TestCodexAuthMissingAndScopeMissing(t *testing.T) {
 	}
 	if snap.Status != StatusAuthMissing {
 		t.Fatalf("missing auth status = %s", snap.Status)
+	}
+	if snap.Error != codexLoginRequired {
+		t.Fatalf("missing auth error = %q, want %q", snap.Error, codexLoginRequired)
 	}
 
 	root := t.TempDir()

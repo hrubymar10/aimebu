@@ -53,7 +53,9 @@ and `OPTIONS`) when a transient transport failure occurs or the provider
 returns HTTP `408`, `429`, `500`, `502`, `503`, or `504`. The retry uses
 exponential backoff starting at one second, caps delay at ten seconds, honors
 `Retry-After` when present, and stops immediately if the request context is
-canceled. Non-idempotent auth and device-flow `POST` requests are not retried.
+canceled. Non-idempotent auth and device-flow `POST` requests are not retried
+by default; Claude Code OAuth refresh is the narrow exception and retries one
+`429` response when the request body can be replayed.
 
 ## Provider Ordering
 

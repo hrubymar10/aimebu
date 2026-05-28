@@ -2471,6 +2471,8 @@
     if (key === 'weekly') return 'Weekly';
     if (key === 'weekly_opus') return 'Weekly (Opus)';
     if (key === 'weekly_sonnet') return 'Weekly (Sonnet)';
+    if (key === 'codex_spark') return 'Codex Spark';
+    if (key === 'codex_spark_weekly') return 'Codex Spark Weekly';
     if (key === 'premium') return 'Premium interactions';
     if (key === 'chat') return 'Chat';
     return key || 'Window';

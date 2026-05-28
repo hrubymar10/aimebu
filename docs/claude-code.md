@@ -111,7 +111,9 @@ Sonnet windows when Claude returns them.
 Common failure states:
 
 - `auth_missing`: `~/.claude/.credentials.json` is missing or OAuth refresh
-  failed. Run `claude` to refresh the login.
+  failed. Run `claude` to refresh the login. When the OAuth token refresh is
+  rate-limited with `429`, aimebu retries once and honors `Retry-After` before
+  surfacing this state.
 - `scope_missing`: the token was accepted by OAuth but rejected by the usage
   endpoint.
 - `fetch_error`: the upstream usage response changed shape or returned an

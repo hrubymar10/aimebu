@@ -87,18 +87,23 @@ See [README.md](../README.md#mcp-tools) for the full tool list.
 The `aimebu usages codex` CLI command and Settings → Usages read Codex quota
 data from Codex's OAuth file at `$CODEX_HOME/auth.json`, or
 `~/.codex/auth.json` when `CODEX_HOME` is unset. API-key-only auth is not
-enough for the ChatGPT usage endpoint; run `codex` to complete OAuth login.
+enough for the ChatGPT usage endpoint; run `codex login --device-auth` to
+complete OAuth login.
 
 Codex can be enabled from Settings → Usages. The same normalized snapshot is
-shown in the web Usages sidebar and in `aimebu usages codex --json`.
+shown in the web Usages sidebar and in `aimebu usages codex --json`. The
+`rate_limit.primary_window` and `rate_limit.secondary_window` fields map to
+the `session` and `weekly` lanes. When the usage response includes Spark
+entries in `additional_rate_limits[]`, aimebu adds stable `codex_spark` and
+`codex_spark_weekly` windows without changing the existing lanes.
 
 Common failure states:
 
 - `auth_missing`: `auth.json` is missing, contains only an API key, or OAuth
   refresh failed. A `401` from the usage endpoint reloads `auth.json` once in
   case another process refreshed the login mid-request, then triggers one
-  OAuth refresh retry before this state is shown. Run `codex` to refresh the
-  OAuth login.
+  OAuth refresh retry before this state is shown. Run
+  `codex login --device-auth` to refresh the OAuth login.
 - `scope_missing`: the OAuth token lacks access to the usage endpoint.
 - `fetch_error`: the upstream usage response changed shape. If numbers look
   wrong or windows disappear, inspect `error_detail.fields`; window shapes

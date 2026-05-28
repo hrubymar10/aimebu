@@ -236,6 +236,65 @@ func TestClaudeProviderRefreshesAfterUnauthorizedAndPreservesCredentials(t *test
 	assertMode(t, path, 0o600)
 }
 
+func TestClaudeRefreshRetriesRateLimitWithReplayableBody(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeClaudeAuthFixture(t, home, `{
+  "claudeAiOauth": {
+    "accessToken": "old-access",
+    "refreshToken": "old-refresh",
+    "expiresAt": 1000
+  }
+}`)
+	usageCalls := 0
+	refreshCalls := 0
+	withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case claudeUsageURL:
+			usageCalls++
+			if usageCalls == 1 {
+				if got := req.Header.Get("Authorization"); got != "Bearer old-access" {
+					t.Fatalf("first usage Authorization = %q", got)
+				}
+				return httpJSON(http.StatusUnauthorized, `{"error":"expired"}`), nil
+			}
+			if got := req.Header.Get("Authorization"); got != "Bearer new-access" {
+				t.Fatalf("second usage Authorization = %q", got)
+			}
+			return httpJSON(200, `{"five_hour":{"utilization":1,"resets_at":"2030-01-01T00:00:00Z"}}`), nil
+		case claudeRefreshURL:
+			refreshCalls++
+			data, _ := io.ReadAll(req.Body)
+			form, err := url.ParseQuery(string(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if form.Get("refresh_token") != "old-refresh" {
+				t.Fatalf("refresh form = %s", data)
+			}
+			if refreshCalls == 1 {
+				resp := httpJSON(http.StatusTooManyRequests, `{"error":"rate_limited"}`)
+				resp.Header.Set("Retry-After", "0")
+				return resp, nil
+			}
+			return httpJSON(200, `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}`), nil
+		default:
+			t.Fatalf("unexpected URL %s", req.URL)
+			return nil, nil
+		}
+	})
+	snap, err := NewClaudeCodeProvider().Fetch(context.Background(), NewStoreAt(t.TempDir()))
+	if err != nil || snap.Status != StatusOK {
+		t.Fatalf("Fetch = %+v err=%v", snap, err)
+	}
+	if usageCalls != 2 {
+		t.Fatalf("usage calls = %d, want 2", usageCalls)
+	}
+	if refreshCalls != 2 {
+		t.Fatalf("refresh calls = %d, want 2", refreshCalls)
+	}
+}
+
 func TestClaudeAuthMissingAndScopeMissing(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	snap, err := NewClaudeCodeProvider().Fetch(context.Background(), NewStoreAt(t.TempDir()))

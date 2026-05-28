@@ -23,6 +23,7 @@ const (
 	codexRefreshURL       = "https://auth.openai.com/oauth/token"
 	codexUsageURL         = "https://chatgpt.com/backend-api/wham/usage"
 	codexClientID         = "app_EMoamEEZ73f0CkXaXp7hrann"
+	codexLoginRequired    = "Codex CLI is not signed in. Run `codex login --device-auth`, then refresh."
 
 	jsonShapeDetailMaxFields = 50
 )
@@ -147,7 +148,7 @@ func loadCodexAuthSnapshot(path string) (codexAuthSnapshot, *ErrorDetail, error)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return codexAuthSnapshot{}, fieldDetail("auth.json", "missing"), errors.New("Codex auth.json not found. Run `codex` to log in.")
+			return codexAuthSnapshot{}, fieldDetail("auth.json", "missing"), errors.New(codexLoginRequired)
 		}
 		return codexAuthSnapshot{}, nil, errors.New("Codex auth.json could not be read.")
 	}
@@ -162,7 +163,7 @@ func loadCodexAuth(path string) (codexCredentials, *ErrorDetail, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return codexCredentials{}, fieldDetail("auth.json", "missing"), errors.New("Codex auth.json not found. Run `codex` to log in.")
+			return codexCredentials{}, fieldDetail("auth.json", "missing"), errors.New(codexLoginRequired)
 		}
 		return codexCredentials{}, nil, errors.New("Codex auth.json could not be read.")
 	}
@@ -184,7 +185,7 @@ func parseCodexAuthData(data []byte) (codexCredentials, *ErrorDetail, error) {
 		AccountID:    firstNonEmpty(raw.Tokens.AccountID, raw.Tokens.AccountIDC),
 	}
 	if creds.AccessToken == "" || creds.RefreshToken == "" {
-		return codexCredentials{}, fieldDetail("auth.json.tokens", "missing_oauth_tokens"), errors.New("Codex auth.json exists but contains no OAuth tokens.")
+		return codexCredentials{}, fieldDetail("auth.json.tokens", "missing_oauth_tokens"), errors.New(codexLoginRequired)
 	}
 	if t := parseCodexTime(raw.LastRefresh); t != nil {
 		creds.LastRefresh = t
@@ -310,9 +311,10 @@ func patchTokenValue(tokens map[string]json.RawMessage, snakeKey, camelKey, valu
 }
 
 type codexUsageRaw struct {
-	PlanType  string             `json:"plan_type"`
-	RateLimit codexRateLimitRaw  `json:"rate_limit"`
-	Credits   codexCreditDetails `json:"credits"`
+	PlanType             string                       `json:"plan_type"`
+	RateLimit            codexRateLimitRaw            `json:"rate_limit"`
+	AdditionalRateLimits codexAdditionalRateLimitList `json:"additional_rate_limits"`
+	Credits              codexCreditDetails           `json:"credits"`
 }
 
 type codexRateLimitRaw struct {
@@ -324,6 +326,31 @@ type codexWindowRaw struct {
 	UsedPercent        float64 `json:"used_percent"`
 	ResetAt            int64   `json:"reset_at"`
 	LimitWindowSeconds int64   `json:"limit_window_seconds"`
+}
+
+type codexAdditionalRateLimitRaw struct {
+	LimitName      string            `json:"limit_name"`
+	MeteredFeature string            `json:"metered_feature"`
+	RateLimit      codexRateLimitRaw `json:"rate_limit"`
+}
+
+type codexAdditionalRateLimitList []codexAdditionalRateLimitRaw
+
+func (l *codexAdditionalRateLimitList) UnmarshalJSON(data []byte) error {
+	var items []json.RawMessage
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil
+	}
+	out := make([]codexAdditionalRateLimitRaw, 0, len(items))
+	for _, item := range items {
+		var raw codexAdditionalRateLimitRaw
+		if err := json.Unmarshal(item, &raw); err != nil {
+			continue
+		}
+		out = append(out, raw)
+	}
+	*l = out
+	return nil
 }
 
 type codexCreditDetails struct {
@@ -401,8 +428,9 @@ func normalizeCodexUsage(raw codexUsageRaw, creds codexCredentials) (Snapshot, *
 	if len(windows) == 0 {
 		return Snapshot{}, detailOrNil(detail), errors.New("Codex usage response did not include recognized rate-limit windows.")
 	}
+	windows = append(windows, codexAdditionalWindows(raw.AdditionalRateLimits)...)
 	ordered := make([]Window, 0, len(windows))
-	for _, want := range []string{"session", "weekly"} {
+	for _, want := range []string{"session", "weekly", "codex_spark", "codex_spark_weekly"} {
 		for _, w := range windows {
 			if w.Key == want {
 				ordered = append(ordered, w)
@@ -422,6 +450,50 @@ func normalizeCodexUsage(raw codexUsageRaw, creds codexCredentials) (Snapshot, *
 		detail.Fields["credits.balance"] = raw.Credits.BalanceDetail
 	}
 	return snap, detailOrNil(detail), nil
+}
+
+func codexAdditionalWindows(entries []codexAdditionalRateLimitRaw) []Window {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]Window, 0, 2)
+	seen := map[string]bool{}
+	add := func(w *codexWindowRaw) {
+		if w == nil {
+			return
+		}
+		key := codexAdditionalWindowKey(w.LimitWindowSeconds)
+		if key == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		reset := time.Unix(w.ResetAt, 0).UTC()
+		out = append(out, Window{Key: key, PercentUsed: w.UsedPercent, ResetAt: &reset})
+	}
+	for _, entry := range entries {
+		if !codexAdditionalLimitIsSpark(entry) {
+			continue
+		}
+		add(entry.RateLimit.PrimaryWindow)
+		add(entry.RateLimit.SecondaryWindow)
+	}
+	return out
+}
+
+func codexAdditionalLimitIsSpark(entry codexAdditionalRateLimitRaw) bool {
+	return strings.Contains(strings.ToLower(entry.LimitName), "spark") ||
+		strings.Contains(strings.ToLower(entry.MeteredFeature), "spark")
+}
+
+func codexAdditionalWindowKey(seconds int64) string {
+	switch {
+	case seconds > 0 && seconds <= int64((24*time.Hour)/time.Second):
+		return "codex_spark"
+	case seconds >= int64((6*24*time.Hour)/time.Second) && seconds <= int64((31*24*time.Hour)/time.Second):
+		return "codex_spark_weekly"
+	default:
+		return ""
+	}
 }
 
 func codexWindowKey(seconds int64) string {

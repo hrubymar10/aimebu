@@ -168,7 +168,11 @@ func refreshClaudeAuth(ctx context.Context, creds claudeCredentials) (claudeCred
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	resp, err := usageHTTPClient.Do(req)
+	resp, err := doWithRetry(ctx, usageHTTPClient, req, RetryPolicy{
+		MaxRetries:           1,
+		RetryableStatusCodes: []int{http.StatusTooManyRequests},
+		RetryableMethods:     []string{http.MethodPost},
+	})
 	if err != nil {
 		return creds, nil, errors.New("Claude OAuth refresh request failed.")
 	}

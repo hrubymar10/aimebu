@@ -148,6 +148,43 @@ func TestDoWithRetrySkipsNonIdempotentMethod(t *testing.T) {
 	}
 }
 
+func TestDoWithRetryRetriesExplicitReplayablePost(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		body, _ := io.ReadAll(r.Body)
+		if string(body) != "refresh=token" {
+			t.Fatalf("body = %q", body)
+		}
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "0")
+			http.Error(w, "try again", http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL, strings.NewReader("refresh=token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delays []time.Duration
+	policy := testRetryPolicy(&delays)
+	policy.RetryableMethods = []string{http.MethodPost}
+	resp, err := doWithRetry(context.Background(), server.Client(), req, policy)
+	if err != nil {
+		t.Fatalf("doWithRetry: %v", err)
+	}
+	defer resp.Body.Close()
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+	if len(delays) != 1 || delays[0] != 0 {
+		t.Fatalf("delays = %v, want [0s]", delays)
+	}
+}
+
 func TestDoWithRetryReturnsContextErrorDuringBackoff(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "retry", http.StatusServiceUnavailable)

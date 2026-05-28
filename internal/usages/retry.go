@@ -43,7 +43,11 @@ func doWithRetry(ctx context.Context, client *http.Client, req *http.Request, po
 			return nil, err
 		}
 
-		resp, err := client.Do(req.Clone(ctx))
+		attemptReq, err := cloneRequestForRetry(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := client.Do(attemptReq)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
@@ -93,11 +97,17 @@ func (p RetryPolicy) shouldRetryError(req *http.Request, attempt int, err error)
 	if !p.retryableMethod(req.Method) || attempt >= p.MaxRetries {
 		return false
 	}
+	if !retryCanReplayBody(req) {
+		return false
+	}
 	return isTransientTransportError(err)
 }
 
 func (p RetryPolicy) shouldRetryStatus(req *http.Request, attempt int, statusCode int) bool {
 	if !p.retryableMethod(req.Method) || attempt >= p.MaxRetries {
+		return false
+	}
+	if !retryCanReplayBody(req) {
 		return false
 	}
 	return p.retryableStatus(statusCode)
@@ -185,6 +195,26 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+func cloneRequestForRetry(ctx context.Context, req *http.Request) (*http.Request, error) {
+	clone := req.Clone(ctx)
+	if req.Body == nil {
+		return clone, nil
+	}
+	if req.GetBody == nil {
+		return clone, nil
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	clone.Body = body
+	return clone, nil
+}
+
+func retryCanReplayBody(req *http.Request) bool {
+	return req.Body == nil || req.GetBody != nil
 }
 
 func drainAndClose(resp *http.Response) {
