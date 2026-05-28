@@ -40,6 +40,11 @@ func TestClaudeCodeStateDetectorDetect(t *testing.T) {
 			want: "idle",
 		},
 		{
+			name: "agent composer ready signal with cursor positioning",
+			line: "\x1b[3G\x1b[95m⏵⏵\x1b[6Gbypass\x1b[13Gpermissions\x1b[25Gon\x1b[37m (shift+tab\x1b[39Gto\x1b[42Gcycle)\x1b[49G·\x1b[51G←\x1b[53Gfor\x1b[57Gagents\x1b[39m\r\r",
+			want: "idle",
+		},
+		{
 			name: "plain markdown star is ignored",
 			line: "* bullet from transcript",
 			want: "",

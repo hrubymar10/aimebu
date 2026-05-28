@@ -597,6 +597,13 @@ func TestAgentPTYReadySignalConstant(t *testing.T) {
 	}
 }
 
+func TestAgentPTYReadySignalAllowsCursorPositioning(t *testing.T) {
+	line := "\x1b[3G\x1b[95m⏵⏵\x1b[6Gbypass\x1b[13Gpermissions\x1b[25Gon\x1b[37m (shift+tab\x1b[39Gto\x1b[42Gcycle)\x1b[49G·\x1b[51G←\x1b[53Gfor\x1b[57Gagents\x1b[39m\r\r"
+	if !agentPTYHasReadySignal([]byte(line)) {
+		t.Fatalf("split-rendered ready signal was not detected: %q", line)
+	}
+}
+
 func TestAgentPTYWaitCanaryDismissesTrustModalBeforeReady(t *testing.T) {
 	master, slave, err := pty.Open()
 	if err != nil {

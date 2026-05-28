@@ -29,6 +29,7 @@ const (
 
 var agentPTYSubmitDelay = 150 * time.Millisecond
 var agentPTYRegistrationStallTimeout = 30 * time.Second
+var agentPTYReadyNeedle = strings.ToLower(strings.ReplaceAll(agentPTYReadySignal, " ", ""))
 
 // agentCommandForPTY creates an exec.Cmd for PTY spawning. Unlike agentCommand,
 // stdout and stderr are NOT pre-piped: pty.Start wires them through the
@@ -48,7 +49,6 @@ func agentCommandForPTY(command, args, env []string) *exec.Cmd {
 // Returns a non-nil error if the timeout expires, the PTY closes (EOF = child
 // exited before the ready signal), or an unexpected read error occurs.
 func agentPTYWaitCanary(ptyFile *os.File, dst io.Writer, timeout time.Duration) error {
-	readySignal := []byte(agentPTYReadySignal)
 	deadline := time.Now().Add(timeout)
 	var seen []byte
 	trustModalDismissed := false
@@ -58,7 +58,7 @@ func agentPTYWaitCanary(ptyFile *os.File, dst io.Writer, timeout time.Duration) 
 		return fmt.Errorf("PTY: failed to set nonblocking mode: %w", err)
 	}
 	defer func() { _ = syscall.SetNonblock(fd, false) }()
-	for !bytes.Contains(seen, readySignal) && time.Now().Before(deadline) {
+	for !agentPTYHasReadySignal(seen) && time.Now().Before(deadline) {
 		n, err := syscall.Read(fd, buf)
 		if n > 0 {
 			chunk := buf[:n]
@@ -88,18 +88,26 @@ func agentPTYWaitCanary(ptyFile *os.File, dst io.Writer, timeout time.Duration) 
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	if !bytes.Contains(seen, readySignal) {
+	if !agentPTYHasReadySignal(seen) {
 		return fmt.Errorf("PTY: timed out waiting for %q ready signal", agentPTYReadySignal)
 	}
 	return nil
 }
 
+func agentPTYHasReadySignal(b []byte) bool {
+	if bytes.Contains(b, []byte(agentPTYReadySignal)) {
+		return true
+	}
+	normalized := strings.ToLower(agentPTYNormalizeForScreenDetection(b))
+	return strings.Contains(normalized, agentPTYReadyNeedle)
+}
+
 func agentPTYHasTrustModal(b []byte) bool {
-	normalized := strings.ToLower(agentPTYNormalizeForModalDetection(b))
+	normalized := strings.ToLower(agentPTYNormalizeForScreenDetection(b))
 	return strings.Contains(normalized, agentPTYTrustModalNeedle)
 }
 
-func agentPTYNormalizeForModalDetection(b []byte) string {
+func agentPTYNormalizeForScreenDetection(b []byte) string {
 	var out strings.Builder
 	out.Grow(len(b))
 	for i := 0; i < len(b); i++ {
