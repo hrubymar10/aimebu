@@ -1712,6 +1712,16 @@ body {
   overflow-wrap: anywhere;
 }
 
+.open-questions-description {
+  margin: -2px 0 14px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .open-question-options {
   display: flex;
   flex-direction: column;

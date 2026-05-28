@@ -183,9 +183,10 @@ var tools = []tool{
 				"body":             {Type: "string", Description: "Message content"},
 				"needs_attention":  {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert in the web UI and auto-subscribes any registered human not yet in the room."},
 				"proposed_answers": {Type: "array", Items: &propRef{Type: "string"}, Description: "Optional short answer buttons for the addressed recipient. Use 2-4 concise choices on human-blocking decision requests, such as Proceed, Revise, or Hold."},
-				"open_questions": {Type: "array", Description: "Optional structured multi-question choice form for addressed human readers. Use instead of prose Q1/Q2 blocks. Provide up to 10 questions; each question has question text and 2-8 option strings. The UI adds an Other free-text choice and derives Q numbers/letters from array order.", Items: &propRef{Type: "object", Required: []string{"question", "options"}, Properties: map[string]property{
-					"question": {Type: "string", Description: "Question text."},
-					"options":  {Type: "array", Items: &propRef{Type: "string"}, Description: "Choice labels; provide 2-8 non-empty options."},
+				"open_questions": {Type: "array", Description: "Optional structured multi-question choice form for addressed human readers. Use instead of prose Q1/Q2 blocks. Provide up to 10 questions; each question has question text, optional description context, and 2-8 option strings. The UI adds an Other free-text choice and derives Q numbers/letters from array order.", Items: &propRef{Type: "object", Required: []string{"question", "options"}, Properties: map[string]property{
+					"question":    {Type: "string", Description: "Question text."},
+					"description": {Type: "string", Description: "Optional context shown below the question in the Open Questions modal."},
+					"options":     {Type: "array", Items: &propRef{Type: "string"}, Description: "Choice labels; provide 2-8 non-empty options."},
 				}}},
 			},
 			Required: []string{"room", "body"},
@@ -245,9 +246,10 @@ var tools = []tool{
 				"body":             {Type: "string", Description: "Message content"},
 				"needs_attention":  {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert and auto-subscribes any registered human not yet in the DM room."},
 				"proposed_answers": {Type: "array", Items: &propRef{Type: "string"}, Description: "Optional short answer buttons for the addressed recipient. Use 2-4 concise choices on human-blocking decision requests, such as Proceed, Revise, or Hold."},
-				"open_questions": {Type: "array", Description: "Optional structured multi-question choice form for addressed human readers. Use instead of prose Q1/Q2 blocks. Provide up to 10 questions; each question has question text and 2-8 option strings. The UI adds an Other free-text choice and derives Q numbers/letters from array order.", Items: &propRef{Type: "object", Required: []string{"question", "options"}, Properties: map[string]property{
-					"question": {Type: "string", Description: "Question text."},
-					"options":  {Type: "array", Items: &propRef{Type: "string"}, Description: "Choice labels; provide 2-8 non-empty options."},
+				"open_questions": {Type: "array", Description: "Optional structured multi-question choice form for addressed human readers. Use instead of prose Q1/Q2 blocks. Provide up to 10 questions; each question has question text, optional description context, and 2-8 option strings. The UI adds an Other free-text choice and derives Q numbers/letters from array order.", Items: &propRef{Type: "object", Required: []string{"question", "options"}, Properties: map[string]property{
+					"question":    {Type: "string", Description: "Question text."},
+					"description": {Type: "string", Description: "Optional context shown below the question in the Open Questions modal."},
+					"options":     {Type: "array", Items: &propRef{Type: "string"}, Description: "Choice labels; provide 2-8 non-empty options."},
 				}}},
 			},
 			Required: []string{"to", "body"},

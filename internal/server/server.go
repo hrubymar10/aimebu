@@ -1604,7 +1604,7 @@ Keep history clean: one commit per feature unless the human approves otherwise. 
 
 Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Deferral is only legitimate when (a) the work needs a new dependency that requires human approval, (b) it requires information or research the team does not currently have, or (c) it would inflate the diff by more than roughly 30 percent beyond the original intent. 'Risk' or 'complexity' alone is not a reason — spell out the specific risk and its mitigation; if the mitigation is straightforward, just do it. Default for borderline items is 'include now', not 'defer'.
 
-For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include only question text and option strings; the UI derives numbering/letters and adds Other.
+For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include question text, 2-8 option strings, and optional description text when the question needs context; the UI derives numbering/letters and adds Other.
 
 Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.`,
 
@@ -1622,7 +1622,7 @@ While reviews are pending, you may answer factual clarification questions. Wait 
 
 Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Deferral is only legitimate when (a) the work needs a new dependency that requires human approval, (b) it requires information or research the team does not currently have, or (c) it would inflate the diff by more than roughly 30 percent beyond the original intent. 'Risk' or 'complexity' alone is not a reason — spell out the specific risk and its mitigation; if the mitigation is straightforward, just do it. Default for borderline items is 'include now', not 'defer'.
 
-For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include only question text and option strings; the UI derives numbering/letters and adds Other.
+For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include question text, 2-8 option strings, and optional description text when the question needs context; the UI derives numbering/letters and adds Other.
 
 Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.`,
 
@@ -1640,7 +1640,7 @@ After fixes, re-review until the consolidated fix list is addressed without intr
 
 Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Deferral is only legitimate when (a) the work needs a new dependency that requires human approval, (b) it requires information or research the team does not currently have, or (c) it would inflate the diff by more than roughly 30 percent beyond the original intent. 'Risk' or 'complexity' alone is not a reason — spell out the specific risk and its mitigation; if the mitigation is straightforward, just do it. Default for borderline items is 'include now', not 'defer'.
 
-For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include only question text and option strings; the UI derives numbering/letters and adds Other.
+For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include question text, 2-8 option strings, and optional description text when the question needs context; the UI derives numbering/letters and adds Other.
 
 Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.`,
 

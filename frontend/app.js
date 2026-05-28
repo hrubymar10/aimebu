@@ -4106,6 +4106,26 @@
     return html;
   }
 
+  /*
+   * Open Questions Reply addressing fixtures:
+   * - Room member [tina@aimebu] -> prefix is "@tina"
+   * - Room members [tina@aimebu, tina@other] -> prefix falls back to "@tina@aimebu"
+   */
+  function senderHandleFor(msg) {
+    var fullID = String(msg.from || '');
+    if (!fullID) return '';
+    var slug = fullID.split('@')[0];
+    var room = (rooms || []).find(function (r) { return r.id === msg.room_id; });
+    var members = room ? (room.members || []) : [];
+    var collisions = 0;
+    for (var i = 0; i < members.length; i++) {
+      if (String(members[i]).split('@')[0] === slug) collisions++;
+    }
+    // Bare slug only when exactly one room member matches. Collision (>1) or
+    // sender-left-room (0) both fall back to the full ID for safety.
+    return collisions === 1 ? slug : fullID;
+  }
+
   function composeOpenQuestionsReply(msgID) {
     var msg = (messages[activeRoomID] || []).find(function (m) { return String(m.id) === String(msgID); });
     var questions = msg && Array.isArray(msg.open_questions) ? msg.open_questions : null;
@@ -4122,6 +4142,9 @@
       var optIdx = (q.options || []).findIndex(function (_, idx) { return openQuestionOptionLetter(idx) === draft.selector; });
       if (optIdx >= 0) lines.push('Q' + (qIdx + 1) + ') ' + draft.selector + ') ' + q.options[optIdx]);
     });
+    if (msg.from && msg.from_kind !== 'system' && lines.length) {
+      lines.unshift('@' + senderHandleFor(msg), '');
+    }
     return lines.join('\n');
   }
 
@@ -4249,8 +4272,16 @@
       body += '<button class="btn btn-primary open-questions-send" type="button"' + (!allAnswered || answeredOpenQuestions[msgID] ? ' disabled' : '') + '>Send answers</button>';
       body += '</div>';
     } else {
+      /*
+       * Open Questions fixtures:
+       * - description renders below the Q title and above option radios.
+       * - submitted answers to tina@aimebu start with "@tina@aimebu\n\nQ1)".
+       */
       body += '<fieldset class="open-question-sheet" data-msg-id="' + esc(msgID) + '" data-q-index="' + esc(String(qIdx)) + '">';
       body += '<legend>Q' + esc(String(qIdx + 1)) + ') ' + esc(q.question || '') + '</legend>';
+      if (q.description) {
+        body += '<div class="open-questions-description md-rendered">' + renderMarkdown(String(q.description)) + '</div>';
+      }
       body += '<div class="open-question-options">';
       (q.options || []).forEach(function (opt, optIdx) {
         var letter = openQuestionOptionLetter(optIdx);

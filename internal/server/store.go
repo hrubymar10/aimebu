@@ -817,10 +817,11 @@ func (s *store) emitSystemMessageTo(roomID, body string, targets []string) {
 }
 
 const (
-	maxProposedAnswers       = 4
-	maxOpenQuestions         = 10
-	maxOpenQuestionOptions   = 8
-	maxOpenQuestionTextRunes = 500
+	maxProposedAnswers              = 4
+	maxOpenQuestions                = 10
+	maxOpenQuestionOptions          = 8
+	maxOpenQuestionTextRunes        = 500
+	maxOpenQuestionDescriptionRunes = 1000
 )
 
 func cleanProposedAnswers(in []string) []string {
@@ -851,6 +852,7 @@ func cleanOpenQuestions(in []types.OpenQuestion) []types.OpenQuestion {
 	out := make([]types.OpenQuestion, 0, min(len(in), maxOpenQuestions))
 	for _, q := range in {
 		question := truncateRunes(strings.TrimSpace(q.Question), maxOpenQuestionTextRunes)
+		description := truncateRunes(strings.TrimSpace(q.Description), maxOpenQuestionDescriptionRunes)
 		if question == "" {
 			continue
 		}
@@ -868,7 +870,11 @@ func cleanOpenQuestions(in []types.OpenQuestion) []types.OpenQuestion {
 		if len(options) < 2 {
 			continue
 		}
-		out = append(out, types.OpenQuestion{Question: question, Options: options})
+		cleaned := types.OpenQuestion{Question: question, Options: options}
+		if description != "" {
+			cleaned.Description = description
+		}
+		out = append(out, cleaned)
 		if len(out) == maxOpenQuestions {
 			break
 		}

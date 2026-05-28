@@ -279,7 +279,7 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 			if !reflect.DeepEqual(got.ProposedAnswers, want) {
 				t.Fatalf("proposed_answers = %#v, want %#v", got.ProposedAnswers, want)
 			}
-			wantQuestions := []types.OpenQuestion{{Question: "Pick one", Options: []string{"A", "B"}}}
+			wantQuestions := []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}}
 			if !reflect.DeepEqual(got.OpenQuestions, wantQuestions) {
 				t.Fatalf("open_questions = %#v, want %#v", got.OpenQuestions, wantQuestions)
 			}
@@ -298,7 +298,7 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 		"body":             "@martin approve?",
 		"needs_attention":  true,
 		"proposed_answers": []string{"Proceed", "Hold"},
-		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Options: []string{"A", "B"}}},
+		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}},
 	})
 	if _, err := handleToolCall(c, "bus_say", args); err != nil {
 		t.Fatalf("handleToolCall bus_say: %v", err)
@@ -324,7 +324,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 			if got.From != "alice@aimebu" || got.To != "martin" || !reflect.DeepEqual(got.ProposedAnswers, want) {
 				t.Fatalf("forwarded dm = %+v, want answers %#v", got, want)
 			}
-			wantQuestions := []types.OpenQuestion{{Question: "Pick one", Options: []string{"A", "B"}}}
+			wantQuestions := []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}}
 			if !reflect.DeepEqual(got.OpenQuestions, wantQuestions) {
 				t.Fatalf("open_questions = %#v, want %#v", got.OpenQuestions, wantQuestions)
 			}
@@ -342,7 +342,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 		"to":               "martin",
 		"body":             "approve?",
 		"proposed_answers": []string{"Proceed", "Revise"},
-		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Options: []string{"A", "B"}}},
+		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}},
 	})
 	if _, err := handleToolCall(c, "bus_dm", args); err != nil {
 		t.Fatalf("handleToolCall bus_dm: %v", err)

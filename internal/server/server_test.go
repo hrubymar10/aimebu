@@ -1790,14 +1790,16 @@ func TestOpenQuestionsRoundTripCleanupAndPersistence(t *testing.T) {
 	}
 
 	longText := strings.Repeat("x", maxOpenQuestionTextRunes+10)
+	longDescription := strings.Repeat("d", maxOpenQuestionDescriptionRunes+10)
 	sendBody, _ := json.Marshal(map[string]any{
 		"from": agent.ID,
 		"body": "@tester choose",
 		"open_questions": []map[string]any{
-			{"question": " First? ", "options": []string{" A ", "", "B", "C", "D", "E", "F", "G", "H", "I"}},
+			{"question": " First? ", "description": " Context for first. ", "options": []string{" A ", "", "B", "C", "D", "E", "F", "G", "H", "I"}},
 			{"question": "drop one option", "options": []string{"only"}},
 			{"question": "", "options": []string{"A", "B"}},
-			{"question": longText, "options": []string{longText, "B"}},
+			{"question": longText, "description": longDescription, "options": []string{longText, "B"}},
+			{"question": "trim blank description", "description": "   ", "options": []string{"A", "B"}},
 		},
 	})
 	resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(sendBody))
@@ -1828,14 +1830,17 @@ func TestOpenQuestionsRoundTripCleanupAndPersistence(t *testing.T) {
 	}
 	wantFirstOptions := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
 	got := data.Messages[0].OpenQuestions
-	if len(got) != 2 {
-		t.Fatalf("open_questions len = %d, want 2: %#v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("open_questions len = %d, want 3: %#v", len(got), got)
 	}
-	if got[0].Question != "First?" || !reflect.DeepEqual(got[0].Options, wantFirstOptions) {
-		t.Fatalf("first open question = %#v, want question First? options %#v", got[0], wantFirstOptions)
+	if got[0].Question != "First?" || got[0].Description != "Context for first." || !reflect.DeepEqual(got[0].Options, wantFirstOptions) {
+		t.Fatalf("first open question = %#v, want question First? description and options %#v", got[0], wantFirstOptions)
 	}
-	if len([]rune(got[1].Question)) != maxOpenQuestionTextRunes || len([]rune(got[1].Options[0])) != maxOpenQuestionTextRunes {
+	if len([]rune(got[1].Question)) != maxOpenQuestionTextRunes || len([]rune(got[1].Description)) != maxOpenQuestionDescriptionRunes || len([]rune(got[1].Options[0])) != maxOpenQuestionTextRunes {
 		t.Fatalf("long open question was not truncated to %d runes: %#v", maxOpenQuestionTextRunes, got[1])
+	}
+	if got[2].Description != "" {
+		t.Fatalf("blank open question description = %q, want empty", got[2].Description)
 	}
 	if !data.Messages[0].AddressedToMe {
 		t.Fatal("expected addressed_to_me=true for addressed open-question message")

@@ -35,8 +35,9 @@ type Message struct {
 }
 
 type OpenQuestion struct {
-	Question string   `json:"question"`
-	Options  []string `json:"options"`
+	Question    string   `json:"question"`
+	Description string   `json:"description,omitempty"`
+	Options     []string `json:"options"`
 }
 
 type Attachment struct {
