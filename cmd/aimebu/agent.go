@@ -61,6 +61,11 @@ const (
 var agentRegistrationLookupTimeout = 30 * time.Second
 
 func agentRegistrationMissingError(harness string) error {
+	listCommand, docsPath := agentHarnessMCPHint(harness)
+	return fmt.Errorf("spawned %s session did not call `bus_register` -- verify `%s` shows aimebu and points at an executable reachable from the harness process. See %s", harness, listCommand, docsPath)
+}
+
+func agentHarnessMCPHint(harness string) (string, string) {
 	listCommand := "the harness MCP server list"
 	docsPath := "the harness documentation"
 	switch harness {
@@ -74,7 +79,7 @@ func agentRegistrationMissingError(harness string) error {
 		listCommand = "cat ~/.pi/agent/mcp.json"
 		docsPath = "docs/pi.md"
 	}
-	return fmt.Errorf("spawned %s session did not call `bus_register` -- verify `%s` shows aimebu and points at an executable reachable from the harness process. See %s", harness, listCommand, docsPath)
+	return listCommand, docsPath
 }
 
 var (
@@ -929,7 +934,7 @@ func agentResolveResume(resumeID, resumeName, name, harness string, sessions []a
 // session bootstrap.
 //
 // For claude-code: PTY interactive mode. Prompt is written to the PTY
-// after the ❯ ready canary is seen, not via argv. Session ID is pre-generated
+// after the agent-ready composer signal is seen, not via argv. Session ID is pre-generated
 // driver-side (--session-id confirmed to work in interactive mode). No
 // stream-json flags: PTY mode runs the normal interactive UI; turn completion
 // is signalled by process exit (context-cap hit), not per-turn result events.
@@ -965,7 +970,7 @@ func agentBootstrapArgs(harness, prompt, sessionID, aimebuURL string, userArgs [
 // agentResumeArgs returns argv for resuming an established session.
 //
 // For claude-code: PTY interactive mode. --resume carries the session
-// ID; prompt is written to the PTY after the ❯ ready canary. No stream-json
+// ID; prompt is written to the PTY after the agent-ready composer signal. No stream-json
 // flags.
 // For codex and pi: prompt is the final positional argument.
 func agentResumeArgs(harness, sessionID, prompt, aimebuURL string, userArgs []string, modelSlug string) []string {

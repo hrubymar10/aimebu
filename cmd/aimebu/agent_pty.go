@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,16 +18,17 @@ import (
 const (
 	agentPTYCols = 80
 	agentPTYRows = 24
-	// agentPTYCanary is the ❯ prompt character (U+276F) that claude's interactive
-	// mode emits when it is ready for the next user input. Detected in the startup
-	// output to confirm claude is ready before the bootstrap/resume prompt is sent.
-	agentPTYCanary = "\xe2\x9d\xaf"
-	// agentPTYStartupTimeout is the maximum time to wait for the initial ❯ canary
+	// agentPTYReadySignal is rendered by claude-code's agent-aware chat UI once
+	// first-run modals are gone and the composer is ready for input.
+	agentPTYReadySignal      = "← for agents"
+	agentPTYTrustModalNeedle = "externalclaude.mdfileimports"
+	// agentPTYStartupTimeout is the maximum time to wait for the ready signal
 	// during bootstrap or resume startup before declaring a spawn failure.
 	agentPTYStartupTimeout = 15 * time.Second
 )
 
 var agentPTYSubmitDelay = 150 * time.Millisecond
+var agentPTYRegistrationStallTimeout = 30 * time.Second
 
 // agentCommandForPTY creates an exec.Cmd for PTY spawning. Unlike agentCommand,
 // stdout and stderr are NOT pre-piped: pty.Start wires them through the
@@ -39,40 +41,87 @@ func agentCommandForPTY(command, args, env []string) *exec.Cmd {
 	return cmd
 }
 
-// agentPTYWaitCanary reads from ptyFile until the ❯ input-ready canary appears
-// or timeout expires. All bytes read are copied to dst.
+// agentPTYWaitCanary reads from ptyFile until claude-code's agent-ready
+// composer signal appears or timeout expires. All bytes read are copied to dst.
+// Known first-run modals are dismissed before returning, because their
+// highlight cursor can look like a prompt while the composer is not ready.
 // Returns a non-nil error if the timeout expires, the PTY closes (EOF = child
-// exited before the canary), or an unexpected read error occurs.
+// exited before the ready signal), or an unexpected read error occurs.
 func agentPTYWaitCanary(ptyFile *os.File, dst io.Writer, timeout time.Duration) error {
-	canary := []byte(agentPTYCanary)
+	readySignal := []byte(agentPTYReadySignal)
 	deadline := time.Now().Add(timeout)
 	var seen []byte
+	trustModalDismissed := false
 	buf := make([]byte, 1024)
-	for !bytes.Contains(seen, canary) && time.Now().Before(deadline) {
-		_ = ptyFile.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-		n, err := ptyFile.Read(buf)
+	fd := int(ptyFile.Fd())
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		return fmt.Errorf("PTY: failed to set nonblocking mode: %w", err)
+	}
+	defer func() { _ = syscall.SetNonblock(fd, false) }()
+	for !bytes.Contains(seen, readySignal) && time.Now().Before(deadline) {
+		n, err := syscall.Read(fd, buf)
 		if n > 0 {
 			chunk := buf[:n]
 			seen = append(seen, chunk...)
 			if dst != nil {
 				_, _ = dst.Write(chunk)
 			}
+			if len(seen) > 64*1024 {
+				seen = append([]byte(nil), seen[len(seen)-64*1024:]...)
+			}
+			if !trustModalDismissed && agentPTYHasTrustModal(seen) {
+				// The known external-imports trust modal appears at most once for
+				// a project; dismiss it once, then keep waiting for the composer.
+				if _, writeErr := syscall.Write(fd, []byte{'\r'}); writeErr != nil {
+					return fmt.Errorf("PTY: failed to dismiss claude-code trust modal: %w", writeErr)
+				}
+				trustModalDismissed = true
+			}
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return fmt.Errorf("PTY: closed before ready prompt (child likely exited)")
+				return fmt.Errorf("PTY: closed before ready signal (child likely exited)")
 			}
-			if !errors.Is(err, os.ErrDeadlineExceeded) {
+			if !errors.Is(err, syscall.EAGAIN) {
 				return fmt.Errorf("PTY read error: %w", err)
 			}
-			// os.ErrDeadlineExceeded is expected — polling interval expired, loop continues.
+			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	_ = ptyFile.SetReadDeadline(time.Time{})
-	if !bytes.Contains(seen, canary) {
-		return fmt.Errorf("PTY: timed out waiting for ❯ ready prompt")
+	if !bytes.Contains(seen, readySignal) {
+		return fmt.Errorf("PTY: timed out waiting for %q ready signal", agentPTYReadySignal)
 	}
 	return nil
+}
+
+func agentPTYHasTrustModal(b []byte) bool {
+	normalized := strings.ToLower(agentPTYNormalizeForModalDetection(b))
+	return strings.Contains(normalized, agentPTYTrustModalNeedle)
+}
+
+func agentPTYNormalizeForModalDetection(b []byte) string {
+	var out strings.Builder
+	out.Grow(len(b))
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if c == 0x1b {
+			i++
+			if i < len(b) && b[i] == '[' {
+				for i+1 < len(b) {
+					i++
+					if b[i] >= 0x40 && b[i] <= 0x7e {
+						break
+					}
+				}
+			}
+			continue
+		}
+		if c < 0x20 || c == 0x7f || c == ' ' {
+			continue
+		}
+		out.WriteByte(c)
+	}
+	return out.String()
 }
 
 // agentPTYWritePrompt writes text to the PTY, waits briefly for Claude to
@@ -94,6 +143,37 @@ func agentPTYWritePrompt(w io.Writer, text string, debug *agentDebugLog) {
 	}
 	if _, err := io.WriteString(w, "\r"); err != nil {
 		debug.log("stdin_write_error", map[string]any{"error": err.Error(), "mode": "pty"})
+	}
+}
+
+func agentPTYRegistrationStalledError(harness string) error {
+	listCommand, docsPath := agentHarnessMCPHint(harness)
+	return fmt.Errorf("spawned %s session did not call `bus_register` within %s after prompt delivery -- verify the harness reached the chat composer and `%s` shows aimebu. See %s",
+		harness,
+		agentPTYRegistrationStallTimeout,
+		listCommand,
+		docsPath,
+	)
+}
+
+func agentPTYLogRegistrationStalled(debug *agentDebugLog, harness string, timeout time.Duration) {
+	debug.log("registration_stalled", map[string]any{
+		"harness":    harness,
+		"timeout_ms": timeout.Milliseconds(),
+	})
+}
+
+func agentPTYTerminateStalledProcess(cmd *exec.Cmd, doneCh <-chan error) {
+	if cmd.Process != nil {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+	}
+	select {
+	case <-doneCh:
+	case <-time.After(2 * time.Second):
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-doneCh
 	}
 }
 
@@ -128,7 +208,7 @@ func agentPTYOutputWriter(debug *agentDebugLog) *agentDebugStdoutWriter {
 //     works without any output parsing. (--session-id confirmed to work in
 //     interactive mode via smoke test with claude 2.1.140.)
 //  2. Spawns claude under a pseudo-TTY.
-//  3. Waits for the ❯ ready-prompt canary, then writes the bootstrap prompt.
+//  3. Waits for the agent-ready composer signal, then writes the bootstrap prompt.
 //  4. Drains PTY output to debug logging via a background goroutine.
 //  5. Polls for agent-name registration on the bus.
 //  6. Waits for the process to exit (context-cap hit or session end).
@@ -152,7 +232,7 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 	agentID := newAgentIDProvider("")
 	stateWriter := startAgentStatePusher(context.Background(), aimebuURL, agentID, newStateDetector(harness))
 	ptyOutput := newAgentDebugStdoutWriter(debug, stateWriter)
-	// Wait for the ❯ canary while keeping the TUI hidden from the user.
+	// Wait for the composer-ready signal while keeping the TUI hidden from the user.
 	if err := agentPTYWaitCanary(ptyFile, ptyOutput, agentPTYStartupTimeout); err != nil {
 		_ = stateWriter.Close()
 		_ = ptyFile.Close()
@@ -181,23 +261,53 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 	go func() { doneCh <- cmd.Wait() }()
 
 	var waitErr error
-	select {
-	case sig := <-sigCh:
-		_ = stateWriter.Close()
-		shutdownName := knownName
-		if shutdownName == "" {
-			select {
-			case shutdownName = <-nameCh:
-			default:
+	var agentName string
+	registrationStallTimer := time.NewTimer(agentPTYRegistrationStallTimeout)
+	defer registrationStallTimer.Stop()
+	stallCh := registrationStallTimer.C
+	registrationCh := (<-chan string)(nameCh)
+	for waiting := true; waiting; {
+		select {
+		case sig := <-sigCh:
+			_ = stateWriter.Close()
+			shutdownName := knownName
+			if shutdownName == "" {
+				select {
+				case shutdownName = <-nameCh:
+				default:
+				}
 			}
+			if shutdownName == "" {
+				shutdownName = agentLookupName(aimebuURL, spawnTag, time.Second)
+			}
+			agentGracefulShutdown(aimebuURL, spawnTag, shutdownName, cmd, doneCh, sigCh, debug, sig)
+			_ = ptyFile.Close()
+			return "", shutdownName, agentErrInterrupted
+		case agentName = <-registrationCh:
+			if agentName == "" {
+				agentPTYLogRegistrationStalled(debug, harness, agentPTYRegistrationStallTimeout)
+				agentPTYTerminateStalledProcess(cmd, doneCh)
+				_ = stateWriter.Close()
+				_ = ptyFile.Close()
+				return "", "", agentPTYRegistrationStalledError(harness)
+			}
+			if !registrationStallTimer.Stop() {
+				select {
+				case <-registrationStallTimer.C:
+				default:
+				}
+			}
+			stallCh = nil
+			registrationCh = nil
+		case <-stallCh:
+			agentPTYLogRegistrationStalled(debug, harness, agentPTYRegistrationStallTimeout)
+			agentPTYTerminateStalledProcess(cmd, doneCh)
+			_ = stateWriter.Close()
+			_ = ptyFile.Close()
+			return "", "", agentPTYRegistrationStalledError(harness)
+		case waitErr = <-doneCh:
+			waiting = false
 		}
-		if shutdownName == "" {
-			shutdownName = agentLookupName(aimebuURL, spawnTag, time.Second)
-		}
-		agentGracefulShutdown(aimebuURL, spawnTag, shutdownName, cmd, doneCh, sigCh, debug, sig)
-		_ = ptyFile.Close()
-		return "", shutdownName, agentErrInterrupted
-	case waitErr = <-doneCh:
 	}
 
 	_ = ptyFile.Close()
@@ -217,7 +327,9 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 		return "", "", waitErr
 	}
 
-	agentName := <-nameCh
+	if agentName == "" {
+		agentName = <-nameCh
+	}
 	if agentName == "" {
 		_ = stateWriter.Close()
 		return "", "", agentRegistrationMissingError(harness)
@@ -229,11 +341,11 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 }
 
 // agentResumeLoopPTY is the PTY-mode resume loop for claude-code.
-// Each iteration spawns a new claude process via --resume, waits for the ❯
-// canary, writes "keep listening" (or a recovery prompt), drains PTY output
-// to debug logging, and waits for the process to exit (context-cap hit). Preflight
-// checks and recovery accounting mirror agentResumeLoop; the only difference
-// is I/O (PTY canary-wait and pty.Write instead of stdin output).
+// Each iteration spawns a new claude process via --resume, waits for the
+// composer-ready signal, writes "keep listening" (or a recovery prompt), drains
+// PTY output to debug logging, and waits for the process to exit (context-cap
+// hit). Preflight checks and recovery accounting mirror agentResumeLoop; the
+// only difference is I/O (PTY ready-wait and pty.Write instead of stdin output).
 func agentResumeLoopPTY(harness string, command []string, sessionID, agentName string, rooms []string, assumeRole string, env []string, aimebuURL string, sigCh <-chan os.Signal, debug *agentDebugLog) {
 	retries := 0
 	backoff := time.Second
@@ -244,6 +356,7 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 		rooms = nil
 	}
 
+respawnLoop:
 	for {
 		recoveryClass := agentRecoveryNormalEnd
 		if agentName != "" {
@@ -258,7 +371,7 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 				fmt.Fprintf(os.Stderr, "aimebu agent: server unreachable before respawn, retry %d/%d in %v\n", consecutiveFailureCount, agentRecoveryFailureCap, backoff)
 				time.Sleep(backoff)
 				backoff = agentPTYBackoff(backoff)
-				continue
+				continue respawnLoop
 			}
 		}
 
@@ -293,7 +406,7 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 
 		stateWriter := startAgentStatePusher(context.Background(), aimebuURL, newAgentIDProvider(agentFullID(agentName)), newStateDetector(harness))
 		ptyOutput := newAgentDebugStdoutWriter(debug, stateWriter)
-		// Wait for ❯ before writing the prompt, keeping the TUI hidden.
+		// Wait for the composer-ready signal before writing the prompt.
 		if err := agentPTYWaitCanary(ptyFile, ptyOutput, agentPTYStartupTimeout); err != nil {
 			_ = stateWriter.Close()
 			_ = ptyFile.Close()
@@ -304,7 +417,7 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 				os.Exit(1)
 			}
 			agentPushState(aimebuURL, agentFullID(agentName), "respawning")
-			fmt.Fprintf(os.Stderr, "aimebu agent: PTY canary timeout on %s (retry %d/%d in %v): %v\n", runMode, retries, agentRecoveryFailureCap, backoff, err)
+			fmt.Fprintf(os.Stderr, "aimebu agent: PTY ready-signal timeout on %s (retry %d/%d in %v): %v\n", runMode, retries, agentRecoveryFailureCap, backoff, err)
 			time.Sleep(backoff)
 			backoff = agentPTYBackoff(backoff)
 			continue
@@ -316,44 +429,85 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 
 		doneCh := make(chan error, 1)
 		go func() { doneCh <- cmd.Wait() }()
+		var registrationCh <-chan string
+		if recoveryClass == agentRecoveryRegistrationLost {
+			ch := make(chan string, 1)
+			registrationCh = ch
+			go func() {
+				ch <- agentLookupName(aimebuURL, spawnTag, agentPTYRegistrationStallTimeout)
+			}()
+		}
 
-		select {
-		case sig := <-sigCh:
-			_ = stateWriter.Close()
-			agentGracefulShutdown(aimebuURL, "", agentName, cmd, doneCh, sigCh, debug, sig)
-			_ = ptyFile.Close()
-			return
-		case err = <-doneCh:
-			_ = ptyFile.Close()
-			_ = stateWriter.Close()
-			agentLogHarnessExit(debug, err, time.Since(startedAt), nil)
-
-			// PTY mode: rely on exit code; no result-event rescue.
-			if err == nil {
-				retries = 0
-				backoff = time.Second
-				lastFailure = agentRecoveryNormalEnd
-				consecutiveFailureCount = 0
-				if agentName != "" {
-					fmt.Fprintf(os.Stderr, "aimebu agent: session %s (%s) ended, resuming…\n", sessionID, agentName)
-				} else {
-					fmt.Fprintf(os.Stderr, "aimebu agent: session %s ended, resuming…\n", sessionID)
+		for waiting := true; waiting; {
+			select {
+			case sig := <-sigCh:
+				_ = stateWriter.Close()
+				agentGracefulShutdown(aimebuURL, "", agentName, cmd, doneCh, sigCh, debug, sig)
+				_ = ptyFile.Close()
+				return
+			case n := <-registrationCh:
+				if n == "" {
+					agentPTYLogRegistrationStalled(debug, harness, agentPTYRegistrationStallTimeout)
+					agentPTYTerminateStalledProcess(cmd, doneCh)
+					_ = ptyFile.Close()
+					_ = stateWriter.Close()
+					fmt.Fprintf(os.Stderr, "aimebu agent: %v\n", agentPTYRegistrationStalledError(harness))
+					retries++
+					if retries > agentRecoveryFailureCap {
+						fmt.Fprintf(os.Stderr, "aimebu agent: too many consecutive harness failures, giving up\n")
+						agentPushState(aimebuURL, agentFullID(agentName), "error")
+						os.Exit(1)
+					}
+					agentPushState(aimebuURL, agentFullID(agentName), "respawning")
+					time.Sleep(backoff)
+					backoff = agentPTYBackoff(backoff)
+					continue respawnLoop
 				}
-				agentPushState(aimebuURL, agentFullID(agentName), "respawning")
-				continue
+				agentName = n
+				registrationCh = nil
+			case err = <-doneCh:
+				if registrationCh != nil {
+					select {
+					case n := <-registrationCh:
+						if n != "" {
+							agentName = n
+						}
+					default:
+					}
+					registrationCh = nil
+				}
+				waiting = false
 			}
-			retries++
-			if retries > agentRecoveryFailureCap {
-				fmt.Fprintf(os.Stderr, "aimebu agent: too many consecutive harness failures, giving up\n")
-				agentPushState(aimebuURL, agentFullID(agentName), "error")
-				os.Exit(1)
+		}
+		_ = ptyFile.Close()
+		_ = stateWriter.Close()
+		agentLogHarnessExit(debug, err, time.Since(startedAt), nil)
+
+		// PTY mode: rely on exit code; no result-event rescue.
+		if err == nil {
+			retries = 0
+			backoff = time.Second
+			lastFailure = agentRecoveryNormalEnd
+			consecutiveFailureCount = 0
+			if agentName != "" {
+				fmt.Fprintf(os.Stderr, "aimebu agent: session %s (%s) ended, resuming…\n", sessionID, agentName)
+			} else {
+				fmt.Fprintf(os.Stderr, "aimebu agent: session %s ended, resuming…\n", sessionID)
 			}
 			agentPushState(aimebuURL, agentFullID(agentName), "respawning")
-			fmt.Fprintf(os.Stderr, "aimebu agent: %s failed (exit %d), retry %d/%d in %v\n",
-				runMode, agentExitCode(err), retries, agentRecoveryFailureCap, backoff)
-			time.Sleep(backoff)
-			backoff = agentPTYBackoff(backoff)
+			continue
 		}
+		retries++
+		if retries > agentRecoveryFailureCap {
+			fmt.Fprintf(os.Stderr, "aimebu agent: too many consecutive harness failures, giving up\n")
+			agentPushState(aimebuURL, agentFullID(agentName), "error")
+			os.Exit(1)
+		}
+		agentPushState(aimebuURL, agentFullID(agentName), "respawning")
+		fmt.Fprintf(os.Stderr, "aimebu agent: %s failed (exit %d), retry %d/%d in %v\n",
+			runMode, agentExitCode(err), retries, agentRecoveryFailureCap, backoff)
+		time.Sleep(backoff)
+		backoff = agentPTYBackoff(backoff)
 	}
 }
 

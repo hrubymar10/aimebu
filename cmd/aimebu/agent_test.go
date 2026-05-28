@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/creack/pty"
 	"github.com/hrubymar10/aimebu/internal/config"
 )
 
@@ -531,7 +532,7 @@ func TestAgentBootstrapArgsClaudeCode(t *testing.T) {
 			t.Errorf("bootstrap args missing %q; got: %s", must, joined)
 		}
 	}
-	// PTY mode: no stream-json flags; prompt goes through the PTY after the ❯ canary.
+	// PTY mode: no stream-json flags; prompt goes through the PTY after the ready signal.
 	for _, forbidden := range []string{
 		"--output-format",
 		"--input-format",
@@ -561,7 +562,7 @@ func TestAgentResumeArgsClaudeCode(t *testing.T) {
 		}
 	}
 	// PTY mode: no stream-json flags; "keep listening" goes through the PTY after
-	// the ❯ canary. --session-id must NOT appear alongside --resume.
+	// the ready signal. --session-id must NOT appear alongside --resume.
 	for _, forbidden := range []string{
 		"--output-format",
 		"--input-format",
@@ -590,12 +591,84 @@ func TestAgentClaudeCodeArgsDoNotInjectMCPConfig(t *testing.T) {
 	}
 }
 
-func TestAgentPTYCanaryConstant(t *testing.T) {
-	// agentPTYCanary must be the UTF-8 encoding of U+276F (❯), the character
-	// claude's interactive mode emits when it is ready for input.
-	const wantRune = '❯'
-	if agentPTYCanary != string(wantRune) {
-		t.Errorf("agentPTYCanary = %q, want %q (U+276F)", agentPTYCanary, string(wantRune))
+func TestAgentPTYReadySignalConstant(t *testing.T) {
+	if agentPTYReadySignal != "← for agents" {
+		t.Errorf("agentPTYReadySignal = %q, want %q", agentPTYReadySignal, "← for agents")
+	}
+}
+
+func TestAgentPTYWaitCanaryDismissesTrustModalBeforeReady(t *testing.T) {
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer slave.Close()
+
+	var copied bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- agentPTYWaitCanary(master, &copied, time.Second)
+	}()
+
+	modal := "\x1b[3G\x1b[93m\x1b[1mAllow\x1b[9Gexternal\x1b[18GCLAUDE.md\x1b[28Gfile\x1b[33Gimports?\x1b[22m\x1b[39m\r\r" +
+		"\x1b[3G\x1b[97m❯\x1b[5G\x1b[37m1.\x1b[8G\x1b[97mYes,\x1b[13Gallow\x1b[19Gexternal\x1b[28Gimports\x1b[39m\r\r"
+	if _, err := io.WriteString(slave, modal); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = slave.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 16)
+	n, err := slave.Read(buf)
+	if err != nil {
+		t.Fatalf("expected modal dismissal carriage return: %v", err)
+	}
+	if !strings.ContainsAny(string(buf[:n]), "\r\n") {
+		t.Fatalf("modal dismissal bytes = %q, want carriage return", string(buf[:n]))
+	}
+
+	select {
+	case err := <-done:
+		t.Fatalf("wait returned before ready signal: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	if _, err := io.WriteString(slave, "\x1b[95m⏵⏵ bypass permissions on\x1b[37m (shift+tab to cycle) · ← for agents\r\r"); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(copied.Bytes(), []byte(agentPTYReadySignal)) {
+		t.Fatalf("copied output missing ready signal: %q", copied.String())
+	}
+}
+
+func TestAgentPTYWaitCanaryModalOnlyDoesNotSatisfyReady(t *testing.T) {
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	defer slave.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- agentPTYWaitCanary(master, io.Discard, 50*time.Millisecond)
+	}()
+
+	modal := "\x1b[3G\x1b[93m\x1b[1mAllow\x1b[9Gexternal\x1b[18GCLAUDE.md\x1b[28Gfile\x1b[33Gimports?\x1b[22m\x1b[39m\r\r" +
+		"\x1b[3G\x1b[97m❯\x1b[5G\x1b[37m1.\x1b[8G\x1b[97mYes,\x1b[13Gallow\x1b[19Gexternal\x1b[28Gimports\x1b[39m\r\r"
+	if _, err := io.WriteString(slave, modal); err != nil {
+		t.Fatal(err)
+	}
+
+	err = <-done
+	if err == nil {
+		t.Fatal("expected timeout without ready signal")
+	}
+	if !contains(err.Error(), "ready signal") {
+		t.Fatalf("error = %q, want ready signal timeout", err)
 	}
 }
 
@@ -873,7 +946,7 @@ func TestAgentBootstrapSessionRequiresRegistration(t *testing.T) {
 		t.Fatal(err)
 	}
 	claudePath := filepath.Join(harnessDir, "fake-claude.sh")
-	claudeScript := "#!/bin/sh\nprintf '\\342\\235\\257'\nsleep 0.05\n"
+	claudeScript := "#!/bin/sh\nprintf '← for agents'\nsleep 0.05\n"
 	if err := os.WriteFile(claudePath, []byte(claudeScript), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -929,6 +1002,69 @@ func TestAgentRegistrationMissingErrorIsHarnessAware(t *testing.T) {
 	piErr := agentRegistrationMissingError("pi").Error()
 	if !contains(piErr, "cat ~/.pi/agent/mcp.json") || !contains(piErr, "docs/pi.md") {
 		t.Fatalf("pi error is not pi-specific: %q", piErr)
+	}
+}
+
+func TestAgentBootstrapSessionPTYRegistrationStall(t *testing.T) {
+	oldStallTimeout := agentPTYRegistrationStallTimeout
+	oldLookupTimeout := agentRegistrationLookupTimeout
+	agentPTYRegistrationStallTimeout = 20 * time.Millisecond
+	agentRegistrationLookupTimeout = 200 * time.Millisecond
+	defer func() {
+		agentPTYRegistrationStallTimeout = oldStallTimeout
+		agentRegistrationLookupTimeout = oldLookupTimeout
+	}()
+
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agents":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	harnessDir := t.TempDir()
+	claudePath := filepath.Join(harnessDir, "fake-claude.sh")
+	claudeScript := "#!/bin/sh\ntrap 'exit 0' TERM\nprintf '← for agents'\nwhile :; do sleep 1 & wait $!; done\n"
+	if err := os.WriteFile(claudePath, []byte(claudeScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	spawnTag := "stallabc12345678"
+	debug := newAgentDebugLog("", spawnTag)
+	_, _, err := agentBootstrapSession(
+		"claude-code",
+		[]string{claudePath},
+		"register please",
+		"",
+		agentBuildEnv(server.URL, "claude-code", spawnTag),
+		server.URL,
+		spawnTag,
+		"",
+		make(chan os.Signal, 1),
+		debug,
+	)
+	if closeErr := debug.close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err == nil {
+		t.Fatal("expected registration stall error")
+	}
+	if got := err.Error(); !contains(got, "bus_register") || !contains(got, "claude mcp list") {
+		t.Fatalf("error %q does not explain stalled registration", got)
+	}
+
+	logPath := filepath.Join(dir, "agents", "agent-logs", "_pre-register-"+spawnTag+".log")
+	records := readAgentDebugRecords(t, logPath)
+	if firstDebugEvent(records, "registration_stalled") == nil {
+		t.Fatalf("expected registration_stalled event in %#v", records)
 	}
 }
 

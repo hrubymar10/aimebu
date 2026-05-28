@@ -35,8 +35,8 @@ func TestClaudeCodeStateDetectorDetect(t *testing.T) {
 			want: "thinking",
 		},
 		{
-			name: "input ready canary",
-			line: "\x1b[2K\x1b[1G❯ ",
+			name: "agent composer ready signal",
+			line: "\x1b[95m⏵⏵ bypass permissions on\x1b[37m (shift+tab to cycle) · ← for agents",
 			want: "idle",
 		},
 		{

@@ -12,7 +12,7 @@ func (claudeCodeStateDetector) Detect(line []byte) string {
 	if claudeLineHasSpinner(line) {
 		return "thinking"
 	}
-	if bytes.Contains(line, []byte(agentPTYCanary)) {
+	if bytes.Contains(line, []byte(agentPTYReadySignal)) {
 		return "idle"
 	}
 	// TODO: Emit tool_call once we have stable Claude PTY samples that

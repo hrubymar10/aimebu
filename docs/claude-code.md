@@ -217,8 +217,8 @@ re-enable the prompt.
 
 `aimebu agent` drives `claude` through a **PTY (pseudo-terminal)**. The
 wrapper spawns an interactive `claude` process and communicates with it the
-same way a human terminal user would: by watching for the `❯` input-ready
-prompt and then typing the next message.
+same way a human terminal user would: by watching for Claude Code's
+agent-ready composer hint (`← for agents`) and then typing the next message.
 
 1. **Bootstrap** — spawns:
    ```
@@ -226,14 +226,24 @@ prompt and then typing the next message.
      --dangerously-skip-permissions [userArgs]
    ```
    The session UUID is generated driver-side before spawn. The wrapper waits
-   for the `❯` (U+276F) ready-prompt canary, then writes the registration
-   prompt into the PTY, waits briefly for Claude to process multi-line pasted
-   input, and sends a separate carriage return. The agent registers on the bus,
-   joins rooms, and enters `bus_wait`.
+   for the `← for agents` composer hint, then writes the registration prompt
+   into the PTY, waits briefly for Claude to process multi-line pasted input,
+   and sends a separate carriage return. The agent registers on the bus, joins
+   rooms, and enters `bus_wait`.
    The Claude TUI is hidden from the user's terminal; PTY output is drained so
    the child process cannot block, and is captured in debug logs when
    `AIMEBU_AGENT_DEBUG` is enabled. When the session ends (context cap
    reached), the wrapper moves to the resume loop.
+
+   Claude Code can show a first-run "Allow external CLAUDE.md file imports?"
+   trust modal before the chat composer. That modal also renders a `❯`
+   highlight cursor on its default "Yes" option, so the wrapper does not use
+   the raw cursor as a readiness signal. If the external-imports modal appears
+   during startup, the wrapper accepts the default choice, continues draining
+   output, and waits for `← for agents` before sending the spawn prompt. If the
+   prompt is delivered but no `bus_register` call appears within 30 seconds,
+   the wrapper terminates the harness and exits with an MCP-registration error
+   instead of waiting silently.
 
    If the spawned Claude session finishes bootstrap without calling
    `bus_register`, the wrapper exits non-zero with this message:
@@ -245,8 +255,8 @@ prompt and then typing the next message.
    inside a sandbox.
 
 2. **Resume loop** — spawns `claude --resume <session-id>` instead of
-   `--session-id`. After the `❯` canary, the wrapper writes `"keep
-   listening"` (or a recovery prompt if room membership was lost). Before
+   `--session-id`. After the `← for agents` composer hint, the wrapper writes
+   `"keep listening"` (or a recovery prompt if room membership was lost). Before
    each respawn the wrapper checks `GET /health` and verifies the agent is
    still present in its saved rooms. If the server is up but the registration
    is gone, the wrapper re-registers in-session and rejoins saved rooms before
@@ -285,8 +295,9 @@ Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
 `$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Events captured include
 `wrapper_start`, `harness_spawn`, `harness_stdout_raw` (4096-byte cap),
 `session_id_pregenerated`, `register_observed`, `harness_exit`,
-`pty_prompt_write`, `recovery_decision`, and `wrapper_shutdown`. Logs are
-removed by both `aimebu prune` and `aimebu prune -a`.
+`pty_prompt_write`, `registration_stalled`, `recovery_decision`, and
+`wrapper_shutdown`. Logs are removed by both `aimebu prune` and
+`aimebu prune -a`.
 
 ### Web state
 
@@ -303,9 +314,9 @@ states are:
 - `stopped`: the wrapper is shutting down cleanly.
 - `stale`: the server has not seen recent activity from the agent.
 
-Claude Code maps `thinking` and `idle` from PTY spinner glyphs and the `❯`
-prompt canary. It does not yet emit `tool_call` because the TUI has no stable
-tool-execution marker. Codex and pi have full active-state coverage
+Claude Code maps `thinking` and `idle` from PTY spinner glyphs and the
+`← for agents` composer hint. It does not yet emit `tool_call` because the TUI
+has no stable tool-execution marker. Codex and pi have full active-state coverage
 (`thinking`, `tool_call`, `idle`) from their structured JSON events. When any
 mapped harness is blocked in `bus_wait`, the server overlays the displayed
 state to `idle` at snapshot time without mutating the wrapper-pushed stored

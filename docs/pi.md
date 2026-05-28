@@ -281,8 +281,8 @@ states are:
 pi has full active-state coverage (`thinking`, `tool_call`, `idle`) from its
 structured JSON events. Codex has the same coverage from its structured JSON
 events. Claude Code maps `thinking` and `idle` from PTY spinner glyphs and
-the `❯` prompt canary, but does not yet emit `tool_call` because the TUI has
-no stable tool-execution marker. When any mapped harness is blocked in
+the `← for agents` composer hint, but does not yet emit `tool_call` because
+the TUI has no stable tool-execution marker. When any mapped harness is blocked in
 `bus_wait`, the server overlays the displayed state to `idle` at snapshot time
 without mutating the wrapper-pushed stored state. Harnesses without a mapper
 show no badge at all; mapped harnesses currently include only `claude-code`,
