@@ -445,6 +445,12 @@
 
   function renderMarkdown(rawText) {
     if (!rawText) return '';
+    /*
+      List regression fixtures:
+      - "1. one\n\n2. two" -> one <ol> with two <li> children.
+      - "5. five\n\n6. six" -> one <ol start="5"> with two <li> children.
+      - "- one\n\n- two" -> one <ul> with two <li> children.
+    */
     var html = esc(rawText);
     var holders = [];
 
@@ -503,6 +509,14 @@
     var lines = html.split('\n');
     var out = [];
     var i = 0;
+    var unorderedListRE = /^[-*]\s/;
+    var orderedListRE = /^(\d+)\.\s/;
+
+    function nextNonBlankIndex(start) {
+      var idx = start;
+      while (idx < lines.length && lines[idx].trim() === '') idx++;
+      return idx;
+    }
 
     while (i < lines.length) {
       var line = lines[i];
@@ -549,24 +563,48 @@
       }
 
       // Unordered list
-      if (/^[-*]\s/.test(line)) {
+      if (unorderedListRE.test(line)) {
         var ulItems = [];
-        while (i < lines.length && /^[-*]\s/.test(lines[i])) {
-          ulItems.push('<li>' + applyInline(lines[i].replace(/^[-*]\s+/, '')) + '</li>');
-          i++;
+        while (i < lines.length) {
+          if (unorderedListRE.test(lines[i])) {
+            ulItems.push('<li>' + applyInline(lines[i].replace(/^[-*]\s+/, '')) + '</li>');
+            i++;
+            continue;
+          }
+          if (lines[i].trim() === '') {
+            var nextUL = nextNonBlankIndex(i);
+            if (nextUL < lines.length && unorderedListRE.test(lines[nextUL])) {
+              i = nextUL;
+              continue;
+            }
+          }
+          break;
         }
         out.push({ type: 'block', html: '<ul class="md-list">' + ulItems.join('') + '</ul>' });
         continue;
       }
 
       // Ordered list
-      if (/^\d+\.\s/.test(line)) {
+      var orderedStart = line.match(orderedListRE);
+      if (orderedStart) {
+        var startAttr = orderedStart[1] === '1' ? '' : ' start="' + orderedStart[1] + '"';
         var olItems = [];
-        while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
-          olItems.push('<li>' + applyInline(lines[i].replace(/^\d+\.\s+/, '')) + '</li>');
-          i++;
+        while (i < lines.length) {
+          if (orderedListRE.test(lines[i])) {
+            olItems.push('<li>' + applyInline(lines[i].replace(/^\d+\.\s+/, '')) + '</li>');
+            i++;
+            continue;
+          }
+          if (lines[i].trim() === '') {
+            var nextOL = nextNonBlankIndex(i);
+            if (nextOL < lines.length && orderedListRE.test(lines[nextOL])) {
+              i = nextOL;
+              continue;
+            }
+          }
+          break;
         }
-        out.push({ type: 'block', html: '<ol class="md-list">' + olItems.join('') + '</ol>' });
+        out.push({ type: 'block', html: '<ol class="md-list"' + startAttr + '>' + olItems.join('') + '</ol>' });
         continue;
       }
 
