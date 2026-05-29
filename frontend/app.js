@@ -3978,7 +3978,7 @@
 
     if (msgs.length === 0) {
       messageListEl.innerHTML = '<div class="empty-state">No messages in this room yet.</div>';
-      renderOpenQuestionsModal();
+      refreshOrRenderOpenQuestionsModal();
       return;
     }
 
@@ -3998,7 +3998,7 @@
       messageListEl.scrollTop = prevScrollTop + (messageListEl.scrollHeight - prevScrollHeight);
     }
     renderMessageDebugModal();
-    renderOpenQuestionsModal();
+    refreshOrRenderOpenQuestionsModal();
   }
 
   function chatMessageHTML(m) {
@@ -4191,6 +4191,7 @@
 
   function refreshOpenQuestionsModalIndicators() {
     var msgID = openQuestionModalState.messageID;
+    var msg = currentOpenQuestionMessage();
     var questions = currentOpenQuestionList();
     if (!msgID || !questions.length) return;
     var answeredCount = openQuestionsAnsweredCount(msgID);
@@ -4213,6 +4214,11 @@
       }
       var sendBtn = openQuestionsModalBody.querySelector('.open-questions-send');
       if (sendBtn) sendBtn.disabled = !allAnswered || !!answeredOpenQuestions[String(msgID)];
+      var hint = openQuestionsModalBody.querySelector('.open-questions-modal-hint');
+      if (hint) {
+        var showHint = currentOpenQuestionSuperseded(msg) && !answeredOpenQuestions[String(msgID)];
+        hint.classList.toggle('is-hidden', !showHint);
+      }
     }
     if (openQuestionsModalFooter) {
       var nextBtn = openQuestionsModalFooter.querySelector('.open-questions-next');
@@ -4221,6 +4227,14 @@
         nextBtn.disabled = qIdx >= questions.length || (qIdx === questions.length - 1 && !allAnswered);
       }
     }
+  }
+
+  function refreshOrRenderOpenQuestionsModal() {
+    if (openQuestionModalState.open) {
+      refreshOpenQuestionsModalIndicators();
+      return;
+    }
+    renderOpenQuestionsModal();
   }
 
   function renderOpenQuestionsModal(focusOther) {
@@ -4259,9 +4273,7 @@
     }
 
     var body = '';
-    if (superseded && !answeredOpenQuestions[msgID]) {
-      body += '<div class="open-questions-modal-hint">Newer messages below</div>';
-    }
+    body += '<div class="open-questions-modal-hint' + (!(superseded && !answeredOpenQuestions[msgID]) ? ' is-hidden' : '') + '">Newer messages below</div>';
     body += '<div class="open-questions-steps" role="tablist" aria-label="Questions">';
     questions.forEach(function (_, idx) {
       var stepDraft = (openQuestionDrafts[msgID] || {})[String(idx)];
