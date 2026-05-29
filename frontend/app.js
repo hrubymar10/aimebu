@@ -34,6 +34,7 @@
   let fleets = {};           // { name: { agents: [{ command }] } }
   let promptEntries = [];    // PromptEntry[] from GET /settings/prompts
   let roleEntries = [];      // RoleEntry[] from GET /roles
+  let roomSettingsDirty = false; // true when a focused role picker deferred a rebuild
   let systemEvents = [];     // Message[] — _system room events
   let systemUnread = 0;      // unread count for broadcast panel
   let systemSSE = null;      // EventSource for _system room
@@ -3265,13 +3266,14 @@
 
   function openRoomSettings() {
     if (!activeRoomID || !roomSettingsModal) return;
-    renderRoomSettings();
     roomSettingsModal.classList.remove('hidden');
+    renderRoomSettings({ force: true });
     updateBodyModalLock();
   }
 
   function closeRoomSettings() {
     if (!roomSettingsModal) return;
+    roomSettingsDirty = false;
     roomSettingsModal.classList.add('hidden');
     updateBodyModalLock();
   }
@@ -4465,28 +4467,48 @@
     renderRightSidebar();
   }
 
-  function renderRoomSettings() {
+  function roomSettingsRoleSelectFocused() {
+    var active = document.activeElement;
+    return !!(
+      active &&
+      active.matches &&
+      active.matches('.room-role-select') &&
+      roomSettingsMembers &&
+      roomSettingsMembers.contains(active)
+    );
+  }
+
+  function renderRoomSettings(opts) {
+    opts = opts || {};
     if (!roomSettingsMembers) return;
+    if (!opts.force && roomSettingsModal && roomSettingsModal.classList.contains('hidden')) return;
     if (!activeRoomID) {
       if (roomSettingsTitle) roomSettingsTitle.textContent = 'Room Settings';
       if (roomSettingsRemoveBtn) roomSettingsRemoveBtn.disabled = true;
       roomSettingsMembers.innerHTML = '<div class="empty-state">Select a room first.</div>';
+      roomSettingsDirty = false;
       return;
     }
     var room = rooms.find(function (r) { return r.id === activeRoomID; });
     if (!room) {
       if (roomSettingsRemoveBtn) roomSettingsRemoveBtn.disabled = true;
       roomSettingsMembers.innerHTML = '<div class="empty-state">Room not found.</div>';
+      roomSettingsDirty = false;
       return;
     }
     if (roomSettingsTitle) roomSettingsTitle.textContent = 'Room Settings: ' + room.id;
     if (roomSettingsRemoveBtn) roomSettingsRemoveBtn.disabled = room.id === '_system';
+    if (!opts.force && roomSettingsRoleSelectFocused()) {
+      roomSettingsDirty = true;
+      return;
+    }
     var members = (room.members || []).filter(function (memberID) {
       var agent = agents.find(function (a) { return a.id === memberID; });
       return agent && agent.kind === 'ai';
     });
     if (!members.length) {
       roomSettingsMembers.innerHTML = '<div class="empty-state">No AI agents in this room.</div>';
+      roomSettingsDirty = false;
       return;
     }
     roomSettingsMembers.innerHTML = members.map(function (memberID) {
@@ -4514,7 +4536,13 @@
     }).join('');
 
     roomSettingsMembers.querySelectorAll('.room-role-select').forEach(function (sel) {
+      sel.addEventListener('blur', function () {
+        if (!roomSettingsDirty) return;
+        roomSettingsDirty = false;
+        renderRoomSettings({ force: true });
+      });
       sel.addEventListener('change', function () {
+        roomSettingsDirty = false;
         var agentIDVal = sel.getAttribute('data-agent-id');
         var roleKey = sel.value;
         api('POST', '/rooms/' + encodeURIComponent(activeRoomID) + '/roles', {
@@ -4523,7 +4551,7 @@
         }).then(function (updatedRoom) {
           rooms = rooms.map(function (r) { return r.id === updatedRoom.id ? updatedRoom : r; });
           renderRoomAgents();
-          renderRoomSettings();
+          renderRoomSettings({ force: true });
         }).catch(function (err) {
           console.error('assign role', err);
           alert('Failed to assign role: ' + err.message);
