@@ -2568,7 +2568,7 @@ body {
 
 /* ── Responsive ──────────────────────────────────────────────── */
 
-@media (max-width: 900px) {
+@media (max-width: 740px) {
   .app-layout {
     grid-template-columns: 1fr;
   }
@@ -2625,6 +2625,21 @@ body {
 
   .logo-subtitle, .build-version {
     display: none;
+  }
+
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .settings-control {
+    align-self: stretch;
+    flex-wrap: wrap;
+  }
+
+  .settings-text-input {
+    width: 100%;
   }
 }
 

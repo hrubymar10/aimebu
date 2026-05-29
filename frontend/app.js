@@ -3394,6 +3394,7 @@
     loadPrompts();
     loadRoles();
     updateBodyModalLock();
+    if (settingsCloseBtn && settingsCloseBtn.focus) settingsCloseBtn.focus();
   }
 
   function closeSettings() {
@@ -4969,7 +4970,8 @@
   // ── Mobile tab handling ──────────────────────────────────────────
 
   function setMobileTab(tab) {
-    document.body.className = 'tab-' + tab;
+    document.body.classList.remove('tab-rooms', 'tab-chat', 'tab-agents');
+    document.body.classList.add('tab-' + tab);
     mobileTabs.querySelectorAll('.mobile-tab').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-tab') === tab);
     });
@@ -5053,6 +5055,17 @@
     });
   });
   document.addEventListener('keydown', function (e) {
+    var modifierOnly = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+    if (modifierOnly && e.key === ',') {
+      e.preventDefault();
+      openSettings('general');
+      return;
+    }
+    if (modifierOnly && e.key.toLowerCase() === 'w' && !settingsModal.classList.contains('hidden')) {
+      e.preventDefault();
+      closeSettings();
+      return;
+    }
     if (e.key === 'Escape' && attachmentLightboxModal && !attachmentLightboxModal.classList.contains('hidden')) {
       closeAttachmentLightbox();
       return;
