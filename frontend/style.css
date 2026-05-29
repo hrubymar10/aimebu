@@ -2589,6 +2589,12 @@ body {
     display: none;
   }
 
+  .sidebar-right[data-mode="profile"] #right-sidebar-toggle,
+  .sidebar-right[data-mode="usages"] #right-sidebar-toggle {
+    display: inline-flex;
+    margin-right: 2px;
+  }
+
   .app-layout.left-collapsed .sidebar-left > :not(.sidebar-header),
   .app-layout.right-collapsed .sidebar-right > :not(.sidebar-header),
   .app-layout.left-collapsed .sidebar-left .section-title,
