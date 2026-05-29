@@ -4512,9 +4512,11 @@
       return;
     }
     roomSettingsMembers.innerHTML = members.map(function (memberID) {
+      var agent = agents.find(function (a) { return a.id === memberID; }) || {};
       var roleKey = (room.roles && room.roles[memberID]) || '';
-      var role = roleEntryByKey(roleKey);
-      var roleLabel = role ? role.key : '';
+      var status = agentStatus(agent.last_seen);
+      var runtime = (agent.model || 'unknown') + ' · ' + (agent.harness || 'unknown');
+      var seen = 'seen ' + relativeTime(agent.last_seen);
       var options = '<option value="">No role</option>';
       roleEntries.forEach(function (re) {
         var label = ((re.emoji || re.icon) ? (re.emoji || re.icon) + ' ' : '') + re.key;
@@ -4525,10 +4527,17 @@
       });
       return (
         '<div class="room-settings-member">' +
-          '<div class="room-settings-member-id">' +
-            roleBadgeHTML(roleKey) +
-            '<span>' + esc(memberID) + '</span>' +
-            (roleLabel ? '<span class="room-settings-role-label">' + esc(roleLabel) + '</span>' : '') +
+          '<div class="room-settings-member-info">' +
+            '<div class="room-settings-member-id">' +
+              roleBadgeHTML(roleKey) +
+              '<span class="room-settings-member-name">' + esc(memberID) + '</span>' +
+            '</div>' +
+            '<div class="room-settings-member-meta">' +
+              '<span class="agent-online-dot ' + esc(status) + '" title="' + esc(status) + '"></span>' +
+              '<span>' + esc(runtime) + '</span>' +
+              '<span class="room-settings-meta-separator">·</span>' +
+              '<span>' + esc(seen) + '</span>' +
+            '</div>' +
           '</div>' +
           '<select class="room-role-select" data-agent-id="' + esc(memberID) + '">' + options + '</select>' +
         '</div>'

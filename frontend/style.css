@@ -3779,12 +3779,12 @@ body {
 .room-settings-members {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .room-settings-danger-zone {
-  margin-top: 16px;
-  padding-top: 16px;
+  margin-top: 18px;
+  padding-top: 18px;
   border-top: 1px solid var(--border);
 }
 
@@ -3799,15 +3799,25 @@ body {
 
 .room-settings-member {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 220px);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(132px, 176px);
+  gap: 14px;
   align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border-subtle, var(--border));
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  transition: background var(--transition), border-color var(--transition);
 }
 
-.room-settings-member:last-child {
-  border-bottom: none;
+.room-settings-member:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.room-settings-member-info {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .room-settings-member-id {
@@ -3820,24 +3830,45 @@ body {
   font-family: var(--font-mono);
 }
 
-.room-settings-member-id span:not(.role-emoji-badge) {
+.room-settings-member-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.room-settings-role-label {
-  color: var(--text-secondary);
+.room-settings-member-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
   font-family: var(--font-sans);
   font-size: 0.72rem;
+  line-height: 1.25;
+}
+
+.room-settings-member-meta span:not(.agent-online-dot) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-settings-member-meta .agent-online-dot {
+  width: 7px;
+  height: 7px;
+}
+
+.room-settings-meta-separator {
+  flex-shrink: 0;
 }
 
 .room-role-select {
   width: 100%;
+  max-width: 176px;
   background: var(--bg-input, var(--bg-tertiary));
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 5px 7px;
+  padding: 6px 8px;
   color: var(--text-primary);
   font-size: 0.78rem;
   outline: none;
@@ -3857,6 +3888,10 @@ body {
   .role-meta-grid,
   .room-settings-member {
     grid-template-columns: 1fr;
+  }
+
+  .room-role-select {
+    max-width: none;
   }
 }
 
