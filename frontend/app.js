@@ -38,6 +38,19 @@
   let roomSettingsDirty = false; // true when a focused role picker deferred a rebuild
   let systemEvents = [];     // Message[] — _system room events
   let systemUnread = 0;      // unread count for broadcast panel
+  const scrollBottomThreshold = 50;
+  let suppressScrollAnchor = false;
+  let suppressScrollAnchorToken = 0;
+  let messageListResizeObserver = null;
+  let scrollAnchor = {
+    pinnedToBottom: true,
+    anchorEl: null,
+    visibleOffset: 0,
+    distanceFromBottom: 0,
+    listWidth: 0,
+    listHeight: 0,
+    hasListSize: false,
+  };
   let systemSSE = null;      // EventSource for _system room
   let macrosSaveTimer = null;
   let serverSettings = {};   // Settings from GET /settings
@@ -3861,7 +3874,9 @@
       renderRooms();
       // Pull presence snapshot after messages so read-receipt rendering
       // has the head message id available.
-      return fetchRoomPresence(roomID);
+      return fetchRoomPresence(roomID).then(function () {
+        if (!scrollToMsgID) scrollToBottom(true);
+      });
     });
 
     // Mark the room read as soon as the user opens it.
@@ -4110,17 +4125,91 @@
     });
   }
 
+  function messageScrollItems() {
+    return Array.from(messageListEl.querySelectorAll('.chat-msg, .chat-msg-system'));
+  }
+
+  function isMessageListNearBottom() {
+    return (messageListEl.scrollHeight - messageListEl.scrollTop - messageListEl.clientHeight) < scrollBottomThreshold;
+  }
+
+  function suppressMessageListScroll(fn, refreshAnchorAfterWrite) {
+    suppressScrollAnchor = true;
+    suppressScrollAnchorToken++;
+    var token = suppressScrollAnchorToken;
+    fn();
+    requestAnimationFrame(function () {
+      if (token !== suppressScrollAnchorToken) return;
+      suppressScrollAnchor = false;
+      if (refreshAnchorAfterWrite) updateScrollAnchor(true);
+    });
+  }
+
+  function updateScrollAnchor(allowListSizeChange) {
+    if (!messageListEl) return;
+    var listWidth = messageListEl.clientWidth;
+    var listHeight = messageListEl.clientHeight;
+    if (!allowListSizeChange && scrollAnchor.hasListSize &&
+        (scrollAnchor.listWidth !== listWidth || scrollAnchor.listHeight !== listHeight)) {
+      return;
+    }
+    scrollAnchor.listWidth = listWidth;
+    scrollAnchor.listHeight = listHeight;
+    scrollAnchor.hasListSize = true;
+    scrollAnchor.distanceFromBottom = messageListEl.scrollHeight - messageListEl.scrollTop - messageListEl.clientHeight;
+    scrollAnchor.pinnedToBottom = scrollAnchor.distanceFromBottom < scrollBottomThreshold;
+    if (scrollAnchor.pinnedToBottom) {
+      scrollAnchor.anchorEl = null;
+      scrollAnchor.visibleOffset = 0;
+      return;
+    }
+    var listRect = messageListEl.getBoundingClientRect();
+    var items = messageScrollItems();
+    scrollAnchor.anchorEl = null;
+    scrollAnchor.visibleOffset = 0;
+    for (var i = 0; i < items.length; i++) {
+      var itemRect = items[i].getBoundingClientRect();
+      if (itemRect.bottom >= listRect.top) {
+        scrollAnchor.anchorEl = items[i];
+        scrollAnchor.visibleOffset = itemRect.top - listRect.top;
+        return;
+      }
+    }
+  }
+
+  function restoreScrollAnchorAfterResize() {
+    if (!messageListEl || !activeRoomID) return;
+    suppressMessageListScroll(function () {
+      if (scrollAnchor.pinnedToBottom) {
+        messageListEl.scrollTop = messageListEl.scrollHeight;
+        return;
+      }
+      if (scrollAnchor.anchorEl && scrollAnchor.anchorEl.isConnected) {
+        var listRect = messageListEl.getBoundingClientRect();
+        var anchorRect = scrollAnchor.anchorEl.getBoundingClientRect();
+        messageListEl.scrollTop += anchorRect.top - listRect.top - scrollAnchor.visibleOffset;
+        return;
+      }
+      messageListEl.scrollTop = messageListEl.scrollHeight - messageListEl.clientHeight - scrollAnchor.distanceFromBottom;
+    }, true);
+  }
+
+  function scheduleResizeAnchorRestore() {
+    restoreScrollAnchorAfterResize();
+  }
+
   function renderMessages() {
     if (!activeRoomID) return;
     var msgs = messages[activeRoomID] || [];
 
     if (msgs.length === 0) {
       messageListEl.innerHTML = '<div class="empty-state">No messages in this room yet.</div>';
+      updateScrollAnchor(true);
       refreshOrRenderOpenQuestionsModal();
       return;
     }
 
-    var atBottom = (messageListEl.scrollHeight - messageListEl.scrollTop - messageListEl.clientHeight) < 50;
+    var atBottom = isMessageListNearBottom();
     var prevScrollTop = messageListEl.scrollTop;
     var prevScrollHeight = messageListEl.scrollHeight;
 
@@ -4133,7 +4222,9 @@
     if (atBottom) {
       scrollToBottom(true);
     } else {
-      messageListEl.scrollTop = prevScrollTop + (messageListEl.scrollHeight - prevScrollHeight);
+      suppressMessageListScroll(function () {
+        messageListEl.scrollTop = prevScrollTop + (messageListEl.scrollHeight - prevScrollHeight);
+      }, true);
     }
     renderMessageDebugModal();
     refreshOrRenderOpenQuestionsModal();
@@ -4538,7 +4629,7 @@
   function appendMessage(msg) {
     if (!activeRoomID || msg.room_id !== activeRoomID) return;
 
-    var atBottom = (messageListEl.scrollHeight - messageListEl.scrollTop - messageListEl.clientHeight) < 50;
+    var atBottom = isMessageListNearBottom();
 
     // Remove empty state if present
     var empty = messageListEl.querySelector('.empty-state');
@@ -4557,10 +4648,12 @@
   }
 
   function scrollToBottom(force) {
-    var nearBottom = (messageListEl.scrollHeight - messageListEl.scrollTop - messageListEl.clientHeight) < 50;
+    var nearBottom = isMessageListNearBottom();
     if (!force && !nearBottom) return;
     requestAnimationFrame(function () {
-      messageListEl.scrollTop = messageListEl.scrollHeight;
+      suppressMessageListScroll(function () {
+        messageListEl.scrollTop = messageListEl.scrollHeight;
+      }, true);
     });
   }
 
@@ -5768,6 +5861,15 @@
       else toggleRightSidebar();
     });
   }
+  messageListEl.addEventListener('scroll', function () {
+    if (suppressScrollAnchor) return;
+    updateScrollAnchor(!messageListResizeObserver);
+  });
+  if (window.ResizeObserver) {
+    messageListResizeObserver = new ResizeObserver(scheduleResizeAnchorRestore);
+    messageListResizeObserver.observe(messageListEl);
+  }
+  window.addEventListener('resize', scheduleResizeAnchorRestore);
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && rightSidebarMode === 'profile') {

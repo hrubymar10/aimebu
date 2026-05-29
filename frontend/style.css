@@ -1300,6 +1300,7 @@ body {
 .message-list {
   flex: 1;
   overflow-y: auto;
+  overflow-anchor: none;
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
