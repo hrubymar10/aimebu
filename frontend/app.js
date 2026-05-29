@@ -10,10 +10,11 @@
   let activeRoomID = null;     // currently viewed room ID
   let messages = {};           // { roomID: Message[] }
   let agents = [];             // Agent[]
-  // First-time visitors get 'user' as a placeholder; init() will try to
-  // replace it with $AIMEBU_NAME from the server before registration.
-  let agentID = localStorage.getItem('aimebu_agent_id') || 'user';
-  let agentIDFromStorage = localStorage.getItem('aimebu_agent_id') !== null;
+  const storedAgentID = localStorage.getItem('aimebu_agent_id');
+  // First-time visitors get 'user' as a placeholder until the welcome gate
+  // captures a name. The placeholder must not be registered automatically.
+  let agentID = storedAgentID || 'user';
+  let agentIDFromStorage = storedAgentID !== null;
   let registered = false; // true after a successful POST /agents for current agentID
   let ws = null;               // WebSocket connection
   let wsReconnectTimer = null;
@@ -77,11 +78,11 @@
   let profileContext = 'room';
   let leftCollapsed = localStorage.getItem('aimebu_left_collapsed') === 'true';
   let rightCollapsed = localStorage.getItem('aimebu_right_collapsed') === 'true';
+  let sessionStarted = false;
 
-  // Autocomplete state
-  let acItems = [];          // Array<{kind,insertText,displayKey,preview}> — ac candidates
-  let acSelected = -1;       // currently highlighted item index
-  let acHideTimer = null;    // debounce timer for blur→hide
+  let composerAutocomplete = null;
+  let welcomeAutocomplete = null;
+  let humanNameSuggestions = [];
 
   // Composer history state (terminal-style ↑/↓)
   let historyIdx = null;     // null = scratch; integer = index into getRecallCandidates()
@@ -99,6 +100,11 @@
   // ── DOM refs ─────────────────────────────────────────────────────
 
   const $ = (sel) => document.querySelector(sel);
+  const welcomeGate = $('#welcome-gate');
+  const welcomeForm = $('#welcome-form');
+  const welcomeNameInput = $('#welcome-name-input');
+  const welcomeSubmitBtn = $('#welcome-submit-btn');
+  const welcomeAcPopupEl = $('#welcome-ac-popup');
   const agentIDInput = $('#agent-id-input');
   const connectionStatus = $('#connection-status');
   const statusText = connectionStatus.querySelector('.status-text');
@@ -764,79 +770,143 @@
     return null;
   }
 
-  function updateAcHighlight() {
-    acPopupEl.querySelectorAll('.ac-item').forEach(function (el, i) {
-      el.classList.toggle('active', i === acSelected);
+  function createAutocomplete(options) {
+    var input = options.input;
+    var popup = options.popup;
+    var items = [];
+    var selected = -1;
+    var hideTimer = null;
+
+    function updateHighlight() {
+      popup.querySelectorAll('.ac-item').forEach(function (el, i) {
+        el.classList.toggle('active', i === selected);
+      });
+      var active = popup.querySelector('.ac-item.active');
+      if (active) active.scrollIntoView({ block: 'nearest' });
+    }
+
+    function hide() {
+      popup.classList.add('hidden');
+      items = [];
+      selected = -1;
+    }
+
+    function select(item) {
+      if (!item) return;
+      options.onSelect(item);
+      hide();
+    }
+
+    function update() {
+      var next = options.getCandidates() || [];
+      if (next.length === 0) { hide(); return; }
+      items = next;
+      selected = 0;
+      popup.innerHTML = items.map(function (item, i) {
+        return (
+          '<div class="ac-item' + (i === selected ? ' active' : '') + '" data-idx="' + i + '">' +
+            '<span class="ac-item-key">' + esc(item.displayKey) + '</span>' +
+            '<span class="ac-item-preview">' + esc(item.preview || '') + '</span>' +
+          '</div>'
+        );
+      }).join('');
+      popup.querySelectorAll('.ac-item').forEach(function (el) {
+        el.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          var idx = parseInt(el.getAttribute('data-idx'), 10);
+          select(items[idx]);
+        });
+      });
+      popup.classList.remove('hidden');
+    }
+
+    function handleKeydown(e) {
+      if (popup.classList.contains('hidden') || items.length === 0) return false;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selected = (selected + 1) % items.length;
+        updateHighlight();
+        return true;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selected = (selected - 1 + items.length) % items.length;
+        updateHighlight();
+        return true;
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && selected >= 0) {
+        e.preventDefault();
+        select(items[selected]);
+        return true;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        hide();
+        return true;
+      }
+      return false;
+    }
+
+    input.addEventListener('blur', function () {
+      hideTimer = setTimeout(hide, 150);
     });
-    // Scroll selected item into view
-    var active = acPopupEl.querySelector('.ac-item.active');
-    if (active) active.scrollIntoView({ block: 'nearest' });
+    input.addEventListener('focus', function () {
+      clearTimeout(hideTimer);
+      update();
+    });
+
+    return {
+      hide: hide,
+      update: update,
+      handleKeydown: handleKeydown
+    };
   }
 
-  function updateAcPopup() {
+  function getComposerAcItems() {
     var ctx = getAcContext();
-    if (ctx === null) { hideAcPopup(); return; }
-    var items = [];
+    if (ctx === null) return [];
     if (ctx.kind === 'macro') {
       var merged = getMergedMacros();
-      var lc = ctx.partial.toLowerCase();
-      items = Object.keys(merged).filter(function (k) {
-        return k.indexOf(lc) === 0;
+      var macroLC = ctx.partial.toLowerCase();
+      return Object.keys(merged).filter(function (k) {
+        return k.indexOf(macroLC) === 0;
       }).sort().map(function (k) {
         return { kind: 'macro', macroKey: k, displayKey: '<' + k.toUpperCase() + '>', preview: truncate(merged[k], 40) };
       });
-    } else {
-      var room = rooms.find(function (r) { return r.id === activeRoomID; });
-      var members = room ? (room.members || []) : [];
-      var lc = ctx.partial.toLowerCase();
-      var specials = specialMentionItems.filter(function (item) {
-        return !lc || item.token.indexOf(lc) === 0;
-      }).map(function (item) {
-        return {
-          kind: 'mention',
-          insertText: '@' + item.token,
-          displayKey: '@' + item.token,
-          preview: item.preview
-        };
-      });
-      var membersList = members.map(function (memberID) {
-        var a = agents.find(function (a) { return a.id === memberID; });
-        var name = a ? a.name : memberID.split('@')[0];
-        var preview = a ? (a.kind === 'human' ? 'human' : ((a.model || 'unknown') + ' · ' + (a.harness || 'unknown'))) : 'unknown';
-        return { kind: 'mention', insertText: '@' + name, displayKey: '@' + name, preview: preview };
-      }).filter(function (item) {
-        return !lc || item.insertText.slice(1).indexOf(lc) === 0;
-      }).sort(function (a, b) { return a.insertText.localeCompare(b.insertText); });
-      var roleList = assignedRoleMentionItems(room).filter(function (item) {
-        return !lc || item.insertText.slice(1).indexOf(lc) === 0;
-      });
-      items = specials.concat(roleList).concat(membersList);
     }
-    if (items.length === 0) { hideAcPopup(); return; }
-    acItems = items;
-    acSelected = items.length > 0 ? 0 : -1;
-    acPopupEl.innerHTML = items.map(function (item, i) {
-      return (
-        '<div class="ac-item' + (i === acSelected ? ' active' : '') + '" data-idx="' + i + '">' +
-          '<span class="ac-item-key">' + esc(item.displayKey) + '</span>' +
-          '<span class="ac-item-preview">' + esc(item.preview) + '</span>' +
-        '</div>'
-      );
-    }).join('');
-    acPopupEl.querySelectorAll('.ac-item').forEach(function (el) {
-      el.addEventListener('mousedown', function (e) {
-        e.preventDefault();
-        var idx = parseInt(el.getAttribute('data-idx'), 10);
-        insertAcItem(acItems[idx]);
-      });
+    var room = rooms.find(function (r) { return r.id === activeRoomID; });
+    var members = room ? (room.members || []) : [];
+    var mentionLC = ctx.partial.toLowerCase();
+    var specials = specialMentionItems.filter(function (item) {
+      return !mentionLC || item.token.indexOf(mentionLC) === 0;
+    }).map(function (item) {
+      return {
+        kind: 'mention',
+        insertText: '@' + item.token,
+        displayKey: '@' + item.token,
+        preview: item.preview
+      };
     });
-    acPopupEl.classList.remove('hidden');
+    var membersList = members.map(function (memberID) {
+      var a = agents.find(function (a) { return a.id === memberID; });
+      var name = a ? a.name : memberID.split('@')[0];
+      var preview = a ? (a.kind === 'human' ? 'human' : ((a.model || 'unknown') + ' · ' + (a.harness || 'unknown'))) : 'unknown';
+      return { kind: 'mention', insertText: '@' + name, displayKey: '@' + name, preview: preview };
+    }).filter(function (item) {
+      return !mentionLC || item.insertText.slice(1).indexOf(mentionLC) === 0;
+    }).sort(function (a, b) { return a.insertText.localeCompare(b.insertText); });
+    var roleList = assignedRoleMentionItems(room).filter(function (item) {
+      return !mentionLC || item.insertText.slice(1).indexOf(mentionLC) === 0;
+    });
+    return specials.concat(roleList).concat(membersList);
+  }
+
+  function updateAcPopup() {
+    composerAutocomplete.update();
   }
 
   function hideAcPopup() {
-    acPopupEl.classList.add('hidden');
-    acItems = [];
-    acSelected = -1;
+    composerAutocomplete.hide();
   }
 
   function resizeMsgInput() {
@@ -879,6 +949,72 @@
     hideAcPopup();
     msgBodyInput.focus();
   }
+
+  function refreshWelcomeSubmit() {
+    if (!welcomeSubmitBtn) return;
+    welcomeSubmitBtn.disabled = !welcomeNameInput.value.trim();
+  }
+
+  function getWelcomeNameItems() {
+    var lc = welcomeNameInput.value.trim().toLowerCase();
+    if (!lc) return [];
+    return humanNameSuggestions.filter(function (name) {
+      return name.toLowerCase().indexOf(lc) === 0;
+    }).map(function (name) {
+      return { kind: 'human', insertText: name, displayKey: name, preview: 'human' };
+    });
+  }
+
+  function loadHumanNameSuggestions() {
+    return api('GET', '/agents').then(function (data) {
+      var seen = {};
+      humanNameSuggestions = (data.agents || []).filter(function (agent) {
+        return agent.kind === 'human' && agent.name;
+      }).map(function (agent) {
+        return agent.name;
+      }).filter(function (name) {
+        var key = name.toLowerCase();
+        if (seen[key]) return false;
+        seen[key] = true;
+        return true;
+      }).sort(function (a, b) {
+        return a.localeCompare(b);
+      });
+      if (welcomeAutocomplete) welcomeAutocomplete.update();
+    }).catch(function () {
+      humanNameSuggestions = [];
+    });
+  }
+
+  function showWelcomeGate() {
+    welcomeGate.classList.remove('hidden');
+    refreshWelcomeSubmit();
+    setTimeout(function () { welcomeNameInput.focus(); }, 0);
+    loadHumanNameSuggestions();
+  }
+
+  function hideWelcomeGate() {
+    welcomeGate.classList.add('hidden');
+    if (welcomeAutocomplete) welcomeAutocomplete.hide();
+  }
+
+  composerAutocomplete = createAutocomplete({
+    input: msgBodyInput,
+    popup: acPopupEl,
+    getCandidates: getComposerAcItems,
+    onSelect: insertAcItem
+  });
+
+  welcomeAutocomplete = createAutocomplete({
+    input: welcomeNameInput,
+    popup: welcomeAcPopupEl,
+    getCandidates: getWelcomeNameItems,
+    onSelect: function (item) {
+      welcomeNameInput.value = item.insertText;
+      refreshWelcomeSubmit();
+      welcomeNameInput.focus();
+    }
+  });
 
   function renderMacrosList() {
     if (!macrosListEl) return;
@@ -3226,10 +3362,11 @@
       applyTheme(localTheme || serverSettings.theme || 'dark');
       // show_system_events: server default is true; false = hidden
       applyShowSystemEvents(serverSettings.show_system_events !== false);
-      // agent_id_default: pre-fill topbar only when nothing was stored locally
+      // agent_id_default: pre-fill the welcome gate only when nothing was
+      // stored locally. It never starts a session until the user submits.
       if (!agentIDFromStorage && serverSettings.agent_id_default) {
-        agentID = serverSettings.agent_id_default;
-        agentIDInput.value = agentID;
+        welcomeNameInput.value = serverSettings.agent_id_default;
+        refreshWelcomeSubmit();
       }
       if (agentIDDefaultInput) {
         agentIDDefaultInput.value = serverSettings.agent_id_default || '';
@@ -4864,6 +5001,31 @@
     }
   });
 
+  welcomeNameInput.addEventListener('input', function () {
+    refreshWelcomeSubmit();
+    welcomeAutocomplete.update();
+  });
+
+  welcomeNameInput.addEventListener('keydown', function (e) {
+    if (welcomeAutocomplete.handleKeydown(e)) return;
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      welcomeForm.requestSubmit();
+    }
+  });
+
+  welcomeForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var name = welcomeNameInput.value.trim();
+    if (!name) return;
+    agentID = name;
+    agentIDFromStorage = true;
+    localStorage.setItem('aimebu_agent_id', name);
+    agentIDInput.value = name;
+    hideWelcomeGate();
+    startSession();
+  });
+
   // Settings modal open/close
   settingsBtn.addEventListener('click', function () { openSettings('general'); });
   settingsCloseBtn.addEventListener('click', closeSettings);
@@ -5795,29 +5957,7 @@
   // IME guard prevents submission mid-composition (CJK / dead-key input).
   // When the autocomplete popup is open, arrow keys / Enter navigate it instead.
   msgBodyInput.addEventListener('keydown', function (e) {
-    if (!acPopupEl.classList.contains('hidden') && acItems.length > 0) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        acSelected = (acSelected + 1) % acItems.length;
-        updateAcHighlight();
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        acSelected = (acSelected - 1 + acItems.length) % acItems.length;
-        updateAcHighlight();
-        return;
-      }
-      if ((e.key === 'Enter' || e.key === 'Tab') && acSelected >= 0) {
-        e.preventDefault();
-        insertAcItem(acItems[acSelected]);
-        return;
-      }
-      if (e.key === 'Escape') {
-        hideAcPopup();
-        return;
-      }
-    }
+    if (composerAutocomplete.handleKeydown(e)) return;
     // Terminal-style ↑/↓ message history
     if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
         !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey &&
@@ -5869,14 +6009,6 @@
   msgBodyInput.addEventListener('input', function () {
     resizeMsgInput();
     updateAcPopup();
-  });
-
-  msgBodyInput.addEventListener('blur', function () {
-    acHideTimer = setTimeout(hideAcPopup, 150);
-  });
-
-  msgBodyInput.addEventListener('focus', function () {
-    clearTimeout(acHideTimer);
   });
 
   // Send message
@@ -5977,60 +6109,52 @@
 
   // ── Init ─────────────────────────────────────────────────────────
 
-  setMobileTab('rooms');
-  applySidebarCollapseState();
-  renderRightSidebar();
-  updateMdToggleBtn();
+  function initPublicShell() {
+    setMobileTab('rooms');
+    applySidebarCollapseState();
+    renderRightSidebar();
+    updateMdToggleBtn();
 
-  // If no persisted name yet, try to prefill from the server's $AIMEBU_NAME.
-  var prefillPromise;
-  if (!agentIDFromStorage) {
-    prefillPromise = fetch('/default-name').then(function (r) {
-      return r.ok ? r.json() : null;
-    }).then(function (data) {
-      if (data && data.name) {
-        agentID = data.name;
-        agentIDInput.value = agentID;
-      }
+    api('GET', '/rooms/_system/messages?limit=100').then(function (data) {
+      systemEvents = (data.messages || []).slice().reverse();
     }).catch(function () {});
-  } else {
-    prefillPromise = Promise.resolve();
+    connectSystemSSE();
+
+    loadSettings();
+
+    api('GET', '/buildinfo').then(function (info) {
+      var el = document.getElementById('build-version');
+      if (!el || !info) return;
+      el.textContent = info.version || '';
+      var parts = [info.version, info.go_version].filter(Boolean);
+      if (parts.length) el.title = parts.join(' · ');
+    }).catch(function () {});
+
+    updateSysNotifStatus();
+
+    loadSounds().catch(function () {});
   }
 
-  // Register as a human on the bus before opening the websocket. If
-  // registration fails (e.g. name clash with an AI) we still connect —
-  // subsequent operations will retry via ensureRegistered and surface the
-  // error to the user.
-  // Load initial system events (history) and start SSE listener
-  api('GET', '/rooms/_system/messages?limit=100').then(function (data) {
-    systemEvents = (data.messages || []).slice().reverse();
-  }).catch(function () {});
-  connectSystemSSE();
+  function startSession() {
+    if (sessionStarted) return;
+    sessionStarted = true;
+    registerHuman().catch(function () {}).then(function () {
+      return Promise.all([
+        fetchMyRooms().catch(function () {}),
+        loadMacros().catch(function () {}),
+        loadFleets().catch(function () {}),
+        loadRoles().catch(function () {})
+      ]);
+    }).finally(function () {
+      connectWS();
+    });
+  }
 
-  loadSettings();
-
-  api('GET', '/buildinfo').then(function (info) {
-    var el = document.getElementById('build-version');
-    if (!el || !info) return;
-    el.textContent = info.version || '';
-    var parts = [info.version, info.go_version].filter(Boolean);
-    if (parts.length) el.title = parts.join(' · ');
-  }).catch(function () {});
-
-  updateSysNotifStatus();
-
-  loadSounds().catch(function () {});
-
-  prefillPromise.then(function () {
-    return registerHuman().catch(function () {});
-  }).then(function () {
-    return Promise.all([
-      fetchMyRooms().catch(function () {}),
-      loadMacros().catch(function () {}),
-      loadFleets().catch(function () {}),
-      loadRoles().catch(function () {})
-    ]);
-  }).finally(function () {
-    connectWS();
-  });
+  agentIDInput.value = agentID;
+  initPublicShell();
+  if (agentIDFromStorage) {
+    startSession();
+  } else {
+    showWelcomeGate();
+  }
 })();

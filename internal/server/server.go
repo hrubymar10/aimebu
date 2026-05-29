@@ -1335,12 +1335,6 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		_ = jsonOK(w, map[string]string{"status": "cleared"})
 	})
 
-	// GET /default-name — returns $AIMEBU_NAME from the server's env so the
-	// web UI can prefill the "You are" field for first-time visitors.
-	mux.HandleFunc("GET /default-name", func(w http.ResponseWriter, _ *http.Request) {
-		_ = jsonOK(w, map[string]string{"name": os.Getenv("AIMEBU_NAME")})
-	})
-
 	// ── Image attachments ───────────────────────────────────────────
 
 	mux.HandleFunc("POST /api/attachments", func(w http.ResponseWriter, r *http.Request) {

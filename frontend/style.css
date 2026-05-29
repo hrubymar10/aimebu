@@ -3908,6 +3908,87 @@ body {
   background: rgba(220, 38, 38, 0.25);
 }
 
+/* ── Welcome gate ───────────────────────────────────────────────── */
+
+.welcome-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg-primary);
+}
+
+.welcome-gate.hidden {
+  display: none;
+}
+
+.welcome-panel {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 28px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.34);
+}
+
+.welcome-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.welcome-logo-mark {
+  width: 40px;
+  height: 40px;
+}
+
+.welcome-logo-text {
+  font-size: 1rem;
+}
+
+.welcome-title {
+  margin: 6px 0 0;
+  color: var(--text-primary);
+  font-size: 1.45rem;
+  line-height: 1.2;
+}
+
+.welcome-label {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.welcome-name-wrap {
+  position: relative;
+}
+
+.welcome-name-input {
+  width: 100%;
+  padding: 10px 12px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+  outline: none;
+}
+
+.welcome-name-input:focus {
+  border-color: var(--accent);
+}
+
+.welcome-submit {
+  width: 100%;
+  justify-content: center;
+}
+
 /* ── Autocomplete popup ─────────────────────────────────────────── */
 
 .send-bar {
@@ -3930,6 +4011,14 @@ body {
 
 .ac-popup.hidden {
   display: none;
+}
+
+.welcome-ac-popup {
+  position: static;
+  margin-top: 4px;
+  bottom: auto;
+  max-height: 160px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 .ac-item {

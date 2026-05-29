@@ -11,6 +11,22 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div id="welcome-gate" class="welcome-gate hidden" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+    <form id="welcome-form" class="welcome-panel">
+      <div class="welcome-logo">
+        <img src="/icons/aimebu-192.png" class="welcome-logo-mark" alt="" width="40" height="40">
+        <span class="welcome-logo-text">aimebu</span>
+      </div>
+      <h2 id="welcome-title" class="welcome-title">Welcome</h2>
+      <label class="welcome-label" for="welcome-name-input">What's your name?</label>
+      <div class="welcome-name-wrap">
+        <input id="welcome-name-input" class="welcome-name-input" type="text" autocomplete="off" spellcheck="false" autofocus>
+        <div id="welcome-ac-popup" class="ac-popup welcome-ac-popup hidden"></div>
+      </div>
+      <button id="welcome-submit-btn" class="btn btn-primary welcome-submit" type="submit" disabled>Continue</button>
+    </form>
+  </div>
+
   <!-- Header -->
   <header class="topbar">
     <div class="topbar-left">
@@ -253,7 +269,7 @@
             <div class="settings-row">
               <div class="settings-row-info">
                 <label class="settings-label" for="agent-id-default-input">Default Agent ID</label>
-                <span class="settings-desc">Pre-fills the "You are:" input for new browsers without a stored value.</span>
+                <span class="settings-desc">Pre-fills the welcome name field for new browsers without a stored value.</span>
               </div>
               <div class="settings-control">
                 <input type="text" id="agent-id-default-input" class="settings-text-input" placeholder="user@project" autocomplete="off" spellcheck="false">

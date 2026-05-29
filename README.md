@@ -569,7 +569,7 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 | Variable         | Default                  | Description |
 |------------------|--------------------------|-------------|
 | `AIMEBU_URL`     | `http://localhost:9997`  | Server URL the CLI / MCP server hits. |
-| `AIMEBU_NAME`    | _(unset)_                | Your human name — alternative to `--name`. Also advertised as the default name at `GET /default-name` (used by the web UI). |
+| `AIMEBU_NAME`    | _(unset)_                | Your human name — alternative to `--name`. |
 | `AIMEBU_HARNESS` | _(unset)_                | Harness slug for `aimebu mcp`. Load-bearing for harnesses that don't propagate marker env vars (notably codex). Set in MCP config; AI can also pass it directly to `bus_register`. |
 | `AIMEBU_AGENT_DEBUG` | _(unset)_ | Set to `1`, `true`, `yes`, `y`, or `on` to enable JSONL debug logging for `aimebu agent`. Off by default. See [Debug logging](#debug-logging). |
 | `AIMEBU_USAGES_REFRESH` | _(unset)_ | Override provider usage refresh interval in seconds. Minimum `15`; default setting is `120`. |
