@@ -115,6 +115,50 @@ func jsonOK(w http.ResponseWriter, data any) error {
 
 const busWaitTimeoutHint = "keep_waiting=true (status=\"still_waiting\") means no messages arrived yet, not that listening is over. Call bus_wait again now. Only return to the user if they explicitly told you to stop."
 
+func reactionEventFromMeta(evt MetaEvent) (types.ReactionEvent, bool) {
+	if evt.Type != "reaction" {
+		return types.ReactionEvent{}, false
+	}
+	data, ok := evt.Data.(map[string]any)
+	if !ok {
+		return types.ReactionEvent{}, false
+	}
+	messageID, ok := int64FromAny(data["message_id"])
+	if !ok || messageID <= 0 {
+		return types.ReactionEvent{}, false
+	}
+	roomID, _ := data["room_id"].(string)
+	emoji, _ := data["emoji"].(string)
+	agentID, _ := data["agent_id"].(string)
+	op, _ := data["op"].(string)
+	if roomID == "" || emoji == "" || agentID == "" || op == "" {
+		return types.ReactionEvent{}, false
+	}
+	return types.ReactionEvent{
+		MessageID: messageID,
+		RoomID:    roomID,
+		Emoji:     emoji,
+		AgentID:   agentID,
+		Op:        op,
+	}, true
+}
+
+func int64FromAny(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case float64:
+		if n != float64(int64(n)) {
+			return 0, false
+		}
+		return int64(n), true
+	default:
+		return 0, false
+	}
+}
+
 // validMP3Header checks that the first bytes of data look like an MP3 file:
 // either an ID3v2 tag ("ID3") or an MPEG sync word (0xFF followed by 0xE0–0xFF).
 func validMP3Header(data []byte) bool {
@@ -137,6 +181,83 @@ func validWAVHeader(data []byte) bool {
 func allowedAttachmentMime(mimeType string) bool {
 	switch mimeType {
 	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func cleanReactionEmoji(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" || !utf8.ValidString(s) {
+		return "", false
+	}
+	runes := []rune(s)
+	if len(runes) == 2 && isRegionalIndicator(runes[0]) && isRegionalIndicator(runes[1]) {
+		return s, true
+	}
+	idx, ok := consumeEmojiComponent(runes, 0)
+	if !ok {
+		return "", false
+	}
+	for idx < len(runes) {
+		if runes[idx] != 0x200D {
+			return "", false
+		}
+		idx, ok = consumeEmojiComponent(runes, idx+1)
+		if !ok {
+			return "", false
+		}
+	}
+	return s, idx == len(runes)
+}
+
+func consumeEmojiComponent(runes []rune, idx int) (int, bool) {
+	if idx >= len(runes) || !isEmojiRune(runes[idx]) {
+		return idx, false
+	}
+	idx++
+	for idx < len(runes) && isEmojiModifier(runes[idx]) {
+		idx++
+	}
+	return idx, true
+}
+
+func isEmojiModifier(r rune) bool {
+	return r == 0xFE0F || (r >= 0x1F3FB && r <= 0x1F3FF)
+}
+
+func isRegionalIndicator(r rune) bool {
+	return r >= 0x1F1E6 && r <= 0x1F1FF
+}
+
+func isEmojiRune(r rune) bool {
+	switch {
+	case r == 0x00A9 || r == 0x00AE:
+		return true
+	case r == 0x203C || r == 0x2049 || r == 0x2122 || r == 0x2139:
+		return true
+	case r >= 0x2194 && r <= 0x21AA:
+		return true
+	case r == 0x231A || r == 0x231B || r == 0x2328 || r == 0x23CF:
+		return true
+	case r >= 0x23E9 && r <= 0x23F3:
+		return true
+	case r >= 0x23F8 && r <= 0x23FA:
+		return true
+	case r == 0x24C2 || r == 0x25AA || r == 0x25AB || r == 0x25B6 || r == 0x25C0:
+		return true
+	case r >= 0x25FB && r <= 0x25FE:
+		return true
+	case r >= 0x2600 && r <= 0x27BF:
+		return true
+	case r == 0x2934 || r == 0x2935:
+		return true
+	case r >= 0x2B05 && r <= 0x2B55:
+		return true
+	case r == 0x3030 || r == 0x303D || r == 0x3297 || r == 0x3299:
+		return true
+	case r >= 0x1F000 && r <= 0x1FAFF:
 		return true
 	default:
 		return false
@@ -239,7 +360,8 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, "room not found", http.StatusNotFound)
 			return
 		}
-		msgs := s.roomMessages(roomID, 50, 0)
+		agentID := r.URL.Query().Get("agent_id")
+		msgs := s.withReactionSummaries(s.roomMessages(roomID, 50, 0), agentID)
 		presence := s.roomPresence(roomID)
 		_ = jsonOK(w, map[string]any{
 			"room":             room,
@@ -362,7 +484,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			sinceID, _ = strconv.ParseInt(sid, 10, 64)
 		}
 
-		msgs := s.roomMessages(roomID, limit, sinceID)
+		msgs := s.withReactionSummaries(s.roomMessages(roomID, limit, sinceID), agentID)
 		if agentID != "" {
 			_ = jsonOK(w, map[string]any{"messages": annotate(msgs, agentID, s.addressingContext), "room": roomID})
 		} else {
@@ -424,13 +546,14 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 						filtered = append(filtered, m)
 					}
 				}
+				filtered = s.withReactionSummaries(filtered, agentID)
 				if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentID, s.addressingContext), "room": roomID}); err == nil {
 					if s.advanceCursor(agentID, roomID, last) {
 						s.broadcastReadUpdate(agentID, roomID, last)
 					}
 				}
 			} else {
-				_ = jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
+				_ = jsonOK(w, map[string]any{"messages": s.withReactionSummaries(msgs, ""), "room": roomID})
 			}
 			return
 		}
@@ -467,13 +590,14 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 					return // client disconnected; preserve cursor so next reconnect replays
 				}
 				if agentID != "" {
-					if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentID, s.addressingContext), "room": roomID}); err == nil {
+					msgs := s.withReactionSummaries([]types.Message{msg}, agentID)
+					if err := jsonOK(w, map[string]any{"messages": annotate(msgs, agentID, s.addressingContext), "room": roomID}); err == nil {
 						if s.advanceCursor(agentID, roomID, msg.ID) {
 							s.broadcastReadUpdate(agentID, roomID, msg.ID)
 						}
 					}
 				} else {
-					_ = jsonOK(w, map[string]any{"messages": []types.Message{msg}, "room": roomID})
+					_ = jsonOK(w, map[string]any{"messages": s.withReactionSummaries([]types.Message{msg}, ""), "room": roomID})
 				}
 				return
 			case <-timer.C:
@@ -537,6 +661,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 					filtered = append(filtered, m)
 				}
 			}
+			filtered = s.withReactionSummaries(filtered, agentID)
 			if err := jsonOK(w, map[string]any{"messages": annotate(filtered, agentID, s.addressingContext), "agent": agentID}); err == nil {
 				if !sinceExplicit {
 					// Advance cursors for every room we returned messages from
@@ -566,6 +691,11 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 
 		ch := s.subscribeGlobal()
 		defer s.unsubscribeGlobal(ch)
+
+		// Agent waits filter the shared meta stream; reaction wakeups are
+		// live-only, so burst drops follow normal meta-event semantics.
+		metaCh := s.subscribeMeta()
+		defer s.unsubscribeMeta(metaCh)
 
 		timer := time.NewTimer(time.Duration(timeoutSec) * time.Second)
 		defer timer.Stop()
@@ -598,13 +728,39 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 				if r.Context().Err() != nil {
 					return // client disconnected; preserve cursor so next reconnect replays
 				}
-				if err := jsonOK(w, map[string]any{"messages": annotate([]types.Message{msg}, agentID, s.addressingContext), "agent": agentID}); err == nil {
+				msgs := s.withReactionSummaries([]types.Message{msg}, agentID)
+				if err := jsonOK(w, map[string]any{"messages": annotate(msgs, agentID, s.addressingContext), "agent": agentID}); err == nil {
 					if !sinceExplicit {
 						if s.advanceCursor(agentID, msg.RoomID, msg.ID) {
 							s.broadcastReadUpdate(agentID, msg.RoomID, msg.ID)
 						}
 					}
 				}
+				return
+			case evt := <-metaCh:
+				reaction, ok := reactionEventFromMeta(evt)
+				if !ok {
+					continue
+				}
+				if reaction.AgentID == agentID {
+					continue
+				}
+				if !s.isMember(reaction.RoomID, agentID) {
+					continue
+				}
+				msg, ok := s.messageByID(reaction.MessageID)
+				if !ok || msg.From != agentID {
+					continue
+				}
+				s.touchAgent(agentID)
+				if r.Context().Err() != nil {
+					return
+				}
+				_ = jsonOK(w, map[string]any{
+					"messages":  []types.Message{},
+					"reactions": []types.ReactionEvent{reaction},
+					"agent":     agentID,
+				})
 				return
 			case <-timer.C:
 				_ = jsonOK(w, map[string]any{
@@ -872,6 +1028,78 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 	// fields for that registered agent's POV, even if the agent is not a
 	// member of the room. This keeps the per-message debug inspector aligned
 	// with the bus-wide agent picker in the web UI.
+	mux.HandleFunc("PUT /messages/{id}/reactions", func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			jsonError(w, "not_found", http.StatusNotFound)
+			return
+		}
+		var req types.ReactRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.AgentID == "" {
+			jsonError(w, "agent_id is required", http.StatusBadRequest)
+			return
+		}
+		emoji, ok := cleanReactionEmoji(req.Emoji)
+		if !ok {
+			jsonError(w, "emoji must be a single emoji", http.StatusBadRequest)
+			return
+		}
+		roomID, summary, changed, err := s.addReaction(id, req.AgentID, emoji)
+		if err != nil {
+			if err.Error() == "message not found" {
+				jsonError(w, "not_found", http.StatusNotFound)
+			} else {
+				jsonError(w, err.Error(), http.StatusForbidden)
+			}
+			return
+		}
+		if changed {
+			s.broadcastReactionUpdate(roomID, id, req.AgentID, emoji, "add")
+		}
+		_ = jsonOK(w, map[string]any{"message_id": id, "room": roomID, "reactions": summary})
+	})
+
+	mux.HandleFunc("DELETE /messages/{id}/reactions", func(w http.ResponseWriter, r *http.Request) {
+		idStr := r.PathValue("id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil || id <= 0 {
+			jsonError(w, "not_found", http.StatusNotFound)
+			return
+		}
+		var req types.ReactRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.AgentID == "" {
+			jsonError(w, "agent_id is required", http.StatusBadRequest)
+			return
+		}
+		emoji, ok := cleanReactionEmoji(req.Emoji)
+		if !ok {
+			jsonError(w, "emoji must be a single emoji", http.StatusBadRequest)
+			return
+		}
+		roomID, summary, changed, err := s.removeReaction(id, req.AgentID, emoji)
+		if err != nil {
+			if err.Error() == "message not found" {
+				jsonError(w, "not_found", http.StatusNotFound)
+			} else {
+				jsonError(w, err.Error(), http.StatusForbidden)
+			}
+			return
+		}
+		if changed {
+			s.broadcastReactionUpdate(roomID, id, req.AgentID, emoji, "remove")
+		}
+		_ = jsonOK(w, map[string]any{"message_id": id, "room": roomID, "reactions": summary})
+	})
+
 	mux.HandleFunc("GET /messages/{id}", func(w http.ResponseWriter, r *http.Request) {
 		idStr := r.PathValue("id")
 		id, err := strconv.ParseInt(idStr, 10, 64)
@@ -889,12 +1117,13 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, "not_found", http.StatusNotFound)
 			return
 		}
-		annotated := annotate([]types.Message{msg}, agentID, s.addressingContext)
+		msgs := s.withReactionSummaries([]types.Message{msg}, agentID)
+		annotated := annotate(msgs, agentID, s.addressingContext)
 		if len(annotated) == 1 {
 			_ = jsonOK(w, annotated[0])
 			return
 		}
-		_ = jsonOK(w, msg)
+		_ = jsonOK(w, msgs[0])
 	})
 
 	// GET /messages — all messages (for sniff/monitoring)
@@ -905,7 +1134,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 				limit = n
 			}
 		}
-		msgs := s.allMessages(limit)
+		msgs := s.withReactionSummaries(s.allMessages(limit), "")
 		_ = jsonOK(w, map[string]any{"messages": msgs})
 	})
 
@@ -1600,7 +1829,9 @@ Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Defer
 
 For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include question text, 2-8 option strings, and optional description text when the question needs context; the UI derives numbering/letters and adds Other.
 
-Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.`,
+Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.
+
+Use bus_react for lightweight acknowledgements instead of posting text-only ack lines. Recommended convention: 👍/🆗 = seen/ack, ✅ = done, 👀 = looking, 🙏 = thanks.`,
 
 		"worker": `You are the worker for this room.
 
@@ -1618,7 +1849,9 @@ Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Defer
 
 For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include question text, 2-8 option strings, and optional description text when the question needs context; the UI derives numbering/letters and adds Other.
 
-Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.`,
+Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.
+
+Use bus_react for lightweight acknowledgements instead of posting text-only ack lines. Recommended convention: 👍/🆗 = seen/ack, ✅ = done, 👀 = looking, 🙏 = thanks.`,
 
 		"reviewer": `You are the reviewer for this room.
 
@@ -1636,7 +1869,9 @@ Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Defer
 
 For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include question text, 2-8 option strings, and optional description text when the question needs context; the UI derives numbering/letters and adds Other.
 
-Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.`,
+Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.
+
+Use bus_react for lightweight acknowledgements instead of posting text-only ack lines. Recommended convention: 👍/🆗 = seen/ack, ✅ = done, 👀 = looking, 🙏 = thanks.`,
 
 		"sec-reviewer": `Additional focus: security.
 

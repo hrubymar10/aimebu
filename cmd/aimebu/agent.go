@@ -1040,11 +1040,11 @@ func agentBootstrapStart(harness string, command []string, prompt, sessionID, ai
 	stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(os.Stdout, buf, stateWriter))
 	cmd := agentCommand(command, args, env, stdoutWriter, io.MultiWriter(os.Stderr, stderrBuf))
 
+	agentLogHarnessSpawn(debug, command, args)
 	if err := cmd.Start(); err != nil {
 		_ = stateWriter.Close()
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	agentLogHarnessSpawn(debug, command, args)
 	return cmd, buf, stderrBuf, stdoutWriter, agentID, stateWriter, nil
 }
 
@@ -1181,11 +1181,11 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 		cmd := agentCommand(command, args, env, stdoutWriter, io.MultiWriter(os.Stderr, stderrBuf))
 		startedAt := time.Now()
 
+		agentLogHarnessSpawn(debug, command, args)
 		if err := cmd.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "aimebu agent: spawn failed: %v\n", err)
 			os.Exit(1)
 		}
-		agentLogHarnessSpawn(debug, command, args)
 
 		doneCh := make(chan error, 1)
 		go func() { doneCh <- cmd.Wait() }()

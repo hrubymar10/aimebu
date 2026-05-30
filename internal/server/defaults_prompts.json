@@ -84,6 +84,13 @@
     "tokens": []
   },
   {
+    "key": "tool.bus_react",
+    "label": "bus_react",
+    "group": "tool_descriptions",
+    "description": "MCP tool description for bus_react.",
+    "tokens": []
+  },
+  {
     "key": "tool.bus_macros_get",
     "label": "bus_macros_get",
     "group": "tool_descriptions",

@@ -123,6 +123,9 @@ type store struct {
 	attachmentsMu sync.RWMutex
 	attachments   map[string]AttachmentEntry
 
+	reactionsMu sync.RWMutex
+	reactions   map[int64][]types.Reaction
+
 	rolesMu        sync.RWMutex
 	rolesOverrides map[string]roleOverrideEntry // catalog key → metadata/body override
 	rolesCustom    map[string]customRoleEntry   // custom key → metadata/body override
@@ -157,6 +160,7 @@ func newStore(dir string) (*store, error) {
 		prompts:                make(map[string]string),
 		fleets:                 make(map[string]Fleet),
 		attachments:            make(map[string]AttachmentEntry),
+		reactions:              make(map[int64][]types.Reaction),
 		rolesOverrides:         make(map[string]roleOverrideEntry),
 		rolesCustom:            make(map[string]customRoleEntry),
 		warnedLegacy:           make(map[string]bool),
@@ -173,6 +177,7 @@ func newStore(dir string) (*store, error) {
 	// goroutine. Uses the configured retention windows.
 	s.pruneOnStartup()
 	s.cleanupAttachments(time.Now().UTC())
+	s.cleanupReactionsForLiveMessages()
 
 	// Create the _system room if it doesn't exist yet (idempotent).
 	s.ensureSystemRoom()
@@ -339,6 +344,9 @@ func (s *store) load() error {
 
 	// Image attachment registry — conversation state; regular prune wipes it.
 	s.loadAttachments()
+
+	// Emoji reactions — mutable conversation metadata; regular prune wipes it.
+	s.loadReactions()
 
 	// Macros — separate from schema-versioned state; survives schema wipes.
 	// Handles three historical shapes:
@@ -549,6 +557,7 @@ func (s *store) deleteRoom(id string) bool {
 	delete(s.messages, id)
 	s.persist()
 	s.mu.Unlock()
+	s.cleanupReactionsForLiveMessages()
 
 	s.broadcastRoomUpdate()
 	if !strings.HasPrefix(id, "_") && !isDM(id) {
@@ -1146,6 +1155,293 @@ func (s *store) allMessages(limit int) []types.Message {
 		result[i] = all[n-1-i]
 	}
 	return result
+}
+
+func (s *store) reactionPath() string {
+	return filepath.Join(s.dir, "reactions.json")
+}
+
+func (s *store) loadReactions() {
+	data, err := os.ReadFile(s.reactionPath())
+	if err != nil {
+		return
+	}
+	var env struct {
+		Reactions map[int64][]types.Reaction `json:"reactions"`
+	}
+	if json.Unmarshal(data, &env) != nil || env.Reactions == nil {
+		return
+	}
+	s.reactionsMu.Lock()
+	for id, rows := range env.Reactions {
+		if id <= 0 {
+			continue
+		}
+		for _, r := range rows {
+			if r.AgentID == "" || r.Emoji == "" {
+				continue
+			}
+			s.reactions[id] = append(s.reactions[id], r)
+		}
+	}
+	s.reactionsMu.Unlock()
+}
+
+func (s *store) persistReactionsLocked() {
+	out := make(map[int64][]types.Reaction, len(s.reactions))
+	for id, rows := range s.reactions {
+		if len(rows) == 0 {
+			continue
+		}
+		cp := append([]types.Reaction(nil), rows...)
+		sort.Slice(cp, func(i, j int) bool {
+			if cp[i].Emoji != cp[j].Emoji {
+				return cp[i].Emoji < cp[j].Emoji
+			}
+			if cp[i].AgentID != cp[j].AgentID {
+				return cp[i].AgentID < cp[j].AgentID
+			}
+			return cp[i].CreatedAt < cp[j].CreatedAt
+		})
+		out[id] = cp
+	}
+	env := struct {
+		Reactions map[int64][]types.Reaction `json:"reactions"`
+	}{Reactions: out}
+	if data, err := json.MarshalIndent(env, "", "  "); err == nil {
+		atomicWrite(s.reactionPath(), data)
+	}
+}
+
+func (s *store) messageRoomLocked(id int64) (string, bool) {
+	for roomID, msgs := range s.messages {
+		for _, m := range msgs {
+			if m.ID == id {
+				return roomID, true
+			}
+		}
+	}
+	return "", false
+}
+
+func (s *store) messageExists(id int64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.messageRoomLocked(id)
+	return ok
+}
+
+func (s *store) liveMessageIDs() map[int64]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	live := make(map[int64]bool)
+	for _, msgs := range s.messages {
+		for _, m := range msgs {
+			live[m.ID] = true
+		}
+	}
+	return live
+}
+
+func (s *store) addReaction(messageID int64, agentID, emoji string) (string, []types.ReactionSummary, bool, error) {
+	s.mu.RLock()
+	roomID, ok := s.messageRoomLocked(messageID)
+	if !ok {
+		s.mu.RUnlock()
+		return "", nil, false, fmt.Errorf("message not found")
+	}
+	if _, ok := s.agents[agentID]; !ok {
+		s.mu.RUnlock()
+		return "", nil, false, fmt.Errorf("agent %q is not registered", agentID)
+	}
+	room := s.rooms[roomID]
+	member := false
+	if room != nil {
+		for _, m := range room.Members {
+			if m == agentID {
+				member = true
+				break
+			}
+		}
+	}
+	s.mu.RUnlock()
+	if !member {
+		return "", nil, false, fmt.Errorf("agent %s is not a member of room %s", agentID, roomID)
+	}
+
+	s.reactionsMu.Lock()
+	rows := s.reactions[messageID]
+	for _, r := range rows {
+		if r.AgentID == agentID && r.Emoji == emoji {
+			summary := summarizeReactions(rows, agentID)
+			s.reactionsMu.Unlock()
+			return roomID, summary, false, nil
+		}
+	}
+	rows = append(rows, types.Reaction{AgentID: agentID, Emoji: emoji, CreatedAt: now()})
+	s.reactions[messageID] = rows
+	summary := summarizeReactions(rows, agentID)
+	s.persistReactionsLocked()
+	s.reactionsMu.Unlock()
+
+	s.touchAgent(agentID)
+	return roomID, summary, true, nil
+}
+
+func (s *store) removeReaction(messageID int64, agentID, emoji string) (string, []types.ReactionSummary, bool, error) {
+	s.mu.RLock()
+	roomID, ok := s.messageRoomLocked(messageID)
+	if !ok {
+		s.mu.RUnlock()
+		return "", nil, false, fmt.Errorf("message not found")
+	}
+	if _, ok := s.agents[agentID]; !ok {
+		s.mu.RUnlock()
+		return "", nil, false, fmt.Errorf("agent %q is not registered", agentID)
+	}
+	room := s.rooms[roomID]
+	member := false
+	if room != nil {
+		for _, m := range room.Members {
+			if m == agentID {
+				member = true
+				break
+			}
+		}
+	}
+	s.mu.RUnlock()
+	if !member {
+		return "", nil, false, fmt.Errorf("agent %s is not a member of room %s", agentID, roomID)
+	}
+
+	s.reactionsMu.Lock()
+	rows := s.reactions[messageID]
+	filtered := rows[:0]
+	removed := false
+	for _, r := range rows {
+		if r.AgentID == agentID && r.Emoji == emoji {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	if removed {
+		if len(filtered) == 0 {
+			delete(s.reactions, messageID)
+		} else {
+			s.reactions[messageID] = filtered
+		}
+		s.persistReactionsLocked()
+	}
+	summary := summarizeReactions(filtered, agentID)
+	s.reactionsMu.Unlock()
+
+	s.touchAgent(agentID)
+	return roomID, summary, removed, nil
+}
+
+func summarizeReactions(rows []types.Reaction, viewerID string) []types.ReactionSummary {
+	if len(rows) == 0 {
+		return nil
+	}
+	type acc struct {
+		count  int
+		agents map[string]bool
+		me     bool
+	}
+	byEmoji := make(map[string]acc)
+	for _, r := range rows {
+		if r.Emoji == "" || r.AgentID == "" {
+			continue
+		}
+		a := byEmoji[r.Emoji]
+		if a.agents == nil {
+			a.agents = make(map[string]bool)
+		}
+		a.count++
+		a.agents[r.AgentID] = true
+		if viewerID != "" && r.AgentID == viewerID {
+			a.me = true
+		}
+		byEmoji[r.Emoji] = a
+	}
+	if len(byEmoji) == 0 {
+		return nil
+	}
+	emojis := make([]string, 0, len(byEmoji))
+	for emoji := range byEmoji {
+		emojis = append(emojis, emoji)
+	}
+	sort.Strings(emojis)
+	out := make([]types.ReactionSummary, 0, len(emojis))
+	for _, emoji := range emojis {
+		a := byEmoji[emoji]
+		agents := make([]string, 0, len(a.agents))
+		for agentID := range a.agents {
+			agents = append(agents, agentID)
+		}
+		sort.Strings(agents)
+		out = append(out, types.ReactionSummary{Emoji: emoji, Count: a.count, Agents: agents, Me: a.me})
+	}
+	return out
+}
+
+func (s *store) withReactionSummaries(msgs []types.Message, viewerID string) []types.Message {
+	if len(msgs) == 0 {
+		return msgs
+	}
+	s.reactionsMu.RLock()
+	defer s.reactionsMu.RUnlock()
+	out := make([]types.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = m
+		out[i].Reactions = summarizeReactions(s.reactions[m.ID], viewerID)
+	}
+	return out
+}
+
+func (s *store) cleanupReactionsForLiveMessages() {
+	live := s.liveMessageIDs()
+	s.reactionsMu.Lock()
+	changed := false
+	for id := range s.reactions {
+		if !live[id] {
+			delete(s.reactions, id)
+			changed = true
+		}
+	}
+	if changed {
+		s.persistReactionsLocked()
+	}
+	s.reactionsMu.Unlock()
+}
+
+func (s *store) broadcastReactionUpdate(roomID string, messageID int64, agentID, emoji, op string) {
+	s.reactionsMu.RLock()
+	summary := summarizeReactions(s.reactions[messageID], "")
+	s.reactionsMu.RUnlock()
+	if summary == nil {
+		summary = []types.ReactionSummary{}
+	}
+	evt := MetaEvent{
+		Type: "reaction",
+		Data: map[string]any{
+			"room_id":    roomID,
+			"message_id": messageID,
+			"agent_id":   agentID,
+			"emoji":      emoji,
+			"op":         op,
+			"reactions":  summary,
+		},
+	}
+	s.subMu.Lock()
+	for _, ch := range s.metaSubs {
+		select {
+		case ch <- evt:
+		default:
+		}
+	}
+	s.subMu.Unlock()
 }
 
 // ── DM ─────────────────────────────────────────────────────────────
@@ -2170,6 +2466,10 @@ func (s *store) clearAll(includeSettings bool) {
 	s.attachments = make(map[string]AttachmentEntry)
 	s.attachmentsMu.Unlock()
 	_ = os.RemoveAll(s.attachmentsDir())
+	s.reactionsMu.Lock()
+	s.reactions = make(map[int64][]types.Reaction)
+	s.persistReactionsLocked()
+	s.reactionsMu.Unlock()
 	if includeSettings {
 		s.macrosMu.Lock()
 		s.macros = make(map[string]string)
@@ -2311,6 +2611,7 @@ func (s *store) cleanupEmptyRooms() {
 	log.Printf("Cleaned up %d empty room(s): %v", len(toDelete), toDelete)
 	s.persist()
 	s.mu.Unlock()
+	s.cleanupReactionsForLiveMessages()
 
 	s.broadcastRoomUpdate()
 }
@@ -2325,6 +2626,7 @@ func (s *store) cleanupMessages() {
 	}
 	s.mu.Unlock()
 	s.cleanupAttachments(now)
+	s.cleanupReactionsForLiveMessages()
 }
 
 func (s *store) cleanupMessagesLocked(now time.Time) bool {

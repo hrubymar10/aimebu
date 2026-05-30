@@ -110,6 +110,10 @@ func TestCleanupMessagesHonorsAgeAndCount(t *testing.T) {
 		retentionTestMessage(4, "general", now),
 	}
 	s.mu.Unlock()
+	s.reactionsMu.Lock()
+	s.reactions[1] = []types.Reaction{{AgentID: "matin", Emoji: "👍", CreatedAt: now.Format(time.RFC3339)}}
+	s.reactions[4] = []types.Reaction{{AgentID: "matin", Emoji: "✅", CreatedAt: now.Format(time.RFC3339)}}
+	s.reactionsMu.Unlock()
 
 	s.cleanupMessages()
 
@@ -121,6 +125,15 @@ func TestCleanupMessagesHonorsAgeAndCount(t *testing.T) {
 	}
 	if got[0].ID != 3 || got[1].ID != 4 {
 		t.Fatalf("kept IDs = [%d %d], want [3 4]", got[0].ID, got[1].ID)
+	}
+
+	s.reactionsMu.RLock()
+	defer s.reactionsMu.RUnlock()
+	if _, ok := s.reactions[1]; ok {
+		t.Fatal("reaction for pruned message 1 was not removed")
+	}
+	if _, ok := s.reactions[4]; !ok {
+		t.Fatal("reaction for kept message 4 was removed")
 	}
 }
 
@@ -144,6 +157,53 @@ func TestCleanupMessagesUnlimitedByDefault(t *testing.T) {
 	defer s.mu.RUnlock()
 	if got := len(s.messages["general"]); got != 2 {
 		t.Fatalf("kept %d messages with default unlimited retention, want 2", got)
+	}
+}
+
+func TestCleanupMessagesRemovesOrphanReactions(t *testing.T) {
+	s, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	retentionCount := 1
+	s.putSettings(Settings{MessageRetentionCount: &retentionCount})
+
+	now := time.Now().UTC()
+	s.mu.Lock()
+	s.rooms["general"] = &types.Room{ID: "general", Members: []string{"matin"}}
+	s.messages["general"] = []types.Message{
+		retentionTestMessage(1, "general", now.Add(-time.Minute)),
+		retentionTestMessage(2, "general", now),
+	}
+	s.mu.Unlock()
+	s.reactionsMu.Lock()
+	s.reactions[1] = []types.Reaction{{AgentID: "matin", Emoji: "👍", CreatedAt: now.Format(time.RFC3339)}}
+	s.reactions[2] = []types.Reaction{{AgentID: "matin", Emoji: "✅", CreatedAt: now.Format(time.RFC3339)}}
+	s.persistReactionsLocked()
+	s.reactionsMu.Unlock()
+
+	s.cleanupMessages()
+
+	s.reactionsMu.RLock()
+	if _, ok := s.reactions[1]; ok {
+		t.Fatal("reaction for pruned message 1 was not removed")
+	}
+	if _, ok := s.reactions[2]; !ok {
+		t.Fatal("reaction for kept message 2 was removed")
+	}
+	s.reactionsMu.RUnlock()
+
+	reloaded, err := newStore(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded.reactionsMu.RLock()
+	defer reloaded.reactionsMu.RUnlock()
+	if _, ok := reloaded.reactions[1]; ok {
+		t.Fatal("persisted reactions still contain pruned message 1")
+	}
+	if _, ok := reloaded.reactions[2]; !ok {
+		t.Fatal("persisted reactions dropped kept message 2")
 	}
 }
 

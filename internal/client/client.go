@@ -131,6 +131,24 @@ func (c *Client) Put(path string, body interface{}) (string, error) {
 	return string(out), nil
 }
 
+func (c *Client) React(messageID int64, emoji string, remove bool) (string, error) {
+	body := map[string]string{"agent_id": c.AgentID, "emoji": emoji}
+	method := "PUT"
+	if remove {
+		method = "DELETE"
+	}
+	data, _ := json.Marshal(body)
+	req, _ := http.NewRequest(method, fmt.Sprintf("%s/messages/%d/reactions", c.BaseURL, messageID), bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient(0).Do(req)
+	if err != nil {
+		return "", &UnreachableError{BaseURL: c.BaseURL, Err: err}
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	return string(out), nil
+}
+
 func (c *Client) Delete(path string) (string, error) {
 	req, _ := http.NewRequest("DELETE", c.BaseURL+path, nil)
 	resp, err := httpClient(0).Do(req)

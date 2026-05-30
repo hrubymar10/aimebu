@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
 	aimebu "github.com/hrubymar10/aimebu"
 	"github.com/hrubymar10/aimebu/internal/client"
 	"github.com/hrubymar10/aimebu/internal/config"
@@ -47,6 +49,8 @@ func main() {
 		sayCmd(os.Args[2:])
 	case "read":
 		readCmd(os.Args[2:])
+	case "react":
+		reactCmd(os.Args[2:])
 	case "rooms":
 		roomsCmd(os.Args[2:])
 	case "dm":
@@ -323,6 +327,42 @@ func readCmd(args []string) {
 	result, err := c.Get("/rooms/" + room + "/messages?limit=" + limit)
 	if err != nil {
 		fatal("read", err)
+	}
+	fmt.Println(client.PrettyJSON(result))
+}
+
+func reactCmd(args []string) {
+	c, rest := humanClient(args)
+	remove := false
+	filtered := make([]string, 0, len(rest))
+	for _, arg := range rest {
+		if arg == "--remove" || arg == "-r" {
+			remove = true
+			continue
+		}
+		filtered = append(filtered, arg)
+	}
+	if len(filtered) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: aimebu react <room> <#id> <emoji> [--remove] --name <your-name>")
+		os.Exit(1)
+	}
+	room := filtered[0]
+	idText := strings.TrimPrefix(filtered[1], "#")
+	msgID, err := strconv.ParseInt(idText, 10, 64)
+	if err != nil || msgID <= 0 {
+		fmt.Fprintln(os.Stderr, "Error: message ID must be a positive number, with optional # prefix.")
+		os.Exit(1)
+	}
+	emoji := filtered[2]
+	result, err := c.React(msgID, emoji, remove)
+	if err != nil {
+		fatal("react", err)
+	}
+	var parsed struct {
+		Room string `json:"room"`
+	}
+	if jsonErr := json.Unmarshal([]byte(result), &parsed); jsonErr == nil && parsed.Room != "" && parsed.Room != room {
+		fmt.Fprintf(os.Stderr, "Warning: message #%d is in room %s, not %s.\n", msgID, parsed.Room, room)
 	}
 	fmt.Println(client.PrettyJSON(result))
 }
@@ -724,6 +764,7 @@ Rooms (humans — require --name or $AIMEBU_NAME):
   join <room> --name N                Join a room (auto-creates if needed)
   leave <room> --name N               Leave a room
   say <room> <msg> --name N           Send a message to a room
+  react <room> <#id> <emoji> --name N Add a reaction to a message
   read <room> [--limit N]             Read messages from a room (no name needed)
   rooms --name N                      List rooms you're in
   dm <recipient> <msg> --name N       Direct message

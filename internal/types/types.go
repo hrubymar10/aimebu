@@ -21,23 +21,45 @@ type RoleInfo struct {
 }
 
 type Message struct {
-	ID                  int64          `json:"id"`
-	RoomID              string         `json:"room_id"`
-	From                string         `json:"from"`
-	FromKind            string         `json:"from_kind,omitempty"` // "ai", "human", or "system" — empty for legacy persisted messages
-	Body                string         `json:"body"`
-	CreatedAt           string         `json:"created_at"`
-	Targets             []string       `json:"targets"`
-	NeedsHumanAttention bool           `json:"needs_human_attention,omitempty"`
-	ProposedAnswers     []string       `json:"proposed_answers,omitempty"`
-	OpenQuestions       []OpenQuestion `json:"open_questions,omitempty"`
-	Attachments         []Attachment   `json:"attachments,omitempty"`
+	ID                  int64             `json:"id"`
+	RoomID              string            `json:"room_id"`
+	From                string            `json:"from"`
+	FromKind            string            `json:"from_kind,omitempty"` // "ai", "human", or "system" — empty for legacy persisted messages
+	Body                string            `json:"body"`
+	CreatedAt           string            `json:"created_at"`
+	Targets             []string          `json:"targets"`
+	NeedsHumanAttention bool              `json:"needs_human_attention,omitempty"`
+	ProposedAnswers     []string          `json:"proposed_answers,omitempty"`
+	OpenQuestions       []OpenQuestion    `json:"open_questions,omitempty"`
+	Attachments         []Attachment      `json:"attachments,omitempty"`
+	Reactions           []ReactionSummary `json:"reactions,omitempty"`
 }
 
 type OpenQuestion struct {
 	Question    string   `json:"question"`
 	Description string   `json:"description,omitempty"`
 	Options     []string `json:"options"`
+}
+
+type Reaction struct {
+	AgentID   string `json:"agent_id"`
+	Emoji     string `json:"emoji"`
+	CreatedAt string `json:"created_at"`
+}
+
+type ReactionSummary struct {
+	Emoji  string   `json:"emoji"`
+	Count  int      `json:"count"`
+	Agents []string `json:"agents,omitempty"`
+	Me     bool     `json:"me,omitempty"`
+}
+
+type ReactionEvent struct {
+	MessageID int64  `json:"message_id"`
+	RoomID    string `json:"room_id"`
+	Emoji     string `json:"emoji"`
+	AgentID   string `json:"agent_id"`
+	Op        string `json:"op"`
 }
 
 type Attachment struct {
@@ -147,6 +169,11 @@ type AgentRoomView struct {
 type MarkReadRequest struct {
 	Room      string `json:"room"`
 	MessageID int64  `json:"message_id"` // highest ID the agent has now seen; 0 means "current HEAD"
+}
+
+type ReactRequest struct {
+	AgentID string `json:"agent_id"`
+	Emoji   string `json:"emoji"`
 }
 
 // MemberPresence is the per-agent presence state embedded in

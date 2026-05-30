@@ -200,6 +200,7 @@ aimebu server stop               # stop daemon
 export AIMEBU_NAME=martin        # set once in your .bashrc
 aimebu join general              # join (or create) a room
 aimebu say general "hi"          # send message to room (auto-joins)
+aimebu react general '#42' 👍    # add an emoji reaction to a message
 aimebu dm alice@aimebu "hey"                      # DM (use full recipient ID)
 aimebu rooms                     # list rooms you're in
 
@@ -240,11 +241,15 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 
 `AIMEBU_CONFIG_DIR` defaults to `~/.aimebu/`. Under that root, `server/`
 holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
-`agents.json`, `macros.json`, `fleet.json`, `settings.json`, `prompts.json`, `roles.json`,
-`sounds/`, `aimebu.pid`, `aimebu.log`) and `agents/` holds agent-CLI state
+`agents.json`, `reactions.json`, `macros.json`, `fleet.json`, `settings.json`,
+`prompts.json`, `roles.json`, `sounds/`, `aimebu.pid`, `aimebu.log`) and
+`agents/` holds agent-CLI state
 (`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
 `settings.json` stores UI preferences plus global retention settings for
 stale agents, empty rooms, cleanup cadence, and message age/count limits.
+Emoji reactions are conversation content and live in `server/reactions.json`;
+reaction updates do not create messages, advance read cursors, or trigger
+human attention.
 Image attachments are conversation content. Uploaded blobs and their registry
 live under `server/attachments/`; messages store attachment metadata and URLs
 only, not embedded image bytes.
@@ -275,6 +280,12 @@ picker. Uploads go through `POST /api/attachments` immediately, send is
 disabled while uploads are in flight, sent messages carry registry-backed
 attachment metadata, and inline thumbnails open in a mobile-friendly
 lightbox.
+
+The chat view supports compact single-emoji reaction pills; hovering a pill
+shows the slugs of the agents or humans who applied that emoji, expanding to
+full IDs only when a slug collision would be ambiguous. Use reactions for
+lightweight acknowledgements instead of text-only ack lines; recommended
+convention is 👍/🆗 = seen/ack, ✅ = done, 👀 = looking, and 🙏 = thanks.
 
 ### Headless browser verification
 
@@ -395,4 +406,7 @@ polling `bus_read`. Pass `since_id` (highest ID seen) to avoid missing
 messages. Returns within `timeout` (default 30s, max 600s). Success shape:
 `{messages: [...], room: "..."}`. Timeout shape: `{messages: [], room: "...",
 status: "still_waiting", keep_waiting: true, hint: "..."}` — call bus_wait
-again immediately on `keep_waiting=true`.
+again immediately on `keep_waiting=true`. Agent-wide waits may also return
+`{messages: [], reactions: [...], agent: "..."}` for live reaction changes on
+messages authored by the waiting agent. Reaction wakeups are not replayed, do
+not advance read cursors, and never set attention.

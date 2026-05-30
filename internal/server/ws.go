@@ -141,6 +141,18 @@ func (wc *wsConn) writeLoop(ctx context.Context, metaCh <-chan MetaEvent, cmdCh 
 					}
 				}
 			}
+			if evt.Type == "reaction" {
+				if data, ok := evt.Data.(map[string]any); ok {
+					if roomID, ok := data["room_id"].(string); ok {
+						wc.mu.Lock()
+						_, subscribed := wc.roomChans[roomID]
+						wc.mu.Unlock()
+						if !subscribed {
+							continue
+						}
+					}
+				}
+			}
 			wc.sendEvent(ctx, wsEvent{Type: evt.Type, Data: evt.Data})
 
 		case msg := <-wc.msgCh:

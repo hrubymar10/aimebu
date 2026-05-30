@@ -79,10 +79,30 @@ func TestBusEtiquetteCoversRoleAssignmentWakeup(t *testing.T) {
 		"call `bus_role_get` for that room",
 		`targeted "role cleared" message`,
 		"do not post an acknowledgement",
+		"Use `bus_react` for lightweight acknowledgements",
 	} {
 		if !strings.Contains(busEtiquette, want) {
 			t.Fatalf("bus etiquette missing %q", want)
 		}
+	}
+}
+
+func TestToolsIncludeBusReact(t *testing.T) {
+	var found bool
+	for _, tool := range tools {
+		if tool.Name != "bus_react" {
+			continue
+		}
+		found = true
+		if !strings.Contains(tool.Description, "acknowledgements") {
+			t.Fatalf("bus_react description = %q, want acknowledgement guidance", tool.Description)
+		}
+		if !reflect.DeepEqual(tool.InputSchema.Required, []string{"message_id", "emoji"}) {
+			t.Fatalf("bus_react required = %v", tool.InputSchema.Required)
+		}
+	}
+	if !found {
+		t.Fatal("bus_react tool not registered")
 	}
 }
 
@@ -161,6 +181,52 @@ func TestMCP_RoleAssign_PostsToServer(t *testing.T) {
 	_ = gotBody
 	if result == "" {
 		t.Fatal("expected non-empty result")
+	}
+}
+
+func TestMCP_React_PutsAndDeletesReaction(t *testing.T) {
+	var calls []struct {
+		Method string
+		Path   string
+		Body   map[string]string
+	}
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		calls = append(calls, struct {
+			Method string
+			Path   string
+			Body   map[string]string
+		}{Method: r.Method, Path: r.URL.Path, Body: body})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"message_id":42,"room":"general","reactions":[{"emoji":"👍","count":1,"me":true}]}`))
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
+	addArgs, _ := json.Marshal(map[string]any{"message_id": 42, "emoji": "👍"})
+	if _, err := handleToolCall(c, "bus_react", addArgs); err != nil {
+		t.Fatalf("handleToolCall bus_react add: %v", err)
+	}
+	removeArgs, _ := json.Marshal(map[string]any{"message_id": 42, "emoji": "👍", "remove": true})
+	if _, err := handleToolCall(c, "bus_react", removeArgs); err != nil {
+		t.Fatalf("handleToolCall bus_react remove: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("calls = %d, want 2", len(calls))
+	}
+	if calls[0].Method != http.MethodPut || calls[0].Path != "/messages/42/reactions" {
+		t.Fatalf("add call = %s %s, want PUT /messages/42/reactions", calls[0].Method, calls[0].Path)
+	}
+	if calls[1].Method != http.MethodDelete || calls[1].Path != "/messages/42/reactions" {
+		t.Fatalf("remove call = %s %s, want DELETE /messages/42/reactions", calls[1].Method, calls[1].Path)
+	}
+	for i, call := range calls {
+		if call.Body["agent_id"] != "alice@aimebu" || call.Body["emoji"] != "👍" {
+			t.Fatalf("call %d body = %v", i, call.Body)
+		}
 	}
 }
 

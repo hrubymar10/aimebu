@@ -1369,6 +1369,7 @@ body {
 }
 
 .chat-msg-bubble {
+  position: relative;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -1434,6 +1435,101 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.message-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.message-reaction-pill,
+.message-reaction-picker summary,
+.message-reaction-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: 0.72rem var(--font-sans);
+  line-height: 1;
+}
+
+.message-reaction-pill {
+  gap: 3px;
+  padding: 0 6px;
+}
+
+.message-reaction-pill.mine {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--text-primary);
+}
+
+.message-reaction-pill:hover,
+.message-reaction-pill:focus-visible,
+.message-reaction-picker summary:hover,
+.message-reaction-picker summary:focus-visible,
+.message-reaction-option:hover,
+.message-reaction-option:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.message-reaction-picker {
+  position: relative;
+}
+
+.message-reaction-add {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition);
+}
+
+.chat-msg:hover .message-reaction-add,
+.chat-msg:focus-within .message-reaction-add,
+.chat-msg.show-reaction-controls .message-reaction-add {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.message-reaction-picker summary {
+  list-style: none;
+  padding: 0;
+}
+
+.message-reaction-picker summary::-webkit-details-marker {
+  display: none;
+}
+
+.message-reaction-menu {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  bottom: calc(100% + 6px);
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+}
+
+.message-reaction-option {
+  border-radius: var(--radius);
+  padding: 0;
 }
 
 .mention {
@@ -2422,6 +2518,17 @@ body {
 }
 
 @media (hover: none) {
+  .chat-msg:hover .message-reaction-add {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .chat-msg.show-reaction-controls .message-reaction-add,
+  .chat-msg:focus-within .message-reaction-add {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .agent-card-actions {
     opacity: 1;
     pointer-events: auto;

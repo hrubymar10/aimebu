@@ -231,6 +231,229 @@ func TestAttachmentValidationAndCaps(t *testing.T) {
 	}
 }
 
+func TestReactionsRoundTripValidationAndPersistence(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	alice, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.registerHuman("bob", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outsider, err := s.registerHuman("outsider", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", bob.ID); err != nil {
+		t.Fatal(err)
+	}
+	msgID, err := s.roomSend("general", alice.ID, "ship it", false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(types.ReactRequest{AgentID: bob.ID, Emoji: "👍"})
+	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/messages/%d/reactions", srv.URL, msgID), bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("add reaction returned %d, want 200", resp.StatusCode)
+	}
+
+	// Idempotent duplicate add does not increment the count.
+	req, _ = http.NewRequest(http.MethodPut, fmt.Sprintf("%s/messages/%d/reactions", srv.URL, msgID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("duplicate add returned %d, want 200", resp.StatusCode)
+	}
+
+	resp, err = http.Get(fmt.Sprintf("%s/messages/%d?agent_id=%s", srv.URL, msgID, bob.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var bobView types.Message
+	if err := json.NewDecoder(resp.Body).Decode(&bobView); err != nil {
+		t.Fatal(err)
+	}
+	if len(bobView.Reactions) != 1 || bobView.Reactions[0].Emoji != "👍" || bobView.Reactions[0].Count != 1 || !bobView.Reactions[0].Me {
+		t.Fatalf("bob reactions = %+v, want one own thumbs-up", bobView.Reactions)
+	}
+	if !reflect.DeepEqual(bobView.Reactions[0].Agents, []string{bob.ID}) {
+		t.Fatalf("bob reaction agents = %+v, want [%s]", bobView.Reactions[0].Agents, bob.ID)
+	}
+
+	resp, err = http.Get(fmt.Sprintf("%s/messages/%d?agent_id=%s", srv.URL, msgID, alice.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var aliceView types.Message
+	if err := json.NewDecoder(resp.Body).Decode(&aliceView); err != nil {
+		t.Fatal(err)
+	}
+	if len(aliceView.Reactions) != 1 || aliceView.Reactions[0].Me {
+		t.Fatalf("alice reactions = %+v, want same count with me=false", aliceView.Reactions)
+	}
+	if !reflect.DeepEqual(aliceView.Reactions[0].Agents, []string{bob.ID}) {
+		t.Fatalf("alice reaction agents = %+v, want [%s]", aliceView.Reactions[0].Agents, bob.ID)
+	}
+
+	badBody, _ := json.Marshal(types.ReactRequest{AgentID: bob.ID, Emoji: "ack"})
+	req, _ = http.NewRequest(http.MethodPut, fmt.Sprintf("%s/messages/%d/reactions", srv.URL, msgID), bytes.NewReader(badBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("text reaction returned %d, want 400", resp.StatusCode)
+	}
+
+	outsiderBody, _ := json.Marshal(types.ReactRequest{AgentID: outsider.ID, Emoji: "👍"})
+	req, _ = http.NewRequest(http.MethodPut, fmt.Sprintf("%s/messages/%d/reactions", srv.URL, msgID), bytes.NewReader(outsiderBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("outsider reaction returned %d, want 403", resp.StatusCode)
+	}
+
+	reloaded, err := newStore(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := reloaded.withReactionSummaries(reloaded.messagesSince("general", 0), bob.ID)
+	got := msgs[len(msgs)-1].Reactions
+	if len(got) != 1 || got[0].Count != 1 || !got[0].Me {
+		t.Fatalf("reloaded reactions = %+v, want persisted own reaction", got)
+	}
+
+	req, _ = http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/messages/%d/reactions", srv.URL, msgID), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	respBody, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("remove reaction returned %d, want 200", resp.StatusCode)
+	}
+	var removeResp struct {
+		Reactions []types.ReactionSummary `json:"reactions"`
+	}
+	if err := json.Unmarshal(respBody, &removeResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(removeResp.Reactions) != 0 {
+		t.Fatalf("remove response reactions = %+v, want empty", removeResp.Reactions)
+	}
+	msgs = s.withReactionSummaries(s.messagesSince("general", 0), bob.ID)
+	if got := msgs[len(msgs)-1].Reactions; len(got) != 0 {
+		t.Fatalf("after remove reactions = %+v, want none", got)
+	}
+}
+
+func TestReactionMetaIncludesViewerNeutralSummary(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	alice, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.registerHuman("bob", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", bob.ID); err != nil {
+		t.Fatal(err)
+	}
+	msgID, err := s.roomSend("general", alice.ID, "ship it", false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sub := s.subscribeMeta()
+	defer s.unsubscribeMeta(sub)
+	reactHTTP(t, srv, http.MethodPut, msgID, bob.ID, "👍")
+
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case evt := <-sub:
+			if evt.Type != "reaction" {
+				continue
+			}
+			data, ok := evt.Data.(map[string]any)
+			if !ok {
+				t.Fatalf("reaction data = %T, want map[string]any", evt.Data)
+			}
+			reactions, ok := data["reactions"].([]types.ReactionSummary)
+			if !ok {
+				t.Fatalf("reaction summary = %T, want []types.ReactionSummary", data["reactions"])
+			}
+			if len(reactions) != 1 {
+				t.Fatalf("reaction summary = %+v, want one", reactions)
+			}
+			if reactions[0].Emoji != "👍" || reactions[0].Count != 1 || reactions[0].Me {
+				t.Fatalf("reaction summary = %+v, want viewer-neutral thumbs-up", reactions[0])
+			}
+			if !reflect.DeepEqual(reactions[0].Agents, []string{bob.ID}) {
+				t.Fatalf("reaction agents = %+v, want [%s]", reactions[0].Agents, bob.ID)
+			}
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for reaction meta event")
+		}
+	}
+}
+
+func TestCleanReactionEmojiAcceptsCompoundEmoji(t *testing.T) {
+	for _, emoji := range []string{"👍", "👍🏽", "👩‍💻", "🏳️‍🌈", "👨‍👩‍👧", "🇺🇸"} {
+		t.Run(emoji, func(t *testing.T) {
+			got, ok := cleanReactionEmoji(emoji)
+			if !ok || got != emoji {
+				t.Fatalf("cleanReactionEmoji(%q) = %q, %v; want accepted unchanged", emoji, got, ok)
+			}
+		})
+	}
+	for _, text := range []string{"ack", "👍👍", "あ"} {
+		t.Run(text, func(t *testing.T) {
+			if got, ok := cleanReactionEmoji(text); ok {
+				t.Fatalf("cleanReactionEmoji(%q) = %q, true; want rejected", text, got)
+			}
+		})
+	}
+}
+
 func TestAttachmentCleanupAndPrune(t *testing.T) {
 	s, err := newStore(t.TempDir())
 	if err != nil {
@@ -1108,6 +1331,202 @@ func TestRoomWaitCursorAdvancedOnDelivery(t *testing.T) {
 	cursorAfter := s.ensureRoomCursor(receiver.ID, "deliver-room")
 	if cursorAfter <= cursorBefore {
 		t.Errorf("cursor did not advance after delivery: was %d, now %d", cursorBefore, cursorAfter)
+	}
+}
+
+type agentWaitResponse struct {
+	Messages    []types.Message       `json:"messages"`
+	Reactions   []types.ReactionEvent `json:"reactions"`
+	Agent       string                `json:"agent"`
+	Status      string                `json:"status"`
+	KeepWaiting bool                  `json:"keep_waiting"`
+}
+
+func waitForAgentHTTP(t *testing.T, srv *httptest.Server, agentID string, timeout int) <-chan agentWaitResponse {
+	t.Helper()
+	ch := make(chan agentWaitResponse, 1)
+	go func() {
+		resp, err := http.Get(fmt.Sprintf("%s/agents/%s/wait?timeout=%d", srv.URL, agentID, timeout))
+		if err != nil {
+			t.Errorf("wait request failed: %v", err)
+			ch <- agentWaitResponse{}
+			return
+		}
+		defer resp.Body.Close()
+		var got agentWaitResponse
+		if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+			t.Errorf("decode wait response: %v", err)
+		}
+		ch <- got
+	}()
+	return ch
+}
+
+func reactHTTP(t *testing.T, srv *httptest.Server, method string, messageID int64, agentID, emoji string) {
+	t.Helper()
+	body, err := json.Marshal(types.ReactRequest{AgentID: agentID, Emoji: emoji})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(method, fmt.Sprintf("%s/messages/%d/reactions", srv.URL, messageID), bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("%s reaction returned %d: %s", method, resp.StatusCode, data)
+	}
+}
+
+func setupReactionWaitRoom(t *testing.T, s *store, roomID string) (*types.Agent, *types.Agent, *types.Agent) {
+	t.Helper()
+	author, _, err := s.registerAI("gpt5", "codex", "test", nil, "authr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reactor, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "reactr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _, err := s.registerAI("gemini2.5", "aider", "test", nil, "otherr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.createRoom(roomID, author.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range []*types.Agent{author, reactor, other} {
+		if _, err := s.joinRoom(roomID, agent.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return author, reactor, other
+}
+
+func advanceAgentCursorsToHead(s *store, agentID string) {
+	for _, room := range s.listRooms() {
+		if s.isMember(room.ID, agentID) {
+			s.advanceCursor(agentID, room.ID, s.roomHead(room.ID))
+		}
+	}
+}
+
+func TestAgentWaitReturnsReactionForMessageAuthor(t *testing.T) {
+	s, srv := setupTestServer(t)
+	author, reactor, _ := setupReactionWaitRoom(t, s, "reaction-room")
+
+	msgID, err := s.roomSend("reaction-room", author.ID, "ship it", false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanceAgentCursorsToHead(s, author.ID)
+	cursorBefore := s.ensureRoomCursor(author.ID, "reaction-room")
+
+	waitCh := waitForAgentHTTP(t, srv, author.ID, 5)
+	time.Sleep(50 * time.Millisecond)
+	reactHTTP(t, srv, http.MethodPut, msgID, reactor.ID, "👍")
+
+	select {
+	case got := <-waitCh:
+		if len(got.Messages) != 0 {
+			t.Fatalf("messages len = %d, want 0", len(got.Messages))
+		}
+		if len(got.Reactions) != 1 {
+			t.Fatalf("reactions = %+v, want one", got.Reactions)
+		}
+		reaction := got.Reactions[0]
+		if reaction.MessageID != msgID || reaction.RoomID != "reaction-room" || reaction.AgentID != reactor.ID || reaction.Emoji != "👍" || reaction.Op != "add" {
+			t.Fatalf("reaction = %+v, want add event for message author", reaction)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent wait did not wake for reaction")
+	}
+
+	if cursorAfter := s.ensureRoomCursor(author.ID, "reaction-room"); cursorAfter != cursorBefore {
+		t.Fatalf("cursor advanced on reaction: was %d, now %d", cursorBefore, cursorAfter)
+	}
+}
+
+func TestAgentWaitIgnoresReactionOnAnotherAuthorsMessage(t *testing.T) {
+	s, srv := setupTestServer(t)
+	author, reactor, other := setupReactionWaitRoom(t, s, "other-reaction-room")
+
+	msgID, err := s.roomSend("other-reaction-room", other.ID, "not authored by waiter", false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanceAgentCursorsToHead(s, author.ID)
+
+	waitCh := waitForAgentHTTP(t, srv, author.ID, 1)
+	time.Sleep(50 * time.Millisecond)
+	reactHTTP(t, srv, http.MethodPut, msgID, reactor.ID, "👍")
+
+	select {
+	case got := <-waitCh:
+		if !got.KeepWaiting || got.Status != "still_waiting" || len(got.Reactions) != 0 {
+			t.Fatalf("wait response = %+v, want timeout without reactions", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("agent wait did not time out")
+	}
+}
+
+func TestAgentWaitIgnoresSelfReaction(t *testing.T) {
+	s, srv := setupTestServer(t)
+	author, _, _ := setupReactionWaitRoom(t, s, "self-reaction-room")
+
+	msgID, err := s.roomSend("self-reaction-room", author.ID, "my own reaction", false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanceAgentCursorsToHead(s, author.ID)
+
+	waitCh := waitForAgentHTTP(t, srv, author.ID, 1)
+	time.Sleep(50 * time.Millisecond)
+	reactHTTP(t, srv, http.MethodPut, msgID, author.ID, "👍")
+
+	select {
+	case got := <-waitCh:
+		if !got.KeepWaiting || got.Status != "still_waiting" || len(got.Reactions) != 0 {
+			t.Fatalf("wait response = %+v, want timeout without reactions", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("agent wait did not time out")
+	}
+}
+
+func TestAgentWaitReturnsReactionRemove(t *testing.T) {
+	s, srv := setupTestServer(t)
+	author, reactor, _ := setupReactionWaitRoom(t, s, "remove-reaction-room")
+
+	msgID, err := s.roomSend("remove-reaction-room", author.ID, "remove reaction", false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reactHTTP(t, srv, http.MethodPut, msgID, reactor.ID, "👍")
+	advanceAgentCursorsToHead(s, author.ID)
+
+	waitCh := waitForAgentHTTP(t, srv, author.ID, 5)
+	time.Sleep(50 * time.Millisecond)
+	reactHTTP(t, srv, http.MethodDelete, msgID, reactor.ID, "👍")
+
+	select {
+	case got := <-waitCh:
+		if len(got.Reactions) != 1 {
+			t.Fatalf("reactions = %+v, want one", got.Reactions)
+		}
+		reaction := got.Reactions[0]
+		if reaction.MessageID != msgID || reaction.RoomID != "remove-reaction-room" || reaction.AgentID != reactor.ID || reaction.Emoji != "👍" || reaction.Op != "remove" {
+			t.Fatalf("reaction = %+v, want remove event for message author", reaction)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent wait did not wake for remove reaction")
 	}
 }
 

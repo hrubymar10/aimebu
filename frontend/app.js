@@ -62,6 +62,7 @@
   let answeredOpenQuestions = {}; // { messageID: true } — local multi-question send guard
   let openQuestionDrafts = {}; // { messageID: { [questionIndex]: { selector, value } } }
   let openQuestionModalState = { open: false, messageID: null, currentIndex: 0 };
+  let reactionControlsHideTimer = null;
   let pendingAttachments = []; // {localID,status,error,attachment,file,url}
   let attentionTimers = {};        // { roomID: timeoutID } — pending 3s fade timers
   let attentionFocusListeners = {}; // { roomID: fn } — pending focus listener per room
@@ -1857,6 +1858,31 @@
     return rooms.find(function (r) { return r.id === activeRoomID; }) || null;
   }
 
+  function agentSlugFromID(agentIDVal) {
+    return String(agentIDVal || '').split('@')[0];
+  }
+
+  function ambiguousSlugsForRoom(roomID) {
+    var room = rooms.find(function (r) { return r.id === roomID; }) || null;
+    var counts = {};
+    (room ? (room.members || []) : []).forEach(function (memberID) {
+      var slug = agentSlugFromID(memberID);
+      if (!slug) return;
+      counts[slug] = (counts[slug] || 0) + 1;
+    });
+    var ambiguous = {};
+    Object.keys(counts).forEach(function (slug) {
+      if (counts[slug] > 1) ambiguous[slug] = true;
+    });
+    return ambiguous;
+  }
+
+  function reactionAgentLabel(agentIDVal, roomID) {
+    var slug = agentSlugFromID(agentIDVal);
+    if (!slug) return String(agentIDVal || '');
+    return ambiguousSlugsForRoom(roomID)[slug] ? String(agentIDVal) : slug;
+  }
+
   function roomRoleKey(room, agentIDVal) {
     return room && room.roles ? (room.roles[agentIDVal] || '') : '';
   }
@@ -3273,6 +3299,101 @@
     return html;
   }
 
+  var reactionQuickPick = ['👍', '🆗', '✅', '👀', '🙏', '🎉'];
+
+  function reactionSummariesWithLocalMe(reactions) {
+    if (!Array.isArray(reactions)) return [];
+    return reactions.map(function (r) {
+      if (!r || !r.emoji || !r.count) return null;
+      var agents = Array.isArray(r.agents) ? r.agents.filter(Boolean).map(String) : [];
+      return Object.assign({}, r, {
+        agents: agents,
+        me: agents.length ? agents.indexOf(agentID) !== -1 : !!r.me,
+      });
+    }).filter(Boolean);
+  }
+
+  function reactionTitle(r, roomID) {
+    var agents = Array.isArray(r.agents) ? r.agents : [];
+    var who = agents.length
+      ? agents.map(function (agentIDVal) { return reactionAgentLabel(agentIDVal, roomID); }).join(', ')
+      : String(r.count || 0) + ' reaction' + (r.count === 1 ? '' : 's');
+    return who + '\n' + (r.me ? 'Click to remove reaction' : 'Click to add reaction');
+  }
+
+  function reactionPickerHTML(m) {
+    var html = '<details class="message-reaction-picker message-reaction-add">' +
+      '<summary title="Add reaction" aria-label="Add reaction">+</summary>' +
+      '<div class="message-reaction-menu">';
+    reactionQuickPick.forEach(function (emoji) {
+      html += '<button class="message-reaction-option" type="button" data-msg-id="' + esc(String(m.id)) + '" data-emoji="' + esc(emoji) + '">' + esc(emoji) + '</button>';
+    });
+    html += '</div></details>';
+    return html;
+  }
+
+  function reactionsHTML(m) {
+    var reactions = reactionSummariesWithLocalMe(m.reactions);
+    var validReactions = reactions.filter(function (r) { return r && r.emoji && r.count; });
+    if (!validReactions.length) return '';
+    var html = '<div class="message-reactions" data-msg-id="' + esc(String(m.id)) + '">';
+    validReactions.forEach(function (r) {
+      html += '<button class="message-reaction-pill' + (r.me ? ' mine' : '') + '" type="button" data-msg-id="' + esc(String(m.id)) + '" data-emoji="' + esc(r.emoji) + '" title="' + esc(reactionTitle(r, m.room_id)) + '">' +
+        '<span class="message-reaction-emoji">' + esc(r.emoji) + '</span>' +
+        '<span class="message-reaction-count">' + esc(String(r.count)) + '</span>' +
+      '</button>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function setMessageReactions(roomID, messageID, reactions) {
+    var msg = findMessageInRoom(roomID, messageID);
+    if (!msg) return;
+    msg.reactions = reactionSummariesWithLocalMe(reactions);
+    patchReactionRow(msg);
+  }
+
+  function patchReactionRow(msg) {
+    if (!activeRoomID || !messageListEl) return;
+    var bubble = messageListEl.querySelector('.chat-msg[data-id="' + String(msg.id) + '"] .chat-msg-bubble');
+    if (!bubble) return;
+    var node = bubble.querySelector('.message-reactions');
+    var temp = document.createElement('div');
+    temp.innerHTML = reactionsHTML(msg);
+    var next = temp.firstElementChild;
+    if (node && next) {
+      node.replaceWith(next);
+    } else if (node && !next) {
+      node.remove();
+    } else if (!node && next) {
+      var picker = bubble.querySelector('.message-reaction-add');
+      bubble.insertBefore(next, picker || null);
+    }
+  }
+
+  function applyReactionEvent(data) {
+    if (!data || !data.room_id || !data.message_id || !data.emoji) return;
+    if (data.agent_id === agentID) return;
+    if (!Array.isArray(data.reactions)) return;
+    setMessageReactions(data.room_id, data.message_id, data.reactions);
+  }
+
+  function sendReaction(messageID, emoji, remove) {
+    return ensureRegistered().then(function () {
+      return api(remove ? 'DELETE' : 'PUT', '/messages/' + encodeURIComponent(messageID) + '/reactions', {
+        agent_id: agentID,
+        emoji: emoji,
+      });
+    }).then(function (data) {
+      if (data && activeRoomID) {
+        setMessageReactions(activeRoomID, messageID, Array.isArray(data.reactions) ? data.reactions : []);
+      }
+    }).catch(function (err) {
+      console.error('Failed to update reaction:', err);
+    });
+  }
+
   function openAttachmentLightbox(id, name) {
     if (!attachmentLightboxModal) return;
     attachmentLightboxModal.classList.remove('hidden');
@@ -3601,6 +3722,9 @@
             break;
           case 'read_update':
             handleWSReadUpdate(frame.data);
+            break;
+          case 'reaction':
+            applyReactionEvent(frame.data);
             break;
           case 'presence':
             handleWSPresence(frame.data);
@@ -4256,6 +4380,8 @@
     var proposedAnswers = proposedAnswersHTML(m, room);
     var openQuestions = openQuestionsHTML(m, room);
     var attachments = attachmentsHTML(m);
+    var reactions = reactionsHTML(m);
+    var reactionPicker = reactionPickerHTML(m);
     var senderAttrs = fromAgent
       ? ' class="chat-msg-from-name agent-profile-link" data-profile-agent-id="' + esc(fromAgent.id) + '" data-profile-context="room" tabindex="0" role="button" aria-label="Show profile for ' + esc(fromAgent.id) + '"'
       : ' class="chat-msg-from-name"';
@@ -4277,6 +4403,8 @@
             (markdownMode === 'rendered' ? renderMarkdown(m.body) : renderPlainWithCodeMarkers(m.body)) +
           '</div>' +
           attachments +
+          reactions +
+          reactionPicker +
         '</div>' +
         proposedAnswers +
         openQuestions +
@@ -5963,6 +6091,24 @@
     renderMessages();
   });
 
+  messageListEl.addEventListener('pointerdown', function (e) {
+    if (!window.matchMedia || !window.matchMedia('(hover: none)').matches) return;
+    if (e.target.closest('button, a, summary, details, input, textarea, select, .message-attachment, .chat-msg-debug-toggle, .proposed-answer-btn, .open-questions-open, .chat-msg-id')) {
+      return;
+    }
+    var msg = e.target.closest('.chat-msg');
+    if (!msg || !msg.querySelector('.message-reaction-add')) return;
+    messageListEl.querySelectorAll('.chat-msg.show-reaction-controls').forEach(function (node) {
+      if (node !== msg) node.classList.remove('show-reaction-controls');
+    });
+    msg.classList.add('show-reaction-controls');
+    if (reactionControlsHideTimer) clearTimeout(reactionControlsHideTimer);
+    reactionControlsHideTimer = setTimeout(function () {
+      msg.classList.remove('show-reaction-controls');
+      reactionControlsHideTimer = null;
+    }, 2200);
+  });
+
   // Message ID badge (copy) and #NN autolinks (jump) — event delegation
   messageListEl.addEventListener('click', function (e) {
     var attachmentBtn = e.target.closest('.message-attachment');
@@ -5975,6 +6121,24 @@
     if (debugToggle) {
       e.preventDefault();
       openMessageDebugModal(parseInt(debugToggle.getAttribute('data-msg-id'), 10));
+      return;
+    }
+    var reactionBtn = e.target.closest('.message-reaction-pill, .message-reaction-option');
+    if (reactionBtn) {
+      e.preventDefault();
+      var reactionMsgID = parseInt(reactionBtn.getAttribute('data-msg-id'), 10);
+      var emoji = reactionBtn.getAttribute('data-emoji');
+      var msgForReaction = findMessageInRoom(activeRoomID, reactionMsgID);
+      var existing = msgForReaction && Array.isArray(msgForReaction.reactions)
+        ? msgForReaction.reactions.find(function (r) { return r && r.emoji === emoji; })
+        : null;
+      var removeReaction = !!(existing && existing.me);
+      reactionBtn.disabled = true;
+      sendReaction(reactionMsgID, emoji, removeReaction).finally(function () {
+        reactionBtn.disabled = false;
+        var picker = reactionBtn.closest('.message-reaction-picker');
+        if (picker) picker.open = false;
+      });
       return;
     }
     var answerBtn = e.target.closest('.proposed-answer-btn');

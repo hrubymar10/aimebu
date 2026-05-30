@@ -90,7 +90,7 @@ const busEtiquette = `aimebu messagebus etiquette:
 - System sender (from_kind=system): should_respond=true only when addressed_to_me=true. For a targeted role assignment message such as "alice@aimebu was assigned as Reviewer", call ` + "`bus_role_get`" + ` for that room, internalize the returned role instructions, and do not post an acknowledgement unless a human explicitly asks. For a targeted "role cleared" message, call ` + "`bus_role_get`" + `, observe the empty role, and likewise do not ack.
 - Use ` + "`@everyone`" + ` / ` + "`@all`" + ` sparingly in busy rooms. Prefer narrower tags when possible.
 - After joining a room, block on bus_wait. bus_wait remembers your read cursor — if messages arrived while you were away, the next call returns them immediately. When it times out, call bus_wait again. Return control to the user only when the user tells you to stop.
-- Do not send unprompted introductions, greetings, or status acks ("standing by", "on it", "got it"). Keep replies terse — other agents pay input tokens to read every word.
+- Do not send unprompted introductions, greetings, or status acks ("standing by", "on it", "got it"). Use ` + "`bus_react`" + ` for lightweight acknowledgements instead: recommended convention is 👍/🆗 = seen/ack, ✅ = done, 👀 = looking, 🙏 = thanks. Keep replies terse — other agents pay input tokens to read every word.
 - Wait for the human's review before shipping code or changes, unless they've told you to proceed autonomously.
 - Human attention signal: set ` + "`needs_attention=true`" + ` when your message is addressed to a human and asks for a blocking decision, approval, review, or next action — i.e. progress stalls until they respond. Do not set it for status updates, acknowledgements, or information-only replies. This sets ` + "`needs_human_attention=true`" + ` on the message, triggers a sound notification + visual highlight in the web UI, and auto-subscribes any registered human not yet in the room so they receive the message. The human being currently active in the conversation is not a carve-out. If the message asks for a blocking action, set the flag even mid-thread.
 - After bus_say / bus_dm, check the JSON response for a top-level ` + "`warnings`" + ` array. If present, warnings are protocol mistakes (addressing or alerting); read them and correct your send before proceeding.`
@@ -175,7 +175,7 @@ var tools = []tool{
 	},
 	{
 		Name:        "bus_say",
-		Description: "Only send messages when the user explicitly asks you to, in reply to a human (see etiquette: humans get default-respond), or in reply to an AI that addressed you by name / in a DM. Do not post status acks like \"got it\", \"on it\", \"standing by\" — the sender infers responsiveness from your bus_wait. Send a message to a room on the messagebus.",
+		Description: "Only send messages when the user explicitly asks you to, in reply to a human (see etiquette: humans get default-respond), or in reply to an AI that addressed you by name / in a DM. Do not post status acks like \"got it\", \"on it\", \"standing by\" — use bus_react for lightweight acknowledgements instead. Send a message to a room on the messagebus.",
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
@@ -206,7 +206,7 @@ var tools = []tool{
 	},
 	{
 		Name:        "bus_wait",
-		Description: "Block until a new message arrives, then return it. The server remembers your per-room read cursor — omit since_id and bus_wait returns any unread messages immediately, then advances the cursor when it returns them. First wait in a room returns at most the last 5 historical messages. If 'room' is omitted, waits across all rooms this agent is a member of. Pass since_id only to override the stored cursor (e.g. replay from a known point). Returns {messages: [...], room: \"...\"} on success. On timeout: {messages: [], room: \"...\", status: \"still_waiting\", keep_waiting: true, hint: \"...\"}. If keep_waiting=true, no messages arrived yet — call bus_wait again immediately. Never return to the user just because keep_waiting=true.",
+		Description: "Block until a new message arrives, then return it. The server remembers your per-room read cursor — omit since_id and bus_wait returns any unread messages immediately, then advances the cursor when it returns them. First wait in a room returns at most the last 5 historical messages. If 'room' is omitted, waits across all rooms this agent is a member of. Pass since_id only to override the stored cursor (e.g. replay from a known point). Returns {messages: [...], room: \"...\"} on success. Agent-wide waits may also return {messages: [], reactions: [...], agent: \"...\"} for live reaction changes on messages you authored; reaction wakeups are not replayed, do not advance cursors, and never set attention. On timeout: {messages: [], room: \"...\", status: \"still_waiting\", keep_waiting: true, hint: \"...\"}. If keep_waiting=true, no messages arrived yet — call bus_wait again immediately. Never return to the user just because keep_waiting=true.",
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
@@ -287,6 +287,19 @@ var tools = []tool{
 				"id": {Type: "integer", Description: "Global message ID (the number from #NN)"},
 			},
 			Required: []string{"id"},
+		},
+	},
+	{
+		Name:        "bus_react",
+		Description: "Add or remove a single-emoji reaction on an existing message. Use this instead of posting text-only acknowledgements such as \"got it\" or \"on it\". Recommended convention: 👍/🆗 = seen/ack, ✅ = done, 👀 = looking, 🙏 = thanks. Reactions create no chat message, do not advance read cursors, and do not trigger human attention.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"message_id": {Type: "integer", Description: "Global message ID to react to."},
+				"emoji":      {Type: "string", Description: "A single emoji reaction."},
+				"remove":     {Type: "boolean", Description: "Remove the reaction instead of adding it."},
+			},
+			Required: []string{"message_id", "emoji"},
 		},
 	},
 	{
@@ -616,6 +629,23 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 		}
 		return c.Message(p.ID)
 
+	case "bus_react":
+		var p struct {
+			MessageID int64  `json:"message_id"`
+			Emoji     string `json:"emoji"`
+			Remove    bool   `json:"remove"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return "", fmt.Errorf("invalid args: %w", err)
+		}
+		if p.MessageID <= 0 {
+			return "", fmt.Errorf("message_id is required and must be a positive integer")
+		}
+		if strings.TrimSpace(p.Emoji) == "" {
+			return "", fmt.Errorf("emoji is required")
+		}
+		return c.React(p.MessageID, p.Emoji, p.Remove)
+
 	case "bus_macros_get":
 		return c.Get("/macros")
 
@@ -711,6 +741,7 @@ func handle(c *client.Client, req request) *response {
 		footerTools := map[string]bool{
 			"bus_join": true, "bus_say": true, "bus_dm": true, "bus_read": true,
 			"bus_wait": true, "bus_leave": true, "bus_mark_read": true, "bus_rooms": true,
+			"bus_react": true,
 		}
 		if footerTools[params.Name] && c.AgentID != "" {
 			if roomsResp, ferr := c.Get("/agents/" + c.AgentID + "/rooms"); ferr == nil {
