@@ -185,6 +185,26 @@ func (c *Client) DeleteAgent(id string, timeout time.Duration) error {
 	return err
 }
 
+// HeartbeatAgent refreshes an agent's last_seen without creating messages,
+// changing read cursors, or updating room membership.
+func (c *Client) HeartbeatAgent(id string, timeout time.Duration) error {
+	req, _ := http.NewRequest(http.MethodPost, c.BaseURL+"/agents/"+url.PathEscape(id)+"/heartbeat", nil)
+	resp, err := httpClient(timeout).Do(req)
+	if err != nil {
+		return &UnreachableError{BaseURL: c.BaseURL, Err: err}
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= http.StatusBadRequest {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = resp.Status
+		}
+		return fmt.Errorf("POST /agents/%s/heartbeat: %s", id, msg)
+	}
+	return nil
+}
+
 // Message fetches a single message by its global ID. The caller's AgentID
 // is passed for the membership check; returns the raw JSON response.
 func (c *Client) Message(id int64) (string, error) {

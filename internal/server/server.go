@@ -938,6 +938,18 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// POST /agents/{id}/heartbeat — lightweight wrapper keepalive. It only
+	// refreshes last_seen; it does not create messages, advance read cursors,
+	// change room membership, or alter the displayed activity state.
+	mux.HandleFunc("POST /agents/{id}/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.PathValue("id")
+		if !s.heartbeatAgent(agentID) {
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"agent": agentID})
+	})
+
 	// POST /agents/{id}/state — wrapper-pushed live activity state.
 	mux.HandleFunc("POST /agents/{id}/state", func(w http.ResponseWriter, r *http.Request) {
 		agentID := r.PathValue("id")

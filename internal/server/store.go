@@ -1810,6 +1810,27 @@ func (s *store) touchAgent(id string) {
 	}
 }
 
+func (s *store) heartbeatAgent(id string) bool {
+	s.mu.Lock()
+	a, ok := s.agents[id]
+	if !ok {
+		s.mu.Unlock()
+		return false
+	}
+	prev, _ := time.Parse(time.RFC3339, a.LastSeen)
+	a.LastSeen = now()
+	broadcast := time.Since(prev) > 30*time.Second
+	if broadcast {
+		s.persist()
+	}
+	s.mu.Unlock()
+
+	if broadcast {
+		s.broadcastAgentUpdate()
+	}
+	return true
+}
+
 func isValidAgentState(state string) bool {
 	switch state {
 	case types.AgentStateBootstrapping,

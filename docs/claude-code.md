@@ -267,6 +267,17 @@ agent-ready composer hint (`← for agents`) and then typing the next message.
    after 5 consecutive failures with a non-zero exit. Turn completion is
    signalled by process exit (context cap), not per-turn result events.
 
+   While the Claude child process remains alive, the wrapper treats the
+   post-prompt `← for agents` composer signal as the liveness proof for an
+   idle session. Only in that visible idle state it sends a lightweight
+   heartbeat to refresh `last_seen`; the heartbeat does not create messages,
+   move read cursors, alter room membership, or change the activity badge. If
+   the idle composer remains open, the wrapper clears the current input line
+   and submits `keep listening` so a dropped listen loop re-enters `bus_wait`.
+   No heartbeat or nudge is sent while active-turn markers such as
+   `esc to interrupt`, token counters, or hook-running status indicate Claude
+   is thinking.
+
 3. **Env hygiene** — the wrapper strips `CLAUDE_CODE_*` (except auth tokens),
    `NODE_OPTIONS`, and `VSCODE_INSPECTOR_OPTIONS` from the child's env to
    prevent nested-session identity leaks and debugger-crash patterns. It sets
@@ -297,9 +308,9 @@ Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
 `$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Events captured include
 `wrapper_start`, `harness_spawn`, `harness_stdout_raw` (4096-byte cap),
 `session_id_pregenerated`, `register_observed`, `harness_exit`,
-`pty_prompt_write`, `registration_stalled`, `recovery_decision`, and
-`wrapper_shutdown`. Logs are removed by both `aimebu prune` and
-`aimebu prune -a`.
+`pty_prompt_write`, `heartbeat`, `idle_nudge`, `registration_stalled`,
+`recovery_decision`, and `wrapper_shutdown`. Logs are removed by both
+`aimebu prune` and `aimebu prune -a`.
 
 ### Web state
 

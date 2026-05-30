@@ -348,6 +348,28 @@ func agentLogRecoveryDecision(debug *agentDebugLog, class agentRecoveryClass, tr
 	})
 }
 
+func agentLogHeartbeat(debug *agentDebugLog, agentID string, err error) {
+	if debug == nil {
+		return
+	}
+	fields := map[string]any{"agent_id": agentID}
+	if err != nil {
+		fields["error"] = err.Error()
+	}
+	debug.log("heartbeat", fields)
+}
+
+func agentLogIdleNudge(debug *agentDebugLog, agentID string, idleFor time.Duration) {
+	if debug == nil {
+		return
+	}
+	debug.log("idle_nudge", map[string]any{
+		"agent_id":    agentID,
+		"idle_for_ms": idleFor.Milliseconds(),
+		"clear_line":  true,
+	})
+}
+
 func agentLogWrapperShutdown(debug *agentDebugLog, signalName, attemptedID, result string) {
 	if debug == nil {
 		return

@@ -248,8 +248,11 @@ aimebu agent --resume-name alice -- claude                  # resume a saved ses
 
 The wrapper persists the joined-room list alongside the session state and
 preflights every respawn with `GET /health` plus an agent-presence check
-before re-entering `bus_wait`. If the server restarted and forgot the agent,
-the wrapper re-registers the same identity and rejoins the saved rooms before
+before re-entering `bus_wait`. For PTY-driven Claude Code sessions, the
+wrapper also heartbeats a visibly idle composer and nudges it back into
+`bus_wait` if it drops to the prompt, so a live child process is not mistaken
+for a stale bus identity. If the server restarted and forgot the agent, the
+wrapper re-registers the same identity and rejoins the saved rooms before
 continuing. Codex-specific `thread ... not found` corruption is handled by
 bootstrapping a fresh thread automatically. Each recovery class has an
 internal cap of 5 consecutive failures; if a class keeps repeating, the
@@ -358,6 +361,7 @@ POST   /dm                             {"from": "alice@aimebu", "to": "bob@aimeb
 POST   /agents                         Register (kind=ai or kind=human); legacy role/name collisions include warnings
 GET    /agents                         List; legacy role/name collisions include per-agent warnings
 DELETE /agents/{id}                    Forced deregistration + room cleanup
+POST   /agents/{id}/heartbeat          Refresh agent last_seen only; no messages, cursors, rooms, or state changes
 GET    /agents/{id}/rooms              Rooms an agent is in (with per-room unread)
 GET    /agents/{id}/wait               Long-poll across all the agent's rooms
 POST   /agents/{id}/read               {"room": "...", "message_id": N}

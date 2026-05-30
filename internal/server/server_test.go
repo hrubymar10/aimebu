@@ -740,6 +740,67 @@ func TestDeleteAgentReturnsNotFoundForUnknownAgent(t *testing.T) {
 	}
 }
 
+func TestAgentHeartbeatRefreshesLastSeenOnly(t *testing.T) {
+	s, srv := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "claude-code", "test", nil, "beacon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.createRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.roomSend("general", agent.ID, "before", false, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.agents[agent.ID].ReadCursors = map[string]int64{"general": 1}
+	s.agents[agent.ID].LastSeen = time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339)
+	beforeLastSeen := s.agents[agent.ID].LastSeen
+	beforeMessages := len(s.messages["general"])
+	beforeCursor := s.agents[agent.ID].ReadCursors["general"]
+	s.mu.Unlock()
+
+	resp, err := http.Post(srv.URL+"/agents/"+agent.ID+"/heartbeat", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST heartbeat returned %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if got := s.agents[agent.ID].LastSeen; got == beforeLastSeen {
+		t.Fatal("heartbeat did not refresh last_seen")
+	}
+	if got := len(s.messages["general"]); got != beforeMessages {
+		t.Fatalf("message count = %d, want %d", got, beforeMessages)
+	}
+	if got := s.agents[agent.ID].ReadCursors["general"]; got != beforeCursor {
+		t.Fatalf("read cursor = %d, want %d", got, beforeCursor)
+	}
+	if got := s.rooms["general"].Members; len(got) != 1 || got[0] != agent.ID {
+		t.Fatalf("room members = %v, want [%s]", got, agent.ID)
+	}
+}
+
+func TestAgentHeartbeatUnknownAgentReturns404(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	resp, err := http.Post(srv.URL+"/agents/nope@aimebu/heartbeat", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("POST heartbeat returned %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
 func TestSetAgentStateKnownStateUpdatesAndBroadcasts(t *testing.T) {
 	s, _ := setupTestServer(t)
 	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "stateful")

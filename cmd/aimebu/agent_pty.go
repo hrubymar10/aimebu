@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/creack/pty"
+	aimebuclient "github.com/hrubymar10/aimebu/internal/client"
 )
 
 const (
@@ -30,6 +32,8 @@ const (
 var agentPTYSubmitDelay = 150 * time.Millisecond
 var agentPTYRegistrationStallTimeout = 30 * time.Second
 var agentPTYReadyNeedle = strings.ToLower(strings.ReplaceAll(agentPTYReadySignal, " ", ""))
+var agentPTYHeartbeatInterval = 20 * time.Second
+var agentPTYIdleNudgeDelay = 5 * time.Second
 
 // agentCommandForPTY creates an exec.Cmd for PTY spawning. Unlike agentCommand,
 // stdout and stderr are NOT pre-piped: pty.Start wires them through the
@@ -137,20 +141,26 @@ func agentPTYNormalizeForScreenDetection(b []byte) string {
 // return to simulate the user pressing Enter. Logs write failures to the debug
 // log.
 func agentPTYWritePrompt(w io.Writer, text string, debug *agentDebugLog) {
-	debug.log("pty_prompt_write", map[string]any{
-		"bytes":          len(text),
-		"separate_enter": true,
-		"enter_delay_ms": agentPTYSubmitDelay.Milliseconds(),
-	})
+	if debug != nil {
+		debug.log("pty_prompt_write", map[string]any{
+			"bytes":          len(text),
+			"separate_enter": true,
+			"enter_delay_ms": agentPTYSubmitDelay.Milliseconds(),
+		})
+	}
 	if _, err := io.WriteString(w, text); err != nil {
-		debug.log("stdin_write_error", map[string]any{"error": err.Error(), "mode": "pty"})
+		if debug != nil {
+			debug.log("stdin_write_error", map[string]any{"error": err.Error(), "mode": "pty"})
+		}
 		return
 	}
 	if agentPTYSubmitDelay > 0 {
 		time.Sleep(agentPTYSubmitDelay)
 	}
 	if _, err := io.WriteString(w, "\r"); err != nil {
-		debug.log("stdin_write_error", map[string]any{"error": err.Error(), "mode": "pty"})
+		if debug != nil {
+			debug.log("stdin_write_error", map[string]any{"error": err.Error(), "mode": "pty"})
+		}
 	}
 }
 
@@ -209,6 +219,161 @@ func agentPTYOutputWriter(debug *agentDebugLog) *agentDebugStdoutWriter {
 	return newAgentDebugStdoutWriter(debug, io.Discard)
 }
 
+type agentPTYIdleTracker struct {
+	mu         sync.Mutex
+	seen       []byte
+	idle       bool
+	idleSince  time.Time
+	nudgeSent  bool
+	lastChange time.Time
+}
+
+func (t *agentPTYIdleTracker) Write(p []byte) (int, error) {
+	t.Observe(p)
+	return len(p), nil
+}
+
+func (t *agentPTYIdleTracker) Observe(p []byte) {
+	if len(p) == 0 {
+		return
+	}
+	now := time.Now()
+	readyCurrent := agentPTYHasReadySignal(p) || agentPTYHasComposerPromptSignal(p)
+	activeCurrent := agentPTYHasActiveTurnSignal(p)
+	t.mu.Lock()
+	if activeCurrent && !readyCurrent {
+		t.seen = nil
+		t.idle = false
+		t.idleSince = time.Time{}
+		t.nudgeSent = false
+		t.lastChange = now
+		t.mu.Unlock()
+		return
+	}
+	t.seen = append(t.seen, p...)
+	if len(t.seen) > 64*1024 {
+		t.seen = append([]byte(nil), t.seen[len(t.seen)-64*1024:]...)
+	}
+	ready := readyCurrent || agentPTYHasReadySignal(t.seen) || agentPTYHasComposerPromptSignal(t.seen)
+	t.mu.Unlock()
+
+	if ready {
+		t.mu.Lock()
+		if !t.idle {
+			t.idleSince = now
+			t.nudgeSent = false
+		}
+		t.idle = true
+		t.lastChange = now
+		t.mu.Unlock()
+		return
+	}
+}
+
+func agentPTYHasActiveTurnSignal(b []byte) bool {
+	normalized := strings.ToLower(agentPTYNormalizeForScreenDetection(b))
+	if normalized == "" {
+		return false
+	}
+	for _, needle := range []string{
+		"esctointerrupt",
+		"·thinking)",
+		"runningstophooks",
+		"runninghooks",
+	} {
+		if strings.Contains(normalized, needle) {
+			return true
+		}
+	}
+	return strings.Contains(normalized, "↓") && strings.Contains(normalized, "tokens")
+}
+
+func agentPTYHasComposerPromptSignal(b []byte) bool {
+	normalized := strings.ToLower(agentPTYNormalizeForScreenDetection(b))
+	if normalized == "" {
+		return false
+	}
+	if !strings.Contains(normalized, "❯") {
+		return false
+	}
+	return strings.Contains(normalized, "shifttabtocycle") || strings.Contains(normalized, "?forshortcuts")
+}
+
+func (t *agentPTYIdleTracker) IsIdle() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.idle
+}
+
+func (t *agentPTYIdleTracker) MarkNudgeReady(after time.Duration) (time.Duration, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.idle || t.idleSince.IsZero() || t.nudgeSent {
+		return 0, false
+	}
+	idleFor := time.Since(t.idleSince)
+	if idleFor < after {
+		return idleFor, false
+	}
+	t.nudgeSent = true
+	return idleFor, true
+}
+
+func agentPTYSessionWriter(debug *agentDebugLog, stateWriter io.Writer, tracker *agentPTYIdleTracker) io.Writer {
+	return io.MultiWriter(newAgentDebugStdoutWriter(debug, stateWriter), tracker)
+}
+
+func agentPushHeartbeat(aimebuURL, agentID string) error {
+	c := &aimebuclient.Client{BaseURL: strings.TrimRight(aimebuURL, "/")}
+	return c.HeartbeatAgent(agentID, 5*time.Second)
+}
+
+func agentPTYStartKeepalive(ctx context.Context, aimebuURL, agentID string, ptyFile io.Writer, tracker *agentPTYIdleTracker, debug *agentDebugLog) {
+	go func() {
+		ticker := time.NewTicker(agentPTYHeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if tracker.IsIdle() {
+					err := agentPushHeartbeat(aimebuURL, agentID)
+					agentLogHeartbeat(debug, agentID, err)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				idleFor, ok := tracker.MarkNudgeReady(agentPTYIdleNudgeDelay)
+				if !ok {
+					continue
+				}
+				agentLogIdleNudge(debug, agentID, idleFor)
+				agentPTYWriteIdleNudge(ptyFile, "keep listening", debug)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func agentPTYWriteIdleNudge(w io.Writer, text string, debug *agentDebugLog) {
+	if _, err := io.WriteString(w, "\x15"); err != nil {
+		if debug != nil {
+			debug.log("stdin_write_error", map[string]any{"error": err.Error(), "mode": "pty_idle_nudge_clear"})
+		}
+		return
+	}
+	agentPTYWritePrompt(w, text, debug)
+}
+
 // agentBootstrapSessionPTY is the PTY-mode bootstrap for the
 // claude-code harness:
 //
@@ -250,8 +415,12 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 	ptyOutput.Flush()
 	agentPTYWritePrompt(ptyFile, prompt, debug)
 
+	tracker := &agentPTYIdleTracker{}
+	keepaliveCtx, stopKeepalive := context.WithCancel(context.Background())
+	defer stopKeepalive()
+
 	// Background goroutine drains the PTY for the rest of the session.
-	go agentPTYCopyOut(ptyFile, newAgentDebugStdoutWriter(debug, stateWriter))
+	go agentPTYCopyOut(ptyFile, agentPTYSessionWriter(debug, stateWriter, tracker))
 
 	// Poll for agent-name registration in parallel.
 	nameCh := make(chan string, 1)
@@ -299,6 +468,7 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 				_ = ptyFile.Close()
 				return "", "", agentPTYRegistrationStalledError(harness)
 			}
+			agentPTYStartKeepalive(keepaliveCtx, aimebuURL, agentFullID(agentName), ptyFile, tracker, debug)
 			if !registrationStallTimer.Stop() {
 				select {
 				case <-registrationStallTimer.C:
@@ -318,6 +488,7 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 		}
 	}
 
+	stopKeepalive()
 	_ = ptyFile.Close()
 	agentLogHarnessExit(debug, waitErr, time.Since(startedAt), nil)
 
@@ -433,7 +604,10 @@ respawnLoop:
 		ptyOutput.Flush()
 		agentPTYWritePrompt(ptyFile, prompt, debug)
 
-		go agentPTYCopyOut(ptyFile, newAgentDebugStdoutWriter(debug, stateWriter))
+		tracker := &agentPTYIdleTracker{}
+		keepaliveCtx, stopKeepalive := context.WithCancel(context.Background())
+		agentPTYStartKeepalive(keepaliveCtx, aimebuURL, agentFullID(agentName), ptyFile, tracker, debug)
+		go agentPTYCopyOut(ptyFile, agentPTYSessionWriter(debug, stateWriter, tracker))
 
 		doneCh := make(chan error, 1)
 		go func() { doneCh <- cmd.Wait() }()
@@ -449,12 +623,14 @@ respawnLoop:
 		for waiting := true; waiting; {
 			select {
 			case sig := <-sigCh:
+				stopKeepalive()
 				_ = stateWriter.Close()
 				agentGracefulShutdown(aimebuURL, "", agentName, cmd, doneCh, sigCh, debug, sig)
 				_ = ptyFile.Close()
 				return
 			case n := <-registrationCh:
 				if n == "" {
+					stopKeepalive()
 					agentPTYLogRegistrationStalled(debug, harness, agentPTYRegistrationStallTimeout)
 					agentPTYTerminateStalledProcess(cmd, doneCh)
 					_ = ptyFile.Close()
@@ -472,6 +648,9 @@ respawnLoop:
 					continue respawnLoop
 				}
 				agentName = n
+				stopKeepalive()
+				keepaliveCtx, stopKeepalive = context.WithCancel(context.Background())
+				agentPTYStartKeepalive(keepaliveCtx, aimebuURL, agentFullID(agentName), ptyFile, tracker, debug)
 				registrationCh = nil
 			case err = <-doneCh:
 				if registrationCh != nil {
@@ -487,6 +666,7 @@ respawnLoop:
 				waiting = false
 			}
 		}
+		stopKeepalive()
 		_ = ptyFile.Close()
 		_ = stateWriter.Close()
 		agentLogHarnessExit(debug, err, time.Since(startedAt), nil)

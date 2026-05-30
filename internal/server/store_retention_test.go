@@ -60,6 +60,35 @@ func TestCleanupStaleAgentsHonorsConfiguredWindow(t *testing.T) {
 	}
 }
 
+func TestHeartbeatPreventsStaleAgentCleanup(t *testing.T) {
+	s, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := 120
+	s.putSettings(Settings{StaleAgentWindowSeconds: &window})
+
+	now := time.Now().UTC()
+	s.mu.Lock()
+	s.agents["idle@aimebu"] = &types.Agent{ID: "idle@aimebu", Name: "idle", Kind: "ai", LastSeen: now.Add(-3 * time.Minute).Format(time.RFC3339)}
+	s.rooms["general"] = &types.Room{ID: "general", Members: []string{"idle@aimebu"}}
+	s.mu.Unlock()
+
+	if !s.heartbeatAgent("idle@aimebu") {
+		t.Fatal("heartbeatAgent returned false")
+	}
+	s.cleanupStaleAgents()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.agents["idle@aimebu"]; !ok {
+		t.Fatal("heartbeat-refreshed agent was removed")
+	}
+	if got := s.rooms["general"].Members; len(got) != 1 || got[0] != "idle@aimebu" {
+		t.Fatalf("room members = %v, want idle agent", got)
+	}
+}
+
 func TestCleanupEmptyRoomsHonorsConfiguredWindow(t *testing.T) {
 	s, err := newStore(t.TempDir())
 	if err != nil {
