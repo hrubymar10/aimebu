@@ -182,6 +182,32 @@ func TestNormalizeCodexUsageIgnoresMalformedAdditionalLimits(t *testing.T) {
 	}
 }
 
+func TestNormalizeCodexUsageAllowsCreditsWithoutWindows(t *testing.T) {
+	var raw codexUsageRaw
+	if err := json.Unmarshal([]byte(`{
+  "plan_type": "pro",
+  "credits": {"balance": 42}
+}`), &raw); err != nil {
+		t.Fatal(err)
+	}
+	snap, detail, err := normalizeCodexUsage(raw, codexCredentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != StatusOK || snap.Provider != ProviderCodex || snap.Plan != "pro" {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+	if len(snap.Windows) != 0 {
+		t.Fatalf("windows = %+v, want none", snap.Windows)
+	}
+	if snap.Credits == nil || snap.Credits.Balance != 42 {
+		t.Fatalf("credits = %+v, want balance 42", snap.Credits)
+	}
+	if detail != nil {
+		t.Fatalf("detail = %+v", detail)
+	}
+}
+
 func TestCodexUsageRequestTimeout(t *testing.T) {
 	withTimeoutHTTPTransport(t, timeoutRoundTrip)
 	_, _, status, err := fetchCodexUsage(context.Background(), codexCredentials{AccessToken: "access-secret"})

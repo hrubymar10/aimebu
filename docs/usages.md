@@ -86,7 +86,9 @@ data.
 
 Credit snapshots can include both current spend and a spend limit. The CLI
 prints those as `used/limit`; the web sidebar shows the same pair in the
-provider's credits row.
+provider's credits row. Codex can return credits without recognized
+rate-limit windows; aimebu keeps that as an OK credits-only snapshot instead
+of treating the refresh as a failed response.
 
 ## Troubleshooting
 

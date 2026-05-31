@@ -425,9 +425,6 @@ func normalizeCodexUsage(raw codexUsageRaw, creds codexCredentials) (Snapshot, *
 	}
 	addWindow("rate_limit.primary_window", raw.RateLimit.PrimaryWindow)
 	addWindow("rate_limit.secondary_window", raw.RateLimit.SecondaryWindow)
-	if len(windows) == 0 {
-		return Snapshot{}, detailOrNil(detail), errors.New("Codex usage response did not include recognized rate-limit windows.")
-	}
 	windows = append(windows, codexAdditionalWindows(raw.AdditionalRateLimits)...)
 	ordered := make([]Window, 0, len(windows))
 	for _, want := range []string{"session", "weekly", "codex_spark", "codex_spark_weekly"} {
@@ -448,6 +445,9 @@ func normalizeCodexUsage(raw codexUsageRaw, creds codexCredentials) (Snapshot, *
 	}
 	if raw.Credits.BalanceDetail != "" {
 		detail.Fields["credits.balance"] = raw.Credits.BalanceDetail
+	}
+	if len(ordered) == 0 && snap.Credits == nil {
+		return Snapshot{}, detailOrNil(detail), errors.New("Codex usage response did not include recognized rate-limit windows.")
 	}
 	return snap, detailOrNil(detail), nil
 }
