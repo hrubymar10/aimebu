@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -11,6 +13,47 @@ import (
 	"github.com/hrubymar10/aimebu/internal/client"
 	"github.com/hrubymar10/aimebu/internal/types"
 )
+
+func callMCPToolForTest(t *testing.T, c *client.Client, id int, name string, args any) *response {
+	t.Helper()
+	argJSON, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params, err := json.Marshal(map[string]any{
+		"name":      name,
+		"arguments": json.RawMessage(argJSON),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := handle(c, request{
+		JSONRPC: "2.0",
+		Method:  "tools/call",
+		ID:      json.RawMessage(fmt.Sprintf("%d", id)),
+		Params:  params,
+	})
+	if resp == nil {
+		t.Fatalf("tools/call %s returned nil", name)
+	}
+	return resp
+}
+
+func requireMCPTextResult(t *testing.T, resp *response) string {
+	t.Helper()
+	if resp.Error != nil {
+		t.Fatalf("unexpected JSON-RPC error: %+v", resp.Error)
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result is %T, want map[string]any", resp.Result)
+	}
+	content, ok := result["content"].([]textContent)
+	if !ok || len(content) != 1 {
+		t.Fatalf("content = %#v, want one textContent", result["content"])
+	}
+	return content[0].Text
+}
 
 func TestDetectHarness(t *testing.T) {
 	// Clear all env vars detectHarness may consult, then re-set per case.
@@ -150,6 +193,183 @@ func TestMCP_InitializeReturnsOverriddenEtiquette(t *testing.T) {
 	if instructions != overrideBody {
 		t.Fatalf("instructions = %q, want override %q", instructions, overrideBody)
 	}
+}
+
+func TestMCP_JSONRPCToolRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	var calls []string
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/agents":
+			var got struct {
+				Kind    string            `json:"kind"`
+				Model   string            `json:"model"`
+				Harness string            `json:"harness"`
+				Project string            `json:"project"`
+				Meta    map[string]string `json:"meta"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Kind != "ai" || got.Model != "gpt5" || got.Harness != "codex" || got.Meta["spawn_tag"] != "0123456789abcdef" {
+				t.Fatalf("register body = %+v", got)
+			}
+			io.WriteString(w, `{"id":"alice@aimebu","name":"alice","kind":"ai","model":"gpt5","harness":"codex","project":"aimebu","reclaimed":false}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/rooms/general/join":
+			io.WriteString(w, `{"id":"general","members":["alice@aimebu"],"roles":{}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/rooms/general/send":
+			var got struct {
+				From string `json:"from"`
+				Body string `json:"body"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got.From != "alice@aimebu" || got.Body != "hello" {
+				t.Fatalf("send body = %+v", got)
+			}
+			io.WriteString(w, `{"id":42,"room":"general"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/wait":
+			if r.URL.Query().Get("timeout") != "1" {
+				t.Fatalf("wait timeout = %q, want 1", r.URL.Query().Get("timeout"))
+			}
+			io.WriteString(w, `{"messages":[{"id":42,"room_id":"general","from":"bob","from_kind":"human","body":"hello back"}],"agent":"alice@aimebu"}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/messages/42/reactions":
+			var got map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got["agent_id"] != "alice@aimebu" || got["emoji"] != "👍" {
+				t.Fatalf("reaction body = %v", got)
+			}
+			io.WriteString(w, `{"message_id":42,"room":"general","reactions":[{"emoji":"👍","count":1,"me":true}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/rooms/general/roles":
+			var got map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got["agent_id"] != "alice@aimebu" || got["role_key"] != "worker" {
+				t.Fatalf("role assign body = %v", got)
+			}
+			io.WriteString(w, `{"id":"general","members":["alice@aimebu"],"roles":{"alice@aimebu":"worker"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/rooms/general/roles/alice@aimebu":
+			io.WriteString(w, `{"role_key":"worker","label":"Worker","icon":"W","body":"do the work"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/rooms":
+			io.WriteString(w, `{"agent":"alice@aimebu","rooms":[{"id":"general","unread_count":0}]}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	t.Cleanup(fakeSrv.Close)
+
+	c := &client.Client{BaseURL: fakeSrv.URL}
+	registerText := requireMCPTextResult(t, callMCPToolForTest(t, c, 1, "bus_register", map[string]any{
+		"model":   "gpt5",
+		"harness": "codex",
+		"meta": map[string]string{
+			"project":   "aimebu",
+			"spawn_tag": "0123456789abcdef",
+		},
+	}))
+	if !strings.Contains(registerText, `"id":"alice@aimebu"`) || c.AgentID != "alice@aimebu" || c.AgentName != "alice" {
+		t.Fatalf("register result=%q AgentID=%q AgentName=%q", registerText, c.AgentID, c.AgentName)
+	}
+
+	for _, step := range []struct {
+		name string
+		args any
+		want string
+	}{
+		{name: "bus_join", args: map[string]any{"room": "general"}, want: `"id":"general"`},
+		{name: "bus_say", args: map[string]any{"room": "general", "body": "hello"}, want: `"id":42`},
+		{name: "bus_wait", args: map[string]any{"timeout": 1}, want: `"body":"hello back"`},
+		{name: "bus_react", args: map[string]any{"message_id": 42, "emoji": "👍"}, want: `"message_id":42`},
+		{name: "bus_role_assign", args: map[string]any{"room": "general", "agent_id": "alice@aimebu", "role_key": "worker"}, want: `"worker"`},
+		{name: "bus_role_get", args: map[string]any{"room": "general"}, want: `"body":"do the work"`},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			text := requireMCPTextResult(t, callMCPToolForTest(t, c, 2, step.name, step.args))
+			if !strings.Contains(text, step.want) {
+				t.Fatalf("%s result = %q, want substring %q", step.name, text, step.want)
+			}
+		})
+	}
+
+	for _, want := range []string{
+		"POST /agents",
+		"POST /rooms/general/join",
+		"POST /rooms/general/send",
+		"GET /agents/alice@aimebu/wait?timeout=1",
+		"PUT /messages/42/reactions",
+		"POST /rooms/general/roles",
+		"GET /rooms/general/roles/alice@aimebu",
+	} {
+		found := false
+		for _, call := range calls {
+			if call == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing call %q in %v", want, calls)
+		}
+	}
+}
+
+func TestMCP_JSONRPCErrorPaths(t *testing.T) {
+	t.Parallel()
+
+	c := &client.Client{BaseURL: "http://127.0.0.1"}
+
+	t.Run("tool before register returns MCP tool error", func(t *testing.T) {
+		resp := callMCPToolForTest(t, c, 1, "bus_join", map[string]any{"room": "general"})
+		if resp.Error != nil {
+			t.Fatalf("unexpected JSON-RPC error: %+v", resp.Error)
+		}
+		result, ok := resp.Result.(map[string]any)
+		if !ok {
+			t.Fatalf("result = %T, want map", resp.Result)
+		}
+		if isError, _ := result["isError"].(bool); !isError {
+			t.Fatalf("isError = %v, want true", result["isError"])
+		}
+		content, ok := result["content"].([]textContent)
+		if !ok || len(content) != 1 {
+			t.Fatalf("content = %#v, want one textContent", result["content"])
+		}
+		if !strings.Contains(content[0].Text, "call bus_register first") {
+			t.Fatalf("error text = %q", content[0].Text)
+		}
+	})
+
+	t.Run("unknown method returns method not found", func(t *testing.T) {
+		resp := handle(c, request{JSONRPC: "2.0", ID: json.RawMessage(`2`), Method: "missing/method"})
+		if resp == nil || resp.Error == nil {
+			t.Fatalf("response = %+v, want JSON-RPC error", resp)
+		}
+		if resp.Error.Code != -32601 || !strings.Contains(resp.Error.Message, "method not found") {
+			t.Fatalf("error = %+v, want method not found", resp.Error)
+		}
+	})
+
+	t.Run("bad tool params returns invalid params", func(t *testing.T) {
+		resp := handle(c, request{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage(`3`),
+			Method:  "tools/call",
+			Params:  json.RawMessage(`{"name":`),
+		})
+		if resp == nil || resp.Error == nil {
+			t.Fatalf("response = %+v, want JSON-RPC error", resp)
+		}
+		if resp.Error.Code != -32602 || !strings.Contains(resp.Error.Message, "invalid params") {
+			t.Fatalf("error = %+v, want invalid params", resp.Error)
+		}
+	})
 }
 
 // ── Roles MCP tool tests ──────────────────────────────────────────

@@ -1,7 +1,13 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hrubymar10/aimebu/internal/client"
 	"github.com/hrubymar10/aimebu/internal/config"
@@ -259,6 +266,40 @@ func TestServerStartStatusRoundTrip(t *testing.T) {
 	}
 }
 
+func TestServerStartFailsWhenDaemonExitsDuringStartup(t *testing.T) {
+	cli := buildTestCLI(t)
+	rootDir := t.TempDir()
+	certPath, keyPath := writeMainTestCertificatePair(t)
+	tlsListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen on TLS port: %v", err)
+	}
+	defer tlsListener.Close()
+	tlsPort := tlsListener.Addr().(*net.TCPAddr).Port
+
+	env := append(os.Environ(),
+		"AIMEBU_CONFIG_DIR="+rootDir,
+		fmt.Sprintf("AIMEBU_PORT=%d", freePort(t)),
+		"AIMEBU_BIND=127.0.0.1",
+		"AIMEBU_TLS_CERT="+certPath,
+		"AIMEBU_TLS_KEY="+keyPath,
+		fmt.Sprintf("AIMEBU_TLS_PORT=%d", tlsPort),
+	)
+
+	start := exec.Command(cli, "server", "start")
+	start.Env = env
+	startOut, err := start.CombinedOutput()
+	if err == nil {
+		t.Fatalf("server start succeeded with occupied TLS port:\n%s", startOut)
+	}
+	if !strings.Contains(string(startOut), "daemon exited during startup") {
+		t.Fatalf("server start output = %q, want startup-exit error", startOut)
+	}
+	if _, err := os.Stat(filepath.Join(rootDir, "server", "aimebu.pid")); !os.IsNotExist(err) {
+		t.Fatalf("pid file should be removed after startup exit, got err=%v", err)
+	}
+}
+
 func TestPruneCanUseOfflineFallback(t *testing.T) {
 	cases := []struct {
 		baseURL string
@@ -360,6 +401,52 @@ func writeTestFile(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func writeMainTestCertificatePair(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "cert.pem")
+	keyPath := filepath.Join(dir, "key.pem")
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "127.0.0.1"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	certFile, err := os.Create(certPath)
+	if err != nil {
+		t.Fatalf("create cert file: %v", err)
+	}
+	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
+		t.Fatalf("write cert file: %v", err)
+	}
+	if err := certFile.Close(); err != nil {
+		t.Fatalf("close cert file: %v", err)
+	}
+	keyFile, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatalf("create key file: %v", err)
+	}
+	if err := pem.Encode(keyFile, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+	if err := keyFile.Close(); err != nil {
+		t.Fatalf("close key file: %v", err)
+	}
+	return certPath, keyPath
 }
 
 func assertDirEmpty(t *testing.T, path string) {

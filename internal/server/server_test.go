@@ -436,6 +436,59 @@ func TestReactionMetaIncludesViewerNeutralSummary(t *testing.T) {
 	}
 }
 
+func TestStorePersistenceReloadRoundTripLeavesNoTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, _, err := s.registerAI("gpt5", "codex", "test", map[string]string{"spawn_tag": "0123456789abcdef"}, "persistalice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.registerHuman("persistbob", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, agentID := range []string{alice.ID, bob.ID} {
+		if _, err := s.joinRoom("persist-room", agentID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msgID, err := s.roomSend("persist-room", alice.ID, "@persistbob review this", true, []string{"Approve", "Hold"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := s.addReaction(msgID, bob.ID, "👍"); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if room := reloaded.getRoom("persist-room"); room == nil || len(room.Members) != 2 {
+		t.Fatalf("reloaded room = %+v, want two members", room)
+	}
+	msg, ok := reloaded.messageByID(msgID)
+	if !ok {
+		t.Fatalf("reloaded message %d not found", msgID)
+	}
+	if msg.Body != "@persistbob review this" || !msg.NeedsHumanAttention || len(msg.ProposedAnswers) != 2 {
+		t.Fatalf("reloaded message = %+v", msg)
+	}
+	if reactions := reloaded.withReactionSummaries([]types.Message{msg}, bob.ID)[0].Reactions; len(reactions) != 1 || reactions[0].Emoji != "👍" || !reactions[0].Me {
+		t.Fatalf("reloaded reactions = %+v, want bob thumbs-up", reactions)
+	}
+	tmpFiles, err := filepath.Glob(filepath.Join(dir, "*.tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tmpFiles) != 0 {
+		t.Fatalf("leftover temp files = %v, want none", tmpFiles)
+	}
+}
+
 func TestCleanReactionEmojiAcceptsCompoundEmoji(t *testing.T) {
 	for _, emoji := range []string{"👍", "👍🏽", "👩‍💻", "🏳️‍🌈", "👨‍👩‍👧", "🇺🇸"} {
 		t.Run(emoji, func(t *testing.T) {
@@ -1395,6 +1448,49 @@ func TestRoomWaitCursorAdvancedOnDelivery(t *testing.T) {
 	}
 }
 
+type roomWaitResponse struct {
+	Messages    []types.Message `json:"messages"`
+	Room        string          `json:"room"`
+	Status      string          `json:"status"`
+	KeepWaiting bool            `json:"keep_waiting"`
+}
+
+func TestRoomWaitTimeoutAndSinceIDNoReplay(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	sender, _, err := s.registerAI("gpt5", "codex", "test", nil, "waitsnd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiver, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "waitrcv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("wait-contract-room", sender.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("wait-contract-room", receiver.ID); err != nil {
+		t.Fatal(err)
+	}
+	msgID, err := s.roomSend("wait-contract-room", sender.ID, "one message", false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(fmt.Sprintf("%s/rooms/wait-contract-room/wait?agent_id=%s&since_id=%d&timeout=1", srv.URL, receiver.ID, msgID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got roomWaitResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Room != "wait-contract-room" || got.Status != "still_waiting" || !got.KeepWaiting || len(got.Messages) != 0 {
+		t.Fatalf("wait response = %+v, want timeout without replay", got)
+	}
+}
+
 type agentWaitResponse struct {
 	Messages    []types.Message       `json:"messages"`
 	Reactions   []types.ReactionEvent `json:"reactions"`
@@ -1511,6 +1607,52 @@ func TestAgentWaitReturnsReactionForMessageAuthor(t *testing.T) {
 
 	if cursorAfter := s.ensureRoomCursor(author.ID, "reaction-room"); cursorAfter != cursorBefore {
 		t.Fatalf("cursor advanced on reaction: was %d, now %d", cursorBefore, cursorAfter)
+	}
+	msg, ok := s.messageByID(msgID)
+	if !ok {
+		t.Fatal("message disappeared")
+	}
+	if msg.NeedsHumanAttention {
+		t.Fatal("reaction wakeup set human attention on message")
+	}
+
+	replayCh := waitForAgentHTTP(t, srv, author.ID, 1)
+	select {
+	case got := <-replayCh:
+		if !got.KeepWaiting || got.Status != "still_waiting" || len(got.Reactions) != 0 {
+			t.Fatalf("replay wait response = %+v, want timeout without replayed reaction", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("agent wait did not time out after reaction wakeup")
+	}
+}
+
+func TestReactionIsolationDoesNotCreateMessagesAdvanceCursorOrAttention(t *testing.T) {
+	s, srv := setupTestServer(t)
+	author, reactor, _ := setupReactionWaitRoom(t, s, "reaction-isolation-room")
+
+	msgID, err := s.roomSend("reaction-isolation-room", author.ID, "ship it", false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanceAgentCursorsToHead(s, author.ID)
+	cursorBefore := s.ensureRoomCursor(author.ID, "reaction-isolation-room")
+	messageCountBefore := len(s.messagesSince("reaction-isolation-room", 0))
+
+	reactHTTP(t, srv, http.MethodPut, msgID, reactor.ID, "👍")
+
+	if got := len(s.messagesSince("reaction-isolation-room", 0)); got != messageCountBefore {
+		t.Fatalf("message count after reaction = %d, want %d", got, messageCountBefore)
+	}
+	if cursorAfter := s.ensureRoomCursor(author.ID, "reaction-isolation-room"); cursorAfter != cursorBefore {
+		t.Fatalf("cursor advanced on reaction: was %d, now %d", cursorBefore, cursorAfter)
+	}
+	msg, ok := s.messageByID(msgID)
+	if !ok {
+		t.Fatal("message disappeared")
+	}
+	if msg.NeedsHumanAttention {
+		t.Fatal("reaction set human attention on message")
 	}
 }
 
@@ -3010,6 +3152,13 @@ func TestNeedsAttentionForceSubscribesHumans(t *testing.T) {
 	if !found {
 		t.Errorf("human %q not auto-joined to room after needs_attention send", human.ID)
 	}
+	msgs := s.messagesSince("attention-room", 0)
+	if len(msgs) == 0 {
+		t.Fatal("no messages in attention-room")
+	}
+	if !msgs[len(msgs)-1].NeedsHumanAttention {
+		t.Fatalf("latest message NeedsHumanAttention=false, want true")
+	}
 }
 
 func TestNeedsAttentionDoesNotWidenFrozenGroupTargets(t *testing.T) {
@@ -3226,6 +3375,103 @@ func TestNeedsAttentionWSDelivery(t *testing.T) {
 			return // success
 		}
 	}
+}
+
+func TestWebSocketSubscribedRoomReceivesMessageAndDisconnectsCleanly(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	ai, _, err := s.registerAI("gpt5", "codex", "test", nil, "wssender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("wshuman", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, agentID := range []string{ai.ID, human.ID} {
+		if _, err := s.joinRoom("ws-room", agentID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		CompressionMode: websocket.CompressionDisabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hello, _ := json.Marshal(map[string]any{"type": "hello", "agent_id": human.ID})
+	if err := conn.Write(ctx, websocket.MessageText, hello); err != nil {
+		t.Fatal(err)
+	}
+	subscribe, _ := json.Marshal(map[string]any{"type": "subscribe", "rooms": []string{"ws-room"}})
+	if err := conn.Write(ctx, websocket.MessageText, subscribe); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		s.subMu.Lock()
+		roomSubs := len(s.roomSubs["ws-room"])
+		s.subMu.Unlock()
+		if roomSubs > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.subMu.Lock()
+	roomSubs := len(s.roomSubs["ws-room"])
+	s.subMu.Unlock()
+	if roomSubs == 0 {
+		t.Fatal("websocket did not subscribe to ws-room")
+	}
+
+	msgID, err := s.roomSend("ws-room", ai.ID, "ws hello", false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("WS read error before message arrived: %v", err)
+		}
+		var frame struct {
+			Type string        `json:"type"`
+			Data types.Message `json:"data"`
+		}
+		if err := json.Unmarshal(data, &frame); err != nil {
+			continue
+		}
+		if frame.Type != "message" {
+			continue
+		}
+		if frame.Data.ID != msgID || frame.Data.RoomID != "ws-room" || frame.Data.Body != "ws hello" {
+			t.Fatalf("message frame = %+v, want id %d ws hello", frame.Data, msgID)
+		}
+		break
+	}
+
+	if err := conn.Close(websocket.StatusNormalClosure, "done"); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		s.subMu.Lock()
+		roomSubs = len(s.roomSubs["ws-room"])
+		s.subMu.Unlock()
+		if roomSubs == 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.subMu.Lock()
+	roomSubs = len(s.roomSubs["ws-room"])
+	s.subMu.Unlock()
+	t.Fatalf("room subscriptions after websocket close = %d, want 0", roomSubs)
 }
 
 // ── Sound upload validation ────────────────────────────────────────

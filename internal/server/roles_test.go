@@ -25,6 +25,27 @@ func TestRolesCatalogLoad(t *testing.T) {
 	}
 }
 
+func TestBuiltInRoleKeysDocumented(t *testing.T) {
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	combinedDocs := read("../../README.md") + "\n" + read("../../AGENTS.md")
+
+	for _, key := range []string{"leader", "worker", "reviewer", "sec-reviewer", "test-reviewer", "ux-reviewer"} {
+		if _, ok := roleCatalogEntryFor(key); !ok {
+			t.Fatalf("built-in role %q missing from role catalog", key)
+		}
+		if !strings.Contains(combinedDocs, key) {
+			t.Fatalf("built-in role %q is not documented in README.md or AGENTS.md", key)
+		}
+	}
+}
+
 func TestDefaultRolesIncludeThreeWayIndependentPlanning(t *testing.T) {
 	defaults := defaultRoleBodies()
 	for _, key := range []string{"leader", "worker", "reviewer"} {

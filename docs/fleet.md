@@ -18,8 +18,10 @@ Fleet launching is macOS-only in v1. It uses `osascript` and Terminal.app to
 open each configured command in a new Terminal window. Running
 `aimebu fleet <name>` on Linux or Windows exits with a clear error.
 
-The optional path is expanded to an absolute path before substitution. When
-omitted, aimebu uses the current working directory.
+The optional path is expanded to a canonical absolute path before
+substitution. When omitted, aimebu uses the current working directory.
+Canonicalization resolves symlinks in the deepest existing path prefix and
+then preserves any not-yet-created tail components.
 
 Fleet names must be 1-64 characters, start with a lowercase letter or digit,
 and then use only lowercase letters, digits, dots, underscores, or dashes.
@@ -30,7 +32,7 @@ can be disabled when the command already handles its own working directory.
 
 Supported placeholders:
 
-- `${AIMEBU_FLEET_PATH}` — absolute target path.
+- `${AIMEBU_FLEET_PATH}` — canonical absolute target path.
 - `${AIMEBU_FLEET_NAME}` — fleet name.
 - `${AIMEBU_FLEET_AGENT_INDEX}` — zero-based agent index.
 

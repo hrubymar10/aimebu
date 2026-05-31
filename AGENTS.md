@@ -36,6 +36,14 @@ Rules:
   reader can understand the change without reconstructing the whole discussion
   from chat logs.
 
+## Testing
+
+All tests must pass before committing. Run `make test` for the standard
+unit suite (`go test ./...` underneath), and run `make test-race` for any
+change touching concurrency, the store, WebSocket, or `bus_wait`. Run
+`make test-full` before sharing a substantive change for commit. Never
+commit a red tree.
+
 ## Supported harnesses
 
 The canonical support matrix lives in [README.md](README.md) under

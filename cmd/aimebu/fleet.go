@@ -82,11 +82,11 @@ func printFleetUsage() {
 	fmt.Println(`Usage: aimebu fleet [<name> [path]]
 
 List configured fleets, or launch a named fleet against path. When path is
-omitted, the current working directory is used. The path is resolved to an
-absolute path before command substitution.
+omitted, the current working directory is used. The path is resolved to a
+canonical absolute path before command substitution.
 
 Placeholders replaced before running each command:
-  ${AIMEBU_FLEET_PATH}          absolute target path
+  ${AIMEBU_FLEET_PATH}          canonical absolute target path
   ${AIMEBU_FLEET_NAME}          fleet name
   ${AIMEBU_FLEET_AGENT_INDEX}   zero-based agent index`)
 }
@@ -147,7 +147,34 @@ func resolveFleetPath(args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Abs(expanded)
+	abs, err := filepath.Abs(expanded)
+	if err != nil {
+		return "", err
+	}
+	return resolveFleetSymlinks(abs)
+}
+
+func resolveFleetSymlinks(absPath string) (string, error) {
+	cur := filepath.Clean(absPath)
+	var tail []string
+	for {
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return absPath, nil
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+	}
 }
 
 func expandHomePath(p string) (string, error) {

@@ -121,8 +121,12 @@ func TestResolveFleetPathDefaultsToAbsCwd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != dir {
-		t.Fatalf("resolveFleetPath(nil) = %q, want %q", got, dir)
+	want, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("resolveFleetPath(nil) = %q, want %q", got, want)
 	}
 }
 
@@ -141,9 +145,38 @@ func TestResolveFleetPathExpandsRelative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(dir, "subdir")
+	canonicalDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(canonicalDir, "subdir")
 	if got != want {
 		t.Fatalf("resolveFleetPath(relative) = %q, want %q", got, want)
+	}
+}
+
+func TestResolveFleetSymlinksPreservesMissingTail(t *testing.T) {
+	dir := t.TempDir()
+	realDir := filepath.Join(dir, "real")
+	if err := os.Mkdir(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := filepath.Join(dir, "link")
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	got, err := resolveFleetSymlinks(filepath.Join(linkDir, "missing", "leaf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalRealDir, err := filepath.EvalSymlinks(realDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(canonicalRealDir, "missing", "leaf")
+	if got != want {
+		t.Fatalf("resolveFleetSymlinks(missing tail) = %q, want %q", got, want)
 	}
 }
 

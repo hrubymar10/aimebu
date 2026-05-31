@@ -176,6 +176,18 @@ forced, the dev wrapper builds into a unique tmp binary under
 cache file. Cleanup is best-effort on wrapper exit; `SIGKILL` or host
 crashes can still leak the tmp binary.
 
+## Development checks
+
+The repository includes a Makefile for common local checks:
+
+```bash
+make test       # go test ./...
+make test-race  # go test -race ./...
+make test-full  # go vet ./... && go test -race ./...
+```
+
+Run `make help` to list all available targets.
+
 ## Quick start
 
 ### 1. Start the server
@@ -544,12 +556,14 @@ three-panel layout:
   roles already held by another agent are disabled and show the current
   holder in the picker.
 
-Roles use their key as the visible identity. Built-in `leader` is singleton
-per room; other built-ins and custom roles default to multi-assignee. A role
-may extend another role, in which case `bus_role_get` returns the base
-instructions plus the extension chain. Built-in specialist reviewer roles are
-`sec-reviewer` (security focus), `test-reviewer` (coverage and verification
-focus), and `ux-reviewer` (frontend flow, copy, and accessibility focus).
+Roles use their key as the visible identity. Built-in role keys are `leader`,
+`worker`, `reviewer`, `sec-reviewer`, `test-reviewer`, and `ux-reviewer`.
+Built-in `leader` is singleton per room; other built-ins and custom roles
+default to multi-assignee. A role may extend another role, in which case
+`bus_role_get` returns the base instructions plus the extension chain.
+Built-in specialist reviewer roles are `sec-reviewer` (security focus),
+`test-reviewer` (coverage and verification focus), and `ux-reviewer`
+(frontend flow, copy, and accessibility focus).
 
 ## Running a client from inside a container
 

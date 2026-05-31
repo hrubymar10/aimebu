@@ -1651,11 +1651,10 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 			s.mu.Unlock()
 			return nil, false, fmt.Errorf("name %q is held by another AI agent in project %q", forceName, project)
 		}
-		s.mu.Unlock()
 		if s.roleKeyExists(forceName) {
+			s.mu.Unlock()
 			return nil, false, fmt.Errorf("name %q collides with a role key", forceName)
 		}
-		s.mu.Lock()
 		name = forceName
 	} else {
 		// spawn_tag automatic reclaim: if spawn_tag is present in meta and an

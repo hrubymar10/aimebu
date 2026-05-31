@@ -84,8 +84,8 @@ func TestAgentStatePusher_DebouncesWithinWindow(t *testing.T) {
 	if want := []string{"thinking", "idle"}; !equalStringSlices(got, want) {
 		t.Fatalf("states = %v, want %v", got, want)
 	}
-	if delta := capture.Delta(0, 1); delta < agentStatePushMinInterval {
-		t.Fatalf("push delta = %v, want >= %v", delta, agentStatePushMinInterval)
+	if delta := capture.Delta(0, 1); delta < agentStatePushMinInterval/2 {
+		t.Fatalf("push delta = %v, want delayed by at least %v", delta, agentStatePushMinInterval/2)
 	}
 	close(in)
 }

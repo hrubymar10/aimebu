@@ -91,12 +91,15 @@ func DaemonStart(selfBin, addr, rootDir string) error {
 	if err := os.WriteFile(pidFile(serverDir), []byte(strconv.Itoa(pid)), 0o644); err != nil {
 		return fmt.Errorf("write pid file: %w", err)
 	}
+	exited := make(chan error, 1)
+	go func() {
+		exited <- cmd.Wait()
+	}()
 
 	// Wait briefly and confirm it's alive + healthy
 	time.Sleep(200 * time.Millisecond)
-	if !processAlive(pid) {
-		_ = os.Remove(pidFile(serverDir))
-		return fmt.Errorf("daemon exited immediately — check %s", logFile(serverDir))
+	if err := daemonStartupExitError(exited, serverDir); err != nil {
+		return err
 	}
 
 	// Try hitting health endpoint. When TLS is enabled, the daemon serves
@@ -114,6 +117,9 @@ func DaemonStart(selfBin, addr, rootDir string) error {
 	healthURL := fmt.Sprintf("%s://%s/health", scheme, healthAddr)
 	httpClient := daemonHealthClient()
 	for i := 0; i < 10; i++ {
+		if err := daemonStartupExitError(exited, serverDir); err != nil {
+			return err
+		}
 		resp, err := httpClient.Get(healthURL)
 		if err == nil {
 			resp.Body.Close()
@@ -131,6 +137,19 @@ func DaemonStart(selfBin, addr, rootDir string) error {
 
 	fmt.Printf("aimebu started (pid %d) — health check pending\n", pid)
 	return nil
+}
+
+func daemonStartupExitError(exited <-chan error, serverDir string) error {
+	select {
+	case err := <-exited:
+		_ = os.Remove(pidFile(serverDir))
+		if err != nil {
+			return fmt.Errorf("daemon exited during startup (%v) — check %s", err, logFile(serverDir))
+		}
+		return fmt.Errorf("daemon exited during startup — check %s", logFile(serverDir))
+	default:
+		return nil
+	}
 }
 
 func daemonHealthClient() *http.Client {
