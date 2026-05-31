@@ -9,6 +9,7 @@ this file, and everything under [docs/](docs/) (currently
 [docs/claude-code.md](docs/claude-code.md),
 [docs/codex.md](docs/codex.md), [docs/fleet.md](docs/fleet.md),
 [docs/github-copilot.md](docs/github-copilot.md),
+[docs/memory.md](docs/memory.md),
 [docs/ollama-cloud.md](docs/ollama-cloud.md), [docs/pi.md](docs/pi.md),
 [docs/tls.md](docs/tls.md), and [docs/usages.md](docs/usages.md)). When your
 change makes any of those drift from reality — flags, env vars, tool names,
@@ -98,6 +99,7 @@ internal/
   server/
     server.go             HTTP server, route handlers, Run()
     store.go              In-memory store with JSON persistence (rooms, messages, agents)
+    memory.go             Durable bus memory records and recall search
     daemon.go             PID-based daemon start/stop/status
     allow.go              IP allowlist middleware (AIMEBU_ALLOW)
     allow_test.go
@@ -225,7 +227,7 @@ aimebu fleet default             # launch a named command bundle in cwd
 
 aimebu prune                     # clear conversation state with confirmation prompt
 aimebu prune -y                  # same, skip confirmation
-aimebu prune -a                  # clear everything including macros, fleets, and prompts
+aimebu prune -a                  # clear everything including memory, macros, fleets, and prompts
 aimebu prune -a -y               # clear everything without prompt
 
 aimebu mcp                       # start MCP server (for AI assistants)
@@ -249,26 +251,34 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 
 `AIMEBU_CONFIG_DIR` defaults to `~/.aimebu/`. Under that root, `server/`
 holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
-`agents.json`, `reactions.json`, `macros.json`, `fleet.json`, `settings.json`,
-`prompts.json`, `roles.json`, `sounds/`, `aimebu.pid`, `aimebu.log`) and
+`agents.json`, `reactions.json`, `memory.json`, `macros.json`, `fleet.json`,
+`settings.json`, `prompts.json`, `roles.json`, `sounds/`, `aimebu.pid`,
+`aimebu.log`) and
 `agents/` holds agent-CLI state
 (`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
 `settings.json` stores UI preferences plus global retention settings for
-stale agents, empty rooms, cleanup cadence, and message age/count limits.
+stale agents, empty rooms, cleanup cadence, message age/count limits, and the
+global `memory_enabled` flag. When `memory_enabled` is absent, the web UI has
+not asked yet and memory is effectively disabled.
 Emoji reactions are conversation content and live in `server/reactions.json`;
 reaction updates do not create messages, advance read cursors, or trigger
 human attention.
 Image attachments are conversation content. Uploaded blobs and their registry
 live under `server/attachments/`; messages store attachment metadata and URLs
 only, not embedded image bytes.
+Bus memory is durable curated knowledge and lives in `server/memory.json`;
+plain `aimebu prune` preserves it, while `aimebu prune -a` removes it. Room
+memory overrides live on room records in `server/rooms.json`; they are
+content-flow controls only, not an automatic wipe or an airtight
+per-participant memory kill switch.
 `usages/` holds provider usage state: `config.json` (0600, refresh interval,
 percent display, provider order, enabled flags, provider secrets), `cache.json` (0644, last successful
 snapshots, no secrets), and `.lock` (stable flock target for server/CLI
 refresh coordination).
 `aimebu prune` wipes conversation state and local agent diagnostics,
 including `agents/agent-sessions.json` and `agents/agent-logs/*`;
-`aimebu prune -a` also wipes user settings, including macros, fleet command
-bundles, prompt overrides, role definitions/emoji, sounds, and
+`aimebu prune -a` also wipes user settings, including memory, macros, fleet
+command bundles, prompt overrides, role definitions/emoji, sounds, and
 `agents/agent-warning-acknowledged`. Runtime diagnostics
 (`server/aimebu.log`) are preserved by both prune modes. Provider usage state
 under `usages/` is independent of conversation prune; clear Copilot tokens or
@@ -288,6 +298,13 @@ picker. Uploads go through `POST /api/attachments` immediately, send is
 disabled while uploads are in flight, sent messages carry registry-backed
 attachment metadata, and inline thumbnails open in a mobile-friendly
 lightbox.
+
+Settings -> Memory enables or disables durable bus memory globally, and the
+brain button in the top bar opens the memory viewer for inspecting, editing,
+and cleaning project facts, globally visible user profiles, and global shared
+agent notes. Room Settings can disable whether that room's messages feed
+memory and recall. Fresh AI registrations receive a memory snapshot in the
+`bus_register` response only when memory is enabled.
 
 The chat view supports compact single-emoji reaction pills; hovering a pill
 shows the slugs of the agents or humans who applied that emoji, expanding to

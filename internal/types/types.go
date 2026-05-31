@@ -3,11 +3,12 @@ package types
 import "time"
 
 type Room struct {
-	ID        string            `json:"id"`
-	Members   []string          `json:"members"`
-	CreatedAt string            `json:"created_at"`
-	CreatedBy string            `json:"created_by"`
-	Roles     map[string]string `json:"roles,omitempty"` // agent_id → role_key
+	ID            string            `json:"id"`
+	Members       []string          `json:"members"`
+	CreatedAt     string            `json:"created_at"`
+	CreatedBy     string            `json:"created_by"`
+	Roles         map[string]string `json:"roles,omitempty"`          // agent_id → role_key
+	MemoryEnabled *bool             `json:"memory_enabled,omitempty"` // nil = inherit global memory content-flow policy
 }
 
 // RoleInfo is the role data embedded in bus_join responses when the joining
@@ -89,6 +90,50 @@ type Agent struct {
 	// (explicit, e.g. frontend "user opened the room"). Persisted with the
 	// agent so a pruned-then-reclaimed identity keeps its read state.
 	ReadCursors map[string]int64 `json:"read_cursors,omitempty"`
+}
+
+const (
+	MemoryScopeProjectFacts     = "project_facts"
+	MemoryScopeUserProfile      = "user_profile"
+	MemoryScopeAgentSharedNotes = "agent_shared_notes"
+)
+
+// MemoryRecord is one curated memory item. ScopeKey is the durable owner key
+// inside the scope: project name for project_facts, human ID for user_profile,
+// and a fixed global bucket for agent_shared_notes.
+type MemoryRecord struct {
+	ID              string `json:"id"`
+	Scope           string `json:"scope"`
+	ScopeKey        string `json:"scope_key"`
+	Body            string `json:"body"`
+	Version         int    `json:"version"`
+	Author          string `json:"author"`
+	SourceMessageID int64  `json:"source_message_id,omitempty"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
+}
+
+type MemoryUsage struct {
+	Scope   string `json:"scope"`
+	Key     string `json:"key"`
+	Used    int    `json:"used"`
+	Cap     int    `json:"cap"`
+	Percent int    `json:"percent"`
+}
+
+type MemorySnapshot struct {
+	Records  []MemoryRecord `json:"records"`
+	Usage    []MemoryUsage  `json:"usage"`
+	Rendered string         `json:"rendered"`
+}
+
+type RecallResult struct {
+	MessageID int64  `json:"message_id"`
+	RoomID    string `json:"room_id"`
+	From      string `json:"from"`
+	CreatedAt string `json:"created_at"`
+	Snippet   string `json:"snippet"`
+	Score     int    `json:"score"`
 }
 
 const (
@@ -199,4 +244,5 @@ type RegisterResponse struct {
 	Meta      map[string]string `json:"meta,omitempty"`
 	Reclaimed bool              `json:"reclaimed"`
 	Warnings  []string          `json:"warnings,omitempty"`
+	Memory    *MemorySnapshot   `json:"memory,omitempty"`
 }

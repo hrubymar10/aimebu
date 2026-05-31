@@ -246,6 +246,39 @@ func TestMCP_JSONRPCToolRoundTrip(t *testing.T) {
 				t.Fatalf("reaction body = %v", got)
 			}
 			io.WriteString(w, `{"message_id":42,"room":"general","reactions":[{"emoji":"👍","count":1,"me":true}]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/memory":
+			if r.URL.Query().Get("agent_id") != "alice@aimebu" {
+				t.Fatalf("memory agent_id = %q", r.URL.Query().Get("agent_id"))
+			}
+			io.WriteString(w, `{"records":[{"id":"mem1","scope":"agent_shared_notes","scope_key":"global","body":"note","version":1,"author":"alice@aimebu"}],"usage":[],"rendered":"note"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/memory":
+			var got map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got["agent_id"] != "alice@aimebu" || got["scope"] != "agent_shared_notes" || got["body"] != "note" {
+				t.Fatalf("memory add body = %v", got)
+			}
+			io.WriteString(w, `{"record":{"id":"mem1","scope":"agent_shared_notes","scope_key":"global","body":"note","version":1,"author":"alice@aimebu"}}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/memory/mem1":
+			var got map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got["agent_id"] != "alice@aimebu" || got["version"].(float64) != 1 || got["body"] != "edited" {
+				t.Fatalf("memory update body = %v", got)
+			}
+			io.WriteString(w, `{"record":{"id":"mem1","body":"edited","version":2}}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/memory/mem1":
+			if r.URL.Query().Get("agent_id") != "alice@aimebu" || r.URL.Query().Get("version") != "2" {
+				t.Fatalf("memory delete query = %s", r.URL.RawQuery)
+			}
+			io.WriteString(w, `{"record":{"id":"mem1","body":"edited","version":2}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/recall":
+			if r.URL.Query().Get("agent_id") != "alice@aimebu" || r.URL.Query().Get("query") != "needle" {
+				t.Fatalf("recall query = %s", r.URL.RawQuery)
+			}
+			io.WriteString(w, `{"results":[{"message_id":42,"room_id":"general","from":"bob","snippet":"needle","score":10}]}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/rooms/general/roles":
 			var got map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
@@ -287,6 +320,11 @@ func TestMCP_JSONRPCToolRoundTrip(t *testing.T) {
 		{name: "bus_say", args: map[string]any{"room": "general", "body": "hello"}, want: `"id":42`},
 		{name: "bus_wait", args: map[string]any{"timeout": 1}, want: `"body":"hello back"`},
 		{name: "bus_react", args: map[string]any{"message_id": 42, "emoji": "👍"}, want: `"message_id":42`},
+		{name: "bus_memory_list", args: map[string]any{}, want: `"rendered":"note"`},
+		{name: "bus_memory_add", args: map[string]any{"scope": "agent_shared_notes", "body": "note"}, want: `"id":"mem1"`},
+		{name: "bus_memory_update", args: map[string]any{"id": "mem1", "version": 1, "body": "edited"}, want: `"version":2`},
+		{name: "bus_memory_remove", args: map[string]any{"id": "mem1", "version": 2}, want: `"body":"edited"`},
+		{name: "bus_recall", args: map[string]any{"query": "needle", "limit": 3}, want: `"message_id":42`},
 		{name: "bus_role_assign", args: map[string]any{"room": "general", "agent_id": "alice@aimebu", "role_key": "worker"}, want: `"worker"`},
 		{name: "bus_role_get", args: map[string]any{"room": "general"}, want: `"body":"do the work"`},
 	} {
@@ -304,6 +342,11 @@ func TestMCP_JSONRPCToolRoundTrip(t *testing.T) {
 		"POST /rooms/general/send",
 		"GET /agents/alice@aimebu/wait?timeout=1",
 		"PUT /messages/42/reactions",
+		"GET /memory?agent_id=alice%40aimebu",
+		"POST /memory",
+		"PUT /memory/mem1",
+		"DELETE /memory/mem1?agent_id=alice%40aimebu&version=2",
+		"GET /recall?agent_id=alice%40aimebu&limit=3&query=needle",
 		"POST /rooms/general/roles",
 		"GET /rooms/general/roles/alice@aimebu",
 	} {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -318,6 +319,68 @@ var tools = []tool{
 			Properties: map[string]property{
 				"macros": {Type: "object", Description: "Global macro map: {key: body}"},
 			},
+		},
+	},
+	{
+		Name:        "bus_memory_list",
+		Description: "List curated bus memory visible to you. Returns records plus a rendered bounded snapshot and usage/cap metadata. Omit scope to get your startup-visible memory: project_facts for your project, user_profile records, and global agent_shared_notes. If memory is disabled, proceed without memory rather than retrying.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"scope":     {Type: "string", Description: "Optional scope: project_facts, user_profile, or agent_shared_notes."},
+				"scope_key": {Type: "string", Description: "Optional key inside the scope. Required for user_profile when the caller is an AI and wants one human profile."},
+			},
+		},
+	},
+	{
+		Name:        "bus_memory_add",
+		Description: "Add one curated memory record with explicit intent. Writes are cap-enforced and attributable. project_facts requires a non-empty caller project; user_profile requires scope_key with the human ID; agent_shared_notes is one global shared bucket visible to all agents, so keep those notes concise and generally applicable. Before recording a durable project convention, consider whether it belongs in the project's AGENTS.md/CLAUDE.md instead because those files are version-controlled and reviewed; ask the human when promotion to repo docs seems appropriate. If source_message_id points to a room whose memory is disabled, the write is rejected.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"scope":             {Type: "string", Description: "Scope: project_facts, user_profile, or agent_shared_notes."},
+				"scope_key":         {Type: "string", Description: "Optional key inside the scope. For user_profile, pass the human ID such as 'matin'."},
+				"body":              {Type: "string", Description: "Memory body to add."},
+				"source_message_id": {Type: "integer", Description: "Optional source message ID that motivated this memory."},
+			},
+			Required: []string{"scope", "body"},
+		},
+	},
+	{
+		Name:        "bus_memory_update",
+		Description: "Update one memory record by id. Requires the version you saw as an optimistic concurrency guard; if stale, the server returns the fresh record instead of overwriting blindly.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"id":      {Type: "string", Description: "Memory record ID."},
+				"version": {Type: "integer", Description: "The record version you saw. Required to prevent blind overwrites."},
+				"body":    {Type: "string", Description: "Replacement body."},
+			},
+			Required: []string{"id", "version", "body"},
+		},
+	},
+	{
+		Name:        "bus_memory_remove",
+		Description: "Remove one memory record by id and version. Use only when the record is wrong, stale, or consolidated elsewhere.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"id":      {Type: "string", Description: "Memory record ID."},
+				"version": {Type: "integer", Description: "The record version you saw. Required to prevent blind deletes."},
+			},
+			Required: []string{"id", "version"},
+		},
+	},
+	{
+		Name:        "bus_recall",
+		Description: "Read-only keyword recall over messages visible to you, skipping rooms whose memory is disabled. Returns a small ranked list with message metadata and snippets. It does not summarize, create memory, or advance read cursors.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"query": {Type: "string", Description: "Search query."},
+				"limit": {Type: "integer", Description: "Maximum results, capped by the server."},
+			},
+			Required: []string{"query"},
 		},
 	},
 	{
@@ -655,6 +718,84 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 		}
 		_ = json.Unmarshal(args, &p)
 		return c.Put("/macros", p)
+
+	case "bus_memory_list":
+		var p struct {
+			Scope    string `json:"scope"`
+			ScopeKey string `json:"scope_key"`
+		}
+		_ = json.Unmarshal(args, &p)
+		q := url.Values{}
+		q.Set("agent_id", c.AgentID)
+		if p.Scope != "" {
+			q.Set("scope", p.Scope)
+		}
+		if p.ScopeKey != "" {
+			q.Set("scope_key", p.ScopeKey)
+		}
+		return c.Get("/memory?" + q.Encode())
+
+	case "bus_memory_add":
+		var p struct {
+			Scope           string `json:"scope"`
+			ScopeKey        string `json:"scope_key"`
+			Body            string `json:"body"`
+			SourceMessageID int64  `json:"source_message_id"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return "", fmt.Errorf("invalid args: %w", err)
+		}
+		return c.Post("/memory", map[string]any{
+			"agent_id":          c.AgentID,
+			"scope":             p.Scope,
+			"scope_key":         p.ScopeKey,
+			"body":              p.Body,
+			"source_message_id": p.SourceMessageID,
+		})
+
+	case "bus_memory_update":
+		var p struct {
+			ID      string `json:"id"`
+			Version int    `json:"version"`
+			Body    string `json:"body"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return "", fmt.Errorf("invalid args: %w", err)
+		}
+		return c.Put("/memory/"+url.PathEscape(p.ID), map[string]any{
+			"agent_id": c.AgentID,
+			"version":  p.Version,
+			"body":     p.Body,
+		})
+
+	case "bus_memory_remove":
+		var p struct {
+			ID      string `json:"id"`
+			Version int    `json:"version"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return "", fmt.Errorf("invalid args: %w", err)
+		}
+		q := url.Values{}
+		q.Set("agent_id", c.AgentID)
+		q.Set("version", fmt.Sprintf("%d", p.Version))
+		return c.Delete("/memory/" + url.PathEscape(p.ID) + "?" + q.Encode())
+
+	case "bus_recall":
+		var p struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return "", fmt.Errorf("invalid args: %w", err)
+		}
+		q := url.Values{}
+		q.Set("agent_id", c.AgentID)
+		q.Set("query", p.Query)
+		if p.Limit > 0 {
+			q.Set("limit", fmt.Sprintf("%d", p.Limit))
+		}
+		return c.Get("/recall?" + q.Encode())
 
 	case "bus_role_assign":
 		var p struct {

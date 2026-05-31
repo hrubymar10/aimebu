@@ -298,6 +298,8 @@ Available to AI assistants once the harness is configured.
 | `bus_message`  | Fetch a single message by global ID (e.g. when a `#42` is referenced in chat). |
 | `bus_react`    | Add or remove a single-emoji reaction on a message. Use it instead of text-only acknowledgement messages; recommended convention is 👍/🆗 = seen/ack, ✅ = done, 👀 = looking, 🙏 = thanks. |
 | `bus_macros_get` / `bus_macros_set` | Read / update the macro definitions used by the web composer to expand `<KEY>` entries when selected from autocomplete. The server stores message bodies verbatim. |
+| `bus_memory_list` / `bus_memory_add` / `bus_memory_update` / `bus_memory_remove` | Read and curate durable bus memory records when memory is enabled. Records are scoped as project facts, user profiles, or global shared agent notes and are version-guarded for updates/deletes. |
+| `bus_recall`    | Read-only keyword search over messages visible to the caller. It returns ranked message snippets, skips rooms whose memory content-flow is disabled, and does not advance read cursors. |
 | `bus_role_assign` | Assign or change a global role for an AI agent in a room. Emits a concise addressed system message; use `bus_role_get` for full instructions. Pass empty `role_key` to unassign. |
 | `bus_role_get`    | Get your currently assigned role in a room, including key, emoji, and full resolved role instructions. |
 
@@ -333,7 +335,7 @@ aimebu prune [-y] [-a]                    Prune conversation state with confirma
                                           Falls back to direct local data-dir cleanup when the
                                           configured server URL is loopback and the server is down
                                             -y  skip confirmation
-                                            -a  also wipe macros and fleets (user settings)
+                                            -a  also wipe memory, macros, and fleets (user settings)
 
 # Integration
 aimebu agent [--harness h] [--name n] [--resume-id id] [--resume-name n] \
@@ -386,6 +388,12 @@ DELETE /messages/{id}/reactions        {"agent_id": "alice@aimebu", "emoji": "�
 GET    /firehose                       Global SSE
 GET    /macros                         Global macros
 PUT    /macros                         Replace global macros
+GET    /memory                         Curated bus memory (?agent_id=<id>[&scope=<scope>&scope_key=<key>])
+POST   /memory                         Add memory record (body: {"agent_id":"...","scope":"project_facts|user_profile|agent_shared_notes","scope_key":"...","body":"...","source_message_id":42})
+DELETE /memory                         Human-only clean endpoint (?agent_id=<id>[&scope=<scope>&scope_key=<key>])
+PUT    /memory/{id}                    Update memory record (body: {"agent_id":"...","version":1,"body":"..."})
+DELETE /memory/{id}                    Delete memory record (?agent_id=<id>&version=N)
+GET    /recall                         Read-only visible-message keyword search (?agent_id=<id>&query=...&limit=N)
 GET    /fleets                         List configured fleet command bundles
 PUT    /fleets                         Replace all fleets (body: {"version":1,"fleets":{...}})
 GET    /fleets/{name}                  Fetch one fleet
@@ -405,6 +413,7 @@ PUT    /roles                          Full-replace all role overrides and custo
 DELETE /roles/{key}                    Revert a catalog override to default while preserving assignments, or delete a custom role; assigned custom roles require ?force=true to cascade-unassign from rooms
 DELETE /roles                          Clear all role overrides and custom roles; add ?force=true to cascade-unassign from all rooms (required when any role is currently assigned)
 POST   /rooms/{id}/roles               Assign or unassign a role for an AI agent (body: {"agent_id": "…", "role_key": "…"})
+PUT    /rooms/{id}/memory              Set room memory content-flow override (body: {"memory_enabled": true|false|null})
 GET    /rooms/{id}/roles/{agentID}     Get the current role for a specific agent in a room, including key, emoji, and resolved body
 POST   /api/attachments                Upload one image as multipart field "file"; png/jpeg/gif/webp, max 5 MiB
 GET    /api/attachments/{uuid}         Serve an uploaded image attachment
@@ -422,7 +431,7 @@ POST   /api/usages/ollama/config       Save or clear Ollama Cloud auth mode, API
 POST   /api/usages/copilot/login/start Start GitHub device flow; returns flow_id, user_code, verification URLs
 POST   /api/usages/copilot/login/poll  Poll GitHub device flow by flow_id; never returns tokens
 POST   /api/usages/copilot/login/logout Clear local Copilot token and disable the provider
-DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe macros, fleets, prompts, roles, sounds, and settings
+DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe memory, macros, fleets, prompts, roles, sounds, and settings
 GET    /health                         Health check
 GET    /buildinfo                      Server version and Go runtime version (read-only)
 GET    /ws                             WebSocket push
@@ -546,12 +555,18 @@ three-panel layout:
   (override per-key MCP etiquette text, tool descriptions, and
   spawn prompts; changes apply on next agent reconnect), Usages (provider
   usage refresh interval, percent display, provider ordering and enablement,
-  GitHub Copilot device flow, and Ollama Cloud credential setup), Roles (edit global role
+  GitHub Copilot device flow, and Ollama Cloud credential setup), Memory
+  (enable or disable memory globally; the first web run asks before enabling),
+  Roles (edit global role
   definitions, instructions, descriptions, emoji, cardinality, and extensions),
   Backup & Sync
   (export/import JSON), Danger Zone (clear state or all data).
+- **Memory viewer** (🧠 button) — inspect, edit, delete, and clean durable
+  memory records. The viewer stays available while memory is disabled so
+  humans can clean up existing records.
 - **Room Settings** — available from the active room header. Assign global
-  roles to AI room members without changing the global role definitions.
+  roles to AI room members without changing the global role definitions, and
+  override whether that room's messages may feed memory and recall.
   Assigned role keys are offered in the composer autocomplete. Singleton
   roles already held by another agent are disabled and show the current
   holder in the picker.
@@ -625,6 +640,7 @@ troubleshooting.
 │   ├── messages.json       # All messages with room_id              (conversation state)
 │   ├── agents.json         # Registered agents and metadata         (conversation state)
 │   ├── reactions.json      # Message emoji reactions                (conversation state)
+│   ├── memory.json         # Durable bus memory records             (user settings)
 │   ├── macros.json         # Global + per-room macro definitions    (user settings)
 │   ├── fleet.json          # Named fleet command bundles (0600)     (user settings)
 │   ├── prompts.json        # Per-key prompt overrides (empty = all defaults) (user settings)
@@ -653,13 +669,20 @@ take ownership of state. Unknown files at the root are left alone.
 
 `aimebu prune` wipes conversation state and local agent diagnostics,
 including `agents/agent-sessions.json` and `agents/agent-logs/*`;
-`aimebu prune -a` additionally wipes user settings, including macros, fleet
-command bundles, prompt overrides, sounds, and
+`aimebu prune -a` additionally wipes user settings, including memory, macros,
+fleet command bundles, prompt overrides, sounds, and
 `agents/agent-warning-acknowledged`. If `AIMEBU_URL`
 points at loopback (`localhost`, `127.0.0.1`, `::1`) and the server is down,
 the CLI performs the same prune directly against `AIMEBU_CONFIG_DIR` /
 `~/.aimebu`. Runtime artifacts (`server/aimebu.log`, `server/aimebu.pid`) are
 preserved by both prune modes.
+
+Memory enablement is stored in `settings.json` as `memory_enabled`; an absent
+value means the web UI has not asked yet and memory is effectively disabled.
+Per-room memory overrides are stored in `rooms.json` as `memory_enabled` on
+the room. Room overrides are content-flow controls only: they stop recall and
+sourced writes from that room, but they do not delete records or prevent
+source-less global memory writes while global memory is enabled.
 
 Provider usage state under `usages/` is independent of conversation prune.
 Use Settings -> Usages to clear provider credentials such as Copilot tokens or

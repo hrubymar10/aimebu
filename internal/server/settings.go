@@ -17,6 +17,7 @@ type Settings struct {
 	Theme                   string `json:"theme,omitempty"` // "" | "dark" | "light" | "red-dark" | "red-light" | "blue-dark" | "blue-light" | "green-dark" | "green-light" | "high-contrast-dark" | "high-contrast-light"
 	ShowSystemEvents        *bool  `json:"show_system_events,omitempty"`
 	DebugButtonEnabled      *bool  `json:"debug_button_enabled,omitempty"`
+	MemoryEnabled           *bool  `json:"memory_enabled,omitempty"` // nil = first-run prompt has not answered; effective disabled
 	NotificationEnabled     *bool  `json:"notification_enabled,omitempty"`
 	NotificationSound       string `json:"notification_sound,omitempty"`  // "builtin:<name>" or "user:<uuid>"
 	NotificationVolume      *int   `json:"notification_volume,omitempty"` // 0–100

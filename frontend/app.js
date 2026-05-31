@@ -35,6 +35,7 @@
   let fleets = {};           // { name: { agents: [{ command }] } }
   let promptEntries = [];    // PromptEntry[] from GET /settings/prompts
   let roleEntries = [];      // RoleEntry[] from GET /roles
+  let memorySnapshot = { records: [], usage: [], rendered: '' };
   let roomSettingsDirty = false; // true when a focused role picker deferred a rebuild
   let systemEvents = [];     // Message[] — _system room events
   let systemUnread = 0;      // unread count for broadcast panel
@@ -119,6 +120,9 @@
   const welcomeNameInput = $('#welcome-name-input');
   const welcomeSubmitBtn = $('#welcome-submit-btn');
   const welcomeAcPopupEl = $('#welcome-ac-popup');
+  const memoryOnboardingModal = $('#memory-onboarding-modal');
+  const memoryOnboardingEnableBtn = $('#memory-onboarding-enable-btn');
+  const memoryOnboardingDisableBtn = $('#memory-onboarding-disable-btn');
   const agentIDInput = $('#agent-id-input');
   const connectionStatus = $('#connection-status');
   const statusText = connectionStatus.querySelector('.status-text');
@@ -229,6 +233,25 @@
   const promptsResetAllBtn = $('#prompts-reset-all-btn');
   const rolesListEl = $('#roles-list');
   const rolesResetAllBtn = $('#roles-reset-all-btn');
+  const memoryViewerBtn = $('#memory-viewer-btn');
+  const memoryViewerModal = $('#memory-viewer-modal');
+  const memoryViewerOverlay = $('#memory-viewer-overlay');
+  const memoryViewerCloseBtn = $('#memory-viewer-close-btn');
+  const memoryGlobalToggleBtn = $('#memory-global-toggle-btn');
+  const memoryGlobalStatusEl = $('#memory-global-status');
+  const memoryDisabledBanner = $('#memory-disabled-banner');
+  const memoryScopeSelect = $('#memory-scope-select');
+  const memoryScopeKeyInput = $('#memory-scope-key-input');
+  const memoryRefreshBtn = $('#memory-refresh-btn');
+  const memoryUsageListEl = $('#memory-usage-list');
+  const memoryListEl = $('#memory-list');
+  const memoryAddForm = $('#memory-add-form');
+  const memoryAddScopeSelect = $('#memory-add-scope-select');
+  const memoryAddScopeKeyInput = $('#memory-add-scope-key-input');
+  const memoryAddBodyInput = $('#memory-add-body-input');
+  const memoryAddSubmitBtn = $('#memory-add-submit-btn');
+  const memoryCleanFilterBtn = $('#memory-clean-filter-btn');
+  const memoryCleanAllBtn = $('#memory-clean-all-btn');
   const roleAddForm = $('#role-add-form');
   const roleKeyInput = $('#role-key-input');
   const roleEmojiInput = $('#role-emoji-input');
@@ -240,6 +263,8 @@
   const roomSettingsTitle = $('#room-settings-title');
   const roomSettingsMembers = $('#room-settings-members');
   const roomSettingsRemoveBtn = $('#room-settings-remove-btn');
+  const roomMemorySelect = $('#room-memory-select');
+  const roomMemoryStatusEl = $('#room-memory-status');
   const macroAddForm = $('#macro-add-form');
   const macroKeyInput = $('#macro-key-input');
   const macroBodyInput = $('#macro-body-input');
@@ -1666,6 +1691,242 @@
       .catch(function () { macros = {}; renderMacrosList(); });
   }
 
+  // ── Memory ──────────────────────────────────────────────────────
+
+  function memoryScopeLabel(scope) {
+    if (scope === 'project_facts') return 'Project facts';
+    if (scope === 'user_profile') return 'User profile';
+    if (scope === 'agent_shared_notes') return 'Shared notes';
+    return scope || 'Memory';
+  }
+
+  function memorySettingAnswered() {
+    return Object.prototype.hasOwnProperty.call(serverSettings, 'memory_enabled');
+  }
+
+  function memoryGloballyEnabled() {
+    return serverSettings.memory_enabled === true;
+  }
+
+  function applyMemorySettings() {
+    var enabled = memoryGloballyEnabled();
+    if (memoryGlobalToggleBtn) {
+      memoryGlobalToggleBtn.textContent = enabled ? 'Enabled' : 'Disabled';
+    }
+    if (memoryGlobalStatusEl) {
+      memoryGlobalStatusEl.textContent = memorySettingAnswered()
+        ? (enabled ? 'Memory is enabled.' : 'Memory is disabled. Existing records are preserved.')
+        : 'Memory has not been enabled yet.';
+    }
+    if (memoryDisabledBanner) {
+      memoryDisabledBanner.classList.toggle('hidden', enabled);
+    }
+    if (memoryAddForm) {
+      memoryAddForm.classList.toggle('memory-add-disabled', !enabled);
+    }
+    if (memoryAddSubmitBtn) {
+      memoryAddSubmitBtn.disabled = !enabled;
+      memoryAddSubmitBtn.textContent = enabled ? 'Add memory' : 'Memory disabled';
+    }
+    renderRoomSettings();
+  }
+
+  function setMemoryEnabled(enabled) {
+    return saveSettings({ memory_enabled: !!enabled }).then(function () {
+      applyMemorySettings();
+      if (memoryViewerModal && !memoryViewerModal.classList.contains('hidden')) {
+        loadMemory();
+      }
+    });
+  }
+
+  function maybeShowMemoryOnboarding() {
+    if (!registered || !memoryOnboardingModal || memorySettingAnswered()) return;
+    memoryOnboardingModal.classList.remove('hidden');
+    updateBodyModalLock();
+  }
+
+  function closeMemoryOnboarding() {
+    if (!memoryOnboardingModal) return;
+    memoryOnboardingModal.classList.add('hidden');
+    updateBodyModalLock();
+  }
+
+  function openMemoryViewer() {
+    if (!memoryViewerModal) return;
+    memoryViewerModal.classList.remove('hidden');
+    applyMemorySettings();
+    loadMemory();
+    updateBodyModalLock();
+    if (memoryViewerCloseBtn && memoryViewerCloseBtn.focus) memoryViewerCloseBtn.focus();
+  }
+
+  function closeMemoryViewer() {
+    if (!memoryViewerModal) return;
+    memoryViewerModal.classList.add('hidden');
+    updateBodyModalLock();
+  }
+
+  function memoryQuery() {
+    var qs = '?agent_id=' + encodeURIComponent(agentID);
+    var scope = memoryScopeSelect ? memoryScopeSelect.value : '';
+    var key = memoryScopeKeyInput ? memoryScopeKeyInput.value.trim() : '';
+    if (scope === 'project_facts' && !key) return null;
+    if (scope) qs += '&scope=' + encodeURIComponent(scope);
+    if (key) qs += '&scope_key=' + encodeURIComponent(key);
+    return qs;
+  }
+
+  function renderMemoryUsage() {
+    if (!memoryUsageListEl) return;
+    var usage = memorySnapshot.usage || [];
+    if (!usage.length) {
+      memoryUsageListEl.innerHTML = '';
+      return;
+    }
+    memoryUsageListEl.innerHTML = usage.map(function (u) {
+      var pct = u.cap ? Math.min(100, Math.round((u.used / u.cap) * 100)) : 0;
+      return '<div class="memory-usage-row">' +
+        '<div class="memory-usage-meta"><span>' + esc(memoryScopeLabel(u.scope)) + '</span><code>' + esc(u.key || '') + '</code><span>' + esc(String(u.used || 0)) + '/' + esc(String(u.cap || 0)) + '</span></div>' +
+        '<div class="memory-usage-bar"><span style="width:' + pct + '%"></span></div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function renderMemoryList() {
+    if (!memoryListEl) return;
+    renderMemoryUsage();
+    var records = memorySnapshot.records || [];
+    if (!records.length) {
+      memoryListEl.innerHTML = '<div class="empty-state">No memory records.</div>';
+      return;
+    }
+    memoryListEl.innerHTML = records.map(function (r) {
+      return '<div class="memory-row" data-id="' + esc(r.id) + '">' +
+        '<div class="memory-row-header">' +
+          '<span class="memory-scope-badge">' + esc(memoryScopeLabel(r.scope)) + '</span>' +
+          '<code>' + esc(r.scope_key || '') + '</code>' +
+          '<span class="memory-meta">v' + esc(String(r.version || 0)) + ' · ' + esc(r.author || '') + '</span>' +
+        '</div>' +
+        '<textarea class="memory-textarea memory-edit-body" rows="3" data-id="' + esc(r.id) + '" data-version="' + esc(String(r.version || 0)) + '">' + esc(r.body || '') + '</textarea>' +
+        '<div class="memory-row-actions">' +
+          '<button class="btn btn-sm memory-save-btn" type="button" data-id="' + esc(r.id) + '">Save</button>' +
+          '<button class="btn btn-sm btn-danger memory-delete-btn" type="button" data-id="' + esc(r.id) + '" data-version="' + esc(String(r.version || 0)) + '">Delete</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+    memoryListEl.querySelectorAll('.memory-save-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var id = btn.getAttribute('data-id');
+        var textarea = memoryListEl.querySelector('.memory-edit-body[data-id="' + id + '"]');
+        if (!textarea) return;
+        api('PUT', '/memory/' + encodeURIComponent(id), {
+          agent_id: agentID,
+          version: parseInt(textarea.getAttribute('data-version'), 10) || 0,
+          body: textarea.value
+        }).then(loadMemory).catch(function (err) {
+          alert('Save failed: ' + (err && err.message ? err.message : err));
+          return loadMemory();
+        });
+      });
+    });
+    memoryListEl.querySelectorAll('.memory-delete-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var id = btn.getAttribute('data-id');
+        var version = btn.getAttribute('data-version');
+        if (!confirm('Delete this memory record?')) return;
+        api('DELETE', '/memory/' + encodeURIComponent(id) + '?agent_id=' + encodeURIComponent(agentID) + '&version=' + encodeURIComponent(version))
+          .then(loadMemory)
+          .catch(function (err) {
+            alert('Delete failed: ' + (err && err.message ? err.message : err));
+            return loadMemory();
+          });
+      });
+    });
+  }
+
+  function loadMemory() {
+    if (!registered) {
+      memorySnapshot = { records: [], usage: [], rendered: '' };
+      renderMemoryList();
+      return Promise.resolve();
+    }
+    var query = memoryQuery();
+    if (query === null) {
+      memorySnapshot = { records: [], usage: [], rendered: '' };
+      renderMemoryList();
+      if (memoryListEl) memoryListEl.innerHTML = '<div class="empty-state">Enter a project scope key to load project facts.</div>';
+      return Promise.resolve();
+    }
+    return api('GET', '/memory' + query)
+      .then(function (data) {
+        memorySnapshot = data || { records: [], usage: [], rendered: '' };
+        renderMemoryList();
+      })
+      .catch(function (err) {
+        memorySnapshot = { records: [], usage: [], rendered: '' };
+        renderMemoryList();
+        console.error('Failed to load memory:', err);
+      });
+  }
+
+  function addMemoryRecord() {
+    if (!memoryGloballyEnabled()) {
+      alert('Memory is disabled.');
+      return Promise.resolve();
+    }
+    var scope = memoryAddScopeSelect ? memoryAddScopeSelect.value : 'project_facts';
+    var key = memoryAddScopeKeyInput ? memoryAddScopeKeyInput.value.trim() : '';
+    var body = memoryAddBodyInput ? memoryAddBodyInput.value.trim() : '';
+    if (scope === 'project_facts' && !key) {
+      alert('Project facts require a project scope key.');
+      if (memoryAddScopeKeyInput) memoryAddScopeKeyInput.focus();
+      return Promise.resolve();
+    }
+    if (!body) return Promise.resolve();
+    return api('POST', '/memory', {
+      agent_id: agentID,
+      scope: scope,
+      scope_key: key,
+      body: body
+    }).then(function (data) {
+      if (memoryAddBodyInput) memoryAddBodyInput.value = '';
+      var record = data && data.record;
+      if (record) {
+        if (memoryScopeSelect) memoryScopeSelect.value = record.scope || scope;
+        if (memoryScopeKeyInput) memoryScopeKeyInput.value = record.scope_key || key;
+      }
+      return loadMemory();
+    }).catch(function (err) {
+      alert('Add failed: ' + (err && err.message ? err.message : err));
+    });
+  }
+
+  function cleanMemory(filtered) {
+    var qs = '?agent_id=' + encodeURIComponent(agentID);
+    if (filtered) {
+      var scope = memoryScopeSelect ? memoryScopeSelect.value : '';
+      var key = memoryScopeKeyInput ? memoryScopeKeyInput.value.trim() : '';
+      if (!scope) {
+        alert('Choose a scope before clearing filtered memory.');
+        return Promise.resolve();
+      }
+      if (scope === 'project_facts' && !key) {
+        alert('Project facts require a project scope key.');
+        if (memoryScopeKeyInput) memoryScopeKeyInput.focus();
+        return Promise.resolve();
+      }
+      qs += '&scope=' + encodeURIComponent(scope);
+      if (key) qs += '&scope_key=' + encodeURIComponent(key);
+      if (!confirm('Clear filtered memory records? This cannot be undone.')) return Promise.resolve();
+    } else if (!confirm('Clear all memory records? This cannot be undone.')) {
+      return Promise.resolve();
+    }
+    return api('DELETE', '/memory' + qs).then(loadMemory).catch(function (err) {
+      alert('Clear failed: ' + (err && err.message ? err.message : err));
+    });
+  }
+
   // ── Prompts ──────────────────────────────────────────────────────
 
   var GROUP_LABELS = {
@@ -2307,8 +2568,10 @@
   function updateBodyModalLock() {
     var settingsOpen = settingsModal && !settingsModal.classList.contains('hidden');
     var roomSettingsOpen = roomSettingsModal && !roomSettingsModal.classList.contains('hidden');
+    var memoryViewerOpen = memoryViewerModal && !memoryViewerModal.classList.contains('hidden');
+    var memoryOnboardingOpen = memoryOnboardingModal && !memoryOnboardingModal.classList.contains('hidden');
     var attachmentOpen = attachmentLightboxModal && !attachmentLightboxModal.classList.contains('hidden');
-    document.body.style.overflow = (settingsOpen || roomSettingsOpen || messageDebugState.open || openQuestionModalState.open || attachmentOpen) ? 'hidden' : '';
+    document.body.style.overflow = (settingsOpen || roomSettingsOpen || memoryViewerOpen || memoryOnboardingOpen || messageDebugState.open || openQuestionModalState.open || attachmentOpen) ? 'hidden' : '';
   }
 
   function closeMessageDebugModal() {
@@ -3508,6 +3771,7 @@
       applyDebugButtonSetting(!!serverSettings.debug_button_enabled);
       applyNotificationSettings();
       applyRetentionSettings();
+      applyMemorySettings();
     }).catch(function () {});
   }
 
@@ -3583,10 +3847,11 @@
     settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
     });
-    var titles = { general: 'General', retention: 'Retention', agents: 'Agents', notifications: 'Notifications', usages: 'Usages', macros: 'Macros', fleets: 'Fleets', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
+    var titles = { general: 'General', retention: 'Retention', agents: 'Agents', notifications: 'Notifications', usages: 'Usages', macros: 'Macros', fleets: 'Fleets', memory: 'Memory', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
     if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
     if (section === 'usages') loadUsages();
     if (section === 'fleets') loadFleets();
+    if (section === 'memory') applyMemorySettings();
   }
 
   function exportBackup() {
@@ -3613,6 +3878,7 @@
         applyTheme(localTheme || serverSettings.theme || 'dark');
         applyShowSystemEvents(serverSettings.show_system_events !== false);
         applyDebugButtonSetting(!!serverSettings.debug_button_enabled);
+        applyMemorySettings();
         if (agentIDDefaultInput) agentIDDefaultInput.value = serverSettings.agent_id_default || '';
       }
       if (data.macros && typeof data.macros === 'object') {
@@ -3668,6 +3934,7 @@
       applyTheme('dark');
       applyShowSystemEvents(true);
       applyDebugButtonSetting(false);
+      applyMemorySettings();
       applyNotificationSettings();
       renderMacrosList();
       renderFleetsList();
@@ -4849,6 +5116,27 @@
     );
   }
 
+  function roomMemoryOverrideValue(room) {
+    if (!room || room.memory_enabled === undefined || room.memory_enabled === null) return 'inherit';
+    return room.memory_enabled ? 'enabled' : 'disabled';
+  }
+
+  function roomMemoryEffectiveText(room) {
+    if (!memoryGloballyEnabled()) return 'Effective: disabled by global setting';
+    if (!room || room.memory_enabled === undefined || room.memory_enabled === null) return 'Effective: enabled by global setting';
+    return room.memory_enabled ? 'Effective: enabled by room override' : 'Effective: disabled for this room';
+  }
+
+  function renderRoomMemorySettings(room) {
+    if (roomMemorySelect) {
+      roomMemorySelect.disabled = !room || room.id === '_system';
+      roomMemorySelect.value = roomMemoryOverrideValue(room);
+    }
+    if (roomMemoryStatusEl) {
+      roomMemoryStatusEl.textContent = room ? roomMemoryEffectiveText(room) : 'Select a room first.';
+    }
+  }
+
   function renderRoomSettings(opts) {
     opts = opts || {};
     if (!roomSettingsMembers) return;
@@ -4856,6 +5144,7 @@
     if (!activeRoomID) {
       if (roomSettingsTitle) roomSettingsTitle.textContent = 'Room Settings';
       if (roomSettingsRemoveBtn) roomSettingsRemoveBtn.disabled = true;
+      renderRoomMemorySettings(null);
       roomSettingsMembers.innerHTML = '<div class="empty-state">Select a room first.</div>';
       roomSettingsDirty = false;
       return;
@@ -4863,12 +5152,14 @@
     var room = rooms.find(function (r) { return r.id === activeRoomID; });
     if (!room) {
       if (roomSettingsRemoveBtn) roomSettingsRemoveBtn.disabled = true;
+      renderRoomMemorySettings(null);
       roomSettingsMembers.innerHTML = '<div class="empty-state">Room not found.</div>';
       roomSettingsDirty = false;
       return;
     }
     if (roomSettingsTitle) roomSettingsTitle.textContent = 'Room Settings: ' + room.id;
     if (roomSettingsRemoveBtn) roomSettingsRemoveBtn.disabled = room.id === '_system';
+    renderRoomMemorySettings(room);
     if (!opts.force && roomSettingsRoleSelectFocused()) {
       roomSettingsDirty = true;
       return;
@@ -5299,6 +5590,10 @@
       closeMessageDebugModal();
       return;
     }
+    if (e.key === 'Escape' && memoryViewerModal && !memoryViewerModal.classList.contains('hidden')) {
+      closeMemoryViewer();
+      return;
+    }
     if (e.key === 'Escape' && roomSettingsModal && !roomSettingsModal.classList.contains('hidden')) {
       closeRoomSettings();
       return;
@@ -5406,6 +5701,44 @@
       var next = !serverSettings.debug_button_enabled;
       saveSettings({ debug_button_enabled: next });
       applyDebugButtonSetting(next);
+    });
+  }
+
+  if (memoryGlobalToggleBtn) {
+    memoryGlobalToggleBtn.addEventListener('click', function () {
+      setMemoryEnabled(!memoryGloballyEnabled());
+    });
+  }
+
+  if (memoryViewerBtn) memoryViewerBtn.addEventListener('click', openMemoryViewer);
+  if (memoryViewerCloseBtn) memoryViewerCloseBtn.addEventListener('click', closeMemoryViewer);
+  if (memoryViewerOverlay) memoryViewerOverlay.addEventListener('click', closeMemoryViewer);
+  if (memoryOnboardingEnableBtn) {
+    memoryOnboardingEnableBtn.addEventListener('click', function () {
+      setMemoryEnabled(true).then(closeMemoryOnboarding);
+    });
+  }
+  if (memoryOnboardingDisableBtn) {
+    memoryOnboardingDisableBtn.addEventListener('click', function () {
+      setMemoryEnabled(false).then(closeMemoryOnboarding);
+    });
+  }
+  if (roomMemorySelect) {
+    roomMemorySelect.addEventListener('change', function () {
+      if (!activeRoomID) return;
+      var value = roomMemorySelect.value;
+      var next = null;
+      if (value === 'enabled') next = true;
+      if (value === 'disabled') next = false;
+      api('PUT', '/rooms/' + encodeURIComponent(activeRoomID) + '/memory', {
+        memory_enabled: next
+      }).then(function (updatedRoom) {
+        rooms = rooms.map(function (r) { return r.id === updatedRoom.id ? updatedRoom : r; });
+        renderRoomSettings({ force: true });
+      }).catch(function (err) {
+        alert('Failed to update room memory setting: ' + err.message);
+        renderRoomSettings({ force: true });
+      });
     });
   }
 
@@ -5756,6 +6089,29 @@
   if (fleetImportCancelBtn) {
     fleetImportCancelBtn.addEventListener('click', function () {
       hideFleetImportFallback();
+    });
+  }
+  if (memoryRefreshBtn) memoryRefreshBtn.addEventListener('click', loadMemory);
+  if (memoryScopeSelect) memoryScopeSelect.addEventListener('change', loadMemory);
+  if (memoryScopeKeyInput) {
+    memoryScopeKeyInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') loadMemory();
+    });
+  }
+  if (memoryAddForm) {
+    memoryAddForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      addMemoryRecord();
+    });
+  }
+  if (memoryCleanFilterBtn) {
+    memoryCleanFilterBtn.addEventListener('click', function () {
+      cleanMemory(true);
+    });
+  }
+  if (memoryCleanAllBtn) {
+    memoryCleanAllBtn.addEventListener('click', function () {
+      cleanMemory(false);
     });
   }
   if (fleetImportTextarea) {
@@ -6419,12 +6775,14 @@
     sessionStarted = true;
     registerHuman().catch(function () {}).then(function () {
       return Promise.all([
+        loadSettings().catch(function () {}),
         fetchMyRooms().catch(function () {}),
         loadMacros().catch(function () {}),
         loadFleets().catch(function () {}),
         loadRoles().catch(function () {})
       ]);
     }).finally(function () {
+      maybeShowMemoryOnboarding();
       connectWS();
     });
   }

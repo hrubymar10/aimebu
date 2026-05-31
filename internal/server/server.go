@@ -108,6 +108,52 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+func jsonMemoryError(w http.ResponseWriter, err error) {
+	var capErr *memoryCapError
+	if errors.As(err, &capErr) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":   capErr.Error(),
+			"usage":   capErr.Usage,
+			"records": capErr.Records,
+		})
+		return
+	}
+	var conflictErr *memoryConflictError
+	if errors.As(err, &conflictErr) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":  "stale_version: " + conflictErr.Error(),
+			"record": conflictErr.Record,
+		})
+		return
+	}
+	var bodyErr *memoryBodyTooLongError
+	if errors.As(err, &bodyErr) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":     bodyErr.Error(),
+			"max_runes": bodyErr.MaxRunes,
+			"got_runes": bodyErr.GotRunes,
+		})
+		return
+	}
+	var disabledErr *memoryDisabledError
+	if errors.As(err, &disabledErr) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":  "memory_disabled",
+			"reason": disabledErr.Reason,
+		})
+		return
+	}
+	jsonError(w, err.Error(), http.StatusBadRequest)
+}
+
 func jsonOK(w http.ResponseWriter, data any) error {
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(data)
@@ -917,6 +963,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			Meta:      agent.Meta,
 			Reclaimed: reclaimed,
 			Warnings:  warnings,
+			Memory:    s.memorySnapshotForAgent(agent),
 		})
 	})
 
@@ -1538,6 +1585,28 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		_ = jsonOK(w, room)
 	})
 
+	// PUT /rooms/{id}/memory — set or clear the room memory content-flow override.
+	// Body: {"memory_enabled": true|false|null}. nil means inherit global policy.
+	mux.HandleFunc("PUT /rooms/{id}/memory", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			MemoryEnabled *bool `json:"memory_enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		room, err := s.setRoomMemoryOverride(r.PathValue("id"), req.MemoryEnabled)
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, ErrRoomNotFound) {
+				status = http.StatusNotFound
+			}
+			jsonError(w, err.Error(), status)
+			return
+		}
+		_ = jsonOK(w, room)
+	})
+
 	// GET /rooms/{id}/roles/{agentID} — get the role for a specific agent in a room
 	mux.HandleFunc("GET /rooms/{id}/roles/{agentID}", func(w http.ResponseWriter, r *http.Request) {
 		roomID := r.PathValue("id")
@@ -1574,6 +1643,104 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		includeSettings := r.URL.Query().Get("include_settings") == "true"
 		s.clearAll(includeSettings)
 		_ = jsonOK(w, map[string]string{"status": "cleared"})
+	})
+
+	// ── Memory ──────────────────────────────────────────────────────
+
+	mux.HandleFunc("GET /memory", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.URL.Query().Get("agent_id")
+		if agentID == "" {
+			jsonError(w, "agent_id is required", http.StatusBadRequest)
+			return
+		}
+		snapshot, err := s.listMemory(agentID, r.URL.Query().Get("scope"), r.URL.Query().Get("scope_key"))
+		if err != nil {
+			jsonMemoryError(w, err)
+			return
+		}
+		_ = jsonOK(w, snapshot)
+	})
+
+	mux.HandleFunc("DELETE /memory", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.URL.Query().Get("agent_id")
+		if agentID == "" {
+			jsonError(w, "agent_id is required", http.StatusBadRequest)
+			return
+		}
+		removed, err := s.cleanMemory(agentID, r.URL.Query().Get("scope"), r.URL.Query().Get("scope_key"))
+		if err != nil {
+			jsonMemoryError(w, err)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"removed": removed, "count": len(removed)})
+	})
+
+	mux.HandleFunc("POST /memory", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AgentID         string `json:"agent_id"`
+			Scope           string `json:"scope"`
+			ScopeKey        string `json:"scope_key"`
+			Body            string `json:"body"`
+			SourceMessageID int64  `json:"source_message_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		record, err := s.addMemory(req.AgentID, req.Scope, req.ScopeKey, req.Body, req.SourceMessageID)
+		if err != nil {
+			jsonMemoryError(w, err)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"record": record})
+	})
+
+	mux.HandleFunc("PUT /memory/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AgentID string `json:"agent_id"`
+			Version int    `json:"version"`
+			Body    string `json:"body"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		record, err := s.updateMemory(req.AgentID, r.PathValue("id"), req.Version, req.Body)
+		if err != nil {
+			jsonMemoryError(w, err)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"record": record})
+	})
+
+	mux.HandleFunc("DELETE /memory/{id}", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.URL.Query().Get("agent_id")
+		if agentID == "" {
+			jsonError(w, "agent_id is required", http.StatusBadRequest)
+			return
+		}
+		version, _ := strconv.Atoi(r.URL.Query().Get("version"))
+		record, err := s.removeMemory(agentID, r.PathValue("id"), version)
+		if err != nil {
+			jsonMemoryError(w, err)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"record": record})
+	})
+
+	mux.HandleFunc("GET /recall", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.URL.Query().Get("agent_id")
+		if agentID == "" {
+			jsonError(w, "agent_id is required", http.StatusBadRequest)
+			return
+		}
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		results, err := s.recallMessages(agentID, r.URL.Query().Get("query"), limit)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"results": results})
 	})
 
 	// ── Image attachments ───────────────────────────────────────────
@@ -1837,6 +2004,8 @@ After approval, hand implementation to the appropriate implementer role or agent
 
 Keep history clean: one commit per feature unless the human approves otherwise. Push only when explicitly instructed by the human. After sign-off, hand the final status to the human with needs_attention=true when their next action is required.
 
+Use bus memory deliberately. At the start of work, internalize the memory snapshot returned by bus_register or call bus_memory_list if you need to refresh it. When the room establishes a durable project convention, human preference, correction, or gotcha, call bus_memory_add or bus_memory_update with the narrowest correct scope: project_facts for project-wide facts, user_profile for durable human preferences, and agent_shared_notes for concise notes that are useful to all agents across projects. Before recording a durable project convention in memory, consider whether it belongs in the project's AGENTS.md/CLAUDE.md instead because those files are version-controlled and reviewed. Ask the human when promotion to repo docs seems appropriate. Treat bus_recall as read-only lookup over visible message history; it does not replace curated memory. If a memory tool returns memory_disabled, proceed without memory rather than retrying.
+
 Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Deferral is only legitimate when (a) the work needs a new dependency that requires human approval, (b) it requires information or research the team does not currently have, or (c) it would inflate the diff by more than roughly 30 percent beyond the original intent. 'Risk' or 'complexity' alone is not a reason — spell out the specific risk and its mitigation; if the mitigation is straightforward, just do it. Default for borderline items is 'include now', not 'defer'.
 
 For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include question text, 2-8 option strings, and optional description text when the question needs context; the UI derives numbering/letters and adds Other.
@@ -1857,6 +2026,8 @@ If implementation reveals surprises, fallbacks, or necessary deviations, report 
 
 While reviews are pending, you may answer factual clarification questions. Wait until all independent reviews are posted before applying fixes. Apply the consolidated fix list from the room leader. If a feature commit already exists, amend it so the branch keeps one clean feature commit. Push only when explicitly instructed by the human or room leader.
 
+Use bus memory deliberately. At the start of work, internalize the memory snapshot returned by bus_register or call bus_memory_list if you need to refresh it. When implementation reveals a durable project convention, human preference, correction, or gotcha, call bus_memory_add or bus_memory_update with the narrowest correct scope: project_facts for project-wide facts, user_profile for durable human preferences, and agent_shared_notes for concise notes that are useful to all agents across projects. Before recording a durable project convention in memory, consider whether it belongs in the project's AGENTS.md/CLAUDE.md instead because those files are version-controlled and reviewed. Ask the human when promotion to repo docs seems appropriate. Treat bus_recall as read-only lookup over visible message history; it does not replace curated memory. If a memory tool returns memory_disabled, proceed without memory rather than retrying.
+
 Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Deferral is only legitimate when (a) the work needs a new dependency that requires human approval, (b) it requires information or research the team does not currently have, or (c) it would inflate the diff by more than roughly 30 percent beyond the original intent. 'Risk' or 'complexity' alone is not a reason — spell out the specific risk and its mitigation; if the mitigation is straightforward, just do it. Default for borderline items is 'include now', not 'defer'.
 
 For multi-question choice asks directed to a human, attach an open_questions array to bus_say or bus_dm instead of writing Q1/Q2 option blocks in prose. Include question text, 2-8 option strings, and optional description text when the question needs context; the UI derives numbering/letters and adds Other.
@@ -1876,6 +2047,8 @@ Lead with actionable findings, ordered by severity, with concrete file/line refe
 During long review passes, stay reachable with quick non-blocking bus_read checkpoints at natural breaks. Answer concise direct human, leader, or needs_attention messages, then resume review; ignore non-blocking chatter until your review is posted.
 
 After fixes, re-review until the consolidated fix list is addressed without introducing unrelated changes.
+
+Use bus memory deliberately. At the start of review, internalize the memory snapshot returned by bus_register or call bus_memory_list if you need to refresh it. When review establishes a durable project convention, human preference, correction, or gotcha, call bus_memory_add or bus_memory_update with the narrowest correct scope: project_facts for project-wide facts, user_profile for durable human preferences, and agent_shared_notes for concise notes that are useful to all agents across projects. Before recording a durable project convention in memory, consider whether it belongs in the project's AGENTS.md/CLAUDE.md instead because those files are version-controlled and reviewed. Ask the human when promotion to repo docs seems appropriate. Treat bus_recall as read-only lookup over visible message history; it does not replace curated memory. If a memory tool returns memory_disabled, proceed without memory rather than retrying.
 
 Do not casually defer scope to 'v2', 'v3', 'follow-up', or 'out of scope'. Deferral is only legitimate when (a) the work needs a new dependency that requires human approval, (b) it requires information or research the team does not currently have, or (c) it would inflate the diff by more than roughly 30 percent beyond the original intent. 'Risk' or 'complexity' alone is not a reason — spell out the specific risk and its mitigation; if the mitigation is straightforward, just do it. Default for borderline items is 'include now', not 'defer'.
 

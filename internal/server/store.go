@@ -126,6 +126,9 @@ type store struct {
 	reactionsMu sync.RWMutex
 	reactions   map[int64][]types.Reaction
 
+	memoryMu sync.RWMutex
+	memory   map[string]types.MemoryRecord
+
 	rolesMu        sync.RWMutex
 	rolesOverrides map[string]roleOverrideEntry // catalog key → metadata/body override
 	rolesCustom    map[string]customRoleEntry   // custom key → metadata/body override
@@ -161,6 +164,7 @@ func newStore(dir string) (*store, error) {
 		fleets:                 make(map[string]Fleet),
 		attachments:            make(map[string]AttachmentEntry),
 		reactions:              make(map[int64][]types.Reaction),
+		memory:                 make(map[string]types.MemoryRecord),
 		rolesOverrides:         make(map[string]roleOverrideEntry),
 		rolesCustom:            make(map[string]customRoleEntry),
 		warnedLegacy:           make(map[string]bool),
@@ -348,6 +352,10 @@ func (s *store) load() error {
 	// Emoji reactions — mutable conversation metadata; regular prune wipes it.
 	s.loadReactions()
 
+	// Curated bus memory — durable knowledge; survives conversation prune and
+	// is wiped only by prune -a.
+	s.loadMemory()
+
 	// Macros — separate from schema-versioned state; survives schema wipes.
 	// Handles three historical shapes:
 	//   v1: per-user  {agentID: {key: body}}
@@ -534,6 +542,10 @@ func copyRoom(r *types.Room) *types.Room {
 	}
 	cp := *r
 	cp.Members = append([]string{}, r.Members...)
+	if r.MemoryEnabled != nil {
+		v := *r.MemoryEnabled
+		cp.MemoryEnabled = &v
+	}
 	return &cp
 }
 
@@ -564,6 +576,27 @@ func (s *store) deleteRoom(id string) bool {
 		s.emitSystemMessage("_system", "room "+id+" deleted")
 	}
 	return true
+}
+
+func (s *store) setRoomMemoryOverride(roomID string, enabled *bool) (*types.Room, error) {
+	s.mu.Lock()
+	room, ok := s.rooms[roomID]
+	if !ok {
+		s.mu.Unlock()
+		return nil, ErrRoomNotFound
+	}
+	if enabled == nil {
+		room.MemoryEnabled = nil
+	} else {
+		v := *enabled
+		room.MemoryEnabled = &v
+	}
+	cp := copyRoom(room)
+	s.persist()
+	s.mu.Unlock()
+
+	s.broadcastRoomUpdate()
+	return cp, nil
 }
 
 // ── Room membership ────────────────────────────────────────────────
@@ -2491,6 +2524,7 @@ func (s *store) clearAll(includeSettings bool) {
 	s.persistReactionsLocked()
 	s.reactionsMu.Unlock()
 	if includeSettings {
+		s.clearMemory()
 		s.macrosMu.Lock()
 		s.macros = make(map[string]string)
 		s.seenDefaults = make(map[string]bool)
