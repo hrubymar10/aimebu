@@ -226,8 +226,129 @@ func TestAttachmentValidationAndCaps(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = types.Attachment{ID: fmt.Sprintf("%032x", i+1)}
 	}
-	if _, err := s.roomSend("general", agent.ID, "too many", false, nil, nil, tooMany); err == nil || !strings.Contains(err.Error(), "too many attachments") {
+	if _, err := s.roomSend("general", agent.ID, "too many", false, nil, nil, tooMany, 0); err == nil || !strings.Contains(err.Error(), "too many attachments") {
 		t.Fatalf("roomSend too many err = %v, want cap error", err)
+	}
+}
+
+func TestReplyToRoundTripAndValidation(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	alice, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, _, err := s.registerAI("gpt5", "codex", "test", nil, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", bob.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("other", alice.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	parentID, err := s.roomSend("general", alice.ID, "parent", false, nil, nil, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherID, err := s.roomSend("other", alice.ID, "other room", false, nil, nil, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.roomSend("general", bob.ID, "missing parent", false, nil, nil, nil, 999999); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("missing reply_to err = %v, want not found", err)
+	}
+	if _, err := s.roomSend("general", bob.ID, "cross room", false, nil, nil, nil, otherID); err == nil || !strings.Contains(err.Error(), "not found in room general") {
+		t.Fatalf("cross-room reply_to err = %v, want room mismatch", err)
+	}
+
+	sendBody := map[string]any{
+		"from":     bob.ID,
+		"body":     "child",
+		"reply_to": parentID,
+	}
+	data, _ := json.Marshal(sendBody)
+	resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send returned %d, want 200", resp.StatusCode)
+	}
+
+	resp, err = http.Get(srv.URL + "/rooms/general/messages?agent_id=" + alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Messages []struct {
+			types.Message
+			AddressedTo   []string `json:"addressed_to"`
+			AddressedToMe bool     `json:"addressed_to_me"`
+			ShouldRespond bool     `json:"should_respond"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	var child struct {
+		types.Message
+		AddressedTo   []string `json:"addressed_to"`
+		AddressedToMe bool     `json:"addressed_to_me"`
+		ShouldRespond bool     `json:"should_respond"`
+	}
+	for _, msg := range out.Messages {
+		if msg.Body == "child" {
+			child = msg
+			break
+		}
+	}
+	if child.ID == 0 || child.ReplyTo != parentID {
+		t.Fatalf("child reply_to = %d, want %d in messages %#v", child.ReplyTo, parentID, out.Messages)
+	}
+	if !reflect.DeepEqual(child.AddressedTo, []string{alice.ID}) || !child.AddressedToMe || !child.ShouldRespond {
+		t.Fatalf("child addressing = to %#v me %v respond %v, want parent author", child.AddressedTo, child.AddressedToMe, child.ShouldRespond)
+	}
+	if child.NeedsHumanAttention {
+		t.Fatalf("reply_to unexpectedly set needs_human_attention")
+	}
+
+	selfParentID, err := s.roomSend("general", bob.ID, "self parent", false, nil, nil, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selfReplyID, err := s.roomSend("general", bob.ID, "self child", false, nil, nil, nil, selfParentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selfReply, ok := s.messageByID(selfReplyID)
+	if !ok {
+		t.Fatalf("self reply %d not found", selfReplyID)
+	}
+	if len(selfReply.Targets) != 0 {
+		t.Fatalf("self reply targets = %#v, want none", selfReply.Targets)
+	}
+
+	s.emitSystemMessage("general", "system parent")
+	msgs := s.messagesSince("general", 0)
+	systemParentID := msgs[len(msgs)-1].ID
+	systemReplyID, err := s.roomSend("general", bob.ID, "system child", false, nil, nil, nil, systemParentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	systemReply, ok := s.messageByID(systemReplyID)
+	if !ok {
+		t.Fatalf("system reply %d not found", systemReplyID)
+	}
+	if len(systemReply.Targets) != 0 {
+		t.Fatalf("system reply targets = %#v, want none", systemReply.Targets)
 	}
 }
 
@@ -252,7 +373,7 @@ func TestReactionsRoundTripValidationAndPersistence(t *testing.T) {
 	if _, err := s.joinRoom("general", bob.ID); err != nil {
 		t.Fatal(err)
 	}
-	msgID, err := s.roomSend("general", alice.ID, "ship it", false, nil, nil, nil)
+	msgID, err := s.roomSend("general", alice.ID, "ship it", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +517,7 @@ func TestReactionMetaIncludesViewerNeutralSummary(t *testing.T) {
 	if _, err := s.joinRoom("general", bob.ID); err != nil {
 		t.Fatal(err)
 	}
-	msgID, err := s.roomSend("general", alice.ID, "ship it", false, nil, nil, nil)
+	msgID, err := s.roomSend("general", alice.ID, "ship it", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +576,7 @@ func TestStorePersistenceReloadRoundTripLeavesNoTempFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	msgID, err := s.roomSend("persist-room", alice.ID, "@persistbob review this", true, []string{"Approve", "Hold"}, nil, nil)
+	msgID, err := s.roomSend("persist-room", alice.ID, "@persistbob review this", true, []string{"Approve", "Hold"}, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -805,7 +926,7 @@ func TestAgentHeartbeatRefreshesLastSeenOnly(t *testing.T) {
 	if _, err := s.joinRoom("general", agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("general", agent.ID, "before", false, nil, nil, nil); err != nil {
+	if _, err := s.roomSend("general", agent.ID, "before", false, nil, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	s.mu.Lock()
@@ -999,7 +1120,7 @@ func TestAgentStateNoLongerDerivedFromBusTraffic(t *testing.T) {
 	if _, err := s.joinRoom("general", agent.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("general", agent.ID, "hello", false, nil, nil, nil); err != nil {
+	if _, err := s.roomSend("general", agent.ID, "hello", false, nil, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1379,7 +1500,7 @@ func TestRoomWaitCursorNotAdvancedOnContextCancel(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// Post a message after the disconnect — handler won't deliver it.
-	if _, err := s.roomSend("race-room", sender.ID, "@rcvrone hello after disconnect", false, nil, nil, nil); err != nil {
+	if _, err := s.roomSend("race-room", sender.ID, "@rcvrone hello after disconnect", false, nil, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1432,7 +1553,7 @@ func TestRoomWaitCursorAdvancedOnDelivery(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Post a message — handler should deliver it and advance the cursor.
-	if _, err := s.roomSend("deliver-room", sender.ID, "hello rcvrtwo", false, nil, nil, nil); err != nil {
+	if _, err := s.roomSend("deliver-room", sender.ID, "hello rcvrtwo", false, nil, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1472,7 +1593,7 @@ func TestRoomWaitTimeoutAndSinceIDNoReplay(t *testing.T) {
 	if _, err := s.joinRoom("wait-contract-room", receiver.ID); err != nil {
 		t.Fatal(err)
 	}
-	msgID, err := s.roomSend("wait-contract-room", sender.ID, "one message", false, nil, nil, nil)
+	msgID, err := s.roomSend("wait-contract-room", sender.ID, "one message", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1578,7 +1699,7 @@ func TestAgentWaitReturnsReactionForMessageAuthor(t *testing.T) {
 	s, srv := setupTestServer(t)
 	author, reactor, _ := setupReactionWaitRoom(t, s, "reaction-room")
 
-	msgID, err := s.roomSend("reaction-room", author.ID, "ship it", false, nil, nil, nil)
+	msgID, err := s.roomSend("reaction-room", author.ID, "ship it", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1631,7 +1752,7 @@ func TestReactionIsolationDoesNotCreateMessagesAdvanceCursorOrAttention(t *testi
 	s, srv := setupTestServer(t)
 	author, reactor, _ := setupReactionWaitRoom(t, s, "reaction-isolation-room")
 
-	msgID, err := s.roomSend("reaction-isolation-room", author.ID, "ship it", false, nil, nil, nil)
+	msgID, err := s.roomSend("reaction-isolation-room", author.ID, "ship it", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1660,7 +1781,7 @@ func TestAgentWaitIgnoresReactionOnAnotherAuthorsMessage(t *testing.T) {
 	s, srv := setupTestServer(t)
 	author, reactor, other := setupReactionWaitRoom(t, s, "other-reaction-room")
 
-	msgID, err := s.roomSend("other-reaction-room", other.ID, "not authored by waiter", false, nil, nil, nil)
+	msgID, err := s.roomSend("other-reaction-room", other.ID, "not authored by waiter", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1684,7 +1805,7 @@ func TestAgentWaitIgnoresSelfReaction(t *testing.T) {
 	s, srv := setupTestServer(t)
 	author, _, _ := setupReactionWaitRoom(t, s, "self-reaction-room")
 
-	msgID, err := s.roomSend("self-reaction-room", author.ID, "my own reaction", false, nil, nil, nil)
+	msgID, err := s.roomSend("self-reaction-room", author.ID, "my own reaction", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1708,7 +1829,7 @@ func TestAgentWaitReturnsReactionRemove(t *testing.T) {
 	s, srv := setupTestServer(t)
 	author, reactor, _ := setupReactionWaitRoom(t, s, "remove-reaction-room")
 
-	msgID, err := s.roomSend("remove-reaction-room", author.ID, "remove reaction", false, nil, nil, nil)
+	msgID, err := s.roomSend("remove-reaction-room", author.ID, "remove reaction", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3429,7 +3550,7 @@ func TestWebSocketSubscribedRoomReceivesMessageAndDisconnectsCleanly(t *testing.
 		t.Fatal("websocket did not subscribe to ws-room")
 	}
 
-	msgID, err := s.roomSend("ws-room", ai.ID, "ws hello", false, nil, nil, nil)
+	msgID, err := s.roomSend("ws-room", ai.ID, "ws hello", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

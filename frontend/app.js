@@ -64,6 +64,7 @@
   let openQuestionDrafts = {}; // { messageID: { [questionIndex]: { selector, value } } }
   let openQuestionModalState = { open: false, messageID: null, currentIndex: 0 };
   let reactionControlsHideTimer = null;
+  let pendingReply = null; // { roomID, messageID }
   let pendingAttachments = []; // {localID,status,error,attachment,file,url}
   let attentionTimers = {};        // { roomID: timeoutID } — pending 3s fade timers
   let attentionFocusListeners = {}; // { roomID: fn } — pending focus listener per room
@@ -173,6 +174,7 @@
   const sendBar = $('#send-bar');
   const sendForm = $('#send-form');
   const systemRoomNotice = $('#system-room-notice');
+  const replyPendingEl = $('#reply-pending');
   const attachmentPendingList = $('#attachment-pending-list');
   const attachmentPickerBtn = $('#attachment-picker-btn');
   const attachmentFileInput = $('#attachment-file-input');
@@ -2565,6 +2567,56 @@
     return null;
   }
 
+  function messageSnippet(msg) {
+    if (!msg) return '';
+    var text = String(msg.body || '').replace(/\s+/g, ' ').trim();
+    if (!text && Array.isArray(msg.attachments) && msg.attachments.length) {
+      text = '[attachment]';
+    }
+    if (text.length > 96) text = text.slice(0, 93) + '...';
+    return text;
+  }
+
+  function replyReferenceHTML(m) {
+    if (!m.reply_to) return '';
+    var parentID = parseInt(m.reply_to, 10);
+    if (!parentID || parentID <= 0) return '';
+    var parent = findMessageInRoom(m.room_id, parentID);
+    var label = parent
+      ? ('#' + parentID + ' ' + parent.from + ': ' + messageSnippet(parent))
+      : ('Reply to #' + parentID);
+    return '<button class="reply-reference msg-ref" type="button" data-msg-id="' + esc(String(parentID)) + '" title="Jump to #' + esc(String(parentID)) + '">↪ ' + esc(label) + '</button>';
+  }
+
+  function renderPendingReply() {
+    if (!replyPendingEl) return;
+    if (!pendingReply || pendingReply.roomID !== activeRoomID) {
+      replyPendingEl.classList.add('hidden');
+      replyPendingEl.innerHTML = '';
+      return;
+    }
+    var parent = findMessageInRoom(activeRoomID, pendingReply.messageID);
+    var label = parent
+      ? ('#' + pendingReply.messageID + ' ' + parent.from + ': ' + messageSnippet(parent))
+      : ('Reply to #' + pendingReply.messageID);
+    replyPendingEl.innerHTML =
+      '<button class="reply-pending-link msg-ref" type="button" data-msg-id="' + esc(String(pendingReply.messageID)) + '">↪ ' + esc(label) + '</button>' +
+      '<button class="reply-pending-clear" type="button" aria-label="Cancel reply" title="Cancel reply">×</button>';
+    replyPendingEl.classList.remove('hidden');
+  }
+
+  function setPendingReply(messageID) {
+    if (!activeRoomID || !messageID) return;
+    pendingReply = { roomID: activeRoomID, messageID: messageID };
+    renderPendingReply();
+    msgBodyInput.focus();
+  }
+
+  function clearPendingReply() {
+    pendingReply = null;
+    renderPendingReply();
+  }
+
   function updateBodyModalLock() {
     var settingsOpen = settingsModal && !settingsModal.classList.contains('hidden');
     var roomSettingsOpen = roomSettingsModal && !roomSettingsModal.classList.contains('hidden');
@@ -3595,6 +3647,13 @@
     return html;
   }
 
+  function messageControlsHTML(m) {
+    return '<div class="message-bubble-controls">' +
+      reactionPickerHTML(m) +
+      '<button class="message-reply-add chat-msg-reply" type="button" data-msg-id="' + esc(String(m.id)) + '" aria-label="Reply to #' + esc(String(m.id)) + '" title="Reply">↩</button>' +
+      '</div>';
+  }
+
   function reactionsHTML(m) {
     var reactions = reactionSummariesWithLocalMe(m.reactions);
     var validReactions = reactions.filter(function (r) { return r && r.emoji && r.count; });
@@ -3630,8 +3689,8 @@
     } else if (node && !next) {
       node.remove();
     } else if (!node && next) {
-      var picker = bubble.querySelector('.message-reaction-add');
-      bubble.insertBefore(next, picker || null);
+      var controls = bubble.querySelector('.message-bubble-controls');
+      bubble.insertBefore(next, controls || null);
     }
   }
 
@@ -3675,13 +3734,14 @@
     updateBodyModalLock();
   }
 
-  function sendMessage(body, attachments) {
+  function sendMessage(body, attachments, replyTo) {
     if (!activeRoomID) return;
     return ensureRegistered().then(function () {
       return api('POST', '/rooms/' + encodeURIComponent(activeRoomID) + '/send', {
         from: agentID,
         body: body,
         attachments: attachments || undefined,
+        reply_to: replyTo || undefined,
       });
     }).catch(function (err) {
       console.error('Failed to send message:', err);
@@ -4230,6 +4290,7 @@
     activeRoomID = roomID;
     historyIdx = null;
     historyDraft = null;
+    clearPendingReply();
 
     // Show room view
     noRoomView.classList.add('hidden');
@@ -4247,7 +4308,9 @@
 
     // Clear and fetch messages via HTTP (one-time load)
     renderMessages();
+    renderPendingReply();
     fetchRoomMessages(roomID).then(function () {
+      renderPendingReply();
       if (scrollToMsgID) scrollToMessage(scrollToMsgID);
       else scrollToBottom(true);
       // Clear attention after fetchRoomMessages has rebuilt counts from history
@@ -4647,8 +4710,9 @@
     var proposedAnswers = proposedAnswersHTML(m, room);
     var openQuestions = openQuestionsHTML(m, room);
     var attachments = attachmentsHTML(m);
+    var replyReference = replyReferenceHTML(m);
     var reactions = reactionsHTML(m);
-    var reactionPicker = reactionPickerHTML(m);
+    var messageControls = messageControlsHTML(m);
     var senderAttrs = fromAgent
       ? ' class="chat-msg-from-name agent-profile-link" data-profile-agent-id="' + esc(fromAgent.id) + '" data-profile-context="room" tabindex="0" role="button" aria-label="Show profile for ' + esc(fromAgent.id) + '"'
       : ' class="chat-msg-from-name"';
@@ -4666,12 +4730,13 @@
           '<span class="chat-msg-time" title="' + esc(m.created_at) + '">' + relativeTime(m.created_at) + '</span>' +
         '</div>' +
         '<div class="chat-msg-bubble">' +
+          replyReference +
           '<div class="chat-msg-body' + (markdownMode === 'rendered' ? ' md-rendered' : '') + '">' +
             (markdownMode === 'rendered' ? renderMarkdown(m.body) : renderPlainWithCodeMarkers(m.body)) +
           '</div>' +
           attachments +
           reactions +
-          reactionPicker +
+          messageControls +
         '</div>' +
         proposedAnswers +
         openQuestions +
@@ -6479,6 +6544,12 @@
       openMessageDebugModal(parseInt(debugToggle.getAttribute('data-msg-id'), 10));
       return;
     }
+    var replyBtn = e.target.closest('.chat-msg-reply');
+    if (replyBtn) {
+      e.preventDefault();
+      setPendingReply(parseInt(replyBtn.getAttribute('data-msg-id'), 10));
+      return;
+    }
     var reactionBtn = e.target.closest('.message-reaction-pill, .message-reaction-option');
     if (reactionBtn) {
       e.preventDefault();
@@ -6548,6 +6619,23 @@
       jumpToMessage(parseInt(ref.getAttribute('data-msg-id'), 10), ref);
     }
   });
+
+  if (replyPendingEl) {
+    replyPendingEl.addEventListener('click', function (e) {
+      var clearBtn = e.target.closest('.reply-pending-clear');
+      if (clearBtn) {
+        e.preventDefault();
+        clearPendingReply();
+        msgBodyInput.focus();
+        return;
+      }
+      var ref = e.target.closest('.msg-ref');
+      if (ref) {
+        e.preventDefault();
+        jumpToMessage(parseInt(ref.getAttribute('data-msg-id'), 10), ref);
+      }
+    });
+  }
 
   // Message search bar toggle + submit
   msgSearchBtn.addEventListener('click', function () {
@@ -6656,8 +6744,12 @@
     historyIdx = null;
     historyDraft = null;
     hideAcPopup();
-    sendMessage(body, attachments).then(function (res) {
-      if (res) clearPendingAttachments();
+    var replyTo = pendingReply && pendingReply.roomID === activeRoomID ? pendingReply.messageID : 0;
+    sendMessage(body, attachments, replyTo).then(function (res) {
+      if (res) {
+        clearPendingAttachments();
+        clearPendingReply();
+      }
     });
     msgBodyInput.value = '';
     msgBodyInput.style.height = '';

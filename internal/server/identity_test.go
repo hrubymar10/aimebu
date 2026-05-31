@@ -107,7 +107,7 @@ func TestDisambiguatedMentionResolvesFullName(t *testing.T) {
 		}
 	}
 
-	id, err := s.roomSend("general", sender.ID, "@sam@alpha check this", false, nil, nil, nil)
+	id, err := s.roomSend("general", sender.ID, "@sam@alpha check this", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

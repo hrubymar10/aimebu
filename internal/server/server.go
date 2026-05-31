@@ -485,7 +485,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, "cannot send to reserved room or use reserved sender", http.StatusForbidden)
 			return
 		}
-		id, err := s.roomSend(roomID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions, req.Attachments)
+		id, err := s.roomSend(roomID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions, req.Attachments, req.ReplyTo)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
@@ -879,7 +879,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			return
 		}
 
-		id, err := s.roomSend(room.ID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions, req.Attachments)
+		id, err := s.roomSend(room.ID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions, req.Attachments, req.ReplyTo)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return

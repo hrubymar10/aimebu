@@ -363,11 +363,11 @@ func TestMemoryRoomOverrideContentFlow(t *testing.T) {
 	if _, err := s.joinRoom("disabled", bob.ID); err != nil {
 		t.Fatal(err)
 	}
-	enabledMsg, err := s.roomSend("enabled", bob.ID, "needle from enabled room", false, nil, nil, nil)
+	enabledMsg, err := s.roomSend("enabled", bob.ID, "needle from enabled room", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	disabledMsg, err := s.roomSend("disabled", bob.ID, "needle from disabled room", false, nil, nil, nil)
+	disabledMsg, err := s.roomSend("disabled", bob.ID, "needle from disabled room", false, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,13 +452,13 @@ func TestRecallVisibleAndReadOnly(t *testing.T) {
 	if _, err := s.joinRoom("general", bob.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("general", bob.ID, "the needle is here", false, nil, nil, nil); err != nil {
+	if _, err := s.roomSend("general", bob.ID, "the needle is here", false, nil, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.joinRoom("private", bob.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("private", bob.ID, "secret needle", false, nil, nil, nil); err != nil {
+	if _, err := s.roomSend("private", bob.ID, "secret needle", false, nil, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	s.emitSystemMessage("general", "system needle")

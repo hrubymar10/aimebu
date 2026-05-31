@@ -927,6 +927,18 @@ func cleanOpenQuestions(in []types.OpenQuestion) []types.OpenQuestion {
 	return out
 }
 
+func appendTargetDedup(targets []string, target string) []string {
+	if target == "" {
+		return targets
+	}
+	for _, existing := range targets {
+		if strings.EqualFold(existing, target) {
+			return targets
+		}
+	}
+	return append(targets, target)
+}
+
 func truncateRunes(s string, max int) string {
 	if max <= 0 {
 		return ""
@@ -938,9 +950,22 @@ func truncateRunes(s string, max int) string {
 	return string(r[:max])
 }
 
-func (s *store) roomSend(roomID, from, body string, needsAttention bool, proposedAnswers []string, openQuestions []types.OpenQuestion, attachments []types.Attachment) (int64, error) {
+func (s *store) roomSend(roomID, from, body string, needsAttention bool, proposedAnswers []string, openQuestions []types.OpenQuestion, attachments []types.Attachment, replyTo int64) (int64, error) {
 	if !s.isMember(roomID, from) {
 		return 0, fmt.Errorf("agent %s is not a member of room %s", from, roomID)
+	}
+	if replyTo < 0 {
+		return 0, fmt.Errorf("reply_to must be a positive message ID")
+	}
+	var parentMsg types.Message
+	if replyTo != 0 {
+		s.mu.RLock()
+		var ok bool
+		parentMsg, ok = s.messageByIDInRoomLocked(roomID, replyTo)
+		s.mu.RUnlock()
+		if !ok {
+			return 0, fmt.Errorf("reply_to message #%d not found in room %s", replyTo, roomID)
+		}
 	}
 	resolvedAttachments, err := s.resolveAttachments(attachments)
 	if err != nil {
@@ -952,6 +977,9 @@ func (s *store) roomSend(roomID, from, body string, needsAttention bool, propose
 	targets := resolveAddressedTokens(rawTargets, ctx)
 	if len(rawTargets) > 0 && targets == nil {
 		targets = []string{}
+	}
+	if replyTo != 0 && !strings.EqualFold(parentMsg.From, from) && parentMsg.FromKind != "system" && parentMsg.From != "_system" {
+		targets = appendTargetDedup(targets, parentMsg.From)
 	}
 
 	// Force-subscribe all registered humans who are not yet room members when
@@ -984,6 +1012,7 @@ func (s *store) roomSend(roomID, from, body string, needsAttention bool, propose
 		FromKind:            fromKind,
 		Body:                body,
 		CreatedAt:           now(),
+		ReplyTo:             replyTo,
 		Targets:             targets,
 		NeedsHumanAttention: needsAttention,
 	}
@@ -1255,6 +1284,15 @@ func (s *store) messageRoomLocked(id int64) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func (s *store) messageByIDInRoomLocked(roomID string, id int64) (types.Message, bool) {
+	for _, m := range s.messages[roomID] {
+		if m.ID == id {
+			return m, true
+		}
+	}
+	return types.Message{}, false
 }
 
 func (s *store) messageExists(id int64) bool {

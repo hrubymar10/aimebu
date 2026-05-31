@@ -597,6 +597,7 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 				NeedsAttention  bool                 `json:"needs_attention"`
 				ProposedAnswers []string             `json:"proposed_answers"`
 				OpenQuestions   []types.OpenQuestion `json:"open_questions"`
+				ReplyTo         int64                `json:"reply_to"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Fatal(err)
@@ -611,6 +612,9 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 			wantQuestions := []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}}
 			if !reflect.DeepEqual(got.OpenQuestions, wantQuestions) {
 				t.Fatalf("open_questions = %#v, want %#v", got.OpenQuestions, wantQuestions)
+			}
+			if got.ReplyTo != 42 {
+				t.Fatalf("reply_to = %d, want 42", got.ReplyTo)
 			}
 			w.Write([]byte(`{"id":1,"room":"general"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/rooms":
@@ -628,6 +632,7 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 		"needs_attention":  true,
 		"proposed_answers": []string{"Proceed", "Hold"},
 		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}},
+		"reply_to":         42,
 	})
 	if _, err := handleToolCall(c, "bus_say", args); err != nil {
 		t.Fatalf("handleToolCall bus_say: %v", err)
@@ -645,6 +650,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 				Body            string               `json:"body"`
 				ProposedAnswers []string             `json:"proposed_answers"`
 				OpenQuestions   []types.OpenQuestion `json:"open_questions"`
+				ReplyTo         int64                `json:"reply_to"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Fatal(err)
@@ -656,6 +662,9 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 			wantQuestions := []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}}
 			if !reflect.DeepEqual(got.OpenQuestions, wantQuestions) {
 				t.Fatalf("open_questions = %#v, want %#v", got.OpenQuestions, wantQuestions)
+			}
+			if got.ReplyTo != 7 {
+				t.Fatalf("reply_to = %d, want 7", got.ReplyTo)
 			}
 			w.Write([]byte(`{"id":1,"room":"dm:alice@aimebu:martin"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/rooms":
@@ -672,6 +681,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 		"body":             "approve?",
 		"proposed_answers": []string{"Proceed", "Revise"},
 		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}},
+		"reply_to":         7,
 	})
 	if _, err := handleToolCall(c, "bus_dm", args); err != nil {
 		t.Fatalf("handleToolCall bus_dm: %v", err)

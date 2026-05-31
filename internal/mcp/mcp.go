@@ -86,6 +86,7 @@ const busEtiquette = `aimebu messagebus etiquette:
   Old IRC-style "name:" prefixes are NOT parsed — they produce room-wide messages with no addressed_to. The server will warn you once if it detects this pattern.
 - Self-labeling: NEVER prefix your message with your own short name (e.g. "worker: ..."). The ` + "`from`" + ` field already identifies you. If you are role-switching, register under a different name — don't prefix.
 - Structured fields: every message from bus_wait and bus_read carries ` + "`addressed_to`" + ` (list of slugs or full IDs), ` + "`addressed_to_me`" + ` (bool), and ` + "`should_respond`" + ` (bool). Use ` + "`should_respond`" + ` as the primary signal. Example: human posts "@leader status?" — if you are not leader, should_respond=false; call bus_wait again immediately, do NOT call bus_say.
+- Reply links: ` + "`reply_to`" + ` auto-addresses the parent message's author so they get should_respond, except for self-replies and system-message parents. It does not inherit ` + "`needs_attention`" + ` or copy proposed answers / open questions; set attention explicitly when a reply needs a human-blocking response.
 - Human sender (from_kind=human): should_respond=true for room-wide messages; should_respond=false when addressed to a different agent. Do not ask "should I reply?" — just reply when should_respond=true.
 - AI sender (from_kind=ai): should_respond=false by default. should_respond=true only when addressed_to_me=true or in a DM room (id starts with "dm:").
 - System sender (from_kind=system): should_respond=true only when addressed_to_me=true. For a targeted role assignment message such as "alice@aimebu was assigned as Reviewer", call ` + "`bus_role_get`" + ` for that room, internalize the returned role instructions, and do not post an acknowledgement unless a human explicitly asks. For a targeted "role cleared" message, call ` + "`bus_role_get`" + `, observe the empty role, and likewise do not ack.
@@ -183,6 +184,7 @@ var tools = []tool{
 				"room":             {Type: "string", Description: "Room ID"},
 				"body":             {Type: "string", Description: "Message content"},
 				"needs_attention":  {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert in the web UI and auto-subscribes any registered human not yet in the room."},
+				"reply_to":         {Type: "integer", Description: "Optional message ID this message replies to. Reply links auto-address the parent author except for self-replies and system-message parents, but do not inherit human attention."},
 				"proposed_answers": {Type: "array", Items: &propRef{Type: "string"}, Description: "Optional short answer buttons for the addressed recipient. Use 2-4 concise choices on human-blocking decision requests, such as Proceed, Revise, or Hold."},
 				"open_questions": {Type: "array", Description: "Optional structured multi-question choice form for addressed human readers. Use instead of prose Q1/Q2 blocks. Provide up to 10 questions; each question has question text, optional description context, and 2-8 option strings. The UI adds an Other free-text choice and derives Q numbers/letters from array order.", Items: &propRef{Type: "object", Required: []string{"question", "options"}, Properties: map[string]property{
 					"question":    {Type: "string", Description: "Question text."},
@@ -246,6 +248,7 @@ var tools = []tool{
 				"to":               {Type: "string", Description: "Recipient's full agent ID (e.g. 'alice@aimebu' or 'martin')"},
 				"body":             {Type: "string", Description: "Message content"},
 				"needs_attention":  {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert and auto-subscribes any registered human not yet in the DM room."},
+				"reply_to":         {Type: "integer", Description: "Optional message ID this message replies to. Reply links auto-address the parent author except for self-replies and system-message parents, but do not inherit human attention."},
 				"proposed_answers": {Type: "array", Items: &propRef{Type: "string"}, Description: "Optional short answer buttons for the addressed recipient. Use 2-4 concise choices on human-blocking decision requests, such as Proceed, Revise, or Hold."},
 				"open_questions": {Type: "array", Description: "Optional structured multi-question choice form for addressed human readers. Use instead of prose Q1/Q2 blocks. Provide up to 10 questions; each question has question text, optional description context, and 2-8 option strings. The UI adds an Other free-text choice and derives Q numbers/letters from array order.", Items: &propRef{Type: "object", Required: []string{"question", "options"}, Properties: map[string]property{
 					"question":    {Type: "string", Description: "Question text."},
@@ -587,6 +590,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			NeedsAttention  bool                 `json:"needs_attention"`
 			ProposedAnswers []string             `json:"proposed_answers"`
 			OpenQuestions   []types.OpenQuestion `json:"open_questions"`
+			ReplyTo         int64                `json:"reply_to"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
@@ -600,6 +604,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			"needs_attention":  p.NeedsAttention,
 			"proposed_answers": p.ProposedAnswers,
 			"open_questions":   p.OpenQuestions,
+			"reply_to":         p.ReplyTo,
 		})
 
 	case "bus_read":
@@ -642,6 +647,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			NeedsAttention  bool                 `json:"needs_attention"`
 			ProposedAnswers []string             `json:"proposed_answers"`
 			OpenQuestions   []types.OpenQuestion `json:"open_questions"`
+			ReplyTo         int64                `json:"reply_to"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
@@ -653,6 +659,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			"needs_attention":  p.NeedsAttention,
 			"proposed_answers": p.ProposedAnswers,
 			"open_questions":   p.OpenQuestions,
+			"reply_to":         p.ReplyTo,
 		})
 
 	case "bus_wait":

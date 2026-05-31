@@ -122,6 +122,12 @@ bin/aimebu                Bash wrapper (auto-builds, add to PATH)
 - Agents must **register** before they can join rooms or send messages
 - Agents must join a room before they can send or read messages
 - `join` auto-creates the room if it doesn't exist
+- Messages may carry `reply_to` to structurally link to an earlier message in
+  the same room. Replies auto-address the parent author so they get
+  `addressed_to_me` / `should_respond`, except when replying to yourself or
+  to system messages. Replies do not inherit `needs_attention` or copy
+  proposed answers / open questions; use explicit attention fields when a
+  reply also needs a human-blocking response.
 - `needs_attention=true` is for human-blocking handoffs: set it when a
   message is addressed to a human and asks for a blocking decision, approval,
   review, or next action. Do not set it for status updates, acknowledgements,
@@ -298,6 +304,12 @@ picker. Uploads go through `POST /api/attachments` immediately, send is
 disabled while uploads are in flight, sent messages carry registry-backed
 attachment metadata, and inline thumbnails open in a mobile-friendly
 lightbox.
+
+The web composer also supports structural replies. A per-message reply action
+sets a pending-reply chip, send includes `reply_to`, and reply messages render
+an inline clickable quote stub. The reply also addresses the parent author,
+except for self-replies and system-message parents; it does not imply human
+attention.
 
 Settings -> Memory enables or disables durable bus memory globally, and the
 brain button in the top bar opens the memory viewer for inspecting, editing,

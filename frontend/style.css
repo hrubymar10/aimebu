@@ -1448,7 +1448,8 @@ body {
 
 .message-reaction-pill,
 .message-reaction-picker summary,
-.message-reaction-option {
+.message-reaction-option,
+.message-reply-add {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1461,6 +1462,15 @@ body {
   cursor: pointer;
   font: 0.72rem var(--font-sans);
   line-height: 1;
+}
+
+.message-reply-add {
+  border-radius: var(--radius);
+  padding: 0;
+}
+
+.message-bubble-controls .message-reaction-picker summary {
+  border-radius: var(--radius);
 }
 
 .message-reaction-pill {
@@ -1479,7 +1489,9 @@ body {
 .message-reaction-picker summary:hover,
 .message-reaction-picker summary:focus-visible,
 .message-reaction-option:hover,
-.message-reaction-option:focus-visible {
+.message-reaction-option:focus-visible,
+.message-reply-add:hover,
+.message-reply-add:focus-visible {
   border-color: var(--accent);
   outline: none;
 }
@@ -1488,18 +1500,21 @@ body {
   position: relative;
 }
 
-.message-reaction-add {
+.message-bubble-controls {
   position: absolute;
   right: 6px;
-  bottom: 4px;
+  top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--transition);
 }
 
-.chat-msg:hover .message-reaction-add,
-.chat-msg:focus-within .message-reaction-add,
-.chat-msg.show-reaction-controls .message-reaction-add {
+.chat-msg:hover .message-bubble-controls,
+.chat-msg:focus-within .message-bubble-controls,
+.chat-msg.show-reaction-controls .message-bubble-controls {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1516,8 +1531,8 @@ body {
 .message-reaction-menu {
   position: absolute;
   z-index: 20;
-  left: 0;
-  bottom: calc(100% + 6px);
+  right: 0;
+  top: calc(100% + 6px);
   display: flex;
   gap: 4px;
   padding: 6px;
@@ -2009,6 +2024,52 @@ body {
 
 .attachment-pending-list.hidden {
   display: none;
+}
+
+.reply-pending {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  max-width: 100%;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  padding: 6px 8px;
+}
+
+.reply-pending.hidden {
+  display: none;
+}
+
+.reply-pending-link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.reply-pending-clear {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.reply-pending-clear:hover,
+.reply-pending-clear:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
 }
 
 .attachment-pending-item {
@@ -2518,13 +2579,13 @@ body {
 }
 
 @media (hover: none) {
-  .chat-msg:hover .message-reaction-add {
+  .chat-msg:hover .message-bubble-controls {
     opacity: 0;
     pointer-events: none;
   }
 
-  .chat-msg.show-reaction-controls .message-reaction-add,
-  .chat-msg:focus-within .message-reaction-add {
+  .chat-msg.show-reaction-controls .message-bubble-controls,
+  .chat-msg:focus-within .message-bubble-controls {
     opacity: 1;
     pointer-events: auto;
   }
@@ -3123,6 +3184,26 @@ body {
 .msg-ref.msg-ref-error {
   color: var(--red);
   text-decoration: line-through;
+}
+
+.reply-reference {
+  display: block;
+  max-width: 100%;
+  margin-bottom: 6px;
+  border: 0;
+  border-left: 2px solid var(--border-hover);
+  background: transparent;
+  padding: 2px 0 2px 8px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-reference:hover,
+.reply-reference:focus-visible {
+  border-left-color: var(--accent);
+  outline: none;
 }
 
 /* ── Message highlight flash ─────────────────────────────────── */

@@ -20,10 +20,10 @@ func TestExportRoom_JSON_RoundTrip(t *testing.T) {
 	if _, err := s.joinRoom("general", alice.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("general", alice.ID, "hello world", false, nil, nil, nil); err != nil {
+	if _, err := s.roomSend("general", alice.ID, "hello world", false, nil, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("general", alice.ID, "second message", false, nil, nil, nil); err != nil {
+	if _, err := s.roomSend("general", alice.ID, "second message", false, nil, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -86,7 +86,7 @@ func TestExportRoom_Markdown_Content(t *testing.T) {
 	if _, err := s.joinRoom("chat", bob.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("chat", bob.ID, "hi there", false, nil, nil, nil); err != nil {
+	if _, err := s.roomSend("chat", bob.ID, "hi there", false, nil, nil, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -140,7 +140,7 @@ func TestExportRoom_AttachmentMetadataOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("chat", agent.ID, "see image", false, nil, nil, []types.Attachment{{ID: attachment.ID}}); err != nil {
+	if _, err := s.roomSend("chat", agent.ID, "see image", false, nil, nil, []types.Attachment{{ID: attachment.ID}}, 0); err != nil {
 		t.Fatal(err)
 	}
 

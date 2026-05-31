@@ -28,6 +28,7 @@ type Message struct {
 	FromKind            string            `json:"from_kind,omitempty"` // "ai", "human", or "system" — empty for legacy persisted messages
 	Body                string            `json:"body"`
 	CreatedAt           string            `json:"created_at"`
+	ReplyTo             int64             `json:"reply_to,omitempty"`
 	Targets             []string          `json:"targets"`
 	NeedsHumanAttention bool              `json:"needs_human_attention,omitempty"`
 	ProposedAnswers     []string          `json:"proposed_answers,omitempty"`
@@ -170,6 +171,7 @@ type RoomSendRequest struct {
 	ProposedAnswers []string       `json:"proposed_answers,omitempty"`
 	OpenQuestions   []OpenQuestion `json:"open_questions,omitempty"`
 	Attachments     []Attachment   `json:"attachments,omitempty"`
+	ReplyTo         int64          `json:"reply_to,omitempty"`
 }
 
 type DMRequest struct {
@@ -180,6 +182,7 @@ type DMRequest struct {
 	ProposedAnswers []string       `json:"proposed_answers,omitempty"`
 	OpenQuestions   []OpenQuestion `json:"open_questions,omitempty"`
 	Attachments     []Attachment   `json:"attachments,omitempty"`
+	ReplyTo         int64          `json:"reply_to,omitempty"`
 }
 
 // RegisterRequest is used by MCP clients. The server assigns the name and
