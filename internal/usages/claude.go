@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,9 +19,7 @@ import (
 
 const (
 	claudeCredentialsRelPath  = ".claude/.credentials.json"
-	claudeRefreshURL          = "https://platform.claude.com/v1/oauth/token"
 	claudeUsageURL            = "https://api.anthropic.com/api/oauth/usage"
-	claudeOAuthClientID       = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	claudeOAuthBetaHeader     = "oauth-2025-04-20"
 	claudeCodeUserAgentPrefix = "claude-code/"
 	claudeCodeVersionFallback = "2.1.0"
@@ -51,18 +48,7 @@ func (claudeCodeProvider) Fetch(ctx context.Context, store *Store) (Snapshot, er
 	}
 	raw, detail, status, unauthorized, err := fetchClaudeUsage(ctx, creds)
 	if unauthorized {
-		refreshed, refreshDetail, refreshErr := refreshClaudeAuth(ctx, creds)
-		if refreshErr != nil {
-			return claudeStatus(StatusAuthMissing, refreshErr.Error(), refreshDetail), nil
-		}
-		creds = refreshed
-		if err := saveClaudeAuth(authPath, creds); err != nil {
-			return claudeStatus(StatusAuthMissing, "Claude OAuth refresh could not be saved.", nil), nil
-		}
-		raw, detail, status, unauthorized, err = fetchClaudeUsage(ctx, creds)
-		if unauthorized {
-			return claudeStatus(StatusAuthMissing, "Claude usage endpoint rejected the refreshed OAuth token.", detail), nil
-		}
+		return claudeStatus(status, "Claude usage endpoint rejected the OAuth token. Run `claude` to refresh the login.", detail), nil
 	}
 	if err != nil {
 		snap := claudeStatus(status, err.Error(), detail)
@@ -154,93 +140,6 @@ func loadClaudeAuth(path string) (claudeCredentials, *ErrorDetail, error) {
 	return creds, nil, nil
 }
 
-func refreshClaudeAuth(ctx context.Context, creds claudeCredentials) (claudeCredentials, *ErrorDetail, error) {
-	if strings.TrimSpace(creds.RefreshToken) == "" {
-		return creds, fieldDetail("refresh.refresh_token", "missing"), errors.New("Claude OAuth refresh token missing. Run `claude` to authenticate.")
-	}
-	form := url.Values{}
-	form.Set("grant_type", "refresh_token")
-	form.Set("refresh_token", creds.RefreshToken)
-	form.Set("client_id", claudeOAuthClientID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, claudeRefreshURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return creds, nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	resp, err := doWithRetry(ctx, usageHTTPClient, req, RetryPolicy{
-		MaxRetries:           1,
-		RetryableStatusCodes: []int{http.StatusTooManyRequests},
-		RetryableMethods:     []string{http.MethodPost},
-	})
-	if err != nil {
-		return creds, nil, errors.New("Claude OAuth refresh request failed.")
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		return creds, jsonShapeDetail("refresh", data), fmt.Errorf("Claude OAuth refresh failed with HTTP %d.", resp.StatusCode)
-	}
-	var raw struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return creds, jsonShapeDetail("refresh", data), errors.New("Claude OAuth refresh response could not be decoded.")
-	}
-	if strings.TrimSpace(raw.AccessToken) != "" {
-		creds.AccessToken = strings.TrimSpace(raw.AccessToken)
-	}
-	if strings.TrimSpace(raw.RefreshToken) != "" {
-		creds.RefreshToken = strings.TrimSpace(raw.RefreshToken)
-	}
-	if raw.ExpiresIn > 0 {
-		t := time.Now().Add(time.Duration(raw.ExpiresIn) * time.Second).UTC()
-		creds.ExpiresAt = &t
-	}
-	return creds, nil, nil
-}
-
-func saveClaudeAuth(path string, creds claudeCredentials) error {
-	raw := map[string]json.RawMessage{}
-	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &raw)
-	}
-	key := "claudeAiOauth"
-	if _, ok := raw["claude_ai_oauth"]; ok {
-		if _, hasCamel := raw["claudeAiOauth"]; !hasCamel {
-			key = "claude_ai_oauth"
-		}
-	}
-	oauth := map[string]json.RawMessage{}
-	if oauthData, ok := raw[key]; ok {
-		_ = json.Unmarshal(oauthData, &oauth)
-	}
-	patchTokenValue(oauth, "access_token", "accessToken", creds.AccessToken)
-	if creds.RefreshToken != "" {
-		patchTokenValue(oauth, "refresh_token", "refreshToken", creds.RefreshToken)
-	}
-	if creds.ExpiresAt != nil {
-		patchJSONNumber(oauth, "expires_at", "expiresAt", float64(creds.ExpiresAt.UnixMilli()))
-	}
-	if len(creds.Scopes) > 0 {
-		patchJSONValue(oauth, "scopes", "scopes", creds.Scopes)
-	}
-	if creds.RateLimitTier != "" {
-		patchTokenValue(oauth, "rate_limit_tier", "rateLimitTier", creds.RateLimitTier)
-	}
-	if creds.SubscriptionType != "" {
-		patchTokenValue(oauth, "subscription_type", "subscriptionType", creds.SubscriptionType)
-	}
-	data, err := json.Marshal(oauth)
-	if err != nil {
-		return err
-	}
-	raw[key] = data
-	return writeAtomicJSONFile(path, raw, 0o600)
-}
-
 func claudeCodeUserAgent() string {
 	return claudeCodeUserAgentPrefix + claudeCodeUAVersion()
 }
@@ -274,36 +173,6 @@ func detectClaudeCodeVersion() string {
 		}
 	}
 	return ""
-}
-
-func patchJSONNumber(tokens map[string]json.RawMessage, snakeKey, camelKey string, value float64) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return
-	}
-	_, hasSnake := tokens[snakeKey]
-	_, hasCamel := tokens[camelKey]
-	if hasSnake || !hasCamel {
-		tokens[snakeKey] = data
-	}
-	if hasCamel {
-		tokens[camelKey] = data
-	}
-}
-
-func patchJSONValue(tokens map[string]json.RawMessage, snakeKey, camelKey string, value any) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return
-	}
-	_, hasSnake := tokens[snakeKey]
-	_, hasCamel := tokens[camelKey]
-	if hasSnake || !hasCamel {
-		tokens[snakeKey] = data
-	}
-	if hasCamel && camelKey != snakeKey {
-		tokens[camelKey] = data
-	}
 }
 
 type claudeUsageRaw struct {

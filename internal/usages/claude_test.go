@@ -2,10 +2,8 @@ package usages
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -166,10 +164,10 @@ func TestClaudeUsageRetriesEmptyValuesOnce(t *testing.T) {
 	}
 }
 
-func TestClaudeProviderRefreshesAfterUnauthorizedAndPreservesCredentials(t *testing.T) {
+func TestClaudeProviderDoesNotRefreshCLIStoredCredentials(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	path := writeClaudeAuthFixture(t, home, `{
+	original := `{
   "futureTop": "preserved-root",
   "claudeAiOauth": {
     "futureToken": "preserved-token",
@@ -179,120 +177,38 @@ func TestClaudeProviderRefreshesAfterUnauthorizedAndPreservesCredentials(t *test
     "rateLimitTier": "pro",
     "subscriptionType": "team"
   }
-}`)
-	usageCalls := 0
+}`
+	path := writeClaudeAuthFixture(t, home, original)
 	withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
 		switch req.URL.String() {
 		case claudeUsageURL:
-			usageCalls++
-			if usageCalls == 1 {
-				if got := req.Header.Get("Authorization"); got != "Bearer old-access" {
-					t.Fatalf("first Authorization = %q", got)
-				}
-				return httpJSON(http.StatusUnauthorized, `{"error":"expired-secret"}`), nil
+			if got := req.Header.Get("Authorization"); got != "Bearer old-access" {
+				t.Fatalf("Authorization = %q", got)
 			}
-			if got := req.Header.Get("Authorization"); got != "Bearer new-access" {
-				t.Fatalf("second Authorization = %q", got)
-			}
-			return httpJSON(200, `{"five_hour":{"utilization":1,"resets_at":"2030-01-01T00:00:00Z"}}`), nil
-		case claudeRefreshURL:
-			if req.Method != http.MethodPost {
-				t.Fatalf("refresh method = %s", req.Method)
-			}
-			if got := req.Header.Get("Content-Type"); got != "application/x-www-form-urlencoded" {
-				t.Fatalf("refresh content-type = %q", got)
-			}
-			data, _ := io.ReadAll(req.Body)
-			form, err := url.ParseQuery(string(data))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if form.Get("grant_type") != "refresh_token" || form.Get("refresh_token") != "old-refresh" || form.Get("client_id") != claudeOAuthClientID {
-				t.Fatalf("refresh form = %s", data)
-			}
-			return httpJSON(200, `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}`), nil
+			return httpJSON(http.StatusUnauthorized, `{"error":"expired-secret"}`), nil
 		default:
 			t.Fatalf("unexpected URL %s", req.URL)
 			return nil, nil
 		}
 	})
 	snap, err := NewClaudeCodeProvider().Fetch(context.Background(), NewStoreAt(t.TempDir()))
-	if err != nil || snap.Status != StatusOK {
+	if err != nil {
 		t.Fatalf("Fetch = %+v err=%v", snap, err)
+	}
+	if snap.Status != StatusAuthMissing {
+		t.Fatalf("status = %s, want %s", snap.Status, StatusAuthMissing)
+	}
+	if !strings.Contains(snap.Error, "Run `claude`") {
+		t.Fatalf("error = %q", snap.Error)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := string(data)
-	for _, want := range []string{`"futureTop": "preserved-root"`, `"futureToken": "preserved-token"`, `"accessToken": "new-access"`, `"refreshToken": "new-refresh"`, `"subscriptionType": "team"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("credentials file missing %s: %s", want, body)
-		}
-	}
-	if strings.Contains(body, `"access_token"`) || strings.Contains(body, `"refresh_token"`) {
-		t.Fatalf("credentials file unexpectedly added snake_case aliases: %s", body)
+	if string(data) != original {
+		t.Fatalf("credentials file changed:\n%s", data)
 	}
 	assertMode(t, path, 0o600)
-}
-
-func TestClaudeRefreshRetriesRateLimitWithReplayableBody(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	writeClaudeAuthFixture(t, home, `{
-  "claudeAiOauth": {
-    "accessToken": "old-access",
-    "refreshToken": "old-refresh",
-    "expiresAt": 1000
-  }
-}`)
-	usageCalls := 0
-	refreshCalls := 0
-	withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
-		switch req.URL.String() {
-		case claudeUsageURL:
-			usageCalls++
-			if usageCalls == 1 {
-				if got := req.Header.Get("Authorization"); got != "Bearer old-access" {
-					t.Fatalf("first usage Authorization = %q", got)
-				}
-				return httpJSON(http.StatusUnauthorized, `{"error":"expired"}`), nil
-			}
-			if got := req.Header.Get("Authorization"); got != "Bearer new-access" {
-				t.Fatalf("second usage Authorization = %q", got)
-			}
-			return httpJSON(200, `{"five_hour":{"utilization":1,"resets_at":"2030-01-01T00:00:00Z"}}`), nil
-		case claudeRefreshURL:
-			refreshCalls++
-			data, _ := io.ReadAll(req.Body)
-			form, err := url.ParseQuery(string(data))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if form.Get("refresh_token") != "old-refresh" {
-				t.Fatalf("refresh form = %s", data)
-			}
-			if refreshCalls == 1 {
-				resp := httpJSON(http.StatusTooManyRequests, `{"error":"rate_limited"}`)
-				resp.Header.Set("Retry-After", "0")
-				return resp, nil
-			}
-			return httpJSON(200, `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}`), nil
-		default:
-			t.Fatalf("unexpected URL %s", req.URL)
-			return nil, nil
-		}
-	})
-	snap, err := NewClaudeCodeProvider().Fetch(context.Background(), NewStoreAt(t.TempDir()))
-	if err != nil || snap.Status != StatusOK {
-		t.Fatalf("Fetch = %+v err=%v", snap, err)
-	}
-	if usageCalls != 2 {
-		t.Fatalf("usage calls = %d, want 2", usageCalls)
-	}
-	if refreshCalls != 2 {
-		t.Fatalf("refresh calls = %d, want 2", refreshCalls)
-	}
 }
 
 func TestClaudeAuthMissingAndScopeMissing(t *testing.T) {
