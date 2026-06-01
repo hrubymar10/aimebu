@@ -2,8 +2,10 @@
 
 The Usages feature shows provider quota snapshots in the right sidebar,
 Settings -> Usages, and the `aimebu usages` CLI command. The top-bar Usages
-button opens the right-sidebar Usages view, where all known providers are
-rendered as a vertical list.
+button opens the right-sidebar Usages view, where enabled providers are
+rendered as a vertical list. Disabled providers remain configurable from
+Settings -> Usages; when none are enabled, the sidebar shows a shortcut to
+that settings section.
 
 Supported providers:
 
@@ -60,10 +62,11 @@ by default; Claude Code OAuth refresh is the narrow exception and retries one
 ## Provider Ordering
 
 Settings -> Usages includes up/down controls for the provider rows. The saved
-order controls the vertical order in the web Usages sidebar and the provider
-metadata order in `aimebu usages --json`. Empty or older configs use the
-canonical order (`codex`, `claude-code`, `github-copilot`, `ollama-cloud`);
-unknown entries are ignored and missing known providers are appended.
+order controls the vertical order in the web Usages sidebar for enabled
+providers and the provider metadata order in `aimebu usages --json`. Empty or
+older configs use the canonical order (`codex`, `claude-code`,
+`github-copilot`, `ollama-cloud`); unknown entries are ignored and missing
+known providers are appended.
 
 ## Stale Cache
 

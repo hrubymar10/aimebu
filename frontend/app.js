@@ -2875,20 +2875,20 @@
       if (order.indexOf(key) === -1) order.push(key);
     });
     return order.map(function (key) {
-      return rowsByKey[key] || { key: key, label: providerLabel(key), enabled: !!usageSnapshots[key], available: true };
+      return rowsByKey[key] || { key: key, label: providerLabel(key), enabled: false, available: true };
     });
   }
 
   function renderUsagesSidebar() {
     if (!rightUsagesPanel) return;
     var rows = canonicalUsageProviders();
-    var enabledCount = rows.filter(function (row) { return !!row.enabled; }).length;
-    var empty = enabledCount ? '' : '<div class="usages-empty">' +
+    var sidebarRows = rows.filter(function (row) { return row.available !== false && !!row.enabled; });
+    var empty = sidebarRows.length ? '' : '<div class="usages-empty">' +
       '<div>No usage providers enabled.</div>' +
       '<button class="btn btn-sm usages-settings-shortcut" type="button">Open Settings → Usages</button>' +
     '</div>';
-    rightUsagesPanel.innerHTML = empty + '<div class="usages-sidebar-list">' + rows.map(function (row) {
-      return renderUsageTile(row, usageSnapshots[row.key] || { provider: row.key, status: row.enabled ? 'not_configured' : 'not_enabled' });
+    rightUsagesPanel.innerHTML = empty + '<div class="usages-sidebar-list">' + sidebarRows.map(function (row) {
+      return renderUsageTile(row, usageSnapshots[row.key] || { provider: row.key, status: 'not_configured' });
     }).join('') + '</div>';
   }
 
