@@ -326,6 +326,15 @@
     return div.innerHTML;
   }
 
+  function unescHtml(str) {
+    const div = document.createElement('div');
+    div.innerHTML = str || '';
+    return div.textContent || '';
+  }
+
+  var COPY_CODE_ICON = '<svg class="md-copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 7c0-.9319 0-1.3978-.1522-1.7654-.203-.4901-.5924-.8794-1.0824-1.0824C12.3978 4 11.9319 4 11 4H8c-1.8856 0-2.8284 0-3.4142.5858C4 5.1716 4 6.1144 4 8v3c0 .9319 0 1.3978.1522 1.7654.203.49.5924.8794 1.0824 1.0824C5.6022 14 6.0681 14 7 14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path><rect x="10" y="10" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.7"></rect></svg>';
+  var CHECK_CODE_ICON = '<svg class="md-copy-icon md-copy-check" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+
   function escRe(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
@@ -507,14 +516,22 @@
       return '\x00' + (holders.length - 1) + '\x00';
     }
 
+    function codeBlock(code, lang) {
+      var normalized = code.replace(/\n$/, '');
+      var cls = lang.trim() ? ' class="lang-' + lang.trim() + '"' : '';
+      var copyPayload = encodeURIComponent(unescHtml(normalized));
+      return '<div class="md-codeblock">' +
+        '<button class="md-copy-btn" type="button" data-code="' + copyPayload + '" aria-label="Copy code block" title="Copy code block">' + COPY_CODE_ICON + '</button>' +
+        '<pre class="md-pre"><code' + cls + '>' + normalized + '</code></pre>' +
+        '</div>';
+    }
+
     // Extract fenced code blocks before any other transforms
     html = html.replace(/```([a-zA-Z0-9]*)\n?([\s\S]*?)```/g, function (_, lang, code) {
-      var cls = lang.trim() ? ' class="lang-' + lang.trim() + '"' : '';
-      return stash('<pre class="md-pre"><code' + cls + '>' + code.replace(/\n$/, '') + '</code></pre>');
+      return stash(codeBlock(code, lang));
     });
     html = html.replace(/~~~([a-zA-Z0-9]*)\n?([\s\S]*?)~~~/g, function (_, lang, code) {
-      var cls = lang.trim() ? ' class="lang-' + lang.trim() + '"' : '';
-      return stash('<pre class="md-pre"><code' + cls + '>' + code.replace(/\n$/, '') + '</code></pre>');
+      return stash(codeBlock(code, lang));
     });
 
     // Extract inline code spans
@@ -586,7 +603,7 @@
           indented.push(lines[i]);
           i++;
         }
-        out.push({ type: 'block', html: '<pre class="md-pre"><code>' + indented.join('\n') + '</code></pre>' });
+        out.push({ type: 'block', html: codeBlock(indented.join('\n'), '') });
         continue;
       }
 
@@ -733,16 +750,25 @@
       return '\x00' + (holders.length - 1) + '\x00';
     }
 
+    function rawCodeBlock(text, code) {
+      var normalized = code.replace(/\n$/, '');
+      var copyPayload = encodeURIComponent(unescHtml(normalized));
+      return '<div class="md-codeblock raw-codeblock">' +
+        '<button class="md-copy-btn" type="button" data-code="' + copyPayload + '" aria-label="Copy code block" title="Copy code block">' + COPY_CODE_ICON + '</button>' +
+        '<span class="raw-code raw-code-block">' + text + '</span>' +
+        '</div>';
+    }
+
     html = html.replace(/```([a-zA-Z0-9]*)\n?([\s\S]*?)```/g, function (_, lang, code) {
       var text = '```' + (lang || '') + '\n' + code + '```';
-      return stash('<span class="raw-code raw-code-block">' + text + '</span>');
+      return stash(rawCodeBlock(text, code));
     });
     html = html.replace(/~~~([a-zA-Z0-9]*)\n?([\s\S]*?)~~~/g, function (_, lang, code) {
       var text = '~~~' + (lang || '') + '\n' + code + '~~~';
-      return stash('<span class="raw-code raw-code-block">' + text + '</span>');
+      return stash(rawCodeBlock(text, code));
     });
     html = rewriteIndentedCodeBlocks(html, function (block) {
-      return stash('<span class="raw-code raw-code-block">' + block + '</span>');
+      return stash(rawCodeBlock(block, block));
     });
     html = html.replace(/`([^`\n]+)`/g, function (_, code) {
       return stash('<code class="raw-code">' + code + '</code>');
@@ -6532,6 +6558,35 @@
 
   // Message ID badge (copy) and #NN autolinks (jump) — event delegation
   messageListEl.addEventListener('click', function (e) {
+    var codeCopyBtn = e.target.closest('.md-copy-btn');
+    if (codeCopyBtn) {
+      e.preventDefault();
+      var encodedCode = codeCopyBtn.getAttribute('data-code') || '';
+      var codeText = '';
+      try {
+        codeText = decodeURIComponent(encodedCode);
+      } catch (err) {
+        console.error('Failed to decode code block payload:', err);
+        setTemporaryLabel(codeCopyBtn, 'Copy failed', 1600);
+        return;
+      }
+      codeCopyBtn.disabled = true;
+      copyText(codeText).then(function () {
+        codeCopyBtn.classList.add('copied');
+        codeCopyBtn.innerHTML = CHECK_CODE_ICON;
+        flashTitleHint(codeCopyBtn, 'Copied', 1200);
+        setTimeout(function () {
+          codeCopyBtn.innerHTML = COPY_CODE_ICON;
+          codeCopyBtn.classList.remove('copied');
+        }, 1000);
+      }).catch(function (err) {
+        console.error('Failed to copy code block:', err);
+        flashTitleHint(codeCopyBtn, 'Copy failed', 1800);
+      }).finally(function () {
+        codeCopyBtn.disabled = false;
+      });
+      return;
+    }
     var attachmentBtn = e.target.closest('.message-attachment');
     if (attachmentBtn) {
       e.preventDefault();

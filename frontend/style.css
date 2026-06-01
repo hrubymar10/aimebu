@@ -1583,6 +1583,73 @@ body {
   white-space: pre-wrap;
 }
 
+.chat-msg-body .md-codeblock {
+  position: relative;
+  display: block;
+}
+
+.chat-msg-body .md-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 1;
+  transition: opacity var(--transition), color var(--transition), border-color var(--transition), background var(--transition);
+}
+
+.chat-msg-body .md-copy-btn:hover,
+.chat-msg-body .md-copy-btn:focus-visible,
+.chat-msg-body .md-copy-btn:active {
+  border-color: var(--orange);
+  background: var(--bg-tertiary);
+}
+
+.chat-msg-body .md-copy-btn:disabled {
+  cursor: default;
+}
+
+.chat-msg-body .md-copy-btn svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  color: #fff;
+}
+
+.chat-msg-body .md-copy-btn.copied {
+  border-color: var(--green);
+}
+
+.chat-msg-body .md-codeblock .md-pre,
+.chat-msg-body .raw-codeblock .raw-code-block {
+  padding-top: 30px;
+}
+
+@media (hover: hover) {
+  .chat-msg-body .md-codeblock .md-copy-btn {
+    opacity: 0;
+  }
+
+  .chat-msg-body .md-codeblock:hover .md-copy-btn,
+  .chat-msg-body .md-codeblock:focus-within .md-copy-btn {
+    opacity: 1;
+  }
+}
+
 .chat-msg.self {
   align-self: flex-end;
 }

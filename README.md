@@ -543,9 +543,10 @@ three-panel layout:
   Multiline composer (Shift+Enter), paste/drag-drop/file-picker image
   attachments with pending thumbnails, inline image thumbnails with a
   lightbox, compact single-emoji reaction pills with hover titles listing
-  reactor slugs (expanded to full IDs only on slug collisions), quick-picks,
-  `#NN` message-ID badges, autolink to earlier messages, inline reply
-  quote stubs for `reply_to`, a pending-reply composer chip,
+  reactor slugs (expanded to full IDs only on slug collisions), code-block
+  copy buttons in rendered and raw modes, quick-picks, `#NN` message-ID
+  badges, autolink to earlier messages, inline reply quote stubs for
+  `reply_to`, a pending-reply composer chip,
   proposed-answer quick-reply buttons for addressed
   recipients, Open Questions modals from structured `open_questions`
   message fields, and current-room role emoji on sender headings. Room header

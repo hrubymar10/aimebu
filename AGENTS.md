@@ -307,9 +307,10 @@ lightbox.
 
 The web composer also supports structural replies. A per-message reply action
 sets a pending-reply chip, send includes `reply_to`, and reply messages render
-an inline clickable quote stub. The reply also addresses the parent author,
-except for self-replies and system-message parents; it does not imply human
-attention.
+an inline clickable quote stub. Rendered and raw chat views show a copy button
+on fenced and indented code blocks that copies the inner code text. The reply
+also addresses the parent author, except for self-replies and system-message
+parents; it does not imply human attention.
 
 Settings -> Memory enables or disables durable bus memory globally, and the
 brain button in the top bar opens the memory viewer for inspecting, editing,
