@@ -1634,11 +1634,6 @@ body {
   border-color: var(--green);
 }
 
-.chat-msg-body .md-codeblock .md-pre,
-.chat-msg-body .raw-codeblock .raw-code-block {
-  padding-top: 30px;
-}
-
 @media (hover: hover) {
   .chat-msg-body .md-codeblock .md-copy-btn {
     opacity: 0;
