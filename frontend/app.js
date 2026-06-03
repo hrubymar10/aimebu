@@ -3706,18 +3706,20 @@
     if (!activeRoomID || !messageListEl) return;
     var bubble = messageListEl.querySelector('.chat-msg[data-id="' + String(msg.id) + '"] .chat-msg-bubble');
     if (!bubble) return;
-    var node = bubble.querySelector('.message-reactions');
     var temp = document.createElement('div');
     temp.innerHTML = reactionsHTML(msg);
-    var next = temp.firstElementChild;
-    if (node && next) {
-      node.replaceWith(next);
-    } else if (node && !next) {
-      node.remove();
-    } else if (!node && next) {
-      var controls = bubble.querySelector('.message-bubble-controls');
-      bubble.insertBefore(next, controls || null);
-    }
+    preserveMessageListScrollForMutation(function () {
+      var node = bubble.querySelector('.message-reactions');
+      var next = temp.firstElementChild;
+      if (node && next) {
+        node.replaceWith(next);
+      } else if (node && !next) {
+        node.remove();
+      } else if (!node && next) {
+        var controls = bubble.querySelector('.message-bubble-controls');
+        bubble.insertBefore(next, controls || null);
+      }
+    });
   }
 
   function applyReactionEvent(data) {
@@ -4678,6 +4680,21 @@
     restoreScrollAnchorAfterResize();
   }
 
+  function preserveMessageListScrollForMutation(fn, preserveScroll) {
+    if (preserveScroll === false) {
+      fn();
+      return;
+    }
+    var wasPinned = isMessageListNearBottom();
+    if (!wasPinned) updateScrollAnchor(true);
+    fn();
+    if (wasPinned) {
+      scrollToBottom(true);
+    } else {
+      restoreScrollAnchorAfterResize();
+    }
+  }
+
   function renderMessages() {
     if (!activeRoomID) return;
     var msgs = messages[activeRoomID] || [];
@@ -4698,7 +4715,7 @@
     }).join('');
 
     messageListEl.querySelectorAll('.chat-msg-body').forEach(function (b) { highlightNames(b); });
-    renderReadReceipts();
+    renderReadReceipts(false);
     if (atBottom) {
       scrollToBottom(true);
     } else {
@@ -5521,7 +5538,7 @@
   // renderReadReceipts appends a small avatar strip to each chat message
   // in the active room, one per agent whose effective cursor >= msg.id
   // (excluding the message author — sender is implicitly read).
-  function renderReadReceipts() {
+  function renderReadReceipts(preserveScroll) {
     if (!activeRoomID) return;
     var msgs = messages[activeRoomID] || [];
     var room = rooms.find(function (r) { return r.id === activeRoomID; });
@@ -5548,26 +5565,28 @@
       markersByMsg[t].push(memberID);
     });
 
-    // Render: one strip per message, placed only where a cursor lands.
-    msgs.forEach(function (m) {
-      var el = messageListEl.querySelector('[data-id="' + esc(m.id) + '"]');
-      if (!el) return;
-      var strip = el.querySelector('.chat-msg-receipts');
-      var seenBy = markersByMsg[m.id] || [];
-      if (seenBy.length === 0) {
-        if (strip) strip.remove();
-        return;
-      }
-      var html = seenBy.map(function (memberID) {
-        return '<span class="receipt-avatar" title="Seen by ' + esc(memberID) + '">' + esc(initials(memberID)) + '</span>';
-      }).join('');
-      if (!strip) {
-        strip = document.createElement('div');
-        strip.className = 'chat-msg-receipts';
-        el.appendChild(strip);
-      }
-      strip.innerHTML = html;
-    });
+    preserveMessageListScrollForMutation(function () {
+      // Render: one strip per message, placed only where a cursor lands.
+      msgs.forEach(function (m) {
+        var el = messageListEl.querySelector('[data-id="' + esc(m.id) + '"]');
+        if (!el) return;
+        var strip = el.querySelector('.chat-msg-receipts');
+        var seenBy = markersByMsg[m.id] || [];
+        if (seenBy.length === 0) {
+          if (strip) strip.remove();
+          return;
+        }
+        var html = seenBy.map(function (memberID) {
+          return '<span class="receipt-avatar" title="Seen by ' + esc(memberID) + '">' + esc(initials(memberID)) + '</span>';
+        }).join('');
+        if (!strip) {
+          strip = document.createElement('div');
+          strip.className = 'chat-msg-receipts';
+          el.appendChild(strip);
+        }
+        strip.innerHTML = html;
+      });
+    }, preserveScroll);
   }
 
   // ── Mobile tab handling ──────────────────────────────────────────
