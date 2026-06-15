@@ -137,6 +137,48 @@ func TestCopilotQuotaFallbackShapes(t *testing.T) {
 	}
 }
 
+func TestCopilotUnlimitedQuotaShape(t *testing.T) {
+	var raw copilotUsageRaw
+	if err := json.Unmarshal([]byte(`{
+  "copilot_plan": "business",
+  "quota_snapshots": {
+    "chat": {"unlimited": true}
+  }
+}`), &raw); err != nil {
+		t.Fatal(err)
+	}
+	snap, _, err := normalizeCopilotUsage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != StatusOK || snap.Plan != "business" {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+	if len(snap.Windows) != 0 {
+		t.Fatalf("windows = %+v, want none for unlimited quota", snap.Windows)
+	}
+}
+
+func TestCopilotSkipsTokenBillingPlaceholderQuota(t *testing.T) {
+	var raw copilotUsageRaw
+	if err := json.Unmarshal([]byte(`{
+  "copilot_plan": "business",
+  "quota_snapshots": {
+    "premium_interactions": {"entitlement": 0, "remaining": 0, "percent_remaining": 0},
+    "chat": {"entitlement": 120, "remaining": 90, "percent_remaining": 75, "quota_id": "chat"}
+  }
+}`), &raw); err != nil {
+		t.Fatal(err)
+	}
+	snap, _, err := normalizeCopilotUsage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Windows) != 1 || snap.Windows[0].Key != "chat" || snap.Windows[0].PercentUsed != 25 {
+		t.Fatalf("windows = %+v, want only usable chat quota", snap.Windows)
+	}
+}
+
 func TestCopilotProviderStatusMappingAndRedaction(t *testing.T) {
 	store := NewStoreAt(t.TempDir())
 	cfg := DefaultConfig()

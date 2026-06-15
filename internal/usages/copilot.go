@@ -134,6 +134,7 @@ type copilotQuotaSnapshotRaw struct {
 	Remaining           *float64 `json:"remaining"`
 	PercentRemaining    *float64 `json:"percent_remaining"`
 	QuotaID             string   `json:"quota_id"`
+	Unlimited           bool     `json:"unlimited"`
 	HasPercentRemaining bool     `json:"-"`
 }
 
@@ -143,6 +144,7 @@ func (q *copilotQuotaSnapshotRaw) UnmarshalJSON(data []byte) error {
 		Remaining        json.RawMessage `json:"remaining"`
 		PercentRemaining json.RawMessage `json:"percent_remaining"`
 		QuotaID          string          `json:"quota_id"`
+		Unlimited        bool            `json:"unlimited"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -157,6 +159,7 @@ func (q *copilotQuotaSnapshotRaw) UnmarshalJSON(data []byte) error {
 		q.HasPercentRemaining = true
 	}
 	q.QuotaID = raw.QuotaID
+	q.Unlimited = raw.Unlimited
 	return nil
 }
 
@@ -252,7 +255,7 @@ func normalizeCopilotUsage(raw copilotUsageRaw) (Snapshot, *ErrorDetail, error) 
 	}
 	add("premium", premium)
 	add("chat", chat)
-	if len(windows) == 0 {
+	if len(windows) == 0 && !copilotHasUnlimitedQuota(raw) {
 		data, err := json.Marshal(raw)
 		if err != nil {
 			return Snapshot{}, fieldDetail("usage", "marshal_error"), errors.New("GitHub Copilot usage response could not be inspected.")
@@ -281,6 +284,18 @@ func copilotQuotaWindows(raw copilotUsageRaw) (*copilotQuotaSnapshotRaw, *copilo
 		chat = usableCopilotQuota(fallback.Chat)
 	}
 	return premium, chat
+}
+
+func copilotHasUnlimitedQuota(raw copilotUsageRaw) bool {
+	if raw.QuotaSnapshots == nil {
+		return false
+	}
+	for _, q := range []*copilotQuotaSnapshotRaw{raw.QuotaSnapshots.PremiumInteractions, raw.QuotaSnapshots.Chat} {
+		if q != nil && q.Unlimited {
+			return true
+		}
+	}
+	return false
 }
 
 func usableCopilotQuota(q *copilotQuotaSnapshotRaw) *copilotQuotaSnapshotRaw {
