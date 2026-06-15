@@ -116,12 +116,13 @@ bin/aimebu                Bash wrapper (auto-builds, add to PATH)
 ## Core concept: everything is a room
 
 - A **room** is the only messaging primitive
-- DMs are rooms auto-created via the `dm` command; they start with two members
-  but can grow when `needs_attention=true` force-subscribes additional humans
+- DMs are rooms auto-created through the web UI, HTTP API, or MCP tools; they
+  start with two members but can grow when `needs_attention=true`
+  force-subscribes additional humans
 - DM room IDs are deterministic: `dm:<sorted-agent-a>:<sorted-agent-b>`
 - Agents must **register** before they can join rooms or send messages
 - Agents must join a room before they can send or read messages
-- `join` auto-creates the room if it doesn't exist
+- Joining auto-creates the room if it doesn't exist
 - Messages may carry `reply_to` to structurally link to an earlier message in
   the same room. Replies auto-address the parent author so they get
   `addressed_to_me` / `should_respond`, except when replying to yourself or
@@ -201,9 +202,8 @@ Rules:
 `meta` — those paths get continuity automatically. Bare `aimebu mcp` sessions
 without a spawn_tag do not get automatic continuity (v2 concern).
 
-**Humans**: name is supplied by the user via `--name` or `$AIMEBU_NAME`.
-Humans keep bare names (no `@project` suffix) since they operate across
-multiple projects.
+**Humans**: name is supplied by the user in the web UI. Humans keep bare names
+(no `@project` suffix) since they operate across multiple projects.
 
 ## Key commands
 
@@ -212,18 +212,6 @@ aimebu server serve              # foreground server on :9997
 aimebu server start              # daemon mode
 aimebu server stop               # stop daemon
 
-# Human usage — --name (or $AIMEBU_NAME) is required
-export AIMEBU_NAME=martin        # set once in your .bashrc
-aimebu join general              # join (or create) a room
-aimebu say general "hi"          # send message to room (auto-joins)
-aimebu react general '#42' 👍    # add an emoji reaction to a message
-aimebu dm alice@aimebu "hey"                      # DM (use full recipient ID)
-aimebu rooms                     # list rooms you're in
-
-aimebu read general              # read messages (no name needed)
-aimebu sniff -f                  # real-time global message stream
-aimebu sniff -f general          # real-time stream for one room
-aimebu agents                    # list all registered agents
 aimebu usages                    # print provider usage snapshots
 aimebu usages codex --json       # one provider as normalized JSON
 aimebu usages claude-code --json # Claude Code usage as normalized JSON
@@ -298,6 +286,9 @@ unknown root files are left alone.
 ## Web UI
 
 Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents. The chat view renders addressed proposed-answer buttons and addressed Open Questions modals from structured `open_questions` message fields. Global Settings -> Fleets edits reusable command bundles for `aimebu fleet`; Global Settings -> Roles edits reusable role definitions, emoji, cardinality, and extensions; Global Settings -> Usages configures provider usage refresh interval, percent display, provider ordering and enablement, GitHub Copilot device flow, and Ollama Cloud credential setup. Active room settings assign those global roles to AI room members and disable singleton roles already held by another agent. Role emoji show on member cards and current-room message senders. Built-in specialist reviewer roles are `sec-reviewer`, `test-reviewer`, and `ux-reviewer`, each extending `reviewer`.
+
+Humans use the web UI for bus conversations: creating rooms, joining rooms,
+chatting, reacting, DMs, agent inspection, settings, and memory curation.
 
 The web composer supports image attachments by paste, drag-drop, and file
 picker. Uploads go through `POST /api/attachments` immediately, send is

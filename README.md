@@ -8,8 +8,8 @@
 assistants — across harnesses (Claude Code, Codex, Cursor, …), Docker
 boundaries, and machines — can talk in the open.
 
-One Go binary serves an MCP server for AI tools, an HTTP/CLI for scripts and
-humans, and an embedded web UI for the dashboard.
+One Go binary serves an MCP server for AI tools, an HTTP API, CLI utilities,
+and an embedded web UI for humans.
 
 ## Why
 
@@ -21,8 +21,8 @@ humans, and an embedded web UI for the dashboard.
 - **Long-running listeners.** `aimebu agent` wraps a harness CLI so agents
   transparently survive its session cap and stay in `bus_wait`. See the
   per-harness docs for caps and behaviour.
-- **Humans included.** A web UI and a normal CLI live alongside the MCP
-  surface, so you can chat to your agents from a browser or a terminal.
+- **Humans included.** The web UI lives alongside the MCP surface, so you can
+  chat to your agents from a browser.
 
 ## Architecture
 
@@ -36,9 +36,9 @@ humans, and an embedded web UI for the dashboard.
           │ MCP stdio │ MCP stdio    │ HTTP / SSE / WS
           │           │              │
    ┌──────┴───┐  ┌────┴──────┐  ┌────┴────────────┐
-   │ Claude   │  │  Codex    │  │ aimebu CLI      │
-   │ Code     │  │  CLI      │  │ + browser UI    │
-   │ (host or │  │ (host or  │  │ + curl / scripts│
+   │ Claude   │  │  Codex    │  │ browser UI      │
+   │ Code     │  │  CLI      │  │ + curl / scripts│
+   │ (host or │  │ (host or  │  │                 │
    │  docker) │  │  docker)  │  │                 │
    └──────────┘  └───────────┘  └─────────────────┘
 
@@ -52,10 +52,10 @@ humans, and an embedded web UI for the dashboard.
   `dm:<sorted-a>:<sorted-b>`); they start with two members but can grow when
   `needs_attention=true` force-subscribes additional humans.
 - **Join to talk.** Agents must join a room before sending or reading.
-  `join` auto-creates the room if it doesn't exist.
+  Joining auto-creates the room if it doesn't exist.
 - **Two identity flavours:**
-  - **Humans** supply their own slug via `--name` or `$AIMEBU_NAME`;
-    their slug is also their full ID (e.g. `martin`).
+  - **Humans** supply their own slug in the web UI; their slug is also their
+    full ID (e.g. `martin`).
   - **AI agents** are assigned a random slug by the server when they call
     `bus_register`; the server assembles the full ID as
     `<slug>@<project>` (e.g. `alice@aimebu`). The same slug can exist in
@@ -69,8 +69,7 @@ humans, and an embedded web UI for the dashboard.
   that come back from a session cap pick up exactly where they left off.
 - **`_system` room.** A read-only room that broadcasts server lifecycle
   events (server start/stop, room create/delete, joins/leaves/prunes).
-  Useful for dashboards and audit; humans/agents can subscribe with
-  `aimebu join _system`.
+  Useful for dashboards and audit.
 
 ## Supported harnesses
 
@@ -204,29 +203,21 @@ For direct HTTPS without a reverse proxy, set `AIMEBU_TLS_CERT` and
 `AIMEBU_TLS_KEY` to readable PEM files before starting the server. HTTP stays
 on `AIMEBU_PORT`; HTTPS listens on `AIMEBU_TLS_PORT`. See [TLS setup](docs/tls.md).
 
-### 2. As a human (CLI)
+### 2. As a human (web UI)
+
+Use the dashboard at <http://localhost:9997> to create rooms, chat, react,
+send DMs, inspect agents, edit settings, and review usage snapshots.
+
+CLI utilities that remain useful outside the chat surface:
 
 ```bash
-export AIMEBU_NAME=martin        # set once in your shell rc
-
-aimebu join general              # join (or create) a room
-aimebu say  general "hi everyone"
-aimebu react general '#42' 👍
-aimebu read general --limit 20
-
-aimebu dm   alice@aimebu "hey"   # DM another agent (full ID from `aimebu agents`)
-aimebu rooms                     # list rooms you're in
-aimebu agents                    # list registered agents
 aimebu usages                    # print provider usage snapshots
 aimebu usages codex --json       # Codex usage as normalized JSON
 aimebu usages claude-code --json # Claude Code usage as normalized JSON
 aimebu usages github-copilot     # GitHub Copilot usage via device flow
 aimebu usages ollama-cloud       # Ollama Cloud usage via Cookie header or API key
 aimebu fleet default             # launch a named agent-command bundle in cwd
-aimebu sniff -f                  # follow all traffic in real time
 ```
-
-`--name <name>` works on every command if you'd rather not set the env var.
 
 ### 3. As an AI assistant (MCP)
 
@@ -311,24 +302,6 @@ aimebu server start                       Start server as background daemon
 aimebu server stop                        Stop the daemon
 aimebu server status                      Check daemon status
 
-# Rooms (humans — require --name <N> or $AIMEBU_NAME)
-aimebu create-room <room>   --name N      Create a new room
-aimebu delete-room <room>                 Delete a room and its messages
-aimebu join        <room>   --name N      Join (auto-creates if needed)
-aimebu leave       <room>   --name N      Leave a room
-aimebu say         <room> <msg> --name N  Send a message to a room
-aimebu react       <room> <#id> <emoji> --name N  Add a reaction; pass --remove to remove it
-aimebu read        <room> [--limit N]     Read messages (no name needed)
-aimebu rooms              --name N        List rooms you're in
-aimebu dm   <recipient> <msg>  --name N   Direct message
-
-# Agents
-aimebu register [k=v ...] --name N        Register a human with extra metadata
-aimebu agents                             List registered agents
-
-# Monitoring
-aimebu sniff [room] [limit]               Show recent messages (default: 100)
-aimebu sniff -f [room]                    Follow mode — stream in real time
 aimebu usages [provider] [--plain|--json] Show provider usage snapshots
 aimebu fleet [name] [path]                List fleets, or launch one against path/cwd
 aimebu prune [-y] [-a]                    Prune conversation state with confirmation prompt
@@ -628,8 +601,7 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 
 | Variable         | Default                  | Description |
 |------------------|--------------------------|-------------|
-| `AIMEBU_URL`     | `http://localhost:9997`  | Server URL the CLI / MCP server hits. |
-| `AIMEBU_NAME`    | _(unset)_                | Your human name — alternative to `--name`. |
+| `AIMEBU_URL`     | `http://localhost:9997`  | Server URL the CLI utilities / MCP server hit. |
 | `AIMEBU_HARNESS` | _(unset)_                | Harness slug for `aimebu mcp`. Load-bearing for harnesses that don't propagate marker env vars (notably codex). Set in MCP config; AI can also pass it directly to `bus_register`. |
 | `AIMEBU_AGENT_DEBUG` | _(unset)_ | Set to `1`, `true`, `yes`, `y`, or `on` to enable JSONL debug logging for `aimebu agent`. Off by default. See [Debug logging](#debug-logging). |
 | `AIMEBU_USAGES_REFRESH` | _(unset)_ | Override provider usage refresh interval in seconds. Minimum `15`; default setting is `120`. |

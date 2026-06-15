@@ -40,7 +40,7 @@ func IsUnreachable(err error) bool {
 // Client holds the base URL and the caller's AgentID. AgentID starts empty
 // and is populated:
 //   - for AI clients: from the server's response to POST /agents (bus_register)
-//   - for human CLI calls: from --name or $AIMEBU_NAME
+//   - for callers acting as a human: explicitly from the registered human ID
 type Client struct {
 	BaseURL   string
 	AgentID   string
