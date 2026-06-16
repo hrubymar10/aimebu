@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # aimebu dev wrapper — builds the binary on first use or when forced, then runs it.
 # For everyday use, prefer `go install github.com/hrubymar10/aimebu/cmd/aimebu@latest`
-# or `brew install --HEAD hrubymar10/tap/aimebu` instead.
+# or `brew tap hrubymar10/tap && brew trust hrubymar10/tap && brew install --HEAD aimebu`.
 #
 # Manual install: add this directory to your PATH:
 #   export PATH="$PATH:/path/to/aimebu/bin"

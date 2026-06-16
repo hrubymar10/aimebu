@@ -100,20 +100,19 @@ No tagged release yet — install from `master`:
 
 ```bash
 brew tap hrubymar10/tap
+brew trust hrubymar10/tap
 brew install --HEAD aimebu
 brew services start aimebu   # auto-start on login (LaunchAgent / systemd)
 brew services run   aimebu   # one-off foreground-style start (no auto-start)
 ```
 
+Homebrew requires third-party taps to be trusted before install.
 `aimebu` is currently a HEAD-only formula, so `brew install aimebu` will
 fail by design — use `--HEAD`.
 
-If you skip the explicit `brew tap`, first install will tap `hrubymar10/tap`
-automatically:
-
-```bash
-brew install --HEAD hrubymar10/tap/aimebu
-```
+The shortcut form (`brew install --HEAD hrubymar10/tap/aimebu`) can tap
+`hrubymar10/tap` automatically, but trust must be granted after the tap
+exists, so use the explicit tap/trust/install flow above for first install.
 
 Once a release is cut, the `--HEAD` flag will no longer be needed.
 
@@ -144,6 +143,9 @@ Replace `<path-to-aimebu>` with the actual clone path, e.g.
 ```bash
 brew upgrade --fetch-HEAD aimebu
 ```
+
+`brew trust hrubymar10/tap` is a one-time, per-tap action; you do not need to
+repeat it before `brew upgrade --fetch-HEAD`.
 
 > **Note:** plain `brew upgrade aimebu` is a no-op for HEAD formulas — the
 > installed and formula versions are both `HEAD` so brew sees nothing to
