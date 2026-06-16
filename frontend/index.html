@@ -150,6 +150,9 @@
           </g>
           </svg>
         </button>
+        <button id="leaderboard-viewer-btn" class="btn btn-icon leaderboard-viewer-btn" type="button" title="Leaderboards" aria-label="Leaderboards">
+          <span class="topbar-icon topbar-leaderboard-icon" aria-hidden="true"></span>
+        </button>
       </div>
       <div class="broadcast-wrap">
         <button id="broadcast-btn" class="btn btn-icon broadcast-btn" type="button" title="System events">
@@ -826,6 +829,54 @@
       <div class="memory-onboarding-actions">
         <button id="memory-onboarding-enable-btn" class="btn btn-primary" type="button">Enable</button>
         <button id="memory-onboarding-disable-btn" class="btn" type="button">Not now</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="leaderboard-viewer-modal" class="settings-modal hidden" role="dialog" aria-modal="true" aria-label="Leaderboards">
+    <div class="settings-overlay" id="leaderboard-viewer-overlay"></div>
+    <div class="settings-pane leaderboard-viewer-pane">
+      <div class="settings-body">
+        <div class="settings-body-header">
+          <span class="settings-section-title">Leaderboards</span>
+          <button id="leaderboard-viewer-close-btn" class="settings-close-btn" type="button" title="Close">✕</button>
+        </div>
+        <div class="settings-section active">
+          <div class="leaderboard-toolbar">
+            <select id="leaderboard-category-select" class="settings-select">
+              <option value="overall">Overall</option>
+              <option value="task_outcome">Task Outcome</option>
+              <option value="role_execution">Role Execution</option>
+              <option value="collaboration_process">Collaboration &amp; Process</option>
+              <option value="judgment_scope">Judgment &amp; Scope</option>
+              <option value="context_understanding">Context Understanding</option>
+            </select>
+            <label class="settings-checkbox leaderboard-self-toggle">
+              <input id="leaderboard-include-self-toggle" type="checkbox" checked>
+              <span>Include self-reviews</span>
+            </label>
+            <button id="leaderboard-refresh-btn" class="btn btn-sm" type="button">Refresh</button>
+          </div>
+          <div id="leaderboard-summary" class="leaderboard-summary"></div>
+          <div class="leaderboard-grid">
+            <section class="leaderboard-panel leaderboard-panel-wide">
+              <h4 class="settings-group-heading">Ranked Combos</h4>
+              <div id="leaderboard-main" class="leaderboard-main"></div>
+            </section>
+            <section class="leaderboard-panel">
+              <h4 class="settings-group-heading">Confidence</h4>
+              <div id="leaderboard-scatter" class="leaderboard-chart"></div>
+            </section>
+            <section class="leaderboard-panel">
+              <h4 class="settings-group-heading">Combo Detail</h4>
+              <div id="leaderboard-detail" class="leaderboard-detail"></div>
+            </section>
+            <section class="leaderboard-panel">
+              <h4 class="settings-group-heading">Model Rollup</h4>
+              <div id="leaderboard-model-rollup" class="leaderboard-model-rollup"></div>
+            </section>
+          </div>
+        </div>
       </div>
     </div>
   </div>

@@ -128,6 +128,68 @@ type MemorySnapshot struct {
 	Rendered string         `json:"rendered"`
 }
 
+const (
+	LeaderboardCategoryTaskOutcome          = "task_outcome"
+	LeaderboardCategoryRoleExecution        = "role_execution"
+	LeaderboardCategoryCollaborationProcess = "collaboration_process"
+	LeaderboardCategoryJudgmentScope        = "judgment_scope"
+	LeaderboardCategoryContextUnderstanding = "context_understanding"
+)
+
+type LeaderboardParticipant struct {
+	AgentID string `json:"agent_id"`
+	Slug    string `json:"slug"`
+	Model   string `json:"model"`
+	Harness string `json:"harness"`
+	RoleKey string `json:"role_key,omitempty"`
+}
+
+type LeaderboardRatingValue struct {
+	Score *int `json:"score"`
+}
+
+type LeaderboardRatingSubmission struct {
+	Subject string                            `json:"subject"`
+	Ratings map[string]LeaderboardRatingValue `json:"ratings"`
+}
+
+type LeaderboardRatingCard struct {
+	SubjectModel   string                            `json:"subject_model,omitempty"`
+	SubjectHarness string                            `json:"subject_harness,omitempty"`
+	IsSelfReview   bool                              `json:"is_selfreview"`
+	Ratings        map[string]LeaderboardRatingValue `json:"ratings"`
+	CreatedAt      string                            `json:"created_at,omitempty"`
+}
+
+type LeaderboardAggregate struct {
+	Key             string             `json:"key"`
+	Model           string             `json:"model"`
+	Harness         string             `json:"harness"`
+	Overall         float64            `json:"overall"`
+	Categories      map[string]float64 `json:"categories"`
+	Counts          map[string]int     `json:"counts"`
+	NACounts        map[string]int     `json:"na_counts"`
+	Cards           int                `json:"cards"`
+	Ratings         int                `json:"ratings"`
+	HighVariance    bool               `json:"high_variance"`
+	Variance        float64            `json:"variance"`
+	RecentTrend     []float64          `json:"recent_trend,omitempty"`
+	LastRatedAt     string             `json:"last_rated_at,omitempty"`
+	SelfIncluded    bool               `json:"self_included"`
+	PeerOnlyOverall float64            `json:"peer_only_overall,omitempty"`
+	SelfDelta       float64            `json:"self_delta,omitempty"`
+}
+
+type LeaderboardView struct {
+	Enabled            bool                   `json:"enabled"`
+	Category           string                 `json:"category"`
+	ExcludeSelfReviews bool                   `json:"exclude_self_reviews"`
+	Categories         []string               `json:"categories"`
+	Aggregates         []LeaderboardAggregate `json:"aggregates"`
+	ModelRollups       []LeaderboardAggregate `json:"model_rollups"`
+	Summary            map[string]any         `json:"summary"`
+}
+
 type RecallResult struct {
 	MessageID int64  `json:"message_id"`
 	RoomID    string `json:"room_id"`

@@ -1728,6 +1728,52 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		_ = jsonOK(w, map[string]any{"record": record})
 	})
 
+	// ── Leaderboards ────────────────────────────────────────────────
+
+	mux.HandleFunc("GET /leaderboard", func(w http.ResponseWriter, r *http.Request) {
+		excludeSelf := r.URL.Query().Get("exclude_self") != "false"
+		view, err := s.leaderboardView(r.URL.Query().Get("category"), excludeSelf)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = jsonOK(w, view)
+	})
+
+	mux.HandleFunc("POST /leaderboard/start", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AgentID string `json:"agent_id"`
+			Room    string `json:"room"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		participants, err := s.startLeaderboardVoting(req.AgentID, req.Room)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"participants": participants})
+	})
+
+	mux.HandleFunc("POST /leaderboard/cards", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AgentID string                              `json:"agent_id"`
+			Cards   []types.LeaderboardRatingSubmission `json:"cards"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		cards, err := s.submitLeaderboardCards(req.AgentID, req.Cards)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"cards": cards})
+	})
+
 	mux.HandleFunc("GET /recall", func(w http.ResponseWriter, r *http.Request) {
 		agentID := r.URL.Query().Get("agent_id")
 		if agentID == "" {

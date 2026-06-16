@@ -9,6 +9,7 @@ this file, and everything under [docs/](docs/) (currently
 [docs/claude-code.md](docs/claude-code.md),
 [docs/codex.md](docs/codex.md), [docs/fleet.md](docs/fleet.md),
 [docs/github-copilot.md](docs/github-copilot.md),
+[docs/leaderboards.md](docs/leaderboards.md),
 [docs/memory.md](docs/memory.md),
 [docs/ollama-cloud.md](docs/ollama-cloud.md), [docs/pi.md](docs/pi.md),
 [docs/tls.md](docs/tls.md), and [docs/usages.md](docs/usages.md)). When your
@@ -245,15 +246,16 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 
 `AIMEBU_CONFIG_DIR` defaults to `~/.aimebu/`. Under that root, `server/`
 holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
-`agents.json`, `reactions.json`, `memory.json`, `macros.json`, `fleet.json`,
+`agents.json`, `reactions.json`, `memory.json`, `leaderboards.json`, `macros.json`, `fleet.json`,
 `settings.json`, `prompts.json`, `roles.json`, `sounds/`, `aimebu.pid`,
 `aimebu.log`) and
 `agents/` holds agent-CLI state
 (`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
 `settings.json` stores UI preferences plus global retention settings for
 stale agents, empty rooms, cleanup cadence, message age/count limits, and the
-global `memory_enabled` flag. When `memory_enabled` is absent, the web UI has
-not asked yet and memory is effectively disabled.
+global `memory_enabled` flag plus the default-on `leaderboard_enabled` flag.
+When `memory_enabled` is absent, the web UI has not asked yet and memory is
+effectively disabled.
 Emoji reactions are conversation content and live in `server/reactions.json`;
 reaction updates do not create messages, advance read cursors, or trigger
 human attention.
@@ -261,8 +263,11 @@ Image attachments are conversation content. Uploaded blobs and their registry
 live under `server/attachments/`; messages store attachment metadata and URLs
 only, not embedded image bytes.
 Bus memory is durable curated knowledge and lives in `server/memory.json`;
-plain `aimebu prune` preserves it, while `aimebu prune -a` removes it. Room
-memory overrides live on room records in `server/rooms.json`; they are
+plain `aimebu prune` preserves it, while `aimebu prune -a` removes it.
+Agent leaderboards are durable rating cards and live in
+`server/leaderboards.json`; plain `aimebu prune` preserves them, while
+`aimebu prune -a` removes them. Room memory overrides live on room records in
+`server/rooms.json`; they are
 content-flow controls only, not an automatic wipe or an airtight
 per-participant memory kill switch.
 `usages/` holds provider usage state: `config.json` (0600, refresh interval,
@@ -309,6 +314,14 @@ and cleaning project facts, globally visible user profiles, and global shared
 agent notes. Room Settings can disable whether that room's messages feed
 memory and recall. Fresh AI registrations receive a memory snapshot in the
 `bus_register` response only when memory is enabled.
+
+The podium button in the top bar opens the leaderboards viewer for inspecting
+durable AI rating-card model+harness aggregates. The web toggle defaults to
+including self-reviews, while API/MCP reads default to peer-only. It has a
+self-review toggle, category selector, ranked bars, confidence scatter, combo
+detail, model rollup, and data-quality indicators. The
+`leaderboard_enabled` setting defaults to enabled; setting it false hides the
+top-bar button.
 
 The chat view supports compact single-emoji reaction pills; hovering a pill
 shows the slugs of the agents or humans who applied that emoji, expanding to

@@ -36,6 +36,8 @@
   let promptEntries = [];    // PromptEntry[] from GET /settings/prompts
   let roleEntries = [];      // RoleEntry[] from GET /roles
   let memorySnapshot = { records: [], usage: [], rendered: '' };
+  let leaderboardSnapshot = null;
+  let selectedLeaderboardKey = null;
   let roomSettingsDirty = false; // true when a focused role picker deferred a rebuild
   let systemEvents = [];     // Message[] — _system room events
   let systemUnread = 0;      // unread count for broadcast panel
@@ -254,6 +256,18 @@
   const memoryAddSubmitBtn = $('#memory-add-submit-btn');
   const memoryCleanFilterBtn = $('#memory-clean-filter-btn');
   const memoryCleanAllBtn = $('#memory-clean-all-btn');
+  const leaderboardViewerBtn = $('#leaderboard-viewer-btn');
+  const leaderboardViewerModal = $('#leaderboard-viewer-modal');
+  const leaderboardViewerOverlay = $('#leaderboard-viewer-overlay');
+  const leaderboardViewerCloseBtn = $('#leaderboard-viewer-close-btn');
+  const leaderboardCategorySelect = $('#leaderboard-category-select');
+  const leaderboardIncludeSelfToggle = $('#leaderboard-include-self-toggle');
+  const leaderboardRefreshBtn = $('#leaderboard-refresh-btn');
+  const leaderboardSummaryEl = $('#leaderboard-summary');
+  const leaderboardMainEl = $('#leaderboard-main');
+  const leaderboardScatterEl = $('#leaderboard-scatter');
+  const leaderboardDetailEl = $('#leaderboard-detail');
+  const leaderboardModelRollupEl = $('#leaderboard-model-rollup');
   const roleAddForm = $('#role-add-form');
   const roleKeyInput = $('#role-key-input');
   const roleEmojiInput = $('#role-emoji-input');
@@ -1759,6 +1773,14 @@
     renderRoomSettings();
   }
 
+  function applyLeaderboardSettings() {
+    var enabled = serverSettings.leaderboard_enabled !== false;
+    if (leaderboardViewerBtn) leaderboardViewerBtn.classList.toggle('hidden', !enabled);
+    if (!enabled && leaderboardViewerModal && !leaderboardViewerModal.classList.contains('hidden')) {
+      closeLeaderboardViewer();
+    }
+  }
+
   function setMemoryEnabled(enabled) {
     return saveSettings({ memory_enabled: !!enabled }).then(function () {
       applyMemorySettings();
@@ -1896,6 +1918,178 @@
         renderMemoryList();
         console.error('Failed to load memory:', err);
       });
+  }
+
+  function leaderboardScore(item, category) {
+    if (!item) return 0;
+    if (!category || category === 'overall') return item.overall || 0;
+    return (item.categories && item.categories[category]) || 0;
+  }
+
+  function leaderboardCategoryLabel(key) {
+    var labels = leaderboardSnapshot && leaderboardSnapshot.summary && leaderboardSnapshot.summary.category_labels;
+    return (labels && labels[key]) || {
+      overall: 'Overall',
+      task_outcome: 'Task Outcome',
+      role_execution: 'Role Execution',
+      collaboration_process: 'Collaboration & Process',
+      judgment_scope: 'Judgment & Scope',
+      context_understanding: 'Context Understanding'
+    }[key] || key;
+  }
+
+  function comboLabel(item) {
+    if (!item) return '';
+    return item.harness ? (item.model + ' / ' + item.harness) : item.model;
+  }
+
+  function renderLeaderboardSummary() {
+    if (!leaderboardSummaryEl) return;
+    var view = leaderboardSnapshot || {};
+    var summary = view.summary || {};
+    var best = summary.best_combo;
+    var latest = summary.latest_rating_at;
+    var topCategory = (leaderboardCategorySelect && leaderboardCategorySelect.value) || 'overall';
+    var cards = [
+      { label: 'Best', value: best ? comboLabel(best) : 'None', sub: best ? String(leaderboardScore(best, topCategory).toFixed ? leaderboardScore(best, topCategory).toFixed(2) : leaderboardScore(best, topCategory)) : '' },
+      { label: 'Combos', value: String(summary.total_combos || 0), sub: 'ranked' },
+      { label: 'Cards', value: String(summary.total_cards || 0), sub: 'submitted' },
+      { label: 'Latest', value: latest || 'None', sub: String(summary.total_cards || 0) + ' cards' }
+    ].map(function (card) {
+      return '<div class="leaderboard-summary-card"><span>' + esc(card.label) + '</span><strong>' + esc(card.value) + '</strong><small>' + esc(card.sub || '') + '</small></div>';
+    }).join('');
+    leaderboardSummaryEl.innerHTML = cards;
+  }
+
+  function renderLeaderboardBars(items, category) {
+    var maxScore = Math.max(5, items.reduce(function (m, item) { return Math.max(m, leaderboardScore(item, category)); }, 0));
+    var rows = items.slice(0, 12).map(function (item, idx) {
+      var score = leaderboardScore(item, category);
+      var pct = maxScore ? Math.max(0, Math.min(100, (score / maxScore) * 100)) : 0;
+      var selected = item.key === selectedLeaderboardKey ? ' selected' : '';
+      return '<button class="leaderboard-rank-row' + selected + '" type="button" data-key="' + esc(item.key) + '">' +
+        '<span class="leaderboard-rank-num">' + (idx + 1) + '</span>' +
+        '<span class="leaderboard-rank-name">' + esc(comboLabel(item)) + '</span>' +
+        '<span class="leaderboard-bar-track"><span style="width:' + pct.toFixed(1) + '%"></span></span>' +
+        '<span class="leaderboard-score">' + score.toFixed(2) + '</span>' +
+        '<span class="leaderboard-muted">' + esc(String(item.cards || 0)) + ' cards</span>' +
+      '</button>';
+    }).join('');
+    return rows || '<div class="empty-state">No submitted leaderboard cards yet.</div>';
+  }
+
+  function renderLeaderboardScatter(items, category) {
+    if (!leaderboardScatterEl) return;
+    if (!items.length) {
+      leaderboardScatterEl.innerHTML = '<div class="empty-state">No points yet.</div>';
+      return;
+    }
+    var maxRatings = Math.max(1, items.reduce(function (m, item) { return Math.max(m, item.ratings || 0); }, 0));
+    var width = 420;
+    var height = 220;
+    var points = items.slice(0, 24).map(function (item) {
+      var score = leaderboardScore(item, category);
+      var x = 32 + (score / 5) * (width - 56);
+      var y = height - 30 - ((item.ratings || 0) / maxRatings) * (height - 60);
+      var r = item.high_variance ? 6 : 4;
+      return '<circle class="leaderboard-point" data-key="' + esc(item.key) + '" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + r + '"><title>' + esc(comboLabel(item) + ' · ' + score.toFixed(2) + ' · ' + (item.ratings || 0) + ' ratings') + '</title></circle>';
+    }).join('');
+    leaderboardScatterEl.innerHTML = '<svg class="leaderboard-scatter-svg" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Score by sample size">' +
+      '<line x1="32" y1="' + (height - 30) + '" x2="' + (width - 16) + '" y2="' + (height - 30) + '"></line>' +
+      '<line x1="32" y1="16" x2="32" y2="' + (height - 30) + '"></line>' +
+      '<text x="' + (width - 54) + '" y="' + (height - 8) + '">score</text>' +
+      '<text x="8" y="24">n</text>' + points + '</svg>';
+  }
+
+  function renderLeaderboardDetail(item) {
+    if (!leaderboardDetailEl) return;
+    if (!item) {
+      leaderboardDetailEl.innerHTML = '<div class="empty-state">Select a combo.</div>';
+      return;
+    }
+    var bars = (leaderboardSnapshot.categories || []).map(function (cat) {
+      var score = leaderboardScore(item, cat);
+      var pct = Math.max(0, Math.min(100, (score / 5) * 100));
+      return '<div class="leaderboard-category-row"><span>' + esc(leaderboardCategoryLabel(cat)) + '</span><div class="leaderboard-bar-track"><span style="width:' + pct.toFixed(1) + '%"></span></div><strong>' + score.toFixed(2) + '</strong></div>';
+    }).join('');
+    var trend = (item.recent_trend || []).map(function (v) { return v.toFixed(2); }).join(' → ');
+    var delta = typeof item.self_delta === 'number' ? item.self_delta : 0;
+    var peerOnly = typeof item.peer_only_overall === 'number' ? item.peer_only_overall : item.overall;
+    var deltaLabel = (delta > 0 ? '+' : '') + delta.toFixed(2);
+    leaderboardDetailEl.innerHTML = '<div class="leaderboard-detail-title">' + esc(comboLabel(item)) + '</div>' +
+      bars +
+      '<div class="leaderboard-detail-meta">' +
+      '<span>' + esc(String(item.cards || 0)) + ' cards</span>' +
+      '<span>' + esc(String(item.ratings || 0)) + ' ratings</span>' +
+      '<span>' + esc(String(item.variance || 0)) + ' variance</span>' +
+      '<span>Peer ' + esc(peerOnly.toFixed(2)) + '</span>' +
+      '<span>Self Δ ' + esc(deltaLabel) + '</span>' +
+      '</div>' +
+      '<div class="leaderboard-trend">' + esc(trend || 'No trend yet') + '</div>';
+  }
+
+  function renderLeaderboardRollup(items) {
+    if (!leaderboardModelRollupEl) return;
+    if (!items.length) {
+      leaderboardModelRollupEl.innerHTML = '<div class="empty-state">No model rollups yet.</div>';
+      return;
+    }
+    leaderboardModelRollupEl.innerHTML = items.slice(0, 8).map(function (item, idx) {
+      return '<div class="leaderboard-rollup-row"><span>' + (idx + 1) + '. ' + esc(item.model || 'unknown') + '</span><strong>' + (item.overall || 0).toFixed(2) + '</strong><small>' + esc(String(item.cards || 0)) + ' cards</small></div>';
+    }).join('');
+  }
+
+  function renderLeaderboard() {
+    var view = leaderboardSnapshot || { aggregates: [], model_rollups: [], categories: [] };
+    var category = (leaderboardCategorySelect && leaderboardCategorySelect.value) || 'overall';
+    var items = view.aggregates || [];
+    if (!selectedLeaderboardKey && items.length) selectedLeaderboardKey = items[0].key;
+    if (selectedLeaderboardKey && !items.some(function (item) { return item.key === selectedLeaderboardKey; })) {
+      selectedLeaderboardKey = items.length ? items[0].key : null;
+    }
+    if (leaderboardMainEl) {
+      leaderboardMainEl.innerHTML = renderLeaderboardBars(items, category);
+      leaderboardMainEl.querySelectorAll('.leaderboard-rank-row').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          selectedLeaderboardKey = btn.getAttribute('data-key');
+          renderLeaderboard();
+        });
+      });
+    }
+    renderLeaderboardSummary();
+    renderLeaderboardScatter(items, category);
+    renderLeaderboardDetail(items.find(function (item) { return item.key === selectedLeaderboardKey; }));
+    renderLeaderboardRollup(view.model_rollups || []);
+  }
+
+  function loadLeaderboard() {
+    var category = leaderboardCategorySelect ? leaderboardCategorySelect.value : 'overall';
+    var includeSelf = leaderboardIncludeSelfToggle && leaderboardIncludeSelfToggle.checked;
+    var qs = '?category=' + encodeURIComponent(category || 'overall') + '&exclude_self=' + encodeURIComponent(includeSelf ? 'false' : 'true');
+    return api('GET', '/leaderboard' + qs)
+      .then(function (data) {
+        leaderboardSnapshot = data || { aggregates: [], model_rollups: [], categories: [] };
+        renderLeaderboard();
+      })
+      .catch(function (err) {
+        leaderboardSnapshot = { aggregates: [], model_rollups: [], categories: [] };
+        renderLeaderboard();
+        console.error('Failed to load leaderboard:', err);
+      });
+  }
+
+  function openLeaderboardViewer() {
+    if (!leaderboardViewerModal) return;
+    leaderboardViewerModal.classList.remove('hidden');
+    loadLeaderboard();
+    updateBodyModalLock();
+    if (leaderboardViewerCloseBtn && leaderboardViewerCloseBtn.focus) leaderboardViewerCloseBtn.focus();
+  }
+
+  function closeLeaderboardViewer() {
+    if (!leaderboardViewerModal) return;
+    leaderboardViewerModal.classList.add('hidden');
+    updateBodyModalLock();
   }
 
   function addMemoryRecord() {
@@ -2649,7 +2843,8 @@
     var memoryViewerOpen = memoryViewerModal && !memoryViewerModal.classList.contains('hidden');
     var memoryOnboardingOpen = memoryOnboardingModal && !memoryOnboardingModal.classList.contains('hidden');
     var attachmentOpen = attachmentLightboxModal && !attachmentLightboxModal.classList.contains('hidden');
-    document.body.style.overflow = (settingsOpen || roomSettingsOpen || memoryViewerOpen || memoryOnboardingOpen || messageDebugState.open || openQuestionModalState.open || attachmentOpen) ? 'hidden' : '';
+    var leaderboardOpen = leaderboardViewerModal && !leaderboardViewerModal.classList.contains('hidden');
+    document.body.style.overflow = (settingsOpen || roomSettingsOpen || memoryViewerOpen || leaderboardOpen || memoryOnboardingOpen || messageDebugState.open || openQuestionModalState.open || attachmentOpen) ? 'hidden' : '';
   }
 
   function closeMessageDebugModal() {
@@ -3860,6 +4055,7 @@
       applyNotificationSettings();
       applyRetentionSettings();
       applyMemorySettings();
+      applyLeaderboardSettings();
     }).catch(function () {});
   }
 
@@ -3967,6 +4163,7 @@
         applyShowSystemEvents(serverSettings.show_system_events !== false);
         applyDebugButtonSetting(!!serverSettings.debug_button_enabled);
         applyMemorySettings();
+        applyLeaderboardSettings();
         if (agentIDDefaultInput) agentIDDefaultInput.value = serverSettings.agent_id_default || '';
       }
       if (data.macros && typeof data.macros === 'object') {
@@ -4023,6 +4220,7 @@
       applyShowSystemEvents(true);
       applyDebugButtonSetting(false);
       applyMemorySettings();
+      applyLeaderboardSettings();
       applyNotificationSettings();
       renderMacrosList();
       renderFleetsList();
@@ -4092,6 +4290,9 @@
             break;
           case 'fleets_updated':
             loadFleets().catch(function () {});
+            break;
+          case 'leaderboard_updated':
+            if (leaderboardViewerModal && !leaderboardViewerModal.classList.contains('hidden')) loadLeaderboard().catch(function () {});
             break;
           case 'usages_updated':
             renderUsages(frame.data);
@@ -5704,6 +5905,10 @@
       closeMemoryViewer();
       return;
     }
+    if (e.key === 'Escape' && leaderboardViewerModal && !leaderboardViewerModal.classList.contains('hidden')) {
+      closeLeaderboardViewer();
+      return;
+    }
     if (e.key === 'Escape' && roomSettingsModal && !roomSettingsModal.classList.contains('hidden')) {
       closeRoomSettings();
       return;
@@ -5823,6 +6028,12 @@
   if (memoryViewerBtn) memoryViewerBtn.addEventListener('click', openMemoryViewer);
   if (memoryViewerCloseBtn) memoryViewerCloseBtn.addEventListener('click', closeMemoryViewer);
   if (memoryViewerOverlay) memoryViewerOverlay.addEventListener('click', closeMemoryViewer);
+  if (leaderboardViewerBtn) leaderboardViewerBtn.addEventListener('click', openLeaderboardViewer);
+  if (leaderboardViewerCloseBtn) leaderboardViewerCloseBtn.addEventListener('click', closeLeaderboardViewer);
+  if (leaderboardViewerOverlay) leaderboardViewerOverlay.addEventListener('click', closeLeaderboardViewer);
+  if (leaderboardRefreshBtn) leaderboardRefreshBtn.addEventListener('click', loadLeaderboard);
+  if (leaderboardCategorySelect) leaderboardCategorySelect.addEventListener('change', loadLeaderboard);
+  if (leaderboardIncludeSelfToggle) leaderboardIncludeSelfToggle.addEventListener('change', loadLeaderboard);
   if (memoryOnboardingEnableBtn) {
     memoryOnboardingEnableBtn.addEventListener('click', function () {
       setMemoryEnabled(true).then(closeMemoryOnboarding);

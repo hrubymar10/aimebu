@@ -129,6 +129,9 @@ type store struct {
 	memoryMu sync.RWMutex
 	memory   map[string]types.MemoryRecord
 
+	leaderboardsMu sync.RWMutex
+	leaderboards   []types.LeaderboardRatingCard
+
 	rolesMu        sync.RWMutex
 	rolesOverrides map[string]roleOverrideEntry // catalog key → metadata/body override
 	rolesCustom    map[string]customRoleEntry   // custom key → metadata/body override
@@ -165,6 +168,7 @@ func newStore(dir string) (*store, error) {
 		attachments:            make(map[string]AttachmentEntry),
 		reactions:              make(map[int64][]types.Reaction),
 		memory:                 make(map[string]types.MemoryRecord),
+		leaderboards:           []types.LeaderboardRatingCard{},
 		rolesOverrides:         make(map[string]roleOverrideEntry),
 		rolesCustom:            make(map[string]customRoleEntry),
 		warnedLegacy:           make(map[string]bool),
@@ -355,6 +359,10 @@ func (s *store) load() error {
 	// Curated bus memory — durable knowledge; survives conversation prune and
 	// is wiped only by prune -a.
 	s.loadMemory()
+
+	// Leaderboard cards — durable evaluation records; survives conversation
+	// prune and is wiped only by prune -a.
+	s.loadLeaderboards()
 
 	// Macros — separate from schema-versioned state; survives schema wipes.
 	// Handles three historical shapes:
@@ -2563,6 +2571,7 @@ func (s *store) clearAll(includeSettings bool) {
 	s.reactionsMu.Unlock()
 	if includeSettings {
 		s.clearMemory()
+		s.clearLeaderboards()
 		s.macrosMu.Lock()
 		s.macros = make(map[string]string)
 		s.seenDefaults = make(map[string]bool)

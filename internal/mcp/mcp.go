@@ -389,6 +389,48 @@ var tools = []tool{
 		},
 	},
 	{
+		Name:        "bus_leaderboard_start",
+		Description: "Start a leaderboard voting session for a room. Leader-only. The server posts the rating request as a system message in that room and returns the current AI participants; no round state is persisted.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"room": {Type: "string", Description: "Rated room ID."},
+			},
+			Required: []string{"room"},
+		},
+	},
+	{
+		Name:        "bus_leaderboard_submit",
+		Description: "Submit anonymous leaderboard rating cards. Submit one numeric card per subject, including yourself when asked. The server uses subject only to fill subject model/harness and is_selfreview, then appends anonymous cards. Use score 1-5 or null for N/A.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"cards": {Type: "array", Description: "One card per subject participant.", Items: &propRef{Type: "object", Required: []string{"subject", "ratings"}, Properties: map[string]property{
+					"subject": {Type: "string", Description: "Subject agent full ID."},
+					"ratings": {Type: "object", Description: "Map of category key to {score}. Category keys: task_outcome, role_execution, collaboration_process, judgment_scope, context_understanding.", Properties: map[string]property{
+						"task_outcome":          {Type: "object", Description: "Task Outcome rating.", Properties: map[string]property{"score": {Type: "integer", Description: "1-5, or null/omit for N/A."}}},
+						"role_execution":        {Type: "object", Description: "Role Execution rating.", Properties: map[string]property{"score": {Type: "integer", Description: "1-5, or null/omit for N/A."}}},
+						"collaboration_process": {Type: "object", Description: "Collaboration & Process rating.", Properties: map[string]property{"score": {Type: "integer", Description: "1-5, or null/omit for N/A."}}},
+						"judgment_scope":        {Type: "object", Description: "Judgment & Scope rating.", Properties: map[string]property{"score": {Type: "integer", Description: "1-5, or null/omit for N/A."}}},
+						"context_understanding": {Type: "object", Description: "Context Understanding rating.", Properties: map[string]property{"score": {Type: "integer", Description: "1-5, or null/omit for N/A."}}},
+					}},
+				}}},
+			},
+			Required: []string{"cards"},
+		},
+	},
+	{
+		Name:        "bus_leaderboard_list",
+		Description: "List leaderboard aggregates. Aggregates are computed on read by model+harness from flat rating cards; self-reviews are excluded by default.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"category":     {Type: "string", Description: "overall or one category key. Defaults to overall."},
+				"exclude_self": {Type: "boolean", Description: "Exclude self-reviews from aggregate calculations. Defaults true."},
+			},
+		},
+	},
+	{
 		Name:        "bus_role_assign",
 		Description: "Assign or change a role for an AI agent in a room. Emits a concise addressed system message; use bus_role_get for the full instructions. Pass empty role_key to unassign.",
 		InputSchema: inputSchema{
@@ -806,6 +848,49 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			q.Set("limit", fmt.Sprintf("%d", p.Limit))
 		}
 		return c.Get("/recall?" + q.Encode())
+
+	case "bus_leaderboard_start":
+		var p struct {
+			Room string `json:"room"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return "", fmt.Errorf("invalid args: %w", err)
+		}
+		return c.Post("/leaderboard/start", map[string]any{
+			"agent_id": c.AgentID,
+			"room":     p.Room,
+		})
+
+	case "bus_leaderboard_submit":
+		var p struct {
+			Cards []types.LeaderboardRatingSubmission `json:"cards"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return "", fmt.Errorf("invalid args: %w", err)
+		}
+		return c.Post("/leaderboard/cards", map[string]any{
+			"agent_id": c.AgentID,
+			"cards":    p.Cards,
+		})
+
+	case "bus_leaderboard_list":
+		var p struct {
+			Category    string `json:"category"`
+			ExcludeSelf *bool  `json:"exclude_self"`
+		}
+		_ = json.Unmarshal(args, &p)
+		q := url.Values{}
+		if p.Category != "" {
+			q.Set("category", p.Category)
+		}
+		if p.ExcludeSelf != nil && !*p.ExcludeSelf {
+			q.Set("exclude_self", "false")
+		}
+		path := "/leaderboard"
+		if enc := q.Encode(); enc != "" {
+			path += "?" + enc
+		}
+		return c.Get(path)
 
 	case "bus_role_assign":
 		var p struct {
