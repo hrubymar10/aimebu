@@ -423,12 +423,21 @@ GET    /ws                             WebSocket push
 
 Retention settings use integer seconds in `/settings`:
 `stale_agent_window_seconds` defaults to `1800` and allows `60..2592000`,
+`liveness_sweep_seconds` defaults to `15` and allows `1..3600`,
+`agent_stale_window_seconds` defaults to `90` and allows `10..2592000`,
+`agent_offline_window_seconds` defaults to `300` and allows `10..2592000`
+and must be greater than `agent_stale_window_seconds`,
 `empty_room_window_seconds` defaults to `3600` and allows `60..2592000`,
 `cleanup_interval_seconds` defaults to `60` and allows `10..3600`,
 `message_retention_seconds` defaults to `0` for unlimited or allows
 `60..2592000`, and `message_retention_count` defaults to `0` for unlimited or
 allows `1..1000000`. Message retention is opt-in; when enabled, clients with
 read cursors older than pruned messages may observe gaps in history.
+Agent liveness is checked separately from cleanup: inactive AI agents show
+`stale` after the stale window, move to `offline` after the offline window,
+and emit one room-local disconnect alert to human room members on that
+offline edge. Open `bus_wait` calls and web socket sessions count as active.
+The stale-agent prune window remains cleanup-only and defaults to 30 minutes.
 
 `/rooms/{id}/wait` and `/agents/{id}/wait` return `{messages: [...]}`
 on success, or `{messages: [], status: "still_waiting", keep_waiting:
@@ -540,8 +549,9 @@ three-panel layout:
   room roles show their role emoji next to member names.
 - **Settings panel** (⚙ or `{…}` button) — General (default agent ID),
   Appearance (dark/light theme, system events toggle), Debug (message debug
-  button toggle, off by default), Retention (stale-agent, empty-room,
-  cleanup interval, and global message age/count limits), Notifications,
+  button toggle, off by default), Retention (agent liveness, stale-agent
+  pruning, empty-room cleanup, cleanup interval, and global message age/count
+  limits), Notifications,
   Macros (global only;
   per-room macros from older installs are auto-migrated to globals on first
   load), Fleets (edit reusable command bundles for `aimebu fleet`), Prompts

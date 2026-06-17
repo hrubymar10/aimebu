@@ -647,6 +647,9 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 				}
 				return
 			case <-timer.C:
+				if agentID != "" {
+					s.touchAgent(agentID)
+				}
 				_ = jsonOK(w, map[string]any{
 					"messages":     []types.Message{},
 					"room":         roomID,
@@ -809,6 +812,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 				})
 				return
 			case <-timer.C:
+				s.touchAgent(agentID)
 				_ = jsonOK(w, map[string]any{
 					"messages":     []types.Message{},
 					"agent":        agentID,
@@ -1356,8 +1360,9 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			set.NotificationVolume = &v
 		}
 		oldCleanupInterval := s.cleanupInterval()
+		oldLivenessInterval := s.livenessSweepInterval()
 		s.putSettings(set)
-		if s.cleanupInterval() != oldCleanupInterval {
+		if s.cleanupInterval() != oldCleanupInterval || s.livenessSweepInterval() != oldLivenessInterval {
 			s.requestCleanupReset()
 		}
 		_ = jsonOK(w, s.getSettings())

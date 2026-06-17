@@ -276,15 +276,21 @@ states are:
 - `respawning`: the wrapper is recovering or starting the next harness turn.
 - `error`: the wrapper hit a terminal recovery error.
 - `stopped`: the wrapper is shutting down cleanly.
-- `stale`: the server has not seen recent activity from the agent.
+- `stale`: the server has not seen recent activity from the agent for the
+  configured stale window (default 90 seconds).
+- `offline`: the server has not seen recent activity for the configured
+  offline window (default 300 seconds). The transition into `offline` emits
+  one room-local disconnect alert to human members; reconnecting emits a
+  quiet room-local recovery line.
 
 pi has full active-state coverage (`thinking`, `tool_call`, `idle`) from its
 structured JSON events. Codex has the same coverage from its structured JSON
 events. Claude Code maps `thinking` and `idle` from PTY spinner glyphs and
 the `← for agents` composer hint, but does not yet emit `tool_call` because
-the TUI has no stable tool-execution marker. When any mapped harness is blocked in
-`bus_wait`, the server overlays the displayed state to `idle` at snapshot time
-without mutating the wrapper-pushed stored state. Harnesses without a mapper
+the TUI has no stable tool-execution marker. When any mapped harness is
+blocked in `bus_wait`, or has an open web socket session, the server treats it
+as active and overlays the displayed state to `idle` at snapshot time without
+mutating ordinary wrapper-pushed stored states. Harnesses without a mapper
 show no badge at all; mapped harnesses currently include only `claude-code`,
 `codex`, and `pi`.
 

@@ -28,6 +28,15 @@ func TestRetentionSettingsDefaults(t *testing.T) {
 	if set.StaleAgentWindowSeconds == nil || *set.StaleAgentWindowSeconds != defaultStaleAgentWindowSeconds {
 		t.Fatalf("stale_agent_window_seconds default = %v, want %d", set.StaleAgentWindowSeconds, defaultStaleAgentWindowSeconds)
 	}
+	if set.LivenessSweepSeconds == nil || *set.LivenessSweepSeconds != defaultLivenessSweepSeconds {
+		t.Fatalf("liveness_sweep_seconds default = %v, want %d", set.LivenessSweepSeconds, defaultLivenessSweepSeconds)
+	}
+	if set.AgentStaleWindowSeconds == nil || *set.AgentStaleWindowSeconds != defaultAgentStaleWindowSeconds {
+		t.Fatalf("agent_stale_window_seconds default = %v, want %d", set.AgentStaleWindowSeconds, defaultAgentStaleWindowSeconds)
+	}
+	if set.AgentOfflineWindowSeconds == nil || *set.AgentOfflineWindowSeconds != defaultAgentOfflineWindowSeconds {
+		t.Fatalf("agent_offline_window_seconds default = %v, want %d", set.AgentOfflineWindowSeconds, defaultAgentOfflineWindowSeconds)
+	}
 	if set.EmptyRoomWindowSeconds == nil || *set.EmptyRoomWindowSeconds != defaultEmptyRoomWindowSeconds {
 		t.Fatalf("empty_room_window_seconds default = %v, want %d", set.EmptyRoomWindowSeconds, defaultEmptyRoomWindowSeconds)
 	}
@@ -47,6 +56,9 @@ func TestRetentionSettingsRoundTrip(t *testing.T) {
 
 	body := bytes.NewBufferString(`{
 		"stale_agent_window_seconds": 600,
+		"liveness_sweep_seconds": 20,
+		"agent_stale_window_seconds": 120,
+		"agent_offline_window_seconds": 600,
 		"empty_room_window_seconds": 900,
 		"cleanup_interval_seconds": 15,
 		"message_retention_seconds": 120,
@@ -69,6 +81,9 @@ func TestRetentionSettingsRoundTrip(t *testing.T) {
 	}
 
 	assertIntPtr(t, "stale_agent_window_seconds", set.StaleAgentWindowSeconds, 600)
+	assertIntPtr(t, "liveness_sweep_seconds", set.LivenessSweepSeconds, 20)
+	assertIntPtr(t, "agent_stale_window_seconds", set.AgentStaleWindowSeconds, 120)
+	assertIntPtr(t, "agent_offline_window_seconds", set.AgentOfflineWindowSeconds, 600)
 	assertIntPtr(t, "empty_room_window_seconds", set.EmptyRoomWindowSeconds, 900)
 	assertIntPtr(t, "cleanup_interval_seconds", set.CleanupIntervalSeconds, 15)
 	assertIntPtr(t, "message_retention_seconds", set.MessageRetentionSeconds, 120)
@@ -84,6 +99,10 @@ func TestRetentionSettingsValidation(t *testing.T) {
 		field string
 	}{
 		{name: "stale agent below floor", body: `{"stale_agent_window_seconds":59}`, field: "stale_agent_window_seconds"},
+		{name: "liveness sweep below floor", body: `{"liveness_sweep_seconds":0}`, field: "liveness_sweep_seconds"},
+		{name: "agent stale below floor", body: `{"agent_stale_window_seconds":9}`, field: "agent_stale_window_seconds"},
+		{name: "agent offline below floor", body: `{"agent_offline_window_seconds":9}`, field: "agent_offline_window_seconds"},
+		{name: "agent stale not below offline", body: `{"agent_stale_window_seconds":300,"agent_offline_window_seconds":300}`, field: "agent_stale_window_seconds"},
 		{name: "empty room above ceiling", body: `{"empty_room_window_seconds":2592001}`, field: "empty_room_window_seconds"},
 		{name: "cleanup interval below floor", body: `{"cleanup_interval_seconds":9}`, field: "cleanup_interval_seconds"},
 		{name: "message seconds below floor", body: `{"message_retention_seconds":1}`, field: "message_retention_seconds"},

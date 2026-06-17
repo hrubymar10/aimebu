@@ -13,31 +13,38 @@ import (
 // Pointer fields use *T so nil (absent from JSON) is distinguishable from an
 // explicit false/zero — nil → server-side default is applied in getSettings().
 type Settings struct {
-	AgentIDDefault          string `json:"agent_id_default,omitempty"`
-	Theme                   string `json:"theme,omitempty"` // "" | "dark" | "light" | "red-dark" | "red-light" | "blue-dark" | "blue-light" | "green-dark" | "green-light" | "high-contrast-dark" | "high-contrast-light"
-	ShowSystemEvents        *bool  `json:"show_system_events,omitempty"`
-	DebugButtonEnabled      *bool  `json:"debug_button_enabled,omitempty"`
-	MemoryEnabled           *bool  `json:"memory_enabled,omitempty"`      // nil = first-run prompt has not answered; effective disabled
-	LeaderboardEnabled      *bool  `json:"leaderboard_enabled,omitempty"` // nil = enabled by default
-	NotificationEnabled     *bool  `json:"notification_enabled,omitempty"`
-	NotificationSound       string `json:"notification_sound,omitempty"`  // "builtin:<name>" or "user:<uuid>"
-	NotificationVolume      *int   `json:"notification_volume,omitempty"` // 0–100
-	StaleAgentWindowSeconds *int   `json:"stale_agent_window_seconds,omitempty"`
-	EmptyRoomWindowSeconds  *int   `json:"empty_room_window_seconds,omitempty"`
-	CleanupIntervalSeconds  *int   `json:"cleanup_interval_seconds,omitempty"`
-	MessageRetentionSeconds *int   `json:"message_retention_seconds,omitempty"`
-	MessageRetentionCount   *int   `json:"message_retention_count,omitempty"`
+	AgentIDDefault            string `json:"agent_id_default,omitempty"`
+	Theme                     string `json:"theme,omitempty"` // "" | "dark" | "light" | "red-dark" | "red-light" | "blue-dark" | "blue-light" | "green-dark" | "green-light" | "high-contrast-dark" | "high-contrast-light"
+	ShowSystemEvents          *bool  `json:"show_system_events,omitempty"`
+	DebugButtonEnabled        *bool  `json:"debug_button_enabled,omitempty"`
+	MemoryEnabled             *bool  `json:"memory_enabled,omitempty"`      // nil = first-run prompt has not answered; effective disabled
+	LeaderboardEnabled        *bool  `json:"leaderboard_enabled,omitempty"` // nil = enabled by default
+	NotificationEnabled       *bool  `json:"notification_enabled,omitempty"`
+	NotificationSound         string `json:"notification_sound,omitempty"`  // "builtin:<name>" or "user:<uuid>"
+	NotificationVolume        *int   `json:"notification_volume,omitempty"` // 0–100
+	StaleAgentWindowSeconds   *int   `json:"stale_agent_window_seconds,omitempty"`
+	LivenessSweepSeconds      *int   `json:"liveness_sweep_seconds,omitempty"`
+	AgentStaleWindowSeconds   *int   `json:"agent_stale_window_seconds,omitempty"`
+	AgentOfflineWindowSeconds *int   `json:"agent_offline_window_seconds,omitempty"`
+	EmptyRoomWindowSeconds    *int   `json:"empty_room_window_seconds,omitempty"`
+	CleanupIntervalSeconds    *int   `json:"cleanup_interval_seconds,omitempty"`
+	MessageRetentionSeconds   *int   `json:"message_retention_seconds,omitempty"`
+	MessageRetentionCount     *int   `json:"message_retention_count,omitempty"`
 }
 
 const (
-	defaultStaleAgentWindowSeconds = 30 * 60
-	defaultEmptyRoomWindowSeconds  = 60 * 60
-	defaultCleanupIntervalSeconds  = 60
-	defaultMessageRetentionSeconds = 0
-	defaultMessageRetentionCount   = 0
+	defaultStaleAgentWindowSeconds   = 30 * 60
+	defaultLivenessSweepSeconds      = 15
+	defaultAgentStaleWindowSeconds   = 90
+	defaultAgentOfflineWindowSeconds = 5 * 60
+	defaultEmptyRoomWindowSeconds    = 60 * 60
+	defaultCleanupIntervalSeconds    = 60
+	defaultMessageRetentionSeconds   = 0
+	defaultMessageRetentionCount     = 0
 
 	maxRetentionWindowSeconds = 30 * 24 * 60 * 60
 	maxCleanupIntervalSeconds = 60 * 60
+	maxLivenessSweepSeconds   = 60 * 60
 	maxMessageRetentionCount  = 1_000_000
 )
 
@@ -106,6 +113,18 @@ func (s *store) getSettings() Settings {
 		v := defaultStaleAgentWindowSeconds
 		set.StaleAgentWindowSeconds = &v
 	}
+	if set.LivenessSweepSeconds == nil {
+		v := defaultLivenessSweepSeconds
+		set.LivenessSweepSeconds = &v
+	}
+	if set.AgentStaleWindowSeconds == nil {
+		v := defaultAgentStaleWindowSeconds
+		set.AgentStaleWindowSeconds = &v
+	}
+	if set.AgentOfflineWindowSeconds == nil {
+		v := defaultAgentOfflineWindowSeconds
+		set.AgentOfflineWindowSeconds = &v
+	}
 	if set.EmptyRoomWindowSeconds == nil {
 		v := defaultEmptyRoomWindowSeconds
 		set.EmptyRoomWindowSeconds = &v
@@ -127,6 +146,18 @@ func (s *store) getSettings() Settings {
 
 func (s Settings) staleAgentWindow() time.Duration {
 	return time.Duration(settingIntInRange(s.StaleAgentWindowSeconds, defaultStaleAgentWindowSeconds, 60, maxRetentionWindowSeconds, false)) * time.Second
+}
+
+func (s Settings) livenessSweepInterval() time.Duration {
+	return time.Duration(settingIntInRange(s.LivenessSweepSeconds, defaultLivenessSweepSeconds, 1, maxLivenessSweepSeconds, false)) * time.Second
+}
+
+func (s Settings) agentStaleWindow() time.Duration {
+	return time.Duration(settingIntInRange(s.AgentStaleWindowSeconds, defaultAgentStaleWindowSeconds, 10, maxRetentionWindowSeconds, false)) * time.Second
+}
+
+func (s Settings) agentOfflineWindow() time.Duration {
+	return time.Duration(settingIntInRange(s.AgentOfflineWindowSeconds, defaultAgentOfflineWindowSeconds, 10, maxRetentionWindowSeconds, false)) * time.Second
 }
 
 func (s Settings) emptyRoomWindow() time.Duration {
@@ -166,6 +197,20 @@ func settingIntInRange(v *int, fallback, min, max int, zeroUnlimited bool) int {
 func validateRetentionSettings(set Settings) error {
 	if err := validateSettingRange("stale_agent_window_seconds", set.StaleAgentWindowSeconds, 60, maxRetentionWindowSeconds, false); err != nil {
 		return err
+	}
+	if err := validateSettingRange("liveness_sweep_seconds", set.LivenessSweepSeconds, 1, maxLivenessSweepSeconds, false); err != nil {
+		return err
+	}
+	if err := validateSettingRange("agent_stale_window_seconds", set.AgentStaleWindowSeconds, 10, maxRetentionWindowSeconds, false); err != nil {
+		return err
+	}
+	if err := validateSettingRange("agent_offline_window_seconds", set.AgentOfflineWindowSeconds, 10, maxRetentionWindowSeconds, false); err != nil {
+		return err
+	}
+	staleSeconds := settingInt(set.AgentStaleWindowSeconds, defaultAgentStaleWindowSeconds)
+	offlineSeconds := settingInt(set.AgentOfflineWindowSeconds, defaultAgentOfflineWindowSeconds)
+	if staleSeconds >= offlineSeconds {
+		return fmt.Errorf("agent_stale_window_seconds must be less than agent_offline_window_seconds")
 	}
 	if err := validateSettingRange("empty_room_window_seconds", set.EmptyRoomWindowSeconds, 60, maxRetentionWindowSeconds, false); err != nil {
 		return err
@@ -209,6 +254,18 @@ func (s *store) putSettings(set Settings) {
 
 func (s *store) staleAgentWindow() time.Duration {
 	return s.getSettings().staleAgentWindow()
+}
+
+func (s *store) livenessSweepInterval() time.Duration {
+	return s.getSettings().livenessSweepInterval()
+}
+
+func (s *store) agentStaleWindow() time.Duration {
+	return s.getSettings().agentStaleWindow()
+}
+
+func (s *store) agentOfflineWindow() time.Duration {
+	return s.getSettings().agentOfflineWindow()
 }
 
 func (s *store) emptyRoomWindow() time.Duration {

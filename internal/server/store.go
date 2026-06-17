@@ -99,6 +99,7 @@ type store struct {
 	// happens outside the main state lock.
 	waitMu    sync.RWMutex
 	openWaits map[string]map[string]int
+	openWS    map[string]int
 
 	// Tracks when a room first became empty (for cleanup)
 	roomEmptySince map[string]time.Time
@@ -147,6 +148,23 @@ type store struct {
 	warnedAmbiguousMention map[string]bool
 }
 
+type livenessEvent struct {
+	AgentID string
+	Kind    string
+	Rooms   []livenessRoomEvent
+}
+
+type livenessRoomEvent struct {
+	RoomID  string
+	RoleKey string
+	Humans  []string
+}
+
+const (
+	livenessEventOffline   = "offline"
+	livenessEventReconnect = "reconnect"
+)
+
 func newStore(dir string) (*store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create store dir: %w", err)
@@ -159,6 +177,7 @@ func newStore(dir string) (*store, error) {
 		agents:                 make(map[string]*types.Agent),
 		roomSubs:               make(map[string][]chan types.Message),
 		openWaits:              make(map[string]map[string]int),
+		openWS:                 make(map[string]int),
 		roomEmptySince:         make(map[string]time.Time),
 		cleanupResetCh:         make(chan struct{}, 1),
 		macros:                 make(map[string]string),
@@ -830,15 +849,20 @@ func (s *store) emitSystemMessage(roomID, body string) {
 }
 
 func (s *store) emitSystemMessageTo(roomID, body string, targets []string) {
+	s.emitSystemMessageFull(roomID, body, targets, false)
+}
+
+func (s *store) emitSystemMessageFull(roomID, body string, targets []string, needsAttention bool) {
 	id := s.nextID.Add(1)
 	msg := types.Message{
-		ID:        id,
-		RoomID:    roomID,
-		From:      "_system",
-		FromKind:  "system",
-		Body:      body,
-		CreatedAt: now(),
-		Targets:   targets,
+		ID:                  id,
+		RoomID:              roomID,
+		From:                "_system",
+		FromKind:            "system",
+		Body:                body,
+		CreatedAt:           now(),
+		Targets:             targets,
+		NeedsHumanAttention: needsAttention,
 	}
 
 	s.mu.Lock()
@@ -861,6 +885,15 @@ func (s *store) emitSystemMessageTo(roomID, body string, targets []string) {
 		select {
 		case ch <- msg:
 		default:
+		}
+	}
+	if needsAttention {
+		attEvt := MetaEvent{Type: "attention_event", Data: map[string]any{"room_id": roomID, "message": msg}}
+		for _, ch := range s.metaSubs {
+			select {
+			case ch <- attEvt:
+			default:
+			}
 		}
 	}
 	s.subMu.Unlock()
@@ -1918,7 +1951,8 @@ func isValidAgentState(state string) bool {
 		types.AgentStateRespawning,
 		types.AgentStateError,
 		types.AgentStateStopped,
-		types.AgentStateStale:
+		types.AgentStateStale,
+		types.AgentStateOffline:
 		return true
 	default:
 		return false
@@ -1953,6 +1987,31 @@ func (s *store) setAgentState(agentID, state string) bool {
 }
 
 func (s *store) deriveAgentStates(now time.Time) {
+	s.emitLivenessEvents(s.sweepAgentLiveness(now))
+}
+
+func (s *store) activeAgentIDs() map[string]bool {
+	active := make(map[string]bool)
+	s.waitMu.RLock()
+	for agentID, scopes := range s.openWaits {
+		if len(scopes) > 0 {
+			active[agentID] = true
+		}
+	}
+	for agentID, count := range s.openWS {
+		if count > 0 {
+			active[agentID] = true
+		}
+	}
+	s.waitMu.RUnlock()
+	return active
+}
+
+func (s *store) sweepAgentLiveness(now time.Time) []livenessEvent {
+	active := s.activeAgentIDs()
+	staleWindow := s.agentStaleWindow()
+	offlineWindow := s.agentOfflineWindow()
+	var events []livenessEvent
 	changed := false
 	s.mu.Lock()
 	for _, a := range s.agents {
@@ -1964,16 +2023,52 @@ func (s *store) deriveAgentStates(now time.Time) {
 			}
 			continue
 		}
-		next := ""
-		if lastSeen, err := time.Parse(time.RFC3339, a.LastSeen); err == nil && now.Sub(lastSeen) > time.Minute {
-			if a.State != types.AgentStateStopped && a.State != types.AgentStateError {
-				next = types.AgentStateStale
+
+		prev := a.State
+		next := prev
+		if active[a.ID] {
+			if prev == types.AgentStateOffline {
+				events = append(events, livenessEvent{
+					AgentID: a.ID,
+					Kind:    livenessEventReconnect,
+					Rooms:   s.livenessRoomsLocked(a.ID),
+				})
+			}
+			if prev == types.AgentStateStale || prev == types.AgentStateOffline {
+				next = types.AgentStateIdle
+			}
+		} else if prev != types.AgentStateStopped && prev != types.AgentStateError {
+			if lastSeen, err := time.Parse(time.RFC3339, a.LastSeen); err == nil {
+				age := now.Sub(lastSeen)
+				switch {
+				case age > offlineWindow:
+					next = types.AgentStateOffline
+				case age > staleWindow:
+					next = types.AgentStateStale
+				case prev == types.AgentStateStale || prev == types.AgentStateOffline:
+					if prev == types.AgentStateOffline {
+						events = append(events, livenessEvent{
+							AgentID: a.ID,
+							Kind:    livenessEventReconnect,
+							Rooms:   s.livenessRoomsLocked(a.ID),
+						})
+					}
+					next = types.AgentStateIdle
+				}
 			}
 		}
-		if next != "" && a.State != next {
+
+		if prev != next {
 			a.State = next
 			a.StateAt = now
 			changed = true
+			if next == types.AgentStateOffline {
+				events = append(events, livenessEvent{
+					AgentID: a.ID,
+					Kind:    livenessEventOffline,
+					Rooms:   s.livenessRoomsLocked(a.ID),
+				})
+			}
 		}
 	}
 	s.mu.Unlock()
@@ -1981,6 +2076,66 @@ func (s *store) deriveAgentStates(now time.Time) {
 	if changed {
 		s.broadcastAgentUpdate()
 	}
+	return events
+}
+
+func (s *store) livenessRoomsLocked(agentID string) []livenessRoomEvent {
+	var rooms []livenessRoomEvent
+	for roomID, room := range s.rooms {
+		if !memberInRoomLocked(room, agentID) {
+			continue
+		}
+		var humans []string
+		for _, memberID := range room.Members {
+			if a, ok := s.agents[memberID]; ok && a.Kind == "human" {
+				humans = append(humans, a.ID)
+			}
+		}
+		roleKey := ""
+		if room.Roles != nil {
+			roleKey = room.Roles[agentID]
+		}
+		rooms = append(rooms, livenessRoomEvent{RoomID: roomID, RoleKey: roleKey, Humans: humans})
+	}
+	sort.Slice(rooms, func(i, j int) bool { return rooms[i].RoomID < rooms[j].RoomID })
+	return rooms
+}
+
+func memberInRoomLocked(room *types.Room, agentID string) bool {
+	for _, memberID := range room.Members {
+		if memberID == agentID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *store) emitLivenessEvents(events []livenessEvent) {
+	for _, evt := range events {
+		for _, room := range evt.Rooms {
+			switch evt.Kind {
+			case livenessEventOffline:
+				body := fmt.Sprintf("%s looks offline (no activity for %s)", livenessSubject(room.RoleKey, evt.AgentID), formatDurationForHumans(s.agentOfflineWindow()))
+				s.emitSystemMessageFull(room.RoomID, body, room.Humans, len(room.Humans) > 0)
+			case livenessEventReconnect:
+				s.emitSystemMessage(room.RoomID, evt.AgentID+" reconnected")
+			}
+		}
+	}
+}
+
+func livenessSubject(roleKey, agentID string) string {
+	if strings.TrimSpace(roleKey) == "" {
+		return agentID
+	}
+	return fmt.Sprintf("%s %s", roleKey, agentID)
+}
+
+func formatDurationForHumans(d time.Duration) string {
+	if d%time.Minute == 0 {
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	}
+	return fmt.Sprintf("%ds", int(d/time.Second))
 }
 
 // roomHead returns the highest message ID currently in the room, or 0 if
@@ -2093,7 +2248,7 @@ func (s *store) applyAgentWaitStateOverlay(agents []types.Agent) {
 		if agents[i].Kind != "ai" {
 			continue
 		}
-		if len(s.openWaits[agents[i].ID]) > 0 {
+		if len(s.openWaits[agents[i].ID]) > 0 || s.openWS[agents[i].ID] > 0 {
 			agents[i].State = types.AgentStateIdle
 		}
 	}
@@ -2433,6 +2588,37 @@ func (s *store) enterWait(agentID, roomID string) {
 	}
 }
 
+func (s *store) enterWS(agentID string) {
+	if agentID == "" {
+		return
+	}
+	s.waitMu.Lock()
+	hadActive := len(s.openWaits[agentID]) > 0 || s.openWS[agentID] > 0
+	s.openWS[agentID]++
+	s.waitMu.Unlock()
+	if !hadActive {
+		s.broadcastAgentUpdate()
+	}
+}
+
+func (s *store) leaveWS(agentID string) {
+	if agentID == "" {
+		return
+	}
+	s.waitMu.Lock()
+	if s.openWS[agentID] > 0 {
+		s.openWS[agentID]--
+		if s.openWS[agentID] == 0 {
+			delete(s.openWS, agentID)
+		}
+	}
+	hasActive := len(s.openWaits[agentID]) > 0 || s.openWS[agentID] > 0
+	s.waitMu.Unlock()
+	if !hasActive {
+		s.broadcastAgentUpdate()
+	}
+}
+
 // leaveWait decrements the per-scope counter and, when that specific scope
 // drops to zero, broadcasts waiting=false for it. Other scopes for the same
 // agent remain unaffected.
@@ -2596,6 +2782,7 @@ func (s *store) clearAll(includeSettings bool) {
 // messages using the retention settings from settings.json.
 func (s *store) startCleanup(ctx context.Context) {
 	ticker := time.NewTicker(s.cleanupInterval())
+	livenessTicker := time.NewTicker(s.livenessSweepInterval())
 	go func() {
 		for {
 			select {
@@ -2603,11 +2790,14 @@ func (s *store) startCleanup(ctx context.Context) {
 				s.cleanupStaleAgents()
 				s.cleanupEmptyRooms()
 				s.cleanupMessages()
+			case <-livenessTicker.C:
 				s.deriveAgentStates(time.Now().UTC())
 			case <-s.cleanupResetCh:
 				ticker.Reset(s.cleanupInterval())
+				livenessTicker.Reset(s.livenessSweepInterval())
 			case <-ctx.Done():
 				ticker.Stop()
+				livenessTicker.Stop()
 				return
 			}
 		}
@@ -2672,7 +2862,7 @@ func (s *store) cleanupStaleAgents() {
 
 	for _, id := range removed {
 		for _, roomID := range removedRooms[id] {
-			s.emitSystemMessage(roomID, id+" disconnected (stale)")
+			s.emitSystemMessage(roomID, id+" pruned after stale timeout")
 		}
 		s.emitSystemMessage("_system", id+" pruned (stale)")
 	}

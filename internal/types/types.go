@@ -208,6 +208,7 @@ const (
 	AgentStateError         = "error"
 	AgentStateStopped       = "stopped"
 	AgentStateStale         = "stale"
+	AgentStateOffline       = "offline"
 )
 
 // Request types

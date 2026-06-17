@@ -74,11 +74,14 @@ func handleWS(s *store) http.HandlerFunc {
 
 		// Clean up room subscriptions
 		wc.mu.Lock()
+		aid := wc.agentID
 		for roomID, ch := range wc.roomChans {
 			s.unsubscribeRoom(roomID, ch)
 		}
 		wc.roomChans = nil
+		wc.agentID = ""
 		wc.mu.Unlock()
+		s.leaveWS(aid)
 
 		conn.Close(websocket.StatusNormalClosure, "bye")
 	}
@@ -195,8 +198,13 @@ func (wc *wsConn) handleCmd(ctx context.Context, cmd wsCmd) {
 	case "hello":
 		if cmd.AgentID != "" {
 			wc.mu.Lock()
+			prev := wc.agentID
 			wc.agentID = cmd.AgentID
 			wc.mu.Unlock()
+			if prev != cmd.AgentID {
+				wc.s.leaveWS(prev)
+				wc.s.enterWS(cmd.AgentID)
+			}
 			// Touch immediately so the agent stays alive
 			wc.s.touchAgent(cmd.AgentID)
 		}

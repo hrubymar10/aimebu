@@ -436,6 +436,33 @@
             </div>
             <div class="settings-row">
               <div class="settings-row-info">
+                <label class="settings-label" for="retention-liveness-sweep-input">Liveness sweep</label>
+                <span class="settings-desc">Seconds between agent liveness checks. Default 15. Range 1-3600.</span>
+              </div>
+              <div class="settings-control">
+                <input type="number" id="retention-liveness-sweep-input" class="settings-text-input retention-number-input" min="1" max="3600" step="1" value="15">
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label" for="retention-agent-stale-input">Agent stale badge</label>
+                <span class="settings-desc">Seconds before an inactive AI shows stale. Default 90. Range 10-2592000.</span>
+              </div>
+              <div class="settings-control">
+                <input type="number" id="retention-agent-stale-input" class="settings-text-input retention-number-input" min="10" max="2592000" step="1" value="90">
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label" for="retention-agent-offline-input">Agent offline alert</label>
+                <span class="settings-desc">Seconds before an inactive AI is marked offline and humans in its rooms are alerted. Default 300. Range 10-2592000.</span>
+              </div>
+              <div class="settings-control">
+                <input type="number" id="retention-agent-offline-input" class="settings-text-input retention-number-input" min="10" max="2592000" step="1" value="300">
+              </div>
+            </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
                 <label class="settings-label" for="retention-empty-room-input">Empty rooms</label>
                 <span class="settings-desc">Seconds before empty rooms are deleted. Default 3600. Range 60-2592000.</span>
               </div>

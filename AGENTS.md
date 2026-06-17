@@ -252,8 +252,10 @@ holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
 `agents/` holds agent-CLI state
 (`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
 `settings.json` stores UI preferences plus global retention settings for
-stale agents, empty rooms, cleanup cadence, message age/count limits, and the
-global `memory_enabled` flag plus the default-on `leaderboard_enabled` flag.
+agent liveness (`liveness_sweep_seconds`, `agent_stale_window_seconds`,
+`agent_offline_window_seconds`), stale-agent pruning, empty rooms, cleanup
+cadence, message age/count limits, and the global `memory_enabled` flag plus
+the default-on `leaderboard_enabled` flag.
 When `memory_enabled` is absent, the web UI has not asked yet and memory is
 effectively disabled.
 Emoji reactions are conversation content and live in `server/reactions.json`;
@@ -287,6 +289,13 @@ the CLI falls back to pruning this config root directly. Legacy flat-layout
 state is migrated into `server/` / `agents/` on first authoritative use by
 `server serve`, `server start`, the offline-prune fallback, or `aimebu agent`;
 unknown root files are left alone.
+
+AI agent liveness is server-owned. The liveness sweep defaults to every 15
+seconds, marks inactive AIs `stale` after 90 seconds, marks them `offline`
+after 300 seconds, and sends one room-local disconnect alert to human members
+on the `offline` edge. Open `bus_wait` calls and web socket sessions count as
+active. The 30-minute stale-agent prune remains cleanup-only and must not be
+treated as the first disconnect signal.
 
 ## Web UI
 

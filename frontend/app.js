@@ -307,6 +307,9 @@
   const usagesEnvBadge = $('#usages-env-badge');
   const usagesProviderRows = $('#usages-provider-rows');
   const retentionStaleAgentInput = $('#retention-stale-agent-input');
+  const retentionLivenessSweepInput = $('#retention-liveness-sweep-input');
+  const retentionAgentStaleInput = $('#retention-agent-stale-input');
+  const retentionAgentOfflineInput = $('#retention-agent-offline-input');
   const retentionEmptyRoomInput = $('#retention-empty-room-input');
   const retentionCleanupIntervalInput = $('#retention-cleanup-interval-input');
   const retentionMessageSecondsInput = $('#retention-message-seconds-input');
@@ -2949,12 +2952,21 @@
     return new Date(isoString).toLocaleDateString();
   }
 
-  function agentStatus(lastSeen) {
-    if (!lastSeen) return 'offline';
-    const diff = Date.now() - new Date(lastSeen).getTime();
-    if (diff < 2 * 60 * 1000) return 'active';
-    if (diff < 10 * 60 * 1000) return 'stale';
-    return 'offline';
+  function agentStatus(agent) {
+    if (!agent) return 'offline';
+    if (typeof agent === 'string') {
+      return agent ? 'active' : 'offline';
+    }
+    switch (agent.state) {
+      case 'stale':
+        return 'stale';
+      case 'offline':
+      case 'stopped':
+      case 'error':
+        return 'offline';
+      default:
+        return agent.last_seen ? 'active' : 'offline';
+    }
   }
 
   function agentStateMeta(state) {
@@ -2975,6 +2987,8 @@
         return { label: 'stopped', className: 'stopped', title: 'stopped' };
       case 'stale':
         return { label: 'stale', className: 'stale', title: 'stale' };
+      case 'offline':
+        return { label: 'offline', className: 'offline', title: 'offline' };
       default:
         return null;
     }
@@ -4001,6 +4015,9 @@
 
   function applyRetentionSettings() {
     if (retentionStaleAgentInput) retentionStaleAgentInput.value = serverSettings.stale_agent_window_seconds || 1800;
+    if (retentionLivenessSweepInput) retentionLivenessSweepInput.value = serverSettings.liveness_sweep_seconds || 15;
+    if (retentionAgentStaleInput) retentionAgentStaleInput.value = serverSettings.agent_stale_window_seconds || 90;
+    if (retentionAgentOfflineInput) retentionAgentOfflineInput.value = serverSettings.agent_offline_window_seconds || 300;
     if (retentionEmptyRoomInput) retentionEmptyRoomInput.value = serverSettings.empty_room_window_seconds || 3600;
     if (retentionCleanupIntervalInput) retentionCleanupIntervalInput.value = serverSettings.cleanup_interval_seconds || 60;
     if (retentionMessageSecondsInput) retentionMessageSecondsInput.value = serverSettings.message_retention_seconds || 0;
@@ -4020,6 +4037,20 @@
     if (field === 'message_retention_count' && !(value === 0 || (value >= 1 && value <= 1000000))) {
       input.setCustomValidity('Use 0 for unlimited, or a value from 1 to 1000000.');
       ok = false;
+    }
+    if (field === 'agent_stale_window_seconds') {
+      var offlineValue = parseInt(retentionAgentOfflineInput && retentionAgentOfflineInput.value, 10);
+      if (Number.isFinite(offlineValue) && value >= offlineValue) {
+        input.setCustomValidity('Use a value lower than the offline alert threshold.');
+        ok = false;
+      }
+    }
+    if (field === 'agent_offline_window_seconds') {
+      var staleValue = parseInt(retentionAgentStaleInput && retentionAgentStaleInput.value, 10);
+      if (Number.isFinite(staleValue) && value <= staleValue) {
+        input.setCustomValidity('Use a value higher than the stale badge threshold.');
+        ok = false;
+      }
     }
     if (!ok) {
       input.reportValidity();
@@ -5370,8 +5401,8 @@
     }
 
     var sorted = agents.slice().sort(function (a, b) {
-      var sa = agentStatus(a.last_seen);
-      var sb = agentStatus(b.last_seen);
+      var sa = agentStatus(a);
+      var sb = agentStatus(b);
       var order = { active: 0, stale: 1, offline: 2 };
       if (order[sa] !== order[sb]) return order[sa] - order[sb];
       return new Date(b.last_seen || 0) - new Date(a.last_seen || 0);
@@ -5485,7 +5516,7 @@
     roomSettingsMembers.innerHTML = members.map(function (memberID) {
       var agent = agents.find(function (a) { return a.id === memberID; }) || {};
       var roleKey = (room.roles && room.roles[memberID]) || '';
-      var status = agentStatus(agent.last_seen);
+      var status = agentStatus(agent);
       var runtime = (agent.model || 'unknown') + ' · ' + (agent.harness || 'unknown');
       var seen = 'seen ' + relativeTime(agent.last_seen);
       var options = '<option value="">No role</option>';
@@ -5541,7 +5572,7 @@
   }
 
   function agentCardHTML(a, context) {
-    var status = agentStatus(a.last_seen);
+    var status = agentStatus(a);
     var room = activeRoomID ? activeRoom() : null;
     var presenceTag = context === 'room' ? agentPresenceHTML(a.id, room) : '';
     var iconSrc = agentIconSrc(a);
@@ -5634,7 +5665,7 @@
     var room = profileContextRoom(profileContext);
     var roleKey = roomRoleKey(room || activeRoom(), a.id);
     var role = roleEntryByKey(roleKey);
-    var status = agentStatus(a.last_seen);
+    var status = agentStatus(a);
     var statusLabel = status === 'active' ? 'Online' : (status === 'stale' ? 'Recently active' : 'Offline');
     var presenceText = agentPresenceText(a.id, room || activeRoom());
     var runtime = a.kind === 'human' ? 'human' : ((a.model || 'unknown') + ' · ' + (a.harness || 'unknown'));
@@ -6065,6 +6096,9 @@
 
   [
     [retentionStaleAgentInput, 'stale_agent_window_seconds'],
+    [retentionLivenessSweepInput, 'liveness_sweep_seconds'],
+    [retentionAgentStaleInput, 'agent_stale_window_seconds'],
+    [retentionAgentOfflineInput, 'agent_offline_window_seconds'],
     [retentionEmptyRoomInput, 'empty_room_window_seconds'],
     [retentionCleanupIntervalInput, 'cleanup_interval_seconds'],
     [retentionMessageSecondsInput, 'message_retention_seconds'],
