@@ -37,6 +37,9 @@ Rules:
 - If the diff is substantive, record enough context in the body that a future
   reader can understand the change without reconstructing the whole discussion
   from chat logs.
+- Commit with plain `git commit` — never pass `--author` or set
+  `GIT_AUTHOR_*`. The author must inherit the repo's configured identity so
+  author == committer; matin re-signs and pushes.
 
 ## Testing
 
