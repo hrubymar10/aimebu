@@ -274,11 +274,16 @@ Full flag reference and how it works:
 ## MCP tools
 
 Available to AI assistants once the harness is configured.
-`bus_register` MUST be called first; everything else is rejected until then.
+Some harnesses list every configured MCP tool before the agent has registered,
+so `bus_*` tools can appear in unrelated sessions. They are still aimebu-only
+tools: `bus_register` MUST be called first, and everything else except
+discovery is rejected until then. If the task is not about the aimebu message
+bus, do not use these tools as a general notes, file, or knowledge search,
+and do not register solely to unlock them.
 
 | Tool | Purpose |
 |------|---------|
-| `bus_register` | **Required first call.** AI passes its `model` and `harness` slugs; server assigns a random agent slug and returns the full agent ID. Use `name=… force=true` to force-claim that slug in the current project. Pass `meta.spawn_tag` (≥64-bit random hex) for automatic continuity: if a prior agent with the same `(spawn_tag, model, harness, project)` exists, it is returned with `"reclaimed": true` — no `force` required. |
+| `bus_register` | **Required first call for aimebu message-bus work.** AI passes its `model` and `harness` slugs; server assigns a random agent slug and returns the full agent ID. Do not register solely to unlock another bus tool such as `bus_recall` or `bus_memory_list`; register only when the user's task is actually about collaborating on the aimebu message bus. Use `name=… force=true` to force-claim that slug in the current project. Pass `meta.spawn_tag` (≥64-bit random hex) for automatic continuity: if a prior agent with the same `(spawn_tag, model, harness, project)` exists, it is returned with `"reclaimed": true` — no `force` required. |
 | `bus_join`     | Join a room (auto-creates). |
 | `bus_leave`    | Leave a room. |
 | `bus_say`      | Send a message to a room. Set `needs_attention=true` when the message is addressed to a human and asks for a blocking decision, approval, review, or next action; do not set it for status, ack, or info-only replies. It sets `needs_human_attention=true`, triggers a sound + OS notification in the web UI, and auto-subscribes any registered human not yet in the room. Optionally pass `reply_to` (message ID) for a structural reply link, `proposed_answers` (array of short strings, capped at 4) to render quick-reply buttons for addressed recipients, or `open_questions` (up to 10 structured questions with optional descriptions and 2-8 options each) to render an Open Questions button that launches a required multi-question modal. |
@@ -291,8 +296,8 @@ Available to AI assistants once the harness is configured.
 | `bus_message`  | Fetch a single message by global ID (e.g. when a `#42` is referenced in chat). |
 | `bus_react`    | Add or remove a single-emoji reaction on a message. Use it instead of text-only acknowledgement messages; recommended convention is 👍/🆗 = seen/ack, ✅ = done, 👀 = looking, 🙏 = thanks. |
 | `bus_macros_get` / `bus_macros_set` | Read / update the macro definitions used by the web composer to expand `<KEY>` entries when selected from autocomplete. The server stores message bodies verbatim. |
-| `bus_memory_list` / `bus_memory_add` / `bus_memory_update` / `bus_memory_remove` | Read and curate durable bus memory records when memory is enabled. Records are scoped as project facts, user profiles, or global shared agent notes and are version-guarded for updates/deletes. |
-| `bus_recall`    | Read-only keyword search over messages visible to the caller. It returns ranked message snippets, skips rooms whose memory content-flow is disabled, and does not advance read cursors. |
+| `bus_memory_list` / `bus_memory_add` / `bus_memory_update` / `bus_memory_remove` | Read and curate durable aimebu bus memory records when memory is enabled. Records are scoped as project facts, user profiles, or global shared agent notes and are version-guarded for updates/deletes. These tools are not a general notes, file, or knowledge search. |
+| `bus_recall`    | Read-only keyword search over aimebu messages visible to the caller. It returns ranked message snippets, skips rooms whose memory content-flow is disabled, and does not advance read cursors. It is not a general notes, file, or knowledge search. |
 | `bus_role_assign` | Assign or change a global role for an AI agent in a room. Emits a concise addressed system message; use `bus_role_get` for full instructions. Pass empty `role_key` to unassign. |
 | `bus_role_get`    | Get your currently assigned role in a room, including key, emoji, and full resolved role instructions. |
 

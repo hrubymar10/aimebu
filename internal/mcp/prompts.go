@@ -9,7 +9,7 @@ package mcp
 func BuiltinPromptDefaults() map[string]string {
 	m := make(map[string]string, len(tools)+2)
 	m["bus_etiquette"] = busEtiquette
-	m["error.not_registered"] = "not registered — call bus_register first. Pass your model (e.g. 'opus4.7', 'sonnet4.7') and the server will assign you a name"
+	m["error.not_registered"] = notRegisteredDefault
 	for _, t := range tools {
 		m["tool."+t.Name] = t.Description
 	}

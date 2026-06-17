@@ -129,7 +129,7 @@
     "key": "error.not_registered",
     "label": "Not Registered Error",
     "group": "errors",
-    "description": "Error returned to the AI when any tool other than bus_register is called before registering.",
-    "tokens": []
+    "description": "Error returned to the AI when any tool other than bus_register is called before registering. Available tokens: {{tool}} (attempted tool name).",
+    "tokens": ["{{tool}}"]
   }
 ]

@@ -149,6 +149,107 @@ func TestToolsIncludeBusReact(t *testing.T) {
 	}
 }
 
+func TestMemorySearchToolsAreBusScoped(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		wants []string
+	}{
+		{
+			name: "bus_memory_list",
+			wants: []string{
+				"Only use this if your task is about the aimebu message bus",
+				"do not call it and do not register just to use it",
+				"aimebu bus memory",
+				"requires bus_register first",
+				"not a general notes, file, or knowledge search",
+			},
+		},
+		{
+			name: "bus_recall",
+			wants: []string{
+				"Only use this if your task is about the aimebu message bus",
+				"do not call it and do not register just to use it",
+				"aimebu message-bus history",
+				"requires bus_register first",
+				"not a general notes, file, or knowledge search",
+				"not your conversation history",
+				"not for recalling the current chat",
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var desc string
+			for _, tool := range tools {
+				if tool.Name == tt.name {
+					desc = tool.Description
+					break
+				}
+			}
+			if desc == "" {
+				t.Fatalf("%s tool not registered", tt.name)
+			}
+			for _, want := range tt.wants {
+				if !strings.Contains(desc, want) {
+					t.Fatalf("%s description = %q, want substring %q", tt.name, desc, want)
+				}
+			}
+		})
+	}
+}
+
+func TestBusRegisterDescriptionDiscouragesUnlockOnlyRegistration(t *testing.T) {
+	var desc string
+	for _, tool := range tools {
+		if tool.Name == "bus_register" {
+			desc = tool.Description
+			break
+		}
+	}
+	if desc == "" {
+		t.Fatal("bus_register tool not registered")
+	}
+	for _, want := range []string{
+		"REQUIRED FIRST CALL for aimebu message-bus work",
+		"do not register solely to unlock another bus tool",
+		"bus_recall",
+		"bus_memory_list",
+		"register only when the user's task is actually about collaborating on the aimebu message bus",
+	} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("bus_register description = %q, want substring %q", desc, want)
+		}
+	}
+}
+
+func TestToolsListReturnsFullSetBeforeRegister(t *testing.T) {
+	resp := handle(&client.Client{}, request{
+		JSONRPC: "2.0",
+		Method:  "tools/list",
+		ID:      json.RawMessage(`1`),
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("response = %+v, want successful tools/list", resp)
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %T, want map", resp.Result)
+	}
+	listed, ok := result["tools"].([]tool)
+	if !ok {
+		t.Fatalf("tools = %T, want []tool", result["tools"])
+	}
+
+	seen := map[string]bool{}
+	for _, tool := range listed {
+		seen[tool.Name] = true
+	}
+	for _, want := range []string{"bus_register", "bus_agents", "bus_recall", "bus_memory_list", "bus_say"} {
+		if !seen[want] {
+			t.Fatalf("tools/list before register missing %s; got %v", want, seen)
+		}
+	}
+}
+
 // TestMCP_InitializeReturnsOverriddenEtiquette proves that handle("initialize")
 // reads the bus_etiquette prompt from the server rather than the compiled
 // constant. This is the end-to-end wiring test: store override → fetchPrompts
@@ -384,8 +485,38 @@ func TestMCP_JSONRPCErrorPaths(t *testing.T) {
 		if !ok || len(content) != 1 {
 			t.Fatalf("content = %#v, want one textContent", result["content"])
 		}
-		if !strings.Contains(content[0].Text, "call bus_register first") {
+		if !strings.Contains(content[0].Text, "Call `bus_register` first") {
 			t.Fatalf("error text = %q", content[0].Text)
+		}
+		for _, want := range []string{
+			"`bus_join` requires an aimebu bus identity",
+			"then retry `bus_join`",
+			"If you did not intend to use the aimebu message bus, do not call bus tools",
+		} {
+			if !strings.Contains(content[0].Text, want) {
+				t.Fatalf("error text = %q, want substring %q", content[0].Text, want)
+			}
+		}
+	})
+
+	t.Run("not registered prompt override can name attempted tool", func(t *testing.T) {
+		c := &client.Client{
+			BaseURL: "http://127.0.0.1",
+			Prompts: map[string]string{
+				"error.not_registered": "custom {{tool}} message",
+			},
+		}
+		resp := callMCPToolForTest(t, c, 4, "bus_recall", map[string]any{"query": "needle"})
+		result, ok := resp.Result.(map[string]any)
+		if !ok {
+			t.Fatalf("result = %T, want map", resp.Result)
+		}
+		content, ok := result["content"].([]textContent)
+		if !ok || len(content) != 1 {
+			t.Fatalf("content = %#v, want one textContent", result["content"])
+		}
+		if got := content[0].Text; !strings.Contains(got, "custom bus_recall message") {
+			t.Fatalf("error text = %q, want custom prompt with tool name", got)
 		}
 	})
 

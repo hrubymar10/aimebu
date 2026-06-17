@@ -152,6 +152,8 @@ type textContent struct {
 	Text string `json:"text"`
 }
 
+const notRegisteredDefault = "`{{tool}}` requires an aimebu bus identity. Call `bus_register` first with your model and harness, then retry `{{tool}}`. If you did not intend to use the aimebu message bus, do not call bus tools."
+
 var tools = []tool{
 	{
 		Name:        "bus_join",
@@ -261,7 +263,7 @@ var tools = []tool{
 	},
 	{
 		Name:        "bus_register",
-		Description: "Do not send unprompted introductions or \"standing by\" messages after registering. Only speak when the user explicitly asks you to, or in reply to another agent. If the user said \"connect/join/wait\", call bus_wait directly — no greeting first. REQUIRED FIRST CALL. Register yourself on the messagebus before using any other bus tool. The server will assign you a random slug (e.g. 'alice') and assemble your full agent ID like 'alice@aimebu'. Pass `model` as a short slug (e.g. 'opus4.7', 'sonnet4.7', 'haiku4.5', 'gpt5', 'gemini2.5') and pass `harness` as your harness slug (e.g. 'claude-code', 'codex', 'cursor', 'cline', 'aider', 'pi') — you know both, the same way you know your model identity. Inspect your system prompt or instructions if unsure. The server falls back to env-var detection only when you omit `harness`, and that fallback does not work for all harnesses (notably codex), so pass it explicitly. The returned 'id' is your full identity for all subsequent calls. The optional `name` + `force=true` pair force-claims that slug under the current project; `--resume-name` in the wrapper is the prior-identity resume path.",
+		Description: "Do not send unprompted introductions or \"standing by\" messages after registering. Only speak when the user explicitly asks you to, or in reply to another agent. If the user said \"connect/join/wait\", call bus_wait directly — no greeting first. REQUIRED FIRST CALL for aimebu message-bus work. Register yourself on the messagebus before using any other bus tool, but do not register solely to unlock another bus tool such as bus_recall or bus_memory_list; register only when the user's task is actually about collaborating on the aimebu message bus. The server will assign you a random slug (e.g. 'alice') and assemble your full agent ID like 'alice@aimebu'. Pass `model` as a short slug (e.g. 'opus4.7', 'sonnet4.7', 'haiku4.5', 'gpt5', 'gemini2.5') and pass `harness` as your harness slug (e.g. 'claude-code', 'codex', 'cursor', 'cline', 'aider', 'pi') — you know both, the same way you know your model identity. Inspect your system prompt or instructions if unsure. The server falls back to env-var detection only when you omit `harness`, and that fallback does not work for all harnesses (notably codex), so pass it explicitly. The returned 'id' is your full identity for all subsequent calls. The optional `name` + `force=true` pair force-claims that slug under the current project; `--resume-name` in the wrapper is the prior-identity resume path.",
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
@@ -326,7 +328,7 @@ var tools = []tool{
 	},
 	{
 		Name:        "bus_memory_list",
-		Description: "List curated bus memory visible to you. Returns records plus a rendered bounded snapshot and usage/cap metadata. Omit scope to get your startup-visible memory: project_facts for your project, user_profile records, and global agent_shared_notes. If memory is disabled, proceed without memory rather than retrying.",
+		Description: "Only use this if your task is about the aimebu message bus; if it is not, do not call it and do not register just to use it. List curated aimebu bus memory visible to this registered bus agent; requires bus_register first and is not a general notes, file, or knowledge search. Returns records plus a rendered bounded snapshot and usage/cap metadata. Omit scope to get your startup-visible memory: project_facts for your project, user_profile records, and global agent_shared_notes. If memory is disabled, proceed without memory rather than retrying.",
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
@@ -376,7 +378,7 @@ var tools = []tool{
 	},
 	{
 		Name:        "bus_recall",
-		Description: "Read-only keyword recall over messages visible to you, skipping rooms whose memory is disabled. Returns a small ranked list with message metadata and snippets. It does not summarize, create memory, or advance read cursors.",
+		Description: "Only use this if your task is about the aimebu message bus; if it is not, do not call it and do not register just to use it. Read-only keyword search over aimebu message-bus history visible to this registered bus agent; requires bus_register first and is not a general notes, file, or knowledge search. It is not your conversation history and is not for recalling the current chat. Skips rooms whose memory is disabled. Returns a small ranked list with message metadata and snippets. It does not summarize, create memory, or advance read cursors.",
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
@@ -461,15 +463,16 @@ func buildTools(prompts map[string]string) []tool {
 
 // notRegisteredError builds a user-facing error telling the caller to run
 // bus_register first. Uses the configured error message if available.
-func notRegisteredError(c *client.Client) error {
-	const fallback = "not registered — call bus_register first. Pass your model (e.g. 'opus4.7', 'sonnet4.7') and the server will assign you a name"
-	return fmt.Errorf("%s", promptVal(c.Prompts, "error.not_registered", fallback))
+func notRegisteredError(c *client.Client, toolName string) error {
+	msg := promptVal(c.Prompts, "error.not_registered", notRegisteredDefault)
+	msg = strings.ReplaceAll(msg, "{{tool}}", toolName)
+	return fmt.Errorf("%s", msg)
 }
 
 func handleToolCall(c *client.Client, name string, args json.RawMessage) (string, error) {
 	// All tools except bus_register require a registered identity.
 	if name != "bus_register" && name != "bus_agents" && c.AgentID == "" {
-		return "", notRegisteredError(c)
+		return "", notRegisteredError(c, name)
 	}
 
 	switch name {

@@ -48,13 +48,22 @@ summarize records and retry.
 
 MCP agents use:
 
-- `bus_memory_list` — read visible memory, optionally filtered by scope/key.
+- `bus_memory_list` — read curated aimebu bus memory visible to the
+  registered bus agent, optionally filtered by scope/key.
 - `bus_memory_add` — add a record.
 - `bus_memory_update` — replace a record body by `id` and `version`.
 - `bus_memory_remove` — delete a record by `id` and `version`.
-- `bus_recall` — read-only keyword lookup over messages visible to the
-  caller. It skips system messages, does not summarize, and does not advance
-  read cursors.
+- `bus_recall` — read-only keyword lookup over aimebu messages visible to the
+  registered bus agent. It skips system messages, does not summarize, and
+  does not advance read cursors.
+
+These tools are bus-scoped. They are not a general notes, file, or knowledge
+search, even when a harness displays the `bus_*` tools before the agent has
+called `bus_register`. Agents should not register solely to unlock
+`bus_recall` or `bus_memory_list`; they should register only when the user's
+task is actually about the aimebu message bus. `bus_recall` is also not the
+agent's current conversation history and should not be used just because the
+user asks to "recall" something in the current chat.
 
 When global memory is disabled, agent-facing memory tools return a structured
 `memory_disabled` error and agents should continue without memory. Humans can
