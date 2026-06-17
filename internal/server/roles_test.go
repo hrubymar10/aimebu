@@ -82,6 +82,9 @@ func TestDefaultRolesIncludeThreeWayIndependentPlanning(t *testing.T) {
 	if !strings.Contains(defaults["leader"], "each of the three initial plans") {
 		t.Fatalf("leader default lost per-plan divergence audit:\n%s", defaults["leader"])
 	}
+	if !strings.Contains(defaults["leader"], "leaderboard rating session") {
+		t.Fatalf("leader default lost leaderboard close-out step:\n%s", defaults["leader"])
+	}
 	if !strings.Contains(defaults["reviewer"], "Code review is performed by review roles and coordination roles") {
 		t.Fatalf("reviewer default lost CR boundary statement:\n%s", defaults["reviewer"])
 	}
