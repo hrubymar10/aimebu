@@ -2594,6 +2594,90 @@ func TestOpenQuestionsRoundTripCleanupAndPersistence(t *testing.T) {
 	}
 }
 
+func TestVisualPlanRoundTripValidationAndPersistence(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	agent, err := s.registerHuman("visualtester", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	sendBody, _ := json.Marshal(map[string]any{
+		"from": agent.ID,
+		"body": "@visualtester approve?",
+		"visual_plan": []map[string]any{
+			{"type": " markdown ", "title": " Summary ", "data": map[string]any{"text": "Proceed with the narrow path."}},
+			{"type": "future-block", "data": map[string]any{"text": "Fallback text"}},
+		},
+	})
+	resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send returned %d", resp.StatusCode)
+	}
+
+	resp2, err := http.Get(srv.URL + "/rooms/general/messages?agent_id=" + agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var data struct {
+		Messages []struct {
+			VisualPlan    []types.PlanBlock `json:"visual_plan"`
+			AddressedToMe bool              `json:"addressed_to_me"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Messages) == 0 {
+		t.Fatal("expected at least one message")
+	}
+	got := data.Messages[0].VisualPlan
+	if len(got) != 2 {
+		t.Fatalf("visual_plan len = %d, want 2: %#v", len(got), got)
+	}
+	if got[0].ID == "" || got[0].Type != "markdown" || got[0].Title != "Summary" || got[0].Order != 0 {
+		t.Fatalf("first visual_plan block not normalized: %#v", got[0])
+	}
+	if got[1].Type != "future-block" || got[1].Order != 1 {
+		t.Fatalf("unknown visual_plan block not preserved: %#v", got[1])
+	}
+	if !data.Messages[0].AddressedToMe {
+		t.Fatal("expected addressed_to_me=true for addressed visual-plan message")
+	}
+
+	reloaded, err := newStore(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := reloaded.roomMessages("general", 10, 0)
+	var persisted []types.PlanBlock
+	for _, msg := range msgs {
+		if msg.From == agent.ID {
+			persisted = msg.VisualPlan
+			break
+		}
+	}
+	if !reflect.DeepEqual(persisted, got) {
+		t.Fatalf("persisted visual_plan = %#v, want %#v", persisted, got)
+	}
+
+	if _, err := s.db.Exec(`SELECT COUNT(*) FROM plans`); err == nil || !strings.Contains(err.Error(), "no such table") {
+		t.Fatalf("plans table query error = %v, want no such table", err)
+	}
+
+	if _, err := s.roomSendWithVisualPlan("general", agent.ID, "bad", false, nil, nil, []types.PlanBlock{{Type: "markdown", Data: []byte(`{`)}}, nil, 0); err == nil || !strings.Contains(err.Error(), "valid JSON") {
+		t.Fatalf("invalid visual_plan data err = %v, want valid JSON error", err)
+	}
+}
+
 func TestLegacyMessagesLoadWithoutProposedAnswers(t *testing.T) {
 	dir := t.TempDir()
 	schema, _ := json.Marshal(map[string]int{"version": storeSchemaVersion})
@@ -2616,6 +2700,36 @@ func TestLegacyMessagesLoadWithoutProposedAnswers(t *testing.T) {
 	}
 	if len(msgs[0].OpenQuestions) != 0 {
 		t.Fatalf("legacy open_questions = %#v, want empty", msgs[0].OpenQuestions)
+	}
+	if len(msgs[0].VisualPlan) != 0 {
+		t.Fatalf("legacy visual_plan = %#v, want empty", msgs[0].VisualPlan)
+	}
+}
+
+func TestFrontendVisualPlanRenderHooks(t *testing.T) {
+	app, err := os.ReadFile(filepath.Join("..", "..", "frontend", "app.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(app)
+	for _, want := range []string{
+		"function visualPlanHTML(message)",
+		"renderMermaidBlocks(messageListEl)",
+		"securityLevel: 'strict'",
+		`<iframe class="visual-plan-prototype-frame" sandbox srcdoc="`,
+		"Content-Security-Policy",
+		"default-src \\'none\\'",
+		"style-src \\'unsafe-inline\\'",
+	} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("frontend app.js missing %q", want)
+		}
+	}
+	bodyIdx := strings.Index(src, "(markdownMode === 'rendered' ? renderMarkdown(m.body) : renderPlainWithCodeMarkers(m.body))")
+	visualIdx := strings.Index(src, "visualPlan +")
+	answersIdx := strings.Index(src, "proposedAnswers +")
+	if bodyIdx == -1 || visualIdx == -1 || answersIdx == -1 || !(bodyIdx < visualIdx && visualIdx < answersIdx) {
+		t.Fatalf("visual plan render ordering body=%d visual=%d answers=%d", bodyIdx, visualIdx, answersIdx)
 	}
 }
 

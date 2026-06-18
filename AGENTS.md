@@ -304,7 +304,7 @@ treated as the first disconnect signal.
 
 ## Web UI
 
-Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents. The chat view renders addressed proposed-answer buttons and addressed Open Questions modals from structured `open_questions` message fields. Global Settings -> Fleets edits reusable command bundles for `aimebu fleet`; Global Settings -> Roles edits reusable role definitions, emoji, cardinality, and extensions; Global Settings -> Usages configures provider usage refresh interval, percent display, provider ordering and enablement, GitHub Copilot device flow, and Ollama Cloud credential setup. Active room settings assign those global roles to AI room members and disable singleton roles already held by another agent. Role emoji show on member cards and current-room message senders. Built-in specialist reviewer roles are `sec-reviewer`, `test-reviewer`, and `ux-reviewer`, each extending `reviewer`.
+Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents. The chat view renders display-only inline visual-plan blocks from structured `visual_plan` message fields, addressed proposed-answer buttons, and addressed Open Questions modals from structured `open_questions` message fields. Global Settings -> Fleets edits reusable command bundles for `aimebu fleet`; Global Settings -> Roles edits reusable role definitions, emoji, cardinality, and extensions; Global Settings -> Usages configures provider usage refresh interval, percent display, provider ordering and enablement, GitHub Copilot device flow, and Ollama Cloud credential setup. Active room settings assign those global roles to AI room members and disable singleton roles already held by another agent. Role emoji show on member cards and current-room message senders. Built-in specialist reviewer roles are `sec-reviewer`, `test-reviewer`, and `ux-reviewer`, each extending `reviewer`.
 
 Humans use the web UI for bus conversations: creating rooms, joining rooms,
 chatting, reacting, DMs, agent inspection, settings, and memory curation.
@@ -321,6 +321,12 @@ an inline clickable quote stub. Rendered and raw chat views show a copy button
 on fenced and indented code blocks that copies the inner code text. The reply
 also addresses the parent author, except for self-replies and system-message
 parents; it does not imply human attention.
+
+Messages may carry `visual_plan` blocks for leader-to-human approval
+handoffs. These blocks are message-scoped, display-only, and ephemeral:
+sending them does not create or update a durable Plans resource. Use
+`proposed_answers` for proceed/pushback buttons and `open_questions` for
+actual multi-question answers.
 
 Settings -> Memory enables or disables durable bus memory globally, and the
 brain button in the top bar opens the memory viewer for inspecting, editing,

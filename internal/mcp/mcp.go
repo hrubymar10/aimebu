@@ -147,6 +147,24 @@ type propRef struct {
 	Required   []string            `json:"required,omitempty"`
 }
 
+func visualPlanProperty() property {
+	return property{
+		Type:        "array",
+		Description: "Optional display-only inline visual plan blocks for leader approval handoffs. Message-scoped and ephemeral; does not create or update a durable Plans resource. Blocks are rendered in chat before proposed_answers/open_questions.",
+		Items: &propRef{
+			Type:     "object",
+			Required: []string{"type", "data"},
+			Properties: map[string]property{
+				"id":    {Type: "string", Description: "Optional stable block ID; generated when omitted."},
+				"type":  {Type: "string", Description: "Block type, such as markdown, file-tree, data-model, api-endpoint, annotated-code, diff, checklist, question-form, diagram, canvas, or prototype. Unknown types are stored and rendered as fallback text."},
+				"title": {Type: "string", Description: "Optional short block title."},
+				"data":  {Type: "object", Description: "Renderer-agnostic JSON payload for this block."},
+				"order": {Type: "integer", Description: "Ignored on input; server stores sequential order."},
+			},
+		},
+	}
+}
+
 type textContent struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
@@ -193,6 +211,7 @@ var tools = []tool{
 					"description": {Type: "string", Description: "Optional context shown below the question in the Open Questions modal."},
 					"options":     {Type: "array", Items: &propRef{Type: "string"}, Description: "Choice labels; provide 2-8 non-empty options."},
 				}}},
+				"visual_plan": visualPlanProperty(),
 			},
 			Required: []string{"room", "body"},
 		},
@@ -257,6 +276,7 @@ var tools = []tool{
 					"description": {Type: "string", Description: "Optional context shown below the question in the Open Questions modal."},
 					"options":     {Type: "array", Items: &propRef{Type: "string"}, Description: "Choice labels; provide 2-8 non-empty options."},
 				}}},
+				"visual_plan": visualPlanProperty(),
 			},
 			Required: []string{"to", "body"},
 		},
@@ -635,6 +655,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			NeedsAttention  bool                 `json:"needs_attention"`
 			ProposedAnswers []string             `json:"proposed_answers"`
 			OpenQuestions   []types.OpenQuestion `json:"open_questions"`
+			VisualPlan      []types.PlanBlock    `json:"visual_plan"`
 			ReplyTo         int64                `json:"reply_to"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
@@ -649,6 +670,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			"needs_attention":  p.NeedsAttention,
 			"proposed_answers": p.ProposedAnswers,
 			"open_questions":   p.OpenQuestions,
+			"visual_plan":      p.VisualPlan,
 			"reply_to":         p.ReplyTo,
 		})
 
@@ -692,6 +714,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			NeedsAttention  bool                 `json:"needs_attention"`
 			ProposedAnswers []string             `json:"proposed_answers"`
 			OpenQuestions   []types.OpenQuestion `json:"open_questions"`
+			VisualPlan      []types.PlanBlock    `json:"visual_plan"`
 			ReplyTo         int64                `json:"reply_to"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
@@ -704,6 +727,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			"needs_attention":  p.NeedsAttention,
 			"proposed_answers": p.ProposedAnswers,
 			"open_questions":   p.OpenQuestions,
+			"visual_plan":      p.VisualPlan,
 			"reply_to":         p.ReplyTo,
 		})
 

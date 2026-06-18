@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/types"
@@ -870,6 +871,9 @@ const (
 	maxOpenQuestionOptions          = 8
 	maxOpenQuestionTextRunes        = 500
 	maxOpenQuestionDescriptionRunes = 1000
+	maxVisualPlanBlocks             = 80
+	maxVisualPlanBlockTitleRunes    = 160
+	maxVisualPlanBlockDataBytes     = 64000
 )
 
 func cleanProposedAnswers(in []string) []string {
@@ -933,6 +937,41 @@ func cleanOpenQuestions(in []types.OpenQuestion) []types.OpenQuestion {
 	return out
 }
 
+func normalizeVisualPlanBlocks(in []types.PlanBlock) ([]types.PlanBlock, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > maxVisualPlanBlocks {
+		return nil, fmt.Errorf("too many visual_plan blocks (max %d)", maxVisualPlanBlocks)
+	}
+	out := make([]types.PlanBlock, len(in))
+	for i, block := range in {
+		block.Type = strings.TrimSpace(block.Type)
+		block.Title = strings.TrimSpace(block.Title)
+		if block.ID == "" {
+			block.ID = randomID()
+		}
+		if block.Type == "" {
+			return nil, fmt.Errorf("visual_plan block type is required")
+		}
+		if got := utf8.RuneCountInString(block.Title); got > maxVisualPlanBlockTitleRunes {
+			return nil, fmt.Errorf("visual_plan block title exceeds %d runes (%d)", maxVisualPlanBlockTitleRunes, got)
+		}
+		if len(block.Data) == 0 {
+			block.Data = json.RawMessage(`{}`)
+		}
+		if len(block.Data) > maxVisualPlanBlockDataBytes {
+			return nil, fmt.Errorf("visual_plan block data exceeds %d bytes (%d)", maxVisualPlanBlockDataBytes, len(block.Data))
+		}
+		if !json.Valid(block.Data) {
+			return nil, fmt.Errorf("visual_plan block %q data must be valid JSON", block.Type)
+		}
+		block.Order = i
+		out[i] = block
+	}
+	return out, nil
+}
+
 func appendTargetDedup(targets []string, target string) []string {
 	if target == "" {
 		return targets
@@ -957,6 +996,10 @@ func truncateRunes(s string, max int) string {
 }
 
 func (s *store) roomSend(roomID, from, body string, needsAttention bool, proposedAnswers []string, openQuestions []types.OpenQuestion, attachments []types.Attachment, replyTo int64) (int64, error) {
+	return s.roomSendWithVisualPlan(roomID, from, body, needsAttention, proposedAnswers, openQuestions, nil, attachments, replyTo)
+}
+
+func (s *store) roomSendWithVisualPlan(roomID, from, body string, needsAttention bool, proposedAnswers []string, openQuestions []types.OpenQuestion, visualPlan []types.PlanBlock, attachments []types.Attachment, replyTo int64) (int64, error) {
 	if !s.isMember(roomID, from) {
 		return 0, fmt.Errorf("agent %s is not a member of room %s", from, roomID)
 	}
@@ -974,6 +1017,10 @@ func (s *store) roomSend(roomID, from, body string, needsAttention bool, propose
 		}
 	}
 	resolvedAttachments, err := s.resolveAttachments(attachments)
+	if err != nil {
+		return 0, err
+	}
+	normalizedVisualPlan, err := normalizeVisualPlanBlocks(visualPlan)
 	if err != nil {
 		return 0, err
 	}
@@ -1024,6 +1071,7 @@ func (s *store) roomSend(roomID, from, body string, needsAttention bool, propose
 	}
 	msg.ProposedAnswers = cleanProposedAnswers(proposedAnswers)
 	msg.OpenQuestions = cleanOpenQuestions(openQuestions)
+	msg.VisualPlan = normalizedVisualPlan
 	msg.Attachments = resolvedAttachments
 
 	s.mu.Lock()

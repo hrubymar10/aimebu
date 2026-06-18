@@ -1,6 +1,10 @@
 package types
 
-import "time"
+import (
+	"time"
+
+	"github.com/goccy/go-json"
+)
 
 type Room struct {
 	ID            string            `json:"id"`
@@ -33,6 +37,7 @@ type Message struct {
 	NeedsHumanAttention bool              `json:"needs_human_attention,omitempty"`
 	ProposedAnswers     []string          `json:"proposed_answers,omitempty"`
 	OpenQuestions       []OpenQuestion    `json:"open_questions,omitempty"`
+	VisualPlan          []PlanBlock       `json:"visual_plan,omitempty"`
 	Attachments         []Attachment      `json:"attachments,omitempty"`
 	Reactions           []ReactionSummary `json:"reactions,omitempty"`
 }
@@ -41,6 +46,30 @@ type OpenQuestion struct {
 	Question    string   `json:"question"`
 	Description string   `json:"description,omitempty"`
 	Options     []string `json:"options"`
+}
+
+const (
+	PlanBlockMarkdown      = "markdown"
+	PlanBlockFileTree      = "file-tree"
+	PlanBlockDataModel     = "data-model"
+	PlanBlockAPIEndpoint   = "api-endpoint"
+	PlanBlockAnnotatedCode = "annotated-code"
+	PlanBlockDiff          = "diff"
+	PlanBlockChecklist     = "checklist"
+	PlanBlockQuestionForm  = "question-form"
+	PlanBlockDiagram       = "diagram"
+	PlanBlockCanvas        = "canvas"
+	PlanBlockPrototype     = "prototype"
+)
+
+// PlanBlock is one ordered visual block. On messages it is ephemeral
+// review/display structure, not a durable Plans resource.
+type PlanBlock struct {
+	ID    string          `json:"id"`
+	Type  string          `json:"type"`
+	Title string          `json:"title,omitempty"`
+	Data  json.RawMessage `json:"data"`
+	Order int             `json:"order"`
 }
 
 type Reaction struct {
@@ -233,6 +262,7 @@ type RoomSendRequest struct {
 	NeedsAttention  bool           `json:"needs_attention,omitempty"`
 	ProposedAnswers []string       `json:"proposed_answers,omitempty"`
 	OpenQuestions   []OpenQuestion `json:"open_questions,omitempty"`
+	VisualPlan      []PlanBlock    `json:"visual_plan,omitempty"`
 	Attachments     []Attachment   `json:"attachments,omitempty"`
 	ReplyTo         int64          `json:"reply_to,omitempty"`
 }
@@ -244,6 +274,7 @@ type DMRequest struct {
 	NeedsAttention  bool           `json:"needs_attention,omitempty"`
 	ProposedAnswers []string       `json:"proposed_answers,omitempty"`
 	OpenQuestions   []OpenQuestion `json:"open_questions,omitempty"`
+	VisualPlan      []PlanBlock    `json:"visual_plan,omitempty"`
 	Attachments     []Attachment   `json:"attachments,omitempty"`
 	ReplyTo         int64          `json:"reply_to,omitempty"`
 }

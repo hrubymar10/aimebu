@@ -82,6 +82,15 @@ func TestDefaultRolesIncludeThreeWayIndependentPlanning(t *testing.T) {
 	if !strings.Contains(defaults["leader"], "each of the three initial plans") {
 		t.Fatalf("leader default lost per-plan divergence audit:\n%s", defaults["leader"])
 	}
+	for _, want := range []string{
+		"inline visual_plan blocks instead of a prose wall",
+		"message-scoped and display-only",
+		"Use proposed_answers for proceed/pushback buttons and open_questions for real answer collection",
+	} {
+		if !strings.Contains(defaults["leader"], want) {
+			t.Fatalf("leader default lost visual-plan approval guidance %q:\n%s", want, defaults["leader"])
+		}
+	}
 	if !strings.Contains(defaults["leader"], "leaderboard rating session") {
 		t.Fatalf("leader default lost leaderboard close-out step:\n%s", defaults["leader"])
 	}

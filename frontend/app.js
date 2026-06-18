@@ -343,6 +343,10 @@
     return div.innerHTML;
   }
 
+  function escAttr(str) {
+    return esc(str);
+  }
+
   function unescHtml(str) {
     const div = document.createElement('div');
     div.innerHTML = str || '';
@@ -794,6 +798,180 @@
     return html.replace(/\x00(\d+)\x00/g, function (_, i) {
       return holders[+i];
     });
+  }
+
+  function visualPlanBlockData(block) {
+    if (!block || block.data === undefined || block.data === null) return {};
+    if (typeof block.data === 'string') {
+      try {
+        return JSON.parse(block.data);
+      } catch (_) {
+        return { text: block.data };
+      }
+    }
+    if (typeof block.data === 'object') return block.data;
+    return { text: String(block.data) };
+  }
+
+  function visualPlanBlockHeader(block) {
+    return '<div class="visual-plan-block-header">' +
+      '<span class="visual-plan-block-type">' + esc(block.type || 'block') + '</span>' +
+      (block.title ? '<span class="visual-plan-block-title">' + esc(block.title) + '</span>' : '') +
+    '</div>';
+  }
+
+  function renderVisualPlanFileTreeNode(node) {
+    if (typeof node === 'string') return '<li>' + esc(node) + '</li>';
+    node = node || {};
+    var children = Array.isArray(node.children) ? node.children : [];
+    return '<li><span class="visual-plan-file-node ' + esc(node.type || '') + '">' + esc(node.name || node.path || 'item') + '</span>' +
+      (children.length ? '<ul>' + children.map(renderVisualPlanFileTreeNode).join('') + '</ul>' : '') +
+    '</li>';
+  }
+
+  function renderVisualPlanDataModel(data) {
+    var entities = Array.isArray(data.entities) ? data.entities : (Array.isArray(data.tables) ? data.tables : []);
+    if (!entities.length) return '<pre>' + esc(JSON.stringify(data, null, 2)) + '</pre>';
+    return entities.map(function (entity) {
+      var fields = Array.isArray(entity.fields) ? entity.fields : [];
+      return '<div class="visual-plan-model-entity">' +
+        '<div class="visual-plan-model-name">' + esc(entity.name || entity.table || 'Entity') + '</div>' +
+        '<table class="visual-plan-block-table"><tbody>' +
+          fields.map(function (field) {
+            if (typeof field === 'string') return '<tr><td colspan="3">' + esc(field) + '</td></tr>';
+            return '<tr><td>' + esc(field.name || '') + '</td><td>' + esc(field.type || '') + '</td><td>' + esc(field.notes || field.description || '') + '</td></tr>';
+          }).join('') +
+        '</tbody></table>' +
+      '</div>';
+    }).join('');
+  }
+
+  function renderVisualPlanAPIEndpoint(data) {
+    var rows = [
+      ['Method', data.method || ''],
+      ['Path', data.path || data.url || ''],
+      ['Request', data.request || data.request_body || ''],
+      ['Response', data.response || data.response_body || ''],
+      ['Notes', data.notes || data.description || ''],
+    ].filter(function (row) { return row[1] !== ''; });
+    return '<table class="visual-plan-block-table"><tbody>' + rows.map(function (row) {
+      var val = typeof row[1] === 'object' ? JSON.stringify(row[1], null, 2) : String(row[1]);
+      return '<tr><th>' + esc(row[0]) + '</th><td><pre>' + esc(val) + '</pre></td></tr>';
+    }).join('') + '</tbody></table>';
+  }
+
+  function renderVisualPlanAnnotatedCode(data) {
+    var code = data.code || data.source || '';
+    var annotations = Array.isArray(data.annotations) ? data.annotations : [];
+    return '<pre class="visual-plan-code-block"><code>' + esc(code) + '</code></pre>' +
+      (annotations.length ? '<ol class="visual-plan-annotations">' + annotations.map(function (a) {
+        if (typeof a === 'string') return '<li>' + esc(a) + '</li>';
+        return '<li><span>' + esc(a.line ? 'L' + a.line : '') + '</span>' + esc(a.text || a.note || '') + '</li>';
+      }).join('') + '</ol>' : '');
+  }
+
+  function renderVisualPlanChecklist(data) {
+    var items = Array.isArray(data.items) ? data.items : [];
+    return '<div class="visual-plan-checklist">' + items.map(function (item) {
+      var text = typeof item === 'string' ? item : (item.text || item.label || '');
+      var checked = typeof item === 'object' && !!item.checked;
+      return '<div class="visual-plan-check-row">' +
+        '<input type="checkbox" disabled' + (checked ? ' checked' : '') + '>' +
+        '<span class="' + (checked ? 'checked' : '') + '">' + esc(text) + '</span>' +
+      '</div>';
+    }).join('') + '</div>';
+  }
+
+  function renderVisualPlanQuestionForm(data) {
+    var questions = Array.isArray(data.questions) ? data.questions : [];
+    return '<div class="visual-plan-question-list">' + questions.map(function (q, idx) {
+      var options = Array.isArray(q.options) ? q.options : [];
+      return '<div class="visual-plan-question">' +
+        '<div class="visual-plan-question-title">Q' + (idx + 1) + '. ' + esc(q.question || '') + '</div>' +
+        (q.description ? '<div class="visual-plan-question-desc">' + renderMarkdown(q.description) + '</div>' : '') +
+        '<div class="visual-plan-question-options">' + options.map(function (opt) { return '<span>' + esc(opt) + '</span>'; }).join('') + '</div>' +
+      '</div>';
+    }).join('') + '</div>';
+  }
+
+  function clampPercent(value, fallback) {
+    var n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(100, n));
+  }
+
+  function visualPlanBoundsStyle(node, x, y, w, h) {
+    return 'left:' + clampPercent(node.x, x).toFixed(2) + '%;' +
+      'top:' + clampPercent(node.y, y).toFixed(2) + '%;' +
+      'width:' + clampPercent(node.w, w).toFixed(2) + '%;' +
+      'height:' + clampPercent(node.h, h).toFixed(2) + '%;';
+  }
+
+  function renderVisualPlanCanvas(data) {
+    var nodes = Array.isArray(data.nodes) ? data.nodes : [];
+    if (!nodes.length) return '<pre>' + esc(JSON.stringify(data, null, 2)) + '</pre>';
+    return '<div class="visual-plan-canvas">' + nodes.map(function (node) {
+      var style = visualPlanBoundsStyle(node || {}, 0, 0, 20, 10);
+      return '<div class="visual-plan-canvas-node" style="' + escAttr(style) + '">' + esc(node.label || node.text || node.id || '') + '</div>';
+    }).join('') + '</div>';
+  }
+
+  function visualPlanPrototypeSrcdoc(data) {
+    var screens = Array.isArray(data.screens) ? data.screens : [];
+    if (!screens.length) {
+      return '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:"><style>body{font:14px system-ui;margin:16px;color:#222;background:#fff}pre{white-space:pre-wrap}</style><pre>' + esc(JSON.stringify(data, null, 2)) + '</pre>';
+    }
+    var firstID = screens[0].id || 'screen-0';
+    var css = 'body{font:14px system-ui;margin:0;background:#f8fafc;color:#111827}.screen{min-height:280px;position:relative;padding:16px;display:none}.screen:first-of-type{display:block}.screen:target{display:block}.screen:target~.screen{display:none}body:has(.screen:target) .screen:first-of-type{display:none}.title{font-weight:700;margin-bottom:8px}.el{position:absolute;border:1px solid #94a3b8;background:#fff;border-radius:6px;padding:8px;box-sizing:border-box}.button{background:#111827;color:#fff;text-decoration:none;text-align:center}.input{background:#f1f5f9;color:#64748b}';
+    var body = screens.map(function (screen, idx) {
+      var elements = Array.isArray(screen.elements) ? screen.elements : [];
+      var screenID = screen.id || ('screen-' + idx);
+      return '<section class="screen" id="' + escAttr(screenID) + '">' +
+        '<div class="title">' + esc(screen.title || screen.id || ('Screen ' + (idx + 1))) + '</div>' +
+        elements.map(function (el) {
+          el = el || {};
+          var cls = el.type === 'button' || el.target ? 'el button' : (el.type === 'input' ? 'el input' : 'el');
+          var style = visualPlanBoundsStyle(el, 4, 16, 24, 10);
+          var text = esc(el.text || el.label || el.id || '');
+          if (el.target) return '<a class="' + cls + '" style="' + escAttr(style) + '" href="#' + escAttr(el.target) + '">' + text + '</a>';
+          return '<div class="' + cls + '" style="' + escAttr(style) + '">' + text + '</div>';
+        }).join('') +
+      '</section>';
+    }).join('');
+    return '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:"><style>' + css + '</style><a href="#' + escAttr(firstID) + '" style="position:absolute;left:-9999px">start</a>' + body;
+  }
+
+  function renderVisualPlanBlock(block, idx) {
+    var data = visualPlanBlockData(block);
+    var body = '';
+    if (block.type === 'markdown') body = renderMarkdown(data.markdown || data.text || '');
+    else if (block.type === 'file-tree') body = '<ul class="visual-plan-file-tree">' + renderVisualPlanFileTreeNode(data.root || data) + '</ul>';
+    else if (block.type === 'data-model') body = renderVisualPlanDataModel(data);
+    else if (block.type === 'api-endpoint') body = renderVisualPlanAPIEndpoint(data);
+    else if (block.type === 'annotated-code') body = renderVisualPlanAnnotatedCode(data);
+    else if (block.type === 'diff') body = '<pre class="visual-plan-code-block visual-plan-diff"><code>' + esc(data.diff || data.text || '') + '</code></pre>';
+    else if (block.type === 'checklist') body = renderVisualPlanChecklist(data);
+    else if (block.type === 'question-form') body = renderVisualPlanQuestionForm(data);
+    else if (block.type === 'diagram') body = '<pre class="mermaid visual-plan-mermaid" data-visual-plan-block="' + escAttr(block.id || String(idx)) + '">' + esc(data.mermaid || data.source || data.text || '') + '</pre>';
+    else if (block.type === 'canvas') body = renderVisualPlanCanvas(data);
+    else if (block.type === 'prototype') body = '<iframe class="visual-plan-prototype-frame" sandbox srcdoc="' + escAttr(visualPlanPrototypeSrcdoc(data)) + '"></iframe>';
+    else body = '<pre>' + esc(data.text || data.markdown || JSON.stringify(data, null, 2)) + '</pre>';
+    return '<section class="visual-plan-block">' + visualPlanBlockHeader(block) + '<div class="visual-plan-block-body">' + body + '</div></section>';
+  }
+
+  function visualPlanHTML(message) {
+    var blocks = Array.isArray(message.visual_plan) ? message.visual_plan.slice() : [];
+    if (!blocks.length) return '';
+    blocks.sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+    return '<div class="visual-plan" data-msg-id="' + esc(String(message.id)) + '">' + blocks.map(renderVisualPlanBlock).join('') + '</div>';
+  }
+
+  function renderMermaidBlocks(root) {
+    if (!window.mermaid || !root) return;
+    try {
+      window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default' });
+      window.mermaid.run({ nodes: root.querySelectorAll('.visual-plan-mermaid') }).catch(function () {});
+    } catch (_) {}
   }
 
   function updateMdToggleBtn() {
@@ -4947,6 +5125,7 @@
     }).join('');
 
     messageListEl.querySelectorAll('.chat-msg-body').forEach(function (b) { highlightNames(b); });
+    renderMermaidBlocks(messageListEl);
     renderReadReceipts(false);
     if (atBottom) {
       scrollToBottom(true);
@@ -4984,6 +5163,7 @@
     var msgRoleTag = roleBadgeHTML(msgRoleKey);
     var proposedAnswers = proposedAnswersHTML(m, room);
     var openQuestions = openQuestionsHTML(m, room);
+    var visualPlan = visualPlanHTML(m);
     var attachments = attachmentsHTML(m);
     var replyReference = replyReferenceHTML(m);
     var reactions = reactionsHTML(m);
@@ -5009,6 +5189,7 @@
           '<div class="chat-msg-body' + (markdownMode === 'rendered' ? ' md-rendered' : '') + '">' +
             (markdownMode === 'rendered' ? renderMarkdown(m.body) : renderPlainWithCodeMarkers(m.body)) +
           '</div>' +
+          visualPlan +
           attachments +
           reactions +
           messageControls +
