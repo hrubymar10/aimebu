@@ -702,6 +702,52 @@ func (s *store) persistCoreSQLiteLocked() error {
 	return tx.Commit()
 }
 
+func (s *store) persistRoomsAgentsSQLiteLocked() error {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM rooms`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM agents`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for _, room := range s.rooms {
+		data, err := json.Marshal(room)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO rooms(id, data) VALUES(?, ?)`, room.ID, string(data)); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	for _, agent := range s.agents {
+		cp := *agent
+		cp.State = ""
+		cp.StateAt = time.Time{}
+		data, err := json.Marshal(cp)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO agents(id, data) VALUES(?, ?)`, cp.ID, string(data)); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *store) deleteRoomMessagesSQLiteLocked(roomID string) error {
+	_, err := s.db.Exec(`DELETE FROM messages WHERE room_id=?`, roomID)
+	return err
+}
+
 func (s *store) insertMessageSQLiteLocked(msg types.Message) error {
 	data, err := json.Marshal(msg)
 	if err != nil {

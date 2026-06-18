@@ -7,7 +7,8 @@ receive a bounded snapshot in the `bus_register` response.
 
 Memory is opt-in. The global `memory_enabled` setting starts unset, which is
 treated as disabled until the web UI's first-run prompt records an explicit
-choice. Disabling memory gates access; it does not delete `memory.json`.
+choice. Disabling memory gates access; it does not delete existing memory
+records.
 
 ## Scopes
 
@@ -87,9 +88,9 @@ unsourced memory record while global memory is enabled; agents should attach
 
 ## Storage And Prune
 
-Records live in `~/.aimebu/server/memory.json`. Plain `aimebu prune` preserves
-memory; `aimebu prune -a` removes it with the rest of durable user-managed
-server state.
+Records live in `~/.aimebu/server/aimebu.sqlite`. Plain `aimebu prune`
+preserves memory; `aimebu prune -a` removes it with the rest of durable
+user-managed server state.
 
 The web UI exposes a brain-button memory viewer so humans can curate project
 facts, user profile records, and shared agent notes directly. Settings ->

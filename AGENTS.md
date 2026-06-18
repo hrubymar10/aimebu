@@ -12,6 +12,7 @@ this file, and everything under [docs/](docs/) (currently
 [docs/leaderboards.md](docs/leaderboards.md),
 [docs/memory.md](docs/memory.md),
 [docs/ollama-cloud.md](docs/ollama-cloud.md), [docs/pi.md](docs/pi.md),
+[docs/sqlite.md](docs/sqlite.md),
 [docs/tls.md](docs/tls.md), and [docs/usages.md](docs/usages.md)). When your
 change makes any of those drift from reality — flags, env vars, tool names,
 config snippets, behaviour descriptions — update the docs **in the same
@@ -102,7 +103,7 @@ internal/
   client/client.go        HTTP client (used by CLI commands and MCP)
   server/
     server.go             HTTP server, route handlers, Run()
-    store.go              In-memory store with JSON persistence (rooms, messages, agents)
+    store.go              In-memory store with SQLite persistence (rooms, messages, agents)
     memory.go             Durable bus memory records and recall search
     daemon.go             PID-based daemon start/stop/status
     allow.go              IP allowlist middleware (AIMEBU_ALLOW)
@@ -242,37 +243,38 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 
 - `github.com/goccy/go-json` — drop-in replacement for `encoding/json`, faster marshaling.
 - `github.com/creack/pty v1.1.24` — PTY allocation for the claude-code interactive agent path. MIT licence, no transitive deps.
+- `modernc.org/sqlite v1.49.1` — pure-Go SQLite driver for the server store. BSD-3-Clause, CGo-free.
 
 **Do not add new dependencies without user consent.**
 
 ## Data directory
 
 `AIMEBU_CONFIG_DIR` defaults to `~/.aimebu/`. Under that root, `server/`
-holds server-owned files (`schema.json`, `rooms.json`, `messages.json`,
-`agents.json`, `reactions.json`, `memory.json`, `leaderboards.json`, `macros.json`, `fleet.json`,
-`settings.json`, `prompts.json`, `roles.json`, `sounds/`, `aimebu.pid`,
-`aimebu.log`) and
+holds server-owned files (`aimebu.sqlite`, optional `.old/` legacy JSON
+archive, `sounds/`, `attachments/`, `aimebu.pid`, `aimebu.log`) and
 `agents/` holds agent-CLI state
 (`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
-`settings.json` stores UI preferences plus global retention settings for
+`aimebu.sqlite` stores rooms, messages, agents, reactions, memory,
+leaderboards, macros, fleet command bundles, prompt overrides, role
+definitions/emoji, sound metadata, attachment metadata, UI preferences, plus
+global retention settings for
 agent liveness (`liveness_sweep_seconds`, `agent_stale_window_seconds`,
 `agent_offline_window_seconds`), stale-agent pruning, empty rooms, cleanup
 cadence, message age/count limits, and the global `memory_enabled` flag plus
 the default-on `leaderboard_enabled` flag.
 When `memory_enabled` is absent, the web UI has not asked yet and memory is
 effectively disabled.
-Emoji reactions are conversation content and live in `server/reactions.json`;
+Emoji reactions are conversation content and live in SQLite;
 reaction updates do not create messages, advance read cursors, or trigger
 human attention.
 Image attachments are conversation content. Uploaded blobs and their registry
-live under `server/attachments/`; messages store attachment metadata and URLs
-only, not embedded image bytes.
-Bus memory is durable curated knowledge and lives in `server/memory.json`;
+live under `server/attachments/` plus SQLite metadata; messages store
+attachment metadata and URLs only, not embedded image bytes.
+Bus memory is durable curated knowledge and lives in SQLite;
 plain `aimebu prune` preserves it, while `aimebu prune -a` removes it.
-Agent leaderboards are durable rating cards and live in
-`server/leaderboards.json`; plain `aimebu prune` preserves them, while
-`aimebu prune -a` removes them. Room memory overrides live on room records in
-`server/rooms.json`; they are
+Agent leaderboards are durable rating cards and live in SQLite; plain
+`aimebu prune` preserves them, while `aimebu prune -a` removes them. Room
+memory overrides live on room records in SQLite; they are
 content-flow controls only, not an automatic wipe or an airtight
 per-participant memory kill switch.
 `usages/` holds provider usage state: `config.json` (0600, refresh interval,

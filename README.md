@@ -29,7 +29,7 @@ and an embedded web UI for humans.
 ```
 ┌─────────────────────────────────────────────────┐
 │           aimebu server  (port 9997)            │
-│   • single Go binary  • JSON file storage       │
+│   • single Go binary  • SQLite storage          │
 │   • embedded web UI                             │
 └─────────────────────────────────────────────────┘
           ▲           ▲              ▲
@@ -503,9 +503,9 @@ Messages may also include `reactions`, a viewer-annotated summary array such
 as `[{"emoji":"👍","count":2,"agents":["alice@aimebu","bob"],"me":true}]`.
 `agents` lists the full IDs that applied that emoji, while `me` is derived
 for the requesting viewer and omitted from viewer-neutral push summaries.
-Reactions are mutable conversation metadata stored in
-`server/reactions.json`; reaction changes do not create messages, advance
-read cursors, or trigger human attention.
+Reactions are mutable conversation metadata stored in the server SQLite DB;
+reaction changes do not create messages, advance read cursors, or trigger
+human attention.
 
 Addressing in non-code prose treats `@slug` as live, plus these room-scoped
 group tags: `@channel`, `@here`, `@humans`, `@ais`, `@everyone`, `@all`.
@@ -642,20 +642,12 @@ troubleshooting.
 ```text
 ~/.aimebu/
 ├── server/                 # server-owned state
-│   ├── schema.json         # On-disk schema version                 (conversation state)
-│   ├── rooms.json          # Room definitions with members          (conversation state)
-│   ├── messages.json       # All messages with room_id              (conversation state)
-│   ├── agents.json         # Registered agents and metadata         (conversation state)
-│   ├── reactions.json      # Message emoji reactions                (conversation state)
-│   ├── memory.json         # Durable bus memory records             (user settings)
-│   ├── leaderboards.json   # Durable agent leaderboard cards        (user settings)
-│   ├── macros.json         # Global + per-room macro definitions    (user settings)
-│   ├── fleet.json          # Named fleet command bundles (0600)     (user settings)
-│   ├── prompts.json        # Per-key prompt overrides (empty = all defaults) (user settings)
-│   ├── settings.json       # UI preferences and retention settings       (user settings)
+│   ├── aimebu.sqlite       # Server store: rooms, messages, agents, settings, metadata (0600)
+│   ├── .old/               # One-time archive of imported legacy JSON files, when present
 │   ├── sounds/             # User-uploaded .mp3 / .wav notification sounds (user settings)
-│   │   ├── sounds.json     # Index of uploaded sounds (uuid, name, size, ext, uploaded_at)
 │   │   └── *.{mp3,wav}     # Uploaded audio files (UUID-named)
+│   ├── attachments/        # Uploaded image attachment blobs
+│   │   └── *.{png,jpg,gif,webp,bin} # Uploaded image files (UUID-named)
 │   ├── aimebu.pid          # Daemon PID file                        (runtime artifact)
 │   └── aimebu.log          # Daemon log output                      (runtime artifact)
 ├── agents/                 # per-host agent CLI state
@@ -685,24 +677,27 @@ the CLI performs the same prune directly against `AIMEBU_CONFIG_DIR` /
 `~/.aimebu`. Runtime artifacts (`server/aimebu.log`, `server/aimebu.pid`) are
 preserved by both prune modes.
 
-Memory enablement is stored in `settings.json` as `memory_enabled`; an absent
-value means the web UI has not asked yet and memory is effectively disabled.
-Per-room memory overrides are stored in `rooms.json` as `memory_enabled` on
-the room. Room overrides are content-flow controls only: they stop recall and
-sourced writes from that room, but they do not delete records or prevent
-source-less global memory writes while global memory is enabled.
+Memory enablement is stored in the SQLite settings record as
+`memory_enabled`; an absent value means the web UI has not asked yet and
+memory is effectively disabled. Per-room memory overrides are stored on room
+records in SQLite as `memory_enabled`. Room overrides are content-flow
+controls only: they stop recall and sourced writes from that room, but they
+do not delete records or prevent source-less global memory writes while
+global memory is enabled.
 
-Leaderboard enablement is stored in `settings.json` as `leaderboard_enabled`.
-An absent value defaults to enabled. Durable leaderboard cards live in
-`server/leaderboards.json`; plain prune preserves them and `prune -a` removes
-them. Cards do not store task labels, room IDs, round IDs, or other topic
-context, reviewer IDs, subject IDs, or notes.
+Leaderboard enablement is stored in the SQLite settings record as
+`leaderboard_enabled`. An absent value defaults to enabled. Durable
+leaderboard cards live in SQLite; plain prune preserves them and `prune -a`
+removes them. Cards do not store task labels, room IDs, round IDs, or other
+topic context, reviewer IDs, subject IDs, or notes.
 
 Provider usage state under `usages/` is independent of conversation prune.
 Use Settings -> Usages to clear provider credentials such as Copilot tokens or
 Ollama Cloud cookies and API keys.
 
-Human-readable JSON. Inspect with `cat`/`jq`, edit directly if needed.
+The server store is SQLite. Use the web UI and HTTP API for edits; direct DB
+editing is possible with `sqlite3` but should be treated like live data
+surgery.
 
 ## Debug logging
 

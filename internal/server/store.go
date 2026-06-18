@@ -273,7 +273,7 @@ func (s *store) pruneOnStartup() {
 	}
 	s.cleanupMessagesLocked(now)
 
-	s.persist()
+	s.persistFullCoreLocked()
 
 	if len(removedAgents) > 0 {
 		log.Printf("Startup prune: removed %d stale agent(s)", len(removedAgents))
@@ -397,8 +397,8 @@ func (s *store) load() error {
 
 func (s *store) persist() {
 	if s.db != nil {
-		if err := s.persistCoreSQLiteLocked(); err != nil {
-			log.Printf("Warning: failed to persist sqlite core state: %v", err)
+		if err := s.persistRoomsAgentsSQLiteLocked(); err != nil {
+			log.Printf("Warning: failed to persist sqlite room/agent state: %v", err)
 		}
 		return
 	}
@@ -432,6 +432,16 @@ func (s *store) persist() {
 	if data, err := json.MarshalIndent(agents, "", "  "); err == nil {
 		atomicWrite(filepath.Join(s.dir, "agents.json"), data)
 	}
+}
+
+func (s *store) persistFullCoreLocked() {
+	if s.db != nil {
+		if err := s.persistCoreSQLiteLocked(); err != nil {
+			log.Printf("Warning: failed to persist sqlite core state: %v", err)
+		}
+		return
+	}
+	s.persist()
 }
 
 // atomicWrite writes data to a temp file, flushes to disk, and renames it
@@ -538,6 +548,11 @@ func (s *store) deleteRoom(id string) bool {
 	}
 	delete(s.rooms, id)
 	delete(s.messages, id)
+	if s.db != nil {
+		if err := s.deleteRoomMessagesSQLiteLocked(id); err != nil {
+			log.Printf("aimebu: delete room messages sqlite: %v", err)
+		}
+	}
 	s.persist()
 	s.mu.Unlock()
 	s.cleanupReactionsForLiveMessages()
@@ -2725,7 +2740,7 @@ func (s *store) clearAll(includeSettings bool) {
 	s.rooms = make(map[string]*types.Room)
 	s.messages = make(map[string][]types.Message)
 	s.agents = make(map[string]*types.Agent)
-	s.persist()
+	s.persistFullCoreLocked()
 	s.mu.Unlock()
 	s.attachmentsMu.Lock()
 	s.attachments = make(map[string]AttachmentEntry)
@@ -2890,7 +2905,7 @@ func (s *store) cleanupEmptyRooms() {
 	}
 
 	log.Printf("Cleaned up %d empty room(s): %v", len(toDelete), toDelete)
-	s.persist()
+	s.persistFullCoreLocked()
 	s.mu.Unlock()
 	s.cleanupReactionsForLiveMessages()
 
@@ -2903,7 +2918,7 @@ func (s *store) cleanupMessages() {
 	s.mu.Lock()
 	changed := s.cleanupMessagesLocked(now)
 	if changed {
-		s.persist()
+		s.persistFullCoreLocked()
 	}
 	s.mu.Unlock()
 	s.cleanupAttachments(now)

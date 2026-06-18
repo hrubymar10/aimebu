@@ -116,6 +116,40 @@ func TestSQLitePruneDataDirClearsCoreDB(t *testing.T) {
 	}
 }
 
+func TestSQLiteAgentTouchDoesNotRewriteMessages(t *testing.T) {
+	s, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	msgID, err := s.roomSend("general", agent.ID, "hello", false, nil, nil, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE messages SET data='sentinel' WHERE id=?`, msgID); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.agents[agent.ID].LastSeen = "2026-01-01T00:00:00Z"
+	s.mu.Unlock()
+
+	s.touchAgent(agent.ID)
+
+	var data string
+	if err := s.db.QueryRow(`SELECT data FROM messages WHERE id=?`, msgID).Scan(&data); err != nil {
+		t.Fatal(err)
+	}
+	if data != "sentinel" {
+		t.Fatalf("message row was rewritten by touchAgent: %q", data)
+	}
+}
+
 func writeJSONFixture(t *testing.T, path string, v any) {
 	t.Helper()
 	data, err := json.Marshal(v)

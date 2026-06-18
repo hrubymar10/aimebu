@@ -118,9 +118,10 @@ Importing never overwrites an existing fleet name. Collisions are renamed with
 
 ## Storage And Prune
 
-Fleets are stored in `~/.aimebu/server/fleet.json` with file mode `0600`.
-Plain `aimebu prune` / `aimebu prune -y` preserves this file. `aimebu prune
--a` deletes it with the rest of user settings.
+Fleets are stored in `~/.aimebu/server/aimebu.sqlite`, which is created with
+file mode `0600` because fleet commands can contain sensitive local shell
+details. Plain `aimebu prune` / `aimebu prune -y` preserves fleets.
+`aimebu prune -a` deletes them with the rest of user settings.
 
 Fleet commands run with your full shell privileges. Treat imported fleet JSON
 like a shell script: only import fleets you trust.

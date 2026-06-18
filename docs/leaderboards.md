@@ -43,21 +43,17 @@ anonymous sample instead of replacing an earlier card.
 
 ## Storage And Prune
 
-Cards live in `~/.aimebu/server/leaderboards.json` as:
-
-```json
-{"cards":[...]}
-```
-
-Plain `aimebu prune` preserves this file. `aimebu prune -a` removes it with
-the rest of durable user-managed server state.
+Cards live in `~/.aimebu/server/aimebu.sqlite`. Plain `aimebu prune`
+preserves leaderboard cards. `aimebu prune -a` removes them with the rest of
+durable user-managed server state.
 
 The `(model, harness)` aggregate is computed on read from card records. It is
 not persisted as a separate cache, so category filters and the self-review
 toggle always fold the same canonical cards.
 
-`settings.json` stores `leaderboard_enabled`. The setting defaults to enabled
-when absent; setting it to `false` hides the top-bar leaderboard button.
+The SQLite settings record stores `leaderboard_enabled`. The setting defaults
+to enabled when absent; setting it to `false` hides the top-bar leaderboard
+button.
 
 ## Data Anonymization
 
