@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	_ "embed"
 	"encoding/hex"
 	"fmt"
@@ -76,6 +77,7 @@ type AttachmentEntry struct {
 
 type store struct {
 	dir    string
+	db     *sql.DB
 	nextID atomic.Int64
 
 	mu       sync.RWMutex
@@ -165,6 +167,8 @@ const (
 	livenessEventReconnect = "reconnect"
 )
 
+const storeSchemaVersion = sqliteSchemaVersion
+
 func newStore(dir string) (*store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create store dir: %w", err)
@@ -195,8 +199,12 @@ func newStore(dir string) (*store, error) {
 		warnedAmbiguousMention: make(map[string]bool),
 	}
 
+	if err := s.openSQLite(); err != nil {
+		return nil, err
+	}
+
 	if err := s.load(); err != nil {
-		log.Printf("Warning: could not load existing state: %v (starting fresh)", err)
+		return nil, err
 	}
 
 	// Apply cleanup rules once at startup so restarts don't accumulate
@@ -272,86 +280,9 @@ func (s *store) pruneOnStartup() {
 	}
 }
 
-// storeSchemaVersion is bumped whenever the on-disk format changes in a way
-// that requires a clean slate. On mismatch the server wipes the three data
-// files and starts fresh; no migration is attempted.
-const storeSchemaVersion = 2
-
-func (s *store) schemaOutdated() bool {
-	data, err := os.ReadFile(filepath.Join(s.dir, "schema.json"))
-	if err != nil {
-		return true // no schema file → assume old data
-	}
-	var sv struct {
-		Version int `json:"version"`
-	}
-	if json.Unmarshal(data, &sv) != nil {
-		return true
-	}
-	return sv.Version != storeSchemaVersion
-}
-
-func (s *store) writeSchema() {
-	data, _ := json.Marshal(map[string]int{"version": storeSchemaVersion})
-	_ = os.WriteFile(filepath.Join(s.dir, "schema.json"), data, 0o644)
-}
-
-func (s *store) wipeDataFiles() {
-	for _, name := range []string{"rooms.json", "messages.json", "agents.json"} {
-		_ = os.Remove(filepath.Join(s.dir, name))
-	}
-}
-
 func (s *store) load() error {
-	if s.schemaOutdated() {
-		log.Printf("Schema version mismatch — wiping data dir for clean start")
-		s.wipeDataFiles()
-		s.writeSchema()
-	}
-	// Rooms
-	data, err := os.ReadFile(filepath.Join(s.dir, "rooms.json"))
-	if err == nil {
-		var rooms []types.Room
-		if err := json.Unmarshal(data, &rooms); err != nil {
-			return fmt.Errorf("parse rooms: %w", err)
-		}
-		for i := range rooms {
-			s.rooms[rooms[i].ID] = &rooms[i]
-		}
-	}
-
-	// Messages — stored as flat list on disk, loaded into per-room map
-	data, err = os.ReadFile(filepath.Join(s.dir, "messages.json"))
-	if err == nil {
-		var flat []types.Message
-		if err := json.Unmarshal(data, &flat); err != nil {
-			return fmt.Errorf("parse messages: %w", err)
-		}
-		var maxID int64
-		for _, m := range flat {
-			s.messages[m.RoomID] = append(s.messages[m.RoomID], m)
-			if m.ID > maxID {
-				maxID = m.ID
-			}
-		}
-		s.nextID.Store(maxID)
-	}
-
-	// Agents
-	data, err = os.ReadFile(filepath.Join(s.dir, "agents.json"))
-	if err == nil {
-		var agents []types.Agent
-		if err := json.Unmarshal(data, &agents); err != nil {
-			return fmt.Errorf("parse agents: %w", err)
-		}
-		for i := range agents {
-			agents[i].State = ""
-			agents[i].StateAt = time.Time{}
-			s.agents[agents[i].ID] = &agents[i]
-			if isReservedAgentName(agents[i].Name) {
-				log.Printf("warning: persisted agent %q has reserved name %q; @%s now resolves to a group token, not this agent", agents[i].ID, agents[i].Name, agents[i].Name)
-			}
-		}
+	if err := s.loadCoreSQLite(); err != nil {
+		return err
 	}
 
 	// Settings — persisted separately; survives schema wipes and prune (unless include_settings=true).
@@ -388,7 +319,7 @@ func (s *store) load() error {
 	//   v1: per-user  {agentID: {key: body}}
 	//   v2: global    {macros: {key: body}, seen_defaults: [...]}
 	//   v3: global+rooms {macros: {...}, rooms: {roomID: {...}}, seen_defaults: [...]}
-	data, err = os.ReadFile(filepath.Join(s.dir, "macros.json"))
+	data, err := os.ReadFile(filepath.Join(s.dir, "macros.json"))
 	if err == nil {
 		var env macrosEnvelope
 		if json.Unmarshal(data, &env) == nil && env.Macros != nil {
@@ -459,6 +390,13 @@ func (s *store) load() error {
 }
 
 func (s *store) persist() {
+	if s.db != nil {
+		if err := s.persistCoreSQLiteLocked(); err != nil {
+			log.Printf("Warning: failed to persist sqlite core state: %v", err)
+		}
+		return
+	}
+
 	// Rooms
 	rooms := make([]types.Room, 0, len(s.rooms))
 	for _, r := range s.rooms {
@@ -1265,6 +1203,12 @@ func (s *store) reactionPath() string {
 }
 
 func (s *store) loadReactions() {
+	if s.db != nil {
+		if _, err := s.loadReactionsSQLite(); err != nil {
+			log.Printf("aimebu: loadReactions sqlite: %v", err)
+		}
+		return
+	}
 	data, err := os.ReadFile(s.reactionPath())
 	if err != nil {
 		return
@@ -1291,6 +1235,12 @@ func (s *store) loadReactions() {
 }
 
 func (s *store) persistReactionsLocked() {
+	if s.db != nil {
+		if err := s.persistReactionsSQLiteLocked(); err != nil {
+			log.Printf("aimebu: persist reactions sqlite: %v", err)
+		}
+		return
+	}
 	out := make(map[int64][]types.Reaction, len(s.reactions))
 	for id, rows := range s.reactions {
 		if len(rows) == 0 {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -63,6 +64,19 @@ var validThemes = map[string]bool{
 }
 
 func (s *store) loadSettings() {
+	if s.db != nil {
+		if _, err := s.loadSettingsSQLite(); err != nil {
+			log.Printf("aimebu: loadSettings sqlite: %v", err)
+		}
+		// Legacy theme migration: prior "red" maps to "red-dark".
+		if s.settings.Theme == "red" {
+			s.settings.Theme = "red-dark"
+		}
+		if s.settings.Theme == "high-contrast-dark-cyan" {
+			s.settings.Theme = "high-contrast-dark"
+		}
+		return
+	}
 	data, err := os.ReadFile(filepath.Join(s.dir, "settings.json"))
 	if err != nil {
 		return
@@ -247,6 +261,13 @@ func validateSettingRange(field string, value *int, min, max int, zeroUnlimited 
 func (s *store) putSettings(set Settings) {
 	s.settingsMu.Lock()
 	s.settings = set
+	if s.db != nil {
+		if err := s.persistSettingsSQLiteLocked(); err != nil {
+			log.Printf("aimebu: persist settings sqlite: %v", err)
+		}
+		s.settingsMu.Unlock()
+		return
+	}
 	data, _ := json.MarshalIndent(set, "", "  ")
 	s.settingsMu.Unlock()
 	atomicWrite(filepath.Join(s.dir, "settings.json"), data)
@@ -287,6 +308,13 @@ func (s *store) messageRetentionCount() int {
 func (s *store) clearSettings() {
 	s.settingsMu.Lock()
 	s.settings = Settings{}
+	if s.db != nil {
+		if err := s.persistSettingsSQLiteLocked(); err != nil {
+			log.Printf("aimebu: clear settings sqlite: %v", err)
+		}
+		s.settingsMu.Unlock()
+		return
+	}
 	s.settingsMu.Unlock()
 	_ = os.Remove(filepath.Join(s.dir, "settings.json"))
 }

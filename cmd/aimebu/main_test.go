@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -50,20 +51,9 @@ func TestPruneViaServerOrLocalFallsBackOffline(t *testing.T) {
 		t.Fatalf("pruneLocalSidecars returned error: %v", err)
 	}
 
-	for _, tc := range []struct {
-		name string
-		want string
-	}{
-		{name: "rooms.json", want: "[]"},
-		{name: "messages.json", want: "null"},
-		{name: "agents.json", want: "[]"},
-	} {
-		data, err := os.ReadFile(filepath.Join(serverDir, tc.name))
-		if err != nil {
-			t.Fatalf("read %s: %v", tc.name, err)
-		}
-		if strings.TrimSpace(string(data)) != tc.want {
-			t.Fatalf("%s = %s, want %s", tc.name, strings.TrimSpace(string(data)), tc.want)
+	for _, table := range []string{"rooms", "messages", "agents"} {
+		if got := sqliteTableCount(t, filepath.Join(serverDir, "aimebu.sqlite"), table); got != 0 {
+			t.Fatalf("%s rows after offline prune = %d, want 0", table, got)
 		}
 	}
 
@@ -401,6 +391,20 @@ func writeTestFile(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func sqliteTableCount(t *testing.T, dbPath, table string) int {
+	t.Helper()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
 }
 
 func writeMainTestCertificatePair(t *testing.T) (string, string) {
