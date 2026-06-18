@@ -85,6 +85,22 @@ func TestDefaultRolesIncludeThreeWayIndependentPlanning(t *testing.T) {
 	if !strings.Contains(defaults["leader"], "leaderboard rating session") {
 		t.Fatalf("leader default lost leaderboard close-out step:\n%s", defaults["leader"])
 	}
+	closeOut := "At close-out, use this sequence:"
+	closeOutIndex := strings.Index(defaults["leader"], closeOut)
+	if closeOutIndex == -1 {
+		t.Fatalf("leader default lost explicit close-out sequence:\n%s", defaults["leader"])
+	}
+	closeOutBody := defaults["leader"][closeOutIndex:]
+	for _, want := range []string{
+		"first hand the final status to the human with needs_attention=true",
+		"after the human signs off on a shipped change or you otherwise conclude the cycle is complete",
+		"immediately start a leaderboard rating session for the room with bus_leaderboard_start",
+		"only after that rating step may you resume idle bus_wait listening",
+	} {
+		if !strings.Contains(closeOutBody, want) {
+			t.Fatalf("leader close-out sequence missing %q:\n%s", want, defaults["leader"])
+		}
+	}
 	if !strings.Contains(defaults["reviewer"], "Code review is performed by review roles and coordination roles") {
 		t.Fatalf("reviewer default lost CR boundary statement:\n%s", defaults["reviewer"])
 	}

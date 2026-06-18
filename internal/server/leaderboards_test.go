@@ -58,6 +58,19 @@ func setupLeaderboardStore(t *testing.T) (*store, types.Agent, types.Agent) {
 	return s, *leader, *worker
 }
 
+func setupLeaderboardStoreWithHuman(t *testing.T) (*store, types.Agent, types.Agent, types.Agent) {
+	t.Helper()
+	s, leader, worker := setupLeaderboardStore(t)
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("rated", human.ID); err != nil {
+		t.Fatal(err)
+	}
+	return s, leader, worker, *human
+}
+
 func TestLeaderboardStartPostsInWorkingRoomOnly(t *testing.T) {
 	s, leader, _ := setupLeaderboardStore(t)
 
@@ -85,6 +98,46 @@ func TestLeaderboardStartPostsInWorkingRoomOnly(t *testing.T) {
 	got := ratedMessages[len(ratedMessages)-1]
 	if got.From != "_system" || !strings.Contains(got.Body, "Leader started a voting session") {
 		t.Fatalf("latest rated message = %+v, want voting-session system message", got)
+	}
+}
+
+func TestLeaderboardStartAddressesAIParticipantsOnly(t *testing.T) {
+	s, leader, worker, human := setupLeaderboardStoreWithHuman(t)
+
+	if _, err := s.startLeaderboardVoting(leader.ID, "rated"); err != nil {
+		t.Fatal(err)
+	}
+
+	s.mu.RLock()
+	ratedMessages := append([]types.Message{}, s.messages["rated"]...)
+	s.mu.RUnlock()
+	if len(ratedMessages) == 0 {
+		t.Fatal("start did not post system message in rated room")
+	}
+	got := ratedMessages[len(ratedMessages)-1]
+
+	wantTargets := []string{leader.ID, worker.ID}
+	if len(got.Targets) != len(wantTargets) {
+		t.Fatalf("targets = %v, want %v", got.Targets, wantTargets)
+	}
+	for i, want := range wantTargets {
+		if got.Targets[i] != want {
+			t.Fatalf("targets = %v, want %v", got.Targets, wantTargets)
+		}
+	}
+	if strings.Contains(strings.Join(got.Targets, ","), human.ID) {
+		t.Fatalf("targets include human %q: %v", human.ID, got.Targets)
+	}
+
+	for _, agent := range []types.Agent{leader, worker} {
+		view := annotate([]types.Message{got}, agent.ID, nil)
+		if len(view) != 1 || !view[0].AddressedToMe || !view[0].ShouldRespond {
+			t.Fatalf("%s annotation = %+v, want addressed/responding", agent.ID, view)
+		}
+	}
+	humanView := annotate([]types.Message{got}, human.ID, nil)
+	if len(humanView) != 1 || humanView[0].AddressedToMe || humanView[0].ShouldRespond {
+		t.Fatalf("%s annotation = %+v, want not addressed/responding", human.ID, humanView)
 	}
 }
 

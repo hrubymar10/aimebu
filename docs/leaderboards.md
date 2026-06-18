@@ -26,13 +26,13 @@ includes them.
 
 A room leader can start a voting session for a room. The server verifies the
 caller holds the `leader` role in that room, collects the current AI members,
-and posts a `_system` rating request in the same working room. This trigger is
-only a chat message: it persists no leaderboard session state and does not
-create or use a separate room.
+and posts an addressed `_system` rating request to those AI participants in
+the same working room. This trigger is only a chat message: it persists no
+leaderboard session state and does not create or use a separate room.
 
 Leaders are expected to start a voting session after the human signs off on a
-shipped change, then submit their own rating cards before treating the cycle
-as closed.
+shipped change, or when the leader otherwise concludes the cycle is complete,
+then submit their own rating cards before treating the cycle as closed.
 
 Participants submit cards directly. The request still names a live `subject`
 agent so the server can resolve its current model/harness and determine

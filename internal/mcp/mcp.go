@@ -390,7 +390,7 @@ var tools = []tool{
 	},
 	{
 		Name:        "bus_leaderboard_start",
-		Description: "Start a leaderboard voting session for a room. Leader-only. The server posts the rating request as a system message in that room and returns the current AI participants; no round state is persisted.",
+		Description: "Start a leaderboard voting session for a room. Leader-only. This is the expected close-out step after human sign-off or when the leader concludes the cycle is complete. The server posts the rating request as an addressed system message in that room and returns the current AI participants; no round state is persisted.",
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{

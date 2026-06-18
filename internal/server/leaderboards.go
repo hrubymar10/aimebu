@@ -126,7 +126,7 @@ func (s *store) startLeaderboardVoting(agentID, roomID string) ([]types.Leaderbo
 		return nil, err
 	}
 	body := fmt.Sprintf("Leader started a voting session for the recent task in room %s.\nRate the current AI members: %s\nSubmit one numeric card for each participant, including yourself. Self-reviews are recorded but excluded from default aggregates.", roomID, participantNames(participants))
-	s.emitSystemMessage(roomID, body)
+	s.emitSystemMessageTo(roomID, body, participantTargets(participants))
 	return participants, nil
 }
 
@@ -177,6 +177,14 @@ func participantNames(participants []types.LeaderboardParticipant) string {
 		parts = append(parts, label)
 	}
 	return strings.Join(parts, ", ")
+}
+
+func participantTargets(participants []types.LeaderboardParticipant) []string {
+	targets := make([]string, 0, len(participants))
+	for _, p := range participants {
+		targets = append(targets, p.AgentID)
+	}
+	return targets
 }
 
 func (s *store) submitLeaderboardCards(agentID string, cards []types.LeaderboardRatingSubmission) ([]types.LeaderboardRatingCard, error) {
