@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -114,6 +115,25 @@ func (s *store) fleetPath() string {
 }
 
 func (s *store) loadFleets() {
+	if s.db != nil {
+		fleets := make(map[string]Fleet)
+		if err := s.loadJSONRows("fleets", "name", func(name string, data []byte) error {
+			var fleet Fleet
+			if err := json.Unmarshal(data, &fleet); err != nil {
+				return err
+			}
+			fleets[name] = normalizeFleetDefaults(fleet)
+			return nil
+		}); err == nil {
+			env := normalizeFleetEnvelope(fleetsEnvelope{Version: 1, Fleets: fleets})
+			if validateFleetsEnvelope(env) == nil {
+				s.fleetsMu.Lock()
+				s.fleets = env.Fleets
+				s.fleetsMu.Unlock()
+				return
+			}
+		}
+	}
 	data, err := os.ReadFile(s.fleetPath())
 	if err != nil {
 		return
@@ -228,12 +248,31 @@ func (s *store) importFleets(env fleetsEnvelope) (fleetsEnvelope, error) {
 func (s *store) clearFleets() {
 	s.fleetsMu.Lock()
 	s.fleets = make(map[string]Fleet)
+	if s.db != nil {
+		if err := s.clearTable("fleets"); err != nil {
+			log.Printf("aimebu: clear fleets sqlite: %v", err)
+		}
+		s.fleetsMu.Unlock()
+		s.broadcastFleetsUpdated()
+		return
+	}
 	s.fleetsMu.Unlock()
 	_ = os.Remove(s.fleetPath())
 	s.broadcastFleetsUpdated()
 }
 
 func (s *store) persistFleets() {
+	if s.db != nil {
+		env := s.listFleets()
+		rows := make(map[string]any, len(env.Fleets))
+		for name, fleet := range env.Fleets {
+			rows[name] = fleet
+		}
+		if err := s.replaceJSONRows("fleets", "name", rows); err != nil {
+			log.Printf("aimebu: persist fleets sqlite: %v", err)
+		}
+		return
+	}
 	env := s.listFleets()
 	data, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {

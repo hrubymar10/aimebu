@@ -48,26 +48,30 @@ func (s *store) openSQLite() error {
 	}
 	s.db = db
 
-	if err := s.configureSQLite(); err != nil {
+	legacyCore := s.hasLegacyCoreJSON()
+	if err := s.configureSQLite(!legacyCore); err != nil {
 		db.Close()
 		s.db = nil
-		if fresh {
-			_ = os.Remove(path)
-		}
+		removeSQLiteFiles(path)
 		return err
 	}
-	if fresh {
+	if legacyCore {
 		if err := s.importLegacyCoreJSON(); err != nil {
 			db.Close()
 			s.db = nil
-			_ = os.Remove(path)
+			removeSQLiteFiles(path)
 			return err
 		}
+	}
+	if err := s.importLegacyRemainingJSON(); err != nil {
+		db.Close()
+		s.db = nil
+		return err
 	}
 	return nil
 }
 
-func (s *store) configureSQLite() error {
+func (s *store) configureSQLite(seedSchemaMeta bool) error {
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA busy_timeout=5000",
@@ -87,6 +91,15 @@ func (s *store) configureSQLite() error {
 		`CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS reactions (message_id INTEGER PRIMARY KEY, data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS memory (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS leaderboards (seq INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS macros (key TEXT PRIMARY KEY, value TEXT NOT NULL, seen_default INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS fleets (name TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS prompts (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS role_overrides (key TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS role_custom (key TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS sounds (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -98,6 +111,9 @@ func (s *store) configureSQLite() error {
 		return fmt.Errorf("read schema_meta: %w", err)
 	}
 	if count == 0 {
+		if !seedSchemaMeta {
+			return nil
+		}
 		if _, err := s.db.Exec(`INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)`, sqliteSchemaVersion, now()); err != nil {
 			return fmt.Errorf("write schema_meta: %w", err)
 		}
@@ -111,6 +127,25 @@ func (s *store) configureSQLite() error {
 		return fmt.Errorf("sqlite schema version %d is newer than this binary supports (%d)", version, sqliteSchemaVersion)
 	}
 	return nil
+}
+
+func (s *store) hasLegacyCoreJSON() bool {
+	for _, name := range []string{"rooms.json", "messages.json", "agents.json", "reactions.json", "settings.json"} {
+		if _, err := os.Stat(filepath.Join(s.dir, name)); err == nil {
+			var count int
+			if s.db != nil && s.db.QueryRow(`SELECT COUNT(*) FROM schema_meta`).Scan(&count) == nil && count > 0 {
+				return false
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func removeSQLiteFiles(path string) {
+	_ = os.Remove(path)
+	_ = os.Remove(path + "-wal")
+	_ = os.Remove(path + "-shm")
 }
 
 func (s *store) importLegacyCoreJSON() error {
@@ -170,6 +205,10 @@ func (s *store) importLegacyCoreJSON() error {
 		_ = tx.Rollback()
 		return err
 	}
+	if _, err := tx.Exec(`INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)`, sqliteSchemaVersion, now()); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("write schema_meta: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit legacy import: %w", err)
 	}
@@ -177,6 +216,236 @@ func (s *store) importLegacyCoreJSON() error {
 		return fmt.Errorf("archive legacy json: %w", err)
 	}
 	return nil
+}
+
+func (s *store) importLegacyRemainingJSON() error {
+	topLevel := []string{"memory.json", "leaderboards.json", "macros.json", "fleet.json", "prompts.json", "roles.json"}
+	hasAny := false
+	for _, name := range topLevel {
+		if _, err := os.Stat(filepath.Join(s.dir, name)); err == nil {
+			hasAny = true
+			break
+		}
+	}
+	for _, path := range []string{s.soundsIndexPath(), s.attachmentsIndexPath()} {
+		if _, err := os.Stat(path); err == nil {
+			hasAny = true
+		}
+	}
+	if !hasAny {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return fmt.Errorf("begin remaining legacy import: %w", err)
+	}
+	if err := s.importRemainingTx(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit remaining legacy import: %w", err)
+	}
+	if err := moveLegacyJSONFiles(s.dir, topLevel); err != nil {
+		return fmt.Errorf("archive remaining legacy json: %w", err)
+	}
+	_ = os.Remove(s.soundsIndexPath())
+	_ = os.Remove(s.attachmentsIndexPath())
+	return nil
+}
+
+func (s *store) importRemainingTx(tx *sql.Tx) error {
+	var memory memoryEnvelope
+	if err := readLegacyJSON(filepath.Join(s.dir, "memory.json"), &memory); err != nil {
+		return err
+	}
+	for _, record := range memory.Records {
+		if record.ID == "" {
+			continue
+		}
+		if err := txInsertJSON(tx, "memory", "id", record.ID, record); err != nil {
+			return err
+		}
+	}
+
+	var leaderboards leaderboardsEnvelope
+	if err := readLegacyJSON(filepath.Join(s.dir, "leaderboards.json"), &leaderboards); err != nil {
+		return err
+	}
+	for i, card := range leaderboards.Cards {
+		if err := txInsertJSON(tx, "leaderboards", "seq", fmt.Sprintf("%012d", i+1), card); err != nil {
+			return err
+		}
+	}
+
+	if err := s.importLegacyMacrosTx(tx); err != nil {
+		return err
+	}
+
+	var fleets fleetsEnvelope
+	if err := readLegacyJSON(filepath.Join(s.dir, "fleet.json"), &fleets); err != nil {
+		return err
+	}
+	fleets = normalizeFleetEnvelope(fleets)
+	for name, fleet := range fleets.Fleets {
+		if err := txInsertJSON(tx, "fleets", "name", name, fleet); err != nil {
+			return err
+		}
+	}
+
+	var prompts promptsEnvelope
+	if err := readLegacyJSON(filepath.Join(s.dir, "prompts.json"), &prompts); err != nil {
+		return err
+	}
+	for key, value := range prompts.Prompts {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO prompts(key, value) VALUES(?, ?)`, key, value); err != nil {
+			return err
+		}
+	}
+
+	if err := s.importLegacyRolesTx(tx); err != nil {
+		return err
+	}
+
+	var sounds struct {
+		Sounds []SoundEntry `json:"sounds"`
+	}
+	if err := readLegacyJSON(s.soundsIndexPath(), &sounds); err != nil {
+		return err
+	}
+	for _, entry := range sounds.Sounds {
+		if entry.UUID == "" {
+			continue
+		}
+		if err := txInsertJSON(tx, "sounds", "id", entry.UUID, entry); err != nil {
+			return err
+		}
+	}
+
+	var attachments struct {
+		Attachments []AttachmentEntry `json:"attachments"`
+	}
+	if err := readLegacyJSON(s.attachmentsIndexPath(), &attachments); err != nil {
+		return err
+	}
+	for _, entry := range attachments.Attachments {
+		if entry.ID == "" {
+			continue
+		}
+		if err := txInsertJSON(tx, "attachments", "id", entry.ID, entry); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *store) importLegacyMacrosTx(tx *sql.Tx) error {
+	data, err := os.ReadFile(filepath.Join(s.dir, "macros.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	macros := make(map[string]string)
+	seen := make(map[string]bool)
+	var env macrosEnvelope
+	if json.Unmarshal(data, &env) == nil && env.Macros != nil {
+		for k, v := range env.Macros {
+			macros[k] = v
+		}
+		for _, k := range env.SeenDefaults {
+			seen[k] = true
+		}
+		roomIDs := make([]string, 0, len(env.Rooms))
+		for roomID := range env.Rooms {
+			roomIDs = append(roomIDs, roomID)
+		}
+		sort.Strings(roomIDs)
+		for _, roomID := range roomIDs {
+			rm := env.Rooms[roomID]
+			keys := make([]string, 0, len(rm))
+			for k := range rm {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				if _, exists := macros[k]; !exists {
+					macros[k] = rm[k]
+				}
+			}
+		}
+	} else {
+		var old map[string]map[string]string
+		if err := json.Unmarshal(data, &old); err != nil {
+			return err
+		}
+		agentIDs := make([]string, 0, len(old))
+		for k := range old {
+			agentIDs = append(agentIDs, k)
+		}
+		sort.Strings(agentIDs)
+		for _, aid := range agentIDs {
+			for k, v := range old[aid] {
+				if _, exists := macros[k]; !exists {
+					macros[k] = v
+				}
+			}
+		}
+	}
+	keys := make(map[string]bool, len(macros)+len(seen))
+	for k := range macros {
+		keys[k] = true
+	}
+	for k := range seen {
+		keys[k] = true
+	}
+	for k := range keys {
+		seenDefault := 0
+		if seen[k] {
+			seenDefault = 1
+		}
+		if _, err := tx.Exec(`INSERT INTO macros(key, value, seen_default) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, seen_default=excluded.seen_default`, k, macros[k], seenDefault); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *store) importLegacyRolesTx(tx *sql.Tx) error {
+	var env rolesEnvelope
+	if err := readLegacyJSON(filepath.Join(s.dir, "roles.json"), &env); err != nil {
+		return err
+	}
+	for key, raw := range env.Overrides {
+		var body string
+		var entry roleOverrideEntry
+		if json.Unmarshal(raw, &body) == nil {
+			entry = roleOverrideEntry{Body: body}
+		} else if err := json.Unmarshal(raw, &entry); err != nil {
+			return err
+		}
+		if err := txInsertJSON(tx, "role_overrides", "key", key, entry); err != nil {
+			return err
+		}
+	}
+	for key, entry := range env.Custom {
+		if err := txInsertJSON(tx, "role_custom", "key", key, entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func txInsertJSON(tx *sql.Tx, table, keyColumn, key string, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`INSERT OR REPLACE INTO `+table+`(`+keyColumn+`, data) VALUES(?, ?)`, key, string(data))
+	return err
 }
 
 func readLegacyJSON(path string, dst any) error {
@@ -433,6 +702,15 @@ func (s *store) persistCoreSQLiteLocked() error {
 	return tx.Commit()
 }
 
+func (s *store) insertMessageSQLiteLocked(msg types.Message) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO messages(id, room_id, data) VALUES(?, ?, ?)`, msg.ID, msg.RoomID, string(data))
+	return err
+}
+
 func (s *store) loadReactionsSQLite() (bool, error) {
 	rows, err := s.db.Query(`SELECT message_id, data FROM reactions ORDER BY message_id`)
 	if err != nil {
@@ -486,6 +764,20 @@ func (s *store) persistReactionsSQLiteLocked() error {
 	return tx.Commit()
 }
 
+func (s *store) persistReactionSQLiteLocked(messageID int64) error {
+	rows := s.reactions[messageID]
+	if len(rows) == 0 {
+		_, err := s.db.Exec(`DELETE FROM reactions WHERE message_id=?`, messageID)
+		return err
+	}
+	data, err := json.Marshal(rows)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO reactions(message_id, data) VALUES(?, ?) ON CONFLICT(message_id) DO UPDATE SET data=excluded.data`, messageID, string(data))
+	return err
+}
+
 func (s *store) loadSettingsSQLite() (bool, error) {
 	var data string
 	err := s.db.QueryRow(`SELECT data FROM settings WHERE id=1`).Scan(&data)
@@ -509,5 +801,162 @@ func (s *store) persistSettingsSQLiteLocked() error {
 		return err
 	}
 	_, err = s.db.Exec(`INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, string(data))
+	return err
+}
+
+func (s *store) loadMacrosSQLite() error {
+	rows, err := s.db.Query(`SELECT key, value, seen_default FROM macros ORDER BY key`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	macros := make(map[string]string)
+	seen := make(map[string]bool)
+	for rows.Next() {
+		var key, value string
+		var seenDefault int
+		if err := rows.Scan(&key, &value, &seenDefault); err != nil {
+			return err
+		}
+		macros[key] = value
+		if seenDefault != 0 {
+			seen[key] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	s.macrosMu.Lock()
+	s.macros = macros
+	s.seenDefaults = seen
+	s.macrosMu.Unlock()
+	return nil
+}
+
+func (s *store) persistMacrosSQLiteLocked() error {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM macros`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	keys := make(map[string]bool, len(s.macros)+len(s.seenDefaults))
+	for key := range s.macros {
+		keys[key] = true
+	}
+	for key := range s.seenDefaults {
+		keys[key] = true
+	}
+	ordered := make([]string, 0, len(keys))
+	for key := range keys {
+		ordered = append(ordered, key)
+	}
+	sort.Strings(ordered)
+	for _, key := range ordered {
+		value := s.macros[key]
+		seenDefault := 0
+		if s.seenDefaults[key] {
+			seenDefault = 1
+		}
+		if _, err := tx.Exec(`INSERT INTO macros(key, value, seen_default) VALUES(?, ?, ?)`, key, value, seenDefault); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *store) replaceJSONRows(table, keyColumn string, rows map[string]any) error {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM ` + table); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	keys := make([]string, 0, len(rows))
+	for key := range rows {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		data, err := json.Marshal(rows[key])
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO `+table+`(`+keyColumn+`, data) VALUES(?, ?)`, key, string(data)); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *store) replacePromptRows(rows map[string]any) error {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM prompts`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	keys := make([]string, 0, len(rows))
+	for key := range rows {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value, _ := rows[key].(string)
+		if _, err := tx.Exec(`INSERT INTO prompts(key, value) VALUES(?, ?)`, key, value); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *store) loadPromptRows(apply func(string, string) error) error {
+	rows, err := s.db.Query(`SELECT key, value FROM prompts ORDER BY key`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return err
+		}
+		if err := apply(key, value); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (s *store) loadJSONRows(table, keyColumn string, apply func(string, []byte) error) error {
+	rows, err := s.db.Query(`SELECT ` + keyColumn + `, data FROM ` + table + ` ORDER BY ` + keyColumn)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, data string
+		if err := rows.Scan(&key, &data); err != nil {
+			return err
+		}
+		if err := apply(key, []byte(data)); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (s *store) clearTable(table string) error {
+	_, err := s.db.Exec(`DELETE FROM ` + table)
 	return err
 }

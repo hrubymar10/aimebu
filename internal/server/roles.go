@@ -113,6 +113,37 @@ func compiledRoleDefaultFor(key string) string {
 }
 
 func (s *store) loadRoles() {
+	if s.db != nil {
+		overrides := make(map[string]roleOverrideEntry)
+		custom := make(map[string]customRoleEntry)
+		if err := s.loadJSONRows("role_overrides", "key", func(k string, data []byte) error {
+			if !roleCatalogSet[k] {
+				log.Printf("aimebu: loadRoles: dropped stale override for key %q", k)
+				return nil
+			}
+			var entry roleOverrideEntry
+			if err := json.Unmarshal(data, &entry); err != nil {
+				return err
+			}
+			overrides[k] = entry
+			return nil
+		}); err == nil {
+			if err := s.loadJSONRows("role_custom", "key", func(k string, data []byte) error {
+				var entry customRoleEntry
+				if err := json.Unmarshal(data, &entry); err != nil {
+					return err
+				}
+				custom[k] = entry
+				return nil
+			}); err == nil {
+				s.rolesMu.Lock()
+				s.rolesOverrides = overrides
+				s.rolesCustom = custom
+				s.rolesMu.Unlock()
+				return
+			}
+		}
+	}
 	data, err := os.ReadFile(filepath.Join(s.dir, "roles.json"))
 	if err != nil {
 		return
@@ -167,6 +198,24 @@ func (s *store) loadRoles() {
 
 func (s *store) saveRoles() {
 	s.rolesMu.RLock()
+	if s.db != nil {
+		overrides := make(map[string]any, len(s.rolesOverrides))
+		for k, v := range s.rolesOverrides {
+			overrides[k] = v
+		}
+		custom := make(map[string]any, len(s.rolesCustom))
+		for k, v := range s.rolesCustom {
+			custom[k] = v
+		}
+		s.rolesMu.RUnlock()
+		if err := s.replaceJSONRows("role_overrides", "key", overrides); err != nil {
+			log.Printf("aimebu: save role overrides sqlite: %v", err)
+		}
+		if err := s.replaceJSONRows("role_custom", "key", custom); err != nil {
+			log.Printf("aimebu: save custom roles sqlite: %v", err)
+		}
+		return
+	}
 	overrides := make(map[string]roleOverrideEntry, len(s.rolesOverrides))
 	for k, v := range s.rolesOverrides {
 		overrides[k] = v
@@ -812,6 +861,16 @@ func (s *store) clearRoles() {
 	s.rolesMu.Lock()
 	s.rolesOverrides = make(map[string]roleOverrideEntry)
 	s.rolesCustom = make(map[string]customRoleEntry)
+	if s.db != nil {
+		if err := s.clearTable("role_overrides"); err != nil {
+			log.Printf("aimebu: clear role overrides sqlite: %v", err)
+		}
+		if err := s.clearTable("role_custom"); err != nil {
+			log.Printf("aimebu: clear custom roles sqlite: %v", err)
+		}
+		s.rolesMu.Unlock()
+		return
+	}
 	s.rolesMu.Unlock()
 	_ = os.Remove(filepath.Join(s.dir, "roles.json"))
 }

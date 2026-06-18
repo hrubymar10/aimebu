@@ -82,6 +82,26 @@ func compiledDefaultFor(key string) string {
 // ── Store operations ───────────────────────────────────────────────
 
 func (s *store) loadPrompts() {
+	if s.db != nil {
+		clean := make(map[string]string)
+		dropped := 0
+		if err := s.loadPromptRows(func(key, value string) error {
+			if promptCatalogSet[key] {
+				clean[key] = value
+			} else {
+				dropped++
+			}
+			return nil
+		}); err == nil {
+			if dropped > 0 {
+				log.Printf("aimebu: loadPrompts: dropped %d stale prompt override(s) for keys no longer in catalog", dropped)
+			}
+			s.promptsMu.Lock()
+			s.prompts = clean
+			s.promptsMu.Unlock()
+			return
+		}
+	}
 	data, err := os.ReadFile(filepath.Join(s.dir, "prompts.json"))
 	if err != nil {
 		return
@@ -112,6 +132,17 @@ func (s *store) loadPrompts() {
 
 func (s *store) savePrompts() {
 	s.promptsMu.RLock()
+	if s.db != nil {
+		rows := make(map[string]any, len(s.prompts))
+		for key, value := range s.prompts {
+			rows[key] = value
+		}
+		s.promptsMu.RUnlock()
+		if err := s.replacePromptRows(rows); err != nil {
+			log.Printf("aimebu: save prompts sqlite: %v", err)
+		}
+		return
+	}
 	env := promptsEnvelope{Prompts: s.prompts}
 	data, err := json.MarshalIndent(env, "", "  ")
 	s.promptsMu.RUnlock()
@@ -197,6 +228,13 @@ func (s *store) listPrompts() []PromptEntry {
 func (s *store) clearPrompts() {
 	s.promptsMu.Lock()
 	s.prompts = make(map[string]string)
+	if s.db != nil {
+		if err := s.clearTable("prompts"); err != nil {
+			log.Printf("aimebu: clear prompts sqlite: %v", err)
+		}
+		s.promptsMu.Unlock()
+		return
+	}
 	s.promptsMu.Unlock()
 	_ = os.Remove(filepath.Join(s.dir, "prompts.json"))
 }

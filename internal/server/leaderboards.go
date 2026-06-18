@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -35,6 +36,26 @@ type leaderboardsEnvelope struct {
 }
 
 func (s *store) loadLeaderboards() {
+	if s.db != nil {
+		var cards []types.LeaderboardRatingCard
+		if err := s.loadJSONRows("leaderboards", "seq", func(_ string, data []byte) error {
+			var card types.LeaderboardRatingCard
+			if err := json.Unmarshal(data, &card); err != nil {
+				return err
+			}
+			card = normalizeStoredLeaderboardCard(card)
+			if card.SubjectModel == "" && card.SubjectHarness == "" {
+				return nil
+			}
+			cards = append(cards, card)
+			return nil
+		}); err == nil {
+			s.leaderboardsMu.Lock()
+			s.leaderboards = cards
+			s.leaderboardsMu.Unlock()
+			return
+		}
+	}
 	data, err := os.ReadFile(filepath.Join(s.dir, "leaderboards.json"))
 	if err != nil {
 		return
@@ -63,6 +84,16 @@ func normalizeStoredLeaderboardCard(card types.LeaderboardRatingCard) types.Lead
 }
 
 func (s *store) persistLeaderboardsLocked() {
+	if s.db != nil {
+		rows := make(map[string]any, len(s.leaderboards))
+		for i, card := range s.leaderboards {
+			rows[fmt.Sprintf("%012d", i+1)] = card
+		}
+		if err := s.replaceJSONRows("leaderboards", "seq", rows); err != nil {
+			log.Printf("aimebu: persist leaderboards sqlite: %v", err)
+		}
+		return
+	}
 	cards := append([]types.LeaderboardRatingCard{}, s.leaderboards...)
 	sortLeaderboardCards(cards)
 	if data, err := json.MarshalIndent(leaderboardsEnvelope{Cards: cards}, "", "  "); err == nil {
@@ -88,6 +119,13 @@ func sortLeaderboardCards(cards []types.LeaderboardRatingCard) {
 func (s *store) clearLeaderboards() {
 	s.leaderboardsMu.Lock()
 	s.leaderboards = []types.LeaderboardRatingCard{}
+	if s.db != nil {
+		if err := s.clearTable("leaderboards"); err != nil {
+			log.Printf("aimebu: clear leaderboards sqlite: %v", err)
+		}
+		s.leaderboardsMu.Unlock()
+		return
+	}
 	s.leaderboardsMu.Unlock()
 	_ = os.Remove(filepath.Join(s.dir, "leaderboards.json"))
 }

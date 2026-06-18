@@ -2247,16 +2247,10 @@ func TestStaleDefaultMacroMigration(t *testing.T) {
 		t.Fatalf("stale do-cr macro was not migrated")
 	}
 
-	firstPersisted, err := os.ReadFile(filepath.Join(dir, "macros.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	firstPersisted := s.getEnvelope()
 	s.migrateStaleDefaultMacros()
-	secondPersisted, err := os.ReadFile(filepath.Join(dir, "macros.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(firstPersisted, secondPersisted) {
+	secondPersisted := s.getEnvelope()
+	if !reflect.DeepEqual(firstPersisted, secondPersisted) {
 		t.Fatal("migration should be idempotent after replacing the stale body")
 	}
 }
@@ -2322,16 +2316,10 @@ func TestStaleDefaultMacroMigrationLeavesCurrentDefaultAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	before, err := os.ReadFile(filepath.Join(dir, "macros.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := s.getEnvelope()
 	s.migrateStaleDefaultMacros()
-	after, err := os.ReadFile(filepath.Join(dir, "macros.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(before, after) {
+	after := s.getEnvelope()
+	if !reflect.DeepEqual(before, after) {
 		t.Fatal("already-current default should be a no-op")
 	}
 }

@@ -144,18 +144,16 @@ func TestListPrompts_ShowsCatalogKeysWithCompiledDefault(t *testing.T) {
 // a later release). Without this filter, getPrompt would silently serve stale
 // values forever, because it has no catalog gate of its own.
 func TestLoadPrompts_DropsStaleKeys(t *testing.T) {
-	s, err := newStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := t.TempDir()
 	SetPromptDefaults(map[string]string{
 		"bus_etiquette": "default etiquette",
 	})
 	// Write a prompts.json that contains a "stale.key" no longer in the catalog.
 	staleData := []byte(`{"prompts":{"bus_etiquette":"user custom","stale.key":"orphaned value"}}`)
-	if err := os.WriteFile(filepath.Join(s.dir, "prompts.json"), staleData, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "prompts.json"), staleData, 0600); err != nil {
 		t.Fatal(err)
 	}
+	s := &store{dir: dir, prompts: make(map[string]string)}
 	s.loadPrompts()
 
 	// Known key must survive.

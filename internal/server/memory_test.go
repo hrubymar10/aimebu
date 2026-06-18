@@ -6,8 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -412,23 +410,16 @@ func TestMemoryPruneSemantics(t *testing.T) {
 	if _, err := s.addMemory(agent.ID, types.MemoryScopeProjectFacts, "", "persist across plain prune", 0); err != nil {
 		t.Fatal(err)
 	}
-	memoryPath := filepath.Join(s.dir, "memory.json")
-	if _, err := os.Stat(memoryPath); err != nil {
-		t.Fatalf("memory.json before prune: %v", err)
+	if got := memoryCountForTest(s); got != 1 {
+		t.Fatalf("memory count before prune = %d, want 1", got)
 	}
 	s.clearAll(false)
 	if got := memoryCountForTest(s); got != 1 {
 		t.Fatalf("plain clearAll memory count = %d, want 1", got)
 	}
-	if _, err := os.Stat(memoryPath); err != nil {
-		t.Fatalf("plain clearAll should preserve memory.json: %v", err)
-	}
 	s.clearAll(true)
 	if got := memoryCountForTest(s); got != 0 {
 		t.Fatalf("includeSettings clearAll memory count = %d, want 0", got)
-	}
-	if _, err := os.Stat(memoryPath); !os.IsNotExist(err) {
-		t.Fatalf("includeSettings clearAll should remove memory.json, stat err=%v", err)
 	}
 }
 

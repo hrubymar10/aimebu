@@ -12,7 +12,7 @@ import (
 	"github.com/goccy/go-json"
 )
 
-func TestFleetsPersistWith0600Mode(t *testing.T) {
+func TestFleetsPersistInSQLiteDBWith0600Mode(t *testing.T) {
 	s, err := newStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -22,12 +22,12 @@ func TestFleetsPersistWith0600Mode(t *testing.T) {
 		t.Fatalf("setFleet: %v", err)
 	}
 
-	info, err := os.Stat(filepath.Join(s.dir, "fleet.json"))
+	info, err := os.Stat(s.sqlitePath())
 	if err != nil {
-		t.Fatalf("stat fleet.json: %v", err)
+		t.Fatalf("stat sqlite db: %v", err)
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("fleet.json mode = %o, want 600", got)
+		t.Fatalf("sqlite db mode = %o, want 600", got)
 	}
 
 	reloaded, err := newStore(s.dir)

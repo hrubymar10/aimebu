@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -76,6 +77,28 @@ func (e *memoryDisabledError) Error() string {
 }
 
 func (s *store) loadMemory() {
+	if s.db != nil {
+		records := make(map[string]types.MemoryRecord)
+		if err := s.loadJSONRows("memory", "id", func(_ string, data []byte) error {
+			var r types.MemoryRecord
+			if err := json.Unmarshal(data, &r); err != nil {
+				return err
+			}
+			if r.ID == "" || !validMemoryScope(r.Scope) || r.ScopeKey == "" {
+				return nil
+			}
+			if r.Version <= 0 {
+				r.Version = 1
+			}
+			records[r.ID] = r
+			return nil
+		}); err == nil {
+			s.memoryMu.Lock()
+			s.memory = records
+			s.memoryMu.Unlock()
+			return
+		}
+	}
 	data, err := os.ReadFile(filepath.Join(s.dir, "memory.json"))
 	if err != nil {
 		return
@@ -99,6 +122,16 @@ func (s *store) loadMemory() {
 }
 
 func (s *store) persistMemoryLocked() {
+	if s.db != nil {
+		rows := make(map[string]any, len(s.memory))
+		for id, r := range s.memory {
+			rows[id] = r
+		}
+		if err := s.replaceJSONRows("memory", "id", rows); err != nil {
+			log.Printf("aimebu: persist memory sqlite: %v", err)
+		}
+		return
+	}
 	records := make([]types.MemoryRecord, 0, len(s.memory))
 	for _, r := range s.memory {
 		records = append(records, r)
@@ -112,6 +145,13 @@ func (s *store) persistMemoryLocked() {
 func (s *store) clearMemory() {
 	s.memoryMu.Lock()
 	s.memory = make(map[string]types.MemoryRecord)
+	if s.db != nil {
+		if err := s.clearTable("memory"); err != nil {
+			log.Printf("aimebu: clear memory sqlite: %v", err)
+		}
+		s.memoryMu.Unlock()
+		return
+	}
 	s.memoryMu.Unlock()
 	_ = os.Remove(filepath.Join(s.dir, "memory.json"))
 }

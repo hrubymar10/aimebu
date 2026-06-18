@@ -319,6 +319,12 @@ func (s *store) load() error {
 	//   v1: per-user  {agentID: {key: body}}
 	//   v2: global    {macros: {key: body}, seen_defaults: [...]}
 	//   v3: global+rooms {macros: {...}, rooms: {roomID: {...}}, seen_defaults: [...]}
+	if s.db != nil {
+		if err := s.loadMacrosSQLite(); err != nil {
+			log.Printf("aimebu: load macros sqlite: %v", err)
+		}
+		return nil
+	}
 	data, err := os.ReadFile(filepath.Join(s.dir, "macros.json"))
 	if err == nil {
 		var env macrosEnvelope
@@ -809,7 +815,13 @@ func (s *store) emitSystemMessageFull(roomID, body string, targets []string, nee
 		return
 	}
 	s.messages[roomID] = append(s.messages[roomID], msg)
-	s.persist()
+	if s.db != nil {
+		if err := s.insertMessageSQLiteLocked(msg); err != nil {
+			log.Printf("aimebu: persist system message sqlite: %v", err)
+		}
+	} else {
+		s.persist()
+	}
 	s.mu.Unlock()
 
 	s.subMu.Lock()
@@ -1001,7 +1013,13 @@ func (s *store) roomSend(roomID, from, body string, needsAttention bool, propose
 
 	s.mu.Lock()
 	s.messages[roomID] = append(s.messages[roomID], msg)
-	s.persist()
+	if s.db != nil {
+		if err := s.insertMessageSQLiteLocked(msg); err != nil {
+			log.Printf("aimebu: persist message sqlite: %v", err)
+		}
+	} else {
+		s.persist()
+	}
 	s.mu.Unlock()
 
 	// Touch agent last_seen
@@ -1343,7 +1361,13 @@ func (s *store) addReaction(messageID int64, agentID, emoji string) (string, []t
 	rows = append(rows, types.Reaction{AgentID: agentID, Emoji: emoji, CreatedAt: now()})
 	s.reactions[messageID] = rows
 	summary := summarizeReactions(rows, agentID)
-	s.persistReactionsLocked()
+	if s.db != nil {
+		if err := s.persistReactionSQLiteLocked(messageID); err != nil {
+			log.Printf("aimebu: persist reaction sqlite: %v", err)
+		}
+	} else {
+		s.persistReactionsLocked()
+	}
 	s.reactionsMu.Unlock()
 
 	s.touchAgent(agentID)
@@ -1393,7 +1417,13 @@ func (s *store) removeReaction(messageID int64, agentID, emoji string) (string, 
 		} else {
 			s.reactions[messageID] = filtered
 		}
-		s.persistReactionsLocked()
+		if s.db != nil {
+			if err := s.persistReactionSQLiteLocked(messageID); err != nil {
+				log.Printf("aimebu: persist reaction sqlite: %v", err)
+			}
+		} else {
+			s.persistReactionsLocked()
+		}
 	}
 	summary := summarizeReactions(filtered, agentID)
 	s.reactionsMu.Unlock()
@@ -2699,6 +2729,11 @@ func (s *store) clearAll(includeSettings bool) {
 	s.mu.Unlock()
 	s.attachmentsMu.Lock()
 	s.attachments = make(map[string]AttachmentEntry)
+	if s.db != nil {
+		if err := s.clearTable("attachments"); err != nil {
+			log.Printf("aimebu: clear attachments sqlite: %v", err)
+		}
+	}
 	s.attachmentsMu.Unlock()
 	_ = os.RemoveAll(s.attachmentsDir())
 	s.reactionsMu.Lock()
@@ -2719,6 +2754,11 @@ func (s *store) clearAll(includeSettings bool) {
 		s.clearFleets()
 		s.soundsMu.Lock()
 		s.sounds = nil
+		if s.db != nil {
+			if err := s.clearTable("sounds"); err != nil {
+				log.Printf("aimebu: clear sounds sqlite: %v", err)
+			}
+		}
 		s.soundsMu.Unlock()
 		_ = os.RemoveAll(s.soundsDir())
 	}
@@ -2940,6 +2980,13 @@ func (s *store) setEnvelope(env macrosEnvelope) {
 
 func (s *store) persistMacros() {
 	s.macrosMu.RLock()
+	if s.db != nil {
+		if err := s.persistMacrosSQLiteLocked(); err != nil {
+			log.Printf("aimebu: persist macros sqlite: %v", err)
+		}
+		s.macrosMu.RUnlock()
+		return
+	}
 	sdKeys := make([]string, 0, len(s.seenDefaults))
 	for k := range s.seenDefaults {
 		sdKeys = append(sdKeys, k)
@@ -2997,6 +3044,13 @@ func (s *store) migrateStaleDefaultMacros() {
 	}
 	var data []byte
 	if changed {
+		if s.db != nil {
+			if err := s.persistMacrosSQLiteLocked(); err != nil {
+				log.Printf("aimebu: migrate default macros sqlite: %v", err)
+			}
+			s.macrosMu.Unlock()
+			return
+		}
 		sdKeys := make([]string, 0, len(s.seenDefaults))
 		for k := range s.seenDefaults {
 			sdKeys = append(sdKeys, k)
@@ -3034,6 +3088,13 @@ func (s *store) applyDefaultMacros() {
 	}
 	var data []byte
 	if changed {
+		if s.db != nil {
+			if err := s.persistMacrosSQLiteLocked(); err != nil {
+				log.Printf("aimebu: apply default macros sqlite: %v", err)
+			}
+			s.macrosMu.Unlock()
+			return
+		}
 		sdKeys := make([]string, 0, len(s.seenDefaults))
 		for k := range s.seenDefaults {
 			sdKeys = append(sdKeys, k)
@@ -3094,6 +3155,24 @@ func (s *store) soundsIndexPath() string {
 }
 
 func (s *store) loadSounds() {
+	if s.db != nil {
+		var sounds []SoundEntry
+		if err := s.loadJSONRows("sounds", "id", func(_ string, data []byte) error {
+			var entry SoundEntry
+			if err := json.Unmarshal(data, &entry); err != nil {
+				return err
+			}
+			if entry.UUID != "" {
+				sounds = append(sounds, entry)
+			}
+			return nil
+		}); err == nil {
+			s.soundsMu.Lock()
+			s.sounds = sounds
+			s.soundsMu.Unlock()
+			return
+		}
+	}
 	data, err := os.ReadFile(s.soundsIndexPath())
 	if err != nil {
 		return
@@ -3111,6 +3190,16 @@ func (s *store) loadSounds() {
 // persistSoundsLocked writes the sounds index to disk. Must be called with
 // soundsMu held (read or write). Does not acquire the lock.
 func (s *store) persistSoundsLocked() {
+	if s.db != nil {
+		rows := make(map[string]any, len(s.sounds))
+		for _, entry := range s.sounds {
+			rows[entry.UUID] = entry
+		}
+		if err := s.replaceJSONRows("sounds", "id", rows); err != nil {
+			log.Printf("aimebu: persist sounds sqlite: %v", err)
+		}
+		return
+	}
 	env := struct {
 		Sounds []SoundEntry `json:"sounds"`
 	}{Sounds: s.sounds}
@@ -3273,6 +3362,28 @@ func attachmentMeta(entry AttachmentEntry) types.Attachment {
 }
 
 func (s *store) loadAttachments() {
+	if s.db != nil {
+		attachments := make(map[string]AttachmentEntry)
+		if err := s.loadJSONRows("attachments", "id", func(_ string, data []byte) error {
+			var entry AttachmentEntry
+			if err := json.Unmarshal(data, &entry); err != nil {
+				return err
+			}
+			if entry.ID == "" {
+				return nil
+			}
+			if entry.Ext == "" {
+				entry.Ext = attachmentExt(entry.Mime)
+			}
+			attachments[entry.ID] = entry
+			return nil
+		}); err == nil {
+			s.attachmentsMu.Lock()
+			s.attachments = attachments
+			s.attachmentsMu.Unlock()
+			return
+		}
+	}
 	data, err := os.ReadFile(s.attachmentsIndexPath())
 	if err != nil {
 		return
@@ -3297,6 +3408,16 @@ func (s *store) loadAttachments() {
 }
 
 func (s *store) persistAttachmentsLocked() {
+	if s.db != nil {
+		rows := make(map[string]any, len(s.attachments))
+		for id, entry := range s.attachments {
+			rows[id] = entry
+		}
+		if err := s.replaceJSONRows("attachments", "id", rows); err != nil {
+			log.Printf("aimebu: persist attachments sqlite: %v", err)
+		}
+		return
+	}
 	entries := make([]AttachmentEntry, 0, len(s.attachments))
 	for _, entry := range s.attachments {
 		entries = append(entries, entry)

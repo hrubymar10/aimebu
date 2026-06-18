@@ -65,15 +65,11 @@ func TestPruneViaServerOrLocalFallsBackOffline(t *testing.T) {
 	}
 	assertDirEmpty(t, filepath.Join(agentsDir, "agent-logs"))
 
-	macrosData, err := os.ReadFile(filepath.Join(serverDir, "macros.json"))
-	if err != nil {
-		t.Fatalf("read macros.json: %v", err)
+	if got := sqliteScalarCount(t, filepath.Join(serverDir, "aimebu.sqlite"), `SELECT COUNT(*) FROM macros WHERE key='zzz_custom_only_for_test'`); got != 0 {
+		t.Fatalf("custom macro survived prune -a, count=%d", got)
 	}
-	if strings.Contains(string(macrosData), "zzz_custom_only_for_test") {
-		t.Fatalf("macros.json still contains custom macro after prune -a: %s", macrosData)
-	}
-	if !strings.Contains(string(macrosData), `"macros"`) {
-		t.Fatalf("macros.json should remain a macros envelope, got %s", macrosData)
+	if got := sqliteTableCount(t, filepath.Join(serverDir, "aimebu.sqlite"), "macros"); got == 0 {
+		t.Fatal("default macros should be reseeded after prune -a")
 	}
 	if _, err := os.Stat(filepath.Join(serverDir, "fleet.json")); !os.IsNotExist(err) {
 		t.Fatalf("fleet.json should be removed by prune -a, got err=%v", err)
@@ -395,13 +391,18 @@ func writeTestFile(t *testing.T, path, body string) {
 
 func sqliteTableCount(t *testing.T, dbPath, table string) int {
 	t.Helper()
+	return sqliteScalarCount(t, dbPath, `SELECT COUNT(*) FROM `+table)
+}
+
+func sqliteScalarCount(t *testing.T, dbPath, query string) int {
+	t.Helper()
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+	if err := db.QueryRow(query).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	return count
