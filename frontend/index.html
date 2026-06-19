@@ -502,6 +502,21 @@
 
         <!-- Agents -->
         <div class="settings-section" data-section="agents">
+          <div class="settings-group">
+            <h4 class="settings-group-heading">Agents behaviour</h4>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label" for="inline-plan-appendix-select">Inline plans</label>
+                <span class="settings-desc">Controls whether the leader role always includes a full-plan appendix block or leaves it optional.</span>
+              </div>
+              <div class="settings-control">
+                <select id="inline-plan-appendix-select" class="settings-select">
+                  <option value="always">Always include full plan</option>
+                  <option value="optional">Full plan optional</option>
+                </select>
+              </div>
+            </div>
+          </div>
           <div id="all-agents-list" class="agent-list settings-agent-list">
             <div class="empty-state" id="agents-empty">No agents registered.</div>
           </div>

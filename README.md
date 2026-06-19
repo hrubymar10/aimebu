@@ -421,6 +421,13 @@ GET    /buildinfo                      Server version and Go runtime version (re
 GET    /ws                             WebSocket push
 ```
 
+Agent behaviour settings in `/settings`: `inline_plan_appendix` controls
+whether the leader role always includes a full-plan appendix block or
+leaves it optional (`"always"` | `"optional"`, default `"always"`). When
+`"always"`, the leader body instructs the leader to always attach the full
+prose as `appendix_pages`; when `"optional"`, the leader may omit it.
+Configurable via Global Settings → Agents → Agents behaviour → Inline plans.
+
 Retention settings use integer seconds in `/settings`:
 `stale_agent_window_seconds` defaults to `1800` and allows `60..2592000`,
 `liveness_sweep_seconds` defaults to `15` and allows `1..3600`,

@@ -1,12 +1,15 @@
 package server
 
 import (
+	"bytes"
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/types"
 )
 
@@ -552,5 +555,99 @@ func TestListAgentsWarnsLegacyRoleNameCollision(t *testing.T) {
 	}
 	if !strings.Contains(agents[0].Warnings[0], "collides with a role key") {
 		t.Fatalf("warning = %q, want role-key collision", agents[0].Warnings[0])
+	}
+}
+
+func getLeaderRoleBody(t *testing.T, srvURL, roomID, agentID string) string {
+	t.Helper()
+	resp, err := http.Get(srvURL + "/rooms/" + roomID + "/roles/" + agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET roles: expected 200, got %d", resp.StatusCode)
+	}
+	var payload struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Body
+}
+
+func putInlinePlanAppendix(t *testing.T, srvURL, val string) {
+	t.Helper()
+	body := bytes.NewBufferString(`{"inline_plan_appendix":"` + val + `"}`)
+	req, _ := http.NewRequest(http.MethodPut, srvURL+"/settings", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /settings: expected 200, got %d for inline_plan_appendix=%q", resp.StatusCode, val)
+	}
+}
+
+func TestLeaderRoleBodyReflectsInlinePlanAppendixSetting(t *testing.T) {
+	// Some tests in this file call SetRoleDefaults with short stub bodies.
+	// Reset to real defaults so the serve-time replacement has text to act on.
+	SetRoleDefaults(defaultRoleBodies())
+	t.Cleanup(func() { SetRoleDefaults(defaultRoleBodies()) })
+
+	s, srv := setupTestServer(t)
+
+	agent, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "pilot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("bridge", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.assignRole("bridge", agent.ID, "leader"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default (always): body must use the "always" clause.
+	body := getLeaderRoleBody(t, srv.URL, "bridge", agent.ID)
+	if !strings.Contains(body, "always attach the full prose") {
+		t.Fatalf("default leader body missing always-clause:\n%s", body)
+	}
+	if strings.Contains(body, "this is optional") {
+		t.Fatalf("default leader body still has optional-clause:\n%s", body)
+	}
+
+	// Set to "optional": body must revert to the optional phrasing.
+	putInlinePlanAppendix(t, srv.URL, "optional")
+	body = getLeaderRoleBody(t, srv.URL, "bridge", agent.ID)
+	if !strings.Contains(body, "this is optional") {
+		t.Fatalf("optional leader body missing optional-clause:\n%s", body)
+	}
+	if strings.Contains(body, "always attach") {
+		t.Fatalf("optional leader body still has always-clause:\n%s", body)
+	}
+
+	// Set back to "always".
+	putInlinePlanAppendix(t, srv.URL, "always")
+	body = getLeaderRoleBody(t, srv.URL, "bridge", agent.ID)
+	if !strings.Contains(body, "always attach the full prose") {
+		t.Fatalf("after re-set leader body missing always-clause:\n%s", body)
+	}
+}
+
+func TestLeaderRoleBodyAlwaysClauseNotPresentInDefaultBodies(t *testing.T) {
+	// The stored default body uses "optional" phrasing; the serve-time
+	// transform injects the "always" variant. Verify the stored default
+	// does NOT already contain the always clause (so the replacement is
+	// meaningful and not vacuous).
+	bodies := defaultRoleBodies()
+	if strings.Contains(bodies["leader"], "always attach the full prose") {
+		t.Fatal("defaultRoleBodies leader already contains always-clause; the serve-time replacement would be vacuous")
+	}
+	if !strings.Contains(bodies["leader"], "this is optional") {
+		t.Fatal("defaultRoleBodies leader missing optional-clause marker; replacement anchor is broken")
 	}
 }

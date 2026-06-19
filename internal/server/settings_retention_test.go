@@ -157,3 +157,73 @@ func assertIntPtr(t *testing.T, name string, got *int, want int) {
 		t.Fatalf("%s = %d, want %d", name, *got, want)
 	}
 }
+
+func TestInlinePlanAppendixDefault(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	resp, err := http.Get(srv.URL + "/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /settings: expected 200, got %d", resp.StatusCode)
+	}
+	var set Settings
+	if err := json.NewDecoder(resp.Body).Decode(&set); err != nil {
+		t.Fatal(err)
+	}
+	if set.InlinePlanAppendix != "always" {
+		t.Fatalf("inline_plan_appendix default = %q, want \"always\"", set.InlinePlanAppendix)
+	}
+}
+
+func TestInlinePlanAppendixRoundTrip(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	for _, val := range []string{"optional", "always"} {
+		body := bytes.NewBufferString(`{"inline_plan_appendix":"` + val + `"}`)
+		req, _ := http.NewRequest(http.MethodPut, srv.URL+"/settings", body)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("PUT /settings inline_plan_appendix=%q: expected 200, got %d", val, resp.StatusCode)
+		}
+		var set Settings
+		if err := json.NewDecoder(resp.Body).Decode(&set); err != nil {
+			t.Fatal(err)
+		}
+		if set.InlinePlanAppendix != val {
+			t.Fatalf("inline_plan_appendix round-trip = %q, want %q", set.InlinePlanAppendix, val)
+		}
+	}
+}
+
+func TestInlinePlanAppendixValidation(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/settings",
+		bytes.NewBufferString(`{"inline_plan_appendix":"never"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid inline_plan_appendix, got %d", resp.StatusCode)
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains([]byte(payload.Error), []byte("inline_plan_appendix")) {
+		t.Fatalf("error %q does not mention inline_plan_appendix", payload.Error)
+	}
+}

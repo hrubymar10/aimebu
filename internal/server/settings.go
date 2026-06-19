@@ -31,6 +31,7 @@ type Settings struct {
 	CleanupIntervalSeconds    *int   `json:"cleanup_interval_seconds,omitempty"`
 	MessageRetentionSeconds   *int   `json:"message_retention_seconds,omitempty"`
 	MessageRetentionCount     *int   `json:"message_retention_count,omitempty"`
+	InlinePlanAppendix        string `json:"inline_plan_appendix,omitempty"` // "always" | "optional"; default "always"
 }
 
 const (
@@ -154,6 +155,9 @@ func (s *store) getSettings() Settings {
 	if set.MessageRetentionCount == nil {
 		v := defaultMessageRetentionCount
 		set.MessageRetentionCount = &v
+	}
+	if set.InlinePlanAppendix == "" {
+		set.InlinePlanAppendix = "always"
 	}
 	return set
 }

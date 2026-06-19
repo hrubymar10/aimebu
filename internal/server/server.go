@@ -1346,6 +1346,10 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, `invalid theme: must be "dark", "light", or ""`, http.StatusBadRequest)
 			return
 		}
+		if set.InlinePlanAppendix != "" && set.InlinePlanAppendix != "always" && set.InlinePlanAppendix != "optional" {
+			jsonError(w, `invalid inline_plan_appendix: must be "always" or "optional"`, http.StatusBadRequest)
+			return
+		}
 		if err := validateRetentionSettings(set); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
@@ -1633,6 +1637,12 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		}
 		if roleKey != "" {
 			body, _ := s.getRole(roleKey)
+			if roleKey == "leader" && s.getSettings().InlinePlanAppendix == "always" {
+				body = strings.ReplaceAll(body,
+					`you may attach the full prose as appendix_pages rendered as a collapsed "Full plan" block at the visual_plan tail; this is optional, never mandatory boilerplate, and must not duplicate proceed/answer controls.`,
+					`always attach the full prose as appendix_pages rendered as a collapsed "Full plan" block at the visual_plan tail; do not omit it, and do not duplicate proceed/answer controls inside it.`,
+				)
+			}
 			resp["body"] = body
 			label := s.getRoleLabel(roleKey)
 			resp["label"] = label

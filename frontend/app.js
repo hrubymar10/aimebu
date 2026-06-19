@@ -135,6 +135,7 @@
   const settingsCloseBtn = $('#settings-close-btn');
   const settingsSectionTitle = $('#settings-section-title');
   const themeSelect = $('#theme-select');
+  const inlinePlanAppendixSelect = $('#inline-plan-appendix-select');
   const debugToggleBtn = $('#debug-toggle-btn');
   const macrosSearchInput = $('#macros-search-input');
   const macrosCopyBtn = $('#macros-copy-btn');
@@ -2072,6 +2073,12 @@
     if (leaderboardViewerBtn) leaderboardViewerBtn.classList.toggle('hidden', !enabled);
     if (!enabled && leaderboardViewerModal && !leaderboardViewerModal.classList.contains('hidden')) {
       closeLeaderboardViewer();
+    }
+  }
+
+  function applyAgentsBehaviourSettings() {
+    if (inlinePlanAppendixSelect) {
+      inlinePlanAppendixSelect.value = serverSettings.inline_plan_appendix || 'always';
     }
   }
 
@@ -4383,6 +4390,7 @@
       applyRetentionSettings();
       applyMemorySettings();
       applyLeaderboardSettings();
+      applyAgentsBehaviourSettings();
     }).catch(function () {});
   }
 
@@ -6330,6 +6338,12 @@
     saveSettings({ theme: next });
     applyTheme(next);
   });
+
+  if (inlinePlanAppendixSelect) {
+    inlinePlanAppendixSelect.addEventListener('change', function () {
+      saveSettings({ inline_plan_appendix: inlinePlanAppendixSelect.value });
+    });
+  }
 
   // System events visibility toggle
   if (systemEventsToggleBtn) {
