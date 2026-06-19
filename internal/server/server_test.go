@@ -2814,6 +2814,17 @@ func TestFrontendVisualPlanRenderHooks(t *testing.T) {
 	src := string(app)
 	for _, want := range []string{
 		"function visualPlanHTML(message)",
+		"function renderRawBlockData(data)",
+		"function renderVisualPlanFileTree(data)",
+		"function visualPlanFileTreeRoots(data)",
+		"data.files",
+		"visual-plan-file-note",
+		"if (!node.name && children.length) return children.map(renderVisualPlanFileTreeNode).join('');",
+		"catch (err) {\n      body = renderRawBlockData(data);\n    }",
+		"function restoreMermaidSource(node, source, err)",
+		"node.textContent = '';",
+		"code.textContent = source;",
+		"visual-plan-mermaid-fallback",
 		"function renderVisualPlanAppendix(pages)",
 		"message.appendix_pages",
 		`<details class="visual-plan-block visual-plan-appendix">`,
@@ -2833,6 +2844,28 @@ func TestFrontendVisualPlanRenderHooks(t *testing.T) {
 	answersIdx := strings.Index(src, "proposedAnswers +")
 	if bodyIdx == -1 || visualIdx == -1 || answersIdx == -1 || !(bodyIdx < visualIdx && visualIdx < answersIdx) {
 		t.Fatalf("visual plan render ordering body=%d visual=%d answers=%d", bodyIdx, visualIdx, answersIdx)
+	}
+	if strings.Contains(src, "'item'") || strings.Contains(src, `"item"`) {
+		t.Fatalf("frontend app.js should not use a hardcoded visual-plan file-tree placeholder")
+	}
+
+	style, err := os.ReadFile(filepath.Join("..", "..", "frontend", "style.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(style)
+	for _, want := range []string{
+		".visual-plan-file-node.file::before",
+		".visual-plan-file-node.dir::before",
+		".visual-plan-file-note",
+		".visual-plan-raw-fallback",
+		".visual-plan-render-error",
+		"-webkit-mask-image: url(\"data:image/svg+xml",
+		"data:image/svg+xml",
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("frontend style.css missing %q", want)
+		}
 	}
 }
 

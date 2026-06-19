@@ -820,18 +820,78 @@
     '</div>';
   }
 
+  function renderRawBlockData(data) {
+    var text = '';
+    if (data === undefined) text = '';
+    else if (data === null) text = 'null';
+    else if (typeof data === 'string') text = data;
+    else {
+      try {
+        text = JSON.stringify(data, null, 2);
+      } catch (_) {
+        text = String(data);
+      }
+    }
+    return '<pre class="visual-plan-raw-fallback"><code>' + esc(text) + '</code></pre>';
+  }
+
+  function visualPlanHasMeaningfulValue(value) {
+    if (value === undefined || value === null) return false;
+    if (typeof value === 'string') return value.trim() !== '';
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === 'object') return Object.keys(value).length > 0;
+    return true;
+  }
+
+  function visualPlanFileTreeEntry(entry) {
+    if (typeof entry === 'string') return { name: entry, type: 'file' };
+    if (!entry || typeof entry !== 'object') return null;
+    var children = Array.isArray(entry.children) ? entry.children.map(visualPlanFileTreeEntry).filter(Boolean) : [];
+    var name = entry.name || entry.path || '';
+    if (!name && !children.length) return null;
+    var rawType = String(entry.type || '').toLowerCase();
+    var type = rawType === 'dir' || rawType === 'directory' || rawType === 'folder' || children.length ? 'dir' : 'file';
+    return {
+      name: name,
+      type: type,
+      note: entry.note || entry.status || entry.description || '',
+      children: children,
+    };
+  }
+
+  function visualPlanFileTreeRoots(data) {
+    var source = null;
+    if (Array.isArray(data)) source = data;
+    else if (data && typeof data === 'object' && data.root) source = [data.root];
+    else if (data && typeof data === 'object' && Array.isArray(data.files)) source = data.files;
+    else if (data && typeof data === 'object' && Array.isArray(data.children) && !(data.name || data.path)) source = data.children;
+    else if (data && typeof data === 'object' && (data.name || data.path || Array.isArray(data.children))) source = [data];
+    if (!source) return [];
+    return source.map(visualPlanFileTreeEntry).filter(Boolean);
+  }
+
   function renderVisualPlanFileTreeNode(node) {
-    if (typeof node === 'string') return '<li>' + esc(node) + '</li>';
-    node = node || {};
+    if (!node) return '';
     var children = Array.isArray(node.children) ? node.children : [];
-    return '<li><span class="visual-plan-file-node ' + esc(node.type || '') + '">' + esc(node.name || node.path || 'item') + '</span>' +
+    if (!node.name && children.length) return children.map(renderVisualPlanFileTreeNode).join('');
+    if (!node.name) return '';
+    return '<li><span class="visual-plan-file-node ' + esc(node.type || 'file') + '">' +
+      '<span class="visual-plan-file-name">' + esc(node.name) + '</span>' +
+      (node.note ? '<span class="visual-plan-file-note">' + esc(node.note) + '</span>' : '') +
+      '</span>' +
       (children.length ? '<ul>' + children.map(renderVisualPlanFileTreeNode).join('') + '</ul>' : '') +
     '</li>';
   }
 
+  function renderVisualPlanFileTree(data) {
+    var roots = visualPlanFileTreeRoots(data);
+    if (!roots.length) return renderRawBlockData(data);
+    return '<ul class="visual-plan-file-tree">' + roots.map(renderVisualPlanFileTreeNode).join('') + '</ul>';
+  }
+
   function renderVisualPlanDataModel(data) {
     var entities = Array.isArray(data.entities) ? data.entities : (Array.isArray(data.tables) ? data.tables : []);
-    if (!entities.length) return '<pre>' + esc(JSON.stringify(data, null, 2)) + '</pre>';
+    if (!entities.length) return renderRawBlockData(data);
     return entities.map(function (entity) {
       var fields = Array.isArray(entity.fields) ? entity.fields : [];
       return '<div class="visual-plan-model-entity">' +
@@ -854,6 +914,7 @@
       ['Response', data.response || data.response_body || ''],
       ['Notes', data.notes || data.description || ''],
     ].filter(function (row) { return row[1] !== ''; });
+    if (!rows.length) return renderRawBlockData(data);
     return '<table class="visual-plan-block-table"><tbody>' + rows.map(function (row) {
       var val = typeof row[1] === 'object' ? JSON.stringify(row[1], null, 2) : String(row[1]);
       return '<tr><th>' + esc(row[0]) + '</th><td><pre>' + esc(val) + '</pre></td></tr>';
@@ -863,6 +924,7 @@
   function renderVisualPlanAnnotatedCode(data) {
     var code = data.code || data.source || '';
     var annotations = Array.isArray(data.annotations) ? data.annotations : [];
+    if (!code && !annotations.length) return renderRawBlockData(data);
     return '<pre class="visual-plan-code-block"><code>' + esc(code) + '</code></pre>' +
       (annotations.length ? '<ol class="visual-plan-annotations">' + annotations.map(function (a) {
         if (typeof a === 'string') return '<li>' + esc(a) + '</li>';
@@ -872,6 +934,7 @@
 
   function renderVisualPlanChecklist(data) {
     var items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) return renderRawBlockData(data);
     return '<div class="visual-plan-checklist">' + items.map(function (item) {
       var text = typeof item === 'string' ? item : (item.text || item.label || '');
       var checked = typeof item === 'object' && !!item.checked;
@@ -884,6 +947,7 @@
 
   function renderVisualPlanQuestionForm(data) {
     var questions = Array.isArray(data.questions) ? data.questions : [];
+    if (!questions.length) return renderRawBlockData(data);
     return '<div class="visual-plan-question-list">' + questions.map(function (q, idx) {
       var options = Array.isArray(q.options) ? q.options : [];
       return '<div class="visual-plan-question">' +
@@ -909,7 +973,7 @@
 
   function renderVisualPlanCanvas(data) {
     var nodes = Array.isArray(data.nodes) ? data.nodes : [];
-    if (!nodes.length) return '<pre>' + esc(JSON.stringify(data, null, 2)) + '</pre>';
+    if (!nodes.length) return renderRawBlockData(data);
     return '<div class="visual-plan-canvas">' + nodes.map(function (node) {
       var style = visualPlanBoundsStyle(node || {}, 0, 0, 20, 10);
       return '<div class="visual-plan-canvas-node" style="' + escAttr(style) + '">' + esc(node.label || node.text || node.id || '') + '</div>';
@@ -919,7 +983,7 @@
   function visualPlanPrototypeSrcdoc(data) {
     var screens = Array.isArray(data.screens) ? data.screens : [];
     if (!screens.length) {
-      return '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:"><style>body{font:14px system-ui;margin:16px;color:#222;background:#fff}pre{white-space:pre-wrap}</style><pre>' + esc(JSON.stringify(data, null, 2)) + '</pre>';
+      return '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:"><style>body{font:14px system-ui;margin:16px;color:#222;background:#fff}pre{white-space:pre-wrap}</style>' + renderRawBlockData(data);
     }
     var firstID = screens[0].id || 'screen-0';
     var css = 'body{font:14px system-ui;margin:0;background:#f8fafc;color:#111827}.screen{min-height:280px;position:relative;padding:16px;display:none}.screen:first-of-type{display:block}.screen:target{display:block}.screen:target~.screen{display:none}body:has(.screen:target) .screen:first-of-type{display:none}.title{font-weight:700;margin-bottom:8px}.el{position:absolute;border:1px solid #94a3b8;background:#fff;border-radius:6px;padding:8px;box-sizing:border-box}.button{background:#111827;color:#fff;text-decoration:none;text-align:center}.input{background:#f1f5f9;color:#64748b}';
@@ -944,18 +1008,22 @@
   function renderVisualPlanBlock(block, idx) {
     var data = visualPlanBlockData(block);
     var body = '';
-    if (block.type === 'markdown') body = renderMarkdown(data.markdown || data.text || '');
-    else if (block.type === 'file-tree') body = '<ul class="visual-plan-file-tree">' + renderVisualPlanFileTreeNode(data.root || data) + '</ul>';
-    else if (block.type === 'data-model') body = renderVisualPlanDataModel(data);
-    else if (block.type === 'api-endpoint') body = renderVisualPlanAPIEndpoint(data);
-    else if (block.type === 'annotated-code') body = renderVisualPlanAnnotatedCode(data);
-    else if (block.type === 'diff') body = '<pre class="visual-plan-code-block visual-plan-diff"><code>' + esc(data.diff || data.text || '') + '</code></pre>';
-    else if (block.type === 'checklist') body = renderVisualPlanChecklist(data);
-    else if (block.type === 'question-form') body = renderVisualPlanQuestionForm(data);
-    else if (block.type === 'diagram') body = '<pre class="mermaid visual-plan-mermaid" data-visual-plan-block="' + escAttr(block.id || String(idx)) + '">' + esc(data.mermaid || data.source || data.text || '') + '</pre>';
-    else if (block.type === 'canvas') body = renderVisualPlanCanvas(data);
-    else if (block.type === 'prototype') body = '<iframe class="visual-plan-prototype-frame" sandbox srcdoc="' + escAttr(visualPlanPrototypeSrcdoc(data)) + '"></iframe>';
-    else body = '<pre>' + esc(data.text || data.markdown || JSON.stringify(data, null, 2)) + '</pre>';
+    try {
+      if (block.type === 'markdown') body = visualPlanHasMeaningfulValue(data.markdown || data.text) ? renderMarkdown(data.markdown || data.text || '') : renderRawBlockData(data);
+      else if (block.type === 'file-tree') body = renderVisualPlanFileTree(data);
+      else if (block.type === 'data-model') body = renderVisualPlanDataModel(data);
+      else if (block.type === 'api-endpoint') body = renderVisualPlanAPIEndpoint(data);
+      else if (block.type === 'annotated-code') body = renderVisualPlanAnnotatedCode(data);
+      else if (block.type === 'diff') body = visualPlanHasMeaningfulValue(data.diff || data.text) ? '<pre class="visual-plan-code-block visual-plan-diff"><code>' + esc(data.diff || data.text || '') + '</code></pre>' : renderRawBlockData(data);
+      else if (block.type === 'checklist') body = renderVisualPlanChecklist(data);
+      else if (block.type === 'question-form') body = renderVisualPlanQuestionForm(data);
+      else if (block.type === 'diagram') body = visualPlanHasMeaningfulValue(data.mermaid || data.source || data.text) ? '<pre class="mermaid visual-plan-mermaid" data-visual-plan-block="' + escAttr(block.id || String(idx)) + '">' + esc(data.mermaid || data.source || data.text || '') + '</pre>' : renderRawBlockData(data);
+      else if (block.type === 'canvas') body = renderVisualPlanCanvas(data);
+      else if (block.type === 'prototype') body = '<iframe class="visual-plan-prototype-frame" sandbox srcdoc="' + escAttr(visualPlanPrototypeSrcdoc(data)) + '"></iframe>';
+      else body = renderRawBlockData(data);
+    } catch (err) {
+      body = renderRawBlockData(data);
+    }
     return '<section class="visual-plan-block">' + visualPlanBlockHeader(block) + '<div class="visual-plan-block-body">' + body + '</div></section>';
   }
 
@@ -991,8 +1059,32 @@
     if (!window.mermaid || !root) return;
     try {
       window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default' });
-      window.mermaid.run({ nodes: root.querySelectorAll('.visual-plan-mermaid') }).catch(function () {});
-    } catch (_) {}
+      Array.from(root.querySelectorAll('.visual-plan-mermaid')).forEach(function (node) {
+        var source = node.textContent || '';
+        window.mermaid.run({ nodes: [node] }).catch(function (err) {
+          restoreMermaidSource(node, source, err);
+        });
+      });
+    } catch (err) {
+      Array.from(root.querySelectorAll('.visual-plan-mermaid')).forEach(function (node) {
+        restoreMermaidSource(node, node.textContent || '', err);
+      });
+    }
+  }
+
+  function restoreMermaidSource(node, source, err) {
+    if (!node || node.dataset.visualPlanFallback === '1') return;
+    node.dataset.visualPlanFallback = '1';
+    node.classList.remove('mermaid');
+    node.classList.add('visual-plan-mermaid-fallback');
+    node.textContent = '';
+    var label = document.createElement('span');
+    label.className = 'visual-plan-render-error';
+    label.textContent = 'Diagram failed to render' + (err && err.message ? ': ' + err.message : '');
+    var code = document.createElement('code');
+    code.textContent = source;
+    node.appendChild(label);
+    node.appendChild(code);
   }
 
   function updateMdToggleBtn() {

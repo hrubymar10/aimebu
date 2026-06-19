@@ -329,6 +329,12 @@ also carry `appendix_pages`, titled Markdown pages rendered as a
 default-collapsed "Full plan" block at the visual-plan tail when the approval
 needs long-form detail. Use `proposed_answers` for proceed/pushback buttons
 and `open_questions` for actual multi-question answers.
+For `visual_plan` data shapes, follow the canonical block vocabulary in
+[README.md](README.md#visual-plan-block-vocabulary): keep `file-tree` node
+`name` values short and put prose in `note`; quote Mermaid labels with spaces
+or punctuation and use `<br/>`, not `\n`, inside labels. The web UI should
+degrade bad or future block shapes to escaped raw text/JSON rather than
+dropping content.
 
 Settings -> Memory enables or disables durable bus memory globally, and the
 brain button in the top bar opens the memory viewer for inspecting, editing,

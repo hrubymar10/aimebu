@@ -1481,14 +1481,101 @@ body {
 .visual-plan-file-tree ul {
   list-style: none;
   margin: 0;
-  padding-left: 16px;
+  padding-left: 18px;
 }
 
 .visual-plan-file-tree {
   padding-left: 0;
 }
 
+.visual-plan-file-tree ul {
+  margin-left: 7px;
+}
+
+.visual-plan-file-tree li {
+  position: relative;
+  padding: 2px 0 2px 10px;
+}
+
+.visual-plan-file-tree ul > li::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -11px;
+  border-left: 1px solid var(--border);
+}
+
+.visual-plan-file-tree ul > li:last-child::before {
+  bottom: auto;
+  height: 13px;
+}
+
+.visual-plan-file-tree ul > li::after {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: -11px;
+  width: 11px;
+  border-top: 1px solid var(--border);
+}
+
+.visual-plan-file-node {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.visual-plan-file-node::before {
+  content: "";
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  background-color: var(--text-muted);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+
+.visual-plan-file-node.file::before {
+  content: "";
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20d%3D%22M6%2022H18C19.1046%2022%2020%2021.1046%2020%2020V9.82843C20%209.29799%2019.7893%208.78929%2019.4142%208.41421L13.5858%202.58579C13.2107%202.21071%2012.702%202%2012.1716%202H6C4.89543%202%204%202.89543%204%204V20C4%2021.1046%204.89543%2022%206%2022Z%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3Cpath%20d%3D%22M13%202.5V9H19%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3Cpath%20d%3D%22M8%2017H15%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3Cpath%20d%3D%22M8%2013H15%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3Cpath%20d%3D%22M8%209H9%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20d%3D%22M6%2022H18C19.1046%2022%2020%2021.1046%2020%2020V9.82843C20%209.29799%2019.7893%208.78929%2019.4142%208.41421L13.5858%202.58579C13.2107%202.21071%2012.702%202%2012.1716%202H6C4.89543%202%204%202.89543%204%204V20C4%2021.1046%204.89543%2022%206%2022Z%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3Cpath%20d%3D%22M13%202.5V9H19%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3Cpath%20d%3D%22M8%2017H15%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3Cpath%20d%3D%22M8%2013H15%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3Cpath%20d%3D%22M8%209H9%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E");
+}
+
+.visual-plan-file-node.dir::before {
+  content: "";
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20d%3D%22M3%208.2C3%207.07989%203%206.51984%203.21799%206.09202C3.40973%205.71569%203.71569%205.40973%204.09202%205.21799C4.51984%205%205.0799%205%206.2%205H9.67452C10.1637%205%2010.4083%205%2010.6385%205.05526C10.8425%205.10425%2011.0376%205.18506%2011.2166%205.29472C11.4184%205.4184%2011.5914%205.59135%2011.9373%205.93726L12.0627%206.06274C12.4086%206.40865%2012.5816%206.5816%2012.7834%206.70528C12.9624%206.81494%2013.1575%206.89575%2013.3615%206.94474C13.5917%207%2013.8363%207%2014.3255%207H17.8C18.9201%207%2019.4802%207%2019.908%207.21799C20.2843%207.40973%2020.5903%207.71569%2020.782%208.09202C21%208.51984%2021%209.0799%2021%2010.2V15.8C21%2016.9201%2021%2017.4802%2020.782%2017.908C20.5903%2018.2843%2020.2843%2018.5903%2019.908%2018.782C19.4802%2019%2018.9201%2019%2017.8%2019H6.2C5.07989%2019%204.51984%2019%204.09202%2018.782C3.71569%2018.5903%203.40973%2018.2843%203.21799%2017.908C3%2017.4802%203%2016.9201%203%2015.8V8.2Z%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cpath%20d%3D%22M3%208.2C3%207.07989%203%206.51984%203.21799%206.09202C3.40973%205.71569%203.71569%205.40973%204.09202%205.21799C4.51984%205%205.0799%205%206.2%205H9.67452C10.1637%205%2010.4083%205%2010.6385%205.05526C10.8425%205.10425%2011.0376%205.18506%2011.2166%205.29472C11.4184%205.4184%2011.5914%205.59135%2011.9373%205.93726L12.0627%206.06274C12.4086%206.40865%2012.5816%206.5816%2012.7834%206.70528C12.9624%206.81494%2013.1575%206.89575%2013.3615%206.94474C13.5917%207%2013.8363%207%2014.3255%207H17.8C18.9201%207%2019.4802%207%2019.908%207.21799C20.2843%207.40973%2020.5903%207.71569%2020.782%208.09202C21%208.51984%2021%209.0799%2021%2010.2V15.8C21%2016.9201%2021%2017.4802%2020.782%2017.908C20.5903%2018.2843%2020.2843%2018.5903%2019.908%2018.782C19.4802%2019%2018.9201%2019%2017.8%2019H6.2C5.07989%2019%204.51984%2019%204.09202%2018.782C3.71569%2018.5903%203.40973%2018.2843%203.21799%2017.908C3%2017.4802%203%2016.9201%203%2015.8V8.2Z%22%20stroke%3D%22%23000000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E");
+}
+
 .visual-plan-file-node.dir {
+  font-weight: 700;
+}
+
+.visual-plan-file-note {
+  min-width: 0;
+  color: var(--text-muted);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.visual-plan-raw-fallback {
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.visual-plan-render-error {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--red);
   font-weight: 700;
 }
 

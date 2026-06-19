@@ -150,7 +150,7 @@ type propRef struct {
 func visualPlanProperty() property {
 	return property{
 		Type:        "array",
-		Description: "Optional display-only inline visual plan blocks for leader approval handoffs. Message-scoped and ephemeral; does not create or update a durable Plans resource. Blocks are rendered in chat before proposed_answers/open_questions.",
+		Description: "Optional display-only inline visual plan blocks for leader approval handoffs. Message-scoped and ephemeral; does not create or update a durable Plans resource. Blocks are rendered in chat before proposed_answers/open_questions. Data shapes: markdown {markdown}; file-tree {root:{name,type:\"dir\"|\"file\",note,children:[...]}} with short path names and optional notes; data-model {entities:[{name,fields:[{name,type,notes}]}]}; api-endpoint {method,path,request,response,notes}; annotated-code {code,annotations:[{line,text}]}; diff {diff}; checklist {items:[{text,checked}]}; question-form {questions:[{question,description,options:[...]}]}; diagram {mermaid}; canvas {nodes:[{label,x,y,w,h}]}; prototype {screens:[{id,title,elements:[...]}]}. Mermaid labels with punctuation or spaces should be quoted; use <br/> for line breaks, not \\n. Unknown or mismatched data shapes are stored and should render as escaped fallback text.",
 		Items: &propRef{
 			Type:     "object",
 			Required: []string{"type", "data"},

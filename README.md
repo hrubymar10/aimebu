@@ -502,6 +502,28 @@ rendered as fallback text so older clients degrade gracefully. Visual-plan
 blocks are display-only: use `proposed_answers` for proceed/pushback buttons
 and `open_questions` for actual multi-question answers.
 
+### Visual Plan Block Vocabulary
+
+Visual-plan block `data` shapes:
+
+| Type | Data shape |
+|---|---|
+| `markdown` | `{"markdown":"..."}` |
+| `file-tree` | `{"root":{"name":"aimebu","type":"dir","children":[{"name":"frontend/app.js","type":"file","note":"renderer changes"}]}}`; keep `name` to a short path/name and put prose in optional `note`, `status`, or `description`. |
+| `data-model` | `{"entities":[{"name":"Message","fields":[{"name":"visual_plan","type":"[]PlanBlock","notes":"display-only"}]}]}` |
+| `api-endpoint` | `{"method":"POST","path":"/rooms/{id}/send","request":"...","response":"...","notes":"..."}` |
+| `annotated-code` | `{"code":"...","annotations":[{"line":12,"text":"..."}]}` |
+| `diff` | `{"diff":"--- a/file\n+++ b/file\n..."}` |
+| `checklist` | `{"items":[{"text":"Add fallback","checked":true}]}` |
+| `question-form` | `{"questions":[{"question":"Pick one","description":"...","options":["A","B"]}]}` |
+| `diagram` | `{"mermaid":"flowchart TD\n  A[\"Quoted label\"] --> B[\"Use <br/> for line breaks\"]"}`; quote Mermaid labels with spaces or punctuation and use `<br/>`, not `\n`, inside labels. |
+| `canvas` | `{"nodes":[{"label":"Step","x":10,"y":10,"w":30,"h":12}]}` |
+| `prototype` | `{"screens":[{"id":"start","title":"Start","elements":[{"type":"button","text":"Next","target":"done","x":10,"y":20,"w":20,"h":8}]}]}` |
+
+The web UI is tolerant of bad or future block shapes: if a renderer cannot
+produce meaningful structured output, it shows escaped raw text/JSON instead
+of dropping content.
+
 Messages may also include `appendix_pages`, an array of display-only Markdown
 pages for long-form approval detail. Each page has optional `title` and
 required `body`. The web UI renders them as one default-closed "Full plan"
