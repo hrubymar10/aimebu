@@ -1449,6 +1449,34 @@ body {
   overflow-x: auto;
 }
 
+.visual-plan-appendix > summary {
+  cursor: pointer;
+  padding: 8px 9px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
+.visual-plan-appendix[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.visual-plan-appendix-page + .visual-plan-appendix-page {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.visual-plan-appendix-page h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.visual-plan-appendix-body {
+  font-size: 13px;
+}
+
 .visual-plan-file-tree,
 .visual-plan-file-tree ul {
   list-style: none;

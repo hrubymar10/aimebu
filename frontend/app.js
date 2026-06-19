@@ -959,11 +959,32 @@
     return '<section class="visual-plan-block">' + visualPlanBlockHeader(block) + '<div class="visual-plan-block-body">' + body + '</div></section>';
   }
 
+  function renderAppendixPage(page, idx) {
+    page = page || {};
+    var title = page.title || ('Page ' + (idx + 1));
+    return '<section class="visual-plan-appendix-page">' +
+      '<h4>' + esc(title) + '</h4>' +
+      '<div class="visual-plan-appendix-body md-rendered">' + renderMarkdown(page.body || '') + '</div>' +
+    '</section>';
+  }
+
+  function renderVisualPlanAppendix(pages) {
+    if (!Array.isArray(pages) || !pages.length) return '';
+    return '<details class="visual-plan-block visual-plan-appendix">' +
+      '<summary>Full plan (' + esc(String(pages.length)) + ' page' + (pages.length === 1 ? '' : 's') + ')</summary>' +
+      '<div class="visual-plan-block-body">' + pages.map(renderAppendixPage).join('') + '</div>' +
+    '</details>';
+  }
+
   function visualPlanHTML(message) {
     var blocks = Array.isArray(message.visual_plan) ? message.visual_plan.slice() : [];
-    if (!blocks.length) return '';
+    var appendixPages = Array.isArray(message.appendix_pages) ? message.appendix_pages.slice() : [];
+    if (!blocks.length && !appendixPages.length) return '';
     blocks.sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
-    return '<div class="visual-plan" data-msg-id="' + esc(String(message.id)) + '">' + blocks.map(renderVisualPlanBlock).join('') + '</div>';
+    return '<div class="visual-plan" data-msg-id="' + esc(String(message.id)) + '">' +
+      blocks.map(renderVisualPlanBlock).join('') +
+      renderVisualPlanAppendix(appendixPages) +
+    '</div>';
   }
 
   function renderMermaidBlocks(root) {

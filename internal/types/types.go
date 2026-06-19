@@ -38,6 +38,7 @@ type Message struct {
 	ProposedAnswers     []string          `json:"proposed_answers,omitempty"`
 	OpenQuestions       []OpenQuestion    `json:"open_questions,omitempty"`
 	VisualPlan          []PlanBlock       `json:"visual_plan,omitempty"`
+	AppendixPages       []AppendixPage    `json:"appendix_pages,omitempty"`
 	Attachments         []Attachment      `json:"attachments,omitempty"`
 	Reactions           []ReactionSummary `json:"reactions,omitempty"`
 }
@@ -46,6 +47,11 @@ type OpenQuestion struct {
 	Question    string   `json:"question"`
 	Description string   `json:"description,omitempty"`
 	Options     []string `json:"options"`
+}
+
+type AppendixPage struct {
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body"`
 }
 
 const (
@@ -263,6 +269,7 @@ type RoomSendRequest struct {
 	ProposedAnswers []string       `json:"proposed_answers,omitempty"`
 	OpenQuestions   []OpenQuestion `json:"open_questions,omitempty"`
 	VisualPlan      []PlanBlock    `json:"visual_plan,omitempty"`
+	AppendixPages   []AppendixPage `json:"appendix_pages,omitempty"`
 	Attachments     []Attachment   `json:"attachments,omitempty"`
 	ReplyTo         int64          `json:"reply_to,omitempty"`
 }
@@ -275,6 +282,7 @@ type DMRequest struct {
 	ProposedAnswers []string       `json:"proposed_answers,omitempty"`
 	OpenQuestions   []OpenQuestion `json:"open_questions,omitempty"`
 	VisualPlan      []PlanBlock    `json:"visual_plan,omitempty"`
+	AppendixPages   []AppendixPage `json:"appendix_pages,omitempty"`
 	Attachments     []Attachment   `json:"attachments,omitempty"`
 	ReplyTo         int64          `json:"reply_to,omitempty"`
 }

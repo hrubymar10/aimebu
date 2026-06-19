@@ -324,9 +324,11 @@ parents; it does not imply human attention.
 
 Messages may carry `visual_plan` blocks for leader-to-human approval
 handoffs. These blocks are message-scoped, display-only, and ephemeral:
-sending them does not create or update a durable Plans resource. Use
-`proposed_answers` for proceed/pushback buttons and `open_questions` for
-actual multi-question answers.
+sending them does not create or update a durable Plans resource. Messages may
+also carry `appendix_pages`, titled Markdown pages rendered as a
+default-collapsed "Full plan" block at the visual-plan tail when the approval
+needs long-form detail. Use `proposed_answers` for proceed/pushback buttons
+and `open_questions` for actual multi-question answers.
 
 Settings -> Memory enables or disables durable bus memory globally, and the
 brain button in the top bar opens the memory viewer for inspecting, editing,

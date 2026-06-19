@@ -165,6 +165,21 @@ func visualPlanProperty() property {
 	}
 }
 
+func appendixPagesProperty() property {
+	return property{
+		Type:        "array",
+		Description: "Optional collapsed prose appendix rendered as the trailing \"Full plan\" block inside the visual_plan flow. Display-only; each page has optional title and Markdown body.",
+		Items: &propRef{
+			Type:     "object",
+			Required: []string{"body"},
+			Properties: map[string]property{
+				"title": {Type: "string", Description: "Optional page title."},
+				"body":  {Type: "string", Description: "Markdown body for this appendix page."},
+			},
+		},
+	}
+}
+
 type textContent struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
@@ -211,7 +226,8 @@ var tools = []tool{
 					"description": {Type: "string", Description: "Optional context shown below the question in the Open Questions modal."},
 					"options":     {Type: "array", Items: &propRef{Type: "string"}, Description: "Choice labels; provide 2-8 non-empty options."},
 				}}},
-				"visual_plan": visualPlanProperty(),
+				"visual_plan":    visualPlanProperty(),
+				"appendix_pages": appendixPagesProperty(),
 			},
 			Required: []string{"room", "body"},
 		},
@@ -276,7 +292,8 @@ var tools = []tool{
 					"description": {Type: "string", Description: "Optional context shown below the question in the Open Questions modal."},
 					"options":     {Type: "array", Items: &propRef{Type: "string"}, Description: "Choice labels; provide 2-8 non-empty options."},
 				}}},
-				"visual_plan": visualPlanProperty(),
+				"visual_plan":    visualPlanProperty(),
+				"appendix_pages": appendixPagesProperty(),
 			},
 			Required: []string{"to", "body"},
 		},
@@ -656,6 +673,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			ProposedAnswers []string             `json:"proposed_answers"`
 			OpenQuestions   []types.OpenQuestion `json:"open_questions"`
 			VisualPlan      []types.PlanBlock    `json:"visual_plan"`
+			AppendixPages   []types.AppendixPage `json:"appendix_pages"`
 			ReplyTo         int64                `json:"reply_to"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
@@ -671,6 +689,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			"proposed_answers": p.ProposedAnswers,
 			"open_questions":   p.OpenQuestions,
 			"visual_plan":      p.VisualPlan,
+			"appendix_pages":   p.AppendixPages,
 			"reply_to":         p.ReplyTo,
 		})
 
@@ -715,6 +734,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			ProposedAnswers []string             `json:"proposed_answers"`
 			OpenQuestions   []types.OpenQuestion `json:"open_questions"`
 			VisualPlan      []types.PlanBlock    `json:"visual_plan"`
+			AppendixPages   []types.AppendixPage `json:"appendix_pages"`
 			ReplyTo         int64                `json:"reply_to"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
@@ -728,6 +748,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 			"proposed_answers": p.ProposedAnswers,
 			"open_questions":   p.OpenQuestions,
 			"visual_plan":      p.VisualPlan,
+			"appendix_pages":   p.AppendixPages,
 			"reply_to":         p.ReplyTo,
 		})
 

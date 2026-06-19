@@ -477,15 +477,15 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if req.From == "" || (req.Body == "" && len(req.Attachments) == 0 && len(req.VisualPlan) == 0) {
-			jsonError(w, "from and body, attachments, or visual_plan are required", http.StatusBadRequest)
+		if req.From == "" || (req.Body == "" && len(req.Attachments) == 0 && len(req.VisualPlan) == 0 && len(req.AppendixPages) == 0) {
+			jsonError(w, "from and body, attachments, visual_plan, or appendix_pages are required", http.StatusBadRequest)
 			return
 		}
 		if req.From == "_system" || strings.HasPrefix(roomID, "_") {
 			jsonError(w, "cannot send to reserved room or use reserved sender", http.StatusForbidden)
 			return
 		}
-		id, err := s.roomSendWithVisualPlan(roomID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions, req.VisualPlan, req.Attachments, req.ReplyTo)
+		id, err := s.roomSendWithVisualPlan(roomID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions, req.VisualPlan, req.AppendixPages, req.Attachments, req.ReplyTo)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
@@ -878,12 +878,12 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			return
 		}
 
-		if req.Body == "" && len(req.Attachments) == 0 && len(req.VisualPlan) == 0 {
+		if req.Body == "" && len(req.Attachments) == 0 && len(req.VisualPlan) == 0 && len(req.AppendixPages) == 0 {
 			_ = jsonOK(w, map[string]any{"room": room.ID})
 			return
 		}
 
-		id, err := s.roomSendWithVisualPlan(room.ID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions, req.VisualPlan, req.Attachments, req.ReplyTo)
+		id, err := s.roomSendWithVisualPlan(room.ID, req.From, req.Body, req.NeedsAttention, req.ProposedAnswers, req.OpenQuestions, req.VisualPlan, req.AppendixPages, req.Attachments, req.ReplyTo)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
@@ -2049,7 +2049,7 @@ func defaultRoleBodies() map[string]string {
 
 Your job is to keep the collaboration process orderly and decision-ready. For new tasks, first frame the problem by describing symptoms, gaps, scope hints, and relevant files without proposing solutions, numbered options, preferred directions, or "I'm leaning" language. After that framing kickoff, post your own independent initial plan. Do not read the other roles' plans before posting yours. If you arrive late and another plan is already on the bus, post yours anyway without editing toward convergence. Wait for the initial plans of all others in room to be posted before discussion starts. Always wait for all other agents to finish their current response before sending your next message during planning and code review. Do not start a new round while another agent is still mid-message.
 
-During discussion, drive the team toward a concrete plan. If no consensus emerges after five rounds, summarize each position for the human. Once a plan is finalized, hand it to the human for approval with needs_attention=true as a short message plus inline visual_plan blocks instead of a prose wall. The visual_plan should be message-scoped and display-only, with blocks such as an approach diagram, impacted file tree, divergence-from-initial-plans summary, and decision/question summary. Use proposed_answers for proceed/pushback buttons and open_questions for real answer collection; do not create a second answer mechanism inside visual_plan blocks. Explicitly show how the finalized plan diverged from each of the three initial plans so the human can audit the consolidation.
+During discussion, drive the team toward a concrete plan. If no consensus emerges after five rounds, summarize each position for the human. Once a plan is finalized, hand it to the human for approval with needs_attention=true as a short message plus inline visual_plan blocks instead of a prose wall. The visual_plan should be message-scoped and display-only, with blocks such as an approach diagram, impacted file tree, divergence-from-initial-plans summary, and decision/question summary. When the decision needs an auditable paper trail, you may attach the full prose as appendix_pages rendered as a collapsed "Full plan" block at the visual_plan tail; this is optional, never mandatory boilerplate, and must not duplicate proceed/answer controls. Use proposed_answers for proceed/pushback buttons and open_questions for real answer collection; do not create a second answer mechanism inside visual_plan blocks. Explicitly show how the finalized plan diverged from each of the three initial plans so the human can audit the consolidation.
 
 After approval, hand implementation to the appropriate implementer role or agent. During code review, post your review independently of any assigned review roles, then consolidate all reviews into one prioritized fix list. If reviewers disagree, surface the tie to the human.
 

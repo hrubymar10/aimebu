@@ -2673,8 +2673,105 @@ func TestVisualPlanRoundTripValidationAndPersistence(t *testing.T) {
 		t.Fatalf("plans table query error = %v, want no such table", err)
 	}
 
-	if _, err := s.roomSendWithVisualPlan("general", agent.ID, "bad", false, nil, nil, []types.PlanBlock{{Type: "markdown", Data: []byte(`{`)}}, nil, 0); err == nil || !strings.Contains(err.Error(), "valid JSON") {
+	if _, err := s.roomSendWithVisualPlan("general", agent.ID, "bad", false, nil, nil, []types.PlanBlock{{Type: "markdown", Data: []byte(`{`)}}, nil, nil, 0); err == nil || !strings.Contains(err.Error(), "valid JSON") {
 		t.Fatalf("invalid visual_plan data err = %v, want valid JSON error", err)
+	}
+}
+
+func TestAppendixPagesRoundTripValidationAndPersistence(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	agent, err := s.registerHuman("appendixtester", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	sendBody, _ := json.Marshal(map[string]any{
+		"from": agent.ID,
+		"body": "@appendixtester approve?",
+		"appendix_pages": []map[string]any{
+			{"title": " Full plan ", "body": " # Heading\n\nDetails. "},
+			{"title": "  ", "body": "   "},
+			{"body": "Second page"},
+		},
+	})
+	resp, err := http.Post(srv.URL+"/rooms/general/send", "application/json", bytes.NewReader(sendBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("send returned %d", resp.StatusCode)
+	}
+
+	resp2, err := http.Get(srv.URL + "/rooms/general/messages?agent_id=" + agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var data struct {
+		Messages []struct {
+			AppendixPages []types.AppendixPage `json:"appendix_pages"`
+			AddressedToMe bool                 `json:"addressed_to_me"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Messages) == 0 {
+		t.Fatal("expected at least one message")
+	}
+	got := data.Messages[0].AppendixPages
+	want := []types.AppendixPage{{Title: "Full plan", Body: "# Heading\n\nDetails."}, {Body: "Second page"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("appendix_pages = %#v, want %#v", got, want)
+	}
+	if !data.Messages[0].AddressedToMe {
+		t.Fatal("expected addressed_to_me=true for addressed appendix message")
+	}
+
+	reloaded, err := newStore(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := reloaded.roomMessages("general", 10, 0)
+	var persisted []types.AppendixPage
+	for _, msg := range msgs {
+		if msg.From == agent.ID {
+			persisted = msg.AppendixPages
+			break
+		}
+	}
+	if !reflect.DeepEqual(persisted, got) {
+		t.Fatalf("persisted appendix_pages = %#v, want %#v", persisted, got)
+	}
+
+	if _, err := normalizeAppendixPages(make([]types.AppendixPage, maxAppendixPages+1)); err == nil || !strings.Contains(err.Error(), "too many appendix_pages") {
+		t.Fatalf("too many pages err = %v, want max error", err)
+	}
+	if _, err := normalizeAppendixPages([]types.AppendixPage{{Body: strings.Repeat("x", maxAppendixPageBodyBytes+1)}}); err == nil || !strings.Contains(err.Error(), "body exceeds") {
+		t.Fatalf("oversized body err = %v, want body cap error", err)
+	}
+	if _, err := normalizeAppendixPages([]types.AppendixPage{{Title: strings.Repeat("x", maxAppendixPageTitleRunes+1), Body: "body"}}); err == nil || !strings.Contains(err.Error(), "title exceeds") {
+		t.Fatalf("oversized title err = %v, want title cap error", err)
+	}
+	if _, err := normalizeAppendixPages([]types.AppendixPage{
+		{Body: strings.Repeat("x", maxAppendixPageBodyBytes)},
+		{Body: strings.Repeat("y", maxAppendixPageBodyBytes)},
+		{Body: strings.Repeat("z", maxAppendixPageBodyBytes)},
+		{Body: strings.Repeat("q", maxAppendixPageBodyBytes)},
+		{Body: "overflow"},
+	}); err == nil || !strings.Contains(err.Error(), "total body exceeds") {
+		t.Fatalf("oversized total err = %v, want total cap error", err)
+	}
+	if _, err := normalizeAppendixPages([]types.AppendixPage{{Title: "No body"}}); err == nil || !strings.Contains(err.Error(), "body is required") {
+		t.Fatalf("missing body err = %v, want body required error", err)
+	}
+	if _, err := s.roomSendWithVisualPlan("general", agent.ID, "", false, nil, nil, nil, []types.AppendixPage{{Title: " ", Body: " "}}, nil, 0); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("empty appendix-only send err = %v, want required error", err)
 	}
 }
 
@@ -2704,6 +2801,9 @@ func TestLegacyMessagesLoadWithoutProposedAnswers(t *testing.T) {
 	if len(msgs[0].VisualPlan) != 0 {
 		t.Fatalf("legacy visual_plan = %#v, want empty", msgs[0].VisualPlan)
 	}
+	if len(msgs[0].AppendixPages) != 0 {
+		t.Fatalf("legacy appendix_pages = %#v, want empty", msgs[0].AppendixPages)
+	}
 }
 
 func TestFrontendVisualPlanRenderHooks(t *testing.T) {
@@ -2714,6 +2814,9 @@ func TestFrontendVisualPlanRenderHooks(t *testing.T) {
 	src := string(app)
 	for _, want := range []string{
 		"function visualPlanHTML(message)",
+		"function renderVisualPlanAppendix(pages)",
+		"message.appendix_pages",
+		`<details class="visual-plan-block visual-plan-appendix">`,
 		"renderMermaidBlocks(messageListEl)",
 		"securityLevel: 'strict'",
 		`<iframe class="visual-plan-prototype-frame" sandbox srcdoc="`,

@@ -874,6 +874,10 @@ const (
 	maxVisualPlanBlocks             = 80
 	maxVisualPlanBlockTitleRunes    = 160
 	maxVisualPlanBlockDataBytes     = 64000
+	maxAppendixPages                = 10
+	maxAppendixPageBodyBytes        = 32000
+	maxAppendixPageTitleRunes       = 160
+	maxAppendixTotalBodyBytes       = 128000
 )
 
 func cleanProposedAnswers(in []string) []string {
@@ -972,6 +976,42 @@ func normalizeVisualPlanBlocks(in []types.PlanBlock) ([]types.PlanBlock, error) 
 	return out, nil
 }
 
+func normalizeAppendixPages(in []types.AppendixPage) ([]types.AppendixPage, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	if len(in) > maxAppendixPages {
+		return nil, fmt.Errorf("too many appendix_pages (max %d)", maxAppendixPages)
+	}
+	out := make([]types.AppendixPage, 0, len(in))
+	totalBodyBytes := 0
+	for _, page := range in {
+		page.Title = strings.TrimSpace(page.Title)
+		page.Body = strings.TrimSpace(page.Body)
+		if page.Title == "" && page.Body == "" {
+			continue
+		}
+		if page.Body == "" {
+			return nil, fmt.Errorf("appendix_pages body is required")
+		}
+		if got := utf8.RuneCountInString(page.Title); got > maxAppendixPageTitleRunes {
+			return nil, fmt.Errorf("appendix_pages title exceeds %d runes (%d)", maxAppendixPageTitleRunes, got)
+		}
+		if got := len(page.Body); got > maxAppendixPageBodyBytes {
+			return nil, fmt.Errorf("appendix_pages body exceeds %d bytes (%d)", maxAppendixPageBodyBytes, got)
+		}
+		totalBodyBytes += len(page.Body)
+		if totalBodyBytes > maxAppendixTotalBodyBytes {
+			return nil, fmt.Errorf("appendix_pages total body exceeds %d bytes (%d)", maxAppendixTotalBodyBytes, totalBodyBytes)
+		}
+		out = append(out, page)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
 func appendTargetDedup(targets []string, target string) []string {
 	if target == "" {
 		return targets
@@ -996,10 +1036,10 @@ func truncateRunes(s string, max int) string {
 }
 
 func (s *store) roomSend(roomID, from, body string, needsAttention bool, proposedAnswers []string, openQuestions []types.OpenQuestion, attachments []types.Attachment, replyTo int64) (int64, error) {
-	return s.roomSendWithVisualPlan(roomID, from, body, needsAttention, proposedAnswers, openQuestions, nil, attachments, replyTo)
+	return s.roomSendWithVisualPlan(roomID, from, body, needsAttention, proposedAnswers, openQuestions, nil, nil, attachments, replyTo)
 }
 
-func (s *store) roomSendWithVisualPlan(roomID, from, body string, needsAttention bool, proposedAnswers []string, openQuestions []types.OpenQuestion, visualPlan []types.PlanBlock, attachments []types.Attachment, replyTo int64) (int64, error) {
+func (s *store) roomSendWithVisualPlan(roomID, from, body string, needsAttention bool, proposedAnswers []string, openQuestions []types.OpenQuestion, visualPlan []types.PlanBlock, appendixPages []types.AppendixPage, attachments []types.Attachment, replyTo int64) (int64, error) {
 	if !s.isMember(roomID, from) {
 		return 0, fmt.Errorf("agent %s is not a member of room %s", from, roomID)
 	}
@@ -1023,6 +1063,13 @@ func (s *store) roomSendWithVisualPlan(roomID, from, body string, needsAttention
 	normalizedVisualPlan, err := normalizeVisualPlanBlocks(visualPlan)
 	if err != nil {
 		return 0, err
+	}
+	normalizedAppendixPages, err := normalizeAppendixPages(appendixPages)
+	if err != nil {
+		return 0, err
+	}
+	if body == "" && len(resolvedAttachments) == 0 && len(normalizedVisualPlan) == 0 && len(normalizedAppendixPages) == 0 {
+		return 0, fmt.Errorf("body, attachments, visual_plan, or appendix_pages are required")
 	}
 
 	ctx := s.addressingContext(types.Message{RoomID: roomID, From: from, Body: body})
@@ -1072,6 +1119,7 @@ func (s *store) roomSendWithVisualPlan(roomID, from, body string, needsAttention
 	msg.ProposedAnswers = cleanProposedAnswers(proposedAnswers)
 	msg.OpenQuestions = cleanOpenQuestions(openQuestions)
 	msg.VisualPlan = normalizedVisualPlan
+	msg.AppendixPages = normalizedAppendixPages
 	msg.Attachments = resolvedAttachments
 
 	s.mu.Lock()

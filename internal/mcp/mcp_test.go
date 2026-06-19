@@ -729,6 +729,7 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 				ProposedAnswers []string             `json:"proposed_answers"`
 				OpenQuestions   []types.OpenQuestion `json:"open_questions"`
 				VisualPlan      []types.PlanBlock    `json:"visual_plan"`
+				AppendixPages   []types.AppendixPage `json:"appendix_pages"`
 				ReplyTo         int64                `json:"reply_to"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
@@ -747,6 +748,10 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 			}
 			if len(got.VisualPlan) != 1 || got.VisualPlan[0].Type != "markdown" {
 				t.Fatalf("visual_plan = %#v, want markdown block", got.VisualPlan)
+			}
+			wantAppendix := []types.AppendixPage{{Title: "Full plan", Body: "Details"}}
+			if !reflect.DeepEqual(got.AppendixPages, wantAppendix) {
+				t.Fatalf("appendix_pages = %#v, want %#v", got.AppendixPages, wantAppendix)
 			}
 			if got.ReplyTo != 42 {
 				t.Fatalf("reply_to = %d, want 42", got.ReplyTo)
@@ -768,6 +773,7 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 		"proposed_answers": []string{"Proceed", "Hold"},
 		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}},
 		"visual_plan":      []map[string]any{{"type": "markdown", "data": map[string]any{"text": "Summary"}}},
+		"appendix_pages":   []types.AppendixPage{{Title: "Full plan", Body: "Details"}},
 		"reply_to":         42,
 	})
 	if _, err := handleToolCall(c, "bus_say", args); err != nil {
@@ -787,6 +793,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 				ProposedAnswers []string             `json:"proposed_answers"`
 				OpenQuestions   []types.OpenQuestion `json:"open_questions"`
 				VisualPlan      []types.PlanBlock    `json:"visual_plan"`
+				AppendixPages   []types.AppendixPage `json:"appendix_pages"`
 				ReplyTo         int64                `json:"reply_to"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
@@ -802,6 +809,10 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 			}
 			if len(got.VisualPlan) != 1 || got.VisualPlan[0].Type != "diagram" {
 				t.Fatalf("visual_plan = %#v, want diagram block", got.VisualPlan)
+			}
+			wantAppendix := []types.AppendixPage{{Title: "Full plan", Body: "Details"}}
+			if !reflect.DeepEqual(got.AppendixPages, wantAppendix) {
+				t.Fatalf("appendix_pages = %#v, want %#v", got.AppendixPages, wantAppendix)
 			}
 			if got.ReplyTo != 7 {
 				t.Fatalf("reply_to = %d, want 7", got.ReplyTo)
@@ -822,6 +833,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 		"proposed_answers": []string{"Proceed", "Revise"},
 		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}},
 		"visual_plan":      []map[string]any{{"type": "diagram", "data": map[string]any{"text": "graph TD; A-->B"}}},
+		"appendix_pages":   []types.AppendixPage{{Title: "Full plan", Body: "Details"}},
 		"reply_to":         7,
 	})
 	if _, err := handleToolCall(c, "bus_dm", args); err != nil {
