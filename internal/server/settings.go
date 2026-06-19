@@ -37,7 +37,7 @@ const (
 	defaultStaleAgentWindowSeconds   = 30 * 60
 	defaultLivenessSweepSeconds      = 15
 	defaultAgentStaleWindowSeconds   = 90
-	defaultAgentOfflineWindowSeconds = 5 * 60
+	defaultAgentOfflineWindowSeconds = 10 * 60
 	defaultEmptyRoomWindowSeconds    = 60 * 60
 	defaultCleanupIntervalSeconds    = 60
 	defaultMessageRetentionSeconds   = 0

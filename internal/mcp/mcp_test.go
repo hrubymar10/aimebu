@@ -7,7 +7,10 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/client"
@@ -32,7 +35,7 @@ func callMCPToolForTest(t *testing.T, c *client.Client, id int, name string, arg
 		Method:  "tools/call",
 		ID:      json.RawMessage(fmt.Sprintf("%d", id)),
 		Params:  params,
-	})
+	}, nil)
 	if resp == nil {
 		t.Fatalf("tools/call %s returned nil", name)
 	}
@@ -226,7 +229,7 @@ func TestToolsListReturnsFullSetBeforeRegister(t *testing.T) {
 		JSONRPC: "2.0",
 		Method:  "tools/list",
 		ID:      json.RawMessage(`1`),
-	})
+	}, nil)
 	if resp == nil || resp.Error != nil {
 		t.Fatalf("response = %+v, want successful tools/list", resp)
 	}
@@ -278,7 +281,7 @@ func TestMCP_InitializeReturnsOverriddenEtiquette(t *testing.T) {
 		JSONRPC: "2.0",
 		Method:  "initialize",
 		ID:      json.RawMessage(`1`),
-	})
+	}, nil)
 
 	if resp == nil {
 		t.Fatal("handle returned nil for initialize")
@@ -521,7 +524,7 @@ func TestMCP_JSONRPCErrorPaths(t *testing.T) {
 	})
 
 	t.Run("unknown method returns method not found", func(t *testing.T) {
-		resp := handle(c, request{JSONRPC: "2.0", ID: json.RawMessage(`2`), Method: "missing/method"})
+		resp := handle(c, request{JSONRPC: "2.0", ID: json.RawMessage(`2`), Method: "missing/method"}, nil)
 		if resp == nil || resp.Error == nil {
 			t.Fatalf("response = %+v, want JSON-RPC error", resp)
 		}
@@ -536,7 +539,7 @@ func TestMCP_JSONRPCErrorPaths(t *testing.T) {
 			ID:      json.RawMessage(`3`),
 			Method:  "tools/call",
 			Params:  json.RawMessage(`{"name":`),
-		})
+		}, nil)
 		if resp == nil || resp.Error == nil {
 			t.Fatalf("response = %+v, want JSON-RPC error", resp)
 		}
@@ -565,7 +568,7 @@ func TestMCP_RoleAssign_PostsToServer(t *testing.T) {
 		"agent_id": "alice@aimebu",
 		"role_key": "worker",
 	})
-	result, err := handleToolCall(c, "bus_role_assign", args)
+	result, err := handleToolCall(c, "bus_role_assign", args, nil)
 	if err != nil {
 		t.Fatalf("handleToolCall bus_role_assign: %v", err)
 	}
@@ -601,11 +604,11 @@ func TestMCP_React_PutsAndDeletesReaction(t *testing.T) {
 
 	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
 	addArgs, _ := json.Marshal(map[string]any{"message_id": 42, "emoji": "👍"})
-	if _, err := handleToolCall(c, "bus_react", addArgs); err != nil {
+	if _, err := handleToolCall(c, "bus_react", addArgs, nil); err != nil {
 		t.Fatalf("handleToolCall bus_react add: %v", err)
 	}
 	removeArgs, _ := json.Marshal(map[string]any{"message_id": 42, "emoji": "👍", "remove": true})
-	if _, err := handleToolCall(c, "bus_react", removeArgs); err != nil {
+	if _, err := handleToolCall(c, "bus_react", removeArgs, nil); err != nil {
 		t.Fatalf("handleToolCall bus_react remove: %v", err)
 	}
 	if len(calls) != 2 {
@@ -634,7 +637,7 @@ func TestMCP_RoleGet_ReturnsRoleWhenAssigned(t *testing.T) {
 
 	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
 	args, _ := json.Marshal(map[string]string{"room": "testroom"})
-	result, err := handleToolCall(c, "bus_role_get", args)
+	result, err := handleToolCall(c, "bus_role_get", args, nil)
 	if err != nil {
 		t.Fatalf("handleToolCall bus_role_get: %v", err)
 	}
@@ -659,7 +662,7 @@ func TestMCP_RoleGet_ReturnsEmptyWhenUnassigned(t *testing.T) {
 
 	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
 	args, _ := json.Marshal(map[string]string{"room": "testroom"})
-	result, err := handleToolCall(c, "bus_role_get", args)
+	result, err := handleToolCall(c, "bus_role_get", args, nil)
 	if err != nil {
 		t.Fatalf("handleToolCall bus_role_get: %v", err)
 	}
@@ -700,7 +703,7 @@ func TestMCP_BusSayIncludesUnreadFooter(t *testing.T) {
 		Method:  "tools/call",
 		ID:      json.RawMessage(`1`),
 		Params:  params,
-	})
+	}, nil)
 	if resp == nil || resp.Error != nil {
 		t.Fatalf("tools/call returned error: %+v", resp)
 	}
@@ -776,7 +779,7 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 		"appendix_pages":   []types.AppendixPage{{Title: "Full plan", Body: "Details"}},
 		"reply_to":         42,
 	})
-	if _, err := handleToolCall(c, "bus_say", args); err != nil {
+	if _, err := handleToolCall(c, "bus_say", args, nil); err != nil {
 		t.Fatalf("handleToolCall bus_say: %v", err)
 	}
 }
@@ -836,7 +839,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 		"appendix_pages":   []types.AppendixPage{{Title: "Full plan", Body: "Details"}},
 		"reply_to":         7,
 	})
-	if _, err := handleToolCall(c, "bus_dm", args); err != nil {
+	if _, err := handleToolCall(c, "bus_dm", args, nil); err != nil {
 		t.Fatalf("handleToolCall bus_dm: %v", err)
 	}
 }
@@ -857,7 +860,7 @@ func TestMCP_JoinEnrichesWithYourRole(t *testing.T) {
 
 	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
 	args, _ := json.Marshal(map[string]string{"room": "testroom"})
-	result, err := handleToolCall(c, "bus_join", args)
+	result, err := handleToolCall(c, "bus_join", args, nil)
 	if err != nil {
 		t.Fatalf("handleToolCall bus_join: %v", err)
 	}
@@ -878,4 +881,125 @@ func TestMCP_JoinEnrichesWithYourRole(t *testing.T) {
 	if yourRole["icon"] != "👑" {
 		t.Fatalf("your_role.icon = %v, want icon", yourRole["icon"])
 	}
+}
+
+func TestSessionHeartbeatFiresAndStopsOnClose(t *testing.T) {
+	// Not parallel: shares mcpHeartbeatInterval with the other heartbeat test.
+	var mu sync.Mutex
+	var hbCount int
+	var hbIDs []string
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/heartbeat") {
+			parts := strings.Split(r.URL.Path, "/")
+			mu.Lock()
+			hbCount++
+			if len(parts) >= 3 {
+				hbIDs = append(hbIDs, parts[len(parts)-2])
+			}
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `{"agent":"alice@aimebu"}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL}
+	var agentID atomic.Pointer[string]
+	id := "alice@aimebu"
+	agentID.Store(&id)
+
+	done := make(chan struct{})
+	startSessionHeartbeat(done, &agentID, c, 20*time.Millisecond)
+
+	// Allow at least 2 ticks.
+	time.Sleep(60 * time.Millisecond)
+	close(done)
+	// Brief grace period to let the goroutine exit cleanly.
+	time.Sleep(10 * time.Millisecond)
+
+	mu.Lock()
+	count := hbCount
+	ids := append([]string(nil), hbIDs...)
+	mu.Unlock()
+
+	if count < 2 {
+		t.Fatalf("expected >=2 heartbeats, got %d", count)
+	}
+	for _, id := range ids {
+		if id != "alice@aimebu" {
+			t.Fatalf("heartbeat for wrong agent %q, want alice@aimebu", id)
+		}
+	}
+
+	// After done is closed, count must not increase.
+	time.Sleep(40 * time.Millisecond)
+	mu.Lock()
+	after := hbCount
+	mu.Unlock()
+	if after != count {
+		t.Fatalf("heartbeat continued after done closed: got %d (was %d)", after, count)
+	}
+}
+
+func TestSessionHeartbeatSkipsWhenNoAgentID(t *testing.T) {
+	// Not parallel: shares mcpHeartbeatInterval with the other heartbeat test.
+	var mu sync.Mutex
+	var hbCount int
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/heartbeat") {
+			mu.Lock()
+			hbCount++
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL}
+	var agentID atomic.Pointer[string] // nil → skips heartbeat
+
+	done := make(chan struct{})
+	startSessionHeartbeat(done, &agentID, c, 20*time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
+	close(done)
+	time.Sleep(10 * time.Millisecond)
+
+	mu.Lock()
+	count := hbCount
+	mu.Unlock()
+	if count != 0 {
+		t.Fatalf("expected 0 heartbeats before registration, got %d", count)
+	}
+}
+
+// TestSessionHeartbeatConcurrentRegisterIsRaceFree verifies that concurrent
+// atomic stores (simulating bus_register) and goroutine loads are race-free
+// under -race. Without the atomic.Pointer guard this test would race.
+func TestSessionHeartbeatConcurrentRegisterIsRaceFree(t *testing.T) {
+	fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer fakeSrv.Close()
+
+	c := &client.Client{BaseURL: fakeSrv.URL}
+	var agentID atomic.Pointer[string]
+
+	done := make(chan struct{})
+	startSessionHeartbeat(done, &agentID, c, 5*time.Millisecond)
+
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			id := fmt.Sprintf("agent%d@test", n)
+			agentID.Store(&id)
+		}(i)
+	}
+	wg.Wait()
+	time.Sleep(30 * time.Millisecond)
+	close(done)
+	time.Sleep(10 * time.Millisecond)
 }

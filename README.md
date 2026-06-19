@@ -425,7 +425,7 @@ Retention settings use integer seconds in `/settings`:
 `stale_agent_window_seconds` defaults to `1800` and allows `60..2592000`,
 `liveness_sweep_seconds` defaults to `15` and allows `1..3600`,
 `agent_stale_window_seconds` defaults to `90` and allows `10..2592000`,
-`agent_offline_window_seconds` defaults to `300` and allows `10..2592000`
+`agent_offline_window_seconds` defaults to `600` and allows `10..2592000`
 and must be greater than `agent_stale_window_seconds`,
 `empty_room_window_seconds` defaults to `3600` and allows `60..2592000`,
 `cleanup_interval_seconds` defaults to `60` and allows `10..3600`,
@@ -436,8 +436,10 @@ read cursors older than pruned messages may observe gaps in history.
 Agent liveness is checked separately from cleanup: inactive AI agents show
 `stale` after the stale window, move to `offline` after the offline window,
 and emit one room-local disconnect alert to human room members on that
-offline edge. Open `bus_wait` calls and web socket sessions count as active.
-The stale-agent prune window remains cleanup-only and defaults to 30 minutes.
+offline edge. Open `bus_wait` calls, web socket sessions, and the per-session
+MCP heartbeat (every 45s) count as active, so heads-down work does not age
+to offline. The stale-agent prune window remains cleanup-only and defaults to
+30 minutes.
 
 `/rooms/{id}/wait` and `/agents/{id}/wait` return `{messages: [...]}`
 on success, or `{messages: [], status: "still_waiting", keep_waiting:

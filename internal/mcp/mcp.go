@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -548,7 +549,7 @@ func notRegisteredError(c *client.Client, toolName string) error {
 	return fmt.Errorf("%s", msg)
 }
 
-func handleToolCall(c *client.Client, name string, args json.RawMessage) (string, error) {
+func handleToolCall(c *client.Client, name string, args json.RawMessage, heartbeatID *atomic.Pointer[string]) (string, error) {
 	// All tools except bus_register require a registered identity.
 	if name != "bus_register" && name != "bus_agents" && c.AgentID == "" {
 		return "", notRegisteredError(c, name)
@@ -603,6 +604,10 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 		if err := json.Unmarshal([]byte(resp), &parsed); err == nil && parsed.ID != "" {
 			c.AgentID = parsed.ID
 			c.AgentName = parsed.Name
+			if heartbeatID != nil {
+				s := parsed.ID
+				heartbeatID.Store(&s)
+			}
 		}
 		return resp, nil
 
@@ -967,7 +972,7 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage) (string
 
 // ── JSON-RPC dispatch ──────────────────────────────────────────────
 
-func handle(c *client.Client, req request) *response {
+func handle(c *client.Client, req request, heartbeatID *atomic.Pointer[string]) *response {
 	switch req.Method {
 	case "initialize":
 		// Fetch configured prompts once per MCP connection and cache them.
@@ -1007,7 +1012,7 @@ func handle(c *client.Client, req request) *response {
 			}
 		}
 
-		result, err := handleToolCall(c, params.Name, params.Arguments)
+		result, err := handleToolCall(c, params.Name, params.Arguments, heartbeatID)
 		if err != nil {
 			return &response{
 				JSONRPC: "2.0",
@@ -1076,10 +1081,43 @@ func handle(c *client.Client, req request) *response {
 	}
 }
 
+// mcpHeartbeatInterval is the delay between per-session liveness heartbeats.
+// startSessionHeartbeat spawns a goroutine that POSTs /heartbeat at the given
+// interval while the MCP session is open. It stops when done is closed.
+// agentID is loaded atomically on each tick; the Run goroutine stores the ID
+// after bus_register completes, preventing a data race on client.AgentID.
+// Covers both bare-MCP and wrapper-run agents; when the harness dies, MCP
+// stdio closes, done is closed, and the agent correctly ages to offline.
+func startSessionHeartbeat(done <-chan struct{}, agentID *atomic.Pointer[string], c *client.Client, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if p := agentID.Load(); p != nil && *p != "" {
+					_ = c.HeartbeatAgent(*p, 5*time.Second)
+				}
+			}
+		}
+	}()
+}
+
 // Run starts the MCP stdio JSON-RPC server.
 func Run(c *client.Client) error {
 	log.SetOutput(os.Stderr)
 	log.Printf("aimebu MCP server (agent=%s, bus=%s)", c.AgentID, c.BaseURL)
+
+	// Per-session heartbeat: keeps last_seen fresh while the harness is alive
+	// so heads-down work (long model turns, silent tool calls) doesn't age to
+	// stale/offline. agentID is updated atomically after bus_register so the
+	// goroutine never races with the main loop on c.AgentID.
+	var heartbeatID atomic.Pointer[string]
+	done := make(chan struct{})
+	defer close(done)
+	startSessionHeartbeat(done, &heartbeatID, c, 45*time.Second)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
@@ -1096,7 +1134,7 @@ func Run(c *client.Client) error {
 			continue
 		}
 
-		resp := handle(c, req)
+		resp := handle(c, req, &heartbeatID)
 		if resp == nil {
 			continue
 		}

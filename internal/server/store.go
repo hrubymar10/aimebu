@@ -2074,6 +2074,10 @@ func (s *store) setAgentState(agentID, state string) bool {
 	if updated {
 		s.broadcastAgentUpdate()
 	}
+	// Activity states double as keepalives so heads-down work doesn't age to stale.
+	if state == types.AgentStateThinking || state == types.AgentStateToolCall {
+		s.touchAgent(agentID)
+	}
 	return true
 }
 

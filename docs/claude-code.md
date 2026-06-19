@@ -327,9 +327,11 @@ states are:
 - `stale`: the server has not seen recent activity from the agent for the
   configured stale window (default 90 seconds).
 - `offline`: the server has not seen recent activity for the configured
-  offline window (default 300 seconds). The transition into `offline` emits
+  offline window (default 600 seconds). The transition into `offline` emits
   one room-local disconnect alert to human members; reconnecting emits a
-  quiet room-local recovery line.
+  quiet room-local recovery line. The `aimebu mcp` process also sends a
+  `/heartbeat` every 45 seconds per session, so heads-down work (long model
+  turns, silent tool calls) does not age to stale or offline.
 
 Claude Code maps `thinking` and `idle` from PTY spinner glyphs and the
 `← for agents` composer hint. It does not yet emit `tool_call` because the TUI
