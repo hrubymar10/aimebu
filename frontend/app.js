@@ -3243,6 +3243,11 @@
     return new Date(isoString).toLocaleDateString();
   }
 
+  function lastSeenTitle(a) {
+    if (!a || !a.last_seen) return 'Last seen: never';
+    return 'Last seen ' + relativeTime(a.last_seen);
+  }
+
   function agentStatus(agent) {
     if (!agent) return 'offline';
     if (typeof agent === 'string') {
@@ -5829,7 +5834,7 @@
               '<span class="room-settings-member-name">' + esc(memberID) + '</span>' +
             '</div>' +
             '<div class="room-settings-member-meta">' +
-              '<span class="agent-online-dot ' + esc(status) + '" title="' + esc(status) + '"></span>' +
+              '<span class="agent-online-dot ' + esc(status) + '" title="' + esc(lastSeenTitle(agent)) + '"></span>' +
               '<span>' + esc(runtime) + '</span>' +
               '<span class="room-settings-meta-separator">·</span>' +
               '<span>' + esc(seen) + '</span>' +
@@ -5880,7 +5885,7 @@
     return (
       '<div class="agent-card agent-card-compact agent-profile-link" data-agent-id="' + esc(a.id) + '" data-profile-agent-id="' + esc(a.id) + '" data-profile-context="' + esc(context) + '" tabindex="0" role="button" aria-label="Show profile for ' + esc(a.id) + '">' +
         '<div class="agent-id">' +
-          '<span class="agent-online-dot ' + status + '"></span>' +
+          '<span class="agent-online-dot ' + status + '" title="' + esc(lastSeenTitle(a)) + '"></span>' +
           presenceTag +
           iconTag +
           roleTag +
