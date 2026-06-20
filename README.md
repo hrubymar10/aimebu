@@ -310,6 +310,9 @@ aimebu server start                       Start server as background daemon
 aimebu server stop                        Stop the daemon
 aimebu server status                      Check daemon status
 
+aimebu doctor                             Run health checks (server, config dir, SQLite, TLS)
+                                          exits 0 on OK/WARN, 1 on FAIL
+
 aimebu usages [provider] [--plain|--json] Show provider usage snapshots
 aimebu fleet [name] [path]                List fleets, or launch one against path/cwd
 aimebu prune [-y] [-a]                    Prune conversation state with confirmation prompt

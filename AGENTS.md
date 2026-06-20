@@ -238,6 +238,8 @@ aimebu usages github-copilot     # GitHub Copilot usage via device flow
 aimebu usages ollama-cloud       # Ollama Cloud usage via Cookie header or API key
 aimebu fleet default             # launch a named command bundle in cwd
 
+aimebu doctor                    # run health checks (server, config dir, SQLite, TLS)
+
 aimebu prune                     # clear conversation state with confirmation prompt
 aimebu prune -y                  # same, skip confirmation
 aimebu prune -a                  # clear everything including memory, macros, fleets, and prompts

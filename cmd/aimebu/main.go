@@ -18,6 +18,7 @@ import (
 	aimebu "github.com/hrubymar10/aimebu"
 	"github.com/hrubymar10/aimebu/internal/client"
 	"github.com/hrubymar10/aimebu/internal/config"
+	"github.com/hrubymar10/aimebu/internal/doctor"
 	"github.com/hrubymar10/aimebu/internal/mcp"
 	"github.com/hrubymar10/aimebu/internal/server"
 )
@@ -43,6 +44,8 @@ func main() {
 		fleetCmd(os.Args[2:])
 	case "agent":
 		agentCmd(os.Args[2:])
+	case "doctor":
+		doctorCmd()
 	case "mcp":
 		mcpCmd()
 	case "fe":
@@ -385,6 +388,19 @@ func fatal(msg string, err error) {
 	os.Exit(1)
 }
 
+func doctorCmd() {
+	baseURL := os.Getenv("AIMEBU_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:9997"
+	}
+	rootDir := config.Root()
+	results := doctor.Run(baseURL, rootDir)
+	worst := doctor.Print(os.Stdout, results)
+	if worst == doctor.StatusFail {
+		os.Exit(1)
+	}
+}
+
 func usage() {
 	fmt.Fprintf(os.Stderr, `aimebu — AI Message Bus
 
@@ -397,6 +413,7 @@ Server:
   server status                       Check if daemon is running
 
 Utilities:
+  doctor                              Run health checks and print a report
   fleet [name] [path]                 List fleets, or launch one against path/cwd
   prune [-y] [-a]                     Prune conversation history with confirmation prompt
                                         -y  skip confirmation
