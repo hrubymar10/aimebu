@@ -2807,11 +2807,18 @@ func TestLegacyMessagesLoadWithoutProposedAnswers(t *testing.T) {
 }
 
 func TestFrontendVisualPlanRenderHooks(t *testing.T) {
-	app, err := os.ReadFile(filepath.Join("..", "..", "frontend", "app.js"))
-	if err != nil {
-		t.Fatal(err)
+	// The visual plan renderers were split out of app.js into render-visual-plan.js.
+	// Check the combined frontend source so the test doesn't depend on which file
+	// holds which function.
+	var combined []byte
+	for _, name := range []string{"app.js", "render-markdown.js", "render-visual-plan.js", "utils.js"} {
+		b, err := os.ReadFile(filepath.Join("..", "..", "frontend", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		combined = append(combined, b...)
 	}
-	src := string(app)
+	src := string(combined)
 	for _, want := range []string{
 		"function visualPlanHTML(message)",
 		"function renderRawBlockData(data)",
@@ -2820,7 +2827,8 @@ func TestFrontendVisualPlanRenderHooks(t *testing.T) {
 		"data.files",
 		"visual-plan-file-note",
 		"if (!node.name && children.length) return children.map(renderVisualPlanFileTreeNode).join('');",
-		"catch (err) {\n      body = renderRawBlockData(data);\n    }",
+		"catch (err) {",
+		"body = renderRawBlockData(data);",
 		"function restoreMermaidSource(node, source, err)",
 		"node.textContent = '';",
 		"code.textContent = source;",
@@ -2836,7 +2844,7 @@ func TestFrontendVisualPlanRenderHooks(t *testing.T) {
 		"style-src \\'unsafe-inline\\'",
 	} {
 		if !strings.Contains(src, want) {
-			t.Fatalf("frontend app.js missing %q", want)
+			t.Fatalf("frontend JS missing %q", want)
 		}
 	}
 	bodyIdx := strings.Index(src, "(markdownMode === 'rendered' ? renderMarkdown(m.body) : renderPlainWithCodeMarkers(m.body))")
@@ -2846,7 +2854,7 @@ func TestFrontendVisualPlanRenderHooks(t *testing.T) {
 		t.Fatalf("visual plan render ordering body=%d visual=%d answers=%d", bodyIdx, visualIdx, answersIdx)
 	}
 	if strings.Contains(src, "'item'") || strings.Contains(src, `"item"`) {
-		t.Fatalf("frontend app.js should not use a hardcoded visual-plan file-tree placeholder")
+		t.Fatalf("frontend JS should not use a hardcoded visual-plan file-tree placeholder")
 	}
 
 	style, err := os.ReadFile(filepath.Join("..", "..", "frontend", "style.css"))
