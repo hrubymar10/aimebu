@@ -227,6 +227,28 @@ func TestForceClaimInvalidSlugRejected(t *testing.T) {
 	}
 }
 
+// TestRegisterUnknownModelEmptyHarness verifies that passing model="unknown"
+// stores it as-is, and an empty harness string is normalised to "unknown" by
+// the store (MCP resolves harness via detectHarness before this call; the
+// store's fallback handles anything that still arrives empty).
+func TestRegisterUnknownModelEmptyHarness(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	a, reclaimed, err := s.registerAI("unknown", "", "proj", nil, "")
+	if err != nil {
+		t.Fatalf("registerAI: %v", err)
+	}
+	if reclaimed {
+		t.Fatal("first registration unexpectedly reclaimed")
+	}
+	if a.Model != "unknown" {
+		t.Errorf("model = %q, want %q", a.Model, "unknown")
+	}
+	if a.Harness != "unknown" {
+		t.Errorf("harness = %q, want %q", a.Harness, "unknown")
+	}
+}
+
 type roomSendResp struct {
 	ID       int64    `json:"id"`
 	Warnings []string `json:"warnings"`

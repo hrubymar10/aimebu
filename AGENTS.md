@@ -165,12 +165,19 @@ may be present in the same room. Code that needs identity must use the full
 ID, not the slug.
 
 **AI agents**: the server assigns the slug (random, from a pool) when the AI
-calls `bus_register`. The AI passes both `model` and `harness` — both are
-session-side knowledge the AI knows about itself.
+calls `bus_register`. The AI passes `model` and optionally `harness`:
+
+- **model**: pass a short version slug (e.g. `sonnet4.6`) only if the system
+  prompt explicitly states the model version; otherwise pass `"unknown"`. Do
+  not guess or copy examples.
+- **harness**: pass if known for certain (e.g. `claude-code`, `codex`,
+  `cursor`, `pi`). If unsure, **omit the field entirely** — do NOT pass
+  `"unknown"`, as that suppresses auto-detection which is load-bearing for
+  some harnesses (codex in particular).
 
 Harness resolution order in `bus_register`:
 
-1. `harness` field passed by the AI (primary).
+1. `harness` field passed by the AI (primary). If omitted, the server attempts auto-detection.
 2. `AIMEBU_HARNESS` env var (set in the MCP server config; load-bearing for
    harnesses that don't propagate upstream env vars to MCP children — codex
    is the prominent case).
