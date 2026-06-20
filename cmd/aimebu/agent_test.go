@@ -1097,19 +1097,61 @@ func TestAgentBootstrapSessionPTYRegistrationStall(t *testing.T) {
 }
 
 func TestAgentPiArgs(t *testing.T) {
-	bootstrap := agentBootstrapArgs("pi", "register now", "", "http://localhost:9997", []string{"--no-tools"}, "ollama-cloud/gemma4:31b")
-	if got := strings.Join(bootstrap, " "); got != "--mode json --model ollama-cloud/gemma4:31b --no-tools register now" {
-		t.Fatalf("bootstrap args = %q", got)
+	// Harvest path: modelSlug is the stripped slug; userArgs has no --model.
+	// Wrapper injects --model <stripped-slug> before userArgs.
+	bootstrap := agentBootstrapArgs("pi", "register now", "", "http://localhost:9997", []string{"--no-tools"}, "gemma4:31b")
+	if got := strings.Join(bootstrap, " "); got != "--mode json --model gemma4:31b --no-tools register now" {
+		t.Fatalf("bootstrap args (harvest) = %q", got)
 	}
 
+	// No model at all.
 	bootstrapNoModel := agentBootstrapArgs("pi", "register now", "", "http://localhost:9997", nil, "")
 	if got := strings.Join(bootstrapNoModel, " "); got != "--mode json register now" {
 		t.Fatalf("bootstrap args without model = %q", got)
 	}
 
-	resume := agentResumeArgs("pi", "pi-session-123", "keep listening", "http://localhost:9997", []string{"--no-tools"}, "ollama-cloud/gemma4:31b")
-	if got := strings.Join(resume, " "); got != "--resume --session pi-session-123 --mode json --model ollama-cloud/gemma4:31b --no-tools keep listening" {
-		t.Fatalf("resume args = %q", got)
+	// Passthrough path: userArgs already has --model; wrapper must NOT inject a second one.
+	bootstrapPassthrough := agentBootstrapArgs("pi", "register now", "", "http://localhost:9997", []string{"--model", "ollama-cloud/minimax-m3", "--no-tools"}, "minimax-m3")
+	if got := strings.Join(bootstrapPassthrough, " "); got != "--mode json --model ollama-cloud/minimax-m3 --no-tools register now" {
+		t.Fatalf("bootstrap args (passthrough) = %q", got)
+	}
+
+	// Harvest resume path.
+	resume := agentResumeArgs("pi", "pi-session-123", "keep listening", "http://localhost:9997", []string{"--no-tools"}, "gemma4:31b")
+	if got := strings.Join(resume, " "); got != "--resume --session pi-session-123 --mode json --model gemma4:31b --no-tools keep listening" {
+		t.Fatalf("resume args (harvest) = %q", got)
+	}
+
+	// Passthrough resume: no double --model.
+	resumePassthrough := agentResumeArgs("pi", "pi-session-123", "keep listening", "http://localhost:9997", []string{"--model", "ollama-cloud/minimax-m3"}, "minimax-m3")
+	if got := strings.Join(resumePassthrough, " "); got != "--resume --session pi-session-123 --mode json --model ollama-cloud/minimax-m3 keep listening" {
+		t.Fatalf("resume args (passthrough) = %q", got)
+	}
+}
+
+func TestPiModelFromArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"absent", nil, ""},
+		{"space form", []string{"--model", "ollama-cloud/minimax-m3"}, "minimax-m3"},
+		{"equals form", []string{"--model=ollama-cloud/minimax-m3"}, "minimax-m3"},
+		{"no provider prefix", []string{"--model", "gemma4:31b"}, "gemma4:31b"},
+		{"provider with equals in value", []string{"--model=ollama-cloud/m3"}, "m3"},
+		{"last wins", []string{"--model", "ollama-cloud/first", "--model", "ollama-cloud/last"}, "last"},
+		{"last wins mixed forms", []string{"--model=ollama-cloud/first", "--model", "ollama-cloud/last"}, "last"},
+		{"no false positive --model-path", []string{"--model-path", "/some/path"}, ""},
+		{"surrounding args preserved", []string{"--no-tools", "--model", "ollama-cloud/minimax-m3", "--verbose"}, "minimax-m3"},
+		{"provider prefix stripped on first slash only", []string{"--model", "ollama-cloud/a/b"}, "a/b"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := piModelFromArgs(tc.args); got != tc.want {
+				t.Fatalf("piModelFromArgs(%v) = %q, want %q", tc.args, got, tc.want)
+			}
+		})
 	}
 }
 

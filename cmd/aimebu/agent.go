@@ -159,8 +159,7 @@ func agentCmd(args []string) {
 	resumeName := "" // --resume-name
 	autoRoom := false
 	assumeRole := ""
-	modelSlug := ""
-
+	modelSlug := "" // resolved after flag parsing from passthrough args (pi) or harvest
 	i := 0
 	for i < len(args) {
 		switch args[i] {
@@ -194,13 +193,6 @@ func agentCmd(args []string) {
 				os.Exit(1)
 			}
 			assumeRole = args[i+1]
-			i += 2
-		case "--model":
-			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "aimebu agent: --model requires a value")
-				os.Exit(1)
-			}
-			modelSlug = args[i+1]
 			i += 2
 		case "--resume-id":
 			if i+1 >= len(args) {
@@ -238,9 +230,6 @@ func agentCmd(args []string) {
 				i++
 			case strings.HasPrefix(args[i], "--assume-role="):
 				assumeRole = strings.TrimPrefix(args[i], "--assume-role=")
-				i++
-			case strings.HasPrefix(args[i], "--model="):
-				modelSlug = strings.TrimPrefix(args[i], "--model=")
 				i++
 			case strings.HasPrefix(args[i], "--resume-id="):
 				resumeID = strings.TrimPrefix(args[i], "--resume-id=")
@@ -353,11 +342,11 @@ func agentCmd(args []string) {
 		if assumeRole == "" {
 			assumeRole = entry.AssumeRole
 		}
-		if modelSlug == "" {
-			modelSlug = entry.Model
-		}
-		if harness == "pi" && modelSlug == "" {
-			modelSlug = agentHarvestPiDefaultModel(os.Environ())
+		if harness == "pi" {
+			modelSlug = piModelFromArgs(command[1:])
+			if modelSlug == "" {
+				modelSlug = agentHarvestPiDefaultModel(os.Environ())
+			}
 		}
 		if assumeRole != "" && len(entry.Rooms) != 1 {
 			fmt.Fprintln(os.Stderr, "aimebu agent: --assume-role requires exactly one saved launch room")
@@ -388,8 +377,11 @@ func agentCmd(args []string) {
 
 	childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 
-	if harness == "pi" && modelSlug == "" {
-		modelSlug = agentHarvestPiDefaultModel(os.Environ())
+	if harness == "pi" {
+		modelSlug = piModelFromArgs(command[1:])
+		if modelSlug == "" {
+			modelSlug = agentHarvestPiDefaultModel(os.Environ())
+		}
 	}
 
 	prompt := agentBuildBootstrapPrompt(aimebuURL, harness, spawnTag, rooms, name, assumeRole, modelSlug)
@@ -612,6 +604,35 @@ func agentEnvValue(env []string, key string) string {
 		}
 	}
 	return ""
+}
+
+// piModelFromArgs extracts and normalizes the --model value from harness args
+// (everything after -- in the aimebu agent command). It is pi-specific: the
+// returned slug strips the provider prefix (everything up to and including the
+// first '/') so "ollama-cloud/minimax-m3" → "minimax-m3". A value with no '/'
+// passes through unchanged. Last occurrence of --model wins; returns "" when
+// absent. Matches "--model <val>" and "--model=<val>" exactly; "--model-path"
+// and similar flags are not matched.
+func piModelFromArgs(args []string) string {
+	val := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--model" {
+			if i+1 < len(args) {
+				val = args[i+1]
+				i++
+			}
+		} else if strings.HasPrefix(args[i], "--model=") {
+			// Split on first '=' only; value may contain '=' (e.g. query strings).
+			val = args[i][len("--model="):]
+		}
+	}
+	if val == "" {
+		return ""
+	}
+	if _, after, ok := strings.Cut(val, "/"); ok {
+		return after
+	}
+	return val
 }
 
 func agentHarvestPiDefaultModel(env []string) string {
@@ -959,7 +980,10 @@ func agentBootstrapArgs(harness, prompt, sessionID, aimebuURL string, userArgs [
 		return append(args, prompt)
 	case "pi":
 		args := []string{"--mode", "json"}
-		if modelSlug != "" {
+		// Only inject --model when the passthrough (userArgs) does not already
+		// supply one. piModelFromArgs uses last-wins, so a passthrough --model
+		// is already what pi will run; re-injecting would add a duplicate.
+		if modelSlug != "" && piModelFromArgs(userArgs) == "" {
 			args = append(args, "--model", modelSlug)
 		}
 		args = append(args, userArgs...)
@@ -988,7 +1012,7 @@ func agentResumeArgs(harness, sessionID, prompt, aimebuURL string, userArgs []st
 		return append(args, prompt)
 	case "pi":
 		args := []string{"--resume", "--session", sessionID, "--mode", "json"}
-		if modelSlug != "" {
+		if modelSlug != "" && piModelFromArgs(userArgs) == "" {
 			args = append(args, "--model", modelSlug)
 		}
 		args = append(args, userArgs...)
@@ -1589,8 +1613,6 @@ Options:
                          --resume-id as an escape hatch when the state file is missing.
   --assume-role <key>    Assign this agent to a role in the single launch room.
                          Requires exactly one resolved --room/--auto-room.
-  --model <slug>         Model slug to record for harnesses that need one-time
-                         wrapper-supplied model metadata (currently pi).
   --resume-id <uuid>     Resume a prior session by session UUID. Loads the agent full ID
                          from agents/agent-sessions.json in the aimebu config dir;
                          pass --name as fallback.
@@ -1619,5 +1641,5 @@ Examples:
   aimebu agent --resume-id <uuid> --name alice -- claude
   aimebu agent --harness claude-code --room dev --room general -- /usr/local/bin/claude
   aimebu agent --room general -- codex
-  aimebu agent --model ollama-cloud/gemma4:31b --room general -- pi`)
+  aimebu agent --room general -- pi --model ollama-cloud/minimax-m3`)
 }

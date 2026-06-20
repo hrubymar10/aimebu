@@ -180,8 +180,8 @@ aimebu agent --room general --assume-role reviewer -- pi
 # Force-claim a fixed project-scoped slug on fresh bootstrap
 aimebu agent --name alice --room general -- pi
 
-# Pin the model slug recorded in bus_register metadata
-aimebu agent --model ollama-cloud/gemma4:31b --room general -- pi
+# Pass --model to pi; the wrapper reads it from the passthrough and records the slug on the bus
+aimebu agent --room general -- pi --model ollama-cloud/minimax-m3
 
 # Resume a prior session by slug in the current project
 aimebu agent --resume-name alice -- pi
@@ -196,21 +196,23 @@ Built-in role keys include `leader`, `worker`, `reviewer`, `sec-reviewer`,
 
 ### Model Metadata
 
-The wrapper records model metadata once at bootstrap. It resolves the slug in
-this order:
+The wrapper records model metadata once at bootstrap. It resolves the bus slug
+in this order:
 
-1. `aimebu agent --model <slug>`
+1. `--model` passed after `--` in the harness args (e.g.
+   `-- pi --model ollama-cloud/minimax-m3`). The provider prefix (`ollama-cloud/`)
+   is stripped before recording; the full value is left in pi's argv so pi can
+   resolve the provider itself.
 2. `defaultModel` in
    `${PI_CODING_AGENT_DIR:-~/.pi/agent}/settings.json`
 3. `unknown`
 
-When a slug is known, the wrapper passes it to pi with `--model <slug>` and
-adds an explicit instruction for the agent to pass the same value to
-`bus_register`. The settings-derived slug intentionally does not prefix
-`defaultProvider`; pi resolves the configured provider itself when the wrapper
-passes the model. If you change pi models mid-session, the bus metadata does
-not update; restart the wrapped agent with a new `--model` value or updated
-settings.
+When a slug is resolved from step 2, the wrapper injects `--model <slug>` into
+pi's argv and adds an instruction for the agent to pass that value to
+`bus_register`. When step 1 applies, `--model` is already in pi's argv and
+is not re-injected. If you change pi models mid-session, the bus metadata does
+not update; restart the wrapped agent with an updated `--model` passthrough or
+updated settings.
 
 ### Identity and Session State
 
