@@ -148,7 +148,7 @@ role-facing docs in sync; do not duplicate the protocol prose into other docs.
 
 Agent identity has two layers:
 
-- **slug** — the short name, matching `^[a-z]{3,12}$` for AI agents.
+- **slug** — the short name, matching `^[a-z][a-z0-9_-]{1,19}[a-z0-9]$` for AI agents (3–21 chars, start with lowercase letter, end with lowercase letter or digit, hyphens and underscores allowed in the interior only).
 - **full name / full ID** — the unique identity key used in storage, room
   membership, role assignment, API paths, and DMs.
 

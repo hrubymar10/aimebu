@@ -44,6 +44,15 @@ func TestParseAddressedTo(t *testing.T) {
 		{"~~~\n@alice\n~~~", nil},
 		{"hello @alice and `@bob`", []string{"alice"}},
 		{"\\@alice stays literal", nil},
+
+		// Trailing separator stripping (slugs must end with letter/digit)
+		{"@alice- what do you think?", []string{"alice"}},
+		{"@alice_ what do you think?", []string{"alice"}},
+		{"see @foo-bar here", []string{"foo-bar"}},
+		{"see @foo_bar here", []string{"foo_bar"}},
+		{"@foo-bar@proj disambiguated", []string{"foo-bar@proj"}},
+		// trailing separator on disambiguated form strips only from slug
+		{"@foo-@proj trailing sep before @", []string{"foo@proj"}},
 	}
 
 	for _, tc := range cases {

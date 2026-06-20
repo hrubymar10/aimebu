@@ -24,10 +24,11 @@ import (
 
 	aimebuclient "github.com/hrubymar10/aimebu/internal/client"
 	"github.com/hrubymar10/aimebu/internal/config"
+	"github.com/hrubymar10/aimebu/internal/server"
 )
 
-// agentNamePattern mirrors store.go's reclaimNamePattern.
-var agentNamePattern = regexp.MustCompile(`^[a-z]{3,12}$`)
+// agentNamePattern is server.SlugPattern re-exported for local use.
+var agentNamePattern = server.SlugPattern
 
 // agentSession is one entry in agents/agent-sessions.json.
 type agentSession struct {
@@ -272,11 +273,11 @@ func agentCmd(args []string) {
 		os.Exit(1)
 	}
 	if name != "" && !agentNamePattern.MatchString(name) {
-		fmt.Fprintf(os.Stderr, "aimebu agent: --name %q must match [a-z]{3,12}\n", name)
+		fmt.Fprintf(os.Stderr, "aimebu agent: --name %q must match %s\n", name, server.SlugPatternStr)
 		os.Exit(1)
 	}
 	if resumeName != "" && !agentNamePattern.MatchString(resumeName) {
-		fmt.Fprintf(os.Stderr, "aimebu agent: --resume-name %q must match [a-z]{3,12}\n", resumeName)
+		fmt.Fprintf(os.Stderr, "aimebu agent: --resume-name %q must match %s\n", resumeName, server.SlugPatternStr)
 		os.Exit(1)
 	}
 	if assumeRole != "" && !agentRoleKeyPattern.MatchString(assumeRole) {
@@ -1582,7 +1583,8 @@ Options:
   --harness <slug>       Harness slug. Auto-detected from command basename if omitted.
   --room <id>            Room to join on startup (repeatable).
   --auto-room            Join the current working directory basename as a room.
-  --name <slug>          Force-claim this project-scoped slug ([a-z]{3,12}).
+  --name <slug>          Force-claim this project-scoped slug (3–21 chars, start with letter,
+                         end with letter/digit, hyphens/underscores interior only).
                          Usable alone (fresh bootstrap with name continuity) or with
                          --resume-id as an escape hatch when the state file is missing.
   --assume-role <key>    Assign this agent to a role in the single launch room.

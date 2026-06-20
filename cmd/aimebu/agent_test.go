@@ -22,15 +22,36 @@ func TestAgentNamePattern(t *testing.T) {
 		input string
 		want  bool
 	}{
+		// plain alpha — still valid
 		{"alice", true},
 		{"otto", true},
 		{"abc", true},
-		{"abcdefghijkl", true},   // 12 chars
-		{"ab", false},            // too short
-		{"abcdefghijklm", false}, // 13 chars
-		{"Alice", false},         // uppercase
-		{"al1ce", false},         // digit
-		{"al-ce", false},         // hyphen
+		// min length (3)
+		{"ab1", true},
+		// max length (21)
+		{"abcdefghijklmnopqrstu", true},
+		// hyphens/underscores mid-name
+		{"foo-bar", true},
+		{"foo_bar", true},
+		{"a-b-c", true},
+		{"a_b_c", true},
+		// digits mid-name
+		{"al1ce", true},
+		// too short (2 chars)
+		{"ab", false},
+		// too long (22 chars)
+		{"abcdefghijklmnopqrstuv", false},
+		// uppercase not allowed
+		{"Alice", false},
+		// leading hyphen
+		{"-alice", false},
+		// leading underscore
+		{"_alice", false},
+		// trailing hyphen
+		{"alice-", false},
+		// trailing underscore
+		{"alice_", false},
+		// empty
 		{"", false},
 	}
 	for _, tc := range cases {

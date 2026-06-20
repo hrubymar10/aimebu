@@ -249,6 +249,10 @@ func stripEscapedMentions(body string) string {
 // live prose (outside code, outside escaped \@literal forms). The returned
 // tokens are lowercased and may include group tags such as "here" or
 // "everyone"; room-aware resolution happens later.
+//
+// Trailing hyphens and underscores are stripped from the slug portion before
+// lookup. Valid slugs must end with a letter or digit, so a trailing separator
+// in prose (e.g. "@alice-") is punctuation, not part of the name.
 func parseAddressedTo(body string) []string {
 	view := maskCodeForAddressing(body)
 	var names []string
@@ -261,7 +265,19 @@ func parseAddressedTo(body string) []string {
 		}
 	}
 	for _, m := range mentionRe.FindAllStringSubmatch(view.escaped, -1) {
-		add(m[1])
+		token := m[1]
+		// Strip trailing separators from the slug part (before any @project).
+		if atIdx := strings.IndexByte(token, '@'); atIdx > 0 {
+			slug := strings.TrimRight(token[:atIdx], "-_")
+			if slug != "" {
+				token = slug + token[atIdx:]
+			}
+		} else {
+			token = strings.TrimRight(token, "-_")
+		}
+		if token != "" {
+			add(token)
+		}
 	}
 	return names
 }

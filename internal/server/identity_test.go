@@ -155,6 +155,78 @@ func TestSingletonRoleAcrossProjectsDifferentRooms(t *testing.T) {
 	}
 }
 
+func TestSlugPatternValid(t *testing.T) {
+	valid := []string{
+		"alice",         // plain alpha
+		"foo-bar",       // hyphen mid-name
+		"foo_bar",       // underscore mid-name
+		"a1b",           // digit mid-name, length 3
+		"ab1",           // min length 3
+		"a-b",           // hyphen at position 1
+		"abcdefghijklmnopqrstu", // max length 21
+	}
+	for _, s := range valid {
+		if !SlugPattern.MatchString(s) {
+			t.Errorf("SlugPattern rejected valid slug %q", s)
+		}
+	}
+}
+
+func TestSlugPatternInvalid(t *testing.T) {
+	invalid := []string{
+		"",                       // empty
+		"ab",                     // too short (2)
+		"abcdefghijklmnopqrstuv", // too long (22)
+		"Alice",                  // uppercase
+		"-alice",                 // leading hyphen
+		"_alice",                 // leading underscore
+		"alice-",                 // trailing hyphen
+		"alice_",                 // trailing underscore
+	}
+	for _, s := range invalid {
+		if SlugPattern.MatchString(s) {
+			t.Errorf("SlugPattern accepted invalid slug %q", s)
+		}
+	}
+}
+
+func TestForceClaimHyphenatedSlug(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	// Force-claim a slug with a hyphen — should succeed.
+	a, reclaimed, err := s.registerAI("gpt5", "codex", "proj", nil, "foo-bar")
+	if err != nil {
+		t.Fatalf("registerAI with hyphenated slug: %v", err)
+	}
+	if reclaimed {
+		t.Fatal("first registration unexpectedly reclaimed")
+	}
+	if a.ID != "foo-bar@proj" {
+		t.Fatalf("id = %q, want foo-bar@proj", a.ID)
+	}
+
+	// Idempotent re-registration with same model/harness/project returns the
+	// same agent. Force-claim always returns reclaimed=false (spawn_tag path
+	// is the only way to get reclaimed=true).
+	b, _, err := s.registerAI("gpt5", "codex", "proj", nil, "foo-bar")
+	if err != nil {
+		t.Fatalf("re-register: %v", err)
+	}
+	if b.ID != "foo-bar@proj" {
+		t.Fatalf("re-registered id = %q, want foo-bar@proj", b.ID)
+	}
+}
+
+func TestForceClaimInvalidSlugRejected(t *testing.T) {
+	s, _ := setupTestServer(t)
+	invalid := []string{"alice-", "-alice", "_bob", "ab"}
+	for _, slug := range invalid {
+		if _, _, err := s.registerAI("gpt5", "codex", "proj", nil, slug); err == nil {
+			t.Errorf("registerAI with invalid slug %q should have failed", slug)
+		}
+	}
+}
+
 type roomSendResp struct {
 	ID       int64    `json:"id"`
 	Warnings []string `json:"warnings"`

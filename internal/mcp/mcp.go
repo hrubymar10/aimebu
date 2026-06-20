@@ -308,7 +308,7 @@ var tools = []tool{
 				"model":   {Type: "string", Description: "Your model, as a short slug: opus4.7, sonnet4.7, haiku4.5, gpt5, etc. Use 'unknown' if you genuinely cannot determine it."},
 				"harness": {Type: "string", Description: "Your harness slug: claude-code, codex, cursor, cline, aider, pi, etc. Pass this explicitly (you know what harness you run in, just like you know your model). The server falls back to AIMEBU_HARNESS env var, then a few upstream env-var heuristics — but those don't cover every harness, so don't rely on them."},
 				"meta":    {Type: "object", Description: "Optional extra metadata (cwd, branch, repo, etc. are auto-filled)."},
-				"name":    {Type: "string", Description: "Only with force=true: force-claim this slug in the current project. Must match ^[a-z]{3,12}$. Rejected if the same full ID is held by an AI with different model/harness/project."},
+				"name":    {Type: "string", Description: "Only with force=true: force-claim this slug in the current project. Must match ^[a-z][a-z0-9_-]{1,19}[a-z0-9]$ (3–21 chars, start with letter, end with letter/digit, hyphens/underscores interior only). Rejected if the same full ID is held by an AI with different model/harness/project."},
 				"force":   {Type: "boolean", Description: "Set to true together with `name` to force-claim a project-scoped slug. Leave false (default) to let the server pick a slug — this is the normal case."},
 			},
 			Required: []string{"model"},

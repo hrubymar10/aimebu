@@ -44,11 +44,18 @@ type macrosEnvelope struct {
 	SeenDefaults []string                     `json:"seen_defaults,omitempty"`
 }
 
-// reclaimNamePattern restricts `force`d names to the same shape as the
-// server-assigned pool — lowercase letters only, 3-12 chars. Keeps the ID
-// space clean without requiring pool membership (pool can shift across
-// versions; old names should stay reclaimable).
-var reclaimNamePattern = regexp.MustCompile(`^[a-z]{3,12}$`)
+// SlugPattern is the canonical AI-agent slug rule: start with a lowercase
+// letter, end with a lowercase letter or digit, hyphens and underscores
+// allowed in the interior only, total length 3–21 chars.
+// Used by both the server (force-claim) and the agent wrapper (--name/--resume-name).
+const SlugPatternStr = `^[a-z][a-z0-9_-]{1,19}[a-z0-9]$`
+
+// SlugPattern is the compiled form of SlugPatternStr.
+var SlugPattern = regexp.MustCompile(SlugPatternStr)
+
+// reclaimNamePattern is kept as an alias for internal callers that predate
+// the export; new code should use SlugPattern directly.
+var reclaimNamePattern = SlugPattern
 
 // MetaEvent is a push notification for room/agent state changes.
 type MetaEvent struct {
@@ -1798,7 +1805,7 @@ func (s *store) findBySpawnTagLocked(tag, model, harness, project string) *types
 // slug from the pool and assembles the full ID from slug/project. If
 // forceName is non-empty, the caller is asking to force-claim that slug in
 // the current project. Reclaim rules:
-//   - name must match ^[a-z]{3,12}$ (same shape as pool names)
+//   - name must match SlugPatternStr (3–21 chars, alpha start, alphanumeric end)
 //   - if current-project full ID is held by an AI with same model+harness+
 //     project → idempotent: return the existing agent with last_seen touched
 //   - if current-project full ID is held by an AI with different
@@ -1826,7 +1833,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 	if forceName != "" {
 		if !reclaimNamePattern.MatchString(forceName) {
 			s.mu.Unlock()
-			return nil, false, fmt.Errorf("name %q must match [a-z]{3,12}", forceName)
+			return nil, false, fmt.Errorf("name %q must match %s (3–21 chars, start with letter, end with letter/digit, hyphens/underscores interior only)", forceName, SlugPatternStr)
 		}
 		if isReservedAgentName(forceName) {
 			s.mu.Unlock()
