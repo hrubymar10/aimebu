@@ -2836,7 +2836,7 @@ func TestFrontendVisualPlanRenderHooks(t *testing.T) {
 		"function renderVisualPlanAppendix(pages)",
 		"message.appendix_pages",
 		`<details class="visual-plan-block visual-plan-appendix">`,
-		"renderMermaidBlocks(messageListEl)",
+		"renderMermaidBlocks(messageListEl, repinIfPinned)",
 		"securityLevel: 'strict'",
 		`<iframe class="visual-plan-prototype-frame" sandbox srcdoc="`,
 		"Content-Security-Policy",

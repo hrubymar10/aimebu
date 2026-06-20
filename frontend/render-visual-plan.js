@@ -254,20 +254,45 @@ function visualPlanHTML(message) {
   '</div>';
 }
 
-function renderMermaidBlocks(root) {
+function mermaidNodeIsError(node) {
+  if (!node.querySelector('svg')) return true;
+  return !!(node.querySelector('.error-icon, .error-text'));
+}
+
+function runMermaidNode(node, source, onDone, isRetry) {
+  window.mermaid.run({ nodes: [node] }).then(function () {
+    if (!isRetry && mermaidNodeIsError(node)) {
+      // mermaid.run skips nodes with data-processed set; clear it before retry.
+      node.removeAttribute('data-processed');
+      node.textContent = source;
+      runMermaidNode(node, source, onDone, true);
+      return;
+    }
+    if (mermaidNodeIsError(node)) {
+      restoreMermaidSource(node, source, new Error('diagram render produced error graphic'));
+    }
+    if (onDone) onDone();
+  }).catch(function (err) {
+    restoreMermaidSource(node, source, err);
+    if (onDone) onDone();
+  });
+}
+
+function renderMermaidBlocks(root, onDone) {
   if (!window.mermaid || !root) return;
+  var nodes = Array.from(root.querySelectorAll('.visual-plan-mermaid'));
+  if (!nodes.length) return;
   try {
     window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default' });
-    Array.from(root.querySelectorAll('.visual-plan-mermaid')).forEach(function (node) {
+    nodes.forEach(function (node) {
       var source = node.textContent || '';
-      window.mermaid.run({ nodes: [node] }).catch(function (err) {
-        restoreMermaidSource(node, source, err);
-      });
+      runMermaidNode(node, source, onDone, false);
     });
   } catch (err) {
-    Array.from(root.querySelectorAll('.visual-plan-mermaid')).forEach(function (node) {
+    nodes.forEach(function (node) {
       restoreMermaidSource(node, node.textContent || '', err);
     });
+    if (onDone) onDone();
   }
 }
 

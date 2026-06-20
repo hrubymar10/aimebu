@@ -4271,6 +4271,13 @@
     }
     closeMessageDebugModal();
     activeRoomID = roomID;
+    // Reset to a clean pinned state so stale anchor from the previous room
+    // cannot be applied to this room's content during initial load.
+    scrollAnchor.pinnedToBottom = true;
+    scrollAnchor.anchorEl = null;
+    scrollAnchor.visibleOffset = 0;
+    scrollAnchor.distanceFromBottom = 0;
+    scrollAnchor.hasListSize = false;
     historyIdx = null;
     historyDraft = null;
     clearPendingReply();
@@ -4311,9 +4318,7 @@
       renderRooms();
       // Pull presence snapshot after messages so read-receipt rendering
       // has the head message id available.
-      return fetchRoomPresence(roomID).then(function () {
-        if (!scrollToMsgID) scrollToBottom(true);
-      });
+      return fetchRoomPresence(roomID);
     });
 
     // Mark the room read as soon as the user opens it.
@@ -4670,10 +4675,29 @@
     }).join('');
 
     messageListEl.querySelectorAll('.chat-msg-body').forEach(function (b) { highlightNames(b); });
-    renderMermaidBlocks(messageListEl);
+
+    // Re-pin when async content (images, Mermaid, fonts) later grows scrollHeight.
+    // Only fires if scrollAnchor.pinnedToBottom, so a user who scrolled up is never yanked.
+    function repinIfPinned() {
+      if (scrollAnchor.pinnedToBottom) scrollToBottom(true);
+    }
+    messageListEl.querySelectorAll('img').forEach(function (img) {
+      if (!img.complete) {
+        img.addEventListener('load', repinIfPinned);
+        img.addEventListener('error', repinIfPinned);
+      }
+      // decode() resolves even for cached images where 'load' never fires
+      if (img.decode) img.decode().then(repinIfPinned).catch(function () {});
+    });
+    renderMermaidBlocks(messageListEl, repinIfPinned);
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(repinIfPinned);
+    }
+
     renderReadReceipts(false);
     if (atBottom) {
       scrollToBottom(true);
+      setTimeout(repinIfPinned, 250);
     } else {
       suppressMessageListScroll(function () {
         messageListEl.scrollTop = prevScrollTop + (messageListEl.scrollHeight - prevScrollHeight);
@@ -5111,10 +5135,15 @@
   function scrollToBottom(force) {
     var nearBottom = isMessageListNearBottom();
     if (!force && !nearBottom) return;
+    // Double-rAF: outer frame lets the browser complete its layout pass (Safari
+    // defers layout for cached images until after the first rAF fires), inner
+    // frame performs the actual scroll write with fresh scrollHeight.
     requestAnimationFrame(function () {
-      suppressMessageListScroll(function () {
-        messageListEl.scrollTop = messageListEl.scrollHeight;
-      }, true);
+      requestAnimationFrame(function () {
+        suppressMessageListScroll(function () {
+          messageListEl.scrollTop = messageListEl.scrollHeight;
+        }, true);
+      });
     });
   }
 
