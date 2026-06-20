@@ -1105,6 +1105,27 @@ func startSessionHeartbeat(done <-chan struct{}, agentID *atomic.Pointer[string]
 	}()
 }
 
+// processLine unmarshals and handles one JSON-RPC line.
+// Wrapping unmarshal+handle in recover() ensures that a library panic (e.g.
+// the known go-json null-byte bug) does not crash the whole MCP session.
+func processLine(c *client.Client, line string, heartbeatID *atomic.Pointer[string]) *response {
+	var resp *response
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("mcp: recovered panic on line: %v", r)
+			}
+		}()
+		var req request
+		if err := json.Unmarshal([]byte(line), &req); err != nil {
+			log.Printf("invalid JSON-RPC: %s", err)
+			return
+		}
+		resp = handle(c, req, heartbeatID)
+	}()
+	return resp
+}
+
 // Run starts the MCP stdio JSON-RPC server.
 func Run(c *client.Client) error {
 	log.SetOutput(os.Stderr)
@@ -1128,13 +1149,7 @@ func Run(c *client.Client) error {
 			continue
 		}
 
-		var req request
-		if err := json.Unmarshal([]byte(line), &req); err != nil {
-			log.Printf("invalid JSON-RPC: %s", err)
-			continue
-		}
-
-		resp := handle(c, req, &heartbeatID)
+		resp := processLine(c, line, &heartbeatID)
 		if resp == nil {
 			continue
 		}
