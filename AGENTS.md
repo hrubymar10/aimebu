@@ -103,7 +103,14 @@ internal/
   client/client.go        HTTP client (used by CLI commands and MCP)
   server/
     server.go             HTTP server, route handlers, Run()
-    store.go              In-memory store with SQLite persistence (rooms, messages, agents)
+    store.go              Store type, constants, shared helpers, macros, cleanup sweep
+    store_persist.go      newStore, load/persist, atomic write, prune
+    store_rooms.go        Room CRUD, join/leave, DM, system messages
+    store_agents.go       Agent register/deregister, liveness, addressing, wait/WS counters
+    store_messages.go     Send/read messages, reactions, cursors, SSE subscriptions
+    store_sounds.go       Sound file management
+    store_attachments.go  Image attachment management
+    store_helpers.go      Pure utility functions (sanitize, normalize, randomID/UUID)
     memory.go             Durable bus memory records and recall search
     daemon.go             PID-based daemon start/stop/status
     allow.go              IP allowlist middleware (AIMEBU_ALLOW)
