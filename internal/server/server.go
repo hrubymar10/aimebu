@@ -2187,7 +2187,7 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	usageManager.SetUpdateHook(func(resp usages.Response) {
 		s.broadcastMeta(MetaEvent{Type: "usages_updated", Data: resp})
 	})
-	usageManager.Start(cleanupCtx)
+	usageManager.Start(cleanupCtx, &s.bgWG)
 	setupHandlers(mux, s, build, usageManager)
 
 	// Serve embedded frontend at /
@@ -2245,13 +2245,16 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGTERM, syscall.SIGINT)
 
+	var shutdownOnce sync.Once
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			gracefulShutdown(s, serverCancel, cleanupCancel, servers)
+		})
+	}
+
 	go func() {
 		<-done
-		log.Println("Shutting down...")
-		// best-effort: won't fire on SIGKILL or crash
-		s.emitSystemMessage("_system", "server stopping")
-		serverCancel()
-		shutdownServers(servers)
+		shutdown()
 	}()
 
 	log.Printf("aimebu listening on %s (allow: %v, data: %s)", listenerSummary(servers), allow, dataDir)
@@ -2287,11 +2290,65 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 		}
 		if firstErr == nil {
 			firstErr = err
-			serverCancel()
-			shutdownServers(servers)
+			shutdown()
 		}
 	}
 	return firstErr
+}
+
+const shutdownTimeout = 15 * time.Second
+
+// gracefulShutdown performs an ordered, bounded teardown:
+//  1. emit "server stopping" (best-effort)
+//  2. serverCancel — unblock bus_wait long-polls and signal WS handlers
+//  3. cleanupCancel — stop background writers (cleanup ticker, usages manager)
+//  4. HTTP drain (shutdownServers, 5 s inner timeout)
+//  5. wsWG.Wait — WS goroutines + their post-loop leaveWS writes (bounded)
+//  6. bgWG.Wait — background goroutines fully exited (bounded)
+//  7. store.Close — wal_checkpoint(TRUNCATE) + db.Close()
+//
+// All steps run inside a 15 s overall deadline; if any step exceeds the
+// remaining budget the function logs what stalled and proceeds to store.Close
+// anyway so the WAL is checkpointed regardless.
+func gracefulShutdown(s *store, serverCancel, cleanupCancel context.CancelFunc, servers []serverListener) {
+	deadline, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	// 1. best-effort bus notification
+	s.emitSystemMessage("_system", "server stopping")
+	log.Println("Shutting down...")
+
+	// 2. unblock long-polls + signal WS
+	serverCancel()
+
+	// 3. stop background writers
+	cleanupCancel()
+
+	// 4. stop accepting new HTTP connections and drain in-flight requests
+	shutdownServers(servers)
+
+	// 5. wait for WS goroutines (includes post-loop leaveWS writes)
+	wsDone := make(chan struct{})
+	go func() { s.wsWG.Wait(); close(wsDone) }()
+	select {
+	case <-wsDone:
+	case <-deadline.Done():
+		log.Println("shutdown: WebSocket connections did not drain within deadline")
+	}
+
+	// 6. wait for background goroutines
+	bgDone := make(chan struct{})
+	go func() { s.bgWG.Wait(); close(bgDone) }()
+	select {
+	case <-bgDone:
+	case <-deadline.Done():
+		log.Println("shutdown: background goroutines did not exit within deadline")
+	}
+
+	// 7. checkpoint WAL and close SQLite
+	if err := s.Close(); err != nil {
+		log.Printf("shutdown: store close: %v", err)
+	}
 }
 
 func serverBaseContext(ctx context.Context) func(net.Listener) context.Context {

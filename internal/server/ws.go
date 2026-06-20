@@ -47,6 +47,12 @@ func handleWS(s *store) http.HandlerFunc {
 			return
 		}
 
+		// Track this goroutine so gracefulShutdown can wait for the post-loop
+		// cleanup (unsubscribe + leaveWS write + conn.Close) to land before
+		// the store is closed.
+		s.wsWG.Add(1)
+		defer s.wsWG.Done()
+
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 

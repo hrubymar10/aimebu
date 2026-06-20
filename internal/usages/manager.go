@@ -206,9 +206,18 @@ func (m *Manager) SetOllamaConfig(ctx context.Context, authMode string, apiKey *
 	return cfg, err
 }
 
-func (m *Manager) Start(ctx context.Context) {
+// Start launches the background refresh goroutine. If wg is non-nil, the
+// goroutine registers with it (Add/Done) so callers can wait for it to exit
+// after cancelling ctx.
+func (m *Manager) Start(ctx context.Context, wg *sync.WaitGroup) {
 	ticker := time.NewTicker(5 * time.Second)
+	if wg != nil {
+		wg.Add(1)
+	}
 	go func() {
+		if wg != nil {
+			defer wg.Done()
+		}
 		defer ticker.Stop()
 		for {
 			select {

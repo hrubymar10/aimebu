@@ -71,6 +71,30 @@ func (s *store) openSQLite() error {
 	return nil
 }
 
+// Close checkpoints the WAL and closes the underlying SQLite connection.
+// It is idempotent: the second and subsequent calls are no-ops.
+// Call only after all writers (HTTP handlers, WebSocket goroutines,
+// background goroutines) have fully exited.
+func (s *store) Close() error {
+	var err error
+	s.closeOnce.Do(func() {
+		if s.db == nil {
+			return
+		}
+		if _, execErr := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); execErr != nil {
+			log.Printf("store.Close: wal_checkpoint: %v", execErr)
+			err = execErr
+		}
+		if closeErr := s.db.Close(); closeErr != nil {
+			log.Printf("store.Close: db.Close: %v", closeErr)
+			if err == nil {
+				err = closeErr
+			}
+		}
+	})
+	return err
+}
+
 func (s *store) configureSQLite(seedSchemaMeta bool) error {
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",

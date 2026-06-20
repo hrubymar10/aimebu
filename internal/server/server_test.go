@@ -4892,3 +4892,52 @@ func TestRolesHTTP_PutConflictOnRemovedAssignedCustomRole(t *testing.T) {
 		t.Fatalf("PUT /roles?force=true: status %d", resp2.StatusCode)
 	}
 }
+
+func TestGracefulShutdown(t *testing.T) {
+	s, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	s.startCleanup(cleanupCtx)
+
+	serverCtx, serverCancel := context.WithCancel(context.Background())
+
+	mux := http.NewServeMux()
+	setupHandlers(mux, s, BuildInfo{}, nil)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(serverCtx)
+		mux.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	wsCtx, wsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer wsCancel()
+	wsConn, _, err := websocket.Dial(wsCtx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("ws dial: %v", err)
+	}
+
+	// Run gracefulShutdown in a goroutine; it must finish within the deadline.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		gracefulShutdown(s, serverCancel, cleanupCancel, nil)
+	}()
+
+	// The WS connection should be closed by shutdown.
+	wsConn.CloseRead(context.Background())
+
+	select {
+	case <-done:
+	case <-time.After(shutdownTimeout + 2*time.Second):
+		t.Fatal("gracefulShutdown did not complete within deadline")
+	}
+
+	// store.Close must have run — db should be closed (second Close is a no-op).
+	if err := s.Close(); err != nil {
+		t.Fatalf("post-shutdown store.Close: %v", err)
+	}
+}

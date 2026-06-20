@@ -84,6 +84,18 @@ type store struct {
 	db     *sql.DB
 	nextID atomic.Int64
 
+	// wsWG tracks active WebSocket handler goroutines including their
+	// post-loop cleanup (unsubscribe + leaveWS write + conn.Close).
+	// Shutdown waits on wsWG before closing the store so those final
+	// writes land before db.Close().
+	wsWG sync.WaitGroup
+	// bgWG tracks background goroutines (startCleanup, usages manager)
+	// so shutdown can cancel and wait for them before closing the store.
+	bgWG sync.WaitGroup
+	// closeOnce guards store.Close so the signal path and the fatal-error
+	// path cannot double-run the teardown sequence.
+	closeOnce sync.Once
+
 	mu       sync.RWMutex
 	rooms    map[string]*types.Room
 	messages map[string][]types.Message // keyed by room ID
@@ -229,7 +241,9 @@ func (s *store) clearAll(includeSettings bool) {
 func (s *store) startCleanup(ctx context.Context) {
 	ticker := time.NewTicker(s.cleanupInterval())
 	livenessTicker := time.NewTicker(s.livenessSweepInterval())
+	s.bgWG.Add(1)
 	go func() {
+		defer s.bgWG.Done()
 		for {
 			select {
 			case <-ticker.C:

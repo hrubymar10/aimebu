@@ -150,6 +150,51 @@ func TestSQLiteAgentTouchDoesNotRewriteMessages(t *testing.T) {
 	}
 }
 
+func TestStoreClose(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Commit data that will be in the WAL before close.
+	agent := types.Agent{ID: "alice@test", Name: "alice", Kind: "ai", Model: "gpt5",
+		Harness: "codex", Project: "test", RegisteredAt: now(), LastSeen: now()}
+	s.mu.Lock()
+	s.agents[agent.ID] = &agent
+	s.mu.Unlock()
+	s.persist()
+
+	// Close must succeed.
+	if err := s.Close(); err != nil {
+		t.Fatalf("store.Close: %v", err)
+	}
+
+	// Idempotent: second call must not panic and return nil.
+	if err := s.Close(); err != nil {
+		t.Fatalf("store.Close (2nd): %v", err)
+	}
+
+	// After wal_checkpoint(TRUNCATE) the WAL file should be absent or zero bytes.
+	walPath := s.sqlitePath() + "-wal"
+	if info, statErr := os.Stat(walPath); statErr == nil && info.Size() > 0 {
+		t.Errorf("WAL not truncated after Close: size=%d", info.Size())
+	}
+
+	// Reopen and verify committed data survived.
+	s2, err := newStore(dir)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer s2.Close()
+	s2.mu.RLock()
+	_, ok := s2.agents[agent.ID]
+	s2.mu.RUnlock()
+	if !ok {
+		t.Error("agent not found after store reopen — data lost on Close")
+	}
+}
+
 func writeJSONFixture(t *testing.T, path string, v any) {
 	t.Helper()
 	data, err := json.Marshal(v)
