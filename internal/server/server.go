@@ -1604,7 +1604,8 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		room, err := s.setRoomMemoryOverride(r.PathValue("id"), req.MemoryEnabled)
+		roomID := r.PathValue("id")
+		room, err := s.setRoomMemoryOverride(roomID, req.MemoryEnabled)
 		if err != nil {
 			status := http.StatusBadRequest
 			if errors.Is(err, ErrRoomNotFound) {
@@ -1613,6 +1614,16 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, err.Error(), status)
 			return
 		}
+		var feedState string
+		switch {
+		case req.MemoryEnabled == nil:
+			feedState = "reset to default"
+		case *req.MemoryEnabled:
+			feedState = "enabled"
+		default:
+			feedState = "disabled"
+		}
+		s.emitSystemMessage(roomID, "memory feed "+feedState)
 		_ = jsonOK(w, room)
 	})
 
@@ -1687,6 +1698,9 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonMemoryError(w, err)
 			return
 		}
+		if n := len(removed); n > 0 {
+			s.emitSystemMessageToActorRooms(agentID, fmt.Sprintf("%s cleaned %d memory records", agentID, n))
+		}
 		_ = jsonOK(w, map[string]any{"removed": removed, "count": len(removed)})
 	})
 
@@ -1707,6 +1721,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonMemoryError(w, err)
 			return
 		}
+		s.emitSystemMessageToActorRooms(req.AgentID, fmt.Sprintf("%s added memory %s/%s [%s]", req.AgentID, record.Scope, record.ScopeKey, record.ID))
 		_ = jsonOK(w, map[string]any{"record": record})
 	})
 
@@ -1725,6 +1740,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonMemoryError(w, err)
 			return
 		}
+		s.emitSystemMessageToActorRooms(req.AgentID, fmt.Sprintf("%s updated memory [%s]", req.AgentID, record.ID))
 		_ = jsonOK(w, map[string]any{"record": record})
 	})
 
@@ -1740,6 +1756,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonMemoryError(w, err)
 			return
 		}
+		s.emitSystemMessageToActorRooms(agentID, fmt.Sprintf("%s removed memory [%s]", agentID, record.ID))
 		_ = jsonOK(w, map[string]any{"record": record})
 	})
 
@@ -1786,6 +1803,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		s.emitSystemMessageToActorRooms(req.AgentID, req.AgentID+" submitted leaderboard cards")
 		_ = jsonOK(w, map[string]any{"cards": cards})
 	})
 

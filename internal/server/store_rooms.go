@@ -335,6 +335,29 @@ func (s *store) isMember(roomID, agentID string) bool {
 	return false
 }
 
+// emitSystemMessageToActorRooms emits a system message to every room that
+// actorID is a member of, excluding _system and DM rooms. Must NOT be called
+// while s.mu is held. If the actor is in no eligible rooms, this is a no-op.
+func (s *store) emitSystemMessageToActorRooms(actorID, body string) {
+	s.mu.RLock()
+	var roomIDs []string
+	for id, r := range s.rooms {
+		if id == "_system" || isDM(id) {
+			continue
+		}
+		for _, m := range r.Members {
+			if m == actorID {
+				roomIDs = append(roomIDs, id)
+				break
+			}
+		}
+	}
+	s.mu.RUnlock()
+	for _, id := range roomIDs {
+		s.emitSystemMessage(id, body)
+	}
+}
+
 // ── Messages ───────────────────────────────────────────────────────
 
 // emitSystemMessage appends a system event into roomID and broadcasts it.

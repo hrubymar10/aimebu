@@ -4941,3 +4941,294 @@ func TestGracefulShutdown(t *testing.T) {
 		t.Fatalf("post-shutdown store.Close: %v", err)
 	}
 }
+
+// lastSystemMsg returns the last message in the given room that has from_kind=system,
+// or the zero value if none exist.
+func lastSystemMsg(s *store, roomID string) (types.Message, bool) {
+	s.mu.RLock()
+	msgs := s.messages[roomID]
+	s.mu.RUnlock()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].FromKind == "system" {
+			return msgs[i], true
+		}
+	}
+	return types.Message{}, false
+}
+
+func TestMemoryAddSystemLine(t *testing.T) {
+	s, srv := setupTestServer(t)
+	enableMemoryForTest(s)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("work", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"agent_id":  agent.ID,
+		"scope":     "project_facts",
+		"scope_key": "test",
+		"body":      "a fact",
+	})
+	resp, err := http.Post(srv.URL+"/memory", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /memory = %d, want 200", resp.StatusCode)
+	}
+	var out struct {
+		Record struct{ ID string } `json:"record"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+
+	msg, ok := lastSystemMsg(s, "work")
+	if !ok {
+		t.Fatal("no system message emitted to actor room after memory add")
+	}
+	want := fmt.Sprintf("%s added memory project_facts/test [%s]", agent.ID, out.Record.ID)
+	if msg.Body != want {
+		t.Fatalf("system line = %q, want %q", msg.Body, want)
+	}
+	// _system must not receive the memory line.
+	s.mu.RLock()
+	for _, m := range s.messages["_system"] {
+		if m.Body == want {
+			s.mu.RUnlock()
+			t.Fatalf("memory add line unexpectedly landed in _system: %q", m.Body)
+		}
+	}
+	s.mu.RUnlock()
+}
+
+func TestMemoryUpdateSystemLine(t *testing.T) {
+	s, srv := setupTestServer(t)
+	enableMemoryForTest(s)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("work", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := s.addMemory(agent.ID, "project_facts", "test", "initial", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"agent_id": agent.ID,
+		"version":  rec.Version,
+		"body":     "updated",
+	})
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/memory/"+rec.ID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /memory/{id} = %d, want 200", resp.StatusCode)
+	}
+
+	msg, ok := lastSystemMsg(s, "work")
+	if !ok {
+		t.Fatal("no system message emitted to actor room after memory update")
+	}
+	want := fmt.Sprintf("%s updated memory [%s]", agent.ID, rec.ID)
+	if msg.Body != want {
+		t.Fatalf("system line = %q, want %q", msg.Body, want)
+	}
+}
+
+func TestMemoryRemoveSystemLine(t *testing.T) {
+	s, srv := setupTestServer(t)
+	enableMemoryForTest(s)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("work", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := s.addMemory(agent.ID, "project_facts", "test", "to remove", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/memory/%s?agent_id=%s&version=%d", srv.URL, rec.ID, agent.ID, rec.Version), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("DELETE /memory/{id} = %d, want 200", resp.StatusCode)
+	}
+
+	msg, ok := lastSystemMsg(s, "work")
+	if !ok {
+		t.Fatal("no system message emitted to actor room after memory remove")
+	}
+	want := fmt.Sprintf("%s removed memory [%s]", agent.ID, rec.ID)
+	if msg.Body != want {
+		t.Fatalf("system line = %q, want %q", msg.Body, want)
+	}
+}
+
+func TestMemoryBulkCleanSystemLine(t *testing.T) {
+	s, srv := setupTestServer(t)
+	enableMemoryForTest(s)
+	human, err := s.registerHuman("matin", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-populate records to clean.
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.addMemory(agent.ID, "project_facts", "test", "fact one", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.addMemory(agent.ID, "project_facts", "test", "fact two", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Give human a room so the emit has somewhere to land.
+	if _, err := s.joinRoom("work", human.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Count room messages before to verify N=0 emits nothing.
+	s.mu.RLock()
+	before := len(s.messages["work"])
+	s.mu.RUnlock()
+
+	// Bulk clean with no matching scope — N=0, must not emit.
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/memory?agent_id="+human.ID+"&scope=agent_shared_notes", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("DELETE /memory (N=0) = %d, want 200", resp.StatusCode)
+	}
+	s.mu.RLock()
+	afterEmpty := len(s.messages["work"])
+	s.mu.RUnlock()
+	if afterEmpty != before {
+		t.Fatalf("N=0 bulk clean emitted %d new message(s) to room, want 0", afterEmpty-before)
+	}
+
+	// Bulk clean with matching scope — N>0, must emit one summary line.
+	req2, _ := http.NewRequest(http.MethodDelete, srv.URL+"/memory?agent_id="+human.ID, nil)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("DELETE /memory (N>0) = %d, want 200", resp2.StatusCode)
+	}
+
+	msg, ok := lastSystemMsg(s, "work")
+	if !ok {
+		t.Fatal("no system message emitted to actor room after bulk clean")
+	}
+	if !strings.Contains(msg.Body, human.ID+" cleaned") || !strings.Contains(msg.Body, "memory records") {
+		t.Fatalf("system line = %q, want %q cleaned N memory records", msg.Body, human.ID)
+	}
+}
+
+func TestLeaderboardSubmitSystemLine(t *testing.T) {
+	s, srv := setupTestServer(t)
+	leader, _, err := s.registerAI("gpt5", "codex", "test", nil, "leadone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, _, err := s.registerAI("opus4.7", "claude-code", "test", nil, "workone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("rated", leader.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("rated", worker.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	cards := testLeaderboardCards(leader.ID, worker.ID, 4, 3)
+	body, _ := json.Marshal(map[string]any{
+		"agent_id": leader.ID,
+		"cards":    cards,
+	})
+	resp, err := http.Post(srv.URL+"/leaderboard/cards", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST /leaderboard/cards = %d: %s", resp.StatusCode, b)
+	}
+
+	msg, ok := lastSystemMsg(s, "rated")
+	if !ok {
+		t.Fatal("no system message emitted to actor room after leaderboard submit")
+	}
+	want := leader.ID + " submitted leaderboard cards"
+	if msg.Body != want {
+		t.Fatalf("system line = %q, want %q", msg.Body, want)
+	}
+}
+
+func TestRoomMemoryOverrideSystemLine(t *testing.T) {
+	s, srv := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("chat", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		body string
+		want string
+	}{
+		{`{"memory_enabled":true}`, "memory feed enabled"},
+		{`{"memory_enabled":false}`, "memory feed disabled"},
+		{`{"memory_enabled":null}`, "memory feed reset to default"},
+	}
+
+	for _, tc := range cases {
+		req, _ := http.NewRequest(http.MethodPut, srv.URL+"/rooms/chat/memory", strings.NewReader(tc.body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("PUT /rooms/chat/memory %s = %d, want 200", tc.body, resp.StatusCode)
+		}
+
+		msg, ok := lastSystemMsg(s, "chat")
+		if !ok {
+			t.Fatalf("no system message in room 'chat' after %s", tc.body)
+		}
+		if msg.Body != tc.want {
+			t.Fatalf("system line = %q, want %q", msg.Body, tc.want)
+		}
+	}
+}
