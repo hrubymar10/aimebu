@@ -274,7 +274,18 @@ func normalizeClaudeUsage(raw claudeUsageRaw, creds claudeCredentials) (Snapshot
 				reset = &t
 			}
 		}
-		windows = append(windows, Window{Key: key, PercentUsed: *w.Utilization, ResetAt: reset})
+		var durationSec int64
+		switch key {
+		case "session":
+			durationSec = 5 * 3600
+		case "weekly":
+			durationSec = 7 * 24 * 3600
+		}
+		win := Window{Key: key, PercentUsed: *w.Utilization, ResetAt: reset, WindowDurationSeconds: durationSec}
+		if durationSec > 0 {
+			win.Pace = computeWindowPace(win, time.Now())
+		}
+		windows = append(windows, win)
 	}
 	addWindow("session", "five_hour", raw.FiveHour)
 	weeklyWindow, weeklyPath := raw.SevenDay, "seven_day"

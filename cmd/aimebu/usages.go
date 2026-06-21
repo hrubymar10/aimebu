@@ -78,7 +78,11 @@ func printUsagesPlain(resp usages.Response) {
 		s := resp.Snapshots[key]
 		windows := make([]string, 0, len(s.Windows))
 		for _, w := range s.Windows {
-			windows = append(windows, fmt.Sprintf("%s=%.0f%%", w.Key, w.PercentUsed))
+			cell := fmt.Sprintf("%s=%.0f%%", w.Key, w.PercentUsed)
+			if w.Pace != nil {
+				cell += " (" + paceCLIText(w.Pace) + ")"
+			}
+			windows = append(windows, cell)
 		}
 		windowsText := "-"
 		if len(windows) > 0 {
@@ -107,6 +111,43 @@ func printUsagesPlain(resp usages.Response) {
 			plainCell(credits, 16),
 		)
 	}
+}
+
+func paceCLIText(p *usages.Pace) string {
+	absDelta := p.DeltaPercent
+	if absDelta < 0 {
+		absDelta = -absDelta
+	}
+	var label string
+	switch p.State {
+	case usages.PaceStateReserve:
+		label = fmt.Sprintf("%.0f%% reserve", absDelta)
+	case usages.PaceStateDeficit:
+		label = fmt.Sprintf("%.0f%% deficit", absDelta)
+	default:
+		label = "on track"
+	}
+	if p.LastsToReset {
+		return label + " · lasts to reset"
+	}
+	if p.EtaSeconds != nil {
+		return label + " · runs out in " + formatCLIDuration(time.Duration(*p.EtaSeconds)*time.Second)
+	}
+	return label
+}
+
+func formatCLIDuration(d time.Duration) string {
+	d = d.Round(time.Minute)
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	mins := int(d.Minutes()) % 60
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	}
+	return fmt.Sprintf("%dm", mins)
 }
 
 func plainCell(value string, width int) string {

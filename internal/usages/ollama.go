@@ -398,6 +398,8 @@ func parseOllamaSettingsHTML(data []byte) (Snapshot, *ErrorDetail, error) {
 		windows = append(windows, w)
 	}
 	if w, ok := parseOllamaUsageBlock("weekly", []string{ollamaWeeklyAnchor}, html, detail); ok {
+		w.WindowDurationSeconds = 7 * 24 * 3600
+		w.Pace = computeWindowPace(w, time.Now())
 		windows = append(windows, w)
 	}
 	windows = orderWindows(windows, []string{"session", "weekly"})

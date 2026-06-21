@@ -93,6 +93,52 @@ provider's credits row. Codex can return credits without recognized
 rate-limit windows; aimebu keeps that as an OK credits-only snapshot instead
 of treating the refresh as a failed response.
 
+## Pace Marker
+
+For windows with a known fixed duration — `session` (5 h) and `weekly` (7 d)
+on both codex and claude-code — aimebu computes a linear-spend pace marker and
+renders it alongside the usage bar.
+
+**How it works**: given the window's full duration and time remaining until
+reset, the expected used percentage at this moment is:
+
+```
+expected% = elapsed / duration × 100
+delta% = actual used% − expected%
+```
+
+The sign of `delta%` determines the state:
+
+| State | Meaning | Colour |
+|---|---|---|
+| **reserve** | under pace (delta < −2%) | green |
+| **on_track** | within ±2% of pace | muted |
+| **deficit** | over pace (delta > +2%) | red |
+
+The web bar shows a small vertical **tick** at the linear-pace position.
+Below the bar, a pace text line shows:
+- **"X% in reserve · Lasts until reset"** — under pace, projected to not run
+  out before reset.
+- **"X% in deficit · Runs out in Nd Mh"** — over pace, projected to hit 100%
+  before reset. The ETA counts down live in the UI.
+- **"X% in deficit · Lasts until reset"** — over pace but the burn rate still
+  projects finishing after reset.
+
+The CLI appends pace text inline in the window cell:
+
+```
+session=43% (7% reserve · lasts to reset)
+weekly=82% (12% deficit · runs out in 1d 4h)
+```
+
+Flat windows (`weekly_sonnet`, `codex_spark`, `codex_spark_weekly`) carry no
+duration and show no pace marker.
+
+The pace model is **purely linear**: it assumes a constant burn rate from
+window start to now. No historical samples or probabilistic run-out estimates
+are used. The computed `pace` object is included in the `Window` fields in
+`aimebu usages --json` output.
+
 ## Troubleshooting
 
 - `auth_missing`: authenticate in the provider's own CLI or complete the

@@ -5305,6 +5305,53 @@ body {
   text-align: right;
 }
 
+.usages-pace-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.usages-pace-tick--reserve {
+  background: var(--green-text);
+}
+
+.usages-pace-tick--deficit {
+  background: var(--red);
+}
+
+.usages-pace-tick--on-track {
+  background: var(--text-muted);
+  opacity: 0.5;
+}
+
+.usages-pace-text {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.70rem;
+  font-weight: 700;
+  margin-top: -2px;
+}
+
+.usages-pace-text--reserve {
+  color: var(--green-text);
+}
+
+.usages-pace-text--deficit {
+  color: var(--red);
+}
+
+.usages-pace-text--on-track {
+  color: var(--text-muted);
+}
+
+.usages-pace-sep {
+  opacity: 0.5;
+}
+
 .usages-credits-row {
   border-top: 1px solid var(--border);
   padding-top: 10px;

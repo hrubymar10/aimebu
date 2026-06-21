@@ -2848,7 +2848,7 @@
     var label = row.label || providerLabel(snap.provider);
     var updated = snap.last_refresh_at ? 'Updated ' + formatRelativeAge(snap.last_refresh_at) + ' ago' : statusLabel(snap.status || 'Not configured');
     var plan = snap.plan || statusLabel(snap.status);
-    var windows = (snap.windows || []).map(function (w) { return renderUsageWindowRow(w); }).join('');
+    var windows = (snap.windows || []).map(function (w) { return renderUsageWindowRow(w, snap.last_refresh_at); }).join('');
     if (!windows) {
       windows = '<div class="usages-empty usages-empty-compact">No window data yet.</div>';
     }
@@ -2869,17 +2869,48 @@
     return found ? found.label : key;
   }
 
-  function renderUsageWindowRow(w) {
+  function renderUsageWindowRow(w, lastRefreshAt) {
     if (!w) return '';
     var pct = Number(w.percent_used);
     var display = usagePercentValue(pct);
     var fill = Number.isFinite(display) ? Math.max(0, Math.min(100, display)) : 0;
     var label = usagePercentDisplay === 'used' ? 'used' : 'left';
     var reset = w.reset_at ? resetText(w.key, w.reset_at) : '';
+    var tickHtml = '';
+    var paceHtml = '';
+    if (w.pace) {
+      var tickPct = Math.max(0, Math.min(100, usagePercentValue(Number(w.pace.expected_percent))));
+      var tickClass = 'usages-pace-tick usages-pace-tick--' + (w.pace.state === 'reserve' ? 'reserve' : w.pace.state === 'deficit' ? 'deficit' : 'on-track');
+      tickHtml = '<i class="' + tickClass + '" style="left:' + tickPct.toFixed(2) + '%"></i>';
+      var absDelta = Math.abs(Number(w.pace.delta_percent));
+      var paceLabel = '';
+      if (w.pace.state === 'reserve') {
+        paceLabel = formatPercent(absDelta) + ' in reserve';
+      } else if (w.pace.state === 'deficit') {
+        paceLabel = formatPercent(absDelta) + ' in deficit';
+      }
+      var etaText = '';
+      if (w.pace.lasts_to_reset) {
+        etaText = 'Lasts until reset';
+      } else if (w.pace.eta_seconds != null) {
+        var fetchBase = lastRefreshAt ? Date.parse(lastRefreshAt) : Date.now();
+        if (!Number.isFinite(fetchBase)) fetchBase = Date.now();
+        etaText = 'Runs out in ' + formatResetCountdown(new Date(fetchBase + w.pace.eta_seconds * 1000).toISOString());
+      }
+      if (paceLabel || etaText) {
+        var paceStateClass = 'usages-pace-text usages-pace-text--' + (w.pace.state === 'reserve' ? 'reserve' : w.pace.state === 'deficit' ? 'deficit' : 'on-track');
+        paceHtml = '<div class="' + paceStateClass + '">' +
+          (paceLabel ? '<span>' + esc(paceLabel) + '</span>' : '') +
+          (paceLabel && etaText ? '<span class="usages-pace-sep">·</span>' : '') +
+          (etaText ? '<span>' + esc(etaText) + '</span>' : '') +
+          '</div>';
+      }
+    }
     return '<div class="usages-window-row">' +
       '<div class="usages-window-top"><span>' + esc(windowLabel(w.key)) + '</span></div>' +
-      '<div class="usages-progress" aria-label="' + esc(windowLabel(w.key)) + ' usage"><span style="width:' + fill.toFixed(2) + '%"></span></div>' +
+      '<div class="usages-progress" aria-label="' + esc(windowLabel(w.key)) + ' usage"><span style="width:' + fill.toFixed(2) + '%"></span>' + tickHtml + '</div>' +
       '<div class="usages-window-meta"><strong>' + esc(formatPercent(display) + ' ' + label) + '</strong><span>' + esc(reset) + '</span></div>' +
+      paceHtml +
     '</div>';
   }
 

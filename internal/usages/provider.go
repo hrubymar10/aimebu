@@ -42,9 +42,20 @@ var providerLabels = map[string]string{
 }
 
 type Window struct {
-	Key         string     `json:"key"`
-	PercentUsed float64    `json:"percent_used"`
-	ResetAt     *time.Time `json:"reset_at,omitempty"`
+	Key                   string     `json:"key"`
+	PercentUsed           float64    `json:"percent_used"`
+	ResetAt               *time.Time `json:"reset_at,omitempty"`
+	WindowDurationSeconds int64      `json:"window_duration_seconds,omitempty"`
+	Pace                  *Pace      `json:"pace,omitempty"`
+}
+
+// Pace holds the precomputed linear-spend pace for a usage window.
+type Pace struct {
+	ExpectedPercent float64  `json:"expected_percent"`
+	DeltaPercent    float64  `json:"delta_percent"`
+	State           string   `json:"state"`
+	EtaSeconds      *float64 `json:"eta_seconds,omitempty"`
+	LastsToReset    bool     `json:"lasts_to_reset,omitempty"`
 }
 
 type Credits struct {

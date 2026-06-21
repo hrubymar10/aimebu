@@ -421,7 +421,9 @@ func normalizeCodexUsage(raw codexUsageRaw, creds codexCredentials) (Snapshot, *
 			return
 		}
 		reset := time.Unix(w.ResetAt, 0).UTC()
-		windows = append(windows, Window{Key: key, PercentUsed: w.UsedPercent, ResetAt: &reset})
+		win := Window{Key: key, PercentUsed: w.UsedPercent, ResetAt: &reset, WindowDurationSeconds: w.LimitWindowSeconds}
+		win.Pace = computeWindowPace(win, time.Now())
+		windows = append(windows, win)
 	}
 	addWindow("rate_limit.primary_window", raw.RateLimit.PrimaryWindow)
 	addWindow("rate_limit.secondary_window", raw.RateLimit.SecondaryWindow)

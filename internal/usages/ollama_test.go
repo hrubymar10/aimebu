@@ -710,6 +710,44 @@ func assertNoOllamaSecret(t *testing.T, haystack string, values ...string) {
 	}
 }
 
+func TestOllamaWeeklyWindowPace(t *testing.T) {
+	// Weekly window with a future reset_at should get WindowDurationSeconds set
+	// and a non-nil Pace. Session window (ambiguous duration) should have neither.
+	futureReset := time.Now().Add(3 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	html := `<span>Cloud Usage</span><span>Pro</span>` +
+		`<div>Session usage <span>30% used</span><time data-time="` + futureReset + `"></time></div>` +
+		`<div>Weekly usage <span style="width: 40%"></span><time data-time="` + futureReset + `"></time></div>`
+	snap, _, err := parseOllamaSettingsHTML([]byte(html))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(snap.Windows) != 2 {
+		t.Fatalf("expected 2 windows, got %d", len(snap.Windows))
+	}
+	var session, weekly Window
+	for _, w := range snap.Windows {
+		switch w.Key {
+		case "session":
+			session = w
+		case "weekly":
+			weekly = w
+		}
+	}
+	if session.WindowDurationSeconds != 0 {
+		t.Errorf("session.WindowDurationSeconds = %d, want 0 (ambiguous duration)", session.WindowDurationSeconds)
+	}
+	if session.Pace != nil {
+		t.Errorf("session.Pace should be nil, got %+v", session.Pace)
+	}
+	const wantDuration = int64(7 * 24 * 3600)
+	if weekly.WindowDurationSeconds != wantDuration {
+		t.Errorf("weekly.WindowDurationSeconds = %d, want %d", weekly.WindowDurationSeconds, wantDuration)
+	}
+	if weekly.Pace == nil {
+		t.Error("weekly.Pace is nil, expected non-nil for window with future reset_at and 7d duration")
+	}
+}
+
 func mustOpen(t *testing.T, path string) *os.File {
 	t.Helper()
 	f, err := os.Open(path)
