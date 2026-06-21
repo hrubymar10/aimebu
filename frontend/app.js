@@ -5743,7 +5743,8 @@
   if (usagesBtn) {
     usagesBtn.addEventListener('click', function (e) {
       e.stopPropagation();
-      openUsagesPanel();
+      if (rightSidebarMode === 'usages' && !rightCollapsed) closeUsagesPanel();
+      else openUsagesPanel();
     });
   }
   if (usagesRefreshBtn) usagesRefreshBtn.addEventListener('click', forceRefreshUsages);
