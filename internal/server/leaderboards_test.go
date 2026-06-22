@@ -292,6 +292,42 @@ func TestLeaderboardTrendOrdersByCreatedAt(t *testing.T) {
 	}
 }
 
+func TestLeaderboardAggregatesCanonicalModelSlugs(t *testing.T) {
+	s, _, _ := setupLeaderboardStore(t)
+	s.leaderboardsMu.Lock()
+	s.leaderboards = append(s.leaderboards,
+		storedLeaderboardCard("claude-opus-4-8", "claude-code", false, "2026-01-01T00:00:00Z", 4),
+		storedLeaderboardCard("opus4.8", "claude-code", false, "2026-01-02T00:00:00Z", 2),
+	)
+	s.leaderboardsMu.Unlock()
+
+	view, err := s.leaderboardView("overall", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Aggregates) != 1 {
+		t.Fatalf("aggregates = %d, want 1: %+v", len(view.Aggregates), view.Aggregates)
+	}
+	agg := view.Aggregates[0]
+	if agg.Key != "opus4.8|claude-code" || agg.Model != "opus4.8" || agg.Harness != "claude-code" {
+		t.Fatalf("aggregate identity = %+v, want canonical opus4.8/claude-code", agg)
+	}
+	if agg.Cards != 2 || agg.Overall != 3 {
+		t.Fatalf("aggregate scores = cards:%d overall:%.2f, want 2 and 3.00", agg.Cards, agg.Overall)
+	}
+
+	if len(view.ModelRollups) != 1 {
+		t.Fatalf("model rollups = %d, want 1: %+v", len(view.ModelRollups), view.ModelRollups)
+	}
+	rollup := view.ModelRollups[0]
+	if rollup.Key != "opus4.8" || rollup.Model != "opus4.8" || rollup.Harness != "" {
+		t.Fatalf("rollup identity = %+v, want canonical opus4.8", rollup)
+	}
+	if rollup.Cards != 2 || rollup.Overall != 3 {
+		t.Fatalf("rollup scores = cards:%d overall:%.2f, want 2 and 3.00", rollup.Cards, rollup.Overall)
+	}
+}
+
 func storedLeaderboardCard(model, harness string, isSelfReview bool, createdAt string, score int) types.LeaderboardRatingCard {
 	ratings := make(map[string]types.LeaderboardRatingValue, len(leaderboardCategories))
 	for _, category := range leaderboardCategories {

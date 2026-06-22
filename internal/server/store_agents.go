@@ -90,7 +90,7 @@ func (s *store) findBySpawnTagLocked(tag, model, harness, project string) *types
 		if a.Meta["spawn_tag"] != tag {
 			continue
 		}
-		if a.Model == model && a.Harness == harness && a.Project == project {
+		if canonicalModelSlug(a.Model, a.Harness) == model && a.Harness == harness && a.Project == project {
 			return a
 		}
 	}
@@ -124,6 +124,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 	if harness == "" {
 		harness = "unknown"
 	}
+	model = canonicalModelSlug(model, harness)
 
 	var name string
 	if forceName != "" {
@@ -137,7 +138,8 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 		}
 		forceID := assembleID("ai", forceName, model, harness, project)
 		if a, ok := s.agents[forceID]; ok {
-			if a.Model == model && a.Harness == harness && a.Project == project {
+			if canonicalModelSlug(a.Model, a.Harness) == model && a.Harness == harness && a.Project == project {
+				a.Model = model
 				a.LastSeen = now()
 				if len(meta) > 0 {
 					if a.Meta == nil {
@@ -168,6 +170,7 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 		// return that identity without allocating a new pool name.
 		if tag := meta["spawn_tag"]; tag != "" {
 			if existing := s.findBySpawnTagLocked(tag, model, harness, project); existing != nil {
+				existing.Model = model
 				existing.LastSeen = now()
 				if len(meta) > 0 {
 					if existing.Meta == nil {
@@ -512,7 +515,6 @@ func (s *store) emitLivenessEvents(events []livenessEvent) {
 		}
 	}
 }
-
 
 func cloneAgentLocked(a *types.Agent) types.Agent {
 	clone := *a

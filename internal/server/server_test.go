@@ -1908,6 +1908,64 @@ func TestRegisterRejectsTagWithMismatchedTuple(t *testing.T) {
 	}
 }
 
+func TestRegisterReclaimsByCanonicalModel(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	meta := map[string]string{"spawn_tag": "test-tag-canon456"}
+	first, reclaimed, err := s.registerAI("claude-opus-4-8", "claude-code", "proj", meta, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed {
+		t.Error("first registration should not be reclaimed")
+	}
+	if first.Model != "opus4.8" {
+		t.Fatalf("stored model = %q, want opus4.8", first.Model)
+	}
+
+	s.mu.Lock()
+	s.agents[first.ID].Model = "claude-opus-4-8"
+	s.mu.Unlock()
+
+	second, reclaimed, err := s.registerAI("opus4.8", "claude-code", "proj", meta, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reclaimed {
+		t.Fatal("second registration should reclaim across canonical model")
+	}
+	if first.ID != second.ID || second.Model != "opus4.8" {
+		t.Fatalf("reclaimed agent = %+v, want same ID %q with canonical model", second, first.ID)
+	}
+}
+
+func TestForceRegisterReclaimsByCanonicalModel(t *testing.T) {
+	s, _ := setupTestServer(t)
+
+	first, reclaimed, err := s.registerAI("claude-opus-4-8", "claude-code", "proj", nil, "canon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed {
+		t.Error("force registration should return reclaimed=false")
+	}
+
+	s.mu.Lock()
+	s.agents[first.ID].Model = "claude-opus-4-8"
+	s.mu.Unlock()
+
+	second, reclaimed, err := s.registerAI("opus4.8", "claude-code", "proj", nil, "canon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reclaimed {
+		t.Error("force reclaim should report reclaimed=false")
+	}
+	if first.ID != second.ID || second.Model != "opus4.8" {
+		t.Fatalf("force-reclaimed agent = %+v, want same ID %q with canonical model", second, first.ID)
+	}
+}
+
 // TestRegisterWithoutSpawnTagAlwaysFresh verifies that two registrations
 // without a spawn_tag always allocate distinct names.
 func TestRegisterWithoutSpawnTagAlwaysFresh(t *testing.T) {

@@ -49,7 +49,12 @@ durable user-managed server state.
 
 The `(model, harness)` aggregate is computed on read from card records. It is
 not persisted as a separate cache, so category filters and the self-review
-toggle always fold the same canonical cards.
+toggle always fold the same canonical cards. During aggregation, the server
+canonicalizes known full provider model IDs to the short slug used by current
+agents, for example folding a reported Claude full ID into its `opus4.8` /
+`sonnet4.6` / `haiku4.5` style bucket. Stored cards are not rewritten.
+Genuinely unknown model strings stay `unknown`; aimebu does not guess a
+specific model from the harness alone.
 
 The SQLite settings record stores `leaderboard_enabled`. The setting defaults
 to enabled when absent; setting it to `false` hides the top-bar leaderboard

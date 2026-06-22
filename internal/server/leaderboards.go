@@ -381,10 +381,11 @@ func computeLeaderboardAggregates(cards []types.LeaderboardRatingCard, excludeSe
 		if excludeSelf && card.IsSelfReview {
 			continue
 		}
-		key := card.SubjectModel + "|" + card.SubjectHarness
+		model := canonicalModelSlug(card.SubjectModel, card.SubjectHarness)
 		harness := card.SubjectHarness
+		key := model + "|" + harness
 		if modelOnly {
-			key = card.SubjectModel
+			key = model
 			harness = ""
 		}
 		if key == "" {
@@ -393,7 +394,7 @@ func computeLeaderboardAggregates(cards []types.LeaderboardRatingCard, excludeSe
 		acc := accs[key]
 		if acc == nil {
 			acc = &aggregateAccumulator{
-				model:    card.SubjectModel,
+				model:    model,
 				harness:  harness,
 				category: map[string][]float64{},
 				naCounts: map[string]int{},

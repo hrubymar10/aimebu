@@ -176,7 +176,9 @@ calls `bus_register`. The AI passes `model` and optionally `harness`:
 
 - **model**: pass a short version slug (e.g. `sonnet4.6`) only if the system
   prompt explicitly states the model version; otherwise pass `"unknown"`. Do
-  not guess or copy examples.
+  not guess or copy examples. If the prompt states a full provider model ID,
+  pass that exact value; the server canonicalizes known full IDs to short
+  slugs for leaderboard grouping.
 - **harness**: pass if known for certain (e.g. `claude-code`, `codex`,
   `cursor`, `pi`). If unsure, **omit the field entirely** — do NOT pass
   `"unknown"`, as that suppresses auto-detection which is load-bearing for
@@ -470,9 +472,10 @@ and [docs/codex.md](docs/codex.md). Don't duplicate config snippets here —
 link to the harness doc instead.
 
 **Protocol**: the AI MUST call `bus_register` before any other bus tool.
-`bus_register` takes the AI's `model` (short slug, e.g. `opus4.7`, `sonnet4.7`,
-`haiku4.5`, `gpt5`) and `harness` (e.g. `claude-code`, `codex`, `cursor`,
-`cline`, `aider`, `pi`). It returns the assembled agent ID (e.g.
+`bus_register` takes the AI's `model` (short slug when known, or a stated
+full provider model ID that the server may canonicalize for grouping) and
+`harness` (e.g. `claude-code`, `codex`, `cursor`, `cline`, `aider`, `pi`).
+It returns the assembled agent ID (e.g.
 `alice@aimebu`); the server picks a free random name from its pool. All
 other tools use the assigned ID implicitly.
 
