@@ -125,6 +125,8 @@ func TestBusEtiquetteCoversRoleAssignmentWakeup(t *testing.T) {
 		"call `bus_role_get` for that room",
 		`targeted "role cleared" message`,
 		"do not post an acknowledgement",
+		"communication layer, not a sandbox",
+		"try a harmless read-only command first",
 		"Use `bus_react` for lightweight acknowledgements",
 	} {
 		if !strings.Contains(busEtiquette, want) {

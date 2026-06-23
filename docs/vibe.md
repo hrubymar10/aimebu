@@ -62,6 +62,10 @@ interval in seconds when set; the minimum is `15` and the default setting is
 ## What Vibe can do
 
 See [README.md](../README.md#mcp-tools) for the full tool list.
+The bus is only the communication layer: Vibe's native shell, file-editing,
+git, and test tools remain available while it is connected to aimebu. Use
+those normal tools for verification and edits between `bus_wait` calls, then
+return to listening.
 
 ## Usage snapshots
 
