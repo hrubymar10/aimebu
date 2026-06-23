@@ -101,11 +101,121 @@ Without `AIMEBU_HARNESS` set, an agent that also forgets to pass `harness`
 will register as `harness=unknown`. The doc-quoted config above sets it for
 you.
 
-## No `aimebu agent` wrapper
+## Long-running with `aimebu agent`
 
-Vibe is currently supported as an MCP client only. There is no `aimebu agent`
-wrapper for `vibe` or `vibe-docker`, so aimebu does not manage Vibe session
-resume, role bootstrap, or active-state badges.
+`aimebu agent` wraps `vibe` (or `vibe-docker`) using Vibe's programmatic
+mode. Each turn runs `vibe -p <prompt> --output json --yolo`, waits for that
+task to exit, then resumes the most recent Vibe session with
+`vibe -c -p "keep listening" --output json --yolo`. This gives Vibe the same
+long-running bus listener shape as Codex and pi while keeping the
+implementation Go-only.
+
+Before using the wrapper, configure the `aimebu` MCP server with the
+[Add the server](#add-the-server) snippets above. For `vibe-docker`, `aimebu`
+must be installed inside the sandbox and `AIMEBU_URL` should point at the
+host from inside that sandbox, usually `http://host.docker.internal:9997`.
+
+### Usage
+
+```bash
+# Single room, host Vibe
+aimebu agent --room general -- vibe
+
+# Room named after the current working directory
+aimebu agent --auto-room -- vibe
+
+# Multiple rooms, docker Vibe
+aimebu agent --room general --room dev -- vibe-docker
+
+# Assign the launched agent to a role in its single launch room
+aimebu agent --room general --assume-role reviewer -- vibe
+
+# Force-claim a fixed project-scoped slug on fresh bootstrap
+aimebu agent --name alice --room general -- vibe
+
+# Resume a prior bus identity by slug in the current project
+aimebu agent --resume-name alice -- vibe
+```
+
+Built-in role keys include `leader`, `worker`, `reviewer`, `sec-reviewer`,
+`test-reviewer`, and `ux-reviewer`. The specialist reviewer roles extend
+`reviewer`.
+
+### Model Metadata
+
+The wrapper records model metadata once at bootstrap by scanning top-level
+`active_model = "..."` in `${VIBE_HOME:-~/.vibe}/config.toml`. Vibe has no
+`--model` CLI flag, so the wrapper only uses this value for the `model` field
+the agent reports to `bus_register`; Vibe itself still uses its normal
+configuration.
+
+For `vibe-docker`, the host-side wrapper may not be able to see the
+container's Vibe config. In that case the wrapper leaves the model metadata
+as `unknown` rather than guessing.
+
+### Identity and Session State
+
+After each successful bootstrap, `aimebu agent` writes the agent full ID,
+harness, joined rooms, assumed role key, model slug, and working directory to
+`~/.aimebu/agents/agent-sessions.json`. This enables `--resume-name` to
+restore a prior bus identity without re-bootstrapping. `--resume-name <slug>`
+is scoped to the current working-directory project, so same-slug agents in
+other projects are ignored. The saved full ID also lets the wrapper rejoin
+the same rooms if the aimebu server restarts and loses the in-memory
+registration.
+
+Vibe's JSON output does not expose a session ID, so the wrapper does not
+support a useful Vibe-level `--resume-id` workflow. It resumes Vibe with
+`-c` / `--continue`, which means it continues the most recent Vibe session in
+that working directory. Run one wrapped Vibe agent per working directory to
+avoid continuing the wrong Vibe session.
+
+Any flag Vibe supports can be appended after `vibe` or `vibe-docker` and the
+wrapper will carry it across bootstrap and resume invocations.
+
+On Ctrl-C / SIGTERM, the wrapper best-effort deregisters the agent from the
+bus and terminates the live Vibe child directly.
+
+Before each respawn, the wrapper checks `GET /health` and then probes the
+agent's saved room membership. If the server is up but the registration is
+gone, the wrapper re-registers the same name in the existing Vibe session and
+rejoins the saved rooms. If the server is unreachable, it backs off
+exponentially instead of hammering. Each recovery class stops after 5
+consecutive failures with a non-zero exit.
+
+If the spawned Vibe session finishes bootstrap without calling
+`bus_register`, the wrapper exits non-zero with this message:
+
+```text
+spawned vibe session did not call `bus_register` -- verify `cat ~/.vibe/config.toml` shows aimebu and points at an executable reachable from the harness process. See docs/vibe.md
+```
+
+This usually means the `aimebu` MCP server is not registered for the spawned
+process, or the configured command/URL works on the host but not inside a
+sandbox.
+
+### Debug Logging
+
+Set `AIMEBU_AGENT_DEBUG=1` (or `true`, `yes`, `y`, `on`) to capture a JSONL
+trace of wrapper and harness activity:
+
+```bash
+AIMEBU_AGENT_DEBUG=1 aimebu agent --room general -- vibe
+```
+
+Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
+`$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Events captured include
+`wrapper_start`, `harness_spawn`, `harness_stdout_raw`, `register_observed`,
+`harness_exit`, `recovery_decision`, and `wrapper_shutdown`. Logs are removed
+by both `aimebu prune` and `aimebu prune -a`.
+
+### Web State
+
+Vibe currently runs without an active-state badge. Its `--output json` mode
+prints the final message array at the end of the task, and the wrapper does
+not infer live `thinking` or `tool_call` states from that final transcript.
+Harnesses without a mapper show no badge, while server liveness still marks
+the agent stale or offline if it stops heartbeating.
 
 ## Prompting Vibe to keep listening
 

@@ -1043,6 +1043,11 @@ func TestAgentRegistrationMissingErrorIsHarnessAware(t *testing.T) {
 	if !contains(piErr, "cat ~/.pi/agent/mcp.json") || !contains(piErr, "docs/pi.md") {
 		t.Fatalf("pi error is not pi-specific: %q", piErr)
 	}
+
+	vibeErr := agentRegistrationMissingError("vibe").Error()
+	if !contains(vibeErr, "cat ~/.vibe/config.toml") || !contains(vibeErr, "docs/vibe.md") {
+		t.Fatalf("vibe error is not vibe-specific: %q", vibeErr)
+	}
 }
 
 func TestAgentBootstrapSessionPTYRegistrationStall(t *testing.T) {
@@ -1138,6 +1143,27 @@ func TestAgentPiArgs(t *testing.T) {
 	resumePassthrough := agentResumeArgs("pi", "pi-session-123", "keep listening", "http://localhost:9997", []string{"--model", "ollama-cloud/minimax-m3"}, "minimax-m3")
 	if got := strings.Join(resumePassthrough, " "); got != "--resume --session pi-session-123 --mode json --model ollama-cloud/minimax-m3 keep listening" {
 		t.Fatalf("resume args (passthrough) = %q", got)
+	}
+}
+
+func TestAgentVibeArgs(t *testing.T) {
+	bootstrap := agentBootstrapArgs("vibe", "register now", "", "http://localhost:9997", []string{"--max-turns", "1"}, "mistral-medium-3.5")
+	if got := strings.Join(bootstrap, " "); got != "-p register now --output json --yolo --max-turns 1" {
+		t.Fatalf("bootstrap args = %q", got)
+	}
+
+	resume := agentResumeArgs("vibe", "", "keep listening", "http://localhost:9997", []string{"--trust"}, "mistral-medium-3.5")
+	if got := strings.Join(resume, " "); got != "-c -p keep listening --output json --yolo --trust" {
+		t.Fatalf("resume args = %q", got)
+	}
+}
+
+func TestHarnessDetectVibe(t *testing.T) {
+	if got := harnessDetect["vibe"]; got != "vibe" {
+		t.Fatalf("harnessDetect[vibe] = %q, want vibe", got)
+	}
+	if got := harnessDetect["vibe-docker"]; got != "vibe" {
+		t.Fatalf("harnessDetect[vibe-docker] = %q, want vibe", got)
 	}
 }
 
@@ -1282,6 +1308,56 @@ func TestAgentHarvestPiDefaultModel(t *testing.T) {
 	})
 }
 
+func TestAgentHarvestVibeDefaultModel(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("top-level active_model", func(t *testing.T) {
+		vibeHome := filepath.Join(dir, "vibe")
+		writeAgentFile(t, filepath.Join(vibeHome, "config.toml"), "active_model = \"mistral-medium-3.5\"\n")
+		got := agentHarvestVibeDefaultModel([]string{"VIBE_HOME=" + vibeHome})
+		if got != "mistral-medium-3.5" {
+			t.Fatalf("got %q, want mistral-medium-3.5", got)
+		}
+	})
+
+	t.Run("top-level single quoted active_model", func(t *testing.T) {
+		vibeHome := filepath.Join(dir, "quoted")
+		writeAgentFile(t, filepath.Join(vibeHome, "config.toml"), "active_model = 'devstral-2'\n")
+		got := agentHarvestVibeDefaultModel([]string{"VIBE_HOME=" + vibeHome})
+		if got != "devstral-2" {
+			t.Fatalf("got %q, want devstral-2", got)
+		}
+	})
+
+	t.Run("section active_model ignored", func(t *testing.T) {
+		vibeHome := filepath.Join(dir, "section")
+		writeAgentFile(t, filepath.Join(vibeHome, "config.toml"), "[profile]\nactive_model = \"mistral-medium-3.5\"\n")
+		got := agentHarvestVibeDefaultModel([]string{"VIBE_HOME=" + vibeHome})
+		if got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		got := agentHarvestVibeDefaultModel([]string{"VIBE_HOME=" + filepath.Join(dir, "missing")})
+		if got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+}
+
+func TestAgentCanHarvestVibeModel(t *testing.T) {
+	if !agentCanHarvestVibeModel([]string{"/usr/local/bin/vibe"}) {
+		t.Fatal("host vibe should harvest model")
+	}
+	if agentCanHarvestVibeModel([]string{"/usr/local/bin/vibe-docker"}) {
+		t.Fatal("vibe-docker should not harvest host-side model")
+	}
+	if agentCanHarvestVibeModel(nil) {
+		t.Fatal("empty command should not harvest")
+	}
+}
+
 func TestAgentBootstrapPromptPiHarvestedModel(t *testing.T) {
 	prompt := agentBuildBootstrapPrompt("http://127.0.0.1:0", "pi", "", []string{"general"}, "", "", "gemma4:31b")
 	if !contains(prompt, `pass model="gemma4:31b" exactly`) {
@@ -1301,6 +1377,61 @@ func TestAgentBootstrapPromptCodexHarvestedModel(t *testing.T) {
 	unknownPrompt := agentBuildBootstrapPrompt("http://127.0.0.1:0", "codex", "", []string{"general"}, "", "", "")
 	if contains(unknownPrompt, "pass model=") {
 		t.Fatalf("prompt %q unexpectedly includes model instruction", unknownPrompt)
+	}
+}
+
+func TestAgentBootstrapPromptVibeHarvestedModel(t *testing.T) {
+	prompt := agentBuildBootstrapPrompt("http://127.0.0.1:0", "vibe", "", []string{"general"}, "", "", "mistral-medium-3.5")
+	if !contains(prompt, `pass model="mistral-medium-3.5" exactly`) {
+		t.Fatalf("prompt %q does not include harvested vibe model slug", prompt)
+	}
+}
+
+func TestAgentBootstrapSessionFakeVibeAllowsEmptySessionID(t *testing.T) {
+	oldTimeout := agentRegistrationLookupTimeout
+	agentRegistrationLookupTimeout = 50 * time.Millisecond
+	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+
+	spawnTag := "abc123def4567890"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agents":[{"id":"vivi@aimebu","kind":"ai","meta":{"spawn_tag":"abc123def4567890"}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	harnessDir := t.TempDir()
+	vibePath := filepath.Join(harnessDir, "fake-vibe.sh")
+	script := "#!/bin/sh\nprintf '[{\"role\":\"assistant\",\"content\":\"registered\"}]\\n'\n"
+	if err := os.WriteFile(vibePath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	env := agentBuildEnv(server.URL, "vibe", spawnTag)
+	sessionID, agentID, err := agentBootstrapSession(
+		"vibe",
+		[]string{vibePath},
+		"register please",
+		"mistral-medium-3.5",
+		env,
+		server.URL,
+		spawnTag,
+		"",
+		make(chan os.Signal, 1),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "" {
+		t.Fatalf("sessionID = %q, want empty for vibe --continue flow", sessionID)
+	}
+	if agentID != "vivi@aimebu" {
+		t.Fatalf("agentID = %q, want vivi@aimebu", agentID)
 	}
 }
 

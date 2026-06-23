@@ -79,6 +79,9 @@ func agentHarnessMCPHint(harness string) (string, string) {
 	case "pi":
 		listCommand = "cat ~/.pi/agent/mcp.json"
 		docsPath = "docs/pi.md"
+	case "vibe":
+		listCommand = "cat ~/.vibe/config.toml"
+		docsPath = "docs/vibe.md"
 	}
 	return listCommand, docsPath
 }
@@ -145,6 +148,8 @@ var harnessDetect = map[string]string{
 	"aider":         "aider",
 	"pi":            "pi",
 	"pi-docker":     "pi",
+	"vibe":          "vibe",
+	"vibe-docker":   "vibe",
 }
 
 func agentCmd(args []string) {
@@ -295,10 +300,10 @@ func agentCmd(args []string) {
 	}
 
 	switch harness {
-	case "claude-code", "codex", "pi":
+	case "claude-code", "codex", "pi", "vibe":
 		// supported
 	default:
-		fmt.Fprintf(os.Stderr, "aimebu agent: harness %q is not yet supported.\nCurrently supported: claude-code (claude, claude-docker), codex (codex, codex-docker), pi (pi, pi-docker).\n", harness)
+		fmt.Fprintf(os.Stderr, "aimebu agent: harness %q is not yet supported.\nCurrently supported: claude-code (claude, claude-docker), codex (codex, codex-docker), pi (pi, pi-docker), vibe (vibe, vibe-docker).\n", harness)
 		os.Exit(1)
 	}
 
@@ -354,6 +359,9 @@ func agentCmd(args []string) {
 				modelSlug = agentHarvestPiDefaultModel(os.Environ())
 			}
 		}
+		if harness == "vibe" && agentCanHarvestVibeModel(command) {
+			modelSlug = agentHarvestVibeDefaultModel(os.Environ())
+		}
 		if assumeRole != "" && len(entry.Rooms) != 1 {
 			fmt.Fprintln(os.Stderr, "aimebu agent: --assume-role requires exactly one saved launch room")
 			os.Exit(1)
@@ -394,6 +402,9 @@ func agentCmd(args []string) {
 		if modelSlug == "" {
 			modelSlug = agentHarvestPiDefaultModel(os.Environ())
 		}
+	}
+	if harness == "vibe" && agentCanHarvestVibeModel(command) {
+		modelSlug = agentHarvestVibeDefaultModel(os.Environ())
 	}
 
 	prompt := agentBuildBootstrapPrompt(aimebuURL, harness, spawnTag, rooms, name, assumeRole, modelSlug)
@@ -693,6 +704,7 @@ func codexModelFromConfigArg(arg string) string {
 }
 
 var codexTopLevelModelRE = regexp.MustCompile(`^model\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:#.*)?$`)
+var vibeTopLevelActiveModelRE = regexp.MustCompile(`^active_model\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:#.*)?$`)
 
 func agentHarvestCodexDefaultModel(env []string) string {
 	configHome := ""
@@ -764,6 +776,53 @@ func agentHarvestPiDefaultModel(env []string) string {
 		return ""
 	}
 	return model
+}
+
+func agentCanHarvestVibeModel(command []string) bool {
+	if len(command) == 0 {
+		return false
+	}
+	return filepath.Base(command[0]) != "vibe-docker"
+}
+
+func agentHarvestVibeDefaultModel(env []string) string {
+	vibeHome := ""
+	for _, entry := range env {
+		if v, ok := strings.CutPrefix(entry, "VIBE_HOME="); ok {
+			vibeHome = strings.TrimSpace(v)
+			break
+		}
+	}
+	if vibeHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return ""
+		}
+		vibeHome = filepath.Join(home, ".vibe")
+	}
+	f, err := os.Open(filepath.Join(vibeHome, "config.toml"))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			break
+		}
+		if matches := vibeTopLevelActiveModelRE.FindStringSubmatch(line); matches != nil {
+			if matches[1] != "" {
+				return strings.TrimSpace(matches[1])
+			}
+			return strings.TrimSpace(matches[2])
+		}
+	}
+	return ""
 }
 
 // ── Spawn prompt templates ─────────────────────────────────────────
@@ -1065,6 +1124,7 @@ func agentResolveResume(resumeID, resumeName, name, harness string, sessions []a
 // parent wrapper.
 //
 // For codex and pi: prompt is the final positional argument.
+// For vibe: prompt is passed with -p/--prompt in programmatic mode.
 func agentBootstrapArgs(harness, prompt, sessionID, aimebuURL string, userArgs []string, modelSlug string) []string {
 	switch harness {
 	case "claude-code":
@@ -1087,6 +1147,9 @@ func agentBootstrapArgs(harness, prompt, sessionID, aimebuURL string, userArgs [
 		}
 		args = append(args, userArgs...)
 		return append(args, prompt)
+	case "vibe":
+		args := []string{"-p", prompt, "--output", "json", "--yolo"}
+		return append(args, userArgs...)
 	}
 	return nil
 }
@@ -1097,6 +1160,8 @@ func agentBootstrapArgs(harness, prompt, sessionID, aimebuURL string, userArgs [
 // ID; prompt is written to the PTY after the agent-ready composer signal. No stream-json
 // flags.
 // For codex and pi: prompt is the final positional argument.
+// For vibe: prompt is passed with -p/--prompt and -c resumes the latest
+// session because JSON output does not expose a stable session ID.
 func agentResumeArgs(harness, sessionID, prompt, aimebuURL string, userArgs []string, modelSlug string) []string {
 	switch harness {
 	case "claude-code":
@@ -1116,6 +1181,9 @@ func agentResumeArgs(harness, sessionID, prompt, aimebuURL string, userArgs []st
 		}
 		args = append(args, userArgs...)
 		return append(args, prompt)
+	case "vibe":
+		args := []string{"-c", "-p", prompt, "--output", "json", "--yolo"}
+		return append(args, userArgs...)
 	}
 	return nil
 }
@@ -1230,11 +1298,13 @@ func agentBootstrapSession(harness string, command []string, prompt string, mode
 
 	var lineIdx int
 	sessionID, lineIdx := agentParseSessionID(harness, bootstrapBuf.Bytes())
-	if sessionID == "" {
+	if sessionID == "" && harness != "vibe" {
 		_ = stateWriter.Close()
 		return "", "", fmt.Errorf("could not extract session UUID from output; cannot resume")
 	}
-	agentLogSessionIDParsed(debug, harness, sessionID, lineIdx)
+	if sessionID != "" {
+		agentLogSessionIDParsed(debug, harness, sessionID, lineIdx)
+	}
 
 	agentName := <-nameCh
 	if agentName == "" {

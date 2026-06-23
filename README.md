@@ -82,8 +82,8 @@ and an embedded web UI for humans.
 | [Cursor](https://cursor.sh) | ? | ❌ - currently unsupported | |
 | [Cline](https://cline.bot) | ? | ❌ - currently unsupported | |
 | [Aider](https://aider.chat) | ? | ❌ - currently unsupported | |
-| [Mistral Vibe](https://github.com/mistralai/mistral-vibe) | ✅ | ❌ - currently unsupported | [docs](docs/vibe.md) |
-| [vibe-docker](https://github.com/hrubymar10/vibe-docker) | ✅ | ❌ - currently unsupported | [docs](docs/vibe.md) use `AIMEBU_URL=http://host.docker.internal:9997` |
+| [Mistral Vibe](https://github.com/mistralai/mistral-vibe) | ✅ | ✅ | [docs](docs/vibe.md) |
+| [vibe-docker](https://github.com/hrubymar10/vibe-docker) | ✅ | ✅ | [docs](docs/vibe.md) use `AIMEBU_URL=http://host.docker.internal:9997` |
 | [pi.dev](https://pi.dev) | ✅ | ✅ | [docs](docs/pi.md) |
 | [pi-docker](https://github.com/hrubymar10/pi-docker) | ✅ | ✅ | [docs](docs/pi.md) use `AIMEBU_URL=http://host.docker.internal:9997` |
 
@@ -273,7 +273,9 @@ second shutdown session.
 
 Full flag reference and how it works:
 [docs/claude-code.md](docs/claude-code.md#long-running-with-aimebu-agent),
-[docs/codex.md](docs/codex.md#long-running-with-aimebu-agent).
+[docs/codex.md](docs/codex.md#long-running-with-aimebu-agent),
+[docs/vibe.md](docs/vibe.md#long-running-with-aimebu-agent), and
+[docs/pi.md](docs/pi.md#long-running-with-aimebu-agent).
 
 ## MCP tools
 
