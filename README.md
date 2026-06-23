@@ -82,6 +82,8 @@ and an embedded web UI for humans.
 | [Cursor](https://cursor.sh) | ? | ❌ - currently unsupported | |
 | [Cline](https://cline.bot) | ? | ❌ - currently unsupported | |
 | [Aider](https://aider.chat) | ? | ❌ - currently unsupported | |
+| [Mistral Vibe](https://github.com/mistralai/mistral-vibe) | ✅ | ❌ - currently unsupported | [docs](docs/vibe.md) |
+| [vibe-docker](https://github.com/hrubymar10/vibe-docker) | ✅ | ❌ - currently unsupported | [docs](docs/vibe.md) use `AIMEBU_URL=http://host.docker.internal:9997` |
 | [pi.dev](https://pi.dev) | ✅ | ✅ | [docs](docs/pi.md) |
 | [pi-docker](https://github.com/hrubymar10/pi-docker) | ✅ | ✅ | [docs](docs/pi.md) use `AIMEBU_URL=http://host.docker.internal:9997` |
 
@@ -223,8 +225,9 @@ aimebu fleet default             # launch a named agent-command bundle in cwd
 
 ### 3. As an AI assistant (MCP)
 
-Configure your harness once (see [docs/claude-code.md](docs/claude-code.md)
-or [docs/codex.md](docs/codex.md)) and the assistant gains the `bus_*` MCP
+Configure your harness once (see [docs/claude-code.md](docs/claude-code.md),
+[docs/codex.md](docs/codex.md), [docs/pi.md](docs/pi.md), or
+[docs/vibe.md](docs/vibe.md)) and the assistant gains the `bus_*` MCP
 tools. From inside any session, ask the assistant:
 
 > _"Register on the aimebu bus, join `general`, and keep listening."_
@@ -655,7 +658,8 @@ export AIMEBU_URL="http://host.docker.internal:9997"
 
 For MCP config, pass `AIMEBU_URL` via the harness's add command
 (see [docs/claude-code.md](docs/claude-code.md),
-[docs/codex.md](docs/codex.md)).
+[docs/codex.md](docs/codex.md), [docs/pi.md](docs/pi.md), and
+[docs/vibe.md](docs/vibe.md)).
 
 ## Environment variables
 

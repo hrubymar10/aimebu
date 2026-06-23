@@ -323,6 +323,7 @@
     'codex':       '/icons/codex.svg',
     'cursor':      '/icons/cursor.svg',
     'cline':       '/icons/cline.svg',
+    'vibe':        '/icons/vibe.svg',
     'pi':          '/icons/pi.svg',
   };
 

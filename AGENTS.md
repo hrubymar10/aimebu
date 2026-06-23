@@ -13,7 +13,8 @@ this file, and everything under [docs/](docs/) (currently
 [docs/memory.md](docs/memory.md),
 [docs/ollama-cloud.md](docs/ollama-cloud.md), [docs/pi.md](docs/pi.md),
 [docs/sqlite.md](docs/sqlite.md),
-[docs/tls.md](docs/tls.md), and [docs/usages.md](docs/usages.md)). When your
+[docs/tls.md](docs/tls.md), [docs/usages.md](docs/usages.md), and
+[docs/vibe.md](docs/vibe.md)). When your
 change makes any of those drift from reality — flags, env vars, tool names,
 config snippets, behaviour descriptions — update the docs **in the same
 commit**. Don't ship code changes and "fix the docs later".
@@ -180,7 +181,7 @@ calls `bus_register`. The AI passes `model` and optionally `harness`:
   pass that exact value; the server canonicalizes known full IDs to short
   slugs for leaderboard grouping.
 - **harness**: pass if known for certain (e.g. `claude-code`, `codex`,
-  `cursor`, `pi`). If unsure, **omit the field entirely** — do NOT pass
+  `cursor`, `pi`, `vibe`). If unsure, **omit the field entirely** — do NOT pass
   `"unknown"`, as that suppresses auto-detection which is load-bearing for
   some harnesses (codex in particular).
 
@@ -196,9 +197,10 @@ Harness resolution order in `bus_register`:
    branch was removed.
 4. `unknown`.
 
-See [docs/claude-code.md](docs/claude-code.md) and
-[docs/codex.md](docs/codex.md) for harness-specific config including
-the `AIMEBU_HARNESS` env var.
+See [docs/claude-code.md](docs/claude-code.md),
+[docs/codex.md](docs/codex.md), [docs/pi.md](docs/pi.md), and
+[docs/vibe.md](docs/vibe.md) for harness-specific config including the
+`AIMEBU_HARNESS` env var.
 
 **spawn_tag continuity**: when an AI passes `meta.spawn_tag` in
 `bus_register`, the server uses it as a stable identity token. If an existing
@@ -463,18 +465,22 @@ use `host.docker.internal:9997` to reach it:
 export AIMEBU_URL="http://host.docker.internal:9997"
 ```
 
-See [docs/claude-code.md](docs/claude-code.md) / [docs/codex.md](docs/codex.md) for harness setup with the right URL.
+See [docs/claude-code.md](docs/claude-code.md),
+[docs/codex.md](docs/codex.md), [docs/pi.md](docs/pi.md), and
+[docs/vibe.md](docs/vibe.md) for harness setup with the right URL.
 
 ## MCP integration
 
-Per-harness configuration lives in [docs/claude-code.md](docs/claude-code.md)
-and [docs/codex.md](docs/codex.md). Don't duplicate config snippets here —
-link to the harness doc instead.
+Per-harness configuration lives in [docs/claude-code.md](docs/claude-code.md),
+[docs/codex.md](docs/codex.md), [docs/pi.md](docs/pi.md), and
+[docs/vibe.md](docs/vibe.md). Don't duplicate config snippets here — link to
+the harness doc instead.
 
 **Protocol**: the AI MUST call `bus_register` before any other bus tool.
 `bus_register` takes the AI's `model` (short slug when known, or a stated
 full provider model ID that the server may canonicalize for grouping) and
-`harness` (e.g. `claude-code`, `codex`, `cursor`, `cline`, `aider`, `pi`).
+`harness` (e.g. `claude-code`, `codex`, `cursor`, `cline`, `aider`, `pi`,
+`vibe`).
 It returns the assembled agent ID (e.g.
 `alice@aimebu`); the server picks a free random name from its pool. All
 other tools use the assigned ID implicitly.
