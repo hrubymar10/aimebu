@@ -710,13 +710,13 @@ func assertNoOllamaSecret(t *testing.T, haystack string, values ...string) {
 	}
 }
 
-func TestOllamaWeeklyWindowPace(t *testing.T) {
-	// Weekly window with a future reset_at should get WindowDurationSeconds set
-	// and a non-nil Pace. Session window (ambiguous duration) should have neither.
-	futureReset := time.Now().Add(3 * 24 * time.Hour).UTC().Format(time.RFC3339)
+func TestOllamaWindowPace(t *testing.T) {
+	// Ollama Cloud session windows reset every 5h; weekly windows reset every 7d.
+	sessionReset := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339)
+	weeklyReset := time.Now().Add(3 * 24 * time.Hour).UTC().Format(time.RFC3339)
 	html := `<span>Cloud Usage</span><span>Pro</span>` +
-		`<div>Session usage <span>30% used</span><time data-time="` + futureReset + `"></time></div>` +
-		`<div>Weekly usage <span style="width: 40%"></span><time data-time="` + futureReset + `"></time></div>`
+		`<div>Session usage <span>30% used</span><time data-time="` + sessionReset + `"></time></div>` +
+		`<div>Weekly usage <span style="width: 40%"></span><time data-time="` + weeklyReset + `"></time></div>`
 	snap, _, err := parseOllamaSettingsHTML([]byte(html))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -733,15 +733,14 @@ func TestOllamaWeeklyWindowPace(t *testing.T) {
 			weekly = w
 		}
 	}
-	if session.WindowDurationSeconds != 0 {
-		t.Errorf("session.WindowDurationSeconds = %d, want 0 (ambiguous duration)", session.WindowDurationSeconds)
+	if session.WindowDurationSeconds != ollamaSessionWindowSeconds {
+		t.Errorf("session.WindowDurationSeconds = %d, want %d", session.WindowDurationSeconds, ollamaSessionWindowSeconds)
 	}
-	if session.Pace != nil {
-		t.Errorf("session.Pace should be nil, got %+v", session.Pace)
+	if session.Pace == nil {
+		t.Error("session.Pace is nil, expected non-nil for window with future reset_at and 5h duration")
 	}
-	const wantDuration = int64(7 * 24 * 3600)
-	if weekly.WindowDurationSeconds != wantDuration {
-		t.Errorf("weekly.WindowDurationSeconds = %d, want %d", weekly.WindowDurationSeconds, wantDuration)
+	if weekly.WindowDurationSeconds != ollamaWeeklyWindowSeconds {
+		t.Errorf("weekly.WindowDurationSeconds = %d, want %d", weekly.WindowDurationSeconds, ollamaWeeklyWindowSeconds)
 	}
 	if weekly.Pace == nil {
 		t.Error("weekly.Pace is nil, expected non-nil for window with future reset_at and 7d duration")

@@ -26,6 +26,9 @@ const (
 	OllamaAuthAuto   = "auto"
 	OllamaAuthCookie = "cookie"
 	OllamaAuthAPIKey = "api_key"
+
+	ollamaSessionWindowSeconds int64 = 5 * 3600
+	ollamaWeeklyWindowSeconds  int64 = 7 * 24 * 3600
 )
 
 var (
@@ -395,10 +398,12 @@ func parseOllamaSettingsHTML(data []byte) (Snapshot, *ErrorDetail, error) {
 
 	windows := make([]Window, 0, 2)
 	if w, ok := parseOllamaUsageBlock("session", []string{ollamaSessionAnchor, ollamaHourlyAnchor}, html, detail); ok {
+		w.WindowDurationSeconds = ollamaSessionWindowSeconds
+		w.Pace = computeWindowPace(w, time.Now())
 		windows = append(windows, w)
 	}
 	if w, ok := parseOllamaUsageBlock("weekly", []string{ollamaWeeklyAnchor}, html, detail); ok {
-		w.WindowDurationSeconds = 7 * 24 * 3600
+		w.WindowDurationSeconds = ollamaWeeklyWindowSeconds
 		w.Pace = computeWindowPace(w, time.Now())
 		windows = append(windows, w)
 	}

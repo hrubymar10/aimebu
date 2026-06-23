@@ -98,8 +98,8 @@ of treating the refresh as a failed response.
 ## Pace Marker
 
 For windows with a known fixed duration — `session` (5 h) and `weekly` (7 d)
-on both codex and claude-code — aimebu computes a linear-spend pace marker and
-renders it alongside the usage bar.
+on codex, claude-code, and ollama-cloud — aimebu computes a linear-spend pace
+marker and renders it alongside the usage bar.
 
 **How it works**: given the window's full duration and time remaining until
 reset, the expected used percentage at this moment is:
