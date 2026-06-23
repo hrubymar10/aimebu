@@ -342,6 +342,12 @@ func agentCmd(args []string) {
 		if assumeRole == "" {
 			assumeRole = entry.AssumeRole
 		}
+		if harness == "codex" {
+			modelSlug = codexModelFromArgs(command[1:])
+			if modelSlug == "" {
+				modelSlug = agentHarvestCodexDefaultModel(os.Environ())
+			}
+		}
 		if harness == "pi" {
 			modelSlug = piModelFromArgs(command[1:])
 			if modelSlug == "" {
@@ -377,6 +383,12 @@ func agentCmd(args []string) {
 
 	childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 
+	if harness == "codex" {
+		modelSlug = codexModelFromArgs(command[1:])
+		if modelSlug == "" {
+			modelSlug = agentHarvestCodexDefaultModel(os.Environ())
+		}
+	}
 	if harness == "pi" {
 		modelSlug = piModelFromArgs(command[1:])
 		if modelSlug == "" {
@@ -633,6 +645,93 @@ func piModelFromArgs(args []string) string {
 		return after
 	}
 	return val
+}
+
+// codexModelFromArgs extracts the effective model from codex passthrough args
+// (everything after -- in the aimebu agent command). Last explicit model wins.
+// It recognizes -m/--model plus -c/--config model=... because codex supports
+// config overrides through CLI flags. Returns "" when no model override is
+// present.
+func codexModelFromArgs(args []string) string {
+	val := ""
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-m" || arg == "--model":
+			if i+1 < len(args) {
+				val = args[i+1]
+				i++
+			}
+		case strings.HasPrefix(arg, "--model="):
+			val = arg[len("--model="):]
+		case arg == "-c" || arg == "--config":
+			if i+1 < len(args) {
+				if model := codexModelFromConfigArg(args[i+1]); model != "" {
+					val = model
+				}
+				i++
+			}
+		case strings.HasPrefix(arg, "-c="):
+			if model := codexModelFromConfigArg(arg[len("-c="):]); model != "" {
+				val = model
+			}
+		case strings.HasPrefix(arg, "--config="):
+			if model := codexModelFromConfigArg(arg[len("--config="):]); model != "" {
+				val = model
+			}
+		}
+	}
+	return strings.TrimSpace(val)
+}
+
+func codexModelFromConfigArg(arg string) string {
+	key, val, ok := strings.Cut(strings.TrimSpace(arg), "=")
+	if !ok || strings.TrimSpace(key) != "model" {
+		return ""
+	}
+	return strings.Trim(strings.TrimSpace(val), `"'`)
+}
+
+var codexTopLevelModelRE = regexp.MustCompile(`^model\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:#.*)?$`)
+
+func agentHarvestCodexDefaultModel(env []string) string {
+	configHome := ""
+	for _, entry := range env {
+		if v, ok := strings.CutPrefix(entry, "CODEX_HOME="); ok {
+			configHome = strings.TrimSpace(v)
+			break
+		}
+	}
+	if configHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return ""
+		}
+		configHome = filepath.Join(home, ".codex")
+	}
+	f, err := os.Open(filepath.Join(configHome, "config.toml"))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			break
+		}
+		if matches := codexTopLevelModelRE.FindStringSubmatch(line); matches != nil {
+			if matches[1] != "" {
+				return strings.TrimSpace(matches[1])
+			}
+			return strings.TrimSpace(matches[2])
+		}
+	}
+	return ""
 }
 
 func agentHarvestPiDefaultModel(env []string) string {

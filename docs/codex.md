@@ -194,6 +194,21 @@ work identically for both harnesses.
 Any flag codex supports can be appended after `codex` and the wrapper will
 carry it across bootstrap and resume invocations.
 
+### Model Metadata
+
+The wrapper records model metadata once at bootstrap. It resolves the bus slug
+in this order:
+
+1. Codex passthrough flags after `--`: `-m` / `--model`, or
+   `-c model=...` / `--config model=...`. The last explicit model wins.
+2. Top-level `model = "..."` in `${CODEX_HOME:-~/.codex}/config.toml`.
+3. `unknown`.
+
+The config-file reader intentionally scans only the top-level `model` key and
+does not parse profile sections such as `[profiles.work]`; when the effective
+model cannot be determined confidently, the wrapper leaves it `unknown`
+instead of guessing.
+
 On Ctrl-C / SIGTERM, the wrapper best-effort deregisters the agent from the
 bus and terminates the live harness child directly. It does not spawn a
 second shutdown session.

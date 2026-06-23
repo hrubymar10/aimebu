@@ -9,6 +9,7 @@ var (
 	modelBracketSuffixRE = regexp.MustCompile(`\s*\[[^\]]+\]\s*$`)
 	modelDateSuffixRE    = regexp.MustCompile(`[-_](?:\d{8}|\d{4}-\d{2}-\d{2})$`)
 	claudeModelIDRE      = regexp.MustCompile(`^claude-([a-z]+)-([0-9]+)-([0-9]+)$`)
+	gptModelIDRE         = regexp.MustCompile(`^gpt-?([0-9].*)$`)
 )
 
 // canonicalModelSlug folds structurally known provider-specific model IDs
@@ -32,6 +33,9 @@ func canonicalModelSlug(raw, harness string) string {
 	}
 	if matches := claudeModelIDRE.FindStringSubmatch(model); matches != nil {
 		return matches[1] + matches[2] + "." + matches[3]
+	}
+	if matches := gptModelIDRE.FindStringSubmatch(model); matches != nil {
+		return "gpt-" + matches[1]
 	}
 	return model
 }

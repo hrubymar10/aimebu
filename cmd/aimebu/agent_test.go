@@ -1167,6 +1167,71 @@ func TestPiModelFromArgs(t *testing.T) {
 	}
 }
 
+func TestCodexModelFromArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"absent", nil, ""},
+		{"short model flag", []string{"-m", "gpt-5"}, "gpt-5"},
+		{"long model flag", []string{"--model", "gpt-5.5"}, "gpt-5.5"},
+		{"equals model flag", []string{"--model=gpt-5"}, "gpt-5"},
+		{"short config flag", []string{"-c", "model=gpt-5"}, "gpt-5"},
+		{"long config flag", []string{"--config", "model='gpt-5.5'"}, "gpt-5.5"},
+		{"equals config flag", []string{"--config=model=\"gpt-5\""}, "gpt-5"},
+		{"short equals config flag", []string{"-c=model=gpt-5"}, "gpt-5"},
+		{"last wins mixed forms", []string{"--model", "gpt-5", "-c", "model=gpt-5.5"}, "gpt-5.5"},
+		{"ignores other config keys", []string{"--config", "profile=work"}, ""},
+		{"no false positive --model-path", []string{"--model-path", "/some/path"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := codexModelFromArgs(tc.args); got != tc.want {
+				t.Fatalf("codexModelFromArgs(%v) = %q, want %q", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAgentHarvestCodexDefaultModel(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Run("top-level model", func(t *testing.T) {
+		codexHome := filepath.Join(dir, "codex")
+		writeAgentFile(t, filepath.Join(codexHome, "config.toml"), "model = \"gpt-5.5\"\n")
+		got := agentHarvestCodexDefaultModel([]string{"CODEX_HOME=" + codexHome})
+		if got != "gpt-5.5" {
+			t.Fatalf("got %q, want gpt-5.5", got)
+		}
+	})
+
+	t.Run("top-level single quoted model", func(t *testing.T) {
+		codexHome := filepath.Join(dir, "quoted")
+		writeAgentFile(t, filepath.Join(codexHome, "config.toml"), "model = 'gpt-5'\n")
+		got := agentHarvestCodexDefaultModel([]string{"CODEX_HOME=" + codexHome})
+		if got != "gpt-5" {
+			t.Fatalf("got %q, want gpt-5", got)
+		}
+	})
+
+	t.Run("profile model ignored", func(t *testing.T) {
+		codexHome := filepath.Join(dir, "profile")
+		writeAgentFile(t, filepath.Join(codexHome, "config.toml"), "[profiles.work]\nmodel = \"gpt-5.5\"\n")
+		got := agentHarvestCodexDefaultModel([]string{"CODEX_HOME=" + codexHome})
+		if got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		got := agentHarvestCodexDefaultModel([]string{"CODEX_HOME=" + filepath.Join(dir, "missing")})
+		if got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+}
+
 func TestAgentHarvestPiDefaultModel(t *testing.T) {
 	dir := t.TempDir()
 	agentDir := filepath.Join(dir, "agent")
@@ -1224,6 +1289,18 @@ func TestAgentBootstrapPromptPiHarvestedModel(t *testing.T) {
 	}
 	if contains(prompt, "ollama-cloud/gemma4:31b") {
 		t.Fatalf("prompt %q unexpectedly includes provider-prefixed pi model", prompt)
+	}
+}
+
+func TestAgentBootstrapPromptCodexHarvestedModel(t *testing.T) {
+	prompt := agentBuildBootstrapPrompt("http://127.0.0.1:0", "codex", "", []string{"general"}, "", "", "gpt-5.5")
+	if !contains(prompt, `pass model="gpt-5.5" exactly`) {
+		t.Fatalf("prompt %q does not include harvested codex model slug", prompt)
+	}
+
+	unknownPrompt := agentBuildBootstrapPrompt("http://127.0.0.1:0", "codex", "", []string{"general"}, "", "", "")
+	if contains(unknownPrompt, "pass model=") {
+		t.Fatalf("prompt %q unexpectedly includes model instruction", unknownPrompt)
 	}
 }
 
