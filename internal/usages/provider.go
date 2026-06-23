@@ -24,6 +24,7 @@ const (
 	ProviderCodex         = "codex"
 	ProviderClaudeCode    = "claude-code"
 	ProviderGitHubCopilot = "github-copilot"
+	ProviderMistral       = "mistral"
 	ProviderOllamaCloud   = "ollama-cloud"
 )
 
@@ -31,6 +32,7 @@ var knownProviders = []string{
 	ProviderCodex,
 	ProviderClaudeCode,
 	ProviderGitHubCopilot,
+	ProviderMistral,
 	ProviderOllamaCloud,
 }
 
@@ -38,6 +40,7 @@ var providerLabels = map[string]string{
 	ProviderCodex:         "Codex",
 	ProviderClaudeCode:    "Claude Code",
 	ProviderGitHubCopilot: "GitHub Copilot",
+	ProviderMistral:       "Mistral",
 	ProviderOllamaCloud:   "Ollama Cloud",
 }
 
@@ -136,7 +139,7 @@ func NewRegistry(providers ...Provider) *Registry {
 func EmptyRegistry() *Registry { return NewRegistry() }
 
 func DefaultRegistry() *Registry {
-	return NewRegistry(NewCodexProvider(), NewClaudeCodeProvider(), NewCopilotProvider(), NewOllamaCloudProvider())
+	return NewRegistry(NewCodexProvider(), NewClaudeCodeProvider(), NewCopilotProvider(), NewMistralProvider(), NewOllamaCloudProvider())
 }
 
 func (r *Registry) Provider(key string) (Provider, bool) {
@@ -217,7 +220,7 @@ func ProviderInfos(cfg Config, registry *Registry) []ProviderInfo {
 			EnterpriseHost:   pc.EnterpriseHost,
 			AuthMode:         ollamaProviderAuthMode(key, pc),
 			APIKeyConfigured: key == ProviderOllamaCloud && strings.TrimSpace(pc.APIKey) != "",
-			CookieConfigured: key == ProviderOllamaCloud && pc.Cookie != "",
+			CookieConfigured: (key == ProviderOllamaCloud || key == ProviderMistral) && pc.Cookie != "",
 		})
 	}
 	return out

@@ -53,17 +53,17 @@ func TestNormalizeProviderOrder(t *testing.T) {
 		{
 			name: "custom order",
 			in:   []string{ProviderOllamaCloud, ProviderCodex, ProviderClaudeCode, ProviderGitHubCopilot},
-			want: []string{ProviderOllamaCloud, ProviderCodex, ProviderClaudeCode, ProviderGitHubCopilot},
+			want: []string{ProviderOllamaCloud, ProviderCodex, ProviderClaudeCode, ProviderGitHubCopilot, ProviderMistral},
 		},
 		{
 			name: "drops unknowns and appends missing",
 			in:   []string{"bogus", ProviderOllamaCloud, ProviderCodex},
-			want: []string{ProviderOllamaCloud, ProviderCodex, ProviderClaudeCode, ProviderGitHubCopilot},
+			want: []string{ProviderOllamaCloud, ProviderCodex, ProviderClaudeCode, ProviderGitHubCopilot, ProviderMistral},
 		},
 		{
 			name: "dedupes first occurrence",
 			in:   []string{ProviderClaudeCode, ProviderCodex, ProviderClaudeCode, ProviderOllamaCloud},
-			want: []string{ProviderClaudeCode, ProviderCodex, ProviderOllamaCloud, ProviderGitHubCopilot},
+			want: []string{ProviderClaudeCode, ProviderCodex, ProviderOllamaCloud, ProviderGitHubCopilot, ProviderMistral},
 		},
 	}
 	for _, tt := range tests {
@@ -86,7 +86,7 @@ func TestStoreNormalizesProviderOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	want := []string{ProviderOllamaCloud, ProviderCodex, ProviderClaudeCode, ProviderGitHubCopilot}
+	want := []string{ProviderOllamaCloud, ProviderCodex, ProviderClaudeCode, ProviderGitHubCopilot, ProviderMistral}
 	if !reflect.DeepEqual(got.ProviderOrder, want) {
 		t.Fatalf("ProviderOrder = %v, want %v", got.ProviderOrder, want)
 	}
@@ -94,7 +94,7 @@ func TestStoreNormalizesProviderOrder(t *testing.T) {
 
 func TestProviderInfosRespectsProviderOrder(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.ProviderOrder = []string{ProviderOllamaCloud, ProviderGitHubCopilot, ProviderClaudeCode, ProviderCodex}
+	cfg.ProviderOrder = []string{ProviderOllamaCloud, ProviderGitHubCopilot, ProviderClaudeCode, ProviderCodex, ProviderMistral}
 	infos := ProviderInfos(cfg, DefaultRegistry())
 	var got []string
 	for _, info := range infos {

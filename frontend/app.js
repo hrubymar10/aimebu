@@ -80,9 +80,10 @@
   let usageSnapshots = {};
   let usagePercentDisplay = 'left';
   let usageCooldownTimer = null;
-  const usageProviderFallbackOrder = ['codex', 'claude-code', 'github-copilot', 'ollama-cloud'];
+  const usageProviderFallbackOrder = ['codex', 'claude-code', 'github-copilot', 'mistral', 'ollama-cloud'];
   let copilotLoginState = { status: 'disconnected', enterpriseHost: '', flowId: '', interval: 5, timer: null, error: '' };
   let ollamaCookieEditorOpen = false;
+  let mistralCookieEditorOpen = false;
   let messageDebugState = {
     open: false,
     messageID: null,
@@ -3024,6 +3025,7 @@
     rows = rows || usageProviders || [];
     usagesProviderRows.innerHTML = rows.map(function (row, idx) {
       if (row.key === 'github-copilot') return renderCopilotProviderRow(row, idx, rows.length);
+      if (row.key === 'mistral') return renderMistralProviderRow(row, idx, rows.length);
       if (row.key === 'ollama-cloud') return renderOllamaProviderRow(row, idx, rows.length);
       var available = !!row.available;
       var enabled = !!row.enabled;
@@ -3123,6 +3125,39 @@
       '<div class="settings-row-info">' +
         '<label class="settings-label">Ollama Cloud</label>' +
         '<span class="settings-desc">Use a Cookie header for quota windows, or an API key to verify Cloud access.</span>' +
+        '<span class="settings-status">' + esc(statusText) + '</span>' +
+      '</div>' +
+      '<div class="settings-control ollama-settings-control">' + usageProviderOrderControls(row, idx, total) + editor + '</div>' +
+    '</div>';
+  }
+
+  function renderMistralProviderRow(row, idx, total) {
+    var available = !!row.available;
+    var configured = !!row.cookie_configured || !!row.enabled;
+    var snap = usageSnapshots.mistral || {};
+    var status = snap.status || (configured ? 'saved' : 'not_configured');
+    var hasError = status === 'auth_missing' || status === 'fetch_error';
+    var showEditor = available && (!configured || hasError || mistralCookieEditorOpen);
+    var statusText = 'Cookie not configured';
+    if (!available) {
+      statusText = 'Available in upcoming release.';
+    } else if (hasError) {
+      statusText = snap.error || 'Mistral fetch failed. Update credentials.';
+    } else if (configured) {
+      statusText = 'Cookie configured' + (snap.last_refresh_at ? ' (last fetched ' + new Date(snap.last_refresh_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ')' : '');
+    }
+    var editor = '';
+    if (showEditor) {
+      editor = '<textarea class="settings-text-input mistral-cookie-input" rows="3" autocomplete="off" spellcheck="false" placeholder="' + (row.cookie_configured ? 'Cookie configured' : 'Paste the Cookie header from console.mistral.ai') + '"></textarea>' +
+        '<div class="ollama-actions"><button class="btn btn-sm mistral-cookie-save-btn" type="button">Save</button>' +
+        (configured ? '<button class="btn btn-sm mistral-cookie-cancel-btn" type="button">Cancel</button>' : '') + '</div>';
+    } else if (configured) {
+      editor = '<div class="ollama-actions"><button class="btn btn-sm mistral-cookie-update-btn" type="button">Update credentials</button><button class="btn btn-sm mistral-cookie-clear-btn" type="button">Clear</button></div>';
+    }
+    return '<div class="settings-row mistral-provider-row' + (available ? '' : ' usages-provider-row-disabled') + '">' +
+      '<div class="settings-row-info">' +
+        '<label class="settings-label">Mistral</label>' +
+        '<span class="settings-desc">Use a Cookie header for Vibe monthly quota and optional API spend.</span>' +
         '<span class="settings-status">' + esc(statusText) + '</span>' +
       '</div>' +
       '<div class="settings-control ollama-settings-control">' + usageProviderOrderControls(row, idx, total) + editor + '</div>' +
@@ -3262,6 +3297,32 @@
       })
       .catch(function (err) {
         alert('Failed to clear Ollama Cloud credentials: ' + (err && err.message ? err.message : err));
+      });
+  }
+
+  function saveMistralCookie() {
+    var cookieInput = usagesProviderRows && usagesProviderRows.querySelector('.mistral-cookie-input');
+    var payload = {};
+    if (cookieInput && cookieInput.value.trim()) payload.cookie = cookieInput.value;
+    api('POST', '/api/usages/mistral/config', payload)
+      .then(function () {
+        if (cookieInput) cookieInput.value = '';
+        mistralCookieEditorOpen = false;
+        return loadUsages();
+      })
+      .catch(function (err) {
+        alert('Failed to save Mistral credentials: ' + (err && err.message ? err.message : err));
+      });
+  }
+
+  function clearMistralCookie() {
+    api('POST', '/api/usages/mistral/config', { cookie: '' })
+      .then(function () {
+        mistralCookieEditorOpen = false;
+        return loadUsages();
+      })
+      .catch(function (err) {
+        alert('Failed to clear Mistral credentials: ' + (err && err.message ? err.message : err));
       });
   }
 
@@ -5779,6 +5840,10 @@
       var ollamaClear = e.target && e.target.closest ? e.target.closest('.ollama-cookie-clear-btn') : null;
       var ollamaUpdate = e.target && e.target.closest ? e.target.closest('.ollama-cookie-update-btn') : null;
       var ollamaCancel = e.target && e.target.closest ? e.target.closest('.ollama-cookie-cancel-btn') : null;
+      var mistralSave = e.target && e.target.closest ? e.target.closest('.mistral-cookie-save-btn') : null;
+      var mistralClear = e.target && e.target.closest ? e.target.closest('.mistral-cookie-clear-btn') : null;
+      var mistralUpdate = e.target && e.target.closest ? e.target.closest('.mistral-cookie-update-btn') : null;
+      var mistralCancel = e.target && e.target.closest ? e.target.closest('.mistral-cookie-cancel-btn') : null;
       if (move && !move.disabled) {
         moveUsageProvider(move.getAttribute('data-usage-provider-move'), move.getAttribute('data-direction'));
         return;
@@ -5793,6 +5858,16 @@
       }
       if (ollamaCancel) {
         ollamaCookieEditorOpen = false;
+        renderUsageProviderRows(usageProviders);
+      }
+      if (mistralSave) saveMistralCookie();
+      if (mistralClear) clearMistralCookie();
+      if (mistralUpdate) {
+        mistralCookieEditorOpen = true;
+        renderUsageProviderRows(usageProviders);
+      }
+      if (mistralCancel) {
+        mistralCookieEditorOpen = false;
         renderUsageProviderRows(usageProviders);
       }
       if (cancel) {

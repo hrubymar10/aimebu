@@ -14,6 +14,7 @@ Supported providers:
 | `codex` | Codex OAuth file at `$CODEX_HOME/auth.json`, or `~/.codex/auth.json` | Enable in Settings -> Usages |
 | `claude-code` | Claude Code OAuth file at `~/.claude/.credentials.json` | Enable in Settings -> Usages |
 | `github-copilot` | GitHub device flow token stored locally by aimebu | Settings -> Usages -> Sign in with GitHub |
+| `mistral` | Browser `Cookie` header from `https://console.mistral.ai` | Settings -> Usages -> Mistral credentials |
 | `ollama-cloud` | Browser `Cookie` header from `https://ollama.com/settings`, or Ollama API key | Settings -> Usages -> Ollama Cloud credentials |
 
 Provider secrets are stored in `~/.aimebu/usages/config.json` with file mode
@@ -27,6 +28,7 @@ aimebu usages
 aimebu usages codex
 aimebu usages claude-code --json
 aimebu usages github-copilot --plain
+aimebu usages mistral --json
 aimebu usages ollama-cloud --json
 ```
 
@@ -65,8 +67,8 @@ Settings -> Usages includes up/down controls for the provider rows. The saved
 order controls the vertical order in the web Usages sidebar for enabled
 providers and the provider metadata order in `aimebu usages --json`. Empty or
 older configs use the canonical order (`codex`, `claude-code`,
-`github-copilot`, `ollama-cloud`); unknown entries are ignored and missing
-known providers are appended.
+`github-copilot`, `mistral`, `ollama-cloud`); unknown entries are ignored and
+missing known providers are appended.
 
 ## Stale Cache
 
@@ -156,4 +158,5 @@ Provider-specific setup and failure notes live in:
 - [Codex](codex.md#usage-snapshots)
 - [Claude Code](claude-code.md#usage-snapshots)
 - [GitHub Copilot](github-copilot.md)
+- [Mistral](mistral.md)
 - [Ollama Cloud](ollama-cloud.md)

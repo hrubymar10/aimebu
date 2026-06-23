@@ -206,6 +206,45 @@ func (m *Manager) SetOllamaConfig(ctx context.Context, authMode string, apiKey *
 	return cfg, err
 }
 
+func (m *Manager) SetMistralConfig(ctx context.Context, cookie *string) (Config, error) {
+	var cfg Config
+	err := m.store.WithLock(func() error {
+		var err error
+		cfg, err = m.store.LoadConfig()
+		if err != nil {
+			return err
+		}
+		pc := cfg.Providers[ProviderMistral]
+		if cookie != nil {
+			rawCookie := strings.TrimSpace(*cookie)
+			if rawCookie == "" {
+				pc.Cookie = ""
+			} else {
+				normalized, detail, err := normalizeMistralCookieHeader(rawCookie)
+				if err != nil {
+					if detail != nil {
+						return &SnapshotError{Snapshot: Snapshot{Provider: ProviderMistral, Status: StatusAuthMissing, Error: err.Error(), ErrorDetail: detail}, Err: err}
+					}
+					return err
+				}
+				pc.Cookie = normalized
+			}
+		}
+		pc.Enabled = pc.Cookie != ""
+		cfg.Providers[ProviderMistral] = pc
+		if err := m.store.SaveConfig(cfg); err != nil {
+			return err
+		}
+		cache, err := m.store.LoadCache()
+		if err != nil {
+			return err
+		}
+		delete(cache.Snapshots, ProviderMistral)
+		return m.store.SaveCache(cache)
+	})
+	return cfg, err
+}
+
 // Start launches the background refresh goroutine. If wg is non-nil, the
 // goroutine registers with it (Add/Done) so callers can wait for it to exit
 // after cancelling ctx.

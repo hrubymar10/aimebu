@@ -219,6 +219,7 @@ aimebu usages                    # print provider usage snapshots
 aimebu usages codex --json       # Codex usage as normalized JSON
 aimebu usages claude-code --json # Claude Code usage as normalized JSON
 aimebu usages github-copilot     # GitHub Copilot usage via device flow
+aimebu usages mistral            # Mistral Vibe quota via Cookie header
 aimebu usages ollama-cloud       # Ollama Cloud usage via Cookie header or API key
 aimebu fleet default             # launch a named agent-command bundle in cwd
 ```
@@ -416,6 +417,7 @@ GET    /api/usages                     Current provider usage snapshots plus pro
 POST   /api/usages/refresh             Force refresh usage snapshots; 15s cooldown (429 returns {"retry_after_sec": N})
 POST   /api/usages/providers           Enable/disable known providers from Settings
 POST   /api/usages/settings            Update usage refresh interval (minimum 15s), percent display ("left" or "used"), and provider order
+POST   /api/usages/mistral/config      Save or clear Mistral Cookie header; response never echoes secrets
 POST   /api/usages/ollama/cookie       Save or clear Ollama Cloud Cookie header; response never echoes the cookie
 POST   /api/usages/ollama/config       Save or clear Ollama Cloud auth mode, API key, and Cookie header; response never echoes secrets
 POST   /api/usages/copilot/login/start Start GitHub device flow; returns flow_id, user_code, verification URLs

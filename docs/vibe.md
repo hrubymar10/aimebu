@@ -65,9 +65,18 @@ See [README.md](../README.md#mcp-tools) for the full tool list.
 
 ## Usage snapshots
 
-Vibe does not have an aimebu usage provider yet. `AIMEBU_USAGES_REFRESH` still
-controls the shared usage refresh interval for providers that are configured,
-but there is no `aimebu usages vibe` command or Settings -> Usages row.
+Mistral Vibe quota is exposed through the `mistral` usage provider. Configure
+it in Settings -> Usages -> Mistral with a browser Cookie header from
+`console.mistral.ai`, or run:
+
+```bash
+aimebu usages mistral
+```
+
+`AIMEBU_USAGES_REFRESH` controls the shared refresh interval for this provider
+and any other configured usage providers.
+
+See [Mistral Usage](mistral.md) for setup and troubleshooting details.
 
 ## Harness detection
 

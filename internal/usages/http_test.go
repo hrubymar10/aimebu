@@ -31,6 +31,9 @@ func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
 	if !strings.Contains(resp.Body.String(), `{"key":"github-copilot","label":"GitHub Copilot","enabled":false,"available":true}`) {
 		t.Fatalf("GET providers missing github-copilot availability: %s", resp.Body.String())
 	}
+	if !strings.Contains(resp.Body.String(), `{"key":"mistral","label":"Mistral","enabled":false,"available":true}`) {
+		t.Fatalf("GET providers missing mistral availability: %s", resp.Body.String())
+	}
 	if !strings.Contains(resp.Body.String(), `{"key":"ollama-cloud","label":"Ollama Cloud","enabled":false,"available":true}`) {
 		t.Fatalf("GET providers missing ollama-cloud availability: %s", resp.Body.String())
 	}
@@ -71,8 +74,29 @@ func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
 	codex := strings.Index(got, `"key":"codex"`)
 	claude := strings.Index(got, `"key":"claude-code"`)
 	copilot := strings.Index(got, `"key":"github-copilot"`)
-	if !(ollama >= 0 && codex > ollama && claude > codex && copilot > claude) {
+	mistral := strings.Index(got, `"key":"mistral"`)
+	if !(ollama >= 0 && codex > ollama && claude > codex && copilot > claude && mistral > copilot) {
 		t.Fatalf("providers not in configured order: %s", got)
+	}
+}
+
+func TestHTTPMistralConfigRedactsSecret(t *testing.T) {
+	m := NewManager(NewStoreAt(t.TempDir()), DefaultRegistry())
+	mux := http.NewServeMux()
+	Routes{Manager: m}.Mount(mux)
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/usages/mistral/config", strings.NewReader(`{"cookie":"Cookie: csrftoken=csrf-secret; ory_session_abc=session-secret; admin_secret=hidden"}`))
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("mistral config status = %d body=%s", resp.Code, resp.Body.String())
+	}
+	body := resp.Body.String()
+	if strings.Contains(body, "csrf-secret") || strings.Contains(body, "session-secret") || strings.Contains(body, "hidden") {
+		t.Fatalf("mistral config leaked secret: %s", body)
+	}
+	if !strings.Contains(body, `"mistral":{"enabled":true}`) {
+		t.Fatalf("mistral config body = %s", body)
 	}
 }
 

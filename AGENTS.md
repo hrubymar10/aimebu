@@ -10,7 +10,7 @@ this file, and everything under [docs/](docs/) (currently
 [docs/codex.md](docs/codex.md), [docs/fleet.md](docs/fleet.md),
 [docs/github-copilot.md](docs/github-copilot.md),
 [docs/leaderboards.md](docs/leaderboards.md),
-[docs/memory.md](docs/memory.md),
+[docs/memory.md](docs/memory.md), [docs/mistral.md](docs/mistral.md),
 [docs/ollama-cloud.md](docs/ollama-cloud.md), [docs/pi.md](docs/pi.md),
 [docs/sqlite.md](docs/sqlite.md),
 [docs/tls.md](docs/tls.md), [docs/usages.md](docs/usages.md), and
