@@ -625,7 +625,7 @@ func TestAgentPTYReadySignalAllowsCursorPositioning(t *testing.T) {
 	}
 }
 
-func TestAgentPTYWaitCanaryDismissesTrustModalBeforeReady(t *testing.T) {
+func TestAgentPTYWaitCanaryCrashesWithMeaningfulErrorOnModal(t *testing.T) {
 	master, slave, err := pty.Open()
 	if err != nil {
 		t.Fatal(err)
@@ -636,39 +636,51 @@ func TestAgentPTYWaitCanaryDismissesTrustModalBeforeReady(t *testing.T) {
 	var copied bytes.Buffer
 	done := make(chan error, 1)
 	go func() {
-		done <- agentPTYWaitCanary(master, &copied, time.Second)
+		done <- agentPTYWaitCanary(master, &copied, 50*time.Millisecond)
 	}()
 
-	modal := "\x1b[3G\x1b[93m\x1b[1mAllow\x1b[9Gexternal\x1b[18GCLAUDE.md\x1b[28Gfile\x1b[33Gimports?\x1b[22m\x1b[39m\r\r" +
-		"\x1b[3G\x1b[97m❯\x1b[5G\x1b[37m1.\x1b[8G\x1b[97mYes,\x1b[13Gallow\x1b[19Gexternal\x1b[28Gimports\x1b[39m\r\r"
+	modal := "\r\r" +
+		"\x1b[97m────────────────────────────────────────────────────────────────────────────────\x1b[39m\r\r" +
+		"\x1b[3G\x1b[97m\x1b[1mTry\x1b[7Gthe\x1b[11Gnew\x1b[15Gfullscreen\x1b[26Grenderer?\x1b[22m\x1b[39m\r\r" +
+		"\r\r" +
+		"\x1b[3G\x1b[37m·\x1b[5GFlicker-free\x1b[18Goutput\x1b[25G—\x1b[27Gfixes\x1b[33Gthe\x1b[37Gflashing\x1b[46Gyou\x1b[50Gsee\x1b[54Gduring\x1b[61Glong\x1b[66Gresponses\x1b[39m\r\r" +
+		"\x1b[3G\x1b[37m·\x1b[5GMouse\x1b[11Gsupport\x1b[19G—\x1b[21Gclick\x1b[27Gto\x1b[30Gmove\x1b[35Gyour\x1b[40Gcursor\x1b[47Gor\x1b[50Gexpand\x1b[57Gresults\x1b[39m\r\r" +
+		"\x1b[3G\x1b[37m·\x1b[5GSelected\x1b[14Gtext\x1b[19Gauto-copies\x1b[31Gto\x1b[34Gyour\x1b[39Gclipboard\x1b[39m\r\r" +
+		"\r\r" +
+		"\x1b[3G\x1b[97m❯\x1b[5G\x1b[37m1.\x1b[8G\x1b[97mYes,\x1b[13Gtry\x1b[17Git\x1b[39m\r\r" +
+		"\x1b[5G\x1b[37m2.\x1b[8G\x1b[39mNot\x1b[12Gnow\r\r" +
+		"\r\r" +
+		"\x1b[3G\x1b[37m\x1b[3mEnter\x1b[9Gto\x1b[12Gconfirm\x1b[20G·\x1b[22GEsc\x1b[26Gto\x1b[29Gcancel\x1b[23m\x1b[39m\r\r"
 	if _, err := io.WriteString(slave, modal); err != nil {
 		t.Fatal(err)
 	}
 
-	_ = slave.SetReadDeadline(time.Now().Add(time.Second))
+	err = <-done
+	if err == nil {
+		t.Fatal("expected timeout without ready signal")
+	}
+	for _, want := range []string{
+		"claude-code did not reach its chat composer",
+		"first-run prompt",
+		"Try the new fullscreen renderer?",
+		"will not choose for you",
+		"Run `claude` once interactively",
+		"-- last screen seen --",
+		"Yes, try it",
+	} {
+		if !contains(err.Error(), want) {
+			t.Fatalf("error = %q, want substring %q", err.Error(), want)
+		}
+	}
+	if !bytes.Contains(copied.Bytes(), []byte("Try")) {
+		t.Fatalf("copied output missing modal text: %q", copied.String())
+	}
+
+	_ = slave.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 	buf := make([]byte, 16)
 	n, err := slave.Read(buf)
-	if err != nil {
-		t.Fatalf("expected modal dismissal carriage return: %v", err)
-	}
-	if !strings.ContainsAny(string(buf[:n]), "\r\n") {
-		t.Fatalf("modal dismissal bytes = %q, want carriage return", string(buf[:n]))
-	}
-
-	select {
-	case err := <-done:
-		t.Fatalf("wait returned before ready signal: %v", err)
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	if _, err := io.WriteString(slave, "\x1b[95m⏵⏵ bypass permissions on\x1b[37m (shift+tab to cycle) · ← for agents\r\r"); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(copied.Bytes(), []byte(agentPTYReadySignal)) {
-		t.Fatalf("copied output missing ready signal: %q", copied.String())
+	if err == nil || n != 0 {
+		t.Fatalf("expected no PTY writes from canary, read n=%d bytes=%q err=%v", n, string(buf[:n]), err)
 	}
 }
 
@@ -695,8 +707,8 @@ func TestAgentPTYWaitCanaryModalOnlyDoesNotSatisfyReady(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout without ready signal")
 	}
-	if !contains(err.Error(), "ready signal") {
-		t.Fatalf("error = %q, want ready signal timeout", err)
+	if !contains(err.Error(), "first-run prompt") {
+		t.Fatalf("error = %q, want first-run prompt guidance", err)
 	}
 }
 

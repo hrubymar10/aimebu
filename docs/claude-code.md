@@ -236,15 +236,18 @@ agent-ready composer hint (`← for agents`) and then typing the next message.
    `AIMEBU_AGENT_DEBUG` is enabled. When the session ends (context cap
    reached), the wrapper moves to the resume loop.
 
-   Claude Code can show a first-run "Allow external CLAUDE.md file imports?"
-   trust modal before the chat composer. That modal also renders a `❯`
-   highlight cursor on its default "Yes" option, so the wrapper does not use
-   the raw cursor as a readiness signal. If the external-imports modal appears
-   during startup, the wrapper accepts the default choice, continues draining
-   output, and waits for `← for agents` before sending the spawn prompt. If the
-   prompt is delivered but no `bus_register` call appears within 30 seconds,
-   the wrapper terminates the harness and exits with an MCP-registration error
-   instead of waiting silently.
+   Claude Code can show first-run prompts before the chat composer, such as
+   the "Allow external CLAUDE.md file imports?" trust prompt or v2.1.187's
+   "Try the new fullscreen renderer?" prompt. The wrapper does not answer
+   those prompts on your behalf: accepting, declining, or changing renderer
+   mode is a user choice. If Claude does not reach the `← for agents` composer
+   hint within the startup timeout, `aimebu agent` exits with an actionable
+   error, includes the last screen it saw, and tells you to run `claude` once
+   interactively in that working directory. Answer the prompt(s) there, then
+   re-run the `aimebu agent` command; Claude persists the choice, so this is a
+   one-time setup step. If the prompt is delivered but no `bus_register` call
+   appears within 30 seconds, the wrapper terminates the harness and exits
+   with an MCP-registration error instead of waiting silently.
 
    If the spawned Claude session finishes bootstrap without calling
    `bus_register`, the wrapper exits non-zero with this message:

@@ -22,8 +22,7 @@ const (
 	agentPTYRows = 24
 	// agentPTYReadySignal is rendered by claude-code's agent-aware chat UI once
 	// first-run modals are gone and the composer is ready for input.
-	agentPTYReadySignal      = "← for agents"
-	agentPTYTrustModalNeedle = "externalclaude.mdfileimports"
+	agentPTYReadySignal = "← for agents"
 	// agentPTYStartupTimeout is the maximum time to wait for the ready signal
 	// during bootstrap or resume startup before declaring a spawn failure.
 	agentPTYStartupTimeout = 15 * time.Second
@@ -48,14 +47,14 @@ func agentCommandForPTY(command, args, env []string) *exec.Cmd {
 
 // agentPTYWaitCanary reads from ptyFile until claude-code's agent-ready
 // composer signal appears or timeout expires. All bytes read are copied to dst.
-// Known first-run modals are dismissed before returning, because their
-// highlight cursor can look like a prompt while the composer is not ready.
+// The wrapper deliberately does not answer first-run prompts on the user's
+// behalf; if Claude does not reach the composer, the timeout error explains
+// how the user can clear the prompt interactively.
 // Returns a non-nil error if the timeout expires, the PTY closes (EOF = child
 // exited before the ready signal), or an unexpected read error occurs.
 func agentPTYWaitCanary(ptyFile *os.File, dst io.Writer, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var seen []byte
-	trustModalDismissed := false
 	buf := make([]byte, 1024)
 	fd := int(ptyFile.Fd())
 	if err := syscall.SetNonblock(fd, true); err != nil {
@@ -73,14 +72,6 @@ func agentPTYWaitCanary(ptyFile *os.File, dst io.Writer, timeout time.Duration) 
 			if len(seen) > 64*1024 {
 				seen = append([]byte(nil), seen[len(seen)-64*1024:]...)
 			}
-			if !trustModalDismissed && agentPTYHasTrustModal(seen) {
-				// The known external-imports trust modal appears at most once for
-				// a project; dismiss it once, then keep waiting for the composer.
-				if _, writeErr := syscall.Write(fd, []byte{'\r'}); writeErr != nil {
-					return fmt.Errorf("PTY: failed to dismiss claude-code trust modal: %w", writeErr)
-				}
-				trustModalDismissed = true
-			}
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -93,7 +84,7 @@ func agentPTYWaitCanary(ptyFile *os.File, dst io.Writer, timeout time.Duration) 
 		}
 	}
 	if !agentPTYHasReadySignal(seen) {
-		return fmt.Errorf("PTY: timed out waiting for %q ready signal", agentPTYReadySignal)
+		return agentPTYReadyTimeoutError(timeout, seen)
 	}
 	return nil
 }
@@ -104,11 +95,6 @@ func agentPTYHasReadySignal(b []byte) bool {
 	}
 	normalized := strings.ToLower(agentPTYNormalizeForScreenDetection(b))
 	return strings.Contains(normalized, agentPTYReadyNeedle)
-}
-
-func agentPTYHasTrustModal(b []byte) bool {
-	normalized := strings.ToLower(agentPTYNormalizeForScreenDetection(b))
-	return strings.Contains(normalized, agentPTYTrustModalNeedle)
 }
 
 func agentPTYNormalizeForScreenDetection(b []byte) string {
@@ -134,6 +120,75 @@ func agentPTYNormalizeForScreenDetection(b []byte) string {
 		out.WriteByte(c)
 	}
 	return out.String()
+}
+
+func agentPTYReadyTimeoutError(timeout time.Duration, seen []byte) error {
+	cwd, err := os.Getwd()
+	if err != nil || cwd == "" {
+		cwd = "the working directory"
+	}
+	return fmt.Errorf("claude-code did not reach its chat composer within %s. This usually means Claude is waiting on a first-run prompt that only you should answer, such as v2.1.187's %q prompt. aimebu agent will not choose for you. Run `claude` once interactively in %s, answer the prompt(s), then re-run your aimebu agent command; Claude remembers this as a one-time choice.\n-- last screen seen --\n%s",
+		timeout,
+		"Try the new fullscreen renderer?",
+		cwd,
+		agentPTYCleanScreenTail(seen, 400),
+	)
+}
+
+func agentPTYCleanScreenTail(b []byte, maxRunes int) string {
+	var out strings.Builder
+	out.Grow(len(b))
+	lastWasNewline := false
+	lastWasSpace := false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if c == 0x1b {
+			i++
+			if i < len(b) && b[i] == '[' {
+				final := byte(0)
+				for i+1 < len(b) {
+					i++
+					if b[i] >= 0x40 && b[i] <= 0x7e {
+						final = b[i]
+						break
+					}
+				}
+				if final == 'G' && !lastWasNewline && !lastWasSpace {
+					out.WriteByte(' ')
+					lastWasSpace = true
+				}
+			}
+			continue
+		}
+		switch {
+		case c == '\r' || c == '\n':
+			if !lastWasNewline {
+				out.WriteByte('\n')
+			}
+			lastWasNewline = true
+			lastWasSpace = false
+		case c == '\t' || c == ' ':
+			if !lastWasSpace && !lastWasNewline {
+				out.WriteByte(' ')
+			}
+			lastWasSpace = true
+		case c < 0x20 || c == 0x7f:
+			continue
+		default:
+			out.WriteByte(c)
+			lastWasNewline = false
+			lastWasSpace = false
+		}
+	}
+	cleaned := strings.TrimSpace(out.String())
+	if cleaned == "" {
+		return "(no screen output captured)"
+	}
+	runes := []rune(cleaned)
+	if maxRunes > 0 && len(runes) > maxRunes {
+		cleaned = "..." + string(runes[len(runes)-maxRunes:])
+	}
+	return cleaned
 }
 
 // agentPTYWritePrompt writes text to the PTY, waits briefly for Claude to
