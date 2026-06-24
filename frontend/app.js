@@ -2826,7 +2826,7 @@
   }
 
   function usageProviderIcon(key) {
-    if (key === 'codex' || key === 'claude-code' || key === 'github-copilot' || key === 'ollama-cloud') {
+    if (key === 'codex' || key === 'claude-code' || key === 'github-copilot' || key === 'mistral' || key === 'ollama-cloud') {
       return '<span class="usages-provider-mask usages-provider-mask-' + esc(key) + '" aria-hidden="true"></span>';
     }
     return '<span aria-hidden="true">AI</span>';
@@ -2940,10 +2940,6 @@
   }
 
   function resetText(key, value) {
-    var ms = Date.parse(value);
-    if (key === 'weekly' && Number.isFinite(ms) && ms - Date.now() < 3600000) {
-      return 'Lasts until reset';
-    }
     return 'Resets in ' + formatResetCountdown(value);
   }
 

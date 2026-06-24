@@ -126,7 +126,7 @@ func TestNormalizeMistralSpend(t *testing.T) {
 			},
 		}},
 	}
-	credits, plan, ok := normalizeMistralSpend(raw)
+	credits, ok := normalizeMistralSpend(raw)
 	if !ok || credits == nil {
 		t.Fatalf("credits missing ok=%v credits=%#v", ok, credits)
 	}
@@ -136,18 +136,12 @@ func TestNormalizeMistralSpend(t *testing.T) {
 	if credits.Balance != 0.0111 {
 		t.Fatalf("balance = %.8f", credits.Balance)
 	}
-	if plan != "1 models · 2k in / 3k out / 500 cached" {
-		t.Fatalf("plan = %q", plan)
-	}
 }
 
 func TestNormalizeMistralSpendSkipsZeroSpend(t *testing.T) {
-	credits, plan, ok := normalizeMistralSpend(mistralBillingResponse{})
+	credits, ok := normalizeMistralSpend(mistralBillingResponse{})
 	if ok || credits != nil {
 		t.Fatalf("credits = %#v ok=%v", credits, ok)
-	}
-	if plan != "Vibe monthly quota" {
-		t.Fatalf("plan = %q", plan)
 	}
 }
 
@@ -181,6 +175,7 @@ func TestMistralFetchKeepsVibeWindowWhenSpendFallbackFails(t *testing.T) {
 			}
 			return testMistralResponse(req, http.StatusOK, mistralVibeResponse(4.5, true)), nil
 		case "admin.mistral.ai":
+			// Plan fetch and spend fetch both fail — plan falls back to "Vibe".
 			return testMistralResponse(req, http.StatusServiceUnavailable, `{"error":"down"}`), nil
 		default:
 			t.Fatalf("unexpected host %s", req.URL.Host)
@@ -201,11 +196,48 @@ func TestMistralFetchKeepsVibeWindowWhenSpendFallbackFails(t *testing.T) {
 	if snap.Status != StatusOK || len(snap.Windows) != 1 || snap.Windows[0].PercentUsed != 4.5 {
 		t.Fatalf("snapshot = %#v", snap)
 	}
+	if snap.Plan != "Vibe" {
+		t.Fatalf("plan fallback = %q, want \"Vibe\"", snap.Plan)
+	}
 	if snap.Credits != nil {
 		t.Fatalf("credits should not be attached on spend fallback failure: %#v", snap.Credits)
 	}
 	if snap.ErrorDetail == nil || snap.ErrorDetail.Fields["usage.error"] != "string" {
 		t.Fatalf("expected fallback shape detail, got %#v", snap.ErrorDetail)
+	}
+}
+
+func TestMistralFetchActivePlan(t *testing.T) {
+	oldClient := mistralHTTPClient
+	t.Cleanup(func() { mistralHTTPClient = oldClient })
+	mistralHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "console.mistral.ai":
+			return testMistralResponse(req, http.StatusOK, mistralVibeResponse(1.0, false)), nil
+		case "admin.mistral.ai":
+			if req.URL.Path == "/api/users/me" {
+				return testMistralResponse(req, http.StatusOK, `{"organization":{"active_api_plan":"FREE"}}`), nil
+			}
+			t.Fatalf("unexpected admin path %s", req.URL.Path)
+			return nil, nil
+		default:
+			t.Fatalf("unexpected host %s", req.URL.Host)
+			return nil, nil
+		}
+	})}
+
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderMistral] = ProviderConfig{Enabled: true, Cookie: "csrftoken=csrf; ory_session_abc=session"}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	snap, err := NewMistralProvider().Fetch(context.Background(), store)
+	if err != nil {
+		t.Fatalf("Fetch returned error: %v", err)
+	}
+	if snap.Plan != "Free" {
+		t.Fatalf("plan = %q, want \"Free\"", snap.Plan)
 	}
 }
 

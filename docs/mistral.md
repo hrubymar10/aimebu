@@ -6,9 +6,13 @@ intentionally not supported.
 
 The primary snapshot is the Mistral Vibe monthly quota. aimebu calls the
 console billing endpoint and maps `usage_percentage` to a `monthly` usage
-window with the returned `reset_at` time. When Mistral also reports
-pay-as-you-go API spend, aimebu fetches the admin billing endpoint and shows a
-secondary `Credits` row for monthly spend.
+window with the returned `reset_at` time. It also calls
+`admin.mistral.ai/api/users/me` to read `organization.active_api_plan` and
+display your real plan tier (e.g. "Free", "Pro") as the card badge; if that
+call fails, the badge falls back to "Vibe" so a plan-fetch failure never
+degrades a working quota card. When Mistral also reports pay-as-you-go API
+spend, aimebu fetches the admin billing endpoint and shows a secondary
+`Credits` row for monthly spend.
 
 ## Web Setup
 

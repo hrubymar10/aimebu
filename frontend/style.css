@@ -5219,6 +5219,11 @@ body {
   mask-image: url("/icons/ollama-cloud.svg");
 }
 
+.usages-provider-mask-mistral {
+  -webkit-mask-image: url("/icons/mistral.svg");
+  mask-image: url("/icons/mistral.svg");
+}
+
 .usages-provider-name {
   font-size: 0.95rem;
   font-weight: 800;

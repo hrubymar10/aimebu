@@ -19,6 +19,7 @@ import (
 const (
 	mistralConsoleVibeUsageURL = "https://console.mistral.ai/api-ui/trpc/billing.vibeUsage?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%2C%22meta%22%3A%7B%22values%22%3A%5B%22undefined%22%5D%2C%22v%22%3A1%7D%7D%7D"
 	mistralAdminUsageURL       = "https://admin.mistral.ai/api/billing/v2/usage"
+	mistralAdminMeURL          = "https://admin.mistral.ai/api/users/me"
 	mistralAdminOrigin         = "https://admin.mistral.ai"
 	mistralAdminReferer        = "https://admin.mistral.ai/organization/usage"
 )
@@ -59,14 +60,13 @@ func (mistralProvider) Fetch(ctx context.Context, store *Store) (Snapshot, error
 		return Snapshot{}, &SnapshotError{Snapshot: snap, Err: err}
 	}
 
+	snap.Plan = fetchMistralActivePlan(ctx, parsed)
+
 	if vibe.PaygEnabled {
 		spend, spendDetail, spendStatus, spendErr := fetchMistralAPISpend(ctx, parsed)
 		if spendErr == nil {
-			if credits, plan, ok := normalizeMistralSpend(spend); ok {
+			if credits, ok := normalizeMistralSpend(spend); ok {
 				snap.Credits = credits
-				if plan != "" {
-					snap.Plan = plan
-				}
 			}
 		} else if spendStatus == StatusAuthMissing || spendStatus == StatusFetchError || spendStatus == StatusTimeout {
 			// The Vibe quota is the primary value; an unavailable API-spend
@@ -273,7 +273,7 @@ func normalizeMistralVibeUsage(raw mistralVibeUsageRaw) (Snapshot, *ErrorDetail,
 		window.WindowDurationSeconds = int64(reset.Sub(start).Seconds())
 		window.Pace = computeWindowPace(window, time.Now())
 	}
-	return Snapshot{Provider: ProviderMistral, Status: StatusOK, Plan: "Vibe monthly quota", Windows: []Window{window}}, detailOrNil(detail), nil
+	return Snapshot{Provider: ProviderMistral, Status: StatusOK, Windows: []Window{window}}, detailOrNil(detail), nil
 }
 
 type mistralBillingResponse struct {
@@ -359,7 +359,7 @@ func fetchMistralAPISpend(ctx context.Context, cookies mistralCookies) (mistralB
 	return raw, nil, "", nil
 }
 
-func normalizeMistralSpend(raw mistralBillingResponse) (*Credits, string, bool) {
+func normalizeMistralSpend(raw mistralBillingResponse) (*Credits, bool) {
 	prices := mistralPriceIndex(raw.Prices)
 	var input, output, cached, modelCount int
 	var spend float64
@@ -374,13 +374,53 @@ func normalizeMistralSpend(raw mistralBillingResponse) (*Credits, string, bool) 
 		}
 	}
 	if spend <= 0 {
-		return nil, mistralPlanText(modelCount, input, output, cached), false
+		return nil, false
 	}
 	currency := strings.TrimSpace(raw.Currency)
 	if currency == "" {
 		currency = "EUR"
 	}
-	return &Credits{Label: "Monthly spend (" + currency + ")", Balance: spend}, mistralPlanText(modelCount, input, output, cached), true
+	return &Credits{Label: "Monthly spend (" + currency + ")", Balance: spend}, true
+}
+
+type mistralUserMeRaw struct {
+	Organization struct {
+		ActiveAPIPlan string `json:"active_api_plan"`
+	} `json:"organization"`
+}
+
+// fetchMistralActivePlan calls /api/users/me and returns the title-cased
+// active_api_plan (e.g. "Free", "Pro"). Falls back to "Vibe" on any error
+// so a plan-fetch failure never degrades a working Vibe quota card.
+func fetchMistralActivePlan(ctx context.Context, cookies mistralCookies) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mistralAdminMeURL, nil)
+	if err != nil {
+		return "Vibe"
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cookie", cookies.Serialize())
+	req.Header.Set("X-CSRFToken", cookies.CSRFToken())
+	req.Header.Set("Origin", mistralAdminOrigin)
+	req.Header.Set("Referer", "https://admin.mistral.ai/")
+	resp, err := doWithRetry(ctx, mistralHTTPClient, req, RetryPolicy{MaxRetries: 1})
+	if err != nil {
+		return "Vibe"
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if resp.StatusCode != http.StatusOK {
+		return "Vibe"
+	}
+	var raw mistralUserMeRaw
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return "Vibe"
+	}
+	plan := strings.TrimSpace(raw.Organization.ActiveAPIPlan)
+	if plan == "" {
+		return "Vibe"
+	}
+	lower := strings.ToLower(plan)
+	return strings.ToUpper(lower[:1]) + lower[1:]
 }
 
 func mistralSpendModelGroups(raw mistralBillingResponse) []map[string]mistralModelUsageData {
@@ -448,35 +488,6 @@ func aggregateMistralModel(model mistralModelUsageData, prices map[string]float6
 	cached, c = add(model.Cached)
 	cost += c
 	return input, output, cached, cost
-}
-
-func mistralPlanText(modelCount, input, output, cached int) string {
-	if modelCount == 0 && input == 0 && output == 0 && cached == 0 {
-		return "Vibe monthly quota"
-	}
-	return fmt.Sprintf("%d models · %s in / %s out / %s cached", modelCount, compactUsageNumber(input), compactUsageNumber(output), compactUsageNumber(cached))
-}
-
-func compactUsageNumber(value int) string {
-	abs := value
-	if abs < 0 {
-		abs = -abs
-	}
-	switch {
-	case abs >= 1_000_000_000:
-		return trimCompactFloat(float64(value)/1_000_000_000) + "B"
-	case abs >= 1_000_000:
-		return trimCompactFloat(float64(value)/1_000_000) + "M"
-	case abs >= 1_000:
-		return trimCompactFloat(float64(value)/1_000) + "k"
-	default:
-		return strconv.Itoa(value)
-	}
-}
-
-func trimCompactFloat(value float64) string {
-	text := fmt.Sprintf("%.1f", value)
-	return strings.TrimSuffix(strings.TrimSuffix(text, "0"), ".")
 }
 
 func mistralStatus(status Status, message string, detail *ErrorDetail) Snapshot {
