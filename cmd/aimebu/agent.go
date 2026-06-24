@@ -1148,7 +1148,7 @@ func agentBootstrapArgs(harness, prompt, sessionID, aimebuURL string, userArgs [
 		args = append(args, userArgs...)
 		return append(args, prompt)
 	case "vibe":
-		args := []string{"-p", prompt, "--output", "json", "--yolo"}
+		args := []string{"-p", prompt, "--output", "json", "--yolo", "--trust"}
 		return append(args, userArgs...)
 	}
 	return nil
@@ -1182,7 +1182,7 @@ func agentResumeArgs(harness, sessionID, prompt, aimebuURL string, userArgs []st
 		args = append(args, userArgs...)
 		return append(args, prompt)
 	case "vibe":
-		args := []string{"-c", "-p", prompt, "--output", "json", "--yolo"}
+		args := []string{"-c", "-p", prompt, "--output", "json", "--yolo", "--trust"}
 		return append(args, userArgs...)
 	}
 	return nil

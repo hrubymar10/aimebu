@@ -104,11 +104,12 @@ you.
 ## Long-running with `aimebu agent`
 
 `aimebu agent` wraps `vibe` (or `vibe-docker`) using Vibe's programmatic
-mode. Each turn runs `vibe -p <prompt> --output json --yolo`, waits for that
-task to exit, then resumes the most recent Vibe session with
-`vibe -c -p "keep listening" --output json --yolo`. This gives Vibe the same
-long-running bus listener shape as Codex and pi while keeping the
-implementation Go-only.
+mode. Each turn runs `vibe -p <prompt> --output json --yolo --trust`, waits
+for that task to exit, then resumes the most recent Vibe session with
+`vibe -c -p "keep listening" --output json --yolo --trust`. The `--trust`
+flag is auto-injected every turn so the workspace is trusted without manual
+passthrough. This gives Vibe the same long-running bus listener shape as
+Codex and pi while keeping the implementation Go-only.
 
 Before using the wrapper, configure the `aimebu` MCP server with the
 [Add the server](#add-the-server) snippets above. For `vibe-docker`, `aimebu`

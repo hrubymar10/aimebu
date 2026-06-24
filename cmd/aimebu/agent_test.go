@@ -1148,11 +1148,11 @@ func TestAgentPiArgs(t *testing.T) {
 
 func TestAgentVibeArgs(t *testing.T) {
 	bootstrap := agentBootstrapArgs("vibe", "register now", "", "http://localhost:9997", []string{"--max-turns", "1"}, "mistral-medium-3.5")
-	if got := strings.Join(bootstrap, " "); got != "-p register now --output json --yolo --max-turns 1" {
+	if got := strings.Join(bootstrap, " "); got != "-p register now --output json --yolo --trust --max-turns 1" {
 		t.Fatalf("bootstrap args = %q", got)
 	}
 
-	resume := agentResumeArgs("vibe", "", "keep listening", "http://localhost:9997", []string{"--trust"}, "mistral-medium-3.5")
+	resume := agentResumeArgs("vibe", "", "keep listening", "http://localhost:9997", nil, "mistral-medium-3.5")
 	if got := strings.Join(resume, " "); got != "-c -p keep listening --output json --yolo --trust" {
 		t.Fatalf("resume args = %q", got)
 	}
