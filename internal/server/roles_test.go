@@ -88,11 +88,18 @@ func TestDefaultRolesIncludeThreeWayIndependentPlanning(t *testing.T) {
 	for _, want := range []string{
 		"inline visual_plan blocks instead of a prose wall",
 		"message-scoped and display-only",
+		"Leaders may also attach visual_plan blocks to any message",
 		"Use proposed_answers for proceed/pushback buttons and open_questions for real answer collection",
 	} {
 		if !strings.Contains(defaults["leader"], want) {
 			t.Fatalf("leader default lost visual-plan approval guidance %q:\n%s", want, defaults["leader"])
 		}
+	}
+	if !strings.Contains(defaults["worker"], "you may use visual_plan blocks such as diff, annotated-code, or file-tree") {
+		t.Fatalf("worker default lost visual-plan handoff guidance:\n%s", defaults["worker"])
+	}
+	if !strings.Contains(defaults["reviewer"], "you may present review findings or summaries with visual_plan blocks") {
+		t.Fatalf("reviewer default lost visual-plan review guidance:\n%s", defaults["reviewer"])
 	}
 	if !strings.Contains(defaults["leader"], "leaderboard rating session") {
 		t.Fatalf("leader default lost leaderboard close-out step:\n%s", defaults["leader"])

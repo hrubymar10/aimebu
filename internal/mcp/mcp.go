@@ -152,7 +152,7 @@ type propRef struct {
 func visualPlanProperty() property {
 	return property{
 		Type:        "array",
-		Description: "Optional display-only inline visual plan blocks for leader approval handoffs. Message-scoped and ephemeral; does not create or update a durable Plans resource. Blocks are rendered in chat before proposed_answers/open_questions. Data shapes: markdown {markdown}; file-tree {root:{name,type:\"dir\"|\"file\",note,children:[...]}} with short path names and optional notes; data-model {entities:[{name,fields:[{name,type,notes}]}]}; api-endpoint {method,path,request,response,notes}; annotated-code {code,annotations:[{line,text}]}; diff {diff}; checklist {items:[{text,checked}]}; question-form {questions:[{question,description,options:[...]}]}; diagram {mermaid}; canvas {nodes:[{label,x,y,w,h}]}; prototype {screens:[{id,title,elements:[...]}]}. Mermaid labels with punctuation or spaces should be quoted; use <br/> for line breaks, not \\n. Unknown or mismatched data shapes are stored and should render as escaped fallback text.",
+		Description: "Optional display-only inline visual plan blocks for any message where structure communicates better than prose, such as approval handoffs, problem framing, diffs, and review summaries. Message-scoped and ephemeral; does not create or update a durable Plans resource. Blocks are rendered in chat before proposed_answers/open_questions. Data shapes: markdown {markdown}; file-tree {root:{name,type:\"dir\"|\"file\",note,children:[...]}} with short path names and optional notes; data-model {entities:[{name,fields:[{name,type,notes}]}]}; api-endpoint {method,path,request,response,notes}; annotated-code {code,annotations:[{line,text}]}; diff {diff}; checklist {items:[{text,checked}]}; question-form {questions:[{question,description,options:[...]}]}; diagram {mermaid}; canvas {nodes:[{label,x,y,w,h}]}; prototype {screens:[{id,title,elements:[...]}]}. Mermaid labels with punctuation or spaces should be quoted; use <br/> for line breaks, not \\n. Unknown or mismatched data shapes are stored and should render as escaped fallback text.",
 		Items: &propRef{
 			Type:     "object",
 			Required: []string{"type", "data"},
@@ -170,7 +170,7 @@ func visualPlanProperty() property {
 func appendixPagesProperty() property {
 	return property{
 		Type:        "array",
-		Description: "Optional collapsed prose appendix rendered as the trailing \"Full plan\" block inside the visual_plan flow. Display-only; each page has optional title and Markdown body.",
+		Description: "Optional collapsed prose appendix rendered as the trailing \"Full plan\" block inside the visual_plan flow when a message needs long-form supporting detail. Display-only; each page has optional title and Markdown body.",
 		Items: &propRef{
 			Type:     "object",
 			Required: []string{"body"},

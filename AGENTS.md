@@ -345,13 +345,15 @@ on fenced and indented code blocks that copies the inner code text. The reply
 also addresses the parent author, except for self-replies and system-message
 parents; it does not imply human attention.
 
-Messages may carry `visual_plan` blocks for leader-to-human approval
-handoffs. These blocks are message-scoped, display-only, and ephemeral:
-sending them does not create or update a durable Plans resource. Messages may
-also carry `appendix_pages`, titled Markdown pages rendered as a
-default-collapsed "Full plan" block at the visual-plan tail when the approval
-needs long-form detail. Use `proposed_answers` for proceed/pushback buttons
-and `open_questions` for actual multi-question answers.
+Messages may carry `visual_plan` blocks for any message where structure
+communicates better than prose, including leader-to-human approval handoffs,
+problem framing, diffs, and review summaries. These blocks are
+message-scoped, display-only, and ephemeral: sending them does not create or
+update a durable Plans resource. Messages may also carry `appendix_pages`,
+titled Markdown pages rendered as a default-collapsed "Full plan" block at
+the visual-plan tail when long-form detail is useful. Use `proposed_answers`
+for proceed/pushback buttons and `open_questions` for actual multi-question
+answers.
 For `visual_plan` data shapes, follow the canonical block vocabulary in
 [README.md](README.md#visual-plan-block-vocabulary): keep `file-tree` node
 `name` values short and put prose in `note`; quote Mermaid labels with spaces
