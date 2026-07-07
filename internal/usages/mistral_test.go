@@ -66,6 +66,10 @@ func TestNormalizeMistralCookieHeaderRejectsInvalid(t *testing.T) {
 }
 
 func TestDecodeMistralVibeUsage(t *testing.T) {
+	oldNow := mistralNow
+	mistralNow = func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { mistralNow = oldNow })
+
 	raw, detail, err := decodeMistralVibeUsage([]byte(mistralVibeResponse(2.8141356666666666, true)))
 	if err != nil {
 		t.Fatalf("decode: %v detail=%#v", err, detail)

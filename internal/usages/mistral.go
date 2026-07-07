@@ -271,10 +271,12 @@ func normalizeMistralVibeUsage(raw mistralVibeUsageRaw) (Snapshot, *ErrorDetail,
 	if reset != nil {
 		start := time.Date(reset.UTC().Year(), reset.UTC().Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
 		window.WindowDurationSeconds = int64(reset.Sub(start).Seconds())
-		window.Pace = computeWindowPace(window, time.Now())
+		window.Pace = computeWindowPace(window, mistralNow())
 	}
 	return Snapshot{Provider: ProviderMistral, Status: StatusOK, Windows: []Window{window}}, detailOrNil(detail), nil
 }
+
+var mistralNow = time.Now
 
 type mistralBillingResponse struct {
 	Completion   *mistralModelUsageCategory     `json:"completion"`
