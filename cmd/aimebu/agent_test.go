@@ -769,6 +769,19 @@ func TestAgentPTYWritePromptSendsSeparateEnter(t *testing.T) {
 	}
 }
 
+func TestAgentPTYDetectsEmptyComposerPlaceholder(t *testing.T) {
+	screen := []byte(`Try "fix typecheck errors"` + agentPTYReadySignal)
+	if !agentPTYHasEmptyComposerPlaceholder(screen) {
+		t.Fatalf("expected empty composer placeholder")
+	}
+	if agentPTYHasEmptyComposerPlaceholder([]byte(`register via bus_register` + agentPTYReadySignal)) {
+		t.Fatalf("prompt text must not be treated as empty composer")
+	}
+	if agentPTYHasEmptyComposerPlaceholder([]byte(`Try "fix typecheck errors"`)) {
+		t.Fatalf("placeholder without ready composer signal must not trigger resend")
+	}
+}
+
 // TestAgentNoSessionIDParsingForClaudeCode is a regression guard: the old
 // protocol extracted session_id from JSON output (-p path). The PTY path
 // pre-generates the session ID driver-side, so neither -p nor any output
@@ -919,6 +932,255 @@ func TestAgentBootstrapSessionDebugLogging(t *testing.T) {
 	stdoutRecord := firstDebugEvent(records, "harness_stdout_raw")
 	if got := stdoutRecord["line"]; got != `{"type":"thread.started","thread_id":"thread-123"}` {
 		t.Fatalf("first stdout line = %v", got)
+	}
+}
+
+func TestAgentBootstrapSessionPromotesLogBeforeSessionParseFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+
+	oldTimeout := agentRegistrationLookupTimeout
+	agentRegistrationLookupTimeout = time.Second
+	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+
+	spawnTag := "parsefail12345678"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents/by-spawn-tag":
+			if r.URL.Query().Get("tag") != spawnTag {
+				http.NotFound(w, r)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agent":{"id":"worker@aimebu","kind":"ai","meta":{"spawn_tag":"parsefail12345678"}}}`))
+		case "/agents":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agents":[{"id":"worker@aimebu","kind":"ai","meta":{"spawn_tag":"parsefail12345678"}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	harnessDir := t.TempDir()
+	harnessPath := filepath.Join(harnessDir, "fake-codex.sh")
+	script := "#!/bin/sh\nprintf '{\"type\":\"note\",\"message\":\"registered but no thread id\"}\\n'\n"
+	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	debug := newAgentDebugLog("", spawnTag)
+	env := agentBuildEnv(server.URL, "codex", spawnTag)
+	_, agentID, err := agentBootstrapSession("codex", []string{harnessPath}, "keep listening", "", env, server.URL, spawnTag, "", make(chan os.Signal, 1), debug)
+	if closeErr := debug.close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err == nil {
+		t.Fatal("expected session parse error")
+	}
+	if agentID != "worker@aimebu" {
+		t.Fatalf("agentID = %q, want worker@aimebu", agentID)
+	}
+
+	finalPath := filepath.Join(dir, "agents", "agent-logs", "worker.log")
+	if _, err := os.Stat(finalPath); err != nil {
+		t.Fatalf("expected promoted debug log %s: %v", finalPath, err)
+	}
+	preRegisterPath := filepath.Join(dir, "agents", "agent-logs", "_pre-register-"+spawnTag+".log")
+	if _, err := os.Stat(preRegisterPath); !os.IsNotExist(err) {
+		t.Fatalf("expected pre-register log to be renamed away, stat err=%v", err)
+	}
+	records := readAgentDebugRecords(t, finalPath)
+	classified := firstDebugEvent(records, "bootstrap_failure_classified")
+	if classified == nil {
+		t.Fatalf("expected bootstrap_failure_classified event in %#v", records)
+	}
+	if got := classified["class"]; got != "registration_observed_parse_failed" {
+		t.Fatalf("classification = %v, want registration_observed_parse_failed", got)
+	}
+}
+
+func TestAgentBootstrapSessionClassifiesPiTimeoutAfterRegistration(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+
+	oldTimeout := agentRegistrationLookupTimeout
+	agentRegistrationLookupTimeout = time.Second
+	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+
+	spawnTag := "pitimeout1234567"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents/by-spawn-tag":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agent":{"id":"piper@aimebu","kind":"ai","meta":{"spawn_tag":"pitimeout1234567"}}}`))
+		case "/agents":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agents":[{"id":"piper@aimebu","kind":"ai","meta":{"spawn_tag":"pitimeout1234567"}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	harnessDir := t.TempDir()
+	harnessPath := filepath.Join(harnessDir, "fake-pi-timeout.sh")
+	script := "#!/bin/sh\nprintf '{\"type\":\"turn_end\",\"stopReason\":\"error\",\"errorMessage\":\"Request timed out.\"}\\n'\n"
+	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	debug := newAgentDebugLog("", spawnTag)
+	env := agentBuildEnv(server.URL, "pi", spawnTag)
+	_, agentID, err := agentBootstrapSession("pi", []string{harnessPath}, "register please", "gemma4:31b", env, server.URL, spawnTag, "", make(chan os.Signal, 1), debug)
+	if closeErr := debug.close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err == nil {
+		t.Fatal("expected session parse error")
+	}
+	if agentID != "piper@aimebu" {
+		t.Fatalf("agentID = %q, want piper@aimebu", agentID)
+	}
+	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "piper.log"))
+	classified := firstDebugEvent(records, "bootstrap_failure_classified")
+	if classified == nil {
+		t.Fatalf("expected bootstrap_failure_classified event in %#v", records)
+	}
+	if got := classified["class"]; got != "post_registration_turn_timeout" {
+		t.Fatalf("classification = %v, want post_registration_turn_timeout", got)
+	}
+}
+
+func TestAgentBootstrapSessionRetriesPiModelTimeoutOnce(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+
+	oldTimeout := agentRegistrationLookupTimeout
+	agentRegistrationLookupTimeout = 20 * time.Millisecond
+	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+
+	spawnTag := "piretry123456789"
+	statePath := filepath.Join(t.TempDir(), "state")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		state, _ := os.ReadFile(statePath)
+		registered := strings.Contains(string(state), "registered")
+		switch r.URL.Path {
+		case "/agents/by-spawn-tag":
+			if !registered {
+				http.NotFound(w, r)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agent":{"id":"piper@aimebu","kind":"ai","meta":{"spawn_tag":"piretry123456789"}}}`))
+		case "/agents":
+			w.WriteHeader(http.StatusOK)
+			if registered {
+				_, _ = w.Write([]byte(`{"agents":[{"id":"piper@aimebu","kind":"ai","meta":{"spawn_tag":"piretry123456789"}}]}`))
+			} else {
+				_, _ = w.Write([]byte(`{"agents":[]}`))
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	harnessDir := t.TempDir()
+	harnessPath := filepath.Join(harnessDir, "fake-pi-retry.sh")
+	script := `#!/bin/sh
+if [ -f "$PI_RETRY_STATE" ]; then
+	printf 'registered' > "$PI_RETRY_STATE"
+	printf '{"type":"session","version":3,"id":"pi-session-retry","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}\n'
+	printf '{"type":"agent_start"}\n'
+	printf '{"type":"agent_end","messages":[]}\n'
+else
+	printf 'timedout' > "$PI_RETRY_STATE"
+	printf '{"type":"turn_end","stopReason":"error","errorMessage":"Request timed out."}\n'
+fi
+`
+	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	debug := newAgentDebugLog("", spawnTag)
+	env := append(agentBuildEnv(server.URL, "pi", spawnTag), "PI_RETRY_STATE="+statePath)
+	sessionID, agentID, err := agentBootstrapSession("pi", []string{harnessPath}, "register please", "gemma4:31b", env, server.URL, spawnTag, "", make(chan os.Signal, 1), debug)
+	if closeErr := debug.close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != nil {
+		t.Fatalf("bootstrap retry failed: %v", err)
+	}
+	if sessionID != "pi-session-retry" {
+		t.Fatalf("sessionID = %q, want pi-session-retry", sessionID)
+	}
+	if agentID != "piper@aimebu" {
+		t.Fatalf("agentID = %q, want piper@aimebu", agentID)
+	}
+	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "piper.log"))
+	retry := firstDebugEvent(records, "bootstrap_retry")
+	if retry == nil {
+		t.Fatalf("expected bootstrap_retry event in %#v", records)
+	}
+	if got := retry["class"]; got != "model_turn_timeout" {
+		t.Fatalf("retry class = %v, want model_turn_timeout", got)
+	}
+}
+
+func TestAgentBootstrapSessionPromotesLogBeforeChildFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+
+	oldTimeout := agentRegistrationLookupTimeout
+	agentRegistrationLookupTimeout = time.Second
+	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+
+	spawnTag := "childfail1234567"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents/by-spawn-tag":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agent":{"id":"worker@aimebu","kind":"ai","meta":{"spawn_tag":"childfail1234567"}}}`))
+		case "/agents":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"agents":[{"id":"worker@aimebu","kind":"ai","meta":{"spawn_tag":"childfail1234567"}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	harnessDir := t.TempDir()
+	harnessPath := filepath.Join(harnessDir, "fake-codex-fail.sh")
+	script := "#!/bin/sh\nprintf '{\"type\":\"thread.started\",\"thread_id\":\"thread-123\"}\\n'\nprintf 'foreign MCP auth failed\\n' >&2\nexit 1\n"
+	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	debug := newAgentDebugLog("", spawnTag)
+	env := agentBuildEnv(server.URL, "codex", spawnTag)
+	_, agentID, err := agentBootstrapSession("codex", []string{harnessPath}, "keep listening", "", env, server.URL, spawnTag, "", make(chan os.Signal, 1), debug)
+	if closeErr := debug.close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err == nil {
+		t.Fatal("expected child error")
+	}
+	if agentID != "worker@aimebu" {
+		t.Fatalf("agentID = %q, want worker@aimebu", agentID)
+	}
+	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "worker.log"))
+	classified := firstDebugEvent(records, "bootstrap_failure_classified")
+	if classified == nil {
+		t.Fatalf("expected bootstrap_failure_classified event in %#v", records)
+	}
+	if got := classified["class"]; got != "registration_observed_child_failed" {
+		t.Fatalf("classification = %v, want registration_observed_child_failed", got)
 	}
 }
 
@@ -1110,6 +1372,13 @@ func TestAgentBootstrapSessionPTYRegistrationStall(t *testing.T) {
 	records := readAgentDebugRecords(t, logPath)
 	if firstDebugEvent(records, "registration_stalled") == nil {
 		t.Fatalf("expected registration_stalled event in %#v", records)
+	}
+	classified := firstDebugEvent(records, "bootstrap_failure_classified")
+	if classified == nil {
+		t.Fatalf("expected bootstrap_failure_classified event in %#v", records)
+	}
+	if got := classified["class"]; got != "pty_delivered_no_registration" {
+		t.Fatalf("classification = %v, want pty_delivered_no_registration", got)
 	}
 }
 

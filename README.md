@@ -364,6 +364,7 @@ POST   /dm                             {"from": "alice@aimebu", "to": "bob@aimeb
 # Agents
 POST   /agents                         Register (kind=ai or kind=human); legacy role/name collisions include warnings
 GET    /agents                         List; legacy role/name collisions include per-agent warnings
+GET    /agents/by-spawn-tag            Lookup wrapper-registered AI by `?tag=<spawn_tag>`
 DELETE /agents/{id}                    Forced deregistration + room cleanup
 POST   /agents/{id}/heartbeat          Refresh agent last_seen only; no messages, cursors, rooms, or state changes
 GET    /agents/{id}/rooms              Rooms an agent is in (with per-room unread)
@@ -782,11 +783,14 @@ One JSONL file is written per agent name under
 `~/.aimebu/agents/agent-logs/<name>.log`). Before the agent registers and
 gets a name, events go to `_pre-register-<spawn_tag>.log` in the same
 directory; that file is merged into `<name>.log` once registration is
-observed.
+observed through the server-side spawn-tag lookup. If a `_pre-register` file
+remains, the wrapper never observed server-side registration; check
+`bootstrap_failure_classified` for the narrower failure class.
 
 Events captured: `wrapper_start`, `harness_spawn`, `harness_stdout_raw`
 (4096-byte line cap), `session_id_parsed`, `session_id_pregenerated`,
-`register_observed`, `pty_prompt_write`, `harness_exit`,
+`register_observed`, `pty_prompt_write`, `pty_prompt_resend`,
+`harness_exit`, `bootstrap_failure_classified`, `bootstrap_retry`,
 `recovery_decision`, `wrapper_shutdown`.
 
 Debug logs are runtime diagnostics and are removed by both `aimebu prune`

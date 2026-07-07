@@ -97,6 +97,21 @@ func (s *store) findBySpawnTagLocked(tag, model, harness, project string) *types
 	return nil
 }
 
+func (s *store) findBySpawnTag(tag string) (*types.Agent, bool) {
+	if tag == "" {
+		return nil, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, a := range s.agents {
+		if a.Kind == "ai" && a.Meta["spawn_tag"] == tag {
+			cp := cloneAgentLocked(a)
+			return &cp, true
+		}
+	}
+	return nil, false
+}
+
 // registerAI registers an AI agent. Normally the server assigns a random
 // slug from the pool and assembles the full ID from slug/project. If
 // forceName is non-empty, the caller is asking to force-claim that slug in

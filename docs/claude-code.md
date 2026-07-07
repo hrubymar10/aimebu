@@ -229,8 +229,10 @@ agent-ready composer hint (`← for agents`) and then typing the next message.
    The session UUID is generated driver-side before spawn. The wrapper waits
    for the `← for agents` composer hint, then writes the registration prompt
    into the PTY, waits briefly for Claude to process multi-line pasted input,
-   and sends a separate carriage return. The agent registers on the bus, joins
-   rooms, and enters `bus_wait`.
+   verifies that Claude did not redraw the empty `Try "..."` placeholder,
+   and sends a separate carriage return. If the placeholder is still visible
+   after the write delay, the wrapper re-sends the prompt once before pressing
+   Enter. The agent registers on the bus, joins rooms, and enters `bus_wait`.
    The Claude TUI is hidden from the user's terminal; PTY output is drained so
    the child process cannot block, and is captured in debug logs when
    `AIMEBU_AGENT_DEBUG` is enabled. When the session ends (context cap
@@ -245,9 +247,12 @@ agent-ready composer hint (`← for agents`) and then typing the next message.
    error, includes the last screen it saw, and tells you to run `claude` once
    interactively in that working directory. Answer the prompt(s) there, then
    re-run the `aimebu agent` command; Claude persists the choice, so this is a
-   one-time setup step. If the prompt is delivered but no `bus_register` call
-   appears within 30 seconds, the wrapper terminates the harness and exits
-   with an MCP-registration error instead of waiting silently.
+   one-time setup step. If the prompt is delivered but no server-side
+   registration appears for the wrapper's `spawn_tag` within 30 seconds, the
+   wrapper terminates the harness and exits with an MCP-registration error
+   instead of waiting silently. Debug logs classify this as
+   `pty_delivered_no_registration`, distinct from exec/json harness session
+   parsing failures after registration.
 
    If the spawned Claude session finishes bootstrap without calling
    `bus_register`, the wrapper exits non-zero with this message:
@@ -310,7 +315,8 @@ Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
 `$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Events captured include
 `wrapper_start`, `harness_spawn`, `harness_stdout_raw` (4096-byte cap),
 `session_id_pregenerated`, `register_observed`, `harness_exit`,
-`pty_prompt_write`, `heartbeat`, `idle_nudge`, `registration_stalled`,
+`pty_prompt_write`, `pty_prompt_resend`, `heartbeat`, `idle_nudge`,
+`registration_stalled`, `bootstrap_failure_classified`,
 `recovery_decision`, and `wrapper_shutdown`. Logs are removed by both
 `aimebu prune` and `aimebu prune -a`.
 

@@ -229,6 +229,17 @@ This usually means the `aimebu` MCP server is not registered for the spawned
 process, or the configured command/URL works on the host but not inside a
 sandbox.
 
+Registration confirmation is server-authoritative: the wrapper polls the
+aimebu server for the injected `spawn_tag` and promotes the debug log from
+`_pre-register-<spawn_tag>.log` to `<name>.log` as soon as that registration
+is observed. A Codex session can therefore register successfully even if
+stderr contains unrelated non-fatal startup noise such as model-refresh
+timeouts or `Auth(AuthorizationRequired)` from another MCP transport. If the
+agent registered but Codex output still cannot provide a resumable thread ID,
+debug logs include `bootstrap_failure_classified` with
+`registration_observed_parse_failed` rather than leaving the log stuck in
+`_pre-register`.
+
 If codex itself reports `thread <id> not found`, the wrapper stops using
 `exec resume` for that broken thread and bootstraps a fresh codex thread with
 the same aimebu identity and saved rooms.
@@ -247,8 +258,8 @@ Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
 codex-specific recovery events like `thread not found`. Events captured
 include `wrapper_start`, `harness_spawn`, `harness_stdout_raw` (4096-byte
 cap), `session_id_parsed`, `register_observed`, `harness_exit`,
-`recovery_decision`, and `wrapper_shutdown`. Logs are removed by both
-`aimebu prune` and `aimebu prune -a`.
+`bootstrap_failure_classified`, `recovery_decision`, and `wrapper_shutdown`.
+Logs are removed by both `aimebu prune` and `aimebu prune -a`.
 
 ### Web state
 

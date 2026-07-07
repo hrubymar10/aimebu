@@ -478,11 +478,16 @@ func agentRoomFromCWD(cwd string) (string, error) {
 	return room, nil
 }
 
-// agentLookupName polls GET /agents until it finds an AI agent whose
+// agentLookupName polls the server until it finds an AI agent whose
 // meta.spawn_tag matches spawnTag. Returns the agent ID or "" after timeout.
 func agentLookupName(aimebuURL, spawnTag string, timeout time.Duration) string {
 	if timeout <= 0 {
 		return ""
+	}
+	type lookupResp struct {
+		Agent struct {
+			ID string `json:"id"`
+		} `json:"agent"`
 	}
 	type agent struct {
 		ID   string            `json:"id"`
@@ -507,7 +512,17 @@ func agentLookupName(aimebuURL, spawnTag string, timeout time.Duration) string {
 	}
 
 	for time.Now().Before(deadline) {
-		resp, err := httpc.Get(aimebuURL + "/agents")
+		resp, err := httpc.Get(strings.TrimRight(aimebuURL, "/") + "/agents/by-spawn-tag?tag=" + url.QueryEscape(spawnTag))
+		if err == nil {
+			var lr lookupResp
+			_ = json.NewDecoder(resp.Body).Decode(&lr)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && lr.Agent.ID != "" {
+				return lr.Agent.ID
+			}
+		}
+
+		resp, err = httpc.Get(strings.TrimRight(aimebuURL, "/") + "/agents")
 		if err != nil {
 			sleep()
 			continue
@@ -524,6 +539,26 @@ func agentLookupName(aimebuURL, spawnTag string, timeout time.Duration) string {
 		sleep()
 	}
 	return ""
+}
+
+func agentBootstrapFailureClass(harness string, agentName string, output []byte, parseErr error) (string, string) {
+	if agentName != "" && parseErr != nil {
+		if harness == "pi" && agentOutputHasPiTimeout(output) {
+			return "post_registration_turn_timeout", parseErr.Error()
+		}
+		return "registration_observed_parse_failed", parseErr.Error()
+	}
+	if harness == "pi" && agentOutputHasPiTimeout(output) {
+		return "model_turn_timeout", "pi reported Request timed out before registration was observed"
+	}
+	return "child_completed_no_registration", ""
+}
+
+func agentOutputHasPiTimeout(output []byte) bool {
+	s := string(output)
+	return strings.Contains(s, `"errorMessage":"Request timed out."`) ||
+		strings.Contains(s, `"errorMessage":"Request timed out"`) ||
+		strings.Contains(s, "Request timed out")
 }
 
 // agentGenTag returns a random 16-char hex string used to identify the agent
@@ -1246,6 +1281,17 @@ func agentBootstrapSession(harness string, command []string, prompt string, mode
 		return agentBootstrapSessionPTY(harness, command, prompt, env, aimebuURL, spawnTag, knownName, sigCh, debug)
 	}
 
+	for attempt := 1; ; attempt++ {
+		sessionID, agentName, err, failureClass := agentBootstrapSessionProcess(harness, command, prompt, modelSlug, env, aimebuURL, spawnTag, knownName, sigCh, debug)
+		if err != nil && harness == "pi" && agentName == "" && failureClass == "model_turn_timeout" && attempt == 1 {
+			agentLogBootstrapRetry(debug, harness, failureClass, attempt+1)
+			continue
+		}
+		return sessionID, agentName, err
+	}
+}
+
+func agentBootstrapSessionProcess(harness string, command []string, prompt string, modelSlug string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog) (string, string, error, string) {
 	startedAt := time.Now()
 
 	// Codex: sessionID is extracted from stdout.
@@ -1253,7 +1299,7 @@ func agentBootstrapSession(harness string, command []string, prompt string, mode
 
 	bootstrapCmd, bootstrapBuf, stderrBuf, stdoutWriter, agentID, stateWriter, err := agentBootstrapStart(harness, command, prompt, preSessionID, aimebuURL, modelSlug, env, debug)
 	if err != nil {
-		return "", "", err
+		return "", "", err, ""
 	}
 
 	nameCh := make(chan string, 1)
@@ -1285,36 +1331,66 @@ func agentBootstrapSession(harness string, command []string, prompt string, mode
 			shutdownName = agentLookupName(aimebuURL, spawnTag, time.Second)
 		}
 		agentGracefulShutdown(aimebuURL, spawnTag, shutdownName, bootstrapCmd, doneCh, sigCh, debug, sig)
-		return "", shutdownName, agentErrInterrupted
+		return "", shutdownName, agentErrInterrupted, ""
 	case waitErr = <-doneCh:
 	}
 	stdoutWriter.Flush()
 	agentLogHarnessExit(debug, waitErr, time.Since(startedAt), stderrBuf.Bytes())
 
 	if waitErr != nil {
+		agentName := ""
+		select {
+		case agentName = <-nameCh:
+		default:
+			agentName = agentLookupName(aimebuURL, spawnTag, time.Second)
+			if agentName != "" {
+				agentID.Set(agentFullID(agentName))
+				fmt.Fprintf(os.Stderr, "aimebu agent: registered as %s\n", agentName)
+				agentLogRegisterObserved(debug, agentName, time.Since(startedAt))
+			}
+		}
+		if agentName != "" {
+			agentLogBootstrapFailure(debug, "registration_observed_child_failed", waitErr.Error())
+			_ = stateWriter.Close()
+			return "", agentName, waitErr, "registration_observed_child_failed"
+		}
+		class, detail := agentBootstrapFailureClass(harness, "", bootstrapBuf.Bytes(), nil)
+		agentLogBootstrapFailure(debug, class, detail)
 		_ = stateWriter.Close()
-		return "", "", waitErr
+		return "", "", waitErr, class
+	}
+
+	agentName := <-nameCh
+	if agentName != "" {
+		agentID.Set(agentFullID(agentName))
 	}
 
 	var lineIdx int
 	sessionID, lineIdx := agentParseSessionID(harness, bootstrapBuf.Bytes())
+	var parseErr error
 	if sessionID == "" && harness != "vibe" {
+		parseErr = fmt.Errorf("could not extract session UUID from output; cannot resume")
+		class, detail := agentBootstrapFailureClass(harness, agentName, bootstrapBuf.Bytes(), parseErr)
+		agentLogBootstrapFailure(debug, class, detail)
 		_ = stateWriter.Close()
-		return "", "", fmt.Errorf("could not extract session UUID from output; cannot resume")
+		if agentName != "" {
+			return "", agentName, parseErr, class
+		}
+		return "", "", parseErr, class
 	}
 	if sessionID != "" {
 		agentLogSessionIDParsed(debug, harness, sessionID, lineIdx)
 	}
 
-	agentName := <-nameCh
 	if agentName == "" {
+		class, detail := agentBootstrapFailureClass(harness, "", bootstrapBuf.Bytes(), nil)
+		agentLogBootstrapFailure(debug, class, detail)
 		_ = stateWriter.Close()
-		return "", "", agentRegistrationMissingError(harness)
+		return "", "", agentRegistrationMissingError(harness), class
 	}
-	agentID.Set(agentFullID(agentName))
 	_ = stateWriter.Close()
 	_ = debug.setAgentName(agentName)
-	return sessionID, agentName, nil
+	return sessionID, agentName, nil, ""
 }
 
 func agentResumeLoop(harness string, command []string, sessionID, agentName string, rooms []string, assumeRole, modelSlug string, env []string, aimebuURL string, sigCh <-chan os.Signal, debug *agentDebugLog) {

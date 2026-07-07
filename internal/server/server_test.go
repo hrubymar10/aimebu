@@ -2435,6 +2435,50 @@ func TestRegisterReclaimedFlagInHTTPResponse(t *testing.T) {
 	}
 }
 
+func TestAgentLookupBySpawnTagHTTP(t *testing.T) {
+	_, srv := setupTestServer(t)
+
+	body, _ := json.Marshal(map[string]any{
+		"kind":    "ai",
+		"model":   "gpt-5.5",
+		"harness": "codex",
+		"project": "proj",
+		"meta":    map[string]string{"spawn_tag": "lookup-tag-http123"},
+	})
+	resp, err := http.Post(srv.URL+"/agents", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Get(srv.URL + "/agents/by-spawn-tag?tag=lookup-tag-http123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("lookup returned %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var got struct {
+		Agent types.Agent `json:"agent"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Agent.ID == "" || got.Agent.Meta["spawn_tag"] != "lookup-tag-http123" {
+		t.Fatalf("lookup agent = %#v", got.Agent)
+	}
+
+	missing, err := http.Get(srv.URL + "/agents/by-spawn-tag?tag=missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing lookup returned %d, want %d", missing.StatusCode, http.StatusNotFound)
+	}
+}
+
 // ── NeedsHumanAttention round-trip ────────────────────────────────
 
 func TestNeedsHumanAttentionRoundTrip(t *testing.T) {

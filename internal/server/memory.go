@@ -19,6 +19,7 @@ const (
 	userProfileMemoryCap      = 2048
 	agentSharedNotesMemoryCap = 4096
 	agentSharedNotesMemoryKey = "global"
+	slowHarnessMemoryBodyCap  = 2048
 	maxMemoryBodyRunes        = 2000
 	maxRecallLimit            = 10
 )
@@ -377,7 +378,60 @@ func (s *store) memorySnapshotForAgent(agent *types.Agent) *types.MemorySnapshot
 		refs = append(refs, s.userProfileRefs()...)
 	}
 	snap := s.memorySnapshot(refs)
+	if shouldTrimMemorySnapshotForAgent(agent) {
+		snap = trimMemorySnapshotForSlowHarness(snap)
+	}
 	return &snap
+}
+
+func shouldTrimMemorySnapshotForAgent(agent *types.Agent) bool {
+	if agent == nil || agent.Kind != "ai" {
+		return false
+	}
+	return agent.Harness == "pi" && strings.Contains(strings.ToLower(agent.Model), "gemma")
+}
+
+func trimMemorySnapshotForSlowHarness(snap types.MemorySnapshot) types.MemorySnapshot {
+	if len(snap.Records) == 0 {
+		return snap
+	}
+	trimmed := snap
+	trimmed.Records = make([]types.MemoryRecord, 0, len(snap.Records))
+	remaining := slowHarnessMemoryBodyCap
+	for _, rec := range snap.Records {
+		if remaining <= 0 {
+			break
+		}
+		next := rec
+		body, truncated := truncateMemoryStringBytes(rec.Body, remaining)
+		next.Body = body
+		trimmed.Records = append(trimmed.Records, next)
+		remaining -= len(body)
+		if truncated {
+			break
+		}
+	}
+	trimmed.Rendered = renderMemory(trimmed.Records)
+	trimmed.Rendered, _ = truncateMemoryStringBytes(trimmed.Rendered, slowHarnessMemoryBodyCap)
+	return trimmed
+}
+
+func truncateMemoryStringBytes(s string, maxBytes int) (string, bool) {
+	if maxBytes <= 0 {
+		return "", s != ""
+	}
+	if len(s) <= maxBytes {
+		return s, false
+	}
+	const suffix = "... [truncated for pi bootstrap]"
+	limit := maxBytes - len(suffix)
+	if limit <= 0 {
+		return suffix[:maxBytes], true
+	}
+	for limit > 0 && !utf8.ValidString(s[:limit]) {
+		limit--
+	}
+	return strings.TrimSpace(s[:limit]) + suffix, true
 }
 
 func (s *store) memorySnapshot(refs []memoryScopeRef) types.MemorySnapshot {

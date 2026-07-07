@@ -249,6 +249,22 @@ This usually means the `aimebu` MCP server is not registered for the spawned
 process, or the configured command/URL works on the host but not inside a
 sandbox.
 
+Registration confirmation is server-authoritative: the wrapper polls the
+aimebu server for the injected `spawn_tag` and promotes the debug log from
+`_pre-register-<spawn_tag>.log` to `<name>.log` as soon as that registration
+is observed. If pi reports `Request timed out` before registration is
+observed, debug logs classify it as `model_turn_timeout` and the
+process-per-turn wrapper retries the bootstrap turn once before giving up. If
+registration was already observed but the turn later times out or fails before
+producing a resumable session ID, it is classified as
+`post_registration_turn_timeout`.
+
+There is no aimebu wrapper timeout knob for pi model turns. Slow local
+gemma-class pi agents are mitigated by the one retry above and by trimming
+the memory snapshot included in `bus_register` responses for `pi` agents
+whose model contains `gemma`, reducing bootstrap prompt pressure without
+changing the full `bus_memory_list` surface.
+
 ### Debug Logging
 
 Set `AIMEBU_AGENT_DEBUG=1` (or `true`, `yes`, `y`, `on`) to capture a JSONL
@@ -261,9 +277,9 @@ AIMEBU_AGENT_DEBUG=1 aimebu agent --room general -- pi
 Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
 `$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Events captured include
 `wrapper_start`, `harness_spawn`, `harness_stdout_raw`, `session_id_parsed`,
-`register_observed`, `harness_exit`, `recovery_decision`, and
-`wrapper_shutdown`. Logs are removed by both `aimebu prune` and
-`aimebu prune -a`.
+`register_observed`, `harness_exit`, `bootstrap_failure_classified`,
+`recovery_decision`, and `wrapper_shutdown`. Logs are removed by both
+`aimebu prune` and `aimebu prune -a`.
 
 ### Web state
 

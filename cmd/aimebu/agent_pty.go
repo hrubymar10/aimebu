@@ -219,6 +219,95 @@ func agentPTYWritePrompt(w io.Writer, text string, debug *agentDebugLog) {
 	}
 }
 
+func agentPTYWriteBootstrapPrompt(ptyFile *os.File, text string, debug *agentDebugLog, dst io.Writer) {
+	if debug != nil {
+		debug.log("pty_prompt_write", map[string]any{
+			"bytes":          len(text),
+			"separate_enter": true,
+			"enter_delay_ms": agentPTYSubmitDelay.Milliseconds(),
+			"mode":           "verified_bootstrap",
+		})
+	}
+	if _, err := io.WriteString(ptyFile, text); err != nil {
+		if debug != nil {
+			debug.log("stdin_write_error", map[string]any{"error": err.Error(), "mode": "pty"})
+		}
+		return
+	}
+	if agentPTYSubmitDelay > 0 {
+		time.Sleep(agentPTYSubmitDelay)
+	}
+	seen, err := agentPTYReadAvailable(ptyFile, dst, 250*time.Millisecond)
+	if err != nil && debug != nil {
+		debug.log("pty_prompt_verify_error", map[string]any{"error": err.Error()})
+	}
+	if agentPTYHasEmptyComposerPlaceholder(seen) {
+		if debug != nil {
+			debug.log("pty_prompt_resend", map[string]any{
+				"bytes":  len(text),
+				"reason": "empty_composer_placeholder",
+			})
+		}
+		if _, err := io.WriteString(ptyFile, text); err != nil {
+			if debug != nil {
+				debug.log("stdin_write_error", map[string]any{"error": err.Error(), "mode": "pty"})
+			}
+			return
+		}
+		if agentPTYSubmitDelay > 0 {
+			time.Sleep(agentPTYSubmitDelay)
+		}
+	}
+	if _, err := io.WriteString(ptyFile, "\r"); err != nil {
+		if debug != nil {
+			debug.log("stdin_write_error", map[string]any{"error": err.Error(), "mode": "pty"})
+		}
+	}
+}
+
+func agentPTYReadAvailable(ptyFile *os.File, dst io.Writer, timeout time.Duration) ([]byte, error) {
+	deadline := time.Now().Add(timeout)
+	var seen []byte
+	buf := make([]byte, 1024)
+	fd := int(ptyFile.Fd())
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		return nil, fmt.Errorf("PTY: failed to set nonblocking mode: %w", err)
+	}
+	defer func() { _ = syscall.SetNonblock(fd, false) }()
+	for time.Now().Before(deadline) {
+		n, err := syscall.Read(fd, buf)
+		if n > 0 {
+			chunk := buf[:n]
+			seen = append(seen, chunk...)
+			if dst != nil {
+				_, _ = dst.Write(chunk)
+			}
+			if len(seen) > 16*1024 {
+				seen = append([]byte(nil), seen[len(seen)-16*1024:]...)
+			}
+			continue
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return seen, fmt.Errorf("PTY: closed while verifying prompt delivery")
+			}
+			if !errors.Is(err, syscall.EAGAIN) {
+				return seen, fmt.Errorf("PTY read error: %w", err)
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return seen, nil
+}
+
+func agentPTYHasEmptyComposerPlaceholder(b []byte) bool {
+	if len(b) == 0 {
+		return false
+	}
+	cleaned := strings.ToLower(agentPTYCleanScreenTail(b, 2000))
+	return strings.Contains(cleaned, `try "`) && agentPTYHasReadySignal(b)
+}
+
 func agentPTYRegistrationStalledError(harness string) error {
 	listCommand, docsPath := agentHarnessMCPHint(harness)
 	return fmt.Errorf("spawned %s session did not call `bus_register` within %s after prompt delivery -- verify the harness reached the chat composer and `%s` shows aimebu. See %s",
@@ -234,6 +323,7 @@ func agentPTYLogRegistrationStalled(debug *agentDebugLog, harness string, timeou
 		"harness":    harness,
 		"timeout_ms": timeout.Milliseconds(),
 	})
+	agentLogBootstrapFailure(debug, "pty_delivered_no_registration", "prompt delivered but no bus registration was observed")
 }
 
 func agentPTYTerminateStalledProcess(cmd *exec.Cmd, doneCh <-chan error) {
@@ -468,7 +558,7 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 		return "", "", err
 	}
 	ptyOutput.Flush()
-	agentPTYWritePrompt(ptyFile, prompt, debug)
+	agentPTYWriteBootstrapPrompt(ptyFile, prompt, debug, ptyOutput)
 
 	tracker := &agentPTYIdleTracker{}
 	keepaliveCtx, stopKeepalive := context.WithCancel(context.Background())

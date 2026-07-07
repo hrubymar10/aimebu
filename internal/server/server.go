@@ -977,6 +977,24 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		_ = jsonOK(w, map[string]any{"agents": agents})
 	})
 
+	// GET /agents/by-spawn-tag?tag=... — lookup the AI agent registered by
+	// an aimebu agent wrapper bootstrap. The tag is caller-generated entropy;
+	// it is not a public identity, but this local API is intentionally small so
+	// wrappers do not have to scrape the full agent list.
+	mux.HandleFunc("GET /agents/by-spawn-tag", func(w http.ResponseWriter, r *http.Request) {
+		tag := strings.TrimSpace(r.URL.Query().Get("tag"))
+		if tag == "" {
+			jsonError(w, "tag is required", http.StatusBadRequest)
+			return
+		}
+		agent, ok := s.findBySpawnTag(tag)
+		if !ok {
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"agent": agent})
+	})
+
 	// DELETE /agents/{id} — forced deregistration. Removes the agent from the
 	// registry and all room memberships, then broadcasts updated room/agent
 	// state. Used by aimebu agent for fast Ctrl-C teardown.

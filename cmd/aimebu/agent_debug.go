@@ -336,6 +336,28 @@ func agentLogHarnessExit(debug *agentDebugLog, err error, wallTime time.Duration
 	})
 }
 
+func agentLogBootstrapFailure(debug *agentDebugLog, class, detail string) {
+	if debug == nil {
+		return
+	}
+	fields := map[string]any{"class": class}
+	if detail != "" {
+		fields["detail"] = detail
+	}
+	debug.log("bootstrap_failure_classified", fields)
+}
+
+func agentLogBootstrapRetry(debug *agentDebugLog, harness, class string, attempt int) {
+	if debug == nil {
+		return
+	}
+	debug.log("bootstrap_retry", map[string]any{
+		"harness": harness,
+		"class":   class,
+		"attempt": attempt,
+	})
+}
+
 func agentLogRecoveryDecision(debug *agentDebugLog, class agentRecoveryClass, trigger string, retryCount int, backoff time.Duration) {
 	if debug == nil {
 		return

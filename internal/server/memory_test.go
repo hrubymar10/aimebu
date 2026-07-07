@@ -185,6 +185,57 @@ func TestMemoryAgentSharedNotesGlobalBucket(t *testing.T) {
 	}
 }
 
+func TestMemorySnapshotForPiGemmaIsTrimmed(t *testing.T) {
+	s, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	enableMemoryForTest(s)
+	piAgent, _, err := s.registerAI("gemma4:31b", "pi", "alpha", nil, "piper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexAgent, _, err := s.registerAI("gpt-5.5", "codex", "alpha", nil, "cody")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstBody := strings.Repeat("a", 1500)
+	secondBody := strings.Repeat("b", 1500)
+	if _, err := s.addMemory(piAgent.ID, types.MemoryScopeProjectFacts, "", firstBody, 0); err != nil {
+		t.Fatalf("add first memory: %v", err)
+	}
+	if _, err := s.addMemory(piAgent.ID, types.MemoryScopeProjectFacts, "", secondBody, 0); err != nil {
+		t.Fatalf("add second memory: %v", err)
+	}
+
+	piSnap := s.memorySnapshotForAgent(piAgent)
+	if piSnap == nil || len(piSnap.Records) != 2 {
+		t.Fatalf("pi snapshot = %#v", piSnap)
+	}
+	totalBodyBytes := len(piSnap.Records[0].Body) + len(piSnap.Records[1].Body)
+	if totalBodyBytes > slowHarnessMemoryBodyCap {
+		t.Fatalf("pi snapshot body bytes = %d, want <= %d", totalBodyBytes, slowHarnessMemoryBodyCap)
+	}
+	if !strings.Contains(piSnap.Records[1].Body, "truncated for pi bootstrap") {
+		t.Fatalf("second pi record was not marked truncated: %q", piSnap.Records[1].Body)
+	}
+	if len(piSnap.Rendered) > slowHarnessMemoryBodyCap {
+		t.Fatalf("rendered pi snapshot bytes = %d, want <= %d", len(piSnap.Rendered), slowHarnessMemoryBodyCap)
+	}
+
+	codexSnap := s.memorySnapshotForAgent(codexAgent)
+	if codexSnap == nil || len(codexSnap.Records) != 2 {
+		t.Fatalf("codex snapshot = %#v", codexSnap)
+	}
+	gotBodies := map[string]bool{}
+	for _, rec := range codexSnap.Records {
+		gotBodies[rec.Body] = true
+	}
+	if !gotBodies[firstBody] || !gotBodies[secondBody] {
+		t.Fatalf("non-pi snapshot should not be trimmed: %#v", codexSnap.Records)
+	}
+}
+
 func TestHumanProjectFactsHTTPPath(t *testing.T) {
 	s, err := newStore(t.TempDir())
 	if err != nil {
