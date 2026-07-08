@@ -248,9 +248,12 @@ agent-ready composer hint (`← for agents`) and then typing the next message.
    interactively in that working directory. Answer the prompt(s) there, then
    re-run the `aimebu agent` command; Claude persists the choice, so this is a
    one-time setup step. If the prompt is delivered but no server-side
-   registration appears for the wrapper's `spawn_tag` within 30 seconds, the
-   wrapper terminates the harness and exits with an MCP-registration error
-   instead of waiting silently. Debug logs classify this as
+   registration appears for the wrapper's `spawn_tag` within the registration
+   budget, the wrapper terminates the harness and exits with an
+   MCP-registration error instead of waiting silently. Local `claude` keeps a
+   30 second budget; docker-shaped commands such as `claude-docker` get 120
+   seconds to allow for container startup, the MCP bridge, and the first model
+   turn. Debug logs classify this as
    `pty_delivered_no_registration`, distinct from exec/json harness session
    parsing failures after registration.
 

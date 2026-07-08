@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -30,6 +31,7 @@ const (
 
 var agentPTYSubmitDelay = 150 * time.Millisecond
 var agentPTYRegistrationStallTimeout = 30 * time.Second
+var agentPTYDockerRegistrationStallTimeout = 120 * time.Second
 var agentPTYReadyNeedle = strings.ToLower(strings.ReplaceAll(agentPTYReadySignal, " ", ""))
 var agentPTYHeartbeatInterval = 20 * time.Second
 var agentPTYIdleNudgeDelay = 5 * time.Second
@@ -308,11 +310,22 @@ func agentPTYHasEmptyComposerPlaceholder(b []byte) bool {
 	return strings.Contains(cleaned, `try "`) && agentPTYHasReadySignal(b)
 }
 
-func agentPTYRegistrationStalledError(harness string) error {
+func agentPTYRegistrationBudget(command []string) time.Duration {
+	if len(command) == 0 {
+		return agentPTYRegistrationStallTimeout
+	}
+	base := filepath.Base(command[0])
+	if strings.Contains(base, "docker") {
+		return agentPTYDockerRegistrationStallTimeout
+	}
+	return agentPTYRegistrationStallTimeout
+}
+
+func agentPTYRegistrationStalledError(harness string, timeout time.Duration) error {
 	listCommand, docsPath := agentHarnessMCPHint(harness)
 	return fmt.Errorf("spawned %s session did not call `bus_register` within %s after prompt delivery -- verify the harness reached the chat composer and `%s` shows aimebu. See %s",
 		harness,
-		agentPTYRegistrationStallTimeout,
+		timeout,
 		listCommand,
 		docsPath,
 	)
@@ -534,6 +547,7 @@ func agentPTYWriteIdleNudge(w io.Writer, text string, debug *agentDebugLog) {
 // No --debug or "Logging to:" parse is needed; --session-id gives us the UUID.
 func agentBootstrapSessionPTY(harness string, command []string, prompt string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog) (string, string, error) {
 	startedAt := time.Now()
+	registrationTimeout := agentPTYRegistrationBudget(command)
 
 	preSessionID := agentGenSessionID()
 	agentLogSessionIDPreGenerated(debug, harness, preSessionID)
@@ -570,7 +584,7 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 	// Poll for agent-name registration in parallel.
 	nameCh := make(chan string, 1)
 	go func() {
-		n := agentLookupName(aimebuURL, spawnTag, agentRegistrationLookupTimeout)
+		n := agentLookupName(aimebuURL, spawnTag, registrationTimeout)
 		if n != "" {
 			agentID.Set(agentFullID(n))
 			fmt.Fprintf(os.Stderr, "aimebu agent: registered as %s\n", n)
@@ -584,7 +598,7 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 
 	var waitErr error
 	var agentName string
-	registrationStallTimer := time.NewTimer(agentPTYRegistrationStallTimeout)
+	registrationStallTimer := time.NewTimer(registrationTimeout)
 	defer registrationStallTimer.Stop()
 	stallCh := registrationStallTimer.C
 	registrationCh := (<-chan string)(nameCh)
@@ -607,11 +621,11 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 			return "", shutdownName, agentErrInterrupted
 		case agentName = <-registrationCh:
 			if agentName == "" {
-				agentPTYLogRegistrationStalled(debug, harness, agentPTYRegistrationStallTimeout)
+				agentPTYLogRegistrationStalled(debug, harness, registrationTimeout)
 				agentPTYTerminateStalledProcess(cmd, doneCh)
 				_ = stateWriter.Close()
 				_ = ptyFile.Close()
-				return "", "", agentPTYRegistrationStalledError(harness)
+				return "", "", agentPTYRegistrationStalledError(harness, registrationTimeout)
 			}
 			agentPTYStartKeepalive(keepaliveCtx, aimebuURL, agentFullID(agentName), ptyFile, tracker, debug)
 			if !registrationStallTimer.Stop() {
@@ -623,11 +637,11 @@ func agentBootstrapSessionPTY(harness string, command []string, prompt string, e
 			stallCh = nil
 			registrationCh = nil
 		case <-stallCh:
-			agentPTYLogRegistrationStalled(debug, harness, agentPTYRegistrationStallTimeout)
+			agentPTYLogRegistrationStalled(debug, harness, registrationTimeout)
 			agentPTYTerminateStalledProcess(cmd, doneCh)
 			_ = stateWriter.Close()
 			_ = ptyFile.Close()
-			return "", "", agentPTYRegistrationStalledError(harness)
+			return "", "", agentPTYRegistrationStalledError(harness, registrationTimeout)
 		case waitErr = <-doneCh:
 			waiting = false
 		}
@@ -676,6 +690,7 @@ func agentResumeLoopPTY(harness string, command []string, sessionID, agentName s
 	lastFailure := agentRecoveryNormalEnd
 	consecutiveFailureCount := 0
 	spawnTag := agentEnvValue(env, "AIMEBU_AGENT_SPAWN_TAG")
+	registrationTimeout := agentPTYRegistrationBudget(command)
 	if len(rooms) == 0 {
 		rooms = nil
 	}
@@ -761,7 +776,7 @@ respawnLoop:
 			ch := make(chan string, 1)
 			registrationCh = ch
 			go func() {
-				ch <- agentLookupName(aimebuURL, spawnTag, agentPTYRegistrationStallTimeout)
+				ch <- agentLookupName(aimebuURL, spawnTag, registrationTimeout)
 			}()
 		}
 
@@ -776,11 +791,11 @@ respawnLoop:
 			case n := <-registrationCh:
 				if n == "" {
 					stopKeepalive()
-					agentPTYLogRegistrationStalled(debug, harness, agentPTYRegistrationStallTimeout)
+					agentPTYLogRegistrationStalled(debug, harness, registrationTimeout)
 					agentPTYTerminateStalledProcess(cmd, doneCh)
 					_ = ptyFile.Close()
 					_ = stateWriter.Close()
-					fmt.Fprintf(os.Stderr, "aimebu agent: %v\n", agentPTYRegistrationStalledError(harness))
+					fmt.Fprintf(os.Stderr, "aimebu agent: %v\n", agentPTYRegistrationStalledError(harness, registrationTimeout))
 					retries++
 					if retries > agentRecoveryFailureCap {
 						fmt.Fprintf(os.Stderr, "aimebu agent: too many consecutive harness failures, giving up\n")

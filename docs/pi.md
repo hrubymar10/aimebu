@@ -235,8 +235,14 @@ Before each respawn, the wrapper checks `GET /health` and then probes the
 agent's saved room membership. If the server is up but the registration is
 gone, the wrapper re-registers the same name in the existing pi session and
 rejoins the saved rooms. If the server is unreachable, it backs off
-exponentially instead of hammering. Each recovery class stops after 5
-consecutive failures with a non-zero exit.
+exponentially instead of hammering. While the resumed pi child is running,
+the wrapper sends a lightweight heartbeat independently of pi's stdout so a
+silent model turn does not make the registered bus agent age to stale or
+offline. If a resumed child produces no output for the bounded resume-stall
+window, the wrapper terminates that child, records a `resume_stalled` recovery
+decision, backs off, and retries instead of silently waiting until stale-agent
+prune removes the registration. Each recovery class stops after 5 consecutive
+failures with a non-zero exit.
 
 If the spawned pi session finishes bootstrap without calling `bus_register`,
 the wrapper exits non-zero with this message:
@@ -257,7 +263,10 @@ observed, debug logs classify it as `model_turn_timeout` and the
 process-per-turn wrapper retries the bootstrap turn once before giving up. If
 registration was already observed but the turn later times out or fails before
 producing a resumable session ID, it is classified as
-`post_registration_turn_timeout`.
+`post_registration_turn_timeout`. After bootstrap, steady-state pi `Request
+timed out` exits are also classified as `model_turn_timeout`; they count
+toward the bounded recovery cap and are retried with backoff rather than
+being treated as normal session ends.
 
 There is no aimebu wrapper timeout knob for pi model turns. Slow local
 gemma-class pi agents are mitigated by the one retry above and by trimming
@@ -277,9 +286,9 @@ AIMEBU_AGENT_DEBUG=1 aimebu agent --room general -- pi
 Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
 `$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Events captured include
 `wrapper_start`, `harness_spawn`, `harness_stdout_raw`, `session_id_parsed`,
-`register_observed`, `harness_exit`, `bootstrap_failure_classified`,
-`recovery_decision`, and `wrapper_shutdown`. Logs are removed by both
-`aimebu prune` and `aimebu prune -a`.
+`register_observed`, `harness_exit`, `heartbeat`,
+`bootstrap_failure_classified`, `recovery_decision`, and `wrapper_shutdown`.
+Logs are removed by both `aimebu prune` and `aimebu prune -a`.
 
 ### Web state
 

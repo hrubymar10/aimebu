@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -337,12 +338,117 @@ func TestAgentClassifyChildResult(t *testing.T) {
 		}
 	})
 
+	t.Run("pi model turn timeout", func(t *testing.T) {
+		stdout := []byte(`{"type":"turn_end","stopReason":"error","errorMessage":"Request timed out."}`)
+		got := agentClassifyChildResult("pi", stdout, nil)
+		if got != agentRecoveryModelTurnTimeout {
+			t.Fatalf("got %q, want %q", got, agentRecoveryModelTurnTimeout)
+		}
+	})
+
 	t.Run("normal end", func(t *testing.T) {
 		got := agentClassifyChildResult("codex", []byte(`{"type":"turn.completed"}`), nil)
 		if got != agentRecoveryNormalEnd {
 			t.Fatalf("got %q, want %q", got, agentRecoveryNormalEnd)
 		}
 	})
+}
+
+func TestAgentPTYRegistrationBudgetDockerCommands(t *testing.T) {
+	oldDefault := agentPTYRegistrationStallTimeout
+	oldDocker := agentPTYDockerRegistrationStallTimeout
+	agentPTYRegistrationStallTimeout = 30 * time.Second
+	agentPTYDockerRegistrationStallTimeout = 120 * time.Second
+	defer func() {
+		agentPTYRegistrationStallTimeout = oldDefault
+		agentPTYDockerRegistrationStallTimeout = oldDocker
+	}()
+
+	if got := agentPTYRegistrationBudget([]string{"claude"}); got != 30*time.Second {
+		t.Fatalf("local budget = %s, want 30s", got)
+	}
+	if got := agentPTYRegistrationBudget([]string{"/usr/local/bin/claude-docker"}); got != 120*time.Second {
+		t.Fatalf("docker budget = %s, want 120s", got)
+	}
+}
+
+func TestAgentResumeHeartbeatIndependentOfOutput(t *testing.T) {
+	oldInterval := agentResumeHeartbeatInterval
+	agentResumeHeartbeatInterval = 10 * time.Millisecond
+	defer func() { agentResumeHeartbeatInterval = oldInterval }()
+
+	seen := make(chan struct{}, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/agents/worker@aimebu/heartbeat" {
+			seen <- struct{}{}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agentStartResumeHeartbeat(ctx, srv.URL, "worker@aimebu", nil)
+
+	select {
+	case <-seen:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected heartbeat without harness output")
+	}
+}
+
+func TestAgentResumeActivitySignalsFirstOutputOnce(t *testing.T) {
+	activity := newAgentResumeActivity()
+	select {
+	case <-activity.FirstOutput():
+		t.Fatal("first output signaled before write")
+	default:
+	}
+
+	if _, err := activity.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-activity.FirstOutput():
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("first output was not signaled")
+	}
+
+	if _, err := activity.Write([]byte("again")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAgentWaitResumeChildParksAfterFirstOutput(t *testing.T) {
+	activity := newAgentResumeActivity()
+	if _, err := activity.Write([]byte("first byte")); err != nil {
+		t.Fatal(err)
+	}
+
+	doneCh := make(chan error, 1)
+	resultCh := make(chan agentResumeWaitResult, 1)
+	go func() {
+		result, _, _ := agentWaitResumeChild(doneCh, make(chan os.Signal), activity.FirstOutput(), nil)
+		resultCh <- result
+	}()
+
+	select {
+	case result := <-resultCh:
+		t.Fatalf("wait returned after first output with %s; want parked until child exit", result)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	doneCh <- nil
+	select {
+	case result := <-resultCh:
+		if result != agentResumeWaitExited {
+			t.Fatalf("result = %s, want %s", result, agentResumeWaitExited)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("wait did not return after child exit")
+	}
 }
 
 func TestAgentRoomsContainExpected(t *testing.T) {
@@ -1229,6 +1335,9 @@ func TestAgentBootstrapSessionRequiresRegistration(t *testing.T) {
 	oldTimeout := agentRegistrationLookupTimeout
 	agentRegistrationLookupTimeout = 10 * time.Millisecond
 	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+	oldStallTimeout := agentPTYRegistrationStallTimeout
+	agentPTYRegistrationStallTimeout = 10 * time.Millisecond
+	defer func() { agentPTYRegistrationStallTimeout = oldStallTimeout }()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
