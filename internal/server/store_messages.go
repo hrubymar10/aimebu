@@ -576,6 +576,16 @@ func (s *store) withReactionSummaries(msgs []types.Message, viewerID string) []t
 	for i, m := range msgs {
 		out[i] = m
 		out[i].Reactions = summarizeReactions(s.reactions[m.ID], viewerID)
+		if len(m.Attachments) > 0 {
+			out[i].Attachments = append([]types.Attachment(nil), m.Attachments...)
+		}
+		for j := range out[i].Attachments {
+			if out[i].Attachments[j].ID == "" {
+				out[i].Attachments[j].MCPHint = ""
+				continue
+			}
+			out[i].Attachments[j].MCPHint = "use bus_attachment_get(" + out[i].Attachments[j].ID + ") to view"
+		}
 	}
 	return out
 }
@@ -623,7 +633,6 @@ func (s *store) broadcastReactionUpdate(roomID string, messageID int64, agentID,
 	}
 	s.subMu.Unlock()
 }
-
 
 // roomHead returns the highest message ID currently in the room, or 0 if
 // the room has no messages. Caller must hold s.mu (read or write).

@@ -100,12 +100,13 @@ type ReactionEvent struct {
 }
 
 type Attachment struct {
-	ID     string `json:"id"`
-	Mime   string `json:"mime,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Size   int64  `json:"size,omitempty"`
-	Width  int    `json:"width,omitempty"`
-	Height int    `json:"height,omitempty"`
+	ID      string `json:"id"`
+	Mime    string `json:"mime,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Size    int64  `json:"size,omitempty"`
+	Width   int    `json:"width,omitempty"`
+	Height  int    `json:"height,omitempty"`
+	MCPHint string `json:"mcp_hint,omitempty"`
 }
 
 type Agent struct {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,16 @@ type Client struct {
 	// Prompts caches the configured prompt bodies fetched on MCP initialize.
 	// nil means not yet fetched; callers should use a compiled default when nil.
 	Prompts map[string]string
+}
+
+type AttachmentData struct {
+	ID     string
+	Mime   string
+	Name   string
+	Size   int64
+	Width  int
+	Height int
+	Data   []byte
 }
 
 var insecureSkipVerifyWarnOnce sync.Once
@@ -209,6 +220,48 @@ func (c *Client) HeartbeatAgent(id string, timeout time.Duration) error {
 // is passed for the membership check; returns the raw JSON response.
 func (c *Client) Message(id int64) (string, error) {
 	return c.Get(fmt.Sprintf("/messages/%d?agent_id=%s", id, c.AgentID))
+}
+
+func (c *Client) Attachment(id string, messageID int64) (AttachmentData, error) {
+	path := "/agents/" + url.PathEscape(c.AgentID) + "/attachments/" + url.PathEscape(id)
+	if messageID > 0 {
+		path += "?message_id=" + strconv.FormatInt(messageID, 10)
+	}
+	resp, err := httpClient(0).Get(c.BaseURL + path)
+	if err != nil {
+		return AttachmentData{}, &UnreachableError{BaseURL: c.BaseURL, Err: err}
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= http.StatusBadRequest {
+		msg := strings.TrimSpace(string(out))
+		var errBody struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(out, &errBody) == nil && errBody.Error != "" {
+			msg = errBody.Error
+		}
+		if msg == "" {
+			msg = resp.Status
+		}
+		return AttachmentData{}, fmt.Errorf("%s", msg)
+	}
+	size, _ := strconv.ParseInt(resp.Header.Get("X-Aimebu-Attachment-Size"), 10, 64)
+	width, _ := strconv.Atoi(resp.Header.Get("X-Aimebu-Attachment-Width"))
+	height, _ := strconv.Atoi(resp.Header.Get("X-Aimebu-Attachment-Height"))
+	mime := resp.Header.Get("X-Aimebu-Attachment-Mime")
+	if mime == "" {
+		mime = resp.Header.Get("Content-Type")
+	}
+	return AttachmentData{
+		ID:     resp.Header.Get("X-Aimebu-Attachment-ID"),
+		Mime:   mime,
+		Name:   resp.Header.Get("X-Aimebu-Attachment-Name"),
+		Size:   size,
+		Width:  width,
+		Height: height,
+		Data:   out,
+	}, nil
 }
 
 func PrettyJSON(s string) string {

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -51,11 +52,27 @@ func requireMCPTextResult(t *testing.T, resp *response) string {
 	if !ok {
 		t.Fatalf("result is %T, want map[string]any", resp.Result)
 	}
-	content, ok := result["content"].([]textContent)
+	content, ok := result["content"].([]contentBlock)
 	if !ok || len(content) != 1 {
-		t.Fatalf("content = %#v, want one textContent", result["content"])
+		t.Fatalf("content = %#v, want one contentBlock", result["content"])
 	}
 	return content[0].Text
+}
+
+func requireMCPContentResult(t *testing.T, resp *response) []contentBlock {
+	t.Helper()
+	if resp.Error != nil {
+		t.Fatalf("unexpected JSON-RPC error: %+v", resp.Error)
+	}
+	result, ok := resp.Result.(map[string]any)
+	if !ok {
+		t.Fatalf("result is %T, want map[string]any", resp.Result)
+	}
+	content, ok := result["content"].([]contentBlock)
+	if !ok {
+		t.Fatalf("content = %#v, want []contentBlock", result["content"])
+	}
+	return content
 }
 
 func TestDetectHarness(t *testing.T) {
@@ -396,6 +413,18 @@ func TestMCP_JSONRPCToolRoundTrip(t *testing.T) {
 			io.WriteString(w, `{"id":"general","members":["alice@aimebu"],"roles":{"alice@aimebu":"worker"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/rooms/general/roles/alice@aimebu":
 			io.WriteString(w, `{"role_key":"worker","label":"Worker","icon":"W","body":"do the work"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/attachments/0123456789abcdef0123456789abcdef":
+			if r.URL.Query().Get("message_id") != "42" {
+				t.Fatalf("attachment message_id = %q, want 42", r.URL.Query().Get("message_id"))
+			}
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("X-Aimebu-Attachment-ID", "0123456789abcdef0123456789abcdef")
+			w.Header().Set("X-Aimebu-Attachment-Name", "screen.png")
+			w.Header().Set("X-Aimebu-Attachment-Mime", "image/png")
+			w.Header().Set("X-Aimebu-Attachment-Size", "4")
+			w.Header().Set("X-Aimebu-Attachment-Width", "1")
+			w.Header().Set("X-Aimebu-Attachment-Height", "1")
+			w.Write([]byte{0x89, 'P', 'N', 'G'})
 		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/rooms":
 			io.WriteString(w, `{"agent":"alice@aimebu","rooms":[{"id":"general","unread_count":0}]}`)
 		default:
@@ -442,6 +471,27 @@ func TestMCP_JSONRPCToolRoundTrip(t *testing.T) {
 		})
 	}
 
+	attachmentContent := requireMCPContentResult(t, callMCPToolForTest(t, c, 3, "bus_attachment_get", map[string]any{
+		"attachment_id": "0123456789abcdef0123456789abcdef",
+		"message_id":    42,
+	}))
+	if len(attachmentContent) != 2 {
+		t.Fatalf("attachment content blocks = %#v, want text + image", attachmentContent)
+	}
+	if attachmentContent[0].Type != "text" || !strings.Contains(attachmentContent[0].Text, "screen.png") {
+		t.Fatalf("attachment text block = %#v", attachmentContent[0])
+	}
+	if attachmentContent[1].Type != "image" || attachmentContent[1].MimeType != "image/png" {
+		t.Fatalf("attachment image block = %#v", attachmentContent[1])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(attachmentContent[1].Data)
+	if err != nil {
+		t.Fatalf("image data is not base64: %v", err)
+	}
+	if string(decoded) != "\x89PNG" {
+		t.Fatalf("decoded image data = %q", decoded)
+	}
+
 	for _, want := range []string{
 		"POST /agents",
 		"POST /rooms/general/join",
@@ -455,6 +505,7 @@ func TestMCP_JSONRPCToolRoundTrip(t *testing.T) {
 		"GET /recall?agent_id=alice%40aimebu&limit=3&query=needle",
 		"POST /rooms/general/roles",
 		"GET /rooms/general/roles/alice@aimebu",
+		"GET /agents/alice@aimebu/attachments/0123456789abcdef0123456789abcdef?message_id=42",
 	} {
 		found := false
 		for _, call := range calls {
@@ -486,9 +537,9 @@ func TestMCP_JSONRPCErrorPaths(t *testing.T) {
 		if isError, _ := result["isError"].(bool); !isError {
 			t.Fatalf("isError = %v, want true", result["isError"])
 		}
-		content, ok := result["content"].([]textContent)
+		content, ok := result["content"].([]contentBlock)
 		if !ok || len(content) != 1 {
-			t.Fatalf("content = %#v, want one textContent", result["content"])
+			t.Fatalf("content = %#v, want one contentBlock", result["content"])
 		}
 		if !strings.Contains(content[0].Text, "Call `bus_register` first") {
 			t.Fatalf("error text = %q", content[0].Text)
@@ -516,9 +567,9 @@ func TestMCP_JSONRPCErrorPaths(t *testing.T) {
 		if !ok {
 			t.Fatalf("result = %T, want map", resp.Result)
 		}
-		content, ok := result["content"].([]textContent)
+		content, ok := result["content"].([]contentBlock)
 		if !ok || len(content) != 1 {
-			t.Fatalf("content = %#v, want one textContent", result["content"])
+			t.Fatalf("content = %#v, want one contentBlock", result["content"])
 		}
 		if got := content[0].Text; !strings.Contains(got, "custom bus_recall message") {
 			t.Fatalf("error text = %q, want custom prompt with tool name", got)
@@ -551,6 +602,64 @@ func TestMCP_JSONRPCErrorPaths(t *testing.T) {
 	})
 }
 
+func TestMCPBusAttachmentGetFailureAndGuardPaths(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      int
+		mime        string
+		size        string
+		body        string
+		wantError   bool
+		wantText    string
+		wantNoImage bool
+	}{
+		{name: "unknown id", status: http.StatusNotFound, body: `{"error":"attachment not found"}`, wantError: true, wantText: "attachment not found"},
+		{name: "not authorized", status: http.StatusForbidden, body: `{"error":"not_authorized"}`, wantError: true, wantText: "not_authorized"},
+		{name: "oversized", status: http.StatusOK, mime: "image/png", size: "5242881", body: "too large", wantText: "too large", wantNoImage: true},
+		{name: "non image", status: http.StatusOK, mime: "text/plain", size: "5", body: "hello", wantText: "not a supported image", wantNoImage: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/agents/alice@aimebu/attachments/0123456789abcdef0123456789abcdef" {
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+				}
+				w.Header().Set("Content-Type", tt.mime)
+				w.Header().Set("X-Aimebu-Attachment-ID", "0123456789abcdef0123456789abcdef")
+				w.Header().Set("X-Aimebu-Attachment-Name", tt.name+".png")
+				w.Header().Set("X-Aimebu-Attachment-Mime", tt.mime)
+				w.Header().Set("X-Aimebu-Attachment-Size", tt.size)
+				w.WriteHeader(tt.status)
+				io.WriteString(w, tt.body)
+			}))
+			defer fakeSrv.Close()
+
+			c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu", AgentName: "alice"}
+			resp := callMCPToolForTest(t, c, 1, "bus_attachment_get", map[string]any{
+				"attachment_id": "0123456789abcdef0123456789abcdef",
+			})
+			result, ok := resp.Result.(map[string]any)
+			if !ok {
+				t.Fatalf("result = %T, want map", resp.Result)
+			}
+			if got, _ := result["isError"].(bool); got != tt.wantError {
+				t.Fatalf("isError = %v, want %v", got, tt.wantError)
+			}
+			content, ok := result["content"].([]contentBlock)
+			if !ok || len(content) != 1 {
+				t.Fatalf("content = %#v, want one block", result["content"])
+			}
+			if !strings.Contains(content[0].Text, tt.wantText) {
+				t.Fatalf("text = %q, want substring %q", content[0].Text, tt.wantText)
+			}
+			if tt.wantNoImage && content[0].Type == "image" {
+				t.Fatalf("unexpected image block: %#v", content[0])
+			}
+		})
+	}
+}
+
 // ── Roles MCP tool tests ──────────────────────────────────────────
 
 func TestMCP_RoleAssign_PostsToServer(t *testing.T) {
@@ -570,7 +679,7 @@ func TestMCP_RoleAssign_PostsToServer(t *testing.T) {
 		"agent_id": "alice@aimebu",
 		"role_key": "worker",
 	})
-	result, err := handleToolCall(c, "bus_role_assign", args, nil)
+	result, err := handleToolCallText(c, "bus_role_assign", args, nil)
 	if err != nil {
 		t.Fatalf("handleToolCall bus_role_assign: %v", err)
 	}
@@ -606,11 +715,11 @@ func TestMCP_React_PutsAndDeletesReaction(t *testing.T) {
 
 	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
 	addArgs, _ := json.Marshal(map[string]any{"message_id": 42, "emoji": "👍"})
-	if _, err := handleToolCall(c, "bus_react", addArgs, nil); err != nil {
+	if _, err := handleToolCallText(c, "bus_react", addArgs, nil); err != nil {
 		t.Fatalf("handleToolCall bus_react add: %v", err)
 	}
 	removeArgs, _ := json.Marshal(map[string]any{"message_id": 42, "emoji": "👍", "remove": true})
-	if _, err := handleToolCall(c, "bus_react", removeArgs, nil); err != nil {
+	if _, err := handleToolCallText(c, "bus_react", removeArgs, nil); err != nil {
 		t.Fatalf("handleToolCall bus_react remove: %v", err)
 	}
 	if len(calls) != 2 {
@@ -639,7 +748,7 @@ func TestMCP_RoleGet_ReturnsRoleWhenAssigned(t *testing.T) {
 
 	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
 	args, _ := json.Marshal(map[string]string{"room": "testroom"})
-	result, err := handleToolCall(c, "bus_role_get", args, nil)
+	result, err := handleToolCallText(c, "bus_role_get", args, nil)
 	if err != nil {
 		t.Fatalf("handleToolCall bus_role_get: %v", err)
 	}
@@ -664,7 +773,7 @@ func TestMCP_RoleGet_ReturnsEmptyWhenUnassigned(t *testing.T) {
 
 	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
 	args, _ := json.Marshal(map[string]string{"room": "testroom"})
-	result, err := handleToolCall(c, "bus_role_get", args, nil)
+	result, err := handleToolCallText(c, "bus_role_get", args, nil)
 	if err != nil {
 		t.Fatalf("handleToolCall bus_role_get: %v", err)
 	}
@@ -713,7 +822,7 @@ func TestMCP_BusSayIncludesUnreadFooter(t *testing.T) {
 	if !ok {
 		t.Fatalf("result is not a map: %T", resp.Result)
 	}
-	content, ok := result["content"].([]textContent)
+	content, ok := result["content"].([]contentBlock)
 	if !ok || len(content) != 1 {
 		t.Fatalf("content = %#v, want one text item", result["content"])
 	}
@@ -781,7 +890,7 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 		"appendix_pages":   []types.AppendixPage{{Title: "Full plan", Body: "Details"}},
 		"reply_to":         42,
 	})
-	if _, err := handleToolCall(c, "bus_say", args, nil); err != nil {
+	if _, err := handleToolCallText(c, "bus_say", args, nil); err != nil {
 		t.Fatalf("handleToolCall bus_say: %v", err)
 	}
 }
@@ -841,7 +950,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 		"appendix_pages":   []types.AppendixPage{{Title: "Full plan", Body: "Details"}},
 		"reply_to":         7,
 	})
-	if _, err := handleToolCall(c, "bus_dm", args, nil); err != nil {
+	if _, err := handleToolCallText(c, "bus_dm", args, nil); err != nil {
 		t.Fatalf("handleToolCall bus_dm: %v", err)
 	}
 }
@@ -862,7 +971,7 @@ func TestMCP_JoinEnrichesWithYourRole(t *testing.T) {
 
 	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu"}
 	args, _ := json.Marshal(map[string]string{"room": "testroom"})
-	result, err := handleToolCall(c, "bus_join", args, nil)
+	result, err := handleToolCallText(c, "bus_join", args, nil)
 	if err != nil {
 		t.Fatalf("handleToolCall bus_join: %v", err)
 	}

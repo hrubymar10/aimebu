@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/url"
@@ -187,6 +188,13 @@ type textContent struct {
 	Text string `json:"text"`
 }
 
+type contentBlock struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	Data     string `json:"data,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
+}
+
 const notRegisteredDefault = "`{{tool}}` requires an aimebu bus identity. Call `bus_register` first with your model and harness, then retry `{{tool}}`. If you did not intend to use the aimebu message bus, do not call bus tools."
 
 var tools = []tool{
@@ -332,6 +340,18 @@ var tools = []tool{
 				"id": {Type: "integer", Description: "Global message ID (the number from #NN)"},
 			},
 			Required: []string{"id"},
+		},
+	},
+	{
+		Name:        "bus_attachment_get",
+		Description: "Fetch an image attachment visible to this agent and return it as an MCP image content block for inline rendering. Use this before claiming to have seen or read an image attachment. The attachment must be referenced by a message in a room you are a member of. Optionally pass message_id to verify the attachment belongs to that message. Attachments are not exposed as MCP resources; use this tool instead.",
+		InputSchema: inputSchema{
+			Type: "object",
+			Properties: map[string]property{
+				"attachment_id": {Type: "string", Description: "Attachment UUID from message attachment metadata."},
+				"message_id":    {Type: "integer", Description: "Optional message ID that must contain this attachment."},
+			},
+			Required: []string{"attachment_id"},
 		},
 	},
 	{
@@ -550,7 +570,7 @@ func notRegisteredError(c *client.Client, toolName string) error {
 	return fmt.Errorf("%s", msg)
 }
 
-func handleToolCall(c *client.Client, name string, args json.RawMessage, heartbeatID *atomic.Pointer[string]) (string, error) {
+func handleToolCallText(c *client.Client, name string, args json.RawMessage, heartbeatID *atomic.Pointer[string]) (string, error) {
 	// All tools except bus_register require a registered identity.
 	if name != "bus_register" && name != "bus_agents" && c.AgentID == "" {
 		return "", notRegisteredError(c, name)
@@ -971,6 +991,67 @@ func handleToolCall(c *client.Client, name string, args json.RawMessage, heartbe
 	}
 }
 
+func handleToolCall(c *client.Client, name string, args json.RawMessage, heartbeatID *atomic.Pointer[string]) ([]contentBlock, error) {
+	if name == "bus_attachment_get" {
+		if c.AgentID == "" {
+			return nil, notRegisteredError(c, name)
+		}
+		var p struct {
+			AttachmentID string `json:"attachment_id"`
+			MessageID    int64  `json:"message_id"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		p.AttachmentID = strings.TrimSpace(p.AttachmentID)
+		if p.AttachmentID == "" {
+			return nil, fmt.Errorf("attachment_id is required")
+		}
+		attachment, err := c.Attachment(p.AttachmentID, p.MessageID)
+		if err != nil {
+			return nil, err
+		}
+		if attachment.Size > maxAttachmentImageBytes || len(attachment.Data) > maxAttachmentImageBytes {
+			return []contentBlock{{Type: "text", Text: attachmentSummary(attachment) + "\nError: attachment too large to return as MCP image content."}}, nil
+		}
+		if !isMCPImageMime(attachment.Mime) {
+			return []contentBlock{{Type: "text", Text: attachmentSummary(attachment) + "\nError: attachment mime is not a supported image type."}}, nil
+		}
+		return []contentBlock{
+			{Type: "text", Text: attachmentSummary(attachment)},
+			{Type: "image", Data: base64.StdEncoding.EncodeToString(attachment.Data), MimeType: attachment.Mime},
+		}, nil
+	}
+	result, err := handleToolCallText(c, name, args, heartbeatID)
+	if err != nil {
+		return nil, err
+	}
+	return []contentBlock{{Type: "text", Text: result}}, nil
+}
+
+const maxAttachmentImageBytes = 5 * 1024 * 1024
+
+func isMCPImageMime(mime string) bool {
+	switch mime {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func attachmentSummary(a client.AttachmentData) string {
+	name := a.Name
+	if name == "" {
+		name = a.ID
+	}
+	var dims string
+	if a.Width > 0 && a.Height > 0 {
+		dims = fmt.Sprintf(", %dx%d", a.Width, a.Height)
+	}
+	return fmt.Sprintf("Attachment %s (%s, %d bytes%s)", name, a.Mime, a.Size, dims)
+}
+
 // ── JSON-RPC dispatch ──────────────────────────────────────────────
 
 func handle(c *client.Client, req request, heartbeatID *atomic.Pointer[string]) *response {
@@ -1013,13 +1094,13 @@ func handle(c *client.Client, req request, heartbeatID *atomic.Pointer[string]) 
 			}
 		}
 
-		result, err := handleToolCall(c, params.Name, params.Arguments, heartbeatID)
+		content, err := handleToolCall(c, params.Name, params.Arguments, heartbeatID)
 		if err != nil {
 			return &response{
 				JSONRPC: "2.0",
 				ID:      req.ID,
 				Result: map[string]any{
-					"content": []textContent{{Type: "text", Text: "Error: " + err.Error()}},
+					"content": []contentBlock{{Type: "text", Text: "Error: " + err.Error()}},
 					"isError": true,
 				},
 			}
@@ -1057,7 +1138,11 @@ func handle(c *client.Client, req request, heartbeatID *atomic.Pointer[string]) 
 					} else {
 						footer = fmt.Sprintf("[you are %s, listening on: %s. call bus_wait to keep listening — do not return to the user unless they told you to stop.]", name, listening)
 					}
-					result += "\n" + footer
+					if len(content) > 0 && content[0].Type == "text" {
+						content[0].Text += "\n" + footer
+					} else {
+						content = append([]contentBlock{{Type: "text", Text: footer}}, content...)
+					}
 				}
 			}
 		}
@@ -1066,7 +1151,7 @@ func handle(c *client.Client, req request, heartbeatID *atomic.Pointer[string]) 
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"content": []textContent{{Type: "text", Text: result}},
+				"content": content,
 			},
 		}
 

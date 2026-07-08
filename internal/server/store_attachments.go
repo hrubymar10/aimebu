@@ -206,18 +206,29 @@ func (s *store) resolveAttachments(in []types.Attachment) ([]types.Attachment, e
 }
 
 func (s *store) attachmentReferenced(id string) bool {
+	return len(s.attachmentReferences(id)) > 0
+}
+
+type attachmentReference struct {
+	RoomID    string
+	MessageID int64
+}
+
+func (s *store) attachmentReferences(id string) []attachmentReference {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, roomMessages := range s.messages {
+	var refs []attachmentReference
+	for roomID, roomMessages := range s.messages {
 		for _, msg := range roomMessages {
 			for _, attachment := range msg.Attachments {
 				if attachment.ID == id {
-					return true
+					refs = append(refs, attachmentReference{RoomID: roomID, MessageID: msg.ID})
+					break
 				}
 			}
 		}
 	}
-	return false
+	return refs
 }
 
 func (s *store) deleteAttachment(id string) (bool, bool) {
@@ -300,4 +311,3 @@ func (s *store) cleanupAttachments(now time.Time) {
 		}
 	}
 }
-

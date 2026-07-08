@@ -1922,6 +1922,83 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		_, _ = w.Write(data)
 	})
 
+	mux.HandleFunc("GET /agents/{id}/attachments/{uuid}", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.PathValue("id")
+		uuid := r.PathValue("uuid")
+		if agentID == "" {
+			jsonError(w, "agent_id is required", http.StatusBadRequest)
+			return
+		}
+		if !validUUID(uuid) {
+			jsonError(w, "attachment not found", http.StatusNotFound)
+			return
+		}
+		entry, path, ok := s.attachmentFilePath(uuid)
+		if !ok {
+			jsonError(w, "attachment not found", http.StatusNotFound)
+			return
+		}
+
+		var messageID int64
+		if raw := strings.TrimSpace(r.URL.Query().Get("message_id")); raw != "" {
+			parsed, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || parsed <= 0 {
+				jsonError(w, "message_id must be a positive integer", http.StatusBadRequest)
+				return
+			}
+			messageID = parsed
+		}
+
+		refs := s.attachmentReferences(uuid)
+		if messageID > 0 {
+			filtered := refs[:0]
+			for _, ref := range refs {
+				if ref.MessageID == messageID {
+					filtered = append(filtered, ref)
+				}
+			}
+			refs = filtered
+		}
+		if len(refs) == 0 {
+			jsonError(w, "attachment not found", http.StatusNotFound)
+			return
+		}
+		authorized := false
+		for _, ref := range refs {
+			if s.isMember(ref.RoomID, agentID) {
+				authorized = true
+				break
+			}
+		}
+		if !authorized {
+			jsonError(w, "not_authorized", http.StatusForbidden)
+			return
+		}
+		if entry.Size > maxAttachmentFileSize {
+			jsonError(w, fmt.Sprintf("attachment too large (max %d MB)", maxAttachmentFileSize/1024/1024), http.StatusRequestEntityTooLarge)
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			jsonError(w, "attachment not found", http.StatusNotFound)
+			return
+		}
+		if len(data) > maxAttachmentFileSize {
+			jsonError(w, fmt.Sprintf("attachment too large (max %d MB)", maxAttachmentFileSize/1024/1024), http.StatusRequestEntityTooLarge)
+			return
+		}
+		w.Header().Set("Content-Type", entry.Mime)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Aimebu-Attachment-ID", entry.ID)
+		w.Header().Set("X-Aimebu-Attachment-Name", entry.Name)
+		w.Header().Set("X-Aimebu-Attachment-Mime", entry.Mime)
+		w.Header().Set("X-Aimebu-Attachment-Size", strconv.FormatInt(entry.Size, 10))
+		w.Header().Set("X-Aimebu-Attachment-Width", strconv.Itoa(entry.Width))
+		w.Header().Set("X-Aimebu-Attachment-Height", strconv.Itoa(entry.Height))
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, strings.ReplaceAll(entry.Name, `"`, "")))
+		_, _ = w.Write(data)
+	})
+
 	// ── User notification sounds ────────────────────────────────────
 
 	// GET /api/sounds — list bundled (built-in) + user-uploaded sounds.

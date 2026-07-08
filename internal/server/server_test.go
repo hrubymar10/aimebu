@@ -187,6 +187,36 @@ func TestAttachmentUploadSendRoundTripAndPersistence(t *testing.T) {
 	if got[0].Name != "screen.png" || got[0].Mime != "image/png" || got[0].Width != 7 || got[0].Height != 5 {
 		t.Fatalf("message used client metadata, got %+v", got[0])
 	}
+	if got[0].MCPHint != "" {
+		t.Fatalf("stored message attachment mcp_hint = %q, want empty", got[0].MCPHint)
+	}
+	withHint := s.withReactionSummaries([]types.Message{msgs[len(msgs)-1]}, agent.ID)
+	if len(withHint) != 1 || len(withHint[0].Attachments) != 1 || !strings.Contains(withHint[0].Attachments[0].MCPHint, "bus_attachment_get("+uploaded.ID+")") {
+		t.Fatalf("response attachment mcp_hint = %+v", withHint)
+	}
+	afterServe := s.messagesSince("general", 0)
+	if got := afterServe[len(afterServe)-1].Attachments[0].MCPHint; got != "" {
+		t.Fatalf("stored message attachment mcp_hint after serve = %q, want empty", got)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				decorated := s.withReactionSummaries([]types.Message{msgs[len(msgs)-1]}, agent.ID)
+				if len(decorated) != 1 || len(decorated[0].Attachments) != 1 || decorated[0].Attachments[0].MCPHint == "" {
+					t.Errorf("decorated attachment missing mcp_hint: %+v", decorated)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	afterConcurrentServe := s.messagesSince("general", 0)
+	if got := afterConcurrentServe[len(afterConcurrentServe)-1].Attachments[0].MCPHint; got != "" {
+		t.Fatalf("stored message attachment mcp_hint after concurrent serve = %q, want empty", got)
+	}
 
 	reloaded, err := newStore(s.dir)
 	if err != nil {
@@ -200,6 +230,86 @@ func TestAttachmentUploadSendRoundTripAndPersistence(t *testing.T) {
 		t.Fatalf("reloaded attachment registry missing %s", uploaded.ID)
 	} else if _, err := os.Stat(path); err != nil {
 		t.Fatalf("reloaded attachment file missing: %v", err)
+	}
+}
+
+func TestAuthorizedAttachmentEndpoint(t *testing.T) {
+	s, srv := setupTestServer(t)
+
+	alice, _, err := s.registerAI("gpt5", "codex", "test", nil, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, _, err := s.registerAI("gpt5", "codex", "test", nil, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("other", bob.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	uploaded, resp := uploadAttachment(t, srv, "screen.png", testPNG(t, 7, 5))
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("upload returned %d: %s", resp.StatusCode, body)
+	}
+	msgID, err := s.roomSend("general", alice.ID, "see image", false, nil, nil, []types.Attachment{{ID: uploaded.ID}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err = http.Get(fmt.Sprintf("%s/agents/%s/attachments/%s?message_id=%d", srv.URL, alice.ID, uploaded.ID, msgID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("authorized fetch returned %d: %s", resp.StatusCode, data)
+	}
+	if resp.Header.Get("Content-Type") != "image/png" || resp.Header.Get("X-Aimebu-Attachment-Name") != "screen.png" {
+		t.Fatalf("attachment headers: content-type=%q name=%q", resp.Header.Get("Content-Type"), resp.Header.Get("X-Aimebu-Attachment-Name"))
+	}
+	if len(data) == 0 {
+		t.Fatal("authorized fetch returned empty data")
+	}
+
+	resp, err = http.Get(fmt.Sprintf("%s/agents/%s/attachments/%s", srv.URL, bob.ID, uploaded.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "not_authorized") {
+		t.Fatalf("non-member fetch returned %d: %s", resp.StatusCode, body)
+	}
+
+	resp, err = http.Get(fmt.Sprintf("%s/agents/%s/attachments/%s?message_id=%d", srv.URL, alice.ID, uploaded.ID, msgID+1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("wrong message_id fetch returned %d: %s", resp.StatusCode, body)
+	}
+
+	unreferenced, err := s.addAttachment("orphan.png", "image/png", testPNG(t, 2, 2), 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err = http.Get(fmt.Sprintf("%s/agents/%s/attachments/%s", srv.URL, alice.ID, unreferenced.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unreferenced fetch returned %d: %s", resp.StatusCode, body)
 	}
 }
 

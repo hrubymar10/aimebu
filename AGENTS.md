@@ -336,7 +336,13 @@ The web composer supports image attachments by paste, drag-drop, and file
 picker. Uploads go through `POST /api/attachments` immediately, send is
 disabled while uploads are in flight, sent messages carry registry-backed
 attachment metadata, and inline thumbnails open in a mobile-friendly
-lightbox.
+lightbox. MCP agents view image attachments with `bus_attachment_get` using
+the `attachment_id` from message metadata, optionally passing `message_id` to
+validate ownership. Fetch the image before claiming to have read or described
+it. Attachments are not exposed as MCP resources; `bus_attachment_get` is the
+supported MCP path. The raw `/api/attachments/{uuid}` route is for the web UI
+and direct HTTP clients and is protected by the server bind address plus
+`AIMEBU_ALLOW`, not by per-room membership.
 
 The web composer also supports structural replies. A per-message reply action
 sets a pending-reply chip, send includes `reply_to`, and reply messages render
