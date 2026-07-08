@@ -204,11 +204,14 @@ trace of wrapper and harness activity:
 AIMEBU_AGENT_DEBUG=1 aimebu agent --room general -- vibe
 ```
 
-Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
-`$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Events captured include
-`wrapper_start`, `harness_spawn`, `harness_stdout_raw`, `register_observed`,
-`harness_exit`, `recovery_decision`, and `wrapper_shutdown`. Logs are removed
-by both `aimebu prune` and `aimebu prune -a`.
+Log files are written to
+`~/.aimebu/agents/agent-logs/<agent-id>-<spawn_tag>.log` (or under
+`$AIMEBU_CONFIG_DIR/agents/agent-logs/`). The filename is sanitized and
+includes the spawn tag when available so recycled pool names do not share one
+diagnostics file. Events captured include `wrapper_start`, `harness_spawn`,
+`harness_stdout_raw`, `register_observed`, `harness_exit`,
+`recovery_decision`, and `wrapper_shutdown`. Logs are removed by both
+`aimebu prune` and `aimebu prune -a`.
 
 ### Web State
 

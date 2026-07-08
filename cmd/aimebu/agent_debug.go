@@ -57,23 +57,45 @@ func agentDebugDir() string {
 	return filepath.Join(config.AgentsDir(), "agent-logs")
 }
 
-func agentDebugShortName(agentName string) string {
-	if idx := strings.IndexByte(agentName, '@'); idx >= 0 {
-		agentName = agentName[:idx]
+func agentDebugLogStem(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
 	}
-	return strings.TrimSpace(agentName)
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '@' || r == '-' || r == '_' || r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 func agentDebugLogPath(agentName, spawnTag string) string {
 	dir := agentDebugDir()
-	shortName := agentDebugShortName(agentName)
-	if shortName != "" {
-		return filepath.Join(dir, shortName+".log")
+	agentName = strings.TrimSpace(agentName)
+	if agentName != "" {
+		agentID := agentFullID(agentName)
+		if agentID == "" {
+			agentID = agentName
+		}
+		stem := agentDebugLogStem(agentID)
+		if tag := agentDebugLogStem(spawnTag); tag != "" {
+			stem += "-" + tag
+		}
+		return filepath.Join(dir, stem+".log")
 	}
 	if spawnTag == "" {
 		spawnTag = "unknown"
 	}
-	return filepath.Join(dir, "_pre-register-"+spawnTag+".log")
+	return filepath.Join(dir, "_pre-register-"+agentDebugLogStem(spawnTag)+".log")
 }
 
 func (l *agentDebugLog) close() error {

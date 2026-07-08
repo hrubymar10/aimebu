@@ -257,9 +257,10 @@ sandbox.
 
 Registration confirmation is server-authoritative: the wrapper polls the
 aimebu server for the injected `spawn_tag` and promotes the debug log from
-`_pre-register-<spawn_tag>.log` to `<name>.log` as soon as that registration
-is observed. If pi reports `Request timed out` before registration is
-observed, debug logs classify it as `model_turn_timeout` and the
+`_pre-register-<spawn_tag>.log` to an identity-keyed
+`<agent-id>-<spawn_tag>.log` as soon as that registration is observed. If pi
+reports `Request timed out` before registration is observed, debug logs
+classify it as `model_turn_timeout` and the
 process-per-turn wrapper retries the bootstrap turn once before giving up. If
 registration was already observed but the turn later times out or fails before
 producing a resumable session ID, it is classified as
@@ -283,12 +284,15 @@ trace of wrapper and harness activity:
 AIMEBU_AGENT_DEBUG=1 aimebu agent --room general -- pi
 ```
 
-Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
-`$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Events captured include
-`wrapper_start`, `harness_spawn`, `harness_stdout_raw`, `session_id_parsed`,
-`register_observed`, `harness_exit`, `heartbeat`,
-`bootstrap_failure_classified`, `recovery_decision`, and `wrapper_shutdown`.
-Logs are removed by both `aimebu prune` and `aimebu prune -a`.
+Log files are written to
+`~/.aimebu/agents/agent-logs/<agent-id>-<spawn_tag>.log` (or under
+`$AIMEBU_CONFIG_DIR/agents/agent-logs/`). The filename is sanitized and
+includes the spawn tag when available so recycled pool names do not share one
+diagnostics file. Events captured include `wrapper_start`, `harness_spawn`,
+`harness_stdout_raw`, `session_id_parsed`, `register_observed`,
+`harness_exit`, `heartbeat`, `bootstrap_failure_classified`,
+`recovery_decision`, and `wrapper_shutdown`. Logs are removed by both
+`aimebu prune` and `aimebu prune -a`.
 
 ### Web state
 

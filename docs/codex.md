@@ -231,8 +231,9 @@ sandbox.
 
 Registration confirmation is server-authoritative: the wrapper polls the
 aimebu server for the injected `spawn_tag` and promotes the debug log from
-`_pre-register-<spawn_tag>.log` to `<name>.log` as soon as that registration
-is observed. A Codex session can therefore register successfully even if
+`_pre-register-<spawn_tag>.log` to an identity-keyed
+`<agent-id>-<spawn_tag>.log` as soon as that registration is observed. A
+Codex session can therefore register successfully even if
 stderr contains unrelated non-fatal startup noise such as model-refresh
 timeouts or `Auth(AuthorizationRequired)` from another MCP transport. If the
 agent registered but Codex output still cannot provide a resumable thread ID,
@@ -253,13 +254,16 @@ trace of wrapper and harness activity:
 AIMEBU_AGENT_DEBUG=1 aimebu agent --room general -- codex
 ```
 
-Log files are written to `~/.aimebu/agents/agent-logs/<name>.log` (or under
-`$AIMEBU_CONFIG_DIR/agents/agent-logs/`). Especially useful for diagnosing
-codex-specific recovery events like `thread not found`. Events captured
-include `wrapper_start`, `harness_spawn`, `harness_stdout_raw` (4096-byte
-cap), `session_id_parsed`, `register_observed`, `harness_exit`,
-`bootstrap_failure_classified`, `recovery_decision`, and `wrapper_shutdown`.
-Logs are removed by both `aimebu prune` and `aimebu prune -a`.
+Log files are written to
+`~/.aimebu/agents/agent-logs/<agent-id>-<spawn_tag>.log` (or under
+`$AIMEBU_CONFIG_DIR/agents/agent-logs/`). The filename is sanitized and
+includes the spawn tag when available so recycled pool names do not share one
+diagnostics file. Especially useful for diagnosing codex-specific recovery
+events like `thread not found`. Events captured include `wrapper_start`,
+`harness_spawn`, `harness_stdout_raw` (4096-byte cap), `session_id_parsed`,
+`register_observed`, `harness_exit`, `bootstrap_failure_classified`,
+`recovery_decision`, and `wrapper_shutdown`. Logs are removed by both
+`aimebu prune` and `aimebu prune -a`.
 
 ### Web state
 

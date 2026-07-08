@@ -723,7 +723,7 @@ troubleshooting.
 │   ├── agent-sessions.json # `aimebu agent` session-state for resume (conversation state)
 │   ├── agent-warning-acknowledged # First-run warning acknowledgement marker (user setting)
 │   └── agent-logs/         # per-agent JSONL debug logs (runtime artifact, opt-in via AIMEBU_AGENT_DEBUG)
-│       └── <name>.log      # one file per agent name; pre-register: _pre-register-<spawn_tag>.log
+│       └── <agent-id>-<spawn_tag>.log # pre-register: _pre-register-<spawn_tag>.log
 └── usages/                  # provider usage state
     ├── config.json          # refresh interval, percent display, provider order, enabled flags, provider secrets (0600)
     ├── cache.json           # last successful snapshots, no secrets (0644)
@@ -781,13 +781,16 @@ and harness behaviour. Enable it by setting `AIMEBU_AGENT_DEBUG=1` (or
 AIMEBU_AGENT_DEBUG=1 aimebu agent --room general -- claude
 ```
 
-One JSONL file is written per agent name under
-`agents/agent-logs/<name>.log` in the aimebu config dir (default
-`~/.aimebu/agents/agent-logs/<name>.log`). Before the agent registers and
-gets a name, events go to `_pre-register-<spawn_tag>.log` in the same
-directory; that file is merged into `<name>.log` once registration is
-observed through the server-side spawn-tag lookup. If a `_pre-register` file
-remains, the wrapper never observed server-side registration; check
+One JSONL file is written per registered agent identity under
+`agents/agent-logs/<agent-id>-<spawn_tag>.log` in the aimebu config dir
+(default `~/.aimebu/agents/agent-logs/<agent-id>-<spawn_tag>.log`). The
+filename is sanitized for the filesystem and includes the spawn tag when
+available so recycled pool names do not share one diagnostics file. Before
+the agent registers and gets a name, events go to
+`_pre-register-<spawn_tag>.log` in the same directory; that file is merged
+into the identity-keyed log once registration is observed through the
+server-side spawn-tag lookup. If a `_pre-register` file remains, the wrapper
+never observed server-side registration; check
 `bootstrap_failure_classified` for the narrower failure class.
 
 Events captured: `wrapper_start`, `harness_spawn`, `harness_stdout_raw`

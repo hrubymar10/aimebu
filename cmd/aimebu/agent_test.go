@@ -925,7 +925,7 @@ func TestAgentDebugLogRenamesPreRegisterFile(t *testing.T) {
 	}
 	debug.log("wrapper_start", map[string]any{"resume_mode": "bootstrap"})
 
-	finalPath := filepath.Join(dir, "agents", "agent-logs", "worker.log")
+	finalPath := filepath.Join(dir, "agents", "agent-logs", "worker@aimebu-feedbeefcafebabe.log")
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1013,7 +1013,7 @@ func TestAgentBootstrapSessionDebugLogging(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	logPath := filepath.Join(dir, "agents", "agent-logs", "worker.log")
+	logPath := filepath.Join(dir, "agents", "agent-logs", "worker@aimebu-abc123def4567890.log")
 	records := readAgentDebugRecords(t, logPath)
 	events := debugEventNames(records)
 	wantSequence := []string{"wrapper_start", "harness_spawn", "harness_stdout_raw", "harness_exit", "session_id_parsed"}
@@ -1089,7 +1089,7 @@ func TestAgentBootstrapSessionPromotesLogBeforeSessionParseFailure(t *testing.T)
 		t.Fatalf("agentID = %q, want worker@aimebu", agentID)
 	}
 
-	finalPath := filepath.Join(dir, "agents", "agent-logs", "worker.log")
+	finalPath := filepath.Join(dir, "agents", "agent-logs", "worker@aimebu-parsefail12345678.log")
 	if _, err := os.Stat(finalPath); err != nil {
 		t.Fatalf("expected promoted debug log %s: %v", finalPath, err)
 	}
@@ -1150,7 +1150,7 @@ func TestAgentBootstrapSessionClassifiesPiTimeoutAfterRegistration(t *testing.T)
 	if agentID != "piper@aimebu" {
 		t.Fatalf("agentID = %q, want piper@aimebu", agentID)
 	}
-	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "piper.log"))
+	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "piper@aimebu-pitimeout1234567.log"))
 	classified := firstDebugEvent(records, "bootstrap_failure_classified")
 	if classified == nil {
 		t.Fatalf("expected bootstrap_failure_classified event in %#v", records)
@@ -1227,7 +1227,7 @@ fi
 	if agentID != "piper@aimebu" {
 		t.Fatalf("agentID = %q, want piper@aimebu", agentID)
 	}
-	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "piper.log"))
+	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "piper@aimebu-piretry123456789.log"))
 	retry := firstDebugEvent(records, "bootstrap_retry")
 	if retry == nil {
 		t.Fatalf("expected bootstrap_retry event in %#v", records)
@@ -1280,7 +1280,7 @@ func TestAgentBootstrapSessionPromotesLogBeforeChildFailure(t *testing.T) {
 	if agentID != "worker@aimebu" {
 		t.Fatalf("agentID = %q, want worker@aimebu", agentID)
 	}
-	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "worker.log"))
+	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "worker@aimebu-childfail1234567.log"))
 	classified := firstDebugEvent(records, "bootstrap_failure_classified")
 	if classified == nil {
 		t.Fatalf("expected bootstrap_failure_classified event in %#v", records)
@@ -1853,7 +1853,7 @@ func TestAgentDebugLogsResumeFailureEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	logPath := filepath.Join(dir, "agents", "agent-logs", "worker.log")
+	logPath := filepath.Join(dir, "agents", "agent-logs", "worker@aimebu-resumetag.log")
 	records := readAgentDebugRecords(t, logPath)
 	events := debugEventNames(records)
 
