@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -161,7 +162,9 @@ func detectClaudeCodeVersion() string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, "--allowed-tools", "", "--version").CombinedOutput()
+	cmd := exec.CommandContext(ctx, path, "--allowed-tools", "", "--version")
+	cmd.Env = append(os.Environ(), "DISABLE_AUTOUPDATER=1")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return ""
 	}
@@ -181,6 +184,7 @@ type claudeUsageRaw struct {
 	SevenDayOAuthApps *claudeWindowRaw     `json:"seven_day_oauth_apps"`
 	SevenDayOpus      *claudeWindowRaw     `json:"seven_day_opus"`
 	SevenDaySonnet    *claudeWindowRaw     `json:"seven_day_sonnet"`
+	Limits            []claudeLimitRaw     `json:"limits"`
 	ExtraUsage        *claudeExtraUsageRaw `json:"extra_usage"`
 }
 
@@ -195,6 +199,24 @@ type claudeExtraUsageRaw struct {
 	MonthlyLimit *float64 `json:"monthly_limit"`
 	Utilization  *float64 `json:"utilization"`
 	Currency     string   `json:"currency"`
+}
+
+type claudeLimitRaw struct {
+	Kind     string              `json:"kind"`
+	Group    string              `json:"group"`
+	Percent  *float64            `json:"percent"`
+	ResetsAt string              `json:"resets_at"`
+	Scope    claudeLimitScopeRaw `json:"scope"`
+	IsActive *bool               `json:"is_active"`
+}
+
+type claudeLimitScopeRaw struct {
+	Model *claudeLimitModelRaw `json:"model"`
+}
+
+type claudeLimitModelRaw struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
 }
 
 func fetchClaudeUsage(ctx context.Context, creds claudeCredentials) (claudeUsageRaw, *ErrorDetail, Status, bool, error) {
@@ -245,6 +267,11 @@ func fetchClaudeUsageOnce(ctx context.Context, creds claudeCredentials) (claudeU
 func (raw claudeUsageRaw) hasValues() bool {
 	for _, w := range []*claudeWindowRaw{raw.FiveHour, raw.SevenDay, raw.SevenDayOAuthApps, raw.SevenDayOpus, raw.SevenDaySonnet} {
 		if w != nil && w.Utilization != nil {
+			return true
+		}
+	}
+	for _, limit := range raw.Limits {
+		if limit.Kind == "weekly_scoped" && limit.Group == "weekly" && limit.Percent != nil {
 			return true
 		}
 	}
@@ -299,7 +326,8 @@ func normalizeClaudeUsage(raw claudeUsageRaw, creds claudeCredentials) (Snapshot
 	addWindow("weekly", weeklyPath, weeklyWindow)
 	addWindow("weekly_opus", "seven_day_opus", raw.SevenDayOpus)
 	addWindow("weekly_sonnet", "seven_day_sonnet", raw.SevenDaySonnet)
-	ordered := orderWindows(windows, []string{"session", "weekly", "weekly_opus", "weekly_sonnet"})
+	windows = append(windows, claudeScopedWeeklyWindows(raw.Limits, detail)...)
+	ordered := orderWindows(windows, append([]string{"session", "weekly", "weekly_opus", "weekly_sonnet"}, claudeScopedWeeklyOrder(windows)...))
 	snap := Snapshot{
 		Provider: ProviderClaudeCode,
 		Status:   StatusOK,
@@ -322,6 +350,85 @@ func normalizeClaudeUsage(raw claudeUsageRaw, creds claudeCredentials) (Snapshot
 		return Snapshot{}, detailOrNil(detail), errors.New("Claude usage response did not include recognized rate-limit windows.")
 	}
 	return snap, detailOrNil(detail), nil
+}
+
+func claudeScopedWeeklyWindows(limits []claudeLimitRaw, detail *ErrorDetail) []Window {
+	if len(limits) == 0 {
+		return nil
+	}
+	out := make([]Window, 0)
+	seen := map[string]bool{}
+	for i, limit := range limits {
+		if limit.Kind != "weekly_scoped" || limit.Group != "weekly" {
+			continue
+		}
+		path := fmt.Sprintf("limits.%d", i)
+		if limit.Percent == nil {
+			detail.Fields[path+".percent"] = "missing"
+			continue
+		}
+		if math.IsNaN(*limit.Percent) || math.IsInf(*limit.Percent, 0) {
+			detail.Fields[path+".percent"] = "number_out_of_range"
+			continue
+		}
+		if limit.Scope.Model == nil {
+			detail.Fields[path+".scope.model"] = "missing"
+			continue
+		}
+		modelName := strings.TrimSpace(limit.Scope.Model.DisplayName)
+		if modelName == "" {
+			detail.Fields[path+".scope.model.display_name"] = "missing"
+			continue
+		}
+		slug := claudeScopedWeeklySlug(firstNonEmpty(limit.Scope.Model.ID, modelName))
+		if slug == "" {
+			detail.Fields[path+".scope.model"] = "invalid"
+			continue
+		}
+		key := "weekly_scoped:" + slug
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		var reset *time.Time
+		if strings.TrimSpace(limit.ResetsAt) != "" {
+			t, ok := parseClaudeTime(limit.ResetsAt)
+			if !ok {
+				detail.Fields[path+".resets_at"] = "string"
+			} else {
+				reset = &t
+			}
+		}
+		win := Window{Key: key, PercentUsed: *limit.Percent, ResetAt: reset, WindowDurationSeconds: 7 * 24 * 3600}
+		win.Pace = computeWindowPace(win, time.Now())
+		out = append(out, win)
+	}
+	return out
+}
+
+func claudeScopedWeeklySlug(value string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(value) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+		} else if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func claudeScopedWeeklyOrder(windows []Window) []string {
+	keys := make([]string, 0)
+	for _, w := range windows {
+		if strings.HasPrefix(w.Key, "weekly_scoped:") {
+			keys = append(keys, w.Key)
+		}
+	}
+	return keys
 }
 
 func claudeExtraUsageAmount(value float64) float64 {

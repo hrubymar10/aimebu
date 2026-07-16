@@ -22,6 +22,7 @@ const (
 	mistralAdminMeURL          = "https://admin.mistral.ai/api/users/me"
 	mistralAdminOrigin         = "https://admin.mistral.ai"
 	mistralAdminReferer        = "https://admin.mistral.ai/organization/usage"
+	mistralMaxCreditAmount     = 1e12
 )
 
 var mistralHTTPClient = newUsageHTTPClient()
@@ -375,7 +376,7 @@ func normalizeMistralSpend(raw mistralBillingResponse) (*Credits, bool) {
 			spend += cost
 		}
 	}
-	if spend <= 0 {
+	if spend <= 0 || !validMistralCreditAmount(spend) {
 		return nil, false
 	}
 	currency := strings.TrimSpace(raw.Currency)
@@ -458,7 +459,7 @@ func mistralPriceIndex(prices []mistralPrice) map[string]float64 {
 			continue
 		}
 		value, err := strconv.ParseFloat(price.Price, 64)
-		if err != nil {
+		if err != nil || !validMistralCreditAmount(value) {
 			continue
 		}
 		index[price.BillingMetric+"::"+price.BillingGroup] = value
@@ -477,7 +478,11 @@ func aggregateMistralModel(model mistralModelUsageData, prices map[string]float6
 			}
 			tokens += value
 			if entry.BillingMetric != "" && entry.BillingGroup != "" {
-				total += float64(value) * prices[entry.BillingMetric+"::"+entry.BillingGroup]
+				cost := float64(value) * prices[entry.BillingMetric+"::"+entry.BillingGroup]
+				if !validMistralCreditAmount(cost) {
+					return tokens, math.NaN()
+				}
+				total += cost
 			}
 		}
 		return tokens, total
@@ -490,6 +495,10 @@ func aggregateMistralModel(model mistralModelUsageData, prices map[string]float6
 	cached, c = add(model.Cached)
 	cost += c
 	return input, output, cached, cost
+}
+
+func validMistralCreditAmount(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= mistralMaxCreditAmount
 }
 
 func mistralStatus(status Status, message string, detail *ErrorDetail) Snapshot {

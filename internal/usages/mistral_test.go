@@ -149,6 +149,36 @@ func TestNormalizeMistralSpendSkipsZeroSpend(t *testing.T) {
 	}
 }
 
+func TestNormalizeMistralSpendRejectsMalformedBalances(t *testing.T) {
+	cases := []struct {
+		name  string
+		price string
+		value int
+	}{
+		{"nan price", "NaN", 1000},
+		{"infinite price", "+Inf", 1000},
+		{"huge total", "1000000000000", 1000000000000},
+		{"negative total", "0.01", -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := mistralBillingResponse{
+				Currency: "EUR",
+				Prices:   []mistralPrice{{BillingMetric: "input_tokens", BillingGroup: "mistral-large", Price: tc.price}},
+				Completion: &mistralModelUsageCategory{Models: map[string]mistralModelUsageData{
+					"mistral-large": {
+						Input: []mistralUsageEntry{{BillingMetric: "input_tokens", BillingGroup: "mistral-large", Value: tc.value}},
+					},
+				}},
+			}
+			credits, ok := normalizeMistralSpend(raw)
+			if ok || credits != nil {
+				t.Fatalf("credits = %#v ok=%v", credits, ok)
+			}
+		})
+	}
+}
+
 func TestSetMistralConfig(t *testing.T) {
 	store := NewStoreAt(t.TempDir())
 	m := NewManager(store, EmptyRegistry())

@@ -2,6 +2,7 @@ package usages
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -51,6 +52,10 @@ func TestClaudeCodeUAVersionFromCLI(t *testing.T) {
 if [ "$1" != "--allowed-tools" ] || [ "$2" != "" ] || [ "$3" != "--version" ]; then
   echo "unexpected args: $*" >&2
   exit 7
+fi
+if [ "$DISABLE_AUTOUPDATER" != "1" ]; then
+  echo "DISABLE_AUTOUPDATER=$DISABLE_AUTOUPDATER" >&2
+  exit 8
 fi
 printf '\033[32m2.3.4 (Claude Code)\033[0m\nignored\n'
 `), 0o755); err != nil {
@@ -160,6 +165,26 @@ func TestClaudeUsageRetriesEmptyValuesOnce(t *testing.T) {
 		t.Fatalf("calls = %d, want 2", calls)
 	}
 	if raw.FiveHour == nil || raw.FiveHour.Utilization == nil || *raw.FiveHour.Utilization != 4 {
+		t.Fatalf("raw = %+v", raw)
+	}
+}
+
+func TestClaudeUsageTreatsScopedLimitsAsValues(t *testing.T) {
+	resetClaudeCodeVersionCache(t)
+	t.Setenv("PATH", t.TempDir())
+	calls := 0
+	withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
+		calls++
+		return httpJSON(200, `{"limits":[{"kind":"weekly_scoped","group":"weekly","percent":5,"resets_at":"2030-01-07T00:00:00Z","scope":{"model":{"display_name":"Fable"}}}]}`), nil
+	})
+	raw, _, _, _, err := fetchClaudeUsage(context.Background(), claudeCredentials{AccessToken: "access-secret"})
+	if err != nil {
+		t.Fatalf("fetchClaudeUsage: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+	if len(raw.Limits) != 1 || raw.Limits[0].Percent == nil || *raw.Limits[0].Percent != 5 {
 		t.Fatalf("raw = %+v", raw)
 	}
 }
@@ -313,6 +338,62 @@ func TestNormalizeClaudeUsageDetailsMissingWeeklyFallback(t *testing.T) {
 		t.Fatalf("windows = %+v", snap.Windows)
 	}
 	if detail == nil || detail.Fields["seven_day"] != "missing" || detail.Fields["seven_day_oauth_apps"] != "missing" {
+		t.Fatalf("detail = %+v", detail)
+	}
+}
+
+func TestNormalizeClaudeUsageIncludesScopedWeeklyLimits(t *testing.T) {
+	session := 12.0
+	weekly := 34.0
+	fable := 5.0
+	teamResearch := 8.0
+	inactive := false
+	snap, detail, err := normalizeClaudeUsage(claudeUsageRaw{
+		FiveHour: &claudeWindowRaw{Utilization: &session, ResetsAt: "2030-01-01T00:00:00Z"},
+		SevenDay: &claudeWindowRaw{Utilization: &weekly, ResetsAt: "2030-01-07T00:00:00Z"},
+		Limits: []claudeLimitRaw{
+			{Kind: "session", Group: "session", Percent: &session, ResetsAt: "2030-01-01T00:00:00Z", IsActive: &inactive},
+			{Kind: "weekly_scoped", Group: "weekly", Percent: &fable, ResetsAt: "2030-01-07T00:00:00Z", Scope: claudeLimitScopeRaw{Model: &claudeLimitModelRaw{DisplayName: "Fable"}}, IsActive: &inactive},
+			{Kind: "weekly_scoped", Group: "weekly", Percent: &teamResearch, ResetsAt: "2030-01-07T00:00:00Z", Scope: claudeLimitScopeRaw{Model: &claudeLimitModelRaw{ID: "team/research", DisplayName: "Team Research"}}, IsActive: &inactive},
+		},
+	}, claudeCredentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail != nil {
+		t.Fatalf("detail = %+v", detail)
+	}
+	gotKeys := make([]string, 0, len(snap.Windows))
+	for _, w := range snap.Windows {
+		gotKeys = append(gotKeys, w.Key)
+	}
+	wantKeys := []string{"session", "weekly", "weekly_scoped:fable", "weekly_scoped:team-research"}
+	if !reflect.DeepEqual(gotKeys, wantKeys) {
+		t.Fatalf("keys = %v, want %v", gotKeys, wantKeys)
+	}
+	if snap.Windows[2].PercentUsed != 5 || snap.Windows[2].WindowDurationSeconds != 7*24*3600 {
+		t.Fatalf("fable window = %+v", snap.Windows[2])
+	}
+}
+
+func TestNormalizeClaudeUsageIgnoresMalformedScopedWeeklyLimits(t *testing.T) {
+	session := 12.0
+	bad := math.NaN()
+	snap, detail, err := normalizeClaudeUsage(claudeUsageRaw{
+		FiveHour: &claudeWindowRaw{Utilization: &session, ResetsAt: "2030-01-01T00:00:00Z"},
+		Limits: []claudeLimitRaw{
+			{Kind: "weekly_scoped", Group: "weekly", Percent: &bad, Scope: claudeLimitScopeRaw{Model: &claudeLimitModelRaw{DisplayName: "Fable"}}},
+			{Kind: "weekly_scoped", Group: "weekly", Percent: &session, Scope: claudeLimitScopeRaw{}},
+			{Kind: "weekly_scoped", Group: "monthly", Percent: &session, Scope: claudeLimitScopeRaw{Model: &claudeLimitModelRaw{DisplayName: "Ignored"}}},
+		},
+	}, claudeCredentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Windows) != 1 || snap.Windows[0].Key != "session" {
+		t.Fatalf("windows = %+v", snap.Windows)
+	}
+	if detail == nil || detail.Fields["limits.0.percent"] != "number_out_of_range" || detail.Fields["limits.1.scope.model"] != "missing" {
 		t.Fatalf("detail = %+v", detail)
 	}
 }

@@ -2948,6 +2948,9 @@
     if (key === 'weekly') return 'Weekly';
     if (key === 'weekly_opus') return 'Weekly (Opus)';
     if (key === 'weekly_sonnet') return 'Weekly (Sonnet)';
+    if (String(key || '').indexOf('weekly_scoped:') === 0) {
+      return 'Weekly (' + key.slice('weekly_scoped:'.length).replace(/-/g, ' ') + ')';
+    }
     if (key === 'codex_spark') return 'Codex Spark';
     if (key === 'codex_spark_weekly') return 'Codex Spark Weekly';
     if (key === 'premium') return 'Premium interactions';

@@ -41,7 +41,9 @@ When a pasted header contains multiple recognized Ollama session cookies,
 aimebu tries the full header first, then retries distinct session-cookie
 candidates before treating a signed-out settings page as an expired login.
 This helps with browser headers that contain both stale and current session
-cookies.
+cookies. Current WorkOS AuthKit cookies such as `wos-session` are recognized,
+and redirects to Ollama or WorkOS sign-in pages are treated as expired
+credentials rather than as settings-page parser drift.
 
 If credentials expire or are rejected, Ollama Cloud snapshots show
 `auth_missing`. Paste a fresh Cookie header or API key to resume updates.

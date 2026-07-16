@@ -106,7 +106,10 @@ aimebu falls back to its bundled Claude Code version string.
 Claude Code can be enabled from Settings → Usages. The same normalized
 snapshot is shown in the web Usages sidebar and in
 `aimebu usages claude-code --json`, including the distinct weekly Opus and
-Sonnet windows when Claude returns them.
+Sonnet windows when Claude returns them. When Claude's OAuth endpoint returns
+model-scoped weekly limits through `limits[]`, aimebu also shows those
+windows, keyed as `weekly_scoped:<model>`, so new model carve-outs are not
+dropped while the all-model weekly window remains visible.
 
 Common failure states:
 

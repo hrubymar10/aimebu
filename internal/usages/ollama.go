@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -50,7 +51,7 @@ var (
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaResetAnchor = regexp.MustCompile(`data-time=["']([^"']+)["']`)
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
-	ollamaSignedOutAnchor = regexp.MustCompile(`(?is)(sign in to ollama|log in to ollama|/auth/login|/auth/signin)`)
+	ollamaSignedOutAnchor = regexp.MustCompile(`(?is)(sign in to ollama|log in to ollama|/auth/login|/auth/signin|/signin)`)
 
 	ollamaHTTPClient = newUsageHTTPClient()
 )
@@ -263,7 +264,7 @@ func stripWrappingCookieQuotes(value string) string {
 
 func isOllamaSessionCookieName(name string) bool {
 	switch name {
-	case "session", "__Secure-session", "ollama_session", "__Host-ollama_session", "__Secure-next-auth.session-token", "next-auth.session-token":
+	case "session", "__Secure-session", "ollama_session", "__Host-ollama_session", "wos-session", "__Secure-next-auth.session-token", "next-auth.session-token":
 		return true
 	}
 	return strings.HasPrefix(name, "__Secure-next-auth.session-token.") ||
@@ -352,6 +353,10 @@ func fetchOllamaSettingsHTML(ctx context.Context, cookie string) ([]byte, *Error
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
+	case resp.StatusCode == http.StatusOK && isOllamaSignInRedirect(responseFinalURL(resp)):
+		return nil, fieldDetail("settings", "signin_redirect"), StatusAuthMissing, errors.New("Ollama Cloud settings page requires sign in.")
+	case resp.StatusCode == http.StatusOK && isUsageCrossOriginRedirect(resp, ollamaSettingsURL):
+		return nil, fieldDetail("settings", "cross_origin_redirect"), StatusAuthMissing, errors.New("Ollama Cloud settings page requires sign in.")
 	case resp.StatusCode == http.StatusOK:
 		return data, nil, "", nil
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
@@ -376,9 +381,13 @@ func fetchOllamaTags(ctx context.Context, apiKey string) ([]byte, *ErrorDetail, 
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
+	case resp.StatusCode == http.StatusOK && isOllamaSignInRedirect(responseFinalURL(resp)):
+		return nil, fieldDetail("tags", "signin_redirect"), StatusAuthMissing, errors.New("Ollama Cloud API key was rejected or revoked.")
+	case resp.StatusCode == http.StatusOK && isUsageCrossOriginRedirect(resp, ollamaTagsURL):
+		return nil, fieldDetail("tags", "cross_origin_redirect"), StatusAuthMissing, errors.New("Ollama Cloud API key was rejected or revoked.")
 	case resp.StatusCode == http.StatusOK:
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return nil, jsonShapeDetail("tags", data), StatusAuthMissing, errors.New("Ollama Cloud API key was rejected.")
+		return nil, jsonShapeDetail("tags", data), StatusAuthMissing, errors.New("Ollama Cloud API key was rejected or revoked.")
 	default:
 		return nil, jsonShapeDetail("tags", data), StatusFetchError, fmt.Errorf("Ollama Cloud API endpoint returned HTTP %d.", resp.StatusCode)
 	}
@@ -389,6 +398,43 @@ func fetchOllamaTags(ctx context.Context, apiKey string) ([]byte, *ErrorDetail, 
 		return nil, jsonShapeDetail("tags", data), StatusFetchError, errors.New("Ollama Cloud API response could not be decoded.")
 	}
 	return data, nil, "", nil
+}
+
+func responseFinalURL(resp *http.Response) *url.URL {
+	if resp == nil || resp.Request == nil {
+		return nil
+	}
+	return resp.Request.URL
+}
+
+func isUsageCrossOriginRedirect(resp *http.Response, expectedRawURL string) bool {
+	finalURL := responseFinalURL(resp)
+	if finalURL == nil {
+		return false
+	}
+	expected, err := url.Parse(expectedRawURL)
+	if err != nil {
+		return false
+	}
+	return !strings.EqualFold(finalURL.Scheme, expected.Scheme) || !strings.EqualFold(finalURL.Host, expected.Host)
+}
+
+func isOllamaSignInRedirect(u *url.URL) bool {
+	if u == nil || !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	path := strings.ToLower(u.EscapedPath())
+	switch {
+	case (host == "ollama.com" || host == "www.ollama.com") && path == "/signin":
+		return true
+	case host == "signin.ollama.com":
+		return true
+	case strings.HasSuffix(host, ".workos.com") && strings.HasPrefix(path, "/user_management/authorize"):
+		return true
+	default:
+		return false
+	}
 }
 
 func parseOllamaSettingsHTML(data []byte) (Snapshot, *ErrorDetail, error) {

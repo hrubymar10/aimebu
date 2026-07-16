@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -21,6 +22,7 @@ func TestParseOllamaCookieInput(t *testing.T) {
 		{"curl header", "curl 'https://ollama.com/settings' -H 'Cookie: session=abc; foo=bar'", "foo=bar; session=abc"},
 		{"curl cookie", "curl --cookie 'ollama_session=abc; foo=bar'", "foo=bar; ollama_session=abc"},
 		{"curl b", "curl -b \"__Host-ollama_session=abc; foo=bar\"", "__Host-ollama_session=abc; foo=bar"},
+		{"workos", "wos-session=abc; foo=bar", "foo=bar; wos-session=abc"},
 		{"quoted blob", "'next-auth.session-token=abc; foo=bar'", "foo=bar; next-auth.session-token=abc"},
 		{"chunked", "next-auth.session-token.0=abc; next-auth.session-token.1=def", "next-auth.session-token.0=abc; next-auth.session-token.1=def"},
 		{"whitespace", " \n Cookie: session=abc ; foo=bar \n ", "foo=bar; session=abc"},
@@ -354,6 +356,52 @@ func TestOllamaFetchRequestAndStatusMapping(t *testing.T) {
 	}
 }
 
+func TestOllamaSettingsDetectsSignInRedirect(t *testing.T) {
+	old := ollamaHTTPClient
+	defer func() { ollamaHTTPClient = old }()
+	finalURL := mustParseURL(t, "https://signin.ollama.com/?client_id=test")
+	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`<html><body>Sign in</body></html>`)),
+			Header:     http.Header{},
+			Request:    &http.Request{URL: finalURL},
+		}, nil
+	})}
+
+	_, detail, status, err := fetchOllamaSettingsHTML(context.Background(), "wos-session=expired")
+	if err == nil || status != StatusAuthMissing {
+		t.Fatalf("status=%s err=%v, want auth_missing", status, err)
+	}
+	if detail == nil || detail.Fields["settings"] != "signin_redirect" {
+		t.Fatalf("detail = %#v", detail)
+	}
+}
+
+func TestOllamaSignInRedirectMatcher(t *testing.T) {
+	for _, raw := range []string{
+		"https://ollama.com/signin",
+		"https://www.ollama.com/signin",
+		"https://signin.ollama.com/?client_id=test",
+		"https://auth.workos.com/user_management/authorize?client_id=test",
+		"https://api.workos.com/user_management/authorize?client_id=test",
+	} {
+		if !isOllamaSignInRedirect(mustParseURL(t, raw)) {
+			t.Fatalf("%s was not recognized as sign-in redirect", raw)
+		}
+	}
+	for _, raw := range []string{
+		"https://ollama.com/settings",
+		"http://ollama.com/signin",
+		"https://api.workos.com/other",
+		"https://example.com/user_management/authorize",
+	} {
+		if isOllamaSignInRedirect(mustParseURL(t, raw)) {
+			t.Fatalf("%s was incorrectly recognized as sign-in redirect", raw)
+		}
+	}
+}
+
 func TestOllamaSettingsRequestTimeout(t *testing.T) {
 	old := ollamaHTTPClient
 	defer func() { ollamaHTTPClient = old }()
@@ -396,6 +444,50 @@ func TestOllamaAPIKeyFetchRequestAndStatusMapping(t *testing.T) {
 		if err == nil || got != want {
 			t.Fatalf("status %d => got status=%s err=%v, want %s", code, got, err, want)
 		}
+	}
+}
+
+func TestOllamaAPIKeyDetectsSignInRedirect(t *testing.T) {
+	old := ollamaHTTPClient
+	defer func() { ollamaHTTPClient = old }()
+	finalURL := mustParseURL(t, "https://auth.workos.com/user_management/authorize?client_id=test")
+	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"models":[{}]}`)),
+			Header:     http.Header{},
+			Request:    &http.Request{URL: finalURL},
+		}, nil
+	})}
+
+	_, detail, status, err := fetchOllamaTags(context.Background(), "api-secret")
+	if err == nil || status != StatusAuthMissing {
+		t.Fatalf("status=%s err=%v, want auth_missing", status, err)
+	}
+	if detail == nil || detail.Fields["tags"] != "signin_redirect" {
+		t.Fatalf("detail = %#v", detail)
+	}
+}
+
+func TestOllamaAPIKeyRejectsCrossOriginSuccess(t *testing.T) {
+	old := ollamaHTTPClient
+	defer func() { ollamaHTTPClient = old }()
+	finalURL := mustParseURL(t, "https://example.com/api/tags")
+	ollamaHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"models":[{}]}`)),
+			Header:     http.Header{},
+			Request:    &http.Request{URL: finalURL},
+		}, nil
+	})}
+
+	_, detail, status, err := fetchOllamaTags(context.Background(), "api-secret")
+	if err == nil || status != StatusAuthMissing {
+		t.Fatalf("status=%s err=%v, want auth_missing", status, err)
+	}
+	if detail == nil || detail.Fields["tags"] != "cross_origin_redirect" {
+		t.Fatalf("detail = %#v", detail)
 	}
 }
 
@@ -755,4 +847,13 @@ func mustOpen(t *testing.T, path string) *os.File {
 	}
 	t.Cleanup(func() { _ = f.Close() })
 	return f
+}
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }
