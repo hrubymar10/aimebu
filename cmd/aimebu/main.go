@@ -38,6 +38,8 @@ func main() {
 		serverCmd(os.Args[2:])
 	case "prune":
 		pruneCmd(os.Args[2:])
+	case "sessions":
+		sessionsCmd(os.Args[2:])
 	case "usages":
 		usagesCmd(os.Args[2:])
 	case "fleet":
@@ -420,6 +422,7 @@ Utilities:
                                         -a  also wipe macros and fleets (user settings)
                                         falls back to direct local cleanup when
                                         AIMEBU_URL is loopback and the server is down
+  sessions                            List wrapper and server-known agent sessions
   usages [provider] [--plain|--json]  Show provider usage snapshots
 
 Integration:

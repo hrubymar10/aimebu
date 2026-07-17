@@ -441,7 +441,7 @@ func TestAgentPersistSessionLogsSaveFailure(t *testing.T) {
 	}
 
 	debug := newAgentDebugLog("alice@aimebu", "feedfacecafebeef")
-	agentPersistSession(debug, agentSession{
+	agentPersistSession(debug, "", agentSession{
 		CWD:       dir,
 		Harness:   "codex",
 		SessionID: "thread-1",
@@ -464,6 +464,33 @@ func TestAgentPersistSessionLogsSaveFailure(t *testing.T) {
 	}
 	if got, _ := record["error"].(string); !contains(got, "agent-sessions.json") {
 		t.Fatalf("error = %v, want mention of agent-sessions.json", record["error"])
+	}
+}
+
+func TestAgentPushSessionLogsFailure(t *testing.T) {
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	debug := newAgentDebugLog("alice@aimebu", "feedfacecafebeef")
+	agentPushSession(debug, server.URL, agentSession{
+		CWD:       t.TempDir(),
+		Harness:   "codex",
+		SessionID: "thread-1",
+		Name:      "alice@aimebu",
+		Command:   []string{"codex"},
+		LastUsed:  time.Now().UTC(),
+	})
+	if err := debug.close(); err != nil {
+		t.Fatal(err)
+	}
+
+	records := readAgentDebugRecords(t, debug.path)
+	record := firstDebugEvent(records, "session_push_failed")
+	if record == nil {
+		t.Fatalf("expected session_push_failed in %#v", records)
 	}
 }
 

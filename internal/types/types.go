@@ -109,6 +109,19 @@ type Attachment struct {
 	MCPHint string `json:"mcp_hint,omitempty"`
 }
 
+type AgentSession struct {
+	FullID           string    `json:"full_id"`
+	Origin           string    `json:"origin"` // "wrapper" or "mcp"
+	Harness          string    `json:"harness,omitempty"`
+	Model            string    `json:"model,omitempty"`
+	Project          string    `json:"project,omitempty"`
+	CWD              string    `json:"cwd,omitempty"`
+	HarnessSessionID string    `json:"harness_session_id,omitempty"`
+	ResumeCommand    string    `json:"resume_command,omitempty"`
+	RegisteredAt     time.Time `json:"registered_at"`
+	LastSeen         time.Time `json:"last_seen"`
+}
+
 type Agent struct {
 	ID           string            `json:"id"`
 	Name         string            `json:"name"`
@@ -303,6 +316,7 @@ type RegisterRequest struct {
 	Harness string            `json:"harness,omitempty"` // only for kind=ai
 	Project string            `json:"project,omitempty"` // included in ID (e.g. @aimebu)
 	Meta    map[string]string `json:"meta,omitempty"`    // additional context (cwd, branch, repo, etc.)
+	Session *AgentSession     `json:"session,omitempty"` // optional harness-native session hint
 	Force   bool              `json:"force,omitempty"`   // force-claim an ai slug by Name in Project (only honored for kind=ai)
 }
 

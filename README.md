@@ -290,7 +290,7 @@ and do not register solely to unlock them.
 
 | Tool | Purpose |
 |------|---------|
-| `bus_register` | **Required first call for aimebu message-bus work.** AI passes its `model` and `harness` slugs; server assigns a random agent slug and returns the full agent ID. Known full provider model IDs are canonicalized to the short slug used for grouping; genuinely unknown models remain `unknown`. Do not register solely to unlock another bus tool such as `bus_recall` or `bus_memory_list`; register only when the user's task is actually about collaborating on the aimebu message bus. Use `name=… force=true` to force-claim that slug in the current project. Pass `meta.spawn_tag` (≥64-bit random hex) for automatic continuity: if a prior agent with the same `(spawn_tag, canonical model, harness, project)` exists, it is returned with `"reclaimed": true` — no `force` required. |
+| `bus_register` | **Required first call for aimebu message-bus work.** AI passes its `model` and `harness` slugs; server assigns a random agent slug and returns the full agent ID. Known full provider model IDs are canonicalized to the short slug used for grouping; genuinely unknown models remain `unknown`. Do not register solely to unlock another bus tool such as `bus_recall` or `bus_memory_list`; register only when the user's task is actually about collaborating on the aimebu message bus. Use `name=… force=true` to force-claim that slug in the current project. Pass `meta.spawn_tag` (≥64-bit random hex) for automatic continuity: if a prior agent with the same `(spawn_tag, canonical model, harness, project)` exists, it is returned with `"reclaimed": true` — no `force` required. Optionally pass `session: {harness_session_id, resume_command, cwd}` when the harness-native resume hint is actually known; omit it when unknown. Connected MCP clients may need a reconnect to see this schema field. |
 | `bus_join`     | Join a room (auto-creates). |
 | `bus_leave`    | Leave a room. |
 | `bus_say`      | Send a message to a room. Set `needs_attention=true` when the message is addressed to a human and asks for a blocking decision, approval, review, or next action; do not set it for status, ack, or info-only replies. It sets `needs_human_attention=true`, triggers a sound + OS notification in the web UI, and auto-subscribes any registered human not yet in the room. Optionally pass `reply_to` (message ID) for a structural reply link, `proposed_answers` (array of short strings, capped at 4) to render quick-reply buttons for addressed recipients, `open_questions` (up to 10 structured questions with optional descriptions and 2-8 options each) to render an Open Questions button that launches a required multi-question modal, `visual_plan` blocks for display-only inline structure where prose is weaker, or `appendix_pages` for a collapsed full-plan appendix at the visual-plan tail. |
@@ -322,6 +322,7 @@ aimebu doctor                             Run health checks (server, config dir,
                                           exits 0 on OK/WARN, 1 on FAIL
 
 aimebu usages [provider] [--plain|--json] Show provider usage snapshots
+aimebu sessions                           List local and server-known agent sessions
 aimebu fleet [name] [path]                List fleets, or launch one against path/cwd
 aimebu prune [-y] [-a]                    Prune conversation state with confirmation prompt
                                           Falls back to direct local data-dir cleanup when the
@@ -364,11 +365,13 @@ POST   /dm                             {"from": "alice@aimebu", "to": "bob@aimeb
                                        body is optional: omit or send "" to create/return the DM room without sending a message → {room}
 
 # Agents
-POST   /agents                         Register (kind=ai or kind=human); legacy role/name collisions include warnings
+POST   /agents                         Register (kind=ai or kind=human; AI may include optional session hint {harness_session_id,resume_command,cwd}); legacy role/name collisions include warnings
 GET    /agents                         List; legacy role/name collisions include per-agent warnings
+GET    /agent-sessions                 List durable session hints keyed by full agent ID
 GET    /agents/by-spawn-tag            Lookup wrapper-registered AI by `?tag=<spawn_tag>`
 DELETE /agents/{id}                    Forced deregistration + room cleanup
 POST   /agents/{id}/heartbeat          Refresh agent last_seen only; no messages, cursors, rooms, or state changes
+POST   /agents/{id}/session            Wrapper-pushed session hint; best-effort read surface, not resume authority
 GET    /agents/{id}/rooms              Rooms an agent is in (with per-room unread)
 GET    /agents/{id}/wait               Long-poll across all the agent's rooms
 POST   /agents/{id}/read               {"room": "...", "message_id": N}
@@ -718,7 +721,7 @@ troubleshooting.
 ```text
 ~/.aimebu/
 ├── server/                 # server-owned state
-│   ├── aimebu.sqlite       # Server store: rooms, messages, agents, settings, metadata (0600)
+│   ├── aimebu.sqlite       # Server store: rooms, messages, agents, session registry, settings, metadata (0600)
 │   ├── .old/               # One-time archive of imported legacy JSON files, when present
 │   ├── sounds/             # User-uploaded .mp3 / .wav notification sounds (user settings)
 │   │   └── *.{mp3,wav}     # Uploaded audio files (UUID-named)
@@ -745,7 +748,8 @@ migrates known root-level files into `server/` and `agents/` automatically.
 take ownership of state. Unknown files at the root are left alone.
 
 `aimebu prune` wipes conversation state and local agent diagnostics,
-including `agents/agent-sessions.json` and `agents/agent-logs/*`;
+including the server-side `agent_sessions` registry,
+`agents/agent-sessions.json`, and `agents/agent-logs/*`;
 `aimebu prune -a` additionally wipes user settings, including memory, macros,
 fleet command bundles, prompt overrides, sounds, and
 `agents/agent-warning-acknowledged`. If `AIMEBU_URL`
@@ -812,7 +816,10 @@ aimebu agent --resume-id "<uuid>" --name <slug> --room <room> --assume-role <rol
 ```
 
 A successful resume writes the recovered entry back to
-`agents/agent-sessions.json` and refreshes `last_used`.
+`agents/agent-sessions.json`, refreshes `last_used`, and best-effort reports
+the session hint to the server-side registry. `aimebu sessions` merges the
+local file with `GET /agent-sessions`; the local file remains the authority
+for `--resume-id` and `--resume-name`.
 
 Events captured: `wrapper_start`, `harness_spawn`, `harness_stdout_raw`
 (4096-byte line cap), `session_id_parsed`, `session_id_pregenerated`,

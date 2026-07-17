@@ -10,6 +10,7 @@
   let activeRoomID = null;     // currently viewed room ID
   let messages = {};           // { roomID: Message[] }
   let agents = [];             // Agent[]
+  let agentSessions = {};      // { agentID: AgentSession }
   const storedAgentID = localStorage.getItem('aimebu_agent_id');
   // First-time visitors get 'user' as a placeholder until the welcome gate
   // captures a name. The placeholder must not be registered automatically.
@@ -3476,6 +3477,16 @@
     });
   }
 
+  function loadAgentSessions() {
+    return api('GET', '/agent-sessions').then(function (data) {
+      agentSessions = {};
+      (data.agent_sessions || []).forEach(function (sess) {
+        if (sess && sess.full_id) agentSessions[sess.full_id] = sess;
+      });
+      renderRightSidebar();
+    });
+  }
+
   // markRead tells the server this agent has read up to the latest message
   // in the given room. Called when the user opens a room. Fire-and-forget —
   // the server will broadcast a read_update WS event to sync other clients.
@@ -4348,6 +4359,7 @@
 
   function handleWSAgentUpdate(data) {
     agents = data.agents || [];
+    loadAgentSessions().catch(function () {});
     renderAllAgents();
     renderRoomAgents();
     renderRoomSettings();
@@ -5516,6 +5528,18 @@
     var statusLabel = status === 'active' ? 'Online' : (status === 'stale' ? 'Recently active' : 'Offline');
     var presenceText = agentPresenceText(a.id, room || activeRoom());
     var runtime = a.kind === 'human' ? 'human' : ((a.model || 'unknown') + ' · ' + (a.harness || 'unknown'));
+    var session = agentSessions[a.id] || null;
+    var sessionRows = session ? [
+      ['Session', session.harness_session_id || ''],
+      ['Origin', session.origin || ''],
+      ['Resume', session.resume_command || ''],
+      ['CWD', session.cwd || ''],
+      ['Seen', session.last_seen ? relativeTime(session.last_seen) : '']
+    ].filter(function (row) {
+      return row[1];
+    }).map(function (row) {
+      return '<div class="right-profile-meta-row"><dt>' + esc(row[0]) + '</dt><dd>' + esc(String(row[1])) + '</dd></div>';
+    }).join('') : '';
     var meta = a.meta || {};
     var metaKeys = Object.keys(meta).sort();
     var metaRows = metaKeys.map(function (k) {
@@ -5538,6 +5562,7 @@
           '<div><span>Runtime</span><strong>' + esc(runtime) + '</strong></div>' +
           (roleKey ? '<div><span>Role</span><strong>' + roleBadgeHTML(roleKey) + esc(role ? role.key : roleKey) + '</strong></div>' : '') +
         '</div>' +
+        (sessionRows ? '<dl class="right-profile-meta">' + sessionRows + '</dl>' : '') +
         (metaRows ? '<dl class="right-profile-meta">' + metaRows + '</dl>' : '') +
         (actions ? '<div class="agent-actions right-profile-actions">' + actions + '</div>' : '') +
       '</div>'
@@ -7056,6 +7081,7 @@
       return Promise.all([
         loadSettings().catch(function () {}),
         fetchMyRooms().catch(function () {}),
+        loadAgentSessions().catch(function () {}),
         loadMacros().catch(function () {}),
         loadFleets().catch(function () {}),
         loadRoles().catch(function () {})

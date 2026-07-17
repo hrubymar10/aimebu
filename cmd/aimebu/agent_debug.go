@@ -424,3 +424,13 @@ func agentLogSessionSaveFailure(debug *agentDebugLog, path string, err error) {
 		"error": err.Error(),
 	})
 }
+
+func agentLogSessionPushFailure(debug *agentDebugLog, agentID string, err error) {
+	if debug == nil || err == nil {
+		return
+	}
+	debug.log("session_push_failed", map[string]any{
+		"agent_id": agentID,
+		"error":    err.Error(),
+	})
+}

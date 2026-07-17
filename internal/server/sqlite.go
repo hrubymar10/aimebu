@@ -113,6 +113,7 @@ func (s *store) configureSQLite(seedSchemaMeta bool) error {
 		`CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, room_id TEXT NOT NULL, data TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages(room_id, id)`,
 		`CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS agent_sessions (full_id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS reactions (message_id INTEGER PRIMARY KEY, data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS memory (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
@@ -660,6 +661,30 @@ func (s *store) loadCoreSQLite() error {
 			log.Printf("warning: persisted agent %q has reserved name %q; @%s now resolves to a group token, not this agent", agent.ID, agent.Name, agent.Name)
 		}
 	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+
+	rows, err = s.db.Query(`SELECT data FROM agent_sessions ORDER BY full_id`)
+	if err != nil {
+		return fmt.Errorf("load agent sessions: %w", err)
+	}
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			rows.Close()
+			return err
+		}
+		var sess types.AgentSession
+		if err := json.Unmarshal([]byte(data), &sess); err != nil {
+			rows.Close()
+			return fmt.Errorf("parse agent session: %w", err)
+		}
+		if sess.FullID != "" {
+			cp := sess
+			s.agentSessions[sess.FullID] = &cp
+		}
+	}
 	return rows.Close()
 }
 
@@ -677,6 +702,10 @@ func (s *store) persistCoreSQLiteLocked() error {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM agents`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_sessions`); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -719,6 +748,17 @@ func (s *store) persistCoreSQLiteLocked() error {
 			return err
 		}
 		if _, err := tx.Exec(`INSERT INTO agents(id, data) VALUES(?, ?)`, cp.ID, string(data)); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	for _, sess := range s.agentSessions {
+		data, err := json.Marshal(sess)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO agent_sessions(full_id, data) VALUES(?, ?)`, sess.FullID, string(data)); err != nil {
 			_ = tx.Rollback()
 			return err
 		}

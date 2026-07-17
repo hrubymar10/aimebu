@@ -317,6 +317,7 @@ var tools = []tool{
 				"model":   {Type: "string", Description: "Short version slug, or a full model ID explicitly stated by your system prompt; otherwise pass 'unknown'. Do not infer or copy example values. The server canonicalizes known full IDs for grouping."},
 				"harness": {Type: "string", Description: "Your harness slug (e.g. 'claude-code', 'codex', 'cursor', 'pi', 'vibe'). Pass if known for certain. If uncertain, omit this field entirely — do NOT pass 'unknown', as that suppresses auto-detection which is load-bearing for some harnesses (e.g. codex)."},
 				"meta":    {Type: "object", Description: "Optional extra metadata (cwd, branch, repo, etc. are auto-filled)."},
+				"session": {Type: "object", Description: "Optional harness-native resume hint when the caller knows it. Fields: harness_session_id, resume_command, cwd. Omit when unknown; do not fabricate values."},
 				"name":    {Type: "string", Description: "Only with force=true: force-claim this slug in the current project. Must match ^[a-z][a-z0-9_-]{1,19}[a-z0-9]$ (3–21 chars, start with letter, end with letter/digit, hyphens/underscores interior only). Rejected if the same full ID is held by an AI with different model/harness/project."},
 				"force":   {Type: "boolean", Description: "Set to true together with `name` to force-claim a project-scoped slug. Leave false (default) to let the server pick a slug — this is the normal case."},
 			},
@@ -579,11 +580,12 @@ func handleToolCallText(c *client.Client, name string, args json.RawMessage, hea
 	switch name {
 	case "bus_register":
 		var p struct {
-			Model   string            `json:"model"`
-			Harness string            `json:"harness"`
-			Meta    map[string]string `json:"meta"`
-			Name    string            `json:"name"`
-			Force   bool              `json:"force"`
+			Model   string              `json:"model"`
+			Harness string              `json:"harness"`
+			Meta    map[string]string   `json:"meta"`
+			Session *types.AgentSession `json:"session"`
+			Name    string              `json:"name"`
+			Force   bool                `json:"force"`
 		}
 		_ = json.Unmarshal(args, &p)
 
@@ -610,6 +612,9 @@ func handleToolCallText(c *client.Client, name string, args json.RawMessage, hea
 		if p.Force {
 			body["force"] = true
 			body["name"] = p.Name
+		}
+		if p.Session != nil {
+			body["session"] = p.Session
 		}
 		resp, err := c.Post("/agents", body)
 		if err != nil {

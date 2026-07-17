@@ -30,6 +30,8 @@ import (
 // agentNamePattern is server.SlugPattern re-exported for local use.
 var agentNamePattern = server.SlugPattern
 
+var shellSafeTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
 // agentSession is one entry in agents/agent-sessions.json.
 type agentSession struct {
 	CWD        string    `json:"cwd"`
@@ -372,7 +374,7 @@ func agentCmd(args []string) {
 		agentLogWrapperStart(debug, args, harness, entry.Rooms, spawnTag, resumeMode, aimebuURL, os.Getenv("AIMEBU_HARNESS"))
 		childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 		fmt.Fprintf(os.Stderr, "aimebu agent: resuming session %s as %s\n", entry.SessionID, entry.Name)
-		agentPersistSession(debug, entry)
+		agentPersistSession(debug, aimebuURL, entry)
 		agentPushState(aimebuURL, agentFullID(entry.Name), "bootstrapping")
 		agentResumeLoop(harness, command, entry.SessionID, entry.Name, entry.Rooms, assumeRole, modelSlug, childEnv, aimebuURL, sigCh, debug)
 		return
@@ -437,7 +439,7 @@ func agentCmd(args []string) {
 
 	if agentName != "" {
 		cwd, _ := os.Getwd()
-		agentPersistSession(debug, agentSession{
+		agentPersistSession(debug, aimebuURL, agentSession{
 			CWD:        cwd,
 			Harness:    harness,
 			SessionID:  sessionID,
@@ -1116,12 +1118,13 @@ func agentSaveSession(sess agentSession) error {
 	return os.Rename(tmp, path)
 }
 
-func agentPersistSession(debug *agentDebugLog, sess agentSession) {
+func agentPersistSession(debug *agentDebugLog, aimebuURL string, sess agentSession) {
 	if err := agentSaveSession(sess); err != nil {
 		path := agentSessionsPath()
 		fmt.Fprintf(os.Stderr, "aimebu agent: failed to save session state %s: %v\n", path, err)
 		agentLogSessionSaveFailure(debug, path, err)
 	}
+	agentPushSession(debug, aimebuURL, sess)
 }
 
 func agentPrepareResumeSession(entry agentSession, harness, modelSlug string, rooms []string, assumeRole string, command []string, now time.Time) agentSession {
@@ -1731,7 +1734,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 				agentName = recoveredName
 			}
 			cwd, _ := os.Getwd()
-			agentPersistSession(debug, agentSession{
+			agentPersistSession(debug, aimebuURL, agentSession{
 				CWD:        cwd,
 				Harness:    harness,
 				SessionID:  sessionID,
@@ -1973,6 +1976,80 @@ func agentPushState(aimebuURL, agentID, state string) {
 	}
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
+}
+
+func agentPushSession(debug *agentDebugLog, aimebuURL string, sess agentSession) {
+	agentID := agentFullID(sess.Name)
+	resumeCommand := agentResumeCommandHint(sess)
+	if aimebuURL == "" || agentID == "" || resumeCommand == "" {
+		return
+	}
+	payload, err := json.Marshal(map[string]string{
+		"harness_session_id": sess.SessionID,
+		"resume_command":     resumeCommand,
+		"cwd":                sess.CWD,
+	})
+	if err != nil {
+		agentLogSessionPushFailure(debug, agentID, err)
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(aimebuURL, "/")+"/agents/"+url.PathEscape(agentID)+"/session", bytes.NewReader(payload))
+	if err != nil {
+		agentLogSessionPushFailure(debug, agentID, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c := &http.Client{Timeout: 500 * time.Millisecond}
+	resp, err := c.Do(req)
+	if err != nil {
+		agentLogSessionPushFailure(debug, agentID, err)
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		agentLogSessionPushFailure(debug, agentID, fmt.Errorf("server returned %s", resp.Status))
+	}
+}
+
+func agentResumeCommandHint(sess agentSession) string {
+	parts := []string{"aimebu", "agent"}
+	if sess.SessionID != "" {
+		parts = append(parts, "--resume-id", sess.SessionID)
+	} else if sess.Name != "" {
+		parts = append(parts, "--resume-name", strings.Split(agentFullID(sess.Name), "@")[0])
+	} else {
+		return ""
+	}
+	if sess.Harness != "" {
+		parts = append(parts, "--harness", sess.Harness)
+	}
+	if len(sess.Rooms) == 0 {
+		parts = append(parts, "--auto-room")
+	} else {
+		for _, room := range sess.Rooms {
+			parts = append(parts, "--room", room)
+		}
+	}
+	if sess.AssumeRole != "" {
+		parts = append(parts, "--assume-role", sess.AssumeRole)
+	}
+	parts = append(parts, "--")
+	parts = append(parts, sess.Command...)
+	for i, part := range parts {
+		parts[i] = shellQuote(part)
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if shellSafeTokenPattern.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 func agentSignalProcessGroup(cmd *exec.Cmd, sig syscall.Signal) error {

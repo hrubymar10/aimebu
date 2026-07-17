@@ -171,6 +171,11 @@ support a useful Vibe-level `--resume-id` workflow. It resumes Vibe with
 that working directory. Run one wrapped Vibe agent per working directory to
 avoid continuing the wrong Vibe session.
 
+Because there is no harness-native Vibe session ID to report, Vibe registry
+rows may have a resume command but no `harness_session_id`. Plain MCP Vibe
+sessions should omit `bus_register(session=...)` unless a real external
+resume hint is available.
+
 Any flag Vibe supports can be appended after `vibe` or `vibe-docker` and the
 wrapper will carry it across bootstrap and resume invocations.
 

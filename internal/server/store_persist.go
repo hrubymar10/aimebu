@@ -22,6 +22,7 @@ func newStore(dir string) (*store, error) {
 		rooms:                  make(map[string]*types.Room),
 		messages:               make(map[string][]types.Message),
 		agents:                 make(map[string]*types.Agent),
+		agentSessions:          make(map[string]*types.AgentSession),
 		roomSubs:               make(map[string][]chan types.Message),
 		openWaits:              make(map[string]map[string]int),
 		openWS:                 make(map[string]int),

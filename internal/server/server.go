@@ -928,6 +928,11 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		var err error
 		switch kind {
 		case "ai":
+			sessionHint, sessionErr := normalizeAgentSessionHint(req.Session)
+			if sessionErr != nil {
+				jsonError(w, sessionErr.Error(), http.StatusBadRequest)
+				return
+			}
 			// Default protocol to "mcp" for AI agents that don't set it.
 			// The aimebu agent wrapper sets protocol="agent" via meta + env var.
 			if req.Meta == nil {
@@ -940,7 +945,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			if req.Force {
 				forceName = req.Name
 			}
-			agent, reclaimed, err = s.registerAI(req.Model, req.Harness, req.Project, req.Meta, forceName)
+			agent, reclaimed, err = s.registerAIWithSession(req.Model, req.Harness, req.Project, req.Meta, forceName, sessionHint)
 		case "human":
 			agent, err = s.registerHuman(req.Name, req.Project, req.Meta)
 		default:
@@ -975,6 +980,11 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 	mux.HandleFunc("GET /agents", func(w http.ResponseWriter, _ *http.Request) {
 		agents := s.listAgents()
 		_ = jsonOK(w, map[string]any{"agents": agents})
+	})
+
+	// GET /agent-sessions — list durable resume hints keyed by full agent ID.
+	mux.HandleFunc("GET /agent-sessions", func(w http.ResponseWriter, _ *http.Request) {
+		_ = jsonOK(w, map[string]any{"agent_sessions": s.listAgentSessions()})
 	})
 
 	// GET /agents/by-spawn-tag?tag=... — lookup the AI agent registered by
@@ -1017,6 +1027,37 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			return
 		}
 		_ = jsonOK(w, map[string]any{"agent": agentID})
+	})
+
+	// POST /agents/{id}/session — wrapper-pushed session hint. This updates a
+	// durable read surface only; wrapper resume still uses agent-sessions.json.
+	mux.HandleFunc("POST /agents/{id}/session", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.PathValue("id")
+		var req types.AgentSession
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		sessionHint, err := normalizeAgentSessionHint(&req)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.mu.Lock()
+		agent := s.agents[agentID]
+		if agent == nil {
+			s.mu.Unlock()
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		if err := s.upsertAgentSessionLocked(agent, agentSessionOriginWrapper, sessionHint); err != nil {
+			s.mu.Unlock()
+			jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		sess := *s.agentSessions[agentID]
+		s.mu.Unlock()
+		_ = jsonOK(w, map[string]any{"agent_session": sess})
 	})
 
 	// POST /agents/{id}/state — wrapper-pushed live activity state.

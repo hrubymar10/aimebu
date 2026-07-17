@@ -131,6 +131,10 @@ func (s *store) findBySpawnTag(tag string) (*types.Agent, bool) {
 //
 // Returns the created (or reclaimed) agent, a reclaimed flag, and any error.
 func (s *store) registerAI(model, harness, project string, meta map[string]string, forceName string) (*types.Agent, bool, error) {
+	return s.registerAIWithSession(model, harness, project, meta, forceName, nil)
+}
+
+func (s *store) registerAIWithSession(model, harness, project string, meta map[string]string, forceName string, sessionHint *types.AgentSession) (*types.Agent, bool, error) {
 	s.mu.Lock()
 
 	if model == "" {
@@ -164,6 +168,14 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 						a.Meta[k] = v
 					}
 				}
+				if sessionHint != nil {
+					if err := s.upsertAgentSessionLocked(a, agentSessionOriginMCP, sessionHint); err != nil {
+						s.mu.Unlock()
+						return nil, false, err
+					}
+				} else {
+					s.touchAgentSessionLocked(a.ID)
+				}
 				s.persist()
 				cp := cloneAgentLocked(a)
 				s.mu.Unlock()
@@ -194,6 +206,14 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 					for k, v := range meta {
 						existing.Meta[k] = v
 					}
+				}
+				if sessionHint != nil {
+					if err := s.upsertAgentSessionLocked(existing, agentSessionOriginMCP, sessionHint); err != nil {
+						s.mu.Unlock()
+						return nil, false, err
+					}
+				} else {
+					s.touchAgentSessionLocked(existing.ID)
 				}
 				s.persist()
 				cp := cloneAgentLocked(existing)
@@ -248,6 +268,12 @@ func (s *store) registerAI(model, harness, project string, meta map[string]strin
 		LastSeen:     now(),
 	}
 	s.agents[id] = agent
+	if sessionHint != nil {
+		if err := s.upsertAgentSessionLocked(agent, agentSessionOriginMCP, sessionHint); err != nil {
+			s.mu.Unlock()
+			return nil, false, err
+		}
+	}
 	s.persist()
 	cp := cloneAgentLocked(agent)
 	s.mu.Unlock()
@@ -342,6 +368,7 @@ func (s *store) heartbeatAgent(id string) bool {
 	}
 	prev, _ := time.Parse(time.RFC3339, a.LastSeen)
 	a.LastSeen = now()
+	s.touchAgentSessionLocked(id)
 	broadcast := time.Since(prev) > 30*time.Second
 	if broadcast {
 		s.persist()

@@ -134,6 +134,26 @@ func TestDetectHarness(t *testing.T) {
 	}
 }
 
+func TestBusRegisterSchemaIncludesSessionHint(t *testing.T) {
+	var register *tool
+	for i := range tools {
+		if tools[i].Name == "bus_register" {
+			register = &tools[i]
+			break
+		}
+	}
+	if register == nil {
+		t.Fatal("bus_register tool not found")
+	}
+	prop, ok := register.InputSchema.Properties["session"]
+	if !ok {
+		t.Fatal("bus_register schema missing session property")
+	}
+	if prop.Type != "object" {
+		t.Fatalf("session property type = %q, want object", prop.Type)
+	}
+}
+
 func TestBusEtiquetteCoversRoleAssignmentWakeup(t *testing.T) {
 	for _, want := range []string{
 		"assigned room role keys",

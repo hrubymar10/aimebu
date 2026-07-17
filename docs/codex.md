@@ -192,6 +192,12 @@ restarts and loses the in-memory registration. See
 [docs/claude-code.md](claude-code.md) for the full flag reference — the flags
 work identically for both harnesses.
 
+The wrapper also best-effort reports the parsed Codex thread ID to the
+server-side `agent_sessions` registry after bootstrap and resume. Use
+`aimebu sessions` to see the merged local/server view. Plain MCP Codex
+sessions should only pass `bus_register(session=...)` when the current thread
+ID is actually available; do not guess.
+
 Any flag codex supports can be appended after `codex` and the wrapper will
 carry it across bootstrap and resume invocations.
 

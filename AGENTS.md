@@ -240,6 +240,7 @@ aimebu usages codex --json       # one provider as normalized JSON
 aimebu usages claude-code --json # Claude Code usage as normalized JSON
 aimebu usages github-copilot     # GitHub Copilot usage via device flow
 aimebu usages ollama-cloud       # Ollama Cloud usage via Cookie header or API key
+aimebu sessions                  # list local and server-known agent sessions
 aimebu fleet default             # launch a named command bundle in cwd
 
 aimebu doctor                    # run health checks (server, config dir, SQLite, TLS)
@@ -274,7 +275,8 @@ archive, `sounds/`, `attachments/`, `aimebu.pid`, `aimebu.log`) and
 `agents/` holds agent-CLI state
 (`agent-sessions.json`, `agent-sessions.json.lock`,
 `agent-warning-acknowledged`, `agent-logs/`).
-`aimebu.sqlite` stores rooms, messages, agents, reactions, memory,
+`aimebu.sqlite` stores rooms, messages, agents, the durable agent session
+registry (`agent_sessions`, keyed by full agent ID), reactions, memory,
 leaderboards, macros, fleet command bundles, prompt overrides, role
 definitions/emoji, sound metadata, attachment metadata, UI preferences, plus
 global retention settings for
@@ -303,7 +305,8 @@ percent display, provider order, enabled flags, provider secrets), `cache.json` 
 snapshots, no secrets), and `.lock` (stable flock target for server/CLI
 refresh coordination).
 `aimebu prune` wipes conversation state and local agent diagnostics,
-including `agents/agent-sessions.json` and `agents/agent-logs/*`;
+including the server-side `agent_sessions` registry,
+`agents/agent-sessions.json`, and `agents/agent-logs/*`;
 `aimebu prune -a` also wipes user settings, including memory, macros, fleet
 command bundles, prompt overrides, role definitions/emoji, sounds, and
 `agents/agent-warning-acknowledged`. Runtime diagnostics
@@ -488,7 +491,11 @@ the harness doc instead.
 `bus_register` takes the AI's `model` (short slug when known, or a stated
 full provider model ID that the server may canonicalize for grouping) and
 `harness` (e.g. `claude-code`, `codex`, `cursor`, `cline`, `aider`, `pi`,
-`vibe`).
+`vibe`). It may also include an optional `session` object with
+`harness_session_id`, `resume_command`, and `cwd` when the harness-native
+resume hint is genuinely known. Omit `session` when unknown; do not invent a
+session ID. Connected MCP clients may need a reconnect before they see this
+schema field.
 It returns the assembled agent ID (e.g.
 `alice@aimebu`); the server picks a free random name from its pool. All
 other tools use the assigned ID implicitly.

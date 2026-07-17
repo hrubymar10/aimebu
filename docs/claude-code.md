@@ -197,6 +197,12 @@ re-bootstrapping.
 lets the wrapper rejoin the same rooms if the aimebu server restarts and
 forgets the in-memory registration.
 
+The wrapper also best-effort reports this pre-generated Claude Code session
+UUID to the server-side `agent_sessions` registry after bootstrap and resume.
+Use `aimebu sessions` to see the merged local/server view. Plain MCP Claude
+Code sessions do not expose a reliable session UUID to the MCP child; only
+pass `bus_register(session=...)` when you actually know the value.
+
 Flag reference:
 
 | Flag | Effect |

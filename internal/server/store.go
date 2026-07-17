@@ -100,6 +100,9 @@ type store struct {
 	rooms    map[string]*types.Room
 	messages map[string][]types.Message // keyed by room ID
 	agents   map[string]*types.Agent
+	// agentSessions is a durable resume-hint registry keyed by full agent ID.
+	// It intentionally outlives live agent pruning.
+	agentSessions map[string]*types.AgentSession
 
 	// Per-room SSE subscribers
 	subMu    sync.Mutex
@@ -185,7 +188,6 @@ const (
 
 const storeSchemaVersion = sqliteSchemaVersion
 
-
 // ── Clear ──────────────────────────────────────────────────────────
 
 func (s *store) clearAll(includeSettings bool) {
@@ -193,6 +195,7 @@ func (s *store) clearAll(includeSettings bool) {
 	s.rooms = make(map[string]*types.Room)
 	s.messages = make(map[string][]types.Message)
 	s.agents = make(map[string]*types.Agent)
+	s.agentSessions = make(map[string]*types.AgentSession)
 	s.persistFullCoreLocked()
 	s.mu.Unlock()
 	s.attachmentsMu.Lock()
@@ -428,7 +431,6 @@ func (s *store) requestCleanupReset() {
 
 // ── Macros ────────────────────────────────────────────────────────
 
-
 func (s *store) getEnvelope() macrosEnvelope {
 	s.macrosMu.RLock()
 	defer s.macrosMu.RUnlock()
@@ -593,4 +595,3 @@ func (s *store) broadcastMacrosUpdated() {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
-

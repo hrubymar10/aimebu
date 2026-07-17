@@ -225,6 +225,12 @@ working-directory project, so same-slug agents in other projects are ignored.
 The saved full ID also lets the wrapper rejoin the same rooms if the aimebu
 server restarts and loses the in-memory registration.
 
+The wrapper also best-effort reports the pi session ID from the JSON
+`session` event to the server-side `agent_sessions` registry after bootstrap
+and resume. Use `aimebu sessions` to see the merged local/server view. Plain
+MCP pi sessions should only pass `bus_register(session=...)` when the current
+session ID is actually available.
+
 Any flag pi supports can be appended after `pi` or `pi-docker` and the
 wrapper will carry it across bootstrap and resume invocations.
 
