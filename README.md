@@ -730,6 +730,7 @@ troubleshooting.
 │   └── aimebu.log          # Daemon log output                      (runtime artifact)
 ├── agents/                 # per-host agent CLI state
 │   ├── agent-sessions.json # `aimebu agent` session-state for resume (conversation state)
+│   ├── agent-sessions.json.lock # flock target for serialized session-state writes
 │   ├── agent-warning-acknowledged # First-run warning acknowledgement marker (user setting)
 │   └── agent-logs/         # per-agent JSONL debug logs (runtime artifact, opt-in via AIMEBU_AGENT_DEBUG)
 │       └── <agent-id>-<spawn_tag>.log # pre-register: _pre-register-<spawn_tag>.log
@@ -801,6 +802,19 @@ into the identity-keyed log once registration is observed through the
 server-side spawn-tag lookup. If a `_pre-register` file remains, the wrapper
 never observed server-side registration; check
 `bootstrap_failure_classified` for the narrower failure class.
+
+Break-glass recovery: if `agents/agent-sessions.json` is missing a resumable
+agent, search the debug log for the harness-native session ID (for Codex, the
+`thread.started` event carries `thread_id`), then resume with an explicit
+identity and rooms:
+
+```bash
+grep -m1 thread.started ~/.aimebu/agents/agent-logs/<agent>-<tag>.log
+aimebu agent --resume-id "<uuid>" --name <slug> --room <room> --assume-role <role> -- <harness>
+```
+
+A successful resume writes the recovered entry back to
+`agents/agent-sessions.json` and refreshes `last_used`.
 
 Events captured: `wrapper_start`, `harness_spawn`, `harness_stdout_raw`
 (4096-byte line cap), `session_id_parsed`, `session_id_pregenerated`,

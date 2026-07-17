@@ -83,6 +83,23 @@ pi reviewer:
 aimebu agent --auto-room --assume-role reviewer -- pi-docker
 ```
 
+## Recovering Missing Agent Sessions
+
+If a fleet-spawned agent is still recoverable in the harness but is missing
+from `~/.aimebu/agents/agent-sessions.json`, use the agent debug log as the
+break-glass source of truth. Enable `AIMEBU_AGENT_DEBUG=1` for wrapped agents
+that you may need to recover later. For Codex, the `thread.started` debug
+event carries the resumable `thread_id`:
+
+```bash
+grep -m1 thread.started ~/.aimebu/agents/agent-logs/<agent>-<tag>.log
+aimebu agent --resume-id "<uuid>" --name <slug> --room <room> --assume-role <role> -- <harness>
+```
+
+A successful resume writes the recovered entry back to
+`agent-sessions.json`, including the supplied room and role, so later
+`--resume-name <slug>` launches can use the state file again.
+
 ## Settings
 
 Fleets are edited in Settings -> Fleets in the web UI. The editor supports

@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -297,6 +299,183 @@ func TestAgentResolveResume(t *testing.T) {
 			t.Fatal("expected error on harness mismatch, got nil")
 		}
 	})
+}
+
+func TestAgentSaveSessionConcurrentPreservesEntries(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+
+	const n = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- agentSaveSession(agentSession{
+				CWD:       filepath.Join(dir, "project"),
+				Harness:   "codex",
+				SessionID: fmt.Sprintf("thread-%02d", i),
+				Name:      fmt.Sprintf("agent%02d@project", i),
+				Rooms:     []string{"project"},
+				Command:   []string{"codex"},
+				LastUsed:  time.Now().UTC(),
+			})
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("agentSaveSession returned error: %v", err)
+		}
+	}
+
+	sessions := mustLoadAgentSessions(t)
+	if len(sessions) != n {
+		t.Fatalf("saved sessions = %d, want %d: %#v", len(sessions), n, sessions)
+	}
+	seen := map[string]bool{}
+	for _, sess := range sessions {
+		seen[sess.SessionID] = true
+	}
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("thread-%02d", i)
+		if !seen[id] {
+			t.Fatalf("missing saved session %s from %#v", id, sessions)
+		}
+	}
+}
+
+func TestAgentPrepareResumeSessionSelfHealsEscapeHatch(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	projectDir := filepath.Join(dir, "aimebu")
+	if err := os.Mkdir(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(projectDir)
+
+	entry, err := agentResolveResume("thread-missing", "", "carol", "codex", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 17, 18, 0, 0, 0, time.UTC)
+	entry = agentPrepareResumeSession(entry, "codex", "gpt-5.5", []string{"oddin"}, "worker", []string{"codex"}, now)
+	if err := agentSaveSession(entry); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := agentResolveResume("", "carol", "", "codex", mustLoadAgentSessions(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.SessionID != "thread-missing" {
+		t.Fatalf("resolved session = %q, want thread-missing", resolved.SessionID)
+	}
+	if resolved.CWD != projectDir {
+		t.Fatalf("CWD = %q, want %q", resolved.CWD, projectDir)
+	}
+	if got := strings.Join(resolved.Rooms, ","); got != "oddin" {
+		t.Fatalf("rooms = %q, want oddin", got)
+	}
+	if resolved.AssumeRole != "worker" {
+		t.Fatalf("assume role = %q, want worker", resolved.AssumeRole)
+	}
+	if resolved.Model != "gpt-5.5" {
+		t.Fatalf("model = %q, want gpt-5.5", resolved.Model)
+	}
+	if !resolved.LastUsed.Equal(now) {
+		t.Fatalf("last_used = %s, want %s", resolved.LastUsed, now)
+	}
+}
+
+func TestAgentPrepareResumeSessionRefreshesLastUsedAndKeepsSavedRooms(t *testing.T) {
+	old := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	now := old.Add(2 * time.Hour)
+	entry := agentSession{
+		CWD:        "/old/project",
+		Harness:    "claude-code",
+		SessionID:  "session-1",
+		Name:       "alice@aimebu",
+		Model:      "sonnet4.6",
+		Rooms:      []string{"saved"},
+		AssumeRole: "reviewer",
+		Command:    []string{"claude"},
+		LastUsed:   old,
+	}
+
+	got := agentPrepareResumeSession(entry, "claude-code", "", nil, entry.AssumeRole, []string{"claude"}, now)
+	if !got.LastUsed.Equal(now) {
+		t.Fatalf("last_used = %s, want %s", got.LastUsed, now)
+	}
+	if got.Model != "sonnet4.6" {
+		t.Fatalf("model = %q, want preserved sonnet4.6", got.Model)
+	}
+	if strings.Join(got.Rooms, ",") != "saved" {
+		t.Fatalf("rooms = %v, want saved rooms", got.Rooms)
+	}
+}
+
+func TestAgentPrepareResumeSessionExplicitRoomsOverrideSavedRooms(t *testing.T) {
+	entry := agentSession{
+		SessionID: "session-1",
+		Name:      "alice@aimebu",
+		Harness:   "codex",
+		Rooms:     []string{"saved"},
+	}
+	got := agentPrepareResumeSession(entry, "codex", "", []string{"override"}, "", []string{"codex"}, time.Now().UTC())
+	if strings.Join(got.Rooms, ",") != "override" {
+		t.Fatalf("rooms = %v, want explicit override room", got.Rooms)
+	}
+}
+
+func TestAgentPersistSessionLogsSaveFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+	if err := os.MkdirAll(filepath.Join(dir, "agents", "agent-sessions.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	debug := newAgentDebugLog("alice@aimebu", "feedfacecafebeef")
+	agentPersistSession(debug, agentSession{
+		CWD:       dir,
+		Harness:   "codex",
+		SessionID: "thread-1",
+		Name:      "alice@aimebu",
+		Command:   []string{"codex"},
+		LastUsed:  time.Now().UTC(),
+	})
+	if err := debug.close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(dir, "agents", "agent-logs", "alice@aimebu-feedfacecafebeef.log")
+	records := readAgentDebugRecords(t, logPath)
+	record := firstDebugEvent(records, "session_save_failed")
+	if record == nil {
+		t.Fatalf("expected session_save_failed in %#v", records)
+	}
+	if got := record["path"]; got != agentSessionsPath() {
+		t.Fatalf("path = %v, want %s", got, agentSessionsPath())
+	}
+	if got, _ := record["error"].(string); !contains(got, "agent-sessions.json") {
+		t.Fatalf("error = %v, want mention of agent-sessions.json", record["error"])
+	}
+}
+
+func mustLoadAgentSessions(t *testing.T) []agentSession {
+	t.Helper()
+	sessions, err := agentLoadSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sessions
 }
 
 func TestAgentCommandSetsProcessGroup(t *testing.T) {

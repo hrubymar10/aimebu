@@ -344,13 +344,6 @@ func agentCmd(args []string) {
 			fmt.Fprintln(os.Stderr, "aimebu agent:", err)
 			os.Exit(1)
 		}
-		if autoRoom {
-			entry.Rooms, err = agentResolveRooms(entry.Rooms, true)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "aimebu agent: %v\n", err)
-				os.Exit(1)
-			}
-		}
 		if assumeRole == "" {
 			assumeRole = entry.AssumeRole
 		}
@@ -369,6 +362,7 @@ func agentCmd(args []string) {
 		if harness == "vibe" && agentCanHarvestVibeModel(command) {
 			modelSlug = agentHarvestVibeDefaultModel(os.Environ())
 		}
+		entry = agentPrepareResumeSession(entry, harness, modelSlug, rooms, assumeRole, command, time.Now().UTC())
 		if assumeRole != "" && len(entry.Rooms) != 1 {
 			fmt.Fprintln(os.Stderr, "aimebu agent: --assume-role requires exactly one saved launch room")
 			os.Exit(1)
@@ -378,6 +372,7 @@ func agentCmd(args []string) {
 		agentLogWrapperStart(debug, args, harness, entry.Rooms, spawnTag, resumeMode, aimebuURL, os.Getenv("AIMEBU_HARNESS"))
 		childEnv := agentBuildEnv(aimebuURL, harness, spawnTag)
 		fmt.Fprintf(os.Stderr, "aimebu agent: resuming session %s as %s\n", entry.SessionID, entry.Name)
+		agentPersistSession(debug, entry)
 		agentPushState(aimebuURL, agentFullID(entry.Name), "bootstrapping")
 		agentResumeLoop(harness, command, entry.SessionID, entry.Name, entry.Rooms, assumeRole, modelSlug, childEnv, aimebuURL, sigCh, debug)
 		return
@@ -442,7 +437,7 @@ func agentCmd(args []string) {
 
 	if agentName != "" {
 		cwd, _ := os.Getwd()
-		_ = agentSaveSession(agentSession{
+		agentPersistSession(debug, agentSession{
 			CWD:        cwd,
 			Harness:    harness,
 			SessionID:  sessionID,
@@ -1013,6 +1008,43 @@ func agentSessionsPath() string {
 	return filepath.Join(config.AgentsDir(), "agent-sessions.json")
 }
 
+func agentSessionsLockPath() string {
+	return filepath.Join(config.AgentsDir(), "agent-sessions.json.lock")
+}
+
+type agentSessionsLock struct {
+	file *os.File
+}
+
+func agentAcquireSessionsLock() (*agentSessionsLock, error) {
+	path := agentSessionsLockPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return &agentSessionsLock{file: f}, nil
+}
+
+func (l *agentSessionsLock) unlock() error {
+	if l == nil || l.file == nil {
+		return nil
+	}
+	err := syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
+	closeErr := l.file.Close()
+	l.file = nil
+	if err != nil {
+		return err
+	}
+	return closeErr
+}
+
 // agentLoadSessions reads agents/agent-sessions.json.
 // Returns nil (not an error) if the file does not exist yet.
 func agentLoadSessions() ([]agentSession, error) {
@@ -1035,9 +1067,11 @@ func agentLoadSessions() ([]agentSession, error) {
 // identity, then writes atomically via a tmp file + rename.
 func agentSaveSession(sess agentSession) error {
 	path := agentSessionsPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	lock, err := agentAcquireSessionsLock()
+	if err != nil {
 		return err
 	}
+	defer lock.unlock()
 	sessions, _ := agentLoadSessions() // ignore parse errors; start fresh if corrupt
 	updated := false
 	for i, s := range sessions {
@@ -1059,6 +1093,34 @@ func agentSaveSession(sess agentSession) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func agentPersistSession(debug *agentDebugLog, sess agentSession) {
+	if err := agentSaveSession(sess); err != nil {
+		path := agentSessionsPath()
+		fmt.Fprintf(os.Stderr, "aimebu agent: failed to save session state %s: %v\n", path, err)
+		agentLogSessionSaveFailure(debug, path, err)
+	}
+}
+
+func agentPrepareResumeSession(entry agentSession, harness, modelSlug string, rooms []string, assumeRole string, command []string, now time.Time) agentSession {
+	cwd, err := os.Getwd()
+	if err == nil && cwd != "" {
+		entry.CWD = cwd
+	}
+	entry.Harness = harness
+	if modelSlug != "" {
+		entry.Model = modelSlug
+	}
+	if len(rooms) > 0 {
+		entry.Rooms = append([]string(nil), rooms...)
+	} else {
+		entry.Rooms = append([]string(nil), entry.Rooms...)
+	}
+	entry.AssumeRole = assumeRole
+	entry.Command = append([]string(nil), command...)
+	entry.LastUsed = now
+	return entry
 }
 
 func agentSessionProject(sess agentSession) string {
@@ -1643,7 +1705,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 				agentName = recoveredName
 			}
 			cwd, _ := os.Getwd()
-			_ = agentSaveSession(agentSession{
+			agentPersistSession(debug, agentSession{
 				CWD:        cwd,
 				Harness:    harness,
 				SessionID:  sessionID,
@@ -2008,7 +2070,7 @@ Options:
   --                     Separator before the harness command (required).
 
 Session state is persisted in agents/agent-sessions.json under the aimebu
-config dir after each successful bootstrap so that --resume-id and
+config dir after each successful bootstrap or resume so that --resume-id and
 --resume-name can look up prior sessions.
 
 Set AIMEBU_AGENT_DEBUG=1 (or true/yes/y/on) to write JSONL debug logs to

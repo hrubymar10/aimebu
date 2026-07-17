@@ -156,14 +156,14 @@ as `unknown` rather than guessing.
 
 ### Identity and Session State
 
-After each successful bootstrap, `aimebu agent` writes the agent full ID,
-harness, joined rooms, assumed role key, model slug, and working directory to
-`~/.aimebu/agents/agent-sessions.json`. This enables `--resume-name` to
-restore a prior bus identity without re-bootstrapping. `--resume-name <slug>`
-is scoped to the current working-directory project, so same-slug agents in
-other projects are ignored. The saved full ID also lets the wrapper rejoin
-the same rooms if the aimebu server restarts and loses the in-memory
-registration.
+After each successful bootstrap or resume, `aimebu agent` writes the agent
+full ID, harness, joined rooms, assumed role key, model slug, and working
+directory to `~/.aimebu/agents/agent-sessions.json`. This enables
+`--resume-name` to restore a prior bus identity without re-bootstrapping.
+`--resume-name <slug>` is scoped to the current working-directory project, so
+same-slug agents in other projects are ignored. The saved full ID also lets
+the wrapper rejoin the same rooms if the aimebu server restarts and loses the
+in-memory registration.
 
 Vibe's JSON output does not expose a session ID, so the wrapper does not
 support a useful Vibe-level `--resume-id` workflow. It resumes Vibe with

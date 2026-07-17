@@ -273,7 +273,8 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 holds server-owned files (`aimebu.sqlite`, optional `.old/` legacy JSON
 archive, `sounds/`, `attachments/`, `aimebu.pid`, `aimebu.log`) and
 `agents/` holds agent-CLI state
-(`agent-sessions.json`, `agent-warning-acknowledged`, `agent-logs/`).
+(`agent-sessions.json`, `agent-sessions.json.lock`,
+`agent-warning-acknowledged`, `agent-logs/`).
 `aimebu.sqlite` stores rooms, messages, agents, reactions, memory,
 leaderboards, macros, fleet command bundles, prompt overrides, role
 definitions/emoji, sound metadata, attachment metadata, UI preferences, plus

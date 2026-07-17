@@ -425,3 +425,13 @@ func agentLogWrapperShutdown(debug *agentDebugLog, signalName, attemptedID, resu
 		"result":               result,
 	})
 }
+
+func agentLogSessionSaveFailure(debug *agentDebugLog, path string, err error) {
+	if debug == nil || err == nil {
+		return
+	}
+	debug.log("session_save_failed", map[string]any{
+		"path":  path,
+		"error": err.Error(),
+	})
+}
