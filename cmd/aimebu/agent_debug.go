@@ -336,7 +336,7 @@ func agentLogSessionIDParsed(debug *agentDebugLog, harness, parsedID string, lin
 }
 
 // agentLogSessionIDPreGenerated records that the session ID was generated
-// driver-side (claude-code PTY path) rather than parsed from child output.
+// driver-side before spawning a harness that accepts caller-supplied IDs.
 func agentLogSessionIDPreGenerated(debug *agentDebugLog, harness, sessionID string) {
 	if debug == nil {
 		return
@@ -401,17 +401,6 @@ func agentLogHeartbeat(debug *agentDebugLog, agentID string, err error) {
 		fields["error"] = err.Error()
 	}
 	debug.log("heartbeat", fields)
-}
-
-func agentLogIdleNudge(debug *agentDebugLog, agentID string, idleFor time.Duration) {
-	if debug == nil {
-		return
-	}
-	debug.log("idle_nudge", map[string]any{
-		"agent_id":    agentID,
-		"idle_for_ms": idleFor.Milliseconds(),
-		"clear_line":  true,
-	})
 }
 
 func agentLogWrapperShutdown(debug *agentDebugLog, signalName, attemptedID, result string) {

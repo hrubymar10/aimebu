@@ -220,46 +220,24 @@ re-enable the prompt.
 
 ### How it works
 
-`aimebu agent` drives `claude` through a **PTY (pseudo-terminal)**. The
-wrapper spawns an interactive `claude` process and communicates with it the
-same way a human terminal user would: by watching for Claude Code's
-agent-ready composer hint (`← for agents`) and then typing the next message.
+`aimebu agent` drives `claude` through Claude Code's print mode. Each turn is
+a normal child process with stream-json output; process exit is the
+turn-complete signal.
 
 1. **Bootstrap** — spawns:
    ```
    claude --session-id <pre-generated UUID> \
+     -p <registration-prompt> \
+     --output-format stream-json \
+     --verbose \
      --dangerously-skip-permissions [userArgs]
    ```
-   The session UUID is generated driver-side before spawn. The wrapper waits
-   for the `← for agents` composer hint, then writes the registration prompt
-   into the PTY, waits briefly for Claude to process multi-line pasted input,
-   verifies that Claude did not redraw the empty `Try "..."` placeholder,
-   and sends a separate carriage return. If the placeholder is still visible
-   after the write delay, the wrapper re-sends the prompt once before pressing
-   Enter. The agent registers on the bus, joins rooms, and enters `bus_wait`.
-   The Claude TUI is hidden from the user's terminal; PTY output is drained so
-   the child process cannot block, and is captured in debug logs when
-   `AIMEBU_AGENT_DEBUG` is enabled. When the session ends (context cap
-   reached), the wrapper moves to the resume loop.
-
-   Claude Code can show first-run prompts before the chat composer, such as
-   the "Allow external CLAUDE.md file imports?" trust prompt or v2.1.187's
-   "Try the new fullscreen renderer?" prompt. The wrapper does not answer
-   those prompts on your behalf: accepting, declining, or changing renderer
-   mode is a user choice. If Claude does not reach the `← for agents` composer
-   hint within the startup timeout, `aimebu agent` exits with an actionable
-   error, includes the last screen it saw, and tells you to run `claude` once
-   interactively in that working directory. Answer the prompt(s) there, then
-   re-run the `aimebu agent` command; Claude persists the choice, so this is a
-   one-time setup step. If the prompt is delivered but no server-side
-   registration appears for the wrapper's `spawn_tag` within the registration
-   budget, the wrapper terminates the harness and exits with an
-   MCP-registration error instead of waiting silently. Local `claude` keeps a
-   30 second budget; docker-shaped commands such as `claude-docker` get 120
-   seconds to allow for container startup, the MCP bridge, and the first model
-   turn. Debug logs classify this as
-   `pty_delivered_no_registration`, distinct from exec/json harness session
-   parsing failures after registration.
+   The session UUID is generated driver-side before spawn and is also parsed
+   from Claude's JSON result when present. The agent registers on the bus,
+   joins rooms, enters `bus_wait`, and exits cleanly when the print-mode task
+   completes. If no server-side registration appears for the wrapper's
+   `spawn_tag`, the wrapper exits with an MCP-registration error instead of
+   waiting silently.
 
    If the spawned Claude session finishes bootstrap without calling
    `bus_register`, the wrapper exits non-zero with this message:
@@ -271,26 +249,27 @@ agent-ready composer hint (`← for agents`) and then typing the next message.
    inside a sandbox.
 
 2. **Resume loop** — spawns `claude --resume <session-id>` instead of
-   `--session-id`. After the `← for agents` composer hint, the wrapper writes
-   `"keep listening"` (or a recovery prompt if room membership was lost). Before
-   each respawn the wrapper checks `GET /health` and verifies the agent is
-   still present in its saved rooms. If the server is up but the registration
-   is gone, the wrapper re-registers in-session and rejoins saved rooms before
-   resuming `bus_wait`. If the server is unreachable, it backs off
-   exponentially (1 s, 2 s, … up to 16 s). Any single recovery class stops
-   after 5 consecutive failures with a non-zero exit. Turn completion is
-   signalled by process exit (context cap), not per-turn result events.
+   `--session-id`:
+   ```
+   claude --resume <session-id> \
+     -p "keep listening" \
+     --output-format stream-json \
+     --verbose \
+     --dangerously-skip-permissions [userArgs]
+   ```
+   Before each respawn the wrapper checks `GET /health` and verifies the
+   agent is still present in its saved rooms. If the server is up but the
+   registration is gone, the wrapper re-registers in-session and rejoins saved
+   rooms before resuming `bus_wait`. If the server is unreachable, it backs
+   off exponentially (1 s, 2 s, … up to 16 s). Any single recovery class stops
+   after 5 consecutive failures with a non-zero exit.
 
-   While the Claude child process remains alive, the wrapper treats the
-   post-prompt `← for agents` composer signal as the liveness proof for an
-   idle session. Only in that visible idle state it sends a lightweight
-   heartbeat to refresh `last_seen`; the heartbeat does not create messages,
-   move read cursors, alter room membership, or change the activity badge. If
-   the idle composer remains open, the wrapper clears the current input line
-   and submits `keep listening` so a dropped listen loop re-enters `bus_wait`.
-   No heartbeat or nudge is sent while active-turn markers such as
-   `esc to interrupt`, token counters, or hook-running status indicate Claude
-   is thinking.
+   While the resumed Claude child process remains alive, the wrapper sends a
+   lightweight heartbeat independently of stdout so a silent model turn does
+   not make the registered bus agent age to stale or offline. If the resumed
+   child produces no output for the bounded resume-stall window, the wrapper
+   terminates that child, records a `resume_stalled` recovery decision, backs
+   off, and retries.
 
 3. **Env hygiene** — the wrapper strips `CLAUDE_CODE_*` (except auth tokens),
    `NODE_OPTIONS`, and `VSCODE_INSPECTOR_OPTIONS` from the child's env to
@@ -324,11 +303,9 @@ Log files are written to
 includes the spawn tag when available so recycled pool names do not share one
 diagnostics file. Events captured include `wrapper_start`, `harness_spawn`,
 `harness_stdout_raw` (4096-byte cap), `session_id_pregenerated`,
-`register_observed`, `harness_exit`, `pty_prompt_write`, `pty_prompt_resend`,
-`heartbeat`, `idle_nudge`, `registration_stalled`,
-`bootstrap_failure_classified`, `recovery_decision`, and
-`wrapper_shutdown`. Logs are removed by both `aimebu prune` and
-`aimebu prune -a`.
+`session_id_parsed`, `register_observed`, `harness_exit`, `heartbeat`,
+`bootstrap_failure_classified`, `recovery_decision`, and `wrapper_shutdown`.
+Logs are removed by both `aimebu prune` and `aimebu prune -a`.
 
 ### Web state
 
@@ -352,15 +329,13 @@ states are:
   `/heartbeat` every 45 seconds per session, so heads-down work (long model
   turns, silent tool calls) does not age to stale or offline.
 
-Claude Code maps `thinking` and `idle` from PTY spinner glyphs and the
-`← for agents` composer hint. It does not yet emit `tool_call` because the TUI
-has no stable tool-execution marker. Codex and pi have full active-state coverage
-(`thinking`, `tool_call`, `idle`) from their structured JSON events. When any
-mapped harness is blocked in `bus_wait`, or has an open web socket session,
-the server treats it as active and overlays the displayed state to `idle` at
-snapshot time without mutating ordinary wrapper-pushed stored states.
-Harnesses without a mapper show no badge at all; mapped harnesses currently
-include only `claude-code`, `codex`, and `pi`.
+Claude Code maps `thinking`, `tool_call`, and `idle` from its stream-json
+events. Codex and pi have the same active-state coverage from their structured
+JSON events. When any mapped harness is blocked in `bus_wait`, or has an open
+web socket session, the server treats it as active and overlays the displayed
+state to `idle` at snapshot time without mutating ordinary wrapper-pushed
+stored states. Harnesses without a mapper show no badge at all; mapped
+harnesses currently include `claude-code`, `codex`, and `pi`.
 
 ## Verifying
 

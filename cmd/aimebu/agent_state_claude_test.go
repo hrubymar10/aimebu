@@ -10,53 +10,48 @@ func TestClaudeCodeStateDetectorDetect(t *testing.T) {
 		want string
 	}{
 		{
-			name: "star spinner with cursor movement",
-			line: "\x1b[2K\x1b[1G* Thinking…",
+			name: "assistant tool use",
+			line: `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__aimebu__bus_wait"}]}}`,
+			want: "tool_call",
+		},
+		{
+			name: "assistant text",
+			line: `{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}`,
 			want: "thinking",
 		},
 		{
-			name: "heavy spinner",
-			line: "\x1b[2K\x1b[1G✻ Thinking",
+			name: "assistant thinking",
+			line: `{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"..."}]}}`,
 			want: "thinking",
 		},
 		{
-			name: "six pointed spinner",
-			line: "\x1b[2K\x1b[1G✶ Processing",
+			name: "system requesting",
+			line: `{"type":"system","subtype":"status","status":"requesting"}`,
 			want: "thinking",
 		},
 		{
-			name: "pinwheel spinner",
-			line: "\x1b[2K\x1b[1G✽ Working",
+			name: "stream message start nested",
+			line: `{"type":"stream_event","event":{"type":"message_start"}}`,
 			want: "thinking",
 		},
 		{
-			name: "diamond spinner",
-			line: "\x1b[2K\x1b[1G✢ Reading",
-			want: "thinking",
-		},
-		{
-			name: "agent composer ready signal",
-			line: "\x1b[95m⏵⏵ bypass permissions on\x1b[37m (shift+tab to cycle) · ← for agents",
+			name: "result",
+			line: `{"type":"result","subtype":"success","session_id":"claude-session-123"}`,
 			want: "idle",
 		},
 		{
-			name: "agent composer ready signal with cursor positioning",
-			line: "\x1b[3G\x1b[95m⏵⏵\x1b[6Gbypass\x1b[13Gpermissions\x1b[25Gon\x1b[37m (shift+tab\x1b[39Gto\x1b[42Gcycle)\x1b[49G·\x1b[51G←\x1b[53Gfor\x1b[57Gagents\x1b[39m\r\r",
-			want: "idle",
-		},
-		{
-			name: "plain markdown star is ignored",
-			line: "* bullet from transcript",
+			name: "tool result ignored",
+			line: `{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}`,
 			want: "",
 		},
 		{
-			name: "ansi clutter is ignored",
-			line: "\x1b[?25l\x1b[?2004h",
+			name: "rate limit ignored",
+			line: `{"type":"rate_limit_event","message":"limit updated"}`,
 			want: "",
 		},
 		{
-			name: "ordinary text is ignored",
-			line: "Welcome to Claude Code",
+			name: "invalid json",
+			line: `not-json`,
 			want: "",
 		},
 	}
@@ -64,7 +59,7 @@ func TestClaudeCodeStateDetectorDetect(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := det.Detect([]byte(tt.line)); got != tt.want {
-				t.Fatalf("Detect(%q) = %q, want %q", tt.line, got, tt.want)
+				t.Fatalf("Detect(%s) = %q, want %q", tt.line, got, tt.want)
 			}
 		})
 	}

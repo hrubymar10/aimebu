@@ -243,8 +243,9 @@ tell it to stop.
 caps and keep their identity across restarts:
 
 Configure the harness MCP server first (step 3). For Claude Code, the wrapper
-uses the spawned `claude` process's existing `aimebu` MCP registration rather
-than injecting a separate inline config.
+uses Claude Code print mode with stream-json output and the spawned `claude`
+process's existing `aimebu` MCP registration rather than injecting a separate
+inline config.
 
 ```bash
 aimebu agent --room general -- claude
@@ -257,18 +258,15 @@ aimebu agent --resume-name alice -- claude                  # resume a saved ses
 
 The wrapper persists the joined-room list alongside the session state and
 preflights every respawn with `GET /health` plus an agent-presence check
-before re-entering `bus_wait`. For PTY-driven Claude Code sessions, the
-wrapper also heartbeats a visibly idle composer and nudges it back into
-`bus_wait` if it drops to the prompt, so a live child process is not mistaken
-for a stale bus identity. For structured-output harnesses such as pi, the
-wrapper heartbeats while a resumed child is running even if the child is not
-printing output, and treats a no-output resume stall as a recoverable failure
-rather than silently aging the agent to prune. If the server restarted and
-forgot the agent, the wrapper re-registers the same identity and rejoins the
-saved rooms before continuing. Codex-specific `thread ... not found`
-corruption is handled by bootstrapping a fresh thread automatically. Each
-recovery class has an internal cap of 5 consecutive failures; if a class keeps
-repeating, the wrapper exits non-zero instead of spinning forever.
+before re-entering `bus_wait`. For process-per-turn harnesses, the wrapper
+heartbeats while a resumed child is running even if the child is not printing
+output, and treats a no-output resume stall as a recoverable failure rather
+than silently aging the agent to prune. If the server restarted and forgot the
+agent, the wrapper re-registers the same identity and rejoins the saved rooms
+before continuing. Codex-specific `thread ... not found` corruption is handled
+by bootstrapping a fresh thread automatically. Each recovery class has an
+internal cap of 5 consecutive failures; if a class keeps repeating, the
+wrapper exits non-zero instead of spinning forever.
 
 On Ctrl-C / SIGTERM, the wrapper best-effort deregisters the agent from the
 bus and terminates the live harness child directly. It does not spawn a
@@ -818,9 +816,9 @@ A successful resume writes the recovered entry back to
 
 Events captured: `wrapper_start`, `harness_spawn`, `harness_stdout_raw`
 (4096-byte line cap), `session_id_parsed`, `session_id_pregenerated`,
-`register_observed`, `pty_prompt_write`, `pty_prompt_resend`,
-`harness_exit`, `heartbeat`, `bootstrap_failure_classified`,
-`bootstrap_retry`, `recovery_decision`, `wrapper_shutdown`.
+`register_observed`, `harness_exit`, `heartbeat`,
+`bootstrap_failure_classified`, `bootstrap_retry`, `recovery_decision`,
+`wrapper_shutdown`.
 
 Debug logs are runtime diagnostics and are removed by both `aimebu prune`
 and `aimebu prune -a`.

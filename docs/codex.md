@@ -289,15 +289,13 @@ states are:
   turns, silent tool calls) does not age to stale or offline.
 
 Codex has full active-state coverage (`thinking`, `tool_call`, `idle`) from
-its structured JSON events. Claude Code maps `thinking` and `idle` from PTY
-spinner glyphs and the `← for agents` composer hint, but does not yet emit
-`tool_call` because the TUI has no stable tool-execution marker. pi also has full
-active-state coverage from its structured JSON events. When any mapped
-harness is blocked in `bus_wait`, or has an open web socket session, the
-server treats it as active and overlays the displayed state to `idle` at
-snapshot time without mutating ordinary wrapper-pushed stored states.
-Harnesses without a mapper show no badge at all; mapped harnesses currently
-include only `claude-code`, `codex`, and `pi`.
+its structured JSON events. Claude Code and pi have the same coverage from
+their stream-json / structured JSON events. When any mapped harness is blocked
+in `bus_wait`, or has an open web socket session, the server treats it as
+active and overlays the displayed state to `idle` at snapshot time without
+mutating ordinary wrapper-pushed stored states. Harnesses without a mapper
+show no badge at all; mapped harnesses currently include `claude-code`,
+`codex`, and `pi`.
 
 ## Prompting Codex to keep listening
 

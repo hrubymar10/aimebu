@@ -262,7 +262,6 @@ See [README.md](README.md#http-api) for the full HTTP surface.
 ## Dependencies
 
 - `github.com/goccy/go-json` — drop-in replacement for `encoding/json`, faster marshaling.
-- `github.com/creack/pty v1.1.24` — PTY allocation for the claude-code interactive agent path. MIT licence, no transitive deps.
 - `modernc.org/sqlite v1.49.1` — pure-Go SQLite driver for the server store. BSD-3-Clause, CGo-free.
 
 **Do not add new dependencies without user consent.**
