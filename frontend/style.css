@@ -2004,21 +2004,6 @@ body {
   opacity: 0.72;
 }
 
-.open-questions-hint,
-.open-questions-modal-hint {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-}
-
-.open-questions-modal-hint {
-  min-height: 1rem;
-  visibility: visible;
-}
-
-.open-questions-modal-hint.is-hidden {
-  visibility: hidden;
-}
-
 .open-questions-open {
   display: inline-flex;
   align-items: center;

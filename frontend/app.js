@@ -4876,9 +4876,7 @@
   function proposedAnswersHTML(m, room) {
     var answers = Array.isArray(m.proposed_answers) ? m.proposed_answers : [];
     if (!answers.length || !messageTargetsViewer(m, room)) return '';
-    var roomMessages = messages[m.room_id] || [];
-    var superseded = roomMessages.some(function (n) { return n.id > m.id && n.from_kind !== 'system'; });
-    var disabled = superseded || !!answeredProposedAnswers[String(m.id)];
+    var disabled = !!answeredProposedAnswers[String(m.id)];
     var html = '<div class="proposed-answers' + (disabled ? ' answered' : '') + '" data-msg-id="' + esc(String(m.id)) + '">';
     answers.forEach(function (answer, idx) {
       html += '<button class="proposed-answer-btn" type="button" data-msg-id="' + esc(String(m.id)) + '" data-answer-index="' + esc(String(idx)) + '"' + (disabled ? ' disabled' : '') + '>' + esc(answer) + '</button>';
@@ -4913,13 +4911,8 @@
 
     var msgID = String(m.id);
     var answered = !!answeredOpenQuestions[msgID];
-    var roomMessages = messages[m.room_id] || [];
-    var superseded = roomMessages.some(function (n) { return n.id > m.id && n.from_kind !== 'system'; });
     var answeredCount = openQuestionsAnsweredCount(msgID);
     var html = '<div class="open-questions-trigger' + (answered ? ' answered' : '') + '" data-msg-id="' + esc(msgID) + '">';
-    if (superseded && !answered) {
-      html += '<div class="open-questions-hint">Newer messages below</div>';
-    }
     html += '<button class="open-questions-open" type="button" data-msg-id="' + esc(msgID) + '"' + (answered ? ' disabled' : '') + '>';
     html += answered ? 'Answered' : 'Open Questions';
     html += '<span class="open-questions-count">' + esc(String(answeredCount)) + '/' + esc(String(questions.length)) + '</span>';
@@ -4984,12 +4977,6 @@
     return openQuestionsAnsweredCount(msgID) === questions.length;
   }
 
-  function currentOpenQuestionSuperseded(msg) {
-    if (!msg) return false;
-    var roomMessages = messages[msg.room_id] || [];
-    return roomMessages.some(function (n) { return n.id > msg.id && n.from_kind !== 'system'; });
-  }
-
   function setOpenQuestionDraft(msgID, qIdx, selector, value) {
     var key = String(msgID);
     if (!openQuestionDrafts[key]) openQuestionDrafts[key] = {};
@@ -5032,11 +5019,6 @@
       }
       var sendBtn = openQuestionsModalBody.querySelector('.open-questions-send');
       if (sendBtn) sendBtn.disabled = !allAnswered || !!answeredOpenQuestions[String(msgID)];
-      var hint = openQuestionsModalBody.querySelector('.open-questions-modal-hint');
-      if (hint) {
-        var showHint = currentOpenQuestionSuperseded(msg) && !answeredOpenQuestions[String(msgID)];
-        hint.classList.toggle('is-hidden', !showHint);
-      }
     }
     if (openQuestionsModalFooter) {
       var nextBtn = openQuestionsModalFooter.querySelector('.open-questions-next');
@@ -5080,7 +5062,6 @@
     var draft = onSendSheet ? {} : ((openQuestionDrafts[msgID] || {})[String(qIdx)] || {});
     var otherSelected = draft.selector === 'other';
     var currentAnswered = onSendSheet || openQuestionDraftHasAnswer(draft);
-    var superseded = currentOpenQuestionSuperseded(msg);
     var name = 'open-question-modal-' + msgID + '-' + qIdx;
 
     openQuestionsModal.classList.remove('hidden');
@@ -5091,7 +5072,6 @@
     }
 
     var body = '';
-    body += '<div class="open-questions-modal-hint' + (!(superseded && !answeredOpenQuestions[msgID]) ? ' is-hidden' : '') + '">Newer messages below</div>';
     body += '<div class="open-questions-steps" role="tablist" aria-label="Questions">';
     questions.forEach(function (_, idx) {
       var stepDraft = (openQuestionDrafts[msgID] || {})[String(idx)];
@@ -5198,6 +5178,7 @@
     if (!reply) return;
     if (e && e.shiftKey) {
       msgBodyInput.value = reply;
+      setPendingReply(parseInt(msgID, 10));
       answeredOpenQuestions[String(msgID)] = true;
       closeOpenQuestionsModal();
       renderMessages();
@@ -5207,7 +5188,7 @@
       updateAcPopup();
       return;
     }
-    sendMessage(reply).then(function (res) {
+    sendMessage(reply, undefined, parseInt(msgID, 10)).then(function (res) {
       if (!res) return;
       answeredOpenQuestions[String(msgID)] = true;
       closeOpenQuestionsModal();
@@ -6792,6 +6773,7 @@
       var reply = mentionForAuthor(msg.from, room) + ' ' + answers[answerIdx];
       if (e.shiftKey) {
         msgBodyInput.value = reply;
+        setPendingReply(answerMsgID);
         answeredProposedAnswers[String(answerMsgID)] = true;
         renderMessages();
         msgBodyInput.focus();
@@ -6800,7 +6782,7 @@
         updateAcPopup();
         return;
       }
-      sendMessage(reply).then(function (res) {
+      sendMessage(reply, undefined, answerMsgID).then(function (res) {
         if (!res) return;
         answeredProposedAnswers[String(answerMsgID)] = true;
         renderMessages();

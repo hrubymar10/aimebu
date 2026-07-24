@@ -25,6 +25,7 @@ var defaultMacrosJSON []byte
 var staleDefaultMacroDigests = map[string][]string{
 	"do-cr": {
 		"b9da1cdbf66c5c2842fb54dfff3188609e376e9bf5a88c32b71dc68bd517d4c8",
+		"041b7fd1451f213dae1a4644aee546d3945de67f0140fb2d5ad2bb214f08408d",
 	},
 }
 

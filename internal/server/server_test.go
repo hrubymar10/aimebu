@@ -2492,6 +2492,32 @@ func TestStaleDefaultMacroMigrationLeavesCurrentDefaultAlone(t *testing.T) {
 	}
 }
 
+func TestDoCRDefaultOffersPostAndCleanupChoices(t *testing.T) {
+	body := defaultMacros()["do-cr"]
+	for _, want := range []string{
+		`proposed_answers: ["post it", "cleanup", "post it and cleanup"]`,
+		`- "post it" — push the review to github (see below).`,
+		`- "cleanup" — tear down`,
+		`- "post it and cleanup" — run the "post it" steps, then immediately`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("do-cr default missing %q", want)
+		}
+	}
+
+	const priorDefaultDigest = "041b7fd1451f213dae1a4644aee546d3945de67f0140fb2d5ad2bb214f08408d"
+	foundPriorDefault := false
+	for _, digest := range staleDefaultMacroDigests["do-cr"] {
+		if digest == priorDefaultDigest {
+			foundPriorDefault = true
+			break
+		}
+	}
+	if !foundPriorDefault {
+		t.Errorf("do-cr stale digests missing prior default %q", priorDefaultDigest)
+	}
+}
+
 // TestRegisterReclaimedFlagInHTTPResponse verifies that the HTTP register
 // endpoint includes reclaimed=true in the JSON response on spawn_tag reclaim.
 func TestRegisterReclaimedFlagInHTTPResponse(t *testing.T) {

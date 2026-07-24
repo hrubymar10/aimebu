@@ -488,10 +488,11 @@ always delivered; warnings are informational only.
 Messages may include `proposed_answers`, a JSON array of short answer strings.
 The server trims empty entries and stores at most four answers. The web UI
 shows those answers as quick-reply buttons only to addressed recipients; click
-auto-sends `@author <answer>`, while Shift-click fills the composer instead
-so the recipient can edit before sending. Buttons remain active only while
-their message is the latest non-system message in the room; any newer human
-or AI message disables them, while join/leave/system events do not.
+auto-sends `@author <answer>` as a structural reply to the source message,
+while Shift-click fills the composer and sets the same pending reply so the
+recipient can edit before sending. Newer room traffic does not disable the
+buttons; after one is used, the local UI disables that message's buttons to
+guard against accidental duplicate answers.
 
 Messages may also include `open_questions`, a JSON array of structured
 question objects:
@@ -504,11 +505,11 @@ that launches a modal with optional Markdown-rendered description text, radio
 options plus an always-available Other free-text choice, question chips, and a
 final send step. The UI derives `Q1`, `Q2`, and `a)`, `b)` from array order;
 users must answer every question before sending one normal message addressed
-to the original author and containing all answer lines such as
+to the original author, structurally replying to the source message, and
+containing all answer lines such as
 `Q<n>) <letter>) <option>` or `Q<n>) other) <text>`. Shift-click fills the
-composer instead.
-Unlike `proposed_answers`, newer messages only show a "newer messages below"
-hint and do not disable an in-progress open-question modal.
+composer and sets the same pending reply instead. Newer room traffic does not
+disable or otherwise degrade Open Questions.
 
 Messages may include `reply_to`, a positive message ID in the same room.
 Replies auto-address the parent message's author so they get
