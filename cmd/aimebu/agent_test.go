@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -576,12 +577,37 @@ func TestAgentResumeHeartbeatIndependentOfOutput(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	agentStartResumeHeartbeat(ctx, srv.URL, "worker@aimebu", nil)
+	agentStartResumeHeartbeat(ctx, srv.URL, "worker@aimebu", nil, nil)
 
 	select {
 	case <-seen:
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("expected heartbeat without harness output")
+	}
+}
+
+func TestAgentResumeHeartbeatStopsOutsideProgressBudget(t *testing.T) {
+	oldInterval := agentResumeHeartbeatInterval
+	agentResumeHeartbeatInterval = 10 * time.Millisecond
+	defer func() { agentResumeHeartbeatInterval = oldInterval }()
+
+	var count atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/agents/worker@aimebu/heartbeat" {
+			count.Add(1)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agentStartResumeHeartbeat(ctx, srv.URL, "worker@aimebu", func() bool { return false }, nil)
+	time.Sleep(4 * agentResumeHeartbeatInterval)
+	if got := count.Load(); got != 0 {
+		t.Fatalf("heartbeat count = %d, want 0 outside progress budget", got)
 	}
 }
 
@@ -1262,6 +1288,375 @@ fi
 	if got := retry["class"]; got != "model_turn_timeout" {
 		t.Fatalf("retry class = %v, want model_turn_timeout", got)
 	}
+}
+
+func TestAgentBootstrapPiWatchdogPreservesBufferedSession(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+	t.Setenv(agentProgressIdleEnv, "30ms")
+	t.Setenv(agentProgressForwardEnv, "1s")
+
+	oldLookupTimeout := agentRegistrationLookupTimeout
+	agentRegistrationLookupTimeout = 100 * time.Millisecond
+	defer func() { agentRegistrationLookupTimeout = oldLookupTimeout }()
+
+	spawnTag := "piwatchsession1"
+	server := newRegisteredAgentTestServer(t, spawnTag, "piper@aimebu")
+	defer server.Close()
+
+	harnessPath := filepath.Join(t.TempDir(), "fake-pi-watch-session.sh")
+	script := `#!/bin/sh
+printf '{"type":"session","version":3,"id":"pi-watch-session"}\n'
+printf '{"type":"turn_start"}\n'
+printf 'provider stopped responding\n' >&2
+sleep 2
+`
+	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	debug := newAgentDebugLog("", spawnTag)
+	sessionID, agentID, err := agentBootstrapSession(
+		"pi",
+		[]string{harnessPath},
+		"register please",
+		"gemma4:31b",
+		agentBuildEnv(server.URL, "pi", spawnTag),
+		server.URL,
+		spawnTag,
+		"",
+		make(chan os.Signal, 1),
+		debug,
+	)
+	if closeErr := debug.close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != nil {
+		t.Fatalf("bootstrap watchdog recovery failed: %v", err)
+	}
+	if sessionID != "pi-watch-session" || agentID != "piper@aimebu" {
+		t.Fatalf("session/agent = %q/%q", sessionID, agentID)
+	}
+
+	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "piper@aimebu-"+spawnTag+".log"))
+	diagnostics := firstDebugEvent(records, "harness_diagnostics")
+	if diagnostics == nil || diagnostics["reason"] != string(agentProgressStallIdle) {
+		t.Fatalf("missing idle watchdog diagnostics: %#v", records)
+	}
+	if !strings.Contains(fmt.Sprint(diagnostics["stderr_tail"]), "provider stopped responding") {
+		t.Fatalf("diagnostics lost stderr: %#v", diagnostics)
+	}
+	if parsed := firstDebugEvent(records, "session_id_parsed"); parsed == nil {
+		t.Fatalf("session ID was not parsed before recovery: %#v", records)
+	}
+}
+
+func TestAgentBootstrapPiWatchdogRebootstrapsWithoutSession(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+	t.Setenv(agentProgressIdleEnv, "30ms")
+	t.Setenv(agentProgressForwardEnv, "1s")
+
+	oldLookupTimeout := agentRegistrationLookupTimeout
+	agentRegistrationLookupTimeout = 100 * time.Millisecond
+	defer func() { agentRegistrationLookupTimeout = oldLookupTimeout }()
+	oldInitialBackoff := agentRecoveryInitialBackoff
+	agentRecoveryInitialBackoff = 5 * time.Millisecond
+	defer func() { agentRecoveryInitialBackoff = oldInitialBackoff }()
+
+	spawnTag := "piwatchreboot12"
+	server := newRegisteredAgentTestServer(t, spawnTag, "piper@aimebu")
+	defer server.Close()
+
+	statePath := filepath.Join(t.TempDir(), "attempt")
+	harnessPath := filepath.Join(t.TempDir(), "fake-pi-watch-rebootstrap.sh")
+	script := `#!/bin/sh
+if [ -f "$PI_WATCH_STATE" ]; then
+	printf '{"type":"session","version":3,"id":"pi-rebootstrap-session"}\n'
+	printf '{"type":"agent_end","messages":[]}\n'
+	exit 0
+fi
+printf 'first' > "$PI_WATCH_STATE"
+printf '{"type":"turn_start"}\n'
+sleep 2
+`
+	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	debug := newAgentDebugLog("", spawnTag)
+	env := append(agentBuildEnv(server.URL, "pi", spawnTag), "PI_WATCH_STATE="+statePath)
+	sessionID, agentID, err := agentBootstrapSession(
+		"pi",
+		[]string{harnessPath},
+		"register please",
+		"gemma4:31b",
+		env,
+		server.URL,
+		spawnTag,
+		"",
+		make(chan os.Signal, 1),
+		debug,
+	)
+	if closeErr := debug.close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != nil {
+		t.Fatalf("re-bootstrap fallback failed: %v", err)
+	}
+	if sessionID != "pi-rebootstrap-session" || agentID != "piper@aimebu" {
+		t.Fatalf("session/agent = %q/%q", sessionID, agentID)
+	}
+	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "piper@aimebu-"+spawnTag+".log"))
+	retry := firstDebugEvent(records, "bootstrap_retry")
+	if retry == nil || retry["class"] != string(agentProgressStallIdle) {
+		t.Fatalf("missing watchdog re-bootstrap retry: %#v", records)
+	}
+}
+
+func TestAgentBootstrapInterruptCapturesDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+	t.Setenv(agentProgressIdleEnv, "5s")
+	t.Setenv(agentProgressForwardEnv, "10s")
+
+	oldLookupTimeout := agentRegistrationLookupTimeout
+	agentRegistrationLookupTimeout = 100 * time.Millisecond
+	defer func() { agentRegistrationLookupTimeout = oldLookupTimeout }()
+
+	spawnTag := "piinterrupt1234"
+	server := newRegisteredAgentTestServer(t, spawnTag, "piper@aimebu")
+	defer server.Close()
+
+	harnessPath := filepath.Join(t.TempDir(), "fake-pi-interrupt.sh")
+	script := `#!/bin/sh
+trap 'exit 0' INT TERM
+printf '{"type":"session","version":3,"id":"pi-interrupt-session"}\n'
+printf '{"type":"turn_start"}\n'
+printf 'stderr before interrupt\n' >&2
+while :; do sleep 1; done
+`
+	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	go func() {
+		time.Sleep(75 * time.Millisecond)
+		sigCh <- os.Interrupt
+	}()
+	debug := newAgentDebugLog("", spawnTag)
+	_, agentID, err := agentBootstrapSession(
+		"pi",
+		[]string{harnessPath},
+		"register please",
+		"gemma4:31b",
+		agentBuildEnv(server.URL, "pi", spawnTag),
+		server.URL,
+		spawnTag,
+		"",
+		sigCh,
+		debug,
+	)
+	if closeErr := debug.close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != agentErrInterrupted {
+		t.Fatalf("bootstrap error = %v, want interrupt", err)
+	}
+	if agentID != "piper@aimebu" {
+		t.Fatalf("agentID = %q", agentID)
+	}
+	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "piper@aimebu-"+spawnTag+".log"))
+	diagnostics := firstDebugEvent(records, "harness_diagnostics")
+	if diagnostics == nil || diagnostics["reason"] != "interrupt" {
+		t.Fatalf("missing interrupt diagnostics: %#v", records)
+	}
+	if !strings.Contains(fmt.Sprint(diagnostics["stderr_tail"]), "stderr before interrupt") {
+		t.Fatalf("interrupt diagnostics lost stderr: %#v", diagnostics)
+	}
+}
+
+func TestAgentResumePiWatchdogRecoversAfterFirstOutputStalls(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AIMEBU_CONFIG_DIR", dir)
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+	t.Setenv(agentProgressIdleEnv, "30ms")
+	t.Setenv(agentProgressForwardEnv, "1s")
+
+	oldInitialBackoff := agentRecoveryInitialBackoff
+	agentRecoveryInitialBackoff = 5 * time.Millisecond
+	defer func() { agentRecoveryInitialBackoff = oldInitialBackoff }()
+
+	spawnTag := "piresumewatch12"
+	server := newRegisteredAgentTestServer(t, spawnTag, "piper@aimebu")
+	defer server.Close()
+
+	statePath := filepath.Join(t.TempDir(), "attempt")
+	harnessPath := filepath.Join(t.TempDir(), "fake-pi-resume-watch.sh")
+	script := `#!/bin/sh
+if [ -f "$PI_RESUME_WATCH_STATE" ]; then
+	printf 'second' > "$PI_RESUME_WATCH_STATE"
+	trap 'exit 0' INT TERM
+	printf '{"type":"turn_start"}\n'
+	printf '{"type":"tool_execution_start","toolName":"aimebu_bus_wait","args":{"timeout":600}}\n'
+	while :; do sleep 1; done
+fi
+printf 'first' > "$PI_RESUME_WATCH_STATE"
+printf '{"type":"turn_start"}\n'
+printf '{"type":"message_update"}\n'
+printf 'resume provider stalled\n' >&2
+sleep 2
+`
+	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	go func() {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			state, _ := os.ReadFile(statePath)
+			if string(state) == "second" {
+				time.Sleep(50 * time.Millisecond)
+				sigCh <- os.Interrupt
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		sigCh <- os.Interrupt
+	}()
+
+	debug := newAgentDebugLog("piper@aimebu", spawnTag)
+	env := append(agentBuildEnv(server.URL, "pi", spawnTag), "PI_RESUME_WATCH_STATE="+statePath)
+	agentResumeLoop(
+		"pi",
+		[]string{harnessPath},
+		"pi-resume-session",
+		"piper@aimebu",
+		nil,
+		"",
+		"gemma4:31b",
+		env,
+		server.URL,
+		sigCh,
+		debug,
+	)
+	if closeErr := debug.close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+
+	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "piper@aimebu-"+spawnTag+".log"))
+	var watchdogRecovery map[string]any
+	spawnCount := 0
+	for _, record := range records {
+		if record["event"] == "harness_spawn" {
+			spawnCount++
+		}
+		if record["event"] == "recovery_decision" && record["class"] == string(agentRecoveryPiIdleStalled) {
+			watchdogRecovery = record
+		}
+	}
+	if watchdogRecovery == nil {
+		t.Fatalf("missing pi resume watchdog recovery: %#v", records)
+	}
+	if spawnCount < 2 {
+		t.Fatalf("resume harness spawned %d times, want recovery spawn", spawnCount)
+	}
+	diagnostics := firstDebugEvent(records, "harness_diagnostics")
+	if diagnostics == nil || !strings.Contains(fmt.Sprint(diagnostics["stderr_tail"]), "resume provider stalled") {
+		t.Fatalf("resume watchdog lost diagnostics: %#v", records)
+	}
+}
+
+func TestAgentBootstrapPiWatchdogRetriesAreBounded(t *testing.T) {
+	t.Setenv("AIMEBU_CONFIG_DIR", t.TempDir())
+	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
+	t.Setenv(agentProgressIdleEnv, "15ms")
+	t.Setenv(agentProgressForwardEnv, "1s")
+
+	oldLookupTimeout := agentRegistrationLookupTimeout
+	agentRegistrationLookupTimeout = 50 * time.Millisecond
+	defer func() { agentRegistrationLookupTimeout = oldLookupTimeout }()
+	oldInitialBackoff := agentRecoveryInitialBackoff
+	agentRecoveryInitialBackoff = time.Millisecond
+	defer func() { agentRecoveryInitialBackoff = oldInitialBackoff }()
+
+	spawnTag := "piwatchbounded1"
+	server := newRegisteredAgentTestServer(t, spawnTag, "piper@aimebu")
+	defer server.Close()
+
+	harnessPath := filepath.Join(t.TempDir(), "fake-pi-watch-bounded.sh")
+	script := "#!/bin/sh\nprintf '{\"type\":\"turn_start\"}\\n'\nsleep 2\n"
+	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	debug := newAgentDebugLog("", spawnTag)
+	_, _, err := agentBootstrapSession(
+		"pi",
+		[]string{harnessPath},
+		"register please",
+		"gemma4:31b",
+		agentBuildEnv(server.URL, "pi", spawnTag),
+		server.URL,
+		spawnTag,
+		"",
+		make(chan os.Signal, 1),
+		debug,
+	)
+	if closeErr := debug.close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err == nil {
+		t.Fatal("expected bounded bootstrap watchdog failure")
+	}
+
+	records := readAgentDebugRecords(t, agentDebugLogPath("piper@aimebu", spawnTag))
+	spawnCount := 0
+	retryCount := 0
+	for _, record := range records {
+		switch record["event"] {
+		case "harness_spawn":
+			spawnCount++
+		case "bootstrap_retry":
+			retryCount++
+		}
+	}
+	if spawnCount != agentRecoveryFailureCap+1 || retryCount != agentRecoveryFailureCap {
+		t.Fatalf("spawns/retries = %d/%d, want %d/%d", spawnCount, retryCount, agentRecoveryFailureCap+1, agentRecoveryFailureCap)
+	}
+}
+
+func newRegisteredAgentTestServer(t *testing.T, spawnTag, agentID string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/health":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case r.URL.Path == "/agents/by-spawn-tag":
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprintf(w, `{"agent":{"id":%q,"kind":"ai","meta":{"spawn_tag":%q}}}`, agentID, spawnTag)
+		case r.URL.Path == "/agents":
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprintf(w, `{"agents":[{"id":%q,"kind":"ai","meta":{"spawn_tag":%q}}]}`, agentID, spawnTag)
+		case strings.HasSuffix(r.URL.Path, "/rooms"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprintf(w, `{"agent":%q,"rooms":[]}`, agentID)
+		case strings.HasSuffix(r.URL.Path, "/heartbeat"):
+			w.WriteHeader(http.StatusNoContent)
+		case strings.HasSuffix(r.URL.Path, "/state"):
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/agents/"):
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
 }
 
 func TestAgentBootstrapSessionPromotesLogBeforeChildFailure(t *testing.T) {

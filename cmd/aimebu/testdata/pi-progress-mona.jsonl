@@ -1,0 +1,8 @@
+{"at":"2026-07-27T08:59:57Z","event":{"type":"session","id":"019fa2cd-6274-7afc-846c-ab1b6557c7f5"}}
+{"at":"2026-07-27T08:59:57Z","event":{"type":"turn_start"}}
+{"at":"2026-07-27T09:00:02Z","event":{"type":"tool_execution_start","toolName":"aimebu_bus_register","args":{}}}
+{"at":"2026-07-27T09:00:02Z","event":{"type":"tool_execution_end","toolName":"aimebu_bus_register"}}
+{"at":"2026-07-27T09:00:02Z","event":{"type":"turn_end"}}
+{"at":"2026-07-27T09:00:02Z","event":{"type":"turn_start"}}
+{"at":"2026-07-27T09:01:19Z","event":{"type":"message_update"}}
+{"at":"2026-07-27T09:02:09Z","event":{"type":"message_update"}}

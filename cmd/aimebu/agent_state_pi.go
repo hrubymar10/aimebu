@@ -1,7 +1,5 @@
 package main
 
-import "encoding/json"
-
 type piStateDetector struct {
 	current      string
 	preToolState string
@@ -12,10 +10,8 @@ func (*piStateDetector) Name() string {
 }
 
 func (d *piStateDetector) Detect(line []byte) string {
-	var event struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(line, &event); err != nil || event.Type == "" {
+	event, ok := parsePiProgressEvent(line)
+	if !ok {
 		return ""
 	}
 	switch event.Type {

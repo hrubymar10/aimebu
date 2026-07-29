@@ -1260,18 +1260,28 @@ func TestAgentEffectiveStateOverridesToIdleDuringBusWait(t *testing.T) {
 	if got.State != types.AgentStateIdle {
 		t.Fatalf("state during bus_wait = %q, want %q", got.State, types.AgentStateIdle)
 	}
+	if !got.StateOverlay {
+		t.Fatal("bus_wait state should be marked as an overlay")
+	}
 
 	s.mu.RLock()
 	storedState := s.agents[agent.ID].State
+	storedOverlay := s.agents[agent.ID].StateOverlay
 	s.mu.RUnlock()
 	if storedState != types.AgentStateThinking {
 		t.Fatalf("stored state = %q, want %q", storedState, types.AgentStateThinking)
+	}
+	if storedOverlay {
+		t.Fatal("bus_wait overlay must not mutate stored state")
 	}
 
 	s.leaveWait(agent.ID, "")
 	got = findListedAgent(t, s, agent.ID)
 	if got.State != types.AgentStateThinking {
 		t.Fatalf("state after bus_wait = %q, want %q", got.State, types.AgentStateThinking)
+	}
+	if got.StateOverlay {
+		t.Fatal("stored state should not be marked as an overlay")
 	}
 }
 
@@ -1307,6 +1317,9 @@ func TestAgentEffectiveStateNoBusWaitReturnsStoredState(t *testing.T) {
 	got := findListedAgent(t, s, agent.ID)
 	if got.State != types.AgentStateToolCall {
 		t.Fatalf("state = %q, want %q", got.State, types.AgentStateToolCall)
+	}
+	if got.StateOverlay {
+		t.Fatal("stored state should not be marked as an overlay")
 	}
 }
 

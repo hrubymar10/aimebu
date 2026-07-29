@@ -17,6 +17,28 @@ import (
 )
 
 const agentDebugStdoutLineLimit = 4096
+const agentDebugDiagnosticEventLimit = 12
+
+// agentCaptureBuffer is a bytes.Buffer with snapshot-safe reads. Child
+// stdout/stderr can still be arriving when a signal or watchdog asks for a
+// diagnostic snapshot, so ordinary bytes.Buffer reads would race with the
+// exec package's writer goroutines.
+type agentCaptureBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *agentCaptureBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *agentCaptureBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.buf.Bytes()...)
+}
 
 type agentDebugLog struct {
 	mu       sync.Mutex
@@ -356,6 +378,59 @@ func agentLogHarnessExit(debug *agentDebugLog, err error, wallTime time.Duration
 		"wall_time_ms": wallTime.Milliseconds(),
 		"stderr_tail":  agentDebugTail(stderr, 1024),
 	})
+}
+
+func agentStructuredEventTail(output []byte, max int) []string {
+	if max <= 0 {
+		return nil
+	}
+	lines := bytes.Split(output, []byte{'\n'})
+	events := make([]string, 0, max)
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var envelope struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(line, &envelope) != nil || envelope.Type == "" {
+			continue
+		}
+		if len(line) > agentDebugStdoutLineLimit {
+			line = line[:agentDebugStdoutLineLimit]
+		}
+		if len(events) == max {
+			copy(events, events[1:])
+			events = events[:max-1]
+		}
+		events = append(events, string(line))
+	}
+	return events
+}
+
+func agentLogHarnessDiagnostics(debug *agentDebugLog, reason string, stdout, stderr []byte) {
+	if debug == nil {
+		return
+	}
+	debug.log("harness_diagnostics", map[string]any{
+		"reason":      reason,
+		"stderr_tail": agentDebugTail(stderr, agentDebugStdoutLineLimit),
+		"event_tail":  agentStructuredEventTail(stdout, agentDebugDiagnosticEventLimit),
+	})
+}
+
+func agentPrintHarnessDiagnostics(reason string, stdout, stderr []byte) {
+	fmt.Fprintf(os.Stderr, "aimebu agent: harness diagnostics (%s)\n", reason)
+	if tail := strings.TrimSpace(agentDebugTail(stderr, agentDebugStdoutLineLimit)); tail != "" {
+		fmt.Fprintf(os.Stderr, "stderr tail:\n%s\n", tail)
+	}
+	if events := agentStructuredEventTail(stdout, agentDebugDiagnosticEventLimit); len(events) > 0 {
+		fmt.Fprintln(os.Stderr, "structured event tail:")
+		for _, event := range events {
+			fmt.Fprintln(os.Stderr, event)
+		}
+	}
 }
 
 func agentLogBootstrapFailure(debug *agentDebugLog, class, detail string) {

@@ -132,6 +132,7 @@ type Agent struct {
 	Meta         map[string]string `json:"meta,omitempty"`
 	State        string            `json:"state,omitempty"`
 	StateAt      time.Time         `json:"state_at,omitempty"`
+	StateOverlay bool              `json:"state_overlay,omitempty"`
 	Warnings     []string          `json:"warnings,omitempty"`
 	RegisteredAt string            `json:"registered_at"`
 	LastSeen     string            `json:"last_seen"`

@@ -603,6 +603,7 @@ func (s *store) applyAgentWaitStateOverlay(agents []types.Agent) {
 		}
 		if len(s.openWaits[agents[i].ID]) > 0 || s.openWS[agents[i].ID] > 0 {
 			agents[i].State = types.AgentStateIdle
+			agents[i].StateOverlay = true
 		}
 	}
 }

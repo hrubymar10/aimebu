@@ -2722,9 +2722,39 @@
   function agentStateBadgeHTML(a) {
     var meta = agentStateMeta(a && a.state);
     if (!meta) return '';
-    var title = meta.title;
-    if (a.state_at) title += ' since ' + relativeTime(a.state_at);
-    return '<span class="agent-state-badge agent-state-' + esc(meta.className) + '" title="' + esc(title) + '">' + esc(meta.label) + '</span>';
+    var elapsed = a.state_overlay ? '' : formatStateElapsed(a.state_at);
+    var title = meta.title + (elapsed ? ' for ' + elapsed : '');
+    var label = meta.label + (elapsed ? ' ' + elapsed : '');
+    var data = a.state_at && !a.state_overlay
+      ? ' data-state-label="' + esc(meta.label) + '" data-state-title="' + esc(meta.title) + '" data-state-at="' + esc(a.state_at) + '"'
+      : '';
+    return '<span class="agent-state-badge agent-state-' + esc(meta.className) + '" title="' + esc(title) + '"' + data + '>' + esc(label) + '</span>';
+  }
+
+  function formatStateElapsed(isoString, nowMS) {
+    if (!isoString) return '';
+    var stateMS = Date.parse(isoString);
+    if (!Number.isFinite(stateMS)) return '';
+    var elapsedSeconds = Math.max(0, Math.floor(((nowMS == null ? Date.now() : nowMS) - stateMS) / 1000));
+    var hours = Math.floor(elapsedSeconds / 3600);
+    var minutes = Math.floor((elapsedSeconds % 3600) / 60);
+    var seconds = elapsedSeconds % 60;
+    if (hours > 0) {
+      return hours + ':' + String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+    }
+    return minutes + ':' + String(seconds).padStart(2, '0');
+  }
+
+  function refreshAgentStateBadges() {
+    if (document.hidden) return;
+    document.querySelectorAll('.agent-state-badge[data-state-at]').forEach(function (el) {
+      var elapsed = formatStateElapsed(el.getAttribute('data-state-at'));
+      if (!elapsed) return;
+      var label = el.getAttribute('data-state-label') || '';
+      var title = el.getAttribute('data-state-title') || label;
+      el.textContent = label + ' ' + elapsed;
+      el.title = title + ' for ' + elapsed;
+    });
   }
 
   function isDM(roomID) {
@@ -7018,6 +7048,8 @@
   // ── Periodic refresh (timestamps only) ──────────────────────────
 
   // Update relative timestamps every 30 seconds (purely cosmetic)
+  setInterval(refreshAgentStateBadges, 1000);
+
   setInterval(function () {
     messageListEl.querySelectorAll('.chat-msg-time').forEach(function (el) {
       el.textContent = relativeTime(el.title);

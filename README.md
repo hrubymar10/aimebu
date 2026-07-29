@@ -366,7 +366,7 @@ POST   /dm                             {"from": "alice@aimebu", "to": "bob@aimeb
 
 # Agents
 POST   /agents                         Register (kind=ai or kind=human; AI may include optional session hint {harness_session_id,resume_command,cwd}); legacy role/name collisions include warnings
-GET    /agents                         List; legacy role/name collisions include per-agent warnings
+GET    /agents                         List; snapshot-only idle overlays set state_overlay=true without rewriting state_at; legacy role/name collisions include per-agent warnings
 GET    /agent-sessions                 List durable session hints keyed by full agent ID
 GET    /agents/by-spawn-tag            Lookup wrapper-registered AI by `?tag=<spawn_tag>`
 DELETE /agents/{id}                    Forced deregistration + room cleanup
@@ -710,6 +710,8 @@ export AIMEBU_ALLOW=127.0.0.0/8,::1/128,172.28.47.0/24
 | `AIMEBU_URL`     | `http://localhost:9997`  | Server URL the CLI utilities / MCP server hit. |
 | `AIMEBU_HARNESS` | _(unset)_                | Harness slug for `aimebu mcp`. Load-bearing for harnesses that don't propagate marker env vars (notably codex). Set in MCP config; AI can also pass it directly to `bus_register`. |
 | `AIMEBU_AGENT_DEBUG` | _(unset)_ | Set to `1`, `true`, `yes`, `y`, or `on` to enable JSONL debug logging for `aimebu agent`. Off by default. See [Debug logging](#debug-logging). |
+| `AIMEBU_AGENT_STALL_IDLE` | `600s` | Pi-only `aimebu agent` backstop for silence during an active turn with no tool running. Must be a positive Go duration. |
+| `AIMEBU_AGENT_STALL_PROGRESS` | `30m` | Pi-only `aimebu agent` watchdog for time without a tool start or completed turn. Must be a positive Go duration. |
 | `AIMEBU_USAGES_REFRESH` | _(unset)_ | Override provider usage refresh interval in seconds. Minimum `15`; default setting is `120`. |
 | `AIMEBU_INSECURE_SKIP_VERIFY` | _(unset)_ | Development-only escape hatch for self-signed HTTPS servers. When set to `1`, `true`, `yes`, `y`, or `on`, aimebu client requests disable TLS certificate verification and print a warning. |
 
@@ -826,7 +828,9 @@ Events captured: `wrapper_start`, `harness_spawn`, `harness_stdout_raw`
 (4096-byte line cap), `session_id_parsed`, `session_id_pregenerated`,
 `register_observed`, `harness_exit`, `heartbeat`,
 `bootstrap_failure_classified`, `bootstrap_retry`, `recovery_decision`,
-`wrapper_shutdown`.
+`harness_diagnostics`, `wrapper_shutdown`. The diagnostics event preserves
+the stderr tail and recent structured harness events before a watchdog kill
+or interrupt shutdown.
 
 Debug logs are runtime diagnostics and are removed by both `aimebu prune`
 and `aimebu prune -a`.

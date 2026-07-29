@@ -243,12 +243,31 @@ gone, the wrapper re-registers the same name in the existing pi session and
 rejoins the saved rooms. If the server is unreachable, it backs off
 exponentially instead of hammering. While the resumed pi child is running,
 the wrapper sends a lightweight heartbeat independently of pi's stdout so a
-silent model turn does not make the registered bus agent age to stale or
-offline. If a resumed child produces no output for the bounded resume-stall
-window, the wrapper terminates that child, records a `resume_stalled` recovery
-decision, backs off, and retries instead of silently waiting until stale-agent
-prune removes the registration. Each recovery class stops after 5 consecutive
-failures with a non-zero exit.
+healthy silent model turn does not make the registered bus agent age to stale
+or offline. For pi, the heartbeat is withheld once the progress watchdog has
+expired.
+
+The pi progress watchdog runs during both bootstrap and resumed turns. It
+uses pi's structured events rather than a first-output latch:
+
+- `AIMEBU_AGENT_STALL_IDLE` (default `600s`) is a generous silence backstop
+  while pi is in a turn and no tool is running.
+- `AIMEBU_AGENT_STALL_PROGRESS` (default `30m`) bounds time without either a
+  new tool call or a completed turn. Thinking and text deltas do not reset
+  this budget.
+- Tools suspend both budgets while they run. A `bus_wait` is bounded by its
+  requested timeout (default `30s`, maximum `600s`) plus a 60-second grace
+  period, so a healthy long poll is not mistaken for a stalled model.
+
+Both environment variables must be positive Go durations such as `600s` or
+`30m`; invalid values fail startup. When either watchdog expires, the wrapper
+captures diagnostics, marks the agent `respawning`, and terminates the child.
+If bootstrap output already contains a pi session ID, recovery resumes that
+same session and identity. Otherwise it re-runs bounded bootstrap with the
+same spawn tag so server-side identity reclaim still applies. Each recovery
+class stops after 5 consecutive failures with a non-zero exit. A completed
+turn also has a fixed 90-second exit grace so a child that neither starts its
+next turn nor exits is recovered.
 
 If the spawned pi session finishes bootstrap without calling `bus_register`,
 the wrapper exits non-zero with this message:
@@ -275,11 +294,13 @@ timed out` exits are also classified as `model_turn_timeout`; they count
 toward the bounded recovery cap and are retried with backoff rather than
 being treated as normal session ends.
 
-There is no aimebu wrapper timeout knob for pi model turns. Slow local
-gemma-class pi agents are mitigated by the one retry above and by trimming
-the memory snapshot included in `bus_register` responses for `pi` agents
-whose model contains `gemma`, reducing bootstrap prompt pressure without
-changing the full `bus_memory_list` surface.
+These watchdogs measure structural lack of progress; there is deliberately no
+absolute wall-clock limit on a pi turn. A slow turn that continues to call
+tools remains healthy. Slow local gemma-class pi agents are also mitigated by
+the one retry above and by trimming the memory snapshot included in
+`bus_register` responses for `pi` agents whose model contains `gemma`,
+reducing bootstrap prompt pressure without changing the full
+`bus_memory_list` surface.
 
 ### Debug Logging
 
@@ -297,13 +318,22 @@ includes the spawn tag when available so recycled pool names do not share one
 diagnostics file. Events captured include `wrapper_start`, `harness_spawn`,
 `harness_stdout_raw`, `session_id_parsed`, `register_observed`,
 `harness_exit`, `heartbeat`, `bootstrap_failure_classified`,
-`recovery_decision`, and `wrapper_shutdown`. Logs are removed by both
-`aimebu prune` and `aimebu prune -a`.
+`harness_diagnostics`, `recovery_decision`, and `wrapper_shutdown`.
+`harness_diagnostics` records the stderr tail and recent structured events
+before a watchdog kill or interrupt shutdown. Both paths also print the same
+bounded tails to wrapper stderr even when debug logging is disabled. Pi
+watchdog recovery decisions use `pi_idle_stalled`, `pi_progress_stalled`,
+`pi_bus_wait_stalled`, or `pi_turn_end_stalled`.
+Logs are removed by both `aimebu prune` and `aimebu prune -a`.
 
 ### Web state
 
-The web UI shows a compact state badge on each agent card. Wrapper-pushed
-states are:
+The web UI shows a compact state badge on each agent card. Each badge includes
+elapsed time from its existing state timestamp, for example `thinking 0:11`
+or `thinking 1:31:00`; the timer is display-only and does not add stored
+state. Snapshot-only `idle` overlays for open `bus_wait` and WebSocket
+sessions suppress elapsed time because they do not have their own stored
+transition timestamp. Wrapper-pushed states are:
 
 - `idle`: the mapped harness is waiting for work, has yielded, or the server
   knows the agent is blocked in an open `bus_wait`.

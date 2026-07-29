@@ -56,6 +56,10 @@ const (
 	agentRecoveryServerUnreachable  agentRecoveryClass = "server_unreachable"
 	agentRecoveryModelTurnTimeout   agentRecoveryClass = "model_turn_timeout"
 	agentRecoveryResumeStalled      agentRecoveryClass = "resume_stalled"
+	agentRecoveryPiIdleStalled      agentRecoveryClass = "pi_idle_stalled"
+	agentRecoveryPiProgressStalled  agentRecoveryClass = "pi_progress_stalled"
+	agentRecoveryPiBusWaitStalled   agentRecoveryClass = "pi_bus_wait_stalled"
+	agentRecoveryPiTurnEndStalled   agentRecoveryClass = "pi_turn_end_stalled"
 )
 
 const (
@@ -64,6 +68,7 @@ const (
 )
 
 var (
+	agentRecoveryInitialBackoff  = time.Second
 	agentResumeHeartbeatInterval = 20 * time.Second
 	agentResumeStallTimeout      = 5 * time.Minute
 )
@@ -314,6 +319,12 @@ func agentCmd(args []string) {
 	default:
 		fmt.Fprintf(os.Stderr, "aimebu agent: harness %q is not yet supported.\nCurrently supported: claude-code (claude, claude-docker), codex (codex, codex-docker), pi (pi, pi-docker), vibe (vibe, vibe-docker).\n", harness)
 		os.Exit(1)
+	}
+	if harness == "pi" {
+		if _, err := agentProgressConfigFromLookup(os.Getenv); err != nil {
+			fmt.Fprintf(os.Stderr, "aimebu agent: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	aimebuURL := os.Getenv("AIMEBU_URL")
@@ -1355,29 +1366,51 @@ func agentFullID(agentName string) string {
 	return agentName + "@" + project
 }
 
-func agentBootstrapStart(harness string, command []string, prompt, sessionID, aimebuURL, modelSlug string, env []string, debug *agentDebugLog) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer, *agentDebugStdoutWriter, *agentIDProvider, io.WriteCloser, error) {
+func agentBootstrapStart(harness string, command []string, prompt, sessionID, aimebuURL, modelSlug string, env []string, debug *agentDebugLog) (*exec.Cmd, *agentCaptureBuffer, *agentCaptureBuffer, *agentDebugStdoutWriter, *agentIDProvider, io.WriteCloser, *agentProgressMonitor, error) {
 	args := agentBootstrapArgs(harness, prompt, sessionID, aimebuURL, command[1:], modelSlug)
 
-	buf := &bytes.Buffer{}
-	stderrBuf := &bytes.Buffer{}
+	buf := &agentCaptureBuffer{}
+	stderrBuf := &agentCaptureBuffer{}
 	agentID := newAgentIDProvider("")
 	stateWriter := startAgentStatePusher(context.Background(), aimebuURL, agentID, newStateDetector(harness))
-	stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(os.Stdout, buf, stateWriter))
+	var progress *agentProgressMonitor
+	writers := []io.Writer{os.Stdout, buf, stateWriter}
+	if harness == "pi" {
+		config, err := agentProgressConfigFromLookup(os.Getenv)
+		if err != nil {
+			_ = stateWriter.Close()
+			return nil, nil, nil, nil, nil, nil, nil, err
+		}
+		progress = newAgentProgressMonitor(config)
+		writers = append(writers, progress)
+	}
+	stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(writers...))
 	cmd := agentCommand(command, args, env, stdoutWriter, io.MultiWriter(os.Stderr, stderrBuf))
 
 	agentLogHarnessSpawn(debug, command, args)
 	if err := cmd.Start(); err != nil {
 		_ = stateWriter.Close()
-		return nil, nil, nil, nil, nil, nil, err
+		_ = progress.Close()
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
-	return cmd, buf, stderrBuf, stdoutWriter, agentID, stateWriter, nil
+	return cmd, buf, stderrBuf, stdoutWriter, agentID, stateWriter, progress, nil
 }
 
 func agentBootstrapSession(harness string, command []string, prompt string, modelSlug string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog) (string, string, error) {
+	backoff := agentRecoveryInitialBackoff
 	for attempt := 1; ; attempt++ {
 		sessionID, agentName, err, failureClass := agentBootstrapSessionProcess(harness, command, prompt, modelSlug, env, aimebuURL, spawnTag, knownName, sigCh, debug)
 		if err != nil && harness == "pi" && agentName == "" && failureClass == "model_turn_timeout" && attempt == 1 {
 			agentLogBootstrapRetry(debug, harness, failureClass, attempt+1)
+			continue
+		}
+		if err != nil && harness == "pi" && agentProgressStallFromClass(failureClass) != "" && attempt <= agentRecoveryFailureCap {
+			agentLogBootstrapRetry(debug, harness, failureClass, attempt+1)
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > agentRecoveryMaxBackoff {
+				backoff = agentRecoveryMaxBackoff
+			}
 			continue
 		}
 		return sessionID, agentName, err
@@ -1393,10 +1426,11 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 		agentLogSessionIDPreGenerated(debug, harness, preSessionID)
 	}
 
-	bootstrapCmd, bootstrapBuf, stderrBuf, stdoutWriter, agentID, stateWriter, err := agentBootstrapStart(harness, command, prompt, preSessionID, aimebuURL, modelSlug, env, debug)
+	bootstrapCmd, bootstrapBuf, stderrBuf, stdoutWriter, agentID, stateWriter, progress, err := agentBootstrapStart(harness, command, prompt, preSessionID, aimebuURL, modelSlug, env, debug)
 	if err != nil {
 		return "", "", err, ""
 	}
+	defer progress.Close()
 
 	nameCh := make(chan string, 1)
 	go func() {
@@ -1412,9 +1446,16 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 	doneCh := make(chan error, 1)
 	go func() { doneCh <- bootstrapCmd.Wait() }()
 
-	var waitErr error
+	var (
+		waitErr     error
+		stallReason agentProgressStall
+	)
 	select {
 	case sig := <-sigCh:
+		stdoutSnapshot := bootstrapBuf.Bytes()
+		stderrSnapshot := stderrBuf.Bytes()
+		agentPrintHarnessDiagnostics("interrupt", stdoutSnapshot, stderrSnapshot)
+		agentLogHarnessDiagnostics(debug, "interrupt", stdoutSnapshot, stderrSnapshot)
 		_ = stateWriter.Close()
 		shutdownName := knownName
 		if shutdownName == "" {
@@ -1427,8 +1468,41 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 			shutdownName = agentLookupName(aimebuURL, spawnTag, time.Second)
 		}
 		agentGracefulShutdown(aimebuURL, spawnTag, shutdownName, bootstrapCmd, doneCh, sigCh, debug, sig)
+		stdoutWriter.Flush()
 		return "", shutdownName, agentErrInterrupted, ""
+	case stallReason = <-progress.Stalled():
 	case waitErr = <-doneCh:
+	}
+	if stallReason != "" {
+		stdoutSnapshot := bootstrapBuf.Bytes()
+		stderrSnapshot := stderrBuf.Bytes()
+		agentPrintHarnessDiagnostics(string(stallReason), stdoutSnapshot, stderrSnapshot)
+		agentLogHarnessDiagnostics(debug, string(stallReason), stdoutSnapshot, stderrSnapshot)
+
+		agentName := ""
+		select {
+		case agentName = <-nameCh:
+		default:
+			agentName = agentLookupName(aimebuURL, spawnTag, time.Second)
+		}
+		if agentName != "" {
+			agentID.Set(agentFullID(agentName))
+			agentPushState(aimebuURL, agentFullID(agentName), "respawning")
+		}
+
+		sessionID, lineIdx := agentParseSessionID(harness, stdoutSnapshot)
+		agentStopChild(bootstrapCmd, doneCh, sigCh)
+		stdoutWriter.Flush()
+		_ = stateWriter.Close()
+		stallErr := fmt.Errorf("pi bootstrap watchdog fired: %s", stallReason)
+		agentLogHarnessExit(debug, stallErr, time.Since(startedAt), stderrBuf.Bytes())
+		agentLogRecoveryDecision(debug, agentProgressRecoveryClass(stallReason), "pi bootstrap progress watchdog fired", 1, 0)
+		if sessionID != "" && agentName != "" {
+			agentLogSessionIDParsed(debug, harness, sessionID, lineIdx)
+			_ = debug.setAgentName(agentName)
+			return sessionID, agentName, nil, string(stallReason)
+		}
+		return "", agentName, stallErr, string(stallReason)
 	}
 	stdoutWriter.Flush()
 	agentLogHarnessExit(debug, waitErr, time.Since(startedAt), stderrBuf.Bytes())
@@ -1527,7 +1601,7 @@ func agentPushHeartbeat(aimebuURL, agentID string) error {
 	return c.HeartbeatAgent(agentID, 5*time.Second)
 }
 
-func agentStartResumeHeartbeat(ctx context.Context, aimebuURL, agentID string, debug *agentDebugLog) {
+func agentStartResumeHeartbeat(ctx context.Context, aimebuURL, agentID string, withinBudget func() bool, debug *agentDebugLog) {
 	if agentID == "" {
 		return
 	}
@@ -1537,6 +1611,9 @@ func agentStartResumeHeartbeat(ctx context.Context, aimebuURL, agentID string, d
 		for {
 			select {
 			case <-ticker.C:
+				if withinBudget != nil && !withinBudget() {
+					continue
+				}
 				err := agentPushHeartbeat(aimebuURL, agentID)
 				agentLogHeartbeat(debug, agentID, err)
 			case <-ctx.Done():
@@ -1572,7 +1649,7 @@ func agentWaitResumeChild(doneCh <-chan error, sigCh <-chan os.Signal, activityC
 
 func agentResumeLoop(harness string, command []string, sessionID, agentName string, rooms []string, assumeRole, modelSlug string, env []string, aimebuURL string, sigCh <-chan os.Signal, debug *agentDebugLog) {
 	retries := 0
-	backoff := time.Second
+	backoff := agentRecoveryInitialBackoff
 	lastFailure := agentRecoveryNormalEnd
 	consecutiveFailureCount := 0
 	spawnTag := agentEnvValue(env, "AIMEBU_AGENT_SPAWN_TAG")
@@ -1615,16 +1692,32 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 		}
 
 		args := agentResumeArgs(harness, sessionID, prompt, aimebuURL, command[1:], modelSlug)
-		stdoutBuf := &bytes.Buffer{}
-		stderrBuf := &bytes.Buffer{}
+		stdoutBuf := &agentCaptureBuffer{}
+		stderrBuf := &agentCaptureBuffer{}
 		activity := newAgentResumeActivity()
 		stateWriter := startAgentStatePusher(context.Background(), aimebuURL, newAgentIDProvider(agentFullID(agentName)), newStateDetector(harness))
-		stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(os.Stdout, stdoutBuf, stateWriter, activity))
+		var progress *agentProgressMonitor
+		writers := []io.Writer{os.Stdout, stdoutBuf, stateWriter}
+		if harness == "pi" {
+			config, configErr := agentProgressConfigFromLookup(os.Getenv)
+			if configErr != nil {
+				fmt.Fprintf(os.Stderr, "aimebu agent: %v\n", configErr)
+				agentPushState(aimebuURL, agentFullID(agentName), "error")
+				return
+			}
+			progress = newAgentProgressMonitor(config)
+			writers = append(writers, progress)
+		} else {
+			writers = append(writers, activity)
+		}
+		stdoutWriter := newAgentDebugStdoutWriter(debug, io.MultiWriter(writers...))
 		cmd := agentCommand(command, args, env, stdoutWriter, io.MultiWriter(os.Stderr, stderrBuf))
 		startedAt := time.Now()
 
 		agentLogHarnessSpawn(debug, command, args)
 		if err := cmd.Start(); err != nil {
+			_ = progress.Close()
+			_ = stateWriter.Close()
 			fmt.Fprintf(os.Stderr, "aimebu agent: spawn failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -1633,10 +1726,21 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 		go func() { doneCh <- cmd.Wait() }()
 
 		heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
-		agentStartResumeHeartbeat(heartbeatCtx, aimebuURL, agentFullID(agentName), debug)
-		stallTimer := time.NewTimer(agentResumeStallTimeout)
-		stallCh := stallTimer.C
+		var withinBudget func() bool
+		if progress != nil {
+			withinBudget = progress.WithinBudget
+		}
+		agentStartResumeHeartbeat(heartbeatCtx, aimebuURL, agentFullID(agentName), withinBudget, debug)
+		var stallTimer *time.Timer
+		var stallCh <-chan time.Time
+		if progress == nil {
+			stallTimer = time.NewTimer(agentResumeStallTimeout)
+			stallCh = stallTimer.C
+		}
 		stopStallTimer := func() {
+			if stallTimer == nil {
+				return
+			}
 			if !stallTimer.Stop() {
 				select {
 				case <-stallTimer.C:
@@ -1646,29 +1750,69 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 			stallCh = nil
 		}
 
-		waitResult, err, sig := agentWaitResumeChild(doneCh, sigCh, activity.FirstOutput(), stallCh)
+		var (
+			waitResult  agentResumeWaitResult
+			err         error
+			sig         os.Signal
+			stallReason agentProgressStall
+		)
+		if progress != nil {
+			select {
+			case sig = <-sigCh:
+				waitResult = agentResumeWaitInterrupted
+			case stallReason = <-progress.Stalled():
+				waitResult = agentResumeWaitStalled
+			case err = <-doneCh:
+				waitResult = agentResumeWaitExited
+			}
+		} else {
+			waitResult, err, sig = agentWaitResumeChild(doneCh, sigCh, activity.FirstOutput(), stallCh)
+		}
 		switch waitResult {
 		case agentResumeWaitInterrupted:
 			stopHeartbeat()
 			stopStallTimer()
+			stdoutSnapshot := stdoutBuf.Bytes()
+			stderrSnapshot := stderrBuf.Bytes()
+			agentPrintHarnessDiagnostics("interrupt", stdoutSnapshot, stderrSnapshot)
+			agentLogHarnessDiagnostics(debug, "interrupt", stdoutSnapshot, stderrSnapshot)
 			_ = stateWriter.Close()
 			agentGracefulShutdown(aimebuURL, "", agentName, cmd, doneCh, sigCh, debug, sig)
+			stdoutWriter.Flush()
+			_ = progress.Close()
 			return
 		case agentResumeWaitStalled:
 			stopHeartbeat()
+			if stallReason != "" {
+				stdoutSnapshot := stdoutBuf.Bytes()
+				stderrSnapshot := stderrBuf.Bytes()
+				agentPrintHarnessDiagnostics(string(stallReason), stdoutSnapshot, stderrSnapshot)
+				agentLogHarnessDiagnostics(debug, string(stallReason), stdoutSnapshot, stderrSnapshot)
+				agentPushState(aimebuURL, agentFullID(agentName), "respawning")
+			}
 			agentStopChild(cmd, doneCh, sigCh)
 			stdoutWriter.Flush()
+			_ = progress.Close()
 			_ = stateWriter.Close()
-			err := fmt.Errorf("resume produced no output within %s", agentResumeStallTimeout)
-			agentLogHarnessExit(debug, err, time.Since(startedAt), stderrBuf.Bytes())
 			outcome := agentRecoveryResumeStalled
+			detail := fmt.Sprintf("resume child produced no output before %s", agentResumeStallTimeout)
+			if stallReason != "" {
+				outcome = agentProgressRecoveryClass(stallReason)
+				detail = fmt.Sprintf("pi progress watchdog fired: %s", stallReason)
+			}
+			stallErr := fmt.Errorf("%s", detail)
+			agentLogHarnessExit(debug, stallErr, time.Since(startedAt), stderrBuf.Bytes())
 			consecutiveFailureCount = agentAdvanceFailure(outcome, &lastFailure, consecutiveFailureCount)
-			agentLogRecoveryDecision(debug, outcome, "resume child produced no output before stall timeout", consecutiveFailureCount, backoff)
+			agentLogRecoveryDecision(debug, outcome, detail, consecutiveFailureCount, backoff)
 			if consecutiveFailureCount > agentRecoveryFailureCap {
 				agentFatalRecovery(aimebuURL, outcome, sessionID, agentName)
 			}
 			agentPushState(aimebuURL, agentFullID(agentName), "respawning")
-			fmt.Fprintf(os.Stderr, "aimebu agent: %s produced no output for %v, retry %d/%d in %v\n", runMode, agentResumeStallTimeout, consecutiveFailureCount, agentRecoveryFailureCap, backoff)
+			if stallReason != "" {
+				fmt.Fprintf(os.Stderr, "aimebu agent: pi watchdog detected %s during %s, retry %d/%d in %v\n", stallReason, runMode, consecutiveFailureCount, agentRecoveryFailureCap, backoff)
+			} else {
+				fmt.Fprintf(os.Stderr, "aimebu agent: %s produced no output for %v, retry %d/%d in %v\n", runMode, agentResumeStallTimeout, consecutiveFailureCount, agentRecoveryFailureCap, backoff)
+			}
 			time.Sleep(backoff)
 			backoff *= 2
 			if backoff > agentRecoveryMaxBackoff {
@@ -1679,6 +1823,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 		stopHeartbeat()
 		stopStallTimer()
 		stdoutWriter.Flush()
+		_ = progress.Close()
 		_ = stateWriter.Close()
 		agentLogHarnessExit(debug, err, time.Since(startedAt), stderrBuf.Bytes())
 		outcome := agentClassifyChildResult(harness, stdoutBuf.Bytes(), stderrBuf.Bytes())
@@ -1819,6 +1964,8 @@ func agentFatalRecovery(aimebuURL string, class agentRecoveryClass, sessionID, a
 		fmt.Fprintf(os.Stderr, "aimebu agent: model turn timed out %d consecutive times for %s (session %s); giving up\n", agentRecoveryFailureCap, agentFullID(agentName), sessionID)
 	case agentRecoveryResumeStalled:
 		fmt.Fprintf(os.Stderr, "aimebu agent: resumed harness produced no output %d consecutive times for %s (session %s); giving up\n", agentRecoveryFailureCap, agentFullID(agentName), sessionID)
+	case agentRecoveryPiIdleStalled, agentRecoveryPiProgressStalled, agentRecoveryPiBusWaitStalled, agentRecoveryPiTurnEndStalled:
+		fmt.Fprintf(os.Stderr, "aimebu agent: pi progress watchdog reported %s %d consecutive times for %s (session %s); giving up\n", class, agentRecoveryFailureCap, agentFullID(agentName), sessionID)
 	default:
 		fmt.Fprintf(os.Stderr, "aimebu agent: unrecoverable wrapper state (%s); giving up\n", class)
 	}
