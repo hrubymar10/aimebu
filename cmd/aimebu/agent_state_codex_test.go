@@ -10,8 +10,8 @@ func TestCodexStateDetectorDetect(t *testing.T) {
 		want string
 	}{
 		{
-			name: "mcp tool call started",
-			line: `{"type":"item.started","item":{"type":"mcp_tool_call","name":"mcp__aimebu__bus_wait"}}`,
+			name: "observed non-wait mcp tool call started",
+			line: `{"type":"item.started","item":{"type":"mcp_tool_call","server":"aimebu","tool":"bus_join"}}`,
 			want: "tool_call",
 		},
 		{
@@ -68,10 +68,7 @@ func TestCodexStateDetectorDetect(t *testing.T) {
 func TestCodexStateDetectorCapturedTranscript(t *testing.T) {
 	det := codexStateDetector{}
 	lines := readStateFixture(t, "testdata/codex-state-sanitized.jsonl")
-	// The last three entries preserve the current behavior against the
-	// observed mcp_tool_call shape. A follow-up behavior fix updates these
-	// expectations separately from this fixture-hardening change.
-	want := []string{"tool_call", "idle", "tool_call", "", ""}
+	want := []string{"tool_call", "idle", "idle", "thinking", ""}
 	for i, line := range lines {
 		if got := det.Detect([]byte(line)); got != want[i] {
 			t.Fatalf("Detect captured line %d = %q, want %q", i+1, got, want[i])

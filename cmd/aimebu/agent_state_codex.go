@@ -1,6 +1,9 @@
 package main
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 type codexStateDetector struct{}
 
@@ -42,6 +45,11 @@ func (codexStateDetector) Detect(line []byte) string {
 func codexItemType(event map[string]any) string {
 	if item, ok := event["item"].(map[string]any); ok {
 		if typ, ok := item["type"].(string); ok {
+			// MCP server names are user-configurable. The documented name is
+			// "aimebu", but the tool name is the stable contract here.
+			if typ == "mcp_tool_call" && codexToolName(item) == "bus_wait" {
+				return "bus_wait"
+			}
 			return typ
 		}
 	}
@@ -49,6 +57,11 @@ func codexItemType(event map[string]any) string {
 		return typ
 	}
 	return ""
+}
+
+func codexToolName(item map[string]any) string {
+	tool, _ := item["tool"].(string)
+	return tool
 }
 
 func codexHasNonEmptyMessages(v any) bool {
@@ -63,6 +76,13 @@ func codexHasNonEmptyMessages(v any) bool {
 			if codexHasNonEmptyMessages(value) {
 				return true
 			}
+		}
+	case string:
+		// Codex wraps MCP text results as strings. bus_wait appends a listener
+		// hint after the JSON response, so decode only the first JSON value.
+		var decoded any
+		if err := json.NewDecoder(strings.NewReader(x)).Decode(&decoded); err == nil {
+			return codexHasNonEmptyMessages(decoded)
 		}
 	case []any:
 		for _, value := range x {
