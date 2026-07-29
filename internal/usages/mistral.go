@@ -268,10 +268,9 @@ func normalizeMistralVibeUsage(raw mistralVibeUsageRaw) (Snapshot, *ErrorDetail,
 	} else {
 		detail.Fields["vibe_usage.reset_at"] = "missing"
 	}
-	window := Window{Key: "monthly", PercentUsed: raw.UsagePercentage, ResetAt: reset}
+	window := normalizedWindow("monthly", raw.UsagePercentage, reset, 0)
 	if reset != nil {
-		start := time.Date(reset.UTC().Year(), reset.UTC().Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
-		window.WindowDurationSeconds = int64(reset.Sub(start).Seconds())
+		window.WindowDurationSeconds = monthlyWindowDuration(*reset)
 		window.Pace = computeWindowPace(window, mistralNow())
 	}
 	return Snapshot{Provider: ProviderMistral, Status: StatusOK, Windows: []Window{window}}, detailOrNil(detail), nil

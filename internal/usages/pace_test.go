@@ -53,6 +53,15 @@ func TestComputeWindowPace(t *testing.T) {
 		}
 	})
 
+	t.Run("depleted window returns nil", func(t *testing.T) {
+		for _, percentUsed := range []float64{100, 125} {
+			w := makeWindow(now, duration, percentUsed, float64(duration)/2)
+			if got := computeWindowPace(w, now); got != nil {
+				t.Fatalf("percent_used = %.0f: expected nil, got %+v", percentUsed, got)
+			}
+		}
+	})
+
 	t.Run("on track", func(t *testing.T) {
 		// Exactly halfway: 50% elapsed, 50% used → on track, lasts to reset
 		w := makeWindow(now, duration, 50, float64(duration)/2)
@@ -139,4 +148,35 @@ func TestComputeWindowPace(t *testing.T) {
 			t.Errorf("state = %q, want on_track", p.State)
 		}
 	})
+}
+
+func TestMonthlyWindowDuration(t *testing.T) {
+	tests := []struct {
+		name  string
+		reset time.Time
+		want  time.Duration
+	}{
+		{
+			name:  "thirty one day month",
+			reset: time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC),
+			want:  31 * 24 * time.Hour,
+		},
+		{
+			name:  "mid month reset",
+			reset: time.Date(2026, time.August, 15, 0, 0, 0, 0, time.UTC),
+			want:  31 * 24 * time.Hour,
+		},
+		{
+			name:  "leap year february",
+			reset: time.Date(2024, time.March, 1, 0, 0, 0, 0, time.UTC),
+			want:  29 * 24 * time.Hour,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := monthlyWindowDuration(tt.reset); got != int64(tt.want/time.Second) {
+				t.Fatalf("monthlyWindowDuration() = %d, want %d", got, int64(tt.want/time.Second))
+			}
+		})
+	}
 }

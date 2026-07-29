@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -490,7 +489,7 @@ func parseOllamaUsageBlock(key string, labels []string, html string, detail *Err
 		} else {
 			detail.Fields[key+".reset_at"] = "missing"
 		}
-		return Window{Key: key, PercentUsed: clampOllamaPercent(percent), ResetAt: reset}, true
+		return normalizedWindow(key, clampOllamaPercent(percent), reset, 0), true
 	}
 	return Window{}, false
 }
@@ -528,13 +527,7 @@ func parseOllamaPercent(text string) (float64, bool) {
 }
 
 func clampOllamaPercent(value float64) float64 {
-	if math.IsNaN(value) || value < 0 {
-		return 0
-	}
-	if value > 100 {
-		return 100
-	}
-	return value
+	return clampUsagePercent(value)
 }
 
 func firstOllamaCapture(pattern *regexp.Regexp, text string) string {

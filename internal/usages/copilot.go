@@ -251,7 +251,12 @@ func normalizeCopilotUsage(raw copilotUsageRaw) (Snapshot, *ErrorDetail, error) 
 			return
 		}
 		used := 100 - *q.PercentRemaining
-		windows = append(windows, Window{Key: key, PercentUsed: used, ResetAt: reset})
+		window := normalizedWindow(key, used, reset, 0)
+		if reset != nil {
+			window.WindowDurationSeconds = monthlyWindowDuration(*reset)
+			window.Pace = computeWindowPace(window, copilotNow())
+		}
+		windows = append(windows, window)
 	}
 	add("premium", premium)
 	add("chat", chat)
@@ -269,6 +274,8 @@ func normalizeCopilotUsage(raw copilotUsageRaw) (Snapshot, *ErrorDetail, error) 
 		Windows:  windows,
 	}, detailOrNil(detail), nil
 }
+
+var copilotNow = time.Now
 
 func copilotQuotaWindows(raw copilotUsageRaw) (*copilotQuotaSnapshotRaw, *copilotQuotaSnapshotRaw) {
 	var premium, chat *copilotQuotaSnapshotRaw

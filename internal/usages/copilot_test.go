@@ -137,6 +137,63 @@ func TestCopilotQuotaFallbackShapes(t *testing.T) {
 	}
 }
 
+func TestCopilotMonthlyPace(t *testing.T) {
+	now := time.Date(2026, time.July, 16, 0, 0, 0, 0, time.UTC)
+	previousNow := copilotNow
+	copilotNow = func() time.Time { return now }
+	t.Cleanup(func() { copilotNow = previousNow })
+
+	remaining := 75.0
+	raw := copilotUsageRaw{
+		QuotaResetDate: "2026-08-01T00:00:00Z",
+		QuotaSnapshots: &copilotQuotaSnapshotsRaw{
+			PremiumInteractions: &copilotQuotaSnapshotRaw{
+				PercentRemaining:    &remaining,
+				HasPercentRemaining: true,
+				QuotaID:             "premium",
+			},
+		},
+	}
+	snap, _, err := normalizeCopilotUsage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Windows) != 1 {
+		t.Fatalf("windows = %+v, want one", snap.Windows)
+	}
+	window := snap.Windows[0]
+	if window.WindowDurationSeconds != int64((31*24*time.Hour)/time.Second) {
+		t.Fatalf("duration = %d, want 31 days", window.WindowDurationSeconds)
+	}
+	if window.Pace == nil {
+		t.Fatal("pace = nil, want monthly pace")
+	}
+}
+
+func TestCopilotMonthlyPaceWithoutReset(t *testing.T) {
+	remaining := 75.0
+	raw := copilotUsageRaw{
+		QuotaSnapshots: &copilotQuotaSnapshotsRaw{
+			PremiumInteractions: &copilotQuotaSnapshotRaw{
+				PercentRemaining:    &remaining,
+				HasPercentRemaining: true,
+				QuotaID:             "premium",
+			},
+		},
+	}
+	snap, _, err := normalizeCopilotUsage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Windows) != 1 {
+		t.Fatalf("windows = %+v, want one", snap.Windows)
+	}
+	window := snap.Windows[0]
+	if window.WindowDurationSeconds != 0 || window.Pace != nil {
+		t.Fatalf("window = %+v, want graceful no-pace fallback", window)
+	}
+}
+
 func TestCopilotUnlimitedQuotaShape(t *testing.T) {
 	var raw copilotUsageRaw
 	if err := json.Unmarshal([]byte(`{

@@ -308,7 +308,7 @@ func normalizeClaudeUsage(raw claudeUsageRaw, creds claudeCredentials) (Snapshot
 		case "weekly":
 			durationSec = 7 * 24 * 3600
 		}
-		win := Window{Key: key, PercentUsed: *w.Utilization, ResetAt: reset, WindowDurationSeconds: durationSec}
+		win := normalizedWindow(key, *w.Utilization, reset, durationSec)
 		if durationSec > 0 {
 			win.Pace = computeWindowPace(win, time.Now())
 		}
@@ -399,7 +399,7 @@ func claudeScopedWeeklyWindows(limits []claudeLimitRaw, detail *ErrorDetail) []W
 				reset = &t
 			}
 		}
-		win := Window{Key: key, PercentUsed: *limit.Percent, ResetAt: reset, WindowDurationSeconds: 7 * 24 * 3600}
+		win := normalizedWindow(key, *limit.Percent, reset, 7*24*3600)
 		win.Pace = computeWindowPace(win, time.Now())
 		out = append(out, win)
 	}

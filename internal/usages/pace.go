@@ -16,6 +16,9 @@ func computeWindowPace(w Window, now time.Time) *Pace {
 	if w.WindowDurationSeconds <= 0 || w.ResetAt == nil {
 		return nil
 	}
+	if w.PercentUsed >= 100 {
+		return nil
+	}
 	duration := float64(w.WindowDurationSeconds)
 	secondsToReset := w.ResetAt.Sub(now).Seconds()
 	if secondsToReset <= 0 || secondsToReset > duration {
@@ -41,19 +44,19 @@ func computeWindowPace(w Window, now time.Time) *Pace {
 	if elapsed > 0 && w.PercentUsed > 0 {
 		burnRate := w.PercentUsed / elapsed
 		remaining := 100 - w.PercentUsed
-		if remaining <= 0 {
-			zero := 0.0
-			p.EtaSeconds = &zero
+		secondsTillFull := remaining / burnRate
+		if secondsTillFull >= secondsToReset {
+			p.LastsToReset = true
 		} else {
-			secondsTillFull := remaining / burnRate
-			if secondsTillFull >= secondsToReset {
-				p.LastsToReset = true
-			} else {
-				p.EtaSeconds = &secondsTillFull
-			}
+			p.EtaSeconds = &secondsTillFull
 		}
 	} else {
 		p.LastsToReset = true
 	}
 	return p
+}
+
+func monthlyWindowDuration(reset time.Time) int64 {
+	reset = reset.UTC()
+	return int64(reset.Sub(reset.AddDate(0, -1, 0)).Seconds())
 }

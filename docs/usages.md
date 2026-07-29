@@ -136,10 +136,15 @@ weekly=82% (12% deficit · runs out in 1d 4h)
 Flat windows (`weekly_sonnet`, `codex_spark`, `codex_spark_weekly`) carry no
 duration and show no pace marker.
 
+GitHub Copilot monthly windows infer their duration from the quota reset date.
+If the reset date is absent or invalid, the window remains available without
+a pace marker.
+
 The pace model is **purely linear**: it assumes a constant burn rate from
 window start to now. No historical samples or probabilistic run-out estimates
 are used. The computed `pace` object is included in the `Window` fields in
-`aimebu usages --json` output.
+`aimebu usages --json` output. Depleted windows (`percent_used >= 100`) omit
+the `pace` object because there is no remaining quota to project.
 
 ## Troubleshooting
 

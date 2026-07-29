@@ -3,6 +3,7 @@ package usages
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -50,6 +51,25 @@ type Window struct {
 	ResetAt               *time.Time `json:"reset_at,omitempty"`
 	WindowDurationSeconds int64      `json:"window_duration_seconds,omitempty"`
 	Pace                  *Pace      `json:"pace,omitempty"`
+}
+
+func normalizedWindow(key string, percentUsed float64, resetAt *time.Time, durationSeconds int64) Window {
+	return Window{
+		Key:                   key,
+		PercentUsed:           clampUsagePercent(percentUsed),
+		ResetAt:               resetAt,
+		WindowDurationSeconds: durationSeconds,
+	}
+}
+
+func clampUsagePercent(value float64) float64 {
+	if value < 0 || math.IsNaN(value) {
+		return 0
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
 }
 
 // Pace holds the precomputed linear-spend pace for a usage window.

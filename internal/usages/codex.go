@@ -421,7 +421,7 @@ func normalizeCodexUsage(raw codexUsageRaw, creds codexCredentials) (Snapshot, *
 			return
 		}
 		reset := time.Unix(w.ResetAt, 0).UTC()
-		win := Window{Key: key, PercentUsed: w.UsedPercent, ResetAt: &reset, WindowDurationSeconds: w.LimitWindowSeconds}
+		win := normalizedWindow(key, w.UsedPercent, &reset, w.LimitWindowSeconds)
 		win.Pace = computeWindowPace(win, time.Now())
 		windows = append(windows, win)
 	}
@@ -470,7 +470,7 @@ func codexAdditionalWindows(entries []codexAdditionalRateLimitRaw) []Window {
 		}
 		seen[key] = true
 		reset := time.Unix(w.ResetAt, 0).UTC()
-		out = append(out, Window{Key: key, PercentUsed: w.UsedPercent, ResetAt: &reset})
+		out = append(out, normalizedWindow(key, w.UsedPercent, &reset, 0))
 	}
 	for _, entry := range entries {
 		if !codexAdditionalLimitIsSpark(entry) {
