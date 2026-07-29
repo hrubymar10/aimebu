@@ -8,7 +8,7 @@ import (
 var (
 	modelBracketSuffixRE = regexp.MustCompile(`\s*\[[^\]]+\]\s*$`)
 	modelDateSuffixRE    = regexp.MustCompile(`[-_](?:\d{8}|\d{4}-\d{2}-\d{2})$`)
-	claudeModelIDRE      = regexp.MustCompile(`^claude-([a-z]+)-([0-9]+)-([0-9]+)$`)
+	claudeModelIDRE      = regexp.MustCompile(`^claude-([a-z]+)-([0-9]+)(?:-([0-9]+))?$`)
 	gptModelIDRE         = regexp.MustCompile(`^gpt-?([0-9].*)$`)
 )
 
@@ -32,7 +32,11 @@ func canonicalModelSlug(raw, harness string) string {
 		return model
 	}
 	if matches := claudeModelIDRE.FindStringSubmatch(model); matches != nil {
-		return matches[1] + matches[2] + "." + matches[3]
+		slug := matches[1] + matches[2]
+		if matches[3] != "" {
+			slug += "." + matches[3]
+		}
+		return slug
 	}
 	if matches := gptModelIDRE.FindStringSubmatch(model); matches != nil {
 		return "gpt-" + matches[1]
