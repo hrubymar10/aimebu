@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -248,4 +250,19 @@ func equalStringSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func readStateFixture(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	for i, line := range lines {
+		if !json.Valid([]byte(line)) {
+			t.Fatalf("%s line %d is not valid JSON", path, i+1)
+		}
+	}
+	return lines
 }

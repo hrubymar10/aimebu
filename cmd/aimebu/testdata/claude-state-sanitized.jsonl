@@ -1,0 +1,3 @@
+{"type":"assistant","message":{"id":"msg_sanitized","type":"message","role":"assistant","model":"claude-opus-5","content":[{"type":"thinking","thinking":"sanitized","signature":"sanitized"}]}}
+{"type":"assistant","message":{"id":"msg_sanitized","type":"message","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"tool_sanitized","name":"mcp__aimebu__bus_wait","input":{},"caller":{"type":"direct"}}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"session-sanitized","result":"sanitized"}

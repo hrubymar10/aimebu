@@ -65,6 +65,17 @@ func TestClaudeCodeStateDetectorDetect(t *testing.T) {
 	}
 }
 
+func TestClaudeCodeStateDetectorCapturedTranscript(t *testing.T) {
+	det := claudeCodeStateDetector{}
+	lines := readStateFixture(t, "testdata/claude-state-sanitized.jsonl")
+	want := []string{"thinking", "tool_call", "idle"}
+	for i, line := range lines {
+		if got := det.Detect([]byte(line)); got != want[i] {
+			t.Fatalf("Detect captured line %d = %q, want %q", i+1, got, want[i])
+		}
+	}
+}
+
 func TestNewStateDetectorClaudeCode(t *testing.T) {
 	if got := newStateDetector("claude-code"); got == nil || got.Name() != "claude-code" {
 		t.Fatalf("newStateDetector(claude-code) = %T, want claude-code detector", got)

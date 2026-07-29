@@ -1,0 +1,5 @@
+{"type":"item.started","item":{"id":"item_sanitized","type":"command_execution","command":"sanitized","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_sanitized","type":"agent_message","text":"sanitized"}}
+{"type":"item.started","item":{"id":"item_sanitized","type":"mcp_tool_call","server":"aimebu","tool":"bus_wait","status":"in_progress","arguments":{}}}
+{"type":"item.completed","item":{"id":"item_sanitized","type":"mcp_tool_call","server":"aimebu","tool":"bus_wait","status":"completed","arguments":{},"result":{"content":[{"type":"text","text":"{\"agent\":\"agent@project\",\"messages\":[{\"id\":1,\"room_id\":\"room\",\"from\":\"sender@project\",\"body\":\"sanitized\"}]}\n\n[you are agent, listening on: room.]"}],"structured_content":null},"error":null}}
+{"type":"item.completed","item":{"id":"item_sanitized","type":"mcp_tool_call","server":"aimebu","tool":"bus_wait","status":"completed","arguments":{},"result":{"content":[{"type":"text","text":"{\"agent\":\"agent@project\",\"messages\":[],\"status\":\"still_waiting\",\"keep_waiting\":true}\n\n[you are agent, listening on: room.]"}],"structured_content":null},"error":null}}

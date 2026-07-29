@@ -25,17 +25,17 @@ func TestCodexStateDetectorDetect(t *testing.T) {
 			want: "tool_call",
 		},
 		{
-			name: "bus wait started",
+			name: "legacy synthetic bus wait started",
 			line: `{"type":"item.started","item":{"type":"bus_wait","room":"aimebu"}}`,
 			want: "idle",
 		},
 		{
-			name: "bus wait completed with messages",
+			name: "legacy synthetic bus wait completed with messages",
 			line: `{"type":"item.completed","item":{"type":"bus_wait","result":{"messages":[{"id":201,"body":"work"}]}}}`,
 			want: "thinking",
 		},
 		{
-			name: "bus wait completed without messages",
+			name: "legacy synthetic bus wait completed without messages",
 			line: `{"type":"item.completed","item":{"type":"bus_wait","result":{"messages":[]}}}`,
 			want: "",
 		},
@@ -62,6 +62,20 @@ func TestCodexStateDetectorDetect(t *testing.T) {
 				t.Fatalf("Detect(%s) = %q, want %q", tt.line, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCodexStateDetectorCapturedTranscript(t *testing.T) {
+	det := codexStateDetector{}
+	lines := readStateFixture(t, "testdata/codex-state-sanitized.jsonl")
+	// The last three entries preserve the current behavior against the
+	// observed mcp_tool_call shape. A follow-up behavior fix updates these
+	// expectations separately from this fixture-hardening change.
+	want := []string{"tool_call", "idle", "tool_call", "", ""}
+	for i, line := range lines {
+		if got := det.Detect([]byte(line)); got != want[i] {
+			t.Fatalf("Detect captured line %d = %q, want %q", i+1, got, want[i])
+		}
 	}
 }
 
