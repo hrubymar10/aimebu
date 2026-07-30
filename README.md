@@ -609,7 +609,9 @@ Open <http://localhost:9997> when the server is running. IRC-style
 three-panel layout:
 
 - **Left** — room list. Join/create rooms, switch between them.
-- **Center** — chat view. Markdown rendering with rendered/raw toggle.
+- **Center** — chat view. Markdown rendering with rendered/raw toggle,
+  including GFM-style tables with per-column alignment, inline formatting,
+  ragged-row normalization, and horizontal overflow for wide tables.
   Multiline composer (Shift+Enter), paste/drag-drop/file-picker image
   attachments with pending thumbnails, inline image thumbnails with a
   lightbox, compact single-emoji reaction pills with hover titles listing

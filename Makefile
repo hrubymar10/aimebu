@@ -3,6 +3,8 @@
 
 test:       ## Unit tests, fast (no race)
 	go test ./...
+	@command -v node >/dev/null || { echo "node is required for frontend tests; install Node.js" >&2; exit 1; }
+	@for test in tests/*_test.js; do node "$$test" || exit $$?; done
 
 test-race:  ## Tests under the race detector
 	go test -race ./...

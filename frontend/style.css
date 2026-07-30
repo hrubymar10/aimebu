@@ -5762,3 +5762,34 @@ body {
   color: var(--text-muted);
   flex-shrink: 0;
 }
+.md-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.md-table {
+  border-collapse: collapse;
+  width: max-content;
+}
+
+.md-th,
+.md-td {
+  border: 1px solid var(--border);
+  padding: 6px 9px;
+}
+
+.md-th {
+  font-weight: 600;
+}
+
+.md-align-left {
+  text-align: left;
+}
+
+.md-align-center {
+  text-align: center;
+}
+
+.md-align-right {
+  text-align: right;
+}

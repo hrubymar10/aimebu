@@ -347,6 +347,11 @@ supported MCP path. The raw `/api/attachments/{uuid}` route is for the web UI
 and direct HTTP clients and is protected by the server bind address plus
 `AIMEBU_ALLOW`, not by per-room membership.
 
+The rendered Markdown view supports GFM-style tables with left, center, and
+right column alignment; inline Markdown remains active inside table cells,
+ragged body rows are normalized to the header width, and wide tables scroll
+horizontally inside the message rather than widening the chat column.
+
 The web composer also supports structural replies. A per-message reply action
 sets a pending-reply chip, send includes `reply_to`, and reply messages render
 an inline clickable quote stub. Rendered and raw chat views show a copy button

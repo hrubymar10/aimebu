@@ -82,6 +82,39 @@ function renderMarkdown(rawText) {
     return idx;
   }
 
+  function tableCells(row) {
+    var cells = [], cell = '', escaped = false;
+    row = row.trim();
+    if (row.charAt(0) === '|') row = row.slice(1);
+    if (row.charAt(row.length - 1) === '|') row = row.slice(0, -1);
+    for (var p = 0; p < row.length; p++) {
+      var ch = row.charAt(p);
+      if (ch === '|' && !escaped) { cells.push(cell.trim()); cell = ''; continue; }
+      if (ch === '|' && escaped) { cell = cell.slice(0, -1) + '|'; escaped = false; continue; }
+      cell += ch; escaped = ch === '\\' && !escaped;
+    }
+    cells.push(cell.trim());
+    return cells;
+  }
+
+  function tableAlign(cell) {
+    if (!/^:?-+:?$/.test(cell)) return null;
+    return cell.charAt(0) === ':' && cell.charAt(cell.length - 1) === ':' ? 'center' :
+      cell.charAt(cell.length - 1) === ':' ? 'right' : 'left';
+  }
+
+  var tableRow = function (cells, tag, aligns) {
+    return '<tr>' + cells.map(function (cell, n) {
+      // Code spans were stashed before table parsing. Re-stash their rendered
+      // HTML with escaped pipes resolved only in this table cell.
+      cell = cell.replace(/\x00(\d+)\x00/g, function (_, k) {
+        return stash(holders[+k].replace(/\\\|/g, '|'));
+      });
+      return '<' + tag + ' class="md-' + tag + ' md-align-' + aligns[n] + '">' +
+        applyInline(cell) + '</' + tag + '>';
+    }).join('') + '</tr>';
+  };
+
   while (i < lines.length) {
     var line = lines[i];
 
@@ -124,6 +157,24 @@ function renderMarkdown(rawText) {
       }
       out.push({ type: 'block', html: '<blockquote class="md-blockquote">' + applyInline(bqLines.join('<br>')) + '</blockquote>' });
       continue;
+    }
+
+    // GFM-style table. Keep this before lists: "- | -" can look like a list.
+    if (i + 1 < lines.length && line.indexOf('|') >= 0) {
+      var headers = tableCells(line), delimiters = tableCells(lines[i + 1]);
+      var aligns = delimiters.map(tableAlign);
+      if (headers.length === delimiters.length && aligns.every(function (a) { return a !== null; })) {
+        var rows = [], columnCount = headers.length;
+        i += 2;
+        while (i < lines.length && lines[i].trim() !== '' && lines[i].indexOf('|') >= 0) {
+          var cells = tableCells(lines[i]);
+          while (cells.length < columnCount) cells.push('');
+          if (cells.length > columnCount) cells = cells.slice(0, columnCount - 1).concat(cells.slice(columnCount - 1).join(' | '));
+          rows.push(cells); i++;
+        }
+        out.push({ type: 'block', html: '<div class="md-table-wrap"><table class="md-table"><thead>' + tableRow(headers, 'th', aligns) + '</thead><tbody>' + rows.map(function (row) { return tableRow(row, 'td', aligns); }).join('') + '</tbody></table></div>' });
+        continue;
+      }
     }
 
     // Unordered list
