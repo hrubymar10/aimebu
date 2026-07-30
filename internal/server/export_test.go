@@ -20,10 +20,14 @@ func TestExportRoom_JSON_RoundTrip(t *testing.T) {
 	if _, err := s.joinRoom("general", alice.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.roomSend("general", alice.ID, "hello world", false, nil, nil, nil, 0); err != nil {
+	firstID, err := s.roomSend("general", alice.ID, "hello world", false, nil, nil, nil, 0)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.roomSend("general", alice.ID, "second message", false, nil, nil, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := s.addReaction(firstID, alice.ID, "👍"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,6 +72,12 @@ func TestExportRoom_JSON_RoundTrip(t *testing.T) {
 	bodies := make(map[string]bool)
 	for _, m := range got.Messages {
 		bodies[m.Body] = true
+		if m.ID == firstID {
+			if len(m.Reactions) != 1 || m.Reactions[0].Emoji != "👍" ||
+				!m.Reactions[0].Me {
+				t.Errorf("exported reactions = %#v", m.Reactions)
+			}
+		}
 	}
 	for _, want := range []string{"hello world", "second message"} {
 		if !bodies[want] {

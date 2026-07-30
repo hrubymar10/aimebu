@@ -113,7 +113,7 @@ func handleExportRoom(s *store) http.HandlerFunc {
 		}
 
 		// Full history, sorted oldest-first (sinceID=0 returns all)
-		msgs := s.messagesSince(roomID, 0)
+		msgs := s.withReactionSummaries(s.messagesSince(roomID, 0), agentID)
 
 		filename := exportFilename(roomID, format)
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
