@@ -107,7 +107,7 @@ const FIXTURE_BLOCKS = [
     mustNotHave: ['.visual-plan-raw-fallback'],
   },
   {
-    block: { type: 'file-tree', title: 'Files', data: { nodes: [{ name: 'src', type: 'dir' }, { name: 'main.go', type: 'file', parent: 'src' }] } },
+    block: { type: 'file-tree', title: 'Files', data: { root: { name: 'src', type: 'dir', children: [{ name: 'main.go', type: 'file' }] } } },
     mustHave: ['.visual-plan-block', '.visual-plan-file-tree'],
     mustNotHave: ['.visual-plan-raw-fallback'],
   },
