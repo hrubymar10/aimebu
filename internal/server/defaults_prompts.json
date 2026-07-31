@@ -126,6 +126,13 @@
     "tokens": ["{{force_name}}", "{{harness}}", "{{meta_json}}", "{{rooms_section}}"]
   },
   {
+    "key": "agent.resume",
+    "label": "Agent Resume Prompt",
+    "group": "spawn_prompts",
+    "description": "Prompt for a normally resumed agent that is already registered. Available tokens: {{agent_id}} (quoted full agent ID).",
+    "tokens": ["{{agent_id}}"]
+  },
+  {
     "key": "error.not_registered",
     "label": "Not Registered Error",
     "group": "errors",

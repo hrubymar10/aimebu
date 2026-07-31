@@ -903,6 +903,7 @@ func agentHarvestVibeDefaultModel(env []string) string {
 //
 // Tokens substituted at runtime by agentApplyPromptTokens:
 //   {{force_name}}    — quoted agent name (fmt.Sprintf("%q", name))
+//   {{agent_id}}      — quoted full agent ID
 //   {{harness}}       — quoted harness slug (fmt.Sprintf("%q", harness))
 //   {{meta_json}}     — raw meta JSON (e.g. {"protocol":"agent","spawn_tag":"…"})
 //   {{rooms_section}} — "Join these rooms: X.\n\n" when rooms are set, else ""
@@ -924,14 +925,17 @@ const agentRecoveryTemplate = `You're an aimebu bus agent recovering a stale bus
 
 {{rooms_section}}{{assume_role_section}}Then call bus_wait (no room argument — that way you receive DMs and traffic across all your rooms) to block on incoming messages. Respond per the etiquette in the MCP server-instructions. Keep listening (re-call bus_wait every time it returns with keep_waiting=true) until the user explicitly tells you to stop.`
 
+const agentResumeTemplate = `You're already registered on the aimebu bus as {{agent_id}}, already joined to the saved rooms, and retain your assigned role. Do not call bus_register again unless a bus tool reports that you are not registered. Call bus_wait with no room argument immediately and keep listening until the user tells you to stop.`
+
 // AgentBuiltinSpawnDefaults returns the compiled-in default bodies for the
-// three agent spawn prompt keys. Called from main.go to register defaults
+// four agent spawn prompt keys. Called from main.go to register defaults
 // with the server before it starts.
 func AgentBuiltinSpawnDefaults() map[string]string {
 	return map[string]string{
 		"agent.bootstrap":         agentBootstrapTemplate,
 		"agent.bootstrap_reclaim": agentBootstrapReclaimTemplate,
 		"agent.recovery":          agentRecoveryTemplate,
+		"agent.resume":            agentResumeTemplate,
 	}
 }
 
@@ -964,11 +968,12 @@ func agentFetchPromptTemplate(aimebuURL, key, fallback string) string {
 }
 
 // agentApplyPromptTokens substitutes {{tokens}} in a prompt template.
-func agentApplyPromptTokens(template, harness, metaJSON, forceName, roomsSection, assumeRoleSection, modelInstruction string) string {
+func agentApplyPromptTokens(template, harness, metaJSON, forceName, agentID, roomsSection, assumeRoleSection, modelInstruction string) string {
 	r := strings.NewReplacer(
 		"{{harness}}", fmt.Sprintf("%q", harness),
 		"{{meta_json}}", metaJSON,
 		"{{force_name}}", fmt.Sprintf("%q", forceName),
+		"{{agent_id}}", fmt.Sprintf("%q", agentID),
 		"{{rooms_section}}", roomsSection,
 		"{{assume_role_section}}", assumeRoleSection,
 		"{{model_instruction}}", modelInstruction,
@@ -1005,7 +1010,7 @@ func agentBuildBootstrapPrompt(aimebuURL, harness, spawnTag string, rooms []stri
 	} else {
 		tmpl = agentFetchPromptTemplate(aimebuURL, "agent.bootstrap", agentBootstrapTemplate)
 	}
-	return agentApplyPromptTokens(tmpl, harness, agentPromptMetaJSON(spawnTag), forceName, roomsSection, agentAssumeRoleSection(assumeRole, rooms), agentModelInstruction(modelSlug))
+	return agentApplyPromptTokens(tmpl, harness, agentPromptMetaJSON(spawnTag), forceName, "", roomsSection, agentAssumeRoleSection(assumeRole, rooms), agentModelInstruction(modelSlug))
 }
 
 func agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, forceName string, rooms []string, assumeRole, modelSlug string) string {
@@ -1014,7 +1019,12 @@ func agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, forceName string, ro
 		roomsSection = "Join these rooms: " + strings.Join(rooms, ", ") + ".\n\n"
 	}
 	tmpl := agentFetchPromptTemplate(aimebuURL, "agent.recovery", agentRecoveryTemplate)
-	return agentApplyPromptTokens(tmpl, harness, agentPromptMetaJSON(spawnTag), forceName, roomsSection, agentAssumeRoleSection(assumeRole, rooms), agentModelInstruction(modelSlug))
+	return agentApplyPromptTokens(tmpl, harness, agentPromptMetaJSON(spawnTag), forceName, "", roomsSection, agentAssumeRoleSection(assumeRole, rooms), agentModelInstruction(modelSlug))
+}
+
+func agentBuildResumePrompt(aimebuURL, agentName string) string {
+	tmpl := agentFetchPromptTemplate(aimebuURL, "agent.resume", agentResumeTemplate)
+	return agentApplyPromptTokens(tmpl, "", "", "", agentFullID(agentName), "", "", "")
 }
 
 func agentModelInstruction(modelSlug string) string {
@@ -1683,7 +1693,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 			recoveryClass = agentRecoveryNormalEnd
 		}
 
-		prompt := "keep listening"
+		prompt := agentBuildResumePrompt(aimebuURL, agentName)
 		runMode := "resume"
 		if recoveryClass == agentRecoveryRegistrationLost {
 			prompt = agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, agentName, rooms, assumeRole, modelSlug)

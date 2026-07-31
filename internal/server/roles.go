@@ -936,6 +936,10 @@ func (s *store) assignRole(roomID, agentID, roleKey string) error {
 			}
 		}
 	} else if roleKey == "" {
+		if _, assigned := room.Roles[agentID]; !assigned {
+			s.mu.Unlock()
+			return nil
+		}
 		delete(room.Roles, agentID)
 	} else {
 		agent, ok := s.agents[agentID]
@@ -954,6 +958,10 @@ func (s *store) assignRole(roomID, agentID, roleKey string) error {
 					return fmt.Errorf("%w: role %q is already assigned to %s", ErrRoleAssignmentConflict, roleKey, holderID)
 				}
 			}
+		}
+		if room.Roles[agentID] == roleKey {
+			s.mu.Unlock()
+			return nil
 		}
 		room.Roles[agentID] = roleKey
 	}

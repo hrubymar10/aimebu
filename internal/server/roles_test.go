@@ -329,6 +329,92 @@ func TestAssignRoleSystemMessage(t *testing.T) {
 	}
 }
 
+func TestAssignRoleSameRoleIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	SetRoleDefaults(map[string]string{"leader": "lead the team", "worker": "do the work", "reviewer": "review it"})
+	s, _ := newStore(dir)
+
+	agent, _, _ := s.registerAI("gpt5", "codex", "test", nil, "")
+	_, _ = s.joinRoom("testroom", agent.ID)
+
+	roomSub := s.subscribeRoom("testroom")
+	defer s.unsubscribeRoom("testroom", roomSub)
+	metaSub := s.subscribeMeta()
+	defer s.unsubscribeMeta(metaSub)
+
+	if err := s.assignRole("testroom", agent.ID, "worker"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.assignRole("testroom", agent.ID, "worker"); err != nil {
+		t.Fatal(err)
+	}
+
+	var messages int
+	deadline := time.After(50 * time.Millisecond)
+	for {
+		select {
+		case msg := <-roomSub:
+			if strings.Contains(msg.Body, "was assigned as worker") {
+				messages++
+			}
+		case <-deadline:
+			if messages != 1 {
+				t.Fatalf("assignment messages = %d, want 1", messages)
+			}
+			goto countMeta
+		}
+	}
+
+countMeta:
+	var updates int
+	for {
+		select {
+		case evt := <-metaSub:
+			if evt.Type == "room_update" {
+				updates++
+			}
+		default:
+			if updates != 1 {
+				t.Fatalf("room updates = %d, want 1", updates)
+			}
+			return
+		}
+	}
+}
+
+func TestClearUnassignedRoleIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	SetRoleDefaults(map[string]string{"leader": "lead the team", "worker": "do the work", "reviewer": "review it"})
+	s, _ := newStore(dir)
+
+	agent, _, _ := s.registerAI("gpt5", "codex", "test", nil, "")
+	_, _ = s.joinRoom("testroom", agent.ID)
+	roomSub := s.subscribeRoom("testroom")
+	defer s.unsubscribeRoom("testroom", roomSub)
+	metaSub := s.subscribeMeta()
+	defer s.unsubscribeMeta(metaSub)
+
+	if err := s.assignRole("testroom", agent.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case msg := <-roomSub:
+		t.Fatalf("clearing unassigned role emitted message: %+v", msg)
+	case <-time.After(25 * time.Millisecond):
+	}
+	deadline := time.After(25 * time.Millisecond)
+	for {
+		select {
+		case evt := <-metaSub:
+			if evt.Type == "room_update" {
+				t.Fatalf("clearing unassigned role broadcast update: %+v", evt)
+			}
+		case <-deadline:
+			return
+		}
+	}
+}
+
 func TestPropagateRoleUpdate(t *testing.T) {
 	dir := t.TempDir()
 	SetRoleDefaults(map[string]string{"leader": "old body", "worker": "w", "reviewer": "r"})
