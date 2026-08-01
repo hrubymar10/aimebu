@@ -26,25 +26,30 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext([
+  extractFunction('agentStateMeta'),
   extractFunction('agentSpeedMeta'),
+  extractFunction('formatStateElapsed'),
+  extractFunction('agentStateBadgeHTML'),
   extractFunction('agentSpeedBadgeHTML'),
 ].join('\n'), context);
 
-const underSampled = context.agentSpeedBadgeHTML({
+const underSampledAgent = {
   kind: 'ai', harness: 'codex', generation_samples_ms: [1000, 2000], generation_ms: 1500,
-});
-assert(!underSampled.includes('agent-speed-icon'), 'under three samples renders no icon');
-assert(underSampled.includes('not enough samples yet'), 'under-sampled tooltip explains absence');
+  state: 'idle',
+};
+const underSampled = context.agentSpeedBadgeHTML(underSampledAgent);
+assert.strictEqual(underSampled, '', 'under three samples renders no anchor or reserved space');
+assert(context.agentStateBadgeHTML(underSampledAgent).includes('not enough samples yet'), 'state tooltip explains under-sampled absence');
 
-const unsupported = context.agentSpeedBadgeHTML({ kind: 'ai', harness: 'vibe' });
-assert(!unsupported.includes('agent-speed-icon'), 'unsupported harness renders no neutral icon');
-assert(unsupported.includes('not measured for vibe'), 'unsupported tooltip names the harness');
+const unsupportedAgent = { kind: 'ai', harness: 'vibe', state: 'idle' };
+const unsupported = context.agentSpeedBadgeHTML(unsupportedAgent);
+assert.strictEqual(unsupported, '', 'unsupported harness renders no anchor or neutral icon');
+assert(context.agentStateBadgeHTML(unsupportedAgent).includes('not measured for vibe'), 'state tooltip names the unsupported harness');
 
 const missingMedian = context.agentSpeedBadgeHTML({
   kind: 'ai', harness: 'codex', generation_samples_ms: [1000, 2000, 3000], generation_ms: 0,
 });
-assert(!missingMedian.includes('agent-speed-icon'), 'non-positive missing median fails closed');
-assert(missingMedian.includes('not enough samples yet'), 'missing median explains absent icon');
+assert.strictEqual(missingMedian, '', 'non-positive missing median emits no anchor and fails closed');
 
 const fast = context.agentSpeedBadgeHTML({
   kind: 'ai', harness: 'pi', generation_samples_ms: [1000, 2000, 3000], generation_ms: 14999,

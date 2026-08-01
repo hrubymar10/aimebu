@@ -2722,11 +2722,13 @@
   function agentStateBadgeHTML(a) {
     var meta = agentStateMeta(a && a.state);
     if (!meta) return '';
+    var speedMeta = agentSpeedMeta(a);
+    var stateTitle = meta.title + (speedMeta && !speedMeta.band ? '; ' + speedMeta.title : '');
     var elapsed = a.state_overlay ? '' : formatStateElapsed(a.state_at);
-    var title = meta.title + (elapsed ? ' for ' + elapsed : '');
+    var title = stateTitle + (elapsed ? ' for ' + elapsed : '');
     var label = meta.label + (elapsed ? ' ' + elapsed : '');
     var data = a.state_at && !a.state_overlay
-      ? ' data-state-label="' + esc(meta.label) + '" data-state-title="' + esc(meta.title) + '" data-state-at="' + esc(a.state_at) + '"'
+      ? ' data-state-label="' + esc(meta.label) + '" data-state-title="' + esc(stateTitle) + '" data-state-at="' + esc(a.state_at) + '"'
       : '';
     return '<span class="agent-state-badge agent-state-' + esc(meta.className) + '" title="' + esc(title) + '"' + data + '>' + esc(label) + '</span>';
   }
@@ -2754,10 +2756,8 @@
 
   function agentSpeedBadgeHTML(a) {
     var meta = agentSpeedMeta(a);
-    if (!meta) return '';
-    var icon = meta.band
-      ? '<span class="agent-speed-icon agent-speed-' + esc(meta.band) + '" aria-hidden="true"></span>'
-      : '';
+    if (!meta || !meta.band) return '';
+    var icon = '<span class="agent-speed-icon agent-speed-' + esc(meta.band) + '" aria-hidden="true"></span>';
     return '<span class="agent-speed-anchor" title="' + esc(meta.title) + '" aria-label="' + esc(meta.title) + '">' + icon + '</span>';
   }
 
