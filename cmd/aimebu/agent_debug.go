@@ -46,6 +46,40 @@ type agentDebugLog struct {
 	path     string
 	file     *os.File
 	spawnTag string
+	stderr   *agentStderrLog
+}
+
+type agentStderrLog struct {
+	spawnTag string
+	tee      *timestampedStderrTee
+}
+
+var agentStderr io.Writer = os.Stderr
+
+func newAgentStderrLog(agentName, spawnTag string, terminal io.Writer) *agentStderrLog {
+	return &agentStderrLog{
+		spawnTag: spawnTag,
+		tee: newTimestampedStderrTee(
+			terminal,
+			terminal,
+			agentStderrLogPath(agentName, spawnTag),
+			0o600,
+		),
+	}
+}
+
+func (l *agentStderrLog) setAgentName(agentName string) error {
+	if l == nil || l.tee == nil {
+		return nil
+	}
+	return l.tee.setPath(agentStderrLogPath(agentName, l.spawnTag))
+}
+
+func (l *agentStderrLog) close() error {
+	if l == nil || l.tee == nil {
+		return nil
+	}
+	return l.tee.close()
 }
 
 func newAgentDebugLog(agentName, spawnTag string) *agentDebugLog {
@@ -57,7 +91,7 @@ func newAgentDebugLog(agentName, spawnTag string) *agentDebugLog {
 		return log
 	}
 	if err := log.setAgentName(agentName); err != nil {
-		fmt.Fprintf(os.Stderr, "aimebu agent: debug logging disabled: %v\n", err)
+		fmt.Fprintf(agentStderr, "aimebu agent: debug logging disabled: %v\n", err)
 		_ = log.close()
 		log.enabled = false
 	}
@@ -101,6 +135,14 @@ func agentDebugLogStem(s string) string {
 }
 
 func agentDebugLogPath(agentName, spawnTag string) string {
+	return agentLogPath(agentName, spawnTag, ".log")
+}
+
+func agentStderrLogPath(agentName, spawnTag string) string {
+	return agentLogPath(agentName, spawnTag, ".stderr.log")
+}
+
+func agentLogPath(agentName, spawnTag, suffix string) string {
 	dir := agentDebugDir()
 	agentName = strings.TrimSpace(agentName)
 	if agentName != "" {
@@ -112,12 +154,12 @@ func agentDebugLogPath(agentName, spawnTag string) string {
 		if tag := agentDebugLogStem(spawnTag); tag != "" {
 			stem += "-" + tag
 		}
-		return filepath.Join(dir, stem+".log")
+		return filepath.Join(dir, stem+suffix)
 	}
 	if spawnTag == "" {
 		spawnTag = "unknown"
 	}
-	return filepath.Join(dir, "_pre-register-"+agentDebugLogStem(spawnTag)+".log")
+	return filepath.Join(dir, "_pre-register-"+agentDebugLogStem(spawnTag)+suffix)
 }
 
 func (l *agentDebugLog) close() error {
@@ -136,7 +178,13 @@ func (l *agentDebugLog) closeLocked() error {
 }
 
 func (l *agentDebugLog) setAgentName(agentName string) error {
-	if l == nil || !l.enabled {
+	if l == nil {
+		return nil
+	}
+	if err := l.stderr.setAgentName(agentName); err != nil {
+		return err
+	}
+	if !l.enabled {
 		return nil
 	}
 
@@ -421,14 +469,14 @@ func agentLogHarnessDiagnostics(debug *agentDebugLog, reason string, stdout, std
 }
 
 func agentPrintHarnessDiagnostics(reason string, stdout, stderr []byte) {
-	fmt.Fprintf(os.Stderr, "aimebu agent: harness diagnostics (%s)\n", reason)
+	fmt.Fprintf(agentStderr, "aimebu agent: harness diagnostics (%s)\n", reason)
 	if tail := strings.TrimSpace(agentDebugTail(stderr, agentDebugStdoutLineLimit)); tail != "" {
-		fmt.Fprintf(os.Stderr, "stderr tail:\n%s\n", tail)
+		fmt.Fprintf(agentStderr, "stderr tail:\n%s\n", tail)
 	}
 	if events := agentStructuredEventTail(stdout, agentDebugDiagnosticEventLimit); len(events) > 0 {
-		fmt.Fprintln(os.Stderr, "structured event tail:")
+		fmt.Fprintln(agentStderr, "structured event tail:")
 		for _, event := range events {
-			fmt.Fprintln(os.Stderr, event)
+			fmt.Fprintln(agentStderr, event)
 		}
 	}
 }

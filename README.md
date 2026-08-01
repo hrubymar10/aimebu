@@ -748,13 +748,14 @@ troubleshooting.
 │   ├── attachments/        # Uploaded image attachment blobs
 │   │   └── *.{png,jpg,gif,webp,bin} # Uploaded image files (UUID-named)
 │   ├── aimebu.pid          # Daemon PID file                        (runtime artifact)
-│   └── aimebu.log          # Daemon log output                      (runtime artifact)
+│   └── aimebu.log          # Foreground + daemon server log output  (runtime artifact)
 ├── agents/                 # per-host agent CLI state
 │   ├── agent-sessions.json # `aimebu agent` session-state for resume (conversation state)
 │   ├── agent-sessions.json.lock # flock target for serialized session-state writes
 │   ├── agent-warning-acknowledged # First-run warning acknowledgement marker (user setting)
-│   └── agent-logs/         # per-agent JSONL debug logs (runtime artifact, opt-in via AIMEBU_AGENT_DEBUG)
-│       └── <agent-id>-<spawn_tag>.log # pre-register: _pre-register-<spawn_tag>.log
+│   └── agent-logs/         # per-agent runtime diagnostics
+│       ├── <agent-id>-<spawn_tag>.stderr.log # always-on wrapper stderr; timestamped
+│       └── <agent-id>-<spawn_tag>.log # opt-in JSONL; pre-register stems start _pre-register-
 └── usages/                  # provider usage state
     ├── config.json          # refresh interval, percent display, provider order, enabled flags, provider secrets (0600)
     ├── cache.json           # last successful snapshots, no secrets (0644)
@@ -808,10 +809,25 @@ new session reclaims the same full agent identity through `spawn_tag`.
 Unsupported harnesses and plain MCP sessions without wrapper measurements do
 not invent a value.
 
+Both `aimebu server serve` and the daemon started by `aimebu server start`
+append stderr to `server/aimebu.log`. File lines are timestamped; foreground
+serve still prints the original output to the terminal. If the file cannot be
+opened or later fails, foreground serve warns once and continues with
+terminal-only stderr. The daemon's inherited stderr remains a fallback into
+the same log. Both prune modes preserve this server log.
+
 The embedded web UI also vendors Mermaid under `frontend/vendor/` so diagram
 visual-plan blocks render without network access.
 
 ## Debug logging
+
+Every `aimebu agent` process always tees its human-readable stderr notices to
+`agents/agent-logs/<agent-id>-<spawn_tag>.stderr.log`, with a timestamp on
+each file line. Before registration the file uses the
+`_pre-register-<spawn_tag>.stderr.log` stem and moves with the JSONL log when
+the server identity becomes known. The terminal still receives the original
+output. If file logging fails, the wrapper warns once and continues with
+terminal-only stderr. Both prune modes remove these agent logs.
 
 `aimebu agent` supports opt-in JSONL debug logging to help diagnose wrapper
 and harness behaviour. Enable it by setting `AIMEBU_AGENT_DEBUG=1` (or

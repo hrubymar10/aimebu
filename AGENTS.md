@@ -274,7 +274,10 @@ holds server-owned files (`aimebu.sqlite`, optional `.old/` legacy JSON
 archive, `sounds/`, `attachments/`, `aimebu.pid`, `aimebu.log`) and
 `agents/` holds agent-CLI state
 (`agent-sessions.json`, `agent-sessions.json.lock`,
-`agent-warning-acknowledged`, `agent-logs/`).
+`agent-warning-acknowledged`, `agent-logs/`). Long-running agents always tee
+timestamped wrapper stderr to
+`agent-logs/<agent-id>-<spawn_tag>.stderr.log`; optional structured JSONL
+diagnostics use the sibling `.log` file when `AIMEBU_AGENT_DEBUG` is enabled.
 `aimebu.sqlite` stores rooms, messages, agents, the durable agent session
 registry (`agent_sessions`, keyed by full agent ID), reactions, memory,
 leaderboards, macros, fleet command bundles, prompt overrides, role
@@ -314,7 +317,8 @@ including the server-side `agent_sessions` registry,
 `aimebu prune -a` also wipes user settings, including memory, macros, fleet
 command bundles, prompt overrides, role definitions/emoji, sounds, and
 `agents/agent-warning-acknowledged`. Runtime diagnostics
-(`server/aimebu.log`) are preserved by both prune modes. Provider usage state
+(`server/aimebu.log`, shared by foreground and daemon server processes) are
+preserved by both prune modes. Provider usage state
 under `usages/` is independent of conversation prune; clear Copilot tokens or
 Ollama Cloud cookies or API keys from Settings -> Usages. When `AIMEBU_URL` is loopback
 and the server is down,

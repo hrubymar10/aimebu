@@ -333,6 +333,11 @@ watchdog recovery decisions use `pi_idle_stalled`, `pi_progress_stalled`,
 `pi_bus_wait_stalled`, or `pi_turn_end_stalled`.
 Logs are removed by both `aimebu prune` and `aimebu prune -a`.
 
+Independently of this opt-in JSONL trace, wrapper stderr is always teed to the
+same directory as `<agent-id>-<spawn_tag>.stderr.log`. File lines are
+timestamped, the terminal output is unchanged, and the pre-register file is
+renamed alongside the JSONL log when the agent identity becomes known.
+
 ### Web state
 
 The web UI shows a compact state badge on each agent card. Each badge includes

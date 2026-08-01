@@ -57,4 +57,6 @@ Plain `aimebu prune` clears conversation state but preserves durable user
 state such as memory, leaderboards, macros, fleets, prompt overrides, roles,
 settings, and sounds. `aimebu prune -a` clears both conversation state and
 durable user-managed server state. Runtime diagnostics such as
-`server/aimebu.log` remain files and are preserved by both modes.
+`server/aimebu.log` remain files and are preserved by both modes. Foreground
+`server serve` and daemon `server start` share that timestamped server stderr
+log.

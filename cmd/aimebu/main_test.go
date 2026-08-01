@@ -145,6 +145,7 @@ func TestPruneLocalSidecarsRemovesLogsAndPreservesWarningMarkerWithoutIncludeSet
 	writeTestFile(t, newMarker, "yes")
 	writeTestFile(t, filepath.Join(logDir, "alice.log"), `{"event":"wrapper_start"}`)
 	writeTestFile(t, filepath.Join(logDir, "_pre-register-feedbeefcafebabe.log"), `{"event":"wrapper_start"}`)
+	writeTestFile(t, filepath.Join(logDir, "alice.stderr.log"), "2026-08-01T12:30:00Z wrapper notice\n")
 
 	if err := pruneLocalSidecars(rootDir, false); err != nil {
 		t.Fatalf("pruneLocalSidecars returned error: %v", err)

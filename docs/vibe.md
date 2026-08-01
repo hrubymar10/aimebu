@@ -218,6 +218,11 @@ diagnostics file. Events captured include `wrapper_start`, `harness_spawn`,
 `recovery_decision`, and `wrapper_shutdown`. Logs are removed by both
 `aimebu prune` and `aimebu prune -a`.
 
+Independently of this opt-in JSONL trace, wrapper stderr is always teed to the
+same directory as `<agent-id>-<spawn_tag>.stderr.log`. File lines are
+timestamped, the terminal output is unchanged, and the pre-register file is
+renamed alongside the JSONL log when the agent identity becomes known.
+
 ### Web State
 
 Vibe currently runs without an active-state badge. Its `--output json` mode

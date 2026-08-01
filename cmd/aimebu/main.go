@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	neturl "net/url"
@@ -86,9 +88,25 @@ func serverCmd(args []string) {
 
 	switch args[0] {
 	case "serve":
+		serverTerminal := io.Writer(os.Stderr)
+		if os.Getenv("AIMEBU_DAEMON_CHILD") != "" {
+			serverTerminal = io.Discard
+		}
+		serverStderr := newTimestampedStderrTee(
+			serverTerminal,
+			os.Stderr,
+			filepath.Join(rootDir, "server", "aimebu.log"),
+			0o644,
+		)
+		defer serverStderr.close()
+		previousLogOutput := log.Writer()
+		log.SetOutput(serverStderr)
+		defer log.SetOutput(previousLogOutput)
+
 		if os.Getenv("AIMEBU_DAEMON_CHILD") == "" {
 			if err := prepareServerOwnership(rootDir); err != nil {
-				fatal("serve", err)
+				fmt.Fprintf(serverStderr, "Error: serve: %v\n", err)
+				os.Exit(1)
 			}
 		}
 		frontendFS, _ := fs.Sub(aimebu.FrontendFS, "frontend")
@@ -101,7 +119,7 @@ func serverCmd(args []string) {
 			GoVersion: runtime.Version(),
 		}
 		if err := server.Run(addr, rootDir, frontendFS, promptDefaults, build); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(serverStderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -166,7 +184,7 @@ func pruneCmd(args []string) {
 			fmt.Println("  • agents/agent-warning-acknowledged (first-run warning acknowledgement)")
 			fmt.Println("  • server/macros.json         (global + per-room macros)")
 			fmt.Println("  • server/fleet.json          (fleet command bundles)")
-			fmt.Println("  • agents/agent-logs/*        (runtime diagnostics, opt-in via AIMEBU_AGENT_DEBUG)")
+			fmt.Println("  • agents/agent-logs/*        (always-on stderr + optional JSONL diagnostics)")
 			fmt.Println()
 			fmt.Println("Preserved:")
 			fmt.Println("  • server/aimebu.pid, server/aimebu.log (runtime artifacts)")
@@ -176,7 +194,7 @@ func pruneCmd(args []string) {
 			fmt.Println("  • server/messages.json       (full conversation history)")
 			fmt.Println("  • server/agents.json         (all registered agents)")
 			fmt.Println("  • agents/agent-sessions.json (aimebu agent resume state)")
-			fmt.Println("  • agents/agent-logs/*        (runtime diagnostics, opt-in via AIMEBU_AGENT_DEBUG)")
+			fmt.Println("  • agents/agent-logs/*        (always-on stderr + optional JSONL diagnostics)")
 			fmt.Println()
 			fmt.Println("Preserved:")
 			fmt.Println("  • agents/agent-warning-acknowledged (first-run warning acknowledgement)")
