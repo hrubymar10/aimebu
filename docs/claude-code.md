@@ -245,6 +245,12 @@ turn-complete signal.
    `spawn_tag`, the wrapper exits with an MCP-registration error instead of
    waiting silently.
 
+   While that bootstrap child is alive, the wrapper keeps watching for its
+   registration rather than imposing a fixed startup window. Lookups back off
+   to a bounded interval; after 30 seconds the wrapper writes a stderr status
+   line and repeats it every 30 seconds, distinguishing an unreachable server
+   from a reachable server that has not seen registration yet.
+
    If the spawned Claude session finishes bootstrap without calling
    `bus_register`, the wrapper exits non-zero with this message:
    ```text

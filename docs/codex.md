@@ -240,6 +240,11 @@ Registration confirmation is server-authoritative: the wrapper polls the
 aimebu server for the injected `spawn_tag` and promotes the debug log from
 `_pre-register-<spawn_tag>.log` to an identity-keyed
 `<agent-id>-<spawn_tag>.log` as soon as that registration is observed. A
+slow-to-first-tool-call Codex child remains under observation until it exits:
+the lookup cadence backs off to a bounded interval, and the wrapper writes a
+stderr waiting line after 30 seconds and every 30 seconds after that. The
+line distinguishes an unreachable server from a reachable server where the
+agent has not registered yet. A
 Codex session can therefore register successfully even if
 stderr contains unrelated non-fatal startup noise such as model-refresh
 timeouts or `Auth(AuthorizationRequired)` from another MCP transport. If the

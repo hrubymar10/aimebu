@@ -268,6 +268,14 @@ by bootstrapping a fresh thread automatically. Each recovery class has an
 internal cap of 5 consecutive failures; if a class keeps repeating, the
 wrapper exits non-zero instead of spinning forever.
 
+During bootstrap, the wrapper watches for the child to call `bus_register`
+for as long as that child remains alive. It starts with quick server lookups,
+then backs off to a bounded interval. After 30 seconds it writes a waiting
+line to stderr and repeats it every 30 seconds; the line distinguishes a
+reachable bus that has not seen registration yet from an unreachable server.
+This keeps slow-to-first-tool-call models observable without dropping their
+state or usage attribution after an arbitrary startup window.
+
 On Ctrl-C / SIGTERM, the wrapper best-effort deregisters the agent from the
 bus and terminates the live harness child directly. It does not spawn a
 second shutdown session.

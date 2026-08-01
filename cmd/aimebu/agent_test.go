@@ -81,6 +81,87 @@ func TestAgentRoomFromCWD(t *testing.T) {
 	}
 }
 
+func TestAgentWatchRegistrationKeepsLookingPastStatusInterval(t *testing.T) {
+	oldInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = 200 * time.Millisecond
+	defer func() { agentRegistrationNoticeInterval = oldInterval }()
+
+	spawnTag := "late-register-123"
+	startedAt := time.Now()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if time.Since(startedAt) < 350*time.Millisecond {
+			if r.URL.Path == "/agents/by-spawn-tag" {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = w.Write([]byte(`{"agents":[]}`))
+			return
+		}
+		switch r.URL.Path {
+		case "/agents/by-spawn-tag":
+			_, _ = fmt.Fprintf(w, `{"agent":{"id":"late@aimebu","kind":"ai","meta":{"spawn_tag":%q}}}`, spawnTag)
+		case "/agents":
+			_, _ = fmt.Fprintf(w, `{"agents":[{"id":"late@aimebu","kind":"ai","meta":{"spawn_tag":%q}}]}`, spawnTag)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var notices []bool
+	var firstNotice time.Time
+	name := agentWatchRegistration(context.Background(), server.URL, spawnTag, func(_ time.Duration, reachable bool) {
+		if firstNotice.IsZero() {
+			firstNotice = time.Now()
+		}
+		notices = append(notices, reachable)
+	})
+	if name != "late@aimebu" {
+		t.Fatalf("name = %q, want late@aimebu", name)
+	}
+	if len(notices) == 0 || !notices[0] {
+		t.Fatalf("waiting notices = %v, want reachable notice before late registration", notices)
+	}
+	if firstNotice.Sub(startedAt) < 150*time.Millisecond {
+		t.Fatalf("first notice arrived after %v, want no earlier than registration interval", firstNotice.Sub(startedAt))
+	}
+}
+
+func TestAgentWatchRegistrationStopsOnChildCompletion(t *testing.T) {
+	oldInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = 20 * time.Millisecond
+	defer func() { agentRegistrationNoticeInterval = oldInterval }()
+
+	lookedUp := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case lookedUp <- struct{}{}:
+		default:
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopped := make(chan string, 1)
+	go func() { stopped <- agentWatchRegistration(ctx, server.URL, "never-registers", nil) }()
+	select {
+	case <-lookedUp:
+	case <-time.After(time.Second):
+		t.Fatal("watcher did not perform its initial lookup")
+	}
+	cancel()
+	select {
+	case name := <-stopped:
+		if name != "" {
+			t.Fatalf("name = %q, want empty after cancellation", name)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("watcher outlived cancellation")
+	}
+}
+
 func TestAgentResolveRoomsAutoRoom(t *testing.T) {
 	dir := t.TempDir()
 	projectDir := filepath.Join(dir, "project-room")
@@ -1099,9 +1180,9 @@ func TestAgentBootstrapSessionPromotesLogBeforeSessionParseFailure(t *testing.T)
 	t.Setenv("AIMEBU_CONFIG_DIR", dir)
 	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
 
-	oldTimeout := agentRegistrationLookupTimeout
-	agentRegistrationLookupTimeout = time.Second
-	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+	oldInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = time.Second
+	defer func() { agentRegistrationNoticeInterval = oldInterval }()
 
 	spawnTag := "parsefail12345678"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1165,9 +1246,9 @@ func TestAgentBootstrapSessionClassifiesPiTimeoutAfterRegistration(t *testing.T)
 	t.Setenv("AIMEBU_CONFIG_DIR", dir)
 	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
 
-	oldTimeout := agentRegistrationLookupTimeout
-	agentRegistrationLookupTimeout = time.Second
-	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+	oldInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = time.Second
+	defer func() { agentRegistrationNoticeInterval = oldInterval }()
 
 	spawnTag := "pitimeout1234567"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1218,9 +1299,9 @@ func TestAgentBootstrapSessionRetriesPiModelTimeoutOnce(t *testing.T) {
 	t.Setenv("AIMEBU_CONFIG_DIR", dir)
 	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
 
-	oldTimeout := agentRegistrationLookupTimeout
-	agentRegistrationLookupTimeout = 20 * time.Millisecond
-	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+	oldInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = 20 * time.Millisecond
+	defer func() { agentRegistrationNoticeInterval = oldInterval }()
 
 	spawnTag := "piretry123456789"
 	statePath := filepath.Join(t.TempDir(), "state")
@@ -1297,9 +1378,9 @@ func TestAgentBootstrapPiWatchdogPreservesBufferedSession(t *testing.T) {
 	t.Setenv(agentProgressIdleEnv, "30ms")
 	t.Setenv(agentProgressForwardEnv, "1s")
 
-	oldLookupTimeout := agentRegistrationLookupTimeout
-	agentRegistrationLookupTimeout = 100 * time.Millisecond
-	defer func() { agentRegistrationLookupTimeout = oldLookupTimeout }()
+	oldNoticeInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = 100 * time.Millisecond
+	defer func() { agentRegistrationNoticeInterval = oldNoticeInterval }()
 
 	spawnTag := "piwatchsession1"
 	server := newRegisteredAgentTestServer(t, spawnTag, "piper@aimebu")
@@ -1359,9 +1440,9 @@ func TestAgentBootstrapPiWatchdogRebootstrapsWithoutSession(t *testing.T) {
 	t.Setenv(agentProgressIdleEnv, "30ms")
 	t.Setenv(agentProgressForwardEnv, "1s")
 
-	oldLookupTimeout := agentRegistrationLookupTimeout
-	agentRegistrationLookupTimeout = 100 * time.Millisecond
-	defer func() { agentRegistrationLookupTimeout = oldLookupTimeout }()
+	oldNoticeInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = 100 * time.Millisecond
+	defer func() { agentRegistrationNoticeInterval = oldNoticeInterval }()
 	oldInitialBackoff := agentRecoveryInitialBackoff
 	agentRecoveryInitialBackoff = 5 * time.Millisecond
 	defer func() { agentRecoveryInitialBackoff = oldInitialBackoff }()
@@ -1423,9 +1504,9 @@ func TestAgentBootstrapInterruptCapturesDiagnostics(t *testing.T) {
 	t.Setenv(agentProgressIdleEnv, "5s")
 	t.Setenv(agentProgressForwardEnv, "10s")
 
-	oldLookupTimeout := agentRegistrationLookupTimeout
-	agentRegistrationLookupTimeout = 100 * time.Millisecond
-	defer func() { agentRegistrationLookupTimeout = oldLookupTimeout }()
+	oldNoticeInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = 100 * time.Millisecond
+	defer func() { agentRegistrationNoticeInterval = oldNoticeInterval }()
 
 	spawnTag := "piinterrupt1234"
 	server := newRegisteredAgentTestServer(t, spawnTag, "piper@aimebu")
@@ -1477,6 +1558,54 @@ while :; do sleep 1; done
 	}
 	if !strings.Contains(fmt.Sprint(diagnostics["stderr_tail"]), "stderr before interrupt") {
 		t.Fatalf("interrupt diagnostics lost stderr: %#v", diagnostics)
+	}
+}
+
+func TestAgentBootstrapInterruptBeforeRegistrationReturns(t *testing.T) {
+	oldNoticeInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = 20 * time.Millisecond
+	defer func() { agentRegistrationNoticeInterval = oldNoticeInterval }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agents/by-spawn-tag":
+			http.NotFound(w, r)
+		case "/agents":
+			_, _ = w.Write([]byte(`{"agents":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	harnessPath := filepath.Join(t.TempDir(), "fake-pi-unregistered-interrupt.sh")
+	script := "#!/bin/sh\ntrap 'exit 0' INT TERM\nprintf '{\"type\":\"turn_start\"}\\n'\nwhile :; do sleep 1; done\n"
+	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	go func() {
+		time.Sleep(75 * time.Millisecond)
+		sigCh <- os.Interrupt
+	}()
+	type result struct{ err error }
+	done := make(chan result, 1)
+	go func() {
+		_, _, err := agentBootstrapSession(
+			"pi", []string{harnessPath}, "register please", "gemma4:31b",
+			agentBuildEnv(server.URL, "pi", "interrupt-before-register"), server.URL,
+			"interrupt-before-register", "", sigCh, nil,
+		)
+		done <- result{err: err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != agentErrInterrupted {
+			t.Fatalf("bootstrap error = %v, want interrupt", got.err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("bootstrap hung after interrupt before registration")
 	}
 }
 
@@ -1578,9 +1707,9 @@ func TestAgentBootstrapPiWatchdogRetriesAreBounded(t *testing.T) {
 	t.Setenv(agentProgressIdleEnv, "15ms")
 	t.Setenv(agentProgressForwardEnv, "1s")
 
-	oldLookupTimeout := agentRegistrationLookupTimeout
-	agentRegistrationLookupTimeout = 50 * time.Millisecond
-	defer func() { agentRegistrationLookupTimeout = oldLookupTimeout }()
+	oldNoticeInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = 50 * time.Millisecond
+	defer func() { agentRegistrationNoticeInterval = oldNoticeInterval }()
 	oldInitialBackoff := agentRecoveryInitialBackoff
 	agentRecoveryInitialBackoff = time.Millisecond
 	defer func() { agentRecoveryInitialBackoff = oldInitialBackoff }()
@@ -1664,9 +1793,9 @@ func TestAgentBootstrapSessionPromotesLogBeforeChildFailure(t *testing.T) {
 	t.Setenv("AIMEBU_CONFIG_DIR", dir)
 	t.Setenv("AIMEBU_AGENT_DEBUG", "1")
 
-	oldTimeout := agentRegistrationLookupTimeout
-	agentRegistrationLookupTimeout = time.Second
-	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+	oldInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = time.Second
+	defer func() { agentRegistrationNoticeInterval = oldInterval }()
 
 	spawnTag := "childfail1234567"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1703,6 +1832,15 @@ func TestAgentBootstrapSessionPromotesLogBeforeChildFailure(t *testing.T) {
 		t.Fatalf("agentID = %q, want worker@aimebu", agentID)
 	}
 	records := readAgentDebugRecords(t, filepath.Join(dir, "agents", "agent-logs", "worker@aimebu-childfail1234567.log"))
+	registerObserved := 0
+	for _, record := range records {
+		if record["event"] == "register_observed" {
+			registerObserved++
+		}
+	}
+	if registerObserved != 1 {
+		t.Fatalf("register_observed events = %d, want 1", registerObserved)
+	}
 	classified := firstDebugEvent(records, "bootstrap_failure_classified")
 	if classified == nil {
 		t.Fatalf("expected bootstrap_failure_classified event in %#v", records)
@@ -1713,9 +1851,9 @@ func TestAgentBootstrapSessionPromotesLogBeforeChildFailure(t *testing.T) {
 }
 
 func TestAgentBootstrapSessionFakePi(t *testing.T) {
-	oldTimeout := agentRegistrationLookupTimeout
-	agentRegistrationLookupTimeout = 50 * time.Millisecond
-	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+	oldInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = 50 * time.Millisecond
+	defer func() { agentRegistrationNoticeInterval = oldInterval }()
 
 	spawnTag := "abc123def4567890"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1754,9 +1892,9 @@ func TestAgentBootstrapSessionFakePi(t *testing.T) {
 }
 
 func TestAgentBootstrapSessionRequiresRegistration(t *testing.T) {
-	oldTimeout := agentRegistrationLookupTimeout
-	agentRegistrationLookupTimeout = 10 * time.Millisecond
-	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+	oldInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = 10 * time.Millisecond
+	defer func() { agentRegistrationNoticeInterval = oldInterval }()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -2115,9 +2253,9 @@ func TestAgentBootstrapPromptVibeHarvestedModel(t *testing.T) {
 }
 
 func TestAgentBootstrapSessionFakeVibeAllowsEmptySessionID(t *testing.T) {
-	oldTimeout := agentRegistrationLookupTimeout
-	agentRegistrationLookupTimeout = 50 * time.Millisecond
-	defer func() { agentRegistrationLookupTimeout = oldTimeout }()
+	oldInterval := agentRegistrationNoticeInterval
+	agentRegistrationNoticeInterval = 50 * time.Millisecond
+	defer func() { agentRegistrationNoticeInterval = oldInterval }()
 
 	spawnTag := "abc123def4567890"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

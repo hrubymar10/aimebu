@@ -284,6 +284,13 @@ Registration confirmation is server-authoritative: the wrapper polls the
 aimebu server for the injected `spawn_tag` and promotes the debug log from
 `_pre-register-<spawn_tag>.log` to an identity-keyed
 `<agent-id>-<spawn_tag>.log` as soon as that registration is observed. If pi
+is slow to its first tool call, the wrapper keeps watching until the live pi
+child exits. It starts with quick lookups, backs off to a bounded interval,
+and writes a stderr status line after 30 seconds and every 30 seconds after
+that. The status distinguishes a reachable server that has not seen
+registration from an unreachable server.
+
+If pi
 reports `Request timed out` before registration is observed, debug logs
 classify it as `model_turn_timeout` and the
 process-per-turn wrapper retries the bootstrap turn once before giving up. If

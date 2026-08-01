@@ -73,7 +73,15 @@ var (
 	agentResumeStallTimeout      = 5 * time.Minute
 )
 
-var agentRegistrationLookupTimeout = 30 * time.Second
+// agentRegistrationNoticeInterval controls how often the wrapper reports that
+// it is still waiting for bus_register. Observation continues until the child
+// exits regardless of this value.
+var agentRegistrationNoticeInterval = 30 * time.Second
+
+const (
+	agentRegistrationLookupInitialInterval = 250 * time.Millisecond
+	agentRegistrationLookupMaxInterval     = 5 * time.Second
+)
 
 func agentRegistrationMissingError(harness string) error {
 	listCommand, docsPath := agentHarnessMCPHint(harness)
@@ -554,6 +562,107 @@ func agentLookupName(aimebuURL, spawnTag string, timeout time.Duration) string {
 		sleep()
 	}
 	return ""
+}
+
+// agentWatchRegistration follows a live child until it registers or exits.
+// It starts with a quick lookup cadence, backs off to avoid hammering an
+// unavailable server, and reports continued waiting at the configured interval.
+func agentWatchRegistration(ctx context.Context, aimebuURL, spawnTag string, waiting func(time.Duration, bool)) string {
+	type lookupResp struct {
+		Agent struct {
+			ID string `json:"id"`
+		} `json:"agent"`
+	}
+	type agent struct {
+		ID   string            `json:"id"`
+		Kind string            `json:"kind"`
+		Meta map[string]string `json:"meta"`
+	}
+	type agentsResp struct {
+		Agents []agent `json:"agents"`
+	}
+
+	lookup := func() (string, bool) {
+		client := &http.Client{Timeout: 5 * time.Second}
+		request := func(path string) (*http.Response, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(aimebuURL, "/")+path, nil)
+			if err != nil {
+				return nil, err
+			}
+			return client.Do(req)
+		}
+
+		reachable := false
+		resp, err := request("/agents/by-spawn-tag?tag=" + url.QueryEscape(spawnTag))
+		if err == nil {
+			reachable = true
+			var result lookupResp
+			_ = json.NewDecoder(resp.Body).Decode(&result)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && result.Agent.ID != "" {
+				return result.Agent.ID, true
+			}
+		}
+
+		resp, err = request("/agents")
+		if err != nil {
+			return "", reachable
+		}
+		reachable = true
+		var result agentsResp
+		_ = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		for _, candidate := range result.Agents {
+			if candidate.Kind == "ai" && candidate.Meta["spawn_tag"] == spawnTag {
+				return candidate.ID, true
+			}
+		}
+		return "", reachable
+	}
+
+	startedAt := time.Now()
+	noticeInterval := agentRegistrationNoticeInterval
+	nextNotice := noticeInterval
+	interval := agentRegistrationLookupInitialInterval
+	reachableSinceNotice := false
+	for {
+		if name, reachable := lookup(); name != "" {
+			return name
+		} else if reachable {
+			reachableSinceNotice = true
+		}
+		elapsed := time.Since(startedAt)
+		for nextNotice > 0 && elapsed >= nextNotice {
+			if waiting != nil {
+				waiting(nextNotice, reachableSinceNotice)
+			}
+			reachableSinceNotice = false
+			nextNotice += noticeInterval
+		}
+		delay := interval
+		if nextNotice > 0 {
+			untilNotice := time.Until(startedAt.Add(nextNotice))
+			if untilNotice > 0 && untilNotice < delay {
+				delay = untilNotice
+			}
+		}
+		if delay < agentRegistrationLookupInitialInterval {
+			delay = agentRegistrationLookupInitialInterval
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ""
+		case <-timer.C:
+		}
+		interval *= 2
+		if interval > agentRegistrationLookupMaxInterval {
+			interval = agentRegistrationLookupMaxInterval
+		}
+	}
 }
 
 func agentBootstrapFailureClass(harness string, agentName string, output []byte, parseErr error) (string, string) {
@@ -1442,9 +1551,17 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 	}
 	defer progress.Close()
 
+	registrationCtx, stopRegistration := context.WithCancel(context.Background())
+	defer stopRegistration()
 	nameCh := make(chan string, 1)
 	go func() {
-		n := agentLookupName(aimebuURL, spawnTag, agentRegistrationLookupTimeout)
+		n := agentWatchRegistration(registrationCtx, aimebuURL, spawnTag, func(elapsed time.Duration, serverReachable bool) {
+			status := "not registered yet"
+			if !serverReachable {
+				status = "server unreachable"
+			}
+			fmt.Fprintf(os.Stderr, "aimebu agent: still waiting for %s session to call bus_register (%s after %s)\n", harness, status, elapsed)
+		})
 		if n != "" {
 			agentID.Set(agentFullID(n))
 			fmt.Fprintf(os.Stderr, "aimebu agent: registered as %s\n", n)
@@ -1452,6 +1569,16 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 		}
 		nameCh <- n
 	}()
+	observedName := ""
+	observedRead := false
+	stopAndReadRegistration := func() string {
+		stopRegistration()
+		if !observedRead {
+			observedName = <-nameCh
+			observedRead = true
+		}
+		return observedName
+	}
 
 	doneCh := make(chan error, 1)
 	go func() { doneCh <- bootstrapCmd.Wait() }()
@@ -1462,6 +1589,7 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 	)
 	select {
 	case sig := <-sigCh:
+		observedName := stopAndReadRegistration()
 		stdoutSnapshot := bootstrapBuf.Bytes()
 		stderrSnapshot := stderrBuf.Bytes()
 		agentPrintHarnessDiagnostics("interrupt", stdoutSnapshot, stderrSnapshot)
@@ -1469,10 +1597,7 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 		_ = stateWriter.Close()
 		shutdownName := knownName
 		if shutdownName == "" {
-			select {
-			case shutdownName = <-nameCh:
-			default:
-			}
+			shutdownName = observedName
 		}
 		if shutdownName == "" {
 			shutdownName = agentLookupName(aimebuURL, spawnTag, time.Second)
@@ -1489,10 +1614,8 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 		agentPrintHarnessDiagnostics(string(stallReason), stdoutSnapshot, stderrSnapshot)
 		agentLogHarnessDiagnostics(debug, string(stallReason), stdoutSnapshot, stderrSnapshot)
 
-		agentName := ""
-		select {
-		case agentName = <-nameCh:
-		default:
+		agentName := stopAndReadRegistration()
+		if agentName == "" {
 			agentName = agentLookupName(aimebuURL, spawnTag, time.Second)
 		}
 		if agentName != "" {
@@ -1518,10 +1641,8 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 	agentLogHarnessExit(debug, waitErr, time.Since(startedAt), stderrBuf.Bytes())
 
 	if waitErr != nil {
-		agentName := ""
-		select {
-		case agentName = <-nameCh:
-		default:
+		agentName := stopAndReadRegistration()
+		if agentName == "" {
 			agentName = agentLookupName(aimebuURL, spawnTag, time.Second)
 			if agentName != "" {
 				agentID.Set(agentFullID(agentName))
@@ -1540,7 +1661,7 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 		return "", "", waitErr, class
 	}
 
-	agentName := <-nameCh
+	agentName := stopAndReadRegistration()
 	if agentName == "" {
 		agentName = agentLookupName(aimebuURL, spawnTag, time.Second)
 		if agentName != "" {
