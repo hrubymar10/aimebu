@@ -1,0 +1,5 @@
+{"at":"2026-07-07T11:05:51Z","event":{"type":"thread.started","thread_id":"0197e3db-sanitized"}}
+{"at":"2026-07-07T11:05:52Z","event":{"type":"turn.started"}}
+{"at":"2026-07-07T11:06:31Z","event":{"type":"item.started","item":{"type":"mcp_tool_call","tool":"bus_register"}}}
+{"at":"2026-07-07T11:06:32Z","event":{"type":"item.started","item":{"type":"command_execution"}}}
+{"at":"2026-07-07T11:07:22Z","event":{"type":"turn.completed"}}

@@ -1055,6 +1055,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		s.persist()
 		sess := *s.agentSessions[agentID]
 		s.mu.Unlock()
 		_ = jsonOK(w, map[string]any{"agent_session": sess})
@@ -1079,6 +1080,30 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			return
 		}
 		_ = jsonOK(w, map[string]any{"agent": agentID, "state": req.State})
+	})
+
+	// POST /agents/{id}/generation — wrapper-measured model generation
+	// interval. Samples are retained as a ten-turn ring scoped to the harness
+	// session ID and are display-only; they never drive wrapper recovery.
+	mux.HandleFunc("POST /agents/{id}/generation", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.PathValue("id")
+		var req struct {
+			SessionID    string `json:"session_id"`
+			GenerationMS int64  `json:"generation_ms"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.SessionID == "" || req.GenerationMS < 0 {
+			jsonError(w, "session_id is required and generation_ms must be non-negative", http.StatusBadRequest)
+			return
+		}
+		if !s.recordAgentGeneration(agentID, req.SessionID, req.GenerationMS) {
+			jsonError(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"agent": agentID, "generation_ms": req.GenerationMS})
 	})
 
 	// GET /agents/{id}/rooms — rooms an agent is in, with per-agent unread

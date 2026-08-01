@@ -308,6 +308,12 @@ mutating ordinary wrapper-pushed stored states. Harnesses without a mapper
 show no badge at all; mapped harnesses currently include `claude-code`,
 `codex`, and `pi`.
 
+Wrapped Codex agents also get a measurement-only response-speed icon beside
+this state badge after three current-session samples. The wrapper measures
+from `turn.started` to the first tool item. The server displays the rolling
+10-sample median as lightning below 15 seconds, average at 15-60 seconds, or
+snail above 60 seconds; it never uses this signal for recovery.
+
 ## Prompting Codex to keep listening
 
 Codex tends to return control to the user after a single tool-call

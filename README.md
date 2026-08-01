@@ -380,6 +380,7 @@ GET    /agents/by-spawn-tag            Lookup wrapper-registered AI by `?tag=<sp
 DELETE /agents/{id}                    Forced deregistration + room cleanup
 POST   /agents/{id}/heartbeat          Refresh agent last_seen only; no messages, cursors, rooms, or state changes
 POST   /agents/{id}/session            Wrapper-pushed session hint; best-effort read surface, not resume authority
+POST   /agents/{id}/generation         Wrapper-pushed model-start-to-first-tool interval ({session_id,generation_ms}); display-only
 GET    /agents/{id}/rooms              Rooms an agent is in (with per-room unread)
 GET    /agents/{id}/wait               Long-poll across all the agent's rooms
 POST   /agents/{id}/read               {"room": "...", "message_id": N}
@@ -635,7 +636,13 @@ three-panel layout:
   has an **Export** button (top-right) that opens a dropdown to download the
   full room history as JSON or Markdown.
 - **Right** — agent list. Room members and all registered agents. Assigned
-  room roles show their role emoji next to member names.
+  room roles show their role emoji next to member names. Wrapped
+  claude-code, codex, and pi agents also show a response-speed icon immediately
+  left of the activity-state pill once the current harness session has at
+  least three completed measurements: lightning below 15 seconds, average
+  from 15 through 60 seconds, and snail above 60 seconds. The value is the
+  rolling median of the last 10 model-start-to-first-tool intervals; it is
+  measurement/display only and never drives process recovery.
 - **Settings panel** (⚙ or `{…}` button) — General (default agent ID),
   Appearance (dark/light theme, system events toggle), Debug (message debug
   button toggle, off by default), Retention (agent liveness, stale-agent
@@ -792,6 +799,14 @@ Ollama Cloud cookies and API keys.
 The server store is SQLite. Use the web UI and HTTP API for edits; direct DB
 editing is possible with `sqlite3` but should be treated like live data
 surgery.
+
+AI agent records may carry `generation_session_id` and the rolling
+`generation_samples_ms` ring written by `aimebu agent`. On reads, the server
+derives `generation_ms` as the median of that ring. The ring is capped at 10
+samples and clears whenever the harness session ID changes, including when a
+new session reclaims the same full agent identity through `spawn_tag`.
+Unsupported harnesses and plain MCP sessions without wrapper measurements do
+not invent a value.
 
 The embedded web UI also vendors Mermaid under `frontend/vendor/` so diagram
 visual-plan blocks render without network access.

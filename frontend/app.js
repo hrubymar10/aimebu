@@ -2731,6 +2731,36 @@
     return '<span class="agent-state-badge agent-state-' + esc(meta.className) + '" title="' + esc(title) + '"' + data + '>' + esc(label) + '</span>';
   }
 
+  function agentSpeedMeta(a) {
+    if (!a || a.kind !== 'ai') return null;
+    var supported = a.harness === 'claude-code' || a.harness === 'codex' || a.harness === 'pi';
+    if (!supported) {
+      return { title: 'response speed: not measured for ' + (a.harness || 'unknown') };
+    }
+    var samples = Array.isArray(a.generation_samples_ms) ? a.generation_samples_ms.length : 0;
+    if (samples < 3) {
+      return { title: 'response speed: not enough samples yet' };
+    }
+    var median = Number(a.generation_ms);
+    if (!Number.isFinite(median) || median <= 0) {
+      return { title: 'response speed: not enough samples yet' };
+    }
+    var band = median < 15000 ? 'fast' : (median <= 60000 ? 'average' : 'slow');
+    return {
+      band: band,
+      title: 'response speed: ' + Math.round(median / 1000) + 's median over ' + samples + ' turns'
+    };
+  }
+
+  function agentSpeedBadgeHTML(a) {
+    var meta = agentSpeedMeta(a);
+    if (!meta) return '';
+    var icon = meta.band
+      ? '<span class="agent-speed-icon agent-speed-' + esc(meta.band) + '" aria-hidden="true"></span>'
+      : '';
+    return '<span class="agent-speed-anchor" title="' + esc(meta.title) + '" aria-label="' + esc(meta.title) + '">' + icon + '</span>';
+  }
+
   function formatStateElapsed(isoString, nowMS) {
     if (!isoString) return '';
     var stateMS = Date.parse(isoString);
@@ -5451,6 +5481,7 @@
     var iconTag = '<img src="' + iconSrc + '" class="harness-icon" alt="' + iconAlt + '" title="' + iconTitle + '" width="14" height="14">';
     var roleKey = roomRoleKey(room, a.id);
     var roleTag = roleBadgeHTML(roleKey);
+    var speedTag = agentSpeedBadgeHTML(a);
     var stateTag = agentStateBadgeHTML(a);
     var actionBtns = agentCardActionsHTML(a, context, room);
     return (
@@ -5460,6 +5491,7 @@
           presenceTag +
           iconTag +
           roleTag +
+          speedTag +
           stateTag +
           '<span class="agent-id-text">' + esc(a.id) + '</span>' +
         '</div>' +

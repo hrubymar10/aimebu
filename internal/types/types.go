@@ -133,9 +133,15 @@ type Agent struct {
 	State        string            `json:"state,omitempty"`
 	StateAt      time.Time         `json:"state_at,omitempty"`
 	StateOverlay bool              `json:"state_overlay,omitempty"`
-	Warnings     []string          `json:"warnings,omitempty"`
-	RegisteredAt string            `json:"registered_at"`
-	LastSeen     string            `json:"last_seen"`
+	// GenerationSamplesMS is the rolling, session-scoped ring of wrapper-
+	// measured model-start-to-first-tool intervals. GenerationMS is its median,
+	// derived when agent records are read rather than persisted as authority.
+	GenerationSessionID string   `json:"generation_session_id,omitempty"`
+	GenerationSamplesMS []int64  `json:"generation_samples_ms,omitempty"`
+	GenerationMS        int64    `json:"generation_ms,omitempty"`
+	Warnings            []string `json:"warnings,omitempty"`
+	RegisteredAt        string   `json:"registered_at"`
+	LastSeen            string   `json:"last_seen"`
 	// ReadCursors tracks the highest message ID this agent has read per room.
 	// Populated by bus_wait (implicit, on delivery) and POST /agents/{id}/read
 	// (explicit, e.g. frontend "user opened the room"). Persisted with the

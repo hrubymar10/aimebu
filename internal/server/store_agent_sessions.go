@@ -43,6 +43,7 @@ func (s *store) upsertAgentSessionLocked(agent *types.Agent, origin string, hint
 	if agent == nil || agent.ID == "" || hint == nil {
 		return nil
 	}
+	resetAgentGenerationSessionLocked(agent, hint.HarnessSessionID)
 	nowTime := time.Now().UTC()
 	registeredAt := nowTime
 	if existing := s.agentSessions[agent.ID]; existing != nil && !existing.RegisteredAt.IsZero() {

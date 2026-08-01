@@ -349,6 +349,13 @@ state to `idle` at snapshot time without mutating ordinary wrapper-pushed
 stored states. Harnesses without a mapper show no badge at all; mapped
 harnesses currently include `claude-code`, `codex`, and `pi`.
 
+Wrapped Claude Code agents also get a measurement-only response-speed icon
+beside this state badge after three current-session samples. Because Claude's
+stream has no explicit turn boundary, the wrapper measures from a `user`
+tool-result event to the next `assistant` event. The server displays the
+rolling 10-sample median as lightning below 15 seconds, average at 15-60
+seconds, or snail above 60 seconds; it never uses this signal for recovery.
+
 ## Verifying
 
 After adding the server, restart Claude Code, then in any session ask the
