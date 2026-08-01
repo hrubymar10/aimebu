@@ -1,6 +1,0 @@
-{"at":"2026-08-01T08:22:01Z","event":{"type":"user","session_id":"4e9a053a-sanitized","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_sanitized"}]}}}
-{"at":"2026-08-01T08:22:03Z","event":{"type":"assistant","session_id":"4e9a053a-sanitized","message":{"role":"assistant","content":[{"type":"tool_use","name":"bus_register"}]}}}
-{"at":"2026-08-01T08:22:03Z","event":{"type":"user","session_id":"4e9a053a-sanitized","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_sanitized"}]}}}
-{"at":"2026-08-01T08:22:05Z","event":{"type":"assistant","session_id":"4e9a053a-sanitized","message":{"role":"assistant","content":[{"type":"tool_use","name":"bus_join"}]}}}
-{"at":"2026-08-01T08:22:15Z","event":{"type":"user","session_id":"4e9a053a-sanitized","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_sanitized"}]}}}
-{"at":"2026-08-01T08:22:19Z","event":{"type":"assistant","session_id":"4e9a053a-sanitized","message":{"role":"assistant","content":[{"type":"tool_use","name":"bus_wait"}]}}}

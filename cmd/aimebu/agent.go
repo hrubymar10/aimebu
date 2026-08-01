@@ -1500,7 +1500,7 @@ func agentBootstrapStart(harness string, command []string, prompt, sessionID, ai
 	buf := &agentCaptureBuffer{}
 	stderrBuf := &agentCaptureBuffer{}
 	agentID := newAgentIDProvider("")
-	stateWriter := startAgentTelemetryWriter(context.Background(), aimebuURL, agentID, harness, sessionID)
+	stateWriter := startAgentStatePusher(context.Background(), aimebuURL, agentID, newStateDetector(harness))
 	var progress *agentProgressMonitor
 	writers := []io.Writer{os.Stdout, buf, stateWriter}
 	if harness == "pi" {
@@ -1835,7 +1835,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 		stdoutBuf := &agentCaptureBuffer{}
 		stderrBuf := &agentCaptureBuffer{}
 		activity := newAgentResumeActivity()
-		stateWriter := startAgentTelemetryWriter(context.Background(), aimebuURL, newAgentIDProvider(agentFullID(agentName)), harness, sessionID)
+		stateWriter := startAgentStatePusher(context.Background(), aimebuURL, newAgentIDProvider(agentFullID(agentName)), newStateDetector(harness))
 		var progress *agentProgressMonitor
 		writers := []io.Writer{os.Stdout, stdoutBuf, stateWriter}
 		if harness == "pi" {

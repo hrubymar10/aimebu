@@ -2722,43 +2722,13 @@
   function agentStateBadgeHTML(a) {
     var meta = agentStateMeta(a && a.state);
     if (!meta) return '';
-    var speedMeta = agentSpeedMeta(a);
-    var stateTitle = meta.title + (speedMeta && !speedMeta.band ? '; ' + speedMeta.title : '');
     var elapsed = a.state_overlay ? '' : formatStateElapsed(a.state_at);
-    var title = stateTitle + (elapsed ? ' for ' + elapsed : '');
+    var title = meta.title + (elapsed ? ' for ' + elapsed : '');
     var label = meta.label + (elapsed ? ' ' + elapsed : '');
     var data = a.state_at && !a.state_overlay
-      ? ' data-state-label="' + esc(meta.label) + '" data-state-title="' + esc(stateTitle) + '" data-state-at="' + esc(a.state_at) + '"'
+      ? ' data-state-label="' + esc(meta.label) + '" data-state-title="' + esc(meta.title) + '" data-state-at="' + esc(a.state_at) + '"'
       : '';
     return '<span class="agent-state-badge agent-state-' + esc(meta.className) + '" title="' + esc(title) + '"' + data + '>' + esc(label) + '</span>';
-  }
-
-  function agentSpeedMeta(a) {
-    if (!a || a.kind !== 'ai') return null;
-    var supported = a.harness === 'claude-code' || a.harness === 'codex' || a.harness === 'pi';
-    if (!supported) {
-      return { title: 'response speed: not measured for ' + (a.harness || 'unknown') };
-    }
-    var samples = Array.isArray(a.generation_samples_ms) ? a.generation_samples_ms.length : 0;
-    if (samples < 3) {
-      return { title: 'response speed: not enough samples yet' };
-    }
-    var median = Number(a.generation_ms);
-    if (!Number.isFinite(median) || median <= 0) {
-      return { title: 'response speed: not enough samples yet' };
-    }
-    var band = median < 15000 ? 'fast' : (median <= 60000 ? 'average' : 'slow');
-    return {
-      band: band,
-      title: 'response speed: ' + Math.round(median / 1000) + 's median over ' + samples + ' turns'
-    };
-  }
-
-  function agentSpeedBadgeHTML(a) {
-    var meta = agentSpeedMeta(a);
-    if (!meta || !meta.band) return '';
-    var icon = '<span class="agent-speed-icon agent-speed-' + esc(meta.band) + '" aria-hidden="true"></span>';
-    return '<span class="agent-speed-anchor" title="' + esc(meta.title) + '" aria-label="' + esc(meta.title) + '">' + icon + '</span>';
   }
 
   function formatStateElapsed(isoString, nowMS) {
@@ -5481,7 +5451,6 @@
     var iconTag = '<img src="' + iconSrc + '" class="harness-icon" alt="' + iconAlt + '" title="' + iconTitle + '" width="14" height="14">';
     var roleKey = roomRoleKey(room, a.id);
     var roleTag = roleBadgeHTML(roleKey);
-    var speedTag = agentSpeedBadgeHTML(a);
     var stateTag = agentStateBadgeHTML(a);
     var actionBtns = agentCardActionsHTML(a, context, room);
     return (
@@ -5491,7 +5460,6 @@
           presenceTag +
           iconTag +
           roleTag +
-          speedTag +
           stateTag +
           '<span class="agent-id-text">' + esc(a.id) + '</span>' +
         '</div>' +

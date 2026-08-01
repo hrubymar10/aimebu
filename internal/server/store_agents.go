@@ -9,8 +9,6 @@ import (
 	"github.com/hrubymar10/aimebu/internal/types"
 )
 
-const agentGenerationWindow = 10
-
 // ── Agents ─────────────────────────────────────────────────────────
 
 // registerHuman registers a human agent with the given explicit name. The
@@ -431,51 +429,6 @@ func (s *store) setAgentState(agentID, state string) bool {
 	return true
 }
 
-func (s *store) recordAgentGeneration(agentID, sessionID string, generationMS int64) bool {
-	if sessionID == "" || generationMS < 0 {
-		return false
-	}
-	s.mu.Lock()
-	agent, ok := s.agents[agentID]
-	if !ok || agent.Kind != "ai" {
-		s.mu.Unlock()
-		return false
-	}
-	resetAgentGenerationSessionLocked(agent, sessionID)
-	agent.GenerationSamplesMS = append(agent.GenerationSamplesMS, generationMS)
-	if overflow := len(agent.GenerationSamplesMS) - agentGenerationWindow; overflow > 0 {
-		agent.GenerationSamplesMS = append([]int64(nil), agent.GenerationSamplesMS[overflow:]...)
-	}
-	s.persist()
-	s.mu.Unlock()
-	go s.broadcastAgentUpdate()
-	return true
-}
-
-func resetAgentGenerationSessionLocked(agent *types.Agent, sessionID string) bool {
-	if agent == nil || sessionID == "" || agent.GenerationSessionID == sessionID {
-		return false
-	}
-	agent.GenerationSessionID = sessionID
-	agent.GenerationSamplesMS = nil
-	agent.GenerationMS = 0
-	return true
-}
-
-func deriveAgentGeneration(agent *types.Agent) {
-	if agent == nil || len(agent.GenerationSamplesMS) == 0 {
-		return
-	}
-	samples := append([]int64(nil), agent.GenerationSamplesMS...)
-	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
-	middle := len(samples) / 2
-	if len(samples)%2 == 1 {
-		agent.GenerationMS = samples[middle]
-		return
-	}
-	agent.GenerationMS = samples[middle-1] + (samples[middle]-samples[middle-1])/2
-}
-
 func (s *store) deriveAgentStates(now time.Time) {
 	s.emitLivenessEvents(s.sweepAgentLiveness(now))
 }
@@ -622,10 +575,6 @@ func cloneAgentLocked(a *types.Agent) types.Agent {
 	if a.Warnings != nil {
 		clone.Warnings = append([]string(nil), a.Warnings...)
 	}
-	if a.GenerationSamplesMS != nil {
-		clone.GenerationSamplesMS = append([]int64(nil), a.GenerationSamplesMS...)
-	}
-	deriveAgentGeneration(&clone)
 	return clone
 }
 

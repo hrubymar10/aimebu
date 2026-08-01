@@ -288,10 +288,6 @@ agent liveness (`liveness_sweep_seconds`, `agent_stale_window_seconds`,
 cadence, message age/count limits, the global `memory_enabled` flag, the
 default-on `leaderboard_enabled` flag, and the agent behaviour setting
 `inline_plan_appendix` (`"always"` | `"optional"`, default `"always"`).
-AI agent records also hold a session-scoped ring of up to 10
-`generation_samples_ms` values from the wrapper. Agent reads derive the
-rolling median as `generation_ms`; a harness-session change clears the ring
-even when `spawn_tag` preserves the same full identity.
 When `memory_enabled` is absent, the web UI has not asked yet and memory is
 effectively disabled.
 Emoji reactions are conversation content and live in SQLite;
@@ -339,15 +335,6 @@ and must not be treated as the first disconnect signal.
 ## Web UI
 
 Embedded via `go:embed` from `frontend/`. Served at `GET /` when server is running. Open `http://localhost:9997` in a browser. Three-panel IRC-style layout: rooms, messages, agents. The chat view renders display-only inline visual-plan blocks from structured `visual_plan` message fields, addressed proposed-answer buttons, and addressed Open Questions modals from structured `open_questions` message fields. Global Settings -> Agents -> Agents behaviour -> Inline plans controls whether the leader role always includes a full-plan appendix block (`"always"`, default) or leaves it optional (`"optional"`); this setting is stored as `inline_plan_appendix` in `/settings` and is resolved at `bus_role_get` serve time — connected clients see the change on their next role fetch without a reconnect. Global Settings -> Fleets edits reusable command bundles for `aimebu fleet`; Global Settings -> Roles edits reusable role definitions, emoji, cardinality, and extensions; Global Settings -> Usages configures provider usage refresh interval, percent display, provider ordering and enablement, GitHub Copilot device flow, and Ollama Cloud credential setup. Active room settings assign those global roles to AI room members and disable singleton roles already held by another agent. Role emoji show on member cards and current-room message senders. Built-in specialist reviewer roles are `sec-reviewer`, `test-reviewer`, and `ux-reviewer`, each extending `reviewer`.
-
-For wrapped claude-code, codex, and pi agents, member cards show a
-measurement-only response-speed icon immediately left of the activity-state
-pill after at least three current-session samples. The server uses the median
-of the last 10 model-start-to-first-tool intervals: lightning under 15
-seconds, average from 15 through 60 seconds, and snail over 60 seconds.
-Unsupported harnesses, humans, and under-sampled sessions show no speed icon;
-tooltips distinguish unsupported from not-enough-samples cases. This signal
-must never kill or respawn an agent.
 
 Humans use the web UI for bus conversations: creating rooms, joining rooms,
 chatting, reacting, DMs, agent inspection, settings, and memory curation.

@@ -373,12 +373,6 @@ session, the server treats it as active and overlays the displayed state to
 states. Harnesses without a mapper show no badge at all; mapped harnesses
 currently include `claude-code`, `codex`, and `pi`.
 
-Wrapped pi agents also get a measurement-only response-speed icon beside this
-state badge after three current-session samples. The wrapper measures from
-`turn_start` to the first `tool_execution_start`. The server displays the
-rolling 10-sample median as lightning below 15 seconds, average at 15-60
-seconds, or snail above 60 seconds; it never uses this signal for recovery.
-
 ## Prompting pi to keep listening
 
 pi loads agent instructions from `~/.pi/agent/`, parent directories, and the
