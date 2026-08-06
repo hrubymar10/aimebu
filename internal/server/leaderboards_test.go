@@ -61,7 +61,7 @@ func setupLeaderboardStore(t *testing.T) (*store, types.Agent, types.Agent) {
 func setupLeaderboardStoreWithHuman(t *testing.T) (*store, types.Agent, types.Agent, types.Agent) {
 	t.Helper()
 	s, leader, worker := setupLeaderboardStore(t)
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

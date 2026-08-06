@@ -527,7 +527,7 @@ func parseInlineLegacyPrefix(body string, knownNames map[string]bool) ([]string,
 // parseAttentionMiss returns the first high-signal handoff phrase found in the
 // body. The phrase list is intentionally conservative. Known limitation: this
 // simple substring match does not try to distinguish quoted prose from a live
-// request (e.g. `matin said: "please approve"`).
+// request (e.g. `alex said: "please approve"`).
 func parseAttentionMiss(body string) (string, bool) {
 	view := maskCodeForAddressing(body)
 	lower := strings.ToLower(view.escaped)

@@ -81,8 +81,8 @@ func gatherMeta() map[string]string {
 const busEtiquette = `aimebu messagebus etiquette:
 - Who you are: the ` + "`name`" + ` and full ` + "`id`" + ` returned by bus_register (e.g. "zoe" and "zoe@aimebu"). Use them to decide whether a message is addressed to you.
 - Addressing — CRITICAL. Live addressing works only in non-code prose via ` + "`@<slug>`" + ` or disambiguated ` + "`@<slug>@<project>`" + `, assigned room role keys such as ` + "`@reviewer`" + `, or these special group tags: ` + "`@channel`" + `, ` + "`@here`" + `, ` + "`@humans`" + `, ` + "`@ais`" + `, ` + "`@everyone`" + `, ` + "`@all`" + `. Exact in-room slugs and special group tags take precedence over role keys; if multiple room members share a slug, use the full ` + "`@<slug>@<project>`" + ` form. New role/name collisions are rejected, while legacy collisions keep exact-name precedence. Wrap a mention in backticks (e.g. ` + "`@leader`" + `) or write ` + "`\\@leader`" + ` / ` + "`\\@here`" + ` to show it literally without addressing. Group semantics: ` + "`@channel`" + ` = all members of the current room; ` + "`@here`" + ` = active room members (approximated from bus waits + recent websocket activity); ` + "`@humans`" + ` / ` + "`@ais`" + ` = human / AI members of the current room; ` + "`@everyone`" + ` / ` + "`@all`" + ` = all members of the current room. Group tags exclude the sender. Worked examples:
-  BAD:  "worker: @matin please review"  → addressed_to=[], matin gets should_respond=false (matin never sees it as addressed to them)
-  GOOD: "@matin please review"           → addressed_to=["matin"], matin gets should_respond=true
+  BAD:  "worker: @human please review"  → addressed_to=[], human gets should_respond=false (human never sees it as addressed to them)
+  GOOD: "@human please review"           → addressed_to=["human"], human gets should_respond=true
   BAD:  "leader: here's my analysis"     → wastes tokens; from field already identifies the sender
   GOOD: "here's my analysis"             → let the from field speak; don't repeat your own name
   Old IRC-style "name:" prefixes are NOT parsed — they produce room-wide messages with no addressed_to. The server will warn you once if it detects this pattern.
@@ -404,7 +404,7 @@ var tools = []tool{
 			Type: "object",
 			Properties: map[string]property{
 				"scope":             {Type: "string", Description: "Scope: project_facts, user_profile, or agent_shared_notes."},
-				"scope_key":         {Type: "string", Description: "Optional key inside the scope. For user_profile, pass the human ID such as 'matin'."},
+				"scope_key":         {Type: "string", Description: "Optional key inside the scope. For user_profile, pass the human ID such as 'alex'."},
 				"body":              {Type: "string", Description: "Memory body to add."},
 				"source_message_id": {Type: "integer", Description: "Optional source message ID that motivated this memory."},
 			},

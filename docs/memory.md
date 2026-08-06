@@ -22,7 +22,7 @@ the current record instead of overwriting blindly.
   non-empty caller project and are keyed to that project. Human UI edits may
   specify the project key directly.
 - `user_profile` — durable preferences or corrections for one human, keyed by
-  the human slug such as `matin`.
+  the human slug such as `alex`.
 - `agent_shared_notes` — shared notes for all agents across all projects,
   keyed by a single fixed global bucket. Keep these records concise and useful
   outside one specific repository.
@@ -34,7 +34,7 @@ memory fact into repo docs seems appropriate.
 
 `user_profile` records are globally visible to AI agents and AIs may write any
 profile key in v1. This is intentional for the current trusted, usually
-single-human workflow: "how matin likes to work" follows the human across
+single-human workflow: "how the human likes to work" follows the human across
 projects. If aimebu grows multi-tenant or untrusted collaboration modes, this
 is the privacy boundary to revisit first.
 

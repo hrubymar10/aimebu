@@ -61,8 +61,8 @@ func (s *store) roomSendWithVisualPlan(roomID, from, body string, needsAttention
 
 	// Force-subscribe all registered humans who are not yet room members when
 	// the sender signals needs_attention=true. Auto-join is idempotent (joinRoom
-	// returns early for existing members). DMs are not exempt — matin confirmed
-	// DMs are just narrower-scope rooms and multi-member is fine.
+	// returns early for existing members). DMs are not exempt — they are
+	// narrower-scope rooms and multi-member is fine.
 	if needsAttention {
 		for _, a := range s.listAgents() {
 			if a.Kind == "human" && !s.isMember(roomID, a.ID) {

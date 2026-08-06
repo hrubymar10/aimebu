@@ -205,13 +205,13 @@ func TestResolveAddressedToGroupMentions(t *testing.T) {
 		KnownNames: map[string]bool{
 			"worker":   true,
 			"reviewer": true,
-			"matin":    true,
+			"blair":    true,
 			"alex":     true,
 		},
 		RoomAgents: []roomAgentContext{
 			{ID: "worker@aimebu", Name: "worker", Kind: "ai", Waiting: true, LastSeen: now},
 			{ID: "reviewer@aimebu", Name: "reviewer", Kind: "ai", Waiting: true, LastSeen: now.Add(-10 * time.Minute)},
-			{ID: "matin", Name: "matin", Kind: "human", Waiting: false, LastSeen: now.Add(-4 * time.Minute)},
+			{ID: "blair", Name: "blair", Kind: "human", Waiting: false, LastSeen: now.Add(-4 * time.Minute)},
 			{ID: "alex", Name: "alex", Kind: "human", Waiting: false, LastSeen: now.Add(-10 * time.Minute)},
 		},
 		Now: now,
@@ -222,13 +222,13 @@ func TestResolveAddressedToGroupMentions(t *testing.T) {
 		body string
 		want []string
 	}{
-		{"channel", "@channel", []string{"reviewer", "matin", "alex"}},
-		{"humans", "@humans", []string{"matin", "alex"}},
+		{"channel", "@channel", []string{"reviewer", "blair", "alex"}},
+		{"humans", "@humans", []string{"blair", "alex"}},
 		{"ais", "@ais", []string{"reviewer"}},
-		{"everyone alias", "@everyone", []string{"reviewer", "matin", "alex"}},
-		{"all alias", "@all", []string{"reviewer", "matin", "alex"}},
-		{"here waiting or recent", "@here", []string{"reviewer", "matin"}},
-		{"mixed direct and group", "@reviewer @humans", []string{"reviewer", "matin", "alex"}},
+		{"everyone alias", "@everyone", []string{"reviewer", "blair", "alex"}},
+		{"all alias", "@all", []string{"reviewer", "blair", "alex"}},
+		{"here waiting or recent", "@here", []string{"reviewer", "blair"}},
+		{"mixed direct and group", "@reviewer @humans", []string{"reviewer", "blair", "alex"}},
 		{"escaped literal", "\\@channel @reviewer", []string{"reviewer"}},
 		{"code literal", "`@here` @reviewer", []string{"reviewer"}},
 	}
@@ -275,7 +275,7 @@ func TestResolveAddressedToRoleMentions(t *testing.T) {
 		t.Fatalf("reserved group should resolve as group, got %v, want %v", got, want)
 	}
 
-	msg := types.Message{RoomID: "room", From: "matin", FromKind: "human", Body: "@reviewer please review"}
+	msg := types.Message{RoomID: "room", From: "alex", FromKind: "human", Body: "@reviewer please review"}
 	out := annotate([]types.Message{msg}, "bob", func(types.Message) addressingContext { return ctx })
 	if !out[0].AddressedToMe || !out[0].ShouldRespond {
 		t.Fatalf("role-addressed bob should respond: %+v", out[0])
@@ -375,7 +375,7 @@ func TestParseInlineLegacyPrefix(t *testing.T) {
 
 func TestParseAttentionMiss(t *testing.T) {
 	for _, phrase := range attentionMissPhrases {
-		body := "@matin " + phrase + " this plan"
+		body := "@alex " + phrase + " this plan"
 		gotPhrase, gotMatch := parseAttentionMiss(body)
 		if !gotMatch || gotPhrase != phrase {
 			t.Errorf("parseAttentionMiss(%q) = (%q, %v), want (%q, true)", body, gotPhrase, gotMatch, phrase)
@@ -387,13 +387,13 @@ func TestParseAttentionMiss(t *testing.T) {
 		wantPhrase string
 		wantMatch  bool
 	}{
-		{"@matin Please Look At the diff", "please look at", true},
-		{"@matin status update: build is green", "", false},
-		{"@matin what time is it?", "", false},
-		{"matin said: \"please approve\"", "please approve", true},
-		{"@matin `please approve`", "", false},
-		{"@matin\n```\nplease approve\n```", "", false},
-		{"\\@matin please approve", "please approve", true},
+		{"@alex Please Look At the diff", "please look at", true},
+		{"@alex status update: build is green", "", false},
+		{"@alex what time is it?", "", false},
+		{"alex said: \"please approve\"", "please approve", true},
+		{"@alex `please approve`", "", false},
+		{"@alex\n```\nplease approve\n```", "", false},
+		{"\\@alex please approve", "please approve", true},
 	}
 
 	for _, tc := range cases {

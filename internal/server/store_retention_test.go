@@ -131,7 +131,7 @@ func TestCleanupMessagesHonorsAgeAndCount(t *testing.T) {
 
 	now := time.Now().UTC()
 	s.mu.Lock()
-	s.rooms["general"] = &types.Room{ID: "general", Members: []string{"matin"}}
+	s.rooms["general"] = &types.Room{ID: "general", Members: []string{"alex"}}
 	s.messages["general"] = []types.Message{
 		retentionTestMessage(1, "general", now.Add(-5*time.Minute)),
 		retentionTestMessage(2, "general", now.Add(-90*time.Second)),
@@ -140,8 +140,8 @@ func TestCleanupMessagesHonorsAgeAndCount(t *testing.T) {
 	}
 	s.mu.Unlock()
 	s.reactionsMu.Lock()
-	s.reactions[1] = []types.Reaction{{AgentID: "matin", Emoji: "👍", CreatedAt: now.Format(time.RFC3339)}}
-	s.reactions[4] = []types.Reaction{{AgentID: "matin", Emoji: "✅", CreatedAt: now.Format(time.RFC3339)}}
+	s.reactions[1] = []types.Reaction{{AgentID: "alex", Emoji: "👍", CreatedAt: now.Format(time.RFC3339)}}
+	s.reactions[4] = []types.Reaction{{AgentID: "alex", Emoji: "✅", CreatedAt: now.Format(time.RFC3339)}}
 	s.reactionsMu.Unlock()
 
 	s.cleanupMessages()
@@ -199,15 +199,15 @@ func TestCleanupMessagesRemovesOrphanReactions(t *testing.T) {
 
 	now := time.Now().UTC()
 	s.mu.Lock()
-	s.rooms["general"] = &types.Room{ID: "general", Members: []string{"matin"}}
+	s.rooms["general"] = &types.Room{ID: "general", Members: []string{"alex"}}
 	s.messages["general"] = []types.Message{
 		retentionTestMessage(1, "general", now.Add(-time.Minute)),
 		retentionTestMessage(2, "general", now),
 	}
 	s.mu.Unlock()
 	s.reactionsMu.Lock()
-	s.reactions[1] = []types.Reaction{{AgentID: "matin", Emoji: "👍", CreatedAt: now.Format(time.RFC3339)}}
-	s.reactions[2] = []types.Reaction{{AgentID: "matin", Emoji: "✅", CreatedAt: now.Format(time.RFC3339)}}
+	s.reactions[1] = []types.Reaction{{AgentID: "alex", Emoji: "👍", CreatedAt: now.Format(time.RFC3339)}}
+	s.reactions[2] = []types.Reaction{{AgentID: "alex", Emoji: "✅", CreatedAt: now.Format(time.RFC3339)}}
 	s.persistReactionsLocked()
 	s.reactionsMu.Unlock()
 
@@ -240,7 +240,7 @@ func retentionTestMessage(id int64, roomID string, createdAt time.Time) types.Me
 	return types.Message{
 		ID:        id,
 		RoomID:    roomID,
-		From:      "matin",
+		From:      "alex",
 		FromKind:  "human",
 		Body:      "test",
 		CreatedAt: createdAt.UTC().Format(time.RFC3339),

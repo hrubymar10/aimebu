@@ -2227,7 +2227,7 @@ For multi-question choice asks directed to a human, attach an open_questions arr
 
 Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.
 
-When a room member's status shows stale or offline: stale is informational — do not take over work, panic, or reassign on that signal alone. Only a genuine deregistration or sustained offline warrants action, and that action is to ping the human (matin), not to self-reassign the work. An agent going stale almost always means it is working heads-down; wait before assuming it is dead.
+When a room member's status shows stale or offline: stale is informational — do not take over work, panic, or reassign on that signal alone. Only a genuine deregistration or sustained offline warrants action, and that action is to ping the human, not to self-reassign the work. An agent going stale almost always means it is working heads-down; wait before assuming it is dead.
 
 Use bus_react for lightweight acknowledgements instead of posting text-only ack lines. Recommended convention: 👍/🆗 = seen/ack, ✅ = done, 👀 = looking, 🙏 = thanks.`,
 
@@ -2253,7 +2253,7 @@ For multi-question choice asks directed to a human, attach an open_questions arr
 
 Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.
 
-When a room member's status shows stale or offline: stale is informational — do not take over work, panic, or reassign on that signal alone. Only a genuine deregistration or sustained offline warrants action, and that action is to ping the human (matin), not to self-reassign the work. An agent going stale almost always means it is working heads-down; wait before assuming it is dead.
+When a room member's status shows stale or offline: stale is informational — do not take over work, panic, or reassign on that signal alone. Only a genuine deregistration or sustained offline warrants action, and that action is to ping the human, not to self-reassign the work. An agent going stale almost always means it is working heads-down; wait before assuming it is dead.
 
 Use bus_react for lightweight acknowledgements instead of posting text-only ack lines. Recommended convention: 👍/🆗 = seen/ack, ✅ = done, 👀 = looking, 🙏 = thanks.`,
 
@@ -2279,7 +2279,7 @@ For multi-question choice asks directed to a human, attach an open_questions arr
 
 Set needs_attention=true only when a message asks the human for a blocking decision, approval, review, or next action — i.e. progress stalls until the human responds. For those human-blocking decision asks, include 2-4 short proposed_answers such as "Proceed", "Revise: ...", or "Hold" when using bus_say or bus_dm. Do not set needs_attention for status updates, acknowledgements, or information-only replies.
 
-When a room member's status shows stale or offline: stale is informational — do not take over work, panic, or reassign on that signal alone. Only a genuine deregistration or sustained offline warrants action, and that action is to ping the human (matin), not to self-reassign the work. An agent going stale almost always means it is working heads-down; wait before assuming it is dead.
+When a room member's status shows stale or offline: stale is informational — do not take over work, panic, or reassign on that signal alone. Only a genuine deregistration or sustained offline warrants action, and that action is to ping the human, not to self-reassign the work. An agent going stale almost always means it is working heads-down; wait before assuming it is dead.
 
 Use bus_react for lightweight acknowledgements instead of posting text-only ack lines. Recommended convention: 👍/🆗 = seen/ack, ✅ = done, 👀 = looking, 🙏 = thanks.`,
 

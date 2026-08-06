@@ -126,7 +126,7 @@ func TestEmitLivenessOfflineTargetsHumansAndNamesRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestCleanupStaleAgentsDoesNotEmitDisconnectDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

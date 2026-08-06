@@ -1325,7 +1325,7 @@ func TestAgentEffectiveStateNoBusWaitReturnsStoredState(t *testing.T) {
 
 func TestAgentEffectiveStateHumansUnaffectedByBusWait(t *testing.T) {
 	s, _ := setupTestServer(t)
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1344,7 +1344,7 @@ func TestAgentEffectiveStateHumansUnaffectedByBusWait(t *testing.T) {
 
 func TestSetAgentStateNoOpForHuman(t *testing.T) {
 	s, _ := setupTestServer(t)
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1369,7 +1369,7 @@ func TestSetAgentStateNoOpForHuman(t *testing.T) {
 
 func TestDeriveAgentStatesSkipsHumans(t *testing.T) {
 	s, _ := setupTestServer(t)
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1394,7 +1394,7 @@ func TestDeriveAgentStatesSkipsHumans(t *testing.T) {
 
 func TestDeriveAgentStatesClearsExistingHumanState(t *testing.T) {
 	s, _ := setupTestServer(t)
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1423,7 +1423,7 @@ func TestDeriveAgentStatesClearsExistingHumanState(t *testing.T) {
 func TestKickRoomMemberEmitsKickedSystemMessage(t *testing.T) {
 	s, srv := setupTestServer(t)
 
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3163,7 +3163,7 @@ func TestRoomScopedGroupMentionsAnnotateMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3219,8 +3219,8 @@ func TestRoomScopedGroupMentionsAnnotateMessages(t *testing.T) {
 	if !foundHuman {
 		t.Fatalf("human view did not contain target message: %+v", humanView.Messages)
 	}
-	if !reflect.DeepEqual(gotHuman.AddressedTo, []string{"matin"}) {
-		t.Fatalf("human addressed_to = %v, want [matin]", gotHuman.AddressedTo)
+	if !reflect.DeepEqual(gotHuman.AddressedTo, []string{"alex"}) {
+		t.Fatalf("human addressed_to = %v, want [alex]", gotHuman.AddressedTo)
 	}
 	if !gotHuman.AddressedToMe || !gotHuman.ShouldRespond {
 		t.Fatalf("human flags = addressed_to_me:%v should_respond:%v, want true/true", gotHuman.AddressedToMe, gotHuman.ShouldRespond)
@@ -3252,8 +3252,8 @@ func TestRoomScopedGroupMentionsAnnotateMessages(t *testing.T) {
 	if !foundReviewer {
 		t.Fatalf("reviewer view did not contain target message: %+v", reviewerView.Messages)
 	}
-	if len(gotReviewer.AddressedTo) != 1 || gotReviewer.AddressedTo[0] != "matin" {
-		t.Fatalf("reviewer addressed_to = %v, want [matin]", gotReviewer.AddressedTo)
+	if len(gotReviewer.AddressedTo) != 1 || gotReviewer.AddressedTo[0] != "alex" {
+		t.Fatalf("reviewer addressed_to = %v, want [alex]", gotReviewer.AddressedTo)
 	}
 	if gotReviewer.AddressedToMe || gotReviewer.ShouldRespond {
 		t.Fatalf("reviewer flags = addressed_to_me:%v should_respond:%v, want false/false", gotReviewer.AddressedToMe, gotReviewer.ShouldRespond)
@@ -3267,7 +3267,7 @@ func TestDMGroupMentionsResolveWithinDMMembers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3308,8 +3308,8 @@ func TestDMGroupMentionsResolveWithinDMMembers(t *testing.T) {
 		t.Fatal("expected annotated DM message")
 	}
 	got := out.Messages[0]
-	if !reflect.DeepEqual(got.AddressedTo, []string{"matin"}) {
-		t.Fatalf("dm addressed_to = %v, want [matin]", got.AddressedTo)
+	if !reflect.DeepEqual(got.AddressedTo, []string{"alex"}) {
+		t.Fatalf("dm addressed_to = %v, want [alex]", got.AddressedTo)
 	}
 	if !got.AddressedToMe || !got.ShouldRespond {
 		t.Fatalf("dm flags = addressed_to_me:%v should_respond:%v, want true/true", got.AddressedToMe, got.ShouldRespond)
@@ -3544,7 +3544,7 @@ func TestHistoricalGroupTargetsFreezeAtSendTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("blair", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3616,8 +3616,8 @@ func TestHistoricalGroupTargetsFreezeAtSendTime(t *testing.T) {
 	if !found {
 		t.Fatalf("late joiner view did not contain target message: %+v", out.Messages)
 	}
-	if !reflect.DeepEqual(frozen.AddressedTo, []string{"reviewpal", "matin"}) {
-		t.Fatalf("frozen addressed_to = %v, want [reviewpal matin]", frozen.AddressedTo)
+	if !reflect.DeepEqual(frozen.AddressedTo, []string{"reviewpal", "blair"}) {
+		t.Fatalf("frozen addressed_to = %v, want [reviewpal blair]", frozen.AddressedTo)
 	}
 	if frozen.AddressedToMe || frozen.ShouldRespond {
 		t.Fatalf("late joiner flags = addressed_to_me:%v should_respond:%v, want false/false", frozen.AddressedToMe, frozen.ShouldRespond)
@@ -3639,7 +3639,7 @@ func TestGetMessageByIDReturnsViewerAnnotatedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3699,24 +3699,24 @@ func TestGetMessageByIDReturnsViewerAnnotatedFields(t *testing.T) {
 	if humanView.ID != sendResp.ID || humanView.RoomID != "general" || humanView.Body != "@humans please review" {
 		t.Fatalf("human view core fields = %+v", humanView)
 	}
-	if !reflect.DeepEqual(humanView.AddressedTo, []string{"matin"}) {
-		t.Fatalf("human addressed_to = %v, want [matin]", humanView.AddressedTo)
+	if !reflect.DeepEqual(humanView.AddressedTo, []string{"alex"}) {
+		t.Fatalf("human addressed_to = %v, want [alex]", humanView.AddressedTo)
 	}
 	if !humanView.AddressedToMe || !humanView.ShouldRespond {
 		t.Fatalf("human flags = addressed_to_me:%v should_respond:%v, want true/true", humanView.AddressedToMe, humanView.ShouldRespond)
 	}
 
 	reviewerView := fetch(reviewer.ID)
-	if !reflect.DeepEqual(reviewerView.AddressedTo, []string{"matin"}) {
-		t.Fatalf("reviewer addressed_to = %v, want [matin]", reviewerView.AddressedTo)
+	if !reflect.DeepEqual(reviewerView.AddressedTo, []string{"alex"}) {
+		t.Fatalf("reviewer addressed_to = %v, want [alex]", reviewerView.AddressedTo)
 	}
 	if reviewerView.AddressedToMe || reviewerView.ShouldRespond {
 		t.Fatalf("reviewer flags = addressed_to_me:%v should_respond:%v, want false/false", reviewerView.AddressedToMe, reviewerView.ShouldRespond)
 	}
 
 	observerView := fetch(observer.ID)
-	if !reflect.DeepEqual(observerView.AddressedTo, []string{"matin"}) {
-		t.Fatalf("observer addressed_to = %v, want [matin]", observerView.AddressedTo)
+	if !reflect.DeepEqual(observerView.AddressedTo, []string{"alex"}) {
+		t.Fatalf("observer addressed_to = %v, want [alex]", observerView.AddressedTo)
 	}
 	if observerView.AddressedToMe || observerView.ShouldRespond {
 		t.Fatalf("observer flags = addressed_to_me:%v should_respond:%v, want false/false", observerView.AddressedToMe, observerView.ShouldRespond)
@@ -4626,7 +4626,7 @@ func TestAttentionWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4660,12 +4660,12 @@ func TestAttentionWarnings(t *testing.T) {
 
 	w1 := sendAndDecodeWarnings(map[string]any{
 		"from": sender.ID,
-		"body": "@matin please approve this plan",
+		"body": "@alex please approve this plan",
 	})
 	if len(w1) != 1 {
 		t.Fatalf("first attention miss: got %v, want one warning", w1)
 	}
-	if !strings.Contains(w1[0], "@matin addressed with a request for action") {
+	if !strings.Contains(w1[0], "@alex addressed with a request for action") {
 		t.Fatalf("unexpected warning text: %q", w1[0])
 	}
 	if !strings.Contains(w1[0], "immediately re-send the message with needs_attention=true") {
@@ -4683,13 +4683,13 @@ func TestAttentionWarnings(t *testing.T) {
 	if len(w1b) != 1 {
 		t.Fatalf("@humans attention miss: got %v, want one warning", w1b)
 	}
-	if !strings.Contains(w1b[0], "@matin addressed with a request for action") {
+	if !strings.Contains(w1b[0], "@alex addressed with a request for action") {
 		t.Fatalf("unexpected @humans warning text: %q", w1b[0])
 	}
 
 	w2 := sendAndDecodeWarnings(map[string]any{
 		"from": sender.ID,
-		"body": "@matin sign off on this",
+		"body": "@alex sign off on this",
 	})
 	if len(w2) != 0 {
 		t.Fatalf("second attention miss from same sender: got %v, want none", w2)
@@ -4698,7 +4698,7 @@ func TestAttentionWarnings(t *testing.T) {
 	resetAttention(sender.ID)
 	w3 := sendAndDecodeWarnings(map[string]any{
 		"from":            sender.ID,
-		"body":            "@matin please approve this plan",
+		"body":            "@alex please approve this plan",
 		"needs_attention": true,
 	})
 	if len(w3) != 0 {
@@ -4717,7 +4717,7 @@ func TestAttentionWarnings(t *testing.T) {
 	resetAttention(sender.ID)
 	w5 := sendAndDecodeWarnings(map[string]any{
 		"from": sender.ID,
-		"body": "@matin what time is it?",
+		"body": "@alex what time is it?",
 	})
 	if len(w5) != 0 {
 		t.Fatalf("question mark alone should not warn, got %v", w5)
@@ -4735,7 +4735,7 @@ func TestAttentionWarnings(t *testing.T) {
 	resetAttention(sender.ID)
 	w6b := sendAndDecodeWarnings(map[string]any{
 		"from": sender.ID,
-		"body": "\\@matin please approve this",
+		"body": "\\@alex please approve this",
 	})
 	if len(w6b) != 0 {
 		t.Fatalf("escaped addressee should not warn, got %v", w6b)
@@ -4744,7 +4744,7 @@ func TestAttentionWarnings(t *testing.T) {
 	resetAttention(sender.ID)
 	w6c := sendAndDecodeWarnings(map[string]any{
 		"from": sender.ID,
-		"body": "@matin `please approve`",
+		"body": "@alex `please approve`",
 	})
 	if len(w6c) != 0 {
 		t.Fatalf("attention phrase inside inline code should not warn, got %v", w6c)
@@ -4757,7 +4757,7 @@ func TestAttentionWarnings(t *testing.T) {
 
 	w7 := sendAndDecodeWarnings(map[string]any{
 		"from": sender.ID,
-		"body": "@matin let me know your call on B",
+		"body": "@alex let me know your call on B",
 	})
 	if len(w7) != 1 {
 		t.Fatalf("legacy warning state should not suppress attention warning, got %v", w7)
@@ -4770,7 +4770,7 @@ func TestAttentionWarnings(t *testing.T) {
 
 	w8 := sendAndDecodeWarnings(map[string]any{
 		"from": reviewer.ID,
-		"body": "matin: please approve this plan",
+		"body": "alex: please approve this plan",
 	})
 	if len(w8) != 2 {
 		t.Fatalf("expected both legacy and attention warnings, got %v", w8)
@@ -4784,7 +4784,7 @@ func TestAttentionWarningForHumanDM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5046,10 +5046,10 @@ func TestRolesHTTP_PostRoomRole_HappyPath(t *testing.T) {
 func TestRolesHTTP_PostRoomRole_RejectsHuman(t *testing.T) {
 	s, srv := setupRolesServer(t)
 
-	if _, err := s.registerHuman("matin", "", nil); err != nil {
+	if _, err := s.registerHuman("alex", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	joinBody := bytes.NewBufferString(`{"agent_id":"matin"}`)
+	joinBody := bytes.NewBufferString(`{"agent_id":"alex"}`)
 	joinReq, _ := http.NewRequest("POST", srv.URL+"/rooms/testroom/join", joinBody)
 	joinReq.Header.Set("Content-Type", "application/json")
 	joinResp, err := http.DefaultClient.Do(joinReq)
@@ -5058,7 +5058,7 @@ func TestRolesHTTP_PostRoomRole_RejectsHuman(t *testing.T) {
 	}
 	joinResp.Body.Close()
 
-	body := bytes.NewBufferString(`{"agent_id":"matin","role_key":"leader"}`)
+	body := bytes.NewBufferString(`{"agent_id":"alex","role_key":"leader"}`)
 	req, _ := http.NewRequest("POST", srv.URL+"/rooms/testroom/roles", body)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -5337,7 +5337,7 @@ func TestMemoryRemoveSystemLine(t *testing.T) {
 func TestMemoryBulkCleanSystemLine(t *testing.T) {
 	s, srv := setupTestServer(t)
 	enableMemoryForTest(s)
-	human, err := s.registerHuman("matin", "", nil)
+	human, err := s.registerHuman("alex", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -249,11 +249,11 @@ func TestHumanProjectFactsHTTPPath(t *testing.T) {
 
 	postJSONForTest(t, srv, "/agents", map[string]any{
 		"kind": "human",
-		"name": "matin",
+		"name": "alex",
 	})
 
 	added := doJSONForTest(t, srv, http.MethodPost, "/memory", map[string]any{
-		"agent_id":  "matin",
+		"agent_id":  "alex",
 		"scope":     types.MemoryScopeProjectFacts,
 		"scope_key": "aimebu",
 		"body":      "project fact",
@@ -264,11 +264,11 @@ func TestHumanProjectFactsHTTPPath(t *testing.T) {
 	if err := json.Unmarshal([]byte(added), &addResp); err != nil {
 		t.Fatal(err)
 	}
-	if addResp.Record.ScopeKey != "aimebu" || addResp.Record.Author != "matin" {
+	if addResp.Record.ScopeKey != "aimebu" || addResp.Record.Author != "alex" {
 		t.Fatalf("added record = %+v", addResp.Record)
 	}
 
-	listed := getForTest(t, srv, "/memory?agent_id=matin&scope=project_facts&scope_key=aimebu")
+	listed := getForTest(t, srv, "/memory?agent_id=alex&scope=project_facts&scope_key=aimebu")
 	var snap types.MemorySnapshot
 	if err := json.Unmarshal([]byte(listed), &snap); err != nil {
 		t.Fatal(err)
@@ -278,7 +278,7 @@ func TestHumanProjectFactsHTTPPath(t *testing.T) {
 	}
 
 	updated := doJSONForTest(t, srv, http.MethodPut, "/memory/"+addResp.Record.ID, map[string]any{
-		"agent_id": "matin",
+		"agent_id": "alex",
 		"version":  addResp.Record.Version,
 		"body":     "project fact edited",
 	})
@@ -292,7 +292,7 @@ func TestHumanProjectFactsHTTPPath(t *testing.T) {
 		t.Fatalf("updated record = %+v", updateResp.Record)
 	}
 
-	deleted := doJSONForTest(t, srv, http.MethodDelete, "/memory/"+addResp.Record.ID+"?agent_id=matin&version=2", nil)
+	deleted := doJSONForTest(t, srv, http.MethodDelete, "/memory/"+addResp.Record.ID+"?agent_id=alex&version=2", nil)
 	var deleteResp struct {
 		Record types.MemoryRecord `json:"record"`
 	}
@@ -333,7 +333,7 @@ func TestMemoryGlobalGateAndHumanManagement(t *testing.T) {
 	enableMemoryForTest(s)
 	humanResp := postJSONForTest(t, srv, "/agents", map[string]any{
 		"kind": "human",
-		"name": "matin",
+		"name": "alex",
 	})
 	var human types.RegisterResponse
 	if err := json.Unmarshal([]byte(humanResp), &human); err != nil {
