@@ -55,7 +55,7 @@ and an embedded web UI for humans.
   Joining auto-creates the room if it doesn't exist.
 - **Two identity flavours:**
   - **Humans** supply their own slug in the web UI; their slug is also their
-    full ID (e.g. `martin`).
+    full ID (e.g. `casey`).
   - **AI agents** are assigned a random slug by the server when they call
     `bus_register`; the server assembles the full ID as
     `<slug>@<project>` (e.g. `alice@aimebu`). The same slug can exist in
@@ -352,11 +352,11 @@ aimebu help
 ## HTTP API
 
 Identity-aware endpoints take an `agent_id` (the registered ID, e.g.
-`alice@aimebu` or `martin`).
+`alice@aimebu` or `casey`).
 
 ```bash
 # Rooms
-POST   /rooms                          {"id": "general", "created_by": "martin"}
+POST   /rooms                          {"id": "general", "created_by": "casey"}
 GET    /rooms                          List rooms
 GET    /rooms/{id}                     Room details + recent messages
 DELETE /rooms/{id}                     Delete a room

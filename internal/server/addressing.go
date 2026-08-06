@@ -540,7 +540,7 @@ func parseAttentionMiss(body string) (string, bool) {
 }
 
 // agentShortName extracts the name portion from an agent ID.
-// "worker@aimebu" → "worker"; bare "martin" → "martin".
+// "worker@aimebu" → "worker"; bare "casey" → "casey".
 func agentShortName(agentID string) string {
 	if i := strings.IndexByte(agentID, '@'); i > 0 {
 		return agentID[:i]

@@ -870,7 +870,7 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := []string{"Proceed", "Hold"}
-			if got.From != "alice@aimebu" || got.Body != "@martin approve?" || !got.NeedsAttention {
+			if got.From != "alice@aimebu" || got.Body != "@casey approve?" || !got.NeedsAttention {
 				t.Fatalf("forwarded send = %+v", got)
 			}
 			if !reflect.DeepEqual(got.ProposedAnswers, want) {
@@ -902,7 +902,7 @@ func TestMCP_BusSayForwardsProposedAnswers(t *testing.T) {
 	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu", AgentName: "alice"}
 	args, _ := json.Marshal(map[string]any{
 		"room":             "general",
-		"body":             "@martin approve?",
+		"body":             "@casey approve?",
 		"needs_attention":  true,
 		"proposed_answers": []string{"Proceed", "Hold"},
 		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}},
@@ -934,7 +934,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := []string{"Proceed", "Revise"}
-			if got.From != "alice@aimebu" || got.To != "martin" || !reflect.DeepEqual(got.ProposedAnswers, want) {
+			if got.From != "alice@aimebu" || got.To != "casey" || !reflect.DeepEqual(got.ProposedAnswers, want) {
 				t.Fatalf("forwarded dm = %+v, want answers %#v", got, want)
 			}
 			wantQuestions := []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}}
@@ -951,7 +951,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 			if got.ReplyTo != 7 {
 				t.Fatalf("reply_to = %d, want 7", got.ReplyTo)
 			}
-			w.Write([]byte(`{"id":1,"room":"dm:alice@aimebu:martin"}`))
+			w.Write([]byte(`{"id":1,"room":"dm:alice@aimebu:casey"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/agents/alice@aimebu/rooms":
 			w.Write([]byte(`{"agent":"alice@aimebu","rooms":[]}`))
 		default:
@@ -962,7 +962,7 @@ func TestMCP_BusDMForwardsProposedAnswers(t *testing.T) {
 
 	c := &client.Client{BaseURL: fakeSrv.URL, AgentID: "alice@aimebu", AgentName: "alice"}
 	args, _ := json.Marshal(map[string]any{
-		"to":               "martin",
+		"to":               "casey",
 		"body":             "approve?",
 		"proposed_answers": []string{"Proceed", "Revise"},
 		"open_questions":   []types.OpenQuestion{{Question: "Pick one", Description: "More context", Options: []string{"A", "B"}}},

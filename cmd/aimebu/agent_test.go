@@ -65,7 +65,7 @@ func TestAgentNamePattern(t *testing.T) {
 }
 
 func TestAgentRoomFromCWD(t *testing.T) {
-	got, err := agentRoomFromCWD(filepath.Join(string(filepath.Separator), "Users", "martin", "aimebu"))
+	got, err := agentRoomFromCWD(filepath.Join(string(filepath.Separator), "Users", "casey", "aimebu"))
 	if err != nil {
 		t.Fatal(err)
 	}

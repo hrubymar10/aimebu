@@ -412,7 +412,7 @@ func TestAgentShortName(t *testing.T) {
 	}{
 		{"alice@aimebu", "alice"},
 		{"bob@project", "bob"},
-		{"martin", "martin"},
+		{"casey", "casey"},
 		{"@broken", "@broken"}, // no name before @
 		{"", ""},
 	}

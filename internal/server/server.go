@@ -909,7 +909,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 
 	// POST /agents — register. For kind=ai the server assigns a random name
 	// and assembles the full ID (e.g. alice:opus4.7-claude-code@aimebu). For
-	// kind=human the caller provides an explicit name (e.g. martin) which
+	// kind=human the caller provides an explicit name (e.g. casey) which
 	// becomes the ID verbatim.
 	mux.HandleFunc("POST /agents", func(w http.ResponseWriter, r *http.Request) {
 		var req types.RegisterRequest

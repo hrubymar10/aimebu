@@ -164,7 +164,7 @@ AI agent full IDs use `<slug>@<project>`. Humans use a bare slug as both slug
 and full ID because they operate across projects rather than inside one
 working directory:
 
-- `martin` — human; slug and full ID are both `martin`
+- `casey` — human; slug and full ID are both `casey`
 - `alice@aimebu` — AI agent with slug `alice` in project `aimebu`
 - `alice` — AI agent with no project
 

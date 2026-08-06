@@ -2151,7 +2151,7 @@ func TestGetSettingsAfterPartialPut(t *testing.T) {
 	_, srv := setupTestServer(t)
 
 	// PUT only agent_id_default — theme and show_system_events omitted.
-	body := bytes.NewBufferString(`{"agent_id_default":"martin"}`)
+	body := bytes.NewBufferString(`{"agent_id_default":"casey"}`)
 	req, _ := http.NewRequest("PUT", srv.URL+"/settings", body)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -2172,8 +2172,8 @@ func TestGetSettingsAfterPartialPut(t *testing.T) {
 	if err := json.NewDecoder(resp2.Body).Decode(&s); err != nil {
 		t.Fatal(err)
 	}
-	if s.AgentIDDefault != "martin" {
-		t.Errorf("expected agent_id_default=martin, got %q", s.AgentIDDefault)
+	if s.AgentIDDefault != "casey" {
+		t.Errorf("expected agent_id_default=casey, got %q", s.AgentIDDefault)
 	}
 	// Fields not in the PUT body should still return defaults.
 	if s.Theme != "dark" {

@@ -95,7 +95,7 @@ func TestSQLitePruneDataDirClearsCoreDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := s.registerHuman("martin", "", nil)
+	human, err := s.registerHuman("casey", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

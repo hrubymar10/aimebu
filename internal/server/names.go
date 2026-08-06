@@ -43,7 +43,7 @@ func pickRandomName(taken map[string]bool) (string, bool) {
 
 // assembleID builds an agent ID per the project spec:
 //
-//	human:  martin
+//	human:  casey
 //	ai:     alice@aimebu   (model/harness stored in Agent struct, not in ID)
 //	        alice          (no project)
 func assembleID(kind, name, _, _, project string) string {

@@ -292,7 +292,7 @@ var tools = []tool{
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{
-				"to":               {Type: "string", Description: "Recipient's full agent ID (e.g. 'alice@aimebu' or 'martin')"},
+				"to":               {Type: "string", Description: "Recipient's full agent ID (e.g. 'alice@aimebu' or 'casey')"},
 				"body":             {Type: "string", Description: "Message content"},
 				"needs_attention":  {Type: "boolean", Description: "Set to true when addressing a human and asking for a blocking decision, approval, review, or next action. Do not set it for status, ack, or info-only replies. Triggers sound + visual alert and auto-subscribes any registered human not yet in the DM room."},
 				"reply_to":         {Type: "integer", Description: "Optional message ID this message replies to. Reply links auto-address the parent author except for self-replies and system-message parents, but do not inherit human attention."},
