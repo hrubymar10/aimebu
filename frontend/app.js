@@ -130,7 +130,6 @@
   const memoryOnboardingDisableBtn = $('#memory-onboarding-disable-btn');
   const agentIDInput = $('#agent-id-input');
   const connectionStatus = $('#connection-status');
-  const statusText = connectionStatus.querySelector('.status-text');
   const settingsBtn = $('#settings-btn');
   const settingsModal = $('#settings-modal');
   const settingsOverlay = $('#settings-overlay');
@@ -2778,10 +2777,12 @@
   function setConnected(connected) {
     if (connected) {
       connectionStatus.className = 'status-indicator connected';
-      statusText.textContent = 'Connected';
+      connectionStatus.title = 'Connected';
+      connectionStatus.setAttribute('aria-label', 'Connected');
     } else {
       connectionStatus.className = 'status-indicator disconnected';
-      statusText.textContent = 'Disconnected';
+      connectionStatus.title = 'Disconnected';
+      connectionStatus.setAttribute('aria-label', 'Disconnected');
     }
   }
 
