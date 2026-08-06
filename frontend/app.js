@@ -2910,6 +2910,7 @@
     var fill = Number.isFinite(display) ? Math.max(0, Math.min(100, display)) : 0;
     var label = usagePercentDisplay === 'used' ? 'used' : 'left';
     var reset = w.reset_at ? resetText(w.key, w.reset_at) : '';
+    var resetAbs = w.reset_at ? formatAbsoluteDate(new Date(w.reset_at)) : '';
     var tickHtml = '';
     var paceHtml = '';
     if (w.pace) {
@@ -2924,26 +2925,29 @@
         paceLabel = formatPercent(absDelta) + ' in deficit';
       }
       var etaText = '';
+      var etaAbs = '';
       if (w.pace.lasts_to_reset) {
         etaText = 'Lasts until reset';
       } else if (w.pace.eta_seconds != null) {
         var fetchBase = lastRefreshAt ? Date.parse(lastRefreshAt) : Date.now();
         if (!Number.isFinite(fetchBase)) fetchBase = Date.now();
-        etaText = 'Runs out in ' + formatResetCountdown(new Date(fetchBase + w.pace.eta_seconds * 1000).toISOString());
+        var etaDate = new Date(fetchBase + w.pace.eta_seconds * 1000);
+        etaText = 'Runs out in ' + formatResetCountdown(etaDate.toISOString());
+        etaAbs = formatAbsoluteDate(etaDate);
       }
       if (paceLabel || etaText) {
         var paceStateClass = 'usages-pace-text usages-pace-text--' + (w.pace.state === 'reserve' ? 'reserve' : w.pace.state === 'deficit' ? 'deficit' : 'on-track');
         paceHtml = '<div class="' + paceStateClass + '">' +
           (paceLabel ? '<span>' + esc(paceLabel) + '</span>' : '') +
           (paceLabel && etaText ? '<span class="usages-pace-sep">·</span>' : '') +
-          (etaText ? '<span>' + esc(etaText) + '</span>' : '') +
+          (etaText ? '<span' + (etaAbs ? ' title="' + esc(etaAbs) + '"' : '') + '>' + esc(etaText) + '</span>' : '') +
           '</div>';
       }
     }
     return '<div class="usages-window-row">' +
       '<div class="usages-window-top"><span>' + esc(windowLabel(w.key)) + '</span></div>' +
       '<div class="usages-progress" aria-label="' + esc(windowLabel(w.key)) + ' usage"><span style="width:' + fill.toFixed(2) + '%"></span>' + tickHtml + '</div>' +
-      '<div class="usages-window-meta"><strong>' + esc(formatPercent(display) + ' ' + label) + '</strong><span>' + esc(reset) + '</span></div>' +
+      '<div class="usages-window-meta"><strong>' + esc(formatPercent(display) + ' ' + label) + '</strong><span' + (resetAbs ? ' title="' + esc(resetAbs) + '"' : '') + '>' + esc(reset) + '</span></div>' +
       paceHtml +
     '</div>';
   }
@@ -2969,6 +2973,19 @@
     if (days > 0) return days + 'd ' + hours + 'h';
     if (hours > 0) return hours + 'h ' + mins + 'm';
     return mins + 'm';
+  }
+
+  var ABSOLUTE_DATE_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  var ABSOLUTE_DATE_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  // formatAbsoluteDate renders a Date as "Friday, 14 Aug 2026, 21:17" in
+  // English regardless of browser locale (hardcoded day/month names; local
+  // time, matching the rest of the usages UI). Returns '' for an invalid date.
+  function formatAbsoluteDate(d) {
+    if (!(d instanceof Date) || isNaN(d.getTime())) return '';
+    return ABSOLUTE_DATE_DAYS[d.getDay()] + ', ' + d.getDate() + ' ' +
+      ABSOLUTE_DATE_MONTHS[d.getMonth()] + ' ' + d.getFullYear() + ', ' +
+      String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   }
 
   function resetText(key, value) {
