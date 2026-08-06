@@ -157,12 +157,12 @@ func TestSingletonRoleAcrossProjectsDifferentRooms(t *testing.T) {
 
 func TestSlugPatternValid(t *testing.T) {
 	valid := []string{
-		"alice",         // plain alpha
-		"foo-bar",       // hyphen mid-name
-		"foo_bar",       // underscore mid-name
-		"a1b",           // digit mid-name, length 3
-		"ab1",           // min length 3
-		"a-b",           // hyphen at position 1
+		"alice",                 // plain alpha
+		"foo-bar",               // hyphen mid-name
+		"foo_bar",               // underscore mid-name
+		"a1b",                   // digit mid-name, length 3
+		"ab1",                   // min length 3
+		"a-b",                   // hyphen at position 1
 		"abcdefghijklmnopqrstu", // max length 21
 	}
 	for _, s := range valid {
