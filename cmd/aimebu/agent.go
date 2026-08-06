@@ -347,6 +347,15 @@ func agentCmd(args []string) {
 		}
 	}
 
+	// Terminal title — state 1 (starting). command[0] is known at arg-parse
+	// time, so this needs no waiting. The exit title (state 3) is stamped by
+	// the deferred stampAgentExitTitle on normal and signal-interrupted
+	// returns; fatal os.Exit aborts after the agent has run route through
+	// agentExitWithTerminalTitle so they also get the ✗ marker.
+	titleBase := agentTitleBase(command)
+	setAgentTerminalTitle(agentTitleStarting, "", titleBase)
+	defer stampAgentExitTitle()
+
 	aimebuURL := os.Getenv("AIMEBU_URL")
 	if aimebuURL == "" {
 		aimebuURL = "http://localhost:9997"
@@ -405,6 +414,9 @@ func agentCmd(args []string) {
 		fmt.Fprintf(agentStderr, "aimebu agent: resuming session %s as %s\n", entry.SessionID, entry.Name)
 		agentPersistSession(debug, aimebuURL, entry)
 		agentPushState(aimebuURL, agentFullID(entry.Name), "bootstrapping")
+		// Resume skips agentBootstrapSession, so the registration watcher never
+		// fires; set state 2 here from the known saved identity.
+		setAgentTerminalTitle(agentTitleRegistered, agentFullID(entry.Name), titleBase)
 		agentResumeLoop(harness, command, entry.SessionID, entry.Name, entry.Rooms, assumeRole, modelSlug, childEnv, aimebuURL, sigCh, debug)
 		return
 	}
@@ -1573,6 +1585,7 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 		})
 		if n != "" {
 			agentID.Set(agentFullID(n))
+			setAgentTerminalTitle(agentTitleRegistered, agentFullID(n), agentTitleBase(command))
 			fmt.Fprintf(agentStderr, "aimebu agent: registered as %s\n", n)
 			agentLogRegisterObserved(debug, n, time.Since(startedAt))
 		}
@@ -1680,6 +1693,7 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 	}
 	if agentName != "" {
 		agentID.Set(agentFullID(agentName))
+		setAgentTerminalTitle(agentTitleRegistered, agentFullID(agentName), agentTitleBase(command))
 	}
 
 	var lineIdx int
@@ -1859,7 +1873,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 			_ = progress.Close()
 			_ = stateWriter.Close()
 			fmt.Fprintf(agentStderr, "aimebu agent: spawn failed: %v\n", err)
-			os.Exit(1)
+			agentExitWithTerminalTitle(1)
 		}
 
 		doneCh := make(chan error, 1)
@@ -2066,7 +2080,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 		if retries > agentRecoveryFailureCap {
 			fmt.Fprintf(agentStderr, "aimebu agent: too many consecutive harness failures, giving up\n")
 			agentPushState(aimebuURL, agentFullID(agentName), "error")
-			os.Exit(1)
+			agentExitWithTerminalTitle(1)
 		}
 		agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 		fmt.Fprintf(agentStderr, "aimebu agent: exit error (%v), retry %d/%d in %v\n", err, retries, agentRecoveryFailureCap, backoff)
@@ -2110,7 +2124,7 @@ func agentFatalRecovery(aimebuURL string, class agentRecoveryClass, sessionID, a
 		fmt.Fprintf(agentStderr, "aimebu agent: unrecoverable wrapper state (%s); giving up\n", class)
 	}
 	agentPushState(aimebuURL, agentFullID(agentName), "error")
-	os.Exit(1)
+	agentExitWithTerminalTitle(1)
 }
 
 func agentClassifyChildResult(harness string, stdout, stderr []byte) agentRecoveryClass {
