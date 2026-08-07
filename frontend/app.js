@@ -86,6 +86,9 @@
   let ollamaCookieEditorOpen = false;
   let mistralCookieEditorOpen = false;
   let switcherData = null; // { enabled, eligibility[], profiles[] } from GET /api/usages/switcher
+  let usagesLoadSettled = false; // true once a usages load attempt has settled (success or failure) — first-open loading gate. Set in loadSwitcher (.then/.catch) and loadUsages's catch.
+  let usagesLoadFailed = false; // true if the last loadUsages failed — renderUsagesSidebar keeps the error across background re-renders.
+  let roomPrefs = {}; // roomID → {hidden: bool, pinned: bool} — per-human view preferences from AgentRoomView
   let switcherInFlight = {}; // tool → true while a switch is in progress
   let messageDebugState = {
     open: false,
@@ -2849,6 +2852,20 @@
 
   function renderUsagesSidebar() {
     if (!rightUsagesPanel) return;
+    // On the first open of a session the usages/switcher data hasn't
+    // loaded yet. Loading state instead of stale single-account tiles (which
+    // pop to per-profile ~2-3s later). usagesLoadSettled settles on success OR
+    // failure (incl. a failed /api/usages), so a background renderRightSidebar
+    // re-entry can't strand the panel on "loading"; usagesLoadFailed keeps the
+    // honest error visible across those re-renders. Later opens paint immediately.
+    if (!usagesLoadSettled) {
+      rightUsagesPanel.innerHTML = '<div class="usages-empty"><div>Loading usages\u2026</div></div>';
+      return;
+    }
+    if (usagesLoadFailed) {
+      rightUsagesPanel.innerHTML = '<div class="usages-empty">Failed to load usages.</div>';
+      return;
+    }
     var rows = canonicalUsageProviders();
     var sidebarRows = rows.filter(function (row) { return row.available !== false && !!row.enabled; });
     var empty = sidebarRows.length ? '' : '<div class="usages-empty">' +
@@ -3109,6 +3126,7 @@
     return api('GET', '/api/usages').then(function (resp) {
       lastUsagesResponse = resp;
       if (resp && resp.settings) renderUsageSettings(resp.settings);
+      usagesLoadFailed = false; // usages fetched OK — clear any prior error
       // Fetch the switcher BEFORE the first paint. Rendering tiles now and
       // re-rendering when the switcher resolves produces a visible pop-in:
       // the panel shows the old single-account view, then swaps to the
@@ -3118,6 +3136,11 @@
         return resp;
       });
     }).catch(function (err) {
+      // /api/usages failed -> loadSwitcher never ran. Settle the gate here so
+      // a background renderRightSidebar re-entry can't strand the panel on a
+      // permanent "loading" spinner, and keep the error via usagesLoadFailed.
+      usagesLoadSettled = true;
+      usagesLoadFailed = true;
       if (rightUsagesPanel) rightUsagesPanel.innerHTML = '<div class="usages-empty">Failed to load usages.</div>';
       console.error('usages', err);
     });
@@ -3139,11 +3162,15 @@
     return api('GET', '/api/usages/switcher')
       .then(function (resp) {
         switcherData = resp;
+        usagesLoadSettled = true;
         renderSwitcherSettingsRow();
         renderSwitcherSettingsProfiles();
         refreshSwitcherPanel();
       })
       .catch(function (err) {
+        // A failed switcher load still settles the gate: renderUsagesSidebar
+        // then paints the single-account view (switcherData stays null/disabled).
+        usagesLoadSettled = true;
         console.error('switcher', err);
       });
   }
