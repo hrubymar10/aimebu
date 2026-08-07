@@ -508,7 +508,12 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		_ = jsonOK(w, resp)
 	})
 
-	// GET /rooms/{room_id}/messages
+	// GET /rooms/{room_id}/messages — bulk history read. Read-time expiry
+	// applies to AI agents only: messages older than the configured window are
+	// hidden and summarized in an "expired" marker. Humans always see
+	// everything. Keyed off the requesting agent's kind, not the route.
+	// MCP bus_read hits this endpoint with the AI's agent_id, so the filter and
+	// marker flow through to MCP consumers unchanged.
 	mux.HandleFunc("GET /rooms/{room_id}/messages", func(w http.ResponseWriter, r *http.Request) {
 		roomID := r.PathValue("room_id")
 		agentID := r.URL.Query().Get("agent_id")
@@ -531,12 +536,25 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			sinceID, _ = strconv.ParseInt(sid, 10, 64)
 		}
 
-		msgs := s.withReactionSummaries(s.roomMessages(roomID, limit, sinceID), agentID)
-		if agentID != "" {
-			_ = jsonOK(w, map[string]any{"messages": annotate(msgs, agentID, s.addressingContext), "room": roomID})
-		} else {
-			_ = jsonOK(w, map[string]any{"messages": msgs, "room": roomID})
+		// Expiry applies only to bulk reads by AI agents. Humans (no agent_id
+		// or a human agent) see full history; window==0 means never expire.
+		var window time.Duration
+		if agentID != "" && s.agentIsAI(agentID) {
+			window = s.expiredAfterWindow()
 		}
+		msgs, expired := s.roomMessagesWithExpiry(roomID, limit, sinceID, window)
+		msgs = s.withReactionSummaries(msgs, agentID)
+
+		resp := map[string]any{"room": roomID}
+		if agentID != "" {
+			resp["messages"] = annotate(msgs, agentID, s.addressingContext)
+		} else {
+			resp["messages"] = msgs
+		}
+		if expired != nil {
+			resp["expired"] = expired
+		}
+		_ = jsonOK(w, resp)
 	})
 
 	// GET /rooms/{room_id}/export — download full room history as JSON or Markdown

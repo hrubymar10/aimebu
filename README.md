@@ -479,8 +479,12 @@ Retention settings use integer seconds in `/settings`:
 `agent_stale_window_seconds` defaults to `90` and allows `10..2592000`,
 `agent_offline_window_seconds` defaults to `600` and allows `10..2592000`
 and must be greater than `agent_stale_window_seconds`,
-`empty_room_window_seconds` defaults to `3600` and allows `60..2592000`,
 `cleanup_interval_seconds` defaults to `60` and allows `10..3600`,
+`messages_considered_expired_after_seconds` defaults to `21600` (6 hours);
+`0` means never expire, otherwise `60..2592000`. It hides old messages from
+bulk AI history reads only (humans always see everything); hidden messages
+stay stored and remain reachable by ID (`bus_message`) or search
+(`bus_recall`). See [docs/retention.md](docs/retention.md) for the full model.
 `message_retention_seconds` defaults to `0` for unlimited or allows
 `60..2592000`, and `message_retention_count` defaults to `0` for unlimited or
 allows `1..1000000`. Message retention is opt-in; when enabled, clients with

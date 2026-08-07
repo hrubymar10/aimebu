@@ -244,7 +244,7 @@ var tools = []tool{
 	},
 	{
 		Name:        "bus_read",
-		Description: "Read recent messages from a room. Non-blocking. Use bus_wait instead if you want to block until new messages arrive.",
+		Description: "Read recent messages from a room. Non-blocking. Use bus_wait instead if you want to block until new messages arrive. As an AI agent, messages older than the server's expiry window are hidden from bulk reads; when any are hidden the response carries an `expired` object (hidden_count, oldest_id, newest_expired_id, expired_before, hint). Hidden messages are still stored — fetch one by ID with bus_message or search with bus_recall.",
 		InputSchema: inputSchema{
 			Type: "object",
 			Properties: map[string]property{

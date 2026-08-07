@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/types"
@@ -168,6 +169,84 @@ func (s *store) roomMessages(roomID string, limit int, sinceID int64) []types.Me
 		filtered[i], filtered[j] = filtered[j], filtered[i]
 	}
 	return filtered
+}
+
+// ExpiredMarker summarizes messages hidden from a bulk AI history read by
+// read-time expiry. It is returned only when at least one message was hidden;
+// humans never receive it. The ID range lets an agent that needs older context
+// walk back one bus_message(id) call at a time.
+type ExpiredMarker struct {
+	HiddenCount     int    `json:"hidden_count"`
+	OldestID        int64  `json:"oldest_id"`
+	NewestExpiredID int64  `json:"newest_expired_id"`
+	ExpiredBefore   string `json:"expired_before"`
+	Hint            string `json:"hint"`
+}
+
+// roomMessagesWithExpiry returns bulk history (messages with ID > sinceID,
+// newest-first, capped by limit) applying read-time expiry when window > 0.
+// Expired messages (created_at older than the window) are excluded and
+// summarized in the returned *ExpiredMarker (nil when nothing is expired or
+// window == 0). window == 0 means never expire: no filter, no marker. Expiry
+// is computed at read time from created_at; nothing is stored on the message,
+// so changing the setting re-scopes every room instantly with no migration.
+func (s *store) roomMessagesWithExpiry(roomID string, limit int, sinceID int64, window time.Duration) ([]types.Message, *ExpiredMarker) {
+	return s.roomMessagesWithExpiryAt(roomID, limit, sinceID, window, time.Now().UTC())
+}
+
+func (s *store) roomMessagesWithExpiryAt(roomID string, limit int, sinceID int64, window time.Duration, now time.Time) ([]types.Message, *ExpiredMarker) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	applyExpiry := window > 0
+	var cutoff time.Time
+	if applyExpiry {
+		cutoff = now.Add(-window)
+	}
+
+	var live []types.Message
+	var expiredCount int
+	var oldestExpired, newestExpired int64
+	for _, m := range s.messages[roomID] {
+		if m.ID <= sinceID {
+			continue
+		}
+		if applyExpiry {
+			if createdAt, err := time.Parse(time.RFC3339, m.CreatedAt); err == nil && !createdAt.After(cutoff) {
+				// Expired: hidden from bulk AI reads, still stored on disk.
+				expiredCount++
+				if oldestExpired == 0 || m.ID < oldestExpired {
+					oldestExpired = m.ID
+				}
+				if m.ID > newestExpired {
+					newestExpired = m.ID
+				}
+				continue
+			}
+		}
+		live = append(live, m)
+	}
+
+	// Newest-first, capped by limit (matches roomMessages).
+	n := len(live)
+	if limit > 0 && limit < n {
+		live = live[n-limit:]
+	}
+	for i, j := 0, len(live)-1; i < j; i, j = i+1, j-1 {
+		live[i], live[j] = live[j], live[i]
+	}
+
+	var marker *ExpiredMarker
+	if applyExpiry && expiredCount > 0 {
+		marker = &ExpiredMarker{
+			HiddenCount:     expiredCount,
+			OldestID:        oldestExpired,
+			NewestExpiredID: newestExpired,
+			ExpiredBefore:   cutoff.Format(time.RFC3339),
+			Hint:            "Older messages are still stored. Fetch one with bus_message(id), or search with bus_recall.",
+		}
+	}
+	return live, marker
 }
 
 // messagesSince returns messages in a single room with ID > sinceID,

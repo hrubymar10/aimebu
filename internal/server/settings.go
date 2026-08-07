@@ -14,33 +14,35 @@ import (
 // Pointer fields use *T so nil (absent from JSON) is distinguishable from an
 // explicit false/zero — nil → server-side default is applied in getSettings().
 type Settings struct {
-	AgentIDDefault            string `json:"agent_id_default,omitempty"`
-	Theme                     string `json:"theme,omitempty"` // "" | "dark" | "light" | "red-dark" | "red-light" | "blue-dark" | "blue-light" | "green-dark" | "green-light" | "high-contrast-dark" | "high-contrast-light"
-	ShowSystemEvents          *bool  `json:"show_system_events,omitempty"`
-	DebugButtonEnabled        *bool  `json:"debug_button_enabled,omitempty"`
-	MemoryEnabled             *bool  `json:"memory_enabled,omitempty"`      // nil = first-run prompt has not answered; effective disabled
-	LeaderboardEnabled        *bool  `json:"leaderboard_enabled,omitempty"` // nil = enabled by default
-	NotificationEnabled       *bool  `json:"notification_enabled,omitempty"`
-	NotificationSound         string `json:"notification_sound,omitempty"`  // "builtin:<name>" or "user:<uuid>"
-	NotificationVolume        *int   `json:"notification_volume,omitempty"` // 0–100
-	StaleAgentWindowSeconds   *int   `json:"stale_agent_window_seconds,omitempty"`
-	LivenessSweepSeconds      *int   `json:"liveness_sweep_seconds,omitempty"`
-	AgentStaleWindowSeconds   *int   `json:"agent_stale_window_seconds,omitempty"`
-	AgentOfflineWindowSeconds *int   `json:"agent_offline_window_seconds,omitempty"`
-	CleanupIntervalSeconds    *int   `json:"cleanup_interval_seconds,omitempty"`
-	MessageRetentionSeconds   *int   `json:"message_retention_seconds,omitempty"`
-	MessageRetentionCount     *int   `json:"message_retention_count,omitempty"`
-	InlinePlanAppendix        string `json:"inline_plan_appendix,omitempty"` // "always" | "optional"; default "always"
+	AgentIDDefault                        string `json:"agent_id_default,omitempty"`
+	Theme                                 string `json:"theme,omitempty"` // "" | "dark" | "light" | "red-dark" | "red-light" | "blue-dark" | "blue-light" | "green-dark" | "green-light" | "high-contrast-dark" | "high-contrast-light"
+	ShowSystemEvents                      *bool  `json:"show_system_events,omitempty"`
+	DebugButtonEnabled                    *bool  `json:"debug_button_enabled,omitempty"`
+	MemoryEnabled                         *bool  `json:"memory_enabled,omitempty"`      // nil = first-run prompt has not answered; effective disabled
+	LeaderboardEnabled                    *bool  `json:"leaderboard_enabled,omitempty"` // nil = enabled by default
+	NotificationEnabled                   *bool  `json:"notification_enabled,omitempty"`
+	NotificationSound                     string `json:"notification_sound,omitempty"`  // "builtin:<name>" or "user:<uuid>"
+	NotificationVolume                    *int   `json:"notification_volume,omitempty"` // 0–100
+	StaleAgentWindowSeconds               *int   `json:"stale_agent_window_seconds,omitempty"`
+	LivenessSweepSeconds                  *int   `json:"liveness_sweep_seconds,omitempty"`
+	AgentStaleWindowSeconds               *int   `json:"agent_stale_window_seconds,omitempty"`
+	AgentOfflineWindowSeconds             *int   `json:"agent_offline_window_seconds,omitempty"`
+	CleanupIntervalSeconds                *int   `json:"cleanup_interval_seconds,omitempty"`
+	MessageRetentionSeconds               *int   `json:"message_retention_seconds,omitempty"`
+	MessageRetentionCount                 *int   `json:"message_retention_count,omitempty"`
+	MessagesConsideredExpiredAfterSeconds *int   `json:"messages_considered_expired_after_seconds,omitempty"` // read-time expiry for bulk AI reads; 0 = never
+	InlinePlanAppendix                    string `json:"inline_plan_appendix,omitempty"`                      // "always" | "optional"; default "always"
 }
 
 const (
-	defaultStaleAgentWindowSeconds   = 30 * 60
-	defaultLivenessSweepSeconds      = 15
-	defaultAgentStaleWindowSeconds   = 90
-	defaultAgentOfflineWindowSeconds = 10 * 60
-	defaultCleanupIntervalSeconds    = 60
-	defaultMessageRetentionSeconds   = 0
-	defaultMessageRetentionCount     = 0
+	defaultStaleAgentWindowSeconds               = 30 * 60
+	defaultLivenessSweepSeconds                  = 15
+	defaultAgentStaleWindowSeconds               = 90
+	defaultAgentOfflineWindowSeconds             = 10 * 60
+	defaultCleanupIntervalSeconds                = 60
+	defaultMessageRetentionSeconds               = 0
+	defaultMessageRetentionCount                 = 0
+	defaultMessagesConsideredExpiredAfterSeconds = 6 * 60 * 60
 
 	maxRetentionWindowSeconds = 30 * 24 * 60 * 60
 	maxCleanupIntervalSeconds = 60 * 60
@@ -150,6 +152,10 @@ func (s *store) getSettings() Settings {
 		v := defaultMessageRetentionCount
 		set.MessageRetentionCount = &v
 	}
+	if set.MessagesConsideredExpiredAfterSeconds == nil {
+		v := defaultMessagesConsideredExpiredAfterSeconds
+		set.MessagesConsideredExpiredAfterSeconds = &v
+	}
 	if set.InlinePlanAppendix == "" {
 		set.InlinePlanAppendix = "always"
 	}
@@ -182,6 +188,14 @@ func (s Settings) messageRetentionWindow() time.Duration {
 
 func (s Settings) messageRetentionCount() int {
 	return settingIntInRange(s.MessageRetentionCount, defaultMessageRetentionCount, 1, maxMessageRetentionCount, true)
+}
+
+// expiredAfterWindow returns the read-time expiry window for bulk AI history
+// reads. Zero means messages never expire. Computed at read time, never stored
+// on a message, so changing the setting re-scopes every room instantly with
+// no migration or backfill.
+func (s Settings) expiredAfterWindow() time.Duration {
+	return time.Duration(settingIntInRange(s.MessagesConsideredExpiredAfterSeconds, defaultMessagesConsideredExpiredAfterSeconds, 60, maxRetentionWindowSeconds, true)) * time.Second
 }
 
 func settingInt(v *int, fallback int) int {
@@ -227,6 +241,9 @@ func validateRetentionSettings(set Settings) error {
 		return err
 	}
 	if err := validateSettingRange("message_retention_count", set.MessageRetentionCount, 1, maxMessageRetentionCount, true); err != nil {
+		return err
+	}
+	if err := validateSettingRange("messages_considered_expired_after_seconds", set.MessagesConsideredExpiredAfterSeconds, 60, maxRetentionWindowSeconds, true); err != nil {
 		return err
 	}
 	return nil
@@ -290,6 +307,10 @@ func (s *store) messageRetentionWindow() time.Duration {
 
 func (s *store) messageRetentionCount() int {
 	return s.getSettings().messageRetentionCount()
+}
+
+func (s *store) expiredAfterWindow() time.Duration {
+	return s.getSettings().expiredAfterWindow()
 }
 
 func (s *store) clearSettings() {

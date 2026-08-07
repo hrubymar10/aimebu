@@ -359,6 +359,19 @@ func (s *store) touchAgent(id string) {
 	}
 }
 
+// agentIsAI reports whether id is a registered AI agent. Humans, unknown IDs,
+// and the empty string return false. Used to key read-time expiry: only bulk
+// history reads by AI agents are filtered; humans always see full history.
+func (s *store) agentIsAI(id string) bool {
+	if id == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.agents[id]
+	return ok && a.Kind == "ai"
+}
+
 func (s *store) heartbeatAgent(id string) bool {
 	s.mu.Lock()
 	a, ok := s.agents[id]
