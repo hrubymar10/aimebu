@@ -96,6 +96,7 @@
     error: '',
   };
   let rightSidebarMode = 'members';
+
   let profileAgentID = '';
   let profileContext = 'room';
   let leftCollapsed = localStorage.getItem('aimebu_left_collapsed') === 'true';
@@ -5123,6 +5124,9 @@
     }
 
     var atBottom = isMessageListNearBottom();
+    updateScrollAnchor(true);
+    var anchorId = (scrollAnchor.anchorEl && scrollAnchor.anchorEl.dataset) ? scrollAnchor.anchorEl.dataset.id : null;
+    var visibleOffset = scrollAnchor.visibleOffset;
     var prevScrollTop = messageListEl.scrollTop;
     var prevScrollHeight = messageListEl.scrollHeight;
 
@@ -5156,6 +5160,15 @@
       setTimeout(repinIfPinned, 250);
     } else {
       suppressMessageListScroll(function () {
+        if (anchorId) {
+          var anchorEl = messageListEl.querySelector('[data-id="' + anchorId + '"]');
+          if (anchorEl) {
+            var listRect = messageListEl.getBoundingClientRect();
+            var anchorRect = anchorEl.getBoundingClientRect();
+            messageListEl.scrollTop += anchorRect.top - listRect.top - visibleOffset;
+            return;
+          }
+        }
         messageListEl.scrollTop = prevScrollTop + (messageListEl.scrollHeight - prevScrollHeight);
       }, true);
     }
