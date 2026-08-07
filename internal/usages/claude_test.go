@@ -74,6 +74,7 @@ printf '\033[32m2.3.4 (Claude Code)\033[0m\nignored\n'
 func TestClaudeProviderFetchesAndNormalizesUsage(t *testing.T) {
 	resetClaudeCodeVersionCache(t)
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", t.TempDir())
 	writeClaudeAuthFixture(t, home, `{
@@ -191,6 +192,7 @@ func TestClaudeUsageTreatsScopedLimitsAsValues(t *testing.T) {
 
 func TestClaudeProviderDoesNotRefreshCLIStoredCredentials(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("HOME", home)
 	original := `{
   "futureTop": "preserved-root",
@@ -237,6 +239,7 @@ func TestClaudeProviderDoesNotRefreshCLIStoredCredentials(t *testing.T) {
 }
 
 func TestClaudeAuthMissingAndScopeMissing(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("HOME", t.TempDir())
 	snap, err := NewClaudeCodeProvider().Fetch(context.Background(), NewStoreAt(t.TempDir()))
 	if err != nil {
@@ -247,6 +250,7 @@ func TestClaudeAuthMissingAndScopeMissing(t *testing.T) {
 	}
 
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("HOME", home)
 	writeClaudeAuthFixture(t, home, `{"claudeAiOauth":{"accessToken":"access-secret","refreshToken":"refresh-secret"}}`)
 	withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
@@ -431,6 +435,7 @@ func TestNormalizeClaudeUsageSupportsSpendLimitOnly(t *testing.T) {
 
 func TestClaudeFetchErrorRedactsSecretsThroughManagerAndHTTP(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("HOME", home)
 	writeClaudeAuthFixture(t, home, `{"claudeAiOauth":{"accessToken":"access-secret","refreshToken":"refresh-secret"}}`)
 	withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
@@ -486,5 +491,35 @@ func TestClaudeSnakeCaseCredentials(t *testing.T) {
 	}
 	if creds.ExpiresAt == nil || !creds.ExpiresAt.Equal(time.UnixMilli(1893456000000).UTC()) {
 		t.Fatalf("expiresAt = %+v", creds.ExpiresAt)
+	}
+}
+
+// TestClaudePathsFollowConfigDir pins claude-code's two layouts. The account
+// file is the awkward one: with CLAUDE_CONFIG_DIR set it sits beside the
+// credentials, but with the variable unset it lives at the HOME root rather
+// than inside <home>/.claude.
+func TestClaudePathsFollowConfigDir(t *testing.T) {
+	home := "/h"
+
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	if got, want := ClaudeConfigDir(home), filepath.Join("/h", ".claude"); got != want {
+		t.Errorf("unset config dir = %q, want %q", got, want)
+	}
+	if got, want := ClaudeLiveCredPath(home), filepath.Join("/h", ".claude", ".credentials.json"); got != want {
+		t.Errorf("unset cred path = %q, want %q", got, want)
+	}
+	if got, want := ClaudeAccountFilePath(home), filepath.Join("/h", ".claude.json"); got != want {
+		t.Errorf("unset account path = %q, want %q", got, want)
+	}
+
+	t.Setenv("CLAUDE_CONFIG_DIR", "/custom/cfg")
+	if got, want := ClaudeConfigDir(home), "/custom/cfg"; got != want {
+		t.Errorf("set config dir = %q, want %q", got, want)
+	}
+	if got, want := ClaudeLiveCredPath(home), filepath.Join("/custom/cfg", ".credentials.json"); got != want {
+		t.Errorf("set cred path = %q, want %q", got, want)
+	}
+	if got, want := ClaudeAccountFilePath(home), filepath.Join("/custom/cfg", ".claude.json"); got != want {
+		t.Errorf("set account path = %q, want %q", got, want)
 	}
 }

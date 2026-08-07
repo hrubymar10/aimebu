@@ -12,7 +12,7 @@ this file, and everything under [docs/](docs/) (currently
 [docs/leaderboards.md](docs/leaderboards.md),
 [docs/memory.md](docs/memory.md), [docs/mistral.md](docs/mistral.md),
 [docs/ollama-cloud.md](docs/ollama-cloud.md), [docs/pi.md](docs/pi.md),
-[docs/sqlite.md](docs/sqlite.md),
+[docs/sqlite.md](docs/sqlite.md), [docs/switcher.md](docs/switcher.md),
 [docs/tls.md](docs/tls.md), [docs/usages.md](docs/usages.md), and
 [docs/vibe.md](docs/vibe.md)). When your
 change makes any of those drift from reality — flags, env vars, tool names,
@@ -119,8 +119,15 @@ internal/
     tls.go                Optional caller-supplied TLS cert/key support
     names.go              Agent name pool
     ws.go                 WebSocket push handler
+    server_switcher.go    HTTP routes for the account switcher
     defaults_macros.json  Default macro definitions
   mcp/mcp.go              MCP stdio JSON-RPC server for AI assistants
+  switcher/               Account switcher core — pure filesystem, NO server dependency
+    paths.go              Root/profile path resolution, enable flag, profile-name validation
+    state.go              state.json load/save (atomic), flock
+    detect.go             Per-tool eligibility (file credentials only)
+    profile.go            List/Add/Import/Rename/Remove, email lookup
+    switch.go             The safe swap: validate → capture → backup → restore
 embed.go                  Root package — go:embed for frontend/
 frontend/                 Web UI (vanilla HTML/CSS/JS, embedded in binary)
 bin/aimebu                Bash wrapper (auto-builds, add to PATH)
@@ -243,6 +250,11 @@ aimebu usages ollama-cloud       # Ollama Cloud usage via Cookie header or API k
 aimebu sessions                  # list local and server-known agent sessions
 aimebu fleet default             # launch a named command bundle in cwd
 
+aimebu switcher status           # per-tool active profile and eligibility
+aimebu switcher import claude bkp  # adopt the current live login as a profile
+aimebu switcher add claude main    # create an empty profile (log in after switching)
+aimebu switcher use claude main    # switch; captures the live login first
+
 aimebu doctor                    # run health checks (server, config dir, SQLite, TLS)
 
 aimebu prune                     # clear conversation state with confirmation prompt
@@ -307,6 +319,15 @@ per-participant memory kill switch.
 percent display, provider order, enabled flags, provider secrets), `cache.json` (0644, last successful
 snapshots, no secrets), and `.lock` (stable flock target for server/CLI
 refresh coordination).
+`switcher/` holds account-switcher state and is **not server-owned** — the CLI
+writes it with the server stopped: `state.json` (0600, enabled flag plus the
+active profile per tool, schema-versioned), `profiles/<tool>/<name>/` (stored
+credentials, 0600 files in 0700 dirs), `backups/<tool>/` (pre-switch safety
+copies), and `.lock` (flock serializing every mutating operation across CLI and
+server, including the usages poller's writes to a live credentials path).
+Supported tools are claude and codex, file credentials only — the Keychain is
+never read or written, and a tool without a usable credentials file is reported
+ineligible rather than guessed at. See [docs/switcher.md](docs/switcher.md).
 `aimebu prune` wipes conversation state and local agent diagnostics,
 including the server-side `agent_sessions` registry,
 `agents/agent-sessions.json`, and `agents/agent-logs/*`;
@@ -314,7 +335,12 @@ including the server-side `agent_sessions` registry,
 command bundles, prompt overrides, role definitions/emoji, sounds, and
 `agents/agent-warning-acknowledged`. Runtime diagnostics
 (`server/aimebu.log`, shared by foreground and daemon server processes) are
-preserved by both prune modes. Provider usage state
+preserved by both prune modes. **`switcher/` is preserved by both prune modes
+too** — it holds the user's stored logins, not conversation state, and no prune
+flag advertises destroying credentials; losing them costs a fresh browser login
+per account. This is the one thing `prune -a` deliberately spares. Removal is
+explicit: `aimebu switcher remove <tool> <name>`, or
+`rm -rf ~/.aimebu/switcher`. Provider usage state
 under `usages/` is independent of conversation prune; clear Copilot tokens or
 Ollama Cloud cookies or API keys from Settings -> Usages. When `AIMEBU_URL` is loopback
 and the server is down,

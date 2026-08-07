@@ -94,6 +94,11 @@ and an embedded web UI for humans.
 - **MCP aimebu** — harness can be configured as an MCP client of the aimebu stdio server.
 - **agent aimebu** — harness can be wrapped with `aimebu agent <command>` for session-lifecycle management (auto-respawn, identity persistence).
 
+Account switching ([`aimebu switcher`](docs/switcher.md)) is a separate axis
+from this table and covers **claude-code and codex only** — the two harnesses
+aimebu reports usage for — and only when they keep credentials in a file
+rather than the macOS Keychain.
+
 ## Install
 
 ### Homebrew (macOS / Linux)
@@ -330,6 +335,16 @@ aimebu doctor                             Run health checks (server, config dir,
                                           exits 0 on OK/WARN, 1 on FAIL
 
 aimebu usages [provider] [--plain|--json] Show provider usage snapshots
+aimebu switcher <command>                 Switch which account claude/codex uses
+                                          Works with the server stopped; see docs/switcher.md
+  list [--json]                             Profiles across both tools
+  status [--json]                           Active profile and eligibility per tool
+  use <tool> <profile> [-y]                 Switch (captures the live login first)
+  add <tool> <profile>                      Create an empty profile
+  import <tool> <profile>                   Adopt the current live login as a profile
+  rename <tool> <old> <new>                 Rename a profile
+  remove <tool> <profile> [-y]              Delete a profile
+  enable | disable                          Turn the switcher on or off (off by default)
 aimebu sessions                           List local and server-known agent sessions
 aimebu fleet [name] [path]                List fleets, or launch one against path/cwd
 aimebu prune [-y] [-a]                    Prune conversation state with confirmation prompt
@@ -440,6 +455,11 @@ POST   /api/usages/ollama/config       Save or clear Ollama Cloud auth mode, API
 POST   /api/usages/copilot/login/start Start GitHub device flow; returns flow_id, user_code, verification URLs
 POST   /api/usages/copilot/login/poll  Poll GitHub device flow by flow_id; never returns tokens
 POST   /api/usages/copilot/login/logout Clear local Copilot token and disable the provider
+GET    /api/usages/switcher            Switcher enabled flag, per-tool eligibility, and profiles
+POST   /api/usages/switcher/settings   Enable or disable the switcher
+POST   /api/usages/switcher/switch     Switch the active profile for a tool
+POST   /api/usages/switcher/profiles   Create an empty profile, or import the current live login
+DELETE /api/usages/switcher/profiles   Delete a profile; 409 unless force is set when it is active
 DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe memory, macros, fleets, prompts, roles, sounds, and settings
 GET    /health                         Health check
 GET    /buildinfo                      Server version and Go runtime version (read-only)
@@ -749,10 +769,15 @@ troubleshooting.
 │   └── agent-logs/         # per-agent runtime diagnostics
 │       ├── <agent-id>-<spawn_tag>.stderr.log # always-on wrapper stderr; timestamped
 │       └── <agent-id>-<spawn_tag>.log # opt-in JSONL; pre-register stems start _pre-register-
-└── usages/                  # provider usage state
-    ├── config.json          # refresh interval, percent display, provider order, enabled flags, provider secrets (0600)
-    ├── cache.json           # last successful snapshots, no secrets (0644)
-    └── .lock                # stable flock target for server/CLI refresh coordination
+├── usages/                  # provider usage state
+│   ├── config.json          # refresh interval, percent display, provider order, enabled flags, provider secrets (0600)
+│   ├── cache.json           # last successful snapshots, no secrets (0644)
+│   └── .lock                # stable flock target for server/CLI refresh coordination
+└── switcher/                # account switcher state; NOT server-owned (the CLI writes it with the server stopped)
+    ├── state.json           # enabled flag + active profile per tool (0600)
+    ├── profiles/<tool>/<name>/ # stored credentials per profile (0600 files, 0700 dirs)
+    ├── backups/<tool>/      # pre-switch safety copies of live credentials
+    └── .lock                # flock serializing switch/profile mutations across CLI and server
 ```
 
 On first authoritative use after upgrading from the old flat layout, aimebu
@@ -771,6 +796,13 @@ points at loopback (`localhost`, `127.0.0.1`, `::1`) and the server is down,
 the CLI performs the same prune directly against `AIMEBU_CONFIG_DIR` /
 `~/.aimebu`. Runtime artifacts (`server/aimebu.log`, `server/aimebu.pid`) are
 preserved by both prune modes.
+
+**Neither prune mode touches `switcher/`.** Those are stored logins, not
+conversation state, and no prune flag advertises destroying credentials —
+losing them would mean a fresh browser login per account. This is the one
+thing `prune -a` deliberately preserves. Remove them explicitly with
+`aimebu switcher remove <tool> <name>`, or `rm -rf ~/.aimebu/switcher` for all
+of it. See [docs/switcher.md](docs/switcher.md).
 
 Memory enablement is stored in the SQLite settings record as
 `memory_enabled`; an absent value means the web UI has not asked yet and

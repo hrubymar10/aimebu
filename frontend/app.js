@@ -85,6 +85,8 @@
   let copilotLoginState = { status: 'disconnected', enterpriseHost: '', flowId: '', interval: 5, timer: null, error: '' };
   let ollamaCookieEditorOpen = false;
   let mistralCookieEditorOpen = false;
+  let switcherData = null; // { enabled, eligibility[], profiles[] } from GET /api/usages/switcher
+  let switcherInFlight = {}; // tool → true while a switch is in progress
   let messageDebugState = {
     open: false,
     messageID: null,
@@ -2855,6 +2857,7 @@
     rightUsagesPanel.innerHTML = empty + '<div class="usages-sidebar-list">' + sidebarRows.map(function (row) {
       return renderUsageTile(row, usageSnapshots[row.key] || { provider: row.key, status: 'not_configured' });
     }).join('') + '</div>';
+    refreshSwitcherPanel();
   }
 
   function usageProviderIcon(key) {
@@ -2866,6 +2869,53 @@
 
   function usageProviderIconClass(key) {
     return 'usages-provider-icon usages-provider-icon-' + String(key || 'unknown').replace(/[^a-z0-9_-]/gi, '-');
+  }
+
+  // Maps a usage provider key to its switcher tool key.
+  function switcherToolForProvider(key) {
+    if (key === 'claude-code') return 'claude';
+    if (key === 'codex') return 'codex';
+    return '';
+  }
+
+  // Renders each switcher profile as a block inside the provider tile, with its
+  // own usage windows — so every account's quota is visible at once, not just
+  // the active one. Returns '' when the switcher is off or the tool has no
+  // profiles, in which case the tile falls back to its single-account view.
+  function renderSwitcherTileProfiles(providerKey) {
+    var tool = switcherToolForProvider(providerKey);
+    if (!tool || !switcherData || !switcherData.enabled) return '';
+    var profiles = (switcherData.profiles || []).filter(function (p) { return p.tool === tool; });
+    if (!profiles.length) return '';
+    var elig = (switcherData.eligibility || []).filter(function (e) { return e.tool === tool; })[0];
+    var blocked = !!switcherInFlight[tool] || (elig && !elig.eligible);
+    var snaps = switcherData.snapshots || {};
+    return profiles.map(function (p) {
+      var snap = snaps[tool + '/' + p.name] || {};
+      var activeTag = p.active ? '<span class="switcher-tile-active">active</span>' : '';
+      var switchBtn = (!p.active && !blocked)
+        ? '<button class="btn btn-sm switcher-switch-btn" type="button"' +
+            ' data-tool="' + esc(tool) + '" data-profile="' + esc(p.name) + '"' +
+            (!p.has_credentials ? ' data-empty="1"' : '') + '>Switch</button>'
+        : '';
+      var emailTitle = p.email ? ' title="' + esc(p.email) + '"' : '';
+      var head = '<div class="switcher-tile-head">' +
+        '<span class="switcher-tile-name"' + emailTitle + '>' + esc(p.name) + '</span>' +
+        activeTag + switchBtn +
+      '</div>';
+      var body;
+      if (!p.has_credentials) {
+        body = '<div class="usages-empty usages-empty-compact">Needs login</div>';
+      } else {
+        var windows = (snap.windows || []).map(function (w) {
+          return renderUsageWindowRow(w, snap.last_refresh_at);
+        }).join('');
+        body = windows || '<div class="usages-empty usages-empty-compact">No usage data yet.</div>';
+      }
+      return '<div class="switcher-tile-profile' + (p.active ? ' switcher-tile-profile-active' : '') + '">' +
+        head + body + renderCreditsRow(snap.credits) + usageErrorLine(snap) +
+      '</div>';
+    }).join('');
   }
 
   function renderUsageTile(row, snap) {
@@ -2882,7 +2932,13 @@
     var label = row.label || providerLabel(snap.provider);
     var updated = snap.last_refresh_at ? 'Updated ' + formatRelativeAge(snap.last_refresh_at) + ' ago' : statusLabel(snap.status || 'Not configured');
     var plan = snap.plan || statusLabel(snap.status);
-    var windows = (snap.windows || []).map(function (w) { return renderUsageWindowRow(w, snap.last_refresh_at); }).join('');
+    // When the switcher is on for this provider, show every profile's usage
+    // inside the tile instead of only the active account's.
+    var profileBlocks = renderSwitcherTileProfiles(snap.provider || row.key);
+    var windows = profileBlocks;
+    if (!windows) {
+      windows = (snap.windows || []).map(function (w) { return renderUsageWindowRow(w, snap.last_refresh_at); }).join('');
+    }
     if (!windows) {
       windows = '<div class="usages-empty usages-empty-compact">No window data yet.</div>';
     }
@@ -2893,8 +2949,7 @@
       '</div>' +
       usageStaleLine(snap) +
       windows +
-      renderCreditsRow(snap.credits) +
-      usageErrorLine(snap) +
+      (profileBlocks ? '' : renderCreditsRow(snap.credits) + usageErrorLine(snap)) +
     '</div>';
   }
 
@@ -3047,11 +3102,20 @@
     return '<div class="usages-error-line">' + esc(text) + '</div>';
   }
 
+  var lastUsagesResponse = null;
+
   function loadUsages() {
     return api('GET', '/api/usages').then(function (resp) {
-      renderUsages(resp);
+      lastUsagesResponse = resp;
       if (resp && resp.settings) renderUsageSettings(resp.settings);
-      return resp;
+      // Fetch the switcher BEFORE the first paint. Rendering tiles now and
+      // re-rendering when the switcher resolves produces a visible pop-in:
+      // the panel shows the old single-account view, then swaps to the
+      // per-profile one. One paint, with everything.
+      return loadSwitcher().then(function () {
+        renderUsages(resp);
+        return resp;
+      });
     }).catch(function (err) {
       if (rightUsagesPanel) rightUsagesPanel.innerHTML = '<div class="usages-empty">Failed to load usages.</div>';
       console.error('usages', err);
@@ -3066,6 +3130,245 @@
     document.querySelectorAll('.usages-percent-option').forEach(function (btn) {
       btn.classList.toggle('active', btn.getAttribute('data-percent-display') === usagePercentDisplay);
     });
+  }
+
+  // ── Switcher ────────────────────────────────────────────────────────
+
+  function loadSwitcher() {
+    return api('GET', '/api/usages/switcher')
+      .then(function (resp) {
+        switcherData = resp;
+        renderSwitcherSettingsRow();
+        renderSwitcherSettingsProfiles();
+        refreshSwitcherPanel();
+      })
+      .catch(function (err) {
+        console.error('switcher', err);
+      });
+  }
+
+  function renderSwitcherSettingsRow() {
+    var el = document.getElementById('switcher-settings-row');
+    if (!el) return;
+    var enabled = !!(switcherData && switcherData.enabled);
+    var eligibility = (switcherData && Array.isArray(switcherData.eligibility)) ? switcherData.eligibility : [];
+    var ineligibleNotes = enabled ? eligibility.filter(function (e) { return !e.eligible && e.reason; }) : [];
+    var notesHtml = ineligibleNotes.map(function (e) {
+      return '<span class="switcher-ineligible-note">' + esc(e.tool) + ': ' + esc(e.reason) + '</span>';
+    }).join('');
+    el.innerHTML =
+      '<div class="settings-row">' +
+        '<div class="settings-row-info">' +
+          '<label class="settings-label" for="switcher-enabled-toggle">Switcher profiles</label>' +
+          '<span class="settings-desc">Enable per-profile credential switching for Claude Code and Codex.</span>' +
+          notesHtml +
+        '</div>' +
+        '<div class="settings-control">' +
+          '<label class="usages-provider-toggle" aria-label="Switcher profiles">' +
+            '<input type="checkbox" id="switcher-enabled-toggle"' + (enabled ? ' checked' : '') + '>' +
+            '<span></span>' +
+          '</label>' +
+        '</div>' +
+      '</div>';
+  }
+
+  // Settings → Switcher lists profiles for management (add / import / delete).
+  // Switching itself deliberately stays in the usages panel, where the live
+  // quota numbers are — settings is for configuration, not operation.
+  function renderSwitcherSettingsProfiles() {
+    var el = document.getElementById('switcher-settings-profiles');
+    if (!el) return;
+    if (!switcherData || !switcherData.enabled) {
+      el.innerHTML = '';
+      return;
+    }
+    var profiles = Array.isArray(switcherData.profiles) ? switcherData.profiles : [];
+    var eligibility = Array.isArray(switcherData.eligibility) ? switcherData.eligibility : [];
+    el.innerHTML = ['claude', 'codex'].map(function (tool) {
+      var toolProfiles = profiles.filter(function (p) { return p.tool === tool; });
+      var elig = eligibility.filter(function (e) { return e.tool === tool; })[0] || { eligible: true, reason: '' };
+      return renderSwitcherSection(tool, toolProfiles, elig, !!switcherInFlight[tool], 'manage');
+    }).join('');
+  }
+
+  function refreshSwitcherPanel() {
+    if (!rightUsagesPanel) return;
+    var container = rightUsagesPanel.querySelector('.switcher-panel');
+    if (!container) return;
+    if (!switcherData || !switcherData.enabled) {
+      container.innerHTML = '';
+      return;
+    }
+    var profiles = Array.isArray(switcherData.profiles) ? switcherData.profiles : [];
+    var eligibility = Array.isArray(switcherData.eligibility) ? switcherData.eligibility : [];
+    var tools = ['claude', 'codex'];
+    container.innerHTML = tools.map(function (tool) {
+      var toolProfiles = profiles.filter(function (p) { return p.tool === tool; });
+      var toolElig = eligibility.filter(function (e) { return e.tool === tool; })[0] || { tool: tool, eligible: true, reason: '' };
+      return renderSwitcherSection(tool, toolProfiles, toolElig, !!switcherInFlight[tool], 'switch');
+    }).join('');
+  }
+
+  // mode: 'manage' (Settings -> Switcher) shows add/import/delete and no Switch
+  // button; 'switch' (usages panel) shows only the Switch action. Profile
+  // management lives in Settings; the panel is for operating, next to the
+  // live quota numbers.
+  function renderSwitcherSection(tool, profiles, eligibility, inFlight, mode) {
+    var toolLabel = tool === 'claude' ? 'Claude Code' : tool === 'codex' ? 'Codex' : tool;
+    var elig = eligibility || { eligible: true, reason: '' };
+    var disabled = !!inFlight || !elig.eligible;
+    var activeProfile = profiles.filter(function (p) { return p.active; })[0];
+    var activeLabel = activeProfile ? activeProfile.name : '—';
+    var spinner = inFlight ? ' <span class="switcher-spinner" aria-hidden="true"></span>' : '';
+    var eligNote = !elig.eligible && elig.reason
+      ? '<div class="switcher-ineligible-inline">' + esc(elig.reason) + '</div>'
+      : '';
+    var rows = profiles.length
+      ? profiles.map(function (p) { return renderSwitcherProfileRow(p, elig, inFlight, mode); }).join('')
+      : '<div class="switcher-empty">No profiles yet.</div>';
+    var addImport = (disabled || mode !== 'manage') ? '' :
+      '<div class="switcher-actions">' +
+        '<button class="btn btn-sm switcher-add-btn" type="button" data-tool="' + esc(tool) + '">Add profile</button>' +
+        '<button class="btn btn-sm switcher-import-btn" type="button" data-tool="' + esc(tool) + '">Import current login</button>' +
+      '</div>';
+    return '<div class="switcher-section" data-tool="' + esc(tool) + '">' +
+      '<div class="switcher-section-header">' +
+        '<span class="switcher-section-tool">' + esc(toolLabel) + '</span>' +
+        '<span class="switcher-section-active">' + esc(activeLabel) + '</span>' +
+        spinner +
+      '</div>' +
+      eligNote +
+      rows +
+      addImport +
+    '</div>';
+  }
+
+  // Compact per-profile usage for the switcher rows: the tightest window (the
+  // one closest to running out), rendered in whichever percent convention the
+  // user picked for the tiles. The full breakdown stays in the provider tile
+  // above; this is a glance, not a second dashboard.
+  function switcherProfileUsage(tool, name) {
+    var snaps = (switcherData && switcherData.snapshots) || {};
+    var snap = snaps[tool + '/' + name];
+    if (!snap) return '';
+    if (snap.status && snap.status !== 'ok') return '';
+    var windows = Array.isArray(snap.windows) ? snap.windows : [];
+    var worst = null;
+    windows.forEach(function (w) {
+      if (typeof w.percent_used !== 'number') return;
+      if (!worst || w.percent_used > worst.percent_used) worst = w;
+    });
+    if (!worst) return '';
+    var pct = usagePercentDisplay === 'used'
+      ? Math.round(worst.percent_used) + '% used'
+      : Math.max(0, 100 - Math.round(worst.percent_used)) + '% left';
+    var plan = snap.plan ? esc(snap.plan) + ' · ' : '';
+    return '<span class="switcher-profile-usage" title="' + esc(windowLabel(worst.key) || worst.key || '') + '">' +
+      plan + esc(pct) + '</span>';
+  }
+
+  function renderSwitcherProfileRow(profile, eligibility, inFlight, mode) {
+    var isActive = !!profile.active;
+    var isEmpty = !profile.has_credentials;
+    var disabled = !!inFlight || (eligibility && !eligibility.eligible);
+    var emailTitle = profile.email ? ' title="' + esc(profile.email) + '"' : '';
+    var activeMarker = isActive ? '<span class="switcher-active-marker" aria-label="Active">●</span> ' : '';
+    var credLabel = isEmpty ? ' <span class="switcher-needs-login">needs login</span>' : '';
+    var switchBtn = (!isActive && !disabled && mode !== 'manage')
+      ? '<button class="btn btn-sm switcher-switch-btn" type="button"' +
+          ' data-tool="' + esc(profile.tool) + '" data-profile="' + esc(profile.name) + '"' +
+          (isEmpty ? ' data-empty="1"' : '') +
+          '>Switch</button>'
+      : '';
+    var deleteBtn = (!disabled && mode === 'manage')
+      ? '<button class="btn btn-icon switcher-delete-btn" type="button"' +
+          ' data-tool="' + esc(profile.tool) + '" data-profile="' + esc(profile.name) + '"' +
+          (isActive ? ' data-active="1"' : '') +
+          ' title="Delete profile" aria-label="Delete ' + esc(profile.name) + '">✕</button>'
+      : '';
+    var usage = switcherProfileUsage(profile.tool, profile.name);
+    return '<div class="switcher-profile-row' + (isActive ? ' switcher-profile-row-active' : '') + '">' +
+      '<span class="switcher-profile-name"' + emailTitle + '>' + activeMarker + esc(profile.name) + credLabel + '</span>' +
+      usage +
+      '<span class="switcher-profile-controls">' + switchBtn + deleteBtn + '</span>' +
+    '</div>';
+  }
+
+  function switcherToggleEnabled(v) {
+    api('POST', '/api/usages/switcher/settings', { enabled: v })
+      .then(function () { return loadUsages(); })
+      .catch(function (err) {
+        alert('Failed to ' + (v ? 'enable' : 'disable') + ' switcher: ' + (err && err.message ? err.message : err));
+        renderSwitcherSettingsRow(); // restore toggle to actual state
+      });
+  }
+
+  function switcherSwitch(tool, profile, isEmpty) {
+    if (isEmpty && !confirm(
+      'Profile "' + profile + '" is empty — switching will delete the live ' + tool + ' credentials and require a fresh login on next start.\n\nProceed?'
+    )) return;
+    switcherInFlight[tool] = true;
+    refreshSwitcherPanel();
+    // Separate catches: a failed switch and a failed refresh are different events.
+    api('POST', '/api/usages/switcher/switch', { tool: tool, profile: profile })
+      .then(
+        function () {
+          return loadUsages().catch(function (err) {
+            alert('Switched to "' + profile + '", but refresh failed: ' + (err && err.message ? err.message : err));
+          });
+        },
+        function (err) {
+          alert('Failed to switch to "' + profile + '": ' + (err && err.message ? err.message : err));
+        }
+      )
+      .then(function () {
+        switcherInFlight[tool] = false;
+        refreshSwitcherPanel();
+      });
+  }
+
+  function switcherAddProfile(tool) {
+    var name = prompt('Profile name:');
+    if (!name || !name.trim()) return;
+    name = name.trim();
+    api('POST', '/api/usages/switcher/profiles', { tool: tool, profile: name, mode: 'add' })
+      .then(function () { return loadUsages(); })
+      .catch(function (err) {
+        alert('Failed to add profile: ' + (err && err.message ? err.message : err));
+      });
+  }
+
+  function switcherImportProfile(tool) {
+    var name = prompt('Name for this login:');
+    if (!name || !name.trim()) return;
+    name = name.trim();
+    api('POST', '/api/usages/switcher/profiles', { tool: tool, profile: name, mode: 'import' })
+      .then(function () { return loadUsages(); })
+      .catch(function (err) {
+        alert('Failed to import login: ' + (err && err.message ? err.message : err));
+      });
+  }
+
+  function switcherDeleteProfile(tool, profile, isActive) {
+    var msg = isActive
+      ? 'Profile "' + profile + '" is active — deleting it will clear the live ' + tool + ' credentials and require a fresh login.\n\nProceed?'
+      : 'Delete profile "' + profile + '"?';
+    if (!confirm(msg)) return;
+    var force = isActive;
+    api('DELETE', '/api/usages/switcher/profiles', { tool: tool, profile: profile, force: force })
+      .then(function () { return loadUsages(); })
+      .catch(function (err) {
+        if (err && err.status === 409) {
+          // Server confirmed it's active — ask again with force flag
+          if (confirm('Server reports this profile is active. Clear live credentials and delete anyway?')) {
+            api('DELETE', '/api/usages/switcher/profiles', { tool: tool, profile: profile, force: true })
+              .then(function () { return loadUsages(); })
+              .catch(function (e) { alert('Failed to delete: ' + (e && e.message ? e.message : e)); });
+          }
+        } else {
+          alert('Failed to delete profile: ' + (err && err.message ? err.message : err));
+        }
+      });
   }
 
   function renderUsageProviderRows(rows) {
@@ -4036,9 +4339,10 @@
     settingsModal.querySelectorAll('.settings-section').forEach(function (el) {
       el.classList.toggle('active', el.getAttribute('data-section') === section);
     });
-    var titles = { general: 'General', retention: 'Retention', agents: 'Agents', notifications: 'Notifications', usages: 'Usages', macros: 'Macros', fleets: 'Fleets', memory: 'Memory', prompts: 'Prompts', roles: 'Roles', danger: 'Danger Zone' };
+    var titles = { general: 'General', retention: 'Retention', agents: 'Agents', notifications: 'Notifications', usages: 'Usages', macros: 'Macros', fleets: 'Fleets', memory: 'Memory', prompts: 'Prompts', roles: 'Roles', switcher: 'Switcher', danger: 'Danger Zone' };
     if (settingsSectionTitle) settingsSectionTitle.textContent = titles[section] || section;
     if (section === 'usages') loadUsages();
+    if (section === 'switcher') loadSwitcher();
     if (section === 'fleets') loadFleets();
     if (section === 'memory') applyMemorySettings();
   }
@@ -5939,6 +6243,33 @@
     });
   }
   renderUsageProviderRows();
+
+  // Switcher toggle (settings panel — delegated because the element is dynamic).
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'switcher-enabled-toggle') {
+      switcherToggleEnabled(e.target.checked);
+    }
+  });
+
+  // Switcher action buttons. Bound on document rather than on rightUsagesPanel
+  // because the same rows render in two places: the usages panel (with Switch)
+  // and Settings -> Switcher (manage only, no Switch button).
+  document.addEventListener('click', function (e) {
+    if (!e.target || !e.target.closest) return;
+    var switchBtn = e.target.closest('.switcher-switch-btn');
+    var addBtn = e.target.closest('.switcher-add-btn');
+    var importBtn = e.target.closest('.switcher-import-btn');
+    var deleteBtn = e.target.closest('.switcher-delete-btn');
+    if (switchBtn) {
+      switcherSwitch(switchBtn.getAttribute('data-tool'), switchBtn.getAttribute('data-profile'), !!switchBtn.getAttribute('data-empty'));
+    } else if (addBtn) {
+      switcherAddProfile(addBtn.getAttribute('data-tool'));
+    } else if (importBtn) {
+      switcherImportProfile(importBtn.getAttribute('data-tool'));
+    } else if (deleteBtn) {
+      switcherDeleteProfile(deleteBtn.getAttribute('data-tool'), deleteBtn.getAttribute('data-profile'), !!deleteBtn.getAttribute('data-active'));
+    }
+  });
 
   // Theme select — writes to both localStorage (client-local) and server settings.
   themeSelect.addEventListener('change', function () {

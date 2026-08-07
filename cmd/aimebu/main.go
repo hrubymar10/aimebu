@@ -44,6 +44,8 @@ func main() {
 		sessionsCmd(os.Args[2:])
 	case "usages":
 		usagesCmd(os.Args[2:])
+	case "switcher":
+		switcherCmd(os.Args[2:])
 	case "fleet":
 		fleetCmd(os.Args[2:])
 	case "agent":
@@ -435,6 +437,7 @@ Server:
 Utilities:
   doctor                              Run health checks and print a report
   fleet [name] [path]                 List fleets, or launch one against path/cwd
+  switcher <command>                  Manage AI tool credential profiles (works with server stopped)
   prune [-y] [-a]                     Prune conversation history with confirmation prompt
                                         -y  skip confirmation
                                         -a  also wipe macros and fleets (user settings)

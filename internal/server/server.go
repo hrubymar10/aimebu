@@ -32,6 +32,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/config"
+	"github.com/hrubymar10/aimebu/internal/switcher"
 	"github.com/hrubymar10/aimebu/internal/types"
 	"github.com/hrubymar10/aimebu/internal/usages"
 )
@@ -2341,12 +2342,36 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	defer serverCancel()
 
 	mux := http.NewServeMux()
-	usageManager := usages.NewManager(usages.NewStoreAt(filepath.Join(rootDir, "usages")), usages.DefaultRegistry())
+
+	// Build the switcher manager and inject its lock into the codex provider
+	// so the background poller holds switcher/.lock when writing back refreshed
+	// tokens, preventing it from overwriting a just-switched profile (§14.2).
+	swRoot, _ := switcher.DefaultRoot()
+	swMgr, swErr := switcher.New(swRoot)
+	var codexProv usages.Provider
+	if swErr == nil {
+		codexProv = usages.NewCodexProviderWithLock(swMgr.WithLock)
+	} else {
+		codexProv = usages.NewCodexProvider()
+	}
+	usageRegistry := usages.NewRegistry(
+		codexProv,
+		usages.NewClaudeCodeProvider(),
+		usages.NewCopilotProvider(),
+		usages.NewMistralProvider(),
+		usages.NewOllamaCloudProvider(),
+	)
+	usageManager := usages.NewManager(usages.NewStoreAt(filepath.Join(rootDir, "usages")), usageRegistry)
 	usageManager.SetUpdateHook(func(resp usages.Response) {
 		s.broadcastMeta(MetaEvent{Type: "usages_updated", Data: resp})
 	})
 	usageManager.Start(cleanupCtx, &s.bgWG)
 	setupHandlers(mux, s, build, usageManager)
+
+	// Mount switcher routes when the switcher manager initialised successfully.
+	if swErr == nil {
+		switcherRoutes{sm: swMgr, um: usageManager}.mount(mux)
+	}
 
 	// Serve embedded frontend at /
 	if frontendFS != nil {

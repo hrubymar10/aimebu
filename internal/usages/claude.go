@@ -97,12 +97,40 @@ type claudeCredentials struct {
 	SubscriptionType string
 }
 
+// ClaudeConfigDir resolves claude-code's config directory: CLAUDE_CONFIG_DIR
+// when set, otherwise <home>/.claude. Pass home explicitly so callers that
+// override HOME (tests, the switcher) stay consistent.
+func ClaudeConfigDir(home string) string {
+	if dir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); dir != "" {
+		return dir
+	}
+	return filepath.Join(home, ".claude")
+}
+
+// ClaudeLiveCredPath is the live credentials file: always
+// <config dir>/.credentials.json, which collapses both layouts into one rule.
+func ClaudeLiveCredPath(home string) string {
+	return filepath.Join(ClaudeConfigDir(home), ".credentials.json")
+}
+
+// ClaudeAccountFilePath is the account-state file holding oauthAccount. It does
+// NOT follow the credentials: with CLAUDE_CONFIG_DIR set it sits beside them in
+// that directory, but with the variable unset it lives at <home>/.claude.json —
+// the home root, not inside <home>/.claude. That asymmetry is claude-code's,
+// not ours; encode it once here rather than probing candidate paths.
+func ClaudeAccountFilePath(home string) string {
+	if dir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); dir != "" {
+		return filepath.Join(dir, ".claude.json")
+	}
+	return filepath.Join(home, ".claude.json")
+}
+
 func claudeAuthPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, claudeCredentialsRelPath), nil
+	return ClaudeLiveCredPath(home), nil
 }
 
 func loadClaudeAuth(path string) (claudeCredentials, *ErrorDetail, error) {
@@ -139,6 +167,25 @@ func loadClaudeAuth(path string) (claudeCredentials, *ErrorDetail, error) {
 		return claudeCredentials{}, fieldDetail("credentials.json.claudeAiOauth.accessToken", "missing"), errors.New("Claude OAuth access token missing. Run `claude` to authenticate.")
 	}
 	return creds, nil, nil
+}
+
+// ValidateClaudeCredentials validates path as a claude .credentials.json file.
+// Returns the credential expiry (for Profile.ExpiresAt) and nil on success.
+// An error is returned when the file is absent, unparseable, missing an access
+// token, or has a zero expiresAt — the last case is a real observed corruption
+// (expiresAt == 0 means malformed, not merely expired; a past but non-zero
+// value is structurally valid and captures fine).
+func ValidateClaudeCredentials(path string) (*time.Time, error) {
+	creds, _, err := loadClaudeAuth(path)
+	if err != nil {
+		return nil, err
+	}
+	// ExpiresAt is nil only when the raw expiresAt field was zero — malformed.
+	// A past non-zero value produces a non-nil time, which is valid to capture.
+	if creds.ExpiresAt == nil {
+		return nil, errors.New("claude credentials: expiresAt is zero (malformed)")
+	}
+	return creds.ExpiresAt, nil
 }
 
 func claudeCodeUserAgent() string {

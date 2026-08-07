@@ -42,7 +42,8 @@ type CacheEntry struct {
 }
 
 type Cache struct {
-	Snapshots map[string]CacheEntry `json:"snapshots"`
+	Snapshots        map[string]CacheEntry `json:"snapshots"`
+	ProfileSnapshots map[string]CacheEntry `json:"profile_snapshots,omitempty"` // keyed by "tool/name"
 }
 
 type Store struct {
@@ -72,7 +73,7 @@ func DefaultConfig() Config {
 }
 
 func EmptyCache() Cache {
-	return Cache{Snapshots: map[string]CacheEntry{}}
+	return Cache{Snapshots: map[string]CacheEntry{}, ProfileSnapshots: map[string]CacheEntry{}}
 }
 
 func (s *Store) WithLock(fn func() error) error {
@@ -153,6 +154,9 @@ func (s *Store) LoadCache() (Cache, error) {
 	}
 	if cache.Snapshots == nil {
 		cache.Snapshots = map[string]CacheEntry{}
+	}
+	if cache.ProfileSnapshots == nil {
+		cache.ProfileSnapshots = map[string]CacheEntry{}
 	}
 	return cache, nil
 }

@@ -61,6 +61,7 @@ func Run(baseURL, rootDir string) []Result {
 	results = append(results, checkTLSEnv())
 	results = append(results, checkAllowlist())
 	results = append(results, checkAgentLiveness(baseURL))
+	results = append(results, checkSwitcher(rootDir)...)
 
 	return results
 }
@@ -252,6 +253,89 @@ func checkAgentLiveness(baseURL string) Result {
 		return Result{name, StatusWarn, fmt.Sprintf("%d total, %d stale, %d offline", total, stale, offline)}
 	}
 	return Result{name, StatusOK, fmt.Sprintf("%d registered (%d stale)", total, stale)}
+}
+
+// switcherState mirrors the relevant fields from switcher/state.json without
+// importing the switcher package.
+type switcherState struct {
+	Version int               `json:"version"`
+	Enabled bool              `json:"enabled"`
+	Active  map[string]string `json:"active"`
+}
+
+// switcherCredFilename returns the known credential filename for a tool.
+// These must match the switcher package's profileCredFilename constants.
+func switcherCredFilename(tool string) string {
+	switch tool {
+	case "claude":
+		return ".credentials.json"
+	case "codex":
+		return "auth.json"
+	default:
+		return ""
+	}
+}
+
+// checkSwitcher validates the switcher state and profile directories.
+// §14.7: reports stale active pointers, profiles with no credentials while
+// the live file is also absent, and available backup files.
+func checkSwitcher(rootDir string) []Result {
+	swRoot := filepath.Join(rootDir, "switcher")
+	stateFile := filepath.Join(swRoot, "state.json")
+	data, err := os.ReadFile(stateFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // switcher not configured, nothing to check
+		}
+		return []Result{{Name: "switcher state", Status: StatusWarn, Message: fmt.Sprintf("read state.json: %v", err)}}
+	}
+	var state switcherState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return []Result{{Name: "switcher state", Status: StatusFail, Message: fmt.Sprintf("parse state.json: %v", err)}}
+	}
+	if !state.Enabled {
+		return []Result{{Name: "switcher", Status: StatusOK, Message: "disabled"}}
+	}
+
+	var results []Result
+	home, _ := os.UserHomeDir()
+	liveCredPath := map[string]string{
+		"claude": filepath.Join(home, ".claude", ".credentials.json"),
+		"codex":  filepath.Join(home, ".codex", "auth.json"),
+	}
+	for _, tool := range []string{"claude", "codex"} {
+		name := fmt.Sprintf("switcher/%s", tool)
+		active := state.Active[tool]
+		if active == "" {
+			results = append(results, Result{Name: name, Status: StatusOK, Message: "no active profile"})
+			continue
+		}
+		profileDir := filepath.Join(swRoot, "profiles", tool, active)
+		if _, err := os.Stat(profileDir); os.IsNotExist(err) {
+			results = append(results, Result{Name: name, Status: StatusWarn,
+				Message: fmt.Sprintf("active profile %q directory missing (stale pointer)", active)})
+			continue
+		}
+		credFile := switcherCredFilename(tool)
+		storedCred := filepath.Join(profileDir, credFile)
+		_, storedErr := os.Stat(storedCred)
+		livePath := liveCredPath[tool]
+		_, liveErr := os.Stat(livePath)
+		if os.IsNotExist(storedErr) && os.IsNotExist(liveErr) {
+			// Check for a backup that could help recover.
+			backupGlob := filepath.Join(swRoot, "backups", tool, active+"-*.json")
+			backups, _ := filepath.Glob(backupGlob)
+			backupHint := ""
+			if len(backups) > 0 {
+				backupHint = fmt.Sprintf("; backup available: %s", backups[len(backups)-1])
+			}
+			results = append(results, Result{Name: name, Status: StatusWarn,
+				Message: fmt.Sprintf("active profile %q has no stored credentials and no live file%s — login required", active, backupHint)})
+			continue
+		}
+		results = append(results, Result{Name: name, Status: StatusOK, Message: fmt.Sprintf("active: %q", active)})
+	}
+	return results
 }
 
 func checkTLSEnv() Result {

@@ -28,13 +28,44 @@ const (
 	jsonShapeDetailMaxFields = 50
 )
 
-type codexProvider struct{}
+type codexProvider struct {
+	// liveWriteLock, when set, is called around every write to the live
+	// credentials path. Prevents the background poller from overwriting a
+	// just-switched profile's tokens (§14.2). nil in tests and DefaultRegistry.
+	liveWriteLock func(func() error) error
+}
 
-func NewCodexProvider() Provider { return codexProvider{} }
+// NewCodexProvider creates a codex usage provider.
+func NewCodexProvider() Provider { return &codexProvider{} }
 
-func (codexProvider) Key() string { return ProviderCodex }
+// NewCodexProviderWithLock creates a codex provider that holds liveWriteLock
+// around writes to the live credentials file. This prevents the usages poller
+// from silently overwriting a profile that was just switched in (§14.2).
+func NewCodexProviderWithLock(lock func(func() error) error) Provider {
+	return &codexProvider{liveWriteLock: lock}
+}
 
-func (codexProvider) Fetch(ctx context.Context, store *Store) (Snapshot, error) {
+func (p *codexProvider) Key() string { return ProviderCodex }
+
+// persistAuth writes refreshed credentials to path using a compare-and-swap:
+// inside the lock it re-reads the file and compares to expect (bytes captured
+// at load time). If the file changed, a switch landed while we were on the
+// network — the tokens we hold belong to a profile that is no longer active,
+// so we drop the write silently. The next poll will re-read whatever is live.
+func (p *codexProvider) persistAuth(path string, creds codexCredentials, expect []byte) error {
+	save := func() error {
+		if cur := codexAuthFingerprint(path); !bytes.Equal(cur, expect) {
+			return nil // switch landed mid-refresh; do not overwrite the new profile
+		}
+		return saveCodexAuth(path, creds)
+	}
+	if p.liveWriteLock != nil {
+		return p.liveWriteLock(save)
+	}
+	return save()
+}
+
+func (p *codexProvider) Fetch(ctx context.Context, store *Store) (Snapshot, error) {
 	authPath, err := codexAuthPath()
 	if err != nil {
 		return codexStatus(StatusAuthMissing, "Codex auth path unavailable.", nil), nil
@@ -50,7 +81,7 @@ func (codexProvider) Fetch(ctx context.Context, store *Store) (Snapshot, error) 
 			return codexStatus(StatusAuthMissing, err.Error(), detail), nil
 		}
 		creds = refreshed
-		if err := saveCodexAuth(authPath, creds); err != nil {
+		if err := p.persistAuth(authPath, creds, auth.Fingerprint); err != nil {
 			return codexStatus(StatusAuthMissing, "Codex auth refresh could not be saved.", nil), nil
 		}
 		auth.Fingerprint = codexAuthFingerprint(authPath)
@@ -73,7 +104,7 @@ func (codexProvider) Fetch(ctx context.Context, store *Store) (Snapshot, error) 
 			return codexStatus(StatusAuthMissing, refreshErr.Error(), refreshDetail), nil
 		}
 		creds = refreshed
-		if err := saveCodexAuth(authPath, creds); err != nil {
+		if err := p.persistAuth(authPath, creds, auth.Fingerprint); err != nil {
 			return codexStatus(StatusAuthMissing, "Codex auth refresh could not be saved.", nil), nil
 		}
 		raw, detail, status, err = fetchCodexUsage(ctx, creds)
@@ -667,6 +698,66 @@ func jsonTypeName(data []byte) string {
 	default:
 		return "unknown"
 	}
+}
+
+// ValidateCodexCredentials validates path as a codex auth.json file.
+// The file is valid when loadCodexAuth succeeds — it requires non-empty
+// access_token and refresh_token (the parser's own strictness). No JWT exp
+// check is applied: an absent or expired id_token is structurally fine;
+// the id_token is returned only for email/expiry display, not for login.
+// API-key-only installs fail because the parser requires OAuth tokens.
+func ValidateCodexCredentials(path string) (idToken string, err error) {
+	creds, _, err := loadCodexAuth(path)
+	if err != nil {
+		return "", err
+	}
+	return creds.IDToken, nil
+}
+
+// CodexIDTokenEmail extracts the email claim from a JWT id_token.
+// Returns "" if the token is absent, malformed, or has no email claim.
+func CodexIDTokenEmail(idToken string) string {
+	parts := strings.Split(idToken, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	data, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return ""
+	}
+	if v, ok := payload["email"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+// CodexIDTokenExpiry extracts the exp claim from a JWT id_token as a time.Time.
+// Returns nil if the token is absent, malformed, or exp is zero.
+// Note: JWT exp is Unix seconds, not milliseconds.
+func CodexIDTokenExpiry(idToken string) *time.Time {
+	parts := strings.Split(idToken, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+	data, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil
+	}
+	var claims struct {
+		Exp float64 `json:"exp"`
+	}
+	if err := json.Unmarshal(data, &claims); err != nil {
+		return nil
+	}
+	if claims.Exp == 0 {
+		return nil
+	}
+	t := time.Unix(int64(claims.Exp), 0).UTC()
+	return &t
 }
 
 func writeAtomicJSONFile(path string, v any, mode os.FileMode) error {

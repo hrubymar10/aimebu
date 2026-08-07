@@ -3,6 +3,7 @@ package usages
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -541,6 +542,87 @@ func hasTransientHTTPStatus(detail *ErrorDetail) bool {
 		}
 	}
 	return false
+}
+
+// ProfileSnapshotKey returns the per-profile cache key for a tool+name pair.
+func ProfileSnapshotKey(tool, name string) string { return tool + "/" + name }
+
+// FetchProfileSnapshot returns the cached usage snapshot for a credential
+// profile, fetching fresh data when the cache is stale. Pass the live
+// credential file path for the active profile, the stored path for others.
+// Always uses persist=false so reading a stored profile never rotates its
+// tokens; the main provider's background poll refreshes the active profile.
+func (m *Manager) FetchProfileSnapshot(ctx context.Context, tool, name, credPath string) (Snapshot, error) {
+	var cached *CacheEntry
+	var interval time.Duration
+	_ = m.store.WithLock(func() error {
+		cfg, err := m.store.LoadConfig()
+		if err != nil {
+			return err
+		}
+		cache, err := m.store.LoadCache()
+		if err != nil {
+			return err
+		}
+		interval, _ = m.store.RefreshInterval(cfg)
+		now := m.clock.Now()
+		key := ProfileSnapshotKey(tool, name)
+		if entry, ok := cache.ProfileSnapshots[key]; ok {
+			if entry.LastRefreshAt != nil && now.Sub(*entry.LastRefreshAt) < interval {
+				cp := entry
+				cached = &cp
+			}
+		}
+		return nil
+	})
+	if cached != nil {
+		return cached.Snapshot, nil
+	}
+	_ = interval // used only for the cache-freshness check above
+
+	var snap Snapshot
+	var fetchErr error
+	switch tool {
+	case "claude":
+		snap, fetchErr = fetchClaudeSnapshotFromPath(ctx, credPath)
+	case "codex":
+		snap, fetchErr = fetchCodexSnapshotFromPath(ctx, credPath, false, nil)
+	default:
+		return Snapshot{}, fmt.Errorf("unsupported switcher tool %q for profile snapshot", tool)
+	}
+	if fetchErr != nil {
+		return Snapshot{}, fetchErr
+	}
+	snap.Provider = tool
+	now := m.clock.Now()
+	_ = m.store.WithLock(func() error {
+		cache, err := m.store.LoadCache()
+		if err != nil {
+			return err
+		}
+		if cache.ProfileSnapshots == nil {
+			cache.ProfileSnapshots = map[string]CacheEntry{}
+		}
+		cache.ProfileSnapshots[ProfileSnapshotKey(tool, name)] = CacheEntry{Snapshot: snap, LastRefreshAt: &now}
+		return m.store.SaveCache(cache)
+	})
+	return snap, nil
+}
+
+// InvalidateProfileSnapshot removes a profile's entry from the per-profile
+// cache, forcing a fresh fetch on the next FetchProfileSnapshot call. Called
+// after a switch to ensure the two affected profiles refresh immediately.
+func (m *Manager) InvalidateProfileSnapshot(tool, name string) {
+	_ = m.store.WithLock(func() error {
+		cache, err := m.store.LoadCache()
+		if err != nil {
+			return err
+		}
+		if cache.ProfileSnapshots != nil {
+			delete(cache.ProfileSnapshots, ProfileSnapshotKey(tool, name))
+		}
+		return m.store.SaveCache(cache)
+	})
 }
 
 func (m *Manager) checkForceCooldown(provider string) int {
