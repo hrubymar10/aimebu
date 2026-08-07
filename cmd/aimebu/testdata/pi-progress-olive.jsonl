@@ -11,9 +11,9 @@
 {"at":"2026-07-27T10:41:32Z","event":{"type":"tool_execution_end","toolName":"aimebu_bus_message"}}
 {"at":"2026-07-27T10:41:32Z","event":{"type":"tool_execution_end","toolName":"bash"}}
 {"at":"2026-07-27T10:41:32Z","event":{"type":"turn_start"}}
-{"at":"2026-07-27T10:43:03Z","event":{"type":"tool_execution_start","toolName":"read","args":{"path":"/Users/martinhruby/oddin/logos/daegon.png"}}}
+{"at":"2026-07-27T10:43:03Z","event":{"type":"tool_execution_start","toolName":"read","args":{"path":"/home/user/project/picture.png"}}}
 {"at":"2026-07-27T10:43:03Z","event":{"type":"tool_execution_start","toolName":"aimebu_bus_attachment_get","args":{"attachment_id":"e097664beefd062228916bb02ff6860d"}}}
-{"at":"2026-07-27T10:43:03Z","event":{"type":"tool_execution_start","toolName":"read","args":{"path":"/Users/martinhruby/oddin/logos/connector-penalty-arena.png"}}}
+{"at":"2026-07-27T10:43:03Z","event":{"type":"tool_execution_start","toolName":"read","args":{"path":"/home/user/project/image2.png"}}}
 {"at":"2026-07-27T10:43:04Z","event":{"type":"turn_start"}}
 {"at":"2026-07-27T10:43:56Z","event":{"type":"turn_start"}}
 {"at":"2026-07-27T11:43:51Z","event":{"type":"turn_start"}}

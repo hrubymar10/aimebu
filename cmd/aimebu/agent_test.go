@@ -445,7 +445,7 @@ func TestAgentPrepareResumeSessionSelfHealsEscapeHatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 7, 17, 18, 0, 0, 0, time.UTC)
-	entry = agentPrepareResumeSession(entry, "codex", "gpt-5.5", []string{"oddin"}, "worker", []string{"codex"}, now)
+	entry = agentPrepareResumeSession(entry, "codex", "gpt-5.5", []string{"general"}, "worker", []string{"codex"}, now)
 	if err := agentSaveSession(entry); err != nil {
 		t.Fatal(err)
 	}
@@ -460,8 +460,8 @@ func TestAgentPrepareResumeSessionSelfHealsEscapeHatch(t *testing.T) {
 	if resolved.CWD != projectDir {
 		t.Fatalf("CWD = %q, want %q", resolved.CWD, projectDir)
 	}
-	if got := strings.Join(resolved.Rooms, ","); got != "oddin" {
-		t.Fatalf("rooms = %q, want oddin", got)
+	if got := strings.Join(resolved.Rooms, ","); got != "general" {
+		t.Fatalf("rooms = %q, want general", got)
 	}
 	if resolved.AssumeRole != "worker" {
 		t.Fatalf("assume role = %q, want worker", resolved.AssumeRole)

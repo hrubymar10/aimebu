@@ -3930,6 +3930,28 @@ func TestNeedsAttentionFalseNoForceSubscribe(t *testing.T) {
 	}
 }
 
+// waitForWSRegistered blocks until the server has processed a "hello" frame and
+// associated the WebSocket with agentID. The server handles "hello"
+// asynchronously in its read loop, so a test that writes hello and immediately
+// triggers a broadcast races that loop: the event can be dispatched before the
+// connection is attributable to the agent, and is then never delivered.
+// Synchronising here removes the race at its source rather than widening a
+// deadline, which only makes the same failure take longer to appear.
+func waitForWSRegistered(t *testing.T, s *store, agentID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		s.waitMu.Lock()
+		n := s.openWS[agentID]
+		s.waitMu.Unlock()
+		if n > 0 {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for WebSocket registration of %q", agentID)
+}
+
 func TestNeedsAttentionWSDelivery(t *testing.T) {
 	s, srv := setupTestServer(t)
 
@@ -3956,6 +3978,7 @@ func TestNeedsAttentionWSDelivery(t *testing.T) {
 	if err := conn.Write(ctx, websocket.MessageText, hello); err != nil {
 		t.Fatal(err)
 	}
+	waitForWSRegistered(t, s, human.ID)
 
 	// Register an AI, join a room, send needs_attention=true.
 	ai, _, err := s.registerAI("sonnet4.6", "claude-code", "test", nil, "wsaisender")
@@ -4026,6 +4049,7 @@ func TestWebSocketSubscribedRoomReceivesMessageAndDisconnectsCleanly(t *testing.
 	if err := conn.Write(ctx, websocket.MessageText, hello); err != nil {
 		t.Fatal(err)
 	}
+	waitForWSRegistered(t, s, human.ID)
 	subscribe, _ := json.Marshal(map[string]any{"type": "subscribe", "rooms": []string{"ws-room"}})
 	if err := conn.Write(ctx, websocket.MessageText, subscribe); err != nil {
 		t.Fatal(err)
