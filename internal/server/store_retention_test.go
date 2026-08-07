@@ -16,9 +16,6 @@ func TestRetentionDefaultsMatchCurrentBehavior(t *testing.T) {
 	if got := s.staleAgentWindow(); got != 30*time.Minute {
 		t.Fatalf("stale agent window = %s, want 30m", got)
 	}
-	if got := s.emptyRoomWindow(); got != 60*time.Minute {
-		t.Fatalf("empty room window = %s, want 60m", got)
-	}
 	if got := s.cleanupInterval(); got != time.Minute {
 		t.Fatalf("cleanup interval = %s, want 1m", got)
 	}
@@ -89,31 +86,60 @@ func TestHeartbeatPreventsStaleAgentCleanup(t *testing.T) {
 	}
 }
 
-func TestCleanupEmptyRoomsHonorsConfiguredWindow(t *testing.T) {
-	s, err := newStore(t.TempDir())
+// TestEmptyRoomSurvivesSweepAndRestart guards the T41 retention rework:
+// rooms are never auto-deleted, by timer (sweep) or by restart. Previously
+// cleanupEmptyRooms deleted an empty room and all its messages after an hour,
+// and pruneOnStartup deleted any empty room (with all its messages) on every
+// restart — silently, logging only the agent count. Both paths destroyed
+// real history (the restart path is what took out the user's history on
+// 2026-08-07).
+func TestEmptyRoomSurvivesSweepAndRestart(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newStore(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	window := 120
-	s.putSettings(Settings{EmptyRoomWindowSeconds: &window})
 
 	now := time.Now().UTC()
 	s.mu.Lock()
-	s.rooms["old-empty"] = &types.Room{ID: "old-empty"}
-	s.rooms["new-empty"] = &types.Room{ID: "new-empty"}
-	s.roomEmptySince["old-empty"] = now.Add(-3 * time.Minute)
-	s.roomEmptySince["new-empty"] = now.Add(-90 * time.Second)
+	// A room with no members but real history — exactly what used to vanish.
+	s.rooms["lonely"] = &types.Room{ID: "lonely"}
+	s.messages["lonely"] = []types.Message{
+		retentionTestMessage(1, "lonely", now.Add(-3*time.Hour)),
+		retentionTestMessage(2, "lonely", now.Add(-time.Hour)),
+		retentionTestMessage(3, "lonely", now),
+	}
+	s.persistFullCoreLocked()
 	s.mu.Unlock()
 
-	s.cleanupEmptyRooms()
+	// A sweep must not delete an empty room or its messages. The sweep loop
+	// now runs cleanupStaleAgents + cleanupMessages only.
+	s.cleanupStaleAgents()
+	s.cleanupMessages()
 
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if _, ok := s.rooms["old-empty"]; ok {
-		t.Fatal("old empty room was not removed")
+	if _, ok := s.rooms["lonely"]; !ok {
+		t.Fatal("empty room was deleted by sweep")
 	}
-	if _, ok := s.rooms["new-empty"]; !ok {
-		t.Fatal("new empty room was removed")
+	if got := len(s.messages["lonely"]); got != 3 {
+		t.Fatalf("messages deleted by sweep: got %d, want 3", got)
+	}
+	s.mu.RUnlock()
+
+	// A restart (newStore -> pruneOnStartup) must not delete it either. This
+	// is the path that destroyed the user's history: it deleted every empty room
+	// and its messages, reporting nothing but the agent count.
+	restarted, err := newStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.mu.RLock()
+	defer restarted.mu.RUnlock()
+	if _, ok := restarted.rooms["lonely"]; !ok {
+		t.Fatal("empty room was deleted on restart")
+	}
+	if got := len(restarted.messages["lonely"]); got != 3 {
+		t.Fatalf("messages deleted on restart: got %d, want 3", got)
 	}
 }
 

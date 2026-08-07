@@ -26,7 +26,6 @@ func newStore(dir string) (*store, error) {
 		roomSubs:               make(map[string][]chan types.Message),
 		openWaits:              make(map[string]map[string]int),
 		openWS:                 make(map[string]int),
-		roomEmptySince:         make(map[string]time.Time),
 		cleanupResetCh:         make(chan struct{}, 1),
 		macros:                 make(map[string]string),
 		seenDefaults:           make(map[string]bool),
@@ -75,9 +74,10 @@ func PruneDataDir(dir string, includeSettings bool) error {
 	return nil
 }
 
-// pruneOnStartup removes agents whose last_seen is past the stale window,
-// and rooms that are empty (after the agent prune). Messages attached to
-// deleted rooms are also removed. Called once from newStore.
+// pruneOnStartup removes agents whose last_seen is past the stale window and
+// drops them from room memberships and roles. Called once from newStore.
+// Rooms and their messages are never deleted here: rooms are never
+// auto-deleted, by timer or by restart (see the retention rework).
 func (s *store) pruneOnStartup() {
 	now := time.Now().UTC()
 	agentCutoff := now.Add(-s.staleAgentWindow())
@@ -107,14 +107,6 @@ func (s *store) pruneOnStartup() {
 		room.Members = filtered
 	}
 
-	// Drop rooms that are now empty. roomEmptySince isn't persisted, so on
-	// restart any empty room is considered stale enough to prune.
-	for id, room := range s.rooms {
-		if len(room.Members) == 0 {
-			delete(s.rooms, id)
-			delete(s.messages, id)
-		}
-	}
 	s.cleanupMessagesLocked(now)
 
 	s.persistFullCoreLocked()

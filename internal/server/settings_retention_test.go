@@ -37,9 +37,6 @@ func TestRetentionSettingsDefaults(t *testing.T) {
 	if set.AgentOfflineWindowSeconds == nil || *set.AgentOfflineWindowSeconds != defaultAgentOfflineWindowSeconds {
 		t.Fatalf("agent_offline_window_seconds default = %v, want %d", set.AgentOfflineWindowSeconds, defaultAgentOfflineWindowSeconds)
 	}
-	if set.EmptyRoomWindowSeconds == nil || *set.EmptyRoomWindowSeconds != defaultEmptyRoomWindowSeconds {
-		t.Fatalf("empty_room_window_seconds default = %v, want %d", set.EmptyRoomWindowSeconds, defaultEmptyRoomWindowSeconds)
-	}
 	if set.CleanupIntervalSeconds == nil || *set.CleanupIntervalSeconds != defaultCleanupIntervalSeconds {
 		t.Fatalf("cleanup_interval_seconds default = %v, want %d", set.CleanupIntervalSeconds, defaultCleanupIntervalSeconds)
 	}
@@ -59,7 +56,6 @@ func TestRetentionSettingsRoundTrip(t *testing.T) {
 		"liveness_sweep_seconds": 20,
 		"agent_stale_window_seconds": 120,
 		"agent_offline_window_seconds": 600,
-		"empty_room_window_seconds": 900,
 		"cleanup_interval_seconds": 15,
 		"message_retention_seconds": 120,
 		"message_retention_count": 42
@@ -84,7 +80,6 @@ func TestRetentionSettingsRoundTrip(t *testing.T) {
 	assertIntPtr(t, "liveness_sweep_seconds", set.LivenessSweepSeconds, 20)
 	assertIntPtr(t, "agent_stale_window_seconds", set.AgentStaleWindowSeconds, 120)
 	assertIntPtr(t, "agent_offline_window_seconds", set.AgentOfflineWindowSeconds, 600)
-	assertIntPtr(t, "empty_room_window_seconds", set.EmptyRoomWindowSeconds, 900)
 	assertIntPtr(t, "cleanup_interval_seconds", set.CleanupIntervalSeconds, 15)
 	assertIntPtr(t, "message_retention_seconds", set.MessageRetentionSeconds, 120)
 	assertIntPtr(t, "message_retention_count", set.MessageRetentionCount, 42)
@@ -103,7 +98,6 @@ func TestRetentionSettingsValidation(t *testing.T) {
 		{name: "agent stale below floor", body: `{"agent_stale_window_seconds":9}`, field: "agent_stale_window_seconds"},
 		{name: "agent offline below floor", body: `{"agent_offline_window_seconds":9}`, field: "agent_offline_window_seconds"},
 		{name: "agent stale not below offline", body: `{"agent_stale_window_seconds":300,"agent_offline_window_seconds":300}`, field: "agent_stale_window_seconds"},
-		{name: "empty room above ceiling", body: `{"empty_room_window_seconds":2592001}`, field: "empty_room_window_seconds"},
 		{name: "cleanup interval below floor", body: `{"cleanup_interval_seconds":9}`, field: "cleanup_interval_seconds"},
 		{name: "message seconds below floor", body: `{"message_retention_seconds":1}`, field: "message_retention_seconds"},
 		{name: "message count below floor", body: `{"message_retention_count":-1}`, field: "message_retention_count"},

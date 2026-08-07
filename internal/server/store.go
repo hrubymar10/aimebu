@@ -123,8 +123,6 @@ type store struct {
 	openWaits map[string]map[string]int
 	openWS    map[string]int
 
-	// Tracks when a room first became empty (for cleanup)
-	roomEmptySince map[string]time.Time
 	cleanupResetCh chan struct{}
 
 	macrosMu     sync.RWMutex
@@ -252,7 +250,6 @@ func (s *store) startCleanup(ctx context.Context) {
 			select {
 			case <-ticker.C:
 				s.cleanupStaleAgents()
-				s.cleanupEmptyRooms()
 				s.cleanupMessages()
 			case <-livenessTicker.C:
 				s.deriveAgentStates(time.Now().UTC())
@@ -330,45 +327,6 @@ func (s *store) cleanupStaleAgents() {
 		}
 		s.emitSystemMessage("_system", id+" pruned (stale)")
 	}
-}
-
-func (s *store) cleanupEmptyRooms() {
-	cutoff := time.Now().UTC().Add(-s.emptyRoomWindow())
-
-	s.mu.Lock()
-
-	var toDelete []string
-	for id, room := range s.rooms {
-		if len(room.Members) == 0 {
-			if since, ok := s.roomEmptySince[id]; ok {
-				if since.Before(cutoff) {
-					toDelete = append(toDelete, id)
-				}
-			} else {
-				s.roomEmptySince[id] = time.Now().UTC()
-			}
-		} else {
-			delete(s.roomEmptySince, id)
-		}
-	}
-
-	if len(toDelete) == 0 {
-		s.mu.Unlock()
-		return
-	}
-
-	for _, id := range toDelete {
-		delete(s.rooms, id)
-		delete(s.roomEmptySince, id)
-		delete(s.messages, id)
-	}
-
-	log.Printf("Cleaned up %d empty room(s): %v", len(toDelete), toDelete)
-	s.persistFullCoreLocked()
-	s.mu.Unlock()
-	s.cleanupReactionsForLiveMessages()
-
-	s.broadcastRoomUpdate()
 }
 
 func (s *store) cleanupMessages() {

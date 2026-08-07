@@ -485,6 +485,10 @@ and must be greater than `agent_stale_window_seconds`,
 `60..2592000`, and `message_retention_count` defaults to `0` for unlimited or
 allows `1..1000000`. Message retention is opt-in; when enabled, clients with
 read cursors older than pruned messages may observe gaps in history.
+Rooms are never auto-deleted — not by a timer when empty, not on server
+restart; an empty room and its messages persist until explicitly deleted via
+the room API. (Earlier versions deleted empty rooms after an hour and on
+restart; that destroyed real history and has been removed.)
 Agent liveness is checked separately from cleanup: inactive AI agents show
 `stale` after the stale window, move to `offline` after the offline window,
 and emit one room-local disconnect alert to human room members on that
@@ -659,7 +663,7 @@ three-panel layout:
 - **Settings panel** (⚙ or `{…}` button) — General (default agent ID),
   Appearance (dark/light theme, system events toggle), Debug (message debug
   button toggle, off by default), Retention (agent liveness, stale-agent
-  pruning, empty-room cleanup, cleanup interval, and global message age/count
+  pruning, cleanup interval, and global message age/count
   limits), Notifications,
   Macros (global only;
   per-room macros from older installs are auto-migrated to globals on first

@@ -296,7 +296,7 @@ leaderboards, macros, fleet command bundles, prompt overrides, role
 definitions/emoji, sound metadata, attachment metadata, UI preferences, plus
 global retention settings for
 agent liveness (`liveness_sweep_seconds`, `agent_stale_window_seconds`,
-`agent_offline_window_seconds`), stale-agent pruning, empty rooms, cleanup
+`agent_offline_window_seconds`), stale-agent pruning, cleanup
 cadence, message age/count limits, the global `memory_enabled` flag, the
 default-on `leaderboard_enabled` flag, and the agent behaviour setting
 `inline_plan_appendix` (`"always"` | `"optional"`, default `"always"`).
@@ -328,6 +328,10 @@ server, including the usages poller's writes to a live credentials path).
 Supported tools are claude and codex, file credentials only — the Keychain is
 never read or written, and a tool without a usable credentials file is reported
 ineligible rather than guessed at. See [docs/switcher.md](docs/switcher.md).
+Rooms are never auto-deleted — not by a timer when empty, not on server
+restart; an empty room and its messages persist until explicitly deleted via
+the room API. The earlier behaviour that deleted empty rooms on startup (and
+destroyed real history) has been removed.
 `aimebu prune` wipes conversation state and local agent diagnostics,
 including the server-side `agent_sessions` registry,
 `agents/agent-sessions.json`, and `agents/agent-logs/*`;

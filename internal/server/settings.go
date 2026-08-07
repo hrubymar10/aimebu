@@ -27,7 +27,6 @@ type Settings struct {
 	LivenessSweepSeconds      *int   `json:"liveness_sweep_seconds,omitempty"`
 	AgentStaleWindowSeconds   *int   `json:"agent_stale_window_seconds,omitempty"`
 	AgentOfflineWindowSeconds *int   `json:"agent_offline_window_seconds,omitempty"`
-	EmptyRoomWindowSeconds    *int   `json:"empty_room_window_seconds,omitempty"`
 	CleanupIntervalSeconds    *int   `json:"cleanup_interval_seconds,omitempty"`
 	MessageRetentionSeconds   *int   `json:"message_retention_seconds,omitempty"`
 	MessageRetentionCount     *int   `json:"message_retention_count,omitempty"`
@@ -39,7 +38,6 @@ const (
 	defaultLivenessSweepSeconds      = 15
 	defaultAgentStaleWindowSeconds   = 90
 	defaultAgentOfflineWindowSeconds = 10 * 60
-	defaultEmptyRoomWindowSeconds    = 60 * 60
 	defaultCleanupIntervalSeconds    = 60
 	defaultMessageRetentionSeconds   = 0
 	defaultMessageRetentionCount     = 0
@@ -140,10 +138,6 @@ func (s *store) getSettings() Settings {
 		v := defaultAgentOfflineWindowSeconds
 		set.AgentOfflineWindowSeconds = &v
 	}
-	if set.EmptyRoomWindowSeconds == nil {
-		v := defaultEmptyRoomWindowSeconds
-		set.EmptyRoomWindowSeconds = &v
-	}
 	if set.CleanupIntervalSeconds == nil {
 		v := defaultCleanupIntervalSeconds
 		set.CleanupIntervalSeconds = &v
@@ -176,10 +170,6 @@ func (s Settings) agentStaleWindow() time.Duration {
 
 func (s Settings) agentOfflineWindow() time.Duration {
 	return time.Duration(settingIntInRange(s.AgentOfflineWindowSeconds, defaultAgentOfflineWindowSeconds, 10, maxRetentionWindowSeconds, false)) * time.Second
-}
-
-func (s Settings) emptyRoomWindow() time.Duration {
-	return time.Duration(settingIntInRange(s.EmptyRoomWindowSeconds, defaultEmptyRoomWindowSeconds, 60, maxRetentionWindowSeconds, false)) * time.Second
 }
 
 func (s Settings) cleanupInterval() time.Duration {
@@ -229,9 +219,6 @@ func validateRetentionSettings(set Settings) error {
 	offlineSeconds := settingInt(set.AgentOfflineWindowSeconds, defaultAgentOfflineWindowSeconds)
 	if staleSeconds >= offlineSeconds {
 		return fmt.Errorf("agent_stale_window_seconds must be less than agent_offline_window_seconds")
-	}
-	if err := validateSettingRange("empty_room_window_seconds", set.EmptyRoomWindowSeconds, 60, maxRetentionWindowSeconds, false); err != nil {
-		return err
 	}
 	if err := validateSettingRange("cleanup_interval_seconds", set.CleanupIntervalSeconds, 10, maxCleanupIntervalSeconds, false); err != nil {
 		return err
@@ -291,10 +278,6 @@ func (s *store) agentStaleWindow() time.Duration {
 
 func (s *store) agentOfflineWindow() time.Duration {
 	return s.getSettings().agentOfflineWindow()
-}
-
-func (s *store) emptyRoomWindow() time.Duration {
-	return s.getSettings().emptyRoomWindow()
 }
 
 func (s *store) cleanupInterval() time.Duration {
