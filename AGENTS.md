@@ -298,7 +298,7 @@ definitions/emoji, sound metadata, attachment metadata, UI preferences, plus
 global retention settings for
 agent liveness (`liveness_sweep_seconds`, `agent_stale_window_seconds`,
 `agent_offline_window_seconds`), stale-agent pruning, cleanup
-cadence, message age/count limits, the global `memory_enabled` flag, the
+cadence, message expiry, the global `memory_enabled` flag, the
 default-on `leaderboard_enabled` flag, and the agent behaviour setting
 `inline_plan_appendix` (`"always"` | `"optional"`, default `"always"`).
 When `memory_enabled` is absent, the web UI has not asked yet and memory is

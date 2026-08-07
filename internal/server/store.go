@@ -329,56 +329,15 @@ func (s *store) cleanupStaleAgents() {
 	}
 }
 
+// cleanupMessages runs the sweep-time housekeeping that survives the retention
+// rework: reaping orphan attachments and orphan reactions. It no longer deletes
+// messages — read-time expiry hides old ones from bulk AI reads without
+// removing them, and message-retention deletion has been retired. Messages are
+// removed only via an explicit room delete (DELETE /rooms/{room_id}).
 func (s *store) cleanupMessages() {
 	now := time.Now().UTC()
-
-	s.mu.Lock()
-	changed := s.cleanupMessagesLocked(now)
-	if changed {
-		s.persistFullCoreLocked()
-	}
-	s.mu.Unlock()
 	s.cleanupAttachments(now)
 	s.cleanupReactionsForLiveMessages()
-}
-
-func (s *store) cleanupMessagesLocked(now time.Time) bool {
-	retentionWindow := s.messageRetentionWindow()
-	retentionCount := s.messageRetentionCount()
-	if retentionWindow == 0 && retentionCount == 0 {
-		return false
-	}
-
-	var cutoff time.Time
-	if retentionWindow > 0 {
-		cutoff = now.Add(-retentionWindow)
-	}
-
-	changed := false
-	for roomID, roomMessages := range s.messages {
-		start := 0
-		if retentionWindow > 0 {
-			for start < len(roomMessages) {
-				createdAt, err := time.Parse(time.RFC3339, roomMessages[start].CreatedAt)
-				if err != nil || !createdAt.Before(cutoff) {
-					break
-				}
-				start++
-			}
-		}
-		if retentionCount > 0 {
-			countStart := len(roomMessages) - retentionCount
-			if countStart > start {
-				start = countStart
-			}
-		}
-		if start > 0 {
-			kept := append([]types.Message(nil), roomMessages[start:]...)
-			s.messages[roomID] = kept
-			changed = true
-		}
-	}
-	return changed
 }
 
 func (s *store) requestCleanupReset() {

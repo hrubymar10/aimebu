@@ -19,12 +19,6 @@ func TestRetentionDefaultsMatchCurrentBehavior(t *testing.T) {
 	if got := s.cleanupInterval(); got != time.Minute {
 		t.Fatalf("cleanup interval = %s, want 1m", got)
 	}
-	if got := s.messageRetentionWindow(); got != 0 {
-		t.Fatalf("message retention window = %s, want unlimited", got)
-	}
-	if got := s.messageRetentionCount(); got != 0 {
-		t.Fatalf("message retention count = %d, want unlimited", got)
-	}
 }
 
 func TestCleanupStaleAgentsHonorsConfiguredWindow(t *testing.T) {
@@ -86,7 +80,7 @@ func TestHeartbeatPreventsStaleAgentCleanup(t *testing.T) {
 	}
 }
 
-// TestEmptyRoomSurvivesSweepAndRestart guards the T41 retention rework:
+// TestEmptyRoomSurvivesSweepAndRestart guards the retention rework:
 // rooms are never auto-deleted, by timer (sweep) or by restart. Previously
 // cleanupEmptyRooms deleted an empty room and all its messages after an hour,
 // and pruneOnStartup deleted any empty room (with all its messages) on every
@@ -143,122 +137,63 @@ func TestEmptyRoomSurvivesSweepAndRestart(t *testing.T) {
 	}
 }
 
-func TestCleanupMessagesHonorsAgeAndCount(t *testing.T) {
+// TestCleanupMessagesReapsOrphanReactionsAndKeepsMessages verifies the
+// post-retention-rework cleanupMessages: it no longer deletes messages (even
+// very old ones survive a sweep — read-time expiry hides them, not deletion),
+// but it still reaps orphan reactions (reactions for messages that no longer
+// exist, e.g. after an explicit room delete).
+func TestCleanupMessagesReapsOrphanReactionsAndKeepsMessages(t *testing.T) {
 	s, err := newStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	retentionSeconds := 120
-	retentionCount := 2
-	s.putSettings(Settings{
-		MessageRetentionSeconds: &retentionSeconds,
-		MessageRetentionCount:   &retentionCount,
-	})
 
 	now := time.Now().UTC()
 	s.mu.Lock()
 	s.rooms["general"] = &types.Room{ID: "general", Members: []string{"alex"}}
 	s.messages["general"] = []types.Message{
-		retentionTestMessage(1, "general", now.Add(-5*time.Minute)),
-		retentionTestMessage(2, "general", now.Add(-90*time.Second)),
-		retentionTestMessage(3, "general", now.Add(-30*time.Second)),
-		retentionTestMessage(4, "general", now),
-	}
-	s.mu.Unlock()
-	s.reactionsMu.Lock()
-	s.reactions[1] = []types.Reaction{{AgentID: "alex", Emoji: "👍", CreatedAt: now.Format(time.RFC3339)}}
-	s.reactions[4] = []types.Reaction{{AgentID: "alex", Emoji: "✅", CreatedAt: now.Format(time.RFC3339)}}
-	s.reactionsMu.Unlock()
-
-	s.cleanupMessages()
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	got := s.messages["general"]
-	if len(got) != 2 {
-		t.Fatalf("kept %d messages, want 2: %+v", len(got), got)
-	}
-	if got[0].ID != 3 || got[1].ID != 4 {
-		t.Fatalf("kept IDs = [%d %d], want [3 4]", got[0].ID, got[1].ID)
-	}
-
-	s.reactionsMu.RLock()
-	defer s.reactionsMu.RUnlock()
-	if _, ok := s.reactions[1]; ok {
-		t.Fatal("reaction for pruned message 1 was not removed")
-	}
-	if _, ok := s.reactions[4]; !ok {
-		t.Fatal("reaction for kept message 4 was removed")
-	}
-}
-
-func TestCleanupMessagesUnlimitedByDefault(t *testing.T) {
-	s, err := newStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	now := time.Now().UTC()
-	s.mu.Lock()
-	s.messages["general"] = []types.Message{
-		retentionTestMessage(1, "general", now.Add(-365*24*time.Hour)),
+		retentionTestMessage(1, "general", now.Add(-365*24*time.Hour)), // very old — must NOT be deleted
 		retentionTestMessage(2, "general", now),
 	}
-	s.mu.Unlock()
-
-	s.cleanupMessages()
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if got := len(s.messages["general"]); got != 2 {
-		t.Fatalf("kept %d messages with default unlimited retention, want 2", got)
-	}
-}
-
-func TestCleanupMessagesRemovesOrphanReactions(t *testing.T) {
-	s, err := newStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	retentionCount := 1
-	s.putSettings(Settings{MessageRetentionCount: &retentionCount})
-
-	now := time.Now().UTC()
-	s.mu.Lock()
-	s.rooms["general"] = &types.Room{ID: "general", Members: []string{"alex"}}
-	s.messages["general"] = []types.Message{
-		retentionTestMessage(1, "general", now.Add(-time.Minute)),
-		retentionTestMessage(2, "general", now),
-	}
+	s.persistFullCoreLocked()
 	s.mu.Unlock()
 	s.reactionsMu.Lock()
-	s.reactions[1] = []types.Reaction{{AgentID: "alex", Emoji: "👍", CreatedAt: now.Format(time.RFC3339)}}
-	s.reactions[2] = []types.Reaction{{AgentID: "alex", Emoji: "✅", CreatedAt: now.Format(time.RFC3339)}}
+	s.reactions[1] = []types.Reaction{{AgentID: "alex", Emoji: "👍", CreatedAt: now.Format(time.RFC3339)}}   // live
+	s.reactions[999] = []types.Reaction{{AgentID: "alex", Emoji: "✅", CreatedAt: now.Format(time.RFC3339)}} // orphan (no message 999)
 	s.persistReactionsLocked()
 	s.reactionsMu.Unlock()
 
 	s.cleanupMessages()
 
-	s.reactionsMu.RLock()
-	if _, ok := s.reactions[1]; ok {
-		t.Fatal("reaction for pruned message 1 was not removed")
+	// Messages all survive — no retention deletion anymore.
+	s.mu.RLock()
+	if got := len(s.messages["general"]); got != 2 {
+		t.Fatalf("cleanupMessages deleted messages: got %d, want 2 (no retention deletion)", got)
 	}
-	if _, ok := s.reactions[2]; !ok {
-		t.Fatal("reaction for kept message 2 was removed")
+	s.mu.RUnlock()
+
+	// Orphan reaction reaped; live reaction kept.
+	s.reactionsMu.RLock()
+	if _, ok := s.reactions[999]; ok {
+		t.Fatal("orphan reaction for non-existent message 999 was not reaped")
+	}
+	if _, ok := s.reactions[1]; !ok {
+		t.Fatal("live reaction for message 1 was reaped")
 	}
 	s.reactionsMu.RUnlock()
 
+	// Persists across reload.
 	reloaded, err := newStore(s.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reloaded.reactionsMu.RLock()
 	defer reloaded.reactionsMu.RUnlock()
-	if _, ok := reloaded.reactions[1]; ok {
-		t.Fatal("persisted reactions still contain pruned message 1")
+	if _, ok := reloaded.reactions[999]; ok {
+		t.Fatal("persisted reactions still contain orphan message 999")
 	}
-	if _, ok := reloaded.reactions[2]; !ok {
-		t.Fatal("persisted reactions dropped kept message 2")
+	if _, ok := reloaded.reactions[1]; !ok {
+		t.Fatal("persisted reactions dropped live message 1")
 	}
 }
 

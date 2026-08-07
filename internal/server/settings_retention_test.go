@@ -40,11 +40,8 @@ func TestRetentionSettingsDefaults(t *testing.T) {
 	if set.CleanupIntervalSeconds == nil || *set.CleanupIntervalSeconds != defaultCleanupIntervalSeconds {
 		t.Fatalf("cleanup_interval_seconds default = %v, want %d", set.CleanupIntervalSeconds, defaultCleanupIntervalSeconds)
 	}
-	if set.MessageRetentionSeconds == nil || *set.MessageRetentionSeconds != defaultMessageRetentionSeconds {
-		t.Fatalf("message_retention_seconds default = %v, want %d", set.MessageRetentionSeconds, defaultMessageRetentionSeconds)
-	}
-	if set.MessageRetentionCount == nil || *set.MessageRetentionCount != defaultMessageRetentionCount {
-		t.Fatalf("message_retention_count default = %v, want %d", set.MessageRetentionCount, defaultMessageRetentionCount)
+	if set.MessagesConsideredExpiredAfterSeconds == nil || *set.MessagesConsideredExpiredAfterSeconds != defaultMessagesConsideredExpiredAfterSeconds {
+		t.Fatalf("messages_considered_expired_after_seconds default = %v, want %d", set.MessagesConsideredExpiredAfterSeconds, defaultMessagesConsideredExpiredAfterSeconds)
 	}
 }
 
@@ -57,8 +54,7 @@ func TestRetentionSettingsRoundTrip(t *testing.T) {
 		"agent_stale_window_seconds": 120,
 		"agent_offline_window_seconds": 600,
 		"cleanup_interval_seconds": 15,
-		"message_retention_seconds": 120,
-		"message_retention_count": 42
+		"messages_considered_expired_after_seconds": 120
 	}`)
 	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/settings", body)
 	req.Header.Set("Content-Type", "application/json")
@@ -81,8 +77,7 @@ func TestRetentionSettingsRoundTrip(t *testing.T) {
 	assertIntPtr(t, "agent_stale_window_seconds", set.AgentStaleWindowSeconds, 120)
 	assertIntPtr(t, "agent_offline_window_seconds", set.AgentOfflineWindowSeconds, 600)
 	assertIntPtr(t, "cleanup_interval_seconds", set.CleanupIntervalSeconds, 15)
-	assertIntPtr(t, "message_retention_seconds", set.MessageRetentionSeconds, 120)
-	assertIntPtr(t, "message_retention_count", set.MessageRetentionCount, 42)
+	assertIntPtr(t, "messages_considered_expired_after_seconds", set.MessagesConsideredExpiredAfterSeconds, 120)
 }
 
 func TestRetentionSettingsValidation(t *testing.T) {
@@ -99,8 +94,8 @@ func TestRetentionSettingsValidation(t *testing.T) {
 		{name: "agent offline below floor", body: `{"agent_offline_window_seconds":9}`, field: "agent_offline_window_seconds"},
 		{name: "agent stale not below offline", body: `{"agent_stale_window_seconds":300,"agent_offline_window_seconds":300}`, field: "agent_stale_window_seconds"},
 		{name: "cleanup interval below floor", body: `{"cleanup_interval_seconds":9}`, field: "cleanup_interval_seconds"},
-		{name: "message seconds below floor", body: `{"message_retention_seconds":1}`, field: "message_retention_seconds"},
-		{name: "message count below floor", body: `{"message_retention_count":-1}`, field: "message_retention_count"},
+		{name: "expiry below floor", body: `{"messages_considered_expired_after_seconds":1}`, field: "messages_considered_expired_after_seconds"},
+		{name: "expiry above ceiling", body: `{"messages_considered_expired_after_seconds":2592001}`, field: "messages_considered_expired_after_seconds"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req, _ := http.NewRequest(http.MethodPut, srv.URL+"/settings", bytes.NewBufferString(tc.body))
@@ -129,7 +124,7 @@ func TestRetentionSettingsValidation(t *testing.T) {
 func TestRetentionSettingsAllowUnlimitedMessages(t *testing.T) {
 	_, srv := setupTestServer(t)
 
-	body := bytes.NewBufferString(`{"message_retention_seconds":0,"message_retention_count":0}`)
+	body := bytes.NewBufferString(`{"messages_considered_expired_after_seconds":0}`)
 	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/settings", body)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)

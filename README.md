@@ -485,10 +485,6 @@ and must be greater than `agent_stale_window_seconds`,
 bulk AI history reads only (humans always see everything); hidden messages
 stay stored and remain reachable by ID (`bus_message`) or search
 (`bus_recall`). See [docs/retention.md](docs/retention.md) for the full model.
-`message_retention_seconds` defaults to `0` for unlimited or allows
-`60..2592000`, and `message_retention_count` defaults to `0` for unlimited or
-allows `1..1000000`. Message retention is opt-in; when enabled, clients with
-read cursors older than pruned messages may observe gaps in history.
 Rooms are never auto-deleted — not by a timer when empty, not on server
 restart; an empty room and its messages persist until explicitly deleted via
 the room API. (Earlier versions deleted empty rooms after an hour and on

@@ -107,8 +107,6 @@ func (s *store) pruneOnStartup() {
 		room.Members = filtered
 	}
 
-	s.cleanupMessagesLocked(now)
-
 	s.persistFullCoreLocked()
 
 	if len(removedAgents) > 0 {

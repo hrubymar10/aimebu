@@ -28,8 +28,6 @@ type Settings struct {
 	AgentStaleWindowSeconds               *int   `json:"agent_stale_window_seconds,omitempty"`
 	AgentOfflineWindowSeconds             *int   `json:"agent_offline_window_seconds,omitempty"`
 	CleanupIntervalSeconds                *int   `json:"cleanup_interval_seconds,omitempty"`
-	MessageRetentionSeconds               *int   `json:"message_retention_seconds,omitempty"`
-	MessageRetentionCount                 *int   `json:"message_retention_count,omitempty"`
 	MessagesConsideredExpiredAfterSeconds *int   `json:"messages_considered_expired_after_seconds,omitempty"` // read-time expiry for bulk AI reads; 0 = never
 	InlinePlanAppendix                    string `json:"inline_plan_appendix,omitempty"`                      // "always" | "optional"; default "always"
 }
@@ -40,14 +38,11 @@ const (
 	defaultAgentStaleWindowSeconds               = 90
 	defaultAgentOfflineWindowSeconds             = 10 * 60
 	defaultCleanupIntervalSeconds                = 60
-	defaultMessageRetentionSeconds               = 0
-	defaultMessageRetentionCount                 = 0
 	defaultMessagesConsideredExpiredAfterSeconds = 6 * 60 * 60
 
 	maxRetentionWindowSeconds = 30 * 24 * 60 * 60
 	maxCleanupIntervalSeconds = 60 * 60
 	maxLivenessSweepSeconds   = 60 * 60
-	maxMessageRetentionCount  = 1_000_000
 )
 
 var validThemes = map[string]bool{
@@ -144,13 +139,9 @@ func (s *store) getSettings() Settings {
 		v := defaultCleanupIntervalSeconds
 		set.CleanupIntervalSeconds = &v
 	}
-	if set.MessageRetentionSeconds == nil {
-		v := defaultMessageRetentionSeconds
-		set.MessageRetentionSeconds = &v
-	}
-	if set.MessageRetentionCount == nil {
-		v := defaultMessageRetentionCount
-		set.MessageRetentionCount = &v
+	if set.MessagesConsideredExpiredAfterSeconds == nil {
+		v := defaultMessagesConsideredExpiredAfterSeconds
+		set.MessagesConsideredExpiredAfterSeconds = &v
 	}
 	if set.MessagesConsideredExpiredAfterSeconds == nil {
 		v := defaultMessagesConsideredExpiredAfterSeconds
@@ -180,14 +171,6 @@ func (s Settings) agentOfflineWindow() time.Duration {
 
 func (s Settings) cleanupInterval() time.Duration {
 	return time.Duration(settingIntInRange(s.CleanupIntervalSeconds, defaultCleanupIntervalSeconds, 10, maxCleanupIntervalSeconds, false)) * time.Second
-}
-
-func (s Settings) messageRetentionWindow() time.Duration {
-	return time.Duration(settingIntInRange(s.MessageRetentionSeconds, defaultMessageRetentionSeconds, 60, maxRetentionWindowSeconds, true)) * time.Second
-}
-
-func (s Settings) messageRetentionCount() int {
-	return settingIntInRange(s.MessageRetentionCount, defaultMessageRetentionCount, 1, maxMessageRetentionCount, true)
 }
 
 // expiredAfterWindow returns the read-time expiry window for bulk AI history
@@ -237,10 +220,8 @@ func validateRetentionSettings(set Settings) error {
 	if err := validateSettingRange("cleanup_interval_seconds", set.CleanupIntervalSeconds, 10, maxCleanupIntervalSeconds, false); err != nil {
 		return err
 	}
-	if err := validateSettingRange("message_retention_seconds", set.MessageRetentionSeconds, 60, maxRetentionWindowSeconds, true); err != nil {
-		return err
-	}
-	if err := validateSettingRange("message_retention_count", set.MessageRetentionCount, 1, maxMessageRetentionCount, true); err != nil {
+
+	if err := validateSettingRange("messages_considered_expired_after_seconds", set.MessagesConsideredExpiredAfterSeconds, 60, maxRetentionWindowSeconds, true); err != nil {
 		return err
 	}
 	if err := validateSettingRange("messages_considered_expired_after_seconds", set.MessagesConsideredExpiredAfterSeconds, 60, maxRetentionWindowSeconds, true); err != nil {
@@ -299,14 +280,6 @@ func (s *store) agentOfflineWindow() time.Duration {
 
 func (s *store) cleanupInterval() time.Duration {
 	return s.getSettings().cleanupInterval()
-}
-
-func (s *store) messageRetentionWindow() time.Duration {
-	return s.getSettings().messageRetentionWindow()
-}
-
-func (s *store) messageRetentionCount() int {
-	return s.getSettings().messageRetentionCount()
 }
 
 func (s *store) expiredAfterWindow() time.Duration {
