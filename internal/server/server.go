@@ -468,6 +468,21 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		_ = jsonOK(w, map[string]string{"status": "left", "room": roomID})
 	})
 
+	// POST /rooms/{room_id}/kick-agents — kick every AI member in one operation.
+	// Humans are never touched. Idempotent: a room with no AI members returns
+	// {"kicked": []} and 200. This is what makes hiding usable — a room containing
+	// agents cannot be hidden, and a single server-side kick can't half-succeed
+	// the way a client loop of single kicks can.
+	mux.HandleFunc("POST /rooms/{room_id}/kick-agents", func(w http.ResponseWriter, r *http.Request) {
+		roomID := r.PathValue("room_id")
+		kicked, remaining, err := s.kickAgents(roomID)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = jsonOK(w, map[string]any{"status": "kicked", "room": roomID, "kicked": kicked, "remaining": remaining})
+	})
+
 	// ── Room messages ──────────────────────────────────────────────
 
 	// POST /rooms/{room_id}/send

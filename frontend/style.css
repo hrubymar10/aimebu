@@ -5984,3 +5984,5 @@ body {
   font-size: 0.8rem;
   opacity: 0.8;
 }
+.room-item-pin { display: inline-flex; align-items: center; margin-right: 2px; color: var(--accent, #4ea1ff); }
+.room-item.pinned .room-item-name { font-weight: 700; }

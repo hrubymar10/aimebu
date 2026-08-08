@@ -287,6 +287,9 @@
   const roomSettingsTitle = $('#room-settings-title');
   const roomSettingsMembers = $('#room-settings-members');
   const roomSettingsRemoveBtn = $('#room-settings-remove-btn');
+  const roomSettingsKickAgentsBtn = $('#room-settings-kick-agents-btn');
+  const roomSettingsHideBtn = $('#room-settings-hide-btn');
+  const roomSettingsPinBtn = $('#room-settings-pin-btn');
   const roomMemorySelect = $('#room-memory-select');
   const roomMemoryStatusEl = $('#room-memory-status');
   const macroAddForm = $('#macro-add-form');
@@ -3934,10 +3937,14 @@
       unreadCounts = {};
       readCursors = {};
       attentionCounts = {};
+      roomPrefs = {};
       list.forEach(function (r) {
         unreadCounts[r.id] = r.unread_count || 0;
         readCursors[r.id] = r.read_cursor || 0;
         attentionCounts[r.id] = r.attention_unread_count || 0;
+        if (r.hidden || r.pinned) {
+          roomPrefs[r.id] = { hidden: !!r.hidden, pinned: !!r.pinned };
+        }
       });
       updateTitleAttention();
       renderRooms();
@@ -4793,6 +4800,12 @@
     renderRoomAgents();
     renderRoomSettings();
     renderMessageDebugModal();
+    // Re-fetch per-human prefs (hidden/pinned) so join-unhides reflect immediately.
+    // fetchMyRooms calls renderRooms itself, so skip the renderRooms above if it
+    // resolves fast enough — but the WS-driven render is the immediate paint and
+    // can't wait for the HTTP round-trip. The second render from fetchMyRooms is
+    // the correctness pass (prefs may have changed server-side on join).
+    fetchMyRooms().catch(function () {});
   }
 
   // Handles server-pushed attention_event: fires sound, bell, and OS notification
@@ -4938,11 +4951,17 @@
   // ── Render rooms ─────────────────────────────────────────────────
 
   function renderRooms() {
-    var channelRooms = rooms.filter(function (r) { return !isDM(r.id) && r.id !== '_system'; });
-    var dmRooms = rooms.filter(function (r) { return isDM(r.id); });
+    var visibleRooms = rooms.filter(function (r) {
+      return r.id === '_system' || !(roomPrefs[r.id] && roomPrefs[r.id].hidden);
+    });
+    var channelRooms = visibleRooms.filter(function (r) { return !isDM(r.id) && r.id !== '_system'; });
+    var dmRooms = visibleRooms.filter(function (r) { return isDM(r.id); });
 
     function sortList(list) {
       return list.slice().sort(function (a, b) {
+        var pa = !!(roomPrefs[a.id] && roomPrefs[a.id].pinned);
+        var pb = !!(roomPrefs[b.id] && roomPrefs[b.id].pinned);
+        if (pa !== pb) return pb - pa;
         var ma = (a.members || []).length;
         var mb = (b.members || []).length;
         if (mb !== ma) return mb - ma;
@@ -4958,17 +4977,21 @@
       var unread = unreadCounts[r.id] || 0;
       var hasUnread = unread > 0 && !isActive;
       var attention = attentionCounts[r.id] || 0;
+      var isPinned = !!(roomPrefs[r.id] && roomPrefs[r.id].pinned);
       var displayName = dm
         ? (members.length > 0 ? members.join(' · ') : r.id)
         : r.id;
       var icon = dm ? '@' : '#';
+      var pinGlyph = isPinned ? '<svg class="room-item-pin-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.828 1.172a4 4 0 00-5.656 0L3 2.343a1 1 0 001.414 1.414l.293-.293 2.758 2.758-1.586 1.586A1 1 0 007.293 9.414l1.586-1.586 2.758 2.758-.293.293a1 1 0 101.414 1.414l1.172-1.172a4 4 0 000-5.656L9.828 1.172z"/></svg>' : '';
       return (
         '<div class="room-item' +
           (isActive ? ' active' : '') +
           (dm ? ' dm' : '') +
           (hasUnread ? ' has-unread' : '') +
           (attention > 0 ? ' has-attention' : '') +
+          (isPinned ? ' pinned' : '') +
           '" data-room-id="' + esc(r.id) + '">' +
+          (pinGlyph ? '<span class="room-item-pin">' + pinGlyph + '</span>' : '') +
           '<span class="room-item-icon">' + icon + '</span>' +
           '<div class="room-item-info">' +
             '<div class="room-item-top">' +
@@ -5884,6 +5907,32 @@
     }
     if (roomSettingsTitle) roomSettingsTitle.textContent = 'Room Settings: ' + room.id;
     if (roomSettingsRemoveBtn) roomSettingsRemoveBtn.disabled = room.id === '_system';
+    // Kick all agents: disable for _system and when the room has no AI members.
+    var hasAIAgent = (room.members || []).some(function (mid) {
+      var a = agents.find(function (x) { return x.id === mid; });
+      return a && a.kind === 'ai';
+    });
+    if (roomSettingsKickAgentsBtn) roomSettingsKickAgentsBtn.disabled = room.id === '_system' || !hasAIAgent;
+    // Hide: disabled when not solo (roomHasOtherMember rule) or for _system.
+    var others = (room.members || []).filter(function (m) { return m !== agentID; });
+    var isSolo = others.length === 0;
+    if (roomSettingsHideBtn) {
+      roomSettingsHideBtn.disabled = room.id === '_system' || !isSolo;
+      roomSettingsHideBtn.title = (room.id === '_system' || !isSolo)
+        ? 'Only available when you are the last member of this room'
+        : 'Hide this room from your sidebar';
+    }
+    // Pin: always available (except _system).
+    if (roomSettingsPinBtn) {
+      roomSettingsPinBtn.disabled = room.id === '_system';
+      var isPinned = !!(roomPrefs[room.id] && roomPrefs[room.id].pinned);
+      roomSettingsPinBtn.textContent = isPinned ? 'Unpin room' : 'Pin room';
+    }
+    // Hide button label reflects current state.
+    if (roomSettingsHideBtn) {
+      var isHidden = !!(roomPrefs[room.id] && roomPrefs[room.id].hidden);
+      roomSettingsHideBtn.textContent = isHidden ? 'Unhide room' : 'Hide room';
+    }
     renderRoomMemorySettings(room);
     if (!opts.force && roomSettingsRoleSelectFocused()) {
       roomSettingsDirty = true;
@@ -6305,6 +6354,94 @@
     }).finally(function () {
       roomSettingsRemoveBtn.disabled = !activeRoomID || activeRoomID === '_system';
     });
+  });
+  // Kick all AI agents from the active room. Per wren #11810 / viv #11806: the
+  // response carries `remaining` (a point-in-time re-snapshot), but an agent can
+  // join between the kick and a later hide click — so this only updates the UI;
+  // the server's roomHasOtherMember check at hide time is the authoritative gate.
+  if (roomSettingsKickAgentsBtn) roomSettingsKickAgentsBtn.addEventListener('click', function () {
+    if (!activeRoomID || activeRoomID === '_system') return;
+    var kickRoomID = activeRoomID;
+    if (!confirm('Kick every AI agent from "' + kickRoomID + '"? They can re-join later.')) return;
+
+    roomSettingsKickAgentsBtn.disabled = true;
+    api('POST', '/rooms/' + encodeURIComponent(kickRoomID) + '/kick-agents').then(function (resp) {
+      var kicked = (resp && resp.kicked) || [];
+      var remaining = (resp && resp.remaining) || [];
+      if (remaining.length) {
+        // AI members survived the kick (e.g. a concurrent join) — room still not hideable.
+        alert('Kicked ' + kicked.length + ' agent(s), but ' + remaining.length + ' remain(s): ' + remaining.join(', ') + '. The room is still not hideable.');
+      } else {
+        // `remaining` (AI-only) is empty, but under the solo-only rule the room is
+        // hideable only when YOU are the sole member — another human still blocks it.
+        // Drive the message off the member count, not `remaining`.
+        var r = rooms.find(function (x) { return x.id === kickRoomID; });
+        var others = (r && r.members || []).filter(function (mid) { return mid !== agentID; });
+        if (others.length) {
+          alert('Kicked ' + kicked.length + ' agent(s). ' + others.length + ' other member(s) are still in the room, so it can\'t be hidden yet.');
+        } else if (kicked.length) {
+          alert('Kicked ' + kicked.length + ' agent(s). You are now alone in the room and can hide it.');
+        } else {
+          alert('No AI agents were in the room.');
+        }
+      }
+      // Refresh room state so the member list + button-disabled reflect reality.
+      // The GET result is intentionally discarded: `rooms` is already updated by
+      // WS room_update events by the time this lands — the fetch is a timing
+      // barrier so renderRoomSettings runs after those events settle, not a data
+      // source. Don't delete it (that reintroduces a race); if you touch it, call
+      // renderRoomSettings directly and accept the WS-has-already-updated timing.
+      return api('GET', '/rooms').then(function () { renderRoomSettings({ force: true }); });
+    }).catch(function (err) {
+      console.error('kick agents', err);
+      alert('Failed to kick agents: ' + (err && err.message ? err.message : err));
+    }).finally(function () {
+      // Re-evaluate disabled state from the current room membership.
+      var r = rooms.find(function (x) { return x.id === kickRoomID; });
+      var stillHasAI = r && (r.members || []).some(function (mid) {
+        var a = agents.find(function (x) { return x.id === mid; });
+        return a && a.kind === 'ai';
+      });
+      roomSettingsKickAgentsBtn.disabled = !r || r.id === '_system' || !stillHasAI;
+    });
+  });
+  // Hide/Unhide room — per-human, reversible. Solo-only rule enforced server-side;
+  // the button is disabled when not solo so the user can't attempt a refused action.
+  if (roomSettingsHideBtn) roomSettingsHideBtn.addEventListener('click', function () {
+    if (!activeRoomID || activeRoomID === '_system') return;
+    var hideRoomID = activeRoomID;
+    var isHidden = !!(roomPrefs[hideRoomID] && roomPrefs[hideRoomID].hidden);
+    var newHidden = !isHidden;
+    api('POST', '/agents/' + encodeURIComponent(agentID) + '/rooms/' + encodeURIComponent(hideRoomID) + '/prefs', { hidden: newHidden })
+      .then(function () { return fetchMyRooms(); })
+      .then(function () {
+        if (newHidden) {
+          closeRoomSettings();
+          alert('Room hidden — type its name in the join field to return.');
+        }
+        renderRoomSettings({ force: true });
+      })
+      .catch(function (err) {
+        // 409 = not solo (someone joined between the render and the click).
+        if (err && err.status === 409) {
+          alert('Cannot hide this room while anyone else is in it.');
+        } else {
+          alert('Failed to update hide preference: ' + (err && err.message ? err.message : err));
+        }
+      });
+  });
+  // Pin/Unpin room — per-human, always available (except _system).
+  if (roomSettingsPinBtn) roomSettingsPinBtn.addEventListener('click', function () {
+    if (!activeRoomID || activeRoomID === '_system') return;
+    var pinRoomID = activeRoomID;
+    var isPinned = !!(roomPrefs[pinRoomID] && roomPrefs[pinRoomID].pinned);
+    var newPinned = !isPinned;
+    api('POST', '/agents/' + encodeURIComponent(agentID) + '/rooms/' + encodeURIComponent(pinRoomID) + '/prefs', { pinned: newPinned })
+      .then(function () { return fetchMyRooms(); })
+      .then(function () { renderRoomSettings({ force: true }); })
+      .catch(function (err) {
+        alert('Failed to update pin preference: ' + (err && err.message ? err.message : err));
+      });
   });
   document.addEventListener('keydown', function (e) {
     var modifierOnly = (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;

@@ -178,6 +178,64 @@ func (s *store) leaveRoom(roomID, agentID string) error {
 	return s.leaveRoomWithEvent(roomID, agentID, false)
 }
 
+// kickAgents removes every kickable member from roomID in one operation,
+// reusing leaveRoomWithEvent (kicked=true) so each kicked agent gets the same
+// system message, role cleanup, and broadcast as a single kick. This is what
+// makes a room hideable: a room containing agents cannot be hidden, and kicking
+// them all in one server-side op can't half-succeed the way a client loop of
+// single kicks can. Idempotent: a room with no kickable members returns an
+// empty slice and no error.
+//
+// Scope is AI agents only: a room is hideable when you are alone in it, and
+// removing another person stays a deliberate per-person act rather than a
+// side effect of one button. kickableMember keeps that as a single predicate.
+func (s *store) kickableMember(id string) bool {
+	a, ok := s.agents[id]
+	return ok && a.Kind == "ai"
+}
+
+func (s *store) kickAgents(roomID string) ([]string, []string, error) {
+	// Snapshot kickable member IDs under the read lock; kick outside the lock
+	// since leaveRoomWithEvent takes s.mu itself.
+	s.mu.RLock()
+	room, exists := s.rooms[roomID]
+	if !exists {
+		s.mu.RUnlock()
+		return nil, nil, fmt.Errorf("room not found: %s", roomID)
+	}
+	var kickable []string
+	for _, m := range room.Members {
+		if s.kickableMember(m) {
+			kickable = append(kickable, m)
+		}
+	}
+	s.mu.RUnlock()
+
+	kicked := make([]string, 0, len(kickable))
+	for _, aid := range kickable {
+		if err := s.leaveRoomWithEvent(roomID, aid, true); err == nil {
+			kicked = append(kicked, aid)
+		}
+		// A failed individual kick (e.g. a concurrent leave) is skipped rather
+		// than aborting the batch — one stubborn member shouldn't strand the
+		// rest. The remaining re-snapshot below reports the truth regardless.
+	}
+	// Re-evaluate the room and report what's left, so the caller knows the
+	// post-state rather than deducing it from a count. A non-empty remaining
+	// means the room is still not hideable; the UI must not enable Hide then.
+	s.mu.RLock()
+	var remaining []string
+	if room, ok := s.rooms[roomID]; ok {
+		for _, m := range room.Members {
+			if s.kickableMember(m) {
+				remaining = append(remaining, m)
+			}
+		}
+	}
+	s.mu.RUnlock()
+	return kicked, remaining, nil
+}
+
 func (s *store) leaveRoomWithEvent(roomID, agentID string, kicked bool) error {
 	s.mu.Lock()
 
