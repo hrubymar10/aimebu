@@ -5683,7 +5683,22 @@ body {
   padding: 0 5px;
 }
 .switcher-tile-head .switcher-switch-btn {
-  margin-left: auto;
+  margin-left: 0; /* T43: Switch sits next to the profile name, not pushed right */
+}
+.switcher-tile-plan {
+  margin-left: auto; /* T43: plan badge moves here from the tile header, right-aligned */
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1px 6px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  flex: 0 1 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .switcher-profile-usage {

@@ -318,10 +318,7 @@
   const retentionLivenessSweepInput = $('#retention-liveness-sweep-input');
   const retentionAgentStaleInput = $('#retention-agent-stale-input');
   const retentionAgentOfflineInput = $('#retention-agent-offline-input');
-  const retentionEmptyRoomInput = $('#retention-empty-room-input');
   const retentionCleanupIntervalInput = $('#retention-cleanup-interval-input');
-  const retentionMessageSecondsInput = $('#retention-message-seconds-input');
-  const retentionMessageCountInput = $('#retention-message-count-input');
 
   // ── Harness icons ────────────────────────────────────────────────
 
@@ -2896,6 +2893,14 @@
     return '';
   }
 
+  // T43: placeholder icon for the per-profile Switch button — reuses the
+  // export-room share SVG (index.html:264). Defined once so it can be swapped for a
+  // proper icon later in a single place.
+  var SWITCHER_ICON_SVG = '<svg class="room-header-action-icon" width="16" height="16" viewBox="0 0 490.009 490.009" fill="currentColor" aria-hidden="true">' +
+    '<path d="M253.354,342.609c4.3,2,9.4,1.4,13-1.6l193.2-160c2.8-2.3,4.4-5.8,4.4-9.4c0-3.7-1.6-7.1-4.5-9.4l-193.1-159.4c-3.7-3-8.7-3.7-13-1.6c-4.3,2-7,6.3-7,11.1v83.7c-221.5,8-220.6,176-220.2,257.4v9.7c0,5.6,3.7,10.4,9.1,11.8c1,0.3,2.1,0.4,3.1,0.4c4.3,0,8.4-2.3,10.7-6.2c65.4-115.2,119.2-120.8,197.3-121.1v83.5C246.354,336.209,249.055,340.509,253.354,342.609z M50.855,319.909c1.1-35.5,5.8-77.8,25.2-113.6c30.8-57,90.5-85.2,182.6-86.1c6.7-0.1,12.1-5.5,12.1-12.2v-69.8l161.7,133.4l-161.6,133.8v-69.7c0-3.2-1.3-6.4-3.6-8.7s-5.4-3.6-8.7-3.6C172.855,223.509,113.755,228.609,50.855,319.909z"/>' +
+    '<path d="M461.555,477.809v-226c0-6.8-5.5-12.3-12.3-12.3s-12.3,5.5-12.3,12.3v213.7h-386.3v-41.6c0-6.8-5.5-12.3-12.3-12.3s-12.3,5.5-12.3,12.3v53.8c0,6.8,5.5,12.3,12.3,12.3h410.9C456.055,490.009,461.555,484.509,461.555,477.809z"/>' +
+    '</svg>';
+
   // Renders each switcher profile as a block inside the provider tile, with its
   // own usage windows — so every account's quota is visible at once, not just
   // the active one. Returns '' when the switcher is off or the tool has no
@@ -2911,15 +2916,23 @@
     return profiles.map(function (p) {
       var snap = snaps[tool + '/' + p.name] || {};
       var activeTag = p.active ? '<span class="switcher-tile-active">active</span>' : '';
+      // T43: Switch control sits next to the profile name (not pushed right);
+      // the plan badge moves here (right-aligned) from the tile header, since
+      // each profile has its own plan. The button is an icon (export-room
+      // pattern, share-SVG placeholder) with title/aria-label "Switch to <name>";
+      // data-empty keeps the empty-profile switch confirmation.
       var switchBtn = (!p.active && !blocked)
-        ? '<button class="btn btn-sm switcher-switch-btn" type="button"' +
+        ? '<button class="btn btn-sm btn-md-toggle btn-icon-sm switcher-switch-btn" type="button"' +
             ' data-tool="' + esc(tool) + '" data-profile="' + esc(p.name) + '"' +
-            (!p.has_credentials ? ' data-empty="1"' : '') + '>Switch</button>'
+            (!p.has_credentials ? ' data-empty="1"' : '') +
+            ' title="Switch to ' + esc(p.name) + '" aria-label="Switch to ' + esc(p.name) + '">' +
+            SWITCHER_ICON_SVG + '</button>'
         : '';
       var emailTitle = p.email ? ' title="' + esc(p.email) + '"' : '';
+      var planBadge = snap.plan ? '<span class="switcher-tile-plan">' + esc(snap.plan) + '</span>' : '';
       var head = '<div class="switcher-tile-head">' +
         '<span class="switcher-tile-name"' + emailTitle + '>' + esc(p.name) + '</span>' +
-        activeTag + switchBtn +
+        switchBtn + activeTag + planBadge +
       '</div>';
       var body;
       if (!p.has_credentials) {
@@ -2963,7 +2976,7 @@
     return '<div class="usages-provider-tile" data-provider="' + esc(snap.provider || row.key) + '">' +
       '<div class="usages-provider-heading">' +
         '<div class="usages-provider-title"><span class="' + esc(usageProviderIconClass(snap.provider || row.key)) + '">' + usageProviderIcon(snap.provider || row.key) + '</span><div><div class="usages-provider-name">' + esc(label) + '</div><div class="usages-provider-updated">' + esc(updated) + '</div></div></div>' +
-        '<span class="usages-plan-badge">' + esc(plan || '-') + '</span>' +
+        (profileBlocks ? '' : '<span class="usages-plan-badge">' + esc(plan || '-') + '</span>') +
       '</div>' +
       usageStaleLine(snap) +
       windows +
@@ -4222,10 +4235,7 @@
     if (retentionLivenessSweepInput) retentionLivenessSweepInput.value = serverSettings.liveness_sweep_seconds || 15;
     if (retentionAgentStaleInput) retentionAgentStaleInput.value = serverSettings.agent_stale_window_seconds || 90;
     if (retentionAgentOfflineInput) retentionAgentOfflineInput.value = serverSettings.agent_offline_window_seconds || 300;
-    if (retentionEmptyRoomInput) retentionEmptyRoomInput.value = serverSettings.empty_room_window_seconds || 3600;
     if (retentionCleanupIntervalInput) retentionCleanupIntervalInput.value = serverSettings.cleanup_interval_seconds || 60;
-    if (retentionMessageSecondsInput) retentionMessageSecondsInput.value = serverSettings.message_retention_seconds || 0;
-    if (retentionMessageCountInput) retentionMessageCountInput.value = serverSettings.message_retention_count || 0;
   }
 
   function saveRetentionSetting(field, input) {
@@ -4234,14 +4244,6 @@
     var value = parseInt(input.value, 10);
     if (!Number.isFinite(value)) return;
     var ok = input.checkValidity();
-    if (field === 'message_retention_seconds' && !(value === 0 || (value >= 60 && value <= 2592000))) {
-      input.setCustomValidity('Use 0 for unlimited, or a value from 60 to 2592000.');
-      ok = false;
-    }
-    if (field === 'message_retention_count' && !(value === 0 || (value >= 1 && value <= 1000000))) {
-      input.setCustomValidity('Use 0 for unlimited, or a value from 1 to 1000000.');
-      ok = false;
-    }
     if (field === 'agent_stale_window_seconds') {
       var offlineValue = parseInt(retentionAgentOfflineInput && retentionAgentOfflineInput.value, 10);
       if (Number.isFinite(offlineValue) && value >= offlineValue) {
@@ -6392,10 +6394,7 @@
     [retentionLivenessSweepInput, 'liveness_sweep_seconds'],
     [retentionAgentStaleInput, 'agent_stale_window_seconds'],
     [retentionAgentOfflineInput, 'agent_offline_window_seconds'],
-    [retentionEmptyRoomInput, 'empty_room_window_seconds'],
-    [retentionCleanupIntervalInput, 'cleanup_interval_seconds'],
-    [retentionMessageSecondsInput, 'message_retention_seconds'],
-    [retentionMessageCountInput, 'message_retention_count']
+    [retentionCleanupIntervalInput, 'cleanup_interval_seconds']
   ].forEach(function (entry) {
     var input = entry[0];
     var field = entry[1];
