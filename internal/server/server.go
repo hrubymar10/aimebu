@@ -535,14 +535,26 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		if sid := r.URL.Query().Get("since_id"); sid != "" {
 			sinceID, _ = strconv.ParseInt(sid, 10, 64)
 		}
+		var beforeID int64
+		if bid := r.URL.Query().Get("before_id"); bid != "" {
+			beforeID, _ = strconv.ParseInt(bid, 10, 64)
+		}
+		// since_id (catch-up: newer than X) and before_id (page-back: older than
+		// X) express opposite intents; honouring both silently is a bug nobody
+		// can reproduce, so reject with a message naming both.
+		if sinceID > 0 && beforeID > 0 {
+			jsonError(w, "since_id and before_id are mutually exclusive (catch-up vs page-back)", http.StatusBadRequest)
+			return
+		}
 
 		// Expiry applies only to bulk reads by AI agents. Humans (no agent_id
 		// or a human agent) see full history; window==0 means never expire.
+		// Paging back (before_id) does not bypass expiry.
 		var window time.Duration
 		if agentID != "" && s.agentIsAI(agentID) {
 			window = s.expiredAfterWindow()
 		}
-		msgs, expired := s.roomMessagesWithExpiry(roomID, limit, sinceID, window)
+		msgs, expired := s.roomMessagesWithExpiry(roomID, limit, sinceID, beforeID, window)
 		msgs = s.withReactionSummaries(msgs, agentID)
 
 		resp := map[string]any{"room": roomID}

@@ -183,18 +183,24 @@ type ExpiredMarker struct {
 	Hint            string `json:"hint"`
 }
 
-// roomMessagesWithExpiry returns bulk history (messages with ID > sinceID,
-// newest-first, capped by limit) applying read-time expiry when window > 0.
+// roomMessagesWithExpiry returns bulk history applying read-time expiry when
+// window > 0. sinceID and beforeID are mutually exclusive (the handler rejects
+// both): sinceID > 0 returns messages with ID > sinceID, newest-first (catch-up);
+// beforeID > 0 returns messages with ID < beforeID, the newest `limit` of them,
+// newest-first — the same ordering as every other response from this endpoint,
+// regardless of since_id vs before_id. The client reverses exactly as it does
+// for the since_id path; one URL must not change ordering by query parameter.
 // Expired messages (created_at older than the window) are excluded and
 // summarized in the returned *ExpiredMarker (nil when nothing is expired or
 // window == 0). window == 0 means never expire: no filter, no marker. Expiry
 // is computed at read time from created_at; nothing is stored on the message,
 // so changing the setting re-scopes every room instantly with no migration.
-func (s *store) roomMessagesWithExpiry(roomID string, limit int, sinceID int64, window time.Duration) ([]types.Message, *ExpiredMarker) {
-	return s.roomMessagesWithExpiryAt(roomID, limit, sinceID, window, time.Now().UTC())
+// Paging back does not bypass expiry: AI reads still get the window + marker.
+func (s *store) roomMessagesWithExpiry(roomID string, limit int, sinceID, beforeID int64, window time.Duration) ([]types.Message, *ExpiredMarker) {
+	return s.roomMessagesWithExpiryAt(roomID, limit, sinceID, beforeID, window, time.Now().UTC())
 }
 
-func (s *store) roomMessagesWithExpiryAt(roomID string, limit int, sinceID int64, window time.Duration, now time.Time) ([]types.Message, *ExpiredMarker) {
+func (s *store) roomMessagesWithExpiryAt(roomID string, limit int, sinceID, beforeID int64, window time.Duration, now time.Time) ([]types.Message, *ExpiredMarker) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -207,8 +213,14 @@ func (s *store) roomMessagesWithExpiryAt(roomID string, limit int, sinceID int64
 	var live []types.Message
 	var expiredCount int
 	var oldestExpired, newestExpired int64
+	pageBack := beforeID > 0
+
 	for _, m := range s.messages[roomID] {
-		if m.ID <= sinceID {
+		if pageBack {
+			if m.ID >= beforeID {
+				continue
+			}
+		} else if m.ID <= sinceID {
 			continue
 		}
 		if applyExpiry {
@@ -227,7 +239,9 @@ func (s *store) roomMessagesWithExpiryAt(roomID string, limit int, sinceID int64
 		live = append(live, m)
 	}
 
-	// Newest-first, capped by limit (matches roomMessages).
+	// Cap by limit (newest `limit` of the candidates) and reverse to newest-first
+	// — identical ordering to every other response from this endpoint, whether
+	// the caller passed since_id or before_id. Storage order is ascending by ID.
 	n := len(live)
 	if limit > 0 && limit < n {
 		live = live[n-limit:]
