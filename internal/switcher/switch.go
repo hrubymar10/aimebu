@@ -27,29 +27,36 @@ import (
 //
 // The flock on switcher/.lock is held for the entire operation so a concurrent
 // CLI or server switch cannot interleave.
-func (m *Manager) Switch(tool, name string) (active string, err error) {
+func (m *Manager) Switch(tool, name string) (active string, switched bool, err error) {
 	// 1. Validate the target name before any I/O. Apply the same validateProfileName
 	// guard that Add/Import/Rename/Remove all use — a check applied everywhere except
 	// one place reads as complete in review but isn't.
 	if err := validateProfileName(name); err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	// Check eligibility before taking the lock: reads only the live credentials
 	// file and does not touch switcher state. Failing fast here avoids the lock
 	// overhead when the tool is plainly not logged in.
+	//
+	// Absent live creds do NOT block the switch — switching away
+	// from a profile with no live login captures nothing and proceeds, so you
+	// can't get stuck on an empty active profile. Corrupt creds still refuse:
+	// capturing a corrupt file over a good stored profile would destroy real
+	// credentials, the one thing this feature must never do.
 	el, err := m.eligibilityFor(tool)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	if !el.Eligible {
-		return "", &NotEligibleError{Tool: tool, Reason: el.Reason}
+	if !el.Eligible && !el.Absent {
+		return "", false, &NotEligibleError{Tool: tool, Reason: el.Reason}
 	}
+	liveAbsent := el.Absent
 
 	// Acquire the flock before reading or writing any state.
 	lock, lockErr := m.acquireLock()
 	if lockErr != nil {
-		return "", fmt.Errorf("acquire switcher lock: %w", lockErr)
+		return "", false, fmt.Errorf("acquire switcher lock: %w", lockErr)
 	}
 	defer func() {
 		if unlockErr := lock.unlock(); unlockErr != nil && err == nil {
@@ -61,57 +68,76 @@ func (m *Manager) Switch(tool, name string) (active string, err error) {
 	// and Switch are serialized on the same flock — no cross-lock race.
 	state, err := m.loadState()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if !state.Enabled {
-		return "", ErrDisabled
+		return "", false, ErrDisabled
 	}
 	activeProfile := state.Active[tool]
 	if activeProfile == "" {
-		return "", ErrNoActiveProfile
+		return "", false, ErrNoActiveProfile
 	}
 	// Validate the stored active name too — defence in depth. state.json could
 	// contain a poisoned value written before this guard existed, or have been
 	// hand-edited. A stored traversal name would turn the capture step into an
 	// arbitrary file write; refuse to proceed rather than trusting old state.
 	if err := validateProfileName(activeProfile); err != nil {
-		return "", fmt.Errorf("corrupt state: active profile name invalid: %w", err)
+		return "", false, fmt.Errorf("corrupt state: active profile name invalid: %w", err)
 	}
 	targetDir := m.profileDir(tool, name)
 	if _, statErr := os.Stat(targetDir); statErr != nil {
-		return "", fmt.Errorf("%w: %s/%s", ErrProfileNotFound, tool, name)
+		return "", false, fmt.Errorf("%w: %s/%s", ErrProfileNotFound, tool, name)
+	}
+
+	// Switching to the already-active profile is an explicit no-op: return before
+	// any capture or restore. A pointless capture-and-restore cycle over the live
+	// credentials file is the one thing this feature must never risk — even a
+	// no-op-looking round trip writes to a live path for no reason, and an empty
+	// already-active profile would otherwise delete the live file. This also
+	// covers the UI re-entry window where a second Switch click targets the
+	// profile that is already active.
+	if name == activeProfile {
+		return name, false, nil
 	}
 
 	livePath, err := m.liveCredPath(tool)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	// 2. Validate the live credentials before writing anything. A corrupt live
 	// file must abort here — storing those bytes into the outgoing profile would
-	// overwrite the known-good stored copy with garbage.
-	liveData, readErr := os.ReadFile(livePath)
-	if readErr != nil {
-		return "", fmt.Errorf("%w: cannot read live credentials: %s", ErrInvalidCredentials, readErr)
-	}
-	if valErr := validateLiveCred(tool, livePath); valErr != nil {
-		return "", valErr
+	// overwrite the known-good stored copy with garbage. SKIPPED when the live
+	// file is absent (liveAbsent): there's nothing to capture or validate, so we
+	// proceed straight to restoring the target.
+	var liveData []byte
+	if !liveAbsent {
+		var readErr error
+		liveData, readErr = os.ReadFile(livePath)
+		if readErr != nil {
+			return "", false, fmt.Errorf("%w: cannot read live credentials: %s", ErrInvalidCredentials, readErr)
+		}
+		if valErr := validateLiveCred(tool, livePath); valErr != nil {
+			return "", false, valErr
+		}
 	}
 
-	// 3. Capture: update the stored copy of the outgoing profile.
-	captureDir := m.profileDir(tool, activeProfile)
-	if err := os.MkdirAll(captureDir, 0o700); err != nil {
-		return "", fmt.Errorf("capture: mkdir: %w", err)
+	// 3. Capture: update the stored copy of the outgoing profile. SKIPPED when
+	// liveAbsent — capturing nothing is exactly the point.
+	if !liveAbsent {
+		captureDir := m.profileDir(tool, activeProfile)
+		if err := os.MkdirAll(captureDir, 0o700); err != nil {
+			return "", false, fmt.Errorf("capture: mkdir: %w", err)
+		}
+		captureDest := m.profileCredPath(tool, activeProfile)
+		if err := atomicWrite(captureDest, liveData, 0o600); err != nil {
+			return "", false, fmt.Errorf("capture: %w", err)
+		}
 	}
-	captureDest := m.profileCredPath(tool, activeProfile)
-	if err := atomicWrite(captureDest, liveData, 0o600); err != nil {
-		return "", fmt.Errorf("capture: %w", err)
-	}
-	// Capture the outgoing account's identity too. Claude keeps its email in a
-	// global .claude.json that stays behind when credentials move, so without
-	// this the profile would later report whichever account is live.
+	// Capture the outgoing account's identity too (claude only). SKIPPED when
+	// liveAbsent — no live login means no outgoing identity to capture.
 	var liveEmail string
-	if tool == ToolClaude {
+	if !liveAbsent && tool == ToolClaude {
 		liveEmail = m.claudeEmailFromDotJSON()
 		// The outgoing profile was genuinely in use, so this address is its own —
 		// unless it is itself only the stale marker from an earlier switch.
@@ -120,13 +146,16 @@ func (m *Manager) Switch(tool, name string) (active string, err error) {
 		}
 	}
 
-	// 4. Backup: safety copy of the live file before we overwrite it.
-	backupFilePath := m.backupPath(tool, activeProfile, time.Now().Unix())
-	if err := os.MkdirAll(filepath.Dir(backupFilePath), 0o700); err != nil {
-		return "", fmt.Errorf("backup: mkdir: %w", err)
-	}
-	if err := atomicWrite(backupFilePath, liveData, 0o600); err != nil {
-		return "", fmt.Errorf("backup: %w", err)
+	// 4. Backup: safety copy of the live file before we overwrite it. SKIPPED
+	// when liveAbsent — there's no live file to back up.
+	if !liveAbsent {
+		backupFilePath := m.backupPath(tool, activeProfile, time.Now().Unix())
+		if err := os.MkdirAll(filepath.Dir(backupFilePath), 0o700); err != nil {
+			return "", false, fmt.Errorf("backup: mkdir: %w", err)
+		}
+		if err := atomicWrite(backupFilePath, liveData, 0o600); err != nil {
+			return "", false, fmt.Errorf("backup: %w", err)
+		}
 	}
 
 	// 5+6: ordering depends on whether the target profile is empty.
@@ -147,46 +176,68 @@ func (m *Manager) Switch(tool, name string) (active string, err error) {
 		// Empty target: state first, then delete live.
 		state.Active[tool] = name
 		if stateErr := m.saveState(state); stateErr != nil {
-			return "", fmt.Errorf("update state: %w", stateErr)
+			return "", false, fmt.Errorf("update state: %w", stateErr)
 		}
 		if removeErr := os.Remove(livePath); removeErr != nil && !os.IsNotExist(removeErr) {
 			// State is updated but live file persists. Rollback both.
+			//
+			// Unreachable when liveAbsent: os.Remove on an already-absent file
+			// returns os.ErrNotExist, so the !os.IsNotExist guard above skips
+			// this block entirely — the atomicWrite(livePath, liveData) below
+			// never runs with liveData==nil. The guard is load-bearing for that;
+			// don't weaken it. (An atomicWrite of nil bytes to a live
+			// credentials path is the scariest line in this file, so this note
+			// exists to save the next reader from re-deriving the unreachability.)
 			state.Active[tool] = activeProfile
 			_ = m.saveState(state)
 			liveDir, _ := m.liveCredDir(tool)
 			_ = os.MkdirAll(liveDir, 0o700)
 			if rbErr := atomicWrite(livePath, liveData, 0o600); rbErr != nil {
-				return "", fmt.Errorf("remove live failed (%s) and rollback also failed (%s)", removeErr, rbErr)
+				return "", false, fmt.Errorf("remove live failed (%s) and rollback also failed (%s)", removeErr, rbErr)
 			}
-			return "", fmt.Errorf("remove live credentials for empty profile: %w", removeErr)
+			return "", false, fmt.Errorf("remove live credentials for empty profile: %w", removeErr)
 		}
 		m.markIncomingStale(tool, name, liveEmail)
-		return name, nil
+		return name, true, nil
 	}
 
 	// Non-empty target: restore credentials first (step 5), then update state (step 6).
 	restoreErr := m.restoreProfile(tool, name, livePath)
 	if restoreErr != nil {
-		liveDir, _ := m.liveCredDir(tool)
-		_ = os.MkdirAll(liveDir, 0o700)
-		if rbErr := atomicWrite(livePath, liveData, 0o600); rbErr != nil {
-			return "", fmt.Errorf("restore failed (%s) and rollback also failed (%s)", restoreErr, rbErr)
+		// For liveAbsent the live file was absent before the switch and restore
+		// failed before writing (atomicWrite is temp+rename, so no partial), so
+		// live is still absent — nothing to roll back. For non-absent, write the
+		// captured liveData back to restore the pre-switch credentials.
+		if !liveAbsent {
+			liveDir, _ := m.liveCredDir(tool)
+			_ = os.MkdirAll(liveDir, 0o700)
+			if rbErr := atomicWrite(livePath, liveData, 0o600); rbErr != nil {
+				return "", false, fmt.Errorf("restore failed (%s) and rollback also failed (%s)", restoreErr, rbErr)
+			}
 		}
-		return "", restoreErr
+		return "", false, restoreErr
 	}
 
 	state.Active[tool] = name
 	if stateErr := m.saveState(state); stateErr != nil {
-		liveDir, _ := m.liveCredDir(tool)
-		_ = os.MkdirAll(liveDir, 0o700)
-		if rbErr := atomicWrite(livePath, liveData, 0o600); rbErr != nil {
-			return "", fmt.Errorf("state save failed (%s) and rollback also failed (%s)", stateErr, rbErr)
+		// Restore succeeded so live now holds the target's creds; state save
+		// failed, so roll back to the pre-switch live state. For non-absent that's
+		// the captured liveData; for liveAbsent the pre-state was no live file at
+		// all, so remove it rather than writing nil bytes.
+		if liveAbsent {
+			_ = os.Remove(livePath)
+		} else {
+			liveDir, _ := m.liveCredDir(tool)
+			_ = os.MkdirAll(liveDir, 0o700)
+			if rbErr := atomicWrite(livePath, liveData, 0o600); rbErr != nil {
+				return "", false, fmt.Errorf("state save failed (%s) and rollback also failed (%s)", stateErr, rbErr)
+			}
 		}
-		return "", fmt.Errorf("update state: %w", stateErr)
+		return "", false, fmt.Errorf("update state: %w", stateErr)
 	}
 
 	m.markIncomingStale(tool, name, liveEmail)
-	return name, nil
+	return name, true, nil
 }
 
 // markIncomingStale records, on the profile just switched to, the address

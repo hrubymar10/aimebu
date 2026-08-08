@@ -249,7 +249,7 @@ func testSwitchRoundTrip(t *testing.T, tool string) {
 
 		// State: profile-a is active with credential "a-v1".
 		// Switch to profile-b.
-		active, err := m.Switch(tool, "profile-b")
+		active, _, err := m.Switch(tool, "profile-b")
 		must(t, err)
 		if active != "profile-b" {
 			t.Fatalf("Switch returned active=%q, want profile-b", active)
@@ -271,7 +271,7 @@ func testSwitchRoundTrip(t *testing.T, tool string) {
 		_ = credA2 // switch back uses live (profile-b) creds as capture source
 
 		// Switch back to profile-a.
-		active, err = m.Switch(tool, "profile-a")
+		active, _, err = m.Switch(tool, "profile-a")
 		must(t, err)
 		if active != "profile-a" {
 			t.Fatalf("Switch returned active=%q, want profile-a", active)
@@ -308,7 +308,7 @@ func TestSwitchExpiredCredentials(t *testing.T) {
 		must(t, os.MkdirAll(m.profileDir(ToolClaude, "future-profile"), 0o700))
 		must(t, os.WriteFile(m.profileCredPath(ToolClaude, "future-profile"), []byte(futureCred), 0o600))
 
-		_, err := m.Switch(ToolClaude, "future-profile")
+		_, _, err := m.Switch(ToolClaude, "future-profile")
 		if err != nil {
 			t.Fatalf("Switch with expired live cred failed: %v (expired ≠ malformed)", err)
 		}
@@ -332,7 +332,7 @@ func TestSwitchExpiredCredentials(t *testing.T) {
 		must(t, os.MkdirAll(m.profileDir(ToolCodex, "future-profile"), 0o700))
 		must(t, os.WriteFile(m.profileCredPath(ToolCodex, "future-profile"), []byte(futureCred), 0o600))
 
-		_, err := m.Switch(ToolCodex, "future-profile")
+		_, _, err := m.Switch(ToolCodex, "future-profile")
 		if err != nil {
 			t.Fatalf("Switch codex with expired JWT failed: %v (expired JWT ≠ malformed)", err)
 		}
@@ -366,7 +366,7 @@ func TestSwitchCorruptLiveAborts(t *testing.T) {
 	// tool not eligible (step 1 guard), so ErrNotEligible is the returned sentinel.
 	// (The step-2 validate-before-write guard would also catch it, but the
 	// eligibility check fires first since both call the same validator.)
-	_, err := m.Switch(ToolClaude, "profile-b")
+	_, _, err := m.Switch(ToolClaude, "profile-b")
 	if err == nil {
 		t.Fatal("expected error for corrupt live creds, got nil")
 	}
@@ -390,11 +390,109 @@ func TestSwitchToEmptyProfileDeletesLive(t *testing.T) {
 	must(t, m.Import(ToolClaude, "full-profile"))
 	must(t, m.Add(ToolClaude, "empty-profile")) // empty — no creds stored
 
-	_, err := m.Switch(ToolClaude, "empty-profile")
+	_, _, err := m.Switch(ToolClaude, "empty-profile")
 	must(t, err)
 
 	if _, err := os.Stat(livePath); !os.IsNotExist(err) {
 		t.Fatalf("live file should be deleted after switch to empty profile; err=%v", err)
+	}
+}
+
+// TestSwitchAwayFromAbsentLiveSucceeds is the absent-live trap: the active profile has
+// no live login (live creds file absent), so the old Switch refused to switch
+// away — stranding the user on the one profile with no credentials. Under the
+// fix, absent live is allowed: capture nothing, restore the target, proceed.
+// The outgoing profile's stored copy must NOT be touched (nothing to capture).
+func TestSwitchAwayFromAbsentLiveSucceeds(t *testing.T) {
+	m, home := newTestManager(t)
+	must(t, m.SetEnabled(true))
+
+	// Seed a live login + import it as profile-a (active), then seed profile-b
+	// with stored creds.
+	livePath := writeLive(t, home, ToolClaude, futureClaude("tok-a"))
+	must(t, m.Import(ToolClaude, "profile-a"))
+	must(t, m.Add(ToolClaude, "profile-b"))
+	credB := futureClaude("tok-b")
+	must(t, os.WriteFile(m.profileCredPath(ToolClaude, "profile-b"), []byte(credB), 0o600))
+
+	// Simulate the active profile having no live login: delete the live file.
+	must(t, os.Remove(livePath))
+	if _, err := os.Stat(livePath); !os.IsNotExist(err) {
+		t.Fatalf("setup: live file should be absent before switch")
+	}
+	storedABefore := readFile(t, m.profileCredPath(ToolClaude, "profile-a"))
+
+	// Switch away from the absent-live active profile — must succeed (the absent-live fix).
+	active, switched, err := m.Switch(ToolClaude, "profile-b")
+	if err != nil {
+		t.Fatalf("switch away from absent live failed: %v", err)
+	}
+	if !switched {
+		t.Fatal("absent-live switch returned switched=false; want true (a real switch happened)")
+	}
+	if active != "profile-b" {
+		t.Fatalf("Switch returned active=%q, want profile-b", active)
+	}
+	// Live now holds profile-b's stored creds.
+	if got := readFile(t, livePath); got != credB {
+		t.Fatalf("live cred after switch = %q, want %q", got, credB)
+	}
+	// The outgoing profile-a's stored copy is UNCHANGED — nothing was captured.
+	if got := readFile(t, m.profileCredPath(ToolClaude, "profile-a")); got != storedABefore {
+		t.Fatalf("outgoing profile-a stored creds changed during absent-live switch; want %q got %q", storedABefore, got)
+	}
+	// No backup file should have been written for the outgoing profile (nothing to back up).
+	backupToolDir := filepath.Join(m.backupsRoot(), ToolClaude)
+	if entries, err := os.ReadDir(backupToolDir); err == nil {
+		for _, b := range entries {
+			if strings.Contains(b.Name(), "profile-a") {
+				t.Fatalf("backup file written for absent-live outgoing profile: %s", b.Name())
+			}
+		}
+	}
+}
+
+// TestSwitchToAlreadyActiveIsNoOp pins the hardening from #11898: switching to
+// the already-active profile does nothing — no capture, no restore, no write to
+// the live credentials file. Without this, an already-active switch would
+// capture live and restore into the same profile (pointless write over a live
+// path), or for an empty already-active profile, delete the live file.
+func TestSwitchToAlreadyActiveIsNoOp(t *testing.T) {
+	m, home := newTestManager(t)
+	must(t, m.SetEnabled(true))
+
+	liveCred := futureClaude("tok-active")
+	livePath := writeLive(t, home, ToolClaude, liveCred)
+	must(t, m.Import(ToolClaude, "profile-a")) // profile-a is active, live = liveCred
+	storedBefore := readFile(t, m.profileCredPath(ToolClaude, "profile-a"))
+
+	// Switch to the already-active profile-a — must no-op.
+	active, switched, err := m.Switch(ToolClaude, "profile-a")
+	if err != nil {
+		t.Fatalf("switch to already-active failed: %v", err)
+	}
+	if switched {
+		t.Fatal("already-active switch returned switched=true; want false (no-op must report no switch)")
+	}
+	if active != "profile-a" {
+		t.Fatalf("Switch returned active=%q, want profile-a", active)
+	}
+	// Live file untouched — same bytes, still present.
+	if got := readFile(t, livePath); got != liveCred {
+		t.Fatalf("live cred changed during already-active no-op; want %q got %q", liveCred, got)
+	}
+	// Stored profile-a untouched (no capture happened).
+	if got := readFile(t, m.profileCredPath(ToolClaude, "profile-a")); got != storedBefore {
+		t.Fatalf("stored profile-a changed during already-active no-op")
+	}
+	// No backup written.
+	backupToolDir := filepath.Join(m.backupsRoot(), ToolClaude)
+	if entries, err := os.ReadDir(backupToolDir); err == nil {
+		for _, b := range entries {
+			if strings.Contains(b.Name(), "profile-a") {
+				t.Fatalf("backup written during already-active no-op: %s", b.Name())
+			}
+		}
 	}
 }
 
@@ -414,7 +512,7 @@ func TestSwitchTraversalRejected(t *testing.T) {
 	// or nil — and must not touch any filesystem path outside the switcher root.
 	traversalCases := []string{"../escape", "../../etc/passwd", "a/b", ".", ".."}
 	for _, bad := range traversalCases {
-		_, err := m.Switch(ToolClaude, bad)
+		_, _, err := m.Switch(ToolClaude, bad)
 		if err == nil {
 			t.Errorf("Switch(%q): expected error, got nil — path traversal not rejected", bad)
 			continue
@@ -441,7 +539,7 @@ func TestSwitchPoisonedStateRejected(t *testing.T) {
 	must(t, os.MkdirAll(m.root, 0o700))
 	must(t, os.WriteFile(m.statePath(), []byte(`{"version":1,"enabled":true,"active":{"claude":"../escape"}}`), 0o600))
 
-	_, err := m.Switch(ToolClaude, "target")
+	_, _, err := m.Switch(ToolClaude, "target")
 	if err == nil {
 		t.Fatal("expected error for poisoned active profile name, got nil")
 	}
@@ -459,7 +557,7 @@ func TestSwitchNoActiveProfileRefused(t *testing.T) {
 	writeLive(t, home, ToolClaude, futureClaude("tok"))
 	must(t, m.Add(ToolClaude, "orphan")) // profile exists but none is active
 
-	_, err := m.Switch(ToolClaude, "orphan")
+	_, _, err := m.Switch(ToolClaude, "orphan")
 	if err == nil {
 		t.Fatal("expected ErrNoActiveProfile, got nil")
 	}
@@ -483,7 +581,7 @@ func TestSwitchRollbackOnRestoreFailure(t *testing.T) {
 	must(t, os.MkdirAll(m.profileDir(ToolClaude, "profile-b"), 0o700))
 	must(t, os.WriteFile(m.profileCredPath(ToolClaude, "profile-b"), []byte("not-json"), 0o600))
 
-	_, err := m.Switch(ToolClaude, "profile-b")
+	_, _, err := m.Switch(ToolClaude, "profile-b")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -511,7 +609,7 @@ func TestCodexDotCredentialsNeverTouched(t *testing.T) {
 	must(t, m.Add(ToolCodex, "profile-b"))
 	must(t, os.WriteFile(m.profileCredPath(ToolCodex, "profile-b"),
 		[]byte(futureCodex("b@example.com")), 0o600))
-	_, err := m.Switch(ToolCodex, "profile-b")
+	_, _, err := m.Switch(ToolCodex, "profile-b")
 	must(t, err)
 
 	// .credentials.json must be untouched.
@@ -613,7 +711,7 @@ func TestSwitchRefusedWhenDisabled(t *testing.T) {
 	writeLive(t, home, ToolClaude, futureClaude("tok"))
 	must(t, m.Import(ToolClaude, "main"))
 	must(t, m.Add(ToolClaude, "other"))
-	_, err := m.Switch(ToolClaude, "other")
+	_, _, err := m.Switch(ToolClaude, "other")
 	if !errors.Is(err, ErrDisabled) {
 		t.Fatalf("expected ErrDisabled, got %v", err)
 	}
@@ -681,7 +779,7 @@ func TestNoCredentialMaterialInErrors(t *testing.T) {
 		corrupt := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":%q,"refreshToken":"ref","expiresAt":0}}`, secret)
 		must(t, os.WriteFile(livePath, []byte(corrupt), 0o600))
 
-		_, err := m.Switch(ToolClaude, "target")
+		_, _, err := m.Switch(ToolClaude, "target")
 		checkNoLeak(t, err, "Switch(corrupt live claude)")
 	})
 
@@ -708,7 +806,7 @@ func TestListActiveProfileReadsFromLive(t *testing.T) {
 	writeLive(t, home, ToolClaude, futureClaude("import-tok"))
 	must(t, m.Import(ToolClaude, "main"))
 	must(t, m.Add(ToolClaude, "empty"))
-	_, err := m.Switch(ToolClaude, "empty")
+	_, _, err := m.Switch(ToolClaude, "empty")
 	must(t, err)
 
 	// After switching to empty: active="empty", live file deleted.

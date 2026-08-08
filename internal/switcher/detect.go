@@ -1,6 +1,7 @@
 package switcher
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -18,9 +19,14 @@ type Profile struct {
 }
 
 // Eligibility reports whether a tool's live credentials are usable for switching.
+// Absent distinguishes "no live file" (switching away captures nothing but is
+// allowed) from "live file present but corrupt" (refused — capturing would
+// destroy a good stored profile). Both report Eligible=false; Absent lets Switch
+// tell them apart.
 type Eligibility struct {
 	Tool     string `json:"tool"`
 	Eligible bool   `json:"eligible"`
+	Absent   bool   `json:"absent,omitempty"`
 	Reason   string `json:"reason,omitempty"`
 }
 
@@ -50,7 +56,7 @@ func (m *Manager) eligibilityFor(tool string) (Eligibility, error) {
 	// Check for absence first. The usages validators convert os.ErrNotExist into
 	// a non-wrapping error, so we must stat separately to distinguish absent from corrupt.
 	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-		return Eligibility{Tool: tool, Eligible: false, Reason: "not logged in, or using the macOS Keychain"}, nil
+		return Eligibility{Tool: tool, Eligible: false, Absent: true, Reason: fmt.Sprintf("no live credentials file at %s; switching away captures nothing (not logged in, or using the macOS Keychain)", path)}, nil
 	}
 
 	var valErr error

@@ -34,6 +34,10 @@ type switcherFake struct {
 	switchErr      error
 	// switchResult is the returned active profile name on success
 	switchResult string
+	// switchSwitched controls the bool returned by Switch; nil defaults to
+	// true so existing tests (which expect a real switch) are unchanged. Set
+	// false to exercise the already-active no-op branch.
+	switchSwitched *bool
 }
 
 func (f *switcherFake) Enabled() (bool, error) { return f.enabled, f.enabledErr }
@@ -58,8 +62,12 @@ func (f *switcherFake) Remove(tool, name string, force bool) error {
 	}
 	return f.removeErr
 }
-func (f *switcherFake) Switch(tool, name string) (string, error) {
-	return f.switchResult, f.switchErr
+func (f *switcherFake) Switch(tool, name string) (string, bool, error) {
+	switched := true
+	if f.switchSwitched != nil {
+		switched = *f.switchSwitched
+	}
+	return f.switchResult, switched, f.switchErr
 }
 
 // ── list ─────────────────────────────────────────────────────────────
@@ -201,6 +209,30 @@ func TestSwitcherUseHappy(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), `Switched claude to profile "work"`) {
 		t.Errorf("unexpected output: %q", buf.String())
+	}
+}
+
+// TestSwitcherUseAlreadyActiveNoOp covers the branch a user reaches by running
+// the same switch command twice: Switch returns switched=false, and the CLI
+// must NOT claim "Switched". The fake's switchSwitched=false produces that path
+// without a real credential round trip.
+func TestSwitcherUseAlreadyActiveNoOp(t *testing.T) {
+	switched := false
+	fake := &switcherFake{
+		profiles:       []switcher.Profile{{Tool: "claude", Name: "work", Active: true, HasCreds: true}},
+		switchResult:   "work",
+		switchSwitched: &switched,
+	}
+	var buf bytes.Buffer
+	if err := switcherUse(bytes.NewReader(nil), &buf, fake, []string{"claude", "work"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "Switched") {
+		t.Errorf("no-op switch claimed a switch: %q", out)
+	}
+	if !strings.Contains(out, `Already on claude profile "work"`) {
+		t.Errorf("no-op switch output missing 'Already on' line: %q", out)
 	}
 }
 

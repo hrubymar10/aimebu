@@ -3262,7 +3262,7 @@
   function renderSwitcherSection(tool, profiles, eligibility, inFlight, mode) {
     var toolLabel = tool === 'claude' ? 'Claude Code' : tool === 'codex' ? 'Codex' : tool;
     var elig = eligibility || { eligible: true, reason: '' };
-    var disabled = !!inFlight || !elig.eligible;
+    var disabled = !!inFlight || (!elig.eligible && !elig.absent);
     var activeProfile = profiles.filter(function (p) { return p.active; })[0];
     var activeLabel = activeProfile ? activeProfile.name : '—';
     var spinner = inFlight ? ' <span class="switcher-spinner" aria-hidden="true"></span>' : '';
@@ -3316,7 +3316,7 @@
   function renderSwitcherProfileRow(profile, eligibility, inFlight, mode) {
     var isActive = !!profile.active;
     var isEmpty = !profile.has_credentials;
-    var disabled = !!inFlight || (eligibility && !eligibility.eligible);
+    var disabled = !!inFlight || (eligibility && !eligibility.eligible && !eligibility.absent);
     var emailTitle = profile.email ? ' title="' + esc(profile.email) + '"' : '';
     var activeMarker = isActive ? '<span class="switcher-active-marker" aria-label="Active">●</span> ' : '';
     var credLabel = isEmpty ? ' <span class="switcher-needs-login">needs login</span>' : '';

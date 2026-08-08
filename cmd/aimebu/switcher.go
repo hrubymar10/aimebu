@@ -28,7 +28,7 @@ type switcherManager interface {
 	Import(tool, name string) error
 	Rename(tool, oldName, newName string) error
 	Remove(tool, name string, force bool) error
-	Switch(tool, name string) (string, error)
+	Switch(tool, name string) (string, bool, error)
 }
 
 // ── Factory ──────────────────────────────────────────────────────────
@@ -237,10 +237,15 @@ func switcherUse(in io.Reader, out io.Writer, m switcherManager, args []string) 
 		}
 	}
 
-	if _, err := m.Switch(tool, profile); err != nil {
+	_, switched, err := m.Switch(tool, profile)
+	if err != nil {
 		return switcherErrMsg(err)
 	}
-	fmt.Fprintf(out, "Switched %s to profile %q.\n", tool, profile)
+	if switched {
+		fmt.Fprintf(out, "Switched %s to profile %q.\n", tool, profile)
+	} else {
+		fmt.Fprintf(out, "Already on %s profile %q; nothing to do.\n", tool, profile)
+	}
 	return nil
 }
 

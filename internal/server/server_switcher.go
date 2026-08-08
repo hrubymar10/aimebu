@@ -118,14 +118,15 @@ func (r switcherRoutes) handleSwitch(w http.ResponseWriter, req *http.Request) {
 	// switch in the per-profile cache.
 	outgoing, _ := r.sm.Active(body.Tool)
 
-	active, err := r.sm.Switch(body.Tool, body.Profile)
+	active, switched, err := r.sm.Switch(body.Tool, body.Profile)
 	if err != nil {
 		writeSwitcherErr(w, switcherHTTPStatus(err), err)
 		return
 	}
 
-	// Invalidate cache for both sides so the next GET fetches fresh data.
-	if r.um != nil {
+	// Invalidate cache for both sides so the next GET fetches fresh data. A
+	// no-op switch (already on that profile) changes nothing, so skip it.
+	if switched && r.um != nil {
 		if outgoing != "" {
 			r.um.InvalidateProfileSnapshot(body.Tool, outgoing)
 		}
@@ -133,7 +134,7 @@ func (r switcherRoutes) handleSwitch(w http.ResponseWriter, req *http.Request) {
 			r.um.InvalidateProfileSnapshot(body.Tool, body.Profile)
 		}
 	}
-	writeSwitcherJSON(w, http.StatusOK, map[string]string{"active": active})
+	writeSwitcherJSON(w, http.StatusOK, map[string]any{"active": active, "switched": switched})
 }
 
 func (r switcherRoutes) handleProfileCreate(w http.ResponseWriter, req *http.Request) {
