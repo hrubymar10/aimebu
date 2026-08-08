@@ -2,10 +2,11 @@
 
 aimebu separates **storage** from **attention**: old messages are never deleted
 by the server to save space — they simply stop being visible to bulk AI reads.
-There is no message-retention deletion (the old `message_retention_seconds` /
-`message_retention_count` settings that deleted messages have been retired;
-expiry only affects visibility, never deletes). Everything below follows from
-that principle.
+Nothing on this page deletes a message; expiry only affects visibility, never
+deletes. The only message deletions in aimebu are explicit user actions —
+`aimebu prune -a` and deleting a room — and the old `message_retention_seconds` /
+`message_retention_count` settings that auto-deleted messages have been retired.
+Everything below follows from that principle.
 
 ## The one rule
 
@@ -127,7 +128,7 @@ the room has any other member. `POST /rooms/{id}/kick-agents` clears AI members
 
 ## Scope of this doc
 
-This covers the full T41 retention rework: the **expiry model** (message
+This covers the full retention rework: the **expiry model** (message
 visibility for AI bulk reads), the **rooms-never-auto-deleted** guarantee, the
 **prune semantics** (plain spares conversation, `-a` wipes), and **per-human
 hidden/pinned rooms**.
