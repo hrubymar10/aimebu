@@ -3813,6 +3813,46 @@
     return registerHuman();
   }
 
+  // Lazy loading: page older messages in on scroll-up. Per-room flags
+  // gate concurrent/exhausted loads. The block comes back newest-first (like the
+  // initial fetch) and is reversed to oldest-first, then prepended; renderMessages
+  // restores the viewport via the scroll anchor (no hand-computed scroll offsets).
+  var loadingOlder = {};
+  var noMoreOlder = {};
+  function fetchOlderMessages(roomID) {
+    if (!roomID || loadingOlder[roomID] || noMoreOlder[roomID]) return;
+    var arr = messages[roomID] || [];
+    if (!arr.length) return;
+    var oldestID = arr[0].id; // messages are oldest-first
+    loadingOlder[roomID] = true;
+    var path = '/rooms/' + encodeURIComponent(roomID) + '/messages?before_id=' + oldestID + '&limit=50';
+    if (agentID && agentID !== 'user') path += '&agent_id=' + encodeURIComponent(agentID);
+    return api('GET', path).then(function (data) {
+      // Staleness guard: fetchRoomMessages REPLACES messages[roomID] (doesn't
+      // mutate), so if the room was re-fetched mid-flight (room switch/back),
+      // `arr` is a stale reference. Re-read and bail on identity mismatch rather
+      // than clobbering the fresh data. (appendMessage mutates in place via push,
+      // so it doesn't trip this — `cur === arr`.)
+      var cur = messages[roomID] || [];
+      if (cur !== arr) return;
+      var older = data.messages || [];
+      older.reverse(); // API is newest-first; prepend oldest-first
+      if (older.length < 50) noMoreOlder[roomID] = true; // exhausted history
+      if (!older.length) return;
+      var have = {};
+      cur.forEach(function (m) { have[m.id] = true; });
+      var fresh = older.filter(function (m) { return !have[m.id]; });
+      if (!fresh.length) return;
+      messages[roomID] = fresh.concat(cur);
+      fresh.forEach(function (m) { if (m.id > maxSeenMsgID) maxSeenMsgID = m.id; });
+      renderMessages(); // the scroll anchor keeps the viewport on the same message
+    }).catch(function (err) {
+      console.error('older messages', err);
+    }).finally(function () {
+      loadingOlder[roomID] = false;
+    });
+  }
+
   function fetchRoomMessages(roomID) {
     var path = '/rooms/' + encodeURIComponent(roomID) + '/messages?limit=100';
     if (agentID && agentID !== 'user') path += '&agent_id=' + encodeURIComponent(agentID);
@@ -7078,6 +7118,11 @@
   messageListEl.addEventListener('scroll', function () {
     if (suppressScrollAnchor) return;
     updateScrollAnchor(!messageListResizeObserver);
+    // Lazy-load older messages when scrolled to the top.
+    if (activeRoomID && messageListEl.scrollTop < 50 &&
+        messageListEl.scrollHeight > messageListEl.clientHeight + 50) {
+      fetchOlderMessages(activeRoomID);
+    }
   });
   if (window.ResizeObserver) {
     messageListResizeObserver = new ResizeObserver(scheduleResizeAnchorRestore);
