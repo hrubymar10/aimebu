@@ -2897,15 +2897,6 @@
     return '';
   }
 
-  // Icon for the per-profile Switch button (a select/target mark). Defined once
-  // so swapping it is a single edit. fill is currentColor rather than the
-  // source file's hardcoded #1F2328, which would stay near-black — invisible in
-  // the dark themes.
-  var SWITCHER_ICON_SVG = '<svg class="room-header-action-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
-    '<path fill-rule="evenodd" clip-rule="evenodd" d="M12.0001 5.49939C8.40993 5.49939 5.49951 8.40981 5.49951 12C5.49951 15.5902 8.40993 18.5006 12.0001 18.5006C15.5903 18.5006 18.5007 15.5902 18.5007 12C18.5007 8.40981 15.5903 5.49939 12.0001 5.49939ZM3.99951 12C3.99951 7.58139 7.58151 3.99939 12.0001 3.99939C16.4187 3.99939 20.0007 7.58139 20.0007 12C20.0007 16.4186 16.4187 20.0006 12.0001 20.0006C7.58151 20.0006 3.99951 16.4186 3.99951 12Z"/>' +
-    '<path fill-rule="evenodd" clip-rule="evenodd" d="M12.0002 9.5C10.6194 9.5 9.50016 10.6193 9.50016 12C9.50016 13.3807 10.6194 14.5 12.0002 14.5C13.3809 14.5 14.5002 13.3807 14.5002 12C14.5002 10.6193 13.3809 9.5 12.0002 9.5ZM8.00016 12C8.00016 9.79086 9.79102 8 12.0002 8C14.2093 8 16.0002 9.79086 16.0002 12C16.0002 14.2091 14.2093 16 12.0002 16C9.79102 16 8.00016 14.2091 8.00016 12Z"/>' +
-    '</svg>';
-
   // Renders each switcher profile as a block inside the provider tile, with its
   // own usage windows — so every account's quota is visible at once, not just
   // the active one. Returns '' when the switcher is off or the tool has no
@@ -2921,20 +2912,50 @@
     return profiles.map(function (p) {
       var snap = snaps[tool + '/' + p.name] || {};
       var activeTag = p.active ? '<span class="switcher-tile-active">active</span>' : '';
-      // T43: Switch control sits next to the profile name (not pushed right);
-      // the plan badge moves here (right-aligned) from the tile header, since
-      // each profile has its own plan. The button is an icon (export-room
-      // pattern, share-SVG placeholder) with title/aria-label "Switch to <name>";
-      // data-empty keeps the empty-profile switch confirmation.
+      // Switch control: a pill derived from .switcher-tile-active (matched pair:
+      // same radius/colour/font, thicker border to distinguish). Label "SWITCH";
+      // title/aria-label "Switch to <name>"; data-empty keeps the empty-profile
+      // switch confirmation.
       var switchBtn = (!p.active && !blocked)
-        ? '<button class="btn btn-sm btn-md-toggle btn-icon-sm switcher-switch-btn" type="button"' +
+        ? '<button class="switcher-switch-pill" type="button"' +
             ' data-tool="' + esc(tool) + '" data-profile="' + esc(p.name) + '"' +
             (!p.has_credentials ? ' data-empty="1"' : '') +
-            ' title="Switch to ' + esc(p.name) + '" aria-label="Switch to ' + esc(p.name) + '">' +
-            SWITCHER_ICON_SVG + '</button>'
+            ' title="Switch to ' + esc(p.name) + '" aria-label="Switch to ' + esc(p.name) + '">SWITCH</button>'
         : '';
       var emailTitle = p.email ? ' title="' + esc(p.email) + '"' : '';
-      var planBadge = snap.plan ? '<span class="switcher-tile-plan">' + esc(snap.plan) + '</span>' : '';
+      // Token expiry tooltip: hangs off the plan badge when present, or a ⏱
+      // fallback when the plan is absent (a profile with no snapshot has no
+      // badge, so there'd be nowhere for the tooltip to live). Shows absolute
+      // + relative — relative alone is useless in a bug report, absolute alone
+      // makes you do arithmetic.
+      var expiryTitle = '';
+      var expiryState = null; // null | 'expiring' (≤1h) | 'expired' (past) | 'refreshing' (ulf's future)
+      if (p.expires_at) {
+        var expMs = new Date(p.expires_at).getTime();
+        if (Number.isFinite(expMs)) {
+          var diffMs = expMs - Date.now();
+          var absSec = Math.abs(Math.round(diffMs / 1000));
+          var eh = Math.floor(absSec / 3600);
+          var em = Math.floor((absSec % 3600) / 60);
+          var erel;
+          if (eh === 0 && em === 0) {
+            erel = diffMs > 0 ? 'in < 1m' : 'expired < 1m ago';
+          } else {
+            erel = diffMs > 0 ? ('in ' + (eh > 0 ? eh + 'h ' : '') + em + 'm') : ('expired ' + (eh > 0 ? eh + 'h ' : '') + em + 'm ago');
+          }
+          expiryTitle = 'Token expires: ' + new Date(expMs).toISOString() + ' (' + erel + ')';
+          // Visual state folded into the plan-badge / ⏱ fallback anchor (don't
+          // add a second element to the busy row). 'expiring' = ≤1h remaining
+          // (warning); 'expired' = past (fact). 'refreshing' reserved for ulf's
+          // token-refresh work — leave room, don't hardcode two states.
+          if (diffMs <= 0) expiryState = 'expired';
+          else if (diffMs <= 43200000) expiryState = 'expiring'; // 12h threshold — temporary, until auto-refresh exists; drops to 1h (3600000) then
+        }
+      }
+      var planBadgeClass = 'switcher-tile-plan' + (expiryState ? ' switcher-tile-plan--' + expiryState : '');
+      var planBadge = snap.plan
+        ? '<span class="' + planBadgeClass + '"' + (expiryTitle ? ' title="' + esc(expiryTitle) + '"' : '') + '>' + esc(snap.plan) + '</span>'
+        : (expiryTitle ? '<span class="' + planBadgeClass + '" title="' + esc(expiryTitle) + '">⏱</span>' : '');
       var head = '<div class="switcher-tile-head">' +
         '<span class="switcher-tile-name"' + emailTitle + '>' + esc(p.name) + '</span>' +
         switchBtn + activeTag + planBadge +
@@ -3370,6 +3391,7 @@
       .then(function () {
         switcherInFlight[tool] = false;
         refreshSwitcherPanel();
+        if (rightSidebarMode === 'usages') renderUsagesSidebar();
       });
   }
 
@@ -6094,6 +6116,7 @@
     profileAgentID = '';
     profileContext = 'room';
     renderRightSidebar();
+    renderUsagesSidebar(); // show loading/previous tiles immediately; loadUsages refreshes
     loadUsages();
     if (window.innerWidth <= 900) setMobileTab('agents');
   }
@@ -6170,7 +6193,11 @@
     } else {
       rightProfilePanel.innerHTML = '';
     }
-    if (usagesOpen) renderUsagesSidebar();
+    // Note: usages tiles are NOT rebuilt here — that was the 1-3s repaint bug
+    // (every agent tick via renderRoomAgents rebuilt the whole usages panel).
+    // Tiles are painted by renderUsages() on data change (loadUsages/WS events)
+    // and by openUsagesPanel() on open. The data-mode attribute above
+    // shows/hides the panel container; the tile HTML persists in the DOM.
     applyRightToggleState();
   }
 
@@ -6594,7 +6621,7 @@
   // and Settings -> Switcher (manage only, no Switch button).
   document.addEventListener('click', function (e) {
     if (!e.target || !e.target.closest) return;
-    var switchBtn = e.target.closest('.switcher-switch-btn');
+    var switchBtn = e.target.closest('.switcher-switch-btn, .switcher-switch-pill');
     var addBtn = e.target.closest('.switcher-add-btn');
     var importBtn = e.target.closest('.switcher-import-btn');
     var deleteBtn = e.target.closest('.switcher-delete-btn');

@@ -5198,7 +5198,7 @@ body {
 }
 
 .usages-provider-name {
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 800;
   color: var(--text-primary);
   overflow: hidden;
@@ -5210,7 +5210,7 @@ body {
 .usages-window-top,
 .usages-stale-line {
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.6rem;
   font-weight: 600;
 }
 
@@ -5657,7 +5657,7 @@ body {
 .switcher-tile-profile {
   border-top: 1px solid var(--border);
   padding-top: 8px;
-  margin-top: 8px;
+  margin-top: 0;
 }
 .switcher-tile-profile:first-of-type {
   border-top: none;
@@ -5673,7 +5673,10 @@ body {
   font-weight: 600;
   font-size: 0.82rem;
 }
-.switcher-tile-active {
+/* ACTIVE label and SWITCH pill are a matched pair — shared base so they
+   don't drift if either's colour or radius changes. */
+.switcher-tile-active,
+.switcher-switch-pill {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -5682,11 +5685,22 @@ body {
   border-radius: 999px;
   padding: 0 5px;
 }
-.switcher-tile-head .switcher-switch-btn {
-  margin-left: 0; /* T43: Switch sits next to the profile name, not pushed right */
+.switcher-switch-pill {
+  border-width: 2px; /* thicker than ACTIVE to distinguish at a glance */
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+.switcher-switch-pill:hover {
+  background: var(--accent, #4ea1ff);
+  color: #fff;
+  border-color: var(--accent, #4ea1ff);
+}
+.switcher-tile-head .switcher-switch-pill {
+  margin-left: 0; /* SWITCH sits next to the profile name, not pushed right */
 }
 .switcher-tile-plan {
-  margin-left: auto; /* T43: plan badge moves here from the tile header, right-aligned */
+  margin-left: auto; /* plan badge moves here from the tile header, right-aligned */
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1px 6px;
@@ -5699,6 +5713,26 @@ body {
   max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Expiry-state indicators on the plan badge / ⏱ fallback anchor.
+   Folded into the existing element rather than a second icon — the row is
+   already busy with name, Switch pill, ACTIVE and plan badge. */
+.switcher-tile-plan--expiring {
+  border-color: var(--orange, #d29922); /* amber — warning, ≤1h remaining */
+  color: var(--orange, #d29922);
+  background: color-mix(in srgb, var(--orange, #d29922) 12%, transparent);
+}
+.switcher-tile-plan--expired {
+  border-color: var(--red, #f85149); /* red — fact, already past */
+  color: var(--red, #f85149);
+  background: color-mix(in srgb, var(--red, #f85149) 12%, transparent);
+}
+/* Reserved for ulf's token-refresh 'refresh in flight' state — not wired yet. */
+.switcher-tile-plan--refreshing {
+  border-color: var(--accent, #4ea1ff);
+  color: var(--accent, #4ea1ff);
+  background: color-mix(in srgb, var(--accent, #4ea1ff) 12%, transparent);
 }
 
 .switcher-profile-usage {
