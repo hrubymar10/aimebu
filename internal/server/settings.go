@@ -143,10 +143,6 @@ func (s *store) getSettings() Settings {
 		v := defaultMessagesConsideredExpiredAfterSeconds
 		set.MessagesConsideredExpiredAfterSeconds = &v
 	}
-	if set.MessagesConsideredExpiredAfterSeconds == nil {
-		v := defaultMessagesConsideredExpiredAfterSeconds
-		set.MessagesConsideredExpiredAfterSeconds = &v
-	}
 	if set.InlinePlanAppendix == "" {
 		set.InlinePlanAppendix = "always"
 	}
@@ -221,9 +217,6 @@ func validateRetentionSettings(set Settings) error {
 		return err
 	}
 
-	if err := validateSettingRange("messages_considered_expired_after_seconds", set.MessagesConsideredExpiredAfterSeconds, 60, maxRetentionWindowSeconds, true); err != nil {
-		return err
-	}
 	if err := validateSettingRange("messages_considered_expired_after_seconds", set.MessagesConsideredExpiredAfterSeconds, 60, maxRetentionWindowSeconds, true); err != nil {
 		return err
 	}

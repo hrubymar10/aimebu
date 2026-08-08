@@ -806,12 +806,21 @@ func TestAttachmentCleanupAndPrune(t *testing.T) {
 	if _, _, ok := s.attachmentFilePath(kept.ID); !ok {
 		t.Fatal("attachment missing before prune")
 	}
+	// Plain prune preserves attachments — only runtime agent state is cleared.
 	s.clearAll(false)
+	if _, _, ok := s.attachmentFilePath(kept.ID); !ok {
+		t.Fatal("attachment registry did not survive plain prune")
+	}
+	if _, err := os.Stat(s.attachmentsDir()); os.IsNotExist(err) {
+		t.Fatal("attachments dir removed by plain prune, want preserved")
+	}
+	// prune -a wipes attachments.
+	s.clearAll(true)
 	if _, _, ok := s.attachmentFilePath(kept.ID); ok {
-		t.Fatal("attachment registry survived prune")
+		t.Fatal("attachment registry survived prune -a")
 	}
 	if _, err := os.Stat(s.attachmentsDir()); !os.IsNotExist(err) {
-		t.Fatalf("attachments dir after prune err = %v, want not exist", err)
+		t.Fatalf("attachments dir after prune -a err = %v, want not exist", err)
 	}
 }
 

@@ -134,10 +134,14 @@ func (s *store) load() error {
 	// User sounds index — persisted in sounds/sounds.json; wiped when clearAll(includeSettings=true).
 	s.loadSounds()
 
-	// Image attachment registry — conversation state; regular prune wipes it.
+	// Image attachment registry — conversation content; preserved by plain
+	// prune, wiped only by prune -a (and reaped as orphans by cleanupAttachments
+	// after an explicit room delete).
 	s.loadAttachments()
 
-	// Emoji reactions — mutable conversation metadata; regular prune wipes it.
+	// Emoji reactions — mutable conversation metadata; preserved by plain prune,
+	// wiped only by prune -a (and reaped as orphans by cleanupReactionsForLiveMessages
+	// after an explicit room delete).
 	s.loadReactions()
 
 	// Curated bus memory — durable knowledge; survives conversation prune and

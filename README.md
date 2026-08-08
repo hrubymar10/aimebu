@@ -347,7 +347,7 @@ aimebu switcher <command>                 Switch which account claude/codex uses
   enable | disable                          Turn the switcher on or off (off by default)
 aimebu sessions                           List local and server-known agent sessions
 aimebu fleet [name] [path]                List fleets, or launch one against path/cwd
-aimebu prune [-y] [-a]                    Prune conversation state with confirmation prompt
+aimebu prune [-y] [-a]                    Prune runtime agent state; -a wipes everything (with prompt)
                                           Falls back to direct local data-dir cleanup when the
                                           configured server URL is loopback and the server is down
                                             -y  skip confirmation
@@ -460,7 +460,7 @@ POST   /api/usages/switcher/settings   Enable or disable the switcher
 POST   /api/usages/switcher/switch     Switch the active profile for a tool
 POST   /api/usages/switcher/profiles   Create an empty profile, or import the current live login
 DELETE /api/usages/switcher/profiles   Delete a profile; 409 unless force is set when it is active
-DELETE /all                            Clear conversation state (rooms, messages, agents); add ?include_settings=true to also wipe memory, macros, fleets, prompts, roles, sounds, and settings
+DELETE /all                            Clear runtime agent state (agents, sessions); add ?include_settings=true to also wipe rooms, messages, memory, macros, fleets, prompts, roles, sounds, and settings
 GET    /health                         Health check
 GET    /buildinfo                      Server version and Go runtime version (read-only)
 GET    /ws                             WebSocket push
@@ -790,11 +790,12 @@ migrates known root-level files into `server/` and `agents/` automatically.
 `aimebu prune`, and `aimebu agent` trigger the relevant migration before they
 take ownership of state. Unknown files at the root are left alone.
 
-`aimebu prune` wipes conversation state and local agent diagnostics,
-including the server-side `agent_sessions` registry,
-`agents/agent-sessions.json`, and `agents/agent-logs/*`;
-`aimebu prune -a` additionally wipes user settings, including memory, macros,
-fleet command bundles, prompt overrides, sounds, and
+`aimebu prune` clears runtime agent state only — the server-side `agents`
+registry and `agent_sessions` table, plus `agents/agent-sessions.json` and
+`agents/agent-logs/*`. Rooms, messages, reactions, attachments, and all user
+settings survive; agents simply re-register. `aimebu prune -a` additionally
+wipes everything: rooms, messages, agents, sessions, reactions, attachments,
+memory, macros, fleet command bundles, prompt overrides, sounds, and
 `agents/agent-warning-acknowledged`. If `AIMEBU_URL`
 points at loopback (`localhost`, `127.0.0.1`, `::1`) and the server is down,
 the CLI performs the same prune directly against `AIMEBU_CONFIG_DIR` /

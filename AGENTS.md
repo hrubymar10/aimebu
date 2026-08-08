@@ -258,7 +258,7 @@ aimebu switcher use claude main    # switch; captures the live login first
 
 aimebu doctor                    # run health checks (server, config dir, SQLite, TLS)
 
-aimebu prune                     # clear conversation state with confirmation prompt
+aimebu prune                     # clear runtime agent state with confirmation prompt
 aimebu prune -y                  # same, skip confirmation
 aimebu prune -a                  # clear everything including memory, macros, fleets, and prompts
 aimebu prune -a -y               # clear everything without prompt
@@ -333,11 +333,13 @@ Rooms are never auto-deleted — not by a timer when empty, not on server
 restart; an empty room and its messages persist until explicitly deleted via
 the room API. The earlier behaviour that deleted empty rooms on startup (and
 destroyed real history) has been removed.
-`aimebu prune` wipes conversation state and local agent diagnostics,
-including the server-side `agent_sessions` registry,
-`agents/agent-sessions.json`, and `agents/agent-logs/*`;
-`aimebu prune -a` also wipes user settings, including memory, macros, fleet
-command bundles, prompt overrides, role definitions/emoji, sounds, and
+`aimebu prune` clears runtime agent state only — the server-side `agents`
+registry and `agent_sessions` table, plus `agents/agent-sessions.json` and
+`agents/agent-logs/*`; rooms, messages, reactions, attachments, and all user
+settings survive (agents re-register). `aimebu prune -a` also wipes user
+settings AND conversation state — rooms, messages, agents, sessions,
+reactions, attachments, memory, macros, fleet command bundles, prompt
+overrides, role definitions/emoji, sounds, and
 `agents/agent-warning-acknowledged`. Runtime diagnostics
 (`server/aimebu.log`, shared by foreground and daemon server processes) are
 preserved by both prune modes. **`switcher/` is preserved by both prune modes

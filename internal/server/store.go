@@ -189,7 +189,55 @@ const storeSchemaVersion = sqliteSchemaVersion
 
 // ── Clear ──────────────────────────────────────────────────────────
 
+// clearAll resets state for aimebu prune / DELETE /all. The retention
+// rework splits the two modes:
+//
+//   - Plain prune (includeSettings=false) clears only runtime agent state
+//     (agents + agent_sessions) — agents simply re-register. Rooms, messages,
+//     reactions, attachments, and all user settings survive. Local agent-logs
+//     and the agent-sessions.json sidecar are cleaned separately by the CLI.
+//
+//   - prune -a (includeSettings=true) wipes everything: rooms, messages,
+//     agents, sessions, reactions, attachments, plus user settings, memory,
+//     macros, roles, prompts, fleets, and sounds.
+//
+// Neither mode touches switcher/. The online (DELETE /all) and offline
+// (PruneDataDir) prune paths both route through clearAll, so they produce
+// identical on-disk end states.
 func (s *store) clearAll(includeSettings bool) {
+	if !includeSettings {
+		// Plain prune: runtime agent state only. Conversation history
+		// (rooms, messages, reactions, attachments) survives. Agents are also
+		// dropped from every room's membership and roles — otherwise a cleared
+		// agent's ID would ghost-hold a singleton role (e.g. leader) forever,
+		// since assignRole's singleton guard never checks the holder still
+		// exists in s.agents. Matches pruneOnStartup's membership cleanup.
+		s.mu.Lock()
+		removedAgents := make(map[string]bool, len(s.agents))
+		for id := range s.agents {
+			removedAgents[id] = true
+		}
+		s.agents = make(map[string]*types.Agent)
+		s.agentSessions = make(map[string]*types.AgentSession)
+		for _, room := range s.rooms {
+			filtered := room.Members[:0]
+			for _, m := range room.Members {
+				if !removedAgents[m] {
+					filtered = append(filtered, m)
+				} else if room.Roles != nil {
+					delete(room.Roles, m)
+				}
+			}
+			room.Members = filtered
+		}
+		s.persistFullCoreLocked()
+		s.mu.Unlock()
+		s.broadcastAgentUpdate()
+		s.broadcastRoomUpdate()
+		return
+	}
+
+	// prune -a: wipe everything, including user settings.
 	s.mu.Lock()
 	s.rooms = make(map[string]*types.Room)
 	s.messages = make(map[string][]types.Message)
@@ -210,28 +258,26 @@ func (s *store) clearAll(includeSettings bool) {
 	s.reactions = make(map[int64][]types.Reaction)
 	s.persistReactionsLocked()
 	s.reactionsMu.Unlock()
-	if includeSettings {
-		s.clearMemory()
-		s.clearLeaderboards()
-		s.macrosMu.Lock()
-		s.macros = make(map[string]string)
-		s.seenDefaults = make(map[string]bool)
-		s.macrosMu.Unlock()
-		s.applyDefaultMacros() // re-seeds macros.json with embedded defaults
-		s.clearPrompts()
-		s.clearRoles()
-		s.clearSettings()
-		s.clearFleets()
-		s.soundsMu.Lock()
-		s.sounds = nil
-		if s.db != nil {
-			if err := s.clearTable("sounds"); err != nil {
-				log.Printf("aimebu: clear sounds sqlite: %v", err)
-			}
+	s.clearMemory()
+	s.clearLeaderboards()
+	s.macrosMu.Lock()
+	s.macros = make(map[string]string)
+	s.seenDefaults = make(map[string]bool)
+	s.macrosMu.Unlock()
+	s.applyDefaultMacros() // re-seeds macros.json with embedded defaults
+	s.clearPrompts()
+	s.clearRoles()
+	s.clearSettings()
+	s.clearFleets()
+	s.soundsMu.Lock()
+	s.sounds = nil
+	if s.db != nil {
+		if err := s.clearTable("sounds"); err != nil {
+			log.Printf("aimebu: clear sounds sqlite: %v", err)
 		}
-		s.soundsMu.Unlock()
-		_ = os.RemoveAll(s.soundsDir())
 	}
+	s.soundsMu.Unlock()
+	_ = os.RemoveAll(s.soundsDir())
 	s.broadcastRoomUpdate()
 	s.broadcastAgentUpdate()
 }

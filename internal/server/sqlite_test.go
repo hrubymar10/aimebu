@@ -89,7 +89,7 @@ func TestSQLiteLegacyCoreImportFailureLeavesJSON(t *testing.T) {
 	}
 }
 
-func TestSQLitePruneDataDirClearsCoreDB(t *testing.T) {
+func TestSQLitePruneDataDirPlainSparesMessages(t *testing.T) {
 	dir := t.TempDir()
 	s, err := newStore(dir)
 	if err != nil {
@@ -109,10 +109,10 @@ func TestSQLitePruneDataDirClearsCoreDB(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := sqliteCount(t, filepath.Join(dir, "aimebu.sqlite"), "agents"); got != 0 {
-		t.Fatalf("agents after prune = %d, want 0", got)
+		t.Fatalf("agents after plain prune = %d, want 0", got)
 	}
-	if got := sqliteCount(t, filepath.Join(dir, "aimebu.sqlite"), "messages"); got != 0 {
-		t.Fatalf("messages after prune = %d, want 0", got)
+	if got := sqliteCount(t, filepath.Join(dir, "aimebu.sqlite"), "messages"); got == 0 {
+		t.Fatalf("messages after plain prune = 0, want >0 (spared — plain prune no longer touches messages)")
 	}
 }
 

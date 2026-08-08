@@ -1742,7 +1742,8 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		_ = jsonOK(w, resp)
 	})
 
-	// DELETE /all — clear conversation state; ?include_settings=true also wipes user settings.
+	// DELETE /all — plain prune: clear runtime agent state (agents + sessions);
+	// ?include_settings=true (prune -a) wipes everything (rooms, messages, settings).
 	mux.HandleFunc("DELETE /all", func(w http.ResponseWriter, r *http.Request) {
 		includeSettings := r.URL.Query().Get("include_settings") == "true"
 		s.clearAll(includeSettings)

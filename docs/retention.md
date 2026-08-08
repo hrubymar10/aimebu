@@ -2,7 +2,10 @@
 
 aimebu separates **storage** from **attention**: old messages are never deleted
 by the server to save space — they simply stop being visible to bulk AI reads.
-Everything below follows from that principle.
+There is no message-retention deletion (the old `message_retention_seconds` /
+`message_retention_count` settings that deleted messages have been retired;
+expiry only affects visibility, never deletes). Everything below follows from
+that principle.
 
 ## The one rule
 
@@ -77,8 +80,10 @@ destroyed real history, and both paths have been removed.
 
 ## Prune
 
-`aimebu prune` and `aimebu prune -a` semantics are described in the README and
-AGENTS.md data-directory sections. Neither prune mode ever touches `switcher/`
+Plain `aimebu prune` clears only runtime agent state (agents + agent sessions
++ local agent logs) — rooms, messages, reactions, attachments, and all user
+settings survive; agents simply re-register. `aimebu prune -a` wipes
+everything, conversation history included. Neither mode ever touches `switcher/`
 (stored account logins).
 
 ## Scope of this doc
