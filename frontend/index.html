@@ -470,6 +470,15 @@
                 <input type="number" id="retention-cleanup-interval-input" class="settings-text-input retention-number-input" min="10" max="3600" step="1" value="60">
               </div>
             </div>
+            <div class="settings-row">
+              <div class="settings-row-info">
+                <label class="settings-label" for="retention-expiry-input">AI read expiry</label>
+                <span class="settings-desc">Seconds after which older messages are hidden from AI bulk reads (never deleted — still visible to humans, searchable, and fetchable by ID). 0 means never expire. Default 21600 (6h). Range 60-2592000 when non-zero.</span>
+              </div>
+              <div class="settings-control">
+                <input type="number" id="retention-expiry-input" class="settings-text-input retention-number-input" min="0" max="2592000" step="1" value="21600">
+              </div>
+            </div>
           </div>
         </div>
 

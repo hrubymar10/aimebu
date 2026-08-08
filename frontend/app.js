@@ -322,6 +322,7 @@
   const retentionAgentStaleInput = $('#retention-agent-stale-input');
   const retentionAgentOfflineInput = $('#retention-agent-offline-input');
   const retentionCleanupIntervalInput = $('#retention-cleanup-interval-input');
+  const retentionExpiryInput = $('#retention-expiry-input');
 
   // ── Harness icons ────────────────────────────────────────────────
 
@@ -4320,6 +4321,7 @@
     if (retentionAgentStaleInput) retentionAgentStaleInput.value = serverSettings.agent_stale_window_seconds || 90;
     if (retentionAgentOfflineInput) retentionAgentOfflineInput.value = serverSettings.agent_offline_window_seconds || 300;
     if (retentionCleanupIntervalInput) retentionCleanupIntervalInput.value = serverSettings.cleanup_interval_seconds || 60;
+    if (retentionExpiryInput) retentionExpiryInput.value = (serverSettings.messages_considered_expired_after_seconds != null) ? serverSettings.messages_considered_expired_after_seconds : 21600;
   }
 
   function saveRetentionSetting(field, input) {
@@ -4341,6 +4343,11 @@
         input.setCustomValidity('Use a value higher than the stale badge threshold.');
         ok = false;
       }
+    }
+    // Expiry: 0 means never expire; otherwise 60..2592000 (mirrors server validation in settings.go).
+    if (field === 'messages_considered_expired_after_seconds' && value !== 0 && (value < 60 || value > 2592000)) {
+      input.setCustomValidity('Use 0 for never, or a value from 60 to 2592000.');
+      ok = false;
     }
     if (!ok) {
       input.reportValidity();
@@ -6682,7 +6689,8 @@
     [retentionLivenessSweepInput, 'liveness_sweep_seconds'],
     [retentionAgentStaleInput, 'agent_stale_window_seconds'],
     [retentionAgentOfflineInput, 'agent_offline_window_seconds'],
-    [retentionCleanupIntervalInput, 'cleanup_interval_seconds']
+    [retentionCleanupIntervalInput, 'cleanup_interval_seconds'],
+    [retentionExpiryInput, 'messages_considered_expired_after_seconds']
   ].forEach(function (entry) {
     var input = entry[0];
     var field = entry[1];
