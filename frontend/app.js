@@ -3853,6 +3853,34 @@
     });
   }
 
+  // Cache purge: bound messages[roomID] in memory. Eviction runs only
+  // when the user is scrolled to the bottom, so the anchor is always below the
+  // evicted range — an invariant, not something derived from the floor. The
+  // newest end is never evicted: before_id pages backwards only, so a downward
+  // gap could never be refilled, and the memory it would save is reclaimed
+  // anyway the moment the user returns to the bottom. The floor is well above a
+  // screenful so a pruned list can't show its top without scrolling — otherwise
+  // the scroll handler would immediately re-fetch what was just dropped.
+  var MESSAGE_CACHE_CAP = 500;
+  var MESSAGE_CACHE_FLOOR = 200;
+  function pruneMessageCache(roomID) {
+    var arr = messages[roomID];
+    if (!arr || arr.length <= MESSAGE_CACHE_CAP) return false;
+    // No eviction when pinned to the top — explicit: there's no safe end (the
+    // top is the anchor; the bottom is where new messages arrive).
+    if (messageListEl.scrollTop < 50) return false;
+    // Evict the top (oldest) ONLY when at the bottom — the only position where
+    // the evicted end is off-screen AND refillable (before_id pages back). Never
+    // evict when scrolled up: the bottom (newest) can't be refilled (no
+    // after_id), and the top is the anchor's neighborhood. So the anchor is
+    // always below the evicted range — an invariant, not derived from a count.
+    if (!isMessageListNearBottom()) return false;
+    var k = arr.length - MESSAGE_CACHE_FLOOR;
+    messages[roomID] = arr.slice(k);
+    noMoreOlder[roomID] = false; // dropped the oldest → "seen the beginning" no longer holds
+    return true;
+  }
+
   function fetchRoomMessages(roomID) {
     var path = '/rooms/' + encodeURIComponent(roomID) + '/messages?limit=100';
     if (agentID && agentID !== 'user') path += '&agent_id=' + encodeURIComponent(agentID);
@@ -7570,19 +7598,19 @@
     messageListEl.querySelectorAll('.chat-msg-time').forEach(function (el) {
       el.textContent = relativeTime(el.title);
     });
-    // T41 §5: if the expiry render signature (divider anchor + expired count)
-    // changed since the last render, re-render so the divider + ⏳ icons move.
-    // Re-render only on change — a quiet room costs nothing on the common path,
-    // and an unconditional rebuild would discard hover/selection state. The
-    // count covers icon-only drift the anchor alone misses (all-live→all-expired,
-    // a middle message crossing). A system message becoming the first live
-    // message in an all-expired room (anchor null→id) is caught here too — on
-    // the next tick (up to 30s) rather than instantly. That's deliberate: the
+    // Bound the room's in-memory cache (only when scrolled to the
+    // bottom — see pruneMessageCache), then check the expiry render signature.
+    // One re-render if either changed; a quiet room costs nothing.
+    // The count covers icon-only drift the anchor alone misses (all-live→all-
+    // expired, a middle message crossing). A system message becoming the first
+    // live message in an all-expired room (anchor null→id) is caught here too —
+    // on the next tick (up to 30s) rather than instantly. That's deliberate: the
     // SSE caller at app.js:4661 already re-renders for non-system messages, so a
     // per-appendMessage check would double-render every real message.
     if (activeRoomID) {
+      var pruned = pruneMessageCache(activeRoomID);
       var sig = expiryRenderSignature();
-      if (sig.anchor !== lastRenderAnchor || sig.count !== lastRenderCount) renderMessages();
+      if (pruned || sig.anchor !== lastRenderAnchor || sig.count !== lastRenderCount) renderMessages();
     }
     renderRooms();
     renderAllAgents();
