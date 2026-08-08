@@ -2897,12 +2897,13 @@
     return '';
   }
 
-  // T43: placeholder icon for the per-profile Switch button — reuses the
-  // export-room share SVG (index.html:264). Defined once so it can be swapped for a
-  // proper icon later in a single place.
-  var SWITCHER_ICON_SVG = '<svg class="room-header-action-icon" width="16" height="16" viewBox="0 0 490.009 490.009" fill="currentColor" aria-hidden="true">' +
-    '<path d="M253.354,342.609c4.3,2,9.4,1.4,13-1.6l193.2-160c2.8-2.3,4.4-5.8,4.4-9.4c0-3.7-1.6-7.1-4.5-9.4l-193.1-159.4c-3.7-3-8.7-3.7-13-1.6c-4.3,2-7,6.3-7,11.1v83.7c-221.5,8-220.6,176-220.2,257.4v9.7c0,5.6,3.7,10.4,9.1,11.8c1,0.3,2.1,0.4,3.1,0.4c4.3,0,8.4-2.3,10.7-6.2c65.4-115.2,119.2-120.8,197.3-121.1v83.5C246.354,336.209,249.055,340.509,253.354,342.609z M50.855,319.909c1.1-35.5,5.8-77.8,25.2-113.6c30.8-57,90.5-85.2,182.6-86.1c6.7-0.1,12.1-5.5,12.1-12.2v-69.8l161.7,133.4l-161.6,133.8v-69.7c0-3.2-1.3-6.4-3.6-8.7s-5.4-3.6-8.7-3.6C172.855,223.509,113.755,228.609,50.855,319.909z"/>' +
-    '<path d="M461.555,477.809v-226c0-6.8-5.5-12.3-12.3-12.3s-12.3,5.5-12.3,12.3v213.7h-386.3v-41.6c0-6.8-5.5-12.3-12.3-12.3s-12.3,5.5-12.3,12.3v53.8c0,6.8,5.5,12.3,12.3,12.3h410.9C456.055,490.009,461.555,484.509,461.555,477.809z"/>' +
+  // Icon for the per-profile Switch button (a select/target mark). Defined once
+  // so swapping it is a single edit. fill is currentColor rather than the
+  // source file's hardcoded #1F2328, which would stay near-black — invisible in
+  // the dark themes.
+  var SWITCHER_ICON_SVG = '<svg class="room-header-action-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+    '<path fill-rule="evenodd" clip-rule="evenodd" d="M12.0001 5.49939C8.40993 5.49939 5.49951 8.40981 5.49951 12C5.49951 15.5902 8.40993 18.5006 12.0001 18.5006C15.5903 18.5006 18.5007 15.5902 18.5007 12C18.5007 8.40981 15.5903 5.49939 12.0001 5.49939ZM3.99951 12C3.99951 7.58139 7.58151 3.99939 12.0001 3.99939C16.4187 3.99939 20.0007 7.58139 20.0007 12C20.0007 16.4186 16.4187 20.0006 12.0001 20.0006C7.58151 20.0006 3.99951 16.4186 3.99951 12Z"/>' +
+    '<path fill-rule="evenodd" clip-rule="evenodd" d="M12.0002 9.5C10.6194 9.5 9.50016 10.6193 9.50016 12C9.50016 13.3807 10.6194 14.5 12.0002 14.5C13.3809 14.5 14.5002 13.3807 14.5002 12C14.5002 10.6193 13.3809 9.5 12.0002 9.5ZM8.00016 12C8.00016 9.79086 9.79102 8 12.0002 8C14.2093 8 16.0002 9.79086 16.0002 12C16.0002 14.2091 14.2093 16 12.0002 16C9.79102 16 8.00016 14.2091 8.00016 12Z"/>' +
     '</svg>';
 
   // Renders each switcher profile as a block inside the provider tile, with its
