@@ -2951,7 +2951,7 @@
             erel = diffMs > 0 ? ('in ' + (eh > 0 ? eh + 'h ' : '') + em + 'm') : ('expired ' + (eh > 0 ? eh + 'h ' : '') + em + 'm ago');
           }
           expiryTitle = 'Token expires: ' + new Date(expMs).toISOString() + ' (' + erel + ')';
-          // State icon: checkmark (healthy >12h), hourglass (≤12h), red hourglass (expired).
+          // State icon: checkmark (healthy >3h), hourglass (≤3h), red hourglass (expired).
           // 3h threshold. Claude tokens live roughly 8-12h, so a 12h window was
           // longer than the token itself and every claude row showed an hourglass
           // permanently — the healthy state was unreachable. 3h is short enough
