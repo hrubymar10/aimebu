@@ -5040,7 +5040,7 @@
         ? (members.length > 0 ? members.join(' · ') : r.id)
         : r.id;
       var icon = dm ? '@' : '#';
-      var pinGlyph = isPinned ? '<svg class="room-item-pin-icon" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.828 1.172a4 4 0 00-5.656 0L3 2.343a1 1 0 001.414 1.414l.293-.293 2.758 2.758-1.586 1.586A1 1 0 007.293 9.414l1.586-1.586 2.758 2.758-.293.293a1 1 0 101.414 1.414l1.172-1.172a4 4 0 000-5.656L9.828 1.172z"/></svg>' : '';
+      var pinGlyph = isPinned ? '<svg class="room-item-pin-icon" width="22" height="22" viewBox="-7.5 0 32 32" fill="currentColor" aria-hidden="true"><path d="M16.52 12.72l-4.84-4.84c-0.16-0.16-0.44-0.28-0.68-0.24s-0.48 0.16-0.6 0.36l-3.52 5.16-3.72 0.84c-0.28 0.080-0.52 0.28-0.64 0.6-0.080 0.28 0 0.6 0.2 0.84l2.52 2.52-5 5c-0.32 0.32-0.32 0.84 0 1.2 0.16 0.16 0.36 0.24 0.6 0.24s0.44-0.080 0.6-0.24l5.040-5.040 2.52 2.52c0.16 0.16 0.36 0.24 0.6 0.24 0.080 0 0.16 0 0.24-0.040 0.28-0.080 0.52-0.32 0.6-0.64l0.84-3.72 5.16-3.48c0.2-0.16 0.32-0.36 0.36-0.6-0.040-0.28-0.080-0.52-0.28-0.68zM10.080 16.32c-0.16 0.12-0.28 0.32-0.36 0.52l-0.6 2.56-4.12-4.12 2.56-0.56c0.2-0.040 0.4-0.16 0.52-0.36l3.12-4.56 3.4 3.4-4.52 3.12z"/></svg>' : '';
       return (
         '<div class="room-item' +
           (isActive ? ' active' : '') +
@@ -5049,8 +5049,10 @@
           (attention > 0 ? ' has-attention' : '') +
           (isPinned ? ' pinned' : '') +
           '" data-room-id="' + esc(r.id) + '">' +
-          (pinGlyph ? '<span class="room-item-pin">' + pinGlyph + '</span>' : '') +
-          '<span class="room-item-icon">' + icon + '</span>' +
+          '<span class="room-item-icon-group">' +
+            '<span class="room-item-icon">' + icon + '</span>' +
+            (pinGlyph ? '<span class="room-item-pin">' + pinGlyph + '</span>' : '') +
+          '</span>' +
           '<div class="room-item-info">' +
             '<div class="room-item-top">' +
               '<span class="room-item-name">' + esc(displayName) + '</span>' +

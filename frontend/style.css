@@ -6011,5 +6011,12 @@ body {
   font-size: 0.8rem;
   opacity: 0.8;
 }
-.room-item-pin { display: inline-flex; align-items: center; margin-right: 2px; color: var(--accent, #4ea1ff); }
+.room-item-icon-group { display: inline-flex; align-items: center; gap: 0; flex-shrink: 0; }
+/* The pin's viewBox (-7.5 0 32 32) insets its glyph ~5px at 22px, and the 20px
+   centered-# icon span carries ~6px of trailing dead space — together those
+   floor the #-to-pin ink gap at ~11px regardless of the flex gap (a negative
+   gap overflows fixed-size items rather than overlapping them). Pulling the
+   pin -5px over the icon span's dead space halves the measured ink-to-ink gap
+   (~11px → ~6px). Derived from getBoundingClientRect measurement, not eyeballed. */
+.room-item-pin { display: inline-flex; align-items: center; margin-left: -5px; color: var(--accent, #4ea1ff); }
 .room-item.pinned .room-item-name { font-weight: 700; }
