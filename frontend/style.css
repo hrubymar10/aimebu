@@ -5954,3 +5954,33 @@ body {
 .md-align-right {
   text-align: right;
 }
+
+/* Retention expiry divider (human-facing). Messages older than the
+   expiry window are hidden from AI bulk reads; humans still see them, with a
+   moving divider between expired and live + an icon on expired messages. */
+.expiry-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 0 4px;
+}
+.expiry-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.expiry-divider-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.chat-msg-expired {
+  opacity: 0.7;
+}
+.chat-msg-expired-icon {
+  font-size: 0.8rem;
+  opacity: 0.8;
+}

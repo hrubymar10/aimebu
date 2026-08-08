@@ -1131,9 +1131,11 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 
 	// POST /agents/{id}/rooms/{room_id}/prefs — set per-caller hidden/pinned view
 	// preferences for a room. Body: {hidden?: bool, pinned?: bool}. hidden=true
-	// is rejected (409) if the room has any AI agent member: a room containing
-	// agents cannot be hidden, so an urgent message can never land in a hidden
-	// room. Pinned rooms sort to the top of the sidebar (frontend).
+	// is rejected (409) if the room has any other member (human or AI): you can
+	// hide a room only when you are the last one in it, so an urgent message can
+	// never land in a hidden room. Anyone joining
+	// unhides it (clearHiddenForRoomLocked runs on every join). Pinned rooms
+	// sort to the top of the sidebar (frontend).
 	mux.HandleFunc("POST /agents/{id}/rooms/{room_id}/prefs", func(w http.ResponseWriter, r *http.Request) {
 		agentID := r.PathValue("id")
 		roomID := r.PathValue("room_id")

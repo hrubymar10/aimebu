@@ -369,3 +369,92 @@ func expiryMustGet(t *testing.T, url string) *http.Response {
 	}
 	return resp
 }
+
+// TestExpiryAdvisoryServerTimeForHumans verifies the three-way assertion:
+// a human read returns unfiltered messages, no expired marker, and the
+// advisory server_time field present (when window > 0). The server_time
+// lets the frontend compute a clock offset for the expiry divider without
+// filtering or marking human history.
+func TestExpiryAdvisoryServerTimeForHumans(t *testing.T) {
+	s, srv := setupTestServer(t)
+	h6 := 6 * 60 * 60
+	s.putSettings(Settings{MessagesConsideredExpiredAfterSeconds: &h6})
+
+	human, err := s.registerHuman("hank2", "test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	s.mu.Lock()
+	s.rooms["r2"] = &types.Room{ID: "r2", Members: []string{human.ID}}
+	s.messages["r2"] = []types.Message{
+		retentionTestMessage(1, "r2", now.Add(-10*time.Hour)), // would be expired for AI
+		retentionTestMessage(2, "r2", now.Add(-time.Minute)),  // live
+	}
+	s.mu.Unlock()
+
+	resp := expiryMustGet(t, srv.URL+"/rooms/r2/messages?agent_id="+human.ID)
+	var out struct {
+		Messages   []types.Message `json:"messages"`
+		Expired    *ExpiredMarker  `json:"expired"`
+		ServerTime string          `json:"server_time"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// 1. Unfiltered: human sees both messages.
+	if len(out.Messages) != 2 {
+		t.Fatalf("human saw msgs %v, want 2 (unfiltered)", msgIDs(out.Messages))
+	}
+	// 2. No expired marker for humans.
+	if out.Expired != nil {
+		t.Fatalf("human got expired marker %+v, want nil", out.Expired)
+	}
+	// 3. Advisory server_time present.
+	if out.ServerTime == "" {
+		t.Fatal("human read missing server_time (advisory cutoff for the expiry divider)")
+	}
+	// server_time must be a valid RFC3339 timestamp.
+	if _, err := time.Parse(time.RFC3339, out.ServerTime); err != nil {
+		t.Fatalf("server_time %q is not valid RFC3339: %v", out.ServerTime, err)
+	}
+}
+
+// TestExpiryServerTimeAbsentWhenWindowZero verifies server_time is absent
+// when the expiry window is 0 (never expire). The frontend keeps its
+// never-expire path when the field is absent.
+func TestExpiryServerTimeAbsentWhenWindowZero(t *testing.T) {
+	s, srv := setupTestServer(t)
+	zero := 0
+	s.putSettings(Settings{MessagesConsideredExpiredAfterSeconds: &zero})
+
+	human, err := s.registerHuman("hank3", "test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	s.mu.Lock()
+	s.rooms["r3"] = &types.Room{ID: "r3", Members: []string{human.ID}}
+	s.messages["r3"] = []types.Message{
+		retentionTestMessage(1, "r3", now.Add(-time.Minute)),
+	}
+	s.mu.Unlock()
+
+	resp := expiryMustGet(t, srv.URL+"/rooms/r3/messages?agent_id="+human.ID)
+	var out struct {
+		Messages   []types.Message `json:"messages"`
+		ServerTime string          `json:"server_time"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if out.ServerTime != "" {
+		t.Fatalf("server_time = %q, want empty (window 0 = never expire)", out.ServerTime)
+	}
+}

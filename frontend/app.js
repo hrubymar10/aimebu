@@ -3817,7 +3817,16 @@
     var path = '/rooms/' + encodeURIComponent(roomID) + '/messages?limit=100';
     if (agentID && agentID !== 'user') path += '&agent_id=' + encodeURIComponent(agentID);
     return api('GET', path).then(function (data) {
+      // Refresh clock offset from advisory server_time (if present).
+      if (data.server_time) {
+        var sMs = new Date(data.server_time).getTime();
+        if (Number.isFinite(sMs)) clockOffsetMs = sMs - Date.now();
+      }
       messages[roomID] = data.messages || [];
+      // Replaced the array (newest 100) — the oldest loaded messages are gone,
+      // so the "seen the beginning" latch no longer holds. Clear it so lazy
+      // loading works on the next scroll-up. Same invariant as pruneMessageCache.
+      noMoreOlder[roomID] = false;
       // Reverse so oldest first (API returns newest first)
       messages[roomID].reverse();
       // Store last message preview
@@ -5141,6 +5150,52 @@
     }
   }
 
+  // Expiry cutoff + drift. Source of truth: expiredAfterWindow() in
+  // internal/server/settings.go; 0 means never expire. The cutoff is `now -
+  // window` and drifts while the tab is open. renderMessages recomputes it each
+  // paint; the 30s tick re-renders only when the expired set changes, so an
+  // idle room's divider actually moves as messages age out (not just on first
+  // paint). Humans get unfiltered history + no AI `expired` marker, so the
+  // client re-derives the line — a deliberate drift risk.
+  // Clock offset: serverNow - clientNow, refreshed at fetch time from the
+  // advisory server_time field. Starting at 0 degrades to today's behaviour
+  // (local clock) before the first fetch. The window stays live from
+  // serverSettings on every call, so a settings change re-scopes instantly.
+  var clockOffsetMs = 0;
+  function expiryCutoffMs() {
+    var w = Number(serverSettings.messages_considered_expired_after_seconds) || 0;
+    return w > 0 ? (Date.now() + clockOffsetMs) - w * 1000 : 0;
+  }
+  // Expiry render signature = (divider anchor, expired count). The anchor (ID
+  // of the first live message after an expired one, or null) covers a live
+  // message appended below expired ones (appendMessage can't insert the divider
+  // itself). The count covers icon-only drift the anchor alone misses: all-live
+  // →all-expired, or a middle message crossing with the anchor unchanged. The
+  // 30s tick re-renders only when EITHER field changes.
+  function expiryRenderSignature() {
+    var cut = expiryCutoffMs();
+    if (cut <= 0) return { anchor: null, count: 0 };
+    var arr = messages[activeRoomID] || [];
+    var count = 0, anchor = null, sawExpired = false;
+    for (var i = 0; i < arr.length; i++) {
+      var ms = new Date(arr[i].created_at).getTime();
+      if (Number.isFinite(ms) && ms < cut) { count++; sawExpired = true; continue; }
+      if (sawExpired && anchor === null) anchor = arr[i].id;
+    }
+    return { anchor: anchor, count: count };
+  }
+  var lastRenderAnchor = null;
+  var lastRenderCount = 0;
+
+  function expiryDividerHTML(cutoffMs) {
+    var when = new Date(cutoffMs).toISOString();
+    return '<div class="expiry-divider" role="separator" aria-label="Older messages expired from AI bulk reads">' +
+      '<span class="expiry-divider-line"></span>' +
+      '<span class="expiry-divider-label" title="Messages above this line are older than the expiry window and hidden from AI bulk reads — still visible to you. Cutoff: ' + esc(when) + '">expired from AI bulk reads</span>' +
+      '<span class="expiry-divider-line"></span>' +
+    '</div>';
+  }
+
   function renderMessages() {
     if (!activeRoomID) return;
     var msgs = messages[activeRoomID] || [];
@@ -5159,9 +5214,36 @@
     var prevScrollTop = messageListEl.scrollTop;
     var prevScrollHeight = messageListEl.scrollHeight;
 
-    messageListEl.innerHTML = msgs.map(function (m) {
-      return chatMessageHTML(m);
-    }).join('');
+    var cutoffMs = expiryCutoffMs();
+    var html = '';
+    var dividerInserted = false; // latches: one divider at the first expired→live
+    // transition even if clock skew interleaves expired/live created_at — that
+    // is intentional (a single authoritative line), not a bug to remove.
+    var expiredCount = 0;
+    var dividerAnchor = null;
+    for (var mi = 0; mi < msgs.length; mi++) {
+      var m = msgs[mi];
+      var createdMs = new Date(m.created_at).getTime();
+      var expired = cutoffMs > 0 && Number.isFinite(createdMs) && createdMs < cutoffMs;
+      if (expired) expiredCount++;
+      // Insert the divider before the first LIVE message that follows an expired
+      // one (messages are oldest-first, so expired sit at the top). When ALL
+      // messages are expired there is no live transition, so no divider — the
+      // ⏳ icons carry the meaning; a trailing divider would falsely imply live
+      // messages below. Deliberate.
+      if (cutoffMs > 0 && !dividerInserted && !expired && mi > 0) {
+        var prevMs = new Date(msgs[mi - 1].created_at).getTime();
+        if (Number.isFinite(prevMs) && prevMs < cutoffMs) {
+          html += expiryDividerHTML(cutoffMs);
+          dividerInserted = true;
+          dividerAnchor = m.id; // the live message the divider sits before
+        }
+      }
+      html += chatMessageHTML(m, expired);
+    }
+    messageListEl.innerHTML = html;
+    lastRenderAnchor = dividerAnchor;
+    lastRenderCount = expiredCount;
 
     messageListEl.querySelectorAll('.chat-msg-body').forEach(function (b) { highlightNames(b); });
 
@@ -5205,7 +5287,7 @@
     refreshOrRenderOpenQuestionsModal();
   }
 
-  function chatMessageHTML(m) {
+  function chatMessageHTML(m, expired) {
     var showDebugButton = shouldShowDebugButton();
     if (m.from_kind === 'system') {
       return '<div class="chat-msg-system" data-id="' + esc(m.id) + '">' +
@@ -5239,7 +5321,7 @@
       ? ' class="chat-msg-from-name agent-profile-link" data-profile-agent-id="' + esc(fromAgent.id) + '" data-profile-context="room" tabindex="0" role="button" aria-label="Show profile for ' + esc(fromAgent.id) + '"'
       : ' class="chat-msg-from-name"';
     return (
-      '<div class="chat-msg' + (isSelf ? ' self' : '') + (m.needs_human_attention ? ' needs-attention' : '') + '" data-id="' + esc(m.id) + '">' +
+      '<div class="chat-msg' + (isSelf ? ' self' : '') + (m.needs_human_attention ? ' needs-attention' : '') + (expired ? ' chat-msg-expired' : '') + '" data-id="' + esc(m.id) + '">' +
         '<div class="chat-msg-header">' +
           '<span class="chat-msg-from">' +
             '<img src="' + msgIconSrc + '" class="harness-icon chat-msg-icon" alt="' + msgIconAlt + '" title="' + msgIconTitle + '" width="14" height="14">' +
@@ -5250,6 +5332,7 @@
           '<span class="chat-msg-id" data-msg-id="' + esc(String(m.id)) + '" title="Click to copy">#' + esc(String(m.id)) + '</span>' +
           (showDebugButton ? '<button class="icon-button chat-msg-debug-toggle" type="button" data-msg-id="' + esc(String(m.id)) + '" aria-label="Open debug inspector" title="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button>' : '') +
           '<span class="chat-msg-time" title="' + esc(m.created_at) + '">' + relativeTime(m.created_at) + '</span>' +
+          (expired ? '<span class="chat-msg-expired-icon" title="Older than the expiry window — hidden from AI bulk reads, still visible to you" aria-label="Expired from AI bulk reads">⏳</span>' : '') +
         '</div>' +
         '<div class="chat-msg-bubble">' +
           replyReference +
@@ -7442,6 +7525,20 @@
     messageListEl.querySelectorAll('.chat-msg-time').forEach(function (el) {
       el.textContent = relativeTime(el.title);
     });
+    // T41 §5: if the expiry render signature (divider anchor + expired count)
+    // changed since the last render, re-render so the divider + ⏳ icons move.
+    // Re-render only on change — a quiet room costs nothing on the common path,
+    // and an unconditional rebuild would discard hover/selection state. The
+    // count covers icon-only drift the anchor alone misses (all-live→all-expired,
+    // a middle message crossing). A system message becoming the first live
+    // message in an all-expired room (anchor null→id) is caught here too — on
+    // the next tick (up to 30s) rather than instantly. That's deliberate: the
+    // SSE caller at app.js:4661 already re-renders for non-system messages, so a
+    // per-appendMessage check would double-render every real message.
+    if (activeRoomID) {
+      var sig = expiryRenderSignature();
+      if (sig.anchor !== lastRenderAnchor || sig.count !== lastRenderCount) renderMessages();
+    }
     renderRooms();
     renderAllAgents();
     renderRoomAgents();
