@@ -125,6 +125,7 @@ func (s *store) configureSQLite(seedSchemaMeta bool) error {
 		`CREATE TABLE IF NOT EXISTS role_custom (key TEXT PRIMARY KEY, data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS sounds (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS attachments (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS room_prefs (agent_id TEXT NOT NULL, room_id TEXT NOT NULL, hidden INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(agent_id, room_id))`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {

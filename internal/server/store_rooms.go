@@ -156,6 +156,12 @@ func (s *store) joinRoom(roomID, agentID string) (*types.Room, error) {
 	}
 
 	room.Members = append(room.Members, agentID)
+	// Anyone joining a room unhides it for everyone who hid it — the rule:
+	// you can hide only when you're alone, so the moment anyone else arrives the
+	// room must come back. Runs before the joiner can post.
+	if s.clearHiddenForRoomLocked(roomID) {
+		s.persistRoomPrefsLocked()
+	}
 	s.persist()
 	cp := *room
 	s.mu.Unlock()
@@ -269,6 +275,12 @@ func (s *store) joinRoomInternalLocked(roomID, agentID string) bool {
 	}
 
 	room.Members = append(room.Members, agentID)
+	// See joinRoom: anyone joining unhides the room for everyone who hid it.
+	// Persist happens here because this Locked helper is also an auto-join
+	// path (e.g. _system on bus_register) whose caller only persists the core.
+	if s.clearHiddenForRoomLocked(roomID) {
+		s.persistRoomPrefsLocked()
+	}
 	return true
 }
 
@@ -309,12 +321,20 @@ func (s *store) agentRoomViews(agentID string) []types.AgentRoomView {
 				}
 			}
 		}
+		hidden, pinned := false, false
+		if prefs, ok := s.roomPrefs[agentID]; ok {
+			if p, ok := prefs[r.ID]; ok {
+				hidden, pinned = p.Hidden, p.Pinned
+			}
+		}
 		result = append(result, types.AgentRoomView{
 			Room:                 *r,
 			UnreadCount:          unread,
 			AttentionUnreadCount: attentionUnread,
 			LastID:               head,
 			ReadCursor:           cursor,
+			Hidden:               hidden,
+			Pinned:               pinned,
 		})
 	}
 	return result

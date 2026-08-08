@@ -329,6 +329,8 @@ type AgentRoomView struct {
 	AttentionUnreadCount int   `json:"attention_unread_count"`
 	LastID               int64 `json:"last_id"`
 	ReadCursor           int64 `json:"read_cursor"`
+	Hidden               bool  `json:"hidden"`
+	Pinned               bool  `json:"pinned"`
 }
 
 // MarkReadRequest is the body for POST /agents/{id}/read.

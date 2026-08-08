@@ -397,6 +397,7 @@ POST   /agents/{id}/heartbeat          Refresh agent last_seen only; no messages
 POST   /agents/{id}/session            Wrapper-pushed session hint; best-effort read surface, not resume authority
 GET    /agents/{id}/rooms              Rooms an agent is in (with per-room unread)
 GET    /agents/{id}/wait               Long-poll across all the agent's rooms
+POST   /agents/{id}/rooms/{room_id}/prefs  {"hidden": true} | {"pinned": true} — per-caller room view prefs; 409 on hidden=true when the room has an AI member
 POST   /agents/{id}/read               {"room": "...", "message_id": N}
 GET    /agents/{id}/attachments/{uuid} Serve an uploaded attachment only when referenced by a message in one of the agent's rooms (?message_id=N optional)
 

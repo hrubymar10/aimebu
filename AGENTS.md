@@ -294,7 +294,8 @@ diagnostics use the sibling `.log` file when `AIMEBU_AGENT_DEBUG` is enabled.
 `aimebu.sqlite` stores rooms, messages, agents, the durable agent session
 registry (`agent_sessions`, keyed by full agent ID), reactions, memory,
 leaderboards, macros, fleet command bundles, prompt overrides, role
-definitions/emoji, sound metadata, attachment metadata, UI preferences, plus
+definitions/emoji, sound metadata, attachment metadata, UI preferences, per-human
+room view preferences (hidden/pinned), plus
 global retention settings for
 agent liveness (`liveness_sweep_seconds`, `agent_stale_window_seconds`,
 `agent_offline_window_seconds`), stale-agent pruning, cleanup

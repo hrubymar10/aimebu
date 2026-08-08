@@ -70,6 +70,24 @@ func (s *store) roomSendWithVisualPlan(roomID, from, body string, needsAttention
 				_, _ = s.joinRoom(roomID, a.ID)
 			}
 		}
+		// Auto-unhide the room for addressed humans only: a hidden room that
+		// receives a needs_attention handoff must surface to the people it's
+		// blocking, but only them — one attention flag must not rearrange
+		// everyone's sidebar. Group mentions (@here/@channel/@humans) already
+		// expand to individual agents in targets.
+		//
+		// NOTE: under the "hide only when alone" rule this path is
+		// unreachable — a hidden room has no other members to mention you, and
+		// anyone joining unhides it (clearHiddenForRoomLocked on join). Kept
+		// rather than deleted because the rule may loosen; the flip to
+		// any-mention-unhide is staged at __others/mention-unhide-flip.patch.
+		if len(targets) > 0 {
+			s.mu.Lock()
+			if s.unhideRoomForAddressedLocked(roomID, targets) {
+				s.persistRoomPrefsLocked()
+			}
+			s.mu.Unlock()
+		}
 	}
 
 	// Look up sender kind so readers can apply different response policies
@@ -210,11 +228,11 @@ func (s *store) roomMessagesWithExpiryAt(roomID string, limit int, sinceID, befo
 		cutoff = now.Add(-window)
 	}
 
+	pageBack := beforeID > 0
+
 	var live []types.Message
 	var expiredCount int
 	var oldestExpired, newestExpired int64
-	pageBack := beforeID > 0
-
 	for _, m := range s.messages[roomID] {
 		if pageBack {
 			if m.ID >= beforeID {

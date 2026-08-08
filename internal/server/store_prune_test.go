@@ -14,7 +14,7 @@ import (
 // pruneCounts is a snapshot of what a prune leaves behind, used to compare the
 // online (DELETE /all) and offline (PruneDataDir) paths against each other.
 type pruneCounts struct {
-	rooms, messages, agents, sessions, reactions, attachments int
+	rooms, messages, agents, sessions, reactions, attachments, roomPrefs int
 }
 
 func reloadPruneCounts(t *testing.T, dir string) pruneCounts {
@@ -32,6 +32,9 @@ func reloadPruneCounts(t *testing.T, dir string) pruneCounts {
 	}
 	c.agents = len(s.agents)
 	c.sessions = len(s.agentSessions)
+	for _, prefs := range s.roomPrefs {
+		c.roomPrefs += len(prefs)
+	}
 	s.mu.RUnlock()
 	s.reactionsMu.RLock()
 	c.reactions = len(s.reactions)
@@ -121,6 +124,19 @@ func buildPruneFixture(t *testing.T, dir string) {
 	if _, err := s.addAttachment("a.png", "image/png", testPNG(t, 1, 1), 1, 1); err != nil {
 		t.Fatal(err)
 	}
+	// A human-only room the human has hidden (no AI members, so hide is
+	// allowed). room_prefs must survive plain prune and be wiped by prune -a.
+	human, err := s.registerHuman("hank", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("side", human.ID); err != nil {
+		t.Fatal(err)
+	}
+	hide := true
+	if p := s.setRoomPref(human.ID, "side", &hide, nil); !p.Hidden {
+		t.Fatal("fixture hide failed")
+	}
 }
 
 // TestPruneOnlineOfflineIdenticalEndState is the load-bearing item-4 test: the
@@ -165,7 +181,7 @@ func TestPruneOnlineOfflineIdenticalEndState(t *testing.T) {
 	wantPlain := before
 	wantPlain.agents = 0
 	wantPlain.sessions = 0
-	if wantPlain.rooms == 0 || wantPlain.messages == 0 || wantPlain.reactions == 0 || wantPlain.attachments == 0 {
+	if wantPlain.rooms == 0 || wantPlain.messages == 0 || wantPlain.reactions == 0 || wantPlain.attachments == 0 || wantPlain.roomPrefs == 0 {
 		t.Fatalf("fixture undercounted: %+v — test is meaningless without spared content", before)
 	}
 
@@ -213,7 +229,7 @@ func TestPruneOnlineOfflineIdenticalEndState(t *testing.T) {
 		name string
 		got  pruneCounts
 	}{{"online", onlineA}, {"offline", offlineA}} {
-		if c.got.messages != 0 || c.got.agents != 0 || c.got.sessions != 0 || c.got.reactions != 0 || c.got.attachments != 0 {
+		if c.got.messages != 0 || c.got.agents != 0 || c.got.sessions != 0 || c.got.reactions != 0 || c.got.attachments != 0 || c.got.roomPrefs != 0 {
 			t.Fatalf("%s prune -a end state = %+v, want only the _system room (everything else wiped)", c.name, c.got)
 		}
 		if c.got.rooms > 1 {

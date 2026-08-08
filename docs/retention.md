@@ -86,9 +86,48 @@ settings survive; agents simply re-register. `aimebu prune -a` wipes
 everything, conversation history included. Neither mode ever touches `switcher/`
 (stored account logins).
 
+## Room hiding & pinning
+
+Hidden and pinned are **per-human view preferences**, not global room state —
+two humans can keep different sidebars. A hidden room is excluded from a human's
+sidebar but stays reachable by typing its name into the join field. Pinned
+rooms sort to the top.
+
+**You can hide a room only when you are alone in it.** This is the rule,
+and it's enforced at hide time: `hidden=true` is rejected (409) if the room has
+any other member, human or AI. The point is that a hidden room has nobody in
+it to send you an urgent message — so there is no separate notification policy
+to maintain, and no `@mention` or `needs_attention` unhide rule. Hiding is
+yours alone to undo (or to re-trigger by typing the room name into the join
+field).
+
+**Anyone joining unhides the room.** The moment another member — human or AI —
+joins a room a human has hidden, that human's `hidden` preference is cleared,
+before the joiner can post. This is the one auto-unhide rule, and it's why the
+rule above is sufficient: a hidden room can't receive a message, because the
+act of someone joining to send one unhides it first.
+
+**Clearing AI agents to reach a hideable state.** `POST /rooms/{id}/kick-agents`
+removes every AI member in one server-side operation (humans untouched,
+idempotent), returning the kicked IDs and a `remaining` list of any kickable
+members still present (a point-in-time snapshot, not a lock — an agent can
+join again between the kick and a hide attempt). This is the practical way to
+get a room into a hideable state; other humans leave on their own, since
+removing a person stays a deliberate per-person act.
+
+Hidden/pinned preferences survive plain `aimebu prune` (a view preference is
+neither conversation nor agent state, and humans re-register with the same bare
+ID); `aimebu prune -a` wipes them.
+
+**API:** `GET /agents/{id}/rooms` returns each member room with `hidden` and
+`pinned` flags for the caller. `POST /agents/{id}/rooms/{room_id}/prefs` sets
+them (`{hidden?: bool, pinned?: bool}`); `hidden=true` is rejected with 409 if
+the room has any other member. `POST /rooms/{id}/kick-agents` clears AI members
+(`{kicked: [...], remaining: [...]}`).
+
 ## Scope of this doc
 
-This covers the **expiry model** (message visibility for AI bulk reads) and the
-**rooms-never-auto-deleted** guarantee. Per-human hidden/pinned rooms and the
-refined prune semantics are part of the same retention rework and are
-documented here as they land.
+This covers the full T41 retention rework: the **expiry model** (message
+visibility for AI bulk reads), the **rooms-never-auto-deleted** guarantee, the
+**prune semantics** (plain spares conversation, `-a` wipes), and **per-human
+hidden/pinned rooms**.

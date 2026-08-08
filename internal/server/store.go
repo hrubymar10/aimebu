@@ -147,6 +147,10 @@ type store struct {
 	reactionsMu sync.RWMutex
 	reactions   map[int64][]types.Reaction
 
+	// roomPrefs is per-human hidden/pinned room view preferences, keyed
+	// agent_id → room_id → pref. Guarded by s.mu. See store_room_prefs.go.
+	roomPrefs map[string]map[string]*RoomPref
+
 	memoryMu sync.RWMutex
 	memory   map[string]types.MemoryRecord
 
@@ -243,6 +247,11 @@ func (s *store) clearAll(includeSettings bool) {
 	s.messages = make(map[string][]types.Message)
 	s.agents = make(map[string]*types.Agent)
 	s.agentSessions = make(map[string]*types.AgentSession)
+	// roomPrefs is s.mu-guarded, so clear it under the same lock. Calling it
+	// unlocked at the tail (as it previously was) races with concurrent
+	// roomPref reads (e.g. the UI polling /agents/{id}/rooms during prune -a)
+	// and Go fatals on the concurrent map write — unrecoverable mid-wipe.
+	s.clearAllRoomPrefsLocked()
 	s.persistFullCoreLocked()
 	s.mu.Unlock()
 	s.attachmentsMu.Lock()

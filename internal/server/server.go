@@ -566,6 +566,14 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		if expired != nil {
 			resp["expired"] = expired
 		}
+		// Advisory server_time for the expiry divider: when the window is > 0,
+		// include the server's current time so the frontend can compute a clock
+		// offset and place the divider correctly regardless of client clock skew.
+		// Advisory only — does not filter, does not produce a marker for humans,
+		// does not change what AI readers see. Window 0 → field absent.
+		if w := s.expiredAfterWindow(); w > 0 {
+			resp["server_time"] = time.Now().UTC().Format(time.RFC3339)
+		}
 		_ = jsonOK(w, resp)
 	})
 
@@ -1119,6 +1127,30 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		agentID := r.PathValue("id")
 		rooms := s.agentRoomViews(agentID)
 		_ = jsonOK(w, map[string]any{"rooms": rooms, "agent": agentID})
+	})
+
+	// POST /agents/{id}/rooms/{room_id}/prefs — set per-caller hidden/pinned view
+	// preferences for a room. Body: {hidden?: bool, pinned?: bool}. hidden=true
+	// is rejected (409) if the room has any AI agent member: a room containing
+	// agents cannot be hidden, so an urgent message can never land in a hidden
+	// room. Pinned rooms sort to the top of the sidebar (frontend).
+	mux.HandleFunc("POST /agents/{id}/rooms/{room_id}/prefs", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.PathValue("id")
+		roomID := r.PathValue("room_id")
+		var req struct {
+			Hidden *bool `json:"hidden,omitempty"`
+			Pinned *bool `json:"pinned,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Hidden != nil && *req.Hidden && s.roomHasOtherMember(roomID, agentID) {
+			jsonError(w, "room cannot be hidden while anyone else is in it", http.StatusConflict)
+			return
+		}
+		pref := s.setRoomPref(agentID, roomID, req.Hidden, req.Pinned)
+		_ = jsonOK(w, map[string]any{"agent": agentID, "room": roomID, "hidden": pref.Hidden, "pinned": pref.Pinned})
 	})
 
 	// POST /agents/{id}/read — explicit mark-read. Body: {room, message_id}.

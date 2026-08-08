@@ -33,6 +33,7 @@ func newStore(dir string) (*store, error) {
 		fleets:                 make(map[string]Fleet),
 		attachments:            make(map[string]AttachmentEntry),
 		reactions:              make(map[int64][]types.Reaction),
+		roomPrefs:              make(map[string]map[string]*RoomPref),
 		memory:                 make(map[string]types.MemoryRecord),
 		leaderboards:           []types.LeaderboardRatingCard{},
 		rolesOverrides:         make(map[string]roleOverrideEntry),
@@ -143,6 +144,10 @@ func (s *store) load() error {
 	// wiped only by prune -a (and reaped as orphans by cleanupReactionsForLiveMessages
 	// after an explicit room delete).
 	s.loadReactions()
+
+	// Per-human hidden/pinned room view preferences; preserved by plain prune,
+	// wiped only by prune -a.
+	s.loadRoomPrefs()
 
 	// Curated bus memory — durable knowledge; survives conversation prune and
 	// is wiped only by prune -a.
