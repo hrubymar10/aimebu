@@ -170,12 +170,19 @@ with no usage snapshot has no plan badge and no email tooltip. Empty profiles
 render as "needs login" rather than as zero usage.
 
 An icon right of the profile name shows token-expiry state: a checkmark while
-the token has more than 12 hours left, an hourglass at 12 hours or less, and a
+the token has more than 3 hours left, an hourglass at 3 hours or less, and a
 red hourglass once it has expired. The icon and the profile name both carry the
 same hover tooltip with the absolute expiry timestamp and a relative "in 3h
-20m" / "expired 5h 2m ago" reading. The 12-hour threshold is deliberately wide
-so there is time to act by hand; it drops to roughly an hour if automatic
-refresh of near-expiry profiles is ever implemented.
+20m" / "expired 5h 2m ago" reading. The 3-hour threshold is short enough that a
+checkmark means the token is genuinely healthy — claude tokens live only about
+8 to 12 hours, so a wider window would leave every claude profile showing an
+hourglass permanently — and long enough to switch profiles by hand before one
+lapses.
+
+For codex the expiry shown is the access token's. A codex `id_token` is a
+short-lived identity assertion minted at login and never refreshed, so it is
+normally long expired on a perfectly healthy install; only the account email is
+read from it.
 
 Two actions confirm first, because both end a working login: switching to an
 empty profile, and deleting the active profile.

@@ -2952,9 +2952,12 @@
           }
           expiryTitle = 'Token expires: ' + new Date(expMs).toISOString() + ' (' + erel + ')';
           // State icon: checkmark (healthy >12h), hourglass (≤12h), red hourglass (expired).
-          // 12h threshold — temporary, until auto-refresh exists; drops to 1h then.
+          // 3h threshold. Claude tokens live roughly 8-12h, so a 12h window was
+          // longer than the token itself and every claude row showed an hourglass
+          // permanently — the healthy state was unreachable. 3h is short enough
+          // that a checkmark means something and long enough to act by hand.
           var iconSvg = diffMs <= 0 ? EXPIRY_ICON_EXPIRED
-            : (diffMs <= 43200000 ? EXPIRY_ICON_SOON : EXPIRY_ICON_OK);
+            : (diffMs <= 10800000 ? EXPIRY_ICON_SOON : EXPIRY_ICON_OK);
           var iconClass = 'switcher-expiry-icon' + (diffMs <= 0 ? ' switcher-expiry-icon--expired' : '');
           expiryIcon = '<span class="' + iconClass + '" title="' + esc(expiryTitle) + '">' + iconSvg + '</span>';
         }
