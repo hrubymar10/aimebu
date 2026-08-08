@@ -93,6 +93,22 @@ you do not mutate the host's real bus state:
 export AIMEBU_CONFIG_DIR="$(mktemp -d)"
 ```
 
+When running a scratch server for HTTP probing, never clean it up with
+`pkill -f <binary>` — that pattern matches your own shell's command line, so it
+kills the shell and leaves the server running. The stale server keeps an
+advanced `nextID`, so the next probe returns plausible-but-wrong results (a
+believable gap or duplicate) rather than failing outright. Pick a spare port
+(never `9997`), build a fresh probe binary (`bin/aimebu` reuses a cached one),
+track the PID, and kill by PID:
+
+```bash
+go build -o /tmp/aimebu-probe ./cmd/aimebu
+AIMEBU_CONFIG_DIR="$(mktemp -d)" AIMEBU_PORT=9985 /tmp/aimebu-probe server serve > /tmp/probe.log 2>&1 &
+echo $! > /tmp/probe.pid
+# …probe…
+kill "$(cat /tmp/probe.pid)"; rm -rf "$AIMEBU_CONFIG_DIR"
+```
+
 ## Project structure
 
 ```
