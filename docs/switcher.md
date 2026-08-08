@@ -164,9 +164,18 @@ is enabled but not eligible.
 
 The **usages panel** has the switching itself: the profile list per tool with
 an active marker, Switch buttons, "Add profile", "Import current login", and
-per-row delete. Login email shows as a hover tooltip (see the note on claude
-emails below). Empty profiles render as
-"needs login" rather than as zero usage.
+per-row delete. The active profile sorts first. Login email shows as a hover
+tooltip on the plan badge (see the note on claude emails below), so a profile
+with no usage snapshot has no plan badge and no email tooltip. Empty profiles
+render as "needs login" rather than as zero usage.
+
+An icon right of the profile name shows token-expiry state: a checkmark while
+the token has more than 12 hours left, an hourglass at 12 hours or less, and a
+red hourglass once it has expired. The icon and the profile name both carry the
+same hover tooltip with the absolute expiry timestamp and a relative "in 3h
+20m" / "expired 5h 2m ago" reading. The 12-hour threshold is deliberately wide
+so there is time to act by hand; it drops to roughly an hour if automatic
+refresh of near-expiry profiles is ever implemented.
 
 Two actions confirm first, because both end a working login: switching to an
 empty profile, and deleting the active profile.

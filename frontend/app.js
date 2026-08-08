@@ -2897,6 +2897,14 @@
     return '';
   }
 
+  // Expiry state icons (from __plans/ svgrepo exports). All three use
+  // fill="currentColor"; the expired icon's red is set via a CSS class
+  // (.switcher-expiry-icon--expired { color: var(--red) }) on the wrapping
+  // span, not the SVG attribute — Safari doesn't support var() in attributes.
+  var EXPIRY_ICON_OK = '<svg fill="currentColor" width="14" height="14" viewBox="0 0 20 20" aria-hidden="true"><path d="M2.93 17.07A10 10 0 1 1 17.07 2.93 10 10 0 0 1 2.93 17.07zm12.73-1.41A8 8 0 1 0 4.34 4.34a8 8 0 0 0 11.32 11.32zM6.7 9.29L9 11.6l4.3-4.3 1.4 1.42L9 14.4l-3.7-3.7 1.4-1.42z"/></svg>';
+  var EXPIRY_ICON_SOON = '<svg fill="currentColor" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.827 6.956c2.265.662 5.109-.295 8.172-1.867l.001.079c0 1.3-1.642 2.897-3.248 4.288a3.818 3.818 0 0 0-.752.898v6.726c1.321.372 2.815 2.089 3.827 3.655-.027.088-.043.179-.077.265h-8.5c-.034-.087-.057-.17-.082-.254 1.01-1.57 2.509-3.293 3.833-3.666v-6.729a3.819 3.819 0 0 0-.73-.88 17.898 17.898 0 0 1-2.443-2.515zM17.922 2H20v1h-1.516A5.594 5.594 0 0 1 19 5.319c0 2.15-1.479 4.294-3.545 6.092a1.544 1.544 0 0 0-.62 1.089 1.544 1.544 0 0 0 .62 1.089C17.521 15.387 19 17.53 19 19.68a5.595 5.595 0 0 1-.516 2.32H20v1H5v-1h1.5a5.666 5.666 0 0 1-.5-2.319c0-2.15 1.479-4.294 3.545-6.092a1.544 1.544 0 0 0 .62-1.089 1.544 1.544 0 0 0-.62-1.089C7.479 9.613 6 7.47 6 5.32A5.666 5.666 0 0 1 6.5 3H5V2zm-.545 1H7.624A4.68 4.68 0 0 0 7 5.32c0 1.645 1.137 3.54 3.2 5.336a2.435 2.435 0 0 1 .966 1.844 2.432 2.432 0 0 1-.965 1.843c-2.064 1.797-3.2 3.692-3.2 5.338A4.68 4.68 0 0 0 7.623 22h9.753A4.646 4.646 0 0 0 18 19.68c0-1.645-1.137-3.54-3.2-5.336a2.435 2.435 0 0 1-.966-1.844 2.432 2.432 0 0 1 .965-1.843c2.064-1.797 3.2-3.692 3.2-5.338A4.646 4.646 0 0 0 17.378 3z"/><path fill="none" d="M0 0h24v24H0z"/></svg>';
+  var EXPIRY_ICON_EXPIRED = '<svg fill="currentColor" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.085 2H5v1h1.5A5.666 5.666 0 0 0 6 5.319c0 2.15 1.479 4.294 3.545 6.092a1.544 1.544 0 0 1 .62 1.089 1.544 1.544 0 0 1-.62 1.089C7.479 15.387 6 17.53 6 19.68A5.666 5.666 0 0 0 6.5 22H5v1h15v-1h-1.516A5.595 5.595 0 0 0 19 19.681c0-2.15-1.479-4.294-3.545-6.092a1.544 1.544 0 0 1-.62-1.089 1.544 1.544 0 0 1 .62-1.089C17.521 9.613 19 7.47 19 5.32A5.594 5.594 0 0 0 18.484 3H20V2zm10.292 1A4.646 4.646 0 0 1 18 5.32c0 1.645-1.137 3.54-3.201 5.337a2.432 2.432 0 0 0-.965 1.843 2.435 2.435 0 0 0 .965 1.844c2.064 1.796 3.2 3.691 3.2 5.337A4.646 4.646 0 0 1 17.378 22H7.624A4.68 4.68 0 0 1 7 19.68c0-1.645 1.137-3.54 3.201-5.337a2.432 2.432 0 0 0-.965-1.843 2.435 2.435 0 0 0-.965-1.844C8.137 8.86 7 6.965 7 5.32A4.68 4.68 0 0 1 7.623 3zM8.102 18.925a3.246 3.246 0 0 1 1.35-1.9l2.593-1.722a.823.823 0 0 1 .91 0l2.594 1.722a3.248 3.248 0 0 1 1.35 1.901 3.051 3.051 0 0 1 .1.755A3.645 3.645 0 0 1 16.75 21h-8.5A3.713 3.713 0 0 1 8 19.68a3.05 3.05 0 0 1 .102-.755z"/><path fill="none" d="M0 0h24v24H0z"/></svg>';
+
   // Renders each switcher profile as a block inside the provider tile, with its
   // own usage windows — so every account's quota is visible at once, not just
   // the active one. Returns '' when the switcher is off or the tool has no
@@ -2905,9 +2913,10 @@
     var tool = switcherToolForProvider(providerKey);
     if (!tool || !switcherData || !switcherData.enabled) return '';
     var profiles = (switcherData.profiles || []).filter(function (p) { return p.tool === tool; });
+    profiles.sort(function (a, b) { return (b.active ? 1 : 0) - (a.active ? 1 : 0); }); // active first — safe: filter() returned a new array, not shared state
     if (!profiles.length) return '';
     var elig = (switcherData.eligibility || []).filter(function (e) { return e.tool === tool; })[0];
-    var blocked = !!switcherInFlight[tool] || (elig && !elig.eligible);
+    var blocked = !!switcherInFlight[tool] || (elig && !elig.eligible && !elig.absent);
     var snaps = switcherData.snapshots || {};
     return profiles.map(function (p) {
       var snap = snaps[tool + '/' + p.name] || {};
@@ -2923,13 +2932,11 @@
             ' title="Switch to ' + esc(p.name) + '" aria-label="Switch to ' + esc(p.name) + '">SWITCH</button>'
         : '';
       var emailTitle = p.email ? ' title="' + esc(p.email) + '"' : '';
-      // Token expiry tooltip: hangs off the plan badge when present, or a ⏱
-      // fallback when the plan is absent (a profile with no snapshot has no
-      // badge, so there'd be nowhere for the tooltip to live). Shows absolute
-      // + relative — relative alone is useless in a bug report, absolute alone
+      // Expiry tooltip (absolute + relative) + state icon. Shows absolute +
+      // relative — relative alone is useless in a bug report, absolute alone
       // makes you do arithmetic.
       var expiryTitle = '';
-      var expiryState = null; // null | 'expiring' (≤1h) | 'expired' (past) | 'refreshing' (ulf's future)
+      var expiryIcon = '';
       if (p.expires_at) {
         var expMs = new Date(p.expires_at).getTime();
         if (Number.isFinite(expMs)) {
@@ -2944,21 +2951,23 @@
             erel = diffMs > 0 ? ('in ' + (eh > 0 ? eh + 'h ' : '') + em + 'm') : ('expired ' + (eh > 0 ? eh + 'h ' : '') + em + 'm ago');
           }
           expiryTitle = 'Token expires: ' + new Date(expMs).toISOString() + ' (' + erel + ')';
-          // Visual state folded into the plan-badge / ⏱ fallback anchor (don't
-          // add a second element to the busy row). 'expiring' = ≤1h remaining
-          // (warning); 'expired' = past (fact). 'refreshing' reserved for ulf's
-          // token-refresh work — leave room, don't hardcode two states.
-          if (diffMs <= 0) expiryState = 'expired';
-          else if (diffMs <= 43200000) expiryState = 'expiring'; // 12h threshold — temporary, until auto-refresh exists; drops to 1h (3600000) then
+          // State icon: checkmark (healthy >12h), hourglass (≤12h), red hourglass (expired).
+          // 12h threshold — temporary, until auto-refresh exists; drops to 1h then.
+          var iconSvg = diffMs <= 0 ? EXPIRY_ICON_EXPIRED
+            : (diffMs <= 43200000 ? EXPIRY_ICON_SOON : EXPIRY_ICON_OK);
+          var iconClass = 'switcher-expiry-icon' + (diffMs <= 0 ? ' switcher-expiry-icon--expired' : '');
+          expiryIcon = '<span class="' + iconClass + '" title="' + esc(expiryTitle) + '">' + iconSvg + '</span>';
         }
       }
-      var planBadgeClass = 'switcher-tile-plan' + (expiryState ? ' switcher-tile-plan--' + expiryState : '');
+      // Plan badge: single colour (no state), tooltip = email (swapped from name).
       var planBadge = snap.plan
-        ? '<span class="' + planBadgeClass + '"' + (expiryTitle ? ' title="' + esc(expiryTitle) + '"' : '') + '>' + esc(snap.plan) + '</span>'
-        : (expiryTitle ? '<span class="' + planBadgeClass + '" title="' + esc(expiryTitle) + '">⏱</span>' : '');
+        ? '<span class="switcher-tile-plan"' + emailTitle + '>' + esc(snap.plan) + '</span>'
+        : '';
+      // Name: tooltip = expiry (swapped from email). State icon sits right of the name.
+      var nameTitle = expiryTitle ? ' title="' + esc(expiryTitle) + '"' : '';
       var head = '<div class="switcher-tile-head">' +
-        '<span class="switcher-tile-name"' + emailTitle + '>' + esc(p.name) + '</span>' +
-        switchBtn + activeTag + planBadge +
+        '<span class="switcher-tile-name"' + nameTitle + '>' + esc(p.name) + '</span>' +
+        expiryIcon + switchBtn + activeTag + planBadge +
       '</div>';
       var body;
       if (!p.has_credentials) {

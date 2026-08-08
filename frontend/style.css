@@ -5715,24 +5715,16 @@ body {
   text-overflow: ellipsis;
 }
 
-/* Expiry-state indicators on the plan badge / ⏱ fallback anchor.
-   Folded into the existing element rather than a second icon — the row is
-   already busy with name, Switch pill, ACTIVE and plan badge. */
-.switcher-tile-plan--expiring {
-  border-color: var(--orange, #d29922); /* amber — warning, ≤1h remaining */
-  color: var(--orange, #d29922);
-  background: color-mix(in srgb, var(--orange, #d29922) 12%, transparent);
+/* Expiry state icon — sits right of the profile name. currentColor for healthy
+   + soon (inherits profile text colour); var(--red) for expired. */
+.switcher-expiry-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+  vertical-align: middle;
 }
-.switcher-tile-plan--expired {
-  border-color: var(--red, #f85149); /* red — fact, already past */
-  color: var(--red, #f85149);
-  background: color-mix(in srgb, var(--red, #f85149) 12%, transparent);
-}
-/* Reserved for ulf's token-refresh 'refresh in flight' state — not wired yet. */
-.switcher-tile-plan--refreshing {
-  border-color: var(--accent, #4ea1ff);
-  color: var(--accent, #4ea1ff);
-  background: color-mix(in srgb, var(--accent, #4ea1ff) 12%, transparent);
+.switcher-expiry-icon--expired {
+  color: var(--red, #f85149); /* moved from SVG fill attribute — Safari doesn't support var() in presentation attributes */
 }
 
 .switcher-profile-usage {
