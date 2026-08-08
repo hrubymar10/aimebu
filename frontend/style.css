@@ -5981,22 +5981,23 @@ body {
   text-align: right;
 }
 
-/* Retention expiry divider (human-facing). Messages older than the
-   expiry window are hidden from AI bulk reads; humans still see them, with a
-   moving divider between expired and live + an icon on expired messages. */
-.expiry-divider {
+/* Shared history divider base (human-facing). One rule set serves two
+   variants that differ only in their label: the retention expiry divider
+   (expired→live transition) and the start-of-room divider (oldest message
+   reached). Variant-specific text is supplied at render time. */
+.history-divider {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 10px 0;
   padding: 0 4px;
 }
-.expiry-divider-line {
+.history-divider-line {
   flex: 1;
   height: 1px;
   background: var(--border);
 }
-.expiry-divider-label {
+.history-divider-label {
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;

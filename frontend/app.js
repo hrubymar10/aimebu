@@ -3877,7 +3877,23 @@
       var older = data.messages || [];
       older.reverse(); // API is newest-first; prepend oldest-first
       if (older.length < 50) noMoreOlder[roomID] = true; // exhausted history
-      if (!older.length) return;
+      if (!older.length) {
+        // History exhausted with zero new messages: the latch just flipped
+        // false→true (the guard at the top bails when already true), so
+        // re-render to surface the start-of-room divider now rather than
+        // waiting for an unrelated re-render.
+        renderMessages();
+        // renderMessages()'s scroll-anchor compensation shifts scrollTop up by
+        // the prepended divider's height to hold the oldest message in place —
+        // which hides the divider just above the viewport. The user reached
+        // this path by scrolling to the top and nothing but the divider was
+        // added, so there's no reading position to protect: snap to 0 so the
+        // "start of room" line is actually visible. (The partial-batch path
+        // below stays untouched — real messages were prepended there and the
+        // anchor contract is correct.)
+        messageListEl.scrollTop = 0;
+        return;
+      }
       var have = {};
       cur.forEach(function (m) { have[m.id] = true; });
       var fresh = older.filter(function (m) { return !have[m.id]; });
@@ -5320,12 +5336,14 @@
   var lastRenderAnchor = null;
   var lastRenderCount = 0;
 
-  function expiryDividerHTML(cutoffMs) {
-    var when = new Date(cutoffMs).toISOString();
-    return '<div class="expiry-divider" role="separator" aria-label="Older messages expired from AI bulk reads">' +
-      '<span class="expiry-divider-line"></span>' +
-      '<span class="expiry-divider-label" title="Messages above this line are older than the expiry window and hidden from AI bulk reads — still visible to you. Cutoff: ' + esc(when) + '">expired from AI bulk reads</span>' +
-      '<span class="expiry-divider-line"></span>' +
+  // Shared builder for both history dividers — the retention expiry line
+  // (expired→live transition) and the start-of-room line (oldest message
+  // reached). The two differ only in label/aria/title; CSS is one shared base.
+  function historyDividerHTML(label, ariaLabel, title) {
+    return '<div class="history-divider" role="separator" aria-label="' + esc(ariaLabel) + '">' +
+      '<span class="history-divider-line"></span>' +
+      '<span class="history-divider-label"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(label) + '</span>' +
+      '<span class="history-divider-line"></span>' +
     '</div>';
   }
 
@@ -5349,6 +5367,14 @@
 
     var cutoffMs = expiryCutoffMs();
     var html = '';
+    // Start-of-room divider: shown only once a scroll-up has exhausted older
+    // history (noMoreOlder latched true) and the room holds ≥1 message. Empty
+    // rooms returned above. It clears automatically when pruneMessageCache or a
+    // room re-fetch drops the oldest messages (both set noMoreOlder false), so
+    // no separate lifecycle — render reads the flag, nothing else.
+    if (noMoreOlder[activeRoomID] && msgs.length > 0) {
+      html += historyDividerHTML('start of room', 'Beginning of room history');
+    }
     var dividerInserted = false; // latches: one divider at the first expired→live
     // transition even if clock skew interleaves expired/live created_at — that
     // is intentional (a single authoritative line), not a bug to remove.
@@ -5367,7 +5393,7 @@
       if (cutoffMs > 0 && !dividerInserted && !expired && mi > 0) {
         var prevMs = new Date(msgs[mi - 1].created_at).getTime();
         if (Number.isFinite(prevMs) && prevMs < cutoffMs) {
-          html += expiryDividerHTML(cutoffMs);
+          html += historyDividerHTML('expired from AI bulk reads', 'Older messages expired from AI bulk reads', 'Messages above this line are older than the expiry window and hidden from AI bulk reads — still visible to you. Cutoff: ' + new Date(cutoffMs).toISOString());
           dividerInserted = true;
           dividerAnchor = m.id; // the live message the divider sits before
         }
