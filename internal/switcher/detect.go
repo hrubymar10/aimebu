@@ -64,7 +64,7 @@ func (m *Manager) eligibilityFor(tool string) (Eligibility, error) {
 	case ToolClaude:
 		_, valErr = usages.ValidateClaudeCredentials(path)
 	case ToolCodex:
-		_, valErr = usages.ValidateCodexCredentials(path)
+		_, _, valErr = usages.ValidateCodexCredentials(path)
 	default:
 		return Eligibility{Tool: tool, Eligible: false, Reason: "unknown tool"}, nil
 	}

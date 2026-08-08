@@ -298,7 +298,7 @@ func validateStoredCred(tool, path string) error {
 	case ToolClaude:
 		_, err = usages.ValidateClaudeCredentials(path)
 	case ToolCodex:
-		_, err = usages.ValidateCodexCredentials(path)
+		_, _, err = usages.ValidateCodexCredentials(path)
 	default:
 		return fmt.Errorf("unknown tool %q", tool)
 	}

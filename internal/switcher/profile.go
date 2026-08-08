@@ -94,10 +94,10 @@ func (m *Manager) buildProfile(tool, name string, active bool) Profile {
 			}
 		}
 	case ToolCodex:
-		if idToken, err := usages.ValidateCodexCredentials(credPath); err == nil {
+		if idToken, accessToken, err := usages.ValidateCodexCredentials(credPath); err == nil {
 			p.HasCreds = true
 			p.Email = usages.CodexIDTokenEmail(idToken)
-			p.ExpiresAt = usages.CodexIDTokenExpiry(idToken)
+			p.ExpiresAt = usages.CodexTokenExpiry(accessToken)
 		}
 	}
 	return p
@@ -277,7 +277,7 @@ func validateLiveCred(tool, path string) error {
 	case ToolClaude:
 		_, err = usages.ValidateClaudeCredentials(path)
 	case ToolCodex:
-		_, err = usages.ValidateCodexCredentials(path)
+		_, _, err = usages.ValidateCodexCredentials(path)
 	default:
 		return fmt.Errorf("%w: %s", ErrNotEligible, tool)
 	}

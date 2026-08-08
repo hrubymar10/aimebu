@@ -865,3 +865,42 @@ func TestListHasCreds(t *testing.T) {
 		}
 	}
 }
+
+// TestCodexProfileExpiryFromAccessToken verifies that a codex profile's ExpiresAt
+// comes from the access_token (which authenticates, ~9-day life), not the
+// id_token (a ~1-hour OIDC assertion that is expected to be expired).
+// This is the exact shape of the live bug that was found: every codex profile
+// older than an hour showed red because we read the id_token's exp.
+func TestCodexProfileExpiryFromAccessToken(t *testing.T) {
+	m, _ := newTestManager(t)
+	if err := m.Add(ToolCodex, "test"); err != nil {
+		t.Fatal(err)
+	}
+	credPath := m.profileCredPath(ToolCodex, "test")
+	past := time.Now().Add(-time.Hour).Unix()           // id_token: expired 1h ago
+	future := time.Now().Add(9 * 24 * time.Hour).Unix() // access_token: 9 days left
+	authJSON := fmt.Sprintf(`{"tokens":{"id_token":%q,"access_token":%q,"refresh_token":"refresh"}}`,
+		makeTestJWT("test@example.com", past),
+		makeTestJWT("", future))
+	if err := os.WriteFile(credPath, []byte(authJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := m.buildProfile(ToolCodex, "test", false)
+	if !p.HasCreds {
+		t.Fatal("HasCreds = false; want true")
+	}
+	if p.Email != "test@example.com" {
+		t.Errorf("Email = %q; want test@example.com (from id_token)", p.Email)
+	}
+	if p.ExpiresAt == nil {
+		t.Fatal("ExpiresAt = nil; want the access token's expiry")
+	}
+	// The id_token expired 1h ago; if we're reading it, ExpiresAt is in the past.
+	if p.ExpiresAt.Before(time.Now()) {
+		t.Errorf("ExpiresAt = %v (in the past — reading id_token instead of access_token); want a future time", p.ExpiresAt)
+	}
+	expected := time.Unix(future, 0).UTC()
+	if p.ExpiresAt.Sub(expected) > time.Minute {
+		t.Errorf("ExpiresAt = %v; want ~%v (access token's exp)", p.ExpiresAt, expected)
+	}
+}

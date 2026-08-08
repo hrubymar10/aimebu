@@ -704,14 +704,17 @@ func jsonTypeName(data []byte) string {
 // The file is valid when loadCodexAuth succeeds — it requires non-empty
 // access_token and refresh_token (the parser's own strictness). No JWT exp
 // check is applied: an absent or expired id_token is structurally fine;
-// the id_token is returned only for email/expiry display, not for login.
+// it is a short-lived identity assertion minted at login and never
+// refreshed, so it is normally long expired on a working install. Both
+// tokens are returned for display only — the id_token for the account
+// email, the access token for the expiry actually worth showing.
 // API-key-only installs fail because the parser requires OAuth tokens.
-func ValidateCodexCredentials(path string) (idToken string, err error) {
+func ValidateCodexCredentials(path string) (idToken, accessToken string, err error) {
 	creds, _, err := loadCodexAuth(path)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return creds.IDToken, nil
+	return creds.IDToken, creds.AccessToken, nil
 }
 
 // CodexIDTokenEmail extracts the email claim from a JWT id_token.
@@ -735,11 +738,11 @@ func CodexIDTokenEmail(idToken string) string {
 	return ""
 }
 
-// CodexIDTokenExpiry extracts the exp claim from a JWT id_token as a time.Time.
+// CodexTokenExpiry extracts the exp claim from a JWT token as a time.Time.
 // Returns nil if the token is absent, malformed, or exp is zero.
 // Note: JWT exp is Unix seconds, not milliseconds.
-func CodexIDTokenExpiry(idToken string) *time.Time {
-	parts := strings.Split(idToken, ".")
+func CodexTokenExpiry(token string) *time.Time {
+	parts := strings.Split(token, ".")
 	if len(parts) < 2 {
 		return nil
 	}
