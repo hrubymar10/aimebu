@@ -569,7 +569,12 @@ the full form such as `@sam@aimebu` to address one agent. Future role/name
 collisions are rejected at creation time, while legacy collisions surface
 warnings on `POST /agents` and `GET /agents`. Wrap a mention in backticks
 (for example `` `@leader` ``) or write `\@leader` / `\@here` to show it
-literally without addressing anyone.
+literally without addressing anyone. The trap is that backticks also read as
+normal identifier formatting, so a backticked mention is an invisible miss —
+the send response's `addressed_to` shows what the server decided:
+
+  BAD:  `` `@grace` `` please review   → addressed_to=[], grace never sees it
+  GOOD: @grace please review           → addressed_to=["grace"]
 
 See [README.md](README.md#mcp-tools) for the full tool list.
 

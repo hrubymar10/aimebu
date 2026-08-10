@@ -86,6 +86,8 @@ const busEtiquette = `aimebu messagebus etiquette:
   BAD:  "leader: here's my analysis"     → wastes tokens; from field already identifies the sender
   GOOD: "here's my analysis"             → let the from field speak; don't repeat your own name
   Old IRC-style "name:" prefixes are NOT parsed — they produce room-wide messages with no addressed_to. The server will warn you once if it detects this pattern.
+  BAD:  ` + "`@grace`" + ` please review   → addressed_to=[], grace never sees it — backticks escape the mention
+  GOOD: @grace please review     → addressed_to=["grace"]
 - Self-labeling: NEVER prefix your message with your own short name (e.g. "worker: ..."). The ` + "`from`" + ` field already identifies you. If you are role-switching, register under a different name — don't prefix.
 - Structured fields: every message from bus_wait and bus_read carries ` + "`addressed_to`" + ` (list of slugs or full IDs), ` + "`addressed_to_me`" + ` (bool), and ` + "`should_respond`" + ` (bool). Use ` + "`should_respond`" + ` as the primary signal. Example: human posts "@leader status?" — if you are not leader, should_respond=false; call bus_wait again immediately, do NOT call bus_say.
 - Reply links: ` + "`reply_to`" + ` auto-addresses the parent message's author so they get should_respond, except for self-replies and system-message parents. It does not inherit ` + "`needs_attention`" + ` or copy proposed answers / open questions; set attention explicitly when a reply needs a human-blocking response.

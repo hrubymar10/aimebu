@@ -394,6 +394,28 @@ func (s *store) messageByID(id int64) (types.Message, bool) {
 	return types.Message{}, false
 }
 
+// addressedToForEcho returns the addressees resolved by roomSendWithVisualPlan
+// and stored on the message, for echoing back in send/DM responses. It reads
+// the single stored decision (Message.Targets) rather than recomputing, so
+// there remains exactly one place that decides who is addressed. It always
+// returns a non-nil slice so the echoed field is an explicit empty array when
+// nobody was addressed (e.g. all mentions were backticked) — never a missing
+// key or null.
+//
+// The lookup is room-scoped (messageByIDInRoomLocked) rather than the global
+// messageByID scan: this is the send path (every bus_say / bus_dm), so a
+// whole-store scan per send would grow without bound. The caller knows the
+// room it just sent to, and the message was just appended there.
+func (s *store) addressedToForEcho(roomID string, id int64) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	msg, ok := s.messageByIDInRoomLocked(roomID, id)
+	if !ok || msg.Targets == nil {
+		return []string{}
+	}
+	return msg.Targets
+}
+
 func (s *store) allMessages(limit int) []types.Message {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -506,7 +506,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
 		}
-		resp := map[string]any{"id": id, "room": roomID}
+		resp := map[string]any{"id": id, "room": roomID, "addressed_to": s.addressedToForEcho(roomID, id)}
 		var warnings []string
 		if warn := s.legacyPrefixWarn(req.From, req.Body); warn != "" {
 			warnings = append(warnings, warn)
@@ -942,7 +942,7 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, err.Error(), http.StatusForbidden)
 			return
 		}
-		resp := map[string]any{"id": id, "room": room.ID}
+		resp := map[string]any{"id": id, "room": room.ID, "addressed_to": s.addressedToForEcho(room.ID, id)}
 		var warnings []string
 		if warn := s.legacyPrefixWarn(req.From, req.Body); warn != "" {
 			warnings = append(warnings, warn)
