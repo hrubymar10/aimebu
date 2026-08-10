@@ -29,7 +29,7 @@ func TestLockSerializesConcurrentRefreshAcrossManagers(t *testing.T) {
 			defer wg.Done()
 			manager := NewManager(NewStoreAt(root), NewRegistry(fp))
 			manager.SetClock(clock)
-			_, err := manager.Snapshot(context.Background(), ProviderCodex)
+			_, _, err := manager.refresh(context.Background(), ProviderCodex, false)
 			errs <- err
 		}()
 	}

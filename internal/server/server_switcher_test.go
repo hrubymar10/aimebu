@@ -93,74 +93,6 @@ func futureCladeCred(token string) string {
 	return fmt.Sprintf(`{"claudeAiOauth":{"accessToken":%q,"refreshToken":"reftok","expiresAt":%d}}`, token, ms)
 }
 
-// ── GET /api/usages/switcher ──────────────────────────────────────────────────
-
-func TestSwitcherGetDisabled(t *testing.T) {
-	sm, _ := newSwitcherTestEnv(t)
-	mux := newSwitcherMux(t, sm)
-
-	rr := httpDo(t, mux, "GET", "/api/usages/switcher", "")
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d; body = %s", rr.Code, rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), `"enabled":false`) {
-		t.Fatalf("expected enabled=false; body = %s", rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), `"profiles":[]`) {
-		t.Fatalf("expected empty profiles; body = %s", rr.Body.String())
-	}
-}
-
-func TestSwitcherGetWithProfiles(t *testing.T) {
-	sm, home := newSwitcherTestEnv(t)
-	mux := newSwitcherMux(t, sm)
-
-	// Enable + import a profile.
-	writeLiveSwitcherCred(t, home, switcher.ToolClaude, futureCladeCred("tok-main"))
-	if err := sm.SetEnabled(true); err != nil {
-		t.Fatalf("SetEnabled: %v", err)
-	}
-	if err := sm.Import(switcher.ToolClaude, "main"); err != nil {
-		t.Fatalf("Import: %v", err)
-	}
-
-	rr := httpDo(t, mux, "GET", "/api/usages/switcher", "")
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d; body = %s", rr.Code, rr.Body.String())
-	}
-	body := rr.Body.String()
-	if !strings.Contains(body, `"enabled":true`) {
-		t.Fatalf("expected enabled=true; body = %s", body)
-	}
-	if !strings.Contains(body, `"name":"main"`) {
-		t.Fatalf("expected profile name=main; body = %s", body)
-	}
-	if !strings.Contains(body, `"active":true`) {
-		t.Fatalf("expected active=true; body = %s", body)
-	}
-}
-
-// TestSwitcherGetNoCredentialMaterial verifies that credential tokens never
-// appear in the GET response body.
-func TestSwitcherGetNoCredentialMaterial(t *testing.T) {
-	sm, home := newSwitcherTestEnv(t)
-	mux := newSwitcherMux(t, sm)
-
-	secretToken := "SUPER_SECRET_ACCESS_TOKEN_XYZ"
-	writeLiveSwitcherCred(t, home, switcher.ToolClaude, futureCladeCred(secretToken))
-	if err := sm.SetEnabled(true); err != nil {
-		t.Fatalf("SetEnabled: %v", err)
-	}
-	if err := sm.Import(switcher.ToolClaude, "main"); err != nil {
-		t.Fatalf("Import: %v", err)
-	}
-
-	rr := httpDo(t, mux, "GET", "/api/usages/switcher", "")
-	if strings.Contains(rr.Body.String(), secretToken) {
-		t.Fatalf("credential token leaked into GET response: %s", rr.Body.String())
-	}
-}
-
 // ── POST /api/usages/switcher/settings ───────────────────────────────────────
 
 func TestSwitcherSettings(t *testing.T) {
@@ -523,5 +455,72 @@ func TestProfileReaderActiveFromLive(t *testing.T) {
 	snap, _ := m.FetchProfileSnapshot(ctx, "claude", "main", liveCred)
 	if strings.Contains(snap.Error, "credentials not found") {
 		t.Fatalf("live path was not read: %q", snap.Error)
+	}
+}
+
+// TestProfileListerCarriesAllSwitcherFields verifies that the ProfileLister
+// closure wired in server.go carries every field from switcher.Profile into
+// usages.ProfileInfo. This is the boundary where fields are lost —
+// HasCredentials and ExpiresAt were dropped here, causing every account to
+// render as "Needs login" with no expiry icon. The test builds a
+// switcher.Profile with every field set to a non-zero value and asserts each
+// one arrives.
+func TestProfileListerCarriesAllSwitcherFields(t *testing.T) {
+	sm, home := newSwitcherTestEnv(t)
+	if err := sm.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	writeLiveSwitcherCred(t, home, switcher.ToolClaude, futureCladeCred("tok-main"))
+	if err := sm.Import(switcher.ToolClaude, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build the ProfileLister closure the same way server.go does
+	sr := switcherRoutes{sm: sm}
+	lister := func(tool string) []usages.ProfileInfo {
+		profiles, err := sm.List()
+		if err != nil {
+			return nil
+		}
+		var result []usages.ProfileInfo
+		for _, p := range profiles {
+			if p.Tool != tool {
+				continue
+			}
+			result = append(result, usages.ProfileInfo{
+				Tool:           p.Tool,
+				Name:           p.Name,
+				Active:         p.Active,
+				CredPath:       sr.profileCredPath(p),
+				Email:          p.Email,
+				HasCredentials: p.HasCreds,
+				ExpiresAt:      p.ExpiresAt,
+			})
+		}
+		return result
+	}
+
+	infos := lister("claude")
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 profile, got %d", len(infos))
+	}
+	info := infos[0]
+	if info.Tool != "claude" {
+		t.Errorf("Tool = %q, want claude", info.Tool)
+	}
+	if info.Name != "main" {
+		t.Errorf("Name = %q, want main", info.Name)
+	}
+	if !info.Active {
+		t.Error("Active = false, want true (imported profile is active)")
+	}
+	if info.CredPath == "" {
+		t.Error("CredPath = empty, want non-empty")
+	}
+	if !info.HasCredentials {
+		t.Error("HasCredentials = false, want true (profile has stored credentials)")
+	}
+	if info.ExpiresAt == nil {
+		t.Error("ExpiresAt = nil, want non-nil (credentials have expiry)")
 	}
 }

@@ -57,7 +57,7 @@ var (
 
 type ollamaCloudProvider struct{}
 
-func NewOllamaCloudProvider() Provider { return ollamaCloudProvider{} }
+func NewOllamaCloudProvider() UsageProvider { return ollamaCloudProvider{} }
 
 func (ollamaCloudProvider) Key() string { return ProviderOllamaCloud }
 
@@ -144,7 +144,7 @@ func fetchOllamaWithAPIKey(ctx context.Context, apiKey string) (Snapshot, error)
 		}
 		return snap, nil
 	}
-	return Snapshot{Provider: ProviderOllamaCloud, Status: StatusOK, Plan: "API key verified"}, nil
+	return Snapshot{Status: StatusOK, Plan: "API key verified"}, nil
 }
 
 func normalizeOllamaAuthMode(value string) string {
@@ -460,12 +460,12 @@ func parseOllamaSettingsHTML(data []byte) (Snapshot, *ErrorDetail, error) {
 		}
 		if strings.Contains(strings.ToLower(html), "cloud usage") {
 			detail.Fields["windows"] = "missing"
-			return Snapshot{Provider: ProviderOllamaCloud, Status: StatusOK, Plan: strings.TrimSpace(plan)}, detailOrNil(detail), nil
+			return Snapshot{Status: StatusOK, Plan: strings.TrimSpace(plan)}, detailOrNil(detail), nil
 		}
 		return Snapshot{}, fieldDetail("page", "markup_drift"), errors.New("Ollama Cloud settings page did not include recognized usage data.")
 	}
 
-	return Snapshot{Provider: ProviderOllamaCloud, Status: StatusOK, Plan: strings.TrimSpace(plan), Windows: windows}, detailOrNil(detail), nil
+	return Snapshot{Status: StatusOK, Plan: strings.TrimSpace(plan), Windows: windows}, detailOrNil(detail), nil
 }
 
 func parseOllamaUsageBlock(key string, labels []string, html string, detail *ErrorDetail) (Window, bool) {
@@ -539,5 +539,5 @@ func firstOllamaCapture(pattern *regexp.Regexp, text string) string {
 }
 
 func ollamaStatus(status Status, message string, detail *ErrorDetail) Snapshot {
-	return Snapshot{Provider: ProviderOllamaCloud, Status: status, Error: message, ErrorDetail: detail}
+	return Snapshot{Status: status, Error: message, ErrorDetail: detail}
 }

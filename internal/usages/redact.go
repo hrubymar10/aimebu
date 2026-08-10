@@ -32,3 +32,21 @@ func (s Snapshot) Redacted(secrets ...string) Snapshot {
 	}
 	return s
 }
+
+func (p Profile) Redacted(secrets ...string) Profile {
+	p.Error = RedactString(p.Error, secrets...)
+	p.Plan = RedactString(p.Plan, secrets...)
+	if p.Credits != nil {
+		credits := *p.Credits
+		credits.Label = RedactString(credits.Label, secrets...)
+		p.Credits = &credits
+	}
+	if p.ErrorDetail != nil {
+		fields := make(map[string]string, len(p.ErrorDetail.Fields))
+		for key, value := range p.ErrorDetail.Fields {
+			fields[RedactString(key, secrets...)] = RedactString(value, secrets...)
+		}
+		p.ErrorDetail = &ErrorDetail{Fields: fields}
+	}
+	return p
+}

@@ -11,15 +11,18 @@ import (
 
 func TestPrintUsagesPlainMarksStaleSnapshots(t *testing.T) {
 	out := captureStdout(t, func() {
-		printUsagesPlain(usages.Response{
-			Snapshots: map[string]usages.Snapshot{
-				"codex": {
-					Provider: usages.ProviderCodex,
-					Status:   usages.StatusStaleCache,
-					Plan:     "Team Plus",
-					Stale:    true,
-				},
-			},
+		printUsagesPlain(usages.UsagesResponse{
+			Providers: []usages.Provider{{
+				ProviderName: usages.ProviderCodex,
+				Profiles: []usages.Profile{{
+					ProfileName: "default",
+					Snapshot: usages.Snapshot{
+						Status: usages.StatusStaleCache,
+						Plan:   "Team Plus",
+						Stale:  true,
+					},
+				}},
+			}},
 		})
 	})
 
@@ -37,28 +40,35 @@ func TestPrintUsagesPlainMarksStaleSnapshots(t *testing.T) {
 
 func TestPrintUsagesPlainKeepsLongRowsAligned(t *testing.T) {
 	out := captureStdout(t, func() {
-		printUsagesPlain(usages.Response{
-			Snapshots: map[string]usages.Snapshot{
-				"github-copilot": {
-					Provider: usages.ProviderGitHubCopilot,
-					Status:   usages.StatusOK,
-					Plan:     "GitHub Copilot Business Premium",
-					Windows: []usages.Window{
-						{Key: "premium_interactions", PercentUsed: 18},
-						{Key: "chat", PercentUsed: 9},
+		printUsagesPlain(usages.UsagesResponse{
+			Providers: []usages.Provider{{
+				ProviderName: usages.ProviderGitHubCopilot,
+				Profiles: []usages.Profile{{
+					ProfileName: "default",
+					Snapshot: usages.Snapshot{
+						Status: usages.StatusOK,
+						Plan:   "GitHub Copilot Business Premium",
+						Windows: []usages.Window{
+							{Key: "premium_interactions", PercentUsed: 18},
+							{Key: "chat", PercentUsed: 9},
+						},
 					},
-				},
-				"ollama-cloud": {
-					Provider: usages.ProviderOllamaCloud,
-					Status:   usages.StatusStaleCache,
-					Plan:     "Ollama Cloud Max Weekly",
-					Stale:    true,
-					Windows: []usages.Window{
-						{Key: "session", PercentUsed: 3},
-						{Key: "weekly", PercentUsed: 25},
+				}},
+			}, {
+				ProviderName: usages.ProviderOllamaCloud,
+				Profiles: []usages.Profile{{
+					ProfileName: "default",
+					Snapshot: usages.Snapshot{
+						Status: usages.StatusStaleCache,
+						Plan:   "Ollama Cloud Max Weekly",
+						Stale:  true,
+						Windows: []usages.Window{
+							{Key: "session", PercentUsed: 3},
+							{Key: "weekly", PercentUsed: 25},
+						},
 					},
-				},
-			},
+				}},
+			}},
 		})
 	})
 

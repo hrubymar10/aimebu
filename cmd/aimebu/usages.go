@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -62,54 +61,62 @@ func usagesCmd(args []string) {
 	printUsagesPlain(resp)
 }
 
-func printUsagesPlain(resp usages.Response) {
-	if len(resp.Snapshots) == 0 {
+func printUsagesPlain(resp usages.UsagesResponse) {
+	hasData := false
+	for _, prov := range resp.Providers {
+		if len(prov.Profiles) > 0 {
+			hasData = true
+			break
+		}
+	}
+	if !hasData {
 		fmt.Println("No usage providers enabled.")
 		return
 	}
-	const rowFormat = "%-18s %-20s %-32s %-34s %-16s\n"
-	keys := make([]string, 0, len(resp.Snapshots))
-	for key := range resp.Snapshots {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	fmt.Printf(rowFormat, "PROVIDER", "STATUS", "PLAN", "WINDOWS", "CREDITS")
-	for _, key := range keys {
-		s := resp.Snapshots[key]
-		windows := make([]string, 0, len(s.Windows))
-		for _, w := range s.Windows {
-			cell := fmt.Sprintf("%s=%.0f%%", w.Key, w.PercentUsed)
-			if w.Pace != nil {
-				cell += " (" + paceCLIText(w.Pace) + ")"
+	const rowFormat = "%-14s %-14s %-20s %-32s %-34s %-16s\n"
+	fmt.Printf(rowFormat, "PROVIDER", "PROFILE", "STATUS", "PLAN", "WINDOWS", "CREDITS")
+	for _, prov := range resp.Providers {
+		for _, s := range prov.Profiles {
+			windows := make([]string, 0, len(s.Windows))
+			for _, w := range s.Windows {
+				cell := fmt.Sprintf("%s=%.0f%%", w.Key, w.PercentUsed)
+				if w.Pace != nil {
+					cell += " (" + paceCLIText(w.Pace) + ")"
+				}
+				windows = append(windows, cell)
 			}
-			windows = append(windows, cell)
-		}
-		windowsText := "-"
-		if len(windows) > 0 {
-			windowsText = strings.Join(windows, ", ")
-		}
-		credits := "-"
-		if s.Credits != nil {
-			credits = fmt.Sprintf("%.2f", s.Credits.Balance)
-			if s.Credits.SpendLimit > 0 {
-				credits = fmt.Sprintf("%.2f/%.2f", s.Credits.Balance, s.Credits.SpendLimit)
+			windowsText := "-"
+			if len(windows) > 0 {
+				windowsText = strings.Join(windows, ", ")
 			}
+			credits := "-"
+			if s.Credits != nil {
+				credits = fmt.Sprintf("%.2f", s.Credits.Balance)
+				if s.Credits.SpendLimit > 0 {
+					credits = fmt.Sprintf("%.2f/%.2f", s.Credits.Balance, s.Credits.SpendLimit)
+				}
+			}
+			plan := s.Plan
+			if plan == "" {
+				plan = "-"
+			}
+			status := string(s.Status)
+			if s.Stale {
+				status += " (stale)"
+			}
+			profile := s.ProfileName
+			if profile == "" {
+				profile = "default"
+			}
+			fmt.Printf(rowFormat,
+				plainCell(prov.ProviderName, 14),
+				plainCell(profile, 14),
+				plainCell(status, 20),
+				plainCell(plan, 32),
+				plainCell(windowsText, 34),
+				plainCell(credits, 16),
+			)
 		}
-		plan := s.Plan
-		if plan == "" {
-			plan = "-"
-		}
-		status := string(s.Status)
-		if s.Stale {
-			status += " (stale)"
-		}
-		fmt.Printf(rowFormat,
-			plainCell(key, 18),
-			plainCell(status, 20),
-			plainCell(plan, 32),
-			plainCell(windowsText, 34),
-			plainCell(credits, 16),
-		)
 	}
 }
 

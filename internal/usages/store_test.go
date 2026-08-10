@@ -17,10 +17,9 @@ func TestStoreDefaultsAndModes(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	cache := EmptyCache()
-	cache.Snapshots[ProviderCodex] = CacheEntry{
-		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Error: "token-secret leaked"},
-		LastRefreshAt: &now,
-	}
+	cache.Snapshots[ProviderCodex] = []CacheEntry{{
+		Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, Error: "token-secret leaked", LastRefreshAt: &now}},
+	}}
 	cfg.Providers[ProviderCodex] = ProviderConfig{Token: "token-secret"}
 	if err := store.SaveConfig(cfg); err != nil {
 		t.Fatalf("SaveConfig token: %v", err)
@@ -92,16 +91,12 @@ func TestStoreNormalizesProviderOrder(t *testing.T) {
 	}
 }
 
-func TestProviderInfosRespectsProviderOrder(t *testing.T) {
+func TestProviderOrderRespectsConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.ProviderOrder = []string{ProviderOllamaCloud, ProviderGitHubCopilot, ProviderClaudeCode, ProviderCodex, ProviderMistral}
-	infos := ProviderInfos(cfg, DefaultRegistry())
-	var got []string
-	for _, info := range infos {
-		got = append(got, info.Key)
-	}
+	got := normalizeProviderOrder(cfg.ProviderOrder)
 	if !reflect.DeepEqual(got, cfg.ProviderOrder) {
-		t.Fatalf("ProviderInfos order = %v, want %v", got, cfg.ProviderOrder)
+		t.Fatalf("provider order = %v, want %v", got, cfg.ProviderOrder)
 	}
 }
 

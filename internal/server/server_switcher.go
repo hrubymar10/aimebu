@@ -22,66 +22,10 @@ type switcherRoutes struct {
 }
 
 func (r switcherRoutes) mount(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/usages/switcher", r.handleGet)
 	mux.HandleFunc("POST /api/usages/switcher/settings", r.handleSettings)
 	mux.HandleFunc("POST /api/usages/switcher/switch", r.handleSwitch)
 	mux.HandleFunc("POST /api/usages/switcher/profiles", r.handleProfileCreate)
 	mux.HandleFunc("DELETE /api/usages/switcher/profiles", r.handleProfileDelete)
-}
-
-// switcherGetResponse is the response shape for GET /api/usages/switcher.
-type switcherGetResponse struct {
-	Enabled     bool                   `json:"enabled"`
-	Eligibility []switcher.Eligibility `json:"eligibility"`
-	Profiles    []switcher.Profile     `json:"profiles"`
-	// Snapshots holds per-profile usage data, keyed by "tool/name".
-	// Never placed in Response.Snapshots so existing provider iteration paths
-	// stay unchanged.
-	Snapshots map[string]usages.Snapshot `json:"snapshots,omitempty"`
-}
-
-func (r switcherRoutes) handleGet(w http.ResponseWriter, req *http.Request) {
-	enabled, err := r.sm.Enabled()
-	if err != nil {
-		writeSwitcherErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	eligibility, err := r.sm.Eligibility()
-	if err != nil {
-		writeSwitcherErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	if eligibility == nil {
-		eligibility = []switcher.Eligibility{}
-	}
-	profiles, err := r.sm.List()
-	if err != nil {
-		writeSwitcherErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	if profiles == nil {
-		profiles = []switcher.Profile{}
-	}
-
-	snapshots := make(map[string]usages.Snapshot, len(profiles))
-	if r.um != nil {
-		for _, p := range profiles {
-			credPath := r.profileCredPath(p)
-			snap, snapErr := r.um.FetchProfileSnapshot(req.Context(), p.Tool, p.Name, credPath)
-			if snapErr == nil {
-				snapshots[usages.ProfileSnapshotKey(p.Tool, p.Name)] = snap
-			}
-			// Snapshot errors are silently omitted — usage data is best-effort.
-		}
-	}
-
-	resp := switcherGetResponse{
-		Enabled:     enabled,
-		Eligibility: eligibility,
-		Profiles:    profiles,
-		Snapshots:   snapshots,
-	}
-	writeSwitcherJSON(w, http.StatusOK, resp)
 }
 
 func (r switcherRoutes) handleSettings(w http.ResponseWriter, req *http.Request) {

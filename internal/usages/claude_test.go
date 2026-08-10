@@ -448,7 +448,7 @@ func TestClaudeFetchErrorRedactsSecretsThroughManagerAndHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewManager(store, DefaultRegistry())
-	resp, err := m.Snapshot(context.Background(), ProviderClaudeCode)
+	resp, _, err := m.refresh(context.Background(), ProviderClaudeCode, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2428,7 +2428,7 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 	// tokens, preventing it from overwriting a just-switched profile (§14.2).
 	swRoot, _ := switcher.DefaultRoot()
 	swMgr, swErr := switcher.New(swRoot)
-	var codexProv usages.Provider
+	var codexProv usages.UsageProvider
 	if swErr == nil {
 		codexProv = usages.NewCodexProviderWithLock(swMgr.WithLock)
 	} else {
@@ -2442,9 +2442,38 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 		usages.NewOllamaCloudProvider(),
 	)
 	usageManager := usages.NewManager(usages.NewStoreAt(filepath.Join(rootDir, "usages")), usageRegistry)
-	usageManager.SetUpdateHook(func(resp usages.Response) {
+	usageManager.SetUpdateHook(func(resp usages.UsagesResponse) {
 		s.broadcastMeta(MetaEvent{Type: "usages_updated", Data: resp})
 	})
+	if swErr == nil {
+		sr := switcherRoutes{sm: swMgr}
+		usageManager.SetProfileLister(func(tool string) []usages.ProfileInfo {
+			profiles, err := swMgr.List()
+			if err != nil {
+				return nil
+			}
+			var result []usages.ProfileInfo
+			for _, p := range profiles {
+				if p.Tool != tool {
+					continue
+				}
+				result = append(result, usages.ProfileInfo{
+					Tool:           p.Tool,
+					Name:           p.Name,
+					Active:         p.Active,
+					CredPath:       sr.profileCredPath(p),
+					Email:          p.Email,
+					HasCredentials: p.HasCreds,
+					ExpiresAt:      p.ExpiresAt,
+				})
+			}
+			return result
+		})
+		usageManager.SetSwitcherSettingsProvider(func() bool {
+			enabled, _ := swMgr.Enabled()
+			return enabled
+		})
+	}
 	usageManager.Start(cleanupCtx, &s.bgWG)
 	setupHandlers(mux, s, build, usageManager)
 

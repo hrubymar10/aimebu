@@ -384,7 +384,7 @@ func TestCopilotTokenRedactionThroughManagerCacheAndHTTP(t *testing.T) {
 		return httpJSON(http.StatusInternalServerError, `{"message":"raw-live-value"}`), nil
 	})
 	m := NewManager(store, DefaultRegistry())
-	resp, err := m.Snapshot(context.Background(), ProviderGitHubCopilot)
+	resp, _, err := m.refresh(context.Background(), ProviderGitHubCopilot, false)
 	if err != nil {
 		t.Fatal(err)
 	}

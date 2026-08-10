@@ -3,6 +3,7 @@ package usages
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -37,13 +38,12 @@ type Config struct {
 }
 
 type CacheEntry struct {
-	Snapshot      Snapshot   `json:"snapshot"`
-	LastRefreshAt *time.Time `json:"last_refresh_at,omitempty"`
+	Profile        Profile    `json:"profile"`
+	EmailFetchedAt *time.Time `json:"email_fetched_at,omitempty"`
 }
 
 type Cache struct {
-	Snapshots        map[string]CacheEntry `json:"snapshots"`
-	ProfileSnapshots map[string]CacheEntry `json:"profile_snapshots,omitempty"` // keyed by "tool/name"
+	Snapshots map[string][]CacheEntry `json:"snapshots"` // per-provider array of profile-tagged entries
 }
 
 type Store struct {
@@ -73,7 +73,7 @@ func DefaultConfig() Config {
 }
 
 func EmptyCache() Cache {
-	return Cache{Snapshots: map[string]CacheEntry{}, ProfileSnapshots: map[string]CacheEntry{}}
+	return Cache{Snapshots: map[string][]CacheEntry{}}
 }
 
 func (s *Store) WithLock(fn func() error) error {
@@ -150,20 +150,23 @@ func (s *Store) LoadCache() (Cache, error) {
 		return cache, err
 	}
 	if err := json.Unmarshal(data, &cache); err != nil {
-		return cache, err
+		// A cache is best-effort state. An unreadable or schema-stale file is
+		// equivalent to no cache — fall back to empty rather than propagating
+		// the error, which would break every caller (GET, poller, force refresh)
+		// until the file is manually deleted. Log once so a genuinely corrupt
+		// file isn't silent.
+		log.Printf("aimebu: usages cache unreadable, starting fresh: %v", err)
+		return EmptyCache(), nil
 	}
 	if cache.Snapshots == nil {
-		cache.Snapshots = map[string]CacheEntry{}
-	}
-	if cache.ProfileSnapshots == nil {
-		cache.ProfileSnapshots = map[string]CacheEntry{}
+		cache.Snapshots = map[string][]CacheEntry{}
 	}
 	return cache, nil
 }
 
 func (s *Store) SaveCache(cache Cache) error {
 	if cache.Snapshots == nil {
-		cache.Snapshots = map[string]CacheEntry{}
+		cache.Snapshots = map[string][]CacheEntry{}
 	}
 	cfg, err := s.LoadConfig()
 	if err != nil {
@@ -173,15 +176,17 @@ func (s *Store) SaveCache(cache Cache) error {
 	for _, pc := range cfg.Providers {
 		secrets = append(secrets, pc.Token, pc.APIKey, pc.Cookie)
 	}
-	for key, entry := range cache.Snapshots {
-		entry.Snapshot = entry.Snapshot.Redacted(secrets...)
-		cache.Snapshots[key] = entry
+	for key, entries := range cache.Snapshots {
+		for i := range entries {
+			entries[i].Profile = entries[i].Profile.Redacted(secrets...)
+		}
+		cache.Snapshots[key] = entries
 	}
 	return s.writeJSONAtomic(s.CachePath(), cache, 0o644)
 }
 
-func (s *Store) RefreshInterval(cfg Config) (time.Duration, SettingsInfo) {
-	info := SettingsInfo{
+func (s *Store) RefreshInterval(cfg Config) (time.Duration, Settings) {
+	info := Settings{
 		RefreshIntervalSec: cfg.RefreshIntervalSec,
 		MinRefreshSec:      MinRefreshSec,
 		PercentDisplay:     cfg.PercentDisplay,

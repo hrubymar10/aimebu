@@ -33,14 +33,50 @@ aimebu usages ollama-cloud --json
 ```
 
 Plain text is the default. `--json` returns the normalized response used by
-the web UI, including provider metadata, settings, and snapshots keyed by
-provider.
+the web UI:
+
+```
+{
+  "providers": [ { "provider_name": ..., "order_number": ..., "enabled": ...,
+                   "available": ..., "profiles": [ ... ] } ],
+  "settings": { "refresh_interval_sec": ..., "percent_display": ... },
+  "switcher_enabled": true
+}
+```
+
+`providers` is an **ordered array**, not a map — `order_number` is the display
+order, so nothing has to be zipped against a separate ordering setting. Each
+provider carries a `profiles` array with **one entry per switcher profile**, or
+a single entry named `"default"` when the provider has no switcher concept.
+A profile name is never empty.
+
+A `Profile` carries **both** the usage data and the switcher facts for that
+account: `profile_name`, `active`, `has_credentials`, `expires_at`, `email`,
+plus `status`, `plan`, `windows`, `credits` and `last_refresh_at`. That is
+deliberate — there is no join between usage data and account data, so there is
+nothing for the two to disagree about. Switch eligibility is per tool and lives
+on the provider (`switch_eligible`, `switch_ineligible_reason`); only the global
+on/off flag sits at the top level.
 
 ## Refresh Behavior
 
 The stored refresh interval defaults to `120` seconds and has a minimum of
 `15` seconds. `AIMEBU_USAGES_REFRESH` overrides the stored value for both the
 server and CLI.
+
+`GET /api/usages` is a **pure cache read** — it never triggers a network
+fetch. All provider and per-profile fetching is owned by the background
+poller (5-second tick, fetches when the interval elapses) and the
+force-refresh button. On a cold cache (server restart), the first poller tick
+(~5 seconds) warms the cache; until then the response carries empty arrays.
+
+**Per-profile refresh:** inactive switcher-profile snapshots refresh on a
+floor of **1 hour** (`max(provider interval, 1h)`), so they never poll more
+often than their provider. The **active** profile is exempt — it's derived
+from the provider fetch and refreshes on the provider's interval for free.
+After a switch, `InvalidateProfileSnapshot` drops the old entry, so the next
+poller tick (~5 seconds) refetches immediately regardless of the interval —
+the `!ok` short-circuit means absent entries always fetch now.
 
 The right-sidebar force-refresh button calls `POST /api/usages/refresh`. It
 bypasses the normal interval but has a separate server-side 15 second

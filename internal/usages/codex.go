@@ -36,12 +36,12 @@ type codexProvider struct {
 }
 
 // NewCodexProvider creates a codex usage provider.
-func NewCodexProvider() Provider { return &codexProvider{} }
+func NewCodexProvider() UsageProvider { return &codexProvider{} }
 
 // NewCodexProviderWithLock creates a codex provider that holds liveWriteLock
 // around writes to the live credentials file. This prevents the usages poller
 // from silently overwriting a profile that was just switched in (§14.2).
-func NewCodexProviderWithLock(lock func(func() error) error) Provider {
+func NewCodexProviderWithLock(lock func(func() error) error) UsageProvider {
 	return &codexProvider{liveWriteLock: lock}
 }
 
@@ -468,10 +468,9 @@ func normalizeCodexUsage(raw codexUsageRaw, creds codexCredentials) (Snapshot, *
 		}
 	}
 	snap := Snapshot{
-		Provider: ProviderCodex,
-		Status:   StatusOK,
-		Plan:     firstNonEmpty(raw.PlanType, codexPlanFromIDToken(creds.IDToken)),
-		Windows:  ordered,
+		Status:  StatusOK,
+		Plan:    firstNonEmpty(raw.PlanType, codexPlanFromIDToken(creds.IDToken)),
+		Windows: ordered,
 	}
 	if raw.Credits.Balance != nil {
 		snap.Credits = &Credits{Label: "Credits", Balance: *raw.Credits.Balance}
@@ -604,7 +603,7 @@ func parseCodexTime(value string) *time.Time {
 }
 
 func codexStatus(status Status, message string, detail *ErrorDetail) Snapshot {
-	return Snapshot{Provider: ProviderCodex, Status: status, Error: message, ErrorDetail: detail}
+	return Snapshot{Status: status, Error: message, ErrorDetail: detail}
 }
 
 func firstNonEmpty(values ...string) string {

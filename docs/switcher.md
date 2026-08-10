@@ -167,7 +167,19 @@ an active marker, Switch buttons, "Add profile", "Import current login", and
 per-row delete. The active profile sorts first. Login email shows as a hover
 tooltip on the plan badge (see the note on claude emails below), so a profile
 with no usage snapshot has no plan badge and no email tooltip. Empty profiles
-render as "needs login" rather than as zero usage.
+render as "needs login" rather than as zero usage, and a profile that has
+credentials but no snapshot yet — the two seconds after a switch, or a cold
+cache — renders as "Refreshing…" instead, since those mean different things.
+
+Each profile row carries its **own** "Updated X ago". The active profile
+refreshes at the provider interval; the others sit behind a one-hour floor, so
+two rows on one card can legitimately differ by the best part of an hour. A
+single card-level timestamp would describe one of them while sitting above all
+of them, which is why there isn't one.
+
+Profile usage arrives with everything else on `GET /api/usages`; there is no
+separate switcher fetch. The panel never triggers a network call of its own —
+the background poller owns all fetching.
 
 An icon right of the profile name shows token-expiry state: a checkmark while
 the token has more than 3 hours left, an hourglass at 3 hours or less, and a

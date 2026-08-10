@@ -34,7 +34,7 @@ const (
 
 type copilotProvider struct{}
 
-func NewCopilotProvider() Provider { return copilotProvider{} }
+func NewCopilotProvider() UsageProvider { return copilotProvider{} }
 
 func (copilotProvider) Key() string { return ProviderGitHubCopilot }
 
@@ -197,6 +197,45 @@ func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(strings.TrimSpace(s), 64)
 }
 
+// FetchEmail fetches the account email from the GitHub /user API. Copilot's
+// usage endpoint doesn't surface it. Best-effort: returns "" if the API rejects
+// the token or the email is private (read:user scope doesn't grant user:email).
+// The poller calls this on a separate cadence (max(provider interval, 1h)) and
+// caches the result in CacheEntry.EmailFetchedAt.
+func (copilotProvider) FetchEmail(ctx context.Context, store *Store) (string, error) {
+	cfg, err := store.LoadConfig()
+	if err != nil {
+		return "", err
+	}
+	pc := cfg.Providers[ProviderGitHubCopilot]
+	token := strings.TrimSpace(pc.Token)
+	if token == "" {
+		return "", nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, copilotDefaultAPIHost+"/user", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "token "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := doWithRetry(ctx, usageHTTPClient, req, RetryPolicy{MaxRetries: 1})
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", nil
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var user struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(data, &user); err != nil {
+		return "", err
+	}
+	return user.Email, nil
+}
+
 func fetchCopilotUsage(ctx context.Context, token, apiBase string) (copilotUsageRaw, *ErrorDetail, Status, error) {
 	usageURL, err := copilotUsageURL(apiBase)
 	if err != nil {
@@ -268,10 +307,9 @@ func normalizeCopilotUsage(raw copilotUsageRaw) (Snapshot, *ErrorDetail, error) 
 		return Snapshot{}, jsonShapeDetail("usage", data), errors.New("GitHub Copilot usage response did not include recognized quota windows.")
 	}
 	return Snapshot{
-		Provider: ProviderGitHubCopilot,
-		Status:   StatusOK,
-		Plan:     strings.TrimSpace(raw.CopilotPlan),
-		Windows:  windows,
+		Status:  StatusOK,
+		Plan:    strings.TrimSpace(raw.CopilotPlan),
+		Windows: windows,
 	}, detailOrNil(detail), nil
 }
 
@@ -626,5 +664,5 @@ func maxInt(a, b int) int {
 }
 
 func copilotStatus(status Status, message string, detail *ErrorDetail) Snapshot {
-	return Snapshot{Provider: ProviderGitHubCopilot, Status: status, Error: message, ErrorDetail: detail}
+	return Snapshot{Status: status, Error: message, ErrorDetail: detail}
 }

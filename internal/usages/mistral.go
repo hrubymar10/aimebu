@@ -29,7 +29,7 @@ var mistralHTTPClient = newUsageHTTPClient()
 
 type mistralProvider struct{}
 
-func NewMistralProvider() Provider { return mistralProvider{} }
+func NewMistralProvider() UsageProvider { return mistralProvider{} }
 
 func (mistralProvider) Key() string { return ProviderMistral }
 
@@ -273,7 +273,7 @@ func normalizeMistralVibeUsage(raw mistralVibeUsageRaw) (Snapshot, *ErrorDetail,
 		window.WindowDurationSeconds = monthlyWindowDuration(*reset)
 		window.Pace = computeWindowPace(window, mistralNow())
 	}
-	return Snapshot{Provider: ProviderMistral, Status: StatusOK, Windows: []Window{window}}, detailOrNil(detail), nil
+	return Snapshot{Status: StatusOK, Windows: []Window{window}}, detailOrNil(detail), nil
 }
 
 var mistralNow = time.Now
@@ -501,7 +501,7 @@ func validMistralCreditAmount(value float64) bool {
 }
 
 func mistralStatus(status Status, message string, detail *ErrorDetail) Snapshot {
-	return Snapshot{Provider: ProviderMistral, Status: status, Error: message, ErrorDetail: detail}
+	return Snapshot{Status: status, Error: message, ErrorDetail: detail}
 }
 
 func mergeErrorDetails(base, extra *ErrorDetail) *ErrorDetail {

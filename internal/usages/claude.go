@@ -34,7 +34,7 @@ var (
 
 type claudeCodeProvider struct{}
 
-func NewClaudeCodeProvider() Provider { return claudeCodeProvider{} }
+func NewClaudeCodeProvider() UsageProvider { return claudeCodeProvider{} }
 
 func (claudeCodeProvider) Key() string { return ProviderClaudeCode }
 
@@ -376,10 +376,9 @@ func normalizeClaudeUsage(raw claudeUsageRaw, creds claudeCredentials) (Snapshot
 	windows = append(windows, claudeScopedWeeklyWindows(raw.Limits, detail)...)
 	ordered := orderWindows(windows, append([]string{"session", "weekly", "weekly_opus", "weekly_sonnet"}, claudeScopedWeeklyOrder(windows)...))
 	snap := Snapshot{
-		Provider: ProviderClaudeCode,
-		Status:   StatusOK,
-		Plan:     claudePlan(creds),
-		Windows:  ordered,
+		Status:  StatusOK,
+		Plan:    claudePlan(creds),
+		Windows: ordered,
 	}
 	if raw.ExtraUsage != nil && raw.ExtraUsage.IsEnabled != nil && *raw.ExtraUsage.IsEnabled {
 		credits := &Credits{Label: "Extra usage monthly cap"}
@@ -508,5 +507,5 @@ func claudePlan(creds claudeCredentials) string {
 }
 
 func claudeStatus(status Status, message string, detail *ErrorDetail) Snapshot {
-	return Snapshot{Provider: ProviderClaudeCode, Status: status, Error: message, ErrorDetail: detail}
+	return Snapshot{Status: status, Error: message, ErrorDetail: detail}
 }

@@ -78,15 +78,15 @@
   let notifPromptAttempted = false; // flipped only after a real prompt attempt or CTA display
   let pendingNotifPrompt = null; // { senderName } queued while the tab is hidden
   let usageProviders = [];
-  let usageSnapshots = {};
+  let usageSwitcherEnabled = false;
   let usagePercentDisplay = 'left';
   let usageCooldownTimer = null;
   const usageProviderFallbackOrder = ['codex', 'claude-code', 'github-copilot', 'mistral', 'ollama-cloud'];
   let copilotLoginState = { status: 'disconnected', enterpriseHost: '', flowId: '', interval: 5, timer: null, error: '' };
   let ollamaCookieEditorOpen = false;
   let mistralCookieEditorOpen = false;
-  let switcherData = null; // { enabled, eligibility[], profiles[] } from GET /api/usages/switcher
-  let usagesLoadSettled = false; // true once a usages load attempt has settled (success or failure) — first-open loading gate. Set in loadSwitcher (.then/.catch) and loadUsages's catch.
+
+  let usagesLoadSettled = false; // true once a usages load attempt has settled (success or failure) — first-open loading gate. Set in both branches of loadUsages; renderUsagesSidebar paints a placeholder and returns while it is false, so a success path that forgets it renders nothing forever.
   let usagesLoadFailed = false; // true if the last loadUsages failed — renderUsagesSidebar keeps the error across background re-renders.
   let roomPrefs = {}; // roomID → {hidden: bool, pinned: bool} — per-human view preferences from AgentRoomView
   let switcherInFlight = {}; // tool → true while a switch is in progress
@@ -2887,45 +2887,28 @@
   }
 
   function renderUsages(resp) {
-    var snapshots = (resp && resp.snapshots) || {};
-    usageSnapshots = snapshots;
-    if (resp && resp.settings) {
+    if (!resp) return;
+    if (resp.providers) {
+      usageProviders = resp.providers;
+    }
+    if (resp.settings) {
       usagePercentDisplay = resp.settings.percent_display === 'used' ? 'used' : 'left';
     }
-    if (resp && Array.isArray(resp.providers)) {
-      usageProviders = resp.providers;
-      renderUsageProviderRows(usageProviders);
-    }
+    usageSwitcherEnabled = !!resp.switcher_enabled;
+    renderUsageProviderRows(usageProviders);
     renderUsagesSidebar();
   }
 
   function canonicalUsageProviders() {
-    var rowsByKey = {};
-    var order = [];
-    (usageProviders || []).forEach(function (row) {
-      if (!row || !row.key || rowsByKey[row.key]) return;
-      rowsByKey[row.key] = row;
-      order.push(row.key);
-    });
-    if (!order.length) order = usageProviderFallbackOrder.slice();
-    usageProviderFallbackOrder.forEach(function (key) {
-      if (order.indexOf(key) === -1) order.push(key);
-    });
-    return order.map(function (key) {
-      return rowsByKey[key] || { key: key, label: providerLabel(key), enabled: false, available: true };
+    return (usageProviders || []).sort(function (a, b) {
+      return (a.order_number || 0) - (b.order_number || 0);
     });
   }
 
   function renderUsagesSidebar() {
     if (!rightUsagesPanel) return;
-    // On the first open of a session the usages/switcher data hasn't
-    // loaded yet. Loading state instead of stale single-account tiles (which
-    // pop to per-profile ~2-3s later). usagesLoadSettled settles on success OR
-    // failure (incl. a failed /api/usages), so a background renderRightSidebar
-    // re-entry can't strand the panel on "loading"; usagesLoadFailed keeps the
-    // honest error visible across those re-renders. Later opens paint immediately.
     if (!usagesLoadSettled) {
-      rightUsagesPanel.innerHTML = '<div class="usages-empty"><div>Loading usages\u2026</div></div>';
+      rightUsagesPanel.innerHTML = '<div class="usages-empty"><div>Waiting for background refresh\u2026</div></div>';
       return;
     }
     if (usagesLoadFailed) {
@@ -2939,7 +2922,14 @@
       '<button class="btn btn-sm usages-settings-shortcut" type="button">Open Settings → Usages</button>' +
     '</div>';
     rightUsagesPanel.innerHTML = empty + '<div class="usages-sidebar-list">' + sidebarRows.map(function (row) {
-      return renderUsageTile(row, usageSnapshots[row.key] || { provider: row.key, status: 'not_configured' });
+      var profiles = row.profiles || [];
+      if (!profiles || profiles.length === 0) {
+        return renderUsageTile(row, { provider_name: row.provider_name, status: 'not_configured' });
+      }
+      if (profiles.length === 1) {
+        return renderUsageTile(row, profiles[0]);
+      }
+      return renderMultiProfileTile(row, profiles);
     }).join('') + '</div>';
     refreshSwitcherPanel();
   }
@@ -2975,31 +2965,21 @@
   // the active one. Returns '' when the switcher is off or the tool has no
   // profiles, in which case the tile falls back to its single-account view.
   function renderSwitcherTileProfiles(providerKey) {
-    var tool = switcherToolForProvider(providerKey);
-    if (!tool || !switcherData || !switcherData.enabled) return '';
-    var profiles = (switcherData.profiles || []).filter(function (p) { return p.tool === tool; });
-    profiles.sort(function (a, b) { return (b.active ? 1 : 0) - (a.active ? 1 : 0); }); // active first — safe: filter() returned a new array, not shared state
+    var provider = (usageProviders || []).find(function (p) { return p.provider_name === providerKey; });
+    if (!provider || !usageSwitcherEnabled) return '';
+    var profiles = provider.profiles || [];
+    profiles.sort(function (a, b) { return (b.active ? 1 : 0) - (a.active ? 1 : 0); });
     if (!profiles.length) return '';
-    var elig = (switcherData.eligibility || []).filter(function (e) { return e.tool === tool; })[0];
-    var blocked = !!switcherInFlight[tool] || (elig && !elig.eligible && !elig.absent);
-    var snaps = switcherData.snapshots || {};
+    var blocked = !!switcherInFlight[providerKey] || (!provider.switch_eligible && provider.switch_ineligible_reason);
     return profiles.map(function (p) {
-      var snap = snaps[tool + '/' + p.name] || {};
       var activeTag = p.active ? '<span class="switcher-tile-active">active</span>' : '';
-      // Switch control: a pill derived from .switcher-tile-active (matched pair:
-      // same radius/colour/font, thicker border to distinguish). Label "SWITCH";
-      // title/aria-label "Switch to <name>"; data-empty keeps the empty-profile
-      // switch confirmation.
       var switchBtn = (!p.active && !blocked)
         ? '<button class="switcher-switch-pill" type="button"' +
-            ' data-tool="' + esc(tool) + '" data-profile="' + esc(p.name) + '"' +
+            ' data-tool="' + esc(switcherToolForProvider(providerKey)) + '" data-profile="' + esc(p.profile_name) + '"' +
             (!p.has_credentials ? ' data-empty="1"' : '') +
-            ' title="Switch to ' + esc(p.name) + '" aria-label="Switch to ' + esc(p.name) + '">SWITCH</button>'
+            ' title="Switch to ' + esc(p.profile_name) + '" aria-label="Switch to ' + esc(p.profile_name) + '">SWITCH</button>'
         : '';
       var emailTitle = p.email ? ' title="' + esc(p.email) + '"' : '';
-      // Expiry tooltip (absolute + relative) + state icon. Shows absolute +
-      // relative — relative alone is useless in a bug report, absolute alone
-      // makes you do arithmetic.
       var expiryTitle = '';
       var expiryIcon = '';
       if (p.expires_at) {
@@ -3016,40 +2996,74 @@
             erel = diffMs > 0 ? ('in ' + (eh > 0 ? eh + 'h ' : '') + em + 'm') : ('expired ' + (eh > 0 ? eh + 'h ' : '') + em + 'm ago');
           }
           expiryTitle = 'Token expires: ' + new Date(expMs).toISOString() + ' (' + erel + ')';
-          // State icon: checkmark (healthy >3h), hourglass (≤3h), red hourglass (expired).
-          // 3h threshold. Claude tokens live roughly 8-12h, so a 12h window was
-          // longer than the token itself and every claude row showed an hourglass
-          // permanently — the healthy state was unreachable. 3h is short enough
-          // that a checkmark means something and long enough to act by hand.
           var iconSvg = diffMs <= 0 ? EXPIRY_ICON_EXPIRED
             : (diffMs <= 10800000 ? EXPIRY_ICON_SOON : EXPIRY_ICON_OK);
           var iconClass = 'switcher-expiry-icon' + (diffMs <= 0 ? ' switcher-expiry-icon--expired' : '');
           expiryIcon = '<span class="' + iconClass + '" title="' + esc(expiryTitle) + '">' + iconSvg + '</span>';
         }
       }
-      // Plan badge: single colour (no state), tooltip = email (swapped from name).
-      var planBadge = snap.plan
-        ? '<span class="switcher-tile-plan"' + emailTitle + '>' + esc(snap.plan) + '</span>'
+      var planBadge = p.plan
+        ? '<span class="switcher-tile-plan"' + emailTitle + '>' + esc(p.plan) + '</span>'
         : '';
-      // Name: tooltip = expiry (swapped from email). State icon sits right of the name.
       var nameTitle = expiryTitle ? ' title="' + esc(expiryTitle) + '"' : '';
+      // No per-row age: every profile of a provider refreshes on the same
+      // interval, so the card header's single timestamp is true of all of them.
+      // A per-row copy would repeat the same string on every line.
       var head = '<div class="switcher-tile-head">' +
-        '<span class="switcher-tile-name"' + nameTitle + '>' + esc(p.name) + '</span>' +
+        '<span class="switcher-tile-name"' + nameTitle + '>' + esc(p.profile_name) + '</span>' +
         expiryIcon + switchBtn + activeTag + planBadge +
       '</div>';
       var body;
       if (!p.has_credentials) {
         body = '<div class="usages-empty usages-empty-compact">Needs login</div>';
+      } else if (!p.windows || p.windows.length === 0) {
+        body = '<div class="usages-empty usages-empty-compact">Refreshing\u2026</div>';
       } else {
-        var windows = (snap.windows || []).map(function (w) {
-          return renderUsageWindowRow(w, snap.last_refresh_at);
+        var windows = p.windows.map(function (w) {
+          return renderUsageWindowRow(w, p.last_refresh_at);
         }).join('');
         body = windows || '<div class="usages-empty usages-empty-compact">No usage data yet.</div>';
       }
       return '<div class="switcher-tile-profile' + (p.active ? ' switcher-tile-profile-active' : '') + '">' +
-        head + body + renderCreditsRow(snap.credits) + usageErrorLine(snap) +
+        head + body + renderCreditsRow(p.credits) + usageErrorLine(p) +
       '</div>';
     }).join('');
+  }
+
+  function renderMultiProfileTile(row, profiles) {
+    var firstSnap = profiles[0] || {};
+    var label = row.label || firstSnap.provider_name || firstSnap.provider;
+
+    // One age for the card, taken from the oldest profile. Every profile of a
+    // provider refreshes on the same interval, so they agree; the oldest is
+    // chosen so the header can never claim to be fresher than a row beneath it.
+    // Not conditional on the rows agreeing: two profiles fetched seconds apart
+    // can format differently ("just now" vs "1m ago"), and a conditional would
+    // move the label between the header and the rows on a rounding boundary.
+    var oldest = null;
+    (profiles || []).forEach(function (p) {
+      if (!p.last_refresh_at) return;
+      if (oldest === null || Date.parse(p.last_refresh_at) < Date.parse(oldest)) oldest = p.last_refresh_at;
+    });
+    var commonAge = oldest
+      ? 'Updated ' + formatRelativeAge(oldest) + ' ago'
+      : statusLabel((profiles[0] || {}).status || 'Not configured');
+
+    var profileBlocks = renderSwitcherTileProfiles(row.provider_name, false);
+
+    return '<div class="usages-provider-tile" data-provider="' + esc(row.provider_name) + '">' +
+      '<div class="usages-provider-heading">' +
+        '<div class="usages-provider-title"><span class="' + esc(usageProviderIconClass(row.provider_name)) + '">' + usageProviderIcon(row.provider_name) + '</span><div><div class="usages-provider-name">' + esc(label) + '</div>' + (commonAge ? '<div class="usages-provider-updated">' + esc(commonAge) + '</div>' : '') + '</div></div>' +
+        // No card-level plan badge while profile rows are present: a plan
+        // belongs to one account, and each row already renders its own. Hoisting
+        // the first profile's plan into the header states it for the whole card,
+        // which is wrong the moment two profiles are on different plans — the
+        // same mistake as a card-level "Updated X ago" over per-profile numbers.
+        (profileBlocks ? '' : '<span class="usages-plan-badge">' + esc(firstSnap.plan || '-') + '</span>') +
+      '</div>' +
+      profileBlocks +
+      (profileBlocks ? '' : renderCreditsRow(firstSnap.credits) + usageErrorLine(firstSnap)) +
+    '</div>';
   }
 
   function renderUsageTile(row, snap) {
@@ -3058,37 +3072,28 @@
     if (!available || !enabled) {
       var state = available ? 'Not enabled' : 'Unavailable';
       var detail = available ? 'Configure in Settings → Usages' : 'Available in upcoming release';
-      return '<button class="usages-provider-tile usages-provider-tile-inactive usages-settings-shortcut" type="button" data-provider="' + esc(row.key) + '">' +
-        '<span class="' + esc(usageProviderIconClass(row.key)) + '">' + usageProviderIcon(row.key) + '</span>' +
-        '<span><strong>' + esc(row.label || row.key) + '</strong><em>' + esc(state + ' — ' + detail) + '</em></span>' +
+      return '<button class="usages-provider-tile usages-provider-tile-inactive usages-settings-shortcut" type="button" data-provider="' + esc(row.provider_name) + '">' +
+        '<span class="' + esc(usageProviderIconClass(row.provider_name)) + '">' + usageProviderIcon(row.provider_name) + '</span>' +
+        '<span><strong>' + esc(row.label || row.provider_name) + '</strong><em>' + esc(state + ' — ' + detail) + '</em></span>' +
       '</button>';
     }
-    var label = row.label || providerLabel(snap.provider);
+    var label = row.label || providerLabel(snap.provider_name || row.provider_name);
     var updated = snap.last_refresh_at ? 'Updated ' + formatRelativeAge(snap.last_refresh_at) + ' ago' : statusLabel(snap.status || 'Not configured');
     var plan = snap.plan || statusLabel(snap.status);
-    // When the switcher is on for this provider, show every profile's usage
-    // inside the tile instead of only the active account's.
-    var profileBlocks = renderSwitcherTileProfiles(snap.provider || row.key);
-    var windows = profileBlocks;
-    if (!windows) {
-      windows = (snap.windows || []).map(function (w) { return renderUsageWindowRow(w, snap.last_refresh_at); }).join('');
-    }
-    if (!windows) {
-      windows = '<div class="usages-empty usages-empty-compact">No window data yet.</div>';
-    }
-    return '<div class="usages-provider-tile" data-provider="' + esc(snap.provider || row.key) + '">' +
+    
+    return '<div class="usages-provider-tile" data-provider="' + esc(snap.provider_name || row.provider_name) + '">' +
       '<div class="usages-provider-heading">' +
-        '<div class="usages-provider-title"><span class="' + esc(usageProviderIconClass(snap.provider || row.key)) + '">' + usageProviderIcon(snap.provider || row.key) + '</span><div><div class="usages-provider-name">' + esc(label) + '</div><div class="usages-provider-updated">' + esc(updated) + '</div></div></div>' +
-        (profileBlocks ? '' : '<span class="usages-plan-badge">' + esc(plan || '-') + '</span>') +
+        '<div class="usages-provider-title"><span class="' + esc(usageProviderIconClass(snap.provider_name || row.provider_name)) + '">' + usageProviderIcon(snap.provider_name || row.provider_name) + '</span><div><div class="usages-provider-name">' + esc(label) + '</div><div class="usages-provider-updated">' + esc(updated) + '</div></div></div>' +
+        '<span class="usages-plan-badge">' + esc(plan || '-') + '</span>' +
       '</div>' +
       usageStaleLine(snap) +
-      windows +
-      (profileBlocks ? '' : renderCreditsRow(snap.credits) + usageErrorLine(snap)) +
+      (snap.windows ? (snap.windows.map(function (w) { return renderUsageWindowRow(w, snap.last_refresh_at); }).join('') || '<div class="usages-empty usages-empty-compact">No window data yet.</div>') : '<div class="usages-empty usages-empty-compact">No window data yet.</div>') +
+      renderCreditsRow(snap.credits) + usageErrorLine(snap) +
     '</div>';
   }
 
   function providerLabel(key) {
-    var found = usageProviders.find(function (p) { return p.key === key; });
+    var found = usageProviders.find(function (p) { return p.provider_name === key; });
     return found ? found.label : key;
   }
 
@@ -3242,17 +3247,14 @@
     return api('GET', '/api/usages').then(function (resp) {
       lastUsagesResponse = resp;
       if (resp && resp.settings) renderUsageSettings(resp.settings);
+      usagesLoadSettled = true; // a load attempt has now settled — must be set
+      // before renderUsages, which paints the pre-first-load placeholder while
+      // this is false and would otherwise discard the response it was given.
       usagesLoadFailed = false; // usages fetched OK — clear any prior error
-      // Fetch the switcher BEFORE the first paint. Rendering tiles now and
-      // re-rendering when the switcher resolves produces a visible pop-in:
-      // the panel shows the old single-account view, then swaps to the
-      // per-profile one. One paint, with everything.
-      return loadSwitcher().then(function () {
-        renderUsages(resp);
-        return resp;
-      });
+      renderUsages(resp);
+      return resp;
     }).catch(function (err) {
-      // /api/usages failed -> loadSwitcher never ran. Settle the gate here so
+      // /api/usages failed. Settle the gate here so
       // a background renderRightSidebar re-entry can't strand the panel on a
       // permanent "loading" spinner, and keep the error via usagesLoadFailed.
       usagesLoadSettled = true;
@@ -3275,37 +3277,29 @@
   // ── Switcher ────────────────────────────────────────────────────────
 
   function loadSwitcher() {
-    return api('GET', '/api/usages/switcher')
-      .then(function (resp) {
-        switcherData = resp;
-        usagesLoadSettled = true;
-        renderSwitcherSettingsRow();
-        renderSwitcherSettingsProfiles();
-        refreshSwitcherPanel();
-      })
-      .catch(function (err) {
-        // A failed switcher load still settles the gate: renderUsagesSidebar
-        // then paints the single-account view (switcherData stays null/disabled).
-        usagesLoadSettled = true;
-        console.error('switcher', err);
-      });
+    return loadUsages().then(function () {
+      renderSwitcherSettingsRow();
+      renderSwitcherSettingsProfiles();
+      refreshSwitcherPanel();
+    }).catch(function (err) {
+      usagesLoadSettled = true;
+      console.error('switcher', err);
+    });
   }
 
   function renderSwitcherSettingsRow() {
     var el = document.getElementById('switcher-settings-row');
     if (!el) return;
-    var enabled = !!(switcherData && switcherData.enabled);
-    var eligibility = (switcherData && Array.isArray(switcherData.eligibility)) ? switcherData.eligibility : [];
-    var ineligibleNotes = enabled ? eligibility.filter(function (e) { return !e.eligible && e.reason; }) : [];
-    var notesHtml = ineligibleNotes.map(function (e) {
-      return '<span class="switcher-ineligible-note">' + esc(e.tool) + ': ' + esc(e.reason) + '</span>';
+    var enabled = usageSwitcherEnabled;
+    var ineligibleNotes = (usageProviders || []).filter(function (p) { return !p.switch_eligible && p.switch_ineligible_reason; }).map(function (p) {
+      return '<span class="switcher-ineligible-note">' + esc(p.provider_name) + ': ' + esc(p.switch_ineligible_reason) + '</span>';
     }).join('');
     el.innerHTML =
       '<div class="settings-row">' +
         '<div class="settings-row-info">' +
           '<label class="settings-label" for="switcher-enabled-toggle">Switcher profiles</label>' +
           '<span class="settings-desc">Enable per-profile credential switching for Claude Code and Codex.</span>' +
-          notesHtml +
+          ineligibleNotes +
         '</div>' +
         '<div class="settings-control">' +
           '<label class="usages-provider-toggle" aria-label="Switcher profiles">' +
@@ -3322,16 +3316,14 @@
   function renderSwitcherSettingsProfiles() {
     var el = document.getElementById('switcher-settings-profiles');
     if (!el) return;
-    if (!switcherData || !switcherData.enabled) {
+    if (!usageSwitcherEnabled) {
       el.innerHTML = '';
       return;
     }
-    var profiles = Array.isArray(switcherData.profiles) ? switcherData.profiles : [];
-    var eligibility = Array.isArray(switcherData.eligibility) ? switcherData.eligibility : [];
-    el.innerHTML = ['claude', 'codex'].map(function (tool) {
-      var toolProfiles = profiles.filter(function (p) { return p.tool === tool; });
-      var elig = eligibility.filter(function (e) { return e.tool === tool; })[0] || { eligible: true, reason: '' };
-      return renderSwitcherSection(tool, toolProfiles, elig, !!switcherInFlight[tool], 'manage');
+    el.innerHTML = ['claude-code', 'codex'].map(function (name) {
+      var provider = (usageProviders || []).find(function (p) { return p.provider_name === name; }) || { provider_name: name, profiles: [], switch_eligible: true, switch_ineligible_reason: '' };
+      var elig = { tool: name, eligible: provider.switch_eligible, reason: provider.switch_ineligible_reason };
+      return renderSwitcherSection(name, provider.profiles, elig, !!switcherInFlight[switcherToolForProvider(name)], 'manage');
     }).join('');
   }
 
@@ -3339,17 +3331,15 @@
     if (!rightUsagesPanel) return;
     var container = rightUsagesPanel.querySelector('.switcher-panel');
     if (!container) return;
-    if (!switcherData || !switcherData.enabled) {
+    if (!usageSwitcherEnabled) {
       container.innerHTML = '';
       return;
     }
-    var profiles = Array.isArray(switcherData.profiles) ? switcherData.profiles : [];
-    var eligibility = Array.isArray(switcherData.eligibility) ? switcherData.eligibility : [];
-    var tools = ['claude', 'codex'];
-    container.innerHTML = tools.map(function (tool) {
-      var toolProfiles = profiles.filter(function (p) { return p.tool === tool; });
-      var toolElig = eligibility.filter(function (e) { return e.tool === tool; })[0] || { tool: tool, eligible: true, reason: '' };
-      return renderSwitcherSection(tool, toolProfiles, toolElig, !!switcherInFlight[tool], 'switch');
+    var tools = ['claude-code', 'codex'];
+    container.innerHTML = tools.map(function (name) {
+      var provider = (usageProviders || []).find(function (p) { return p.provider_name === name; }) || { provider_name: name, profiles: [], switch_eligible: true, switch_ineligible_reason: '' };
+      var toolElig = { tool: name, eligible: provider.switch_eligible, reason: provider.switch_ineligible_reason };
+      return renderSwitcherSection(name, provider.profiles, toolElig, !!switcherInFlight[switcherToolForProvider(name)], 'switch');
     }).join('');
   }
 
@@ -3358,24 +3348,24 @@
   // management lives in Settings; the panel is for operating, next to the
   // live quota numbers.
   function renderSwitcherSection(tool, profiles, eligibility, inFlight, mode) {
-    var toolLabel = tool === 'claude' ? 'Claude Code' : tool === 'codex' ? 'Codex' : tool;
+    var toolLabel = tool === 'claude-code' ? 'Claude Code' : tool === 'codex' ? 'Codex' : tool;
     var elig = eligibility || { eligible: true, reason: '' };
     var disabled = !!inFlight || (!elig.eligible && !elig.absent);
     var activeProfile = profiles.filter(function (p) { return p.active; })[0];
-    var activeLabel = activeProfile ? activeProfile.name : '—';
+    var activeLabel = activeProfile ? activeProfile.profile_name : '—';
     var spinner = inFlight ? ' <span class="switcher-spinner" aria-hidden="true"></span>' : '';
     var eligNote = !elig.eligible && elig.reason
       ? '<div class="switcher-ineligible-inline">' + esc(elig.reason) + '</div>'
       : '';
     var rows = profiles.length
-      ? profiles.map(function (p) { return renderSwitcherProfileRow(p, elig, inFlight, mode); }).join('')
+      ? profiles.map(function (p) { return renderSwitcherProfileRow(tool, p, elig, inFlight, mode); }).join('')
       : '<div class="switcher-empty">No profiles yet.</div>';
     var addImport = (disabled || mode !== 'manage') ? '' :
       '<div class="switcher-actions">' +
-        '<button class="btn btn-sm switcher-add-btn" type="button" data-tool="' + esc(tool) + '">Add profile</button>' +
-        '<button class="btn btn-sm switcher-import-btn" type="button" data-tool="' + esc(tool) + '">Import current login</button>' +
+        '<button class="btn btn-sm switcher-add-btn" type="button" data-tool="' + esc(switcherToolForProvider(tool)) + '">Add profile</button>' +
+        '<button class="btn btn-sm switcher-import-btn" type="button" data-tool="' + esc(switcherToolForProvider(tool)) + '">Import current login</button>' +
       '</div>';
-    return '<div class="switcher-section" data-tool="' + esc(tool) + '">' +
+    return '<div class="switcher-section" data-tool="' + esc(switcherToolForProvider(tool)) + '">' +
       '<div class="switcher-section-header">' +
         '<span class="switcher-section-tool">' + esc(toolLabel) + '</span>' +
         '<span class="switcher-section-active">' + esc(activeLabel) + '</span>' +
@@ -3391,9 +3381,9 @@
   // one closest to running out), rendered in whichever percent convention the
   // user picked for the tiles. The full breakdown stays in the provider tile
   // above; this is a glance, not a second dashboard.
-  function switcherProfileUsage(tool, name) {
-    var snaps = (switcherData && switcherData.snapshots) || {};
-    var snap = snaps[tool + '/' + name];
+  function switcherProfileUsage(providerName, profileName) {
+    var provider = (usageProviders || []).find(function (p) { return p.provider_name === providerName; });
+    var snap = provider && provider.profiles && provider.profiles.find(function (s) { return s.profile_name === profileName; });
     if (!snap) return '';
     if (snap.status && snap.status !== 'ok') return '';
     var windows = Array.isArray(snap.windows) ? snap.windows : [];
@@ -3411,7 +3401,7 @@
       plan + esc(pct) + '</span>';
   }
 
-  function renderSwitcherProfileRow(profile, eligibility, inFlight, mode) {
+  function renderSwitcherProfileRow(tool, profile, eligibility, inFlight, mode) {
     var isActive = !!profile.active;
     var isEmpty = !profile.has_credentials;
     var disabled = !!inFlight || (eligibility && !eligibility.eligible && !eligibility.absent);
@@ -3420,19 +3410,19 @@
     var credLabel = isEmpty ? ' <span class="switcher-needs-login">needs login</span>' : '';
     var switchBtn = (!isActive && !disabled && mode !== 'manage')
       ? '<button class="btn btn-sm switcher-switch-btn" type="button"' +
-          ' data-tool="' + esc(profile.tool) + '" data-profile="' + esc(profile.name) + '"' +
+          ' data-tool="' + esc(switcherToolForProvider(tool)) + '" data-profile="' + esc(profile.profile_name) + '"' +
           (isEmpty ? ' data-empty="1"' : '') +
           '>Switch</button>'
       : '';
     var deleteBtn = (!disabled && mode === 'manage')
       ? '<button class="btn btn-icon switcher-delete-btn" type="button"' +
-          ' data-tool="' + esc(profile.tool) + '" data-profile="' + esc(profile.name) + '"' +
+          ' data-tool="' + esc(switcherToolForProvider(tool)) + '" data-profile="' + esc(profile.profile_name) + '"' +
           (isActive ? ' data-active="1"' : '') +
-          ' title="Delete profile" aria-label="Delete ' + esc(profile.name) + '">✕</button>'
+          ' title="Delete profile" aria-label="Delete ' + esc(profile.profile_name) + '">✕</button>'
       : '';
-    var usage = switcherProfileUsage(profile.tool, profile.name);
+    var usage = switcherProfileUsage(tool, profile.profile_name);
     return '<div class="switcher-profile-row' + (isActive ? ' switcher-profile-row-active' : '') + '">' +
-      '<span class="switcher-profile-name"' + emailTitle + '>' + activeMarker + esc(profile.name) + credLabel + '</span>' +
+      '<span class="switcher-profile-name"' + emailTitle + '>' + activeMarker + esc(profile.profile_name) + credLabel + '</span>' +
       usage +
       '<span class="switcher-profile-controls">' + switchBtn + deleteBtn + '</span>' +
     '</div>';
@@ -3588,7 +3578,8 @@
     var available = !!row.available;
     var configured = !!row.cookie_configured || !!row.api_key_configured || !!row.enabled;
     var authMode = row.auth_mode || 'auto';
-    var snap = usageSnapshots['ollama-cloud'] || {};
+    var provider = (usageProviders || []).find(function (p) { return p.provider_name === 'ollama-cloud'; });
+    var snap = (provider && provider.profiles && provider.profiles[0]) || {};
     var status = snap.status || (configured ? 'saved' : 'not_configured');
     var hasError = status === 'auth_missing' || status === 'fetch_error';
     var showEditor = available && (!configured || hasError || ollamaCookieEditorOpen);
@@ -3630,7 +3621,8 @@
   function renderMistralProviderRow(row, idx, total) {
     var available = !!row.available;
     var configured = !!row.cookie_configured || !!row.enabled;
-    var snap = usageSnapshots.mistral || {};
+    var provider = (usageProviders || []).find(function (p) { return p.provider_name === 'mistral'; });
+    var snap = (provider && provider.profiles && provider.profiles[0]) || {};
     var status = snap.status || (configured ? 'saved' : 'not_configured');
     var hasError = status === 'auth_missing' || status === 'fetch_error';
     var showEditor = available && (!configured || hasError || mistralCookieEditorOpen);
@@ -3870,10 +3862,15 @@
 
   function forceRefreshUsages() {
     if (!usagesRefreshBtn || usagesRefreshBtn.disabled) return;
+    // Start the cooldown on click, not on response. A force refresh fetches
+    // every provider live and can take seconds; starting it in .then() leaves
+    // the button enabled for that whole window, so a second click fires a
+    // second POST that the server rejects — and the countdown only appears
+    // then, after a click that appeared to do nothing.
+    startUsageRefreshCooldown(15);
     api('POST', '/api/usages/refresh', {})
       .then(function (resp) {
         renderUsages(resp);
-        startUsageRefreshCooldown(15);
       })
       .catch(function (err) {
         var retryAfter = err && err.body && err.body.retry_after_sec;

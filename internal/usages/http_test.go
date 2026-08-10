@@ -19,23 +19,21 @@ func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("GET status = %d", resp.Code)
 	}
-	if !strings.Contains(resp.Body.String(), `"snapshots":{}`) {
-		t.Fatalf("GET body = %s", resp.Body.String())
+	body := resp.Body.String()
+	if !strings.Contains(body, `"providers":[`) {
+		t.Fatalf("GET body missing providers array: %s", body)
 	}
-	if !strings.Contains(resp.Body.String(), `{"key":"codex","label":"Codex","enabled":false,"available":true}`) {
-		t.Fatalf("GET providers missing codex availability: %s", resp.Body.String())
+	if !strings.Contains(body, `"provider_name":"codex"`) {
+		t.Fatalf("GET body missing codex provider: %s", body)
 	}
-	if !strings.Contains(resp.Body.String(), `{"key":"claude-code","label":"Claude Code","enabled":false,"available":true}`) {
-		t.Fatalf("GET providers missing claude-code availability: %s", resp.Body.String())
+	if !strings.Contains(body, `"available":true`) {
+		t.Fatalf("GET body missing available provider: %s", body)
 	}
-	if !strings.Contains(resp.Body.String(), `{"key":"github-copilot","label":"GitHub Copilot","enabled":false,"available":true}`) {
-		t.Fatalf("GET providers missing github-copilot availability: %s", resp.Body.String())
+	if !strings.Contains(body, `"profiles":[]`) {
+		t.Fatalf("GET body missing empty profiles: %s", body)
 	}
-	if !strings.Contains(resp.Body.String(), `{"key":"mistral","label":"Mistral","enabled":false,"available":true}`) {
-		t.Fatalf("GET providers missing mistral availability: %s", resp.Body.String())
-	}
-	if !strings.Contains(resp.Body.String(), `{"key":"ollama-cloud","label":"Ollama Cloud","enabled":false,"available":true}`) {
-		t.Fatalf("GET providers missing ollama-cloud availability: %s", resp.Body.String())
+	if !strings.Contains(body, `"switcher_enabled":false`) {
+		t.Fatalf("GET body missing switcher_enabled: %s", body)
 	}
 
 	resp = httptest.NewRecorder()
@@ -65,16 +63,16 @@ func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
 	resp = httptest.NewRecorder()
 	req = httptest.NewRequest("GET", "/api/usages", nil)
 	mux.ServeHTTP(resp, req)
-	body, err := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
-	got := string(body)
-	ollama := strings.Index(got, `"key":"ollama-cloud"`)
-	codex := strings.Index(got, `"key":"codex"`)
-	claude := strings.Index(got, `"key":"claude-code"`)
-	copilot := strings.Index(got, `"key":"github-copilot"`)
-	mistral := strings.Index(got, `"key":"mistral"`)
+	got := string(bodyBytes)
+	ollama := strings.Index(got, `"provider_name":"ollama-cloud"`)
+	codex := strings.Index(got, `"provider_name":"codex"`)
+	claude := strings.Index(got, `"provider_name":"claude-code"`)
+	copilot := strings.Index(got, `"provider_name":"github-copilot"`)
+	mistral := strings.Index(got, `"provider_name":"mistral"`)
 	if !(ollama >= 0 && codex > ollama && claude > codex && copilot > claude && mistral > copilot) {
 		t.Fatalf("providers not in configured order: %s", got)
 	}
@@ -91,12 +89,12 @@ func TestHTTPMistralConfigRedactsSecret(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("mistral config status = %d body=%s", resp.Code, resp.Body.String())
 	}
-	body := resp.Body.String()
-	if strings.Contains(body, "csrf-secret") || strings.Contains(body, "session-secret") || strings.Contains(body, "hidden") {
-		t.Fatalf("mistral config leaked secret: %s", body)
+	respBody := resp.Body.String()
+	if strings.Contains(respBody, "csrf-secret") || strings.Contains(respBody, "session-secret") || strings.Contains(respBody, "hidden") {
+		t.Fatalf("mistral config leaked secret: %s", respBody)
 	}
-	if !strings.Contains(body, `"mistral":{"enabled":true}`) {
-		t.Fatalf("mistral config body = %s", body)
+	if !strings.Contains(respBody, `"mistral":{"enabled":true}`) {
+		t.Fatalf("mistral config body = %s", respBody)
 	}
 }
 

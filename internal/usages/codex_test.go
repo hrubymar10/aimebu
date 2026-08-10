@@ -194,7 +194,7 @@ func TestNormalizeCodexUsageAllowsCreditsWithoutWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.Status != StatusOK || snap.Provider != ProviderCodex || snap.Plan != "pro" {
+	if snap.Status != StatusOK || snap.Plan != "pro" {
 		t.Fatalf("snapshot = %+v", snap)
 	}
 	if len(snap.Windows) != 0 {
@@ -585,7 +585,7 @@ func TestCodexFetchErrorRedactsSecretsThroughManagerAndHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewManager(store, DefaultRegistry())
-	resp, err := m.Snapshot(context.Background(), ProviderCodex)
+	resp, _, err := m.refresh(context.Background(), ProviderCodex, false)
 	if err != nil {
 		t.Fatal(err)
 	}

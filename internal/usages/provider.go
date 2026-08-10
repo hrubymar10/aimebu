@@ -91,8 +91,9 @@ type ErrorDetail struct {
 	Fields map[string]string `json:"fields,omitempty"`
 }
 
+// Snapshot is the internal provider return type — usage data only. The manager
+// converts it to a Profile (which adds switcher facts) at fetch time.
 type Snapshot struct {
-	Provider      string       `json:"provider"`
 	Status        Status       `json:"status"`
 	Plan          string       `json:"plan,omitempty"`
 	Windows       []Window     `json:"windows,omitempty"`
@@ -103,34 +104,60 @@ type Snapshot struct {
 	ErrorDetail   *ErrorDetail `json:"error_detail,omitempty"`
 }
 
-type Response struct {
-	Snapshots map[string]Snapshot `json:"snapshots"`
-	Settings  *SettingsInfo       `json:"settings,omitempty"`
-	Providers []ProviderInfo      `json:"providers,omitempty"`
+// UsagesResponse is the unified response for GET /api/usages. There is no
+// join: each Profile carries both usage data and switcher facts. Providers is
+// an ordered slice (by OrderNumber), not a map.
+type UsagesResponse struct {
+	Providers       []Provider `json:"providers"`
+	Settings        Settings   `json:"settings"`
+	SwitcherEnabled bool       `json:"switcher_enabled"`
 }
 
-type SettingsInfo struct {
+type Settings struct {
 	RefreshIntervalSec int    `json:"refresh_interval_sec"`
 	MinRefreshSec      int    `json:"min_refresh_sec"`
+	PercentDisplay     string `json:"percent_display"` // "left" | "used"
 	EnvOverride        bool   `json:"env_override"`
 	EnvValue           string `json:"env_value,omitempty"`
-	PercentDisplay     string `json:"percent_display"`
 }
 
-type ProviderInfo struct {
-	Key              string `json:"key"`
-	Label            string `json:"label"`
-	Enabled          bool   `json:"enabled"`
-	Available        bool   `json:"available"`
-	EnterpriseHost   string `json:"enterprise_host,omitempty"`
-	AuthMode         string `json:"auth_mode,omitempty"`
-	APIKeyConfigured bool   `json:"api_key_configured,omitempty"`
-	CookieConfigured bool   `json:"cookie_configured,omitempty"`
+// Provider absorbs the old ProviderInfo, provider_order setting, and switcher
+// eligibility into one object. Profiles carries the per-profile data.
+type Provider struct {
+	ProviderName     string    `json:"provider_name"`
+	Label            string    `json:"label"`
+	OrderNumber      int       `json:"order_number"`
+	Enabled          bool      `json:"enabled"`
+	Available        bool      `json:"available"`
+	SwitchEligible   bool      `json:"switch_eligible,omitempty"`
+	SwitchIneligible string    `json:"switch_ineligible_reason,omitempty"`
+	Profiles         []Profile `json:"profiles"`
 }
 
-type Provider interface {
+// Profile carries both usage data (Status, Plan, Windows, ...) and switcher
+// facts (ProfileName, Active, HasCredentials, ExpiresAt, Email). There is no
+// separate Snapshot or ProfileEntry — every fact has exactly one home.
+// ProfileName is never empty ("default" when there is no switcher profile).
+type Profile struct {
+	ProfileName    string     `json:"profile_name"`
+	Active         bool       `json:"active,omitempty"`
+	HasCredentials bool       `json:"has_credentials"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	Email          string     `json:"email,omitempty"`
+	Snapshot                  // embedded — usage fields promoted and JSON-flattened
+}
+
+type UsageProvider interface {
 	Key() string
 	Fetch(ctx context.Context, store *Store) (Snapshot, error)
+}
+
+// EmailFetcher is an optional interface for providers whose email isn't
+// available in the usage fetch (e.g., Copilot, which needs a separate GitHub
+// /user call). The poller calls FetchEmail on a separate cadence
+// (max(providerInterval, 1h)) and caches the result in CacheEntry.EmailFetchedAt.
+type EmailFetcher interface {
+	FetchEmail(ctx context.Context, store *Store) (string, error)
 }
 
 type RawDecoder[T any] interface {
@@ -142,11 +169,11 @@ type Normalizer[T any] interface {
 }
 
 type Registry struct {
-	providers map[string]Provider
+	providers map[string]UsageProvider
 }
 
-func NewRegistry(providers ...Provider) *Registry {
-	r := &Registry{providers: make(map[string]Provider)}
+func NewRegistry(providers ...UsageProvider) *Registry {
+	r := &Registry{providers: make(map[string]UsageProvider)}
 	for _, p := range providers {
 		if p == nil {
 			continue
@@ -162,7 +189,7 @@ func DefaultRegistry() *Registry {
 	return NewRegistry(NewCodexProvider(), NewClaudeCodeProvider(), NewCopilotProvider(), NewMistralProvider(), NewOllamaCloudProvider())
 }
 
-func (r *Registry) Provider(key string) (Provider, bool) {
+func (r *Registry) Provider(key string) (UsageProvider, bool) {
 	if r == nil {
 		return nil, false
 	}
@@ -224,24 +251,6 @@ func normalizeProviderOrder(order []string) []string {
 		}
 		seen[key] = true
 		out = append(out, key)
-	}
-	return out
-}
-
-func ProviderInfos(cfg Config, registry *Registry) []ProviderInfo {
-	out := make([]ProviderInfo, 0, len(knownProviders))
-	for _, key := range normalizeProviderOrder(cfg.ProviderOrder) {
-		pc := cfg.Providers[key]
-		out = append(out, ProviderInfo{
-			Key:              key,
-			Label:            ProviderLabel(key),
-			Enabled:          pc.Enabled,
-			Available:        registry.HasProvider(key),
-			EnterpriseHost:   pc.EnterpriseHost,
-			AuthMode:         ollamaProviderAuthMode(key, pc),
-			APIKeyConfigured: key == ProviderOllamaCloud && strings.TrimSpace(pc.APIKey) != "",
-			CookieConfigured: (key == ProviderOllamaCloud || key == ProviderMistral) && pc.Cookie != "",
-		})
 	}
 	return out
 }

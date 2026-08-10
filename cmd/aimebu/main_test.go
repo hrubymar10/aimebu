@@ -327,7 +327,8 @@ func TestUsagesCLIEmptyRegistryServerOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("usages json failed: %v\n%s", err, jsonOut)
 	}
-	if got := strings.TrimSpace(string(jsonOut)); got != `{"snapshots":{},"settings":{"refresh_interval_sec":120,"min_refresh_sec":15,"env_override":false,"percent_display":"left"},"providers":[{"key":"codex","label":"Codex","enabled":false,"available":true},{"key":"claude-code","label":"Claude Code","enabled":false,"available":true},{"key":"github-copilot","label":"GitHub Copilot","enabled":false,"available":true},{"key":"mistral","label":"Mistral","enabled":false,"available":true},{"key":"ollama-cloud","label":"Ollama Cloud","enabled":false,"available":true}]}` {
+	got := strings.TrimSpace(string(jsonOut))
+	if !strings.Contains(got, `"providers":[`) || !strings.Contains(got, `"provider_name":"codex"`) || !strings.Contains(got, `"profiles":[]`) || !strings.Contains(got, `"switcher_enabled":false`) {
 		t.Fatalf("json output = %q", got)
 	}
 

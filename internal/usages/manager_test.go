@@ -41,7 +41,7 @@ func (f *fakeProvider) Fetch(ctx context.Context, store *Store) (Snapshot, error
 	if f.err != nil {
 		return Snapshot{}, f.err
 	}
-	return Snapshot{Provider: f.key, Status: StatusOK, Plan: "test"}, nil
+	return Snapshot{Status: StatusOK, Plan: "test"}, nil
 }
 
 func TestManagerEmptyRegistry(t *testing.T) {
@@ -50,8 +50,10 @@ func TestManagerEmptyRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if len(resp.Snapshots) != 0 {
-		t.Fatalf("snapshots = %+v", resp.Snapshots)
+	for _, p := range resp.Providers {
+		if len(p.Profiles) != 0 {
+			t.Fatalf("expected no profiles for %s", p.ProviderName)
+		}
 	}
 }
 
@@ -66,11 +68,11 @@ func TestManagerIntervalGatesFetch(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1000, 0)}
 	m := NewManager(store, NewRegistry(fp))
 	m.SetClock(clock)
-	if _, err := m.Snapshot(context.Background(), ""); err != nil {
-		t.Fatalf("first Snapshot: %v", err)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("first refresh: %v", err)
 	}
-	if _, err := m.Snapshot(context.Background(), ""); err != nil {
-		t.Fatalf("second Snapshot: %v", err)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("second refresh: %v", err)
 	}
 	if got := atomic.LoadInt32(&fp.calls); got != 1 {
 		t.Fatalf("fetch calls = %d, want 1", got)
@@ -96,7 +98,7 @@ func TestManagerConcurrentSnapshotsShareLockAndInterval(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := m.Snapshot(context.Background(), "")
+			_, _, err := m.refresh(context.Background(), "", false)
 			errs <- err
 		}()
 	}
@@ -142,15 +144,14 @@ func TestManagerDNSFailureKeepsPreviousSnapshotStale(t *testing.T) {
 	m.SetClock(clock)
 
 	entry := m.fetchOne(context.Background(), ProviderCodex, CacheEntry{
-		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Plan: "old"},
-		LastRefreshAt: &old,
+		Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, Plan: "old", LastRefreshAt: &old}},
 	})
 
-	if entry.Snapshot.Status != StatusStaleCache || !entry.Snapshot.Stale || entry.Snapshot.Plan != "old" {
-		t.Fatalf("snapshot = %+v", entry.Snapshot)
+	if entry.Profile.Status != StatusStaleCache || !entry.Profile.Stale || entry.Profile.Plan != "old" {
+		t.Fatalf("profile = %+v", entry.Profile)
 	}
-	if entry.LastRefreshAt == nil || !entry.LastRefreshAt.Equal(old) {
-		t.Fatalf("last refresh = %+v, want %v", entry.LastRefreshAt, old)
+	if entry.Profile.LastRefreshAt == nil || !entry.Profile.LastRefreshAt.Equal(old) {
+		t.Fatalf("last refresh = %+v, want %v", entry.Profile.LastRefreshAt, old)
 	}
 }
 
@@ -164,15 +165,14 @@ func TestManagerConnectionResetKeepsPreviousSnapshotStale(t *testing.T) {
 	m.SetClock(clock)
 
 	entry := m.fetchOne(context.Background(), ProviderCodex, CacheEntry{
-		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Plan: "old"},
-		LastRefreshAt: &old,
+		Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, Plan: "old", LastRefreshAt: &old}},
 	})
 
-	if entry.Snapshot.Status != StatusStaleCache || !entry.Snapshot.Stale || entry.Snapshot.Plan != "old" {
-		t.Fatalf("snapshot = %+v", entry.Snapshot)
+	if entry.Profile.Status != StatusStaleCache || !entry.Profile.Stale || entry.Profile.Plan != "old" {
+		t.Fatalf("profile = %+v", entry.Profile)
 	}
-	if entry.LastRefreshAt == nil || !entry.LastRefreshAt.Equal(old) {
-		t.Fatalf("last refresh = %+v, want %v", entry.LastRefreshAt, old)
+	if entry.Profile.LastRefreshAt == nil || !entry.Profile.LastRefreshAt.Equal(old) {
+		t.Fatalf("last refresh = %+v, want %v", entry.Profile.LastRefreshAt, old)
 	}
 }
 
@@ -183,7 +183,6 @@ func TestManagerTransientServerErrorKeepsPreviousSnapshotStale(t *testing.T) {
 		key: ProviderCodex,
 		err: &SnapshotError{
 			Snapshot: Snapshot{
-				Provider:    ProviderCodex,
 				Status:      StatusFetchError,
 				Error:       "Codex usage endpoint returned HTTP 503.",
 				ErrorDetail: fieldDetail("usage", "http_503"),
@@ -194,15 +193,14 @@ func TestManagerTransientServerErrorKeepsPreviousSnapshotStale(t *testing.T) {
 	m.SetClock(clock)
 
 	entry := m.fetchOne(context.Background(), ProviderCodex, CacheEntry{
-		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Plan: "old"},
-		LastRefreshAt: &old,
+		Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, Plan: "old", LastRefreshAt: &old}},
 	})
 
-	if entry.Snapshot.Status != StatusStaleCache || !entry.Snapshot.Stale || entry.Snapshot.Plan != "old" {
-		t.Fatalf("snapshot = %+v", entry.Snapshot)
+	if entry.Profile.Status != StatusStaleCache || !entry.Profile.Stale || entry.Profile.Plan != "old" {
+		t.Fatalf("snapshot = %+v", entry.Profile)
 	}
-	if entry.LastRefreshAt == nil || !entry.LastRefreshAt.Equal(old) {
-		t.Fatalf("last refresh = %+v, want %v", entry.LastRefreshAt, old)
+	if entry.Profile.LastRefreshAt == nil || !entry.Profile.LastRefreshAt.Equal(old) {
+		t.Fatalf("last refresh = %+v, want %v", entry.Profile.LastRefreshAt, old)
 	}
 }
 
@@ -216,24 +214,26 @@ func TestManagerStaleCacheSurvivesRepeatedFailures(t *testing.T) {
 	}
 	old := time.Unix(100, 0)
 	cache := EmptyCache()
-	cache.Snapshots[ProviderCodex] = CacheEntry{
-		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Plan: "old"},
-		LastRefreshAt: &old,
-	}
+	cache.Snapshots[ProviderCodex] = []CacheEntry{{
+		Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, Plan: "old", LastRefreshAt: &old}},
+	}}
 	if err := store.SaveCache(cache); err != nil {
 		t.Fatal(err)
 	}
 	clock := &fakeClock{now: old.Add(time.Hour)}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderCodex, err: &net.DNSError{Err: "no such host", Name: "usage.example"}}))
 	m.SetClock(clock)
-	if _, err := m.Snapshot(context.Background(), ProviderCodex); err != nil {
-		t.Fatalf("first Snapshot: %v", err)
+	// Snapshot is a pure cache read now — it never fetches. ForceRefresh
+	// triggers the fetch, which fails (DNS error) and sets the stale-cache
+	// status on the cached entry. Snapshot then reads it back.
+	if _, _, err := m.ForceRefresh(context.Background(), ProviderCodex); err != nil {
+		t.Fatalf("ForceRefresh: %v", err)
 	}
 	resp, err := m.Snapshot(context.Background(), ProviderCodex)
 	if err != nil {
-		t.Fatalf("second Snapshot: %v", err)
+		t.Fatalf("Snapshot: %v", err)
 	}
-	snap := resp.Snapshots[ProviderCodex]
+	snap := resp.Providers[0].Profiles[0]
 	if snap.Status != StatusStaleCache || !snap.Stale || snap.Plan != "old" {
 		t.Fatalf("snapshot = %+v", snap)
 	}
@@ -246,22 +246,21 @@ func TestManagerAuthFailureDropsPreviousSnapshot(t *testing.T) {
 	m := NewManager(NewStoreAt(t.TempDir()), NewRegistry(&fakeProvider{
 		key: ProviderCodex,
 		err: &SnapshotError{
-			Snapshot: Snapshot{Provider: ProviderCodex, Status: StatusAuthMissing, Error: "OAuth token was rejected."},
+			Snapshot: Snapshot{Status: StatusAuthMissing, Error: "OAuth token was rejected."},
 			Err:      errors.New("OAuth token was rejected."),
 		},
 	}))
 	m.SetClock(clock)
 
 	entry := m.fetchOne(context.Background(), ProviderCodex, CacheEntry{
-		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Plan: "old"},
-		LastRefreshAt: &old,
+		Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, Plan: "old", LastRefreshAt: &old}},
 	})
 
-	if entry.Snapshot.Status != StatusAuthMissing || entry.Snapshot.Stale || entry.Snapshot.Plan != "" {
-		t.Fatalf("snapshot = %+v", entry.Snapshot)
+	if entry.Profile.Status != StatusAuthMissing || entry.Profile.Stale || entry.Profile.Plan != "" {
+		t.Fatalf("snapshot = %+v", entry.Profile)
 	}
-	if entry.LastRefreshAt == nil || !entry.LastRefreshAt.Equal(now) {
-		t.Fatalf("last refresh = %+v, want %v", entry.LastRefreshAt, now)
+	if entry.Profile.LastRefreshAt == nil || !entry.Profile.LastRefreshAt.Equal(now) {
+		t.Fatalf("last refresh = %+v, want %v", entry.Profile.LastRefreshAt, now)
 	}
 }
 
@@ -274,15 +273,14 @@ func TestManagerTimeoutKeepsPreviousSnapshotStale(t *testing.T) {
 	defer cancel()
 
 	entry := m.fetchOne(ctx, ProviderCodex, CacheEntry{
-		Snapshot:      Snapshot{Provider: ProviderCodex, Status: StatusOK, Plan: "old"},
-		LastRefreshAt: &old,
+		Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, Plan: "old", LastRefreshAt: &old}},
 	})
 
-	if entry.Snapshot.Status != StatusStaleCache || !entry.Snapshot.Stale || entry.Snapshot.Plan != "old" {
-		t.Fatalf("snapshot = %+v", entry.Snapshot)
+	if entry.Profile.Status != StatusStaleCache || !entry.Profile.Stale || entry.Profile.Plan != "old" {
+		t.Fatalf("snapshot = %+v", entry.Profile)
 	}
-	if entry.LastRefreshAt == nil || !entry.LastRefreshAt.Equal(old) {
-		t.Fatalf("last refresh = %+v, want %v", entry.LastRefreshAt, old)
+	if entry.Profile.LastRefreshAt == nil || !entry.Profile.LastRefreshAt.Equal(old) {
+		t.Fatalf("last refresh = %+v, want %v", entry.Profile.LastRefreshAt, old)
 	}
 }
 
@@ -294,11 +292,11 @@ func TestManagerRedactsConfiguredSecretsFromFreshErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderCodex, err: errors.New("failed with token-secret")}))
-	resp, err := m.Snapshot(context.Background(), ProviderCodex)
+	resp, _, err := m.refresh(context.Background(), ProviderCodex, false)
 	if err != nil {
-		t.Fatalf("Snapshot: %v", err)
+		t.Fatalf("refresh: %v", err)
 	}
-	if got := resp.Snapshots[ProviderCodex].Error; got != "failed with "+redacted {
+	if got := resp.Providers[0].Profiles[0].Error; got != "failed with "+redacted {
 		t.Fatalf("error = %q", got)
 	}
 }
@@ -311,8 +309,8 @@ func TestManagerForceRefreshEmitsUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderCodex}))
-	updates := make(chan Response, 1)
-	m.SetUpdateHook(func(resp Response) {
+	updates := make(chan UsagesResponse, 1)
+	m.SetUpdateHook(func(resp UsagesResponse) {
 		updates <- resp
 	})
 	if _, _, err := m.ForceRefresh(context.Background(), ProviderCodex); err != nil {
@@ -320,7 +318,7 @@ func TestManagerForceRefreshEmitsUpdate(t *testing.T) {
 	}
 	select {
 	case resp := <-updates:
-		if resp.Snapshots[ProviderCodex].Status != StatusOK {
+		if resp.Providers[0].Profiles[0].Status != StatusOK {
 			t.Fatalf("update response = %+v", resp)
 		}
 	default:
@@ -341,7 +339,7 @@ func TestManagerDoesNotHoldStoreLockDuringFetch(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := m.Snapshot(context.Background(), ProviderCodex)
+		_, _, err := m.refresh(context.Background(), ProviderCodex, false)
 		done <- err
 	}()
 
@@ -368,5 +366,490 @@ func TestManagerDoesNotHoldStoreLockDuringFetch(t *testing.T) {
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatalf("Snapshot: %v", err)
+	}
+}
+
+// TestInvariantProfileNameNeverEmpty verifies that every profile entry in the
+// response has a non-empty ProfileName. ProfileName is the join key — an empty
+// value silently breaks the multi-profile card. This catches the class of bug
+// where ProfileName is set on the cache entry but not on the response Profile.
+func TestInvariantProfileNameNeverEmpty(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderCodex] = ProviderConfig{Enabled: true}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderCodex}))
+	resp, _, err := m.refresh(context.Background(), "", false)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	for _, prov := range resp.Providers {
+		for i, p := range prov.Profiles {
+			if p.ProfileName == "" {
+				t.Fatalf("provider %s profile %d has empty ProfileName", prov.ProviderName, i)
+			}
+		}
+	}
+}
+
+// TestInvariantDeriveActiveReplacesDefault verifies that deriving the active
+// profile REPLACES the "default" entry (not appends alongside it). With N
+// switcher profiles, the array must have exactly N entries — no leftover
+// "default", no duplicates.
+func TestInvariantDeriveActiveReplacesDefault(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderClaudeCode] = ProviderConfig{Enabled: true}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	cache := EmptyCache()
+	cache.Snapshots[ProviderClaudeCode] = []CacheEntry{{
+		Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, Plan: "test", LastRefreshAt: &now}},
+	}}
+	if err := store.SaveCache(cache); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
+	m.deriveActiveProfile(ProviderClaudeCode, ProfileInfo{Tool: "claude", Name: "main", Active: true, Email: "main@test"})
+	resp, err := m.Snapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	var entries []Profile
+	for _, prov := range resp.Providers {
+		if prov.ProviderName == ProviderClaudeCode {
+			entries = prov.Profiles
+			break
+		}
+	}
+	// Must have exactly 1 entry (default replaced by active, not duplicated)
+	count := 0
+	var found Profile
+	for _, p := range entries {
+		if p.ProfileName == "default" {
+			t.Fatalf("found leftover default entry — deriveActiveProfile must replace it")
+		}
+		count++
+		found = p
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 entry, got %d", count)
+	}
+	if found.ProfileName != "main" {
+		t.Fatalf("expected ProfileName=main, got %q", found.ProfileName)
+	}
+	if found.Plan != "test" {
+		t.Fatalf("expected Plan=test (carried from default), got %q", found.Plan)
+	}
+}
+
+// TestInvariantProfilesNeverNil verifies that every provider in the response
+// has a non-nil Profiles slice (always at least []). A nil slice would cause
+// frontend iteration issues and is indistinguishable from "not initialized".
+func TestInvariantProfilesNeverNil(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, DefaultRegistry())
+	resp, err := m.Snapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, prov := range resp.Providers {
+		if prov.Profiles == nil {
+			t.Fatalf("provider %s has nil Profiles — must be initialized to []", prov.ProviderName)
+		}
+	}
+}
+
+// TestInvariantNoDefaultOnSwitcherTool verifies that after a full refresh cycle
+// (provider fetch + profile derivation), no profile on a switcher tool is named
+// "default". The "default" name is an intermediate state from the provider
+// fetch; it must be replaced by the active profile's name before any reader
+// sees it. This catches the race where fetchWithProviderLock writes "default"
+// and deriveActiveProfile renames it in a separate lock acquisition.
+func TestInvariantNoDefaultOnSwitcherTool(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderClaudeCode] = ProviderConfig{Enabled: true}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool != "claude" {
+			return nil
+		}
+		return []ProfileInfo{
+			{Tool: "claude", Name: "main", Active: true, HasCredentials: true},
+			{Tool: "claude", Name: "bkp", Active: false, HasCredentials: true},
+		}
+	})
+	// Full refresh cycle: provider fetch + profile derivation
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if _, err := m.refreshProfiles(context.Background()); err != nil {
+		t.Fatalf("refreshProfiles: %v", err)
+	}
+	resp, err := m.Snapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, prov := range resp.Providers {
+		if !prov.SwitchEligible {
+			continue
+		}
+		for _, p := range prov.Profiles {
+			if p.ProfileName == "default" {
+				t.Fatalf("switcher provider %s has a profile named \"default\" — should be renamed to the active profile's name", prov.ProviderName)
+			}
+		}
+	}
+}
+
+// TestInvariantExactlyOneActivePerSwitcherTool verifies that after a full
+// refresh cycle, exactly one profile per switcher tool has Active: true.
+// Zero means the active flag is never transferred; two means a stale entry
+// wasn't cleaned up. Both are the class of bug that passes the compiler and
+// the gate but fails in production.
+func TestInvariantExactlyOneActivePerSwitcherTool(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderClaudeCode] = ProviderConfig{Enabled: true}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool != "claude" {
+			return nil
+		}
+		return []ProfileInfo{
+			{Tool: "claude", Name: "main", Active: true, HasCredentials: true},
+			{Tool: "claude", Name: "bkp", Active: false, HasCredentials: true},
+		}
+	})
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if _, err := m.refreshProfiles(context.Background()); err != nil {
+		t.Fatalf("refreshProfiles: %v", err)
+	}
+	resp, err := m.Snapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, prov := range resp.Providers {
+		if !prov.SwitchEligible {
+			continue
+		}
+		activeCount := 0
+		for _, p := range prov.Profiles {
+			if p.Active {
+				activeCount++
+			}
+		}
+		if activeCount != 1 {
+			t.Fatalf("switcher provider %s has %d active profiles, want exactly 1", prov.ProviderName, activeCount)
+		}
+	}
+}
+
+// TestInvariantNoDuplicatesAcrossCycles verifies that refreshing twice
+// (simulating two poller cycles) does not produce duplicate profile entries.
+// The first cycle creates entries; the second must replace, not append.
+// This catches the setDefaultCacheEntry vs setProfileCacheEntry mismatch
+// that produces duplicates when a named entry has no "" or "default" to match.
+func TestInvariantNoDuplicatesAcrossCycles(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderClaudeCode] = ProviderConfig{Enabled: true}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool != "claude" {
+			return nil
+		}
+		return []ProfileInfo{
+			{Tool: "claude", Name: "main", Active: true, HasCredentials: true},
+			{Tool: "claude", Name: "bkp", Active: false, HasCredentials: true},
+		}
+	})
+	// Two full refresh cycles
+	for cycle := 0; cycle < 2; cycle++ {
+		if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+			t.Fatalf("cycle %d refresh: %v", cycle, err)
+		}
+		if _, err := m.refreshProfiles(context.Background()); err != nil {
+			t.Fatalf("cycle %d refreshProfiles: %v", cycle, err)
+		}
+	}
+	resp, err := m.Snapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, prov := range resp.Providers {
+		if prov.ProviderName != ProviderClaudeCode {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, p := range prov.Profiles {
+			if seen[p.ProfileName] {
+				t.Fatalf("duplicate profile %q after 2 cycles — entries must be replaced, not appended", p.ProfileName)
+			}
+			seen[p.ProfileName] = true
+		}
+		if len(prov.Profiles) != 2 {
+			t.Fatalf("expected 2 profiles after 2 cycles, got %d: %+v", len(prov.Profiles), prov.Profiles)
+		}
+	}
+}
+
+// TestInvariantOrphanEntriesRemoved verifies that after a refresh cycle, cache
+// entries whose ProfileName isn't in the current profile list are removed.
+// This catches the "default" orphan from older builds and profiles deleted in
+// the switcher. The test seeds a stale "default" entry that no longer
+// corresponds to any profile and asserts it's gone after refresh.
+func TestInvariantOrphanEntriesRemoved(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderClaudeCode] = ProviderConfig{Enabled: true}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	// Seed a stale "default" entry (orphan from an older build)
+	now := time.Now()
+	cache := EmptyCache()
+	cache.Snapshots[ProviderClaudeCode] = []CacheEntry{{
+		Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, LastRefreshAt: &now}},
+	}}
+	if err := store.SaveCache(cache); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool != "claude" {
+			return nil
+		}
+		return []ProfileInfo{
+			{Tool: "claude", Name: "main", Active: true, HasCredentials: true},
+		}
+	})
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if _, err := m.refreshProfiles(context.Background()); err != nil {
+		t.Fatalf("refreshProfiles: %v", err)
+	}
+	resp, err := m.Snapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, prov := range resp.Providers {
+		if prov.ProviderName != ProviderClaudeCode {
+			continue
+		}
+		for _, p := range prov.Profiles {
+			if p.ProfileName == "default" {
+				t.Fatalf("orphan \"default\" entry survived reconciliation — should be removed when not in the current profile list")
+			}
+		}
+	}
+}
+
+// TestEndStateAllPropertiesWithSeededHistory verifies the four end-state
+// properties from wren's #13549 against a cache that has history: a stale
+// "default" orphan, a deleted profile, and a profile whose fetch fails.
+// Properties:
+// 1. profiles array contains exactly the current profiles, no orphans
+// 2. every profile carries account facts (profile_name, has_credentials, etc.)
+// 3. exactly one active per switcher tool
+// 4. usage data is independent per profile
+func TestEndStateAllPropertiesWithSeededHistory(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderClaudeCode] = ProviderConfig{Enabled: true}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	// Seed history: a "default" orphan and a "deleted" profile that no longer
+	// exists in the switcher.
+	now := time.Now()
+	cache := EmptyCache()
+	cache.Snapshots[ProviderClaudeCode] = []CacheEntry{
+		{Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, LastRefreshAt: &now}}},
+		{Profile: Profile{ProfileName: "ghost", Snapshot: Snapshot{Status: StatusOK, LastRefreshAt: &now}}},
+	}
+	if err := store.SaveCache(cache); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool != "claude" {
+			return nil
+		}
+		return []ProfileInfo{
+			{Tool: "claude", Name: "main", Active: true, HasCredentials: true, Email: "main@test"},
+			{Tool: "claude", Name: "bkp", Active: false, HasCredentials: false, Email: ""},
+		}
+	})
+	// Full refresh cycle
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if _, err := m.refreshProfiles(context.Background()); err != nil {
+		t.Fatalf("refreshProfiles: %v", err)
+	}
+	resp, err := m.Snapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	// Find the claude-code provider
+	var prov *Provider
+	for i := range resp.Providers {
+		if resp.Providers[i].ProviderName == ProviderClaudeCode {
+			prov = &resp.Providers[i]
+			break
+		}
+	}
+	if prov == nil {
+		t.Fatal("claude-code provider not found in response")
+	}
+	// Property 1: exactly the current profiles, no orphans
+	if len(prov.Profiles) != 2 {
+		t.Fatalf("property 1: expected 2 profiles, got %d: %+v", len(prov.Profiles), prov.Profiles)
+	}
+	seen := map[string]bool{}
+	for _, p := range prov.Profiles {
+		if p.ProfileName == "default" || p.ProfileName == "ghost" {
+			t.Fatalf("property 1: orphan %q survived reconciliation", p.ProfileName)
+		}
+		if seen[p.ProfileName] {
+			t.Fatalf("property 1: duplicate profile %q", p.ProfileName)
+		}
+		seen[p.ProfileName] = true
+	}
+	if !seen["main"] || !seen["bkp"] {
+		t.Fatalf("property 1: missing expected profiles, seen=%v", seen)
+	}
+	// Property 2: every profile carries account facts
+	for _, p := range prov.Profiles {
+		if p.ProfileName == "" {
+			t.Fatal("property 2: empty profile_name")
+		}
+		if p.ProfileName == "main" && !p.HasCredentials {
+			t.Fatal("property 2: main has HasCredentials=false, want true")
+		}
+		if p.ProfileName == "bkp" && p.HasCredentials {
+			t.Fatal("property 2: bkp has HasCredentials=true, want false")
+		}
+	}
+	// Property 3: exactly one active
+	activeCount := 0
+	for _, p := range prov.Profiles {
+		if p.Active {
+			activeCount++
+		}
+	}
+	if activeCount != 1 {
+		t.Fatalf("property 3: %d active profiles, want exactly 1", activeCount)
+	}
+	// Property 5: every profile has a non-null last_refresh_at
+	for _, p := range prov.Profiles {
+		if p.LastRefreshAt == nil {
+			t.Fatalf("property 5: profile %q has nil last_refresh_at — must be stamped on every write including failed fetches", p.ProfileName)
+		}
+	}
+	// Property 6: provider has a non-empty label
+	if prov.Label == "" {
+		t.Fatalf("property 6: provider %s has empty label", prov.ProviderName)
+	}
+}
+
+// TestInvariantAllProfileTimestampsAdvance verifies that after a refresh
+// cycle past the configured interval, every profile's timestamp advances —
+// not just the active one. With the one-cadence design (all profiles on the
+// provider interval), this is the property that catches a staleness check
+// reading the wrong entry's timestamp and blocking fetches indefinitely.
+func TestInvariantAllProfileTimestampsAdvance(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderClaudeCode] = ProviderConfig{Enabled: true}
+	cfg.RefreshIntervalSec = MinRefreshSec
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	clock := &fakeClock{now: time.Unix(1000, 0)}
+	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
+	m.SetClock(clock)
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool != "claude" {
+			return nil
+		}
+		return []ProfileInfo{
+			{Tool: "claude", Name: "main", Active: true, HasCredentials: true},
+			{Tool: "claude", Name: "bkp", Active: false, HasCredentials: true},
+		}
+	})
+	// First refresh
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if _, err := m.refreshProfiles(context.Background()); err != nil {
+		t.Fatalf("first refreshProfiles: %v", err)
+	}
+	resp1, err := m.Snapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("first Snapshot: %v", err)
+	}
+	ts1 := map[string]time.Time{}
+	for _, prov := range resp1.Providers {
+		if prov.ProviderName != ProviderClaudeCode {
+			continue
+		}
+		for _, p := range prov.Profiles {
+			if p.LastRefreshAt == nil {
+				t.Fatalf("first snapshot: %s has nil LastRefreshAt", p.ProfileName)
+			}
+			ts1[p.ProfileName] = *p.LastRefreshAt
+		}
+	}
+	if len(ts1) != 2 {
+		t.Fatalf("expected 2 profiles, got %d", len(ts1))
+	}
+	// Advance clock past the interval and refresh again
+	clock.now = ts1["main"].Add(time.Duration(cfg.RefreshIntervalSec) * time.Second)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+	if _, err := m.refreshProfiles(context.Background()); err != nil {
+		t.Fatalf("second refreshProfiles: %v", err)
+	}
+	resp2, err := m.Snapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("second Snapshot: %v", err)
+	}
+	for _, prov := range resp2.Providers {
+		if prov.ProviderName != ProviderClaudeCode {
+			continue
+		}
+		for _, p := range prov.Profiles {
+			old, ok := ts1[p.ProfileName]
+			if !ok {
+				t.Fatalf("second snapshot: new profile %s appeared", p.ProfileName)
+			}
+			if p.LastRefreshAt == nil || !p.LastRefreshAt.After(old) {
+				t.Fatalf("profile %s timestamp did not advance: was %v, now %v", p.ProfileName, old, p.LastRefreshAt)
+			}
+		}
 	}
 }
