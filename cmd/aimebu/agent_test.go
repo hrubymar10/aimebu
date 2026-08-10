@@ -1513,11 +1513,18 @@ func TestAgentBootstrapInterruptCapturesDiagnostics(t *testing.T) {
 	defer server.Close()
 
 	harnessPath := filepath.Join(t.TempDir(), "fake-pi-interrupt.sh")
+	// The sentinel file replaces a hard-coded sleep that raced process-spawn
+	// speed: on a slower machine the 75 ms expired before the harness had
+	// produced any output, so the interrupt snapshot was empty. The harness
+	// creates this file only after it has written the stderr line, so polling
+	// for it waits on actual readiness, not wall-clock guesswork.
+	sentinel := harnessPath + ".ready"
 	script := `#!/bin/sh
 trap 'exit 0' INT TERM
 printf '{"type":"session","version":3,"id":"pi-interrupt-session"}\n'
 printf '{"type":"turn_start"}\n'
 printf 'stderr before interrupt\n' >&2
+touch "${0}.ready"
 while :; do sleep 1; done
 `
 	if err := os.WriteFile(harnessPath, []byte(script), 0o700); err != nil {
@@ -1526,7 +1533,17 @@ while :; do sleep 1; done
 
 	sigCh := make(chan os.Signal, 1)
 	go func() {
-		time.Sleep(75 * time.Millisecond)
+		// Poll for the sentinel the harness creates after writing stderr, then
+		// settle briefly for pipe-copy lag. Bounded deadline avoids a hang if
+		// the harness fails to start at all.
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(sentinel); err == nil {
+				time.Sleep(50 * time.Millisecond)
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 		sigCh <- os.Interrupt
 	}()
 	debug := newAgentDebugLog("", spawnTag)
