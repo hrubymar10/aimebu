@@ -2802,6 +2802,31 @@ body {
   background: var(--red-dim);
 }
 
+/* Liveness dot beside a message sender's icon. Identity (icon/alt/tooltip)
+   comes from the persisted message fields; this dot is the one thing that
+   reflects the live record. AI senders only — humans get no dot. A departed
+   sender's dot is red (dot-departed), not absent: no dot already means "human
+   sender", so hiding a departed AI made it indistinguishable from a person. The
+   element is kept rather than removed so a re-register can flip it back without
+   a re-render — do not el.remove() it. active=green, stale=amber,
+   offline/error/stopped=red, departed=red. */
+.msg-sender-presence {
+  display: inline-flex;
+  align-items: center;
+}
+.msg-sender-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+.msg-sender-dot.dot-active { background: var(--green-text); }
+.msg-sender-dot.dot-stale { background: var(--orange); }
+.msg-sender-dot.dot-offline { background: var(--red); }
+.msg-sender-dot.dot-departed { background: var(--red); }
+
 /* Read-receipt avatar strip under a chat message. */
 .chat-msg-receipts {
   display: flex;

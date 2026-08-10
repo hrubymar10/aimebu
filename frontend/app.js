@@ -2763,6 +2763,71 @@
     });
   }
 
+  // mapLiveness maps an agent's live state onto the three dot visuals. The dot
+  // answers one question — "will this agent respond?" error/stopped join offline
+  // in red (a broken agent is still a live member in a bad state, not gone); the
+  // tooltip names the precise state so "error" never reads as merely "offline".
+  function mapLiveness(state) {
+    if (state === 'offline' || state === 'error' || state === 'stopped') {
+      return { cls: 'dot-offline', title: state };
+    }
+    if (state === 'stale') {
+      return { cls: 'dot-stale', title: 'stale' };
+    }
+    return { cls: 'dot-active', title: state || 'active' };
+  }
+
+  // refreshMessageSenderPresence updates liveness dots in place on agent_update.
+  // It never calls renderMessages — agent_update fires on every state transition
+  // (unthrottled), so a full re-render would rebuild the chat several times per
+  // second. Instead it walks dot elements keyed by data-agent-id, toggles their
+  // class/title, and adjusts the icon tooltip's departed marker. Elements are
+  // never added or removed here; departed dots turn red via dot-departed so a
+  // re-register can flip them back. Identity: if the message carried
+  // from_harness it is recomputed from the icon's persisted data attrs (live
+  // never overrides it); otherwise it falls back to the live record — a best
+  // guess for legacy messages, not a falsification of recorded truth. The icon
+  // src/alt are touched only in that fallback branch — once from_harness is
+  // present the icon is fixed to the message.
+  function refreshMessageSenderPresence() {
+    if (document.hidden) return;
+    document.querySelectorAll('.msg-sender-dot').forEach(function (dot) {
+      var id = dot.getAttribute('data-agent-id');
+      var a = agents.find(function (x) { return x.id === id; });
+      var wrap = dot.closest('.msg-sender-presence');
+      var icon = wrap && wrap.querySelector('.msg-sender-icon');
+      var msgHarness = icon ? icon.getAttribute('data-from-harness') : '';
+      var msgModel = icon ? icon.getAttribute('data-from-model') : '';
+      var model, harness;
+      if (msgHarness) {
+        model = msgModel || 'unknown';
+        harness = msgHarness;
+      } else if (a && a.kind === 'ai') {
+        model = a.model || 'unknown';
+        harness = a.harness || 'unknown';
+      } else {
+        model = 'unknown';
+        harness = 'unknown';
+      }
+      if (a && a.kind === 'ai') {
+        var meta = mapLiveness(a.state);
+        dot.className = 'msg-sender-dot ' + meta.cls;
+        dot.title = meta.title;
+        if (icon) {
+          if (!msgHarness) { icon.src = harnessIconSrc(harness); icon.alt = harness; }
+          icon.title = model + ' · ' + harness;
+        }
+      } else {
+        dot.className = 'msg-sender-dot dot-departed';
+        dot.title = 'departed';
+        if (icon) {
+          if (!msgHarness) { icon.src = '/icons/unknown.svg'; icon.alt = 'unknown'; }
+          icon.title = model + ' · ' + harness + ' (departed)';
+        }
+      }
+    });
+  }
+
   function isDM(roomID) {
     return roomID && roomID.startsWith('dm:');
   }
@@ -4894,6 +4959,7 @@
     renderRoomAgents();
     renderRoomSettings();
     renderMessageDebugModal();
+    refreshMessageSenderPresence();
   }
 
   // ── Room selection ───────────────────────────────────────────────
@@ -5461,13 +5527,49 @@
     }
     var isSelf = m.from === agentID;
     var fromAgent = agents.find(function (a) { return a.id === m.from; });
-    var msgIconSrc = agentIconSrc(fromAgent);
-    var msgIconTitle = fromAgent
-      ? (fromAgent.kind === 'human' ? 'human' : esc((fromAgent.model || 'unknown') + ' · ' + (fromAgent.harness || 'unknown')))
-      : 'unknown';
-    var msgIconAlt = fromAgent
-      ? (fromAgent.kind === 'human' ? 'human' : esc(fromAgent.harness || 'unknown'))
-      : 'unknown';
+    // Sender identity (icon/alt/tooltip): from_harness on the message wins
+    // absolutely — the live record can never override recorded identity, so a
+    // re-register on a different model/harness cannot rewrite old messages.
+    // When from_harness is absent (legacy messages sent before this feature),
+    // fall back to the live agent record: a best guess where we hold no truth,
+    // not a falsification of one. The live record also feeds the liveness dot
+    // (a "now" fact). Humans are identified by from_kind (or, for legacy
+    // messages, the live record's stable kind) and get no dot.
+    var senderKind = m.from_kind;
+    var isHumanSender = senderKind === 'human' || (!senderKind && !!fromAgent && fromAgent.kind === 'human');
+    var isAISender = senderKind === 'ai' || (!isHumanSender && !!fromAgent && fromAgent.kind === 'ai');
+    var senderDeparted = !fromAgent;
+    // AI display identity: message wins; else live fallback; else unknown.
+    var aiModel = 'unknown', aiHarness = 'unknown';
+    if (isAISender) {
+      if (m.from_harness) {
+        aiModel = m.from_model || 'unknown';
+        aiHarness = m.from_harness;
+      } else if (fromAgent) {
+        aiModel = fromAgent.model || 'unknown';
+        aiHarness = fromAgent.harness || 'unknown';
+      }
+    }
+    var msgIconSrc = isHumanSender
+      ? '/icons/human.svg'
+      : isAISender
+        ? harnessIconSrc(aiHarness)
+        : '/icons/unknown.svg';
+    var identityTitle = isHumanSender
+      ? 'human'
+      : isAISender
+        ? (aiModel + ' · ' + aiHarness)
+        : 'unknown';
+    var msgIconTitle = identityTitle + (isAISender && senderDeparted ? ' (departed)' : '');
+    var msgIconAlt = isHumanSender ? 'human' : (isAISender ? aiHarness : 'unknown');
+    // Liveness dot: AI senders only. Departed → element kept, turned red via
+    // dot-departed so a re-register can restore it without a re-render. Never
+    // add/remove dot elements on the update path.
+    var dotHTML = '';
+    if (isAISender) {
+      var dotMeta = fromAgent ? mapLiveness(fromAgent.state) : { cls: 'dot-departed', title: 'departed' };
+      dotHTML = '<span class="msg-sender-dot ' + esc(dotMeta.cls) + '" data-agent-id="' + esc(m.from) + '" title="' + esc(dotMeta.title) + '"></span>';
+    }
     var room = rooms.find(function (r) { return r.id === m.room_id; });
     var msgRoleKey = room && room.roles ? (room.roles[m.from] || '') : '';
     var msgRoleTag = roleBadgeHTML(msgRoleKey);
@@ -5485,7 +5587,12 @@
       '<div class="chat-msg' + (isSelf ? ' self' : '') + (m.needs_human_attention ? ' needs-attention' : '') + (expired ? ' chat-msg-expired' : '') + '" data-id="' + esc(m.id) + '">' +
         '<div class="chat-msg-header">' +
           '<span class="chat-msg-from">' +
-            '<img src="' + msgIconSrc + '" class="harness-icon chat-msg-icon" alt="' + msgIconAlt + '" title="' + msgIconTitle + '" width="14" height="14">' +
+            '<span class="msg-sender-presence">' +
+              '<img src="' + msgIconSrc + '" class="harness-icon chat-msg-icon msg-sender-icon" alt="' + esc(msgIconAlt) + '" title="' + esc(msgIconTitle) + '" width="14" height="14"' +
+                (isAISender ? ' data-agent-id="' + esc(m.from) + '" data-from-harness="' + esc(m.from_harness || '') + '" data-from-model="' + esc(m.from_model || '') + '"' : '') +
+              '>' +
+              dotHTML +
+            '</span>' +
             msgRoleTag +
             '<span' + senderAttrs + '>' + esc(m.from) + '</span>' +
           '</span>' +
@@ -6977,6 +7084,7 @@
   document.addEventListener('pointerdown', primeNotificationAudioOnGesture, { passive: true });
   document.addEventListener('keydown', primeNotificationAudioOnGesture, { passive: true });
   document.addEventListener('visibilitychange', maybeShowPendingNotificationPrompt);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshMessageSenderPresence(); });
   window.addEventListener('focus', maybeShowPendingNotificationPrompt);
 
   // Agent ID default — debounced PUT on change

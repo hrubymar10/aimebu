@@ -94,9 +94,11 @@ func (s *store) roomSendWithVisualPlan(roomID, from, body string, needsAttention
 	// (humans → default respond, AIs → default silent) without guessing from
 	// the ID shape.
 	s.mu.RLock()
-	var fromKind string
+	var fromKind, fromHarness, fromModel string
 	if a, ok := s.agents[from]; ok {
 		fromKind = a.Kind
+		fromHarness = a.Harness
+		fromModel = a.Model
 	}
 	s.mu.RUnlock()
 
@@ -106,6 +108,8 @@ func (s *store) roomSendWithVisualPlan(roomID, from, body string, needsAttention
 		RoomID:              roomID,
 		From:                from,
 		FromKind:            fromKind,
+		FromHarness:         fromHarness,
+		FromModel:           fromModel,
 		Body:                body,
 		CreatedAt:           now(),
 		ReplyTo:             replyTo,

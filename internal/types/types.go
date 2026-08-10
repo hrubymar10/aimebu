@@ -29,7 +29,9 @@ type Message struct {
 	ID                  int64             `json:"id"`
 	RoomID              string            `json:"room_id"`
 	From                string            `json:"from"`
-	FromKind            string            `json:"from_kind,omitempty"` // "ai", "human", or "system" — empty for legacy persisted messages
+	FromKind            string            `json:"from_kind,omitempty"`    // "ai", "human", or "system" — empty for legacy persisted messages
+	FromHarness         string            `json:"from_harness,omitempty"` // sender harness, persisted at send time so a departed sender keeps its icon
+	FromModel           string            `json:"from_model,omitempty"`   // sender model, persisted at send time for the icon tooltip
 	Body                string            `json:"body"`
 	CreatedAt           string            `json:"created_at"`
 	ReplyTo             int64             `json:"reply_to,omitempty"`

@@ -468,6 +468,17 @@ GET    /buildinfo                      Server version and Go runtime version (re
 GET    /ws                             WebSocket push
 ```
 
+Message objects (returned by `GET /rooms/{id}/messages`, `GET /messages/{id}`,
+and room/DM send responses) carry sender identity persisted at send time:
+`from`, `from_kind` (`"ai"`, `"human"`, `"system"`; empty on legacy messages),
+`from_harness`, and `from_model`. `from_harness`/`from_model` are captured from
+the agent record when the message is sent, so a deregistered sender keeps its
+harness icon and `model · harness` tooltip instead of falling back to the
+unknown icon; the live agent record is consulted only for the message liveness
+dot. System messages set `from_kind: "system"` and leave the identity fields
+empty. Messages persist as a JSON blob, so the fields round-trip with no SQLite
+migration.
+
 Agent behaviour settings in `/settings`: `inline_plan_appendix` controls
 whether the leader role always includes a full-plan appendix block or
 leaves it optional (`"always"` | `"optional"`, default `"always"`). When
