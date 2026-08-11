@@ -436,11 +436,20 @@ func (m *Manager) refreshWithChange(ctx context.Context, provider string, force 
 	close(results)
 
 	changed := false
+	successes := 0
+	var firstErr error
 	for result := range results {
 		if result.err != nil {
-			return UsagesResponse{}, false, 0, result.err
+			if firstErr == nil {
+				firstErr = result.err
+			}
+			continue
 		}
+		successes++
 		changed = changed || result.changed
+	}
+	if firstErr != nil && (provider != "" || successes == 0) {
+		return UsagesResponse{}, false, 0, firstErr
 	}
 
 	err = m.store.WithLock(func() error {
@@ -803,9 +812,9 @@ func (m *Manager) FetchProfileSnapshot(ctx context.Context, tool, name, credPath
 	var fetchErr error
 	switch tool {
 	case "claude":
-		snap, fetchErr = fetchClaudeSnapshotFromPath(ctx, credPath)
+		snap, fetchErr = fetchClaudeSnapshotFromPathFunc(ctx, credPath)
 	case "codex":
-		snap, fetchErr = fetchCodexSnapshotFromPath(ctx, credPath, false, nil)
+		snap, fetchErr = fetchCodexSnapshotFromPathFunc(ctx, credPath, false, nil)
 	default:
 		return Profile{}, fmt.Errorf("unsupported switcher tool %q for profile snapshot", tool)
 	}
@@ -824,8 +833,8 @@ func (m *Manager) FetchProfileSnapshot(ctx context.Context, tool, name, credPath
 			if errSnap.Error == "" {
 				errSnap.Error = snapErr.Error()
 			}
-			errSnap.LastRefreshAt = &now
 		}
+		errSnap.LastRefreshAt = &now
 		_ = m.store.WithLock(func() error {
 			cache, err := m.store.LoadCache()
 			if err != nil {
@@ -909,6 +918,10 @@ func (m *Manager) refreshProfiles(ctx context.Context) (bool, error) {
 		for _, p := range profiles {
 			if p.Active {
 				m.deriveActiveProfile(key, p)
+				if !m.profileEntryExists(key, p.Name) {
+					_, _ = m.FetchProfileSnapshot(ctx, p.Tool, p.Name, p.CredPath)
+				}
+				m.setProfileFields(key, p.Name, p.Email, p.HasCredentials, p.ExpiresAt, p.Active)
 				changed = true
 				continue
 			}
@@ -916,7 +929,7 @@ func (m *Manager) refreshProfiles(ctx context.Context) (bool, error) {
 			if err == nil {
 				changed = true
 			}
-			m.setProfileFields(key, p.Name, p.Email, p.HasCredentials, p.ExpiresAt)
+			m.setProfileFields(key, p.Name, p.Email, p.HasCredentials, p.ExpiresAt, p.Active)
 		}
 		// Reconciliation: drop any cache entry whose name isn't in the current
 		// profile list. This removes orphans from older builds (e.g. a "default"
@@ -928,6 +941,24 @@ func (m *Manager) refreshProfiles(ctx context.Context) (bool, error) {
 		m.reconcileProfileEntries(key, validNames)
 	}
 	return changed, nil
+}
+
+func (m *Manager) profileEntryExists(regKey, profileName string) bool {
+	found := false
+	_ = m.store.WithLock(func() error {
+		cache, err := m.store.LoadCache()
+		if err != nil {
+			return err
+		}
+		for _, e := range cache.Snapshots[regKey] {
+			if e.Profile.ProfileName == profileName {
+				found = true
+				break
+			}
+		}
+		return nil
+	})
+	return found
 }
 
 // deriveActiveProfile copies the provider's "default" cache entry as the active
@@ -987,9 +1018,9 @@ func (m *Manager) deriveActiveProfile(regKey string, p ProfileInfo) {
 
 // setProfileFields sets the switcher fields on a profile's cache entry,
 // preferring the profile's captured email. No-op for email when empty (falls
-// through to whatever the fetch produced). HasCredentials and ExpiresAt are
-// always set from the switcher profile.
-func (m *Manager) setProfileFields(regKey, profileName, email string, hasCreds bool, expiresAt *time.Time) {
+// through to whatever the fetch produced). HasCredentials, ExpiresAt, and
+// Active are always set from the switcher profile.
+func (m *Manager) setProfileFields(regKey, profileName, email string, hasCreds bool, expiresAt *time.Time, active bool) {
 	_ = m.store.WithLock(func() error {
 		cache, err := m.store.LoadCache()
 		if err != nil {
@@ -1003,6 +1034,7 @@ func (m *Manager) setProfileFields(regKey, profileName, email string, hasCreds b
 				}
 				entries[i].Profile.HasCredentials = hasCreds
 				entries[i].Profile.ExpiresAt = expiresAt
+				entries[i].Profile.Active = active
 				break
 			}
 		}

@@ -2952,6 +2952,28 @@
     return '';
   }
 
+  function providerForSwitcherTool(tool) {
+    if (tool === 'claude') return 'claude-code';
+    if (tool === 'codex') return 'codex';
+    return '';
+  }
+
+  function usageProviderHasProfile(providerKey, profile) {
+    var provider = (usageProviders || []).find(function (p) { return p.provider_name === providerKey; });
+    return !!(provider && (provider.profiles || []).some(function (p) { return p.profile_name === profile; }));
+  }
+
+  function schedulePostSwitchUsageRefresh(tool, profile, attempt) {
+    var providerKey = providerForSwitcherTool(tool);
+    if (!providerKey || usageProviderHasProfile(providerKey, profile)) return;
+    if ((attempt || 0) >= 12) return;
+    setTimeout(function () {
+      loadUsages()
+        .catch(function (err) { console.error('post-switch usages refresh', err); })
+        .then(function () { schedulePostSwitchUsageRefresh(tool, profile, (attempt || 0) + 1); });
+    }, attempt && attempt > 2 ? 2000 : 1000);
+  }
+
   // Expiry state icons (from __plans/ svgrepo exports). All three use
   // fill="currentColor"; the expired icon's red is set via a CSS class
   // (.switcher-expiry-icon--expired { color: var(--red) }) on the wrapping
@@ -3449,7 +3471,7 @@
         function () {
           return loadUsages().catch(function (err) {
             alert('Switched to "' + profile + '", but refresh failed: ' + (err && err.message ? err.message : err));
-          });
+          }).then(function () { schedulePostSwitchUsageRefresh(tool, profile, 0); });
         },
         function (err) {
           alert('Failed to switch to "' + profile + '": ' + (err && err.message ? err.message : err));

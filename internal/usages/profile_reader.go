@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+var (
+	fetchClaudeSnapshotFromPathFunc = fetchClaudeSnapshotFromPath
+	fetchCodexSnapshotFromPathFunc  = fetchCodexSnapshotFromPath
+)
+
 // claudeCredentialsPathInDir returns the credential file path for claude inside dir.
 func claudeCredentialsPathInDir(dir string) string {
 	return filepath.Join(dir, ".credentials.json")

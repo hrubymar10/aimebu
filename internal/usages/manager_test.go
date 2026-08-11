@@ -853,3 +853,121 @@ func TestInvariantAllProfileTimestampsAdvance(t *testing.T) {
 		}
 	}
 }
+
+func TestRefreshProfilesPublishesNamedActiveEntryWhenProviderEntryMissing(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderClaudeCode] = ProviderConfig{Enabled: true}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	clock := &fakeClock{now: time.Unix(2000, 0)}
+	m := NewManager(store, EmptyRegistry())
+	m.SetClock(clock)
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool != "claude" {
+			return nil
+		}
+		return []ProfileInfo{{
+			Tool:           "claude",
+			Name:           "main",
+			Active:         true,
+			CredPath:       "live-credentials.json",
+			Email:          "main@test",
+			HasCredentials: true,
+		}}
+	})
+	oldFetch := fetchClaudeSnapshotFromPathFunc
+	t.Cleanup(func() { fetchClaudeSnapshotFromPathFunc = oldFetch })
+	fetchClaudeSnapshotFromPathFunc = func(ctx context.Context, path string) (Snapshot, error) {
+		if path != "live-credentials.json" {
+			t.Fatalf("cred path = %q", path)
+		}
+		return Snapshot{}, errors.New("temporary claude failure")
+	}
+
+	if _, err := m.refreshProfiles(context.Background()); err != nil {
+		t.Fatalf("refreshProfiles: %v", err)
+	}
+	resp, err := m.Snapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	var profiles []Profile
+	for _, prov := range resp.Providers {
+		if prov.ProviderName == ProviderClaudeCode {
+			profiles = prov.Profiles
+			break
+		}
+	}
+	if len(profiles) != 1 {
+		t.Fatalf("profiles len = %d, want 1: %+v", len(profiles), profiles)
+	}
+	p := profiles[0]
+	if p.ProfileName != "main" || !p.Active || !p.HasCredentials || p.Email != "main@test" {
+		t.Fatalf("profile identity = %+v", p)
+	}
+	if p.Status != StatusFetchError || p.Error != "temporary claude failure" {
+		t.Fatalf("profile status = %+v", p)
+	}
+	if p.LastRefreshAt == nil || !p.LastRefreshAt.Equal(clock.now) {
+		t.Fatalf("LastRefreshAt = %v, want %v", p.LastRefreshAt, clock.now)
+	}
+}
+
+func TestForceRefreshBroadcastsNamedProfileError(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderCodex] = ProviderConfig{Enabled: true}
+	cfg.Providers[ProviderClaudeCode] = ProviderConfig{Enabled: true}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, NewRegistry(
+		&fakeProvider{key: ProviderCodex},
+		&fakeProvider{key: ProviderClaudeCode, err: errors.New("temporary claude failure")},
+	))
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool != "claude" {
+			return nil
+		}
+		return []ProfileInfo{{
+			Tool:           "claude",
+			Name:           "main",
+			Active:         true,
+			HasCredentials: true,
+		}}
+	})
+	updates := make(chan UsagesResponse, 1)
+	m.SetUpdateHook(func(resp UsagesResponse) {
+		updates <- resp
+	})
+
+	if _, _, err := m.ForceRefresh(context.Background(), ""); err != nil {
+		t.Fatalf("ForceRefresh: %v", err)
+	}
+	var update UsagesResponse
+	select {
+	case update = <-updates:
+	default:
+		t.Fatal("force refresh did not emit update")
+	}
+	var codex, claude *Provider
+	for i := range update.Providers {
+		switch update.Providers[i].ProviderName {
+		case ProviderCodex:
+			codex = &update.Providers[i]
+		case ProviderClaudeCode:
+			claude = &update.Providers[i]
+		}
+	}
+	if codex == nil || len(codex.Profiles) != 1 || codex.Profiles[0].Status != StatusOK {
+		t.Fatalf("codex update = %+v", codex)
+	}
+	if claude == nil || len(claude.Profiles) != 1 {
+		t.Fatalf("claude update = %+v", claude)
+	}
+	if got := claude.Profiles[0]; got.ProfileName != "main" || !got.Active || got.Status != StatusFetchError {
+		t.Fatalf("claude profile = %+v", got)
+	}
+}

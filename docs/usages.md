@@ -76,7 +76,12 @@ often than their provider. The **active** profile is exempt — it's derived
 from the provider fetch and refreshes on the provider's interval for free.
 After a switch, `InvalidateProfileSnapshot` drops the old entry, so the next
 poller tick (~5 seconds) refetches immediately regardless of the interval —
-the `!ok` short-circuit means absent entries always fetch now.
+the `!ok` short-circuit means absent entries always fetch now. If that
+post-switch fetch fails, aimebu still publishes a named active-profile row
+with the failure status (`timeout`, `fetch_error`, `auth_missing`, and so on)
+instead of leaving the provider's `profiles` array empty. That distinguishes
+"this configured profile is refreshing or errored" from a genuinely
+unconfigured provider in the web sidebar.
 
 The right-sidebar force-refresh button calls `POST /api/usages/refresh`. It
 bypasses the normal interval but has a separate server-side 15 second
