@@ -5374,6 +5374,12 @@ body {
   line-height: 1.35;
 }
 
+/* When the error line stands in for the body (error + no windows), give it the
+   compact empty-state padding so it isn't flush under the tile head. */
+.usages-error-line-standalone {
+  padding: 8px 0;
+}
+
 .usages-empty {
   padding: 16px 10px;
   font-size: 0.78rem;

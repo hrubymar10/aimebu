@@ -3036,8 +3036,18 @@
         expiryIcon + switchBtn + activeTag + planBadge +
       '</div>';
       var body;
+      var bodyCarriesFailure = false;
       if (!p.has_credentials) {
         body = '<div class="usages-empty usages-empty-compact">Needs login</div>';
+      } else if (p.error && (!p.windows || p.windows.length === 0)) {
+        // Error wins over "Refreshing…", never over data: a profile with an
+        // error AND windows (stale_cache keeps last good numbers through a
+        // transient blip) keeps its numbers — only error-with-no-windows drops
+        // the body, and the padded error line beneath is the statement. Key on
+        // p.error: every failure status backfills a non-empty Error, so this is
+        // sufficient (no status fallback). Wording/styling is item 5.
+        body = '';
+        bodyCarriesFailure = true;
       } else if (!p.windows || p.windows.length === 0) {
         body = '<div class="usages-empty usages-empty-compact">Refreshing\u2026</div>';
       } else {
@@ -3047,7 +3057,7 @@
         body = windows || '<div class="usages-empty usages-empty-compact">No usage data yet.</div>';
       }
       return '<div class="switcher-tile-profile' + (p.active ? ' switcher-tile-profile-active' : '') + '">' +
-        head + body + renderCreditsRow(p.credits) + usageErrorLine(p) +
+        head + body + renderCreditsRow(p.credits) + usageErrorLine(p, bodyCarriesFailure) +
       '</div>';
     }).join('');
   }
@@ -3256,11 +3266,12 @@
     return '<div class="usages-stale-line">Stale, last fetched ' + esc(fetched) + '</div>';
   }
 
-  function usageErrorLine(snap) {
+  function usageErrorLine(snap, standalone) {
     if (!snap || (!snap.error && !snap.stale)) return '';
     var text = snap.error;
     if (!text) return '';
-    return '<div class="usages-error-line">' + esc(text) + '</div>';
+    var cls = 'usages-error-line' + (standalone ? ' usages-error-line-standalone' : '');
+    return '<div class="' + cls + '">' + esc(text) + '</div>';
   }
 
   var lastUsagesResponse = null;
