@@ -3037,15 +3037,17 @@
       '</div>';
       var body;
       var bodyCarriesFailure = false;
+      var failureMsg = usageFailureMessage(p, providerKey);
       if (!p.has_credentials) {
         body = '<div class="usages-empty usages-empty-compact">Needs login</div>';
-      } else if (p.error && (!p.windows || p.windows.length === 0)) {
-        // Error wins over "Refreshing…", never over data: a profile with an
-        // error AND windows (stale_cache keeps last good numbers through a
-        // transient blip) keeps its numbers — only error-with-no-windows drops
-        // the body, and the padded error line beneath is the statement. Key on
-        // p.error: every failure status backfills a non-empty Error, so this is
-        // sufficient (no status fallback). Wording/styling is item 5.
+      } else if (failureMsg && (!p.windows || p.windows.length === 0)) {
+        // Failure/stale wins over "Refreshing…", never over data: a profile
+        // with a failure/stale message AND windows (stale_cache keeps last good
+        // numbers through a blip) keeps its numbers. Only failure/stale with no
+        // windows drops the body; the error line beneath (usageErrorLine) is the
+        // statement. One predicate (usageFailureMessage) drives both the branch
+        // and the line so they can't disagree, and the tile no longer relies on
+        // Error always being backfilled. Wording/styling is item 5.
         body = '';
         bodyCarriesFailure = true;
       } else if (!p.windows || p.windows.length === 0) {
@@ -3057,7 +3059,7 @@
         body = windows || '<div class="usages-empty usages-empty-compact">No usage data yet.</div>';
       }
       return '<div class="switcher-tile-profile' + (p.active ? ' switcher-tile-profile-active' : '') + '">' +
-        head + body + renderCreditsRow(p.credits) + usageErrorLine(p, bodyCarriesFailure) +
+        head + body + renderCreditsRow(p.credits) + usageErrorLine(p, bodyCarriesFailure, providerKey) +
       '</div>';
     }).join('');
   }
@@ -3094,7 +3096,7 @@
         (profileBlocks ? '' : '<span class="usages-plan-badge">' + esc(firstSnap.plan || '-') + '</span>') +
       '</div>' +
       profileBlocks +
-      (profileBlocks ? '' : renderCreditsRow(firstSnap.credits) + usageErrorLine(firstSnap)) +
+      (profileBlocks ? '' : renderCreditsRow(firstSnap.credits) + usageErrorLine(firstSnap, false, row.provider_name || firstSnap.provider_name)) +
     '</div>';
   }
 
@@ -3120,7 +3122,7 @@
       '</div>' +
       usageStaleLine(snap) +
       (snap.windows ? (snap.windows.map(function (w) { return renderUsageWindowRow(w, snap.last_refresh_at); }).join('') || '<div class="usages-empty usages-empty-compact">No window data yet.</div>') : '<div class="usages-empty usages-empty-compact">No window data yet.</div>') +
-      renderCreditsRow(snap.credits) + usageErrorLine(snap) +
+      renderCreditsRow(snap.credits) + usageErrorLine(snap, false, snap.provider_name || row.provider_name) +
     '</div>';
   }
 
@@ -3266,12 +3268,35 @@
     return '<div class="usages-stale-line">Stale, last fetched ' + esc(fetched) + '</div>';
   }
 
-  function usageErrorLine(snap, standalone) {
-    if (!snap || (!snap.error && !snap.stale)) return '';
-    var text = snap.error;
-    if (!text) return '';
+  // usageFailureMessage turns a failure/stale status into a human sentence. It is the
+  // ONLY source of text for usageErrorLine — provider error prose is never
+  // rendered raw (response bodies go to jsonShapeDetail server-side, which
+  // records field names/types not values; the wrap is defense-in-depth against
+  // transport-error strings and keeps our own errors human-readable).
+  function usageFailureMessage(snap, providerName) {
+    if (!snap) return '';
+    var name = providerName ? providerLabel(providerName) : 'the provider';
+    // stale: the backend kept the last good numbers through a failed refresh
+    // (snap.stale / status=stale_cache). Those numbers must not look healthy —
+    // surface a marker. Key on snap.stale (the flag) as well as the status.
+    if (snap.stale || snap.status === 'stale_cache') {
+      return "Showing last known usage — couldn't refresh from " + name + '.';
+    }
+    switch (snap.status) {
+      case 'timeout': return 'Timed out talking to ' + name + '.';
+      case 'auth_missing': return name + ' needs login.';
+      case 'scope_missing': return name + ' is missing permissions.';
+      case 'fetch_error': return "Couldn't reach " + name + ' usage.';
+      default: return '';
+    }
+  }
+
+  function usageErrorLine(snap, standalone, providerName) {
+    if (!snap) return '';
+    var msg = usageFailureMessage(snap, providerName);
+    if (!msg) return '';
     var cls = 'usages-error-line' + (standalone ? ' usages-error-line-standalone' : '');
-    return '<div class="' + cls + '">' + esc(text) + '</div>';
+    return '<div class="' + cls + '">' + esc(msg) + '</div>';
   }
 
   var lastUsagesResponse = null;
@@ -3623,7 +3648,7 @@
     if (!available) {
       statusText = 'Available in upcoming release.';
     } else if (hasError) {
-      statusText = snap.error || 'Ollama Cloud fetch failed. Update credentials.';
+      statusText = usageFailureMessage(snap, 'ollama-cloud') || 'Ollama Cloud fetch failed. Update credentials.';
     } else if (configured) {
       statusText = (methods.length ? methods.join(' + ') : 'Credentials') + ' configured' + (snap.last_refresh_at ? ' (last fetched ' + new Date(snap.last_refresh_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ')' : '');
     }
@@ -3663,7 +3688,7 @@
     if (!available) {
       statusText = 'Available in upcoming release.';
     } else if (hasError) {
-      statusText = snap.error || 'Mistral fetch failed. Update credentials.';
+      statusText = usageFailureMessage(snap, 'mistral') || 'Mistral fetch failed. Update credentials.';
     } else if (configured) {
       statusText = 'Cookie configured' + (snap.last_refresh_at ? ' (last fetched ' + new Date(snap.last_refresh_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ')' : '');
     }
