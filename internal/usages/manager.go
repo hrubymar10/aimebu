@@ -408,7 +408,7 @@ func (m *Manager) refreshWithChange(ctx context.Context, provider string, force 
 				continue
 			}
 			entries := cache.Snapshots[key]
-			def := latestCacheEntry(entries)
+			def := activeCacheEntry(entries)
 			shouldFetch := force || def == nil || def.Profile.LastRefreshAt == nil || now.Sub(*def.Profile.LastRefreshAt) >= interval
 			if shouldFetch {
 				toFetch = append(toFetch, key)
@@ -511,6 +511,25 @@ func latestCacheEntry(entries []CacheEntry) *CacheEntry {
 	return best
 }
 
+// activeCacheEntry returns the entry whose staleness gates the provider usage
+// fetch. That fetch writes the active profile's entry, so the active profile's
+// freshness — not the freshest sibling's — must decide whether to re-fetch.
+// Otherwise an inactive profile that refreshProfiles keeps fresh marks the
+// whole provider fresh and starves the active profile's usage numbers, which
+// then only update on a manual (force) refresh. Falls back to the default
+// entry, then to the most recently refreshed entry.
+func activeCacheEntry(entries []CacheEntry) *CacheEntry {
+	for i := range entries {
+		if entries[i].Profile.Active {
+			return &entries[i]
+		}
+	}
+	if def := defaultCacheEntry(entries); def != nil {
+		return def
+	}
+	return latestCacheEntry(entries)
+}
+
 // setDefaultCacheEntry replaces the default entry in entries, or prepends one
 // if no default exists.
 func setDefaultCacheEntry(entries []CacheEntry, entry CacheEntry) []CacheEntry {
@@ -564,7 +583,7 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 		}
 		interval, _ = m.store.RefreshInterval(cfg)
 		now = m.clock.Now()
-		def := latestCacheEntry(cache.Snapshots[key])
+		def := activeCacheEntry(cache.Snapshots[key])
 		if def != nil {
 			previous = *def
 		}
