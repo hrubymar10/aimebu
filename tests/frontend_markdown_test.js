@@ -17,13 +17,33 @@ function htmlEscape(value) {
     .replace(/"/g, '&quot;');
 }
 
-const context = { esc: htmlEscape, COPY_CODE_ICON: '' };
+function htmlUnescape(value) {
+  return String(value || '')
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&');
+}
+
+const context = { esc: htmlEscape, unescHtml: htmlUnescape, COPY_CODE_ICON: '' };
 vm.createContext(context);
 vm.runInContext(source, context);
 
 function render(markdown) {
   return context.renderMarkdown(markdown);
 }
+
+assert.strictEqual(render('one\ntwo'), 'one<br>two', 'a single newline renders as one hard break');
+assert.strictEqual(render('one\n\ntwo'), 'one<br><br>two', 'a blank line renders as a paragraph gap');
+assert.strictEqual(render('one\n\n\ntwo'), 'one<br><br>two', 'longer blank-line runs normalize to one paragraph gap');
+
+const fencedCode = render('```js\none\ntwo\n```');
+assert(fencedCode.includes('<code class="lang-js">one\ntwo</code>'), 'fenced code preserves literal newlines');
+assert(!fencedCode.includes('one<br>two'), 'fenced code does not gain hard-break markup');
+
+const indentedCode = render('    one\n    two');
+assert(indentedCode.includes('<code>    one\n    two</code>'), 'indented code preserves literal newlines');
+assert(!indentedCode.includes('one<br>'), 'indented code does not gain hard-break markup');
 
 const aligned = render([
   '| Left | Center | Right |',
@@ -38,6 +58,7 @@ assert(!aligned.includes('a\\|b'), 'table-cell inline code does not retain a bac
 assert(aligned.includes('<strong>bold</strong>'), 'bold formatting survives in a cell');
 assert(aligned.includes('href="https://example.com"'), 'links survive in a cell');
 assert(aligned.includes('data-msg-id="42"'), 'message references survive in a cell');
+assert(!aligned.includes('<br>'), 'table source newlines do not become hard breaks');
 
 const proseCode = render('run `grep \'foo\\|bar\' file.txt` to match either');
 assert(proseCode.includes('<code class="md-code">grep \'foo\\|bar\' file.txt</code>'), 'prose inline code retains escaped pipes');

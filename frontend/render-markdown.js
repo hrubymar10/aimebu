@@ -241,7 +241,11 @@ function renderMarkdown(rawText) {
     if (item.type === 'block') {
       result += item.html;
     } else if (item.type === 'empty') {
-      result += '<br>';
+      // A blank source line separates paragraphs. Keep that gap visually
+      // distinct from the single <br> used for adjacent prose lines, and
+      // normalize longer runs of blank lines to the same paragraph gap.
+      result += '<br><br>';
+      while (j + 1 < out.length && out[j + 1].type === 'empty') j++;
     } else {
       var nextIsText = j + 1 < out.length && out[j + 1].type === 'text';
       result += item.html + (nextIsText ? '<br>' : '');
