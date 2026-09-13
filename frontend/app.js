@@ -3223,6 +3223,7 @@
   function windowLabel(key) {
     if (key === 'session') return 'Session';
     if (key === 'weekly') return 'Weekly';
+    if (key === 'monthly') return 'Monthly';
     if (key === 'weekly_opus') return 'Weekly (Opus)';
     if (key === 'weekly_sonnet') return 'Weekly (Sonnet)';
     if (String(key || '').indexOf('weekly_scoped:') === 0) {

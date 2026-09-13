@@ -484,7 +484,7 @@ func normalizeCodexUsage(raw codexUsageRaw, creds codexCredentials) (Snapshot, *
 	addWindow("rate_limit.secondary_window", raw.RateLimit.SecondaryWindow)
 	windows = append(windows, codexAdditionalWindows(raw.AdditionalRateLimits)...)
 	ordered := make([]Window, 0, len(windows))
-	for _, want := range []string{"session", "weekly", "codex_spark", "codex_spark_weekly"} {
+	for _, want := range []string{"session", "weekly", "monthly", "codex_spark", "codex_spark_weekly"} {
 		for _, w := range windows {
 			if w.Key == want {
 				ordered = append(ordered, w)
@@ -556,8 +556,10 @@ func codexWindowKey(seconds int64) string {
 	switch {
 	case seconds > 0 && seconds <= int64((24*time.Hour)/time.Second):
 		return "session"
-	case seconds > int64((24*time.Hour)/time.Second) && seconds <= int64((31*24*time.Hour)/time.Second):
+	case seconds > int64((24*time.Hour)/time.Second) && seconds <= int64((14*24*time.Hour)/time.Second):
 		return "weekly"
+	case seconds > int64((14*24*time.Hour)/time.Second) && seconds <= int64((31*24*time.Hour)/time.Second):
+		return "monthly"
 	default:
 		return ""
 	}

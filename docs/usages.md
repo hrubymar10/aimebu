@@ -195,6 +195,11 @@ GitHub Copilot monthly windows infer their duration from the quota reset date.
 If the reset date is absent or invalid, the window remains available without
 a pace marker.
 
+Codex rate-limit lanes are classified by their reported duration: up to one
+day is session, more than one day through 14 days is weekly, and more than 14
+days through 31 days is monthly. Reset timestamps and durations remain in the
+normalized snapshot.
+
 Ollama Cloud cookie snapshots recognize session, weekly, and monthly usage
 sections. Cookie setup accepts raw pairs, copied `Cookie:` request headers,
 and common `curl` cookie forms; cookie values stay opaque even when they

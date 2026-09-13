@@ -32,11 +32,13 @@ vm.runInContext([
   extractFunction('providerForSwitcherTool'),
   extractFunction('usageProviderHasProfile'),
   extractFunction('schedulePostSwitchUsageRefresh'),
+  extractFunction('windowLabel'),
 ].join('\n'), context);
 
 (async () => {
   assert.strictEqual(context.providerForSwitcherTool('claude'), 'claude-code');
   assert.strictEqual(context.providerForSwitcherTool('codex'), 'codex');
+  assert.strictEqual(context.windowLabel('monthly'), 'Monthly');
 
   context.usageProviders = [{ provider_name: 'claude-code', profiles: [] }];
   let calls = 0;

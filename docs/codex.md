@@ -92,8 +92,11 @@ complete OAuth login.
 
 Codex can be enabled from Settings → Usages. The same normalized snapshot is
 shown in the web Usages sidebar and in `aimebu usages codex --json`. The
-`rate_limit.primary_window` and `rate_limit.secondary_window` fields map to
-the `session` and `weekly` lanes. When the usage response includes Spark
+`rate_limit.primary_window` and `rate_limit.secondary_window` fields are
+classified by duration: up to one day is `session`, longer windows through
+14 days are `weekly`, and longer windows through 31 days are `monthly`. Reset
+timestamps and reported durations are retained. When the usage response
+includes Spark
 entries in `additional_rate_limits[]`, aimebu adds stable `codex_spark` and
 `codex_spark_weekly` windows without changing the existing lanes.
 
@@ -109,7 +112,7 @@ Common failure states:
 - `scope_missing`: the OAuth token lacks access to the usage endpoint.
 - `fetch_error`: the upstream usage response changed shape. If numbers look
   wrong or windows disappear, inspect `error_detail.fields`; window shapes
-  that drift far beyond the expected session/weekly durations are dropped
+  that drift far beyond the expected session/weekly/monthly durations are dropped
   rather than guessed.
 - `stale_cache`: the latest fetch failed, but aimebu is showing the previous
   successful snapshot with a stale marker.

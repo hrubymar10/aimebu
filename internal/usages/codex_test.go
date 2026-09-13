@@ -240,6 +240,12 @@ func TestNormalizeCodexUsageClassifiesWindowDurationsByRange(t *testing.T) {
 			wantKeys:     []string{"session", "weekly"},
 		},
 		{
+			name:         "thirty day monthly",
+			primarySec:   18000,
+			secondarySec: 2592000,
+			wantKeys:     []string{"session", "monthly"},
+		},
+		{
 			name:         "one minute session",
 			primarySec:   60,
 			secondarySec: 604800,
@@ -291,6 +297,27 @@ func TestNormalizeCodexUsageClassifiesWindowDurationsByRange(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNormalizeCodexUsagePreservesMonthlyTiming(t *testing.T) {
+	resetUnix := int64(1893456000)
+	raw := codexUsageRaw{RateLimit: codexRateLimitRaw{PrimaryWindow: &codexWindowRaw{
+		UsedPercent:        37,
+		ResetAt:            resetUnix,
+		LimitWindowSeconds: 30 * 24 * 60 * 60,
+	}}}
+	snap, _, err := normalizeCodexUsage(raw, codexCredentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Windows) != 1 {
+		t.Fatalf("windows = %+v", snap.Windows)
+	}
+	window := snap.Windows[0]
+	if window.Key != "monthly" || window.WindowDurationSeconds != 30*24*60*60 ||
+		window.ResetAt == nil || window.ResetAt.Unix() != resetUnix {
+		t.Fatalf("monthly window = %+v", window)
 	}
 }
 
