@@ -25,6 +25,8 @@ func TestParseOllamaCookieInput(t *testing.T) {
 		{"workos", "wos-session=abc; foo=bar", "foo=bar; wos-session=abc"},
 		{"quoted blob", "'next-auth.session-token=abc; foo=bar'", "foo=bar; next-auth.session-token=abc"},
 		{"chunked", "next-auth.session-token.0=abc; next-auth.session-token.1=def", "next-auth.session-token.0=abc; next-auth.session-token.1=def"},
+		{"colon in raw value", "__Secure-session=my-cookie:session=abc; foo=bar", "__Secure-session=my-cookie:session=abc; foo=bar"},
+		{"captured request headers", "Accept: text/html\nCookie: \"session=abc; foo=bar\"\nUser-Agent: Browser", "foo=bar; session=abc"},
 		{"whitespace", " \n Cookie: session=abc ; foo=bar \n ", "foo=bar; session=abc"},
 	}
 	for _, tc := range cases {
@@ -271,6 +273,16 @@ func TestParseOllamaSettingsHTML(t *testing.T) {
 		t.Fatalf("weekly only = %#v", snap.Windows)
 	}
 
+	monthlyOnly := `<span>Cloud Usage</span><span>Free</span><div>Monthly usage <span>23% used</span><time data-time="2026-06-25T00:00:00Z"></time></div>`
+	snap, _, err = parseOllamaSettingsHTML([]byte(monthlyOnly))
+	if err != nil {
+		t.Fatalf("parse monthly only: %v", err)
+	}
+	if len(snap.Windows) != 1 || snap.Windows[0].Key != "monthly" ||
+		snap.Windows[0].PercentUsed != 23 || snap.Windows[0].WindowDurationSeconds != ollamaMonthlyWindowSeconds {
+		t.Fatalf("monthly only = %#v", snap.Windows)
+	}
+
 	noBars := `<span>Cloud Usage</span><span>Free</span><p>No active quota bars.</p>`
 	snap, detail, err = parseOllamaSettingsHTML([]byte(noBars))
 	if err != nil {
@@ -297,6 +309,28 @@ func TestParseOllamaSettingsHTML(t *testing.T) {
 	}
 	if snap.Windows[0].ResetAt != nil || detail == nil || detail.Fields["session.reset_at"] != "string" {
 		t.Fatalf("invalid reset snap=%#v detail=%#v", snap, detail)
+	}
+}
+
+func TestOllamaAuthGuidanceRedactsCredentials(t *testing.T) {
+	secret := "secret-cookie-value"
+	snap, err := fetchOllamaWithCookie(context.Background(), "foo="+secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != StatusAuthMissing || !strings.Contains(snap.Error, "Cookie request header") {
+		t.Fatalf("cookie guidance = %#v", snap)
+	}
+	if strings.Contains(snap.Error, secret) {
+		t.Fatalf("cookie guidance leaked credential: %q", snap.Error)
+	}
+
+	snap, err = fetchOllamaWithAPIKey(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != StatusAuthMissing || !strings.Contains(snap.Error, "select cookie mode") {
+		t.Fatalf("API key guidance = %#v", snap)
 	}
 }
 

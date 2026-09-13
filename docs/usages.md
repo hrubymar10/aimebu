@@ -195,6 +195,13 @@ GitHub Copilot monthly windows infer their duration from the quota reset date.
 If the reset date is absent or invalid, the window remains available without
 a pace marker.
 
+Ollama Cloud cookie snapshots recognize session, weekly, and monthly usage
+sections. Cookie setup accepts raw pairs, copied `Cookie:` request headers,
+and common `curl` cookie forms; cookie values stay opaque even when they
+contain text resembling a header name. Authentication messages distinguish
+missing setup, unrecognized session cookies, and rejected cookie or API-key
+credentials without echoing secret values.
+
 The pace model is **purely linear**: it assumes a constant burn rate from
 window start to now. No historical samples or probabilistic run-out estimates
 are used. The computed `pace` object is included in the `Window` fields in

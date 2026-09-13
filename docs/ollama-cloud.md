@@ -6,10 +6,11 @@ pasted browser `Cookie` header from <https://ollama.com/settings>.
 The API-key path verifies Cloud API access by calling
 `https://ollama.com/api/tags`. Ollama does not expose Cloud quota windows
 through that API, so API-key snapshots show access as verified but do not show
-session or weekly usage bars.
+session, weekly, or monthly usage bars.
 
 Cookie auth fetches the settings page and parses the Cloud Usage quota
-windows. Use this path when you want plan, session, and weekly usage data.
+windows. Use this path when you want plan, session, weekly, and monthly usage
+data.
 Automatic browser or keychain cookie import is intentionally not supported.
 
 ## Web Setup
@@ -32,6 +33,11 @@ To configure a Cookie header:
 4. Copy the request `Cookie` header.
 5. Paste it into the Ollama Cloud row and save.
 
+The field accepts the raw cookie pairs, a copied `Cookie:` request-header line,
+or the matching `curl -H`, `--cookie`, and `-b` forms. Values are normalized
+before storage. Text such as `cookie:` inside a cookie value remains part of
+that opaque value and is never treated as a second header.
+
 Secrets are stored in `~/.aimebu/usages/config.json` with file mode `0600`.
 After saving, aimebu only shows whether a cookie or API key is configured; it
 never returns either secret through the HTTP API, CLI, cache, websocket
@@ -46,7 +52,11 @@ and redirects to Ollama or WorkOS sign-in pages are treated as expired
 credentials rather than as settings-page parser drift.
 
 If credentials expire or are rejected, Ollama Cloud snapshots show
-`auth_missing`. Paste a fresh Cookie header or API key to resume updates.
+`auth_missing` with guidance specific to the selected mode. Missing cookie
+setup, a pasted header without a recognized session cookie, a rejected cookie,
+and a missing or rejected API key are reported distinctly. Paste a fresh full
+Cookie request header, create a fresh API key, or select the other mode as the
+message directs. Error text and details never include credential values.
 
 CLI:
 

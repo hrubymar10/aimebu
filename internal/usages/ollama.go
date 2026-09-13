@@ -29,6 +29,7 @@ const (
 
 	ollamaSessionWindowSeconds int64 = 5 * 3600
 	ollamaWeeklyWindowSeconds  int64 = 7 * 24 * 3600
+	ollamaMonthlyWindowSeconds int64 = 30 * 24 * 3600
 )
 
 var (
@@ -41,8 +42,9 @@ var (
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaHourlyAnchor = "Hourly usage"
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
-	ollamaWeeklyAnchor = "Weekly usage"
-	ollamaUsageAnchors = []string{ollamaSessionAnchor, ollamaHourlyAnchor, ollamaWeeklyAnchor}
+	ollamaWeeklyAnchor  = "Weekly usage"
+	ollamaMonthlyAnchor = "Monthly usage"
+	ollamaUsageAnchors  = []string{ollamaSessionAnchor, ollamaHourlyAnchor, ollamaWeeklyAnchor, ollamaMonthlyAnchor}
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
 	ollamaPercentAnchor = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*%\s*used`)
 	// if this anchor drifts, the page markup has changed since this parser was written; capture the new page and re-pin
@@ -88,17 +90,17 @@ func (ollamaCloudProvider) Fetch(ctx context.Context, store *Store) (Snapshot, e
 		if apiKey != "" {
 			return fetchOllamaWithAPIKey(ctx, apiKey)
 		}
-		return ollamaStatus(StatusAuthMissing, "Ollama Cloud cookie or API key is not configured.", fieldDetail("config.ollama-cloud.auth", "missing")), nil
+		return ollamaStatus(StatusAuthMissing, "Configure an Ollama Cloud cookie or select API key mode and add a key.", fieldDetail("config.ollama-cloud.auth", "missing")), nil
 	}
 }
 
 func fetchOllamaWithCookie(ctx context.Context, cookie string) (Snapshot, error) {
 	if cookie == "" {
-		return ollamaStatus(StatusAuthMissing, "Ollama Cloud cookie is not configured.", fieldDetail("config.ollama-cloud.cookie", "missing")), nil
+		return ollamaStatus(StatusAuthMissing, "Ollama Cloud cookie is not configured. Paste the Cookie request header from Ollama Settings or select API key mode.", fieldDetail("config.ollama-cloud.cookie", "missing")), nil
 	}
 	normalized, detail, err := normalizeOllamaCookieHeader(cookie)
 	if err != nil {
-		return ollamaStatus(StatusAuthMissing, "Ollama Cloud cookie is missing a recognized session cookie.", detail), nil
+		return ollamaStatus(StatusAuthMissing, "The saved cookie has no recognized session cookie. Paste the full Cookie request header from Ollama Settings or select API key mode.", detail), nil
 	}
 	var signedOutErr error
 	var signedOutDetail *ErrorDetail
@@ -127,14 +129,14 @@ func fetchOllamaWithCookie(ctx context.Context, cookie string) (Snapshot, error)
 		return snap, nil
 	}
 	if signedOutErr != nil {
-		return ollamaStatus(StatusAuthMissing, signedOutErr.Error(), signedOutDetail), nil
+		return ollamaStatus(StatusAuthMissing, "Ollama Cloud rejected the cookie. Sign in again and paste a fresh Cookie request header, or select API key mode.", signedOutDetail), nil
 	}
 	return ollamaStatus(StatusFetchError, "Ollama Cloud settings page did not return usage data.", nil), nil
 }
 
 func fetchOllamaWithAPIKey(ctx context.Context, apiKey string) (Snapshot, error) {
 	if apiKey == "" {
-		return ollamaStatus(StatusAuthMissing, "Ollama Cloud API key is not configured.", fieldDetail("config.ollama-cloud.api_key", "missing")), nil
+		return ollamaStatus(StatusAuthMissing, "Ollama Cloud API key is not configured. Add a key or select cookie mode.", fieldDetail("config.ollama-cloud.api_key", "missing")), nil
 	}
 	_, detail, status, err := fetchOllamaTags(ctx, apiKey)
 	if err != nil {
@@ -235,9 +237,8 @@ func extractOllamaCookieHeader(input string) string {
 	patterns := []*regexp.Regexp{
 		regexp.MustCompile(`(?is)-H\s*'Cookie:\s*([^']+)'`),
 		regexp.MustCompile(`(?is)-H\s*"Cookie:\s*([^"]+)"`),
-		regexp.MustCompile(`(?is)\bcookie:\s*'([^']+)'`),
-		regexp.MustCompile(`(?is)\bcookie:\s*"([^"]+)"`),
-		regexp.MustCompile(`(?im)\bcookie:\s*([^\r\n]+)`),
+		regexp.MustCompile(`(?im)^\s*cookie:\s*['"]([^'"]+)['"]\s*$`),
+		regexp.MustCompile(`(?im)^\s*cookie:\s*'?([^'"\r\n]+)'?\s*$`),
 		regexp.MustCompile(`(?is)(?:^|\s)(?:--cookie|-b)\s*'([^']+)'`),
 		regexp.MustCompile(`(?is)(?:^|\s)(?:--cookie|-b)\s*"([^"]+)"`),
 		regexp.MustCompile(`(?is)(?:^|\s)(?:--cookie|-b)\s+([^\s]+=[^\s]+(?:\s*;\s*[^\s=]+=[^\s]+)*)`),
@@ -359,7 +360,7 @@ func fetchOllamaSettingsHTML(ctx context.Context, cookie string) ([]byte, *Error
 	case resp.StatusCode == http.StatusOK:
 		return data, nil, "", nil
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return nil, fieldDetail("settings", "auth"), StatusAuthMissing, errors.New("Ollama Cloud cookie was rejected.")
+		return nil, fieldDetail("settings", "auth"), StatusAuthMissing, errors.New("Ollama Cloud rejected the cookie. Sign in again and paste a fresh Cookie request header, or select API key mode.")
 	default:
 		return nil, fieldDetail("settings", fmt.Sprintf("http_%d", resp.StatusCode)), StatusFetchError, fmt.Errorf("Ollama Cloud settings endpoint returned HTTP %d.", resp.StatusCode)
 	}
@@ -386,7 +387,7 @@ func fetchOllamaTags(ctx context.Context, apiKey string) ([]byte, *ErrorDetail, 
 		return nil, fieldDetail("tags", "cross_origin_redirect"), StatusAuthMissing, errors.New("Ollama Cloud API key was rejected or revoked.")
 	case resp.StatusCode == http.StatusOK:
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return nil, jsonShapeDetail("tags", data), StatusAuthMissing, errors.New("Ollama Cloud API key was rejected or revoked.")
+		return nil, jsonShapeDetail("tags", data), StatusAuthMissing, errors.New("Ollama Cloud rejected the API key. Create a fresh key or select cookie mode.")
 	default:
 		return nil, jsonShapeDetail("tags", data), StatusFetchError, fmt.Errorf("Ollama Cloud API endpoint returned HTTP %d.", resp.StatusCode)
 	}
@@ -441,7 +442,7 @@ func parseOllamaSettingsHTML(data []byte) (Snapshot, *ErrorDetail, error) {
 	detail := &ErrorDetail{Fields: map[string]string{}}
 	plan := firstOllamaCapture(ollamaPlanAnchor, html)
 
-	windows := make([]Window, 0, 2)
+	windows := make([]Window, 0, 3)
 	if w, ok := parseOllamaUsageBlock("session", []string{ollamaSessionAnchor, ollamaHourlyAnchor}, html, detail); ok {
 		w.WindowDurationSeconds = ollamaSessionWindowSeconds
 		w.Pace = computeWindowPace(w, time.Now())
@@ -452,7 +453,12 @@ func parseOllamaSettingsHTML(data []byte) (Snapshot, *ErrorDetail, error) {
 		w.Pace = computeWindowPace(w, time.Now())
 		windows = append(windows, w)
 	}
-	windows = orderWindows(windows, []string{"session", "weekly"})
+	if w, ok := parseOllamaUsageBlock("monthly", []string{ollamaMonthlyAnchor}, html, detail); ok {
+		w.WindowDurationSeconds = ollamaMonthlyWindowSeconds
+		w.Pace = computeWindowPace(w, time.Now())
+		windows = append(windows, w)
+	}
+	windows = orderWindows(windows, []string{"session", "weekly", "monthly"})
 
 	if len(windows) == 0 {
 		if ollamaSignedOutAnchor.MatchString(html) {
