@@ -133,6 +133,7 @@ type copilotQuotaSnapshotRaw struct {
 	Entitlement         *float64 `json:"entitlement"`
 	Remaining           *float64 `json:"remaining"`
 	PercentRemaining    *float64 `json:"percent_remaining"`
+	CreditsUsed         *float64 `json:"credits_used"`
 	QuotaID             string   `json:"quota_id"`
 	Unlimited           bool     `json:"unlimited"`
 	HasPercentRemaining bool     `json:"-"`
@@ -143,6 +144,7 @@ func (q *copilotQuotaSnapshotRaw) UnmarshalJSON(data []byte) error {
 		Entitlement      json.RawMessage `json:"entitlement"`
 		Remaining        json.RawMessage `json:"remaining"`
 		PercentRemaining json.RawMessage `json:"percent_remaining"`
+		CreditsUsed      json.RawMessage `json:"credits_used"`
 		QuotaID          string          `json:"quota_id"`
 		Unlimited        bool            `json:"unlimited"`
 	}
@@ -152,6 +154,7 @@ func (q *copilotQuotaSnapshotRaw) UnmarshalJSON(data []byte) error {
 	q.Entitlement = decodeCopilotNumber(raw.Entitlement)
 	q.Remaining = decodeCopilotNumber(raw.Remaining)
 	q.PercentRemaining = decodeCopilotNumber(raw.PercentRemaining)
+	q.CreditsUsed = decodeCopilotNumber(raw.CreditsUsed)
 	q.HasPercentRemaining = q.PercentRemaining != nil
 	if q.PercentRemaining == nil && q.Entitlement != nil && *q.Entitlement > 0 && q.Remaining != nil {
 		percent := (*q.Remaining / *q.Entitlement) * 100
@@ -212,7 +215,11 @@ func (copilotProvider) FetchEmail(ctx context.Context, store *Store) (string, er
 	if token == "" {
 		return "", nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, copilotDefaultAPIHost+"/user", nil)
+	apiBase, err := normalizeCopilotEnterpriseHost(pc.EnterpriseHost)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/user", nil)
 	if err != nil {
 		return "", err
 	}
@@ -234,6 +241,18 @@ func (copilotProvider) FetchEmail(ctx context.Context, store *Store) (string, er
 		return "", err
 	}
 	return user.Email, nil
+}
+
+func (copilotProvider) EmailScope(store *Store) string {
+	cfg, err := store.LoadConfig()
+	if err != nil {
+		return ""
+	}
+	host, err := normalizeCopilotEnterpriseHost(cfg.Providers[ProviderGitHubCopilot].EnterpriseHost)
+	if err != nil {
+		return ""
+	}
+	return host
 }
 
 func fetchCopilotUsage(ctx context.Context, token, apiBase string) (copilotUsageRaw, *ErrorDetail, Status, error) {
@@ -299,18 +318,28 @@ func normalizeCopilotUsage(raw copilotUsageRaw) (Snapshot, *ErrorDetail, error) 
 	}
 	add("premium", premium)
 	add("chat", chat)
-	if len(windows) == 0 && !copilotHasUnlimitedQuota(raw) {
+	var rawPremium, rawChat *copilotQuotaSnapshotRaw
+	if raw.QuotaSnapshots != nil {
+		rawPremium = raw.QuotaSnapshots.PremiumInteractions
+		rawChat = raw.QuotaSnapshots.Chat
+	}
+	creditsUsed := firstCopilotCreditsUsed(rawPremium, rawChat, premium, chat)
+	if len(windows) == 0 && !copilotHasUnlimitedQuota(raw) && creditsUsed == nil {
 		data, err := json.Marshal(raw)
 		if err != nil {
 			return Snapshot{}, fieldDetail("usage", "marshal_error"), errors.New("GitHub Copilot usage response could not be inspected.")
 		}
 		return Snapshot{}, jsonShapeDetail("usage", data), errors.New("GitHub Copilot usage response did not include recognized quota windows.")
 	}
-	return Snapshot{
+	snapshot := Snapshot{
 		Status:  StatusOK,
 		Plan:    strings.TrimSpace(raw.CopilotPlan),
 		Windows: windows,
-	}, detailOrNil(detail), nil
+	}
+	if creditsUsed != nil {
+		snapshot.Credits = &Credits{Label: "Premium requests used", Balance: *creditsUsed}
+	}
+	return snapshot, detailOrNil(detail), nil
 }
 
 var copilotNow = time.Now
@@ -324,11 +353,26 @@ func copilotQuotaWindows(raw copilotUsageRaw) (*copilotQuotaSnapshotRaw, *copilo
 	fallback := makeCopilotQuotaSnapshots(raw.MonthlyQuotas, raw.LimitedUserQuotas)
 	if premium == nil && fallback != nil {
 		premium = usableCopilotQuota(fallback.PremiumInteractions)
+		if premium != nil && raw.QuotaSnapshots != nil && raw.QuotaSnapshots.PremiumInteractions != nil {
+			premium.CreditsUsed = raw.QuotaSnapshots.PremiumInteractions.CreditsUsed
+		}
 	}
 	if chat == nil && fallback != nil {
 		chat = usableCopilotQuota(fallback.Chat)
+		if chat != nil && raw.QuotaSnapshots != nil && raw.QuotaSnapshots.Chat != nil {
+			chat.CreditsUsed = raw.QuotaSnapshots.Chat.CreditsUsed
+		}
 	}
 	return premium, chat
+}
+
+func firstCopilotCreditsUsed(quotas ...*copilotQuotaSnapshotRaw) *float64 {
+	for _, quota := range quotas {
+		if quota != nil && quota.CreditsUsed != nil {
+			return quota.CreditsUsed
+		}
+	}
+	return nil
 }
 
 func copilotHasUnlimitedQuota(raw copilotUsageRaw) bool {

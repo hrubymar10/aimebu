@@ -123,6 +123,9 @@ func TestCopilotQuotaFallbackShapes(t *testing.T) {
 	var raw copilotUsageRaw
 	if err := json.Unmarshal([]byte(`{
   "copilot_plan": "individual",
+  "quota_snapshots": {
+    "premium_interactions": {"credits_used": "17.5"}
+  },
   "monthly_quotas": {"completions": "100", "chat": 50},
   "limited_user_quotas": {"completions": 25, "chat": "10"}
 }`), &raw); err != nil {
@@ -134,6 +137,13 @@ func TestCopilotQuotaFallbackShapes(t *testing.T) {
 	}
 	if len(snap.Windows) != 2 || snap.Windows[0].PercentUsed != 75 || snap.Windows[1].PercentUsed != 80 {
 		t.Fatalf("windows = %+v", snap.Windows)
+	}
+	if snap.Credits == nil || snap.Credits.Label != "Premium requests used" || snap.Credits.Balance != 17.5 {
+		t.Fatalf("credits = %+v", snap.Credits)
+	}
+	premium, _ := copilotQuotaWindows(raw)
+	if premium == nil || premium.CreditsUsed == nil || *premium.CreditsUsed != 17.5 {
+		t.Fatalf("fallback premium credits = %+v", premium)
 	}
 }
 
@@ -221,7 +231,7 @@ func TestCopilotSkipsTokenBillingPlaceholderQuota(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{
   "copilot_plan": "business",
   "quota_snapshots": {
-    "premium_interactions": {"entitlement": 0, "remaining": 0, "percent_remaining": 0},
+    "premium_interactions": {"entitlement": 0, "remaining": 0, "percent_remaining": 0, "credits_used": 42},
     "chat": {"entitlement": 120, "remaining": 90, "percent_remaining": 75, "quota_id": "chat"}
   }
 }`), &raw); err != nil {
@@ -233,6 +243,39 @@ func TestCopilotSkipsTokenBillingPlaceholderQuota(t *testing.T) {
 	}
 	if len(snap.Windows) != 1 || snap.Windows[0].Key != "chat" || snap.Windows[0].PercentUsed != 25 {
 		t.Fatalf("windows = %+v, want only usable chat quota", snap.Windows)
+	}
+	if snap.Credits == nil || snap.Credits.Label != "Premium requests used" || snap.Credits.Balance != 42 {
+		t.Fatalf("credits = %+v", snap.Credits)
+	}
+}
+
+func TestCopilotFetchEmailUsesConfiguredHost(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderGitHubCopilot] = ProviderConfig{
+		Enabled:        true,
+		Token:          "access-secret",
+		EnterpriseHost: "https://github.example.com",
+	}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
+		if got, want := req.URL.String(), "https://api.github.example.com/user"; got != want {
+			t.Fatalf("URL = %s, want %s", got, want)
+		}
+		return httpJSON(http.StatusOK, `{"email":"enterprise@example.com"}`), nil
+	})
+	provider := copilotProvider{}
+	email, err := provider.FetchEmail(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if email != "enterprise@example.com" {
+		t.Fatalf("email = %q", email)
+	}
+	if scope := provider.EmailScope(store); scope != "https://api.github.example.com" {
+		t.Fatalf("email scope = %q", scope)
 	}
 }
 

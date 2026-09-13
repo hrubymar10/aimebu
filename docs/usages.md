@@ -148,7 +148,10 @@ Credit snapshots can include both current spend and a spend limit. The CLI
 prints those as `used/limit`; the web sidebar shows the same pair in the
 provider's credits row. Codex can return credits without recognized
 rate-limit windows; aimebu keeps that as an OK credits-only snapshot instead
-of treating the refresh as a failed response.
+of treating the refresh as a failed response. GitHub Copilot token-billed
+seats expose their raw `credits_used` count in the same row with the label
+`Premium requests used`; aimebu does not invent a percentage without an
+entitlement.
 
 ## Pace Marker
 

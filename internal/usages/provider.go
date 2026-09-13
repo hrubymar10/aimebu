@@ -160,6 +160,13 @@ type EmailFetcher interface {
 	FetchEmail(ctx context.Context, store *Store) (string, error)
 }
 
+// EmailScopeProvider identifies the account namespace used by EmailFetcher.
+// A changed scope invalidates a cached identity even when its refresh floor has
+// not elapsed.
+type EmailScopeProvider interface {
+	EmailScope(store *Store) string
+}
+
 type RawDecoder[T any] interface {
 	Decode([]byte) (T, *ErrorDetail, error)
 }

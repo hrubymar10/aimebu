@@ -40,6 +40,7 @@ type Config struct {
 type CacheEntry struct {
 	Profile        Profile    `json:"profile"`
 	EmailFetchedAt *time.Time `json:"email_fetched_at,omitempty"`
+	EmailScope     string     `json:"email_scope,omitempty"`
 }
 
 type Cache struct {

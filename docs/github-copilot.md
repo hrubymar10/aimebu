@@ -11,7 +11,15 @@ payloads. **Sign out** deletes the local token and disables the provider.
 Enterprise setups can enter an HTTPS GitHub Enterprise host in the Copilot
 row before signing in. Empty means `https://api.github.com`; an enterprise
 host such as `https://github.example.com` is normalized to
-`https://api.github.example.com` for the quota request.
+`https://api.github.example.com` for quota and account-identity requests.
+Cached account email is scoped to that normalized host, so changing between
+enterprise and public GitHub cannot reuse another host's identity.
+
+Seats billed by premium-request tokens may return `credits_used` instead of a
+percentage quota. aimebu accepts numeric and string values and shows the count
+in the existing credits row as **Premium requests used**. It does not derive a
+percentage when the response supplies no entitlement. The count is retained
+when legacy monthly quota fields supply the usage windows.
 
 CLI:
 

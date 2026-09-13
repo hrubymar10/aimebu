@@ -684,19 +684,25 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 	// across usage refreshes — only re-fetched when EmailFetchedAt is stale.
 	if p, ok := m.registry.Provider(key); ok {
 		if ef, ok := p.(EmailFetcher); ok {
+			emailScope := ""
+			if scoped, ok := p.(EmailScopeProvider); ok {
+				emailScope = scoped.EmailScope(m.store)
+			}
 			emailFloor := interval
 			if emailFloor < emailRefreshFloor {
 				emailFloor = emailRefreshFloor
 			}
-			if previous.EmailFetchedAt == nil || now.Sub(*previous.EmailFetchedAt) >= emailFloor {
+			if previous.EmailFetchedAt == nil || previous.EmailScope != emailScope || now.Sub(*previous.EmailFetchedAt) >= emailFloor {
 				if email, eerr := ef.FetchEmail(ctx, m.store); eerr == nil && email != "" {
 					entry.Profile.Email = email
 					emailNow := m.clock.Now()
 					entry.EmailFetchedAt = &emailNow
+					entry.EmailScope = emailScope
 				}
 			} else {
 				entry.Profile.Email = previous.Profile.Email
 				entry.EmailFetchedAt = previous.EmailFetchedAt
+				entry.EmailScope = previous.EmailScope
 			}
 		}
 	}
