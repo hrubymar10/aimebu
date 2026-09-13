@@ -2,9 +2,11 @@ package usages
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +42,10 @@ type Manager struct {
 	onUpdate        func(UsagesResponse)
 	profileLister   ProfileLister
 	switcherEnabled SwitcherEnabledProvider
+
+	profileMu          sync.Mutex
+	profileGeneration  map[string]uint64
+	activeFingerprints map[string]string
 }
 
 func NewManager(store *Store, registry *Registry) *Manager {
@@ -50,11 +56,13 @@ func NewManager(store *Store, registry *Registry) *Manager {
 		registry = EmptyRegistry()
 	}
 	return &Manager{
-		store:         store,
-		registry:      registry,
-		clock:         realClock{},
-		lastForce:     map[string]time.Time{},
-		forceCooldown: MinRefreshSec * time.Second,
+		store:              store,
+		registry:           registry,
+		clock:              realClock{},
+		lastForce:          map[string]time.Time{},
+		forceCooldown:      MinRefreshSec * time.Second,
+		profileGeneration:  map[string]uint64{},
+		activeFingerprints: map[string]string{},
 	}
 }
 
@@ -87,6 +95,53 @@ type ProfileLister func(tool string) []ProfileInfo
 
 func (m *Manager) SetProfileLister(fn ProfileLister) {
 	m.profileLister = fn
+}
+
+type activeProfileOwner struct {
+	profile     ProfileInfo
+	fingerprint string
+	generation  uint64
+}
+
+func credentialFingerprint(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "unreadable"
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+func (m *Manager) activeProfileOwner(key string) (activeProfileOwner, bool) {
+	tool := toolForRegistryKey(key)
+	if tool == "" || m.profileLister == nil {
+		return activeProfileOwner{}, false
+	}
+	for _, profile := range m.profileLister(tool) {
+		if profile.Active {
+			return activeProfileOwner{
+				profile:     profile,
+				fingerprint: credentialFingerprint(profile.CredPath),
+			}, true
+		}
+	}
+	return activeProfileOwner{}, false
+}
+
+func sameActiveProfileOwner(left, right activeProfileOwner) bool {
+	return left.profile.Name == right.profile.Name &&
+		left.profile.CredPath == right.profile.CredPath &&
+		left.fingerprint == right.fingerprint
+}
+
+func (m *Manager) activeCredentialsChanged(key string) bool {
+	owner, ok := m.activeProfileOwner(key)
+	if !ok || owner.profile.CredPath == "" {
+		return false
+	}
+	m.profileMu.Lock()
+	defer m.profileMu.Unlock()
+	previous, known := m.activeFingerprints[key]
+	return !known || previous != owner.fingerprint
 }
 
 // SwitcherEnabledProvider returns whether the switcher is currently enabled.
@@ -386,6 +441,14 @@ func (m *Manager) refresh(ctx context.Context, provider string, force bool) (Usa
 func (m *Manager) refreshWithChange(ctx context.Context, provider string, force bool) (UsagesResponse, bool, int, error) {
 	var resp UsagesResponse
 	var toFetch []string
+	credentialChanges := make(map[string]bool)
+	keys := knownProviders
+	if provider != "" {
+		keys = []string{provider}
+	}
+	for _, key := range keys {
+		credentialChanges[key] = m.activeCredentialsChanged(key)
+	}
 	err := m.store.WithLock(func() error {
 		cfg, err := m.store.LoadConfig()
 		if err != nil {
@@ -397,10 +460,6 @@ func (m *Manager) refreshWithChange(ctx context.Context, provider string, force 
 		}
 		interval, _ := m.store.RefreshInterval(cfg)
 		resp = m.assembleResponse(cfg, cache)
-		keys := knownProviders
-		if provider != "" {
-			keys = []string{provider}
-		}
 		now := m.clock.Now()
 		for _, key := range keys {
 			pc := cfg.Providers[key]
@@ -409,7 +468,7 @@ func (m *Manager) refreshWithChange(ctx context.Context, provider string, force 
 			}
 			entries := cache.Snapshots[key]
 			def := activeCacheEntry(entries)
-			shouldFetch := force || def == nil || def.Profile.LastRefreshAt == nil || now.Sub(*def.Profile.LastRefreshAt) >= interval
+			shouldFetch := force || def == nil || def.Profile.LastRefreshAt == nil || now.Sub(*def.Profile.LastRefreshAt) >= interval || credentialChanges[key]
 			if shouldFetch {
 				toFetch = append(toFetch, key)
 			}
@@ -565,10 +624,18 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 	}
 	defer lock.Unlock()
 
+	owner, hasOwner := m.activeProfileOwner(key)
+	if hasOwner {
+		m.profileMu.Lock()
+		owner.generation = m.profileGeneration[key]
+		m.profileMu.Unlock()
+	}
+
 	var previous CacheEntry
 	var interval time.Duration
 	var now time.Time
 	shouldFetch := false
+	credentialsChanged := m.activeCredentialsChanged(key)
 	err = m.store.WithLock(func() error {
 		cfg, err := m.store.LoadConfig()
 		if err != nil {
@@ -587,7 +654,7 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 		if def != nil {
 			previous = *def
 		}
-		shouldFetch = force || def == nil || def.Profile.LastRefreshAt == nil || now.Sub(*def.Profile.LastRefreshAt) >= interval
+		shouldFetch = force || def == nil || def.Profile.LastRefreshAt == nil || now.Sub(*def.Profile.LastRefreshAt) >= interval || credentialsChanged
 		return nil
 	})
 	if err != nil || !shouldFetch {
@@ -601,21 +668,13 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 	// switcher facts now, under the same lock that saves the entry. This
 	// prevents a "default" entry from being observable between the provider
 	// fetch and the separate deriveActiveProfile call.
-	if m.profileLister != nil {
-		tool := toolForRegistryKey(key)
-		if tool != "" {
-			for _, pi := range m.profileLister(tool) {
-				if pi.Active {
-					entry.Profile.ProfileName = pi.Name
-					entry.Profile.Active = pi.Active
-					entry.Profile.HasCredentials = pi.HasCredentials
-					entry.Profile.ExpiresAt = pi.ExpiresAt
-					if pi.Email != "" {
-						entry.Profile.Email = pi.Email
-					}
-					break
-				}
-			}
+	if hasOwner {
+		entry.Profile.ProfileName = owner.profile.Name
+		entry.Profile.Active = owner.profile.Active
+		entry.Profile.HasCredentials = owner.profile.HasCredentials
+		entry.Profile.ExpiresAt = owner.profile.ExpiresAt
+		if owner.profile.Email != "" {
+			entry.Profile.Email = owner.profile.Email
 		}
 	}
 
@@ -639,6 +698,15 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 				entry.Profile.Email = previous.Profile.Email
 				entry.EmailFetchedAt = previous.EmailFetchedAt
 			}
+		}
+	}
+
+	if hasOwner {
+		m.profileMu.Lock()
+		defer m.profileMu.Unlock()
+		current, ok := m.activeProfileOwner(key)
+		if !ok || owner.generation != m.profileGeneration[key] || !sameActiveProfileOwner(owner, current) {
+			return fetchResult{}
 		}
 	}
 
@@ -668,6 +736,9 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 	})
 	if err != nil {
 		return fetchResult{err: err}
+	}
+	if hasOwner {
+		m.activeFingerprints[key] = owner.fingerprint
 	}
 	return fetchResult{changed: true}
 }
@@ -826,6 +897,7 @@ func (m *Manager) FetchProfileSnapshot(ctx context.Context, tool, name, credPath
 		return cached.Profile, nil
 	}
 	_ = interval
+	startFingerprint := credentialFingerprint(credPath)
 
 	var snap Snapshot
 	var fetchErr error
@@ -838,6 +910,9 @@ func (m *Manager) FetchProfileSnapshot(ctx context.Context, tool, name, credPath
 		return Profile{}, fmt.Errorf("unsupported switcher tool %q for profile snapshot", tool)
 	}
 	if fetchErr != nil {
+		if startFingerprint != credentialFingerprint(credPath) {
+			return Profile{}, errors.New("credentials changed during usage fetch")
+		}
 		// Write a placeholder entry with the profile name so setProfileFields
 		// can set identity fields on it. Identity is not conditional on a
 		// successful fetch — a profile whose fetch errors must still carry
@@ -865,6 +940,9 @@ func (m *Manager) FetchProfileSnapshot(ctx context.Context, tool, name, credPath
 		})
 		return profileFromSnapshot(errSnap, name), fetchErr
 	}
+	if startFingerprint != credentialFingerprint(credPath) {
+		return Profile{}, errors.New("credentials changed during usage fetch")
+	}
 	now := m.clock.Now()
 	snap.LastRefreshAt = &now
 	_ = m.store.WithLock(func() error {
@@ -884,6 +962,10 @@ func (m *Manager) FetchProfileSnapshot(ctx context.Context, tool, name, credPath
 // ensure the two affected profiles refresh immediately.
 func (m *Manager) InvalidateProfileSnapshot(tool, name string) {
 	regKey := registryKeyForTool(tool)
+	m.profileMu.Lock()
+	defer m.profileMu.Unlock()
+	m.profileGeneration[regKey]++
+	delete(m.activeFingerprints, regKey)
 	_ = m.store.WithLock(func() error {
 		cache, err := m.store.LoadCache()
 		if err != nil {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -76,6 +78,165 @@ func TestManagerIntervalGatesFetch(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&fp.calls); got != 1 {
 		t.Fatalf("fetch calls = %d, want 1", got)
+	}
+}
+
+func TestManagerCredentialChangeBypassesFreshCache(t *testing.T) {
+	for _, tc := range []struct {
+		provider string
+		tool     string
+		file     string
+	}{
+		{provider: ProviderClaudeCode, tool: "claude", file: ".credentials.json"},
+		{provider: ProviderCodex, tool: "codex", file: "auth.json"},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			root := t.TempDir()
+			credPath := filepath.Join(root, tc.file)
+			if err := os.WriteFile(credPath, []byte("first"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store := NewStoreAt(root)
+			cfg := DefaultConfig()
+			cfg.Providers[tc.provider] = ProviderConfig{Enabled: true}
+			if err := store.SaveConfig(cfg); err != nil {
+				t.Fatal(err)
+			}
+			provider := &fakeProvider{key: tc.provider}
+			m := NewManager(store, NewRegistry(provider))
+			m.SetProfileLister(func(tool string) []ProfileInfo {
+				if tool != tc.tool {
+					return nil
+				}
+				return []ProfileInfo{{Tool: tc.tool, Name: "main", Active: true, CredPath: credPath, HasCredentials: true}}
+			})
+
+			if _, _, err := m.refresh(context.Background(), tc.provider, false); err != nil {
+				t.Fatalf("initial refresh: %v", err)
+			}
+			if err := os.WriteFile(credPath, []byte("second"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := m.refresh(context.Background(), tc.provider, false); err != nil {
+				t.Fatalf("credential refresh: %v", err)
+			}
+			if got := atomic.LoadInt32(&provider.calls); got != 2 {
+				t.Fatalf("fetch calls = %d, want 2 after credentials changed", got)
+			}
+		})
+	}
+}
+
+func TestManagerDiscardsFetchWhenActiveProfileChanges(t *testing.T) {
+	for _, tc := range []struct {
+		provider string
+		tool     string
+	}{
+		{provider: ProviderClaudeCode, tool: "claude"},
+		{provider: ProviderCodex, tool: "codex"},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			root := t.TempDir()
+			mainPath := filepath.Join(root, "main-creds")
+			backupPath := filepath.Join(root, "backup-creds")
+			if err := os.WriteFile(mainPath, []byte("main"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(backupPath, []byte("backup"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			store := NewStoreAt(root)
+			cfg := DefaultConfig()
+			cfg.Providers[tc.provider] = ProviderConfig{Enabled: true}
+			if err := store.SaveConfig(cfg); err != nil {
+				t.Fatal(err)
+			}
+			entered := make(chan struct{}, 1)
+			release := make(chan struct{})
+			provider := &fakeProvider{key: tc.provider, entered: entered, block: release}
+			m := NewManager(store, NewRegistry(provider))
+			var backupActive atomic.Bool
+			m.SetProfileLister(func(tool string) []ProfileInfo {
+				if tool != tc.tool {
+					return nil
+				}
+				return []ProfileInfo{
+					{Tool: tc.tool, Name: "main", Active: !backupActive.Load(), CredPath: mainPath, HasCredentials: true},
+					{Tool: tc.tool, Name: "backup", Active: backupActive.Load(), CredPath: backupPath, HasCredentials: true},
+				}
+			})
+
+			done := make(chan error, 1)
+			go func() {
+				_, _, err := m.refresh(context.Background(), tc.provider, true)
+				done <- err
+			}()
+			<-entered
+			backupActive.Store(true)
+			m.InvalidateProfileSnapshot(tc.tool, "main")
+			m.InvalidateProfileSnapshot(tc.tool, "backup")
+			close(release)
+			if err := <-done; err != nil {
+				t.Fatalf("refresh: %v", err)
+			}
+
+			cache, err := store.LoadCache()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(cache.Snapshots[tc.provider]); got != 0 {
+				t.Fatalf("late fetch published %d cache entries after profile switch: %+v", got, cache.Snapshots[tc.provider])
+			}
+		})
+	}
+}
+
+func TestManagerDiscardsFetchWhenCredentialChangesMidRequest(t *testing.T) {
+	root := t.TempDir()
+	credPath := filepath.Join(root, "auth.json")
+	if err := os.WriteFile(credPath, []byte("first"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStoreAt(root)
+	cfg := DefaultConfig()
+	cfg.Providers[ProviderCodex] = ProviderConfig{Enabled: true}
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeProvider{key: ProviderCodex}
+	m := NewManager(store, NewRegistry(provider))
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		return []ProfileInfo{{Tool: "codex", Name: "main", Active: true, CredPath: credPath, HasCredentials: true}}
+	})
+	if _, _, err := m.refresh(context.Background(), ProviderCodex, true); err != nil {
+		t.Fatalf("initial refresh: %v", err)
+	}
+
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	provider.entered = entered
+	provider.block = release
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := m.refresh(context.Background(), ProviderCodex, true)
+		done <- err
+	}()
+	<-entered
+	if err := os.WriteFile(credPath, []byte("second"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	cache, err := store.LoadCache()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := cache.Snapshots[ProviderCodex]
+	if len(entries) != 1 || entries[0].Profile.Plan != "test" {
+		t.Fatalf("previous usage was not preserved after discarded refresh: %+v", entries)
 	}
 }
 

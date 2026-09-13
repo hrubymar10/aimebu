@@ -83,6 +83,15 @@ instead of leaving the provider's `profiles` array empty. That distinguishes
 "this configured profile is refreshing or errored" from a genuinely
 unconfigured provider in the web sidebar.
 
+Claude and Codex fetches are bound to the active profile name and a fingerprint
+of the credentials that started the request. If either changes while the
+network request is running, aimebu discards the late result instead of caching
+one account's usage under another profile. The switcher lock is not held while
+waiting on the provider. A credential-file change also bypasses an otherwise
+fresh cache entry so CLI token rotation is picked up on the next poller tick;
+an in-flight rotation leaves the previous cache entry intact until a fetch
+owned by the new credentials completes.
+
 The right-sidebar force-refresh button calls `POST /api/usages/refresh`. It
 bypasses the normal interval but has a separate server-side 15 second
 cooldown. During cooldown the endpoint returns HTTP `429` with:
