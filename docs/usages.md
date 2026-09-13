@@ -102,6 +102,11 @@ canceled. Non-idempotent auth and device-flow `POST` requests are not retried
 by default; Claude Code OAuth refresh is the narrow exception and retries one
 `429` response when the request body can be replayed.
 
+Codex OAuth refreshes are staged in memory and validated before the live
+credential file is replaced atomically. A malformed success response or one
+without a new access token is rejected without advancing `last_refresh` or
+changing the existing login.
+
 ## Provider Ordering
 
 Settings -> Usages includes up/down controls for the provider rows. The saved

@@ -338,6 +338,44 @@ func TestCodexProviderRefreshesStaleAuth(t *testing.T) {
 	assertMode(t, filepath.Join(root, "auth.json"), 0o600)
 }
 
+func TestCodexRefreshRejectsInvalidSuccessWithoutChangingAuth(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "missing access token", body: `{"refresh_token":"rotated-refresh"}`},
+		{name: "malformed json", body: `{"access_token":`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("CODEX_HOME", root)
+			original := []byte(`{"future":"keep","tokens":{"access_token":"old-access","refresh_token":"old-refresh"},"last_refresh":"1970-01-01T00:00:01Z"}`)
+			writeCodexAuthFixture(t, root, string(original))
+			withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
+				if req.URL.String() != codexRefreshURL {
+					t.Fatalf("unexpected URL %s", req.URL)
+				}
+				return httpJSON(http.StatusOK, tc.body), nil
+			})
+
+			snap, err := NewCodexProvider().Fetch(context.Background(), NewStoreAt(t.TempDir()))
+			if err != nil {
+				t.Fatalf("Fetch error: %v", err)
+			}
+			if snap.Status != StatusAuthMissing {
+				t.Fatalf("snapshot = %+v, want auth_missing", snap)
+			}
+			got, err := os.ReadFile(filepath.Join(root, "auth.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, original) {
+				t.Fatalf("auth file changed after rejected refresh:\nwant: %s\ngot:  %s", original, got)
+			}
+		})
+	}
+}
+
 func TestCodexProviderRefreshesAfterUnauthorizedUsage(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CODEX_HOME", root)
@@ -491,6 +529,25 @@ func TestCodexPlanFromIDTokenClaimShapes(t *testing.T) {
 			token := "header." + base64.RawURLEncoding.EncodeToString([]byte(tc.payload)) + ".sig"
 			if got := codexPlanFromIDToken(token); got != tc.want {
 				t.Fatalf("plan = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCodexAccountIDRecoveredFromJWTClaims(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{"literal", `{"https://api.openai.com/auth.chatgpt_account_id":"acct-literal"}`, "acct-literal"},
+		{"nested", `{"https://api.openai.com/auth":{"chatgpt_account_id":"acct-nested"}}`, "acct-nested"},
+		{"top", `{"account_id":"acct-top"}`, "acct-top"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			token := "header." + base64.RawURLEncoding.EncodeToString([]byte(tc.payload)) + ".sig"
+			if got := codexAccountIDFromJWT(token); got != tc.want {
+				t.Fatalf("account ID = %q, want %q", got, tc.want)
 			}
 		})
 	}

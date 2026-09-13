@@ -215,6 +215,11 @@ func parseCodexAuthData(data []byte) (codexCredentials, *ErrorDetail, error) {
 		IDToken:      firstNonEmpty(raw.Tokens.IDToken, raw.Tokens.IDTokenC),
 		AccountID:    firstNonEmpty(raw.Tokens.AccountID, raw.Tokens.AccountIDC),
 	}
+	creds.AccountID = firstNonEmpty(
+		creds.AccountID,
+		codexAccountIDFromJWT(creds.IDToken),
+		codexAccountIDFromJWT(creds.AccessToken),
+	)
 	if creds.AccessToken == "" || creds.RefreshToken == "" {
 		return codexCredentials{}, fieldDetail("auth.json.tokens", "missing_oauth_tokens"), errors.New(codexLoginRequired)
 	}
@@ -280,18 +285,37 @@ func refreshCodexAuth(ctx context.Context, creds codexCredentials) (codexCredent
 	if err := json.Unmarshal(respData, &raw); err != nil {
 		return creds, jsonShapeDetail("refresh", respData), errors.New("Codex OAuth refresh response could not be decoded.")
 	}
-	if raw.AccessToken != "" {
-		creds.AccessToken = raw.AccessToken
+	if strings.TrimSpace(raw.AccessToken) == "" {
+		return creds, fieldDetail("refresh.access_token", "missing"), errors.New("Codex OAuth refresh response did not include an access token.")
 	}
+	creds.AccessToken = strings.TrimSpace(raw.AccessToken)
 	if raw.RefreshToken != "" {
-		creds.RefreshToken = raw.RefreshToken
+		creds.RefreshToken = strings.TrimSpace(raw.RefreshToken)
 	}
 	if raw.IDToken != "" {
-		creds.IDToken = raw.IDToken
+		creds.IDToken = strings.TrimSpace(raw.IDToken)
+	}
+	creds.AccountID = firstNonEmpty(
+		codexAccountIDFromJWT(creds.IDToken),
+		codexAccountIDFromJWT(creds.AccessToken),
+		creds.AccountID,
+	)
+	if err := validateCodexCredentialSet(creds); err != nil {
+		return creds, fieldDetail("refresh.tokens", "invalid"), err
 	}
 	now := time.Now().UTC()
 	creds.LastRefresh = &now
 	return creds, nil, nil
+}
+
+func validateCodexCredentialSet(creds codexCredentials) error {
+	if strings.TrimSpace(creds.AccessToken) == "" {
+		return errors.New("Codex OAuth access token is missing after refresh.")
+	}
+	if strings.TrimSpace(creds.RefreshToken) == "" {
+		return errors.New("Codex OAuth refresh token is missing after refresh.")
+	}
+	return nil
 }
 
 func saveCodexAuth(path string, creds codexCredentials) error {
@@ -563,16 +587,8 @@ func parseCodexBalance(data []byte) (float64, bool) {
 }
 
 func codexPlanFromIDToken(token string) string {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	data, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(data, &payload); err != nil {
+	payload := codexJWTClaims(token)
+	if payload == nil {
 		return ""
 	}
 	if v, ok := payload["https://api.openai.com/auth.chatgpt_plan_type"].(string); ok {
@@ -587,6 +603,46 @@ func codexPlanFromIDToken(token string) string {
 		return strings.TrimSpace(v)
 	}
 	return ""
+}
+
+func codexAccountIDFromJWT(token string) string {
+	payload := codexJWTClaims(token)
+	if payload == nil {
+		return ""
+	}
+	for _, key := range []string{
+		"https://api.openai.com/auth.chatgpt_account_id",
+		"chatgpt_account_id",
+		"account_id",
+	} {
+		if v, ok := payload[key].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	if auth, ok := payload["https://api.openai.com/auth"].(map[string]any); ok {
+		for _, key := range []string{"chatgpt_account_id", "account_id"} {
+			if v, ok := auth[key].(string); ok && strings.TrimSpace(v) != "" {
+				return strings.TrimSpace(v)
+			}
+		}
+	}
+	return ""
+}
+
+func codexJWTClaims(token string) map[string]any {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+	data, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil
+	}
+	return payload
 }
 
 func parseCodexTime(value string) *time.Time {
