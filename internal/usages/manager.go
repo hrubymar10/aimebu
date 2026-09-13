@@ -840,6 +840,9 @@ func hasTransientHTTPStatus(detail *ErrorDetail) bool {
 	if detail == nil {
 		return false
 	}
+	if detail.Fields["usage.challenge"] == "cloudflare" {
+		return true
+	}
 	for _, value := range detail.Fields {
 		codeText, ok := strings.CutPrefix(value, "http_")
 		if !ok {

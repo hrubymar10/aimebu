@@ -266,6 +266,38 @@ func TestClaudeAuthMissingAndScopeMissing(t *testing.T) {
 	assertNotContains(t, jsonString(t, snap), "scope-secret", "access-secret", "refresh-secret")
 }
 
+func TestClaudeUsageClassifiesChallengeAndLoginLoss(t *testing.T) {
+	t.Run("cloudflare challenge", func(t *testing.T) {
+		withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
+			resp := httpJSON(http.StatusForbidden, `<html><title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/x.js"></script></html>`)
+			resp.Header.Set("CF-Mitigated", "challenge")
+			return resp, nil
+		})
+		_, detail, status, unauthorized, err := fetchClaudeUsageOnce(context.Background(), claudeCredentials{AccessToken: "access-secret"})
+		if err == nil || status != StatusFetchError || unauthorized {
+			t.Fatalf("status=%s unauthorized=%v err=%v", status, unauthorized, err)
+		}
+		if detail == nil || detail.Fields["usage.challenge"] != "cloudflare" || detail.Fields["usage.status"] != "http_403" {
+			t.Fatalf("detail = %#v", detail)
+		}
+		assertNotContains(t, err.Error(), "access-secret", "challenge-platform")
+	})
+
+	t.Run("expired login on forbidden response", func(t *testing.T) {
+		withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
+			return httpJSON(http.StatusForbidden, `{"type":"authentication_error","message":"login-secret"}`), nil
+		})
+		_, detail, status, unauthorized, err := fetchClaudeUsageOnce(context.Background(), claudeCredentials{AccessToken: "access-secret"})
+		if err == nil || status != StatusAuthMissing || !unauthorized {
+			t.Fatalf("status=%s unauthorized=%v err=%v", status, unauthorized, err)
+		}
+		assertNotContains(t, err.Error(), "access-secret", "login-secret")
+		if detail == nil {
+			t.Fatal("missing redacted response detail")
+		}
+	})
+}
+
 func TestNormalizeClaudeUsageKeepsPercentScale(t *testing.T) {
 	value := 47.5
 	snap, detail, err := normalizeClaudeUsage(claudeUsageRaw{

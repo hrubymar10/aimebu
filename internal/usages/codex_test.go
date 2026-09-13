@@ -454,6 +454,39 @@ func TestCodexProviderRefreshesAfterUnauthorizedUsage(t *testing.T) {
 	}
 }
 
+func TestCodexProviderPreservesPermissionStatusAfterRefresh(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", root)
+	writeCodexAuthFixture(t, root, `{
+  "tokens": {"access_token": "old-access", "refresh_token": "old-refresh"},
+  "last_refresh": "`+time.Now().UTC().Format(time.RFC3339)+`"
+}`)
+	usageCalls := 0
+	withHTTPTransport(t, func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case codexUsageURL:
+			usageCalls++
+			if usageCalls == 1 {
+				return httpJSON(http.StatusUnauthorized, `{"error":"expired"}`), nil
+			}
+			return httpJSON(http.StatusForbidden, `{"error":"permission-secret"}`), nil
+		case codexRefreshURL:
+			return httpJSON(http.StatusOK, `{"access_token":"new-access","refresh_token":"new-refresh"}`), nil
+		default:
+			t.Fatalf("unexpected URL %s", req.URL)
+			return nil, nil
+		}
+	})
+	snap, err := NewCodexProvider().Fetch(context.Background(), NewStoreAt(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Status != StatusScopeMissing {
+		t.Fatalf("status = %s, want %s", snap.Status, StatusScopeMissing)
+	}
+	assertNotContains(t, jsonString(t, snap), "permission-secret", "old-access", "new-access")
+}
+
 func TestCodexProviderRetriesRewrittenAuthAfterUnauthorizedUsage(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CODEX_HOME", root)

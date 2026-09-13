@@ -218,14 +218,17 @@ the `pace` object because there is no remaining quota to project.
 
 ## Troubleshooting
 
-- `auth_missing`: authenticate in the provider's own CLI or complete the
-  provider setup in Settings -> Usages.
+- `auth_missing`: authenticate in the service's own CLI or complete setup in
+  Settings -> Usages. Claude forbidden responses that explicitly identify an
+  invalid or expired login use this status too.
 - `scope_missing`: the token was accepted but lacks access to the usage
   endpoint. Re-authenticate or check the account's plan/enterprise policy.
 - `timeout`: a provider request exceeded aimebu's per-request timeout. The
   provider may be slow or unreachable; retry later.
-- `fetch_error`: upstream returned an unexpected status or shape. The
-  `error_detail.fields` map records field names and types only, never values.
+- `fetch_error`: the service returned an unexpected status or shape. Claude
+  Cloudflare browser challenges use this status with a redacted challenge
+  marker. The `error_detail.fields` map records field names and types only,
+  never values.
 - `stale_cache`: the latest fetch failed but cached values are still shown.
 
 Provider-specific setup and failure notes live in:

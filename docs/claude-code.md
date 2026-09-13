@@ -113,13 +113,16 @@ dropped while the all-model weekly window remains visible.
 
 Common failure states:
 
-- `auth_missing`: `~/.claude/.credentials.json` is missing or OAuth refresh
-  is needed. Run `claude` to refresh the login; aimebu does not rotate the
-  Claude CLI's refresh token itself.
+- `auth_missing`: `~/.claude/.credentials.json` is missing, OAuth refresh is
+  needed, or a forbidden response identifies a lost login. Run `claude` to
+  refresh the login; aimebu does not rotate the Claude CLI's refresh token
+  itself.
 - `scope_missing`: the token was accepted by OAuth but rejected by the usage
   endpoint.
-- `fetch_error`: the upstream usage response changed shape or returned an
-  unexpected status.
+- `fetch_error`: the usage response changed shape, returned an unexpected
+  status, or was replaced by a Cloudflare browser challenge. Challenge
+  details are classified without retaining the HTML response, and an earlier
+  successful snapshot remains visible as stale data.
 - `stale_cache`: the latest fetch failed, but aimebu is showing the previous
   successful snapshot with a stale marker.
 

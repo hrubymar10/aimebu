@@ -109,11 +109,13 @@ Common failure states:
   validated before an atomic write; a malformed or token-less response leaves
   the existing credential file unchanged. Run
   `codex login --device-auth` to refresh the OAuth login.
-- `scope_missing`: the OAuth token lacks access to the usage endpoint.
-- `fetch_error`: the upstream usage response changed shape. If numbers look
+- `scope_missing`: the OAuth token lacks access to the usage endpoint. This
+  classification is retained when a refreshed or concurrently rewritten
+  credential is accepted but the retried usage request is forbidden.
+- `fetch_error`: the usage response changed shape. If numbers look
   wrong or windows disappear, inspect `error_detail.fields`; window shapes
-  that drift far beyond the expected session/weekly/monthly durations are dropped
-  rather than guessed.
+  that drift far beyond the expected session/weekly/monthly durations are
+  dropped rather than guessed.
 - `stale_cache`: the latest fetch failed, but aimebu is showing the previous
   successful snapshot with a stale marker.
 

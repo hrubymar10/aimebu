@@ -295,11 +295,20 @@ func fetchClaudeUsageOnce(ctx context.Context, creds claudeCredentials) (claudeU
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if isClaudeCloudflareChallenge(resp, data) {
+		return claudeUsageRaw{}, &ErrorDetail{Fields: map[string]string{
+			"usage.challenge": "cloudflare",
+			"usage.status":    fmt.Sprintf("http_%d", resp.StatusCode),
+		}}, StatusFetchError, false, errors.New("Claude usage request was blocked by a Cloudflare browser challenge.")
+	}
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode <= 299:
 	case resp.StatusCode == http.StatusUnauthorized:
 		return claudeUsageRaw{}, jsonShapeDetail("usage", data), StatusAuthMissing, true, fmt.Errorf("Claude usage endpoint rejected the OAuth token with HTTP %d.", resp.StatusCode)
 	case resp.StatusCode == http.StatusForbidden:
+		if isClaudeLoginLoss(data) {
+			return claudeUsageRaw{}, jsonShapeDetail("usage", data), StatusAuthMissing, true, errors.New("Claude login is no longer valid.")
+		}
 		return claudeUsageRaw{}, jsonShapeDetail("usage", data), StatusScopeMissing, false, fmt.Errorf("Claude usage endpoint rejected the OAuth scope with HTTP %d.", resp.StatusCode)
 	default:
 		return claudeUsageRaw{}, jsonShapeDetail("usage", data), StatusFetchError, false, fmt.Errorf("Claude usage endpoint returned HTTP %d.", resp.StatusCode)
@@ -309,6 +318,30 @@ func fetchClaudeUsageOnce(ctx context.Context, creds claudeCredentials) (claudeU
 		return claudeUsageRaw{}, jsonShapeDetail("usage", data), StatusFetchError, false, errors.New("Claude usage response could not be decoded.")
 	}
 	return raw, nil, "", false, nil
+}
+
+func isClaudeCloudflareChallenge(resp *http.Response, data []byte) bool {
+	if strings.EqualFold(strings.TrimSpace(resp.Header.Get("CF-Mitigated")), "challenge") {
+		return true
+	}
+	body := strings.ToLower(string(data))
+	markers := []string{"challenge-platform", "cf-chl-", "cloudflare ray id", "just a moment..."}
+	for _, marker := range markers {
+		if strings.Contains(body, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func isClaudeLoginLoss(data []byte) bool {
+	body := strings.ToLower(string(data))
+	for _, marker := range []string{"authentication_error", "invalid_token", "not_authenticated", "login_required", "session_expired"} {
+		if strings.Contains(body, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (raw claudeUsageRaw) hasValues() bool {
