@@ -119,6 +119,12 @@ type Settings struct {
 	PercentDisplay     string `json:"percent_display"` // "left" | "used"
 	EnvOverride        bool   `json:"env_override"`
 	EnvValue           string `json:"env_value,omitempty"`
+	// ClaudeAutoRefresh is the stored on/off flag for claude auto-refresh.
+	ClaudeAutoRefresh bool `json:"claude_auto_refresh"`
+	// ClaudeAutoRefreshAvailable reports whether the feature can run at all —
+	// currently whether harness-docker-ctrl is on PATH. The UI presents the
+	// toggle as unavailable when this is false.
+	ClaudeAutoRefreshAvailable bool `json:"claude_auto_refresh_available"`
 }
 
 // Provider absorbs the old ProviderInfo, provider_order setting, and switcher

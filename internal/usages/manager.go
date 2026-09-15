@@ -44,6 +44,9 @@ type Manager struct {
 	profileLister   ProfileLister
 	switcherEnabled SwitcherEnabledProvider
 
+	claudeRefresher   *claudeRefresher
+	claudeAvailableFn func() bool
+
 	profileMu          sync.Mutex
 	profileGeneration  map[string]uint64
 	activeFingerprints map[string]string
@@ -205,6 +208,69 @@ func (m *Manager) SetSwitcherSettingsProvider(fn SwitcherEnabledProvider) {
 	m.switcherEnabled = fn
 }
 
+// EnableClaudeAutoRefresh wires the claude auto-refresh coordinator. withLock is
+// the switcher's WithLock so the credential copy-back holds switcher/.lock. The
+// coordinator re-resolves the profile by name (via the ProfileLister) inside the
+// lock for its CAS identity guard.
+func (m *Manager) EnableClaudeAutoRefresh(withLock func(func() error) error) {
+	m.claudeRefresher = newClaudeRefresher(withLock, m.currentClaudeProfile)
+}
+
+// currentClaudeProfile returns the current resolved claude switcher profile for
+// name, used by the auto-refresh CAS guard to detect a switch/removal that
+// landed mid-refresh.
+func (m *Manager) currentClaudeProfile(name string) (ProfileInfo, bool) {
+	for _, p := range m.profilesForProvider(ProviderClaudeCode) {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return ProfileInfo{}, false
+}
+
+// claudeAutoRefreshAvailable reports whether the feature can run at all. It is
+// injectable for tests; production checks for the harness-docker-ctrl binary.
+func (m *Manager) claudeAutoRefreshAvailable() bool {
+	if m.claudeAvailableFn != nil {
+		return m.claudeAvailableFn()
+	}
+	return harnessDockerCtrlAvailable()
+}
+
+// decorateSettings fills the runtime-derived Settings fields that are not stored
+// in config (currently the auto-refresh availability flag).
+func (m *Manager) decorateSettings(info Settings) Settings {
+	info.ClaudeAutoRefreshAvailable = m.claudeAutoRefreshAvailable()
+	return info
+}
+
+// triggerClaudeAutoRefresh scans the resolved claude profiles and asks the
+// coordinator to refresh any inactive near-expiry profile. It runs on the
+// normal poller tick and is a no-op unless the setting is enabled and the
+// coordinator is wired.
+func (m *Manager) triggerClaudeAutoRefresh(ctx context.Context) {
+	if m.claudeRefresher == nil {
+		return
+	}
+	var cfg Config
+	if err := m.store.WithLock(func() error {
+		c, err := m.store.LoadConfig()
+		cfg = c
+		return err
+	}); err != nil {
+		return
+	}
+	if !cfg.ClaudeAutoRefresh {
+		return
+	}
+	now := m.clock.Now()
+	for _, profile := range m.profilesForProvider(ProviderClaudeCode) {
+		if claudeProfileNeedsRefresh(profile, now, claudeNearExpiryWindow) {
+			m.claudeRefresher.maybeRefresh(ctx, profile)
+		}
+	}
+}
+
 func (m *Manager) Settings(ctx context.Context) (Settings, error) {
 	var info Settings
 	err := m.store.WithLock(func() error {
@@ -215,7 +281,7 @@ func (m *Manager) Settings(ctx context.Context) (Settings, error) {
 		_, info = m.store.RefreshInterval(cfg)
 		return nil
 	})
-	return info, err
+	return m.decorateSettings(info), err
 }
 
 // Snapshot is a pure cache read — it never fetches. All network work is owned
@@ -225,7 +291,7 @@ func (m *Manager) Settings(ctx context.Context) (Settings, error) {
 // known provider appears (even if disabled), with at least one profile.
 func (m *Manager) assembleResponse(cfg Config, cache Cache) UsagesResponse {
 	_, settings := m.store.RefreshInterval(cfg)
-	resp := UsagesResponse{Settings: settings}
+	resp := UsagesResponse{Settings: m.decorateSettings(settings)}
 	if m.switcherEnabled != nil {
 		resp.SwitcherEnabled = m.switcherEnabled()
 	}
@@ -364,7 +430,7 @@ func (m *Manager) ForceRefresh(ctx context.Context, provider string) (UsagesResp
 	return resp, retry, err
 }
 
-func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDisplay string, providerOrder []string, updateProviderOrder bool) (Settings, error) {
+func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDisplay string, providerOrder []string, updateProviderOrder bool, claudeAutoRefresh *bool) (Settings, error) {
 	if intervalSec != 0 && intervalSec < MinRefreshSec {
 		return Settings{}, errors.New("refresh_interval_sec is below minimum")
 	}
@@ -386,13 +452,16 @@ func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDi
 		if updateProviderOrder {
 			cfg.ProviderOrder = normalizeProviderOrder(providerOrder)
 		}
+		if claudeAutoRefresh != nil {
+			cfg.ClaudeAutoRefresh = *claudeAutoRefresh
+		}
 		if err := m.store.SaveConfig(cfg); err != nil {
 			return err
 		}
 		_, info = m.store.RefreshInterval(cfg)
 		return nil
 	})
-	return info, err
+	return m.decorateSettings(info), err
 }
 
 func (m *Manager) SetProviderEnabled(ctx context.Context, provider string, enabled bool) (Config, error) {
@@ -532,6 +601,7 @@ func (m *Manager) Start(ctx context.Context, wg *sync.WaitGroup) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				m.triggerClaudeAutoRefresh(ctx)
 				resp, changed, _, err := m.refreshWithChange(ctx, "", false)
 				if err != nil {
 					continue

@@ -80,6 +80,8 @@
   let usageProviders = [];
   let usageSwitcherEnabled = false;
   let usagePercentDisplay = 'left';
+  let usageClaudeAutoRefresh = false;
+  let usageClaudeAutoRefreshAvailable = false;
   let usageCooldownTimer = null;
   const usageProviderFallbackOrder = ['codex', 'claude-code', 'github-copilot', 'mistral', 'ollama-cloud'];
   let copilotLoginState = { status: 'disconnected', enterpriseHost: '', flowId: '', interval: 5, timer: null, error: '' };
@@ -3014,8 +3016,12 @@
             erel = diffMs > 0 ? ('in ' + (eh > 0 ? eh + 'h ' : '') + em + 'm') : ('expired ' + (eh > 0 ? eh + 'h ' : '') + em + 'm ago');
           }
           expiryTitle = 'Token expires: ' + new Date(expMs).toISOString() + ' (' + erel + ')';
+          // Near-expiry ("soon") threshold: 3h normally, tightened to 1h when
+          // claude auto-refresh is enabled — the container refresh handles the
+          // long heads-up, so only a genuinely imminent lapse needs flagging.
+          var soonThresholdMs = usageClaudeAutoRefresh ? 3600000 : 10800000;
           var iconSvg = diffMs <= 0 ? EXPIRY_ICON_EXPIRED
-            : (diffMs <= 10800000 ? EXPIRY_ICON_SOON : EXPIRY_ICON_OK);
+            : (diffMs <= soonThresholdMs ? EXPIRY_ICON_SOON : EXPIRY_ICON_OK);
           var iconClass = 'switcher-expiry-icon' + (diffMs <= 0 ? ' switcher-expiry-icon--expired' : '');
           expiryIcon = '<span class="' + iconClass + '" title="' + esc(expiryTitle) + '">' + iconSvg + '</span>';
         }
@@ -3299,6 +3305,53 @@
     document.querySelectorAll('.usages-percent-option').forEach(function (btn) {
       btn.classList.toggle('active', btn.getAttribute('data-percent-display') === usagePercentDisplay);
     });
+    usageClaudeAutoRefresh = !!settings.claude_auto_refresh;
+    usageClaudeAutoRefreshAvailable = !!settings.claude_auto_refresh_available;
+    renderClaudeAutoRefreshRow();
+  }
+
+  // Renders the "Claude auto-refresh" toggle row. When harness-docker-ctrl is
+  // absent the feature is unavailable: the toggle is disabled and the help text
+  // explains why. When available, the help text warns about the per-account cost.
+  function renderClaudeAutoRefreshRow() {
+    var el = document.getElementById('usages-claude-auto-refresh-row');
+    if (!el) return;
+    var available = usageClaudeAutoRefreshAvailable;
+    var enabled = usageClaudeAutoRefresh;
+    var desc = available
+      ? 'Periodically renew near-expiry inactive Claude profiles in a throwaway container so they stay ready to switch to. This incurs a small per-account cost (occasional <code>claude -p</code> calls).'
+      : 'Unavailable: <code>harness-docker-ctrl</code> is not installed. Install it to enable auto-refreshing Claude profiles.';
+    el.innerHTML =
+      '<div class="settings-row' + (available ? '' : ' usages-provider-row-disabled') + '">' +
+        '<div class="settings-row-info">' +
+          '<label class="settings-label" for="claude-auto-refresh-toggle">Claude auto-refresh</label>' +
+          '<span class="settings-desc">' + desc + '</span>' +
+        '</div>' +
+        '<div class="settings-control">' +
+          '<label class="usages-provider-toggle" aria-label="Claude auto-refresh">' +
+            '<input type="checkbox" id="claude-auto-refresh-toggle"' + (enabled ? ' checked' : '') + (available ? '' : ' disabled') + '>' +
+            '<span></span>' +
+          '</label>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function saveClaudeAutoRefresh(v) {
+    var interval = usagesRefreshInput ? parseInt(usagesRefreshInput.value, 10) : 120;
+    if (!Number.isFinite(interval) || interval < 15) interval = 15;
+    api('POST', '/api/usages/settings', {
+      refresh_interval_sec: interval,
+      percent_display: usagePercentDisplay,
+      claude_auto_refresh: v
+    })
+      .then(function (resp) {
+        if (resp && resp.settings) renderUsageSettings(resp.settings);
+        return loadUsages();
+      })
+      .catch(function (err) {
+        alert('Failed to ' + (v ? 'enable' : 'disable') + ' Claude auto-refresh: ' + (err && err.message ? err.message : err));
+        renderClaudeAutoRefreshRow(); // restore toggle to actual state
+      });
   }
 
   // ── Switcher ────────────────────────────────────────────────────────
@@ -6784,6 +6837,13 @@
   document.addEventListener('change', function (e) {
     if (e.target && e.target.id === 'switcher-enabled-toggle') {
       switcherToggleEnabled(e.target.checked);
+    }
+  });
+
+  // Claude auto-refresh toggle (settings panel — delegated, dynamic element).
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'claude-auto-refresh-toggle') {
+      saveClaudeAutoRefresh(e.target.checked);
     }
   });
 

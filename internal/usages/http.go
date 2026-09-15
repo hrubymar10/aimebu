@@ -103,6 +103,7 @@ func (r Routes) handleSettings(w http.ResponseWriter, req *http.Request) {
 		RefreshIntervalSec int       `json:"refresh_interval_sec"`
 		PercentDisplay     string    `json:"percent_display"`
 		ProviderOrder      *[]string `json:"provider_order"`
+		ClaudeAutoRefresh  *bool     `json:"claude_auto_refresh"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		writeUsageStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -113,7 +114,7 @@ func (r Routes) handleSettings(w http.ResponseWriter, req *http.Request) {
 	if body.ProviderOrder != nil {
 		providerOrder = *body.ProviderOrder
 	}
-	info, err := r.Manager.UpdateSettings(req.Context(), body.RefreshIntervalSec, body.PercentDisplay, providerOrder, updateProviderOrder)
+	info, err := r.Manager.UpdateSettings(req.Context(), body.RefreshIntervalSec, body.PercentDisplay, providerOrder, updateProviderOrder, body.ClaudeAutoRefresh)
 	writeUsageJSON(w, map[string]any{"settings": info}, err)
 }
 

@@ -2473,6 +2473,10 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 			enabled, _ := swMgr.Enabled()
 			return enabled
 		})
+		// Auto-refresh near-expiry inactive claude profiles. The copy-back of
+		// rotated tokens holds switcher/.lock so a concurrent switch cannot be
+		// clobbered (§14.2).
+		usageManager.EnableClaudeAutoRefresh(swMgr.WithLock)
 	}
 	usageManager.Start(cleanupCtx, &s.bgWG)
 	setupHandlers(mux, s, build, usageManager)

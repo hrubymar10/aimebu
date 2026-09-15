@@ -146,7 +146,10 @@ Switch when you don't have a session running against the outgoing account.
 ```
 
 Credential files are `0600`, directories `0700`. This tree is **not**
-server-owned — the CLI writes it with the server stopped.
+server-owned — the CLI writes it with the server stopped. `.lock` also
+serializes the server-side writers that touch a live or stored credential path:
+the usages poller's Codex token rotation and, when enabled, the Claude
+auto-refresh copy-back (see [usages.md](usages.md#claude-auto-refresh)).
 
 **Neither `aimebu prune` nor `aimebu prune -a` ever deletes anything here.**
 These are your logins, not conversation state, and no prune flag advertises
@@ -188,14 +191,18 @@ implicit row. On a cold cache, those rows exist immediately and show
 hides switching controls only — it does not change the usage data shape.
 
 An icon right of the profile name shows token-expiry state: a checkmark while
-the token has more than 3 hours left, an hourglass at 3 hours or less, and a
-red hourglass once it has expired. The icon and the profile name both carry the
-same hover tooltip with the absolute expiry timestamp and a relative "in 3h
-20m" / "expired 5h 2m ago" reading. The 3-hour threshold is short enough that a
-checkmark means the token is genuinely healthy — claude tokens live only about
-8 to 12 hours, so a wider window would leave every claude profile showing an
-hourglass permanently — and long enough to switch profiles by hand before one
-lapses.
+the token has more than the near-expiry threshold left, an hourglass at or under
+it, and a red hourglass once it has expired. The icon and the profile name both
+carry the same hover tooltip with the absolute expiry timestamp and a relative
+"in 3h 20m" / "expired 5h 2m ago" reading. The default threshold is 3 hours,
+short enough that a checkmark means the token is genuinely healthy — claude
+tokens live only about 8 to 12 hours, so a wider window would leave every claude
+profile showing an hourglass permanently — and long enough to switch profiles by
+hand before one lapses. When Claude auto-refresh (see
+[usages.md](usages.md#claude-auto-refresh)) is enabled the threshold tightens to
+1 hour: the container refresh gives the long heads-up automatically, so only a
+genuinely imminent lapse still warrants the hourglass. With it disabled the
+3-hour heads-up stays, so manual users keep the wider warning.
 
 For codex the expiry shown is the access token's. A codex `id_token` is a
 short-lived identity assertion minted at login and never refreshed, so it is

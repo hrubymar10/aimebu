@@ -96,6 +96,56 @@ fresh cache entry so CLI token rotation is picked up on the next poller tick;
 an in-flight rotation leaves the previous cache entry intact until a fetch
 owned by the new credentials completes.
 
+## Claude Auto-Refresh
+
+Claude OAuth access tokens live only about 8–12 hours. On macOS the live
+harness refreshes them lazily through the Keychain, but a stored **inactive**
+switcher profile has no process keeping it fresh, so its token silently lapses
+and switching to it forces a browser re-login.
+
+Claude auto-refresh keeps near-expiry inactive `claude` switcher profiles ready
+to switch to. When enabled, the background poller renews any inactive profile
+whose access token is already expired or within 10 minutes of expiry by running
+the real `claude` binary inside a throwaway `harness-docker` container pointed
+at a copy of that profile's credentials. Inside the container there is no
+Keychain, so claude performs its file-based refresh-on-use and writes rotated
+tokens straight back, which aimebu then copies into the stored profile.
+
+Design notes:
+
+- **Inactive-only.** The active profile is never touched — the live harness
+  owns it. Codex profiles are unaffected; this is claude-only.
+- **Temp-dir isolation.** claude pollutes its config dir with `.claude.json`,
+  `sessions/`, `projects/`, and `policy-limits.json`. aimebu copies only
+  `.credentials.json` into a temp dir, runs the container there, and copies only
+  the rotated `.credentials.json` back — the stored profile dir stays clean.
+- **Success is the rotated file, not the exit code.** A refresh counts only when
+  the new `.credentials.json` parses and its `expiresAt` advanced beyond the old
+  value.
+- **Copy-back safety.** The slow container run happens outside the switcher
+  lock. The final copy-back holds `switcher/.lock` and re-checks, compare-and-swap
+  style, that the profile still exists, is still inactive, and its stored
+  credentials are byte-identical to what the refresh started from. A switch or
+  removal that landed mid-refresh aborts the copy-back rather than clobbering it.
+- **Rate limiting.** A profile is never refreshed twice concurrently, and after
+  a failed attempt it is not retried for 5 minutes.
+
+**Gate.** The feature runs only when all of these hold: the
+`claude_auto_refresh` setting is enabled (default **off**), the
+`harness-docker-ctrl` binary is on `PATH`, and the docker daemon is reachable.
+When `harness-docker-ctrl` is absent the feature is reported unavailable and the
+Settings toggle is disabled.
+
+**Cost.** Enabling it incurs a small per-account cost — occasional `claude -p`
+calls against each near-expiry inactive profile — so it is opt-in.
+
+Configure it in **Settings → Usages → Claude auto-refresh**. The stored flag is
+`claude_auto_refresh` in `~/.aimebu/usages/config.json`; the GET/POST
+`/api/usages/settings` responses expose `claude_auto_refresh` and the runtime
+`claude_auto_refresh_available` availability flag. `POST /api/usages/settings`
+accepts an optional `claude_auto_refresh` boolean alongside
+`refresh_interval_sec` and `percent_display`.
+
 The right-sidebar force-refresh button calls `POST /api/usages/refresh`. It
 bypasses the normal interval but has a separate server-side 15 second
 cooldown. During cooldown the endpoint returns HTTP `429` with:

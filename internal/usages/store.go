@@ -31,10 +31,14 @@ type ProviderConfig struct {
 }
 
 type Config struct {
-	RefreshIntervalSec int                       `json:"refresh_interval_sec"`
-	PercentDisplay     string                    `json:"percent_display"`
-	ProviderOrder      []string                  `json:"provider_order,omitempty"`
-	Providers          map[string]ProviderConfig `json:"providers"`
+	RefreshIntervalSec int      `json:"refresh_interval_sec"`
+	PercentDisplay     string   `json:"percent_display"`
+	ProviderOrder      []string `json:"provider_order,omitempty"`
+	// ClaudeAutoRefresh enables auto-refreshing near-expiry inactive claude
+	// switcher profiles via an ephemeral harness-docker container. Default off:
+	// enabling it incurs a small per-account cost (periodic `claude -p` calls).
+	ClaudeAutoRefresh bool                      `json:"claude_auto_refresh,omitempty"`
+	Providers         map[string]ProviderConfig `json:"providers"`
 }
 
 type CacheEntry struct {
@@ -191,6 +195,7 @@ func (s *Store) RefreshInterval(cfg Config) (time.Duration, Settings) {
 		RefreshIntervalSec: cfg.RefreshIntervalSec,
 		MinRefreshSec:      MinRefreshSec,
 		PercentDisplay:     cfg.PercentDisplay,
+		ClaudeAutoRefresh:  cfg.ClaudeAutoRefresh,
 	}
 	if raw := os.Getenv(EnvRefreshInterval); raw != "" {
 		if sec, err := strconv.Atoi(raw); err == nil {
