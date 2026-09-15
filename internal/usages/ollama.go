@@ -389,7 +389,7 @@ func fetchOllamaTags(ctx context.Context, apiKey string) ([]byte, *ErrorDetail, 
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return nil, jsonShapeDetail("tags", data), StatusAuthMissing, errors.New("Ollama Cloud rejected the API key. Create a fresh key or select cookie mode.")
 	default:
-		return nil, jsonShapeDetail("tags", data), StatusFetchError, fmt.Errorf("Ollama Cloud API endpoint returned HTTP %d.", resp.StatusCode)
+		return nil, httpStatusDetail("tags", data, resp.StatusCode), StatusFetchError, fmt.Errorf("Ollama Cloud API endpoint returned HTTP %d.", resp.StatusCode)
 	}
 	var raw struct {
 		Models []json.RawMessage `json:"models"`

@@ -1115,7 +1115,13 @@ func hasTransientHTTPStatus(detail *ErrorDetail) bool {
 			continue
 		}
 		code, err := strconv.Atoi(codeText)
-		if err == nil && code >= 500 && code <= 599 {
+		if err != nil {
+			continue
+		}
+		// 429 (Too Many Requests) is a transient rate-limit, not a data or
+		// auth problem: keep the last good numbers as stale rather than
+		// blanking them, exactly like a 5xx or a transient transport error.
+		if code == 429 || (code >= 500 && code <= 599) {
 			return true
 		}
 	}

@@ -374,6 +374,34 @@ func TestManagerTransientServerErrorKeepsPreviousSnapshotStale(t *testing.T) {
 	}
 }
 
+func TestManagerRateLimitKeepsPreviousSnapshotStale(t *testing.T) {
+	old := time.Unix(100, 0)
+	clock := &fakeClock{now: old.Add(time.Hour)}
+	m := NewManager(NewStoreAt(t.TempDir()), NewRegistry(&fakeProvider{
+		key: ProviderCodex,
+		err: &SnapshotError{
+			Snapshot: Snapshot{
+				Status:      StatusFetchError,
+				Error:       "Codex usage endpoint returned HTTP 429.",
+				ErrorDetail: httpStatusDetail("usage", []byte(`{"error":"rate limited"}`), 429),
+			},
+			Err: errors.New("Codex usage endpoint returned HTTP 429."),
+		},
+	}))
+	m.SetClock(clock)
+
+	entry := m.fetchOne(context.Background(), ProviderCodex, CacheEntry{
+		Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, Plan: "old", LastRefreshAt: &old}},
+	})
+
+	if entry.Profile.Status != StatusStaleCache || !entry.Profile.Stale || entry.Profile.Plan != "old" {
+		t.Fatalf("a 429 blanked the previous snapshot instead of preserving it stale: %+v", entry.Profile)
+	}
+	if entry.Profile.LastRefreshAt == nil || !entry.Profile.LastRefreshAt.Equal(old) {
+		t.Fatalf("last refresh = %+v, want %v", entry.Profile.LastRefreshAt, old)
+	}
+}
+
 func TestManagerStaleCacheSurvivesRepeatedFailures(t *testing.T) {
 	store := NewStoreAt(t.TempDir())
 	cfg := DefaultConfig()

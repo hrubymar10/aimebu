@@ -311,7 +311,7 @@ func fetchClaudeUsageOnce(ctx context.Context, creds claudeCredentials) (claudeU
 		}
 		return claudeUsageRaw{}, jsonShapeDetail("usage", data), StatusScopeMissing, false, fmt.Errorf("Claude usage endpoint rejected the OAuth scope with HTTP %d.", resp.StatusCode)
 	default:
-		return claudeUsageRaw{}, jsonShapeDetail("usage", data), StatusFetchError, false, fmt.Errorf("Claude usage endpoint returned HTTP %d.", resp.StatusCode)
+		return claudeUsageRaw{}, httpStatusDetail("usage", data, resp.StatusCode), StatusFetchError, false, fmt.Errorf("Claude usage endpoint returned HTTP %d.", resp.StatusCode)
 	}
 	var raw claudeUsageRaw
 	if err := json.Unmarshal(data, &raw); err != nil {

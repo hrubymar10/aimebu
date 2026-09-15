@@ -454,7 +454,7 @@ func fetchCodexUsage(ctx context.Context, creds codexCredentials) (codexUsageRaw
 	case resp.StatusCode == http.StatusForbidden:
 		return codexUsageRaw{}, jsonShapeDetail("usage", data), StatusScopeMissing, fmt.Errorf("Codex usage endpoint rejected the OAuth scope with HTTP %d.", resp.StatusCode)
 	default:
-		return codexUsageRaw{}, jsonShapeDetail("usage", data), StatusFetchError, fmt.Errorf("Codex usage endpoint returned HTTP %d.", resp.StatusCode)
+		return codexUsageRaw{}, httpStatusDetail("usage", data, resp.StatusCode), StatusFetchError, fmt.Errorf("Codex usage endpoint returned HTTP %d.", resp.StatusCode)
 	}
 	var raw codexUsageRaw
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -681,6 +681,24 @@ func detailOrNil(detail *ErrorDetail) *ErrorDetail {
 	if detail == nil || len(detail.Fields) == 0 {
 		return nil
 	}
+	return detail
+}
+
+// httpStatusDetail augments a body-shape detail with the response status code
+// so the manager's transient-error classifier (hasTransientHTTPStatus) can see
+// it. Without this the numeric status is lost — jsonShapeDetail only records
+// JSON value types — so a transient 429/5xx could not be distinguished from a
+// permanent failure and would wrongly blank the last good snapshot. The status
+// is recorded as "http_<code>" under the "<prefix>.http_status" key.
+func httpStatusDetail(prefix string, data []byte, statusCode int) *ErrorDetail {
+	detail := jsonShapeDetail(prefix, data)
+	if detail == nil {
+		detail = &ErrorDetail{}
+	}
+	if detail.Fields == nil {
+		detail.Fields = map[string]string{}
+	}
+	detail.Fields[prefix+".http_status"] = fmt.Sprintf("http_%d", statusCode)
 	return detail
 }
 

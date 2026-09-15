@@ -279,7 +279,7 @@ func fetchCopilotUsage(ctx context.Context, token, apiBase string) (copilotUsage
 	case http.StatusForbidden:
 		return copilotUsageRaw{}, jsonShapeDetail("usage", data), StatusScopeMissing, errors.New("GitHub Copilot token lacks access to usage data.")
 	default:
-		return copilotUsageRaw{}, jsonShapeDetail("usage", data), StatusFetchError, fmt.Errorf("GitHub Copilot usage endpoint returned HTTP %d.", resp.StatusCode)
+		return copilotUsageRaw{}, httpStatusDetail("usage", data, resp.StatusCode), StatusFetchError, fmt.Errorf("GitHub Copilot usage endpoint returned HTTP %d.", resp.StatusCode)
 	}
 	var raw copilotUsageRaw
 	if err := json.Unmarshal(data, &raw); err != nil {

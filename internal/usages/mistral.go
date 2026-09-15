@@ -216,7 +216,7 @@ func fetchMistralVibeUsage(ctx context.Context, cookies mistralCookies) (mistral
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return mistralVibeUsageRaw{}, jsonShapeDetail("vibe_usage", data), StatusAuthMissing, errors.New("Mistral cookie was rejected.")
 	default:
-		return mistralVibeUsageRaw{}, jsonShapeDetail("vibe_usage", data), StatusFetchError, fmt.Errorf("Mistral Vibe usage endpoint returned HTTP %d.", resp.StatusCode)
+		return mistralVibeUsageRaw{}, httpStatusDetail("vibe_usage", data, resp.StatusCode), StatusFetchError, fmt.Errorf("Mistral Vibe usage endpoint returned HTTP %d.", resp.StatusCode)
 	}
 	raw, detail, err := decodeMistralVibeUsage(data)
 	if err != nil {
@@ -352,7 +352,7 @@ func fetchMistralAPISpend(ctx context.Context, cookies mistralCookies) (mistralB
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return mistralBillingResponse{}, jsonShapeDetail("usage", data), StatusAuthMissing, errors.New("Mistral API spend cookie was rejected.")
 	default:
-		return mistralBillingResponse{}, jsonShapeDetail("usage", data), StatusFetchError, fmt.Errorf("Mistral API spend endpoint returned HTTP %d.", resp.StatusCode)
+		return mistralBillingResponse{}, httpStatusDetail("usage", data, resp.StatusCode), StatusFetchError, fmt.Errorf("Mistral API spend endpoint returned HTTP %d.", resp.StatusCode)
 	}
 	var raw mistralBillingResponse
 	if err := json.Unmarshal(data, &raw); err != nil {
