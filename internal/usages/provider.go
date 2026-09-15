@@ -137,7 +137,7 @@ type Provider struct {
 // Profile carries both usage data (Status, Plan, Windows, ...) and switcher
 // facts (ProfileName, Active, HasCredentials, ExpiresAt, Email). There is no
 // separate Snapshot or ProfileEntry — every fact has exactly one home.
-// ProfileName is never empty ("default" when there is no switcher profile).
+// ProfileName is never empty ("local" when there is no switcher profile).
 type Profile struct {
 	ProfileName    string     `json:"profile_name"`
 	Active         bool       `json:"active,omitempty"`

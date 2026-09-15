@@ -2923,13 +2923,11 @@
     '</div>';
     rightUsagesPanel.innerHTML = empty + '<div class="usages-sidebar-list">' + sidebarRows.map(function (row) {
       var profiles = row.profiles || [];
-      if (!profiles || profiles.length === 0) {
-        return renderUsageTile(row, { provider_name: row.provider_name, status: 'not_configured' });
-      }
-      if (profiles.length === 1) {
-        return renderUsageTile(row, profiles[0]);
-      }
-      return renderMultiProfileTile(row, profiles);
+      // The backend guarantees at least one profile. Keep a defensive local
+      // placeholder so a malformed or rolling-upgrade response still uses the
+      // same renderer instead of reviving the old single-account mode.
+      if (!profiles.length) profiles = [{ profile_name: 'local', active: true, has_credentials: false }];
+      return renderUsageProviderTile(row, profiles);
     }).join('') + '</div>';
     refreshSwitcherPanel();
   }
@@ -2982,20 +2980,18 @@
   var EXPIRY_ICON_SOON = '<svg fill="currentColor" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.827 6.956c2.265.662 5.109-.295 8.172-1.867l.001.079c0 1.3-1.642 2.897-3.248 4.288a3.818 3.818 0 0 0-.752.898v6.726c1.321.372 2.815 2.089 3.827 3.655-.027.088-.043.179-.077.265h-8.5c-.034-.087-.057-.17-.082-.254 1.01-1.57 2.509-3.293 3.833-3.666v-6.729a3.819 3.819 0 0 0-.73-.88 17.898 17.898 0 0 1-2.443-2.515zM17.922 2H20v1h-1.516A5.594 5.594 0 0 1 19 5.319c0 2.15-1.479 4.294-3.545 6.092a1.544 1.544 0 0 0-.62 1.089 1.544 1.544 0 0 0 .62 1.089C17.521 15.387 19 17.53 19 19.68a5.595 5.595 0 0 1-.516 2.32H20v1H5v-1h1.5a5.666 5.666 0 0 1-.5-2.319c0-2.15 1.479-4.294 3.545-6.092a1.544 1.544 0 0 0 .62-1.089 1.544 1.544 0 0 0-.62-1.089C7.479 9.613 6 7.47 6 5.32A5.666 5.666 0 0 1 6.5 3H5V2zm-.545 1H7.624A4.68 4.68 0 0 0 7 5.32c0 1.645 1.137 3.54 3.2 5.336a2.435 2.435 0 0 1 .966 1.844 2.432 2.432 0 0 1-.965 1.843c-2.064 1.797-3.2 3.692-3.2 5.338A4.68 4.68 0 0 0 7.623 22h9.753A4.646 4.646 0 0 0 18 19.68c0-1.645-1.137-3.54-3.2-5.336a2.435 2.435 0 0 1-.966-1.844 2.432 2.432 0 0 1 .965-1.843c2.064-1.797 3.2-3.692 3.2-5.338A4.646 4.646 0 0 0 17.378 3z"/><path fill="none" d="M0 0h24v24H0z"/></svg>';
   var EXPIRY_ICON_EXPIRED = '<svg fill="currentColor" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.085 2H5v1h1.5A5.666 5.666 0 0 0 6 5.319c0 2.15 1.479 4.294 3.545 6.092a1.544 1.544 0 0 1 .62 1.089 1.544 1.544 0 0 1-.62 1.089C7.479 15.387 6 17.53 6 19.68A5.666 5.666 0 0 0 6.5 22H5v1h15v-1h-1.516A5.595 5.595 0 0 0 19 19.681c0-2.15-1.479-4.294-3.545-6.092a1.544 1.544 0 0 1-.62-1.089 1.544 1.544 0 0 1 .62-1.089C17.521 9.613 19 7.47 19 5.32A5.594 5.594 0 0 0 18.484 3H20V2zm10.292 1A4.646 4.646 0 0 1 18 5.32c0 1.645-1.137 3.54-3.201 5.337a2.432 2.432 0 0 0-.965 1.843 2.435 2.435 0 0 0 .965 1.844c2.064 1.796 3.2 3.691 3.2 5.337A4.646 4.646 0 0 1 17.378 22H7.624A4.68 4.68 0 0 1 7 19.68c0-1.645 1.137-3.54 3.201-5.337a2.432 2.432 0 0 0-.965-1.843 2.435 2.435 0 0 0-.965-1.844C8.137 8.86 7 6.965 7 5.32A4.68 4.68 0 0 1 7.623 3zM8.102 18.925a3.246 3.246 0 0 1 1.35-1.9l2.593-1.722a.823.823 0 0 1 .91 0l2.594 1.722a3.248 3.248 0 0 1 1.35 1.901 3.051 3.051 0 0 1 .1.755A3.645 3.645 0 0 1 16.75 21h-8.5A3.713 3.713 0 0 1 8 19.68a3.05 3.05 0 0 1 .102-.755z"/><path fill="none" d="M0 0h24v24H0z"/></svg>';
 
-  // Renders each switcher profile as a block inside the provider tile, with its
-  // own usage windows — so every account's quota is visible at once, not just
-  // the active one. Returns '' when the switcher is off or the tool has no
-  // profiles, in which case the tile falls back to its single-account view.
-  function renderSwitcherTileProfiles(providerKey) {
+  // Renders every usage profile through one row shape. Switcher enablement
+  // controls only the mutation button; it never changes the usage data view.
+  function renderUsageProfiles(providerKey) {
     var provider = (usageProviders || []).find(function (p) { return p.provider_name === providerKey; });
-    if (!provider || !usageSwitcherEnabled) return '';
+    if (!provider) return '';
     var profiles = provider.profiles || [];
     profiles.sort(function (a, b) { return (b.active ? 1 : 0) - (a.active ? 1 : 0); });
     if (!profiles.length) return '';
     var blocked = !!switcherInFlight[providerKey] || (!provider.switch_eligible && provider.switch_ineligible_reason);
     return profiles.map(function (p) {
       var activeTag = p.active ? '<span class="switcher-tile-active">active</span>' : '';
-      var switchBtn = (!p.active && !blocked)
+      var switchBtn = (usageSwitcherEnabled && switcherToolForProvider(providerKey) && !p.active && !blocked)
         ? '<button class="switcher-switch-pill" type="button"' +
             ' data-tool="' + esc(switcherToolForProvider(providerKey)) + '" data-profile="' + esc(p.profile_name) + '"' +
             (!p.has_credentials ? ' data-empty="1"' : '') +
@@ -3064,7 +3060,7 @@
     }).join('');
   }
 
-  function renderMultiProfileTile(row, profiles) {
+  function renderUsageProviderTile(row, profiles) {
     var firstSnap = profiles[0] || {};
     var label = row.label || firstSnap.provider_name || firstSnap.provider;
 
@@ -3083,7 +3079,7 @@
       ? 'Updated ' + formatRelativeAge(oldest) + ' ago'
       : statusLabel((profiles[0] || {}).status || 'Not configured');
 
-    var profileBlocks = renderSwitcherTileProfiles(row.provider_name, false);
+    var profileBlocks = renderUsageProfiles(row.provider_name);
 
     return '<div class="usages-provider-tile" data-provider="' + esc(row.provider_name) + '">' +
       '<div class="usages-provider-heading">' +
@@ -3093,36 +3089,8 @@
         // the first profile's plan into the header states it for the whole card,
         // which is wrong the moment two profiles are on different plans — the
         // same mistake as a card-level "Updated X ago" over per-profile numbers.
-        (profileBlocks ? '' : '<span class="usages-plan-badge">' + esc(firstSnap.plan || '-') + '</span>') +
       '</div>' +
       profileBlocks +
-      (profileBlocks ? '' : renderCreditsRow(firstSnap.credits) + usageErrorLine(firstSnap, false, row.provider_name || firstSnap.provider_name)) +
-    '</div>';
-  }
-
-  function renderUsageTile(row, snap) {
-    var available = row.available !== false;
-    var enabled = !!row.enabled;
-    if (!available || !enabled) {
-      var state = available ? 'Not enabled' : 'Unavailable';
-      var detail = available ? 'Configure in Settings → Usages' : 'Available in upcoming release';
-      return '<button class="usages-provider-tile usages-provider-tile-inactive usages-settings-shortcut" type="button" data-provider="' + esc(row.provider_name) + '">' +
-        '<span class="' + esc(usageProviderIconClass(row.provider_name)) + '">' + usageProviderIcon(row.provider_name) + '</span>' +
-        '<span><strong>' + esc(row.label || row.provider_name) + '</strong><em>' + esc(state + ' — ' + detail) + '</em></span>' +
-      '</button>';
-    }
-    var label = row.label || providerLabel(snap.provider_name || row.provider_name);
-    var updated = snap.last_refresh_at ? 'Updated ' + formatRelativeAge(snap.last_refresh_at) + ' ago' : statusLabel(snap.status || 'Not configured');
-    var plan = snap.plan || statusLabel(snap.status);
-    
-    return '<div class="usages-provider-tile" data-provider="' + esc(snap.provider_name || row.provider_name) + '">' +
-      '<div class="usages-provider-heading">' +
-        '<div class="usages-provider-title"><span class="' + esc(usageProviderIconClass(snap.provider_name || row.provider_name)) + '">' + usageProviderIcon(snap.provider_name || row.provider_name) + '</span><div><div class="usages-provider-name">' + esc(label) + '</div><div class="usages-provider-updated">' + esc(updated) + '</div></div></div>' +
-        '<span class="usages-plan-badge">' + esc(plan || '-') + '</span>' +
-      '</div>' +
-      usageStaleLine(snap) +
-      (snap.windows ? (snap.windows.map(function (w) { return renderUsageWindowRow(w, snap.last_refresh_at); }).join('') || '<div class="usages-empty usages-empty-compact">No window data yet.</div>') : '<div class="usages-empty usages-empty-compact">No window data yet.</div>') +
-      renderCreditsRow(snap.credits) + usageErrorLine(snap, false, snap.provider_name || row.provider_name) +
     '</div>';
   }
 

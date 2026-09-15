@@ -4,8 +4,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
@@ -29,8 +32,8 @@ func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
 	if !strings.Contains(body, `"available":true`) {
 		t.Fatalf("GET body missing available provider: %s", body)
 	}
-	if !strings.Contains(body, `"profiles":[]`) {
-		t.Fatalf("GET body missing empty profiles: %s", body)
+	if !strings.Contains(body, `"profiles":[{"profile_name":"local","active":true`) {
+		t.Fatalf("GET body missing implicit local profile: %s", body)
 	}
 	if !strings.Contains(body, `"switcher_enabled":false`) {
 		t.Fatalf("GET body missing switcher_enabled: %s", body)
@@ -75,6 +78,53 @@ func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
 	mistral := strings.Index(got, `"provider_name":"mistral"`)
 	if !(ollama >= 0 && codex > ollama && claude > codex && copilot > claude && mistral > copilot) {
 		t.Fatalf("providers not in configured order: %s", got)
+	}
+}
+
+func TestHTTPUsageShapeDoesNotDependOnSwitcherEnabled(t *testing.T) {
+	m := NewManager(NewStoreAt(t.TempDir()), EmptyRegistry())
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool == "codex" {
+			return []ProfileInfo{
+				{Tool: "codex", Name: "main", Active: true, HasCredentials: true},
+				{Tool: "codex", Name: "backup", HasCredentials: true},
+			}
+		}
+		return []ProfileInfo{}
+	})
+	enabled := false
+	m.SetSwitcherSettingsProvider(func() bool { return enabled })
+	mux := http.NewServeMux()
+	Routes{Manager: m}.Mount(mux)
+
+	read := func() UsagesResponse {
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/usages", nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("GET status = %d body=%s", recorder.Code, recorder.Body.String())
+		}
+		var response UsagesResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+
+	off := read()
+	enabled = true
+	on := read()
+	if off.SwitcherEnabled || !on.SwitcherEnabled {
+		t.Fatalf("switcher flags off=%v on=%v", off.SwitcherEnabled, on.SwitcherEnabled)
+	}
+	off.SwitcherEnabled = false
+	on.SwitcherEnabled = false
+	if !reflect.DeepEqual(off, on) {
+		t.Fatalf("usage response changed with display flag:\noff=%+v\non=%+v", off, on)
+	}
+	for _, provider := range on.Providers {
+		if len(provider.Profiles) == 0 {
+			t.Fatalf("provider %s has no profiles", provider.ProviderName)
+		}
 	}
 }
 

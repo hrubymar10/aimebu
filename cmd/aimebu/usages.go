@@ -64,7 +64,7 @@ func usagesCmd(args []string) {
 func printUsagesPlain(resp usages.UsagesResponse) {
 	hasData := false
 	for _, prov := range resp.Providers {
-		if len(prov.Profiles) > 0 {
+		if prov.Enabled && len(prov.Profiles) > 0 {
 			hasData = true
 			break
 		}
@@ -76,6 +76,9 @@ func printUsagesPlain(resp usages.UsagesResponse) {
 	const rowFormat = "%-14s %-14s %-20s %-32s %-34s %-16s\n"
 	fmt.Printf(rowFormat, "PROVIDER", "PROFILE", "STATUS", "PLAN", "WINDOWS", "CREDITS")
 	for _, prov := range resp.Providers {
+		if !prov.Enabled {
+			continue
+		}
 		for _, s := range prov.Profiles {
 			windows := make([]string, 0, len(s.Windows))
 			for _, w := range s.Windows {
@@ -106,7 +109,7 @@ func printUsagesPlain(resp usages.UsagesResponse) {
 			}
 			profile := s.ProfileName
 			if profile == "" {
-				profile = "default"
+				profile = "local"
 			}
 			fmt.Printf(rowFormat,
 				plainCell(prov.ProviderName, 14),

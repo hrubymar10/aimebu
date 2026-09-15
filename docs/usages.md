@@ -46,9 +46,10 @@ the web UI:
 
 `providers` is an **ordered array**, not a map — `order_number` is the display
 order, so nothing has to be zipped against a separate ordering setting. Each
-provider carries a `profiles` array with **one entry per switcher profile**, or
-a single entry named `"default"` when the provider has no switcher concept.
-A profile name is never empty.
+provider carries a non-empty `profiles` array with **one entry per switcher
+profile**, or a single active entry named `"local"` when no switcher profiles
+exist. A profile name is never empty. Switcher initialization failure uses the
+same `local` fallback, so it cannot change the usages response shape.
 
 A `Profile` carries **both** the usage data and the switcher facts for that
 account: `profile_name`, `active`, `has_credentials`, `expires_at`, `email`,
@@ -65,23 +66,26 @@ The stored refresh interval defaults to `120` seconds and has a minimum of
 server and CLI.
 
 `GET /api/usages` is a **pure cache read** — it never triggers a network
-fetch. All provider and per-profile fetching is owned by the background
-poller (5-second tick, fetches when the interval elapses) and the
-force-refresh button. On a cold cache (server restart), the first poller tick
-(~5 seconds) warms the cache; until then the response carries empty arrays.
+fetch. All per-profile fetching is owned by the background poller (5-second
+tick, fetches when the interval elapses) and the force-refresh button. On a
+cold cache (server restart), the response already carries resolved profile
+rows with no usage snapshot; the first poller tick (~5 seconds) warms them.
 
-**Per-profile refresh:** inactive switcher-profile snapshots refresh on a
-floor of **1 hour** (`max(provider interval, 1h)`), so they never poll more
-often than their provider. The **active** profile is exempt — it's derived
-from the provider fetch and refreshes on the provider's interval for free.
-After a switch, `InvalidateProfileSnapshot` drops the old entry, so the next
-poller tick (~5 seconds) refetches immediately regardless of the interval —
-the `!ok` short-circuit means absent entries always fetch now. If that
-post-switch fetch fails, aimebu still publishes a named active-profile row
-with the failure status (`timeout`, `fetch_error`, `auth_missing`, and so on)
-instead of leaving the provider's `profiles` array empty. That distinguishes
-"this configured profile is refreshing or errored" from a genuinely
-unconfigured provider in the web sidebar.
+**Per-profile refresh:** every active and inactive profile refreshes on the
+configured provider interval. The active profile uses the provider's normal
+live-credential fetch so Codex token rotation is persisted safely; inactive
+stored profiles use a read-only fetch that never rotates their credentials.
+Email-only lookups retain a separate one-hour floor. After a switch,
+`InvalidateProfileSnapshot` drops the affected named entries, so the next
+poller tick (~5 seconds) refetches immediately regardless of the interval.
+Until it lands, the API keeps the active named profile row and the web UI shows
+`Refreshing…`; a failed fetch fills that same row with its failure status
+instead of changing the response shape.
+
+The cache has only profile-named entries. Older empty/`"default"` entries are
+migrated to `local` when no switcher profiles exist. When named profiles do
+exist, legacy default and orphan entries are discarded because their account
+ownership cannot be proven; valid named history is retained and deduplicated.
 
 Claude and Codex fetches are bound to the active profile name and a fingerprint
 of the credentials that started the request. If either changes while the
@@ -99,6 +103,11 @@ cooldown. During cooldown the endpoint returns HTTP `429` with:
 ```json
 {"retry_after_sec": 15}
 ```
+
+The web sidebar uses the same provider-card and profile-row renderer for one
+or many profiles. `switcher_enabled` controls only whether Switch buttons and
+other credential-mutation affordances appear; it does not select another data
+path or response representation.
 
 ## Transient-Failure Handling
 

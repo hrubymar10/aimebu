@@ -63,8 +63,8 @@ func TestActiveCacheEntryPreventsStarvation(t *testing.T) {
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if _, err := m.refreshProfiles(context.Background()); err != nil {
-		t.Fatalf("refreshProfiles: %v", err)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("refresh: %v", err)
 	}
 
 	resp, err := m.Snapshot(context.Background(), "")
@@ -154,8 +154,8 @@ func TestActiveCacheEntryPreventsStarvation_Inverse(t *testing.T) {
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if _, err := m.refreshProfiles(context.Background()); err != nil {
-		t.Fatalf("refreshProfiles: %v", err)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("refresh: %v", err)
 	}
 
 	resp, err := m.Snapshot(context.Background(), "")

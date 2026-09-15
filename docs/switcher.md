@@ -171,15 +171,21 @@ render as "needs login" rather than as zero usage, and a profile that has
 credentials but no snapshot yet — the two seconds after a switch, or a cold
 cache — renders as "Refreshing…" instead, since those mean different things.
 
-Each profile row carries its **own** "Updated X ago". The active profile
-refreshes at the provider interval; the others sit behind a one-hour floor, so
-two rows on one card can legitimately differ by the best part of an hour. A
-single card-level timestamp would describe one of them while sitting above all
-of them, which is why there isn't one.
+The card header carries one **"Updated X ago"** value based on the oldest
+profile timestamp, so it never claims the whole card is fresher than a row
+beneath it. All profiles refresh at the provider interval, though their
+requests may finish a few seconds apart.
 
 Profile usage arrives with everything else on `GET /api/usages`; there is no
 separate switcher fetch. The panel never triggers a network call of its own —
 the background poller owns all fetching.
+
+The usages API and sidebar always use profile rows. With no configured
+switcher profiles (or when the switcher cannot initialize), each provider has
+one active implicit profile named `local`; configured profiles replace that
+implicit row. On a cold cache, those rows exist immediately and show
+`Refreshing…` until the background poller fills them. Turning the switcher off
+hides switching controls only — it does not change the usage data shape.
 
 An icon right of the profile name shows token-expiry state: a checkmark while
 the token has more than 3 hours left, an hourglass at 3 hours or less, and a

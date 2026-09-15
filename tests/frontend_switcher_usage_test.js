@@ -25,13 +25,30 @@ function extractFunction(name) {
 const context = {
   console,
   usageProviders: [],
+  usageSwitcherEnabled: false,
+  switcherInFlight: {},
+  EXPIRY_ICON_OK: '',
+  EXPIRY_ICON_SOON: '',
+  EXPIRY_ICON_EXPIRED: '',
+  esc: String,
+  usageFailureMessage: () => '',
+  renderUsageWindowRow: () => '<div class="window"></div>',
+  renderCreditsRow: () => '',
+  usageErrorLine: () => '',
+  formatRelativeAge: () => 'just now',
+  statusLabel: (status) => String(status || 'unknown'),
+  usageProviderIconClass: () => 'icon',
+  usageProviderIcon: () => '<i></i>',
 };
 
 vm.createContext(context);
 vm.runInContext([
+  extractFunction('switcherToolForProvider'),
   extractFunction('providerForSwitcherTool'),
   extractFunction('usageProviderHasProfile'),
   extractFunction('schedulePostSwitchUsageRefresh'),
+  extractFunction('renderUsageProfiles'),
+  extractFunction('renderUsageProviderTile'),
   extractFunction('windowLabel'),
 ].join('\n'), context);
 
@@ -39,6 +56,28 @@ vm.runInContext([
   assert.strictEqual(context.providerForSwitcherTool('claude'), 'claude-code');
   assert.strictEqual(context.providerForSwitcherTool('codex'), 'codex');
   assert.strictEqual(context.windowLabel('monthly'), 'Monthly');
+
+  context.usageProviders = [{
+    provider_name: 'codex',
+    label: 'Codex',
+    profiles: [{ profile_name: 'local', active: true, has_credentials: true }],
+  }];
+  let rendered = context.renderUsageProviderTile(context.usageProviders[0], context.usageProviders[0].profiles);
+  assert(rendered.includes('switcher-tile-profile'), 'one implicit profile uses the shared profile-row renderer');
+  assert(rendered.includes('>local<'), 'implicit profile identity is visible');
+  assert(!rendered.includes('>SWITCH<'), 'switcher-off hides mutation controls only');
+
+  context.usageProviders[0].profiles = [
+    { profile_name: 'main', active: true, has_credentials: true },
+    { profile_name: 'backup', active: false, has_credentials: true },
+  ];
+  rendered = context.renderUsageProviderTile(context.usageProviders[0], context.usageProviders[0].profiles);
+  assert.strictEqual((rendered.match(/<div class="switcher-tile-profile/g) || []).length, 2, 'two profiles use two shared rows');
+  assert(!rendered.includes('>SWITCH<'), 'profile data remains visible when switching is disabled');
+  context.usageSwitcherEnabled = true;
+  rendered = context.renderUsageProviderTile(context.usageProviders[0], context.usageProviders[0].profiles);
+  assert(rendered.includes('data-profile="backup"'), 'switcher-on adds the inactive-profile control');
+  context.usageSwitcherEnabled = false;
 
   context.usageProviders = [{ provider_name: 'claude-code', profiles: [] }];
   let calls = 0;

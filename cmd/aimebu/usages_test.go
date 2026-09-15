@@ -14,8 +14,9 @@ func TestPrintUsagesPlainMarksStaleSnapshots(t *testing.T) {
 		printUsagesPlain(usages.UsagesResponse{
 			Providers: []usages.Provider{{
 				ProviderName: usages.ProviderCodex,
+				Enabled:      true,
 				Profiles: []usages.Profile{{
-					ProfileName: "default",
+					ProfileName: "local",
 					Snapshot: usages.Snapshot{
 						Status: usages.StatusStaleCache,
 						Plan:   "Team Plus",
@@ -43,8 +44,9 @@ func TestPrintUsagesPlainKeepsLongRowsAligned(t *testing.T) {
 		printUsagesPlain(usages.UsagesResponse{
 			Providers: []usages.Provider{{
 				ProviderName: usages.ProviderGitHubCopilot,
+				Enabled:      true,
 				Profiles: []usages.Profile{{
-					ProfileName: "default",
+					ProfileName: "local",
 					Snapshot: usages.Snapshot{
 						Status: usages.StatusOK,
 						Plan:   "GitHub Copilot Business Premium",
@@ -56,8 +58,9 @@ func TestPrintUsagesPlainKeepsLongRowsAligned(t *testing.T) {
 				}},
 			}, {
 				ProviderName: usages.ProviderOllamaCloud,
+				Enabled:      true,
 				Profiles: []usages.Profile{{
-					ProfileName: "default",
+					ProfileName: "local",
 					Snapshot: usages.Snapshot{
 						Status: usages.StatusStaleCache,
 						Plan:   "Ollama Cloud Max Weekly",

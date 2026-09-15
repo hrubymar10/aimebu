@@ -447,7 +447,7 @@ GET    /api/sounds                     List built-in and user-uploaded notificat
 POST   /api/sounds                     Upload a custom .mp3 or .wav sound (multipart field: file; max 1 MB)
 DELETE /api/sounds/{uuid}              Delete a user-uploaded sound
 GET    /api/sounds/{uuid}              Serve a user-uploaded sound file
-GET    /api/usages                     Ordered providers, each with a profiles array (one entry per switcher profile, or "default") + settings + switcher flag (?provider=<key>); pure cache read, never fetches
+GET    /api/usages                     Ordered providers, each with a non-empty profiles array (named switcher profiles, or one active "local" profile) + settings + display-only switcher flag (?provider=<key>); pure cache read, never fetches
 POST   /api/usages/refresh             Force refresh usage snapshots; 15s cooldown (429 returns {"retry_after_sec": N})
 POST   /api/usages/providers           Enable/disable known providers from Settings
 POST   /api/usages/settings            Update usage refresh interval (minimum 15s), percent display ("left" or "used"), and provider order

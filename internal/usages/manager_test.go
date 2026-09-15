@@ -53,8 +53,8 @@ func TestManagerEmptyRegistry(t *testing.T) {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	for _, p := range resp.Providers {
-		if len(p.Profiles) != 0 {
-			t.Fatalf("expected no profiles for %s", p.ProviderName)
+		if len(p.Profiles) != 1 || p.Profiles[0].ProfileName != implicitProfileName || !p.Profiles[0].Active {
+			t.Fatalf("expected one active local profile for %s: %+v", p.ProviderName, p.Profiles)
 		}
 	}
 }
@@ -184,8 +184,17 @@ func TestManagerDiscardsFetchWhenActiveProfileChanges(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := len(cache.Snapshots[tc.provider]); got != 0 {
-				t.Fatalf("late fetch published %d cache entries after profile switch: %+v", got, cache.Snapshots[tc.provider])
+			entries := cache.Snapshots[tc.provider]
+			if len(entries) != 2 {
+				t.Fatalf("profile shape after switch = %+v", entries)
+			}
+			for _, entry := range entries {
+				if entry.Profile.Plan == "test" {
+					t.Fatalf("late active fetch was attributed after profile switch: %+v", entries)
+				}
+				if entry.Profile.ProfileName == "backup" && !entry.Profile.Active {
+					t.Fatalf("new active profile was not published: %+v", entries)
+				}
 			}
 		})
 	}
@@ -555,11 +564,10 @@ func TestInvariantProfileNameNeverEmpty(t *testing.T) {
 	}
 }
 
-// TestInvariantDeriveActiveReplacesDefault verifies that deriving the active
-// profile REPLACES the "default" entry (not appends alongside it). With N
-// switcher profiles, the array must have exactly N entries — no leftover
-// "default", no duplicates.
-func TestInvariantDeriveActiveReplacesDefault(t *testing.T) {
+// TestInvariantNamedMigrationDropsUnownedDefault verifies that legacy
+// default history is never attributed to a named switcher account whose
+// ownership cannot be proven.
+func TestInvariantNamedMigrationDropsUnownedDefault(t *testing.T) {
 	store := NewStoreAt(t.TempDir())
 	cfg := DefaultConfig()
 	cfg.Providers[ProviderClaudeCode] = ProviderConfig{Enabled: true}
@@ -575,7 +583,12 @@ func TestInvariantDeriveActiveReplacesDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
-	m.deriveActiveProfile(ProviderClaudeCode, ProfileInfo{Tool: "claude", Name: "main", Active: true, Email: "main@test"})
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool != "claude" {
+			return nil
+		}
+		return []ProfileInfo{{Tool: "claude", Name: "main", Active: true, Email: "main@test", HasCredentials: true}}
+	})
 	resp, err := m.Snapshot(context.Background(), "")
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
@@ -587,25 +600,105 @@ func TestInvariantDeriveActiveReplacesDefault(t *testing.T) {
 			break
 		}
 	}
-	// Must have exactly 1 entry (default replaced by active, not duplicated)
-	count := 0
-	var found Profile
-	for _, p := range entries {
-		if p.ProfileName == "default" {
-			t.Fatalf("found leftover default entry — deriveActiveProfile must replace it")
-		}
-		count++
-		found = p
+	if len(entries) != 1 {
+		t.Fatalf("expected one named placeholder, got %d", len(entries))
 	}
-	if count != 1 {
-		t.Fatalf("expected 1 entry, got %d", count)
-	}
+	found := entries[0]
 	if found.ProfileName != "main" {
 		t.Fatalf("expected ProfileName=main, got %q", found.ProfileName)
 	}
-	if found.Plan != "test" {
-		t.Fatalf("expected Plan=test (carried from default), got %q", found.Plan)
+	if found.Plan != "" || found.LastRefreshAt != nil {
+		t.Fatalf("legacy default history was attributed to main: %+v", found)
 	}
+	if !found.Active || !found.HasCredentials || found.Email != "main@test" {
+		t.Fatalf("named placeholder lost profile facts: %+v", found)
+	}
+}
+
+func TestCacheMigrationPreservesOwnedHistory(t *testing.T) {
+	t.Run("implicit", func(t *testing.T) {
+		store := NewStoreAt(t.TempDir())
+		old := time.Unix(100, 0)
+		newer := old.Add(time.Minute)
+		cache := EmptyCache()
+		cache.Snapshots[ProviderCodex] = []CacheEntry{
+			{Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, Plan: "legacy", LastRefreshAt: &old}}},
+			{Profile: Profile{ProfileName: implicitProfileName, Snapshot: Snapshot{Status: StatusOK, Plan: "newer", Windows: []Window{{Key: "weekly", PercentUsed: 42}}, LastRefreshAt: &newer}}},
+		}
+		if err := store.SaveCache(cache); err != nil {
+			t.Fatal(err)
+		}
+
+		m := NewManager(store, EmptyRegistry())
+		resp, err := m.Snapshot(context.Background(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		profiles := providerProfiles(resp, ProviderCodex)
+		if len(profiles) != 1 || profiles[0].ProfileName != implicitProfileName || profiles[0].Plan != "newer" {
+			t.Fatalf("implicit migration = %+v", profiles)
+		}
+		if len(profiles[0].Windows) != 1 || profiles[0].Windows[0].PercentUsed != 42 {
+			t.Fatalf("implicit history lost windows: %+v", profiles[0])
+		}
+	})
+
+	t.Run("named", func(t *testing.T) {
+		store := NewStoreAt(t.TempDir())
+		old := time.Unix(100, 0)
+		newer := old.Add(time.Minute)
+		cache := EmptyCache()
+		cache.Snapshots[ProviderClaudeCode] = []CacheEntry{
+			{Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusOK, Plan: "unowned", LastRefreshAt: &newer}}},
+			{Profile: Profile{ProfileName: "ghost", Snapshot: Snapshot{Status: StatusOK, Plan: "orphan", LastRefreshAt: &newer}}},
+			{Profile: Profile{ProfileName: "main", Snapshot: Snapshot{Status: StatusStaleCache, Plan: "old-main", LastRefreshAt: &old}}},
+			{Profile: Profile{ProfileName: "main", Snapshot: Snapshot{Status: StatusOK, Plan: "new-main", Windows: []Window{{Key: "session", PercentUsed: 17}}, LastRefreshAt: &newer}}},
+			{Profile: Profile{ProfileName: "backup", Snapshot: Snapshot{Status: StatusOK, Plan: "backup-history", LastRefreshAt: &old}}},
+		}
+		if err := store.SaveCache(cache); err != nil {
+			t.Fatal(err)
+		}
+		m := NewManager(store, EmptyRegistry())
+		m.SetProfileLister(func(tool string) []ProfileInfo {
+			if tool != "claude" {
+				return []ProfileInfo{}
+			}
+			return []ProfileInfo{
+				{Tool: "claude", Name: "main", Active: true, HasCredentials: true, Email: "main@test"},
+				{Tool: "claude", Name: "backup", HasCredentials: true},
+			}
+		})
+		resp, err := m.Snapshot(context.Background(), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		profiles := providerProfiles(resp, ProviderClaudeCode)
+		if len(profiles) != 2 || profiles[0].ProfileName != "main" || profiles[1].ProfileName != "backup" {
+			t.Fatalf("named migration identities = %+v", profiles)
+		}
+		if profiles[0].Plan != "new-main" || len(profiles[0].Windows) != 1 || profiles[0].Windows[0].PercentUsed != 17 {
+			t.Fatalf("newest main history not preserved: %+v", profiles[0])
+		}
+		if profiles[1].Plan != "backup-history" {
+			t.Fatalf("backup history not preserved: %+v", profiles[1])
+		}
+		persisted, err := store.LoadCache()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(persisted.Snapshots[ProviderClaudeCode]) != 2 {
+			t.Fatalf("migration did not purge legacy/orphan/duplicate entries: %+v", persisted.Snapshots[ProviderClaudeCode])
+		}
+	})
+}
+
+func providerProfiles(resp UsagesResponse, key string) []Profile {
+	for _, provider := range resp.Providers {
+		if provider.ProviderName == key {
+			return provider.Profiles
+		}
+	}
+	return nil
 }
 
 // TestInvariantProfilesNeverNil verifies that every provider in the response
@@ -631,10 +724,7 @@ func TestInvariantProfilesNeverNil(t *testing.T) {
 
 // TestInvariantNoDefaultOnSwitcherTool verifies that after a full refresh cycle
 // (provider fetch + profile derivation), no profile on a switcher tool is named
-// "default". The "default" name is an intermediate state from the provider
-// fetch; it must be replaced by the active profile's name before any reader
-// sees it. This catches the race where fetchWithProviderLock writes "default"
-// and deriveActiveProfile renames it in a separate lock acquisition.
+// "default". Fetches write directly under their resolved profile identity.
 func TestInvariantNoDefaultOnSwitcherTool(t *testing.T) {
 	store := NewStoreAt(t.TempDir())
 	cfg := DefaultConfig()
@@ -656,8 +746,8 @@ func TestInvariantNoDefaultOnSwitcherTool(t *testing.T) {
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if _, err := m.refreshProfiles(context.Background()); err != nil {
-		t.Fatalf("refreshProfiles: %v", err)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("refresh: %v", err)
 	}
 	resp, err := m.Snapshot(context.Background(), "")
 	if err != nil {
@@ -700,8 +790,8 @@ func TestInvariantExactlyOneActivePerSwitcherTool(t *testing.T) {
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if _, err := m.refreshProfiles(context.Background()); err != nil {
-		t.Fatalf("refreshProfiles: %v", err)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("refresh: %v", err)
 	}
 	resp, err := m.Snapshot(context.Background(), "")
 	if err != nil {
@@ -726,8 +816,7 @@ func TestInvariantExactlyOneActivePerSwitcherTool(t *testing.T) {
 // TestInvariantNoDuplicatesAcrossCycles verifies that refreshing twice
 // (simulating two poller cycles) does not produce duplicate profile entries.
 // The first cycle creates entries; the second must replace, not append.
-// This catches the setDefaultCacheEntry vs setProfileCacheEntry mismatch
-// that produces duplicates when a named entry has no "" or "default" to match.
+// This catches writes that accidentally append rather than replace one target.
 func TestInvariantNoDuplicatesAcrossCycles(t *testing.T) {
 	store := NewStoreAt(t.TempDir())
 	cfg := DefaultConfig()
@@ -750,8 +839,8 @@ func TestInvariantNoDuplicatesAcrossCycles(t *testing.T) {
 		if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 			t.Fatalf("cycle %d refresh: %v", cycle, err)
 		}
-		if _, err := m.refreshProfiles(context.Background()); err != nil {
-			t.Fatalf("cycle %d refreshProfiles: %v", cycle, err)
+		if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+			t.Fatalf("cycle %d refresh: %v", cycle, err)
 		}
 	}
 	resp, err := m.Snapshot(context.Background(), "")
@@ -808,8 +897,8 @@ func TestInvariantOrphanEntriesRemoved(t *testing.T) {
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if _, err := m.refreshProfiles(context.Background()); err != nil {
-		t.Fatalf("refreshProfiles: %v", err)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("refresh: %v", err)
 	}
 	resp, err := m.Snapshot(context.Background(), "")
 	if err != nil {
@@ -867,8 +956,8 @@ func TestEndStateAllPropertiesWithSeededHistory(t *testing.T) {
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if _, err := m.refreshProfiles(context.Background()); err != nil {
-		t.Fatalf("refreshProfiles: %v", err)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("refresh: %v", err)
 	}
 	resp, err := m.Snapshot(context.Background(), "")
 	if err != nil {
@@ -965,8 +1054,8 @@ func TestInvariantAllProfileTimestampsAdvance(t *testing.T) {
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 		t.Fatalf("first refresh: %v", err)
 	}
-	if _, err := m.refreshProfiles(context.Background()); err != nil {
-		t.Fatalf("first refreshProfiles: %v", err)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("first refresh: %v", err)
 	}
 	resp1, err := m.Snapshot(context.Background(), "")
 	if err != nil {
@@ -992,8 +1081,8 @@ func TestInvariantAllProfileTimestampsAdvance(t *testing.T) {
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 		t.Fatalf("second refresh: %v", err)
 	}
-	if _, err := m.refreshProfiles(context.Background()); err != nil {
-		t.Fatalf("second refreshProfiles: %v", err)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("second refresh: %v", err)
 	}
 	resp2, err := m.Snapshot(context.Background(), "")
 	if err != nil {
@@ -1015,7 +1104,7 @@ func TestInvariantAllProfileTimestampsAdvance(t *testing.T) {
 	}
 }
 
-func TestRefreshProfilesPublishesNamedActiveEntryWhenProviderEntryMissing(t *testing.T) {
+func TestRefreshPublishesNamedActiveEntryWhenProviderEntryMissing(t *testing.T) {
 	store := NewStoreAt(t.TempDir())
 	cfg := DefaultConfig()
 	cfg.Providers[ProviderClaudeCode] = ProviderConfig{Enabled: true}
@@ -1023,7 +1112,7 @@ func TestRefreshProfilesPublishesNamedActiveEntryWhenProviderEntryMissing(t *tes
 		t.Fatal(err)
 	}
 	clock := &fakeClock{now: time.Unix(2000, 0)}
-	m := NewManager(store, EmptyRegistry())
+	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode, err: errors.New("temporary claude failure")}))
 	m.SetClock(clock)
 	m.SetProfileLister(func(tool string) []ProfileInfo {
 		if tool != "claude" {
@@ -1038,17 +1127,8 @@ func TestRefreshProfilesPublishesNamedActiveEntryWhenProviderEntryMissing(t *tes
 			HasCredentials: true,
 		}}
 	})
-	oldFetch := fetchClaudeSnapshotFromPathFunc
-	t.Cleanup(func() { fetchClaudeSnapshotFromPathFunc = oldFetch })
-	fetchClaudeSnapshotFromPathFunc = func(ctx context.Context, path string) (Snapshot, error) {
-		if path != "live-credentials.json" {
-			t.Fatalf("cred path = %q", path)
-		}
-		return Snapshot{}, errors.New("temporary claude failure")
-	}
-
-	if _, err := m.refreshProfiles(context.Background()); err != nil {
-		t.Fatalf("refreshProfiles: %v", err)
+	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
+		t.Fatalf("refresh: %v", err)
 	}
 	resp, err := m.Snapshot(context.Background(), "")
 	if err != nil {

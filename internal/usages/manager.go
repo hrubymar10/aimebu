@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,8 +94,65 @@ type ProfileInfo struct {
 // no switcher is enabled or the tool has no profiles.
 type ProfileLister func(tool string) []ProfileInfo
 
+const implicitProfileName = "local"
+
 func (m *Manager) SetProfileLister(fn ProfileLister) {
 	m.profileLister = fn
+}
+
+func hasFile(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func (m *Manager) implicitProfile(key string) ProfileInfo {
+	p := ProfileInfo{Name: implicitProfileName, Active: true}
+	switch key {
+	case ProviderClaudeCode:
+		p.Tool = "claude"
+		p.CredPath, _ = claudeAuthPath()
+		p.HasCredentials = hasFile(p.CredPath)
+	case ProviderCodex:
+		p.Tool = "codex"
+		p.CredPath, _ = codexAuthPath()
+		p.HasCredentials = hasFile(p.CredPath)
+	default:
+		cfg, err := m.store.LoadConfig()
+		if err != nil {
+			return p
+		}
+		pc := cfg.Providers[key]
+		switch key {
+		case ProviderGitHubCopilot:
+			p.HasCredentials = strings.TrimSpace(pc.Token) != ""
+		case ProviderMistral:
+			p.HasCredentials = strings.TrimSpace(pc.Cookie) != ""
+		case ProviderOllamaCloud:
+			p.HasCredentials = strings.TrimSpace(pc.Cookie) != "" || strings.TrimSpace(pc.APIKey) != ""
+		}
+	}
+	return p
+}
+
+func (m *Manager) profilesForProvider(key string) []ProfileInfo {
+	tool := toolForRegistryKey(key)
+	if tool != "" && m.profileLister != nil {
+		if profiles := m.profileLister(tool); len(profiles) > 0 {
+			return profiles
+		}
+	}
+	return []ProfileInfo{m.implicitProfile(key)}
+}
+
+func (m *Manager) resolveProfiles(keys []string) map[string][]ProfileInfo {
+	resolved := make(map[string][]ProfileInfo, len(keys))
+	for _, key := range keys {
+		resolved[key] = m.profilesForProvider(key)
+	}
+	return resolved
 }
 
 type activeProfileOwner struct {
@@ -112,11 +170,7 @@ func credentialFingerprint(path string) string {
 }
 
 func (m *Manager) activeProfileOwner(key string) (activeProfileOwner, bool) {
-	tool := toolForRegistryKey(key)
-	if tool == "" || m.profileLister == nil {
-		return activeProfileOwner{}, false
-	}
-	for _, profile := range m.profileLister(tool) {
+	for _, profile := range m.profilesForProvider(key) {
 		if profile.Active {
 			return activeProfileOwner{
 				profile:     profile,
@@ -135,7 +189,7 @@ func sameActiveProfileOwner(left, right activeProfileOwner) bool {
 
 func (m *Manager) activeCredentialsChanged(key string) bool {
 	owner, ok := m.activeProfileOwner(key)
-	if !ok || owner.profile.CredPath == "" {
+	if !ok || owner.profile.Name == implicitProfileName || owner.profile.CredPath == "" {
 		return false
 	}
 	m.profileMu.Lock()
@@ -165,12 +219,10 @@ func (m *Manager) Settings(ctx context.Context) (Settings, error) {
 }
 
 // Snapshot is a pure cache read — it never fetches. All network work is owned
-// by the poller (Manager.Start) and ForceRefresh. On a cold cache (server
-// restart, first call before the first poller tick) it returns empty arrays so
-// the FE can distinguish "cold" from "broken".
+// by the poller (Manager.Start) and ForceRefresh. On a cold cache it still
+// returns the resolved profile identities with empty usage snapshots.
 // assembleResponse builds a UsagesResponse from config and cache. Every
-// known provider appears (even if disabled), with its cached profiles (or an
-// empty profiles slice — never nil).
+// known provider appears (even if disabled), with at least one profile.
 func (m *Manager) assembleResponse(cfg Config, cache Cache) UsagesResponse {
 	_, settings := m.store.RefreshInterval(cfg)
 	resp := UsagesResponse{Settings: settings}
@@ -195,6 +247,73 @@ func (m *Manager) assembleResponse(cfg Config, cache Cache) UsagesResponse {
 	return resp
 }
 
+func newerCacheEntry(current, candidate CacheEntry) CacheEntry {
+	if current.Profile.LastRefreshAt == nil {
+		return candidate
+	}
+	if candidate.Profile.LastRefreshAt != nil && candidate.Profile.LastRefreshAt.After(*current.Profile.LastRefreshAt) {
+		return candidate
+	}
+	return current
+}
+
+// normalizeProfileEntries migrates legacy default entries and reconciles the
+// cache to the currently resolved profiles. Legacy history is safe to carry to
+// the implicit local profile; with named switcher profiles its account owner is
+// unknowable, so it is discarded rather than attributed to the wrong account.
+func normalizeProfileEntries(entries []CacheEntry, profiles []ProfileInfo) ([]CacheEntry, bool) {
+	valid := make(map[string]ProfileInfo, len(profiles))
+	implicit := len(profiles) == 1 && profiles[0].Name == implicitProfileName
+	for _, profile := range profiles {
+		valid[profile.Name] = profile
+	}
+	byName := make(map[string]CacheEntry, len(entries))
+	for _, entry := range entries {
+		name := entry.Profile.ProfileName
+		if name == "" || name == "default" {
+			if !implicit {
+				continue
+			}
+			name = implicitProfileName
+			entry.Profile.ProfileName = name
+		}
+		if _, ok := valid[name]; !ok {
+			continue
+		}
+		if current, ok := byName[name]; ok {
+			entry = newerCacheEntry(current, entry)
+		}
+		byName[name] = entry
+	}
+
+	normalized := make([]CacheEntry, 0, len(profiles))
+	for _, profile := range profiles {
+		entry, ok := byName[profile.Name]
+		if !ok {
+			entry = CacheEntry{Profile: Profile{ProfileName: profile.Name}}
+		}
+		entry.Profile.ProfileName = profile.Name
+		entry.Profile.Active = profile.Active
+		entry.Profile.HasCredentials = profile.HasCredentials
+		entry.Profile.ExpiresAt = profile.ExpiresAt
+		if profile.Email != "" {
+			entry.Profile.Email = profile.Email
+		}
+		normalized = append(normalized, entry)
+	}
+	return normalized, !reflect.DeepEqual(entries, normalized)
+}
+
+func normalizeCache(cache *Cache, resolved map[string][]ProfileInfo) bool {
+	changed := false
+	for _, key := range knownProviders {
+		entries, entryChanged := normalizeProfileEntries(cache.Snapshots[key], resolved[key])
+		cache.Snapshots[key] = entries
+		changed = changed || entryChanged
+	}
+	return changed
+}
+
 // profileFromSnapshot converts an internal Snapshot (provider return type) to
 // a Profile (cache + response type), setting the ProfileName.
 func profileFromSnapshot(snap Snapshot, profileName string) Profile {
@@ -208,6 +327,7 @@ func (m *Manager) Snapshot(ctx context.Context, provider string) (UsagesResponse
 	if provider != "" && !KnownProvider(provider) {
 		return UsagesResponse{}, unknownProviderError(provider)
 	}
+	resolved := m.resolveProfiles(knownProviders)
 	var resp UsagesResponse
 	err := m.store.WithLock(func() error {
 		cfg, err := m.store.LoadConfig()
@@ -217,6 +337,11 @@ func (m *Manager) Snapshot(ctx context.Context, provider string) (UsagesResponse
 		cache, err := m.store.LoadCache()
 		if err != nil {
 			return err
+		}
+		if normalizeCache(&cache, resolved) {
+			if err := m.store.SaveCache(cache); err != nil {
+				return err
+			}
 		}
 		resp = m.assembleResponse(cfg, cache)
 		return nil
@@ -411,17 +536,6 @@ func (m *Manager) Start(ctx context.Context, wg *sync.WaitGroup) {
 				if err != nil {
 					continue
 				}
-				// Refresh per-profile snapshots (switcher). The active profile is
-				// derived from the provider fetch (same credentials, no separate
-				// network call); inactive profiles are fetched if stale.
-				if m.profileLister != nil {
-					if pChanged, pErr := m.refreshProfiles(ctx); pErr == nil && pChanged {
-						changed = true
-					}
-					// Rebuild from cache to include profile entries that
-					// refreshWithChange didn't see.
-					resp, _ = m.Snapshot(ctx, "")
-				}
 				if m.switcherEnabled != nil {
 					resp.SwitcherEnabled = m.switcherEnabled()
 				}
@@ -438,14 +552,20 @@ func (m *Manager) refresh(ctx context.Context, provider string, force bool) (Usa
 	return resp, retry, err
 }
 
+type profileFetch struct {
+	provider string
+	profile  ProfileInfo
+}
+
 func (m *Manager) refreshWithChange(ctx context.Context, provider string, force bool) (UsagesResponse, bool, int, error) {
 	var resp UsagesResponse
-	var toFetch []string
+	var toFetch []profileFetch
 	credentialChanges := make(map[string]bool)
 	keys := knownProviders
 	if provider != "" {
 		keys = []string{provider}
 	}
+	resolved := m.resolveProfiles(knownProviders)
 	for _, key := range keys {
 		credentialChanges[key] = m.activeCredentialsChanged(key)
 	}
@@ -458,6 +578,12 @@ func (m *Manager) refreshWithChange(ctx context.Context, provider string, force 
 		if err != nil {
 			return err
 		}
+		cacheChanged := normalizeCache(&cache, resolved)
+		if cacheChanged {
+			if err := m.store.SaveCache(cache); err != nil {
+				return err
+			}
+		}
 		interval, _ := m.store.RefreshInterval(cfg)
 		resp = m.assembleResponse(cfg, cache)
 		now := m.clock.Now()
@@ -466,11 +592,13 @@ func (m *Manager) refreshWithChange(ctx context.Context, provider string, force 
 			if !pc.Enabled {
 				continue
 			}
-			entries := cache.Snapshots[key]
-			def := activeCacheEntry(entries)
-			shouldFetch := force || def == nil || def.Profile.LastRefreshAt == nil || now.Sub(*def.Profile.LastRefreshAt) >= interval || credentialChanges[key]
-			if shouldFetch {
-				toFetch = append(toFetch, key)
+			for _, profile := range resolved[key] {
+				entry := profileCacheEntry(cache.Snapshots[key], profile.Name)
+				credentialsChanged := profile.Active && credentialChanges[key]
+				shouldFetch := force || entry == nil || entry.Profile.LastRefreshAt == nil || now.Sub(*entry.Profile.LastRefreshAt) >= interval || credentialsChanged
+				if shouldFetch {
+					toFetch = append(toFetch, profileFetch{provider: key, profile: profile})
+				}
 			}
 		}
 		return nil
@@ -484,12 +612,12 @@ func (m *Manager) refreshWithChange(ctx context.Context, provider string, force 
 
 	results := make(chan fetchResult, len(toFetch))
 	var wg sync.WaitGroup
-	for _, key := range toFetch {
+	for _, target := range toFetch {
 		wg.Add(1)
-		go func(key string) {
+		go func(target profileFetch) {
 			defer wg.Done()
-			results <- m.fetchWithProviderLock(ctx, key, force)
-		}(key)
+			results <- m.fetchProfileWithProviderLock(ctx, target.provider, target.profile, force, true)
+		}(target)
 	}
 	wg.Wait()
 	close(results)
@@ -511,6 +639,10 @@ func (m *Manager) refreshWithChange(ctx context.Context, provider string, force 
 		return UsagesResponse{}, false, 0, firstErr
 	}
 
+	// A switch can complete while profile fetches are in flight. Resolve again
+	// before publishing so force-refresh responses and broadcasts never reuse
+	// the pre-fetch active markers or profile set.
+	resolved = m.resolveProfiles(knownProviders)
 	err = m.store.WithLock(func() error {
 		cfg, err := m.store.LoadConfig()
 		if err != nil {
@@ -520,16 +652,12 @@ func (m *Manager) refreshWithChange(ctx context.Context, provider string, force 
 		if err != nil {
 			return err
 		}
-		resp = m.assembleResponse(cfg, cache)
-		keys := knownProviders
-		if provider != "" {
-			keys = []string{provider}
-		}
-		for _, key := range keys {
-			if !cfg.Providers[key].Enabled {
-				continue
+		if normalizeCache(&cache, resolved) {
+			if err := m.store.SaveCache(cache); err != nil {
+				return err
 			}
 		}
+		resp = m.assembleResponse(cfg, cache)
 		return nil
 	})
 	if err != nil {
@@ -538,67 +666,13 @@ func (m *Manager) refreshWithChange(ctx context.Context, provider string, force 
 	return resp, changed, 0, nil
 }
 
-// defaultCacheEntry returns the "default" (non-profile) entry for a provider,
-// or nil if the array is empty. The default entry has Profile == "" or
-// "default"; falling back to the first entry handles caches written before
-// profile support.
-func defaultCacheEntry(entries []CacheEntry) *CacheEntry {
+func profileCacheEntry(entries []CacheEntry, profile string) *CacheEntry {
 	for i := range entries {
-		if entries[i].Profile.ProfileName == "" || entries[i].Profile.ProfileName == "default" {
+		if entries[i].Profile.ProfileName == profile {
 			return &entries[i]
 		}
 	}
 	return nil
-}
-
-// latestCacheEntry returns the entry with the most recent LastRefreshAt, or nil
-// if the array is empty or no entry has a timestamp. Used for staleness checks
-// on switcher tools where the provider fetch writes directly under the active
-// profile's name — defaultCacheEntry returns nil for those, and falling back to
-// entries[0] would read the wrong entry's timestamp (e.g. an inactive profile
-// fetched within the last hour, blocking the provider fetch indefinitely).
-func latestCacheEntry(entries []CacheEntry) *CacheEntry {
-	var best *CacheEntry
-	for i := range entries {
-		if entries[i].Profile.LastRefreshAt == nil {
-			continue
-		}
-		if best == nil || entries[i].Profile.LastRefreshAt.After(*best.Profile.LastRefreshAt) {
-			best = &entries[i]
-		}
-	}
-	return best
-}
-
-// activeCacheEntry returns the entry whose staleness gates the provider usage
-// fetch. That fetch writes the active profile's entry, so the active profile's
-// freshness — not the freshest sibling's — must decide whether to re-fetch.
-// Otherwise an inactive profile that refreshProfiles keeps fresh marks the
-// whole provider fresh and starves the active profile's usage numbers, which
-// then only update on a manual (force) refresh. Falls back to the default
-// entry, then to the most recently refreshed entry.
-func activeCacheEntry(entries []CacheEntry) *CacheEntry {
-	for i := range entries {
-		if entries[i].Profile.Active {
-			return &entries[i]
-		}
-	}
-	if def := defaultCacheEntry(entries); def != nil {
-		return def
-	}
-	return latestCacheEntry(entries)
-}
-
-// setDefaultCacheEntry replaces the default entry in entries, or prepends one
-// if no default exists.
-func setDefaultCacheEntry(entries []CacheEntry, entry CacheEntry) []CacheEntry {
-	for i := range entries {
-		if entries[i].Profile.ProfileName == "" || entries[i].Profile.ProfileName == "default" {
-			entries[i] = entry
-			return entries
-		}
-	}
-	return append([]CacheEntry{entry}, entries...)
 }
 
 // setProfileCacheEntry replaces the entry for a named profile, or appends one.
@@ -613,18 +687,26 @@ func setProfileCacheEntry(entries []CacheEntry, profile string, entry CacheEntry
 }
 
 type fetchResult struct {
-	changed bool
-	err     error
+	changed  bool
+	err      error
+	fetchErr error
 }
 
-func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force bool) fetchResult {
+func (m *Manager) fetchProfileWithProviderLock(ctx context.Context, key string, profile ProfileInfo, force, enabledOnly bool) fetchResult {
 	lock, err := acquireProviderLock(m.store.root, key)
 	if err != nil {
 		return fetchResult{err: err}
 	}
 	defer lock.Unlock()
 
-	owner, hasOwner := m.activeProfileOwner(key)
+	owner, hasOwner := activeProfileOwner{}, false
+	if profile.Active {
+		owner, hasOwner = m.activeProfileOwner(key)
+		if !hasOwner || owner.profile.Name != profile.Name || owner.profile.CredPath != profile.CredPath {
+			return fetchResult{}
+		}
+		profile = owner.profile
+	}
 	if hasOwner {
 		m.profileMu.Lock()
 		owner.generation = m.profileGeneration[key]
@@ -635,13 +717,13 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 	var interval time.Duration
 	var now time.Time
 	shouldFetch := false
-	credentialsChanged := m.activeCredentialsChanged(key)
+	credentialsChanged := profile.Active && m.activeCredentialsChanged(key)
 	err = m.store.WithLock(func() error {
 		cfg, err := m.store.LoadConfig()
 		if err != nil {
 			return err
 		}
-		if !cfg.Providers[key].Enabled {
+		if enabledOnly && !cfg.Providers[key].Enabled {
 			return nil
 		}
 		cache, err := m.store.LoadCache()
@@ -650,59 +732,66 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 		}
 		interval, _ = m.store.RefreshInterval(cfg)
 		now = m.clock.Now()
-		def := activeCacheEntry(cache.Snapshots[key])
-		if def != nil {
-			previous = *def
+		entry := profileCacheEntry(cache.Snapshots[key], profile.Name)
+		if entry != nil {
+			previous = *entry
 		}
-		shouldFetch = force || def == nil || def.Profile.LastRefreshAt == nil || now.Sub(*def.Profile.LastRefreshAt) >= interval || credentialsChanged
+		shouldFetch = force || entry == nil || entry.Profile.LastRefreshAt == nil || now.Sub(*entry.Profile.LastRefreshAt) >= interval || credentialsChanged
 		return nil
 	})
 	if err != nil || !shouldFetch {
 		return fetchResult{err: err}
 	}
 
-	entry := m.fetchOne(ctx, key, previous)
-	entry.Profile.ProfileName = "default"
-
-	// If this provider has a switcher, write the active profile's name and
-	// switcher facts now, under the same lock that saves the entry. This
-	// prevents a "default" entry from being observable between the provider
-	// fetch and the separate deriveActiveProfile call.
-	if hasOwner {
-		entry.Profile.ProfileName = owner.profile.Name
-		entry.Profile.Active = owner.profile.Active
-		entry.Profile.HasCredentials = owner.profile.HasCredentials
-		entry.Profile.ExpiresAt = owner.profile.ExpiresAt
-		if owner.profile.Email != "" {
-			entry.Profile.Email = owner.profile.Email
-		}
+	storedFingerprint := ""
+	if !profile.Active {
+		storedFingerprint = credentialFingerprint(profile.CredPath)
+	}
+	var entry CacheEntry
+	var fetchErr error
+	if profile.Active {
+		entry = m.fetchOne(ctx, key, previous)
+	} else {
+		entry, fetchErr = m.fetchStoredProfile(ctx, profile, previous)
+	}
+	entry.Profile.ProfileName = profile.Name
+	entry.Profile.Active = profile.Active
+	entry.Profile.HasCredentials = profile.HasCredentials
+	entry.Profile.ExpiresAt = profile.ExpiresAt
+	if profile.Email != "" {
+		entry.Profile.Email = profile.Email
+	}
+	if !profile.Active && storedFingerprint != credentialFingerprint(profile.CredPath) {
+		return fetchResult{fetchErr: errors.New("credentials changed during usage fetch")}
 	}
 
 	// Email refresh for providers whose email isn't in the usage fetch (Copilot,
 	// via a separate GitHub /user call). Same floor as inactive profiles:
 	// max(providerInterval, 1h), absent means fetch now. The email persists
 	// across usage refreshes — only re-fetched when EmailFetchedAt is stale.
-	if p, ok := m.registry.Provider(key); ok {
-		if ef, ok := p.(EmailFetcher); ok {
-			emailScope := ""
-			if scoped, ok := p.(EmailScopeProvider); ok {
-				emailScope = scoped.EmailScope(m.store)
-			}
-			emailFloor := interval
-			if emailFloor < emailRefreshFloor {
-				emailFloor = emailRefreshFloor
-			}
-			if previous.EmailFetchedAt == nil || previous.EmailScope != emailScope || now.Sub(*previous.EmailFetchedAt) >= emailFloor {
-				if email, eerr := ef.FetchEmail(ctx, m.store); eerr == nil && email != "" {
-					entry.Profile.Email = email
-					emailNow := m.clock.Now()
-					entry.EmailFetchedAt = &emailNow
-					entry.EmailScope = emailScope
+	if profile.Active {
+		if p, ok := m.registry.Provider(key); ok {
+			if ef, ok := p.(EmailFetcher); ok {
+				emailScope := ""
+				if scoped, ok := p.(EmailScopeProvider); ok {
+					emailScope = scoped.EmailScope(m.store)
 				}
-			} else {
-				entry.Profile.Email = previous.Profile.Email
-				entry.EmailFetchedAt = previous.EmailFetchedAt
-				entry.EmailScope = previous.EmailScope
+				emailFloor := interval
+				if emailFloor < emailRefreshFloor {
+					emailFloor = emailRefreshFloor
+				}
+				if previous.EmailFetchedAt == nil || previous.EmailScope != emailScope || now.Sub(*previous.EmailFetchedAt) >= emailFloor {
+					if email, eerr := ef.FetchEmail(ctx, m.store); eerr == nil && email != "" {
+						entry.Profile.Email = email
+						emailNow := m.clock.Now()
+						entry.EmailFetchedAt = &emailNow
+						entry.EmailScope = emailScope
+					}
+				} else {
+					entry.Profile.Email = previous.Profile.Email
+					entry.EmailFetchedAt = previous.EmailFetchedAt
+					entry.EmailScope = previous.EmailScope
+				}
 			}
 		}
 	}
@@ -721,7 +810,7 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 		if err != nil {
 			return err
 		}
-		if !cfg.Providers[key].Enabled {
+		if enabledOnly && !cfg.Providers[key].Enabled {
 			return nil
 		}
 		cache, err := m.store.LoadCache()
@@ -729,15 +818,7 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 			return err
 		}
 		entry.Profile = entry.Profile.Redacted(configSecrets(cfg)...)
-		// Use setProfileCacheEntry when the entry has a real profile name (switcher
-		// active profile), setDefaultCacheEntry for the non-switcher "default" case.
-		// setDefaultCacheEntry only matches ""/"default" — using it for a named
-		// profile would prepend a duplicate on the second cycle.
-		if entry.Profile.ProfileName != "" && entry.Profile.ProfileName != "default" {
-			cache.Snapshots[key] = setProfileCacheEntry(cache.Snapshots[key], entry.Profile.ProfileName, entry)
-		} else {
-			cache.Snapshots[key] = setDefaultCacheEntry(cache.Snapshots[key], entry)
-		}
+		cache.Snapshots[key] = setProfileCacheEntry(cache.Snapshots[key], profile.Name, entry)
 		return m.store.SaveCache(cache)
 	})
 	if err != nil {
@@ -746,14 +827,14 @@ func (m *Manager) fetchWithProviderLock(ctx context.Context, key string, force b
 	if hasOwner {
 		m.activeFingerprints[key] = owner.fingerprint
 	}
-	return fetchResult{changed: true}
+	return fetchResult{changed: true, fetchErr: fetchErr}
 }
 
 func (m *Manager) fetchOne(ctx context.Context, key string, previous CacheEntry) CacheEntry {
 	now := m.clock.Now()
 	p, ok := m.registry.Provider(key)
 	if !ok {
-		return CacheEntry{Profile: Profile{ProfileName: "default", Snapshot: Snapshot{Status: StatusNotConfigured}}}
+		return CacheEntry{Profile: Profile{ProfileName: implicitProfileName, Snapshot: Snapshot{Status: StatusNotConfigured}}}
 	}
 	fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -763,7 +844,7 @@ func (m *Manager) fetchOne(ctx context.Context, key string, previous CacheEntry)
 			snap.Status = StatusOK
 		}
 		snap.LastRefreshAt = &now
-		return CacheEntry{Profile: profileFromSnapshot(snap, "default")}
+		return CacheEntry{Profile: profileFromSnapshot(snap, implicitProfileName)}
 	}
 	status := StatusFetchError
 	errSnapshot := Snapshot{Status: status, Error: err.Error()}
@@ -790,7 +871,55 @@ func (m *Manager) fetchOne(ctx context.Context, key string, previous CacheEntry)
 		return CacheEntry{Profile: prof}
 	}
 	errSnapshot.LastRefreshAt = &now
-	return CacheEntry{Profile: profileFromSnapshot(errSnapshot, "default")}
+	return CacheEntry{Profile: profileFromSnapshot(errSnapshot, implicitProfileName)}
+}
+
+func (m *Manager) fetchStoredProfile(ctx context.Context, profile ProfileInfo, previous CacheEntry) (CacheEntry, error) {
+	now := m.clock.Now()
+	fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	var snap Snapshot
+	var err error
+	switch profile.Tool {
+	case "claude":
+		snap, err = fetchClaudeSnapshotFromPathFunc(fetchCtx, profile.CredPath)
+	case "codex":
+		snap, err = fetchCodexSnapshotFromPathFunc(fetchCtx, profile.CredPath, false, nil)
+	default:
+		err = fmt.Errorf("unsupported switcher tool %q for profile snapshot", profile.Tool)
+	}
+	if err == nil {
+		if snap.Status == "" {
+			snap.Status = StatusOK
+		}
+		snap.LastRefreshAt = &now
+		return CacheEntry{Profile: profileFromSnapshot(snap, profile.Name)}, nil
+	}
+
+	errSnapshot := Snapshot{Status: StatusFetchError, Error: err.Error()}
+	if snapErr, ok := err.(*SnapshotError); ok {
+		errSnapshot = snapErr.Snapshot
+		if errSnapshot.Status == "" {
+			errSnapshot.Status = StatusFetchError
+		}
+		if errSnapshot.Error == "" {
+			errSnapshot.Error = snapErr.Error()
+		}
+	}
+	if errors.Is(fetchCtx.Err(), context.DeadlineExceeded) {
+		errSnapshot.Status = StatusTimeout
+	}
+	if shouldPreservePreviousSnapshot(err, errSnapshot, previous) {
+		prof := previous.Profile
+		prof.Status = StatusStaleCache
+		prof.Stale = true
+		prof.Error = errSnapshot.Error
+		prof.ErrorDetail = errSnapshot.ErrorDetail
+		return CacheEntry{Profile: prof}, err
+	}
+	errSnapshot.LastRefreshAt = &now
+	return CacheEntry{Profile: profileFromSnapshot(errSnapshot, profile.Name)}, err
 }
 
 func shouldPreservePreviousSnapshot(err error, errSnapshot Snapshot, previous CacheEntry) bool {
@@ -856,11 +985,10 @@ func hasTransientHTTPStatus(detail *ErrorDetail) bool {
 	return false
 }
 
-// FetchProfileSnapshot returns the cached usage snapshot for a credential
-// profile, fetching fresh data when the cache is stale. Pass the live
-// credential file path for the active profile, the stored path for others.
-// Always uses persist=false so reading a stored profile never rotates its
-// tokens; the main provider's background poll refreshes the active profile.
+// FetchProfileSnapshot returns the cached usage snapshot for a stored
+// credential profile, fetching fresh data when the cache is stale. It uses
+// persist=false so reading a stored profile never rotates its tokens; the
+// target-driven poller uses the normal provider for the active profile.
 // registryKeyForTool maps a switcher tool name ("claude", "codex") to the
 // usages provider registry key ("claude-code", "codex"). Codex is the same in
 // both; claude differs because the registry uses the harness name and the
@@ -876,94 +1004,27 @@ func registryKeyForTool(tool string) string {
 
 func (m *Manager) FetchProfileSnapshot(ctx context.Context, tool, name, credPath string) (Profile, error) {
 	regKey := registryKeyForTool(tool)
-	var cached *CacheEntry
-	var interval time.Duration
-	_ = m.store.WithLock(func() error {
-		cfg, err := m.store.LoadConfig()
-		if err != nil {
-			return err
-		}
+	target := ProfileInfo{Tool: tool, Name: name, CredPath: credPath, HasCredentials: hasFile(credPath)}
+	result := m.fetchProfileWithProviderLock(ctx, regKey, target, false, false)
+	if result.err != nil {
+		return Profile{}, result.err
+	}
+	var profile Profile
+	err := m.store.WithLock(func() error {
 		cache, err := m.store.LoadCache()
 		if err != nil {
 			return err
 		}
-		interval, _ = m.store.RefreshInterval(cfg)
-		// All profiles — active and inactive — refresh on the configured provider
-		// interval. No separate floor; email is the only thing on a slower cadence.
-		now := m.clock.Now()
-		for i := range cache.Snapshots[regKey] {
-			if cache.Snapshots[regKey][i].Profile.ProfileName == name {
-				if cache.Snapshots[regKey][i].Profile.LastRefreshAt != nil && now.Sub(*cache.Snapshots[regKey][i].Profile.LastRefreshAt) < interval {
-					cp := cache.Snapshots[regKey][i]
-					cached = &cp
-				}
-				break
-			}
+		entry := profileCacheEntry(cache.Snapshots[regKey], name)
+		if entry != nil {
+			profile = entry.Profile
 		}
 		return nil
 	})
-	if cached != nil {
-		return cached.Profile, nil
+	if err != nil {
+		return Profile{}, err
 	}
-	_ = interval
-	startFingerprint := credentialFingerprint(credPath)
-
-	var snap Snapshot
-	var fetchErr error
-	switch tool {
-	case "claude":
-		snap, fetchErr = fetchClaudeSnapshotFromPathFunc(ctx, credPath)
-	case "codex":
-		snap, fetchErr = fetchCodexSnapshotFromPathFunc(ctx, credPath, false, nil)
-	default:
-		return Profile{}, fmt.Errorf("unsupported switcher tool %q for profile snapshot", tool)
-	}
-	if fetchErr != nil {
-		if startFingerprint != credentialFingerprint(credPath) {
-			return Profile{}, errors.New("credentials changed during usage fetch")
-		}
-		// Write a placeholder entry with the profile name so setProfileFields
-		// can set identity fields on it. Identity is not conditional on a
-		// successful fetch — a profile whose fetch errors must still carry
-		// profile_name, has_credentials, etc.
-		now := m.clock.Now()
-		errSnap := Snapshot{Status: StatusFetchError, Error: fetchErr.Error()}
-		if snapErr, ok := fetchErr.(*SnapshotError); ok {
-			errSnap = snapErr.Snapshot
-			if errSnap.Status == "" {
-				errSnap.Status = StatusFetchError
-			}
-			if errSnap.Error == "" {
-				errSnap.Error = snapErr.Error()
-			}
-		}
-		errSnap.LastRefreshAt = &now
-		_ = m.store.WithLock(func() error {
-			cache, err := m.store.LoadCache()
-			if err != nil {
-				return err
-			}
-			entry := CacheEntry{Profile: profileFromSnapshot(errSnap, name)}
-			cache.Snapshots[regKey] = setProfileCacheEntry(cache.Snapshots[regKey], name, entry)
-			return m.store.SaveCache(cache)
-		})
-		return profileFromSnapshot(errSnap, name), fetchErr
-	}
-	if startFingerprint != credentialFingerprint(credPath) {
-		return Profile{}, errors.New("credentials changed during usage fetch")
-	}
-	now := m.clock.Now()
-	snap.LastRefreshAt = &now
-	_ = m.store.WithLock(func() error {
-		cache, err := m.store.LoadCache()
-		if err != nil {
-			return err
-		}
-		entry := CacheEntry{Profile: profileFromSnapshot(snap, name)}
-		cache.Snapshots[regKey] = setProfileCacheEntry(cache.Snapshots[regKey], name, entry)
-		return m.store.SaveCache(cache)
-	})
-	return profileFromSnapshot(snap, name), nil
+	return profile, result.fetchErr
 }
 
 // InvalidateProfileSnapshot removes a profile's entry from the cache array,
@@ -1003,178 +1064,6 @@ func toolForRegistryKey(regKey string) string {
 	default:
 		return ""
 	}
-}
-
-// refreshProfiles fetches/derives per-profile snapshots for switcher-enabled
-// providers. The active profile is derived from the provider snapshot (no
-// separate fetch — same credentials, same API). Inactive profiles are fetched
-// if stale. Email is set from ProfileInfo, preferring the profile's captured
-// value and falling through to the fetch's when empty. Returns true if any
-// profile entry was created or updated.
-func (m *Manager) refreshProfiles(ctx context.Context) (bool, error) {
-	if m.profileLister == nil {
-		return false, nil
-	}
-	changed := false
-	for _, key := range knownProviders {
-		tool := toolForRegistryKey(key)
-		if tool == "" {
-			continue
-		}
-		profiles := m.profileLister(tool)
-		if len(profiles) == 0 {
-			continue
-		}
-		for _, p := range profiles {
-			if p.Active {
-				m.deriveActiveProfile(key, p)
-				if !m.profileEntryExists(key, p.Name) {
-					_, _ = m.FetchProfileSnapshot(ctx, p.Tool, p.Name, p.CredPath)
-				}
-				m.setProfileFields(key, p.Name, p.Email, p.HasCredentials, p.ExpiresAt, p.Active)
-				changed = true
-				continue
-			}
-			_, err := m.FetchProfileSnapshot(ctx, tool, p.Name, p.CredPath)
-			if err == nil {
-				changed = true
-			}
-			m.setProfileFields(key, p.Name, p.Email, p.HasCredentials, p.ExpiresAt, p.Active)
-		}
-		// Reconciliation: drop any cache entry whose name isn't in the current
-		// profile list. This removes orphans from older builds (e.g. a "default"
-		// entry from before the fix) and handles profiles deleted in the switcher.
-		validNames := make(map[string]bool, len(profiles))
-		for _, p := range profiles {
-			validNames[p.Name] = true
-		}
-		m.reconcileProfileEntries(key, validNames)
-	}
-	return changed, nil
-}
-
-func (m *Manager) profileEntryExists(regKey, profileName string) bool {
-	found := false
-	_ = m.store.WithLock(func() error {
-		cache, err := m.store.LoadCache()
-		if err != nil {
-			return err
-		}
-		for _, e := range cache.Snapshots[regKey] {
-			if e.Profile.ProfileName == profileName {
-				found = true
-				break
-			}
-		}
-		return nil
-	})
-	return found
-}
-
-// deriveActiveProfile copies the provider's "default" cache entry as the active
-// profile's entry, setting Profile = name and Email (prefer profile's, fall
-// through to the fetch's). No network fetch — the active profile uses the same
-// credentials as the provider fetch.
-// deriveActiveProfile copies the provider's "default" cache entry as the active
-// profile's entry, setting Profile = name and Email (prefer profile's, fall
-// through to the fetch's). No network fetch — the active profile uses the same
-// credentials as the provider fetch.
-//
-// Design property: the active profile IS the provider fetch result. There is
-// no separate provider-level cache entry — the "default" entry and the active
-// profile entry are the same data. This means a switch cannot leave the old
-// account's numbers visible: InvalidateProfileSnapshot drops the old active
-// entry, the next provider fetch creates a fresh "default" entry with the new
-// account's data, and deriveActiveProfile copies it as the new active profile.
-// Someone reintroducing a separate provider entry would bring the
-// old-account-persists hazard straight back.
-func (m *Manager) deriveActiveProfile(regKey string, p ProfileInfo) {
-	_ = m.store.WithLock(func() error {
-		cache, err := m.store.LoadCache()
-		if err != nil {
-			return err
-		}
-		entries := cache.Snapshots[regKey]
-		def := defaultCacheEntry(entries)
-		if def == nil {
-			return nil // no provider snapshot yet; skip until the poller fetches one
-		}
-		entry := *def
-		entry.Profile.ProfileName = p.Name
-		entry.Profile.Active = p.Active
-		entry.Profile.HasCredentials = p.HasCredentials
-		entry.Profile.ExpiresAt = p.ExpiresAt
-		if p.Email != "" {
-			entry.Profile.Email = p.Email
-		}
-		// Replace the "default" entry with the active profile's entry (rename,
-		// not duplicate). Drop the old default and any stale entry for this
-		// profile, then append the fresh one.
-		var newEntries []CacheEntry
-		for _, e := range entries {
-			if e.Profile.ProfileName == "" || e.Profile.ProfileName == "default" {
-				continue
-			}
-			if e.Profile.ProfileName == p.Name {
-				continue
-			}
-			newEntries = append(newEntries, e)
-		}
-		newEntries = append(newEntries, entry)
-		cache.Snapshots[regKey] = newEntries
-		return m.store.SaveCache(cache)
-	})
-}
-
-// setProfileFields sets the switcher fields on a profile's cache entry,
-// preferring the profile's captured email. No-op for email when empty (falls
-// through to whatever the fetch produced). HasCredentials, ExpiresAt, and
-// Active are always set from the switcher profile.
-func (m *Manager) setProfileFields(regKey, profileName, email string, hasCreds bool, expiresAt *time.Time, active bool) {
-	_ = m.store.WithLock(func() error {
-		cache, err := m.store.LoadCache()
-		if err != nil {
-			return err
-		}
-		entries := cache.Snapshots[regKey]
-		for i := range entries {
-			if entries[i].Profile.ProfileName == profileName {
-				if email != "" {
-					entries[i].Profile.Email = email
-				}
-				entries[i].Profile.HasCredentials = hasCreds
-				entries[i].Profile.ExpiresAt = expiresAt
-				entries[i].Profile.Active = active
-				break
-			}
-		}
-		cache.Snapshots[regKey] = entries
-		return m.store.SaveCache(cache)
-	})
-}
-
-// reconcileProfileEntries removes cache entries for a switcher tool whose
-// ProfileName is not in validNames. This removes orphans from older builds
-// (e.g. a "default" entry from before the fix) and handles profiles deleted in
-// the switcher. Without this, stale entries survive forever because no write
-// path ever deletes — setProfileCacheEntry replaces by name, and nothing else
-// cleans up.
-func (m *Manager) reconcileProfileEntries(regKey string, validNames map[string]bool) {
-	_ = m.store.WithLock(func() error {
-		cache, err := m.store.LoadCache()
-		if err != nil {
-			return err
-		}
-		entries := cache.Snapshots[regKey]
-		kept := entries[:0]
-		for _, e := range entries {
-			if validNames[e.Profile.ProfileName] {
-				kept = append(kept, e)
-			}
-		}
-		cache.Snapshots[regKey] = kept
-		return m.store.SaveCache(cache)
-	})
 }
 
 func (m *Manager) checkForceCooldown(provider string) int {
