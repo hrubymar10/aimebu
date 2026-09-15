@@ -450,7 +450,7 @@ GET    /api/sounds/{uuid}              Serve a user-uploaded sound file
 GET    /api/usages                     Ordered providers, each with a non-empty profiles array (named switcher profiles, or one active "local" profile) + settings + display-only switcher flag (?provider=<key>); pure cache read, never fetches
 POST   /api/usages/refresh             Force refresh usage snapshots; 15s cooldown (429 returns {"retry_after_sec": N})
 POST   /api/usages/providers           Enable/disable known providers from Settings
-POST   /api/usages/settings            Update usage refresh interval (minimum 15s), percent display ("left" or "used"), provider order, and Claude auto-refresh (claude_auto_refresh)
+POST   /api/usages/settings            Update usage refresh interval (minimum 15s), percent display ("left" or "used"), provider order, Claude auto-refresh (claude_auto_refresh), and Claude auto-warmup (claude_auto_warmup)
 POST   /api/usages/mistral/config      Save or clear Mistral Cookie header; response never echoes secrets
 POST   /api/usages/ollama/cookie       Save or clear Ollama Cloud Cookie header; response never echoes the cookie
 POST   /api/usages/ollama/config       Save or clear Ollama Cloud auth mode, API key, and Cookie header; response never echoes secrets

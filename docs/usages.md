@@ -143,8 +143,73 @@ Configure it in **Settings → Usages → Claude auto-refresh**. The stored flag
 `claude_auto_refresh` in `~/.aimebu/usages/config.json`; the GET/POST
 `/api/usages/settings` responses expose `claude_auto_refresh` and the runtime
 `claude_auto_refresh_available` availability flag. `POST /api/usages/settings`
-accepts an optional `claude_auto_refresh` boolean alongside
-`refresh_interval_sec` and `percent_display`.
+accepts optional `claude_auto_refresh` and `claude_auto_warmup` booleans
+alongside `refresh_interval_sec` and `percent_display`.
+
+### Claude warmup (idle 5-hour window)
+
+Claude subscription usage is bucketed into rolling **5-hour session windows**.
+A window only **starts on first use**, so an account that has been idle has no
+active window and its capacity is not counting down. Warmup proactively kicks
+one off: it runs a trivial `claude -p` as an inactive account inside the same
+throwaway `harness-docker` container that auto-refresh uses (the shared
+executor), which opens the account's rolling 5-hour window server-side.
+
+Warmup is an **automatic, toggle-gated** poller feature — there is no button or
+endpoint that triggers it on demand. Enable it in **Settings → Usages → Claude
+account maintenance → Warm idle Claude accounts**, alongside the auto-refresh
+toggle in the same bordered section. The stored flag is `claude_auto_warmup` in
+`~/.aimebu/usages/config.json`; the GET/POST `/api/usages/settings` responses
+expose `claude_auto_warmup` and the runtime `claude_auto_warmup_available`
+availability flag, and `POST /api/usages/settings` accepts an optional
+`claude_auto_warmup` boolean.
+
+- **Trigger — the background poller.** On each poller tick (the same tick that
+  drives auto-refresh), aimebu warms every eligible inactive account whose 5h
+  window is uninitialized. “Force” only in the sense that the rule is simply
+  *uninitialized → initialize now* — there is no smart pacing or schedule beyond
+  the per-account 1h rate-limit.
+- **Chained to auto-refresh.** Warmup runs only when **both** `claude_auto_refresh`
+  **and** `claude_auto_warmup` are enabled (and the feature is available). The
+  warmup toggle in the UI is disabled while auto-refresh is off. This is
+  deliberate: warmup reuses the same container path and must persist rotated
+  tokens back the way auto-refresh does.
+- **Eligibility — out of the 5h window.** Only **inactive** `claude` switcher
+  profiles with stored credentials are candidates (the active one is warmed by
+  normal use). An account is treated as “out of window” when its usages snapshot
+  has **no active session (`five_hour`) window** — that is, no session window at
+  all, or a session window whose `resets_at` is nil or already in the past. A
+  session window with a **future** `resets_at` is active (even at 0%
+  utilization) and is left alone. Snapshots that are not `ok` are skipped. This
+  is judged from the last **persisted** snapshot (the on-disk usages cache),
+  which may be up to one refresh interval stale — an account that just opened a
+  window can still be selected until the next poll refreshes its snapshot; the
+  1h rate-limit bounds the cost of acting on a slightly-stale read.
+  > **Unconfirmed:** the exact shape the Anthropic usage API returns for a
+  > long-idle account (omitted `five_hour` vs. present-but-stale `resets_at`)
+  > has not been verified against real accounts. The reading above is the safe
+  > superset; confirm it against a running server with real idle accounts.
+- **Copy-back is mandatory.** Running `claude -p` performs OAuth
+  refresh-on-use: for an idle/aged account (warmup's target set) the access
+  token is typically expired, so Anthropic rotates the refresh token into the
+  container's credential copy. Warmup therefore persists any rotated
+  credentials back to the stored profile — discarding them would leave a dead,
+  unrecoverable login. It reuses auto-refresh's compare-and-swap copy-back (same
+  `switcher/.lock` + re-resolve guard), so a switch/removal that lands mid-run
+  is never clobbered and the active profile is never touched. Unlike
+  auto-refresh, warmup does **not** require `expiresAt` to advance: it copies
+  back only when the credentials actually changed, and “no rotation” is still a
+  success (the 5h window started regardless).
+- **Rate limit — 1 hour.** Warmup success is only observable on the *next*
+  usages snapshot (a warmed account then shows an active window and drops out of
+  the eligible set), so it cannot be classified inline. Each account is
+  therefore warmed at most **once per hour** regardless of outcome — distinct
+  from auto-refresh's 5-minute post-failure backoff — plus an in-flight guard so
+  an account never has two concurrent warmups.
+- **Gate.** Warmup shares auto-refresh's availability gate: `harness-docker-ctrl`
+  must be on `PATH` and docker must be reachable; additionally both the
+  `claude_auto_refresh` and `claude_auto_warmup` settings must be enabled. It is
+  inert otherwise.
 
 The right-sidebar force-refresh button calls `POST /api/usages/refresh`. It
 bypasses the normal interval but has a separate server-side 15 second

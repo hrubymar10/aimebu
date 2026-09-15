@@ -37,8 +37,14 @@ type Config struct {
 	// ClaudeAutoRefresh enables auto-refreshing near-expiry inactive claude
 	// switcher profiles via an ephemeral harness-docker container. Default off:
 	// enabling it incurs a small per-account cost (periodic `claude -p` calls).
-	ClaudeAutoRefresh bool                      `json:"claude_auto_refresh,omitempty"`
-	Providers         map[string]ProviderConfig `json:"providers"`
+	ClaudeAutoRefresh bool `json:"claude_auto_refresh,omitempty"`
+	// ClaudeAutoWarmup enables automatically warming inactive claude profiles
+	// whose rolling 5-hour session window is uninitialized, so their capacity is
+	// ready to use. Default off. It is chained to ClaudeAutoRefresh: warmup only
+	// runs when auto-refresh is also enabled (it reuses the same container path
+	// and must persist any rotated tokens back the way auto-refresh does).
+	ClaudeAutoWarmup bool                      `json:"claude_auto_warmup,omitempty"`
+	Providers        map[string]ProviderConfig `json:"providers"`
 }
 
 type CacheEntry struct {
@@ -196,6 +202,7 @@ func (s *Store) RefreshInterval(cfg Config) (time.Duration, Settings) {
 		MinRefreshSec:      MinRefreshSec,
 		PercentDisplay:     cfg.PercentDisplay,
 		ClaudeAutoRefresh:  cfg.ClaudeAutoRefresh,
+		ClaudeAutoWarmup:   cfg.ClaudeAutoWarmup,
 	}
 	if raw := os.Getenv(EnvRefreshInterval); raw != "" {
 		if sec, err := strconv.Atoi(raw); err == nil {

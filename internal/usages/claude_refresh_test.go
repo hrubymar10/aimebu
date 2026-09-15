@@ -439,7 +439,7 @@ func TestManagerSettingsExposeAutoRefreshAvailability(t *testing.T) {
 	}
 
 	bTrue := true
-	if _, err := m.UpdateSettings(context.Background(), 0, "", nil, false, &bTrue); err != nil {
+	if _, err := m.UpdateSettings(context.Background(), 0, "", nil, false, &bTrue, nil); err != nil {
 		t.Fatal(err)
 	}
 	m.claudeAvailableFn = func() bool { return true }

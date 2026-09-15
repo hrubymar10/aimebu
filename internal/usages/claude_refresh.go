@@ -271,16 +271,11 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) erro
 	// Temp-dir isolation: claude pollutes its config dir with .claude.json,
 	// sessions/, projects/, policy-limits.json. Run against a throwaway copy of
 	// only the credentials file so the profile dir stays clean.
-	tmpDir, err := os.MkdirTemp("", "aimebu-claude-refresh-*")
+	tmpDir, tmpCred, err := writeClaudeCredTemp(startData, "aimebu-claude-refresh-*")
 	if err != nil {
-		return fmt.Errorf("claude auto-refresh: create temp dir: %w", err)
+		return fmt.Errorf("claude auto-refresh: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
-
-	tmpCred := filepath.Join(tmpDir, ".credentials.json")
-	if err := atomicWriteBytes(tmpCred, startData, 0o600); err != nil {
-		return fmt.Errorf("claude auto-refresh: seed temp credentials: %w", err)
-	}
 
 	if r.reachable != nil && !r.reachable(ctx) {
 		return errors.New("claude auto-refresh: docker is not reachable")
@@ -306,9 +301,21 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) erro
 	// Copy-back under the switcher lock with a compare-and-swap identity guard,
 	// mirroring codex's persistAuth: a switch or removal that landed mid-refresh
 	// must never be clobbered.
+	return commitClaudeCredCopyBack(r.withLock, r.reresolve, profile.Name, storedPath, startFingerprint, rotated)
+}
+
+// commitClaudeCredCopyBack copies `rotated` back into storedPath under withLock
+// with a compare-and-swap identity guard: the slow container run happened
+// outside the lock, so before writing it re-checks that the profile still
+// exists, is still inactive, its CredPath is unchanged, and the stored file
+// still byte-matches startFingerprint. Any mismatch means a switch or removal
+// landed mid-run; it aborts (without writing) rather than clobbering the new
+// reality. Shared by auto-refresh and warmup so both persist rotated OAuth
+// tokens safely. withLock may be nil (tests) to skip locking.
+func commitClaudeCredCopyBack(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool), name, storedPath string, startFingerprint [32]byte, rotated []byte) error {
 	commit := func() error {
-		if r.reresolve != nil {
-			cur, ok := r.reresolve(profile.Name)
+		if reresolve != nil {
+			cur, ok := reresolve(name)
 			if !ok {
 				return errClaudeRefreshProfileGone
 			}
@@ -328,10 +335,28 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) erro
 		}
 		return atomicWriteBytes(storedPath, rotated, 0o600)
 	}
-	if r.withLock != nil {
-		return r.withLock(commit)
+	if withLock != nil {
+		return withLock(commit)
 	}
 	return commit()
+}
+
+// writeClaudeCredTemp creates a throwaway temp dir seeded with only a
+// .credentials.json holding the provided bytes, so the claude binary — run by
+// the executor — pollutes the temp dir instead of the real profile dir. It is
+// shared by auto-refresh (which copies the rotated file back) and warmup (which
+// discards it). The caller owns removing tmpDir. Returns (tmpDir, tmpCredPath).
+func writeClaudeCredTemp(data []byte, prefix string) (string, string, error) {
+	tmpDir, err := os.MkdirTemp("", prefix)
+	if err != nil {
+		return "", "", fmt.Errorf("create temp dir: %w", err)
+	}
+	tmpCred := filepath.Join(tmpDir, ".credentials.json")
+	if err := atomicWriteBytes(tmpCred, data, 0o600); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return "", "", fmt.Errorf("seed temp credentials: %w", err)
+	}
+	return tmpDir, tmpCred, nil
 }
 
 // atomicWriteBytes writes data to path via a temp file + rename so a crash can

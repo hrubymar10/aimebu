@@ -45,6 +45,7 @@ type Manager struct {
 	switcherEnabled SwitcherEnabledProvider
 
 	claudeRefresher   *claudeRefresher
+	claudeWarmer      *claudeWarmer
 	claudeAvailableFn func() bool
 
 	profileMu          sync.Mutex
@@ -214,6 +215,12 @@ func (m *Manager) SetSwitcherSettingsProvider(fn SwitcherEnabledProvider) {
 // lock for its CAS identity guard.
 func (m *Manager) EnableClaudeAutoRefresh(withLock func(func() error) error) {
 	m.claudeRefresher = newClaudeRefresher(withLock, m.currentClaudeProfile)
+	// Warmup shares the same gate (setting enabled + harness-docker-ctrl present)
+	// and reuses the same executor, so it is wired alongside auto-refresh. It also
+	// needs withLock + the CAS re-resolve: `claude -p` can rotate the account's
+	// OAuth token, and warmup MUST persist that rotation back with the same safety
+	// guard auto-refresh uses.
+	m.claudeWarmer = newClaudeWarmer(withLock, m.currentClaudeProfile)
 }
 
 // currentClaudeProfile returns the current resolved claude switcher profile for
@@ -241,6 +248,9 @@ func (m *Manager) claudeAutoRefreshAvailable() bool {
 // in config (currently the auto-refresh availability flag).
 func (m *Manager) decorateSettings(info Settings) Settings {
 	info.ClaudeAutoRefreshAvailable = m.claudeAutoRefreshAvailable()
+	// Warmup shares auto-refresh's availability gate (harness-docker-ctrl present).
+	// The UI additionally disables the warmup toggle while auto-refresh is off.
+	info.ClaudeAutoWarmupAvailable = m.claudeAutoRefreshAvailable()
 	return info
 }
 
@@ -268,6 +278,59 @@ func (m *Manager) triggerClaudeAutoRefresh(ctx context.Context) {
 		if claudeProfileNeedsRefresh(profile, now, claudeNearExpiryWindow) {
 			m.claudeRefresher.maybeRefresh(ctx, profile)
 		}
+	}
+}
+
+// triggerClaudeAutoWarmup scans the resolved claude profiles and asks the
+// warmer to warm any INACTIVE profile whose rolling 5-hour session window is
+// uninitialized (no active window in its latest cached snapshot), starting one
+// server-side. Like triggerClaudeAutoRefresh it runs on the normal poller tick,
+// receiving the long-lived poller context, so the warmup goroutines it spawns
+// outlive the tick. It is a no-op unless BOTH auto-refresh AND auto-warmup are
+// enabled and the feature is available (harness-docker-ctrl present). "Force"
+// here means the only rule is uninitialized → initialize now (no smart pacing);
+// the per-account 1h cooldown, in-flight guard, and CAS copy-back of rotated
+// credentials all live in claudeWarmer.
+//
+// Eligibility is judged from the last PERSISTED usages snapshot (LoadCache),
+// which may be up to one refresh interval stale; an account that just opened a
+// window can still be selected until the next poll refreshes its snapshot. The
+// 1h cooldown bounds the cost of acting on a slightly-stale read.
+func (m *Manager) triggerClaudeAutoWarmup(ctx context.Context) {
+	if m.claudeWarmer == nil {
+		return
+	}
+	var cfg Config
+	if err := m.store.WithLock(func() error {
+		c, err := m.store.LoadConfig()
+		cfg = c
+		return err
+	}); err != nil {
+		return
+	}
+	// Warmup is chained to auto-refresh: both flags must be on, and the shared
+	// container feature must be available.
+	if !cfg.ClaudeAutoRefresh || !cfg.ClaudeAutoWarmup || !m.claudeAutoRefreshAvailable() {
+		return
+	}
+	var cache Cache
+	if err := m.store.WithLock(func() error {
+		c, err := m.store.LoadCache()
+		cache = c
+		return err
+	}); err != nil {
+		return
+	}
+	now := m.clock.Now()
+	for _, profile := range m.profilesForProvider(ProviderClaudeCode) {
+		if !claudeProfileEligibleForWarmup(profile) {
+			continue
+		}
+		entry := profileCacheEntry(cache.Snapshots[ProviderClaudeCode], profile.Name)
+		if entry == nil || !claudeSnapshotOutOfWindow(entry.Profile.Snapshot, now) {
+			continue
+		}
+		m.claudeWarmer.maybeWarm(ctx, profile)
 	}
 }
 
@@ -430,7 +493,7 @@ func (m *Manager) ForceRefresh(ctx context.Context, provider string) (UsagesResp
 	return resp, retry, err
 }
 
-func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDisplay string, providerOrder []string, updateProviderOrder bool, claudeAutoRefresh *bool) (Settings, error) {
+func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDisplay string, providerOrder []string, updateProviderOrder bool, claudeAutoRefresh *bool, claudeAutoWarmup *bool) (Settings, error) {
 	if intervalSec != 0 && intervalSec < MinRefreshSec {
 		return Settings{}, errors.New("refresh_interval_sec is below minimum")
 	}
@@ -454,6 +517,9 @@ func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDi
 		}
 		if claudeAutoRefresh != nil {
 			cfg.ClaudeAutoRefresh = *claudeAutoRefresh
+		}
+		if claudeAutoWarmup != nil {
+			cfg.ClaudeAutoWarmup = *claudeAutoWarmup
 		}
 		if err := m.store.SaveConfig(cfg); err != nil {
 			return err
@@ -602,6 +668,7 @@ func (m *Manager) Start(ctx context.Context, wg *sync.WaitGroup) {
 				return
 			case <-ticker.C:
 				m.triggerClaudeAutoRefresh(ctx)
+				m.triggerClaudeAutoWarmup(ctx)
 				resp, changed, _, err := m.refreshWithChange(ctx, "", false)
 				if err != nil {
 					continue
