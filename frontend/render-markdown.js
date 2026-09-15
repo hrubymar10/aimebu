@@ -70,6 +70,14 @@ function renderMarkdown(rawText) {
     return s;
   }
 
+  function preserveLeadingWhitespace(s) {
+    return s.replace(/^[ \t]+/, function (whitespace) {
+      return whitespace
+        .replace(/ /g, '&nbsp;')
+        .replace(/\t/g, '&nbsp;&nbsp;&nbsp;&nbsp;');
+    });
+  }
+
   var lines = html.split('\n');
   var out = [];
   var i = 0;
@@ -231,7 +239,7 @@ function renderMarkdown(rawText) {
     }
 
     // Normal inline text
-    out.push({ type: 'text', html: applyInline(line) });
+    out.push({ type: 'text', html: applyInline(preserveLeadingWhitespace(line)) });
     i++;
   }
 

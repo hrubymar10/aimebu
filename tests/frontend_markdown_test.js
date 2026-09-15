@@ -36,6 +36,9 @@ function render(markdown) {
 assert.strictEqual(render('one\ntwo'), 'one<br>two', 'a single newline renders as one hard break');
 assert.strictEqual(render('one\n\ntwo'), 'one<br><br>two', 'a blank line renders as a paragraph gap');
 assert.strictEqual(render('one\n\n\ntwo'), 'one<br><br>two', 'longer blank-line runs normalize to one paragraph gap');
+assert.strictEqual(render('plain'), 'plain', 'a line without indentation is unchanged');
+assert.strictEqual(render('root\n  child'), 'root<br>&nbsp;&nbsp;child', 'leading spaces survive inline rendering');
+assert.strictEqual(render('root\n\tchild'), 'root<br>&nbsp;&nbsp;&nbsp;&nbsp;child', 'a leading tab renders at a fixed width');
 
 const fencedCode = render('```js\none\ntwo\n```');
 assert(fencedCode.includes('<code class="lang-js">one\ntwo</code>'), 'fenced code preserves literal newlines');
