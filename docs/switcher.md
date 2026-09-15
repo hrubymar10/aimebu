@@ -108,6 +108,9 @@ directly — no HTTP, no daemon.
 
 1. Refuse if the switcher is disabled, the tool is ineligible, the target
    profile does not exist, or **no profile is currently active**.
+   An absent live credentials file is the exception: it means an empty active
+   profile has nothing to capture, so switching away is allowed. Malformed
+   live credentials still block the switch.
 2. **Validate** the live credentials. If they are malformed, abort before
    writing anything — storing them would overwrite a known-good profile with
    garbage.

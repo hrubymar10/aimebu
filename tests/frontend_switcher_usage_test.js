@@ -50,6 +50,9 @@ vm.runInContext([
   extractFunction('renderUsageProfiles'),
   extractFunction('renderUsageProviderTile'),
   extractFunction('windowLabel'),
+  extractFunction('switcherProfileUsage'),
+  extractFunction('renderSwitcherSection'),
+  extractFunction('renderSwitcherProfileRow'),
 ].join('\n'), context);
 
 (async () => {
@@ -77,6 +80,32 @@ vm.runInContext([
   context.usageSwitcherEnabled = true;
   rendered = context.renderUsageProviderTile(context.usageProviders[0], context.usageProviders[0].profiles);
   assert(rendered.includes('data-profile="backup"'), 'switcher-on adds the inactive-profile control');
+
+  context.usageProviders[0].switch_eligible = false;
+  context.usageProviders[0].switch_absent = true;
+  context.usageProviders[0].switch_ineligible_reason = 'no live credentials';
+  rendered = context.renderUsageProviderTile(context.usageProviders[0], context.usageProviders[0].profiles);
+  assert(rendered.includes('data-profile="backup"'), 'absent active credentials still allow switching away in the usage tile');
+  let switcherSection = context.renderSwitcherSection(
+    'codex',
+    context.usageProviders[0].profiles,
+    { eligible: false, absent: true, reason: 'no live credentials' },
+    false,
+    'switch'
+  );
+  assert(switcherSection.includes('data-profile="backup"'), 'absent active credentials still allow switching away in the switcher panel');
+
+  context.usageProviders[0].switch_absent = false;
+  rendered = context.renderUsageProviderTile(context.usageProviders[0], context.usageProviders[0].profiles);
+  assert(!rendered.includes('data-profile="backup"'), 'normal ineligibility disables switching in the usage tile');
+  switcherSection = context.renderSwitcherSection(
+    'codex',
+    context.usageProviders[0].profiles,
+    { eligible: false, absent: false, reason: 'invalid credentials' },
+    false,
+    'switch'
+  );
+  assert(!switcherSection.includes('data-profile="backup"'), 'normal ineligibility disables switching in the switcher panel');
   context.usageSwitcherEnabled = false;
 
   context.usageProviders = [{ provider_name: 'claude-code', profiles: [] }];

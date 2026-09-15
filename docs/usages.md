@@ -56,8 +56,11 @@ account: `profile_name`, `active`, `has_credentials`, `expires_at`, `email`,
 plus `status`, `plan`, `windows`, `credits` and `last_refresh_at`. That is
 deliberate — there is no join between usage data and account data, so there is
 nothing for the two to disagree about. Switch eligibility is per tool and lives
-on the provider (`switch_eligible`, `switch_ineligible_reason`); only the global
-on/off flag sits at the top level.
+on the provider (`switch_eligible`, `switch_absent`,
+`switch_ineligible_reason`); only the global on/off flag sits at the top level.
+`switch_absent=true` means the active profile has no live credentials to
+capture, so switching away remains allowed even though the tool is not
+otherwise eligible.
 
 ## Refresh Behavior
 

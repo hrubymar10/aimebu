@@ -524,3 +524,31 @@ func TestProfileListerCarriesAllSwitcherFields(t *testing.T) {
 		t.Error("ExpiresAt = nil, want non-nil (credentials have expiry)")
 	}
 }
+
+func TestSwitcherEligibilityProviderCarriesAbsent(t *testing.T) {
+	sm, home := newSwitcherTestEnv(t)
+	if err := sm.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	writeLiveSwitcherCred(t, home, switcher.ToolClaude, futureCladeCred("tok-main"))
+	if err := sm.Import(switcher.ToolClaude, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.Add(switcher.ToolClaude, "empty"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := sm.Switch(switcher.ToolClaude, "empty"); err != nil {
+		t.Fatal(err)
+	}
+
+	eligible, absent, reason := switcherEligibilityProvider(sm)(switcher.ToolClaude)
+	if eligible {
+		t.Fatal("eligible = true, want false without live credentials")
+	}
+	if !absent {
+		t.Fatal("absent = false, want true after switching to an empty profile")
+	}
+	if !strings.Contains(reason, "no live credentials") {
+		t.Fatalf("reason = %q, want missing-live explanation", reason)
+	}
+}

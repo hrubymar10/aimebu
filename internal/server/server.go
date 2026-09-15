@@ -2473,6 +2473,7 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 			enabled, _ := swMgr.Enabled()
 			return enabled
 		})
+		usageManager.SetSwitcherEligibilityProvider(switcherEligibilityProvider(swMgr))
 		// Auto-refresh near-expiry inactive claude profiles. The copy-back of
 		// rotated tokens holds switcher/.lock so a concurrent switch cannot be
 		// clobbered (§14.2).

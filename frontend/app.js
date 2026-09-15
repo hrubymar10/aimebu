@@ -2992,7 +2992,7 @@
     var profiles = provider.profiles || [];
     profiles.sort(function (a, b) { return (b.active ? 1 : 0) - (a.active ? 1 : 0); });
     if (!profiles.length) return '';
-    var blocked = !!switcherInFlight[providerKey] || (!provider.switch_eligible && provider.switch_ineligible_reason);
+    var blocked = !!switcherInFlight[providerKey] || (!provider.switch_eligible && !provider.switch_absent && provider.switch_ineligible_reason);
     return profiles.map(function (p) {
       var activeTag = p.active ? '<span class="switcher-tile-active">active</span>' : '';
       var switchBtn = (usageSwitcherEnabled && switcherToolForProvider(providerKey) && !p.active && !blocked)
@@ -3449,7 +3449,7 @@
     }
     el.innerHTML = ['claude-code', 'codex'].map(function (name) {
       var provider = (usageProviders || []).find(function (p) { return p.provider_name === name; }) || { provider_name: name, profiles: [], switch_eligible: true, switch_ineligible_reason: '' };
-      var elig = { tool: name, eligible: provider.switch_eligible, reason: provider.switch_ineligible_reason };
+      var elig = { tool: name, eligible: provider.switch_eligible, absent: provider.switch_absent, reason: provider.switch_ineligible_reason };
       return renderSwitcherSection(name, provider.profiles, elig, !!switcherInFlight[switcherToolForProvider(name)], 'manage');
     }).join('');
   }
@@ -3465,7 +3465,7 @@
     var tools = ['claude-code', 'codex'];
     container.innerHTML = tools.map(function (name) {
       var provider = (usageProviders || []).find(function (p) { return p.provider_name === name; }) || { provider_name: name, profiles: [], switch_eligible: true, switch_ineligible_reason: '' };
-      var toolElig = { tool: name, eligible: provider.switch_eligible, reason: provider.switch_ineligible_reason };
+      var toolElig = { tool: name, eligible: provider.switch_eligible, absent: provider.switch_absent, reason: provider.switch_ineligible_reason };
       return renderSwitcherSection(name, provider.profiles, toolElig, !!switcherInFlight[switcherToolForProvider(name)], 'switch');
     }).join('');
   }

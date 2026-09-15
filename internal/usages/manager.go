@@ -40,9 +40,10 @@ type Manager struct {
 	lastForce     map[string]time.Time
 	forceCooldown time.Duration
 
-	onUpdate        func(UsagesResponse)
-	profileLister   ProfileLister
-	switcherEnabled SwitcherEnabledProvider
+	onUpdate            func(UsagesResponse)
+	profileLister       ProfileLister
+	switcherEnabled     SwitcherEnabledProvider
+	switcherEligibility SwitcherEligibilityProvider
 
 	claudeRefresher   *claudeRefresher
 	claudeWarmer      *claudeWarmer
@@ -209,6 +210,16 @@ func (m *Manager) SetSwitcherSettingsProvider(fn SwitcherEnabledProvider) {
 	m.switcherEnabled = fn
 }
 
+// SwitcherEligibilityProvider reports whether a switcher tool's live
+// credentials can be captured. absent distinguishes an empty active profile,
+// which may be switched away from, from malformed live credentials, which
+// must keep switching disabled.
+type SwitcherEligibilityProvider func(tool string) (eligible, absent bool, reason string)
+
+func (m *Manager) SetSwitcherEligibilityProvider(fn SwitcherEligibilityProvider) {
+	m.switcherEligibility = fn
+}
+
 // EnableClaudeAutoRefresh wires the claude auto-refresh coordinator. withLock is
 // the switcher's WithLock so the credential copy-back holds switcher/.lock. The
 // coordinator re-resolves the profile by name (via the ProfileLister) inside the
@@ -364,14 +375,18 @@ func (m *Manager) assembleResponse(cfg Config, cache Cache) UsagesResponse {
 		for _, e := range cache.Snapshots[key] {
 			profiles = append(profiles, e.Profile)
 		}
-		resp.Providers = append(resp.Providers, Provider{
+		provider := Provider{
 			ProviderName: key,
 			Label:        ProviderLabel(key),
 			OrderNumber:  i,
 			Enabled:      pc.Enabled,
 			Available:    m.registry.HasProvider(key),
 			Profiles:     profiles,
-		})
+		}
+		if tool := toolForRegistryKey(key); tool != "" && m.switcherEligibility != nil {
+			provider.SwitchEligible, provider.SwitchAbsent, provider.SwitchIneligible = m.switcherEligibility(tool)
+		}
+		resp.Providers = append(resp.Providers, provider)
 	}
 	return resp
 }

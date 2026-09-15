@@ -793,6 +793,38 @@ func TestInvariantNoDefaultOnSwitcherTool(t *testing.T) {
 	}
 }
 
+func TestSnapshotCarriesAbsentSwitcherEligibility(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	m := NewManager(store, EmptyRegistry())
+	m.SetSwitcherEligibilityProvider(func(tool string) (eligible, absent bool, reason string) {
+		if tool == "claude" {
+			return false, true, "no live credentials"
+		}
+		return true, false, ""
+	})
+
+	resp, err := m.Snapshot(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, provider := range resp.Providers {
+		if provider.ProviderName != ProviderClaudeCode {
+			continue
+		}
+		if provider.SwitchEligible {
+			t.Fatal("SwitchEligible = true, want false for absent live credentials")
+		}
+		if !provider.SwitchAbsent {
+			t.Fatal("SwitchAbsent = false, want true for absent live credentials")
+		}
+		if provider.SwitchIneligible != "no live credentials" {
+			t.Fatalf("SwitchIneligible = %q, want no live credentials", provider.SwitchIneligible)
+		}
+		return
+	}
+	t.Fatal("claude-code provider missing from snapshot")
+}
+
 // TestInvariantExactlyOneActivePerSwitcherTool verifies that after a full
 // refresh cycle, exactly one profile per switcher tool has Active: true.
 // Zero means the active flag is never transferred; two means a stale entry

@@ -21,6 +21,21 @@ type switcherRoutes struct {
 	um *usages.Manager
 }
 
+func switcherEligibilityProvider(sm *switcher.Manager) usages.SwitcherEligibilityProvider {
+	return func(tool string) (eligible, absent bool, reason string) {
+		eligibilities, err := sm.Eligibility()
+		if err != nil {
+			return false, false, err.Error()
+		}
+		for _, eligibility := range eligibilities {
+			if eligibility.Tool == tool {
+				return eligibility.Eligible, eligibility.Absent, eligibility.Reason
+			}
+		}
+		return false, false, "switch eligibility unavailable"
+	}
+}
+
 func (r switcherRoutes) mount(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/usages/switcher/settings", r.handleSettings)
 	mux.HandleFunc("POST /api/usages/switcher/switch", r.handleSwitch)

@@ -143,6 +143,7 @@ type Provider struct {
 	Enabled          bool      `json:"enabled"`
 	Available        bool      `json:"available"`
 	SwitchEligible   bool      `json:"switch_eligible,omitempty"`
+	SwitchAbsent     bool      `json:"switch_absent,omitempty"`
 	SwitchIneligible string    `json:"switch_ineligible_reason,omitempty"`
 	Profiles         []Profile `json:"profiles"`
 }
