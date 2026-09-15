@@ -3,6 +3,7 @@ package usages
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestClaudeProfileEligibleForWarmup(t *testing.T) {
 		want    bool
 	}{
 		{"inactive claude with creds", ProfileInfo{Tool: "claude", HasCredentials: true}, true},
-		{"active never eligible", ProfileInfo{Tool: "claude", Active: true, HasCredentials: true}, false},
+		{"active with credentials", ProfileInfo{Tool: "claude", Active: true, HasCredentials: true}, true},
 		{"no credentials", ProfileInfo{Tool: "claude", HasCredentials: false}, false},
 		{"non-claude tool", ProfileInfo{Tool: "codex", HasCredentials: true}, false},
 	}
@@ -159,7 +160,7 @@ func TestClaudeWarmupCopiesBackRotatedCreds(t *testing.T) {
 
 // ── CAS identity guard on warmup copy-back ───────────────────────────────
 
-func TestClaudeWarmupCASAbortsWhenProfileBecomesActive(t *testing.T) {
+func TestClaudeWarmupCASAllowsActiveProfile(t *testing.T) {
 	now := time.Unix(2_600_000, 0)
 	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
 	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
@@ -167,19 +168,42 @@ func TestClaudeWarmupCASAbortsWhenProfileBecomesActive(t *testing.T) {
 
 	exec := &fakeExecutor{writeNew: rotated}
 	w := newTestWarmer(exec, &fakeClock{now: now})
-	// The profile flipped to active mid-warmup: copy-back must abort.
+	// Active profiles are eligible warmup targets, so copy-back is intentional.
 	w.reresolve = func(name string) (ProfileInfo, bool) {
 		return ProfileInfo{Tool: "claude", Name: name, Active: true, CredPath: credPath, HasCredentials: true}, true
 	}
 	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true}
 
 	_, err := w.maybeWarmSync(context.Background(), profile)
-	if !errors.Is(err, errClaudeRefreshProfileActive) {
-		t.Fatalf("expected active-profile CAS abort, got %v", err)
+	if err != nil {
+		t.Fatalf("active-profile warmup failed: %v", err)
+	}
+	got, _ := os.ReadFile(credPath)
+	if string(got) != rotated {
+		t.Fatalf("active-profile rotated credentials not copied back, got=%s", got)
+	}
+}
+
+func TestClaudeWarmupCASAbortsWhenCredentialPathChanged(t *testing.T) {
+	now := time.Unix(2_650_000, 0)
+	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
+	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
+	_, credPath := writeStoredProfile(t, old)
+	_, otherPath := writeStoredProfile(t, old)
+
+	w := newTestWarmer(&fakeExecutor{writeNew: rotated}, &fakeClock{now: now})
+	w.reresolve = func(name string) (ProfileInfo, bool) {
+		return ProfileInfo{Tool: "claude", Name: name, Active: true, CredPath: otherPath, HasCredentials: true}, true
+	}
+	profile := ProfileInfo{Tool: "claude", Name: "work", Active: true, CredPath: credPath, HasCredentials: true}
+
+	_, err := w.maybeWarmSync(context.Background(), profile)
+	if !errors.Is(err, errClaudeRefreshProfileChanged) {
+		t.Fatalf("expected changed-path CAS abort, got %v", err)
 	}
 	got, _ := os.ReadFile(credPath)
 	if string(got) != old {
-		t.Fatalf("stored credentials must be unchanged when profile became active, got=%s", got)
+		t.Fatalf("stored credentials must be unchanged after path change, got=%s", got)
 	}
 }
 
@@ -372,11 +396,11 @@ func warmupTriggerFixture(t *testing.T) (*Manager, *Store, *fakeExecutor, time.T
 	return m, store, exec, now
 }
 
-func setWarmupSettings(t *testing.T, store *Store, autoRefresh, autoWarmup bool) {
+func setWarmupSettings(t *testing.T, store *Store, autoRefresh bool, mode string) {
 	t.Helper()
 	cfg, _ := store.LoadConfig()
 	cfg.ClaudeAutoRefresh = autoRefresh
-	cfg.ClaudeAutoWarmup = autoWarmup
+	cfg.WarmupMode = mode
 	if err := store.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -385,22 +409,34 @@ func setWarmupSettings(t *testing.T, store *Store, autoRefresh, autoWarmup bool)
 // Both auto-refresh AND auto-warmup on → only the idle, inactive, out-of-window
 // account is warmed; the in-window and active profiles are left alone. A second
 // tick is cooldown-limited.
-func TestManagerTriggerClaudeAutoWarmupBothEnabled(t *testing.T) {
-	m, store, exec, _ := warmupTriggerFixture(t)
-	setWarmupSettings(t, store, true, true)
+func TestManagerTriggerClaudeAutoWarmupForceMode(t *testing.T) {
+	m, store, exec, now := warmupTriggerFixture(t)
+	setWarmupSettings(t, store, true, WarmupModeForce)
+	cfg, err := store.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonmatching := now.Add(time.Minute)
+	cfg.WarmupSchedule = fmt.Sprintf("%d %d * * *", nonmatching.Minute(), nonmatching.Hour())
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
 
 	m.triggerClaudeAutoWarmup(context.Background())
-	waitForCalls(t, exec, 1)
+	waitForCalls(t, exec, 2)
+	if !warmupWasAttempted(m.claudeWarmer, "live") {
+		t.Fatal("active out-of-window profile was not warmed")
+	}
 
 	// A second immediate tick is cooldown-limited → no new warmup.
 	m.triggerClaudeAutoWarmup(context.Background())
-	waitForCalls(t, exec, 1)
+	waitForCalls(t, exec, 2)
 }
 
 // Auto-warmup off (auto-refresh on) → no-op.
-func TestManagerTriggerClaudeAutoWarmupWarmupOff(t *testing.T) {
+func TestManagerTriggerClaudeAutoWarmupOffMode(t *testing.T) {
 	m, store, exec, _ := warmupTriggerFixture(t)
-	setWarmupSettings(t, store, true, false)
+	setWarmupSettings(t, store, true, WarmupModeOff)
 
 	m.triggerClaudeAutoWarmup(context.Background())
 	waitForCalls(t, exec, 0)
@@ -409,7 +445,7 @@ func TestManagerTriggerClaudeAutoWarmupWarmupOff(t *testing.T) {
 // Auto-refresh off (auto-warmup on) → no-op: warmup is chained to auto-refresh.
 func TestManagerTriggerClaudeAutoWarmupRefreshOff(t *testing.T) {
 	m, store, exec, _ := warmupTriggerFixture(t)
-	setWarmupSettings(t, store, false, true)
+	setWarmupSettings(t, store, false, WarmupModeForce)
 
 	m.triggerClaudeAutoWarmup(context.Background())
 	waitForCalls(t, exec, 0)
@@ -419,8 +455,102 @@ func TestManagerTriggerClaudeAutoWarmupRefreshOff(t *testing.T) {
 func TestManagerTriggerClaudeAutoWarmupUnavailable(t *testing.T) {
 	m, store, exec, _ := warmupTriggerFixture(t)
 	m.claudeAvailableFn = func() bool { return false }
-	setWarmupSettings(t, store, true, true)
+	setWarmupSettings(t, store, true, WarmupModeForce)
 
 	m.triggerClaudeAutoWarmup(context.Background())
 	waitForCalls(t, exec, 0)
+}
+
+func smartSpacingTriggerFixture(t *testing.T) (*Manager, *Store, *fakeExecutor, *fakeClock) {
+	t.Helper()
+	store := NewStoreAt(t.TempDir())
+	now := time.Unix(6_000_000, 0)
+	clock := &fakeClock{now: now}
+	exec := &fakeExecutor{}
+	profiles := make([]ProfileInfo, 0, 3)
+	entries := make([]CacheEntry, 0, 3)
+	for i, name := range []string{"oldest", "middle", "newest"} {
+		body := claudeCredsWithExpiry(name+"-tok", now.Add(time.Hour).UnixMilli())
+		_, credPath := writeStoredProfile(t, body)
+		profiles = append(profiles, ProfileInfo{Tool: "claude", Name: name, Active: name == "newest", CredPath: credPath, HasCredentials: true})
+		reset := now.Add(time.Duration(i-3) * time.Hour)
+		entries = append(entries, CacheEntry{Profile: Profile{
+			ProfileName: name,
+			Snapshot:    Snapshot{Status: StatusOK, Windows: []Window{sessionWindow(&reset)}},
+		}})
+	}
+
+	m := NewManager(store, EmptyRegistry())
+	m.SetClock(clock)
+	m.claudeAvailableFn = func() bool { return true }
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool != "claude" {
+			return nil
+		}
+		return profiles
+	})
+	m.claudeWarmer = newTestWarmer(exec, clock)
+	if err := store.WithLock(func() error {
+		cache := EmptyCache()
+		cache.Snapshots[ProviderClaudeCode] = entries
+		return store.SaveCache(cache)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	setWarmupSettings(t, store, true, WarmupModeForce)
+	return m, store, exec, clock
+}
+
+func enableSmartSpacing(t *testing.T, store *Store) {
+	t.Helper()
+	cfg, err := store.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.WarmupMode = WarmupModeSmart
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func warmupWasAttempted(w *claudeWarmer, name string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	state := w.state[name]
+	return state != nil && !state.lastAttempt.IsZero()
+}
+
+func TestManagerSmartSpacingPicksLongestIdleAndEnforcesGap(t *testing.T) {
+	m, store, exec, clock := smartSpacingTriggerFixture(t)
+	enableSmartSpacing(t, store)
+
+	m.triggerClaudeAutoWarmup(context.Background())
+	waitForCalls(t, exec, 1)
+	if !warmupWasAttempted(m.claudeWarmer, "oldest") {
+		t.Fatal("first smart-spaced scan did not pick the longest-idle profile")
+	}
+
+	// All three credential-bearing profiles count toward N, including active
+	// "newest". If active profiles were excluded this would be 5h/2 and the
+	// boundary assertion below would not start the second account.
+	gap := claudeSessionWindowDuration / 3
+	clock.now = clock.now.Add(gap - time.Minute)
+	m.triggerClaudeAutoWarmup(context.Background())
+	waitForCalls(t, exec, 1)
+	if warmupWasAttempted(m.claudeWarmer, "middle") {
+		t.Fatal("different profile warmed before the spacing gap elapsed")
+	}
+
+	clock.now = clock.now.Add(time.Minute)
+	m.triggerClaudeAutoWarmup(context.Background())
+	waitForCalls(t, exec, 2)
+	if !warmupWasAttempted(m.claudeWarmer, "middle") {
+		t.Fatal("second smart-spaced scan did not pick the next longest-idle profile")
+	}
+}
+
+func TestManagerSmartSpacingOffWarmsAllCandidates(t *testing.T) {
+	m, _, exec, _ := smartSpacingTriggerFixture(t)
+	m.triggerClaudeAutoWarmup(context.Background())
+	waitForCalls(t, exec, 3)
 }

@@ -41,6 +41,44 @@ func TestStoreDefaultsAndModes(t *testing.T) {
 	}
 }
 
+func TestLoadConfigMigratesLegacyWarmupFlags(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "disabled", raw: `{"claude_auto_warmup":false}`, want: WarmupModeOff},
+		{name: "smart", raw: `{"claude_auto_warmup":true,"warmup_smart_spacing":true}`, want: WarmupModeSmart},
+		{name: "scheduled", raw: `{"claude_auto_warmup":true,"warmup_schedule":"0 8 * * *"}`, want: WarmupModeScheduled},
+		{name: "force", raw: `{"claude_auto_warmup":true}`, want: WarmupModeForce},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewStoreAt(t.TempDir())
+			if err := os.WriteFile(store.ConfigPath(), []byte(tc.raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := store.LoadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.WarmupMode != tc.want {
+				t.Fatalf("WarmupMode = %q, want %q", cfg.WarmupMode, tc.want)
+			}
+			if err := store.SaveConfig(cfg); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(store.ConfigPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), "claude_auto_warmup") || strings.Contains(string(data), "warmup_smart_spacing") {
+				t.Fatalf("saved config retained legacy warmup fields: %s", data)
+			}
+		})
+	}
+}
+
 func TestNormalizeProviderOrder(t *testing.T) {
 	tests := []struct {
 		name string

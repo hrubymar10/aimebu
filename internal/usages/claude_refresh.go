@@ -301,25 +301,25 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) erro
 	// Copy-back under the switcher lock with a compare-and-swap identity guard,
 	// mirroring codex's persistAuth: a switch or removal that landed mid-refresh
 	// must never be clobbered.
-	return commitClaudeCredCopyBack(r.withLock, r.reresolve, profile.Name, storedPath, startFingerprint, rotated)
+	return commitClaudeCredCopyBack(r.withLock, r.reresolve, profile.Name, storedPath, startFingerprint, rotated, false)
 }
 
 // commitClaudeCredCopyBack copies `rotated` back into storedPath under withLock
 // with a compare-and-swap identity guard: the slow container run happened
 // outside the lock, so before writing it re-checks that the profile still
-// exists, is still inactive, its CredPath is unchanged, and the stored file
-// still byte-matches startFingerprint. Any mismatch means a switch or removal
-// landed mid-run; it aborts (without writing) rather than clobbering the new
-// reality. Shared by auto-refresh and warmup so both persist rotated OAuth
-// tokens safely. withLock may be nil (tests) to skip locking.
-func commitClaudeCredCopyBack(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool), name, storedPath string, startFingerprint [32]byte, rotated []byte) error {
+// exists, its CredPath is unchanged, and the stored file still byte-matches
+// startFingerprint. Auto-refresh additionally requires the profile to remain
+// inactive; warmup passes allowActive because an out-of-window active account
+// is an intentional target. Any other mismatch aborts rather than clobbering
+// new reality. withLock may be nil (tests) to skip locking.
+func commitClaudeCredCopyBack(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool), name, storedPath string, startFingerprint [32]byte, rotated []byte, allowActive bool) error {
 	commit := func() error {
 		if reresolve != nil {
 			cur, ok := reresolve(name)
 			if !ok {
 				return errClaudeRefreshProfileGone
 			}
-			if cur.Active {
+			if cur.Active && !allowActive {
 				return errClaudeRefreshProfileActive
 			}
 			if cur.CredPath != storedPath {

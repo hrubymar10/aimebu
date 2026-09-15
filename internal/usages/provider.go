@@ -125,13 +125,13 @@ type Settings struct {
 	// currently whether harness-docker-ctrl is on PATH. The UI presents the
 	// toggle as unavailable when this is false.
 	ClaudeAutoRefreshAvailable bool `json:"claude_auto_refresh_available"`
-	// ClaudeAutoWarmup is the stored on/off flag for claude auto-warmup. It is
-	// chained to ClaudeAutoRefresh: the UI disables it when auto-refresh is off.
-	ClaudeAutoWarmup bool `json:"claude_auto_warmup"`
-	// ClaudeAutoWarmupAvailable mirrors ClaudeAutoRefreshAvailable (same
-	// harness-docker-ctrl gate); the UI additionally disables the toggle while
-	// auto-refresh is off.
-	ClaudeAutoWarmupAvailable bool `json:"claude_auto_warmup_available"`
+	// WarmupMode selects off, force, scheduled, or smart warmup behavior.
+	WarmupMode string `json:"warmup_mode"`
+	// WarmupAvailable includes both the shared runtime feature gate and the
+	// stored auto-refresh prerequisite.
+	WarmupAvailable bool `json:"warmup_available"`
+	// WarmupSchedule is zero or more five-field cron entries, one per line.
+	WarmupSchedule string `json:"warmup_schedule"`
 }
 
 // Provider absorbs the old ProviderInfo, provider_order setting, and switcher

@@ -82,8 +82,9 @@
   let usagePercentDisplay = 'left';
   let usageClaudeAutoRefresh = false;
   let usageClaudeAutoRefreshAvailable = false;
-  let usageClaudeAutoWarmup = false;
-  let usageClaudeAutoWarmupAvailable = false;
+  let usageWarmupMode = 'off';
+  let usageWarmupAvailable = false;
+  let usageWarmupSchedule = '';
   let usageCooldownTimer = null;
   const usageProviderFallbackOrder = ['codex', 'claude-code', 'github-copilot', 'mistral', 'ollama-cloud'];
   let copilotLoginState = { status: 'disconnected', enterpriseHost: '', flowId: '', interval: 5, timer: null, error: '' };
@@ -3309,16 +3310,15 @@
     });
     usageClaudeAutoRefresh = !!settings.claude_auto_refresh;
     usageClaudeAutoRefreshAvailable = !!settings.claude_auto_refresh_available;
-    usageClaudeAutoWarmup = !!settings.claude_auto_warmup;
-    usageClaudeAutoWarmupAvailable = !!settings.claude_auto_warmup_available;
+    usageWarmupMode = ['off', 'force', 'scheduled', 'smart'].includes(settings.warmup_mode) ? settings.warmup_mode : 'off';
+    usageWarmupAvailable = !!settings.warmup_available;
+    usageWarmupSchedule = settings.warmup_schedule || '';
     renderClaudeMaintenanceRows();
   }
 
-  // Renders the Claude account-maintenance rows (auto-refresh + auto-warmup) into
+  // Renders the Claude account-maintenance rows (auto-refresh + warmup mode) into
   // their bordered section group. When harness-docker-ctrl is absent the whole
-  // feature is unavailable: both toggles are disabled with an explanatory note.
-  // The warmup toggle is additionally disabled whenever auto-refresh is off,
-  // since warmup is chained to it.
+  // feature is unavailable: both controls are disabled with explanatory text.
   function renderClaudeMaintenanceRows() {
     var el = document.getElementById('usages-claude-auto-refresh-row');
     if (!el) return;
@@ -3328,15 +3328,18 @@
       ? 'Periodically renew near-expiry inactive Claude profiles in a throwaway container so they stay ready to switch to. This incurs a small per-account cost (occasional <code>claude -p</code> calls).'
       : 'Unavailable: <code>harness-docker-ctrl</code> is not installed. Install it to enable auto-refreshing Claude profiles.';
 
-    // Warmup requires auto-refresh: its toggle is disabled when the feature is
-    // unavailable OR auto-refresh is off.
-    var warmupEnabled = usageClaudeAutoWarmup;
-    var warmupToggleEnabled = available && refreshOn;
+    var warmupControlEnabled = usageWarmupAvailable;
+    var warmupDescriptions = {
+      off: 'Do not start idle account windows automatically.',
+      force: 'Warm every out-of-window account on each poller scan.',
+      scheduled: 'Warm every out-of-window account when any schedule line matches.',
+      smart: 'Warm at most one account per scan and stagger starts across the five-hour window.'
+    };
     var warmupDesc = !available
       ? 'Unavailable: <code>harness-docker-ctrl</code> is not installed.'
       : (!refreshOn
-        ? 'Automatically start a rolling 5-hour session window for any inactive Claude account whose window is uninitialized, so its capacity is ready to use. <strong>Requires Claude auto-refresh.</strong> Each account is warmed at most once per hour.'
-        : 'Automatically start a rolling 5-hour session window for any inactive Claude account whose window is uninitialized, so its capacity is ready to use. Requires auto-refresh. Each account is warmed at most once per hour.');
+        ? 'Unavailable until Claude auto-refresh is enabled.'
+        : warmupDescriptions[usageWarmupMode]);
 
     el.innerHTML =
       '<div class="settings-row' + (available ? '' : ' usages-provider-row-disabled') + '">' +
@@ -3351,18 +3354,87 @@
           '</label>' +
         '</div>' +
       '</div>' +
-      '<div class="settings-row' + (warmupToggleEnabled ? '' : ' usages-provider-row-disabled') + '">' +
+      '<div class="settings-row' + (warmupControlEnabled ? '' : ' usages-provider-row-disabled') + '">' +
         '<div class="settings-row-info">' +
-          '<label class="settings-label" for="claude-auto-warmup-toggle">Warm idle Claude accounts</label>' +
+          '<label class="settings-label" for="claude-warmup-mode-select">Warm idle Claude accounts</label>' +
           '<span class="settings-desc">' + warmupDesc + '</span>' +
         '</div>' +
         '<div class="settings-control">' +
-          '<label class="usages-provider-toggle" aria-label="Warm idle Claude accounts">' +
-            '<input type="checkbox" id="claude-auto-warmup-toggle"' + (warmupEnabled ? ' checked' : '') + (warmupToggleEnabled ? '' : ' disabled') + '>' +
-            '<span></span>' +
-          '</label>' +
+          '<select id="claude-warmup-mode-select" class="settings-select"' + (warmupControlEnabled ? '' : ' disabled') + '>' +
+            '<option value="off"' + (usageWarmupMode === 'off' ? ' selected' : '') + '>Off</option>' +
+            '<option value="force"' + (usageWarmupMode === 'force' ? ' selected' : '') + '>Force</option>' +
+            '<option value="scheduled"' + (usageWarmupMode === 'scheduled' ? ' selected' : '') + '>Scheduled</option>' +
+            '<option value="smart"' + (usageWarmupMode === 'smart' ? ' selected' : '') + '>Smart</option>' +
+          '</select>' +
         '</div>' +
-      '</div>';
+      '</div>' +
+      (usageWarmupMode === 'scheduled'
+        ? '<div class="settings-row' + (warmupControlEnabled ? '' : ' usages-provider-row-disabled') + '">' +
+            '<div class="settings-row-info">' +
+              '<label class="settings-label" for="claude-warmup-schedule-input">Warmup schedule</label>' +
+              '<span class="settings-desc">One five-field cron entry per line, in server local time. Blank lines are ignored.</span>' +
+              '<span id="claude-warmup-schedule-error" class="warmup-schedule-error" role="alert"></span>' +
+            '</div>' +
+            '<div class="settings-control">' +
+              '<textarea id="claude-warmup-schedule-input" class="settings-text-input warmup-schedule-input" rows="4" placeholder="0 8 * * *&#10;30 14 * * *" autocomplete="off" spellcheck="false"' + (warmupControlEnabled ? '' : ' disabled') + '>' + esc(usageWarmupSchedule) + '</textarea>' +
+            '</div>' +
+          '</div>'
+        : '');
+  }
+
+  function warmupScheduleValidationError(raw) {
+    var value = String(raw || '');
+    if (!value.trim()) return '';
+    var specs = [
+      ['minute', 0, 59],
+      ['hour', 0, 23],
+      ['day-of-month', 1, 31],
+      ['month', 1, 12],
+      ['day-of-week', 0, 7]
+    ];
+    var lines = value.split(/\r?\n/);
+    for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      if (!lines[lineIndex].trim()) continue;
+      var fields = lines[lineIndex].trim().split(/\s+/);
+      if (fields.length !== 5) return 'Line ' + (lineIndex + 1) + ': use 5 fields.';
+      for (var i = 0; i < fields.length; i++) {
+        if (fields[i] === '*') continue;
+        if (!/^\d+$/.test(fields[i])) return 'Line ' + (lineIndex + 1) + ': ' + specs[i][0] + ' must be * or one integer.';
+        var n = Number(fields[i]);
+        if (n < specs[i][1] || n > specs[i][2]) {
+          return 'Line ' + (lineIndex + 1) + ': ' + specs[i][0] + ' must be from ' + specs[i][1] + ' to ' + specs[i][2] + '.';
+        }
+      }
+    }
+    return '';
+  }
+
+  function showWarmupScheduleError(message) {
+    var input = document.getElementById('claude-warmup-schedule-input');
+    var error = document.getElementById('claude-warmup-schedule-error');
+    if (input) input.classList.toggle('error', !!message);
+    if (error) error.textContent = message || '';
+  }
+
+  function saveWarmupSchedule(raw) {
+    var schedule = String(raw || '');
+    var validationError = warmupScheduleValidationError(schedule);
+    showWarmupScheduleError(validationError);
+    if (validationError) return;
+    var interval = usagesRefreshInput ? parseInt(usagesRefreshInput.value, 10) : 120;
+    if (!Number.isFinite(interval) || interval < 15) interval = 15;
+    api('POST', '/api/usages/settings', {
+      refresh_interval_sec: interval,
+      percent_display: usagePercentDisplay,
+      warmup_schedule: schedule
+    })
+      .then(function (resp) {
+        if (resp && resp.settings) renderUsageSettings(resp.settings);
+        return loadUsages();
+      })
+      .catch(function (err) {
+        showWarmupScheduleError(err && err.message ? err.message : String(err));
+      });
   }
 
   function saveClaudeAutoRefresh(v) {
@@ -3383,20 +3455,20 @@
       });
   }
 
-  function saveClaudeAutoWarmup(v) {
+  function saveWarmupMode(mode) {
     var interval = usagesRefreshInput ? parseInt(usagesRefreshInput.value, 10) : 120;
     if (!Number.isFinite(interval) || interval < 15) interval = 15;
     api('POST', '/api/usages/settings', {
       refresh_interval_sec: interval,
       percent_display: usagePercentDisplay,
-      claude_auto_warmup: v
+      warmup_mode: mode
     })
       .then(function (resp) {
         if (resp && resp.settings) renderUsageSettings(resp.settings);
         return loadUsages();
       })
       .catch(function (err) {
-        alert('Failed to ' + (v ? 'enable' : 'disable') + ' Claude account warmup: ' + (err && err.message ? err.message : err));
+        alert('Failed to change Claude account warmup mode: ' + (err && err.message ? err.message : err));
         renderClaudeMaintenanceRows(); // restore toggles to actual state
       });
   }
@@ -6887,13 +6959,20 @@
     }
   });
 
-  // Claude account-maintenance toggles (settings panel — delegated, dynamic).
+  // Claude account-maintenance controls (settings panel — delegated, dynamic).
   document.addEventListener('change', function (e) {
     if (!e.target) return;
     if (e.target.id === 'claude-auto-refresh-toggle') {
       saveClaudeAutoRefresh(e.target.checked);
-    } else if (e.target.id === 'claude-auto-warmup-toggle') {
-      saveClaudeAutoWarmup(e.target.checked);
+    } else if (e.target.id === 'claude-warmup-mode-select') {
+      saveWarmupMode(e.target.value);
+    } else if (e.target.id === 'claude-warmup-schedule-input') {
+      saveWarmupSchedule(e.target.value);
+    }
+  });
+  document.addEventListener('input', function (e) {
+    if (e.target && e.target.id === 'claude-warmup-schedule-input') {
+      showWarmupScheduleError(warmupScheduleValidationError(e.target.value));
     }
   });
 

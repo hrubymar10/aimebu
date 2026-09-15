@@ -29,16 +29,14 @@ const claudeWarmupCooldown = 1 * time.Hour
 const claudeWarmupTimeout = 5 * time.Minute
 
 // claudeProfileEligibleForWarmup is the switcher-side eligibility gate for
-// warmup: an INACTIVE claude switcher profile that has stored credentials. The
-// active profile is warmed by normal use, so it is never a warmup candidate.
-// This is the identity gate; whether the account is actually out of its 5h
-// window is a separate check against the usages snapshot
-// (claudeSnapshotOutOfWindow).
+// warmup: any claude switcher profile that has stored credentials, including
+// the active one. Whether the account is actually idle and out of its 5h window
+// is a separate check against the usages snapshot (claudeSnapshotOutOfWindow).
 func claudeProfileEligibleForWarmup(profile ProfileInfo) bool {
 	if profile.Tool != "claude" {
 		return false
 	}
-	if profile.Active || !profile.HasCredentials {
+	if !profile.HasCredentials {
 		return false
 	}
 	return true
@@ -88,7 +86,7 @@ type claudeWarmupState struct {
 	lastAttempt time.Time
 }
 
-// claudeWarmer keeps inactive claude accounts' rolling 5-hour session window
+// claudeWarmer keeps idle claude accounts' rolling 5-hour session window
 // warm by running a trivial `claude -p` as that account inside the same
 // ephemeral harness-docker container that auto-refresh uses (the shared
 // refreshExecutor). It differs from claudeRefresher only in eligibility (out of
@@ -170,7 +168,10 @@ func (w *claudeWarmer) finish(name string) {
 // Unlike auto-refresh, warmup does NOT require the expiry to advance and treats
 // "no rotation" as success (the window still started); it only copies back when
 // the credentials actually changed, guarded by the same CAS identity check so a
-// switch/removal that landed mid-run is never clobbered.
+// switch/removal that landed mid-run is never clobbered. Active profiles are
+// safe targets here because the caller only warms an out-of-window (idle)
+// account, so no live session depends on the pre-rotation token; the file-based
+// switcher reconciles the live config on its next switch/capture.
 func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo) error {
 	storedPath := profile.CredPath
 	if storedPath == "" {
@@ -216,7 +217,7 @@ func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo) error {
 	if _, err := ValidateClaudeCredentials(tmpCred); err != nil {
 		return fmt.Errorf("claude warmup: rotated credentials invalid: %w", err)
 	}
-	if err := commitClaudeCredCopyBack(w.withLock, w.reresolve, profile.Name, storedPath, startFingerprint, rotated); err != nil {
+	if err := commitClaudeCredCopyBack(w.withLock, w.reresolve, profile.Name, storedPath, startFingerprint, rotated, true); err != nil {
 		return fmt.Errorf("claude warmup: copy-back: %w", err)
 	}
 	return nil

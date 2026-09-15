@@ -146,40 +146,39 @@ Configure it in **Settings → Usages → Claude auto-refresh**. The stored flag
 `claude_auto_refresh` in `~/.aimebu/usages/config.json`; the GET/POST
 `/api/usages/settings` responses expose `claude_auto_refresh` and the runtime
 `claude_auto_refresh_available` availability flag. `POST /api/usages/settings`
-accepts optional `claude_auto_refresh` and `claude_auto_warmup` booleans
-alongside `refresh_interval_sec` and `percent_display`.
+accepts optional `claude_auto_refresh`, `warmup_mode`, and `warmup_schedule`
+values alongside `refresh_interval_sec` and `percent_display`.
 
 ### Claude warmup (idle 5-hour window)
 
 Claude subscription usage is bucketed into rolling **5-hour session windows**.
 A window only **starts on first use**, so an account that has been idle has no
 active window and its capacity is not counting down. Warmup proactively kicks
-one off: it runs a trivial `claude -p` as an inactive account inside the same
+one off: it runs a trivial `claude -p` as an idle account inside the same
 throwaway `harness-docker` container that auto-refresh uses (the shared
 executor), which opens the account's rolling 5-hour window server-side.
 
-Warmup is an **automatic, toggle-gated** poller feature — there is no button or
+Warmup is an **automatic, mode-gated** poller feature — there is no button or
 endpoint that triggers it on demand. Enable it in **Settings → Usages → Claude
 account maintenance → Warm idle Claude accounts**, alongside the auto-refresh
-toggle in the same bordered section. The stored flag is `claude_auto_warmup` in
-`~/.aimebu/usages/config.json`; the GET/POST `/api/usages/settings` responses
-expose `claude_auto_warmup` and the runtime `claude_auto_warmup_available`
-availability flag, and `POST /api/usages/settings` accepts an optional
-`claude_auto_warmup` boolean.
+toggle in the same bordered section. The stored `warmup_mode` is one of `off`,
+`force`, `scheduled`, or `smart`. The GET/POST `/api/usages/settings` responses
+expose it plus the runtime `warmup_available` flag; POST accepts optional
+`warmup_mode` and `warmup_schedule` values.
 
-- **Trigger — the background poller.** On each poller tick (the same tick that
-  drives auto-refresh), aimebu warms every eligible inactive account whose 5h
-  window is uninitialized. “Force” only in the sense that the rule is simply
-  *uninitialized → initialize now* — there is no smart pacing or schedule beyond
-  the per-account 1h rate-limit.
-- **Chained to auto-refresh.** Warmup runs only when **both** `claude_auto_refresh`
-  **and** `claude_auto_warmup` are enabled (and the feature is available). The
-  warmup toggle in the UI is disabled while auto-refresh is off. This is
-  deliberate: warmup reuses the same container path and must persist rotated
-  tokens back the way auto-refresh does.
-- **Eligibility — out of the 5h window.** Only **inactive** `claude` switcher
-  profiles with stored credentials are candidates (the active one is warmed by
-  normal use). An account is treated as “out of window” when its usages snapshot
+- **Trigger — the background poller.** On each eligible poller tick (the same
+  tick that drives auto-refresh), aimebu scans accounts whose 5h window
+  is uninitialized. `force` warms every candidate, `scheduled` warms every
+  candidate only when a cron line matches, and `smart` starts at most one
+  candidate with spacing. `off` does nothing. Exactly one mode is active.
+- **Chained to auto-refresh.** A non-off mode runs only when
+  `claude_auto_refresh` is enabled and the feature is available. The mode
+  selector is disabled while auto-refresh is off. This is deliberate: warmup
+  reuses the same container path and must persist rotated tokens back the way
+  auto-refresh does.
+- **Eligibility — out of the 5h window.** Any `claude` switcher profile with
+  stored credentials is a candidate, **including the active profile**. An
+  account is treated as “out of window” when its usages snapshot
   has **no active session (`five_hour`) window** — that is, no session window at
   all, or a session window whose `resets_at` is nil or already in the past. A
   session window with a **future** `resets_at` is active (even at 0%
@@ -198,21 +197,43 @@ availability flag, and `POST /api/usages/settings` accepts an optional
   container's credential copy. Warmup therefore persists any rotated
   credentials back to the stored profile — discarding them would leave a dead,
   unrecoverable login. It reuses auto-refresh's compare-and-swap copy-back (same
-  `switcher/.lock` + re-resolve guard), so a switch/removal that lands mid-run
-  is never clobbered and the active profile is never touched. Unlike
-  auto-refresh, warmup does **not** require `expiresAt` to advance: it copies
-  back only when the credentials actually changed, and “no rotation” is still a
-  success (the 5h window started regardless).
+  `switcher/.lock` + re-resolve guard), so a switch/removal, credential-path
+  change, or stored-file change that lands mid-run is never clobbered. Warmup
+  deliberately permits copy-back to the active profile: its out-of-window gate
+  means the account is idle, so no live session depends on the old token, and
+  the file-based switcher reconciles live config on the next switch/capture.
+  Unlike auto-refresh, warmup does **not** require `expiresAt` to advance: it
+  copies back only when the credentials actually changed, and “no rotation” is
+  still a success (the 5h window started regardless).
 - **Rate limit — 1 hour.** Warmup success is only observable on the *next*
   usages snapshot (a warmed account then shows an active window and drops out of
   the eligible set), so it cannot be classified inline. Each account is
   therefore warmed at most **once per hour** regardless of outcome — distinct
   from auto-refresh's 5-minute post-failure backoff — plus an in-flight guard so
   an account never has two concurrent warmups.
+- **Scheduled mode.** `warmup_schedule` contains one five-field cron entry per
+  line; blank lines are ignored. Scheduled mode scans when **any** line matches,
+  using the server's local time, and deduplicates across all lines so a matching
+  minute fires once. The built-in parser deliberately accepts `*` or one integer
+  per field (minute, hour, day-of-month, month, day-of-week); lists, ranges, and
+  steps are rejected. `0` and `7` both mean Sunday. When both day fields are
+  restricted, either one matching follows standard cron behavior.
+- **Smart mode.** One scan starts at most one account
+  and different accounts are separated by a gap of **5 hours divided by the
+  number of credential-bearing Claude profiles, active or inactive**. This
+  spreads their rolling windows roughly evenly without another setting. The
+  longest-idle candidate is selected first: an account with no timestamped
+  session window is treated as oldest, otherwise the earliest expired
+  `resets_at` wins, with the profile name breaking ties.
+- **Migration.** Configs written by the earlier independent controls migrate on
+  load: disabled becomes `off`; enabled smart spacing becomes `smart`; otherwise
+  a non-empty schedule becomes `scheduled`, and enabled with no schedule becomes
+  `force`. The next config save removes the legacy fields.
 - **Gate.** Warmup shares auto-refresh's availability gate: `harness-docker-ctrl`
-  must be on `PATH` and docker must be reachable; additionally both the
-  `claude_auto_refresh` and `claude_auto_warmup` settings must be enabled. It is
-  inert otherwise.
+  must be on `PATH` and docker must be reachable; additionally auto-refresh must
+  be enabled and the mode must not be `off`. The multiline schedule editor
+  appears only for Scheduled mode and identifies unsupported or out-of-range
+  entries by line. Warmup is inert otherwise.
 
 The right-sidebar force-refresh button calls `POST /api/usages/refresh`. It
 bypasses the normal interval but has a separate server-side 15 second

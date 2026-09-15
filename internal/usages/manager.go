@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +53,12 @@ type Manager struct {
 	profileMu          sync.Mutex
 	profileGeneration  map[string]uint64
 	activeFingerprints map[string]string
+
+	warmupScheduleMu         sync.Mutex
+	lastWarmupScheduleMinute time.Time
+	warmupSpacingMu          sync.Mutex
+	lastSpacedWarmup         time.Time
+	lastSpacedProfile        string
 }
 
 func NewManager(store *Store, registry *Registry) *Manager {
@@ -259,9 +266,7 @@ func (m *Manager) claudeAutoRefreshAvailable() bool {
 // in config (currently the auto-refresh availability flag).
 func (m *Manager) decorateSettings(info Settings) Settings {
 	info.ClaudeAutoRefreshAvailable = m.claudeAutoRefreshAvailable()
-	// Warmup shares auto-refresh's availability gate (harness-docker-ctrl present).
-	// The UI additionally disables the warmup toggle while auto-refresh is off.
-	info.ClaudeAutoWarmupAvailable = m.claudeAutoRefreshAvailable()
+	info.WarmupAvailable = info.ClaudeAutoRefresh && info.ClaudeAutoRefreshAvailable
 	return info
 }
 
@@ -297,11 +302,11 @@ func (m *Manager) triggerClaudeAutoRefresh(ctx context.Context) {
 // uninitialized (no active window in its latest cached snapshot), starting one
 // server-side. Like triggerClaudeAutoRefresh it runs on the normal poller tick,
 // receiving the long-lived poller context, so the warmup goroutines it spawns
-// outlive the tick. It is a no-op unless BOTH auto-refresh AND auto-warmup are
-// enabled and the feature is available (harness-docker-ctrl present). "Force"
-// here means the only rule is uninitialized → initialize now (no smart pacing);
-// the per-account 1h cooldown, in-flight guard, and CAS copy-back of rotated
-// credentials all live in claudeWarmer.
+// outlive the tick. It is a no-op unless auto-refresh is enabled, the warmup
+// mode is non-off, and the feature is available (harness-docker-ctrl present).
+// The mode selects force, scheduled, or smart dispatch; the per-account 1h
+// cooldown, in-flight guard, and CAS copy-back of rotated credentials all live
+// in claudeWarmer.
 //
 // Eligibility is judged from the last PERSISTED usages snapshot (LoadCache),
 // which may be up to one refresh interval stale; an account that just opened a
@@ -319,9 +324,8 @@ func (m *Manager) triggerClaudeAutoWarmup(ctx context.Context) {
 	}); err != nil {
 		return
 	}
-	// Warmup is chained to auto-refresh: both flags must be on, and the shared
-	// container feature must be available.
-	if !cfg.ClaudeAutoRefresh || !cfg.ClaudeAutoWarmup || !m.claudeAutoRefreshAvailable() {
+	// Warmup is chained to auto-refresh and its shared container feature.
+	if !cfg.ClaudeAutoRefresh || cfg.WarmupMode == WarmupModeOff || !m.claudeAutoRefreshAvailable() {
 		return
 	}
 	var cache Cache
@@ -333,16 +337,109 @@ func (m *Manager) triggerClaudeAutoWarmup(ctx context.Context) {
 		return
 	}
 	now := m.clock.Now()
-	for _, profile := range m.profilesForProvider(ProviderClaudeCode) {
+	if cfg.WarmupMode == WarmupModeScheduled && !m.warmupScheduleDue(cfg.WarmupSchedule, now) {
+		return
+	}
+	profiles := m.profilesForProvider(ProviderClaudeCode)
+	eligibleCount := 0
+	candidates := make([]claudeWarmupCandidate, 0, len(profiles))
+	for _, profile := range profiles {
 		if !claudeProfileEligibleForWarmup(profile) {
 			continue
 		}
+		eligibleCount++
 		entry := profileCacheEntry(cache.Snapshots[ProviderClaudeCode], profile.Name)
 		if entry == nil || !claudeSnapshotOutOfWindow(entry.Profile.Snapshot, now) {
 			continue
 		}
-		m.claudeWarmer.maybeWarm(ctx, profile)
+		candidates = append(candidates, claudeWarmupCandidate{
+			profile:  profile,
+			outSince: claudeOutOfWindowSince(entry.Profile.Snapshot),
+		})
 	}
+	switch cfg.WarmupMode {
+	case WarmupModeForce, WarmupModeScheduled:
+		for _, candidate := range candidates {
+			m.claudeWarmer.maybeWarm(ctx, candidate.profile)
+		}
+	case WarmupModeSmart:
+		m.triggerSpacedClaudeWarmup(ctx, candidates, eligibleCount, now)
+	}
+}
+
+const claudeSessionWindowDuration = 5 * time.Hour
+
+type claudeWarmupCandidate struct {
+	profile  ProfileInfo
+	outSince time.Time
+}
+
+func claudeOutOfWindowSince(snap Snapshot) time.Time {
+	for _, window := range snap.Windows {
+		if window.Key == "session" && window.ResetAt != nil {
+			return *window.ResetAt
+		}
+	}
+	return time.Time{}
+}
+
+func (m *Manager) triggerSpacedClaudeWarmup(ctx context.Context, candidates []claudeWarmupCandidate, eligibleCount int, now time.Time) {
+	if len(candidates) == 0 || eligibleCount == 0 {
+		return
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		left, right := candidates[i], candidates[j]
+		if left.outSince.IsZero() != right.outSince.IsZero() {
+			return left.outSince.IsZero()
+		}
+		if !left.outSince.Equal(right.outSince) {
+			return left.outSince.Before(right.outSince)
+		}
+		return left.profile.Name < right.profile.Name
+	})
+
+	m.warmupSpacingMu.Lock()
+	defer m.warmupSpacingMu.Unlock()
+	gap := claudeSessionWindowDuration / time.Duration(eligibleCount)
+	for pass := 0; pass < 2; pass++ {
+		for _, candidate := range candidates {
+			// Prefer a different account after a successful start while the cache
+			// still shows the prior account out of window. Fall back to the same
+			// account only when no other candidate can start.
+			if pass == 0 && len(candidates) > 1 && candidate.profile.Name == m.lastSpacedProfile {
+				continue
+			}
+			if pass == 1 && candidate.profile.Name != m.lastSpacedProfile {
+				continue
+			}
+			if !m.lastSpacedWarmup.IsZero() && candidate.profile.Name != m.lastSpacedProfile && now.Sub(m.lastSpacedWarmup) < gap {
+				return
+			}
+			if m.claudeWarmer.maybeWarm(ctx, candidate.profile) {
+				m.lastSpacedWarmup = now
+				m.lastSpacedProfile = candidate.profile.Name
+				return
+			}
+		}
+	}
+}
+
+func (m *Manager) warmupScheduleDue(raw string, now time.Time) bool {
+	schedules, err := parseWarmupSchedules(raw)
+	if err != nil || len(schedules) == 0 {
+		return false
+	}
+	if !warmupSchedulesMatch(schedules, now) {
+		return false
+	}
+	minute := now.Truncate(time.Minute)
+	m.warmupScheduleMu.Lock()
+	defer m.warmupScheduleMu.Unlock()
+	if minute.Equal(m.lastWarmupScheduleMinute) {
+		return false
+	}
+	m.lastWarmupScheduleMinute = minute
+	return true
 }
 
 func (m *Manager) Settings(ctx context.Context) (Settings, error) {
@@ -508,12 +605,21 @@ func (m *Manager) ForceRefresh(ctx context.Context, provider string) (UsagesResp
 	return resp, retry, err
 }
 
-func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDisplay string, providerOrder []string, updateProviderOrder bool, claudeAutoRefresh *bool, claudeAutoWarmup *bool) (Settings, error) {
+func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDisplay string, providerOrder []string, updateProviderOrder bool, claudeAutoRefresh *bool, warmupMode *string, warmupSchedule *string) (Settings, error) {
 	if intervalSec != 0 && intervalSec < MinRefreshSec {
 		return Settings{}, errors.New("refresh_interval_sec is below minimum")
 	}
 	if percentDisplay != "" && !validPercentDisplay(percentDisplay) {
 		return Settings{}, errors.New("percent_display must be left or used")
+	}
+	if warmupMode != nil && !validWarmupMode(*warmupMode) {
+		return Settings{}, errors.New("warmup_mode must be off, force, scheduled, or smart")
+	}
+	if warmupSchedule != nil {
+		raw := *warmupSchedule
+		if _, err := parseWarmupSchedules(raw); err != nil {
+			return Settings{}, err
+		}
 	}
 	var info Settings
 	err := m.store.WithLock(func() error {
@@ -533,8 +639,11 @@ func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDi
 		if claudeAutoRefresh != nil {
 			cfg.ClaudeAutoRefresh = *claudeAutoRefresh
 		}
-		if claudeAutoWarmup != nil {
-			cfg.ClaudeAutoWarmup = *claudeAutoWarmup
+		if warmupMode != nil {
+			cfg.WarmupMode = *warmupMode
+		}
+		if warmupSchedule != nil {
+			cfg.WarmupSchedule = *warmupSchedule
 		}
 		if err := m.store.SaveConfig(cfg); err != nil {
 			return err

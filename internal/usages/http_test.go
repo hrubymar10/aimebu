@@ -57,6 +57,34 @@ func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
 	}
 
 	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(`{"warmup_schedule":"0 8 * * *\n30 12 * * *"}`))
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"warmup_schedule":"0 8 * * *\n30 12 * * *"`) {
+		t.Fatalf("warmup schedule response = %d %s", resp.Code, resp.Body.String())
+	}
+
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(`{"warmup_schedule":"*/5 * * * *"}`))
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("invalid warmup schedule status = %d body=%s", resp.Code, resp.Body.String())
+	}
+
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(`{"warmup_mode":"smart"}`))
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"warmup_mode":"smart"`) {
+		t.Fatalf("warmup mode response = %d %s", resp.Code, resp.Body.String())
+	}
+
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(`{"warmup_mode":"sometimes"}`))
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("invalid warmup mode status = %d body=%s", resp.Code, resp.Body.String())
+	}
+
+	resp = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(`{"provider_order":["ollama-cloud","codex"]}`))
 	mux.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {

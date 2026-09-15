@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -14,11 +15,15 @@ import (
 )
 
 const (
-	EnvRefreshInterval = "AIMEBU_USAGES_REFRESH"
-	DefaultRefreshSec  = 120
-	MinRefreshSec      = 15
-	PercentDisplayLeft = "left"
-	PercentDisplayUsed = "used"
+	EnvRefreshInterval  = "AIMEBU_USAGES_REFRESH"
+	DefaultRefreshSec   = 120
+	MinRefreshSec       = 15
+	PercentDisplayLeft  = "left"
+	PercentDisplayUsed  = "used"
+	WarmupModeOff       = "off"
+	WarmupModeForce     = "force"
+	WarmupModeScheduled = "scheduled"
+	WarmupModeSmart     = "smart"
 )
 
 type ProviderConfig struct {
@@ -38,13 +43,11 @@ type Config struct {
 	// switcher profiles via an ephemeral harness-docker container. Default off:
 	// enabling it incurs a small per-account cost (periodic `claude -p` calls).
 	ClaudeAutoRefresh bool `json:"claude_auto_refresh,omitempty"`
-	// ClaudeAutoWarmup enables automatically warming inactive claude profiles
-	// whose rolling 5-hour session window is uninitialized, so their capacity is
-	// ready to use. Default off. It is chained to ClaudeAutoRefresh: warmup only
-	// runs when auto-refresh is also enabled (it reuses the same container path
-	// and must persist any rotated tokens back the way auto-refresh does).
-	ClaudeAutoWarmup bool                      `json:"claude_auto_warmup,omitempty"`
-	Providers        map[string]ProviderConfig `json:"providers"`
+	// WarmupMode selects one mutually exclusive warmup behavior. Warmup remains
+	// chained to ClaudeAutoRefresh because both reuse the container/copy-back path.
+	WarmupMode     string                    `json:"warmup_mode,omitempty"`
+	WarmupSchedule string                    `json:"warmup_schedule,omitempty"`
+	Providers      map[string]ProviderConfig `json:"providers"`
 }
 
 type CacheEntry struct {
@@ -80,7 +83,7 @@ func DefaultConfig() Config {
 	for _, key := range knownProviders {
 		providers[key] = ProviderConfig{}
 	}
-	return Config{RefreshIntervalSec: DefaultRefreshSec, PercentDisplay: PercentDisplayLeft, Providers: providers}
+	return Config{RefreshIntervalSec: DefaultRefreshSec, PercentDisplay: PercentDisplayLeft, WarmupMode: WarmupModeOff, Providers: providers}
 }
 
 func EmptyCache() Cache {
@@ -107,6 +110,32 @@ func (s *Store) LoadConfig() (Config, error) {
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return cfg, err
+	}
+	if _, hasMode := fields["warmup_mode"]; !hasMode {
+		var legacy struct {
+			ClaudeAutoWarmup   bool `json:"claude_auto_warmup"`
+			WarmupSmartSpacing bool `json:"warmup_smart_spacing"`
+		}
+		if err := json.Unmarshal(data, &legacy); err != nil {
+			return cfg, err
+		}
+		switch {
+		case !legacy.ClaudeAutoWarmup:
+			cfg.WarmupMode = WarmupModeOff
+		case legacy.WarmupSmartSpacing:
+			cfg.WarmupMode = WarmupModeSmart
+		case strings.TrimSpace(cfg.WarmupSchedule) != "":
+			cfg.WarmupMode = WarmupModeScheduled
+		default:
+			cfg.WarmupMode = WarmupModeForce
+		}
+	}
+	if !validWarmupMode(cfg.WarmupMode) {
+		cfg.WarmupMode = WarmupModeOff
 	}
 	if cfg.Providers == nil {
 		cfg.Providers = map[string]ProviderConfig{}
@@ -146,6 +175,12 @@ func (s *Store) SaveConfig(cfg Config) error {
 	}
 	if !validPercentDisplay(cfg.PercentDisplay) {
 		return fmt.Errorf("percent_display must be %q or %q", PercentDisplayLeft, PercentDisplayUsed)
+	}
+	if !validWarmupMode(cfg.WarmupMode) {
+		return fmt.Errorf("warmup_mode must be off, force, scheduled, or smart")
+	}
+	if _, err := parseWarmupSchedules(cfg.WarmupSchedule); err != nil {
+		return err
 	}
 	cfg.ProviderOrder = normalizeProviderOrder(cfg.ProviderOrder)
 	return s.writeJSONAtomic(s.ConfigPath(), cfg, 0o600)
@@ -202,7 +237,8 @@ func (s *Store) RefreshInterval(cfg Config) (time.Duration, Settings) {
 		MinRefreshSec:      MinRefreshSec,
 		PercentDisplay:     cfg.PercentDisplay,
 		ClaudeAutoRefresh:  cfg.ClaudeAutoRefresh,
-		ClaudeAutoWarmup:   cfg.ClaudeAutoWarmup,
+		WarmupMode:         cfg.WarmupMode,
+		WarmupSchedule:     cfg.WarmupSchedule,
 	}
 	if raw := os.Getenv(EnvRefreshInterval); raw != "" {
 		if sec, err := strconv.Atoi(raw); err == nil {
@@ -218,6 +254,15 @@ func (s *Store) RefreshInterval(cfg Config) (time.Duration, Settings) {
 		info.RefreshIntervalSec = MinRefreshSec
 	}
 	return time.Duration(info.RefreshIntervalSec) * time.Second, info
+}
+
+func validWarmupMode(mode string) bool {
+	switch mode {
+	case WarmupModeOff, WarmupModeForce, WarmupModeScheduled, WarmupModeSmart:
+		return true
+	default:
+		return false
+	}
 }
 
 func validPercentDisplay(value string) bool {

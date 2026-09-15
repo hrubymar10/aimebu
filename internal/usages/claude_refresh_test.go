@@ -437,9 +437,12 @@ func TestManagerSettingsExposeAutoRefreshAvailability(t *testing.T) {
 	if info.ClaudeAutoRefresh {
 		t.Fatal("expected ClaudeAutoRefresh default off")
 	}
+	if info.WarmupAvailable {
+		t.Fatal("expected WarmupAvailable=false while auto-refresh is off")
+	}
 
 	bTrue := true
-	if _, err := m.UpdateSettings(context.Background(), 0, "", nil, false, &bTrue, nil); err != nil {
+	if _, err := m.UpdateSettings(context.Background(), 0, "", nil, false, &bTrue, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	m.claudeAvailableFn = func() bool { return true }
@@ -452,5 +455,8 @@ func TestManagerSettingsExposeAutoRefreshAvailability(t *testing.T) {
 	}
 	if !info.ClaudeAutoRefreshAvailable {
 		t.Fatal("expected ClaudeAutoRefreshAvailable=true when harness-docker-ctrl present")
+	}
+	if !info.WarmupAvailable {
+		t.Fatal("expected WarmupAvailable=true when auto-refresh and runtime gate are on")
 	}
 }

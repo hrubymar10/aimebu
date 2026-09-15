@@ -694,6 +694,25 @@ body {
   border-color: var(--accent);
 }
 
+.warmup-schedule-input {
+  height: auto;
+  min-height: 84px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.warmup-schedule-input.error {
+  border-color: var(--red);
+}
+
+.warmup-schedule-error {
+  display: block;
+  min-height: 1em;
+  margin-top: 3px;
+  color: var(--red);
+  font-size: 0.72rem;
+}
+
 .retention-number-input {
   max-width: 160px;
 }
