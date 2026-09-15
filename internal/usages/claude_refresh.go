@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -220,6 +221,7 @@ func (r *claudeRefresher) maybeRefresh(ctx context.Context, profile ProfileInfo)
 	if !r.tryStart(profile.Name) {
 		return
 	}
+	log.Printf("usages: claude auto-refresh profile=%q outcome=starting", profile.Name)
 	go func() {
 		// failed defaults to true so a panic in refresh (exec/file/JSON work)
 		// still records a failure and, crucially, always releases the in-flight
@@ -227,10 +229,25 @@ func (r *claudeRefresher) maybeRefresh(ctx context.Context, profile ProfileInfo)
 		// crashing the whole server on this background goroutine.
 		failed := true
 		defer func() {
-			_ = recover()
+			if recovered := recover(); recovered != nil {
+				log.Printf("usages: claude auto-refresh profile=%q outcome=failed reason=panic: %v", profile.Name, recovered)
+			}
 			r.finish(profile.Name, failed)
 		}()
-		failed = r.refresh(ctx, profile) != nil
+		err := r.refresh(ctx, profile)
+		failed = err != nil
+		if err != nil {
+			switch {
+			case errors.Is(err, errClaudeRefreshProfileGone):
+				log.Printf("usages: claude auto-refresh profile=%q outcome=aborted reason=profile removed", profile.Name)
+			case errors.Is(err, errClaudeRefreshProfileActive):
+				log.Printf("usages: claude auto-refresh profile=%q outcome=aborted reason=profile switched active", profile.Name)
+			case errors.Is(err, errClaudeRefreshProfileChanged):
+				log.Printf("usages: claude auto-refresh profile=%q outcome=aborted reason=credentials changed", profile.Name)
+			default:
+				log.Printf("usages: claude auto-refresh profile=%q outcome=failed reason=%v", profile.Name, err)
+			}
+		}
 	}()
 }
 
@@ -301,7 +318,11 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) erro
 	// Copy-back under the switcher lock with a compare-and-swap identity guard,
 	// mirroring codex's persistAuth: a switch or removal that landed mid-refresh
 	// must never be clobbered.
-	return commitClaudeCredCopyBack(r.withLock, r.reresolve, profile.Name, storedPath, startFingerprint, rotated, false)
+	if err := commitClaudeCredCopyBack(r.withLock, r.reresolve, profile.Name, storedPath, startFingerprint, rotated, false); err != nil {
+		return err
+	}
+	log.Printf("usages: claude auto-refresh profile=%q outcome=rotated expiry=%s->%s", profile.Name, oldExpiry.UTC().Format(time.RFC3339), newExpiry.UTC().Format(time.RFC3339))
+	return nil
 }
 
 // commitClaudeCredCopyBack copies `rotated` back into storedPath under withLock

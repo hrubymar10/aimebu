@@ -360,7 +360,7 @@ func (m *Manager) triggerClaudeAutoWarmup(ctx context.Context) {
 	switch cfg.WarmupMode {
 	case WarmupModeForce, WarmupModeScheduled:
 		for _, candidate := range candidates {
-			m.claudeWarmer.maybeWarm(ctx, candidate.profile)
+			m.claudeWarmer.maybeWarm(ctx, candidate.profile, cfg.WarmupMode)
 		}
 	case WarmupModeSmart:
 		m.triggerSpacedClaudeWarmup(ctx, candidates, eligibleCount, now)
@@ -415,7 +415,7 @@ func (m *Manager) triggerSpacedClaudeWarmup(ctx context.Context, candidates []cl
 			if !m.lastSpacedWarmup.IsZero() && candidate.profile.Name != m.lastSpacedProfile && now.Sub(m.lastSpacedWarmup) < gap {
 				return
 			}
-			if m.claudeWarmer.maybeWarm(ctx, candidate.profile) {
+			if m.claudeWarmer.maybeWarm(ctx, candidate.profile, WarmupModeSmart) {
 				m.lastSpacedWarmup = now
 				m.lastSpacedProfile = candidate.profile.Name
 				return

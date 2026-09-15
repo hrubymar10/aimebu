@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -220,6 +221,7 @@ func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo) error {
 	if err := commitClaudeCredCopyBack(w.withLock, w.reresolve, profile.Name, storedPath, startFingerprint, rotated, true); err != nil {
 		return fmt.Errorf("claude warmup: copy-back: %w", err)
 	}
+	log.Printf("usages: claude warmup profile=%q outcome=credentials-rotated copy_back=success", profile.Name)
 	return nil
 }
 
@@ -228,7 +230,7 @@ func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo) error {
 // in flight, or the account is inside its cooldown. Callers must have already
 // checked the setting is enabled and the account is out of window. It returns
 // true when a warmup goroutine was actually started.
-func (w *claudeWarmer) maybeWarm(ctx context.Context, profile ProfileInfo) bool {
+func (w *claudeWarmer) maybeWarm(ctx context.Context, profile ProfileInfo, mode string) bool {
 	if w == nil || w.executor == nil {
 		return false
 	}
@@ -238,15 +240,20 @@ func (w *claudeWarmer) maybeWarm(ctx context.Context, profile ProfileInfo) bool 
 	if !w.tryStart(profile.Name) {
 		return false
 	}
+	log.Printf("usages: claude warmup profile=%q mode=%s outcome=starting", profile.Name, mode)
 	go func() {
 		// recover() keeps one account's panic (exec/file work) from crashing the
 		// whole server on this background goroutine, and the deferred finish always
 		// releases the in-flight guard.
 		defer func() {
-			_ = recover()
+			if recovered := recover(); recovered != nil {
+				log.Printf("usages: claude warmup profile=%q mode=%s outcome=failed reason=panic: %v", profile.Name, mode, recovered)
+			}
 			w.finish(profile.Name)
 		}()
-		_ = w.warm(ctx, profile)
+		if err := w.warm(ctx, profile); err != nil {
+			log.Printf("usages: claude warmup profile=%q mode=%s outcome=failed reason=%v", profile.Name, mode, err)
+		}
 	}()
 	return true
 }
