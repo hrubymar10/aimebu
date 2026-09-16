@@ -5784,6 +5784,7 @@ body {
   max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Expiry state icon — sits right of the profile name. currentColor for healthy

@@ -3044,7 +3044,6 @@
             (!p.has_credentials ? ' data-empty="1"' : '') +
             ' title="Switch to ' + esc(p.profile_name) + '" aria-label="Switch to ' + esc(p.profile_name) + '">SWITCH</button>'
         : '';
-      var emailTitle = p.email ? ' title="' + esc(p.email) + '"' : '';
       var expiryTitle = '';
       var expiryIcon = '';
       if (p.expires_at) {
@@ -3071,8 +3070,9 @@
           expiryIcon = '<span class="' + iconClass + '" title="' + esc(expiryTitle) + '">' + iconSvg + '</span>';
         }
       }
+      var planTitle = p.plan ? p.plan + (p.email ? ' · ' + p.email : '') : '';
       var planBadge = p.plan
-        ? '<span class="switcher-tile-plan"' + emailTitle + '>' + esc(p.plan) + '</span>'
+        ? '<span class="switcher-tile-plan" title="' + esc(planTitle) + '">' + esc(p.plan) + '</span>'
         : '';
       var nameTitle = expiryTitle ? ' title="' + esc(expiryTitle) + '"' : '';
       // No per-row age: every profile of a provider refreshes on the same

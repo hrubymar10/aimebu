@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/goccy/go-json"
 )
@@ -493,7 +494,7 @@ func normalizeCodexUsage(raw codexUsageRaw, creds codexCredentials) (Snapshot, *
 	}
 	snap := Snapshot{
 		Status:  StatusOK,
-		Plan:    firstNonEmpty(raw.PlanType, codexPlanFromIDToken(creds.IDToken)),
+		Plan:    codexPlanDisplayName(firstNonEmpty(raw.PlanType, codexPlanFromIDToken(creds.IDToken))),
 		Windows: ordered,
 	}
 	if raw.Credits.Balance != nil {
@@ -506,6 +507,28 @@ func normalizeCodexUsage(raw codexUsageRaw, creds codexCredentials) (Snapshot, *
 		return Snapshot{}, detailOrNil(detail), errors.New("Codex usage response did not include recognized rate-limit windows.")
 	}
 	return snap, detailOrNil(detail), nil
+}
+
+func codexPlanDisplayName(raw string) string {
+	words := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(raw)), func(r rune) bool {
+		return r == '_' || r == '-' || unicode.IsSpace(r)
+	})
+	if len(words) == 0 {
+		return ""
+	}
+	normalized := strings.Join(words, " ")
+	switch normalized {
+	case "pro":
+		return "Pro 20x"
+	case "prolite", "pro lite":
+		return "Pro 5x"
+	}
+	for i, word := range words {
+		runes := []rune(word)
+		runes[0] = unicode.ToUpper(runes[0])
+		words[i] = string(runes)
+	}
+	return strings.Join(words, " ")
 }
 
 func codexAdditionalWindows(entries []codexAdditionalRateLimitRaw) []Window {

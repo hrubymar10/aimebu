@@ -8,6 +8,8 @@ const vm = require('vm');
 
 const appPath = path.join(__dirname, '..', 'frontend', 'app.js');
 const source = fs.readFileSync(appPath, 'utf8');
+const stylePath = path.join(__dirname, '..', 'frontend', 'style.css');
+const styleSource = fs.readFileSync(stylePath, 'utf8');
 
 function extractFunction(name) {
   const start = source.indexOf(`function ${name}`);
@@ -119,6 +121,22 @@ vm.runInContext([
   rendered = context.renderUsageProviderTile(context.usageProviders[0], [context.usageProviders[0].profiles[1]]);
   assert(!rendered.includes('>main<'), 'a split provider tile excludes the active profile from the lower group');
   assert(rendered.includes('>backup<'), 'a split provider tile keeps the requested inactive profile');
+
+  rendered = context.renderUsageProviderTile(context.usageProviders[0], [{
+    profile_name: 'main',
+    active: true,
+    has_credentials: true,
+    plan: 'Self Serve Business Prolite',
+    email: 'main@example.com',
+  }]);
+  assert(
+    rendered.includes('title="Self Serve Business Prolite · main@example.com"'),
+    'plan badge title preserves the full plan and email'
+  );
+  assert(
+    /\.switcher-tile-plan\s*\{[^}]*white-space:\s*nowrap;/.test(styleSource),
+    'plan badge truncates on one line'
+  );
 
   context.usageProviders[0].switch_eligible = false;
   context.usageProviders[0].switch_absent = true;

@@ -93,7 +93,7 @@ func TestCodexProviderFetchesAndNormalizesUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetch error: %v", err)
 	}
-	if snap.Status != StatusOK || snap.Plan != "pro" {
+	if snap.Status != StatusOK || snap.Plan != "Pro 20x" {
 		t.Fatalf("snapshot = %+v", snap)
 	}
 	if len(snap.Windows) != 2 || snap.Windows[0].Key != "session" || snap.Windows[1].Key != "weekly" {
@@ -104,6 +104,29 @@ func TestCodexProviderFetchesAndNormalizesUsage(t *testing.T) {
 	}
 	if snap.Credits == nil || snap.Credits.Balance != 123.45 {
 		t.Fatalf("credits = %+v", snap.Credits)
+	}
+}
+
+func TestCodexPlanDisplayName(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "pro", raw: "pro", want: "Pro 20x"},
+		{name: "prolite", raw: "prolite", want: "Pro 5x"},
+		{name: "pro lite underscore", raw: "pro_lite", want: "Pro 5x"},
+		{name: "pro lite hyphen", raw: " pro-lite ", want: "Pro 5x"},
+		{name: "humanize identifier", raw: "self_serve_business_prolite", want: "Self Serve Business Prolite"},
+		{name: "empty", raw: " \t ", want: ""},
+		{name: "already clean", raw: "Business Team", want: "Business Team"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := codexPlanDisplayName(tt.raw); got != tt.want {
+				t.Fatalf("codexPlanDisplayName(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -194,7 +217,7 @@ func TestNormalizeCodexUsageAllowsCreditsWithoutWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.Status != StatusOK || snap.Plan != "pro" {
+	if snap.Status != StatusOK || snap.Plan != "Pro 20x" {
 		t.Fatalf("snapshot = %+v", snap)
 	}
 	if len(snap.Windows) != 0 {
