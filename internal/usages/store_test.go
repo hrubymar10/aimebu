@@ -46,6 +46,9 @@ func TestClaudeModelFlagDefaultAndMigration(t *testing.T) {
 	if got := DefaultConfig().ClaudeModelFlag; got != DefaultClaudeModelFlag {
 		t.Fatalf("default ClaudeModelFlag = %q, want %q", got, DefaultClaudeModelFlag)
 	}
+	if got := DefaultConfig().CodexModelFlag; got != DefaultCodexModelFlag {
+		t.Fatalf("default CodexModelFlag = %q", got)
+	}
 	if err := os.WriteFile(store.ConfigPath(), []byte(`{"refresh_interval_sec":120,"percent_display":"left","providers":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +59,9 @@ func TestClaudeModelFlagDefaultAndMigration(t *testing.T) {
 	if cfg.ClaudeModelFlag != DefaultClaudeModelFlag {
 		t.Fatalf("migrated ClaudeModelFlag = %q, want %q", cfg.ClaudeModelFlag, DefaultClaudeModelFlag)
 	}
+	if cfg.CodexModelFlag != DefaultCodexModelFlag {
+		t.Fatalf("migrated CodexModelFlag = %q", cfg.CodexModelFlag)
+	}
 	if err := os.WriteFile(store.ConfigPath(), []byte(`{"claude_model_flag":""}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +71,16 @@ func TestClaudeModelFlagDefaultAndMigration(t *testing.T) {
 	}
 	if cfg.ClaudeModelFlag != "" {
 		t.Fatalf("explicit empty ClaudeModelFlag = %q, want empty", cfg.ClaudeModelFlag)
+	}
+	if err := os.WriteFile(store.ConfigPath(), []byte(`{"claude_model_flag":"","codex_model_flag":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = store.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CodexModelFlag != "" {
+		t.Fatalf("explicit empty CodexModelFlag = %q", cfg.CodexModelFlag)
 	}
 	if err := os.WriteFile(store.ConfigPath(), []byte(`{"claude_model_flag":"haiku"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -84,7 +100,15 @@ func TestClaudeModelFlagValidation(t *testing.T) {
 			t.Errorf("validClaudeModelFlag(%q) = false", value)
 		}
 	}
-	for _, value := range []string{"haiku", "--model a b", "--model haiku --danger", " --model haiku", "--model haiku "} {
+	if validClaudeModelFlag("--model gpt-5.6-luna") {
+		t.Error("Claude validator accepted dots")
+	}
+	for _, value := range []string{"", "--model gpt-5.6-luna"} {
+		if !validCodexModelFlag(value) {
+			t.Errorf("validCodexModelFlag(%q) = false", value)
+		}
+	}
+	for _, value := range []string{"haiku", "--model a b", "--model haiku --danger", " --model haiku", "--model haiku ", "--model bad/name"} {
 		if validClaudeModelFlag(value) {
 			t.Errorf("validClaudeModelFlag(%q) = true", value)
 		}

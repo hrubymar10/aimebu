@@ -49,6 +49,7 @@ type Manager struct {
 	claudeRefresher   *claudeRefresher
 	claudeWarmer      *claudeWarmer
 	claudeAvailableFn func() bool
+	codexMaintainer   *codexMaintainer
 
 	profileMu          sync.Mutex
 	profileGeneration  map[string]uint64
@@ -59,6 +60,8 @@ type Manager struct {
 	warmupSpacingMu          sync.Mutex
 	lastSpacedWarmup         time.Time
 	lastSpacedProfile        string
+	lastCodexSpacedWarmup    time.Time
+	lastCodexSpacedProfile   string
 }
 
 func NewManager(store *Store, registry *Registry) *Manager {
@@ -131,6 +134,11 @@ func (m *Manager) implicitProfile(key string) ProfileInfo {
 		p.Tool = "codex"
 		p.CredPath, _ = codexAuthPath()
 		p.HasCredentials = hasFile(p.CredPath)
+		if p.HasCredentials {
+			if _, access, err := ValidateCodexCredentials(p.CredPath); err == nil {
+				p.ExpiresAt = CodexTokenExpiry(access)
+			}
+		}
 	default:
 		cfg, err := m.store.LoadConfig()
 		if err != nil {
@@ -239,6 +247,16 @@ func (m *Manager) EnableClaudeAutoRefresh(withLock func(func() error) error) {
 	// OAuth token, and warmup MUST persist that rotation back with the same safety
 	// guard auto-refresh uses.
 	m.claudeWarmer = newClaudeWarmer(withLock, m.currentClaudeProfile)
+	m.codexMaintainer = newCodexMaintainer(withLock, m.currentCodexProfile)
+}
+
+func (m *Manager) currentCodexProfile(name string) (ProfileInfo, bool) {
+	for _, p := range m.profilesForProvider(ProviderCodex) {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return ProfileInfo{}, false
 }
 
 // currentClaudeProfile returns the current resolved claude switcher profile for
@@ -365,6 +383,87 @@ func (m *Manager) triggerClaudeAutoWarmup(ctx context.Context) {
 		}
 	case WarmupModeSmart:
 		m.triggerSpacedClaudeWarmup(ctx, candidates, eligibleCount, now, cfg.ClaudeModelFlag)
+	}
+}
+
+func (m *Manager) triggerCodexMaintenance(ctx context.Context) {
+	if m.codexMaintainer == nil {
+		return
+	}
+	cfg, err := m.store.LoadConfig()
+	if err != nil || !cfg.ClaudeAutoRefresh || !m.claudeAutoRefreshAvailable() {
+		return
+	}
+	now := m.clock.Now()
+	profiles := m.profilesForProvider(ProviderCodex)
+	for _, p := range profiles {
+		if codexProfileNeedsRefresh(p, now) {
+			m.codexMaintainer.maybeRefresh(ctx, p, cfg.CodexModelFlag)
+		}
+	}
+	if cfg.WarmupMode == WarmupModeOff {
+		return
+	}
+	if cfg.WarmupMode == WarmupModeScheduled {
+		schedules, e := parseWarmupSchedules(cfg.WarmupSchedule)
+		if e != nil || !warmupSchedulesMatch(schedules, now) {
+			return
+		}
+	}
+	cache, err := m.store.LoadCache()
+	if err != nil {
+		return
+	}
+	eligibleCount := 0
+	candidates := make([]claudeWarmupCandidate, 0, len(profiles))
+	for _, p := range profiles {
+		if !codexProfileEligibleForWarmup(p) {
+			continue
+		}
+		eligibleCount++
+		entry := profileCacheEntry(cache.Snapshots[ProviderCodex], p.Name)
+		if entry == nil || !claudeSnapshotOutOfWindow(entry.Profile.Snapshot, now) {
+			continue
+		}
+		candidates = append(candidates, claudeWarmupCandidate{profile: p, outSince: claudeOutOfWindowSince(entry.Profile.Snapshot)})
+	}
+	if cfg.WarmupMode == WarmupModeSmart {
+		m.triggerSpacedCodexWarmup(ctx, candidates, eligibleCount, now, cfg.CodexModelFlag)
+		return
+	}
+	for _, candidate := range candidates {
+		m.codexMaintainer.maybeWarm(ctx, candidate.profile, cfg.CodexModelFlag)
+	}
+}
+
+func (m *Manager) triggerSpacedCodexWarmup(ctx context.Context, candidates []claudeWarmupCandidate, eligibleCount int, now time.Time, modelFlag string) {
+	if len(candidates) == 0 || eligibleCount == 0 {
+		return
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].outSince.IsZero() != candidates[j].outSince.IsZero() {
+			return candidates[i].outSince.IsZero()
+		}
+		if !candidates[i].outSince.Equal(candidates[j].outSince) {
+			return candidates[i].outSince.Before(candidates[j].outSince)
+		}
+		return candidates[i].profile.Name < candidates[j].profile.Name
+	})
+	m.warmupSpacingMu.Lock()
+	defer m.warmupSpacingMu.Unlock()
+	gap := claudeSessionWindowDuration / time.Duration(eligibleCount)
+	if !m.lastCodexSpacedWarmup.IsZero() && now.Sub(m.lastCodexSpacedWarmup) < gap {
+		return
+	}
+	for _, candidate := range candidates {
+		if candidate.profile.Name == m.lastCodexSpacedProfile && len(candidates) > 1 {
+			continue
+		}
+		if m.codexMaintainer.maybeWarm(ctx, candidate.profile, modelFlag) {
+			m.lastCodexSpacedWarmup = now
+			m.lastCodexSpacedProfile = candidate.profile.Name
+			return
+		}
 	}
 }
 
@@ -606,7 +705,7 @@ func (m *Manager) ForceRefresh(ctx context.Context, provider string) (UsagesResp
 	return resp, retry, err
 }
 
-func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDisplay string, providerOrder []string, updateProviderOrder bool, claudeAutoRefresh *bool, warmupMode *string, warmupSchedule *string, claudeModelFlag *string) (Settings, error) {
+func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDisplay string, providerOrder []string, updateProviderOrder bool, claudeAutoRefresh *bool, warmupMode *string, warmupSchedule *string, claudeModelFlag, codexModelFlag *string) (Settings, error) {
 	if intervalSec != 0 && intervalSec < MinRefreshSec {
 		return Settings{}, errors.New("refresh_interval_sec is below minimum")
 	}
@@ -624,6 +723,9 @@ func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDi
 	}
 	if claudeModelFlag != nil && !validClaudeModelFlag(*claudeModelFlag) {
 		return Settings{}, errors.New("claude_model_flag must be empty or match --model <model-name>")
+	}
+	if codexModelFlag != nil && !validCodexModelFlag(*codexModelFlag) {
+		return Settings{}, errors.New("codex_model_flag must be empty or match --model <model-name>")
 	}
 	var info Settings
 	err := m.store.WithLock(func() error {
@@ -651,6 +753,9 @@ func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDi
 		}
 		if claudeModelFlag != nil {
 			cfg.ClaudeModelFlag = *claudeModelFlag
+		}
+		if codexModelFlag != nil {
+			cfg.CodexModelFlag = *codexModelFlag
 		}
 		if err := m.store.SaveConfig(cfg); err != nil {
 			return err
@@ -800,6 +905,7 @@ func (m *Manager) Start(ctx context.Context, wg *sync.WaitGroup) {
 			case <-ticker.C:
 				m.triggerClaudeAutoRefresh(ctx)
 				m.triggerClaudeAutoWarmup(ctx)
+				m.triggerCodexMaintenance(ctx)
 				resp, changed, _, err := m.refreshWithChange(ctx, "", false)
 				if err != nil {
 					continue
@@ -1153,7 +1259,7 @@ func (m *Manager) fetchStoredProfile(ctx context.Context, profile ProfileInfo, p
 	case "claude":
 		snap, err = fetchClaudeSnapshotFromPathFunc(fetchCtx, profile.CredPath)
 	case "codex":
-		snap, err = fetchCodexSnapshotFromPathFunc(fetchCtx, profile.CredPath, false, nil)
+		snap, err = fetchCodexSnapshotFromPathFunc(fetchCtx, profile.CredPath)
 	default:
 		err = fmt.Errorf("unsupported switcher tool %q for profile snapshot", profile.Tool)
 	}

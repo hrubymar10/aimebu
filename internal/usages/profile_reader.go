@@ -1,10 +1,8 @@
 package usages
 
 import (
-	"bytes"
 	"context"
 	"path/filepath"
-	"time"
 )
 
 var (
@@ -53,43 +51,14 @@ func fetchClaudeSnapshotFromPath(ctx context.Context, path string) (Snapshot, er
 }
 
 // fetchCodexSnapshotFromPath fetches codex usage from the auth.json at path.
-// When persist is false, token refreshes are NOT written back — required for
-// non-active profiles to avoid rotating a stored token (§14.2 complement).
-// When persist is true and a refresh is needed, withLock wraps the save so
-// a concurrent switch cannot overwrite the just-refreshed live credentials.
-func fetchCodexSnapshotFromPath(ctx context.Context, path string, persist bool, withLock func(func() error) error) (Snapshot, error) {
-	// Use loadCodexAuthSnapshot so we capture the file's fingerprint for the
-	// compare-and-swap in the persist path below.
+// Usage reads are read-only. Token rotation is owned by the isolated
+// harness-docker maintenance path.
+func fetchCodexSnapshotFromPath(ctx context.Context, path string) (Snapshot, error) {
 	auth, detail, err := loadCodexAuthSnapshot(path)
 	if err != nil {
 		return codexStatus(StatusAuthMissing, err.Error(), detail), nil
 	}
 	creds := auth.Credentials
-	if persist && creds.needsRefresh(time.Now()) {
-		refreshed, rDetail, rErr := refreshCodexAuth(ctx, creds)
-		if rErr != nil {
-			return codexStatus(StatusAuthMissing, rErr.Error(), rDetail), nil
-		}
-		creds = refreshed
-		// CAS: inside the lock, re-read the fingerprint. If the file changed
-		// (a switch landed while we were on the network), drop this write.
-		expect := auth.Fingerprint
-		save := func() error {
-			if cur := codexAuthFingerprint(path); !bytes.Equal(cur, expect) {
-				return nil // switch landed mid-refresh; do not overwrite new profile
-			}
-			return saveCodexAuth(path, creds)
-		}
-		var saveErr error
-		if withLock != nil {
-			saveErr = withLock(save)
-		} else {
-			saveErr = save()
-		}
-		if saveErr != nil {
-			return codexStatus(StatusAuthMissing, "Codex auth refresh could not be saved.", nil), nil
-		}
-	}
 	raw, detail, status, err := fetchCodexUsage(ctx, creds)
 	if err != nil {
 		snap := codexStatus(status, err.Error(), detail)

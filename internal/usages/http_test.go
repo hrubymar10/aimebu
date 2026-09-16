@@ -99,6 +99,19 @@ func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
 	}
 
 	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(`{"codex_model_flag":"--model gpt-5.6-luna"}`))
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"codex_model_flag":"--model gpt-5.6-luna"`) {
+		t.Fatalf("Codex model flag response = %d %s", resp.Code, resp.Body.String())
+	}
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(`{"codex_model_flag":"--model bad value"}`))
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("invalid Codex model flag status = %d", resp.Code)
+	}
+
+	resp = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(`{"provider_order":["ollama-cloud","codex"]}`))
 	mux.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {

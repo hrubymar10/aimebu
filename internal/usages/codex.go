@@ -20,51 +20,18 @@ import (
 )
 
 const (
-	codexAuthRefreshAfter = 8 * 24 * time.Hour
-	codexRefreshURL       = "https://auth.openai.com/oauth/token"
-	codexUsageURL         = "https://chatgpt.com/backend-api/wham/usage"
-	codexClientID         = "app_EMoamEEZ73f0CkXaXp7hrann"
-	codexLoginRequired    = "Codex CLI is not signed in. Run `codex login --device-auth`, then refresh."
+	codexUsageURL      = "https://chatgpt.com/backend-api/wham/usage"
+	codexLoginRequired = "Codex CLI is not signed in. Run `codex login --device-auth`, then refresh."
 
 	jsonShapeDetailMaxFields = 50
 )
 
-type codexProvider struct {
-	// liveWriteLock, when set, is called around every write to the live
-	// credentials path. Prevents the background poller from overwriting a
-	// just-switched profile's tokens (§14.2). nil in tests and DefaultRegistry.
-	liveWriteLock func(func() error) error
-}
+type codexProvider struct{}
 
 // NewCodexProvider creates a codex usage provider.
 func NewCodexProvider() UsageProvider { return &codexProvider{} }
 
-// NewCodexProviderWithLock creates a codex provider that holds liveWriteLock
-// around writes to the live credentials file. This prevents the usages poller
-// from silently overwriting a profile that was just switched in (§14.2).
-func NewCodexProviderWithLock(lock func(func() error) error) UsageProvider {
-	return &codexProvider{liveWriteLock: lock}
-}
-
 func (p *codexProvider) Key() string { return ProviderCodex }
-
-// persistAuth writes refreshed credentials to path using a compare-and-swap:
-// inside the lock it re-reads the file and compares to expect (bytes captured
-// at load time). If the file changed, a switch landed while we were on the
-// network — the tokens we hold belong to a profile that is no longer active,
-// so we drop the write silently. The next poll will re-read whatever is live.
-func (p *codexProvider) persistAuth(path string, creds codexCredentials, expect []byte) error {
-	save := func() error {
-		if cur := codexAuthFingerprint(path); !bytes.Equal(cur, expect) {
-			return nil // switch landed mid-refresh; do not overwrite the new profile
-		}
-		return saveCodexAuth(path, creds)
-	}
-	if p.liveWriteLock != nil {
-		return p.liveWriteLock(save)
-	}
-	return save()
-}
 
 func (p *codexProvider) Fetch(ctx context.Context, store *Store) (Snapshot, error) {
 	authPath, err := codexAuthPath()
@@ -76,18 +43,6 @@ func (p *codexProvider) Fetch(ctx context.Context, store *Store) (Snapshot, erro
 		return codexStatus(StatusAuthMissing, err.Error(), detail), nil
 	}
 	creds := auth.Credentials
-	if creds.needsRefresh(time.Now()) {
-		refreshed, detail, err := refreshCodexAuth(ctx, creds)
-		if err != nil {
-			return codexStatus(StatusAuthMissing, err.Error(), detail), nil
-		}
-		creds = refreshed
-		if err := p.persistAuth(authPath, creds, auth.Fingerprint); err != nil {
-			return codexStatus(StatusAuthMissing, "Codex auth refresh could not be saved.", nil), nil
-		}
-		auth.Fingerprint = codexAuthFingerprint(authPath)
-	}
-
 	raw, detail, status, err := fetchCodexUsage(ctx, creds)
 	if err != nil && status == StatusAuthMissing && creds.RefreshToken != "" {
 		reloaded, reloadDetail, changed, reloadErr := reloadCodexAuthIfChanged(authPath, auth.Fingerprint)
@@ -98,17 +53,6 @@ func (p *codexProvider) Fetch(ctx context.Context, store *Store) (Snapshot, erro
 			creds = reloaded
 			raw, detail, status, err = fetchCodexUsage(ctx, creds)
 		}
-	}
-	if err != nil && status == StatusAuthMissing && creds.RefreshToken != "" {
-		refreshed, refreshDetail, refreshErr := refreshCodexAuth(ctx, creds)
-		if refreshErr != nil {
-			return codexStatus(StatusAuthMissing, refreshErr.Error(), refreshDetail), nil
-		}
-		creds = refreshed
-		if err := p.persistAuth(authPath, creds, auth.Fingerprint); err != nil {
-			return codexStatus(StatusAuthMissing, "Codex auth refresh could not be saved.", nil), nil
-		}
-		raw, detail, status, err = fetchCodexUsage(ctx, creds)
 	}
 	if err != nil {
 		snap := codexStatus(status, err.Error(), detail)
@@ -151,13 +95,6 @@ type codexCredentials struct {
 	IDToken      string
 	AccountID    string
 	LastRefresh  *time.Time
-}
-
-func (c codexCredentials) needsRefresh(now time.Time) bool {
-	if c.LastRefresh == nil {
-		return true
-	}
-	return now.Sub(*c.LastRefresh) > codexAuthRefreshAfter
 }
 
 func codexAuthPath() (string, error) {
@@ -243,127 +180,6 @@ func reloadCodexAuthIfChanged(path string, previous []byte) (codexCredentials, *
 	}
 	creds, detail, err := parseCodexAuthData(data)
 	return creds, detail, true, err
-}
-
-func codexAuthFingerprint(path string) []byte {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	return append([]byte(nil), data...)
-}
-
-func refreshCodexAuth(ctx context.Context, creds codexCredentials) (codexCredentials, *ErrorDetail, error) {
-	body := map[string]string{
-		"client_id":     codexClientID,
-		"grant_type":    "refresh_token",
-		"refresh_token": creds.RefreshToken,
-		"scope":         "openid profile email",
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return creds, nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, codexRefreshURL, bytes.NewReader(data))
-	if err != nil {
-		return creds, nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := usageHTTPClient.Do(req)
-	if err != nil {
-		return creds, nil, errors.New("Codex OAuth refresh request failed.")
-	}
-	defer resp.Body.Close()
-	respData, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		return creds, jsonShapeDetail("refresh", respData), fmt.Errorf("Codex OAuth refresh failed with HTTP %d.", resp.StatusCode)
-	}
-	var raw struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-	}
-	if err := json.Unmarshal(respData, &raw); err != nil {
-		return creds, jsonShapeDetail("refresh", respData), errors.New("Codex OAuth refresh response could not be decoded.")
-	}
-	if strings.TrimSpace(raw.AccessToken) == "" {
-		return creds, fieldDetail("refresh.access_token", "missing"), errors.New("Codex OAuth refresh response did not include an access token.")
-	}
-	creds.AccessToken = strings.TrimSpace(raw.AccessToken)
-	if raw.RefreshToken != "" {
-		creds.RefreshToken = strings.TrimSpace(raw.RefreshToken)
-	}
-	if raw.IDToken != "" {
-		creds.IDToken = strings.TrimSpace(raw.IDToken)
-	}
-	creds.AccountID = firstNonEmpty(
-		codexAccountIDFromJWT(creds.IDToken),
-		codexAccountIDFromJWT(creds.AccessToken),
-		creds.AccountID,
-	)
-	if err := validateCodexCredentialSet(creds); err != nil {
-		return creds, fieldDetail("refresh.tokens", "invalid"), err
-	}
-	now := time.Now().UTC()
-	creds.LastRefresh = &now
-	return creds, nil, nil
-}
-
-func validateCodexCredentialSet(creds codexCredentials) error {
-	if strings.TrimSpace(creds.AccessToken) == "" {
-		return errors.New("Codex OAuth access token is missing after refresh.")
-	}
-	if strings.TrimSpace(creds.RefreshToken) == "" {
-		return errors.New("Codex OAuth refresh token is missing after refresh.")
-	}
-	return nil
-}
-
-func saveCodexAuth(path string, creds codexCredentials) error {
-	raw := map[string]json.RawMessage{}
-	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &raw)
-	}
-	tokens := map[string]json.RawMessage{}
-	if tokenData, ok := raw["tokens"]; ok {
-		_ = json.Unmarshal(tokenData, &tokens)
-	}
-	patchTokenValue(tokens, "access_token", "accessToken", creds.AccessToken)
-	patchTokenValue(tokens, "refresh_token", "refreshToken", creds.RefreshToken)
-	if creds.IDToken != "" {
-		patchTokenValue(tokens, "id_token", "idToken", creds.IDToken)
-	}
-	if creds.AccountID != "" {
-		patchTokenValue(tokens, "account_id", "accountId", creds.AccountID)
-	}
-	tokenData, err := json.Marshal(tokens)
-	if err != nil {
-		return err
-	}
-	raw["tokens"] = tokenData
-	if creds.LastRefresh != nil {
-		lastRefresh, err := json.Marshal(creds.LastRefresh.UTC().Format(time.RFC3339Nano))
-		if err != nil {
-			return err
-		}
-		raw["last_refresh"] = lastRefresh
-	}
-	return writeAtomicJSONFile(path, raw, 0o600)
-}
-
-func patchTokenValue(tokens map[string]json.RawMessage, snakeKey, camelKey, value string) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return
-	}
-	_, hasSnake := tokens[snakeKey]
-	_, hasCamel := tokens[camelKey]
-	if hasSnake || !hasCamel {
-		tokens[snakeKey] = data
-	}
-	if hasCamel {
-		tokens[camelKey] = data
-	}
 }
 
 type codexUsageRaw struct {

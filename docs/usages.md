@@ -146,7 +146,7 @@ Design notes:
 - **Rate limiting.** A profile is never refreshed twice concurrently, and after
   a genuine failure it is not retried for 5 minutes.
 
-**Gate.** The feature runs only when all of these hold: the
+**Gate.** Claude and Codex maintenance run only when all of these hold: the
 `claude_auto_refresh` setting is enabled (default **off**), the
 `harness-docker-ctrl` binary is on `PATH`, and the docker daemon is reachable.
 When `harness-docker-ctrl` is absent the feature is reported unavailable and the
@@ -168,6 +168,13 @@ auto-refresh and warmup container prompts. It stores the complete flag string
 and defaults to `--model haiku`. Set it to an empty string to omit the flag and
 use the Claude CLI's default model. Non-empty values must match
 `--model [A-Za-z0-9-]+`; extra arguments and whitespace are rejected.
+
+Codex account maintenance uses the same container gate and stores its model in
+`codex_model_flag`, defaulting to `--model gpt-5.6-luna`. Codex model flags
+accept dots via `--model [A-Za-z0-9.-]+`; both settings may be empty to use the
+CLI default. Codex OAuth rotation is performed only by the isolated
+harness-docker maintenance run;
+usage reads never exchange refresh tokens or write `auth.json`.
 
 ### Claude warmup (idle 5-hour window)
 

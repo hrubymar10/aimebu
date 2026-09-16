@@ -2423,17 +2423,11 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 
 	mux := http.NewServeMux()
 
-	// Build the switcher manager and inject its lock into the codex provider
-	// so the background poller holds switcher/.lock when writing back refreshed
-	// tokens, preventing it from overwriting a just-switched profile (§14.2).
+	// Build the switcher manager. Usage reads are read-only; maintenance writes
+	// run in isolated containers and copy back under this manager's lock.
 	swRoot, _ := switcher.DefaultRoot()
 	swMgr, swErr := switcher.New(swRoot)
-	var codexProv usages.UsageProvider
-	if swErr == nil {
-		codexProv = usages.NewCodexProviderWithLock(swMgr.WithLock)
-	} else {
-		codexProv = usages.NewCodexProvider()
-	}
+	codexProv := usages.NewCodexProvider()
 	usageRegistry := usages.NewRegistry(
 		codexProv,
 		usages.NewClaudeCodeProvider(),
@@ -2474,8 +2468,8 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 			return enabled
 		})
 		usageManager.SetSwitcherEligibilityProvider(switcherEligibilityProvider(swMgr))
-		// Auto-refresh near-expiry inactive claude profiles. The copy-back of
-		// rotated tokens holds switcher/.lock so a concurrent switch cannot be
+		// Auto-refresh and warm idle Claude/Codex profiles. Rotated-token
+		// copy-back holds switcher/.lock so a concurrent switch cannot be
 		// clobbered (§14.2).
 		usageManager.EnableClaudeAutoRefresh(swMgr.WithLock)
 	}

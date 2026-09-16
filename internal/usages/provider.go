@@ -123,6 +123,7 @@ type Settings struct {
 	ClaudeAutoRefresh bool `json:"claude_auto_refresh"`
 	// ClaudeModelFlag is the full optional flag passed to maintenance prompts.
 	ClaudeModelFlag string `json:"claude_model_flag"`
+	CodexModelFlag  string `json:"codex_model_flag"`
 	// ClaudeAutoRefreshAvailable reports whether the feature can run at all —
 	// currently whether harness-docker-ctrl is on PATH. The UI presents the
 	// toggle as unavailable when this is false.

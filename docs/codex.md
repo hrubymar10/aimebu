@@ -102,16 +102,17 @@ entries in `additional_rate_limits[]`, aimebu adds stable `codex_spark` and
 
 Common failure states:
 
-- `auth_missing`: `auth.json` is missing, contains only an API key, or OAuth
-  refresh failed. A `401` from the usage endpoint reloads `auth.json` once in
-  case another process refreshed the login mid-request, then triggers one
-  OAuth refresh retry before this state is shown. Refresh responses are
-  validated before an atomic write; a malformed or token-less response leaves
-  the existing credential file unchanged. Run
+- `auth_missing`: `auth.json` is missing, contains only an API key, or its
+  access token is expired. A `401` from the usage endpoint reloads `auth.json`
+  once in case another process refreshed the login mid-request. Usage reads do
+  not exchange refresh tokens or write credentials. When account maintenance
+  is enabled, aimebu refreshes near-expiry tokens by running Codex against an
+  isolated copy inside `harness-docker`, validates the rotated `auth.json`, and
+  atomically copies it back under the switcher lock. Otherwise run
   `codex login --device-auth` to refresh the OAuth login.
 - `scope_missing`: the OAuth token lacks access to the usage endpoint. This
-  classification is retained when a refreshed or concurrently rewritten
-  credential is accepted but the retried usage request is forbidden.
+  classification is retained when a concurrently rewritten credential is
+  accepted but the retried usage request is forbidden.
 - `fetch_error`: the usage response changed shape. If numbers look
   wrong or windows disappear, inspect `error_detail.fields`; window shapes
   that drift far beyond the expected session/weekly/monthly durations are

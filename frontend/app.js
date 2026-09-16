@@ -87,6 +87,7 @@
   let usageWarmupAvailable = false;
   let usageWarmupSchedule = '';
   let usageClaudeModelFlag = '--model haiku';
+  let usageCodexModelFlag = '--model gpt-5.6-luna';
   let usageCooldownTimer = null;
   const usageProviderFallbackOrder = ['codex', 'claude-code', 'github-copilot', 'mistral', 'ollama-cloud'];
   let copilotLoginState = { status: 'disconnected', enterpriseHost: '', flowId: '', interval: 5, timer: null, error: '' };
@@ -3357,6 +3358,7 @@
     usageWarmupAvailable = !!settings.warmup_available;
     usageWarmupSchedule = settings.warmup_schedule || '';
     usageClaudeModelFlag = typeof settings.claude_model_flag === 'string' ? settings.claude_model_flag : '--model haiku';
+    usageCodexModelFlag = typeof settings.codex_model_flag === 'string' ? settings.codex_model_flag : '--model gpt-5.6-luna';
     renderClaudeMaintenanceRows();
   }
 
@@ -3369,8 +3371,8 @@
     var available = usageClaudeAutoRefreshAvailable;
     var refreshOn = usageClaudeAutoRefresh;
     var refreshDesc = available
-      ? 'Periodically renew near-expiry inactive Claude profiles in a throwaway container so they stay ready to switch to. This incurs a small per-account cost (occasional <code>claude -p</code> calls).'
-      : 'Unavailable: <code>harness-docker-ctrl</code> is not installed. Install it to enable auto-refreshing Claude profiles.';
+      ? 'Periodically renew near-expiry Claude and Codex profiles in a throwaway container so they stay ready to switch to. This incurs a small per-account cost.'
+      : 'Unavailable: <code>harness-docker-ctrl</code> is not installed. Install it to enable account auto-refresh.';
 
     var warmupControlEnabled = usageWarmupAvailable;
     var warmupDescriptions = {
@@ -3388,7 +3390,7 @@
     el.innerHTML =
       '<div class="settings-row' + (available ? '' : ' usages-provider-row-disabled') + '">' +
         '<div class="settings-row-info">' +
-          '<label class="settings-label" for="claude-auto-refresh-toggle">Claude auto-refresh</label>' +
+          '<label class="settings-label" for="claude-auto-refresh-toggle">Claude and Codex auto-refresh</label>' +
           '<span class="settings-desc">' + refreshDesc + '</span>' +
         '</div>' +
         '<div class="settings-control">' +
@@ -3407,9 +3409,14 @@
           '<input id="claude-model-flag-input" class="settings-text-input claude-model-flag-input" type="text" value="' + esc(usageClaudeModelFlag) + '" placeholder="--model haiku" autocomplete="off" spellcheck="false">' +
         '</div>' +
       '</div>' +
+      '<div class="settings-row">' +
+        '<div class="settings-row-info"><label class="settings-label" for="codex-model-flag-input">Codex maintenance model flag</label>' +
+          '<span class="settings-desc">Full model flag used by both warmup and refresh. Leave empty to use the Codex CLI default.</span></div>' +
+        '<div class="settings-control"><input id="codex-model-flag-input" class="settings-text-input claude-model-flag-input" type="text" value="' + esc(usageCodexModelFlag) + '" placeholder="--model gpt-5.6-luna" autocomplete="off" spellcheck="false"></div>' +
+      '</div>' +
       '<div class="settings-row' + (warmupControlEnabled ? '' : ' usages-provider-row-disabled') + '">' +
         '<div class="settings-row-info">' +
-          '<label class="settings-label" for="claude-warmup-mode-select">Warm idle Claude accounts</label>' +
+          '<label class="settings-label" for="claude-warmup-mode-select">Warm idle Claude and Codex accounts</label>' +
           '<span class="settings-desc">' + warmupDesc + '</span>' +
         '</div>' +
         '<div class="settings-control">' +
@@ -3542,6 +3549,14 @@
         alert('Failed to save Claude maintenance model flag: ' + (err && err.message ? err.message : err));
         renderClaudeMaintenanceRows();
       });
+  }
+
+  function saveCodexModelFlag(value) {
+    var interval = usagesRefreshInput ? parseInt(usagesRefreshInput.value, 10) : 120;
+    if (!Number.isFinite(interval) || interval < 15) interval = 15;
+    api('POST', '/api/usages/settings', {refresh_interval_sec: interval, percent_display: usagePercentDisplay, codex_model_flag: String(value || '')})
+      .then(function(resp){ if(resp&&resp.settings) renderUsageSettings(resp.settings); return loadUsages(); })
+      .catch(function(err){ alert('Failed to save Codex maintenance model flag: '+(err&&err.message?err.message:err)); renderClaudeMaintenanceRows(); });
   }
 
   // ── Switcher ────────────────────────────────────────────────────────
@@ -7042,6 +7057,8 @@
       saveWarmupSchedule(e.target.value);
     } else if (e.target.id === 'claude-model-flag-input') {
       saveClaudeModelFlag(e.target.value);
+    } else if (e.target.id === 'codex-model-flag-input') {
+      saveCodexModelFlag(e.target.value);
     }
   });
   document.addEventListener('input', function (e) {
