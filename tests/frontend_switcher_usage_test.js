@@ -26,6 +26,7 @@ const context = {
   console,
   usageProviders: [],
   usageSwitcherEnabled: false,
+  usageGroupBy: 'providers',
   switcherInFlight: {},
   EXPIRY_ICON_OK: '',
   EXPIRY_ICON_SOON: '',
@@ -39,6 +40,11 @@ const context = {
   statusLabel: (status) => String(status || 'unknown'),
   usageProviderIconClass: () => 'icon',
   usageProviderIcon: () => '<i></i>',
+  renderUsagesGroupButton: () => {},
+  renderUsagesSidebar: () => {},
+  localStorage: {
+    setItem: (key, value) => { context.savedPreference = [key, value]; },
+  },
 };
 
 vm.createContext(context);
@@ -47,6 +53,8 @@ vm.runInContext([
   extractFunction('providerForSwitcherTool'),
   extractFunction('usageProviderHasProfile'),
   extractFunction('schedulePostSwitchUsageRefresh'),
+  extractFunction('usageSidebarGroups'),
+  extractFunction('toggleUsagesGroupBy'),
   extractFunction('renderUsageProfiles'),
   extractFunction('renderUsageProviderTile'),
   extractFunction('windowLabel'),
@@ -59,6 +67,34 @@ vm.runInContext([
   assert.strictEqual(context.providerForSwitcherTool('claude'), 'claude-code');
   assert.strictEqual(context.providerForSwitcherTool('codex'), 'codex');
   assert.strictEqual(context.windowLabel('monthly'), 'Monthly');
+
+  const grouped = context.usageSidebarGroups([
+    { provider_name: 'codex', profiles: [
+      { profile_name: 'codex-main', active: true },
+      { profile_name: 'codex-backup', active: false },
+    ] },
+    { provider_name: 'claude-code', profiles: [
+      { profile_name: 'claude-main', active: true },
+      { profile_name: 'claude-work', active: false },
+      { profile_name: 'claude-backup', active: false },
+    ] },
+  ], 'active');
+  assert.strictEqual(grouped.primary.length, 2, 'active grouping keeps one top group per provider');
+  assert.strictEqual(grouped.primary[0].profiles[0].profile_name, 'codex-main');
+  assert.strictEqual(grouped.secondary.length, 2, 'providers with inactive profiles remain below the divider');
+  assert.deepStrictEqual(Array.from(grouped.secondary[1].profiles, (p) => p.profile_name), ['claude-work', 'claude-backup']);
+
+  const providerGrouped = context.usageSidebarGroups([{ provider_name: 'codex', profiles: [
+    { profile_name: 'main', active: true },
+    { profile_name: 'backup', active: false },
+  ] }], 'providers');
+  assert.strictEqual(providerGrouped.primary[0].profiles.length, 2, 'provider grouping remains unchanged');
+  assert.strictEqual(providerGrouped.secondary.length, 0, 'provider grouping has no split section');
+
+  context.toggleUsagesGroupBy();
+  assert.strictEqual(context.usageGroupBy, 'active', 'group toggle switches to active-first mode');
+  assert.deepStrictEqual(Array.from(context.savedPreference), ['aimebu_usages_group_by', 'active'], 'group toggle persists locally');
+  assert(source.includes('viewBox="0 0 16 16" fill="currentColor"'), 'group icon is an inline currentColor SVG');
 
   context.usageProviders = [{
     provider_name: 'codex',
@@ -80,6 +116,9 @@ vm.runInContext([
   context.usageSwitcherEnabled = true;
   rendered = context.renderUsageProviderTile(context.usageProviders[0], context.usageProviders[0].profiles);
   assert(rendered.includes('data-profile="backup"'), 'switcher-on adds the inactive-profile control');
+  rendered = context.renderUsageProviderTile(context.usageProviders[0], [context.usageProviders[0].profiles[1]]);
+  assert(!rendered.includes('>main<'), 'a split provider tile excludes the active profile from the lower group');
+  assert(rendered.includes('>backup<'), 'a split provider tile keeps the requested inactive profile');
 
   context.usageProviders[0].switch_eligible = false;
   context.usageProviders[0].switch_absent = true;

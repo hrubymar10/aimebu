@@ -80,6 +80,7 @@
   let usageProviders = [];
   let usageSwitcherEnabled = false;
   let usagePercentDisplay = 'left';
+  let usageGroupBy = localStorage.getItem('aimebu_usages_group_by') === 'active' ? 'active' : 'providers';
   let usageClaudeAutoRefresh = false;
   let usageClaudeAutoRefreshAvailable = false;
   let usageWarmupMode = 'off';
@@ -319,6 +320,7 @@
   const notifSysHelpCloseBtn = $('#notif-sys-help-close-btn');
   const usagesBtn = $('#usages-btn');
   const usagesRefreshBtn = $('#usages-refresh-btn');
+  const usagesGroupBtn = $('#usages-group-btn');
   const usagesRefreshInput = $('#usages-refresh-input');
   const usagesEnvBadge = $('#usages-env-badge');
   const usagesProviderRows = $('#usages-provider-rows');
@@ -2910,6 +2912,43 @@
     });
   }
 
+  function usageSidebarGroups(rows, groupBy) {
+    var groups = (rows || []).map(function (row) {
+      var profiles = row.profiles || [];
+      if (!profiles.length) profiles = [{ profile_name: 'local', active: true, has_credentials: false }];
+      return { row: row, profiles: profiles };
+    });
+    if (groupBy !== 'active') return { primary: groups, secondary: [] };
+    return {
+      primary: groups.map(function (group) {
+        return { row: group.row, profiles: group.profiles.filter(function (profile) { return !!profile.active; }) };
+      }).filter(function (group) { return group.profiles.length > 0; }),
+      secondary: groups.map(function (group) {
+        return { row: group.row, profiles: group.profiles.filter(function (profile) { return !profile.active; }) };
+      }).filter(function (group) { return group.profiles.length > 0; })
+    };
+  }
+
+  var USAGES_GROUP_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M1.5 1h2v1H2v12h1.5v1h-2l-.5-.5v-13l.5-.5zm6 6h-2L5 6.5v-2l.5-.5h2l.5.5v2l-.5.5zM6 6h1V5H6v1zm7.5 1h-3l-.5-.5v-3l.5-.5h3l.5.5v3l-.5.5zM11 6h2V4h-2v2zm-3.5 6h-2l-.5-.5v-2l.5-.5h2l.5.5v2l-.5.5zM6 11h1v-1H6v1zm7.5 2h-3l-.5-.5v-3l.5-.5h3l.5.5v3l-.5.5zM11 12h2v-2h-2v2zm-1-2H8v1h2v-1zm0-5H8v1h2V5z"/></svg>';
+
+  function renderUsagesGroupButton() {
+    if (!usagesGroupBtn) return;
+    var activeFirst = usageGroupBy === 'active';
+    var label = activeFirst ? 'Group usages by provider' : 'Show active profiles first';
+    usagesGroupBtn.innerHTML = USAGES_GROUP_ICON;
+    usagesGroupBtn.classList.toggle('active', activeFirst);
+    usagesGroupBtn.setAttribute('aria-pressed', activeFirst ? 'true' : 'false');
+    usagesGroupBtn.setAttribute('aria-label', label);
+    usagesGroupBtn.title = label;
+  }
+
+  function toggleUsagesGroupBy() {
+    usageGroupBy = usageGroupBy === 'active' ? 'providers' : 'active';
+    localStorage.setItem('aimebu_usages_group_by', usageGroupBy);
+    renderUsagesGroupButton();
+    renderUsagesSidebar();
+  }
+
   function renderUsagesSidebar() {
     if (!rightUsagesPanel) return;
     if (!usagesLoadSettled) {
@@ -2922,18 +2961,21 @@
     }
     var rows = canonicalUsageProviders();
     var sidebarRows = rows.filter(function (row) { return row.available !== false && !!row.enabled; });
+    var groups = usageSidebarGroups(sidebarRows, usageGroupBy);
     var empty = sidebarRows.length ? '' : '<div class="usages-empty">' +
       '<div>No usage providers enabled.</div>' +
       '<button class="btn btn-sm usages-settings-shortcut" type="button">Open Settings → Usages</button>' +
     '</div>';
-    rightUsagesPanel.innerHTML = empty + '<div class="usages-sidebar-list">' + sidebarRows.map(function (row) {
-      var profiles = row.profiles || [];
-      // The backend guarantees at least one profile. Keep a defensive local
-      // placeholder so a malformed or rolling-upgrade response still uses the
-      // same renderer instead of reviving the old single-account mode.
-      if (!profiles.length) profiles = [{ profile_name: 'local', active: true, has_credentials: false }];
-      return renderUsageProviderTile(row, profiles);
-    }).join('') + '</div>';
+    function renderGroups(items) {
+      return items.map(function (group) { return renderUsageProviderTile(group.row, group.profiles); }).join('');
+    }
+    var divider = groups.secondary.length
+      ? '<div class="usages-group-divider" role="separator" aria-label="Other profiles"></div>'
+      : '';
+    rightUsagesPanel.innerHTML = empty + '<div class="usages-sidebar-list">' +
+      renderGroups(groups.primary) + divider + renderGroups(groups.secondary) +
+    '</div>';
+    renderUsagesGroupButton();
     refreshSwitcherPanel();
   }
 
@@ -2987,10 +3029,10 @@
 
   // Renders every usage profile through one row shape. Switcher enablement
   // controls only the mutation button; it never changes the usage data view.
-  function renderUsageProfiles(providerKey) {
+  function renderUsageProfiles(providerKey, selectedProfiles) {
     var provider = (usageProviders || []).find(function (p) { return p.provider_name === providerKey; });
     if (!provider) return '';
-    var profiles = provider.profiles || [];
+    var profiles = (selectedProfiles || provider.profiles || []).slice();
     profiles.sort(function (a, b) { return (b.active ? 1 : 0) - (a.active ? 1 : 0); });
     if (!profiles.length) return '';
     var blocked = !!switcherInFlight[providerKey] || (!provider.switch_eligible && !provider.switch_absent && provider.switch_ineligible_reason);
@@ -3088,7 +3130,7 @@
       ? 'Updated ' + formatRelativeAge(oldest) + ' ago'
       : statusLabel((profiles[0] || {}).status || 'Not configured');
 
-    var profileBlocks = renderUsageProfiles(row.provider_name);
+    var profileBlocks = renderUsageProfiles(row.provider_name, profiles);
 
     return '<div class="usages-provider-tile" data-provider="' + esc(row.provider_name) + '">' +
       '<div class="usages-provider-heading">' +
@@ -6875,6 +6917,7 @@
     });
   }
   if (usagesRefreshBtn) usagesRefreshBtn.addEventListener('click', forceRefreshUsages);
+  if (usagesGroupBtn) usagesGroupBtn.addEventListener('click', toggleUsagesGroupBy);
   if (rightUsagesPanel) rightUsagesPanel.addEventListener('click', function (e) {
     if (!e.target.closest('.usages-settings-shortcut')) return;
     openSettings('usages');

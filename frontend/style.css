@@ -2634,7 +2634,8 @@ body {
   display: none;
 }
 
-.sidebar-right:not([data-mode="usages"]) #usages-refresh-btn {
+.sidebar-right:not([data-mode="usages"]) #usages-refresh-btn,
+.sidebar-right:not([data-mode="usages"]) #usages-group-btn {
   display: none;
 }
 
@@ -5422,6 +5423,19 @@ body {
   padding: 0;
 }
 
+.usages-group-btn {
+  padding: 0;
+}
+
+.usages-group-btn svg {
+  display: block;
+}
+
+.usages-group-btn.active {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
 .usages-refresh-glyph {
   width: 17px;
   height: 17px;
@@ -5436,6 +5450,12 @@ body {
   mask-repeat: no-repeat;
   -webkit-mask-position: center;
   mask-position: center;
+}
+
+.usages-group-divider {
+  height: 1px;
+  margin: 3px 5px;
+  background: var(--border-hover);
 }
 
 .usages-provider-control,

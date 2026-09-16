@@ -259,6 +259,12 @@ or many profiles. `switcher_enabled` controls only whether Switch buttons and
 other credential-mutation affordances appear; it does not select another data
 path or response representation.
 
+The sidebar header's group button switches between provider grouping (the
+default) and an active-first view. Active-first shows each provider's active
+profile above a divider, then groups the remaining profiles by provider below
+it. The browser stores this display-only preference locally; it does not alter
+the shared usage settings or API response.
+
 ## Transient-Failure Handling
 
 Provider usage fetches retry once for idempotent HTTP methods (`GET`, `HEAD`,
