@@ -218,7 +218,7 @@ func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo) error {
 	if _, err := ValidateClaudeCredentials(tmpCred); err != nil {
 		return fmt.Errorf("claude warmup: rotated credentials invalid: %w", err)
 	}
-	if err := commitClaudeCredCopyBack(w.withLock, w.reresolve, profile.Name, storedPath, startFingerprint, rotated, true); err != nil {
+	if err := commitClaudeCredCopyBack(w.withLock, w.reresolve, profile.Name, storedPath, startFingerprint, rotated); err != nil {
 		return fmt.Errorf("claude warmup: copy-back: %w", err)
 	}
 	log.Printf("usages: claude warmup profile=%q outcome=credentials-rotated copy_back=success", profile.Name)

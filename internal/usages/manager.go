@@ -271,9 +271,10 @@ func (m *Manager) decorateSettings(info Settings) Settings {
 }
 
 // triggerClaudeAutoRefresh scans the resolved claude profiles and asks the
-// coordinator to refresh any inactive near-expiry profile. It runs on the
-// normal poller tick and is a no-op unless the setting is enabled and the
-// coordinator is wired.
+// coordinator to refresh any near-expiry profile, INCLUDING the active one so an
+// idle active account's token does not silently expire. It runs on the normal
+// poller tick and is a no-op unless the setting is enabled and the coordinator
+// is wired.
 func (m *Manager) triggerClaudeAutoRefresh(ctx context.Context) {
 	if m.claudeRefresher == nil {
 		return

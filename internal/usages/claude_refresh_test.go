@@ -105,8 +105,13 @@ func TestClaudeProfileNeedsRefresh(t *testing.T) {
 			want:    false,
 		},
 		{
-			name:    "active never eligible",
+			name:    "active near/at expiry is eligible",
 			profile: ProfileInfo{Tool: "claude", Active: true, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))},
+			want:    true,
+		},
+		{
+			name:    "active far from expiry not eligible",
+			profile: ProfileInfo{Tool: "claude", Active: true, HasCredentials: true, ExpiresAt: ptrTime(now.Add(time.Hour))},
 			want:    false,
 		},
 		{
@@ -171,32 +176,55 @@ func TestClaudeRefreshSuccessCopiesBackWhenExpiryAdvances(t *testing.T) {
 	}
 }
 
-func TestClaudeRefreshFailsWhenExpiryDidNotAdvance(t *testing.T) {
+func TestClaudeRefreshNoopWhenExpiryDidNotAdvance(t *testing.T) {
 	now := time.Unix(3_000_000, 0)
-	oldExpiryMs := now.Add(2 * time.Minute).UnixMilli()
+	clock := &fakeClock{now: now}
+	expiry := now.Add(2 * time.Minute) // pre-emptive refresh inside the 10-min window
+	oldExpiryMs := expiry.UnixMilli()
 	old := claudeCredsWithExpiry("old-tok", oldExpiryMs)
-	// Executor "rotates" but expiry is the same (or earlier): must be treated as
-	// a failure, and the stored file must be left untouched.
+	// Executor "runs" but claude declines to rotate a still-valid token: expiry is
+	// unchanged. This is a benign no-op, NOT a failure. The stored file must be
+	// left untouched.
 	rotated := claudeCredsWithExpiry("new-tok", oldExpiryMs)
 
 	_, credPath := writeStoredProfile(t, old)
 	exec := &fakeExecutor{writeNew: rotated}
-	r := newTestRefresher(exec, &fakeClock{now: now})
+	r := newTestRefresher(exec, clock)
 
-	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(2 * time.Minute))}
-	_, err := r.maybeRefreshSync(context.Background(), profile)
-	if err == nil {
-		t.Fatal("expected failure when expiresAt did not advance")
+	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(expiry)}
+	attempted, err := r.maybeRefreshSync(context.Background(), profile)
+	if !attempted {
+		t.Fatal("expected the no-op refresh to be attempted")
+	}
+	if !errors.Is(err, errClaudeRefreshNoop) {
+		t.Fatalf("expected errClaudeRefreshNoop when expiry did not advance, got %v", err)
 	}
 	got, _ := os.ReadFile(credPath)
 	if string(got) != old {
-		t.Fatalf("stored credentials must be unchanged on non-advancing expiry, got=%s", got)
+		t.Fatalf("stored credentials must be unchanged on a no-op, got=%s", got)
+	}
+
+	// A no-op must NOT incur the 5-min failure backoff, but it must also NOT be
+	// retried every tick while the token is still valid. Immediately after and
+	// after 4 minutes (well past the 5-min failure backoff but still before the
+	// token's real expiry) the attempt is deferred by retryAfter.
+	if attempted, _ := r.maybeRefreshSync(context.Background(), profile); attempted {
+		t.Fatal("no-op should defer the next attempt while the token is still valid")
+	}
+	clock.now = now.Add(4 * time.Minute) // > failBackoff(5m)? no; but > token expiry window? still before expiry+? expiry=now+2m
+	// At now+4m the token has actually expired (expiry was now+2m) → retryAfter
+	// has passed → the attempt is allowed again.
+	if attempted, _ := r.maybeRefreshSync(context.Background(), profile); !attempted {
+		t.Fatal("after the token's real expiry the no-op deferral should lift and allow a retry")
+	}
+	if exec.callCount() != 2 {
+		t.Fatalf("executor called %d times, want 2 (initial no-op + retry after real expiry)", exec.callCount())
 	}
 }
 
 // ── CAS identity guard ───────────────────────────────────────────────────
 
-func TestClaudeRefreshCASAbortsWhenProfileBecomesActive(t *testing.T) {
+func TestClaudeRefreshCopiesBackToActiveProfile(t *testing.T) {
 	now := time.Unix(4_000_000, 0)
 	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
 	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
@@ -204,19 +232,23 @@ func TestClaudeRefreshCASAbortsWhenProfileBecomesActive(t *testing.T) {
 	_, credPath := writeStoredProfile(t, old)
 	exec := &fakeExecutor{writeNew: rotated}
 	r := newTestRefresher(exec, &fakeClock{now: now})
-	// The CAS re-resolve reports the profile flipped to active mid-refresh.
+	// The re-resolve reports the profile is (and stays) active: refreshing an
+	// active claude profile is intended now, so copy-back must NOT abort.
 	r.reresolve = func(name string) (ProfileInfo, bool) {
 		return ProfileInfo{Tool: "claude", Name: name, Active: true, CredPath: credPath, HasCredentials: true}, true
 	}
 
-	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
-	_, err := r.maybeRefreshSync(context.Background(), profile)
-	if !errors.Is(err, errClaudeRefreshProfileActive) {
-		t.Fatalf("expected active-profile CAS abort, got %v", err)
+	profile := ProfileInfo{Tool: "claude", Name: "work", Active: true, CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
+	attempted, err := r.maybeRefreshSync(context.Background(), profile)
+	if !attempted {
+		t.Fatal("expected refresh of the active profile to be attempted")
+	}
+	if err != nil {
+		t.Fatalf("refresh of active profile: %v", err)
 	}
 	got, _ := os.ReadFile(credPath)
-	if string(got) != old {
-		t.Fatalf("stored credentials must be unchanged when profile became active, got=%s", got)
+	if string(got) != rotated {
+		t.Fatalf("rotated credentials must be copied back to the active profile:\n got=%s\nwant=%s", got, rotated)
 	}
 }
 

@@ -102,12 +102,13 @@ owned by the new credentials completes.
 ## Claude Auto-Refresh
 
 Claude OAuth access tokens live only about 8–12 hours. On macOS the live
-harness refreshes them lazily through the Keychain, but a stored **inactive**
-switcher profile has no process keeping it fresh, so its token silently lapses
-and switching to it forces a browser re-login.
+harness refreshes them lazily through the Keychain, but a stored switcher
+profile with no live process keeping it fresh — an inactive profile, or an
+active one that has been idle (e.g. overnight) — sees its token silently lapse,
+and switching to it (or resuming work on it) forces a browser re-login.
 
-Claude auto-refresh keeps near-expiry inactive `claude` switcher profiles ready
-to switch to. When enabled, the background poller renews any inactive profile
+Claude auto-refresh keeps near-expiry `claude` switcher profiles ready to use.
+When enabled, the background poller renews any profile — inactive **or active** —
 whose access token is already expired or within 10 minutes of expiry by running
 the real `claude` binary inside a throwaway `harness-docker` container pointed
 at a copy of that profile's credentials. Inside the container there is no
@@ -116,8 +117,11 @@ tokens straight back, which aimebu then copies into the stored profile.
 
 Design notes:
 
-- **Inactive-only.** The active profile is never touched — the live harness
-  owns it. Codex profiles are unaffected; this is claude-only.
+- **Includes the active profile.** Auto-refresh fires only when the token is
+  expired or near-expiry, so for an idle active account no live session depends
+  on that token at that moment; the file-based switcher reconciles `~/.claude` on
+  its next switch/capture. This mirrors warmup, which also covers the active
+  account. Codex profiles are unaffected; this is claude-only.
 - **Temp-dir isolation.** claude pollutes its config dir with `.claude.json`,
   `sessions/`, `projects/`, and `policy-limits.json`. aimebu copies only
   `.credentials.json` into a temp dir, runs the container there, and copies only
@@ -125,13 +129,20 @@ Design notes:
 - **Success is the rotated file, not the exit code.** A refresh counts only when
   the new `.credentials.json` parses and its `expiresAt` advanced beyond the old
   value.
+- **Benign no-op when the token is still valid.** A pre-emptive refresh (fired up
+  to 10 min before expiry) of a still-valid token makes claude decline to rotate,
+  so `expiresAt` does not advance. This is treated as a no-op, not a failure: it
+  is logged `outcome=noop reason=token-still-valid`, does not incur the failure
+  backoff, and defers the next attempt to the token's real expiry rather than
+  re-running the container every poller tick.
 - **Copy-back safety.** The slow container run happens outside the switcher
   lock. The final copy-back holds `switcher/.lock` and re-checks, compare-and-swap
-  style, that the profile still exists, is still inactive, and its stored
-  credentials are byte-identical to what the refresh started from. A switch or
-  removal that landed mid-refresh aborts the copy-back rather than clobbering it.
+  style, that the profile still exists and its stored credentials are
+  byte-identical to what the refresh started from. A removal or credential change
+  that landed mid-refresh aborts the copy-back rather than clobbering it. (It no
+  longer aborts on the profile becoming active — that is now an intended target.)
 - **Rate limiting.** A profile is never refreshed twice concurrently, and after
-  a failed attempt it is not retried for 5 minutes.
+  a genuine failure it is not retried for 5 minutes.
 
 **Gate.** The feature runs only when all of these hold: the
 `claude_auto_refresh` setting is enabled (default **off**), the
@@ -140,7 +151,7 @@ When `harness-docker-ctrl` is absent the feature is reported unavailable and the
 Settings toggle is disabled.
 
 **Cost.** Enabling it incurs a small per-account cost — occasional `claude -p`
-calls against each near-expiry inactive profile — so it is opt-in.
+calls against each near-expiry profile (active or inactive) — so it is opt-in.
 
 Configure it in **Settings → Usages → Claude auto-refresh**. The stored flag is
 `claude_auto_refresh` in `~/.aimebu/usages/config.json`; the GET/POST

@@ -41,12 +41,19 @@ const (
 
 // CAS-guard sentinels. A refresh runs its slow docker step outside the switcher
 // lock; by the time it wants to write the rotated tokens back the profile may
-// have been switched-to (now live-owned), removed, or otherwise changed. Any of
-// these aborts the copy-back rather than clobbering the new reality.
+// have been removed or otherwise changed. Any of these aborts the copy-back
+// rather than clobbering the new reality. (There is deliberately no
+// "profile became active" sentinel: refreshing an active profile is an
+// intended target now — see commitClaudeCredCopyBack.)
 var (
 	errClaudeRefreshProfileGone    = errors.New("claude auto-refresh: profile no longer exists")
-	errClaudeRefreshProfileActive  = errors.New("claude auto-refresh: profile became active mid-refresh")
 	errClaudeRefreshProfileChanged = errors.New("claude auto-refresh: stored credentials changed mid-refresh")
+
+	// errClaudeRefreshNoop signals a benign non-rotation: the executor ran but
+	// the access token was still valid, so claude declined to rotate it. This is
+	// NOT a failure — it must not incur the post-failure backoff nor an
+	// outcome=failed log line. The caller defers the next attempt to real expiry.
+	errClaudeRefreshNoop = errors.New("claude auto-refresh: token still valid, no rotation needed")
 )
 
 // refreshExecutor runs whatever side-effecting step rotates the credentials in
@@ -115,15 +122,18 @@ func dockerReachable(ctx context.Context) bool {
 	return exec.CommandContext(checkCtx, "docker", "info").Run() == nil
 }
 
-// claudeProfileNeedsRefresh is the pure eligibility predicate: an INACTIVE
-// claude switcher profile with stored credentials whose access token is already
-// expired or within window of expiry. The active profile is never eligible —
-// the live harness owns it.
+// claudeProfileNeedsRefresh is the pure eligibility predicate: any claude
+// switcher profile with stored credentials whose access token is already
+// expired or within window of expiry, INCLUDING the active profile. The active
+// account is intentionally eligible: auto-refresh fires only when its token is
+// expired or near-expiry, so an idle active account (e.g. overnight) still gets
+// its token rotated instead of silently expiring. This mirrors
+// claudeProfileEligibleForWarmup, which also covers the active account.
 func claudeProfileNeedsRefresh(profile ProfileInfo, now time.Time, window time.Duration) bool {
 	if profile.Tool != "claude" {
 		return false
 	}
-	if profile.Active || !profile.HasCredentials {
+	if !profile.HasCredentials {
 		return false
 	}
 	if profile.ExpiresAt == nil {
@@ -132,9 +142,41 @@ func claudeProfileNeedsRefresh(profile ProfileInfo, now time.Time, window time.D
 	return !now.Before(profile.ExpiresAt.Add(-window))
 }
 
+// claudeRefreshOutcome classifies how a single refresh attempt ended, which
+// drives the rate-limiter state (failure backoff vs. benign expiry-gated defer).
+type claudeRefreshOutcome int
+
+const (
+	refreshOutcomeSuccess claudeRefreshOutcome = iota
+	refreshOutcomeFailure
+	refreshOutcomeNoop
+)
+
+// classifyRefreshErr maps a refresh() result to an outcome and, for the benign
+// no-op case, the time before which the next attempt should be suppressed (the
+// token's real expiry — once past it, a re-run WILL rotate).
+func classifyRefreshErr(err error, profile ProfileInfo) (claudeRefreshOutcome, time.Time) {
+	switch {
+	case err == nil:
+		return refreshOutcomeSuccess, time.Time{}
+	case errors.Is(err, errClaudeRefreshNoop):
+		var retry time.Time
+		if profile.ExpiresAt != nil {
+			retry = *profile.ExpiresAt
+		}
+		return refreshOutcomeNoop, retry
+	default:
+		return refreshOutcomeFailure, time.Time{}
+	}
+}
+
 type claudeRefreshState struct {
 	inFlight    bool
 	lastFailure time.Time
+	// retryAfter defers the next attempt for a benign no-op (token still valid):
+	// unlike lastFailure it is not a fixed backoff but the token's real expiry, so
+	// the profile is not re-run on every poller tick while its token is valid.
+	retryAfter time.Time
 }
 
 // claudeRefresher coordinates auto-refresh of near-expiry inactive claude
@@ -185,13 +227,17 @@ func (r *claudeRefresher) tryStart(name string) bool {
 	if !st.lastFailure.IsZero() && now.Sub(st.lastFailure) < r.backoff {
 		return false
 	}
+	if !st.retryAfter.IsZero() && now.Before(st.retryAfter) {
+		return false
+	}
 	st.inFlight = true
 	return true
 }
 
-// finish releases the in-flight slot, recording (or clearing) the failure stamp
-// that drives backoff.
-func (r *claudeRefresher) finish(name string, failed bool) {
+// finish releases the in-flight slot and records the rate-limiter state for the
+// outcome: a failure stamps lastFailure (fixed backoff); a benign no-op stamps
+// retryAfter (defer to real expiry) without a failure; success clears both.
+func (r *claudeRefresher) finish(name string, outcome claudeRefreshOutcome, retryAfter time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st := r.state[name]
@@ -200,10 +246,17 @@ func (r *claudeRefresher) finish(name string, failed bool) {
 		r.state[name] = st
 	}
 	st.inFlight = false
-	if failed {
-		st.lastFailure = r.clock.Now()
-	} else {
+	switch outcome {
+	case refreshOutcomeSuccess:
 		st.lastFailure = time.Time{}
+		st.retryAfter = time.Time{}
+	case refreshOutcomeNoop:
+		// Benign: don't stamp a failure; defer the next run until the token is at
+		// real expiry so we don't re-run the container every poller tick.
+		st.lastFailure = time.Time{}
+		st.retryAfter = retryAfter
+	case refreshOutcomeFailure:
+		st.lastFailure = r.clock.Now()
 	}
 }
 
@@ -223,30 +276,31 @@ func (r *claudeRefresher) maybeRefresh(ctx context.Context, profile ProfileInfo)
 	}
 	log.Printf("usages: claude auto-refresh profile=%q outcome=starting", profile.Name)
 	go func() {
-		// failed defaults to true so a panic in refresh (exec/file/JSON work)
+		// outcome defaults to failure so a panic in refresh (exec/file/JSON work)
 		// still records a failure and, crucially, always releases the in-flight
 		// guard via the deferred finish. recover() keeps one profile's panic from
 		// crashing the whole server on this background goroutine.
-		failed := true
+		outcome := refreshOutcomeFailure
+		var retryAfter time.Time
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				log.Printf("usages: claude auto-refresh profile=%q outcome=failed reason=panic: %v", profile.Name, recovered)
 			}
-			r.finish(profile.Name, failed)
+			r.finish(profile.Name, outcome, retryAfter)
 		}()
 		err := r.refresh(ctx, profile)
-		failed = err != nil
-		if err != nil {
-			switch {
-			case errors.Is(err, errClaudeRefreshProfileGone):
-				log.Printf("usages: claude auto-refresh profile=%q outcome=aborted reason=profile removed", profile.Name)
-			case errors.Is(err, errClaudeRefreshProfileActive):
-				log.Printf("usages: claude auto-refresh profile=%q outcome=aborted reason=profile switched active", profile.Name)
-			case errors.Is(err, errClaudeRefreshProfileChanged):
-				log.Printf("usages: claude auto-refresh profile=%q outcome=aborted reason=credentials changed", profile.Name)
-			default:
-				log.Printf("usages: claude auto-refresh profile=%q outcome=failed reason=%v", profile.Name, err)
-			}
+		outcome, retryAfter = classifyRefreshErr(err, profile)
+		switch {
+		case err == nil:
+			// success is logged inside refresh (outcome=rotated)
+		case errors.Is(err, errClaudeRefreshNoop):
+			// benign no-op is logged inside refresh (outcome=noop)
+		case errors.Is(err, errClaudeRefreshProfileGone):
+			log.Printf("usages: claude auto-refresh profile=%q outcome=aborted reason=profile removed", profile.Name)
+		case errors.Is(err, errClaudeRefreshProfileChanged):
+			log.Printf("usages: claude auto-refresh profile=%q outcome=aborted reason=credentials changed", profile.Name)
+		default:
+			log.Printf("usages: claude auto-refresh profile=%q outcome=failed reason=%v", profile.Name, err)
 		}
 	}()
 }
@@ -261,7 +315,10 @@ func (r *claudeRefresher) maybeRefreshSync(ctx context.Context, profile ProfileI
 	var err error
 	// Deferred so the in-flight guard is released even if refresh panics (the
 	// panic still propagates here — this is the synchronous test path).
-	defer func() { r.finish(profile.Name, err != nil) }()
+	defer func() {
+		outcome, retryAfter := classifyRefreshErr(err, profile)
+		r.finish(profile.Name, outcome, retryAfter)
+	}()
 	err = r.refresh(ctx, profile)
 	return true, err
 }
@@ -308,17 +365,26 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) erro
 		return fmt.Errorf("claude auto-refresh: rotated credentials invalid: %w", err)
 	}
 	if !newExpiry.After(*oldExpiry) {
-		return fmt.Errorf("claude auto-refresh: expiry did not advance (old=%s new=%s)", oldExpiry.UTC(), newExpiry.UTC())
+		// The executor ran but claude declined to rotate a still-valid token (a
+		// pre-emptive refresh fires up to 10 min before expiry). This is benign, not
+		// a failure: log outcome=noop and signal errClaudeRefreshNoop so the caller
+		// defers the next attempt to real expiry rather than stamping a 5-min
+		// failure backoff and re-running the container every poller tick.
+		log.Printf("usages: claude auto-refresh profile=%q outcome=noop reason=token-still-valid expiry=%s", profile.Name, oldExpiry.UTC().Format(time.RFC3339))
+		return errClaudeRefreshNoop
 	}
 	rotated, err := os.ReadFile(tmpCred)
 	if err != nil {
 		return fmt.Errorf("claude auto-refresh: read rotated credentials: %w", err)
 	}
 
-	// Copy-back under the switcher lock with a compare-and-swap identity guard,
-	// mirroring codex's persistAuth: a switch or removal that landed mid-refresh
-	// must never be clobbered.
-	if err := commitClaudeCredCopyBack(r.withLock, r.reresolve, profile.Name, storedPath, startFingerprint, rotated, false); err != nil {
+	// Copy-back under the switcher lock with a compare-and-swap identity guard:
+	// a removal or credential change that landed mid-refresh must never be
+	// clobbered. Refreshing an active profile is intentional now (an idle active
+	// account whose token expired): auto-refresh only fires at/near expiry, so no
+	// live session depends on the pre-rotation token at that moment, and the
+	// file-based switcher reconciles ~/.claude on its next switch/capture.
+	if err := commitClaudeCredCopyBack(r.withLock, r.reresolve, profile.Name, storedPath, startFingerprint, rotated); err != nil {
 		return err
 	}
 	log.Printf("usages: claude auto-refresh profile=%q outcome=rotated expiry=%s->%s", profile.Name, oldExpiry.UTC().Format(time.RFC3339), newExpiry.UTC().Format(time.RFC3339))
@@ -329,19 +395,18 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) erro
 // with a compare-and-swap identity guard: the slow container run happened
 // outside the lock, so before writing it re-checks that the profile still
 // exists, its CredPath is unchanged, and the stored file still byte-matches
-// startFingerprint. Auto-refresh additionally requires the profile to remain
-// inactive; warmup passes allowActive because an out-of-window active account
-// is an intentional target. Any other mismatch aborts rather than clobbering
-// new reality. withLock may be nil (tests) to skip locking.
-func commitClaudeCredCopyBack(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool), name, storedPath string, startFingerprint [32]byte, rotated []byte, allowActive bool) error {
+// startFingerprint. It deliberately does NOT abort when the profile is active:
+// both auto-refresh (near/at expiry) and warmup (out-of-window idle) intend to
+// rotate the active account's stored credentials, and the file-based switcher
+// reconciles the live config on its next switch/capture. Any other mismatch
+// aborts rather than clobbering new reality. withLock may be nil (tests) to
+// skip locking.
+func commitClaudeCredCopyBack(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool), name, storedPath string, startFingerprint [32]byte, rotated []byte) error {
 	commit := func() error {
 		if reresolve != nil {
 			cur, ok := reresolve(name)
 			if !ok {
 				return errClaudeRefreshProfileGone
-			}
-			if cur.Active && !allowActive {
-				return errClaudeRefreshProfileActive
 			}
 			if cur.CredPath != storedPath {
 				return errClaudeRefreshProfileChanged
