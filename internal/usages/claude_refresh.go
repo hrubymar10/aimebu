@@ -3,6 +3,7 @@ package usages
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -50,9 +51,9 @@ var (
 	errClaudeRefreshProfileChanged = errors.New("claude auto-refresh: stored credentials changed mid-refresh")
 
 	// errClaudeRefreshNoop signals a benign non-rotation: the executor ran but
-	// the access token was still valid, so claude declined to rotate it. This is
-	// NOT a failure — it must not incur the post-failure backoff nor an
-	// outcome=failed log line. The caller defers the next attempt to real expiry.
+	// the returned expiry did not advance. This is NOT a failure — it must not
+	// incur the post-failure backoff nor an outcome=failed log line. The caller
+	// defers the next attempt to the stored token's real expiry.
 	errClaudeRefreshNoop = errors.New("claude auto-refresh: token still valid, no rotation needed")
 )
 
@@ -350,6 +351,9 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) erro
 		return fmt.Errorf("claude auto-refresh: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
+	if err := forceExpireClaudeTempCredentials(tmpCred); err != nil {
+		return fmt.Errorf("claude auto-refresh: force-expire temp credentials: %w", err)
+	}
 
 	if r.reachable != nil && !r.reachable(ctx) {
 		return errors.New("claude auto-refresh: docker is not reachable")
@@ -365,11 +369,11 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) erro
 		return fmt.Errorf("claude auto-refresh: rotated credentials invalid: %w", err)
 	}
 	if !newExpiry.After(*oldExpiry) {
-		// The executor ran but claude declined to rotate a still-valid token (a
-		// pre-emptive refresh fires up to 10 min before expiry). This is benign, not
-		// a failure: log outcome=noop and signal errClaudeRefreshNoop so the caller
-		// defers the next attempt to real expiry rather than stamping a 5-min
-		// failure backoff and re-running the container every poller tick.
+		// Safety net: the executor ran after the temp copy was force-expired, but
+		// the resulting expiry still did not advance. This is benign, not a
+		// failure: signal errClaudeRefreshNoop so the caller defers the next attempt
+		// to the stored token's real expiry rather than stamping a 5-min failure
+		// backoff and re-running the container every poller tick.
 		log.Printf("usages: claude auto-refresh profile=%q outcome=noop reason=token-still-valid expiry=%s", profile.Name, oldExpiry.UTC().Format(time.RFC3339))
 		return errClaudeRefreshNoop
 	}
@@ -389,6 +393,54 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) erro
 	}
 	log.Printf("usages: claude auto-refresh profile=%q outcome=rotated expiry=%s->%s", profile.Name, oldExpiry.UTC().Format(time.RFC3339), newExpiry.UTC().Format(time.RFC3339))
 	return nil
+}
+
+// forceExpireClaudeTempCredentials makes only the throwaway credential copy
+// look expired so claude performs a real pre-emptive rotation. The stored
+// profile remains byte-for-byte untouched until the rotated temp file passes
+// validation and the copy-back CAS guard. Raw JSON maps preserve credential
+// fields that aimebu does not interpret.
+func forceExpireClaudeTempCredentials(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return fmt.Errorf("parse credentials: %w", err)
+	}
+	updated := false
+	for sectionName, expiryName := range map[string]string{
+		"claudeAiOauth":   "expiresAt",
+		"claude_ai_oauth": "expires_at",
+	} {
+		raw, ok := root[sectionName]
+		if !ok {
+			continue
+		}
+		var tokens map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &tokens); err != nil {
+			return fmt.Errorf("parse %s: %w", sectionName, err)
+		}
+		if _, ok := tokens[expiryName]; !ok {
+			continue
+		}
+		tokens[expiryName] = json.RawMessage("1")
+		encoded, err := json.Marshal(tokens)
+		if err != nil {
+			return fmt.Errorf("encode %s: %w", sectionName, err)
+		}
+		root[sectionName] = encoded
+		updated = true
+	}
+	if !updated {
+		return errors.New("OAuth expiresAt field missing")
+	}
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return fmt.Errorf("encode credentials: %w", err)
+	}
+	return atomicWriteBytes(path, encoded, 0o600)
 }
 
 // commitClaudeCredCopyBack copies `rotated` back into storedPath under withLock

@@ -124,17 +124,19 @@ Design notes:
   account. Codex profiles are unaffected; this is claude-only.
 - **Temp-dir isolation.** claude pollutes its config dir with `.claude.json`,
   `sessions/`, `projects/`, and `policy-limits.json`. aimebu copies only
-  `.credentials.json` into a temp dir, runs the container there, and copies only
-  the rotated `.credentials.json` back — the stored profile dir stays clean.
+  `.credentials.json` into a temp dir, marks only that throwaway copy's access
+  token expiry as past, runs the container there, and copies only the genuinely
+  rotated `.credentials.json` back — the stored profile dir stays clean and is
+  never force-expired.
 - **Success is the rotated file, not the exit code.** A refresh counts only when
   the new `.credentials.json` parses and its `expiresAt` advanced beyond the old
   value.
-- **Benign no-op when the token is still valid.** A pre-emptive refresh (fired up
-  to 10 min before expiry) of a still-valid token makes claude decline to rotate,
-  so `expiresAt` does not advance. This is treated as a no-op, not a failure: it
-  is logged `outcome=noop reason=token-still-valid`, does not incur the failure
-  backoff, and defers the next attempt to the token's real expiry rather than
-  re-running the container every poller tick.
+- **Non-rotation safety net.** Pre-emptive refresh force-expires only the temp
+  copy so claude normally rotates even when the stored access token still has up
+  to 10 minutes left. If the executor nevertheless returns credentials whose
+  `expiresAt` did not advance, aimebu still treats that as a no-op rather than a
+  failure: it logs `outcome=noop reason=token-still-valid`, avoids failure
+  backoff, and defers the next attempt to the stored token's real expiry.
 - **Copy-back safety.** The slow container run happens outside the switcher
   lock. The final copy-back holds `switcher/.lock` and re-checks, compare-and-swap
   style, that the profile still exists and its stored credentials are

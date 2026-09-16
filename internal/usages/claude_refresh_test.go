@@ -2,6 +2,7 @@ package usages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -29,6 +30,7 @@ type fakeExecutor struct {
 	calls    int
 	err      error
 	writeNew string // if non-empty, written to <dir>/.credentials.json on each call
+	inspect  func(profileDir string) error
 	entered  chan struct{}
 	release  chan struct{}
 }
@@ -45,6 +47,11 @@ func (f *fakeExecutor) Refresh(ctx context.Context, profileDir string) error {
 	}
 	if f.err != nil {
 		return f.err
+	}
+	if f.inspect != nil {
+		if err := f.inspect(profileDir); err != nil {
+			return err
+		}
 	}
 	if f.writeNew != "" {
 		return os.WriteFile(filepath.Join(profileDir, ".credentials.json"), []byte(f.writeNew), 0o600)
@@ -176,15 +183,85 @@ func TestClaudeRefreshSuccessCopiesBackWhenExpiryAdvances(t *testing.T) {
 	}
 }
 
+func TestForceExpireClaudeTempCredentialsPreservesShape(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "camel", body: `{"claudeAiOauth":{"accessToken":"tok","refreshToken":"refresh","expiresAt":1893456000000,"extra":"keep"},"top":"keep"}`},
+		{name: "snake", body: `{"claude_ai_oauth":{"access_token":"tok","refresh_token":"refresh","expires_at":1893456000000,"extra":"keep"},"top":"keep"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, path := writeStoredProfile(t, tc.body)
+			if err := forceExpireClaudeTempCredentials(path); err != nil {
+				t.Fatal(err)
+			}
+			expires, err := ValidateClaudeCredentials(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !expires.Before(time.Unix(1, 0)) {
+				t.Fatalf("forced expiry = %s, want near epoch", expires)
+			}
+			var got map[string]any
+			data, _ := os.ReadFile(path)
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got["top"] != "keep" {
+				t.Fatalf("unrelated top-level field lost: %s", data)
+			}
+		})
+	}
+}
+
+func TestClaudeRefreshForceExpiresTempBeforeExecutor(t *testing.T) {
+	now := time.Unix(2_500_000, 0)
+	oldExpiry := now.Add(5 * time.Minute)
+	old := claudeCredsWithExpiry("old-tok", oldExpiry.UnixMilli())
+	rotated := claudeCredsWithExpiry("new-tok", now.Add(8*time.Hour).UnixMilli())
+	_, credPath := writeStoredProfile(t, old)
+
+	exec := &fakeExecutor{writeNew: rotated}
+	exec.inspect = func(profileDir string) error {
+		tempExpiry, err := ValidateClaudeCredentials(filepath.Join(profileDir, ".credentials.json"))
+		if err != nil {
+			return err
+		}
+		if !tempExpiry.Before(now) {
+			return fmt.Errorf("temp expiry = %s, want before %s", tempExpiry, now)
+		}
+		stored, err := os.ReadFile(credPath)
+		if err != nil {
+			return err
+		}
+		if string(stored) != old {
+			return fmt.Errorf("stored credentials changed before executor: %s", stored)
+		}
+		return nil
+	}
+	r := newTestRefresher(exec, &fakeClock{now: now})
+	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(oldExpiry)}
+	attempted, err := r.maybeRefreshSync(context.Background(), profile)
+	if !attempted || err != nil {
+		t.Fatalf("pre-emptive rotation: attempted=%v err=%v", attempted, err)
+	}
+	got, _ := os.ReadFile(credPath)
+	if string(got) != rotated {
+		t.Fatalf("rotated credentials not copied back:\n got=%s\nwant=%s", got, rotated)
+	}
+}
+
 func TestClaudeRefreshNoopWhenExpiryDidNotAdvance(t *testing.T) {
 	now := time.Unix(3_000_000, 0)
 	clock := &fakeClock{now: now}
 	expiry := now.Add(2 * time.Minute) // pre-emptive refresh inside the 10-min window
 	oldExpiryMs := expiry.UnixMilli()
 	old := claudeCredsWithExpiry("old-tok", oldExpiryMs)
-	// Executor "runs" but claude declines to rotate a still-valid token: expiry is
-	// unchanged. This is a benign no-op, NOT a failure. The stored file must be
-	// left untouched.
+	// Safety net: even though refresh force-expires the temp copy, an executor
+	// that returns credentials whose expiry did not advance is still a benign
+	// no-op, NOT a failure. The stored file must be left untouched.
 	rotated := claudeCredsWithExpiry("new-tok", oldExpiryMs)
 
 	_, credPath := writeStoredProfile(t, old)
