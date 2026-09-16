@@ -247,8 +247,12 @@ expose it plus the runtime `warmup_available` flag; POST accepts optional
   restricted, either one matching follows standard cron behavior.
 - **Smart mode.** One scan starts at most one account
   and different accounts are separated by a gap of **5 hours divided by the
-  number of credential-bearing Claude profiles, active or inactive**. This
-  spreads their rolling windows roughly evenly without another setting. The
+  number of warmable credential-bearing profiles, active or inactive**.
+  Profiles whose active weekly limit is at 100% are excluded from both warmup
+  attempts and this spacing count until that weekly window resets. Claude uses
+  its `weekly` window for this gate; Codex uses either `weekly` or
+  `codex_spark_weekly`. This spreads the remaining rolling windows roughly
+  evenly without another setting. The
   longest-idle candidate is selected first: an account with no timestamped
   session window is treated as oldest, otherwise the earliest expired
   `resets_at` wins, with the profile name breaking ties.

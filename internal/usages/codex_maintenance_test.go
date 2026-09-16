@@ -109,6 +109,71 @@ func TestCodexWarmupCopiesRotatedCredentialsBack(t *testing.T) {
 	}
 }
 
+func TestManagerCodexSmartSpacingExcludesWeeklyCappedProfileAndCount(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	now := time.Unix(10_000_000, 0).UTC()
+	clock := &fakeClock{now: now}
+	profiles := make([]ProfileInfo, 0, 3)
+	entries := make([]CacheEntry, 0, 3)
+	for i, name := range []string{"oldest", "middle", "newest"} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "auth.json")
+		if err := os.WriteFile(path, []byte(codexAuth(name, "refresh", now.Format(time.RFC3339))), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		profiles = append(profiles, ProfileInfo{Tool: "codex", Name: name, CredPath: path, HasCredentials: true})
+		reset := now.Add(time.Duration(i-3) * time.Hour)
+		windows := []Window{sessionWindow(&reset)}
+		if name == "oldest" {
+			weeklyReset := now.Add(24 * time.Hour)
+			windows = append(windows, Window{Key: "codex_spark_weekly", PercentUsed: 100, ResetAt: &weeklyReset})
+		}
+		entries = append(entries, CacheEntry{Profile: Profile{ProfileName: name, Snapshot: Snapshot{Status: StatusOK, Windows: windows}}})
+	}
+	cfg, err := store.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ClaudeAutoRefresh = true
+	cfg.WarmupMode = WarmupModeSmart
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	cache := EmptyCache()
+	cache.Snapshots[ProviderCodex] = entries
+	if err := store.SaveCache(cache); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(store, EmptyRegistry())
+	m.SetClock(clock)
+	m.claudeAvailableFn = func() bool { return true }
+	m.SetProfileLister(func(tool string) []ProfileInfo {
+		if tool == "codex" {
+			return profiles
+		}
+		return nil
+	})
+	m.codexMaintainer = testCodexMaintainer(&fakeCodexExecutor{}, now)
+	m.codexMaintainer.clock = clock
+
+	m.triggerCodexMaintenance(context.Background())
+	if codexWarmupWasAttempted(m.codexMaintainer, "oldest") || !codexWarmupWasAttempted(m.codexMaintainer, "middle") {
+		t.Fatal("weekly-capped codex profile was not excluded from smart warmup candidates")
+	}
+	clock.now = clock.now.Add(claudeSessionWindowDuration / 2)
+	m.triggerCodexMaintenance(context.Background())
+	if !codexWarmupWasAttempted(m.codexMaintainer, "newest") {
+		t.Fatal("weekly-capped codex profile still inflated the smart-spacing count")
+	}
+}
+
+func codexWarmupWasAttempted(m *codexMaintainer, name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.warm[name]
+	return state != nil && !state.lastAttempt.IsZero()
+}
+
 func TestCodexProfileNeedsRefreshUsesAccessJWTExpiry(t *testing.T) {
 	now := time.Now().UTC()
 	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"exp":` + strconv.FormatInt(now.Add(5*time.Minute).Unix(), 10) + `}`))

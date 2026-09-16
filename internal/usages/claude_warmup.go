@@ -82,6 +82,29 @@ func claudeSnapshotOutOfWindow(snap Snapshot, now time.Time) bool {
 	return true
 }
 
+// snapshotWeeklyExhausted reports whether any of the named weekly windows has
+// reached its normalized cap and is still active. Window percentages are
+// normalized into [0, 100], and Snapshot carries no separate deficit or
+// rate-limited marker, so 100 percent with a future reset is the complete
+// provider-independent signal available to warmup selection. A missing, nil,
+// or elapsed reset is not exhausted: the next poll can then naturally
+// re-include the profile after its weekly reset.
+func snapshotWeeklyExhausted(snap Snapshot, now time.Time, keys ...string) bool {
+	for _, window := range snap.Windows {
+		matched := false
+		for _, key := range keys {
+			if window.Key == key {
+				matched = true
+				break
+			}
+		}
+		if matched && window.PercentUsed >= 100 && window.ResetAt != nil && window.ResetAt.After(now) {
+			return true
+		}
+	}
+	return false
+}
+
 type claudeWarmupState struct {
 	inFlight    bool
 	lastAttempt time.Time

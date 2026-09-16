@@ -100,6 +100,32 @@ func TestClaudeSnapshotOutOfWindow(t *testing.T) {
 	}
 }
 
+func TestSnapshotWeeklyExhausted(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	future := now.Add(24 * time.Hour)
+	past := now.Add(-time.Hour)
+	cases := []struct {
+		name string
+		snap Snapshot
+		keys []string
+		want bool
+	}{
+		{"capped active weekly", Snapshot{Windows: []Window{{Key: "weekly", PercentUsed: 100, ResetAt: &future}}}, []string{"weekly"}, true},
+		{"healthy weekly", Snapshot{Windows: []Window{{Key: "weekly", PercentUsed: 42, ResetAt: &future}}}, []string{"weekly"}, false},
+		{"past reset", Snapshot{Windows: []Window{{Key: "weekly", PercentUsed: 100, ResetAt: &past}}}, []string{"weekly"}, false},
+		{"near cap", Snapshot{Windows: []Window{{Key: "weekly", PercentUsed: 99.9, ResetAt: &future}}}, []string{"weekly"}, false},
+		{"codex spark weekly", Snapshot{Windows: []Window{{Key: "codex_spark_weekly", PercentUsed: 100, ResetAt: &future}}}, []string{"weekly", "codex_spark_weekly"}, true},
+		{"unselected scoped weekly", Snapshot{Windows: []Window{{Key: "weekly_opus", PercentUsed: 100, ResetAt: &future}}}, []string{"weekly"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := snapshotWeeklyExhausted(tc.snap, now, tc.keys...); got != tc.want {
+				t.Fatalf("snapshotWeeklyExhausted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // ── Warm runs the executor and persists rotated credentials ──────────────
 
 // When the container does NOT rotate credentials (no refresh happened), warmup
@@ -550,6 +576,43 @@ func TestManagerSmartSpacingPicksLongestIdleAndEnforcesGap(t *testing.T) {
 	waitForCalls(t, exec, 2)
 	if !warmupWasAttempted(m.claudeWarmer, "middle") {
 		t.Fatal("second smart-spaced scan did not pick the next longest-idle profile")
+	}
+}
+
+func TestManagerSmartSpacingExcludesWeeklyCappedProfileAndCount(t *testing.T) {
+	m, store, exec, clock := smartSpacingTriggerFixture(t)
+	future := clock.now.Add(24 * time.Hour)
+	if err := store.WithLock(func() error {
+		cache, err := store.LoadCache()
+		if err != nil {
+			return err
+		}
+		for i := range cache.Snapshots[ProviderClaudeCode] {
+			if cache.Snapshots[ProviderClaudeCode][i].Profile.ProfileName == "oldest" {
+				cache.Snapshots[ProviderClaudeCode][i].Profile.Windows = append(
+					cache.Snapshots[ProviderClaudeCode][i].Profile.Windows,
+					Window{Key: "weekly", PercentUsed: 100, ResetAt: &future},
+				)
+			}
+		}
+		return store.SaveCache(cache)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	enableSmartSpacing(t, store)
+
+	m.triggerClaudeAutoWarmup(context.Background())
+	waitForCalls(t, exec, 1)
+	if warmupWasAttempted(m.claudeWarmer, "oldest") || !warmupWasAttempted(m.claudeWarmer, "middle") {
+		t.Fatal("weekly-capped profile was not excluded from smart warmup candidates")
+	}
+
+	// Only the two warmable profiles count, so the next account starts at 5h/2.
+	clock.now = clock.now.Add(claudeSessionWindowDuration / 2)
+	m.triggerClaudeAutoWarmup(context.Background())
+	waitForCalls(t, exec, 2)
+	if !warmupWasAttempted(m.claudeWarmer, "newest") {
+		t.Fatal("weekly-capped profile still inflated the smart-spacing count")
 	}
 }
 

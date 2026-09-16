@@ -366,9 +366,12 @@ func (m *Manager) triggerClaudeAutoWarmup(ctx context.Context) {
 		if !claudeProfileEligibleForWarmup(profile) {
 			continue
 		}
-		eligibleCount++
 		entry := profileCacheEntry(cache.Snapshots[ProviderClaudeCode], profile.Name)
-		if entry == nil || !claudeSnapshotOutOfWindow(entry.Profile.Snapshot, now) {
+		if entry == nil || snapshotWeeklyExhausted(entry.Profile.Snapshot, now, "weekly") {
+			continue
+		}
+		eligibleCount++
+		if !claudeSnapshotOutOfWindow(entry.Profile.Snapshot, now) {
 			continue
 		}
 		candidates = append(candidates, claudeWarmupCandidate{
@@ -420,9 +423,12 @@ func (m *Manager) triggerCodexMaintenance(ctx context.Context) {
 		if !codexProfileEligibleForWarmup(p) {
 			continue
 		}
-		eligibleCount++
 		entry := profileCacheEntry(cache.Snapshots[ProviderCodex], p.Name)
-		if entry == nil || !claudeSnapshotOutOfWindow(entry.Profile.Snapshot, now) {
+		if entry == nil || snapshotWeeklyExhausted(entry.Profile.Snapshot, now, "weekly", "codex_spark_weekly") {
+			continue
+		}
+		eligibleCount++
+		if !claudeSnapshotOutOfWindow(entry.Profile.Snapshot, now) {
 			continue
 		}
 		candidates = append(candidates, claudeWarmupCandidate{profile: p, outSince: claudeOutOfWindowSince(entry.Profile.Snapshot)})
