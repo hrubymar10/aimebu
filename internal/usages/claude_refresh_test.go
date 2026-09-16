@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -26,18 +27,20 @@ func ptrTime(t time.Time) *time.Time { return &t }
 // fakeExecutor writes a caller-supplied credentials body into the profile dir,
 // simulating claude rotating the tokens inside the container.
 type fakeExecutor struct {
-	mu       sync.Mutex
-	calls    int
-	err      error
-	writeNew string // if non-empty, written to <dir>/.credentials.json on each call
-	inspect  func(profileDir string) error
-	entered  chan struct{}
-	release  chan struct{}
+	mu         sync.Mutex
+	calls      int
+	modelFlags []string
+	err        error
+	writeNew   string // if non-empty, written to <dir>/.credentials.json on each call
+	inspect    func(profileDir string) error
+	entered    chan struct{}
+	release    chan struct{}
 }
 
-func (f *fakeExecutor) Refresh(ctx context.Context, profileDir string) error {
+func (f *fakeExecutor) Refresh(ctx context.Context, profileDir, modelFlag string) error {
 	f.mu.Lock()
 	f.calls++
+	f.modelFlags = append(f.modelFlags, modelFlag)
 	f.mu.Unlock()
 	if f.entered != nil {
 		f.entered <- struct{}{}
@@ -57,6 +60,15 @@ func (f *fakeExecutor) Refresh(ctx context.Context, profileDir string) error {
 		return os.WriteFile(filepath.Join(profileDir, ".credentials.json"), []byte(f.writeNew), 0o600)
 	}
 	return nil
+}
+
+func (f *fakeExecutor) lastModelFlag() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.modelFlags) == 0 {
+		return ""
+	}
+	return f.modelFlags[len(f.modelFlags)-1]
 }
 
 func (f *fakeExecutor) callCount() int {
@@ -362,7 +374,7 @@ type mutatingExecutor struct {
 	writeNew   string
 }
 
-func (m *mutatingExecutor) Refresh(ctx context.Context, profileDir string) error {
+func (m *mutatingExecutor) Refresh(ctx context.Context, profileDir, modelFlag string) error {
 	if err := os.WriteFile(m.storedPath, []byte(m.mutateTo), 0o600); err != nil {
 		return err
 	}
@@ -398,7 +410,7 @@ type removingExecutor struct {
 	writeNew   string
 }
 
-func (e *removingExecutor) Refresh(ctx context.Context, profileDir string) error {
+func (e *removingExecutor) Refresh(ctx context.Context, profileDir, modelFlag string) error {
 	if err := os.Remove(e.storedPath); err != nil {
 		return err
 	}
@@ -503,11 +515,15 @@ func TestManagerTriggerClaudeAutoRefreshGatedOnSetting(t *testing.T) {
 	// Enable the setting → refresh fires for the eligible inactive profile.
 	cfg, _ := store.LoadConfig()
 	cfg.ClaudeAutoRefresh = true
+	cfg.ClaudeModelFlag = "--model claude-sonnet-4-6"
 	if err := store.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
 	m.triggerClaudeAutoRefresh(context.Background())
 	waitForCalls(t, exec, 1)
+	if got := exec.lastModelFlag(); got != "--model claude-sonnet-4-6" {
+		t.Fatalf("refresh model flag = %q, want configured flag", got)
+	}
 }
 
 func waitForCalls(t *testing.T, exec *fakeExecutor, want int) {
@@ -551,7 +567,7 @@ func TestManagerSettingsExposeAutoRefreshAvailability(t *testing.T) {
 	}
 
 	bTrue := true
-	if _, err := m.UpdateSettings(context.Background(), 0, "", nil, false, &bTrue, nil, nil); err != nil {
+	if _, err := m.UpdateSettings(context.Background(), 0, "", nil, false, &bTrue, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	m.claudeAvailableFn = func() bool { return true }
@@ -567,5 +583,17 @@ func TestManagerSettingsExposeAutoRefreshAvailability(t *testing.T) {
 	}
 	if !info.WarmupAvailable {
 		t.Fatal("expected WarmupAvailable=true when auto-refresh and runtime gate are on")
+	}
+}
+
+func TestDockerRefreshArgsAppendModelFlagTokens(t *testing.T) {
+	args := dockerRefreshArgs("/tmp/profile", "--model claude-sonnet-4-6")
+	wantTail := []string{"claude", "-p", claudeRefreshPrompt, "--model", "claude-sonnet-4-6"}
+	if got := args[len(args)-len(wantTail):]; !reflect.DeepEqual(got, wantTail) {
+		t.Fatalf("docker args tail = %#v, want %#v", got, wantTail)
+	}
+	without := dockerRefreshArgs("/tmp/profile", "")
+	if got := without[len(without)-3:]; !reflect.DeepEqual(got, []string{"claude", "-p", claudeRefreshPrompt}) {
+		t.Fatalf("docker args without model tail = %#v", got)
 	}
 }

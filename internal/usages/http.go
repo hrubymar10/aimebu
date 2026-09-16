@@ -106,6 +106,7 @@ func (r Routes) handleSettings(w http.ResponseWriter, req *http.Request) {
 		ClaudeAutoRefresh  *bool     `json:"claude_auto_refresh"`
 		WarmupMode         *string   `json:"warmup_mode"`
 		WarmupSchedule     *string   `json:"warmup_schedule"`
+		ClaudeModelFlag    *string   `json:"claude_model_flag"`
 	}
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		writeUsageStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON: " + err.Error()})
@@ -116,7 +117,7 @@ func (r Routes) handleSettings(w http.ResponseWriter, req *http.Request) {
 	if body.ProviderOrder != nil {
 		providerOrder = *body.ProviderOrder
 	}
-	info, err := r.Manager.UpdateSettings(req.Context(), body.RefreshIntervalSec, body.PercentDisplay, providerOrder, updateProviderOrder, body.ClaudeAutoRefresh, body.WarmupMode, body.WarmupSchedule)
+	info, err := r.Manager.UpdateSettings(req.Context(), body.RefreshIntervalSec, body.PercentDisplay, providerOrder, updateProviderOrder, body.ClaudeAutoRefresh, body.WarmupMode, body.WarmupSchedule, body.ClaudeModelFlag)
 	writeUsageJSON(w, map[string]any{"settings": info}, err)
 }
 

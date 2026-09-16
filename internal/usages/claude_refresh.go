@@ -63,20 +63,29 @@ var (
 // generic (a directory, not a claude-specific type) so a later warmup task can
 // reuse the same abstraction.
 type refreshExecutor interface {
-	Refresh(ctx context.Context, profileDir string) error
+	Refresh(ctx context.Context, profileDir, modelFlag string) error
 }
 
 // dockerRefreshExecutor is the production executor: it builds the image on
 // demand and runs the verified `docker run ... claude -p` invocation.
 type dockerRefreshExecutor struct{}
 
-func (dockerRefreshExecutor) Refresh(ctx context.Context, profileDir string) error {
+func (dockerRefreshExecutor) Refresh(ctx context.Context, profileDir, modelFlag string) error {
 	if err := ensureHarnessDockerImage(ctx); err != nil {
 		return err
 	}
 	// Verified-working invocation: mount the profile dir at /config, point
 	// CLAUDE_CONFIG_DIR at it, and run any claude prompt. The image bakes its
 	// own identity, so no `-e` identity flags are needed.
+	args := dockerRefreshArgs(profileDir, modelFlag)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("harness-docker claude refresh run failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func dockerRefreshArgs(profileDir, modelFlag string) []string {
 	args := []string{
 		"run", "--rm",
 		"-v", profileDir + ":/config",
@@ -84,11 +93,10 @@ func (dockerRefreshExecutor) Refresh(ctx context.Context, profileDir string) err
 		harnessDockerImage,
 		"claude", "-p", claudeRefreshPrompt,
 	}
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("harness-docker claude refresh run failed: %w: %s", err, strings.TrimSpace(string(out)))
+	if modelFlag != "" {
+		args = append(args, strings.Fields(modelFlag)...)
 	}
-	return nil
+	return args
 }
 
 // ensureHarnessDockerImage builds the image via harness-docker-ctrl when it is
@@ -265,7 +273,7 @@ func (r *claudeRefresher) finish(name string, outcome claudeRefreshOutcome, retr
 // a no-op when the feature is unavailable, a refresh is already in flight, or
 // the profile is in failure backoff. Callers must have already checked that the
 // config setting is enabled and that the profile is eligible.
-func (r *claudeRefresher) maybeRefresh(ctx context.Context, profile ProfileInfo) {
+func (r *claudeRefresher) maybeRefresh(ctx context.Context, profile ProfileInfo, modelFlag string) {
 	if r == nil || r.executor == nil {
 		return
 	}
@@ -289,7 +297,7 @@ func (r *claudeRefresher) maybeRefresh(ctx context.Context, profile ProfileInfo)
 			}
 			r.finish(profile.Name, outcome, retryAfter)
 		}()
-		err := r.refresh(ctx, profile)
+		err := r.refresh(ctx, profile, modelFlag)
 		outcome, retryAfter = classifyRefreshErr(err, profile)
 		switch {
 		case err == nil:
@@ -309,7 +317,7 @@ func (r *claudeRefresher) maybeRefresh(ctx context.Context, profile ProfileInfo)
 // maybeRefreshSync is the synchronous form used by tests: it applies the
 // in-flight/backoff guard, runs the refresh, and records the outcome. The bool
 // reports whether the refresh was attempted (false = skipped by the guard).
-func (r *claudeRefresher) maybeRefreshSync(ctx context.Context, profile ProfileInfo) (bool, error) {
+func (r *claudeRefresher) maybeRefreshSync(ctx context.Context, profile ProfileInfo, modelFlags ...string) (bool, error) {
 	if !r.tryStart(profile.Name) {
 		return false, nil
 	}
@@ -320,7 +328,11 @@ func (r *claudeRefresher) maybeRefreshSync(ctx context.Context, profile ProfileI
 		outcome, retryAfter := classifyRefreshErr(err, profile)
 		r.finish(profile.Name, outcome, retryAfter)
 	}()
-	err = r.refresh(ctx, profile)
+	modelFlag := ""
+	if len(modelFlags) > 0 {
+		modelFlag = modelFlags[0]
+	}
+	err = r.refresh(ctx, profile, modelFlag)
 	return true, err
 }
 
@@ -328,7 +340,7 @@ func (r *claudeRefresher) maybeRefreshSync(ctx context.Context, profile ProfileI
 // .credentials.json, run the executor against the temp dir, verify the rotated
 // file parses and its expiresAt advanced, then copy the rotated .credentials.json
 // back into the real profile dir under the switcher lock with a CAS guard.
-func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) error {
+func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo, modelFlag string) error {
 	storedPath := profile.CredPath
 	if storedPath == "" {
 		return errors.New("claude auto-refresh: profile has no credential path")
@@ -358,7 +370,7 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo) erro
 	if r.reachable != nil && !r.reachable(ctx) {
 		return errors.New("claude auto-refresh: docker is not reachable")
 	}
-	if err := r.executor.Refresh(ctx, tmpDir); err != nil {
+	if err := r.executor.Refresh(ctx, tmpDir, modelFlag); err != nil {
 		return fmt.Errorf("claude auto-refresh: executor: %w", err)
 	}
 

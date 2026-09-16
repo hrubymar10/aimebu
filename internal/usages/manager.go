@@ -293,7 +293,7 @@ func (m *Manager) triggerClaudeAutoRefresh(ctx context.Context) {
 	now := m.clock.Now()
 	for _, profile := range m.profilesForProvider(ProviderClaudeCode) {
 		if claudeProfileNeedsRefresh(profile, now, claudeNearExpiryWindow) {
-			m.claudeRefresher.maybeRefresh(ctx, profile)
+			m.claudeRefresher.maybeRefresh(ctx, profile, cfg.ClaudeModelFlag)
 		}
 	}
 }
@@ -361,10 +361,10 @@ func (m *Manager) triggerClaudeAutoWarmup(ctx context.Context) {
 	switch cfg.WarmupMode {
 	case WarmupModeForce, WarmupModeScheduled:
 		for _, candidate := range candidates {
-			m.claudeWarmer.maybeWarm(ctx, candidate.profile, cfg.WarmupMode)
+			m.claudeWarmer.maybeWarm(ctx, candidate.profile, cfg.WarmupMode, cfg.ClaudeModelFlag)
 		}
 	case WarmupModeSmart:
-		m.triggerSpacedClaudeWarmup(ctx, candidates, eligibleCount, now)
+		m.triggerSpacedClaudeWarmup(ctx, candidates, eligibleCount, now, cfg.ClaudeModelFlag)
 	}
 }
 
@@ -384,7 +384,7 @@ func claudeOutOfWindowSince(snap Snapshot) time.Time {
 	return time.Time{}
 }
 
-func (m *Manager) triggerSpacedClaudeWarmup(ctx context.Context, candidates []claudeWarmupCandidate, eligibleCount int, now time.Time) {
+func (m *Manager) triggerSpacedClaudeWarmup(ctx context.Context, candidates []claudeWarmupCandidate, eligibleCount int, now time.Time, modelFlag string) {
 	if len(candidates) == 0 || eligibleCount == 0 {
 		return
 	}
@@ -416,7 +416,7 @@ func (m *Manager) triggerSpacedClaudeWarmup(ctx context.Context, candidates []cl
 			if !m.lastSpacedWarmup.IsZero() && candidate.profile.Name != m.lastSpacedProfile && now.Sub(m.lastSpacedWarmup) < gap {
 				return
 			}
-			if m.claudeWarmer.maybeWarm(ctx, candidate.profile, WarmupModeSmart) {
+			if m.claudeWarmer.maybeWarm(ctx, candidate.profile, WarmupModeSmart, modelFlag) {
 				m.lastSpacedWarmup = now
 				m.lastSpacedProfile = candidate.profile.Name
 				return
@@ -606,7 +606,7 @@ func (m *Manager) ForceRefresh(ctx context.Context, provider string) (UsagesResp
 	return resp, retry, err
 }
 
-func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDisplay string, providerOrder []string, updateProviderOrder bool, claudeAutoRefresh *bool, warmupMode *string, warmupSchedule *string) (Settings, error) {
+func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDisplay string, providerOrder []string, updateProviderOrder bool, claudeAutoRefresh *bool, warmupMode *string, warmupSchedule *string, claudeModelFlag *string) (Settings, error) {
 	if intervalSec != 0 && intervalSec < MinRefreshSec {
 		return Settings{}, errors.New("refresh_interval_sec is below minimum")
 	}
@@ -621,6 +621,9 @@ func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDi
 		if _, err := parseWarmupSchedules(raw); err != nil {
 			return Settings{}, err
 		}
+	}
+	if claudeModelFlag != nil && !validClaudeModelFlag(*claudeModelFlag) {
+		return Settings{}, errors.New("claude_model_flag must be empty or match --model <model-name>")
 	}
 	var info Settings
 	err := m.store.WithLock(func() error {
@@ -645,6 +648,9 @@ func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDi
 		}
 		if warmupSchedule != nil {
 			cfg.WarmupSchedule = *warmupSchedule
+		}
+		if claudeModelFlag != nil {
+			cfg.ClaudeModelFlag = *claudeModelFlag
 		}
 		if err := m.store.SaveConfig(cfg); err != nil {
 			return err

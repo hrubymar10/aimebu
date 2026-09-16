@@ -86,6 +86,7 @@
   let usageWarmupMode = 'off';
   let usageWarmupAvailable = false;
   let usageWarmupSchedule = '';
+  let usageClaudeModelFlag = '--model haiku';
   let usageCooldownTimer = null;
   const usageProviderFallbackOrder = ['codex', 'claude-code', 'github-copilot', 'mistral', 'ollama-cloud'];
   let copilotLoginState = { status: 'disconnected', enterpriseHost: '', flowId: '', interval: 5, timer: null, error: '' };
@@ -3355,6 +3356,7 @@
     usageWarmupMode = ['off', 'force', 'scheduled', 'smart'].includes(settings.warmup_mode) ? settings.warmup_mode : 'off';
     usageWarmupAvailable = !!settings.warmup_available;
     usageWarmupSchedule = settings.warmup_schedule || '';
+    usageClaudeModelFlag = typeof settings.claude_model_flag === 'string' ? settings.claude_model_flag : '--model haiku';
     renderClaudeMaintenanceRows();
   }
 
@@ -3394,6 +3396,15 @@
             '<input type="checkbox" id="claude-auto-refresh-toggle"' + (refreshOn ? ' checked' : '') + (available ? '' : ' disabled') + '>' +
             '<span></span>' +
           '</label>' +
+        '</div>' +
+      '</div>' +
+      '<div class="settings-row">' +
+        '<div class="settings-row-info">' +
+          '<label class="settings-label" for="claude-model-flag-input">Claude maintenance model flag</label>' +
+          '<span class="settings-desc">Full model flag used by both warmup and refresh, for example <code>--model haiku</code>. Leave empty to use the Claude CLI default.</span>' +
+        '</div>' +
+        '<div class="settings-control">' +
+          '<input id="claude-model-flag-input" class="settings-text-input claude-model-flag-input" type="text" value="' + esc(usageClaudeModelFlag) + '" placeholder="--model haiku" autocomplete="off" spellcheck="false">' +
         '</div>' +
       '</div>' +
       '<div class="settings-row' + (warmupControlEnabled ? '' : ' usages-provider-row-disabled') + '">' +
@@ -3512,6 +3523,24 @@
       .catch(function (err) {
         alert('Failed to change Claude account warmup mode: ' + (err && err.message ? err.message : err));
         renderClaudeMaintenanceRows(); // restore toggles to actual state
+      });
+  }
+
+  function saveClaudeModelFlag(value) {
+    var interval = usagesRefreshInput ? parseInt(usagesRefreshInput.value, 10) : 120;
+    if (!Number.isFinite(interval) || interval < 15) interval = 15;
+    api('POST', '/api/usages/settings', {
+      refresh_interval_sec: interval,
+      percent_display: usagePercentDisplay,
+      claude_model_flag: String(value || '')
+    })
+      .then(function (resp) {
+        if (resp && resp.settings) renderUsageSettings(resp.settings);
+        return loadUsages();
+      })
+      .catch(function (err) {
+        alert('Failed to save Claude maintenance model flag: ' + (err && err.message ? err.message : err));
+        renderClaudeMaintenanceRows();
       });
   }
 
@@ -7011,6 +7040,8 @@
       saveWarmupMode(e.target.value);
     } else if (e.target.id === 'claude-warmup-schedule-input') {
       saveWarmupSchedule(e.target.value);
+    } else if (e.target.id === 'claude-model-flag-input') {
+      saveClaudeModelFlag(e.target.value);
     }
   });
   document.addEventListener('input', function (e) {

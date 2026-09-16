@@ -173,7 +173,7 @@ func (w *claudeWarmer) finish(name string) {
 // safe targets here because the caller only warms an out-of-window (idle)
 // account, so no live session depends on the pre-rotation token; the file-based
 // switcher reconciles the live config on its next switch/capture.
-func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo) error {
+func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo, modelFlag string) error {
 	storedPath := profile.CredPath
 	if storedPath == "" {
 		return errors.New("claude warmup: profile has no credential path")
@@ -201,7 +201,7 @@ func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo) error {
 	if w.reachable != nil && !w.reachable(runCtx) {
 		return errors.New("claude warmup: docker is not reachable")
 	}
-	if err := w.executor.Refresh(runCtx, tmpDir); err != nil {
+	if err := w.executor.Refresh(runCtx, tmpDir, modelFlag); err != nil {
 		return fmt.Errorf("claude warmup: executor: %w", err)
 	}
 
@@ -230,7 +230,7 @@ func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo) error {
 // in flight, or the account is inside its cooldown. Callers must have already
 // checked the setting is enabled and the account is out of window. It returns
 // true when a warmup goroutine was actually started.
-func (w *claudeWarmer) maybeWarm(ctx context.Context, profile ProfileInfo, mode string) bool {
+func (w *claudeWarmer) maybeWarm(ctx context.Context, profile ProfileInfo, mode, modelFlag string) bool {
 	if w == nil || w.executor == nil {
 		return false
 	}
@@ -251,7 +251,7 @@ func (w *claudeWarmer) maybeWarm(ctx context.Context, profile ProfileInfo, mode 
 			}
 			w.finish(profile.Name)
 		}()
-		if err := w.warm(ctx, profile); err != nil {
+		if err := w.warm(ctx, profile, modelFlag); err != nil {
 			log.Printf("usages: claude warmup profile=%q mode=%s outcome=failed reason=%v", profile.Name, mode, err)
 		}
 	}()
@@ -261,10 +261,14 @@ func (w *claudeWarmer) maybeWarm(ctx context.Context, profile ProfileInfo, mode 
 // maybeWarmSync is the synchronous form used by tests: it applies the
 // in-flight/cooldown guard, runs the warmup, and releases the guard. The bool
 // reports whether the warmup was attempted (false = skipped by the guard).
-func (w *claudeWarmer) maybeWarmSync(ctx context.Context, profile ProfileInfo) (bool, error) {
+func (w *claudeWarmer) maybeWarmSync(ctx context.Context, profile ProfileInfo, modelFlags ...string) (bool, error) {
 	if !w.tryStart(profile.Name) {
 		return false, nil
 	}
 	defer w.finish(profile.Name)
-	return true, w.warm(ctx, profile)
+	modelFlag := ""
+	if len(modelFlags) > 0 {
+		modelFlag = modelFlags[0]
+	}
+	return true, w.warm(ctx, profile, modelFlag)
 }

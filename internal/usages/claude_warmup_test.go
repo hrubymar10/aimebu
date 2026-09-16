@@ -417,6 +417,7 @@ func TestManagerTriggerClaudeAutoWarmupForceMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonmatching := now.Add(time.Minute)
+	cfg.ClaudeModelFlag = "--model claude-sonnet-4-6"
 	cfg.WarmupSchedule = fmt.Sprintf("%d %d * * *", nonmatching.Minute(), nonmatching.Hour())
 	if err := store.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
@@ -424,6 +425,9 @@ func TestManagerTriggerClaudeAutoWarmupForceMode(t *testing.T) {
 
 	m.triggerClaudeAutoWarmup(context.Background())
 	waitForCalls(t, exec, 2)
+	if got := exec.lastModelFlag(); got != "--model claude-sonnet-4-6" {
+		t.Fatalf("warmup model flag = %q, want configured flag", got)
+	}
 	if !warmupWasAttempted(m.claudeWarmer, "live") {
 		t.Fatal("active out-of-window profile was not warmed")
 	}

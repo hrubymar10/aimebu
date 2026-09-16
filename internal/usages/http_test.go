@@ -85,6 +85,20 @@ func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
 	}
 
 	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(`{"claude_model_flag":"--model claude-sonnet-4-6"}`))
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"claude_model_flag":"--model claude-sonnet-4-6"`) {
+		t.Fatalf("Claude model flag response = %d %s", resp.Code, resp.Body.String())
+	}
+
+	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(`{"claude_model_flag":"--model a b"}`))
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("invalid Claude model flag status = %d body=%s", resp.Code, resp.Body.String())
+	}
+
+	resp = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(`{"provider_order":["ollama-cloud","codex"]}`))
 	mux.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {

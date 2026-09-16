@@ -160,7 +160,14 @@ Configure it in **Settings → Usages → Claude auto-refresh**. The stored flag
 `/api/usages/settings` responses expose `claude_auto_refresh` and the runtime
 `claude_auto_refresh_available` availability flag. `POST /api/usages/settings`
 accepts optional `claude_auto_refresh`, `warmup_mode`, and `warmup_schedule`
-values alongside `refresh_interval_sec` and `percent_display`.
+values alongside `refresh_interval_sec`, `percent_display`, and
+`claude_model_flag`.
+
+The shared `claude_model_flag` setting controls the model used by both the
+auto-refresh and warmup container prompts. It stores the complete flag string
+and defaults to `--model haiku`. Set it to an empty string to omit the flag and
+use the Claude CLI's default model. Non-empty values must match
+`--model [A-Za-z0-9-]+`; extra arguments and whitespace are rejected.
 
 ### Claude warmup (idle 5-hour window)
 

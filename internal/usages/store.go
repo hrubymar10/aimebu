@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -15,16 +16,19 @@ import (
 )
 
 const (
-	EnvRefreshInterval  = "AIMEBU_USAGES_REFRESH"
-	DefaultRefreshSec   = 120
-	MinRefreshSec       = 15
-	PercentDisplayLeft  = "left"
-	PercentDisplayUsed  = "used"
-	WarmupModeOff       = "off"
-	WarmupModeForce     = "force"
-	WarmupModeScheduled = "scheduled"
-	WarmupModeSmart     = "smart"
+	EnvRefreshInterval     = "AIMEBU_USAGES_REFRESH"
+	DefaultRefreshSec      = 120
+	MinRefreshSec          = 15
+	PercentDisplayLeft     = "left"
+	PercentDisplayUsed     = "used"
+	WarmupModeOff          = "off"
+	WarmupModeForce        = "force"
+	WarmupModeScheduled    = "scheduled"
+	WarmupModeSmart        = "smart"
+	DefaultClaudeModelFlag = "--model haiku"
 )
+
+var claudeModelFlagPattern = regexp.MustCompile(`^--model [A-Za-z0-9-]+$`)
 
 type ProviderConfig struct {
 	Enabled        bool   `json:"enabled"`
@@ -43,6 +47,9 @@ type Config struct {
 	// switcher profiles via an ephemeral harness-docker container. Default off:
 	// enabling it incurs a small per-account cost (periodic `claude -p` calls).
 	ClaudeAutoRefresh bool `json:"claude_auto_refresh,omitempty"`
+	// ClaudeModelFlag is appended to the shared claude warmup/refresh prompt.
+	// Empty deliberately opts into the Claude CLI's own default model.
+	ClaudeModelFlag string `json:"claude_model_flag"`
 	// WarmupMode selects one mutually exclusive warmup behavior. Warmup remains
 	// chained to ClaudeAutoRefresh because both reuse the container/copy-back path.
 	WarmupMode     string                    `json:"warmup_mode,omitempty"`
@@ -83,7 +90,7 @@ func DefaultConfig() Config {
 	for _, key := range knownProviders {
 		providers[key] = ProviderConfig{}
 	}
-	return Config{RefreshIntervalSec: DefaultRefreshSec, PercentDisplay: PercentDisplayLeft, WarmupMode: WarmupModeOff, Providers: providers}
+	return Config{RefreshIntervalSec: DefaultRefreshSec, PercentDisplay: PercentDisplayLeft, ClaudeModelFlag: DefaultClaudeModelFlag, WarmupMode: WarmupModeOff, Providers: providers}
 }
 
 func EmptyCache() Cache {
@@ -134,6 +141,12 @@ func (s *Store) LoadConfig() (Config, error) {
 			cfg.WarmupMode = WarmupModeForce
 		}
 	}
+	if _, hasModelFlag := fields["claude_model_flag"]; !hasModelFlag {
+		cfg.ClaudeModelFlag = DefaultClaudeModelFlag
+	}
+	if !validClaudeModelFlag(cfg.ClaudeModelFlag) {
+		cfg.ClaudeModelFlag = DefaultClaudeModelFlag
+	}
 	if !validWarmupMode(cfg.WarmupMode) {
 		cfg.WarmupMode = WarmupModeOff
 	}
@@ -178,6 +191,9 @@ func (s *Store) SaveConfig(cfg Config) error {
 	}
 	if !validWarmupMode(cfg.WarmupMode) {
 		return fmt.Errorf("warmup_mode must be off, force, scheduled, or smart")
+	}
+	if !validClaudeModelFlag(cfg.ClaudeModelFlag) {
+		return errors.New("claude_model_flag must be empty or match --model <model-name>")
 	}
 	if _, err := parseWarmupSchedules(cfg.WarmupSchedule); err != nil {
 		return err
@@ -237,6 +253,7 @@ func (s *Store) RefreshInterval(cfg Config) (time.Duration, Settings) {
 		MinRefreshSec:      MinRefreshSec,
 		PercentDisplay:     cfg.PercentDisplay,
 		ClaudeAutoRefresh:  cfg.ClaudeAutoRefresh,
+		ClaudeModelFlag:    cfg.ClaudeModelFlag,
 		WarmupMode:         cfg.WarmupMode,
 		WarmupSchedule:     cfg.WarmupSchedule,
 	}
@@ -263,6 +280,10 @@ func validWarmupMode(mode string) bool {
 	default:
 		return false
 	}
+}
+
+func validClaudeModelFlag(value string) bool {
+	return value == "" || claudeModelFlagPattern.MatchString(value)
 }
 
 func validPercentDisplay(value string) bool {

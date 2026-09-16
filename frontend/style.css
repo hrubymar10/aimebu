@@ -701,6 +701,10 @@ body {
   resize: vertical;
 }
 
+.claude-model-flag-input {
+  min-width: 190px;
+}
+
 .warmup-schedule-input.error {
   border-color: var(--red);
 }

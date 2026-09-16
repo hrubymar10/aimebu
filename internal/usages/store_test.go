@@ -41,6 +41,56 @@ func TestStoreDefaultsAndModes(t *testing.T) {
 	}
 }
 
+func TestClaudeModelFlagDefaultAndMigration(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	if got := DefaultConfig().ClaudeModelFlag; got != DefaultClaudeModelFlag {
+		t.Fatalf("default ClaudeModelFlag = %q, want %q", got, DefaultClaudeModelFlag)
+	}
+	if err := os.WriteFile(store.ConfigPath(), []byte(`{"refresh_interval_sec":120,"percent_display":"left","providers":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := store.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClaudeModelFlag != DefaultClaudeModelFlag {
+		t.Fatalf("migrated ClaudeModelFlag = %q, want %q", cfg.ClaudeModelFlag, DefaultClaudeModelFlag)
+	}
+	if err := os.WriteFile(store.ConfigPath(), []byte(`{"claude_model_flag":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = store.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClaudeModelFlag != "" {
+		t.Fatalf("explicit empty ClaudeModelFlag = %q, want empty", cfg.ClaudeModelFlag)
+	}
+	if err := os.WriteFile(store.ConfigPath(), []byte(`{"claude_model_flag":"haiku"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = store.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClaudeModelFlag != DefaultClaudeModelFlag {
+		t.Fatalf("invalid ClaudeModelFlag fallback = %q, want %q", cfg.ClaudeModelFlag, DefaultClaudeModelFlag)
+	}
+}
+
+func TestClaudeModelFlagValidation(t *testing.T) {
+	for _, value := range []string{"", "--model haiku", "--model claude-sonnet-4-6"} {
+		if !validClaudeModelFlag(value) {
+			t.Errorf("validClaudeModelFlag(%q) = false", value)
+		}
+	}
+	for _, value := range []string{"haiku", "--model a b", "--model haiku --danger", " --model haiku", "--model haiku "} {
+		if validClaudeModelFlag(value) {
+			t.Errorf("validClaudeModelFlag(%q) = true", value)
+		}
+	}
+}
+
 func TestLoadConfigMigratesLegacyWarmupFlags(t *testing.T) {
 	cases := []struct {
 		name string
