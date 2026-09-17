@@ -16,6 +16,7 @@ type fakeCodexExecutor struct {
 	inspect func(string) error
 	write   string
 	flag    string
+	err     error
 }
 
 func (f *fakeCodexExecutor) Refresh(_ context.Context, dir, flag string) error {
@@ -26,9 +27,11 @@ func (f *fakeCodexExecutor) Refresh(_ context.Context, dir, flag string) error {
 		}
 	}
 	if f.write != "" {
-		return os.WriteFile(filepath.Join(dir, "auth.json"), []byte(f.write), 0o600)
+		if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(f.write), 0o600); err != nil {
+			return err
+		}
 	}
-	return nil
+	return f.err
 }
 
 func codexAuth(access, refresh, last string) string {
@@ -67,6 +70,49 @@ func TestCodexRefreshForceExpiresAndCopiesBack(t *testing.T) {
 	}
 	if exec.flag != "--model gpt-5.6-luna" {
 		t.Fatalf("flag=%q", exec.flag)
+	}
+}
+
+func TestCodexRefreshCopiesBackRotationDespiteExecutorError(t *testing.T) {
+	now := time.Unix(9_100_000, 0).UTC()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	old := codexAuth("old", "r1", now.Add(-time.Hour).Format(time.RFC3339))
+	next := codexAuth("new", "r2", now.Format(time.RFC3339))
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exec := &fakeCodexExecutor{write: next, err: errors.New("model turn rate limited")}
+	m := testCodexMaintainer(exec, now)
+
+	attempted, err := m.refreshSync(context.Background(), ProfileInfo{Tool: "codex", Name: "work", CredPath: path, HasCredentials: true}, DefaultCodexModelFlag)
+	if !attempted || err != nil {
+		t.Fatalf("refresh = attempted %v, err %v; want successful rotated copy-back", attempted, err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != next {
+		t.Fatalf("copy-back=%s, want %s", got, next)
+	}
+}
+
+func TestCodexRefreshReturnsExecutorErrorWithoutRotation(t *testing.T) {
+	now := time.Unix(9_200_000, 0).UTC()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	old := codexAuth("old", "r1", now.Add(-time.Hour).Format(time.RFC3339))
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	executorErr := errors.New("model turn rate limited")
+	m := testCodexMaintainer(&fakeCodexExecutor{write: old, err: executorErr}, now)
+
+	_, err := m.refreshSync(context.Background(), ProfileInfo{Tool: "codex", Name: "work", CredPath: path, HasCredentials: true}, DefaultCodexModelFlag)
+	if !errors.Is(err, executorErr) {
+		t.Fatalf("refresh error = %v, want original executor error", err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != old {
+		t.Fatalf("stored auth changed without rotation: %s", got)
 	}
 }
 

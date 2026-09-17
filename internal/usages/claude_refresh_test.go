@@ -48,18 +48,17 @@ func (f *fakeExecutor) Refresh(ctx context.Context, profileDir, modelFlag string
 	if f.release != nil {
 		<-f.release
 	}
-	if f.err != nil {
-		return f.err
-	}
 	if f.inspect != nil {
 		if err := f.inspect(profileDir); err != nil {
 			return err
 		}
 	}
 	if f.writeNew != "" {
-		return os.WriteFile(filepath.Join(profileDir, ".credentials.json"), []byte(f.writeNew), 0o600)
+		if err := os.WriteFile(filepath.Join(profileDir, ".credentials.json"), []byte(f.writeNew), 0o600); err != nil {
+			return err
+		}
 	}
-	return nil
+	return f.err
 }
 
 func (f *fakeExecutor) lastModelFlag() string {
@@ -192,6 +191,42 @@ func TestClaudeRefreshSuccessCopiesBackWhenExpiryAdvances(t *testing.T) {
 	got, _ := os.ReadFile(credPath)
 	if string(got) != rotated {
 		t.Fatalf("stored credentials not copied back:\n got=%s\nwant=%s", got, rotated)
+	}
+}
+
+func TestClaudeRefreshCopiesBackRotationDespiteExecutorError(t *testing.T) {
+	now := time.Unix(2_100_000, 0)
+	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
+	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
+	_, credPath := writeStoredProfile(t, old)
+	r := newTestRefresher(&fakeExecutor{writeNew: rotated, err: errors.New("model turn rate limited")}, &fakeClock{now: now})
+	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
+
+	attempted, err := r.maybeRefreshSync(context.Background(), profile)
+	if !attempted || err != nil {
+		t.Fatalf("refresh = attempted %v, err %v; want successful rotated copy-back", attempted, err)
+	}
+	got, _ := os.ReadFile(credPath)
+	if string(got) != rotated {
+		t.Fatalf("stored credentials not copied back:\n got=%s\nwant=%s", got, rotated)
+	}
+}
+
+func TestClaudeRefreshReturnsExecutorErrorWithoutRotation(t *testing.T) {
+	now := time.Unix(2_200_000, 0)
+	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
+	_, credPath := writeStoredProfile(t, old)
+	executorErr := errors.New("model turn rate limited")
+	r := newTestRefresher(&fakeExecutor{writeNew: old, err: executorErr}, &fakeClock{now: now})
+	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
+
+	_, err := r.maybeRefreshSync(context.Background(), profile)
+	if !errors.Is(err, executorErr) {
+		t.Fatalf("refresh error = %v, want original executor error", err)
+	}
+	got, _ := os.ReadFile(credPath)
+	if string(got) != old {
+		t.Fatalf("stored credentials changed without rotation: %s", got)
 	}
 }
 

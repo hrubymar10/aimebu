@@ -370,17 +370,21 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo, mode
 	if r.reachable != nil && !r.reachable(ctx) {
 		return errors.New("claude auto-refresh: docker is not reachable")
 	}
-	if err := r.executor.Refresh(ctx, tmpDir, modelFlag); err != nil {
-		return fmt.Errorf("claude auto-refresh: executor: %w", err)
-	}
+	executorErr := r.executor.Refresh(ctx, tmpDir, modelFlag)
 
 	// Success is defined by the rotated file, not the docker exit code: it must
 	// parse and its expiresAt must have advanced beyond the old value.
 	newExpiry, err := ValidateClaudeCredentials(tmpCred)
 	if err != nil {
+		if executorErr != nil {
+			return fmt.Errorf("claude auto-refresh: executor: %w", executorErr)
+		}
 		return fmt.Errorf("claude auto-refresh: rotated credentials invalid: %w", err)
 	}
 	if !newExpiry.After(*oldExpiry) {
+		if executorErr != nil {
+			return fmt.Errorf("claude auto-refresh: executor: %w", executorErr)
+		}
 		// Safety net: the executor ran after the temp copy was force-expired, but
 		// the resulting expiry still did not advance. This is benign, not a
 		// failure: signal errClaudeRefreshNoop so the caller defers the next attempt
@@ -403,7 +407,11 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo, mode
 	if err := commitClaudeCredCopyBack(r.withLock, r.reresolve, profile.Name, storedPath, startFingerprint, rotated); err != nil {
 		return err
 	}
-	log.Printf("usages: claude auto-refresh profile=%q outcome=rotated expiry=%s->%s", profile.Name, oldExpiry.UTC().Format(time.RFC3339), newExpiry.UTC().Format(time.RFC3339))
+	if executorErr != nil {
+		log.Printf("usages: claude auto-refresh profile=%q outcome=rotated reason=executor-error-but-token-rotated: %v expiry=%s->%s", profile.Name, executorErr, oldExpiry.UTC().Format(time.RFC3339), newExpiry.UTC().Format(time.RFC3339))
+	} else {
+		log.Printf("usages: claude auto-refresh profile=%q outcome=rotated expiry=%s->%s", profile.Name, oldExpiry.UTC().Format(time.RFC3339), newExpiry.UTC().Format(time.RFC3339))
+	}
 	return nil
 }
 

@@ -154,24 +154,39 @@ func (m *codexMaintainer) run(ctx context.Context, profile ProfileInfo, modelFla
 	if m.reachable != nil && !m.reachable(ctx) {
 		return errors.New("docker is not reachable")
 	}
-	if err := m.executor.Refresh(ctx, dir, modelFlag); err != nil {
-		return err
-	}
+	executorErr := m.executor.Refresh(ctx, dir, modelFlag)
 	rotated, err := os.ReadFile(tmp)
 	if err != nil {
+		if executorErr != nil {
+			return executorErr
+		}
 		return err
 	}
-	if !force && sha256.Sum256(rotated) == sha256.Sum256(start) {
+	unchanged := sha256.Sum256(rotated) == sha256.Sum256(start)
+	if executorErr == nil && !force && unchanged {
 		return nil
 	}
 	next, _, err := loadCodexAuth(tmp)
 	if err != nil {
+		if executorErr != nil {
+			return executorErr
+		}
 		return fmt.Errorf("rotated auth invalid: %w", err)
 	}
-	if force && (next.AccessToken == old.AccessToken || next.LastRefresh == nil || (old.LastRefresh != nil && !next.LastRefresh.After(*old.LastRefresh))) {
+	credentialRotated := next.AccessToken != old.AccessToken && next.LastRefresh != nil && (old.LastRefresh == nil || next.LastRefresh.After(*old.LastRefresh))
+	if executorErr != nil && !credentialRotated {
+		return executorErr
+	}
+	if executorErr == nil && force && !credentialRotated {
 		return errors.New("codex refresh did not rotate credentials")
 	}
-	return commitCodexAuthCopyBack(m.withLock, m.reresolve, profile.Name, profile.CredPath, sha256.Sum256(start), rotated)
+	if err := commitCodexAuthCopyBack(m.withLock, m.reresolve, profile.Name, profile.CredPath, sha256.Sum256(start), rotated); err != nil {
+		return err
+	}
+	if executorErr != nil {
+		log.Printf("usages: codex maintenance profile=%q outcome=rotated reason=executor-error-but-token-rotated: %v", profile.Name, executorErr)
+	}
+	return nil
 }
 
 func commitCodexAuthCopyBack(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool), name, path string, fingerprint [32]byte, data []byte) error {

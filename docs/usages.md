@@ -130,7 +130,10 @@ Design notes:
   never force-expired.
 - **Success is the rotated file, not the exit code.** A refresh counts only when
   the new `.credentials.json` parses and its `expiresAt` advanced beyond the old
-  value.
+  value. If the container rotates the token and then exits non-zero (for example,
+  because the follow-up model turn is usage-capped), aimebu still validates and
+  safely copies back the rotated credentials; a non-zero exit remains fatal when
+  no valid rotation occurred. Codex account maintenance follows the same rule.
 - **Non-rotation safety net.** Pre-emptive refresh force-expires only the temp
   copy so claude normally rotates even when the stored access token still has up
   to 10 minutes left. If the executor nevertheless returns credentials whose
