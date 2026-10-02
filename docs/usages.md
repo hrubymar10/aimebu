@@ -62,6 +62,21 @@ on the provider (`switch_eligible`, `switch_absent`,
 capture, so switching away remains allowed even though the tool is not
 otherwise eligible.
 
+Provider rows also carry the non-secret settings needed by their credential
+controls: `enterprise_host` for GitHub Copilot, `auth_mode` and
+`api_key_configured` for Ollama Cloud, and `cookie_configured` for Ollama Cloud
+and Mistral. `token_configured` reports whether a Copilot token is stored.
+Fields with empty or false values are omitted. The API never returns the
+stored API key, cookie, or token.
+
+Settings -> Usages has an on/off toggle for every provider. Turning off GitHub
+Copilot, Mistral, or Ollama Cloud stops usage fetching while keeping saved
+credentials, so the provider can be turned on again without signing in or
+pasting secrets. The toggle is disabled until usable credentials are saved:
+Copilot needs a token, Mistral needs a cookie, and Ollama Cloud needs the
+credential selected by its `auth_mode` (`auto` accepts either). Clearing
+credentials or signing out still removes them and disables the provider.
+
 ## Refresh Behavior
 
 The stored refresh interval defaults to `120` seconds and has a minimum of

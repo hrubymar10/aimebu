@@ -145,6 +145,11 @@ type Provider struct {
 	OrderNumber      int       `json:"order_number"`
 	Enabled          bool      `json:"enabled"`
 	Available        bool      `json:"available"`
+	EnterpriseHost   string    `json:"enterprise_host,omitempty"`
+	TokenConfigured  bool      `json:"token_configured,omitempty"`
+	AuthMode         string    `json:"auth_mode,omitempty"`
+	APIKeyConfigured bool      `json:"api_key_configured,omitempty"`
+	CookieConfigured bool      `json:"cookie_configured,omitempty"`
 	SwitchEligible   bool      `json:"switch_eligible,omitempty"`
 	SwitchAbsent     bool      `json:"switch_absent,omitempty"`
 	SwitchIneligible string    `json:"switch_ineligible_reason,omitempty"`

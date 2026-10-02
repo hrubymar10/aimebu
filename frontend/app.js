@@ -3795,35 +3795,39 @@
     if (!usagesProviderRows) return;
     rows = rows || usageProviders || [];
     usagesProviderRows.innerHTML = rows.map(function (row, idx) {
-      if (row.key === 'github-copilot') return renderCopilotProviderRow(row, idx, rows.length);
-      if (row.key === 'mistral') return renderMistralProviderRow(row, idx, rows.length);
-      if (row.key === 'ollama-cloud') return renderOllamaProviderRow(row, idx, rows.length);
+      if (row.provider_name === 'github-copilot') return renderCopilotProviderRow(row, idx, rows.length);
+      if (row.provider_name === 'mistral') return renderMistralProviderRow(row, idx, rows.length);
+      if (row.provider_name === 'ollama-cloud') return renderOllamaProviderRow(row, idx, rows.length);
       var available = !!row.available;
-      var enabled = !!row.enabled;
       return '<div class="settings-row' + (available ? '' : ' usages-provider-row-disabled') + '">' +
         '<div class="settings-row-info">' +
           '<label class="settings-label">' + esc(row.label) + '</label>' +
           '<span class="settings-desc">' + esc(available ? 'Show this provider in the usage sidebar and CLI.' : 'Available in upcoming release.') + '</span>' +
         '</div>' +
-        '<div class="settings-control usages-provider-control">' + usageProviderOrderControls(row, idx, rows.length) + '<label class="usages-provider-toggle" aria-label="' + esc(row.label) + ' provider">' +
-          '<input type="checkbox" data-provider="' + esc(row.key) + '"' + (enabled ? ' checked' : '') + (available ? '' : ' disabled') + '>' +
-          '<span></span>' +
-        '</label></div>' +
+        '<div class="settings-control usages-provider-control">' + usageProviderOrderControls(row, idx, rows.length) + usageProviderToggle(row, true) + '</div>' +
       '</div>';
     }).join('');
   }
 
   function usageProviderOrderControls(row, idx, total) {
-    var label = row && row.label ? row.label : row.key;
+    var label = row && row.label ? row.label : row.provider_name;
     return '<div class="usages-provider-order" aria-label="Provider order">' +
-      '<button class="btn btn-icon usages-provider-order-btn" type="button" data-usage-provider-move="' + esc(row.key) + '" data-direction="up" title="Move ' + esc(label) + ' up" aria-label="Move ' + esc(label) + ' up"' + (idx <= 0 ? ' disabled' : '') + '>↑</button>' +
-      '<button class="btn btn-icon usages-provider-order-btn" type="button" data-usage-provider-move="' + esc(row.key) + '" data-direction="down" title="Move ' + esc(label) + ' down" aria-label="Move ' + esc(label) + ' down"' + (idx >= total - 1 ? ' disabled' : '') + '>↓</button>' +
+      '<button class="btn btn-icon usages-provider-order-btn" type="button" data-usage-provider-move="' + esc(row.provider_name) + '" data-direction="up" title="Move ' + esc(label) + ' up" aria-label="Move ' + esc(label) + ' up"' + (idx <= 0 ? ' disabled' : '') + '>↑</button>' +
+      '<button class="btn btn-icon usages-provider-order-btn" type="button" data-usage-provider-move="' + esc(row.provider_name) + '" data-direction="down" title="Move ' + esc(label) + ' down" aria-label="Move ' + esc(label) + ' down"' + (idx >= total - 1 ? ' disabled' : '') + '>↓</button>' +
     '</div>';
+  }
+
+  function usageProviderToggle(row, credentialsReady) {
+    var disabled = !row.available || !credentialsReady;
+    return '<label class="usages-provider-toggle' + (disabled ? ' usages-provider-toggle-disabled' : '') + '" aria-label="' + esc(row.label) + ' provider">' +
+      '<input type="checkbox" data-provider="' + esc(row.provider_name) + '"' + (row.enabled ? ' checked' : '') + (disabled ? ' disabled' : '') + '>' +
+      '<span></span>' +
+    '</label>';
   }
 
   function renderCopilotProviderRow(row, idx, total) {
     var available = !!row.available;
-    var signedIn = !!row.enabled;
+    var signedIn = !!row.token_configured;
     if (!copilotLoginState.enterpriseHost && row.enterprise_host) copilotLoginState.enterpriseHost = row.enterprise_host;
     var status = signedIn && copilotLoginState.status === 'disconnected' ? 'signed_in' : copilotLoginState.status;
     var control = '';
@@ -3852,7 +3856,7 @@
         '<span class="settings-desc">Sign in with GitHub device flow and fetch Copilot quota.</span>' +
         error +
       '</div>' +
-      '<div class="settings-control copilot-settings-control">' + usageProviderOrderControls(row, idx, total) +
+      '<div class="settings-control copilot-settings-control">' + usageProviderOrderControls(row, idx, total) + usageProviderToggle(row, signedIn) +
         '<input type="text" class="settings-text-input copilot-enterprise-input" placeholder="https://github.example.com" value="' + esc(copilotLoginState.enterpriseHost || '') + '"' + (signedIn ? ' disabled' : '') + '>' +
         control +
       '</div>' +
@@ -3863,6 +3867,7 @@
     var available = !!row.available;
     var configured = !!row.cookie_configured || !!row.api_key_configured || !!row.enabled;
     var authMode = row.auth_mode || 'auto';
+    var credentialsReady = authMode === 'cookie' ? !!row.cookie_configured : authMode === 'api_key' ? !!row.api_key_configured : !!row.cookie_configured || !!row.api_key_configured;
     var provider = (usageProviders || []).find(function (p) { return p.provider_name === 'ollama-cloud'; });
     var snap = (provider && provider.profiles && provider.profiles[0]) || {};
     var status = snap.status || (configured ? 'saved' : 'not_configured');
@@ -3899,7 +3904,7 @@
         '<span class="settings-desc">Use a Cookie header for quota windows, or an API key to verify Cloud access.</span>' +
         '<span class="settings-status">' + esc(statusText) + '</span>' +
       '</div>' +
-      '<div class="settings-control ollama-settings-control">' + usageProviderOrderControls(row, idx, total) + editor + '</div>' +
+      '<div class="settings-control ollama-settings-control">' + usageProviderOrderControls(row, idx, total) + usageProviderToggle(row, credentialsReady) + editor + '</div>' +
     '</div>';
   }
 
@@ -3933,7 +3938,7 @@
         '<span class="settings-desc">Use a Cookie header for Vibe monthly quota and optional API spend.</span>' +
         '<span class="settings-status">' + esc(statusText) + '</span>' +
       '</div>' +
-      '<div class="settings-control ollama-settings-control">' + usageProviderOrderControls(row, idx, total) + editor + '</div>' +
+      '<div class="settings-control ollama-settings-control">' + usageProviderOrderControls(row, idx, total) + usageProviderToggle(row, !!row.cookie_configured) + editor + '</div>' +
     '</div>';
   }
 
@@ -3948,7 +3953,7 @@
 
   function moveUsageProvider(provider, direction) {
     var rows = usageProviders || [];
-    var order = rows.map(function (row) { return row.key; });
+    var order = rows.map(function (row) { return row.provider_name; });
     var idx = order.indexOf(provider);
     if (idx === -1) return;
     var next = direction === 'up' ? idx - 1 : idx + 1;

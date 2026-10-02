@@ -579,12 +579,17 @@ func (m *Manager) assembleResponse(cfg Config, cache Cache) UsagesResponse {
 			profiles = append(profiles, e.Profile)
 		}
 		provider := Provider{
-			ProviderName: key,
-			Label:        ProviderLabel(key),
-			OrderNumber:  i,
-			Enabled:      pc.Enabled,
-			Available:    m.registry.HasProvider(key),
-			Profiles:     profiles,
+			ProviderName:     key,
+			Label:            ProviderLabel(key),
+			OrderNumber:      i,
+			Enabled:          pc.Enabled,
+			Available:        m.registry.HasProvider(key),
+			EnterpriseHost:   pc.EnterpriseHost,
+			TokenConfigured:  key == ProviderGitHubCopilot && pc.Token != "",
+			AuthMode:         ollamaProviderAuthMode(key, pc),
+			APIKeyConfigured: key == ProviderOllamaCloud && strings.TrimSpace(pc.APIKey) != "",
+			CookieConfigured: (key == ProviderOllamaCloud || key == ProviderMistral) && pc.Cookie != "",
+			Profiles:         profiles,
 		}
 		if tool := toolForRegistryKey(key); tool != "" && m.switcherEligibility != nil {
 			provider.SwitchEligible, provider.SwitchAbsent, provider.SwitchIneligible = m.switcherEligibility(tool)
@@ -784,6 +789,35 @@ func (m *Manager) SetProviderEnabled(ctx context.Context, provider string, enabl
 			return err
 		}
 		pc := cfg.Providers[provider]
+		if enabled {
+			switch provider {
+			case ProviderGitHubCopilot:
+				if pc.Token == "" {
+					return errors.New("github-copilot requires a saved token before enabling")
+				}
+			case ProviderMistral:
+				if pc.Cookie == "" {
+					return errors.New("mistral requires a saved cookie before enabling")
+				}
+			case ProviderOllamaCloud:
+				cookieReady := pc.Cookie != ""
+				apiKeyReady := strings.TrimSpace(pc.APIKey) != ""
+				switch normalizeOllamaAuthMode(pc.AuthMode) {
+				case OllamaAuthCookie:
+					if !cookieReady {
+						return errors.New("ollama-cloud cookie mode requires a saved cookie before enabling")
+					}
+				case OllamaAuthAPIKey:
+					if !apiKeyReady {
+						return errors.New("ollama-cloud API key mode requires a saved API key before enabling")
+					}
+				default:
+					if !cookieReady && !apiKeyReady {
+						return errors.New("ollama-cloud requires a saved cookie or API key before enabling")
+					}
+				}
+			}
+		}
 		pc.Enabled = enabled
 		cfg.Providers[provider] = pc
 		return m.store.SaveConfig(cfg)

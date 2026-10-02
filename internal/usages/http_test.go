@@ -223,6 +223,13 @@ func TestHTTPProviderToggleAndForceCooldown(t *testing.T) {
 	}
 
 	resp = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/usages/providers", strings.NewReader(`{"provider":"github-copilot","enabled":true}`))
+	mux.ServeHTTP(resp, req)
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "requires a saved token") {
+		t.Fatalf("missing credentials status = %d body=%s", resp.Code, resp.Body.String())
+	}
+
+	resp = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", "/api/usages/refresh", strings.NewReader(`{"provider":"codex"}`))
 	mux.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {

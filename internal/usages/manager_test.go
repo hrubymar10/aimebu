@@ -2,11 +2,13 @@ package usages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -56,6 +58,149 @@ func TestManagerEmptyRegistry(t *testing.T) {
 		if len(p.Profiles) != 1 || p.Profiles[0].ProfileName != implicitProfileName || !p.Profiles[0].Active {
 			t.Fatalf("expected one active local profile for %s: %+v", p.ProviderName, p.Profiles)
 		}
+	}
+}
+
+func TestAssembleResponsePreservesProviderCredentialMetadata(t *testing.T) {
+	for _, mode := range []string{OllamaAuthAPIKey, OllamaAuthCookie} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.Providers[ProviderGitHubCopilot] = ProviderConfig{
+				EnterpriseHost: "https://github.example.com",
+				Token:          "copilot-token-secret",
+			}
+			cfg.Providers[ProviderMistral] = ProviderConfig{Cookie: "mistral-cookie-secret"}
+			cfg.Providers[ProviderOllamaCloud] = ProviderConfig{
+				AuthMode: mode,
+				APIKey:   "ollama-key-secret",
+				Cookie:   "ollama-cookie-secret",
+			}
+
+			m := NewManager(NewStoreAt(t.TempDir()), EmptyRegistry())
+			resp := m.assembleResponse(cfg, Cache{})
+			providers := make(map[string]Provider, len(resp.Providers))
+			for _, provider := range resp.Providers {
+				providers[provider.ProviderName] = provider
+			}
+			if got := providers[ProviderGitHubCopilot].EnterpriseHost; got != "https://github.example.com" {
+				t.Fatalf("Copilot enterprise host = %q", got)
+			}
+			if !providers[ProviderGitHubCopilot].TokenConfigured {
+				t.Fatal("Copilot token should be reported as configured")
+			}
+			if !providers[ProviderMistral].CookieConfigured {
+				t.Fatal("Mistral cookie should be reported as configured")
+			}
+			ollama := providers[ProviderOllamaCloud]
+			if ollama.AuthMode != mode || !ollama.APIKeyConfigured || !ollama.CookieConfigured {
+				t.Fatalf("Ollama credential metadata = %+v", ollama)
+			}
+
+			encoded, err := json.Marshal(resp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{
+				`"enterprise_host":"https://github.example.com"`,
+				`"token_configured":true`,
+				`"auth_mode":"` + mode + `"`,
+				`"api_key_configured":true`,
+				`"cookie_configured":true`,
+			} {
+				if !strings.Contains(string(encoded), field) {
+					t.Fatalf("response missing %s", field)
+				}
+			}
+			for _, secret := range []string{
+				"copilot-token-secret", "mistral-cookie-secret", "ollama-key-secret", "ollama-cookie-secret",
+			} {
+				if strings.Contains(string(encoded), secret) {
+					t.Fatalf("response exposed secret %q", secret)
+				}
+			}
+		})
+	}
+}
+
+func TestSetProviderEnabledRequiresUsableCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		provider string
+		config   ProviderConfig
+		wantErr  bool
+	}{
+		{"Copilot no token", ProviderGitHubCopilot, ProviderConfig{}, true},
+		{"Copilot token", ProviderGitHubCopilot, ProviderConfig{Token: "saved-token"}, false},
+		{"Mistral no cookie", ProviderMistral, ProviderConfig{}, true},
+		{"Mistral cookie", ProviderMistral, ProviderConfig{Cookie: "saved-cookie"}, false},
+		{"Ollama auto no credentials", ProviderOllamaCloud, ProviderConfig{}, true},
+		{"Ollama auto cookie", ProviderOllamaCloud, ProviderConfig{Cookie: "saved-cookie"}, false},
+		{"Ollama auto API key", ProviderOllamaCloud, ProviderConfig{APIKey: "saved-key"}, false},
+		{"Ollama cookie mode needs cookie", ProviderOllamaCloud, ProviderConfig{AuthMode: OllamaAuthCookie, APIKey: "saved-key"}, true},
+		{"Ollama cookie mode with cookie", ProviderOllamaCloud, ProviderConfig{AuthMode: OllamaAuthCookie, Cookie: "saved-cookie"}, false},
+		{"Ollama API key mode needs key", ProviderOllamaCloud, ProviderConfig{AuthMode: OllamaAuthAPIKey, Cookie: "saved-cookie"}, true},
+		{"Ollama API key mode with key", ProviderOllamaCloud, ProviderConfig{AuthMode: OllamaAuthAPIKey, APIKey: "saved-key"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewStoreAt(t.TempDir())
+			cfg := DefaultConfig()
+			cfg.Providers[tc.provider] = tc.config
+			if err := store.SaveConfig(cfg); err != nil {
+				t.Fatal(err)
+			}
+			m := NewManager(store, EmptyRegistry())
+			_, err := m.SetProviderEnabled(context.Background(), tc.provider, true)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("enable error = %v, want error %v", err, tc.wantErr)
+			}
+			got, err := store.LoadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Providers[tc.provider].Enabled != !tc.wantErr {
+				t.Fatalf("enabled = %v, want %v", got.Providers[tc.provider].Enabled, !tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestDisableCredentialProviderKeepsCredentialsAndSkipsFetch(t *testing.T) {
+	for _, tc := range []struct {
+		provider string
+		config   ProviderConfig
+	}{
+		{ProviderGitHubCopilot, ProviderConfig{Enabled: true, Token: "saved-token", EnterpriseHost: "https://github.example.com"}},
+		{ProviderMistral, ProviderConfig{Enabled: true, Cookie: "saved-cookie"}},
+		{ProviderOllamaCloud, ProviderConfig{Enabled: true, AuthMode: OllamaAuthAPIKey, APIKey: "saved-key", Cookie: "saved-cookie"}},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			store := NewStoreAt(t.TempDir())
+			cfg := DefaultConfig()
+			cfg.Providers[tc.provider] = tc.config
+			if err := store.SaveConfig(cfg); err != nil {
+				t.Fatal(err)
+			}
+			fake := &fakeProvider{key: tc.provider}
+			m := NewManager(store, NewRegistry(fake))
+			if _, err := m.SetProviderEnabled(context.Background(), tc.provider, false); err != nil {
+				t.Fatal(err)
+			}
+			got, err := store.LoadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tc.config
+			want.Enabled = false
+			if got.Providers[tc.provider] != want {
+				t.Fatalf("disable changed credentials: got %+v, want %+v", got.Providers[tc.provider], want)
+			}
+			if _, _, err := m.refresh(context.Background(), tc.provider, false); err != nil {
+				t.Fatal(err)
+			}
+			if calls := atomic.LoadInt32(&fake.calls); calls != 0 {
+				t.Fatalf("disabled provider fetched %d times", calls)
+			}
+		})
 	}
 }
 

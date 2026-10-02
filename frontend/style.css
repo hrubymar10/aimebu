@@ -5526,6 +5526,11 @@ body {
   opacity: 0.7;
 }
 
+.usages-provider-toggle-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .usages-provider-toggle input {
   position: absolute;
   opacity: 0;
