@@ -178,9 +178,18 @@ Switch when you don't have a session running against the outgoing account.
   state.json                              # enabled flag + active profile per tool
   profiles/claude/<name>/.credentials.json  # symlink to live while active
   profiles/codex/<name>/auth.json           # symlink to live while active
-  backups/<tool>/<name>-<unix>.json
+  backups/<tool>/<name>-<unix>.json        # newest 10 per profile
   .lock
 ```
+
+Each profile keeps its newest 10 backups; older ones are pruned whenever a new
+backup is written. The newest backup that still validates is always kept, even
+when it is older than those 10, because restoring a detached profile relies on
+it. A backup identical to the profile's newest one is not written again, and
+renaming a profile moves its backups to the new name. Removing a profile deletes
+its backups too, and adding, importing or renaming a profile first clears any
+backups an earlier profile left under that name, so a new profile never
+inherits another account's credentials.
 
 Credential files are `0600`, directories `0700` (an active profile's symlink
 has no mode of its own; its target, the live file, is `0600`). This tree is **not**

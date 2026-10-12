@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 // EnsureActiveLinks brings existing installs up to the active-profile symlink
@@ -117,19 +116,4 @@ func (m *Manager) ensureActiveLink(tool, name string) error {
 		}
 	}
 	return m.linkStoredToLive(tool, name, livePath)
-}
-
-// writeUniqueBackup writes data to backups/<tool>/<name>-<unix>.json, stepping
-// the timestamp forward rather than overwriting an existing backup.
-func (m *Manager) writeUniqueBackup(tool, name string, data []byte) error {
-	ts := time.Now().Unix()
-	path := m.backupPath(tool, name, ts)
-	for {
-		if _, err := os.Lstat(path); err != nil {
-			break // free (or unstat-able, which atomicWrite will report)
-		}
-		ts++
-		path = m.backupPath(tool, name, ts)
-	}
-	return atomicWrite(path, data, 0o600)
 }

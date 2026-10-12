@@ -2,6 +2,7 @@ package switcher
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -112,7 +113,9 @@ func (m *Manager) Active(tool string) (string, error) {
 	return state.Active[tool], nil
 }
 
-// Add creates an empty profile directory. No credentials are stored.
+// Add creates an empty profile directory. No credentials are stored. Backups
+// left under the name by an earlier profile are deleted first, so the new
+// profile never inherits another account's credentials.
 func (m *Manager) Add(tool, name string) error {
 	if err := validateProfileName(name); err != nil {
 		return err
@@ -126,6 +129,9 @@ func (m *Manager) Add(tool, name string) error {
 	dir := m.profileDir(tool, name)
 	if _, err := os.Stat(dir); err == nil {
 		return fmt.Errorf("%w: %s/%s", ErrProfileExists, tool, name)
+	}
+	if err := m.deleteProfileBackups(tool, name); err != nil {
+		return fmt.Errorf("add: clear leftover backups: %w", err)
 	}
 	return os.MkdirAll(dir, 0o700)
 }
@@ -182,6 +188,11 @@ func (m *Manager) Import(tool, name string) error {
 	if _, statErr := os.Stat(dir); statErr == nil {
 		return fmt.Errorf("%w: %s/%s", ErrProfileExists, tool, name)
 	}
+	// Leftover backups under this name belong to an earlier profile's
+	// account; clear them before writing this profile's own.
+	if err := m.deleteProfileBackups(tool, name); err != nil {
+		return fmt.Errorf("import: clear leftover backups: %w", err)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -210,7 +221,32 @@ func (m *Manager) Import(tool, name string) error {
 
 	// Mark this profile active in state.json.
 	state.Active[tool] = name
-	return m.saveState(state)
+	if err := m.saveState(state); err != nil {
+		m.rollbackImport(tool, name, previous, livePath)
+		return fmt.Errorf("import: update state: %w", err)
+	}
+	return nil
+}
+
+// rollbackImport undoes an Import whose final state write failed, so state.json
+// (which still names previous active) matches the filesystem again: the new
+// profile's dir — an otherwise inactive symlink to live — is removed along
+// with the backup written under its name (left behind, a later profile of that
+// name would inherit it), and previous is re-linked to live as it was before
+// the import detached it. Best effort, logged.
+func (m *Manager) rollbackImport(tool, name, previous, livePath string) {
+	if err := os.RemoveAll(m.profileDir(tool, name)); err != nil {
+		log.Printf("switcher: %s/%s: roll back import: remove profile: %v", tool, name, err)
+	}
+	if err := m.deleteProfileBackups(tool, name); err != nil {
+		log.Printf("switcher: %s/%s: roll back import: delete backups: %v", tool, name, err)
+	}
+	if previous == "" || previous == name {
+		return
+	}
+	if err := m.linkStoredToLive(tool, previous, livePath); err != nil {
+		log.Printf("switcher: %s/%s: roll back import: re-link previously active profile: %v", tool, previous, err)
+	}
 }
 
 // Rename renames a profile directory and updates state.json if it was active.
@@ -236,17 +272,24 @@ func (m *Manager) Rename(tool, oldName, newName string) error {
 	if _, err := os.Stat(newDir); err == nil {
 		return fmt.Errorf("%w: %s/%s", ErrProfileExists, tool, newName)
 	}
+	// Leftover backups under the new name belong to an earlier profile's
+	// account; clear them so the moved backups below are the only ones.
+	if err := m.deleteProfileBackups(tool, newName); err != nil {
+		return fmt.Errorf("rename: clear leftover backups: %w", err)
+	}
 	if err := os.Rename(oldDir, newDir); err != nil {
 		return fmt.Errorf("rename profile: %w", err)
 	}
+	// Backups are keyed by profile name and are the recovery source
+	// detachLinkedProfile uses, so they move with the profile (active or not).
+	m.renameProfileBackups(tool, oldName, newName)
 	state, err := m.loadState()
 	if err != nil {
 		return err
 	}
 	if state.Active[tool] == oldName {
-		// Backups are keyed by profile name and are the recovery source
-		// detachLinkedProfile uses, so give the renamed active profile a
-		// current backup under its new name. Best effort: the rename itself
+		// Also record the active profile's current live bytes under the new
+		// name — fresher than any moved backup. Best effort: the rename itself
 		// has already happened.
 		m.backupActiveLiveAs(tool, newName)
 		state.Active[tool] = newName
@@ -290,6 +333,12 @@ func (m *Manager) Remove(tool, name string, force bool) error {
 	// only the link here; the live file is handled explicitly below.
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("remove profile: %w", err)
+	}
+	// Removal is the explicit destructive action: the profile's backups go
+	// with it, so a later profile of the same name cannot inherit them.
+	// Logged, not returned: the profile itself is already gone.
+	if err := m.deleteProfileBackups(tool, name); err != nil {
+		log.Printf("switcher: %s/%s: delete backups of removed profile: %v", tool, name, err)
 	}
 
 	if isActive {

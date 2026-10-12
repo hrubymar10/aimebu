@@ -6,10 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/hrubymar10/aimebu/internal/usages"
 )
@@ -182,11 +178,10 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 	// 4. Backup: safety copy of the live file before we overwrite it. SKIPPED
 	// when liveAbsent — there's no live file to back up.
 	if !liveAbsent {
-		backupFilePath := m.backupPath(tool, activeProfile, time.Now().Unix())
-		if err := os.MkdirAll(filepath.Dir(backupFilePath), 0o700); err != nil {
+		if err := os.MkdirAll(filepath.Join(m.backupsRoot(), tool), 0o700); err != nil {
 			return "", false, fmt.Errorf("backup: mkdir: %w", err)
 		}
-		if err := atomicWrite(backupFilePath, liveData, 0o600); err != nil {
+		if err := m.writeUniqueBackup(tool, activeProfile, liveData); err != nil {
 			return "", false, fmt.Errorf("backup: %w", err)
 		}
 	}
@@ -472,48 +467,6 @@ func (m *Manager) detachLinkedProfile(tool, name string) error {
 		return fmt.Errorf("remove stored credential link: %w", err)
 	}
 	return nil
-}
-
-// newestValidBackup returns the newest backups/<tool>/<name>-<unix>.json that
-// validates as stored credentials. The suffix must be exactly digits, so a
-// profile named "a" never picks up the backups of a profile named "a-b".
-func (m *Manager) newestValidBackup(tool, name string) ([]byte, bool) {
-	dir := filepath.Join(m.backupsRoot(), tool)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, false
-	}
-	type candidate struct {
-		ts   int64
-		path string
-	}
-	var candidates []candidate
-	prefix := name + "-"
-	for _, e := range entries {
-		rest, ok := strings.CutPrefix(e.Name(), prefix)
-		if !ok || !e.Type().IsRegular() {
-			continue
-		}
-		digits, ok := strings.CutSuffix(rest, ".json")
-		if !ok || digits == "" || strings.Trim(digits, "0123456789") != "" {
-			continue
-		}
-		ts, err := strconv.ParseInt(digits, 10, 64)
-		if err != nil {
-			continue
-		}
-		candidates = append(candidates, candidate{ts, filepath.Join(dir, e.Name())})
-	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ts > candidates[j].ts })
-	for _, c := range candidates {
-		if validateStoredCred(tool, c.path) != nil {
-			continue
-		}
-		if data, err := os.ReadFile(c.path); err == nil {
-			return data, true
-		}
-	}
-	return nil, false
 }
 
 // backupActiveLiveAs writes a backup of the live credentials under name. Best
