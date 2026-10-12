@@ -340,8 +340,9 @@ refresh coordination).
 `switcher/` holds account-switcher state and is **not server-owned** — the CLI
 writes it with the server stopped: `state.json` (0600, enabled flag plus the
 active profile per tool, schema-versioned), `profiles/<tool>/<name>/` (stored
-credentials, 0600 files in 0700 dirs), `backups/<tool>/` (pre-switch safety
-copies), and `.lock` (flock serializing every mutating operation across CLI and
+credentials, 0600 files in 0700 dirs; the active profile's credential file is a
+symlink to the live one, replaced by a regular snapshot on switch-away),
+`backups/<tool>/` (pre-switch safety copies), and `.lock` (flock serializing every mutating operation across CLI and
 server, including the usages poller's writes to a live credentials path).
 Supported tools are claude and codex, file credentials only — the Keychain is
 never read or written, and a tool without a usable credentials file is reported

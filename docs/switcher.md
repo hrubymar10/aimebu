@@ -19,6 +19,17 @@ aimebu's switcher captures the live credentials into the outgoing profile
 **before** restoring the incoming one, so a profile's stored copy is always the
 most recently live one.
 
+While a profile is active its stored credential file is not a copy at all: it is
+a **symlink to the tool's live credential file**. The harness rotates tokens
+only in the live file, so a copy would go stale the moment it refreshed; the
+link means anything reading `profiles/<tool>/<active>/<file>` sees the current
+tokens. Inactive profiles always hold regular files.
+
+Installs from before this hold a plain copy for the active profile. The server
+converts it in place on startup, without a switch: when the switcher is enabled and the live file validates, the copy is
+saved under `backups/` first, then replaced by the link.
+Running it again is a no-op, and inactive profiles are never touched.
+
 ## Requirements
 
 - **File credentials only.** If a tool keeps its credentials in the macOS
@@ -80,6 +91,7 @@ profile to capture into, switching would discard the current login
 
 After `claude login`, the new credentials are live and belong to `main`. They
 are written into `main`'s stored copy on the next switch **away** from it.
+(`main` was empty, so it has no stored file — and no link — until then.)
 
 ## Commands
 
@@ -114,15 +126,37 @@ directly — no HTTP, no daemon.
 2. **Validate** the live credentials. If they are malformed, abort before
    writing anything — storing them would overwrite a known-good profile with
    garbage.
-3. **Capture** the live credentials into the outgoing profile.
+3. **Capture** the live credentials into the outgoing profile. This replaces
+   the outgoing profile's symlink with a regular-file snapshot; the live file
+   is not written. If the live file is gone (for example after a harness
+   logout), there is nothing to capture and the outgoing profile's now-dangling
+   link is removed, leaving that profile with no stored credentials. Its
+   last-known credentials stay under `backups/`: one is written whenever a
+   profile is imported, linked in by a switch, or switched away from.
 4. **Back up** the live credentials under `backups/`.
 5. **Restore** the target profile's credentials, or, for an empty profile,
-   delete the live credentials so the tool prompts for a login.
+   delete the live credentials so the tool prompts for a login. A target whose
+   stored file is a dangling symlink counts as empty.
 6. Update the active pointer.
+7. **Link** the now-active profile's stored file to the live file, after
+   backing up the stored bytes it replaces (skipped for an empty target, which
+   has nothing to link). If the backup or link fails, the switch still stands
+   and the profile keeps a plain copy; the failure is logged.
 
-Failures during 5–6 roll back from the step-4 backup. Every write goes to a
-temp file in the same directory followed by a rename, so an interrupted switch
-can never leave a half-written credential file.
+Failures during 5–6 roll back from the step-4 backup, and the outgoing
+profile — still active — is linked again. Every write goes to a temp file in
+the same directory followed by a rename, so an interrupted switch can never
+leave a half-written credential file. `import` links the adopted profile the
+same way, and backs up the adopted login.
+
+`import` while another profile is active means the live login was replaced
+outside the switcher (for example `claude login` as a different account), so
+the old profile's link now points at the new login. Before the import makes the
+new profile active, the old profile is detached: its stored file is restored
+from its newest valid backup — its last-known credentials, the same bytes it
+would have kept before active profiles were linked — or, with no backup, the
+link is dropped and the profile becomes empty. It never ends up holding the new
+login.
 
 Expired credentials are **valid** and are captured normally — that is what the
 refresh token is for. Only malformed ones are rejected.
@@ -142,17 +176,27 @@ Switch when you don't have a session running against the outgoing account.
 ```
 ~/.aimebu/switcher/
   state.json                              # enabled flag + active profile per tool
-  profiles/claude/<name>/.credentials.json
-  profiles/codex/<name>/auth.json
+  profiles/claude/<name>/.credentials.json  # symlink to live while active
+  profiles/codex/<name>/auth.json           # symlink to live while active
   backups/<tool>/<name>-<unix>.json
   .lock
 ```
 
-Credential files are `0600`, directories `0700`. This tree is **not**
+Credential files are `0600`, directories `0700` (an active profile's symlink
+has no mode of its own; its target, the live file, is `0600`). This tree is **not**
 server-owned — the CLI writes it with the server stopped. `.lock` also
 serializes the server-side writers that touch a live or stored credential path:
 the usages poller's Codex token rotation and, when enabled, the Claude
-auto-refresh copy-back (see [usages.md](usages.md#claude-auto-refresh)).
+auto-refresh copy-back (see [usages.md](usages.md#claude-auto-refresh)). A
+copy-back to a symlinked (active) profile writes through the link to the live
+file — temp file plus rename in the live file's directory — and leaves the link
+in place.
+
+The active profile's link is absolute, so renaming a profile keeps it valid, and
+removing a profile deletes the link, never the file it points at (removing the
+*active* profile still clears the live login on purpose, as described above).
+The link is a host path: refresh and warmup containers never mount a profile
+dir, only a temp dir seeded with the resolved credential bytes.
 
 **Neither `aimebu prune` nor `aimebu prune -a` ever deletes anything here.**
 These are your logins, not conversation state, and no prune flag advertises

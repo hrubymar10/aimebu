@@ -89,6 +89,10 @@ func codexProfileNeedsRefresh(p ProfileInfo, now time.Time) bool {
 }
 func codexProfileEligibleForWarmup(p ProfileInfo) bool { return p.Tool == "codex" && p.HasCredentials }
 
+// writeCodexAuthTemp seeds a throwaway CODEX_HOME with the resolved credential
+// bytes as a regular file. The executor bind-mounts this dir, never the profile
+// dir: an active profile's stored auth.json is a symlink to the host's live
+// file, which would dangle inside the container.
 func writeCodexAuthTemp(data []byte) (string, string, error) {
 	dir, err := os.MkdirTemp("", "aimebu-codex-maintenance-*")
 	if err != nil {
@@ -207,7 +211,7 @@ func commitCodexAuthCopyBack(withLock func(func() error) error, reresolve func(s
 		if sha256.Sum256(cur) != fingerprint {
 			return errClaudeRefreshProfileChanged
 		}
-		return atomicWriteBytes(path, data, 0o600)
+		return writeStoredCredential(path, data, 0o600)
 	}
 	if withLock != nil {
 		return withLock(commit)

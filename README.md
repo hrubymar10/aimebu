@@ -799,7 +799,7 @@ troubleshooting.
 │   └── .lock                # stable flock target for server/CLI refresh coordination
 └── switcher/                # account switcher state; NOT server-owned (the CLI writes it with the server stopped)
     ├── state.json           # enabled flag + active profile per tool (0600)
-    ├── profiles/<tool>/<name>/ # stored credentials per profile (0600 files, 0700 dirs)
+    ├── profiles/<tool>/<name>/ # stored credentials per profile (0600 files, 0700 dirs; the active profile's is a symlink to live)
     ├── backups/<tool>/      # pre-switch safety copies of live credentials
     └── .lock                # flock serializing switch/profile mutations across CLI and server
 ```

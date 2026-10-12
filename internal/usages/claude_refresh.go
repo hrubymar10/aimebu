@@ -357,7 +357,10 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo, mode
 
 	// Temp-dir isolation: claude pollutes its config dir with .claude.json,
 	// sessions/, projects/, policy-limits.json. Run against a throwaway copy of
-	// only the credentials file so the profile dir stays clean.
+	// only the credentials file so the profile dir stays clean. The copy holds
+	// the resolved BYTES (startData), never a link: the executor bind-mounts
+	// this dir into a container, where a symlinked active profile's absolute
+	// host target would dangle.
 	tmpDir, tmpCred, err := writeClaudeCredTemp(startData, "aimebu-claude-refresh-*")
 	if err != nil {
 		return fmt.Errorf("claude auto-refresh: %w", err)
@@ -471,8 +474,10 @@ func forceExpireClaudeTempCredentials(path string) error {
 // both auto-refresh (near/at expiry) and warmup (out-of-window idle) intend to
 // rotate the active account's stored credentials, and the file-based switcher
 // reconciles the live config on its next switch/capture. Any other mismatch
-// aborts rather than clobbering new reality. withLock may be nil (tests) to
-// skip locking.
+// aborts rather than clobbering new reality. The fingerprint is computed on the
+// bytes read through storedPath, so a symlinked active profile is compared
+// against the live file it points at, and the write goes through the link (see
+// writeStoredCredential). withLock may be nil (tests) to skip locking.
 func commitClaudeCredCopyBack(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool), name, storedPath string, startFingerprint [32]byte, rotated []byte) error {
 	commit := func() error {
 		if reresolve != nil {
@@ -491,7 +496,7 @@ func commitClaudeCredCopyBack(withLock func(func() error) error, reresolve func(
 		if sha256.Sum256(curData) != startFingerprint {
 			return errClaudeRefreshProfileChanged
 		}
-		return atomicWriteBytes(storedPath, rotated, 0o600)
+		return writeStoredCredential(storedPath, rotated, 0o600)
 	}
 	if withLock != nil {
 		return withLock(commit)
@@ -515,6 +520,26 @@ func writeClaudeCredTemp(data []byte, prefix string) (string, string, error) {
 		return "", "", fmt.Errorf("seed temp credentials: %w", err)
 	}
 	return tmpDir, tmpCred, nil
+}
+
+// writeStoredCredential atomically replaces the credential bytes at path. The
+// switcher keeps the ACTIVE profile's stored credential file as a symlink to
+// the harness's live credential file; a plain temp+rename onto path would
+// replace that link with a regular file and silently orphan the profile from
+// the live login again. When path is a symlink the bytes are therefore written
+// through to the link's resolved target (temp file in the TARGET's directory +
+// rename onto the target), leaving the link itself intact. A dangling link is
+// an error: there is no target left to rotate.
+func writeStoredCredential(path string, data []byte, mode os.FileMode) error {
+	info, err := os.Lstat(path)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		target, evalErr := filepath.EvalSymlinks(path)
+		if evalErr != nil {
+			return fmt.Errorf("resolve credential symlink: %w", evalErr)
+		}
+		path = target
+	}
+	return atomicWriteBytes(path, data, mode)
 }
 
 // atomicWriteBytes writes data to path via a temp file + rename so a crash can

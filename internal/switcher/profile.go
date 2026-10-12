@@ -130,10 +130,20 @@ func (m *Manager) Add(tool, name string) error {
 	return os.MkdirAll(dir, 0o700)
 }
 
-// Import validates the live credentials for tool, copies them into a new profile
-// directory, and marks the profile active. No switch happens — this is "adopt
-// what is already there". The UI must refuse switching without a prior Import
-// because there would be nowhere to capture the outgoing credentials.
+// Import validates the live credentials for tool, creates a new profile
+// directory whose stored credential file is a symlink to the live file, and
+// marks the profile active. No switch happens — this is "adopt what is already
+// there". The link (rather than a copy) is the same invariant Switch maintains
+// for every active profile: the stored path follows the harness's token
+// rotation, and the first switch away replaces it with a regular snapshot. The
+// UI must refuse switching without a prior Import because there would be
+// nowhere to capture the outgoing credentials.
+//
+// Import also writes a backup of the adopted live bytes, so a profile that was
+// only ever imported still has a recovery copy if the live file disappears
+// before its first switch away. When another profile was active, its stored
+// file is still a link to live — which now holds the login being imported, not
+// that profile's account — so it is detached first (see detachLinkedProfile).
 func (m *Manager) Import(tool, name string) error {
 	if err := validateProfileName(name); err != nil {
 		return err
@@ -153,6 +163,20 @@ func (m *Manager) Import(tool, name string) error {
 	if err := validateLiveCred(tool, livePath); err != nil {
 		return err
 	}
+	liveData, err := os.ReadFile(livePath)
+	if err != nil {
+		return fmt.Errorf("%w: cannot read live credentials: %s", ErrInvalidCredentials, err)
+	}
+	state, err := m.loadState()
+	if err != nil {
+		return err
+	}
+	previous := state.Active[tool]
+	if previous != "" {
+		if err := validateProfileName(previous); err != nil {
+			return fmt.Errorf("corrupt state: active profile name invalid: %w", err)
+		}
+	}
 
 	dir := m.profileDir(tool, name)
 	if _, statErr := os.Stat(dir); statErr == nil {
@@ -161,22 +185,30 @@ func (m *Manager) Import(tool, name string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	destPath := m.profileCredPath(tool, name)
+	if err := m.writeUniqueBackup(tool, name, liveData); err != nil {
+		_ = os.RemoveAll(dir)
+		return fmt.Errorf("import: backup: %w", err)
+	}
 	if tool == ToolClaude {
 		// Importing adopts the login that is live right now, so .claude.json is
 		// authoritative for it.
 		m.writeProfileMeta(tool, name, profileMeta{Email: m.claudeEmailFromDotJSON()})
 	}
-	if err := copyCredFile(livePath, destPath); err != nil {
+	if err := m.linkStoredToLive(tool, name, livePath); err != nil {
 		_ = os.RemoveAll(dir)
 		return fmt.Errorf("import credentials: %w", err)
 	}
 
-	// Mark this profile active in state.json.
-	state, err := m.loadState()
-	if err != nil {
-		return err
+	// Detach the previously active profile before moving the active pointer, so
+	// no inactive profile is ever left following the live login.
+	if previous != "" && previous != name {
+		if err := m.detachLinkedProfile(tool, previous); err != nil {
+			_ = os.RemoveAll(dir)
+			return fmt.Errorf("import: detach previously active profile %s/%s: %w", tool, previous, err)
+		}
 	}
+
+	// Mark this profile active in state.json.
 	state.Active[tool] = name
 	return m.saveState(state)
 }
@@ -212,6 +244,11 @@ func (m *Manager) Rename(tool, oldName, newName string) error {
 		return err
 	}
 	if state.Active[tool] == oldName {
+		// Backups are keyed by profile name and are the recovery source
+		// detachLinkedProfile uses, so give the renamed active profile a
+		// current backup under its new name. Best effort: the rename itself
+		// has already happened.
+		m.backupActiveLiveAs(tool, newName)
 		state.Active[tool] = newName
 		return m.saveState(state)
 	}
@@ -248,6 +285,9 @@ func (m *Manager) Remove(tool, name string, force bool) error {
 		return fmt.Errorf("%w: %s/%s", ErrActiveProfile, tool, name)
 	}
 
+	// RemoveAll unlinks symlinks rather than following them, so removing an
+	// active profile whose stored file links to the live credentials deletes
+	// only the link here; the live file is handled explicitly below.
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("remove profile: %w", err)
 	}
@@ -285,14 +325,4 @@ func validateLiveCred(tool, path string) error {
 		return fmt.Errorf("%w: %s", ErrInvalidCredentials, err)
 	}
 	return nil
-}
-
-// copyCredFile reads src and writes its bytes to dst atomically (temp + rename)
-// with mode 0600. A crash mid-write never leaves dst half-written.
-func copyCredFile(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return atomicWrite(dst, data, 0o600)
 }

@@ -2440,6 +2440,11 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 		s.broadcastMeta(MetaEvent{Type: "usages_updated", Data: resp})
 	})
 	if swErr == nil {
+		// One-time (idempotent) migration: link the active profile's stored
+		// credentials to the live file on installs that predate the link.
+		if err := swMgr.EnsureActiveLinks(); err != nil {
+			log.Printf("switcher: ensure active-profile links: %v", err)
+		}
 		sr := switcherRoutes{sm: swMgr}
 		usageManager.SetProfileLister(func(tool string) []usages.ProfileInfo {
 			profiles, err := swMgr.List()

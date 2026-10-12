@@ -415,12 +415,22 @@ func TestSwitchAwayFromAbsentLiveSucceeds(t *testing.T) {
 	credB := futureClaude("tok-b")
 	must(t, os.WriteFile(m.profileCredPath(ToolClaude, "profile-b"), []byte(credB), 0o600))
 
+	// Give profile-a a plain stored file (as a profile from before active
+	// profiles were symlinked would have) so this test pins the regular-file
+	// case; the dangling-symlink case is TestSwitchAwayFromDanglingLink.
+	storedABefore := readFile(t, m.profileCredPath(ToolClaude, "profile-a"))
+	must(t, os.Remove(m.profileCredPath(ToolClaude, "profile-a")))
+	must(t, os.WriteFile(m.profileCredPath(ToolClaude, "profile-a"), []byte(storedABefore), 0o600))
+
+	// Import writes its own backup; clear it so the check below only sees
+	// backups written by the switch.
+	must(t, os.RemoveAll(m.backupsRoot()))
+
 	// Simulate the active profile having no live login: delete the live file.
 	must(t, os.Remove(livePath))
 	if _, err := os.Stat(livePath); !os.IsNotExist(err) {
 		t.Fatalf("setup: live file should be absent before switch")
 	}
-	storedABefore := readFile(t, m.profileCredPath(ToolClaude, "profile-a"))
 
 	// Switch away from the absent-live active profile — must succeed (the absent-live fix).
 	active, switched, err := m.Switch(ToolClaude, "profile-b")
@@ -464,6 +474,7 @@ func TestSwitchToAlreadyActiveIsNoOp(t *testing.T) {
 	liveCred := futureClaude("tok-active")
 	livePath := writeLive(t, home, ToolClaude, liveCred)
 	must(t, m.Import(ToolClaude, "profile-a")) // profile-a is active, live = liveCred
+	must(t, os.RemoveAll(m.backupsRoot()))     // drop Import's own backup; check only the switch's
 	storedBefore := readFile(t, m.profileCredPath(ToolClaude, "profile-a"))
 
 	// Switch to the already-active profile-a — must no-op.

@@ -1,9 +1,14 @@
 package switcher
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hrubymar10/aimebu/internal/usages"
@@ -24,6 +29,13 @@ import (
 //  6. Update state.json.
 //  7. On failure in 5–6: restore from the step-4 backup bytes, return original error.
 //     Never leave the live location half-written.
+//  8. Link: replace the now-active profile's stored credential file with a
+//     symlink to the live credential path, so external readers of the stored
+//     path follow the harness's token rotation instead of an orphaned copy.
+//     Inactive profiles always hold plain files: step 3's temp+rename replaces
+//     the outgoing link itself (rename never writes through a link). If the
+//     switch fails after step 3, the still-active outgoing profile is re-linked
+//     once the rollback has restored its live bytes.
 //
 // The flock on switcher/.lock is held for the entire operation so a concurrent
 // CLI or server switch cannot interleave.
@@ -122,14 +134,35 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 		}
 	}
 
+	// Any failure from here on leaves the outgoing profile active; once capture
+	// has replaced its link with a snapshot, re-link it (step 8 rollback).
+	captured := false
+	defer func() {
+		if err != nil && captured {
+			m.relinkAfterFailedSwitch(tool, activeProfile, livePath, liveData)
+		}
+	}()
+
 	// 3. Capture: update the stored copy of the outgoing profile. SKIPPED when
-	// liveAbsent — capturing nothing is exactly the point.
-	if !liveAbsent {
+	// liveAbsent — capturing nothing is exactly the point. atomicWrite renames
+	// a temp file over captureDest, which replaces an active-profile symlink
+	// with a regular snapshot rather than writing through it to the live file.
+	//
+	// When liveAbsent and the outgoing stored file is a symlink, that link now
+	// dangles (the harness logged out or the live file was deleted): drop it so
+	// the outgoing profile reads as "no stored credentials". The copy from an
+	// earlier switch-away, if any, is still under backups/.
+	if liveAbsent {
+		if err := m.removeStoredLink(tool, activeProfile); err != nil {
+			return "", false, err
+		}
+	} else {
 		captureDir := m.profileDir(tool, activeProfile)
 		if err := os.MkdirAll(captureDir, 0o700); err != nil {
 			return "", false, fmt.Errorf("capture: mkdir: %w", err)
 		}
 		captureDest := m.profileCredPath(tool, activeProfile)
+		captured = true
 		if err := atomicWrite(captureDest, liveData, 0o600); err != nil {
 			return "", false, fmt.Errorf("capture: %w", err)
 		}
@@ -173,6 +206,12 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 	targetCredPath := m.profileCredPath(tool, name)
 	_, targetStatErr := os.Stat(targetCredPath)
 	if os.IsNotExist(targetStatErr) {
+		// A dangling symlink also reads as not-exist: the target has no stored
+		// credentials, so treat it as empty and drop the link so the profile
+		// does not become active pointing at nothing.
+		if err := m.removeStoredLink(tool, name); err != nil {
+			return "", false, err
+		}
 		// Empty target: state first, then delete live.
 		state.Active[tool] = name
 		if stateErr := m.saveState(state); stateErr != nil {
@@ -234,6 +273,22 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 			}
 		}
 		return "", false, fmt.Errorf("update state: %w", stateErr)
+	}
+
+	// 8. Link the now-active profile's stored file to the live file. First
+	// back up the bytes being replaced by the link: they are this profile's
+	// last-known credentials, which detachLinkedProfile restores if the live
+	// login is later replaced from outside a switch (Import). Best effort and
+	// logged, not returned: the switch itself is complete and consistent here,
+	// and a skipped link leaves the stored path holding the plain copy just
+	// restored (the same bytes as live), which the next switch-away
+	// re-captures anyway.
+	if data, readErr := os.ReadFile(targetCredPath); readErr != nil {
+		log.Printf("switcher: %s/%s: read stored credentials for link backup: %v; leaving a plain copy", tool, name, readErr)
+	} else if backupErr := m.writeUniqueBackup(tool, name, data); backupErr != nil {
+		log.Printf("switcher: %s/%s: back up stored credentials before linking: %v; leaving a plain copy", tool, name, backupErr)
+	} else if linkErr := m.linkStoredToLive(tool, name, livePath); linkErr != nil {
+		log.Printf("switcher: %s/%s: link stored credentials to live: %v; leaving a plain copy", tool, name, linkErr)
 	}
 
 	m.markIncomingStale(tool, name, liveEmail)
@@ -303,4 +358,179 @@ func validateStoredCred(tool, path string) error {
 		return fmt.Errorf("unknown tool %q", tool)
 	}
 	return err
+}
+
+// linkStoredToLive replaces profile name's stored credential file with a
+// symlink to the absolute live credential path, so anything reading
+// profiles/<tool>/<name>/<file> while the profile is active sees the tokens the
+// harness keeps rotating in the live file instead of an orphaned copy. Only the
+// ACTIVE profile is ever linked; inactive profiles stay plain files.
+//
+// The link is created under a temp name in the profile dir and renamed over the
+// stored path, so the stored path is always either the old regular file or the
+// new link — never missing. The live file must exist: a link to nothing would
+// just be a dangling stored path. A live path that itself resolves onto the
+// stored path is refused, since linking it would create a loop and lose the
+// bytes.
+func (m *Manager) linkStoredToLive(tool, name, livePath string) error {
+	absLive, err := filepath.Abs(livePath)
+	if err != nil {
+		return fmt.Errorf("link: resolve live path: %w", err)
+	}
+	resolvedLive, err := filepath.EvalSymlinks(absLive)
+	if err != nil {
+		return fmt.Errorf("link: live credentials unavailable: %w", err)
+	}
+	storedPath := m.profileCredPath(tool, name)
+	dir := filepath.Dir(storedPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("link: mkdir: %w", err)
+	}
+	if realDir, dirErr := filepath.EvalSymlinks(dir); dirErr == nil && filepath.Join(realDir, filepath.Base(storedPath)) == resolvedLive {
+		return fmt.Errorf("link: live credentials resolve to the stored profile file %s", storedPath)
+	}
+	// Reserve a unique temp name, then swap the reserved file for the link.
+	// The switcher lock is held by every caller and the dir is 0700, so the
+	// gap between Remove and Symlink is not contended.
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(storedPath)+".*.link")
+	if err != nil {
+		return fmt.Errorf("link: %w", err)
+	}
+	tmpName := tmp.Name()
+	_ = tmp.Close()
+	if err := os.Remove(tmpName); err != nil {
+		return fmt.Errorf("link: %w", err)
+	}
+	if err := os.Symlink(absLive, tmpName); err != nil {
+		return fmt.Errorf("link: %w", err)
+	}
+	if err := os.Rename(tmpName, storedPath); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("link: %w", err)
+	}
+	return nil
+}
+
+// removeStoredLink deletes profile name's stored credential file when (and
+// only when) it is a symlink. Used when switching away from a profile whose
+// live file is gone: the link would dangle, so the profile is left with no
+// stored credentials instead. A regular stored file is left untouched.
+func (m *Manager) removeStoredLink(tool, name string) error {
+	storedPath := m.profileCredPath(tool, name)
+	info, err := os.Lstat(storedPath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	if err := os.Remove(storedPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stored credential link: %w", err)
+	}
+	return nil
+}
+
+// relinkAfterFailedSwitch re-links the still-active outgoing profile after a
+// switch failed past the capture step (which replaced its link with a regular
+// snapshot). It only links when the live file holds exactly the pre-switch
+// bytes, i.e. the rollback really restored the outgoing account; otherwise the
+// regular snapshot is kept, which is always a valid stored file.
+func (m *Manager) relinkAfterFailedSwitch(tool, name, livePath string, liveData []byte) {
+	state, err := m.loadState()
+	if err != nil || state.Active[tool] != name {
+		return
+	}
+	cur, err := os.ReadFile(livePath)
+	if err != nil || !bytes.Equal(cur, liveData) {
+		return
+	}
+	if err := m.linkStoredToLive(tool, name, livePath); err != nil {
+		log.Printf("switcher: %s/%s: re-link after failed switch: %v; keeping the regular snapshot", tool, name, err)
+	}
+}
+
+// detachLinkedProfile turns a profile that is about to stop being active
+// without a switch (Import adopting a different live login) back into a plain
+// inactive profile. Its stored file is a link to live, but live no longer holds
+// this profile's account, so a snapshot of live would mislabel the new login
+// as this profile. The correct bytes are this profile's last-known
+// credentials: the newest valid backup under its name (written at every
+// import, link-in, switch-away and link migration). Without one the link is
+// dropped and the profile becomes empty, which is honest — there is nothing of
+// its account left to keep. A regular stored file is left untouched.
+func (m *Manager) detachLinkedProfile(tool, name string) error {
+	storedPath := m.profileCredPath(tool, name)
+	info, err := os.Lstat(storedPath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	if data, ok := m.newestValidBackup(tool, name); ok {
+		if err := atomicWrite(storedPath, data, 0o600); err != nil {
+			return fmt.Errorf("restore last-known credentials: %w", err)
+		}
+		return nil
+	}
+	log.Printf("switcher: %s/%s: no backup of its credentials; dropping its link to the live login (profile is now empty)", tool, name)
+	if err := os.Remove(storedPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stored credential link: %w", err)
+	}
+	return nil
+}
+
+// newestValidBackup returns the newest backups/<tool>/<name>-<unix>.json that
+// validates as stored credentials. The suffix must be exactly digits, so a
+// profile named "a" never picks up the backups of a profile named "a-b".
+func (m *Manager) newestValidBackup(tool, name string) ([]byte, bool) {
+	dir := filepath.Join(m.backupsRoot(), tool)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, false
+	}
+	type candidate struct {
+		ts   int64
+		path string
+	}
+	var candidates []candidate
+	prefix := name + "-"
+	for _, e := range entries {
+		rest, ok := strings.CutPrefix(e.Name(), prefix)
+		if !ok || !e.Type().IsRegular() {
+			continue
+		}
+		digits, ok := strings.CutSuffix(rest, ".json")
+		if !ok || digits == "" || strings.Trim(digits, "0123456789") != "" {
+			continue
+		}
+		ts, err := strconv.ParseInt(digits, 10, 64)
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, candidate{ts, filepath.Join(dir, e.Name())})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ts > candidates[j].ts })
+	for _, c := range candidates {
+		if validateStoredCred(tool, c.path) != nil {
+			continue
+		}
+		if data, err := os.ReadFile(c.path); err == nil {
+			return data, true
+		}
+	}
+	return nil, false
+}
+
+// backupActiveLiveAs writes a backup of the live credentials under name. Best
+// effort, logged on failure.
+func (m *Manager) backupActiveLiveAs(tool, name string) {
+	livePath, err := m.liveCredPath(tool)
+	if err != nil {
+		return
+	}
+	data, err := os.ReadFile(livePath)
+	if err != nil {
+		return
+	}
+	if validateLiveCred(tool, livePath) != nil {
+		return
+	}
+	if err := m.writeUniqueBackup(tool, name, data); err != nil {
+		log.Printf("switcher: %s/%s: back up live credentials: %v", tool, name, err)
+	}
 }

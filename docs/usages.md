@@ -128,7 +128,10 @@ whose access token is already expired or within 10 minutes of expiry by running
 the real `claude` binary inside a throwaway `harness-docker` container pointed
 at a copy of that profile's credentials. Inside the container there is no
 Keychain, so claude performs its file-based refresh-on-use and writes rotated
-tokens straight back, which aimebu then copies into the stored profile.
+tokens straight back, which aimebu then copies into the stored profile. For the
+active profile, whose stored file is a symlink to the live credentials (see
+[switcher.md](switcher.md#what-a-switch-actually-does)), the copy-back writes
+through the link to the live file and keeps the link.
 
 Design notes:
 
@@ -139,10 +142,11 @@ Design notes:
   account. Codex profiles are unaffected; this is claude-only.
 - **Temp-dir isolation.** claude pollutes its config dir with `.claude.json`,
   `sessions/`, `projects/`, and `policy-limits.json`. aimebu copies only
-  `.credentials.json` into a temp dir, marks only that throwaway copy's access
-  token expiry as past, runs the container there, and copies only the genuinely
-  rotated `.credentials.json` back — the stored profile dir stays clean and is
-  never force-expired.
+  `.credentials.json` (the resolved bytes, never a symlink — a host link would
+  dangle inside the container) into a temp dir, marks only that throwaway
+  copy's access token expiry as past, runs the container there, and copies
+  only the genuinely rotated `.credentials.json` back — the stored profile dir
+  stays clean and is never force-expired.
 - **Success is the rotated file, not the exit code.** A refresh counts only when
   the new `.credentials.json` parses and its `expiresAt` advanced beyond the old
   value. If the container rotates the token and then exits non-zero (for example,
