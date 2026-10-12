@@ -3,6 +3,7 @@ package switcher
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -36,6 +37,23 @@ func (m *Manager) EnsureActiveLinks() error {
 		return nil
 	}
 
+	// Unlocked per-tool check of the link state: the steady state (every
+	// active profile already linked, or nothing to link to) must take no lock
+	// and write nothing, since the server re-runs this periodically to link an
+	// empty profile after its first login. Lock only when a tool needs work.
+	var errs []error
+	needed := false
+	for _, tool := range Tools() {
+		need, _, err := m.activeLinkNeeded(tool, pre.Active[tool])
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", tool, err))
+		}
+		needed = needed || need
+	}
+	if !needed {
+		return errors.Join(errs...)
+	}
+
 	lock, err := m.acquireLock()
 	if err != nil {
 		return fmt.Errorf("acquire switcher lock: %w", err)
@@ -49,7 +67,7 @@ func (m *Manager) EnsureActiveLinks() error {
 	if !state.Enabled { // re-check under the lock
 		return nil
 	}
-	var errs []error
+	errs = nil
 	for _, tool := range Tools() {
 		if err := m.ensureActiveLink(tool, state.Active[tool]); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", tool, err))
@@ -67,29 +85,29 @@ func anyActive(s State) bool {
 	return false
 }
 
-func (m *Manager) ensureActiveLink(tool, name string) error {
+// activeLinkNeeded reports, without writing or locking, whether the active
+// profile name of tool needs its stored file linked to live, and the live path
+// to link to. Nothing is needed for no active profile, a stale pointer, an
+// absent or corrupt live file (never link to those), or an already-correct
+// link — the cheap link check comes first so the steady state does not even
+// read the live file.
+func (m *Manager) activeLinkNeeded(tool, name string) (bool, string, error) {
 	if name == "" {
-		return nil
+		return false, "", nil
 	}
 	if err := validateProfileName(name); err != nil {
-		return fmt.Errorf("corrupt state: active profile name invalid: %w", err)
+		return false, "", fmt.Errorf("corrupt state: active profile name invalid: %w", err)
 	}
 	if info, err := os.Stat(m.profileDir(tool, name)); err != nil || !info.IsDir() {
-		return nil // stale pointer: doctor reports it; nothing to link into
+		return false, "", nil // stale pointer: doctor reports it; nothing to link into
 	}
 	livePath, err := m.liveCredPath(tool)
 	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(livePath); err != nil {
-		return nil // absent live: an empty active profile, nothing to link to
-	}
-	if err := validateLiveCred(tool, livePath); err != nil {
-		return nil // never link a profile to corrupt live credentials
+		return false, "", err
 	}
 	absLive, err := filepath.Abs(livePath)
 	if err != nil {
-		return err
+		return false, "", err
 	}
 
 	storedPath := m.profileCredPath(tool, name)
@@ -97,23 +115,50 @@ func (m *Manager) ensureActiveLink(tool, name string) error {
 	switch {
 	case err == nil && info.Mode()&os.ModeSymlink != 0:
 		if target, readErr := os.Readlink(storedPath); readErr == nil && target == absLive {
-			return nil // already correct
+			return false, "", nil // already correct
 		}
 	case err == nil && info.IsDir():
-		return fmt.Errorf("stored credential path %s is a directory", storedPath)
+		return false, "", fmt.Errorf("stored credential path %s is a directory", storedPath)
 	case err != nil && !os.IsNotExist(err):
+		return false, "", err
+	}
+
+	if _, err := os.Stat(livePath); err != nil {
+		return false, "", nil // absent live: an empty active profile, nothing to link to
+	}
+	if err := validateLiveCred(tool, livePath); err != nil {
+		return false, "", nil // never link a profile to corrupt live credentials
+	}
+	return true, livePath, nil
+}
+
+// ensureActiveLink links the active profile name of tool when
+// activeLinkNeeded says so. Callers hold the switcher lock.
+func (m *Manager) ensureActiveLink(tool, name string) error {
+	need, livePath, err := m.activeLinkNeeded(tool, name)
+	if err != nil || !need {
 		return err
 	}
+	storedPath := m.profileCredPath(tool, name)
 
 	// Safety copy of whatever the stored path holds, even when it equals live:
 	// like Switch's link-time backup, it is this profile's last-known
 	// credentials, which detachLinkedProfile restores if live is later replaced
-	// from outside a switch. An unreadable stored path (missing file, dangling
-	// link) has nothing to keep.
-	if stored, readErr := os.ReadFile(storedPath); readErr == nil {
+	// from outside a switch. Only a stored path that does not exist (missing
+	// file — the empty profile after its first login — or a dangling link,
+	// which reads as not-exist) has nothing to keep and skips the backup. Any
+	// other read error (permissions, I/O) aborts: replacing bytes we could not
+	// back up would discard them.
+	stored, readErr := os.ReadFile(storedPath)
+	switch {
+	case readErr == nil:
 		if err := m.writeUniqueBackup(tool, name, stored); err != nil {
 			return fmt.Errorf("backup stored credentials: %w", err)
 		}
+	case errors.Is(readErr, fs.ErrNotExist):
+		// nothing stored to keep
+	default:
+		return fmt.Errorf("read stored credentials for backup: %w", readErr)
 	}
 	return m.linkStoredToLive(tool, name, livePath)
 }

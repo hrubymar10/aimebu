@@ -26,9 +26,12 @@ link means anything reading `profiles/<tool>/<active>/<file>` sees the current
 tokens. Inactive profiles always hold regular files.
 
 Installs from before this hold a plain copy for the active profile. The server
-converts it in place on startup, without a switch: when the switcher is enabled and the live file validates, the copy is
-saved under `backups/` first, then replaced by the link.
-Running it again is a no-op, and inactive profiles are never touched.
+converts it in place (on startup, then every 60 seconds), without a switch:
+when the switcher is enabled and the live file validates, the copy is saved
+under `backups/` first, then replaced by the link. Running it again is a
+no-op — with everything linked it takes no lock and writes nothing — and
+inactive profiles are never touched. The CLI does not do this; with the server
+stopped, the plain copy stays until the server next runs or you switch.
 
 ## Requirements
 
@@ -89,9 +92,13 @@ no active profile: run 'aimebu switcher import <tool> <name>' first — without 
 profile to capture into, switching would discard the current login
 ```
 
-After `claude login`, the new credentials are live and belong to `main`. They
-are written into `main`'s stored copy on the next switch **away** from it.
-(`main` was empty, so it has no stored file — and no link — until then.)
+After `claude login`, the new credentials are live and belong to `main`.
+`main` was empty, so at first it has no stored file and no link. Once the login
+writes the live file, the running server links `main`'s stored path to it
+within about a minute — with no backup, since there was nothing stored to
+keep — and from then on the stored path follows live through the link. A
+regular snapshot is written into `main`'s stored copy on the next switch
+**away** from it.
 
 ## Commands
 

@@ -554,3 +554,87 @@ func TestEnsureActiveLinksDisabledDoesNotCreateLock(t *testing.T) {
 		t.Fatalf("disabled switcher got a .lock; stat err=%v", err)
 	}
 }
+
+// TestEnsureActiveLinksSteadyStateNoLockNoWrites: with every active profile
+// already linked, the periodic re-run takes no lock (the .lock file is not
+// recreated) and writes nothing.
+func TestEnsureActiveLinksSteadyStateNoLockNoWrites(t *testing.T) {
+	m, home := newTestManager(t)
+	must(t, m.SetEnabled(true))
+	livePath := writeLive(t, home, ToolClaude, futureClaude("a"))
+	must(t, m.Import(ToolClaude, "a"))
+	writeLive(t, home, ToolCodex, futureCodex("c@example.com"))
+	must(t, m.Import(ToolCodex, "c"))
+	before := backupsFor(t, m, ToolClaude)
+	must(t, os.Remove(m.lockPath()))
+
+	for i := 0; i < 3; i++ {
+		must(t, m.EnsureActiveLinks())
+	}
+	if _, err := os.Stat(m.lockPath()); !os.IsNotExist(err) {
+		t.Fatalf("steady state took the lock (.lock recreated); stat err=%v", err)
+	}
+	if got := backupsFor(t, m, ToolClaude); len(got) != len(before) {
+		t.Fatalf("steady state wrote backups: %v -> %v", before, got)
+	}
+	assertLinkedToLive(t, m, ToolClaude, "a", livePath)
+}
+
+// TestEnsureActiveLinksLinksEmptyProfileAfterLogin: switching to an empty
+// profile removes live and leaves no stored file; once the harness logs in and
+// writes live, the next run links the profile, with no backup (nothing
+// readable to keep). Before the login it does nothing and takes no lock.
+func TestEnsureActiveLinksLinksEmptyProfileAfterLogin(t *testing.T) {
+	m, home := newTestManager(t)
+	must(t, m.SetEnabled(true))
+	livePath := writeLive(t, home, ToolClaude, futureClaude("a"))
+	must(t, m.Import(ToolClaude, "a"))
+	must(t, m.Add(ToolClaude, "fresh"))
+	_, _, err := m.Switch(ToolClaude, "fresh")
+	must(t, err)
+
+	must(t, os.Remove(m.lockPath()))
+	must(t, m.EnsureActiveLinks())
+	if _, err := os.Stat(m.lockPath()); !os.IsNotExist(err) {
+		t.Fatalf("nothing to link, but the lock was taken; stat err=%v", err)
+	}
+
+	writeLive(t, home, ToolClaude, futureClaude("fresh-login"))
+	must(t, m.EnsureActiveLinks())
+	assertLinkedToLive(t, m, ToolClaude, "fresh", livePath)
+	for _, b := range backupsFor(t, m, ToolClaude) {
+		if strings.HasPrefix(filepath.Base(b), "fresh-") {
+			t.Fatalf("missing stored file should not produce a backup: %s", b)
+		}
+	}
+}
+
+// TestEnsureActiveLinksUnreadableStoredFileAborts: a stored file that exists
+// but cannot be read (here: mode 000) cannot be backed up, so it must not be
+// replaced by the link.
+func TestEnsureActiveLinksUnreadableStoredFileAborts(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads mode-000 files; permission error cannot be simulated")
+	}
+	live, stale := futureClaude("live"), futureClaude("stale")
+	m, _ := legacyActive(t, ToolClaude, true, live, stale)
+	stored := m.profileCredPath(ToolClaude, "a")
+	must(t, os.Chmod(stored, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(stored, 0o600) })
+
+	if err := m.EnsureActiveLinks(); err == nil {
+		t.Fatal("unreadable stored file should make EnsureActiveLinks report an error")
+	}
+	info, err := os.Lstat(stored)
+	must(t, err)
+	if !info.Mode().IsRegular() {
+		t.Fatalf("unreadable stored file was replaced (mode=%v)", info.Mode())
+	}
+	if got := backupsFor(t, m, ToolClaude); len(got) != 0 {
+		t.Fatalf("no backup expected, got %v", got)
+	}
+	must(t, os.Chmod(stored, 0o600))
+	if got := readFile(t, stored); got != stale {
+		t.Fatalf("stored bytes changed: %q", got)
+	}
+}
