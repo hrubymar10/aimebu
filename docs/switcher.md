@@ -186,6 +186,8 @@ Switch when you don't have a session running against the outgoing account.
   profiles/claude/<name>/.credentials.json  # symlink to live while active
   profiles/codex/<name>/auth.json           # symlink to live while active
   backups/<tool>/<name>-<unix>.json        # newest 10 per profile
+  backups/<tool>/<name>-rotated-<UTC>.json # newest 3 rescues per profile
+  removed.json                           # last 50 explicit removals (token hashes only)
   .lock
 ```
 
@@ -197,6 +199,11 @@ renaming a profile moves its backups to the new name. Removing a profile deletes
 its backups too, and adding, importing or renaming a profile first clears any
 backups an earlier profile left under that name, so a new profile never
 inherits another account's credentials.
+Rotated rescue files have a separate cap of three newest files per profile;
+older rescues are pruned when a new one is saved. Add, Import, rollback, and
+rename-to leave existing rescues intact. Rename moves rescues from the old
+name, stepping a timestamp forward when the destination name already exists.
+Only Remove deletes rescues with the profile's backups.
 
 Credential files are `0600`, directories `0700` (an active profile's symlink
 has no mode of its own; its target, the live file, is `0600`). This tree is **not**
@@ -206,7 +213,27 @@ the usages poller's Codex token rotation and, when enabled, the Claude
 auto-refresh copy-back (see [usages.md](usages.md#claude-auto-refresh)). A
 copy-back to a symlinked (active) profile writes through the link to the live
 file — temp file plus rename in the live file's directory — and leaves the link
-in place.
+in place. If an active profile is switched away while a Claude refresh/warmup
+or Codex maintenance run is in flight, copy-back follows its regular-file
+snapshot when the original refresh token still matches. A rename during the
+run also follows the profile when exactly one stored refresh token matches.
+If the profile has a different refresh token, its current credentials are not
+changed; the rotated file is rescued as a mode-`0600`
+`backups/<tool>/<profile>-rotated-<UTC timestamp>.json` file and named in the
+abort log. Removing a profile records a `0600` tombstone containing the tool,
+profile name, removal time, and SHA-256 hash of its refresh token, without the
+token itself. The last 50 removals are kept. A profile with no usable refresh
+token is still removed; no tombstone can be written for it. Copy-back checks
+these under the switcher lock and discards an in-flight rotation only when the
+tombstone is newer than the run and no current profile holds that token. A
+shared token in another readable profile can still receive its own rotation.
+Every other unresolved copy-back saves the rotated file for recovery, including
+no match, an unreadable sibling, or a tombstone from before the run. A corrupt
+`removed.json` is logged as an error and treated as empty; the next Remove with
+a usable refresh token rewrites it cleanly. If the live credential path cannot
+be resolved, the credential file cannot be read, or the tombstone file cannot
+be read or written, Remove logs the error and still deletes the profile; an
+unresolved in-flight rotation is saved as a rescue.
 
 The active profile's link is absolute, so renaming a profile keeps it valid, and
 removing a profile deletes the link, never the file it points at (removing the
@@ -310,3 +337,5 @@ reports a stale active pointer, a profile with no stored credentials while the
 live file is also missing, and any backups available to restore from. Backups
 are plain JSON files under `~/.aimebu/switcher/backups/<tool>/` — copy one back
 over the tool's credential file by hand if you need to.
+Rotated rescue files use the `-rotated-` suffix and retain the tokens produced
+by a maintenance run that could not safely update an existing profile.

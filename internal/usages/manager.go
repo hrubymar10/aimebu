@@ -105,9 +105,10 @@ type ProfileInfo struct {
 	ExpiresAt      *time.Time // token expiry from the credential file
 }
 
-// ProfileLister returns switcher profiles for a given tool. nil/empty means
-// no switcher is enabled or the tool has no profiles.
-type ProfileLister func(tool string) []ProfileInfo
+// ProfileLister returns switcher profiles for a given tool. An empty successful
+// result means no profiles; errors must remain distinguishable from removal
+// while a maintenance run is copying rotated credentials back.
+type ProfileLister func(tool string) ([]ProfileInfo, error)
 
 const implicitProfileName = "local"
 
@@ -158,13 +159,28 @@ func (m *Manager) implicitProfile(key string) ProfileInfo {
 }
 
 func (m *Manager) profilesForProvider(key string) []ProfileInfo {
-	tool := toolForRegistryKey(key)
-	if tool != "" && m.profileLister != nil {
-		if profiles := m.profileLister(tool); len(profiles) > 0 {
-			return profiles
+	profiles, err := m.listedProfilesForProvider(key)
+	if err != nil {
+		return []ProfileInfo{m.implicitProfile(key)}
+	}
+	return profiles
+}
+
+func (m *Manager) listedProfilesForProvider(key string) ([]ProfileInfo, error) {
+	return listProfilesOrLocal(m.profileLister, toolForRegistryKey(key), m.implicitProfile(key))
+}
+
+func listProfilesOrLocal(lister ProfileLister, tool string, local ProfileInfo) ([]ProfileInfo, error) {
+	if tool != "" && lister != nil {
+		profiles, err := lister(tool)
+		if err != nil {
+			return nil, err
+		}
+		if len(profiles) > 0 {
+			return profiles, nil
 		}
 	}
-	return []ProfileInfo{m.implicitProfile(key)}
+	return []ProfileInfo{local}, nil
 }
 
 func (m *Manager) resolveProfiles(keys []string) map[string][]ProfileInfo {
@@ -237,38 +253,31 @@ func (m *Manager) SetSwitcherEligibilityProvider(fn SwitcherEligibilityProvider)
 
 // EnableClaudeAutoRefresh wires the claude auto-refresh coordinator. withLock is
 // the switcher's WithLock so the credential copy-back holds switcher/.lock. The
-// coordinator re-resolves the profile by name (via the ProfileLister) inside the
-// lock for its CAS identity guard.
-func (m *Manager) EnableClaudeAutoRefresh(withLock func(func() error) error) {
-	m.claudeRefresher = newClaudeRefresher(withLock, m.currentClaudeProfile)
+// coordinator lists profiles inside the lock, so copy-back can follow a
+// switch or rename and distinguish a listing error from removal.
+func (m *Manager) EnableClaudeAutoRefresh(withLock func(func() error) error, rescueRoot string) {
+	m.claudeRefresher = newClaudeRefresher(withLock, func() ([]ProfileInfo, error) { return m.listMaintenanceProfiles("claude") })
+	m.claudeRefresher.rescueRoot = rescueRoot
 	// Warmup shares the same gate (setting enabled + harness-docker-ctrl present)
 	// and reuses the same executor, so it is wired alongside auto-refresh. It also
-	// needs withLock + the CAS re-resolve: `claude -p` can rotate the account's
+	// needs withLock + a fresh profile list: `claude -p` can rotate the account's
 	// OAuth token, and warmup MUST persist that rotation back with the same safety
 	// guard auto-refresh uses.
-	m.claudeWarmer = newClaudeWarmer(withLock, m.currentClaudeProfile)
-	m.codexMaintainer = newCodexMaintainer(withLock, m.currentCodexProfile)
+	m.claudeWarmer = newClaudeWarmer(withLock, func() ([]ProfileInfo, error) { return m.listMaintenanceProfiles("claude") })
+	m.claudeWarmer.rescueRoot = rescueRoot
+	m.codexMaintainer = newCodexMaintainer(withLock, func() ([]ProfileInfo, error) { return m.listMaintenanceProfiles("codex") })
+	m.codexMaintainer.rescueRoot = rescueRoot
 }
 
-func (m *Manager) currentCodexProfile(name string) (ProfileInfo, bool) {
-	for _, p := range m.profilesForProvider(ProviderCodex) {
-		if p.Name == name {
-			return p, true
-		}
+func (m *Manager) listMaintenanceProfiles(tool string) ([]ProfileInfo, error) {
+	switch tool {
+	case "claude":
+		return m.listedProfilesForProvider(ProviderClaudeCode)
+	case "codex":
+		return m.listedProfilesForProvider(ProviderCodex)
+	default:
+		return nil, fmt.Errorf("unsupported maintenance tool %q", tool)
 	}
-	return ProfileInfo{}, false
-}
-
-// currentClaudeProfile returns the current resolved claude switcher profile for
-// name, used by the auto-refresh CAS guard to detect a switch/removal that
-// landed mid-refresh.
-func (m *Manager) currentClaudeProfile(name string) (ProfileInfo, bool) {
-	for _, p := range m.profilesForProvider(ProviderClaudeCode) {
-		if p.Name == name {
-			return p, true
-		}
-	}
-	return ProfileInfo{}, false
 }
 
 // claudeAutoRefreshAvailable reports whether the feature can run at all. It is

@@ -2,7 +2,6 @@ package usages
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -106,8 +105,8 @@ func TestClaudeRefreshWritesThroughActiveSymlink(t *testing.T) {
 		return inspectErr
 	}}
 	r := newTestRefresher(exec, &fakeClock{now: now})
-	r.reresolve = func(name string) (ProfileInfo, bool) {
-		return ProfileInfo{Tool: "claude", Name: name, Active: true, CredPath: linkPath, HasCredentials: true}, true
+	r.listProfiles = func() ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "claude", Name: "work", Active: true, CredPath: linkPath, HasCredentials: true}}, nil
 	}
 	profile := ProfileInfo{Tool: "claude", Name: "work", Active: true, CredPath: linkPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
 	if _, err := r.maybeRefreshSync(context.Background(), profile); err != nil {
@@ -156,23 +155,27 @@ func TestCodexRefreshWritesThroughActiveSymlink(t *testing.T) {
 // TestCopyBackCASReadsThroughSymlink: the fingerprint guard compares against
 // the bytes behind the link, so a live rotation that landed mid-run aborts.
 func TestCopyBackCASReadsThroughSymlink(t *testing.T) {
-	livePath, linkPath := linkedProfile(t, ".credentials.json", "start")
-	if err := os.WriteFile(livePath, []byte("harness-rotated"), 0o600); err != nil {
+	start := claudeCredsWithExpiry("start", 1000)
+	changed := `{"claudeAiOauth":{"accessToken":"harness-rotated","refreshToken":"different","expiresAt":2000}}`
+	livePath, linkPath := linkedProfile(t, ".credentials.json", start)
+	if err := os.WriteFile(livePath, []byte(changed), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := commitClaudeCredCopyBack(nil, nil, "work", linkPath, sha256.Sum256([]byte("start")), []byte("ours"))
+	err := commitClaudeCredCopyBack(nil, nil, "work", linkPath, []byte(start), []byte(start), t.TempDir())
 	if !errors.Is(err, errClaudeRefreshProfileChanged) {
 		t.Fatalf("err = %v, want errClaudeRefreshProfileChanged", err)
 	}
-	assertStillLinked(t, linkPath, livePath, "harness-rotated")
+	assertStillLinked(t, linkPath, livePath, changed)
 }
 
 func TestCopyBackDanglingSymlinkIsProfileGone(t *testing.T) {
-	livePath, linkPath := linkedProfile(t, "auth.json", "start")
+	started := codexAuth("start", "r1", "2026-01-01T00:00:00Z")
+	rotated := codexAuth("next", "r2", "2026-01-02T00:00:00Z")
+	livePath, linkPath := linkedProfile(t, "auth.json", started)
 	if err := os.Remove(livePath); err != nil {
 		t.Fatal(err)
 	}
-	err := commitCodexAuthCopyBack(nil, nil, "work", linkPath, sha256.Sum256([]byte("start")), []byte("ours"))
+	err := commitCodexAuthCopyBack(nil, nil, "work", linkPath, []byte(started), []byte(rotated), t.TempDir())
 	if !errors.Is(err, errClaudeRefreshProfileGone) {
 		t.Fatalf("err = %v, want errClaudeRefreshProfileGone", err)
 	}

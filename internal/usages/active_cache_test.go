@@ -43,9 +43,9 @@ func TestActiveCacheEntryPreventsStarvation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
 		return []ProfileInfo{{
 			Tool:           "claude",
@@ -53,7 +53,7 @@ func TestActiveCacheEntryPreventsStarvation(t *testing.T) {
 			Active:         true,
 			HasCredentials: true,
 			Email:          "main@test",
-		}}
+		}}, nil
 	})
 
 	// Advance time so that main is definitely stale and bkp is not
@@ -133,9 +133,9 @@ func TestActiveCacheEntryPreventsStarvation_Inverse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
 		return []ProfileInfo{{
 			Tool:           "claude",
@@ -143,7 +143,7 @@ func TestActiveCacheEntryPreventsStarvation_Inverse(t *testing.T) {
 			Active:         true,
 			HasCredentials: true,
 			Email:          "main@test",
-		}}
+		}}, nil
 	})
 
 	// Advance time so bkp is stale but main stays within the refresh interval

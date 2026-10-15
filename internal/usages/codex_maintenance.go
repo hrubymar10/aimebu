@@ -45,19 +45,20 @@ type codexMaintenanceState struct {
 	lastAttempt time.Time
 }
 type codexMaintainer struct {
-	executor  refreshExecutor
-	withLock  func(func() error) error
-	reresolve func(string) (ProfileInfo, bool)
-	available func() bool
-	reachable func(context.Context) bool
-	clock     Clock
-	mu        sync.Mutex
-	refresh   map[string]*codexMaintenanceState
-	warm      map[string]*codexMaintenanceState
+	executor     refreshExecutor
+	withLock     func(func() error) error
+	listProfiles func() ([]ProfileInfo, error)
+	available    func() bool
+	reachable    func(context.Context) bool
+	clock        Clock
+	rescueRoot   string
+	mu           sync.Mutex
+	refresh      map[string]*codexMaintenanceState
+	warm         map[string]*codexMaintenanceState
 }
 
-func newCodexMaintainer(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool)) *codexMaintainer {
-	return &codexMaintainer{executor: codexRefreshExecutor{}, withLock: withLock, reresolve: reresolve,
+func newCodexMaintainer(withLock func(func() error) error, listProfiles func() ([]ProfileInfo, error)) *codexMaintainer {
+	return &codexMaintainer{executor: codexRefreshExecutor{}, withLock: withLock, listProfiles: listProfiles,
 		available: harnessDockerCtrlAvailable, reachable: dockerReachable, clock: realClock{},
 		refresh: map[string]*codexMaintenanceState{}, warm: map[string]*codexMaintenanceState{}}
 }
@@ -137,6 +138,7 @@ func forceExpireCodexTempCredentials(path string) error {
 }
 
 func (m *codexMaintainer) run(ctx context.Context, profile ProfileInfo, modelFlag string, force bool) error {
+	runStarted := time.Now()
 	start, err := os.ReadFile(profile.CredPath)
 	if err != nil {
 		return err
@@ -184,7 +186,7 @@ func (m *codexMaintainer) run(ctx context.Context, profile ProfileInfo, modelFla
 	if executorErr == nil && force && !credentialRotated {
 		return errors.New("codex refresh did not rotate credentials")
 	}
-	if err := commitCodexAuthCopyBack(m.withLock, m.reresolve, profile.Name, profile.CredPath, sha256.Sum256(start), rotated); err != nil {
+	if err := commitCodexAuthCopyBack(m.withLock, m.listProfiles, profile.Name, profile.CredPath, start, rotated, m.rescueRoot, runStarted); err != nil {
 		return err
 	}
 	if executorErr != nil {
@@ -193,30 +195,8 @@ func (m *codexMaintainer) run(ctx context.Context, profile ProfileInfo, modelFla
 	return nil
 }
 
-func commitCodexAuthCopyBack(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool), name, path string, fingerprint [32]byte, data []byte) error {
-	commit := func() error {
-		if reresolve != nil {
-			p, ok := reresolve(name)
-			if !ok {
-				return errClaudeRefreshProfileGone
-			}
-			if p.CredPath != path {
-				return errClaudeRefreshProfileChanged
-			}
-		}
-		cur, err := os.ReadFile(path)
-		if err != nil {
-			return errClaudeRefreshProfileGone
-		}
-		if sha256.Sum256(cur) != fingerprint {
-			return errClaudeRefreshProfileChanged
-		}
-		return writeStoredCredential(path, data, 0o600)
-	}
-	if withLock != nil {
-		return withLock(commit)
-	}
-	return commit()
+func commitCodexAuthCopyBack(withLock func(func() error) error, listProfiles func() ([]ProfileInfo, error), name, path string, started, data []byte, rescueRoot string, runStarted ...time.Time) error {
+	return commitRotatedCredentials("codex", withLock, listProfiles, name, path, started, data, rescueRoot, runStarted...)
 }
 
 func (m *codexMaintainer) maybeRefresh(ctx context.Context, p ProfileInfo, flag string) {

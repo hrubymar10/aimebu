@@ -124,30 +124,31 @@ type claudeWarmupState struct {
 // leave the stored profile holding the OLD, now-invalidated refresh token — a
 // dead, unrecoverable login. So warmup persists any rotated credentials back via
 // the same CAS copy-back auto-refresh uses, and therefore carries the same
-// withLock + reresolve deps.
+// withLock + listProfiles deps.
 type claudeWarmer struct {
-	executor  refreshExecutor
-	withLock  func(func() error) error              // switcher WithLock; nil = no locking (tests)
-	reresolve func(name string) (ProfileInfo, bool) // current profile by name, for the CAS guard
-	available func() bool
-	reachable func(context.Context) bool
-	clock     Clock
-	cooldown  time.Duration
+	executor     refreshExecutor
+	withLock     func(func() error) error      // switcher WithLock; nil = no locking (tests)
+	listProfiles func() ([]ProfileInfo, error) // current switcher profiles under the copy-back lock
+	available    func() bool
+	reachable    func(context.Context) bool
+	clock        Clock
+	cooldown     time.Duration
+	rescueRoot   string
 
 	mu    sync.Mutex
 	state map[string]*claudeWarmupState
 }
 
-func newClaudeWarmer(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool)) *claudeWarmer {
+func newClaudeWarmer(withLock func(func() error) error, listProfiles func() ([]ProfileInfo, error)) *claudeWarmer {
 	return &claudeWarmer{
-		executor:  dockerRefreshExecutor{},
-		withLock:  withLock,
-		reresolve: reresolve,
-		available: harnessDockerCtrlAvailable,
-		reachable: dockerReachable,
-		clock:     realClock{},
-		cooldown:  claudeWarmupCooldown,
-		state:     map[string]*claudeWarmupState{},
+		executor:     dockerRefreshExecutor{},
+		withLock:     withLock,
+		listProfiles: listProfiles,
+		available:    harnessDockerCtrlAvailable,
+		reachable:    dockerReachable,
+		clock:        realClock{},
+		cooldown:     claudeWarmupCooldown,
+		state:        map[string]*claudeWarmupState{},
 	}
 }
 
@@ -197,6 +198,7 @@ func (w *claudeWarmer) finish(name string) {
 // account, so no live session depends on the pre-rotation token; the file-based
 // switcher reconciles the live config on its next switch/capture.
 func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo, modelFlag string) error {
+	runStarted := time.Now()
 	storedPath := profile.CredPath
 	if storedPath == "" {
 		return errors.New("claude warmup: profile has no credential path")
@@ -241,7 +243,7 @@ func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo, modelFlag 
 	if _, err := ValidateClaudeCredentials(tmpCred); err != nil {
 		return fmt.Errorf("claude warmup: rotated credentials invalid: %w", err)
 	}
-	if err := commitClaudeCredCopyBack(w.withLock, w.reresolve, profile.Name, storedPath, startFingerprint, rotated); err != nil {
+	if err := commitClaudeCredCopyBack(w.withLock, w.listProfiles, profile.Name, storedPath, startData, rotated, w.rescueRoot, runStarted); err != nil {
 		return fmt.Errorf("claude warmup: copy-back: %w", err)
 	}
 	log.Printf("usages: claude warmup profile=%q outcome=credentials-rotated copy_back=success", profile.Name)

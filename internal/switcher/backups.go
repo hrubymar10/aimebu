@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
 // maxProfileBackups caps how many backups/<tool>/<name>-<unix>.json files are
@@ -53,6 +55,27 @@ func (m *Manager) profileBackups(tool, name string) ([]backupFile, error) {
 	}
 	sort.Slice(backups, func(i, j int) bool { return backups[i].ts > backups[j].ts })
 	return backups, nil
+}
+
+// profileRotatedBackups lists rescue files for exactly this profile. They are
+// separate from ordinary switch backups and must follow rename/removal too.
+func (m *Manager) profileRotatedBackups(tool, name string) ([]string, error) {
+	dir := filepath.Join(m.backupsRoot(), tool)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			continue
+		}
+		if _, ok := usages.RotatedRescueTimestamp(entry.Name(), name); ok {
+			paths = append(paths, filepath.Join(dir, entry.Name()))
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 // writeUniqueBackup writes data to backups/<tool>/<name>-<unix>.json, stepping
@@ -175,13 +198,77 @@ func (m *Manager) renameProfileBackups(tool, oldName, newName string) {
 		}
 	}
 	m.pruneBackups(tool, newName)
+	rescues, err := m.profileRotatedBackups(tool, oldName)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("switcher: %s/%s: list rotated rescues to rename: %v", tool, oldName, err)
+		}
+		return
+	}
+	for _, path := range rescues {
+		oldBase := filepath.Base(path)
+		at, _ := usages.RotatedRescueTimestamp(oldBase, oldName)
+		moved := false
+		for !moved {
+			newPath := filepath.Join(filepath.Dir(path), usages.RotatedRescueName(newName, at))
+			err := os.Link(path, newPath)
+			if os.IsExist(err) {
+				at = at.Add(time.Nanosecond)
+				continue
+			}
+			if err != nil {
+				// Some filesystems do not permit hardlinks. Preserve exclusive
+				// creation so a destination rescue is never overwritten.
+				copyErr := copyRescueExclusive(path, newPath)
+				if os.IsExist(copyErr) {
+					at = at.Add(time.Nanosecond)
+					continue
+				}
+				if copyErr != nil {
+					log.Printf("switcher: %s/%s: move rotated rescue %s: link: %v; copy: %v", tool, oldName, oldBase, err, copyErr)
+					break
+				}
+			}
+			moved = true
+		}
+		if !moved {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			log.Printf("switcher: %s/%s: remove moved rotated rescue %s: %v", tool, oldName, oldBase, err)
+		}
+	}
 }
 
-// deleteProfileBackups removes every backup of name (exactly
-// <name>-<digits>.json). Backups are the recovery source detachLinkedProfile
-// restores from by name, so a profile created under a name that once belonged
-// to another account must not inherit that account's backups. Callers hold the
-// switcher lock.
+func copyRescueExclusive(source, target string) error {
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(target)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(target)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(target)
+		return err
+	}
+	return nil
+}
+
+// deleteProfileBackups removes ordinary backups of name. Rotated rescues are
+// recovery artifacts and survive Add, Import, rollback, and rename-to; only
+// an explicit Remove deletes them. Callers hold the switcher lock.
 func (m *Manager) deleteProfileBackups(tool, name string) error {
 	backups, err := m.profileBackups(tool, name)
 	if err != nil {
@@ -193,6 +280,23 @@ func (m *Manager) deleteProfileBackups(tool, name string) error {
 	var errs []error
 	for _, b := range backups {
 		if err := os.Remove(b.path); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Manager) deleteProfileRescues(tool, name string) error {
+	rescues, err := m.profileRotatedBackups(tool, name)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, path := range rescues {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, err)
 		}
 	}

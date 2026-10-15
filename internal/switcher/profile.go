@@ -327,6 +327,26 @@ func (m *Manager) Remove(tool, name string, force bool) error {
 	if isActive && !force {
 		return fmt.Errorf("%w: %s/%s", ErrActiveProfile, tool, name)
 	}
+	// Record the removed account before its credentials disappear. A concurrent
+	// maintenance run checks this under the same lock before any copy-back.
+	credPath := m.profileCredPath(tool, name)
+	if isActive {
+		credPath, err = m.liveCredPath(tool)
+		if err != nil {
+			log.Printf("ERROR switcher: %s/%s: skip removal tombstone: resolve live credentials: %v", tool, name, err)
+		}
+	}
+	if err == nil {
+		if credentials, readErr := os.ReadFile(credPath); readErr == nil {
+			if recordErr := usages.RecordRemovedProfile(m.root, tool, name, credentials); recordErr != nil {
+				log.Printf("ERROR switcher: %s/%s: skip removal tombstone: %v", tool, name, recordErr)
+			}
+		} else if os.IsNotExist(readErr) {
+			log.Printf("switcher: %s/%s: skip removal tombstone: credentials missing", tool, name)
+		} else {
+			log.Printf("ERROR switcher: %s/%s: skip removal tombstone: read credentials: %v", tool, name, readErr)
+		}
+	}
 
 	// RemoveAll unlinks symlinks rather than following them, so removing an
 	// active profile whose stored file links to the live credentials deletes
@@ -339,6 +359,9 @@ func (m *Manager) Remove(tool, name string, force bool) error {
 	// Logged, not returned: the profile itself is already gone.
 	if err := m.deleteProfileBackups(tool, name); err != nil {
 		log.Printf("switcher: %s/%s: delete backups of removed profile: %v", tool, name, err)
+	}
+	if err := m.deleteProfileRescues(tool, name); err != nil {
+		log.Printf("switcher: %s/%s: delete rescues of removed profile: %v", tool, name, err)
 	}
 
 	if isActive {

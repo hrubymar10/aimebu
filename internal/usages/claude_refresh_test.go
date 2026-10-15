@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -358,8 +360,8 @@ func TestClaudeRefreshCopiesBackToActiveProfile(t *testing.T) {
 	r := newTestRefresher(exec, &fakeClock{now: now})
 	// The re-resolve reports the profile is (and stays) active: refreshing an
 	// active claude profile is intended now, so copy-back must NOT abort.
-	r.reresolve = func(name string) (ProfileInfo, bool) {
-		return ProfileInfo{Tool: "claude", Name: name, Active: true, CredPath: credPath, HasCredentials: true}, true
+	r.listProfiles = func() ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "claude", Name: "work", Active: true, CredPath: credPath, HasCredentials: true}}, nil
 	}
 
 	profile := ProfileInfo{Tool: "claude", Name: "work", Active: true, CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
@@ -376,11 +378,374 @@ func TestClaudeRefreshCopiesBackToActiveProfile(t *testing.T) {
 	}
 }
 
+// The real switcher detaches an active profile's symlink into a snapshot while
+// the container is running. The rotated token must follow that profile.
+func TestClaudeRefreshRotationSurvivesSwitchAway(t *testing.T) {
+	now := time.Unix(4_100_000, 0)
+	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
+	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	live := filepath.Join(home, ".claude", ".credentials.json")
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	switchRoot := filepath.Join(root, "switcher")
+	runSwitcherDriver(t, "setup", switchRoot, home, "claude")
+	stored := filepath.Join(switchRoot, "profiles", "claude", "main", ".credentials.json")
+
+	executor := &fakeExecutor{writeNew: rotated, inspect: func(string) error {
+		runSwitcherDriver(t, "switch", switchRoot, home, "claude")
+		return nil
+	}}
+	r := newTestRefresher(executor, &fakeClock{now: now})
+	r.listProfiles = func() ([]ProfileInfo, error) {
+		_, err := os.Stat(stored)
+		return []ProfileInfo{{Tool: "claude", Name: "main", CredPath: stored, HasCredentials: err == nil}}, nil
+	}
+	p := ProfileInfo{Tool: "claude", Name: "main", Active: true, CredPath: live, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
+	_, err := r.maybeRefreshSync(context.Background(), p)
+	if err != nil {
+		t.Fatalf("refresh after switch: %v", err)
+	}
+	got, err := os.ReadFile(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != rotated {
+		t.Fatalf("stored credentials = %s, want rotated %s", got, rotated)
+	}
+}
+
+func TestClaudeRefreshRotationSurvivesProfileRename(t *testing.T) {
+	now := time.Unix(4_200_000, 0)
+	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
+	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	live := filepath.Join(home, ".claude", ".credentials.json")
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	switchRoot := filepath.Join(root, "switcher")
+	runSwitcherDriver(t, "setup", switchRoot, home, "claude")
+	oldStored := filepath.Join(switchRoot, "profiles", "claude", "main", ".credentials.json")
+	renamedStored := filepath.Join(switchRoot, "profiles", "claude", "renamed", ".credentials.json")
+	unrelated := filepath.Join(root, "unrelated.json")
+	if err := os.WriteFile(unrelated, []byte("malformed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	executor := &fakeExecutor{writeNew: rotated, inspect: func(string) error {
+		runSwitcherDriver(t, "rename", switchRoot, home, "claude")
+		return nil
+	}}
+	r := newTestRefresher(executor, &fakeClock{now: now})
+	r.listProfiles = func() ([]ProfileInfo, error) {
+		return []ProfileInfo{
+			{Tool: "claude", Name: "unrelated", CredPath: unrelated},
+			{Tool: "claude", Name: "renamed", Active: true, CredPath: renamedStored, HasCredentials: true},
+		}, nil
+	}
+	p := ProfileInfo{Tool: "claude", Name: "main", Active: true, CredPath: live, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
+	if _, err := r.maybeRefreshSync(context.Background(), p); err != nil {
+		t.Fatalf("refresh after rename: %v", err)
+	}
+	got, err := os.ReadFile(renamedStored)
+	if err != nil || string(got) != rotated {
+		t.Fatalf("renamed profile credentials = %s, %v; want %s", got, err, rotated)
+	}
+	if _, err := os.Lstat(oldStored); !os.IsNotExist(err) {
+		t.Fatalf("old profile still exists: %v", err)
+	}
+}
+
+func TestClaudeCopyBackRescuesRotationWhenProfileListingFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".credentials.json")
+	started := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"r1","expiresAt":1000}}`)
+	rotated := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"r2","expiresAt":2000}}`)
+	if err := os.WriteFile(path, started, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	err := commitClaudeCredCopyBack(nil, func() ([]ProfileInfo, error) { return nil, errors.New("list failed") },
+		"work", path, started, rotated, root)
+	if err == nil || !strings.Contains(err.Error(), "list failed") {
+		t.Fatalf("listing error = %v", err)
+	}
+	assertRotatedRescue(t, root, "claude", "work", string(rotated))
+}
+
+func TestClaudeCopyBackRescuesAmbiguousRename(t *testing.T) {
+	root := t.TempDir()
+	started := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"shared","expiresAt":1000}}`)
+	rotated := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"next","expiresAt":2000}}`)
+	first := filepath.Join(root, "first.json")
+	second := filepath.Join(root, "second.json")
+	for _, path := range []string{first, second} {
+		if err := os.WriteFile(path, started, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := func() ([]ProfileInfo, error) {
+		return []ProfileInfo{
+			{Tool: "claude", Name: "first", CredPath: first, HasCredentials: true},
+			{Tool: "claude", Name: "second", CredPath: second, HasCredentials: true},
+		}, nil
+	}
+	rescueRoot := t.TempDir()
+	if err := commitClaudeCredCopyBack(nil, list, "renamed", first, started, rotated, rescueRoot); err == nil {
+		t.Fatal("ambiguous rename must not pick a profile")
+	}
+	for _, path := range []string{first, second} {
+		got, err := os.ReadFile(path)
+		if err != nil || string(got) != string(started) {
+			t.Fatalf("ambiguous profile %s changed: %s, %v", path, got, err)
+		}
+	}
+	assertRotatedRescue(t, rescueRoot, "claude", "renamed", string(rotated))
+}
+
+func TestClaudeCopyBackDiscardsRemovedTokenAfterNameReuse(t *testing.T) {
+	root := t.TempDir()
+	runStarted := time.Now().Add(-time.Minute)
+	started := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"old-refresh","expiresAt":1000}}`)
+	rotated := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"rotated","expiresAt":2000}}`)
+	replacement := []byte(`{"claudeAiOauth":{"accessToken":"other","refreshToken":"other-refresh","expiresAt":3000}}`)
+	path := filepath.Join(root, "work.json")
+	if err := os.WriteFile(path, replacement, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordRemovedProfile(root, "claude", "work", started); err != nil {
+		t.Fatal(err)
+	}
+	list := func() ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "claude", Name: "work", CredPath: path}}, nil
+	}
+	err := commitClaudeCredCopyBack(nil, list, "work", path, started, rotated, root, runStarted)
+	if !errors.Is(err, errClaudeRefreshProfileGone) {
+		t.Fatalf("removed token copy-back = %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !reflect.DeepEqual(got, replacement) {
+		t.Fatalf("reused name credentials changed: %s, %v", got, err)
+	}
+	assertNoRotatedRescue(t, root, "claude", "work")
+}
+
+func TestClaudeCopyBackRescuesRecentRemovalWithMalformedSibling(t *testing.T) {
+	root := t.TempDir()
+	runStarted := time.Now().Add(-time.Minute)
+	started := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"old-refresh","expiresAt":1000}}`)
+	rotated := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"rotated","expiresAt":2000}}`)
+	malformed := filepath.Join(root, "sibling.json")
+	if err := os.WriteFile(malformed, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list := func() ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "claude", Name: "sibling", CredPath: malformed}}, nil
+	}
+	if err := RecordRemovedProfile(root, "claude", "work", started); err != nil {
+		t.Fatal(err)
+	}
+	if err := commitClaudeCredCopyBack(nil, list, "work", "", started, rotated, root, runStarted); err == nil {
+		t.Fatal("unreadable sibling must rescue")
+	}
+	assertRotatedRescue(t, root, "claude", "work", string(rotated))
+}
+
+func TestClaudeCopyBackKeepsSharedTokenProfileAfterSiblingRemoval(t *testing.T) {
+	root := t.TempDir()
+	runStarted := time.Now().Add(-time.Minute)
+	started := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"shared","expiresAt":1000}}`)
+	rotated := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"next","expiresAt":2000}}`)
+	workPath := filepath.Join(root, "work.json")
+	if err := os.WriteFile(workPath, started, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// tmp and work held the same token; tmp was removed during work's run.
+	if err := RecordRemovedProfile(root, "claude", "tmp", started); err != nil {
+		t.Fatal(err)
+	}
+	list := func() ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "claude", Name: "work", CredPath: workPath}}, nil
+	}
+	if err := commitClaudeCredCopyBack(nil, list, "work", workPath, started, rotated, root, runStarted); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(workPath)
+	if err != nil || !reflect.DeepEqual(got, rotated) {
+		t.Fatalf("work credentials = %s, %v", got, err)
+	}
+}
+
+func TestClaudeCopyBackRescuesOldTombstone(t *testing.T) {
+	root := t.TempDir()
+	started := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"old-refresh","expiresAt":1000}}`)
+	rotated := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"rotated","expiresAt":2000}}`)
+	if err := RecordRemovedProfile(root, "claude", "work", started); err != nil {
+		t.Fatal(err)
+	}
+	// The removal predates this maintenance run and cannot explain why its
+	// current profile lookup is empty.
+	runStarted := time.Now().Add(time.Minute)
+	err := commitClaudeCredCopyBack(nil, func() ([]ProfileInfo, error) { return nil, nil },
+		"work", "", started, rotated, root, runStarted)
+	if err == nil {
+		t.Fatal("old tombstone should lead to a rescue")
+	}
+	assertRotatedRescue(t, root, "claude", "work", string(rotated))
+}
+
+func TestClaudeCopyBackRescuesRenameAndRelogin(t *testing.T) {
+	root := t.TempDir()
+	started := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"starting","expiresAt":1000}}`)
+	rotated := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"rotated","expiresAt":2000}}`)
+	newLogin := []byte(`{"claudeAiOauth":{"accessToken":"other","refreshToken":"other","expiresAt":3000}}`)
+	path := filepath.Join(root, "renamed.json")
+	if err := os.WriteFile(path, newLogin, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list := func() ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "claude", Name: "renamed", CredPath: path}}, nil
+	}
+	if err := commitClaudeCredCopyBack(nil, list, "original", "", started, rotated, root); err == nil {
+		t.Fatal("rename and re-login must rescue")
+	}
+	assertRotatedRescue(t, root, "claude", "original", string(rotated))
+	got, err := os.ReadFile(path)
+	if err != nil || !reflect.DeepEqual(got, newLogin) {
+		t.Fatalf("new login overwritten: %s, %v", got, err)
+	}
+}
+
+func TestClaudeCopyBackCorruptTombstonesRescue(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "removed.json"), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	started := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"starting","expiresAt":1000}}`)
+	rotated := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"rotated","expiresAt":2000}}`)
+	if err := commitClaudeCredCopyBack(nil, func() ([]ProfileInfo, error) { return nil, nil },
+		"work", "", started, rotated, root); err == nil {
+		t.Fatal("corrupt tombstones and missing profile must rescue")
+	}
+	assertRotatedRescue(t, root, "claude", "work", string(rotated))
+}
+
+func TestClaudeCopyBackRescuesMalformedSiblingWithoutRemoval(t *testing.T) {
+	root := t.TempDir()
+	started := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"old-refresh","expiresAt":1000}}`)
+	rotated := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"rotated","expiresAt":2000}}`)
+	malformed := filepath.Join(root, "sibling.json")
+	if err := os.WriteFile(malformed, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list := func() ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "claude", Name: "sibling", CredPath: malformed}}, nil
+	}
+	if err := commitClaudeCredCopyBack(nil, list, "work", "", started, rotated, root); err == nil {
+		t.Fatal("malformed sibling must rescue")
+	}
+	assertRotatedRescue(t, root, "claude", "work", string(rotated))
+}
+
+func TestClaudeCopyBackPreservesUnrelatedCredentialKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".credentials.json")
+	started := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"r1","expiresAt":1000},"mcpOAuth":{"server":"before"}}`)
+	current := []byte(`{"claudeAiOauth":{"accessToken":"old","refreshToken":"r1","expiresAt":1000},"mcpOAuth":{"server":"updated"}}`)
+	rotated := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"r2","expiresAt":2000}}`)
+	if err := os.WriteFile(path, current, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := commitClaudeCredCopyBack(nil, nil, "work", path, started, rotated, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got["mcpOAuth"]) != `{"server":"updated"}` || string(got["claudeAiOauth"]) != `{"accessToken":"new","refreshToken":"r2","expiresAt":2000}` {
+		t.Fatalf("copy-back lost concurrent keys or rotated OAuth: %s", data)
+	}
+}
+
+func TestClaudeCopyBackAcceptsSupportedRefreshTokenSpellings(t *testing.T) {
+	for _, section := range []string{"claudeAiOauth", "claude_ai_oauth"} {
+		for _, field := range []string{"refreshToken", "refresh_token"} {
+			t.Run(section+"/"+field, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), ".credentials.json")
+				started := []byte(fmt.Sprintf(`{"%s":{"accessToken":"old","%s":"r1","expiresAt":1000}}`, section, field))
+				rotated := []byte(fmt.Sprintf(`{"%s":{"accessToken":"new","%s":"r2","expiresAt":2000}}`, section, field))
+				if err := os.WriteFile(path, started, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := commitClaudeCredCopyBack(nil, nil, "work", path, started, rotated, t.TempDir()); err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(path)
+				if err != nil || string(got) != string(rotated) {
+					t.Fatalf("copy-back = %s, %v; want %s", got, err, rotated)
+				}
+			})
+		}
+	}
+}
+
+func TestClaudeCopyBackRescuesRotationWhenStartingTokenMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".credentials.json")
+	started := []byte(`{"claudeAiOauth":{"accessToken":"old","expiresAt":1000}}`)
+	rotated := []byte(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"r2","expiresAt":2000}}`)
+	if err := os.WriteFile(path, started, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := commitClaudeCredCopyBack(nil, nil, "work", path, started, rotated, root); err == nil {
+		t.Fatal("copy-back accepted a missing starting refresh token")
+	}
+	assertRotatedRescue(t, root, "claude", "work", string(rotated))
+}
+
+func TestRotatedRescueFilesPrunedToThreePerProfile(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 5; i++ {
+		if err := saveAbortedRotation("claude", "work", []byte(fmt.Sprint(i)), root, errClaudeRefreshProfileChanged); err == nil {
+			t.Fatal("expected copy-back abort")
+		}
+	}
+	paths, err := filepath.Glob(filepath.Join(root, "backups", "claude", "work-rotated-*.json"))
+	if err != nil || len(paths) != maxRotatedRescues {
+		t.Fatalf("rotated rescue paths = %v, err=%v", paths, err)
+	}
+	newest, err := os.ReadFile(paths[len(paths)-1])
+	if err != nil || string(newest) != "4" {
+		t.Fatalf("newest rescue = %q, %v; want 4", newest, err)
+	}
+}
+
+func runSwitcherDriver(t *testing.T, action, root, home, tool string) {
+	t.Helper()
+	cmd := exec.Command("go", "run", "./testdata/switcherdriver", action, root, home, tool)
+	cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+filepath.Join(home, ".claude"), "CODEX_HOME="+filepath.Join(home, ".codex"), "AIMEBU_CONFIG_DIR="+filepath.Dir(root))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("switcher %s: %v: %s", action, err, output)
+	}
+}
+
 func TestClaudeRefreshCASAbortsWhenStoredFileChanged(t *testing.T) {
 	now := time.Unix(5_000_000, 0)
 	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
 	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
-	changed := claudeCredsWithExpiry("switched-in-tok", now.Add(9*time.Hour).UnixMilli())
+	changed := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"switched-in-tok","refreshToken":"new-login","expiresAt":%d}}`, now.Add(9*time.Hour).UnixMilli())
 
 	_, credPath := writeStoredProfile(t, old)
 	// The executor mutates the real stored file mid-refresh (simulating a switch
@@ -388,6 +753,7 @@ func TestClaudeRefreshCASAbortsWhenStoredFileChanged(t *testing.T) {
 	exec := &fakeExecutor{}
 	exec.err = nil
 	r := newTestRefresher(&mutatingExecutor{inner: exec, storedPath: credPath, mutateTo: changed, writeNew: rotated}, &fakeClock{now: now})
+	r.rescueRoot = t.TempDir()
 
 	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
 	_, err := r.maybeRefreshSync(context.Background(), profile)
@@ -397,6 +763,29 @@ func TestClaudeRefreshCASAbortsWhenStoredFileChanged(t *testing.T) {
 	got, _ := os.ReadFile(credPath)
 	if string(got) != changed {
 		t.Fatalf("stored credentials must retain the mid-refresh change, got=%s", got)
+	}
+	assertRotatedRescue(t, r.rescueRoot, "claude", "work", rotated)
+}
+
+func assertRotatedRescue(t *testing.T, root, tool, profile, want string) {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(root, "backups", tool, profile+"-rotated-*.json"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("rotated backup paths = %v, err=%v", paths, err)
+	}
+	info, err := os.Stat(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("backup mode = %o", info.Mode().Perm())
+	}
+	got, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("rotated backup = %s, want %s", got, want)
 	}
 }
 
@@ -424,8 +813,9 @@ func TestClaudeRefreshCASAbortsWhenProfileRemoved(t *testing.T) {
 	dir, credPath := writeStoredProfile(t, old)
 	exec := &fakeExecutor{writeNew: rotated}
 	r := newTestRefresher(exec, &fakeClock{now: now})
+	r.rescueRoot = t.TempDir()
 	// Re-resolve says the profile is gone.
-	r.reresolve = func(string) (ProfileInfo, bool) { return ProfileInfo{}, false }
+	r.listProfiles = func() ([]ProfileInfo, error) { return nil, nil }
 	// And the stored file is removed mid-refresh.
 	r.executor = &removingExecutor{storedPath: credPath, writeNew: rotated}
 
@@ -437,7 +827,16 @@ func TestClaudeRefreshCASAbortsWhenProfileRemoved(t *testing.T) {
 	if _, statErr := os.Stat(credPath); !os.IsNotExist(statErr) {
 		t.Fatalf("stored credentials should stay removed, stat err=%v", statErr)
 	}
+	assertRotatedRescue(t, r.rescueRoot, "claude", "work", rotated)
 	_ = dir
+}
+
+func assertNoRotatedRescue(t *testing.T, root, tool, profile string) {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(root, "backups", tool, profile+"-rotated-*.json"))
+	if err != nil || len(paths) != 0 {
+		t.Fatalf("removed profile left rotated rescues: %v, err=%v", paths, err)
+	}
 }
 
 type removingExecutor struct {
@@ -533,15 +932,15 @@ func TestManagerTriggerClaudeAutoRefreshGatedOnSetting(t *testing.T) {
 	m := NewManager(store, EmptyRegistry())
 	m.SetClock(&fakeClock{now: now})
 	m.claudeAvailableFn = func() bool { return true }
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
-		return []ProfileInfo{{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}}
+		return []ProfileInfo{{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}}, nil
 	})
 	exec := &fakeExecutor{writeNew: rotated}
 	m.claudeRefresher = newTestRefresher(exec, &fakeClock{now: now})
-	m.claudeRefresher.reresolve = m.currentClaudeProfile
+	m.claudeRefresher.listProfiles = func() ([]ProfileInfo, error) { return m.listMaintenanceProfiles("claude") }
 
 	// Setting disabled by default → no refresh.
 	m.triggerClaudeAutoRefresh(context.Background())

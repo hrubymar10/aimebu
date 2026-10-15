@@ -138,14 +138,14 @@ func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
 
 func TestHTTPUsageShapeDoesNotDependOnSwitcherEnabled(t *testing.T) {
 	m := NewManager(NewStoreAt(t.TempDir()), EmptyRegistry())
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool == "codex" {
 			return []ProfileInfo{
 				{Tool: "codex", Name: "main", Active: true, HasCredentials: true},
 				{Tool: "codex", Name: "backup", HasCredentials: true},
-			}
+			}, nil
 		}
-		return []ProfileInfo{}
+		return []ProfileInfo{}, nil
 	})
 	enabled := false
 	m.SetSwitcherSettingsProvider(func() bool { return enabled })

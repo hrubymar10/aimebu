@@ -339,7 +339,8 @@ snapshots, no secrets), and `.lock` (stable flock target for server/CLI
 refresh coordination).
 `switcher/` holds account-switcher state and is **not server-owned** — the CLI
 writes it with the server stopped: `state.json` (0600, enabled flag plus the
-active profile per tool, schema-versioned), `profiles/<tool>/<name>/` (stored
+active profile per tool, schema-versioned), `removed.json` (0600, last 50
+explicit removals with hashed refresh tokens), `profiles/<tool>/<name>/` (stored
 credentials, 0600 files in 0700 dirs; the active profile's credential file is a
 symlink to the live one, replaced by a regular snapshot on switch-away),
 `backups/<tool>/` (pre-switch safety copies), and `.lock` (flock serializing every mutating operation across CLI and

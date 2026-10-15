@@ -249,11 +249,11 @@ func TestManagerCredentialChangeBypassesFreshCache(t *testing.T) {
 			}
 			provider := &fakeProvider{key: tc.provider}
 			m := NewManager(store, NewRegistry(provider))
-			m.SetProfileLister(func(tool string) []ProfileInfo {
+			m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 				if tool != tc.tool {
-					return nil
+					return nil, nil
 				}
-				return []ProfileInfo{{Tool: tc.tool, Name: "main", Active: true, CredPath: credPath, HasCredentials: true}}
+				return []ProfileInfo{{Tool: tc.tool, Name: "main", Active: true, CredPath: credPath, HasCredentials: true}}, nil
 			})
 
 			if _, _, err := m.refresh(context.Background(), tc.provider, false); err != nil {
@@ -301,14 +301,14 @@ func TestManagerDiscardsFetchWhenActiveProfileChanges(t *testing.T) {
 			provider := &fakeProvider{key: tc.provider, entered: entered, block: release}
 			m := NewManager(store, NewRegistry(provider))
 			var backupActive atomic.Bool
-			m.SetProfileLister(func(tool string) []ProfileInfo {
+			m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 				if tool != tc.tool {
-					return nil
+					return nil, nil
 				}
 				return []ProfileInfo{
 					{Tool: tc.tool, Name: "main", Active: !backupActive.Load(), CredPath: mainPath, HasCredentials: true},
 					{Tool: tc.tool, Name: "backup", Active: backupActive.Load(), CredPath: backupPath, HasCredentials: true},
-				}
+				}, nil
 			})
 
 			done := make(chan error, 1)
@@ -359,8 +359,8 @@ func TestManagerDiscardsFetchWhenCredentialChangesMidRequest(t *testing.T) {
 	}
 	provider := &fakeProvider{key: ProviderCodex}
 	m := NewManager(store, NewRegistry(provider))
-	m.SetProfileLister(func(tool string) []ProfileInfo {
-		return []ProfileInfo{{Tool: "codex", Name: "main", Active: true, CredPath: credPath, HasCredentials: true}}
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "codex", Name: "main", Active: true, CredPath: credPath, HasCredentials: true}}, nil
 	})
 	if _, _, err := m.refresh(context.Background(), ProviderCodex, true); err != nil {
 		t.Fatalf("initial refresh: %v", err)
@@ -756,11 +756,11 @@ func TestInvariantNamedMigrationDropsUnownedDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
-		return []ProfileInfo{{Tool: "claude", Name: "main", Active: true, Email: "main@test", HasCredentials: true}}
+		return []ProfileInfo{{Tool: "claude", Name: "main", Active: true, Email: "main@test", HasCredentials: true}}, nil
 	})
 	resp, err := m.Snapshot(context.Background(), "")
 	if err != nil {
@@ -832,14 +832,14 @@ func TestCacheMigrationPreservesOwnedHistory(t *testing.T) {
 			t.Fatal(err)
 		}
 		m := NewManager(store, EmptyRegistry())
-		m.SetProfileLister(func(tool string) []ProfileInfo {
+		m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 			if tool != "claude" {
-				return []ProfileInfo{}
+				return []ProfileInfo{}, nil
 			}
 			return []ProfileInfo{
 				{Tool: "claude", Name: "main", Active: true, HasCredentials: true, Email: "main@test"},
 				{Tool: "claude", Name: "backup", HasCredentials: true},
-			}
+			}, nil
 		})
 		resp, err := m.Snapshot(context.Background(), "")
 		if err != nil {
@@ -906,14 +906,14 @@ func TestInvariantNoDefaultOnSwitcherTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
 		return []ProfileInfo{
 			{Tool: "claude", Name: "main", Active: true, HasCredentials: true},
 			{Tool: "claude", Name: "bkp", Active: false, HasCredentials: true},
-		}
+		}, nil
 	})
 	// Full refresh cycle: provider fetch + profile derivation
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
@@ -983,14 +983,14 @@ func TestInvariantExactlyOneActivePerSwitcherTool(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
 		return []ProfileInfo{
 			{Tool: "claude", Name: "main", Active: true, HasCredentials: true},
 			{Tool: "claude", Name: "bkp", Active: false, HasCredentials: true},
-		}
+		}, nil
 	})
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 		t.Fatalf("refresh: %v", err)
@@ -1030,14 +1030,14 @@ func TestInvariantNoDuplicatesAcrossCycles(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
 		return []ProfileInfo{
 			{Tool: "claude", Name: "main", Active: true, HasCredentials: true},
 			{Tool: "claude", Name: "bkp", Active: false, HasCredentials: true},
-		}
+		}, nil
 	})
 	// Two full refresh cycles
 	for cycle := 0; cycle < 2; cycle++ {
@@ -1091,13 +1091,13 @@ func TestInvariantOrphanEntriesRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
 		return []ProfileInfo{
 			{Tool: "claude", Name: "main", Active: true, HasCredentials: true},
-		}
+		}, nil
 	})
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 		t.Fatalf("refresh: %v", err)
@@ -1148,14 +1148,14 @@ func TestEndStateAllPropertiesWithSeededHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
 		return []ProfileInfo{
 			{Tool: "claude", Name: "main", Active: true, HasCredentials: true, Email: "main@test"},
 			{Tool: "claude", Name: "bkp", Active: false, HasCredentials: false, Email: ""},
-		}
+		}, nil
 	})
 	// Full refresh cycle
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
@@ -1246,14 +1246,14 @@ func TestInvariantAllProfileTimestampsAdvance(t *testing.T) {
 	clock := &fakeClock{now: time.Unix(1000, 0)}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode}))
 	m.SetClock(clock)
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
 		return []ProfileInfo{
 			{Tool: "claude", Name: "main", Active: true, HasCredentials: true},
 			{Tool: "claude", Name: "bkp", Active: false, HasCredentials: true},
-		}
+		}, nil
 	})
 	// First refresh
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
@@ -1319,9 +1319,9 @@ func TestRefreshPublishesNamedActiveEntryWhenProviderEntryMissing(t *testing.T) 
 	clock := &fakeClock{now: time.Unix(2000, 0)}
 	m := NewManager(store, NewRegistry(&fakeProvider{key: ProviderClaudeCode, err: errors.New("temporary claude failure")}))
 	m.SetClock(clock)
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
 		return []ProfileInfo{{
 			Tool:           "claude",
@@ -1330,7 +1330,7 @@ func TestRefreshPublishesNamedActiveEntryWhenProviderEntryMissing(t *testing.T) 
 			CredPath:       "live-credentials.json",
 			Email:          "main@test",
 			HasCredentials: true,
-		}}
+		}}, nil
 	})
 	if _, _, err := m.refresh(context.Background(), "", false); err != nil {
 		t.Fatalf("refresh: %v", err)
@@ -1373,16 +1373,16 @@ func TestForceRefreshBroadcastsNamedProfileError(t *testing.T) {
 		&fakeProvider{key: ProviderCodex},
 		&fakeProvider{key: ProviderClaudeCode, err: errors.New("temporary claude failure")},
 	))
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
 		return []ProfileInfo{{
 			Tool:           "claude",
 			Name:           "main",
 			Active:         true,
 			HasCredentials: true,
-		}}
+		}}, nil
 	})
 	updates := make(chan UsagesResponse, 1)
 	m.SetUpdateHook(func(resp UsagesResponse) {

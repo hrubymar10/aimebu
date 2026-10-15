@@ -3,6 +3,7 @@ package usages
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -126,6 +127,7 @@ func TestCodexRefreshCASRejectsChangedProfile(t *testing.T) {
 	os.WriteFile(path, []byte(old), 0o600)
 	exec := &fakeCodexExecutor{write: next, inspect: func(string) error { return os.WriteFile(path, []byte(changed), 0o600) }}
 	m := testCodexMaintainer(exec, now)
+	m.rescueRoot = t.TempDir()
 	_, err := m.refreshSync(context.Background(), ProfileInfo{Tool: "codex", Name: "work", CredPath: path, HasCredentials: true}, DefaultCodexModelFlag)
 	if !errors.Is(err, errClaudeRefreshProfileChanged) {
 		t.Fatalf("err=%v", err)
@@ -133,6 +135,150 @@ func TestCodexRefreshCASRejectsChangedProfile(t *testing.T) {
 	got, _ := os.ReadFile(path)
 	if string(got) != changed {
 		t.Fatal("mid-flight credentials overwritten")
+	}
+	assertRotatedRescue(t, m.rescueRoot, "codex", "work", next)
+}
+
+func TestCodexRotationSurvivesSwitchAway(t *testing.T) {
+	now := time.Now().UTC()
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	live := filepath.Join(home, ".codex", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := codexAuth("old", "r1", now.Add(-time.Hour).Format(time.RFC3339))
+	next := codexAuth("new", "r2", now.Format(time.RFC3339))
+	if err := os.WriteFile(live, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	switchRoot := filepath.Join(root, "switcher")
+	runSwitcherDriver(t, "setup", switchRoot, home, "codex")
+	stored := filepath.Join(switchRoot, "profiles", "codex", "main", "auth.json")
+	exec := &fakeCodexExecutor{write: next, inspect: func(string) error {
+		runSwitcherDriver(t, "switch", switchRoot, home, "codex")
+		return nil
+	}}
+	m := testCodexMaintainer(exec, now)
+	m.rescueRoot = switchRoot
+	m.listProfiles = func() ([]ProfileInfo, error) {
+		_, err := os.Stat(stored)
+		return []ProfileInfo{{Tool: "codex", Name: "main", CredPath: stored, HasCredentials: err == nil}}, nil
+	}
+	p := ProfileInfo{Tool: "codex", Name: "main", Active: true, CredPath: live, HasCredentials: true}
+	if attempted, err := m.refreshSync(context.Background(), p, ""); !attempted || err != nil {
+		t.Fatalf("refresh = %v %v", attempted, err)
+	}
+	got, err := os.ReadFile(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != next {
+		t.Fatalf("stored auth = %s, want %s", got, next)
+	}
+}
+
+func TestCodexCopyBackPreservesUnrelatedAuthKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	started := []byte(`{"tokens":{"access_token":"old","refresh_token":"r1"},"last_refresh":"2026-01-01T00:00:00Z","account":"before"}`)
+	current := []byte(`{"tokens":{"access_token":"old","refresh_token":"r1"},"last_refresh":"2026-01-01T00:00:00Z","account":"updated"}`)
+	rotated := []byte(`{"tokens":{"access_token":"new","refresh_token":"r2"},"last_refresh":"2026-01-02T00:00:00Z"}`)
+	if err := os.WriteFile(path, current, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := commitCodexAuthCopyBack(nil, nil, "work", path, started, rotated, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got["account"]) != `"updated"` || string(got["tokens"]) != `{"access_token":"new","refresh_token":"r2"}` {
+		t.Fatalf("copy-back lost concurrent keys or rotated OAuth: %s", data)
+	}
+}
+
+func TestCodexCopyBackAcceptsCamelRefreshToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	started := []byte(`{"tokens":{"access_token":"old","refreshToken":"r1"}}`)
+	rotated := []byte(`{"tokens":{"access_token":"new","refreshToken":"r2"}}`)
+	if err := os.WriteFile(path, started, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := commitCodexAuthCopyBack(nil, nil, "work", path, started, rotated, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(rotated) {
+		t.Fatalf("copy-back = %s, %v; want %s", got, err, rotated)
+	}
+}
+
+func TestCodexCopyBackRescuesRotationWhenStartingTokenMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	started := []byte(`{"tokens":{"access_token":"old"}}`)
+	rotated := []byte(`{"tokens":{"access_token":"new","refresh_token":"r2"}}`)
+	if err := os.WriteFile(path, started, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := commitCodexAuthCopyBack(nil, nil, "work", path, started, rotated, root); err == nil {
+		t.Fatal("copy-back accepted a missing starting refresh token")
+	}
+	assertRotatedRescue(t, root, "codex", "work", string(rotated))
+}
+
+func TestCodexCopyBackOmitsAbsentLastRefresh(t *testing.T) {
+	current := []byte(`{"tokens":{"access_token":"old","refresh_token":"r1"},"account":"keep"}`)
+	rotated := []byte(`{"tokens":{"access_token":"new","refresh_token":"r2"}}`)
+	merged, err := mergeRotatedCredentials("codex", current, rotated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(merged, &got); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := got["last_refresh"]; exists {
+		t.Fatalf("absent last_refresh became %s", got["last_refresh"])
+	}
+	if string(got["account"]) != `"keep"` {
+		t.Fatalf("unrelated account field lost: %s", merged)
+	}
+}
+
+func TestCodexCopyBackRescuesUnprovenProfileRemoval(t *testing.T) {
+	root := t.TempDir()
+	err := commitCodexAuthCopyBack(nil, func() ([]ProfileInfo, error) { return nil, nil },
+		"work", filepath.Join(root, "auth.json"), []byte(`{"tokens":{"refresh_token":"r1"}}`),
+		[]byte(`{"tokens":{"refresh_token":"r2"}}`), root)
+	if !errors.Is(err, errClaudeRefreshProfileGone) {
+		t.Fatalf("removed profile error = %v", err)
+	}
+	assertRotatedRescue(t, root, "codex", "work", `{"tokens":{"refresh_token":"r2"}}`)
+}
+
+func TestCodexCopyBackKeepsImplicitLocalProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	started := []byte(codexAuth("old", "r1", "2026-01-01T00:00:00Z"))
+	rotated := []byte(codexAuth("new", "r2", "2026-01-02T00:00:00Z"))
+	if err := os.WriteFile(path, started, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list := func() ([]ProfileInfo, error) {
+		return listProfilesOrLocal(func(string) ([]ProfileInfo, error) { return nil, nil }, "codex",
+			ProfileInfo{Tool: "codex", Name: "local", Active: true, CredPath: path, HasCredentials: true})
+	}
+	if err := commitCodexAuthCopyBack(nil, list, "local", path, started, rotated, t.TempDir()); err != nil {
+		t.Fatalf("local copy-back: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(rotated) {
+		t.Fatalf("local credentials = %s, %v; want %s", got, err, rotated)
 	}
 }
 
@@ -193,11 +339,11 @@ func TestManagerCodexSmartSpacingExcludesWeeklyCappedProfileAndCount(t *testing.
 	m := NewManager(store, EmptyRegistry())
 	m.SetClock(clock)
 	m.claudeAvailableFn = func() bool { return true }
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool == "codex" {
-			return profiles
+			return profiles, nil
 		}
-		return nil
+		return nil, nil
 	})
 	m.codexMaintainer = testCodexMaintainer(&fakeCodexExecutor{}, now)
 	m.codexMaintainer.clock = clock

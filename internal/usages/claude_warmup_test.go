@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -169,8 +170,8 @@ func TestClaudeWarmupCopiesBackRotatedCreds(t *testing.T) {
 
 	exec := &fakeExecutor{writeNew: rotated}
 	w := newTestWarmer(exec, &fakeClock{now: now})
-	w.reresolve = func(name string) (ProfileInfo, bool) {
-		return ProfileInfo{Tool: "claude", Name: name, CredPath: credPath, HasCredentials: true}, true
+	w.listProfiles = func() ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true}}, nil
 	}
 	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true}
 
@@ -181,6 +182,45 @@ func TestClaudeWarmupCopiesBackRotatedCreds(t *testing.T) {
 	got, _ := os.ReadFile(credPath)
 	if string(got) != rotated {
 		t.Fatalf("rotated credentials not copied back:\n got=%s\nwant=%s", got, rotated)
+	}
+}
+
+func TestClaudeWarmupRotationSurvivesSwitchAway(t *testing.T) {
+	now := time.Now().UTC()
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	live := filepath.Join(home, ".claude", ".credentials.json")
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := claudeCredsWithExpiry("old", now.Add(-time.Minute).UnixMilli())
+	next := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"new","refreshToken":"r2","expiresAt":%d}}`, now.Add(time.Hour).UnixMilli())
+	if err := os.WriteFile(live, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	switchRoot := filepath.Join(root, "switcher")
+	runSwitcherDriver(t, "setup", switchRoot, home, "claude")
+	stored := filepath.Join(switchRoot, "profiles", "claude", "main", ".credentials.json")
+	exec := &fakeExecutor{writeNew: next, inspect: func(string) error {
+		runSwitcherDriver(t, "switch", switchRoot, home, "claude")
+		return nil
+	}}
+	w := newTestWarmer(exec, &fakeClock{now: now})
+	w.rescueRoot = switchRoot
+	w.listProfiles = func() ([]ProfileInfo, error) {
+		_, err := os.Stat(stored)
+		return []ProfileInfo{{Tool: "claude", Name: "main", CredPath: stored, HasCredentials: err == nil}}, nil
+	}
+	p := ProfileInfo{Tool: "claude", Name: "main", Active: true, CredPath: live, HasCredentials: true}
+	if attempted, err := w.maybeWarmSync(context.Background(), p); !attempted || err != nil {
+		t.Fatalf("warmup = %v %v", attempted, err)
+	}
+	got, err := os.ReadFile(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != next {
+		t.Fatalf("stored credentials = %s, want %s", got, next)
 	}
 }
 
@@ -195,8 +235,8 @@ func TestClaudeWarmupCASAllowsActiveProfile(t *testing.T) {
 	exec := &fakeExecutor{writeNew: rotated}
 	w := newTestWarmer(exec, &fakeClock{now: now})
 	// Active profiles are eligible warmup targets, so copy-back is intentional.
-	w.reresolve = func(name string) (ProfileInfo, bool) {
-		return ProfileInfo{Tool: "claude", Name: name, Active: true, CredPath: credPath, HasCredentials: true}, true
+	w.listProfiles = func() ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "claude", Name: "work", Active: true, CredPath: credPath, HasCredentials: true}}, nil
 	}
 	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true}
 
@@ -210,7 +250,7 @@ func TestClaudeWarmupCASAllowsActiveProfile(t *testing.T) {
 	}
 }
 
-func TestClaudeWarmupCASAbortsWhenCredentialPathChanged(t *testing.T) {
+func TestClaudeWarmupFollowsCredentialPathWhenAccountUnchanged(t *testing.T) {
 	now := time.Unix(2_650_000, 0)
 	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
 	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
@@ -218,18 +258,22 @@ func TestClaudeWarmupCASAbortsWhenCredentialPathChanged(t *testing.T) {
 	_, otherPath := writeStoredProfile(t, old)
 
 	w := newTestWarmer(&fakeExecutor{writeNew: rotated}, &fakeClock{now: now})
-	w.reresolve = func(name string) (ProfileInfo, bool) {
-		return ProfileInfo{Tool: "claude", Name: name, Active: true, CredPath: otherPath, HasCredentials: true}, true
+	w.listProfiles = func() ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "claude", Name: "work", Active: true, CredPath: otherPath, HasCredentials: true}}, nil
 	}
 	profile := ProfileInfo{Tool: "claude", Name: "work", Active: true, CredPath: credPath, HasCredentials: true}
 
 	_, err := w.maybeWarmSync(context.Background(), profile)
-	if !errors.Is(err, errClaudeRefreshProfileChanged) {
-		t.Fatalf("expected changed-path CAS abort, got %v", err)
+	if err != nil {
+		t.Fatalf("expected copy-back at new profile path, got %v", err)
 	}
 	got, _ := os.ReadFile(credPath)
 	if string(got) != old {
-		t.Fatalf("stored credentials must be unchanged after path change, got=%s", got)
+		t.Fatalf("old path must remain unchanged, got=%s", got)
+	}
+	got, _ = os.ReadFile(otherPath)
+	if string(got) != rotated {
+		t.Fatalf("new profile path must receive rotated credentials, got=%s", got)
 	}
 }
 
@@ -237,14 +281,15 @@ func TestClaudeWarmupCASAbortsWhenStoredFileChanged(t *testing.T) {
 	now := time.Unix(2_700_000, 0)
 	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
 	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
-	changed := claudeCredsWithExpiry("switched-in-tok", now.Add(9*time.Hour).UnixMilli())
+	changed := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"switched-in-tok","refreshToken":"new-login","expiresAt":%d}}`, now.Add(9*time.Hour).UnixMilli())
 	_, credPath := writeStoredProfile(t, old)
 
 	// Executor mutates the real stored file mid-warmup (a switch capturing into
 	// it) before returning the rotated temp file.
 	w := newTestWarmer(&mutatingExecutor{storedPath: credPath, mutateTo: changed, writeNew: rotated}, &fakeClock{now: now})
-	w.reresolve = func(name string) (ProfileInfo, bool) {
-		return ProfileInfo{Tool: "claude", Name: name, CredPath: credPath, HasCredentials: true}, true
+	w.rescueRoot = t.TempDir()
+	w.listProfiles = func() ([]ProfileInfo, error) {
+		return []ProfileInfo{{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true}}, nil
 	}
 	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true}
 
@@ -256,6 +301,7 @@ func TestClaudeWarmupCASAbortsWhenStoredFileChanged(t *testing.T) {
 	if string(got) != changed {
 		t.Fatalf("stored credentials must retain the mid-warmup change, got=%s", got)
 	}
+	assertRotatedRescue(t, w.rescueRoot, "claude", "work", rotated)
 }
 
 func TestClaudeWarmupCASAbortsWhenProfileRemoved(t *testing.T) {
@@ -265,7 +311,8 @@ func TestClaudeWarmupCASAbortsWhenProfileRemoved(t *testing.T) {
 	_, credPath := writeStoredProfile(t, old)
 
 	w := newTestWarmer(&removingExecutor{storedPath: credPath, writeNew: rotated}, &fakeClock{now: now})
-	w.reresolve = func(string) (ProfileInfo, bool) { return ProfileInfo{}, false }
+	w.rescueRoot = t.TempDir()
+	w.listProfiles = func() ([]ProfileInfo, error) { return nil, nil }
 	profile := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true}
 
 	_, err := w.maybeWarmSync(context.Background(), profile)
@@ -275,6 +322,7 @@ func TestClaudeWarmupCASAbortsWhenProfileRemoved(t *testing.T) {
 	if _, statErr := os.Stat(credPath); !os.IsNotExist(statErr) {
 		t.Fatalf("stored credentials should stay removed, stat err=%v", statErr)
 	}
+	assertRotatedRescue(t, w.rescueRoot, "claude", "work", rotated)
 }
 
 // ── 1h cooldown: every attempt, regardless of outcome ────────────────────
@@ -393,15 +441,15 @@ func warmupTriggerFixture(t *testing.T) (*Manager, *Store, *fakeExecutor, time.T
 	m := NewManager(store, EmptyRegistry())
 	m.SetClock(&fakeClock{now: now})
 	m.claudeAvailableFn = func() bool { return true }
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
 		return []ProfileInfo{
 			{Tool: "claude", Name: "idle", CredPath: idlePath, HasCredentials: true},
 			{Tool: "claude", Name: "busy", CredPath: busyPath, HasCredentials: true},
 			{Tool: "claude", Name: "live", Active: true, CredPath: activePath, HasCredentials: true},
-		}
+		}, nil
 	})
 	exec := &fakeExecutor{}
 	m.claudeWarmer = newTestWarmer(exec, &fakeClock{now: now})
@@ -513,11 +561,11 @@ func smartSpacingTriggerFixture(t *testing.T) (*Manager, *Store, *fakeExecutor, 
 	m := NewManager(store, EmptyRegistry())
 	m.SetClock(clock)
 	m.claudeAvailableFn = func() bool { return true }
-	m.SetProfileLister(func(tool string) []ProfileInfo {
+	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {
 		if tool != "claude" {
-			return nil
+			return nil, nil
 		}
-		return profiles
+		return profiles, nil
 	})
 	m.claudeWarmer = newTestWarmer(exec, clock)
 	if err := store.WithLock(func() error {

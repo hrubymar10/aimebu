@@ -2,7 +2,6 @@ package usages
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,10 +39,10 @@ const (
 	dockerReachableTimeout = 5 * time.Second
 )
 
-// CAS-guard sentinels. A refresh runs its slow docker step outside the switcher
+// Copy-back sentinels. A refresh runs its slow docker step outside the switcher
 // lock; by the time it wants to write the rotated tokens back the profile may
-// have been removed or otherwise changed. Any of these aborts the copy-back
-// rather than clobbering the new reality. (There is deliberately no
+// have been removed or re-logged in. Either aborts the copy-back after saving
+// the rotated file for recovery. (There is deliberately no
 // "profile became active" sentinel: refreshing an active profile is an
 // intended target now — see commitClaudeCredCopyBack.)
 var (
@@ -193,28 +192,29 @@ type claudeRefreshState struct {
 // backoff) and performs the copy-back under the switcher lock with a CAS
 // identity guard. The slow docker run happens outside the lock.
 type claudeRefresher struct {
-	executor  refreshExecutor
-	withLock  func(func() error) error              // switcher WithLock; nil = no locking (tests)
-	reresolve func(name string) (ProfileInfo, bool) // current profile by name, for the CAS guard
-	available func() bool                           // harness-docker-ctrl present
-	reachable func(context.Context) bool            // docker daemon reachable
-	clock     Clock
-	backoff   time.Duration
+	executor     refreshExecutor
+	withLock     func(func() error) error      // switcher WithLock; nil = no locking (tests)
+	listProfiles func() ([]ProfileInfo, error) // current switcher profiles under the copy-back lock
+	available    func() bool                   // harness-docker-ctrl present
+	reachable    func(context.Context) bool    // docker daemon reachable
+	clock        Clock
+	backoff      time.Duration
+	rescueRoot   string
 
 	mu    sync.Mutex
 	state map[string]*claudeRefreshState
 }
 
-func newClaudeRefresher(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool)) *claudeRefresher {
+func newClaudeRefresher(withLock func(func() error) error, listProfiles func() ([]ProfileInfo, error)) *claudeRefresher {
 	return &claudeRefresher{
-		executor:  dockerRefreshExecutor{},
-		withLock:  withLock,
-		reresolve: reresolve,
-		available: harnessDockerCtrlAvailable,
-		reachable: dockerReachable,
-		clock:     realClock{},
-		backoff:   claudeRefreshFailBackoff,
-		state:     map[string]*claudeRefreshState{},
+		executor:     dockerRefreshExecutor{},
+		withLock:     withLock,
+		listProfiles: listProfiles,
+		available:    harnessDockerCtrlAvailable,
+		reachable:    dockerReachable,
+		clock:        realClock{},
+		backoff:      claudeRefreshFailBackoff,
+		state:        map[string]*claudeRefreshState{},
 	}
 }
 
@@ -339,8 +339,9 @@ func (r *claudeRefresher) maybeRefreshSync(ctx context.Context, profile ProfileI
 // refresh performs the actual work: seed a temp dir with only the profile's
 // .credentials.json, run the executor against the temp dir, verify the rotated
 // file parses and its expiresAt advanced, then copy the rotated .credentials.json
-// back into the real profile dir under the switcher lock with a CAS guard.
+// back into the real profile dir under the switcher lock with an account guard.
 func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo, modelFlag string) error {
+	runStarted := time.Now()
 	storedPath := profile.CredPath
 	if storedPath == "" {
 		return errors.New("claude auto-refresh: profile has no credential path")
@@ -353,7 +354,6 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo, mode
 	if err != nil {
 		return fmt.Errorf("claude auto-refresh: stored credentials invalid: %w", err)
 	}
-	startFingerprint := sha256.Sum256(startData)
 
 	// Temp-dir isolation: claude pollutes its config dir with .claude.json,
 	// sessions/, projects/, policy-limits.json. Run against a throwaway copy of
@@ -401,13 +401,14 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo, mode
 		return fmt.Errorf("claude auto-refresh: read rotated credentials: %w", err)
 	}
 
-	// Copy-back under the switcher lock with a compare-and-swap identity guard:
-	// a removal or credential change that landed mid-refresh must never be
-	// clobbered. Refreshing an active profile is intentional now (an idle active
+	// Copy-back under the switcher lock with a refresh-token identity guard:
+	// a switch can change the credential path without changing the account, while
+	// a removal or re-login must never be clobbered. Refreshing an active profile
+	// is intentional now (an idle active
 	// account whose token expired): auto-refresh only fires at/near expiry, so no
 	// live session depends on the pre-rotation token at that moment, and the
 	// file-based switcher reconciles ~/.claude on its next switch/capture.
-	if err := commitClaudeCredCopyBack(r.withLock, r.reresolve, profile.Name, storedPath, startFingerprint, rotated); err != nil {
+	if err := commitClaudeCredCopyBack(r.withLock, r.listProfiles, profile.Name, storedPath, startData, rotated, r.rescueRoot, runStarted); err != nil {
 		return err
 	}
 	if executorErr != nil {
@@ -466,42 +467,12 @@ func forceExpireClaudeTempCredentials(path string) error {
 	return atomicWriteBytes(path, encoded, 0o600)
 }
 
-// commitClaudeCredCopyBack copies `rotated` back into storedPath under withLock
-// with a compare-and-swap identity guard: the slow container run happened
-// outside the lock, so before writing it re-checks that the profile still
-// exists, its CredPath is unchanged, and the stored file still byte-matches
-// startFingerprint. It deliberately does NOT abort when the profile is active:
-// both auto-refresh (near/at expiry) and warmup (out-of-window idle) intend to
-// rotate the active account's stored credentials, and the file-based switcher
-// reconciles the live config on its next switch/capture. Any other mismatch
-// aborts rather than clobbering new reality. The fingerprint is computed on the
-// bytes read through storedPath, so a symlinked active profile is compared
-// against the live file it points at, and the write goes through the link (see
-// writeStoredCredential). withLock may be nil (tests) to skip locking.
-func commitClaudeCredCopyBack(withLock func(func() error) error, reresolve func(string) (ProfileInfo, bool), name, storedPath string, startFingerprint [32]byte, rotated []byte) error {
-	commit := func() error {
-		if reresolve != nil {
-			cur, ok := reresolve(name)
-			if !ok {
-				return errClaudeRefreshProfileGone
-			}
-			if cur.CredPath != storedPath {
-				return errClaudeRefreshProfileChanged
-			}
-		}
-		curData, err := os.ReadFile(storedPath)
-		if err != nil {
-			return errClaudeRefreshProfileGone
-		}
-		if sha256.Sum256(curData) != startFingerprint {
-			return errClaudeRefreshProfileChanged
-		}
-		return writeStoredCredential(storedPath, rotated, 0o600)
-	}
-	if withLock != nil {
-		return withLock(commit)
-	}
-	return commit()
+// commitClaudeCredCopyBack follows the named profile across path changes and
+// writes only when its pre-rotation refresh token still matches. A different
+// account or removed profile leaves a mode-0600 rescue file. withLock may be
+// nil in tests.
+func commitClaudeCredCopyBack(withLock func(func() error) error, listProfiles func() ([]ProfileInfo, error), name, storedPath string, started, rotated []byte, rescueRoot string, runStarted ...time.Time) error {
+	return commitRotatedCredentials("claude", withLock, listProfiles, name, storedPath, started, rotated, rescueRoot, runStarted...)
 }
 
 // writeClaudeCredTemp creates a throwaway temp dir seeded with only a

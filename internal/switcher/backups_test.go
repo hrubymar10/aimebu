@@ -1,6 +1,7 @@
 package switcher
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,14 @@ import (
 func seedBackup(t *testing.T, m *Manager, tool, name string, ts int64, body string) string {
 	t.Helper()
 	path := m.backupPath(tool, name, ts)
+	must(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	must(t, os.WriteFile(path, []byte(body), 0o600))
+	return path
+}
+
+func seedRotatedRescue(t *testing.T, m *Manager, tool, name, body string) string {
+	t.Helper()
+	path := filepath.Join(m.backupsRoot(), tool, name+"-rotated-20261015T210000.000000000Z.json")
 	must(t, os.MkdirAll(filepath.Dir(path), 0o700))
 	must(t, os.WriteFile(path, []byte(body), 0o600))
 	return path
@@ -137,6 +146,10 @@ func TestRenameMovesBackupsAndClearsLeftovers(t *testing.T) {
 	// Left by an earlier, removed profile named "renamed": another account.
 	seedBackup(t, m, ToolClaude, "renamed", 1005, earlier)
 	other := seedBackup(t, m, ToolClaude, "a-b", 1000, futureClaude("ab"))
+	rotated := futureClaude("rotated")
+	rescue := seedRotatedRescue(t, m, ToolClaude, "a", rotated)
+	staleRescue := seedRotatedRescue(t, m, ToolClaude, "renamed", futureClaude("stale"))
+	otherRescue := seedRotatedRescue(t, m, ToolClaude, "a-b", futureClaude("other"))
 
 	must(t, m.Rename(ToolClaude, "a", "renamed"))
 
@@ -156,6 +169,42 @@ func TestRenameMovesBackupsAndClearsLeftovers(t *testing.T) {
 	if !exists(other) {
 		t.Fatal("rename moved a-b's backup")
 	}
+	if exists(rescue) {
+		t.Fatal("rename left old-name rescue")
+	}
+	newRescue := filepath.Join(m.backupsRoot(), ToolClaude, "renamed-rotated-20261015T210000.000000001Z.json")
+	if !exists(newRescue) || !exists(otherRescue) {
+		t.Fatal("rename lost moved rescue or another profile's rescue")
+	}
+	assertRegularFile(t, newRescue, rotated)
+	if !exists(staleRescue) {
+		t.Fatal("rename-to deleted an existing rescue")
+	}
+}
+
+func TestAddAndImportKeepOldRotatedRescues(t *testing.T) {
+	m, home := newTestManager(t)
+	addRescue := seedRotatedRescue(t, m, ToolClaude, "added", futureClaude("rescue"))
+	must(t, m.Add(ToolClaude, "added"))
+	if !exists(addRescue) {
+		t.Fatal("Add deleted a rotated rescue")
+	}
+	importRescue := seedRotatedRescue(t, m, ToolClaude, "imported", futureClaude("rescue"))
+	writeLive(t, home, ToolClaude, futureClaude("live"))
+	must(t, m.Import(ToolClaude, "imported"))
+	if !exists(importRescue) {
+		t.Fatal("Import deleted a rotated rescue")
+	}
+}
+
+func TestImportRollbackKeepsRotatedRescue(t *testing.T) {
+	m, _ := newTestManager(t)
+	must(t, m.Add(ToolClaude, "newprofile"))
+	rescue := seedRotatedRescue(t, m, ToolClaude, "newprofile", futureClaude("rotated"))
+	m.rollbackImport(ToolClaude, "newprofile", "", "")
+	if !exists(rescue) {
+		t.Fatal("Import rollback deleted a rotated rescue")
+	}
 }
 
 func TestRemoveDeletesProfileBackups(t *testing.T) {
@@ -165,6 +214,8 @@ func TestRemoveDeletesProfileBackups(t *testing.T) {
 	must(t, m.Add(ToolClaude, "a"))
 	seedBackup(t, m, ToolClaude, "a", 1000, futureClaude("a"))
 	other := seedBackup(t, m, ToolClaude, "a-b", 1000, futureClaude("ab"))
+	rescue := seedRotatedRescue(t, m, ToolClaude, "a", futureClaude("rotated"))
+	otherRescue := seedRotatedRescue(t, m, ToolClaude, "a-b", futureClaude("other"))
 
 	must(t, m.Remove(ToolClaude, "a", false))
 	if got, _ := m.profileBackups(ToolClaude, "a"); len(got) != 0 {
@@ -173,6 +224,115 @@ func TestRemoveDeletesProfileBackups(t *testing.T) {
 	if !exists(other) {
 		t.Fatal("Remove deleted a-b's backup")
 	}
+	if exists(rescue) || !exists(otherRescue) {
+		t.Fatal("Remove did not delete only the removed profile's rescue")
+	}
+}
+
+func TestRemoveRecordsRefreshTokenTombstone(t *testing.T) {
+	m, home := newTestManager(t)
+	writeLive(t, home, ToolClaude, futureClaude("old"))
+	must(t, m.Import(ToolClaude, "work"))
+	must(t, m.Remove(ToolClaude, "work", true))
+	data, err := os.ReadFile(filepath.Join(m.root, "removed.json"))
+	must(t, err)
+	var entries struct {
+		Entries []struct {
+			Tool      string `json:"tool"`
+			Name      string `json:"name"`
+			TokenHash string `json:"token_sha256"`
+		} `json:"entries"`
+	}
+	must(t, json.Unmarshal(data, &entries))
+	if len(entries.Entries) != 1 || entries.Entries[0].Tool != ToolClaude || entries.Entries[0].Name != "work" || len(entries.Entries[0].TokenHash) != 64 || strings.Contains(string(data), "refresh-tok") {
+		t.Fatalf("removed profile tombstone = %s", data)
+	}
+	info, err := os.Stat(filepath.Join(m.root, "removed.json"))
+	must(t, err)
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("removed.json mode = %o", info.Mode().Perm())
+	}
+}
+
+func TestRemoveAllowsMalformedCredentialWithoutTombstone(t *testing.T) {
+	m, _ := newTestManager(t)
+	must(t, m.Add(ToolCodex, "broken"))
+	path := m.profileCredPath(ToolCodex, "broken")
+	must(t, os.WriteFile(path, []byte("{broken"), 0o600))
+	must(t, m.Remove(ToolCodex, "broken", false))
+	if exists(m.profileDir(ToolCodex, "broken")) {
+		t.Fatal("malformed profile was not removed")
+	}
+	if exists(filepath.Join(m.root, "removed.json")) {
+		t.Fatal("malformed profile wrote a tombstone")
+	}
+}
+
+func TestRemoveRewritesCorruptTombstones(t *testing.T) {
+	m, home := newTestManager(t)
+	writeLive(t, home, ToolClaude, futureClaude("old"))
+	must(t, m.Import(ToolClaude, "work"))
+	must(t, os.WriteFile(filepath.Join(m.root, "removed.json"), []byte("{broken"), 0o600))
+	must(t, m.Remove(ToolClaude, "work", true))
+	data, err := os.ReadFile(filepath.Join(m.root, "removed.json"))
+	must(t, err)
+	var file struct {
+		Entries []struct {
+			Name string `json:"name"`
+		} `json:"entries"`
+	}
+	must(t, json.Unmarshal(data, &file))
+	if len(file.Entries) != 1 || file.Entries[0].Name != "work" {
+		t.Fatalf("rewritten removed.json = %s", data)
+	}
+}
+
+func TestRemoveWhenLivePathCannotResolve(t *testing.T) {
+	m, _ := newTestManager(t)
+	must(t, m.Add(ToolCodex, "work"))
+	state := emptyState()
+	state.Active[ToolCodex] = "work"
+	must(t, m.saveState(state))
+	m.homeDir = ""
+	t.Setenv("HOME", "")
+	must(t, m.Remove(ToolCodex, "work", true))
+	if exists(m.profileDir(ToolCodex, "work")) {
+		t.Fatal("active profile survived unresolved live path")
+	}
+}
+
+func TestRemoveWhenCredentialReadFails(t *testing.T) {
+	m, _ := newTestManager(t)
+	must(t, m.Add(ToolCodex, "work"))
+	must(t, os.MkdirAll(m.profileCredPath(ToolCodex, "work"), 0o700))
+	must(t, m.Remove(ToolCodex, "work", false))
+	if exists(m.profileDir(ToolCodex, "work")) {
+		t.Fatal("profile survived credential read error")
+	}
+}
+
+func TestRemoveWhenTombstoneReadFails(t *testing.T) {
+	m, _ := newTestManager(t)
+	must(t, m.Add(ToolCodex, "work"))
+	must(t, os.WriteFile(m.profileCredPath(ToolCodex, "work"), []byte(`{"tokens":{"refresh_token":"r1"}}`), 0o600))
+	must(t, os.MkdirAll(filepath.Join(m.root, "removed.json"), 0o700))
+	must(t, m.Remove(ToolCodex, "work", false))
+	if exists(m.profileDir(ToolCodex, "work")) {
+		t.Fatal("profile survived tombstone read error")
+	}
+}
+
+func TestCopyRescueExclusivePreservesExistingDestination(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.json")
+	target := filepath.Join(root, "target.json")
+	must(t, os.WriteFile(source, []byte("rotated"), 0o600))
+	must(t, copyRescueExclusive(source, target))
+	assertRegularFile(t, target, "rotated")
+	if err := copyRescueExclusive(source, target); !os.IsExist(err) {
+		t.Fatalf("existing rescue overwritten: %v", err)
+	}
+	assertRegularFile(t, target, "rotated")
 }
 
 // TestRecreatedProfileDoesNotInheritOldAccount: leftover backups under a name

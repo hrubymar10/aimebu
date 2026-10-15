@@ -160,11 +160,22 @@ Design notes:
   failure: it logs `outcome=noop reason=token-still-valid`, avoids failure
   backoff, and defers the next attempt to the stored token's real expiry.
 - **Copy-back safety.** The slow container run happens outside the switcher
-  lock. The final copy-back holds `switcher/.lock` and re-checks, compare-and-swap
-  style, that the profile still exists and its stored credentials are
-  byte-identical to what the refresh started from. A removal or credential change
-  that landed mid-refresh aborts the copy-back rather than clobbering it. (It no
-  longer aborts on the profile becoming active — that is now an intended target.)
+  lock. The final copy-back holds `switcher/.lock`, re-resolves the named
+  profile, and compares the stored refresh token with the one that started the
+  run. A switch changes the credential path, and a rename changes the name;
+  rotated tokens follow the profile holding the starting refresh token. A
+  profile-listing error or ambiguous match saves the rotated file for recovery.
+  With no named switcher profiles, copy-back retains the implicit `local`
+  profile. Claude copy-back replaces only `claudeAiOauth`, retaining unrelated
+  keys such as `mcpOAuth`. If the profile was re-logged into another account,
+  copy-back leaves it untouched and saves the rotated file under
+  `switcher/backups/claude/<profile>-rotated-<UTC timestamp>.json` with mode
+  `0600`; the abort log names that rescue path. Removing a profile records a
+  hashed refresh-token tombstone in `switcher/removed.json`; copy-back checks
+  it before lookup and discards that in-flight rotation without a rescue file
+  when the removal happened during the run and no current profile holds the
+  starting token. Every other unresolved lookup, including an older tombstone,
+  a re-login after rename, or a corrupt tombstone file, leads to a rescue.
 - **Rate limiting.** A profile is never refreshed twice concurrently, and after
   a genuine failure it is not retried for 5 minutes.
 
@@ -245,9 +256,10 @@ expose it plus the runtime `warmup_available` flag; POST accepts optional
   token is typically expired, so Anthropic rotates the refresh token into the
   container's credential copy. Warmup therefore persists any rotated
   credentials back to the stored profile — discarding them would leave a dead,
-  unrecoverable login. It reuses auto-refresh's compare-and-swap copy-back (same
-  `switcher/.lock` + re-resolve guard), so a switch/removal, credential-path
-  change, or stored-file change that lands mid-run is never clobbered. Warmup
+  unrecoverable login. It reuses auto-refresh's locked, refresh-token-aware
+  copy-back, so a switch during the run follows the named account. A re-login
+  leaves the current profile untouched and saves the rotated file under
+  `switcher/backups/claude/`; removal discards it. Warmup
   deliberately permits copy-back to the active profile: its out-of-window gate
   means the account is idle, so no live session depends on the old token, and
   the file-based switcher reconciles live config on the next switch/capture.

@@ -2445,10 +2445,10 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 		// profile is linked after its first login. Stops with cleanupCtx.
 		startSwitcherLinkLoop(cleanupCtx, &s.bgWG, switcherLinkInterval, swMgr.EnsureActiveLinks, nil)
 		sr := switcherRoutes{sm: swMgr}
-		usageManager.SetProfileLister(func(tool string) []usages.ProfileInfo {
+		usageManager.SetProfileLister(func(tool string) ([]usages.ProfileInfo, error) {
 			profiles, err := swMgr.List()
 			if err != nil {
-				return nil
+				return nil, err
 			}
 			var result []usages.ProfileInfo
 			for _, p := range profiles {
@@ -2465,7 +2465,7 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 					ExpiresAt:      p.ExpiresAt,
 				})
 			}
-			return result
+			return result, nil
 		})
 		usageManager.SetSwitcherSettingsProvider(func() bool {
 			enabled, _ := swMgr.Enabled()
@@ -2475,7 +2475,7 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 		// Auto-refresh and warm idle Claude/Codex profiles. Rotated-token
 		// copy-back holds switcher/.lock so a concurrent switch cannot be
 		// clobbered (§14.2).
-		usageManager.EnableClaudeAutoRefresh(swMgr.WithLock)
+		usageManager.EnableClaudeAutoRefresh(swMgr.WithLock, swRoot)
 	}
 	usageManager.Start(cleanupCtx, &s.bgWG)
 	setupHandlers(mux, s, build, usageManager)
