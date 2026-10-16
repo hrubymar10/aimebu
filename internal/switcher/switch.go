@@ -2,6 +2,7 @@ package switcher
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -42,6 +43,25 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 	if err := validateProfileName(name); err != nil {
 		return "", false, err
 	}
+
+	// Hold the target account's maintenance lock for the whole switch. A
+	// background token refresh of that account must not be mid-rotation when the
+	// profile goes live (the live file would end up with a refresh token the run
+	// has already spent), and none may start between this check and the swap.
+	// Lock order is always account first, switcher lock second, the same as a
+	// run, whose copy-back takes the switcher lock while holding its account
+	// lock; so the two cannot deadlock. The release runs after the switcher lock
+	// is dropped (defers unwind in reverse).
+	releaseAccount, holdErr := usages.HoldMaintenance(m.root, tool, name, m.profileCredPath(tool, name), MaintenanceWait)
+	if errors.Is(holdErr, usages.ErrMaintenanceBusy) {
+		return "", false, fmt.Errorf("%w: %v; try again in a minute", ErrMaintenanceBusy, holdErr)
+	}
+	if holdErr != nil {
+		// Fail closed: without the account lock a background run could be
+		// rotating this token while it goes live.
+		return "", false, fmt.Errorf("switch refused: %w", holdErr)
+	}
+	defer releaseAccount()
 
 	// Check eligibility before taking the lock: reads only the live credentials
 	// file and does not touch switcher state. Failing fast here avoids the lock
@@ -232,6 +252,7 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 			return "", false, fmt.Errorf("remove live credentials for empty profile: %w", removeErr)
 		}
 		m.markIncomingStale(tool, name, liveEmail)
+		m.recordSwitchAway(tool, activeProfile)
 		return name, true, nil
 	}
 
@@ -269,6 +290,8 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 		}
 		return "", false, fmt.Errorf("update state: %w", stateErr)
 	}
+
+	m.recordSwitchAway(tool, activeProfile)
 
 	// 8. Link the now-active profile's stored file to the live file. First
 	// back up the bytes being replaced by the link: they are this profile's

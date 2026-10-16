@@ -341,6 +341,8 @@ func switcherErrMsg(err error) error {
 		return fmt.Errorf("tool is not eligible for switching")
 	case errors.Is(err, switcher.ErrNoActiveProfile):
 		return fmt.Errorf("no active profile: run 'aimebu switcher import <tool> <name>' first — without a profile to capture into, switching would discard the current login")
+	case errors.Is(err, switcher.ErrMaintenanceBusy):
+		return fmt.Errorf("a background token refresh of that account is still running; try again in a minute")
 	case errors.Is(err, switcher.ErrProfileNotFound):
 		return fmt.Errorf("profile not found")
 	case errors.Is(err, switcher.ErrProfileExists):

@@ -125,9 +125,9 @@ func TestClaudeProfileNeedsRefresh(t *testing.T) {
 			want:    false,
 		},
 		{
-			name:    "active near/at expiry is eligible",
+			name:    "active near/at expiry is never eligible",
 			profile: ProfileInfo{Tool: "claude", Active: true, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))},
-			want:    true,
+			want:    false,
 		},
 		{
 			name:    "active far from expiry not eligible",
@@ -350,7 +350,10 @@ func TestClaudeRefreshNoopWhenExpiryDidNotAdvance(t *testing.T) {
 
 // ── CAS identity guard ───────────────────────────────────────────────────
 
-func TestClaudeRefreshCopiesBackToActiveProfile(t *testing.T) {
+// The active profile's token belongs to the harnesses running on the live
+// credential file. A server-side refresh would reuse their refresh token and get
+// the whole family revoked, so the refresher must not even start the executor.
+func TestClaudeRefreshNeverTouchesActiveProfile(t *testing.T) {
 	now := time.Unix(4_000_000, 0)
 	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
 	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
@@ -358,29 +361,25 @@ func TestClaudeRefreshCopiesBackToActiveProfile(t *testing.T) {
 	_, credPath := writeStoredProfile(t, old)
 	exec := &fakeExecutor{writeNew: rotated}
 	r := newTestRefresher(exec, &fakeClock{now: now})
-	// The re-resolve reports the profile is (and stays) active: refreshing an
-	// active claude profile is intended now, so copy-back must NOT abort.
-	r.listProfiles = func() ([]ProfileInfo, error) {
-		return []ProfileInfo{{Tool: "claude", Name: "work", Active: true, CredPath: credPath, HasCredentials: true}}, nil
-	}
 
 	profile := ProfileInfo{Tool: "claude", Name: "work", Active: true, CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
-	attempted, err := r.maybeRefreshSync(context.Background(), profile)
-	if !attempted {
-		t.Fatal("expected refresh of the active profile to be attempted")
+	_, err := r.maybeRefreshSync(context.Background(), profile)
+	if !errors.Is(err, errMaintenanceActiveProfile) {
+		t.Fatalf("refresh of active profile = %v, want errMaintenanceActiveProfile", err)
 	}
-	if err != nil {
-		t.Fatalf("refresh of active profile: %v", err)
+	if exec.callCount() != 0 {
+		t.Fatalf("executor ran %d times for the active profile", exec.callCount())
 	}
-	got, _ := os.ReadFile(credPath)
-	if string(got) != rotated {
-		t.Fatalf("rotated credentials must be copied back to the active profile:\n got=%s\nwant=%s", got, rotated)
+	if got, _ := os.ReadFile(credPath); string(got) != old {
+		t.Fatalf("active credentials changed: %s", got)
 	}
 }
 
-// The real switcher detaches an active profile's symlink into a snapshot while
-// the container is running. The rotated token must follow that profile.
-func TestClaudeRefreshRotationSurvivesSwitchAway(t *testing.T) {
+// A profile that is not active when a run starts can BECOME active mid-run (a
+// switch to it). Its stored file is then a link to the live credentials, which
+// still hold the refresh token the run spent: the rotated token is the only
+// usable one, so the copy-back writes it through the link.
+func TestClaudeRefreshCopyBackWritesThroughWhenProfileBecameActive(t *testing.T) {
 	now := time.Unix(4_100_000, 0)
 	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
 	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
@@ -395,29 +394,52 @@ func TestClaudeRefreshRotationSurvivesSwitchAway(t *testing.T) {
 	}
 	switchRoot := filepath.Join(root, "switcher")
 	runSwitcherDriver(t, "setup", switchRoot, home, "claude")
+	runSwitcherDriver(t, "switch", switchRoot, home, "claude") // main is now an inactive snapshot
 	stored := filepath.Join(switchRoot, "profiles", "claude", "main", ".credentials.json")
+	if credentialPathIsLink(stored) {
+		t.Fatal("setup: main should be an inactive regular file")
+	}
 
 	executor := &fakeExecutor{writeNew: rotated, inspect: func(string) error {
-		runSwitcherDriver(t, "switch", switchRoot, home, "claude")
+		runSwitcherDriver(t, "switchmain", switchRoot, home, "claude") // main becomes active again
 		return nil
 	}}
 	r := newTestRefresher(executor, &fakeClock{now: now})
+	r.rescueRoot = switchRoot
 	r.listProfiles = func() ([]ProfileInfo, error) {
-		_, err := os.Stat(stored)
-		return []ProfileInfo{{Tool: "claude", Name: "main", CredPath: stored, HasCredentials: err == nil}}, nil
+		return []ProfileInfo{{Tool: "claude", Name: "main", Active: credentialPathIsLink(stored), CredPath: stored, HasCredentials: true}}, nil
 	}
-	p := ProfileInfo{Tool: "claude", Name: "main", Active: true, CredPath: live, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
-	_, err := r.maybeRefreshSync(context.Background(), p)
-	if err != nil {
-		t.Fatalf("refresh after switch: %v", err)
+	p := ProfileInfo{Tool: "claude", Name: "main", CredPath: stored, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
+	if _, err := r.maybeRefreshSync(context.Background(), p); err != nil {
+		t.Fatalf("refresh = %v", err)
 	}
-	got, err := os.ReadFile(stored)
-	if err != nil {
-		t.Fatal(err)
+	if got, _ := os.ReadFile(live); string(got) != rotated {
+		t.Fatalf("live credentials = %s, want the rotated token", got)
 	}
-	if string(got) != rotated {
-		t.Fatalf("stored credentials = %s, want rotated %s", got, rotated)
+	if !credentialPathIsLink(stored) {
+		t.Fatal("the active profile lost its link to live")
 	}
+}
+
+// If a harness already rotated the live token itself, the run's token is stale
+// and must not overwrite it: the existing CAS keeps the rotated copy as a
+// rescue.
+func TestClaudeRefreshCopyBackRescuesWhenLiveWasRotatedByHarness(t *testing.T) {
+	now := time.Unix(4_150_000, 0)
+	_, credPath := writeStoredProfile(t, claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli()))
+	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
+	harness := `{"claudeAiOauth":{"accessToken":"harness","refreshToken":"harness-refresh","expiresAt":9999999999999}}`
+	exec := &mutatingExecutor{inner: &fakeExecutor{}, storedPath: credPath, mutateTo: harness, writeNew: rotated}
+	r := newTestRefresher(exec, &fakeClock{now: now})
+	r.rescueRoot = t.TempDir()
+	p := ProfileInfo{Tool: "claude", Name: "work", CredPath: credPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
+	if _, err := r.maybeRefreshSync(context.Background(), p); !errors.Is(err, errClaudeRefreshProfileChanged) {
+		t.Fatalf("refresh = %v, want errClaudeRefreshProfileChanged", err)
+	}
+	if got, _ := os.ReadFile(credPath); string(got) != harness {
+		t.Fatalf("harness-rotated credentials were overwritten: %s", got)
+	}
+	assertRotatedRescue(t, r.rescueRoot, "claude", "work", rotated)
 }
 
 func TestClaudeRefreshRotationSurvivesProfileRename(t *testing.T) {
@@ -435,6 +457,7 @@ func TestClaudeRefreshRotationSurvivesProfileRename(t *testing.T) {
 	}
 	switchRoot := filepath.Join(root, "switcher")
 	runSwitcherDriver(t, "setup", switchRoot, home, "claude")
+	runSwitcherDriver(t, "switch", switchRoot, home, "claude") // main is now an inactive snapshot
 	oldStored := filepath.Join(switchRoot, "profiles", "claude", "main", ".credentials.json")
 	renamedStored := filepath.Join(switchRoot, "profiles", "claude", "renamed", ".credentials.json")
 	unrelated := filepath.Join(root, "unrelated.json")
@@ -449,10 +472,10 @@ func TestClaudeRefreshRotationSurvivesProfileRename(t *testing.T) {
 	r.listProfiles = func() ([]ProfileInfo, error) {
 		return []ProfileInfo{
 			{Tool: "claude", Name: "unrelated", CredPath: unrelated},
-			{Tool: "claude", Name: "renamed", Active: true, CredPath: renamedStored, HasCredentials: true},
+			{Tool: "claude", Name: "renamed", CredPath: renamedStored, HasCredentials: true},
 		}, nil
 	}
-	p := ProfileInfo{Tool: "claude", Name: "main", Active: true, CredPath: live, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
+	p := ProfileInfo{Tool: "claude", Name: "main", CredPath: oldStored, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
 	if _, err := r.maybeRefreshSync(context.Background(), p); err != nil {
 		t.Fatalf("refresh after rename: %v", err)
 	}

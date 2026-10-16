@@ -552,3 +552,10 @@ func TestSwitcherEligibilityProviderCarriesAbsent(t *testing.T) {
 		t.Fatalf("reason = %q, want missing-live explanation", reason)
 	}
 }
+
+func TestSwitcherHTTPStatusMaintenanceBusyIsConflict(t *testing.T) {
+	err := fmt.Errorf("%w: waiting", switcher.ErrMaintenanceBusy)
+	if got := switcherHTTPStatus(err); got != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", got)
+	}
+}

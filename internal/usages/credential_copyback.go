@@ -94,6 +94,11 @@ func commitRotatedCredentials(tool string, withLock func(func() error) error, li
 		if err != nil || currentToken != beforeToken {
 			return saveAbortedRotation(tool, name, rotated, rescueRoot, errClaudeRefreshProfileChanged)
 		}
+		// The profile may have become active during the run (a switch to it), so
+		// this path can be a link to the live credentials. The check above proved
+		// the file still holds the refresh token the run spent, so the rotated
+		// one is the only usable token and is written through the link. If a
+		// harness already rotated it, the check aborted into a rescue instead.
 		merged, err := mergeRotatedCredentials(tool, current, rotated)
 		if err != nil {
 			return saveAbortedRotation(tool, name, rotated, rescueRoot, fmt.Errorf("merge rotated credentials: %w", err))
@@ -240,7 +245,7 @@ func saveAbortedRotation(tool, name string, rotated []byte, root string, cause e
 		return fmt.Errorf("%w; save rotated credentials: %v %v", cause, writeErr, closeErr)
 	}
 	pruneRotatedRescues(dir, name)
-	log.Printf("usages: %s maintenance profile=%q outcome=aborted reason=%v rotated_saved=%s", tool, name, cause, path)
+	log.Printf("usages: ERROR %s maintenance profile=%q outcome=aborted reason=%v rotated_saved=%s — the run spent the stored refresh token; the rescue file holds the new one", tool, name, cause, path)
 	return fmt.Errorf("%w; rotated_saved=%s", cause, path)
 }
 

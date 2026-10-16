@@ -103,6 +103,10 @@ type ProfileInfo struct {
 	Email          string     // captured account email from profile metadata
 	HasCredentials bool       // whether stored credentials exist for this profile
 	ExpiresAt      *time.Time // token expiry from the credential file
+	// SwitchedAwayAt is when the profile last stopped being the active one, or
+	// nil when it never was (or the time was not recorded). Maintenance leaves a
+	// profile alone for maintenanceSwitchAwayGrace after this.
+	SwitchedAwayAt *time.Time
 }
 
 // ProfileLister returns switcher profiles for a given tool. An empty successful
@@ -256,8 +260,14 @@ func (m *Manager) SetSwitcherEligibilityProvider(fn SwitcherEligibilityProvider)
 // coordinator lists profiles inside the lock, so copy-back can follow a
 // switch or rename and distinguish a listing error from removal.
 func (m *Manager) EnableClaudeAutoRefresh(withLock func(func() error) error, rescueRoot string) {
+	// One guard across all three coordinators: warmup, auto-refresh and codex
+	// maintenance rotate the same refresh token and must never overlap on one
+	// (tool, profile).
+	guard := newMaintenanceGuard()
+	guard.root = rescueRoot // cross-process exclusion lives under the switcher root
 	m.claudeRefresher = newClaudeRefresher(withLock, func() ([]ProfileInfo, error) { return m.listMaintenanceProfiles("claude") })
 	m.claudeRefresher.rescueRoot = rescueRoot
+	m.claudeRefresher.guard = guard
 	// Warmup shares the same gate (setting enabled + harness-docker-ctrl present)
 	// and reuses the same executor, so it is wired alongside auto-refresh. It also
 	// needs withLock + a fresh profile list: `claude -p` can rotate the account's
@@ -265,8 +275,10 @@ func (m *Manager) EnableClaudeAutoRefresh(withLock func(func() error) error, res
 	// guard auto-refresh uses.
 	m.claudeWarmer = newClaudeWarmer(withLock, func() ([]ProfileInfo, error) { return m.listMaintenanceProfiles("claude") })
 	m.claudeWarmer.rescueRoot = rescueRoot
+	m.claudeWarmer.guard = guard
 	m.codexMaintainer = newCodexMaintainer(withLock, func() ([]ProfileInfo, error) { return m.listMaintenanceProfiles("codex") })
 	m.codexMaintainer.rescueRoot = rescueRoot
+	m.codexMaintainer.guard = guard
 }
 
 func (m *Manager) listMaintenanceProfiles(tool string) ([]ProfileInfo, error) {
@@ -298,8 +310,8 @@ func (m *Manager) decorateSettings(info Settings) Settings {
 }
 
 // triggerClaudeAutoRefresh scans the resolved claude profiles and asks the
-// coordinator to refresh any near-expiry profile, INCLUDING the active one so an
-// idle active account's token does not silently expire. It runs on the normal
+// coordinator to refresh any near-expiry INACTIVE profile. The active profile is
+// skipped: the harnesses on the live credential file refresh it themselves. It runs on the normal
 // poller tick and is a no-op unless the setting is enabled and the coordinator
 // is wired.
 func (m *Manager) triggerClaudeAutoRefresh(ctx context.Context) {
@@ -372,7 +384,7 @@ func (m *Manager) triggerClaudeAutoWarmup(ctx context.Context) {
 	eligibleCount := 0
 	candidates := make([]claudeWarmupCandidate, 0, len(profiles))
 	for _, profile := range profiles {
-		if !claudeProfileEligibleForWarmup(profile) {
+		if !claudeProfileEligibleForWarmup(profile, now) {
 			continue
 		}
 		entry := profileCacheEntry(cache.Snapshots[ProviderClaudeCode], profile.Name)
@@ -429,7 +441,7 @@ func (m *Manager) triggerCodexMaintenance(ctx context.Context) {
 	eligibleCount := 0
 	candidates := make([]claudeWarmupCandidate, 0, len(profiles))
 	for _, p := range profiles {
-		if !codexProfileEligibleForWarmup(p) {
+		if !codexProfileEligibleForWarmup(p, now) {
 			continue
 		}
 		entry := profileCacheEntry(cache.Snapshots[ProviderCodex], p.Name)

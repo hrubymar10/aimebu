@@ -89,67 +89,54 @@ func requireRegularCredInDir(dir, filename, want string) error {
 	return nil
 }
 
-func TestClaudeRefreshWritesThroughActiveSymlink(t *testing.T) {
-	now := time.Unix(6_000_000, 0)
-	old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
-	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
-	livePath, linkPath := linkedProfile(t, ".credentials.json", old)
+// The switcher links the active profile's stored file to the live credentials.
+// Maintenance never starts on it (the flag says active, and the link alone is
+// enough even if the flag is stale), and never runs the executor.
+func TestMaintenanceRefusesLinkedActiveProfile(t *testing.T) {
+	now := time.Unix(6_000_000, 0).UTC()
+	for _, flagged := range []bool{true, false} {
+		old := claudeCredsWithExpiry("old-tok", now.Add(-time.Minute).UnixMilli())
+		rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
+		livePath, linkPath := linkedProfile(t, ".credentials.json", old)
 
-	var inspectErr error
-	exec := &fakeExecutor{writeNew: rotated, inspect: func(dir string) error {
-		if dir == filepath.Dir(linkPath) {
-			inspectErr = errors.New("executor was handed the profile dir")
-			return inspectErr
+		exec := &fakeExecutor{writeNew: rotated}
+		profile := ProfileInfo{Tool: "claude", Name: "work", Active: flagged, CredPath: linkPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
+		if _, err := newTestRefresher(exec, &fakeClock{now: now}).maybeRefreshSync(context.Background(), profile); !errors.Is(err, errMaintenanceActiveProfile) {
+			t.Fatalf("claude refresh (flagged=%v) = %v", flagged, err)
 		}
-		inspectErr = requireRegularCredInDir(dir, ".credentials.json", "")
-		return inspectErr
-	}}
-	r := newTestRefresher(exec, &fakeClock{now: now})
-	r.listProfiles = func() ([]ProfileInfo, error) {
-		return []ProfileInfo{{Tool: "claude", Name: "work", Active: true, CredPath: linkPath, HasCredentials: true}}, nil
+		if _, err := newTestWarmer(exec, &fakeClock{now: now}).maybeWarmSync(context.Background(), profile); !errors.Is(err, errMaintenanceActiveProfile) {
+			t.Fatalf("claude warmup (flagged=%v) = %v", flagged, err)
+		}
+		assertStillLinked(t, linkPath, livePath, old)
+
+		codexOld := codexAuth("old", "r1", now.Add(-time.Hour).Format(time.RFC3339))
+		codexLive, codexLink := linkedProfile(t, "auth.json", codexOld)
+		cexec := &fakeCodexExecutor{write: codexAuth("new", "r2", now.Format(time.RFC3339))}
+		cp := ProfileInfo{Tool: "codex", Name: "work", Active: flagged, CredPath: codexLink, HasCredentials: true}
+		if _, err := testCodexMaintainer(cexec, now).refreshSync(context.Background(), cp, ""); !errors.Is(err, errMaintenanceActiveProfile) {
+			t.Fatalf("codex refresh (flagged=%v) = %v", flagged, err)
+		}
+		if _, err := testCodexMaintainer(cexec, now).warmSync(context.Background(), cp, ""); !errors.Is(err, errMaintenanceActiveProfile) {
+			t.Fatalf("codex warmup (flagged=%v) = %v", flagged, err)
+		}
+		assertStillLinked(t, codexLink, codexLive, codexOld)
+		if exec.callCount() != 0 || cexec.flag != "" {
+			t.Fatalf("an executor ran for a linked profile (claude calls=%d)", exec.callCount())
+		}
 	}
-	profile := ProfileInfo{Tool: "claude", Name: "work", Active: true, CredPath: linkPath, HasCredentials: true, ExpiresAt: ptrTime(now.Add(-time.Minute))}
-	if _, err := r.maybeRefreshSync(context.Background(), profile); err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
-	if inspectErr != nil {
-		t.Fatal(inspectErr)
-	}
-	assertStillLinked(t, linkPath, livePath, rotated)
 }
 
-func TestClaudeWarmupWritesThroughActiveSymlink(t *testing.T) {
-	now := time.Unix(6_100_000, 0)
-	old := claudeCredsWithExpiry("old-tok", now.Add(time.Hour).UnixMilli())
-	rotated := claudeCredsWithExpiry("new-tok", now.Add(11*time.Hour).UnixMilli())
-	livePath, linkPath := linkedProfile(t, ".credentials.json", old)
-
-	exec := &fakeExecutor{writeNew: rotated, inspect: func(dir string) error {
-		return requireRegularCredInDir(dir, ".credentials.json", old)
-	}}
-	w := newTestWarmer(exec, &fakeClock{now: now})
-	profile := ProfileInfo{Tool: "claude", Name: "work", Active: true, CredPath: linkPath, HasCredentials: true}
-	if _, err := w.maybeWarmSync(context.Background(), profile); err != nil {
-		t.Fatalf("warm: %v", err)
+// A copy-back that finds the profile linked to live (a switch landed during
+// the run) while live still holds the token the run spent writes the rotated
+// token through the link and keeps the link.
+func TestCopyBackWritesThroughLinkWhenLiveHoldsStartToken(t *testing.T) {
+	start := claudeCredsWithExpiry("start", 1000)
+	rotated := claudeCredsWithExpiry("rotated", 9000)
+	livePath, linkPath := linkedProfile(t, ".credentials.json", start)
+	if err := commitClaudeCredCopyBack(nil, nil, "work", linkPath, []byte(start), []byte(rotated), t.TempDir()); err != nil {
+		t.Fatalf("copy-back: %v", err)
 	}
 	assertStillLinked(t, linkPath, livePath, rotated)
-}
-
-func TestCodexRefreshWritesThroughActiveSymlink(t *testing.T) {
-	now := time.Unix(9_500_000, 0).UTC()
-	old := codexAuth("old", "r1", now.Add(-time.Hour).Format(time.RFC3339))
-	next := codexAuth("new", "r2", now.Format(time.RFC3339))
-	livePath, linkPath := linkedProfile(t, "auth.json", old)
-
-	exec := &fakeCodexExecutor{write: next, inspect: func(dir string) error {
-		return requireRegularCredInDir(dir, "auth.json", "")
-	}}
-	m := testCodexMaintainer(exec, now)
-	p := ProfileInfo{Tool: "codex", Name: "work", Active: true, CredPath: linkPath, HasCredentials: true}
-	if attempted, err := m.refreshSync(context.Background(), p, ""); !attempted || err != nil {
-		t.Fatalf("refresh = %v %v", attempted, err)
-	}
-	assertStillLinked(t, linkPath, livePath, next)
 }
 
 // TestCopyBackCASReadsThroughSymlink: the fingerprint guard compares against

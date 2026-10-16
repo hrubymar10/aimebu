@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/usages"
@@ -29,7 +30,12 @@ var (
 	ErrInvalidCredentials = errors.New("credentials failed validation")
 	ErrActiveProfile      = errors.New("profile is active; pass force to remove")
 	ErrInvalidName        = errors.New("invalid profile name")
+	ErrMaintenanceBusy    = errors.New("background token refresh in progress")
 )
+
+// MaintenanceWait is how long Switch waits for an in-flight background token
+// refresh of its target account before refusing with ErrMaintenanceBusy.
+var MaintenanceWait = 45 * time.Second
 
 // NotEligibleError is the concrete type returned when a tool's live credentials
 // are not usable for switching. Reason is safe to display verbatim — it never

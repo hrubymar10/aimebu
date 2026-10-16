@@ -42,6 +42,7 @@ func codexRefreshArgs(profileDir, modelFlag string) []string {
 
 type codexMaintenanceState struct {
 	inFlight    bool
+	release     func() // the account-guard claim of the run in flight
 	lastAttempt time.Time
 }
 type codexMaintainer struct {
@@ -52,6 +53,7 @@ type codexMaintainer struct {
 	reachable    func(context.Context) bool
 	clock        Clock
 	rescueRoot   string
+	guard        *maintenanceGuard // shared per-(tool, profile) in-flight guard
 	mu           sync.Mutex
 	refresh      map[string]*codexMaintenanceState
 	warm         map[string]*codexMaintenanceState
@@ -59,11 +61,12 @@ type codexMaintainer struct {
 
 func newCodexMaintainer(withLock func(func() error) error, listProfiles func() ([]ProfileInfo, error)) *codexMaintainer {
 	return &codexMaintainer{executor: codexRefreshExecutor{}, withLock: withLock, listProfiles: listProfiles,
-		available: harnessDockerCtrlAvailable, reachable: dockerReachable, clock: realClock{},
+		available: harnessDockerCtrlAvailable, reachable: dockerReachable, clock: realClock{}, guard: newMaintenanceGuard(),
 		refresh: map[string]*codexMaintenanceState{}, warm: map[string]*codexMaintenanceState{}}
 }
 
-func (m *codexMaintainer) claim(states map[string]*codexMaintenanceState, name string, cooldown time.Duration) bool {
+func (m *codexMaintainer) claim(states map[string]*codexMaintenanceState, profile ProfileInfo, cooldown time.Duration) bool {
+	name := profile.Name
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := states[name]
@@ -75,6 +78,13 @@ func (m *codexMaintainer) claim(states map[string]*codexMaintenanceState, name s
 	if s.inFlight || (!s.lastAttempt.IsZero() && now.Sub(s.lastAttempt) < cooldown) {
 		return false
 	}
+	// Refresh and warmup of one codex account must not overlap: both rotate the
+	// same refresh token.
+	release, ok := m.guard.acquire("codex", profile)
+	if !ok {
+		return false
+	}
+	s.release = release
 	s.inFlight = true
 	s.lastAttempt = now
 	return true
@@ -82,13 +92,23 @@ func (m *codexMaintainer) claim(states map[string]*codexMaintenanceState, name s
 func (m *codexMaintainer) finish(states map[string]*codexMaintenanceState, name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	states[name].inFlight = false
+	if s := states[name]; s != nil {
+		if s.release != nil {
+			s.release()
+			s.release = nil
+		}
+		s.inFlight = false
+	}
 }
 
+// codexProfileNeedsRefresh and codexProfileEligibleForWarmup exclude the active
+// profile: the running codex sessions own its token and rotate it themselves.
 func codexProfileNeedsRefresh(p ProfileInfo, now time.Time) bool {
-	return p.Tool == "codex" && p.HasCredentials && p.ExpiresAt != nil && !now.Before(p.ExpiresAt.Add(-claudeNearExpiryWindow))
+	return p.Tool == "codex" && maintenanceTargetBlocked(p) == nil && maintenanceGraceBlocked(p, now) == nil && p.HasCredentials && p.ExpiresAt != nil && !now.Before(p.ExpiresAt.Add(-claudeNearExpiryWindow))
 }
-func codexProfileEligibleForWarmup(p ProfileInfo) bool { return p.Tool == "codex" && p.HasCredentials }
+func codexProfileEligibleForWarmup(p ProfileInfo, now time.Time) bool {
+	return p.Tool == "codex" && maintenanceTargetBlocked(p) == nil && maintenanceGraceBlocked(p, now) == nil && p.HasCredentials
+}
 
 // writeCodexAuthTemp seeds a throwaway CODEX_HOME with the resolved credential
 // bytes as a regular file. The executor bind-mounts this dir, never the profile
@@ -138,6 +158,12 @@ func forceExpireCodexTempCredentials(path string) error {
 }
 
 func (m *codexMaintainer) run(ctx context.Context, profile ProfileInfo, modelFlag string, force bool) error {
+	if err := maintenanceTargetBlocked(profile); err != nil {
+		return err
+	}
+	if err := maintenanceGraceBlockedBy(profile, m.clock); err != nil {
+		return err
+	}
 	runStarted := time.Now()
 	start, err := os.ReadFile(profile.CredPath)
 	if err != nil {
@@ -200,7 +226,7 @@ func commitCodexAuthCopyBack(withLock func(func() error) error, listProfiles fun
 }
 
 func (m *codexMaintainer) maybeRefresh(ctx context.Context, p ProfileInfo, flag string) {
-	if m == nil || m.executor == nil || m.available != nil && !m.available() || !m.claim(m.refresh, p.Name, claudeRefreshFailBackoff) {
+	if m == nil || m.executor == nil || m.available != nil && !m.available() || !m.claim(m.refresh, p, claudeRefreshFailBackoff) {
 		return
 	}
 	log.Printf("usages: codex auto-refresh profile=%q outcome=starting", p.Name)
@@ -217,7 +243,7 @@ func (m *codexMaintainer) maybeRefresh(ctx context.Context, p ProfileInfo, flag 
 	}()
 }
 func (m *codexMaintainer) maybeWarm(ctx context.Context, p ProfileInfo, flag string) bool {
-	if m == nil || m.executor == nil || m.available != nil && !m.available() || !m.claim(m.warm, p.Name, claudeWarmupCooldown) {
+	if m == nil || m.executor == nil || m.available != nil && !m.available() || !m.claim(m.warm, p, claudeWarmupCooldown) {
 		return false
 	}
 	log.Printf("usages: codex warmup profile=%q outcome=starting", p.Name)
@@ -237,14 +263,14 @@ func (m *codexMaintainer) maybeWarm(ctx context.Context, p ProfileInfo, flag str
 	return true
 }
 func (m *codexMaintainer) refreshSync(ctx context.Context, p ProfileInfo, flag string) (bool, error) {
-	if !m.claim(m.refresh, p.Name, claudeRefreshFailBackoff) {
+	if !m.claim(m.refresh, p, claudeRefreshFailBackoff) {
 		return false, nil
 	}
 	defer m.finish(m.refresh, p.Name)
 	return true, m.run(ctx, p, flag, true)
 }
 func (m *codexMaintainer) warmSync(ctx context.Context, p ProfileInfo, flag string) (bool, error) {
-	if !m.claim(m.warm, p.Name, claudeWarmupCooldown) {
+	if !m.claim(m.warm, p, claudeWarmupCooldown) {
 		return false, nil
 	}
 	defer m.finish(m.warm, p.Name)

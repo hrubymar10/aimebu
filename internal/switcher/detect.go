@@ -16,6 +16,10 @@ type Profile struct {
 	HasCreds  bool       `json:"has_credentials"`
 	Email     string     `json:"email,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// SwitchedAwayAt is when the profile last stopped being the active one, when
+	// that was recorded. Background token maintenance waits out a grace period
+	// after it.
+	SwitchedAwayAt *time.Time `json:"switched_away_at,omitempty"`
 }
 
 // Eligibility reports whether a tool's live credentials are usable for switching.

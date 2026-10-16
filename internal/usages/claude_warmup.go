@@ -30,11 +30,17 @@ const claudeWarmupCooldown = 1 * time.Hour
 const claudeWarmupTimeout = 5 * time.Minute
 
 // claudeProfileEligibleForWarmup is the switcher-side eligibility gate for
-// warmup: any claude switcher profile that has stored credentials, including
-// the active one. Whether the account is actually idle and out of its 5h window
-// is a separate check against the usages snapshot (claudeSnapshotOutOfWindow).
-func claudeProfileEligibleForWarmup(profile ProfileInfo) bool {
+// warmup: any INACTIVE claude switcher profile, not switched away from within
+// the last maintenanceSwitchAwayGrace, that has stored credentials.
+// The active profile is never warmed: `claude -p` may rotate its OAuth token,
+// which the harnesses on the live credential file are already doing themselves.
+// Whether the account is actually idle and out of its 5h window is a separate
+// check against the usages snapshot (claudeSnapshotOutOfWindow).
+func claudeProfileEligibleForWarmup(profile ProfileInfo, now time.Time) bool {
 	if profile.Tool != "claude" {
+		return false
+	}
+	if maintenanceTargetBlocked(profile) != nil || maintenanceGraceBlocked(profile, now) != nil {
 		return false
 	}
 	if !profile.HasCredentials {
@@ -107,6 +113,7 @@ func snapshotWeeklyExhausted(snap Snapshot, now time.Time, keys ...string) bool 
 
 type claudeWarmupState struct {
 	inFlight    bool
+	release     func() // the account-guard claim of the run in flight
 	lastAttempt time.Time
 }
 
@@ -134,6 +141,7 @@ type claudeWarmer struct {
 	clock        Clock
 	cooldown     time.Duration
 	rescueRoot   string
+	guard        *maintenanceGuard // shared per-(tool, profile) in-flight guard
 
 	mu    sync.Mutex
 	state map[string]*claudeWarmupState
@@ -148,6 +156,7 @@ func newClaudeWarmer(withLock func(func() error) error, listProfiles func() ([]P
 		reachable:    dockerReachable,
 		clock:        realClock{},
 		cooldown:     claudeWarmupCooldown,
+		guard:        newMaintenanceGuard(),
 		state:        map[string]*claudeWarmupState{},
 	}
 }
@@ -156,7 +165,8 @@ func newClaudeWarmer(withLock func(func() error) error, listProfiles func() ([]P
 // warmup is already running for that account or the account is still inside its
 // 1h cooldown. Claiming stamps lastAttempt = now so the cooldown starts from the
 // moment the attempt begins (not when it ends).
-func (w *claudeWarmer) tryStart(name string) bool {
+func (w *claudeWarmer) tryStart(profile ProfileInfo) bool {
+	name := profile.Name
 	now := w.clock.Now()
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -171,6 +181,12 @@ func (w *claudeWarmer) tryStart(name string) bool {
 	if !st.lastAttempt.IsZero() && now.Sub(st.lastAttempt) < w.cooldown {
 		return false
 	}
+	// Auto-refresh and codex maintenance share this guard: one job per account.
+	release, ok := w.guard.acquire("claude", profile)
+	if !ok {
+		return false
+	}
+	st.release = release
 	st.inFlight = true
 	st.lastAttempt = now
 	return true
@@ -182,6 +198,10 @@ func (w *claudeWarmer) finish(name string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if st := w.state[name]; st != nil {
+		if st.release != nil {
+			st.release()
+			st.release = nil
+		}
 		st.inFlight = false
 	}
 }
@@ -194,10 +214,16 @@ func (w *claudeWarmer) finish(name string) {
 // "no rotation" as success (the window still started); it only copies back when
 // the credentials actually changed, guarded by the same CAS identity check so a
 // switch/removal that landed mid-run is never clobbered. Active profiles are
-// safe targets here because the caller only warms an out-of-window (idle)
-// account, so no live session depends on the pre-rotation token; the file-based
-// switcher reconciles the live config on its next switch/capture.
+// never targets: their token belongs to the harnesses on the live credential
+// file. A profile that becomes active during the run still receives the rotated
+// token through its link, but only while the file holds the token the run spent.
 func (w *claudeWarmer) warm(ctx context.Context, profile ProfileInfo, modelFlag string) error {
+	if err := maintenanceTargetBlocked(profile); err != nil {
+		return err
+	}
+	if err := maintenanceGraceBlockedBy(profile, w.clock); err != nil {
+		return err
+	}
 	runStarted := time.Now()
 	storedPath := profile.CredPath
 	if storedPath == "" {
@@ -262,7 +288,7 @@ func (w *claudeWarmer) maybeWarm(ctx context.Context, profile ProfileInfo, mode,
 	if w.available != nil && !w.available() {
 		return false
 	}
-	if !w.tryStart(profile.Name) {
+	if !w.tryStart(profile) {
 		return false
 	}
 	log.Printf("usages: claude warmup profile=%q mode=%s outcome=starting", profile.Name, mode)
@@ -287,7 +313,7 @@ func (w *claudeWarmer) maybeWarm(ctx context.Context, profile ProfileInfo, mode,
 // in-flight/cooldown guard, runs the warmup, and releases the guard. The bool
 // reports whether the warmup was attempted (false = skipped by the guard).
 func (w *claudeWarmer) maybeWarmSync(ctx context.Context, profile ProfileInfo, modelFlags ...string) (bool, error) {
-	if !w.tryStart(profile.Name) {
+	if !w.tryStart(profile) {
 		return false, nil
 	}
 	defer w.finish(profile.Name)

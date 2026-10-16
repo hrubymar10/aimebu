@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
 // ── test helpers ──────────────────────────────────────────────────────────────
@@ -913,5 +915,126 @@ func TestCodexProfileExpiryFromAccessToken(t *testing.T) {
 	expected := time.Unix(future, 0).UTC()
 	if p.ExpiresAt.Sub(expected) > time.Minute {
 		t.Errorf("ExpiresAt = %v; want ~%v (access token's exp)", p.ExpiresAt, expected)
+	}
+}
+
+// A switch must not land while a background token refresh of its target account
+// is mid-rotation: the live file would end up with a refresh token the run has
+// already spent. Switch waits (before taking the switcher lock) and refuses
+// with ErrMaintenanceBusy when the run outlasts the wait.
+func TestSwitchWaitsForMaintenanceOnTarget(t *testing.T) {
+	m, home := newTestManager(t)
+	must(t, m.SetEnabled(true))
+	livePath := writeLive(t, home, ToolClaude, futureClaude("tok-a"))
+	must(t, m.Import(ToolClaude, "profile-a"))
+	must(t, m.Add(ToolClaude, "profile-b"))
+	must(t, os.MkdirAll(m.profileDir(ToolClaude, "profile-b"), 0o700))
+	credB := futureClaude("tok-b")
+	must(t, os.WriteFile(m.profileCredPath(ToolClaude, "profile-b"), []byte(credB), 0o600))
+
+	release, ok, err := usages.AcquireMaintenance(m.root, ToolClaude, "profile-b", m.profileCredPath(ToolClaude, "profile-b"))
+	if err != nil || !ok {
+		t.Fatalf("AcquireMaintenance = %v %v", ok, err)
+	}
+	saved := MaintenanceWait
+	t.Cleanup(func() { MaintenanceWait = saved })
+
+	MaintenanceWait = 150 * time.Millisecond
+	if _, _, err := m.Switch(ToolClaude, "profile-b"); !errors.Is(err, ErrMaintenanceBusy) {
+		t.Fatalf("Switch during maintenance = %v, want ErrMaintenanceBusy", err)
+	}
+	if active, _ := m.Active(ToolClaude); active != "profile-a" {
+		t.Fatalf("a refused switch changed the active profile to %q", active)
+	}
+	if got := readFile(t, livePath); got == credB {
+		t.Fatal("a refused switch wrote the live credentials")
+	}
+
+	MaintenanceWait = 10 * time.Second
+	go func() { time.Sleep(300 * time.Millisecond); release() }()
+	active, switched, err := m.Switch(ToolClaude, "profile-b")
+	if err != nil || !switched || active != "profile-b" {
+		t.Fatalf("Switch after the run finished = %q %v %v", active, switched, err)
+	}
+	if got := readFile(t, livePath); got != credB {
+		t.Fatalf("live credentials = %q, want profile-b's", got)
+	}
+	// The account lock is released (and its file removed) when the switch ends.
+	if entries, err := os.ReadDir(filepath.Join(m.root, ".maintenance")); err != nil || len(entries) != 0 {
+		t.Fatalf(".maintenance after the switch = %v, %v", entries, err)
+	}
+}
+
+// Switching away from a profile records when it stopped being active, so
+// background maintenance can leave it alone for a grace period. Rename moves
+// the record and Remove drops it; the active profile never reports one.
+func TestSwitchRecordsSwitchAwayTime(t *testing.T) {
+	m, home := newTestManager(t)
+	must(t, m.SetEnabled(true))
+	writeLive(t, home, ToolClaude, futureClaude("tok-a"))
+	must(t, m.Import(ToolClaude, "profile-a"))
+	must(t, m.Add(ToolClaude, "profile-b"))
+	must(t, os.MkdirAll(m.profileDir(ToolClaude, "profile-b"), 0o700))
+	must(t, os.WriteFile(m.profileCredPath(ToolClaude, "profile-b"), []byte(futureClaude("tok-b")), 0o600))
+
+	awayOf := func(name string) *time.Time {
+		t.Helper()
+		profiles, err := m.List()
+		must(t, err)
+		for _, p := range profiles {
+			if p.Tool == ToolClaude && p.Name == name {
+				return p.SwitchedAwayAt
+			}
+		}
+		t.Fatalf("profile %s missing", name)
+		return nil
+	}
+	if awayOf("profile-a") != nil || awayOf("profile-b") != nil {
+		t.Fatal("a switch-away time exists before any switch")
+	}
+	before := time.Now().Add(-time.Second)
+	_, _, err := m.Switch(ToolClaude, "profile-b")
+	must(t, err)
+	at := awayOf("profile-a")
+	if at == nil || at.Before(before) || at.After(time.Now().Add(time.Second)) {
+		t.Fatalf("profile-a switched-away time = %v", at)
+	}
+	if awayOf("profile-b") != nil {
+		t.Fatal("the now-active profile reports a switch-away time")
+	}
+	must(t, m.Rename(ToolClaude, "profile-a", "renamed-a"))
+	if awayOf("renamed-a") == nil {
+		t.Fatal("rename lost the switch-away time")
+	}
+	must(t, m.Remove(ToolClaude, "renamed-a", false))
+	data, err := os.ReadFile(m.switchedAwayPath())
+	must(t, err)
+	if strings.Contains(string(data), "renamed-a") || strings.Contains(string(data), "profile-a") {
+		t.Fatalf("removed profile left a record: %s", data)
+	}
+}
+
+// Without the account lock a background run could be mid-rotation when the
+// profile goes live, so an unusable lock directory refuses the switch.
+func TestSwitchFailsClosedWhenAccountLockUnavailable(t *testing.T) {
+	m, home := newTestManager(t)
+	must(t, m.SetEnabled(true))
+	livePath := writeLive(t, home, ToolClaude, futureClaude("tok-a"))
+	must(t, m.Import(ToolClaude, "profile-a"))
+	must(t, m.Add(ToolClaude, "profile-b"))
+	must(t, os.MkdirAll(m.profileDir(ToolClaude, "profile-b"), 0o700))
+	credB := futureClaude("tok-b")
+	must(t, os.WriteFile(m.profileCredPath(ToolClaude, "profile-b"), []byte(credB), 0o600))
+	must(t, os.WriteFile(filepath.Join(m.root, ".maintenance"), []byte("not a directory"), 0o600))
+
+	_, _, err := m.Switch(ToolClaude, "profile-b")
+	if err == nil || errors.Is(err, ErrMaintenanceBusy) {
+		t.Fatalf("Switch with an unusable account lock = %v, want a hard refusal", err)
+	}
+	if active, _ := m.Active(ToolClaude); active != "profile-a" {
+		t.Fatalf("a refused switch changed the active profile to %q", active)
+	}
+	if got := readFile(t, livePath); got == credB {
+		t.Fatal("a refused switch wrote the live credentials")
 	}
 }

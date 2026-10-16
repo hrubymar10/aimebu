@@ -108,5 +108,5 @@ func TestManagerTriggerClaudeAutoWarmupScheduled(t *testing.T) {
 
 	m.clock.(*fakeClock).now = scheduled
 	m.triggerClaudeAutoWarmup(context.Background())
-	waitForCalls(t, exec, 2)
+	waitForCalls(t, exec, 1) // the idle inactive profile; the active one is never warmed
 }

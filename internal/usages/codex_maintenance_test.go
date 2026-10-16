@@ -9,11 +9,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
 
 type fakeCodexExecutor struct {
+	mu      sync.Mutex // warmups of different profiles run concurrently
 	inspect func(string) error
 	write   string
 	flag    string
@@ -21,7 +23,9 @@ type fakeCodexExecutor struct {
 }
 
 func (f *fakeCodexExecutor) Refresh(_ context.Context, dir, flag string) error {
+	f.mu.Lock()
 	f.flag = flag
+	f.mu.Unlock()
 	if f.inspect != nil {
 		if err := f.inspect(dir); err != nil {
 			return err
@@ -139,7 +143,7 @@ func TestCodexRefreshCASRejectsChangedProfile(t *testing.T) {
 	assertRotatedRescue(t, m.rescueRoot, "codex", "work", next)
 }
 
-func TestCodexRotationSurvivesSwitchAway(t *testing.T) {
+func TestCodexCopyBackWritesThroughWhenProfileBecameActive(t *testing.T) {
 	now := time.Now().UTC()
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
@@ -154,27 +158,46 @@ func TestCodexRotationSurvivesSwitchAway(t *testing.T) {
 	}
 	switchRoot := filepath.Join(root, "switcher")
 	runSwitcherDriver(t, "setup", switchRoot, home, "codex")
+	runSwitcherDriver(t, "switch", switchRoot, home, "codex") // main is now an inactive snapshot
 	stored := filepath.Join(switchRoot, "profiles", "codex", "main", "auth.json")
 	exec := &fakeCodexExecutor{write: next, inspect: func(string) error {
-		runSwitcherDriver(t, "switch", switchRoot, home, "codex")
+		runSwitcherDriver(t, "switchmain", switchRoot, home, "codex") // main becomes active again
 		return nil
 	}}
 	m := testCodexMaintainer(exec, now)
 	m.rescueRoot = switchRoot
 	m.listProfiles = func() ([]ProfileInfo, error) {
-		_, err := os.Stat(stored)
-		return []ProfileInfo{{Tool: "codex", Name: "main", CredPath: stored, HasCredentials: err == nil}}, nil
+		return []ProfileInfo{{Tool: "codex", Name: "main", Active: credentialPathIsLink(stored), CredPath: stored, HasCredentials: true}}, nil
 	}
-	p := ProfileInfo{Tool: "codex", Name: "main", Active: true, CredPath: live, HasCredentials: true}
+	p := ProfileInfo{Tool: "codex", Name: "main", CredPath: stored, HasCredentials: true}
 	if attempted, err := m.refreshSync(context.Background(), p, ""); !attempted || err != nil {
 		t.Fatalf("refresh = %v %v", attempted, err)
 	}
-	got, err := os.ReadFile(stored)
-	if err != nil {
+	if got, _ := os.ReadFile(live); string(got) != next {
+		t.Fatalf("live credentials = %s, want the rotated token", got)
+	}
+}
+
+// With no switcher profiles the implicit "local" profile IS the live file. A
+// run never starts on it, but a copy-back that reaches it (the profile list
+// changed mid-run) still writes the token the run spent.
+func TestCodexCopyBackKeepsImplicitLocalProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	started := []byte(codexAuth("old", "r1", "2026-01-01T00:00:00Z"))
+	rotated := []byte(codexAuth("new", "r2", "2026-01-02T00:00:00Z"))
+	if err := os.WriteFile(path, started, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != next {
-		t.Fatalf("stored auth = %s, want %s", got, next)
+	list := func() ([]ProfileInfo, error) {
+		return listProfilesOrLocal(func(string) ([]ProfileInfo, error) { return nil, nil }, "codex",
+			ProfileInfo{Tool: "codex", Name: "local", Active: true, CredPath: path, HasCredentials: true})
+	}
+	if err := commitCodexAuthCopyBack(nil, list, "local", path, started, rotated, t.TempDir()); err != nil {
+		t.Fatalf("local copy-back: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(rotated) {
+		t.Fatalf("local credentials = %s, %v; want %s", got, err, rotated)
 	}
 }
 
@@ -260,26 +283,6 @@ func TestCodexCopyBackRescuesUnprovenProfileRemoval(t *testing.T) {
 		t.Fatalf("removed profile error = %v", err)
 	}
 	assertRotatedRescue(t, root, "codex", "work", `{"tokens":{"refresh_token":"r2"}}`)
-}
-
-func TestCodexCopyBackKeepsImplicitLocalProfile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "auth.json")
-	started := []byte(codexAuth("old", "r1", "2026-01-01T00:00:00Z"))
-	rotated := []byte(codexAuth("new", "r2", "2026-01-02T00:00:00Z"))
-	if err := os.WriteFile(path, started, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	list := func() ([]ProfileInfo, error) {
-		return listProfilesOrLocal(func(string) ([]ProfileInfo, error) { return nil, nil }, "codex",
-			ProfileInfo{Tool: "codex", Name: "local", Active: true, CredPath: path, HasCredentials: true})
-	}
-	if err := commitCodexAuthCopyBack(nil, list, "local", path, started, rotated, t.TempDir()); err != nil {
-		t.Fatalf("local copy-back: %v", err)
-	}
-	got, err := os.ReadFile(path)
-	if err != nil || string(got) != string(rotated) {
-		t.Fatalf("local credentials = %s, %v; want %s", got, err, rotated)
-	}
 }
 
 func TestCodexWarmupCopiesRotatedCredentialsBack(t *testing.T) {

@@ -600,3 +600,10 @@ func TestSwitcherSwitchNoCredentialMaterial(t *testing.T) {
 		t.Errorf("use error leaks credential material: %q", err.Error())
 	}
 }
+
+func TestSwitcherErrMsgMaintenanceBusyHint(t *testing.T) {
+	err := switcherErrMsg(fmt.Errorf("%w: wait elapsed", switcher.ErrMaintenanceBusy))
+	if err == nil || !strings.Contains(err.Error(), "background token refresh") || !strings.Contains(err.Error(), "try again") {
+		t.Fatalf("hint = %v", err)
+	}
+}

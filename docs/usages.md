@@ -91,8 +91,9 @@ rows with no usage snapshot; the first poller tick (~5 seconds) warms them.
 
 **Per-profile refresh:** every active and inactive profile refreshes on the
 configured provider interval. The active profile uses the provider's normal
-live-credential fetch so Codex token rotation is persisted safely; inactive
-stored profiles use a read-only fetch that never rotates their credentials.
+live-credential fetch; inactive stored profiles use a read-only fetch. Neither
+fetch rotates tokens: the server never refreshes the active account's token
+(see [Never the active profile](#never-the-active-profile)).
 Email-only lookups retain a separate one-hour floor. After a switch,
 `InvalidateProfileSnapshot` drops the affected named entries, so the next
 poller tick (~5 seconds) refetches immediately regardless of the interval.
@@ -118,28 +119,25 @@ owned by the new credentials completes.
 
 Claude OAuth access tokens live only about 8–12 hours. On macOS the live
 harness refreshes them lazily through the Keychain, but a stored switcher
-profile with no live process keeping it fresh — an inactive profile, or an
-active one that has been idle (e.g. overnight) — sees its token silently lapse,
-and switching to it (or resuming work on it) forces a browser re-login.
+profile with no live process keeping it fresh — an inactive profile — sees its
+token silently lapse, and switching to it forces a browser re-login. (The
+active profile is kept fresh by the harnesses running on it; see
+[Never the active profile](#never-the-active-profile).)
 
 Claude auto-refresh keeps near-expiry `claude` switcher profiles ready to use.
-When enabled, the background poller renews any profile — inactive **or active** —
+When enabled, the background poller renews any **inactive** profile
 whose access token is already expired or within 10 minutes of expiry by running
 the real `claude` binary inside a throwaway `harness-docker` container pointed
 at a copy of that profile's credentials. Inside the container there is no
 Keychain, so claude performs its file-based refresh-on-use and writes rotated
-tokens straight back, which aimebu then copies into the stored profile. For the
-active profile, whose stored file is a symlink to the live credentials (see
-[switcher.md](switcher.md#what-a-switch-actually-does)), the copy-back writes
-through the link to the live file and keeps the link.
+tokens straight back, which aimebu then copies into the stored profile (see
+[Never the active profile](#never-the-active-profile) for what happens when the
+profile is switched to mid-run).
 
 Design notes:
 
-- **Includes the active profile.** Auto-refresh fires only when the token is
-  expired or near-expiry, so for an idle active account no live session depends
-  on that token at that moment; the file-based switcher reconciles `~/.claude` on
-  its next switch/capture. This mirrors warmup, which also covers the active
-  account. Codex profiles are unaffected; this is claude-only.
+- **Inactive profiles only.** See
+  [Never the active profile](#never-the-active-profile).
 - **Temp-dir isolation.** claude pollutes its config dir with `.claude.json`,
   `sessions/`, `projects/`, and `policy-limits.json`. aimebu copies only
   `.credentials.json` (the resolved bytes, never a symlink — a host link would
@@ -186,7 +184,7 @@ When `harness-docker-ctrl` is absent the feature is reported unavailable and the
 Settings toggle is disabled.
 
 **Cost.** Enabling it incurs a small per-account cost — occasional `claude -p`
-calls against each near-expiry profile (active or inactive) — so it is opt-in.
+calls against each near-expiry inactive profile — so it is opt-in.
 
 Configure it in **Settings → Usages → Claude auto-refresh**. The stored flag is
 `claude_auto_refresh` in `~/.aimebu/usages/config.json`; the GET/POST
@@ -208,6 +206,50 @@ accept dots via `--model [A-Za-z0-9.-]+`; both settings may be empty to use the
 CLI default. Codex OAuth rotation is performed only by the isolated
 harness-docker maintenance run;
 usage reads never exchange refresh tokens or write `auth.json`.
+
+### Never the active profile
+
+Auto-refresh, warmup and Codex maintenance only ever touch **inactive**
+snapshots. The active profile's token is in use by every harness running
+against the live credential file, and they refresh it themselves. A server-side
+refresh of the same account spends the same refresh token a second time, which
+makes the provider revoke the whole token family and logs every session out.
+The server therefore:
+
+- never selects the active profile (the `active` flag, the implicit `local`
+  profile of an install with no switcher profiles, or a stored credential file
+  that is a link to the live one) for refresh, warmup or maintenance, and
+  refuses it again when a run starts;
+- leaves a profile alone for **8 hours after it stops being active** (recorded
+  in `switcher/switched_away.json` by a switch or an import that moves the
+  active pointer; a rename carries it, a removal drops it). Harness sessions
+  started while the profile was active can still be running and refreshing the
+  token they hold, so the stored snapshot is not yet safe to rotate;
+- runs **one maintenance job at a time per account**: warmup, auto-refresh
+  and Codex maintenance share an exclusion keyed by the profile's stored
+  refresh token (the account), not its name, so a rename mid-run does not free
+  a second slot. It is an advisory file lock under `switcher/.maintenance/`
+  (one transient file per account, removed on release), so it also holds across
+  processes (a second server, the `aimebu switcher` CLI);
+- makes a **switch hold the target account's lock for the whole switch**,
+  waiting up to 45 s for a run to finish and otherwise refusing with HTTP 409 /
+  "a background token refresh of that account is still running; try again in a
+  minute". The account lock is taken before the switcher lock (a run's
+  copy-back takes the switcher lock while holding its account lock), so the two
+  cannot deadlock. The lock is keyed by the stored refresh token and a run's
+  copy-back replaces it, so the key is re-derived after every acquisition (a
+  lock taken under a token that has since changed guards nothing). A switch
+  therefore never lands mid-rotation and no run can start between the check
+  and the swap. If the lock cannot be taken at all (the `.maintenance`
+  directory is unusable) the switch is refused, and a background job is not
+  started either: nothing falls back to unlocked operation;
+- if a profile still became active during a run, the copy-back writes the
+  rotated token through the link **only when the live file still holds the
+  refresh token the run spent** (it is then the only usable token). If a
+  harness already rotated the live token, nothing is overwritten and the
+  rotated copy is kept as a
+  `backups/<tool>/<profile>-rotated-<UTC timestamp>.json` rescue, logged at
+  `ERROR` with its path.
 
 ### Claude warmup (idle 5-hour window)
 
@@ -237,7 +279,7 @@ expose it plus the runtime `warmup_available` flag; POST accepts optional
   reuses the same container path and must persist rotated tokens back the way
   auto-refresh does.
 - **Eligibility — out of the 5h window.** Any `claude` switcher profile with
-  stored credentials is a candidate, **including the active profile**. An
+  stored credentials is a candidate, **except the active profile**. An
   account is treated as “out of window” when its usages snapshot
   has **no active session (`five_hour`) window** — that is, no session window at
   all, or a session window whose `resets_at` is nil or already in the past. A
@@ -260,9 +302,8 @@ expose it plus the runtime `warmup_available` flag; POST accepts optional
   copy-back, so a switch during the run follows the named account. A re-login
   leaves the current profile untouched and saves the rotated file under
   `switcher/backups/claude/`; removal discards it. Warmup
-  deliberately permits copy-back to the active profile: its out-of-window gate
-  means the account is idle, so no live session depends on the old token, and
-  the file-based switcher reconciles live config on the next switch/capture.
+  never targets the active profile (see
+  [Never the active profile](#never-the-active-profile)).
   Unlike auto-refresh, warmup does **not** require `expiresAt` to advance: it
   copies back only when the credentials actually changed, and “no rotation” is
   still a success (the 5h window started regardless).
@@ -270,8 +311,9 @@ expose it plus the runtime `warmup_available` flag; POST accepts optional
   usages snapshot (a warmed account then shows an active window and drops out of
   the eligible set), so it cannot be classified inline. Each account is
   therefore warmed at most **once per hour** regardless of outcome — distinct
-  from auto-refresh's 5-minute post-failure backoff — plus an in-flight guard so
-  an account never has two concurrent warmups.
+  from auto-refresh's 5-minute post-failure backoff — plus the shared in-flight
+  account lock so an account never has a warmup concurrent with another warmup
+  or a refresh.
 - **Scheduled mode.** `warmup_schedule` contains one five-field cron entry per
   line; blank lines are ignored. Scheduled mode scans when **any** line matches,
   using the server's local time, and deduplicates across all lines so a matching
@@ -281,7 +323,7 @@ expose it plus the runtime `warmup_available` flag; POST accepts optional
   restricted, either one matching follows standard cron behavior.
 - **Smart mode.** One scan starts at most one account
   and different accounts are separated by a gap of **5 hours divided by the
-  number of warmable credential-bearing profiles, active or inactive**.
+  number of warmable credential-bearing inactive profiles**.
   Profiles whose active weekly limit is at 100% are excluded from both warmup
   attempts and this spacing count until that weekly window resets. Claude uses
   its `weekly` window for this gate; Codex uses either `weekly` or

@@ -173,6 +173,9 @@ func switcherHTTPStatus(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, switcher.ErrProfileExists):
 		return http.StatusConflict
+	case errors.Is(err, switcher.ErrMaintenanceBusy):
+		// 409: a background refresh of the target account is still running.
+		return http.StatusConflict
 	case errors.Is(err, switcher.ErrActiveProfile):
 		// 409 so the UI can ask for confirmation before retrying with force=true.
 		return http.StatusConflict

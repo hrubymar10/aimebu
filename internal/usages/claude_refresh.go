@@ -130,15 +130,18 @@ func dockerReachable(ctx context.Context) bool {
 	return exec.CommandContext(checkCtx, "docker", "info").Run() == nil
 }
 
-// claudeProfileNeedsRefresh is the pure eligibility predicate: any claude
-// switcher profile with stored credentials whose access token is already
-// expired or within window of expiry, INCLUDING the active profile. The active
-// account is intentionally eligible: auto-refresh fires only when its token is
-// expired or near-expiry, so an idle active account (e.g. overnight) still gets
-// its token rotated instead of silently expiring. This mirrors
-// claudeProfileEligibleForWarmup, which also covers the active account.
+// claudeProfileNeedsRefresh is the pure eligibility predicate: any INACTIVE
+// claude switcher profile with stored credentials whose access token is already
+// expired or within window of expiry, and not switched away from within the
+// last maintenanceSwitchAwayGrace. The active profile is never eligible: its
+// token is in use by the harnesses on the live credential file, which refresh it
+// themselves, and a server-side refresh would reuse the same refresh token and
+// get the whole token family revoked.
 func claudeProfileNeedsRefresh(profile ProfileInfo, now time.Time, window time.Duration) bool {
 	if profile.Tool != "claude" {
+		return false
+	}
+	if maintenanceTargetBlocked(profile) != nil || maintenanceGraceBlocked(profile, now) != nil {
 		return false
 	}
 	if !profile.HasCredentials {
@@ -167,6 +170,9 @@ func classifyRefreshErr(err error, profile ProfileInfo) (claudeRefreshOutcome, t
 	switch {
 	case err == nil:
 		return refreshOutcomeSuccess, time.Time{}
+	case errors.Is(err, errMaintenanceActiveProfile), errors.Is(err, errMaintenanceGrace):
+		// Became (or was) active: not a failure, and nothing to wait for.
+		return refreshOutcomeNoop, time.Time{}
 	case errors.Is(err, errClaudeRefreshNoop):
 		var retry time.Time
 		if profile.ExpiresAt != nil {
@@ -180,6 +186,7 @@ func classifyRefreshErr(err error, profile ProfileInfo) (claudeRefreshOutcome, t
 
 type claudeRefreshState struct {
 	inFlight    bool
+	release     func() // the account-guard claim of the run in flight
 	lastFailure time.Time
 	// retryAfter defers the next attempt for a benign no-op (token still valid):
 	// unlike lastFailure it is not a fixed backoff but the token's real expiry, so
@@ -200,6 +207,7 @@ type claudeRefresher struct {
 	clock        Clock
 	backoff      time.Duration
 	rescueRoot   string
+	guard        *maintenanceGuard // shared per-(tool, profile) in-flight guard
 
 	mu    sync.Mutex
 	state map[string]*claudeRefreshState
@@ -214,6 +222,7 @@ func newClaudeRefresher(withLock func(func() error) error, listProfiles func() (
 		reachable:    dockerReachable,
 		clock:        realClock{},
 		backoff:      claudeRefreshFailBackoff,
+		guard:        newMaintenanceGuard(),
 		state:        map[string]*claudeRefreshState{},
 	}
 }
@@ -221,7 +230,8 @@ func newClaudeRefresher(withLock func(func() error) error, listProfiles func() (
 // tryStart claims the in-flight slot for a profile. It returns false when a
 // refresh is already running for that profile or the profile is still inside
 // its post-failure backoff window.
-func (r *claudeRefresher) tryStart(name string) bool {
+func (r *claudeRefresher) tryStart(profile ProfileInfo) bool {
+	name := profile.Name
 	now := r.clock.Now()
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -239,6 +249,12 @@ func (r *claudeRefresher) tryStart(name string) bool {
 	if !st.retryAfter.IsZero() && now.Before(st.retryAfter) {
 		return false
 	}
+	// Warmup and codex maintenance share this guard: one job per account.
+	release, ok := r.guard.acquire("claude", profile)
+	if !ok {
+		return false
+	}
+	st.release = release
 	st.inFlight = true
 	return true
 }
@@ -253,6 +269,10 @@ func (r *claudeRefresher) finish(name string, outcome claudeRefreshOutcome, retr
 	if st == nil {
 		st = &claudeRefreshState{}
 		r.state[name] = st
+	}
+	if st.release != nil {
+		st.release()
+		st.release = nil
 	}
 	st.inFlight = false
 	switch outcome {
@@ -280,7 +300,7 @@ func (r *claudeRefresher) maybeRefresh(ctx context.Context, profile ProfileInfo,
 	if r.available != nil && !r.available() {
 		return
 	}
-	if !r.tryStart(profile.Name) {
+	if !r.tryStart(profile) {
 		return
 	}
 	log.Printf("usages: claude auto-refresh profile=%q outcome=starting", profile.Name)
@@ -318,7 +338,7 @@ func (r *claudeRefresher) maybeRefresh(ctx context.Context, profile ProfileInfo,
 // in-flight/backoff guard, runs the refresh, and records the outcome. The bool
 // reports whether the refresh was attempted (false = skipped by the guard).
 func (r *claudeRefresher) maybeRefreshSync(ctx context.Context, profile ProfileInfo, modelFlags ...string) (bool, error) {
-	if !r.tryStart(profile.Name) {
+	if !r.tryStart(profile) {
 		return false, nil
 	}
 	var err error
@@ -341,6 +361,12 @@ func (r *claudeRefresher) maybeRefreshSync(ctx context.Context, profile ProfileI
 // file parses and its expiresAt advanced, then copy the rotated .credentials.json
 // back into the real profile dir under the switcher lock with an account guard.
 func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo, modelFlag string) error {
+	if err := maintenanceTargetBlocked(profile); err != nil {
+		return err
+	}
+	if err := maintenanceGraceBlockedBy(profile, r.clock); err != nil {
+		return err
+	}
 	runStarted := time.Now()
 	storedPath := profile.CredPath
 	if storedPath == "" {
@@ -403,11 +429,10 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo, mode
 
 	// Copy-back under the switcher lock with a refresh-token identity guard:
 	// a switch can change the credential path without changing the account, while
-	// a removal or re-login must never be clobbered. Refreshing an active profile
-	// is intentional now (an idle active
-	// account whose token expired): auto-refresh only fires at/near expiry, so no
-	// live session depends on the pre-rotation token at that moment, and the
-	// file-based switcher reconciles ~/.claude on its next switch/capture.
+	// a removal or re-login must never be clobbered. A profile that became
+	// active during the run (stored file now linked to live) still gets the
+	// rotated token written through the link, but only while the file holds the
+	// refresh token this run spent; otherwise the abort keeps a rescue copy.
 	if err := commitClaudeCredCopyBack(r.withLock, r.listProfiles, profile.Name, storedPath, startData, rotated, r.rescueRoot, runStarted); err != nil {
 		return err
 	}

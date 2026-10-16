@@ -2463,6 +2463,7 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 					Email:          p.Email,
 					HasCredentials: p.HasCreds,
 					ExpiresAt:      p.ExpiresAt,
+					SwitchedAwayAt: p.SwitchedAwayAt,
 				})
 			}
 			return result, nil

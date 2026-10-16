@@ -343,7 +343,12 @@ active profile per tool, schema-versioned), `removed.json` (0600, last 50
 explicit removals with hashed refresh tokens), `profiles/<tool>/<name>/` (stored
 credentials, 0600 files in 0700 dirs; the active profile's credential file is a
 symlink to the live one, replaced by a regular snapshot on switch-away),
-`backups/<tool>/` (pre-switch safety copies), and `.lock` (flock serializing every mutating operation across CLI and
+`backups/<tool>/` (pre-switch safety copies), `switched_away.json` (0600,
+when each profile last stopped being active; advisory input to the 8-hour
+maintenance grace), `.maintenance/` (transient
+0600 flock files, one per account while a background token refresh, warmup or
+switch holds it; removed on release, so the directory is normally empty), and
+`.lock` (flock serializing every mutating operation across CLI and
 server, including the usages poller's writes to a live credentials path).
 Supported tools are claude and codex, file credentials only — the Keychain is
 never read or written, and a tool without a usable credentials file is reported

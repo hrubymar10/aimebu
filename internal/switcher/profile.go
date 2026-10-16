@@ -17,6 +17,7 @@ func (m *Manager) List() ([]Profile, error) {
 		return nil, err
 	}
 	var profiles []Profile
+	away := m.loadSwitchedAway()
 	for _, tool := range Tools() {
 		toolDir := filepath.Join(m.profilesRoot(), tool)
 		entries, err := os.ReadDir(toolDir)
@@ -33,6 +34,10 @@ func (m *Manager) List() ([]Profile, error) {
 			}
 			name := e.Name()
 			p := m.buildProfile(tool, name, name == active)
+			if at, ok := away[switchedAwayKey(tool, name)]; ok && name != active {
+				at := at
+				p.SwitchedAwayAt = &at
+			}
 			profiles = append(profiles, p)
 		}
 	}
@@ -225,6 +230,9 @@ func (m *Manager) Import(tool, name string) error {
 		m.rollbackImport(tool, name, previous, livePath)
 		return fmt.Errorf("import: update state: %w", err)
 	}
+	if previous != "" && previous != name {
+		m.recordSwitchAway(tool, previous)
+	}
 	return nil
 }
 
@@ -293,8 +301,15 @@ func (m *Manager) Rename(tool, oldName, newName string) error {
 		// has already happened.
 		m.backupActiveLiveAs(tool, newName)
 		state.Active[tool] = newName
-		return m.saveState(state)
+		if err := m.saveState(state); err != nil {
+			return err
+		}
+		// The active profile has no switch-away time; entries left under either
+		// name by earlier profiles must not be inherited by it later.
+		m.forgetSwitchedAway(tool, oldName, newName)
+		return nil
 	}
+	m.moveSwitchedAway(tool, oldName, newName)
 	return nil
 }
 
@@ -363,6 +378,7 @@ func (m *Manager) Remove(tool, name string, force bool) error {
 	if err := m.deleteProfileRescues(tool, name); err != nil {
 		log.Printf("switcher: %s/%s: delete rescues of removed profile: %v", tool, name, err)
 	}
+	m.forgetSwitchedAway(tool, name)
 
 	if isActive {
 		// Clear live credentials so the harness prompts for a fresh login.

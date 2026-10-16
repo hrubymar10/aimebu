@@ -9,7 +9,7 @@ import (
 
 func main() {
 	if len(os.Args) != 5 {
-		panic("usage: switcherdriver <setup|switch|rename> <root> <home> <claude|codex>")
+		panic("usage: switcherdriver <setup|switch|switchmain|rename> <root> <home> <claude|codex>")
 	}
 	m, err := switcher.New(os.Args[2])
 	if err != nil {
@@ -27,6 +27,8 @@ func main() {
 		}
 	case "switch":
 		_, _, err = m.Switch(os.Args[4], "other")
+	case "switchmain":
+		_, _, err = m.Switch(os.Args[4], "main")
 	case "rename":
 		err = m.Rename(os.Args[4], "main", "renamed")
 	default:

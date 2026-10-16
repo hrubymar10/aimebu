@@ -209,13 +209,29 @@ Credential files are `0600`, directories `0700` (an active profile's symlink
 has no mode of its own; its target, the live file, is `0600`). This tree is **not**
 server-owned — the CLI writes it with the server stopped. `.lock` also
 serializes the server-side writers that touch a live or stored credential path:
-the usages poller's Codex token rotation and, when enabled, the Claude
-auto-refresh copy-back (see [usages.md](usages.md#claude-auto-refresh)). A
-copy-back to a symlinked (active) profile writes through the link to the live
-file — temp file plus rename in the live file's directory — and leaves the link
-in place. If an active profile is switched away while a Claude refresh/warmup
-or Codex maintenance run is in flight, copy-back follows its regular-file
-snapshot when the original refresh token still matches. A rename during the
+the copy-back of tokens rotated by the opt-in maintenance jobs (Claude
+auto-refresh and warmup, Codex maintenance; see
+[usages.md](usages.md#claude-auto-refresh)). These
+maintenance jobs never run on the active profile. Each holds a per-account
+advisory lock, `switcher/.maintenance/<hash of the refresh token>.lock`
+(created for the job, removed on release), and a switch **holds the same lock
+of its target account for the whole switch** (waiting up to 45 s for a run to
+finish, then refusing with a "try again" message), so a run can neither be
+mid-rotation when a profile goes live nor start in between. The order is
+always account lock, then `.lock`; a run's copy-back takes `.lock` while it
+holds its account lock, so the two cannot deadlock. The key is re-derived
+after the lock is taken (a finished run replaces the token it was keyed by),
+and a lock that cannot be taken at all refuses the switch. A profile that just
+stopped being active is also left to its own sessions for 8 hours
+(`switcher/switched_away.json`, advisory, not part of `state.json`). A file that exists
+but cannot be parsed also holds other profiles' records, so a writer moves it
+to `switched_away.json.corrupt` (a numbered suffix if one is already there) and
+logs an error rather than replacing it with a one-entry file; listing never
+touches it. Renaming the active profile drops stale entries under either name. If a profile became active
+during a run anyway, copy-back writes through its link to the live file only
+while the live file still holds the refresh token the run spent; otherwise the
+rotated copy is rescued (see
+[usages.md](usages.md#never-the-active-profile)). A rename during the
 run also follows the profile when exactly one stored refresh token matches.
 If the profile has a different refresh token, its current credentials are not
 changed; the rotated file is rescued as a mode-`0600`
