@@ -89,6 +89,76 @@ func TestSweepAgentLivenessOfflineEdgeFiresOnceAndReconnectRearms(t *testing.T) 
 	}
 }
 
+func TestSweepAgentLivenessRespawnLoopDoesNotRepeatOfflineAlert(t *testing.T) {
+	s, _ := setupTestServer(t)
+	agent, _, err := s.registerAI("gpt5", "codex", "test", nil, "retrying")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := s.registerHuman("alex", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.createRoom("general", human.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", human.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.joinRoom("general", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	setAgentLastSeen(t, s, agent.ID, now.Add(-11*time.Minute))
+	s.emitLivenessEvents(s.sweepAgentLiveness(now))
+
+	// A failed harness resume sends lifecycle states but never reaches the bus.
+	// Each retry used to clear offline and create another alert on the sweep.
+	for i, state := range []string{
+		types.AgentStateRespawning,
+		types.AgentStateBootstrapping,
+		types.AgentStateError,
+		types.AgentStateRespawning,
+		types.AgentStateIdle,
+	} {
+		if !s.setAgentState(agent.ID, state) {
+			t.Fatalf("state push %q failed", state)
+		}
+		s.emitLivenessEvents(s.sweepAgentLiveness(now.Add(time.Duration(i+1) * 15 * time.Second)))
+		if got := findListedAgent(t, s, agent.ID); got.State != types.AgentStateOffline {
+			t.Fatalf("after %q, state = %q, want offline", state, got.State)
+		}
+	}
+
+	var alerts int
+	s.mu.RLock()
+	for _, msg := range s.messages["general"] {
+		if strings.Contains(msg.Body, "looks offline") {
+			alerts++
+		}
+	}
+	s.mu.RUnlock()
+	if alerts != 1 {
+		t.Fatalf("offline alerts = %d, want 1", alerts)
+	}
+
+	// An activity state is a keepalive and permits a later real offline edge.
+	if !s.setAgentState(agent.ID, types.AgentStateThinking) {
+		t.Fatal("thinking state push failed")
+	}
+	if events := s.sweepAgentLiveness(time.Now().UTC()); len(events) != 1 || events[0].Kind != livenessEventReconnect {
+		t.Fatalf("activity reconnect events = %#v, want one reconnect", events)
+	}
+	if got := findListedAgent(t, s, agent.ID); got.State != types.AgentStateThinking {
+		t.Fatalf("reconnected state = %q, want thinking", got.State)
+	}
+	setAgentLastSeen(t, s, agent.ID, now.Add(-11*time.Minute))
+	if events := s.sweepAgentLiveness(now.Add(90 * time.Second)); len(events) != 1 || events[0].Kind != livenessEventOffline {
+		t.Fatalf("later offline events = %#v, want one offline", events)
+	}
+}
+
 func TestSweepAgentLivenessOpenWaitAndWebsocketKeepActive(t *testing.T) {
 	s, _ := setupTestServer(t)
 	waiter, _, err := s.registerAI("gpt5", "codex", "test", nil, "waitlive")

@@ -134,6 +134,7 @@ type Agent struct {
 	Meta         map[string]string `json:"meta,omitempty"`
 	State        string            `json:"state,omitempty"`
 	StateAt      time.Time         `json:"state_at,omitempty"`
+	PendingState string            `json:"-"` // latest wrapper state after activity while offline
 	StateOverlay bool              `json:"state_overlay,omitempty"`
 	Warnings     []string          `json:"warnings,omitempty"`
 	RegisteredAt string            `json:"registered_at"`

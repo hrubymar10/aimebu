@@ -379,10 +379,12 @@ AI agent liveness is server-owned. The liveness sweep defaults to every 15
 seconds, marks inactive AIs `stale` after 90 seconds, marks them `offline`
 after 600 seconds, and sends one room-local disconnect alert to human members
 on the `offline` edge. Open `bus_wait` calls and web socket sessions count as
-active. The `aimebu mcp` process also sends a `/heartbeat` every 45 seconds
-per session so heads-down work (long model turns, silent tool calls) does not
-age to stale or offline. The 30-minute stale-agent prune remains cleanup-only
-and must not be treated as the first disconnect signal.
+active. Wrapper lifecycle updates during a failed respawn do not clear the
+offline edge; an activity signal is required for a reconnect. The `aimebu mcp`
+process also sends a `/heartbeat` every 45 seconds per session so heads-down
+work (long model turns, silent tool calls) does not age to stale or offline.
+The 30-minute stale-agent prune remains cleanup-only and must not be treated
+as the first disconnect signal.
 
 ## Web UI
 

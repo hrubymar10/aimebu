@@ -506,8 +506,10 @@ Agent liveness is checked separately from cleanup: inactive AI agents show
 and emit one room-local disconnect alert to human room members on that
 offline edge. Open `bus_wait` calls, web socket sessions, and the per-session
 MCP heartbeat (every 45s) count as active, so heads-down work does not age
-to offline. The stale-agent prune window remains cleanup-only and defaults to
-30 minutes.
+to offline. Wrapper lifecycle updates during a failed respawn leave the
+agent offline; an activity signal must arrive before the sweep emits a
+reconnect and can later send another disconnect alert. The stale-agent prune
+window remains cleanup-only and defaults to 30 minutes.
 
 `/rooms/{id}/wait` and `/agents/{id}/wait` return `{messages: [...]}`
 on success, or `{messages: [], status: "still_waiting", keep_waiting:

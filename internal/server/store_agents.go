@@ -421,6 +421,21 @@ func (s *store) setAgentState(agentID, state string) bool {
 			s.mu.Unlock()
 			return true
 		}
+		// Keep the offline edge until the liveness sweep observes a genuine
+		// keepalive or open wait and emits the matching reconnect event. Wrapper
+		// lifecycle updates alone must not create another offline edge. Once
+		// activity arrives, retain the latest pushed state for that sweep.
+		if a.State == types.AgentStateOffline {
+			activity := state == types.AgentStateThinking || state == types.AgentStateToolCall
+			if activity || a.PendingState != "" {
+				a.PendingState = state
+			}
+			s.mu.Unlock()
+			if activity {
+				s.touchAgent(agentID)
+			}
+			return true
+		}
 		if a.State != state {
 			updated = true
 		}
@@ -515,6 +530,12 @@ func (s *store) sweepAgentLiveness(now time.Time) []livenessEvent {
 		}
 
 		if prev != next {
+			if prev == types.AgentStateOffline && next == types.AgentStateIdle && a.PendingState != "" {
+				next = a.PendingState
+			}
+			if prev == types.AgentStateOffline {
+				a.PendingState = ""
+			}
 			a.State = next
 			a.StateAt = now
 			changed = true
