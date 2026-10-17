@@ -123,7 +123,10 @@ tool to token-only live credentials. A tool that cannot yet
 migrate shows `waiting` and the reason in Settings; it is retried on later
 ticks. The existing safety refusals apply: a token within 15 minutes of
 expiry, a running Codex process, or no active profile stops that tool's
-migration. The other tool may migrate independently. Turning the setting off
+migration. For running Codex sessions, the per-tool reason gives only their
+count and says that migration retries automatically; process details stay in
+the server log. The manual `migrate-copies` refusal still includes those details.
+The other tool may migrate independently. Turning the setting off
 restores a full credential to each live file, preserves unrelated live fields
 such as Claude `mcpOAuth`, relinks the active stored profile, and removes the
 tool's migration marker. A pending `/login` is imported before restore.

@@ -315,7 +315,9 @@ func TestMigrateRefusesWhileCodexRuns(t *testing.T) {
 		return []string{"pid 4242", "container abc: 7"}, "host processes; 2 running docker container(s)", nil
 	}
 	_, err := m.MigrateToTokenCopies(MigrateOptions{Tools: []string{ToolCodex}, RunningCodex: running})
-	if !errors.Is(err, ErrCodexRunning) || !strings.Contains(err.Error(), "pid 4242, container abc: 7") || !strings.Contains(err.Error(), "checked: host processes") {
+	want := "codex is running (pid 4242, container abc: 7): a running codex caches its refresh token and would spend it again; end those sessions and re-run, or pass --allow-running-codex; checked: host processes; 2 running docker container(s); nothing was changed"
+	var runningErr *CodexRunningError
+	if !errors.Is(err, ErrCodexRunning) || !errors.As(err, &runningErr) || len(runningErr.Found) != 2 || err.Error() != want {
 		t.Fatalf("Migrate = %v, want ErrCodexRunning naming the pids", err)
 	}
 	if m.TokenCopies() {

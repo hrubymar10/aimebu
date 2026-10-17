@@ -100,11 +100,13 @@ func (s *store) startTokenCopies(ctx context.Context, wg *sync.WaitGroup, swMgr 
 	// (SetReconcile); the reconciler's own loop then keeps ticking every 60 s.
 	tr.SetReconcile(rec.Pass)
 	last := map[string]usages.TokenAutoRefreshToolState{}
+	blocked := codexBlockLogState{}
 	um.SetTokenCopySeed(swMgr.TokenCopiesFor)
 	um.SetTokenCopyController(func(ctx context.Context, on bool) map[string]usages.TokenAutoRefreshToolState {
 		states := make(map[string]usages.TokenAutoRefreshToolState, 2)
 		for _, tool := range switcher.Tools() {
 			state := usages.TokenAutoRefreshToolState{Status: "off"}
+			var migrationErr error
 			migrated := swMgr.TokenCopiesFor(tool)
 			switch {
 			case on && migrated:
@@ -112,8 +114,9 @@ func (s *store) startTokenCopies(ctx context.Context, wg *sync.WaitGroup, swMgr 
 			case on:
 				if !um.TokenAutoRefreshAvailable() {
 					state = usages.TokenAutoRefreshToolState{Status: "waiting", Reason: "harness-docker-ctrl is unavailable"}
-				} else if result, err := swMgr.MigrateToTokenCopies(switcher.MigrateOptions{Tools: []string{tool}}); err != nil {
-					state = usages.TokenAutoRefreshToolState{Status: "waiting", Reason: usages.RedactDetail(err.Error())}
+				} else if result, err := swMgr.MigrateToTokenCopies(switcher.MigrateOptions{Tools: []string{tool}, RunningCodex: s.tokenSettingRunningCodex}); err != nil {
+					migrationErr = err
+					state = usages.TokenAutoRefreshToolState{Status: "waiting", Reason: tokenCopyMigrationReason(err)}
 				} else if swMgr.TokenCopiesFor(tool) {
 					state.Status = "migrated"
 				} else if len(result.Tools) > 0 {
@@ -140,6 +143,9 @@ func (s *store) startTokenCopies(ctx context.Context, wg *sync.WaitGroup, swMgr 
 					}
 				}
 			}
+			if blocked.changed(tool, migrationErr) {
+				log.Printf("credtarget: %s migration blocked: %s", tool, usages.RedactDetail(migrationErr.Error()))
+			}
 			states[tool] = state
 			if state.Status != last[tool].Status {
 				log.Printf("credtarget: %s token auto-refresh: %s %s", tool, state.Status, state.Reason)
@@ -159,6 +165,32 @@ func (s *store) startTokenCopies(ctx context.Context, wg *sync.WaitGroup, swMgr 
 		rec.Run(ctx)
 	}()
 	return tr
+}
+
+func tokenCopyMigrationReason(err error) string {
+	var running *switcher.CodexRunningError
+	if errors.As(err, &running) {
+		return fmt.Sprintf("waiting for running codex sessions to end (%d found); retries automatically", len(running.Found))
+	}
+	return usages.RedactDetail(err.Error())
+}
+
+// codexBlockLogState records only the blocking process set. Observing any
+// other outcome clears it so a later block is logged again.
+type codexBlockLogState map[string]string
+
+func (s codexBlockLogState) changed(tool string, err error) bool {
+	var running *switcher.CodexRunningError
+	if !errors.As(err, &running) {
+		delete(s, tool)
+		return false
+	}
+	found := append([]string(nil), running.Found...)
+	sort.Strings(found)
+	key := strings.Join(found, "\x00")
+	previous, seen := s[tool]
+	s[tool] = key
+	return !seen || previous != key
 }
 
 // credentialAlertSink returns the alert callback of the credential pieces: it

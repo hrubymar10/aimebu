@@ -40,6 +40,19 @@ type MigrateOptions struct {
 // token the server refreshes, so the migration waits for those sessions to end.
 var ErrCodexRunning = errors.New("codex is running")
 
+// CodexRunningError retains the process details for the CLI and logs while
+// allowing the settings UI to report only how many sessions are blocking it.
+type CodexRunningError struct {
+	Found   []string
+	Checked string
+}
+
+func (e *CodexRunningError) Error() string {
+	return fmt.Sprintf("%s (%s): a running codex caches its refresh token and would spend it again; end those sessions and re-run, or pass --allow-running-codex; checked: %s; nothing was changed", ErrCodexRunning, strings.Join(e.Found, ", "), e.Checked)
+}
+
+func (e *CodexRunningError) Unwrap() error { return ErrCodexRunning }
+
 // MigrateResult reports what happened per tool.
 type MigrateResult struct {
 	AlreadyMigrated bool
@@ -195,7 +208,7 @@ func (m *Manager) MigrateToTokenCopies(opts MigrateOptions) (MigrateResult, erro
 				return MigrateResult{}, fmt.Errorf("check for running codex processes: %w (pass --allow-running-codex to skip the check)", perr)
 			}
 			if len(found) > 0 {
-				return MigrateResult{}, fmt.Errorf("%w (%s): a running codex caches its refresh token and would spend it again; end those sessions and re-run, or pass --allow-running-codex; checked: %s; nothing was changed", ErrCodexRunning, strings.Join(found, ", "), checked)
+				return MigrateResult{}, &CodexRunningError{Found: found, Checked: checked}
 			}
 			result.CodexChecked = checked
 		}

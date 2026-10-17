@@ -103,6 +103,47 @@ func TestTokenSettingMigratesWaitsRetriesAndUnmigrates(t *testing.T) {
 	e.cli.assertNothingSpentTwice(t, "setting round trip")
 }
 
+func TestTokenSettingCodexWaitingReasonInSnapshot(t *testing.T) {
+	e := newE2EEnv(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "harness-docker-ctrl"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	e.setLive(switcher.ToolCodex, fullCodexCreds("cx0", "ref-cx0", time.Now().Add(6*time.Hour), time.Now()))
+	if err := e.m.Import(switcher.ToolCodex, "main"); err != nil {
+		t.Fatal(err)
+	}
+	on := true
+	if _, err := e.um.UpdateSettings(context.Background(), 0, "", nil, false, &on, nil, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := setupTestServer(t)
+	s.tokenSettingRunningCodex = func() ([]string, string, error) {
+		return []string{"pid 4242", "container abc: 7"}, "host and docker", nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	s.startTokenCopies(ctx, &wg, e.m, e.um, t.TempDir())
+	e.um.Start(ctx, &wg)
+	defer func() { cancel(); wg.Wait() }()
+	for deadline := time.Now().Add(18 * time.Second); time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
+		resp, err := e.um.Snapshot(ctx, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := resp.Settings.TokenAutoRefreshState[switcher.ToolCodex]
+		if state.Status == "waiting" {
+			want := "waiting for running codex sessions to end (2 found); retries automatically"
+			if state.Reason != want {
+				t.Fatalf("settings state = %+v, want reason %q", state, want)
+			}
+			return
+		}
+	}
+	t.Fatal("Codex never reached waiting state")
+}
+
 func TestTokenSettingOffStaysOffWhenLinkRepairFails(t *testing.T) {
 	e := newE2EEnv(t)
 	// A corrupt switcher state makes EnsureActiveLinks fail, but no tool has

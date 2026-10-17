@@ -84,6 +84,8 @@ type store struct {
 	dir    string
 	db     *sql.DB
 	nextID atomic.Int64
+	// Tests override the settings migration's Codex process scan.
+	tokenSettingRunningCodex func() ([]string, string, error)
 
 	// wsWG tracks active WebSocket handler goroutines including their
 	// post-loop cleanup (unsubscribe + leaveWS write + conn.Close).
