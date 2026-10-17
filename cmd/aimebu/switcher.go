@@ -11,6 +11,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/config"
+	"github.com/hrubymar10/aimebu/internal/credtarget"
 	"github.com/hrubymar10/aimebu/internal/switcher"
 )
 
@@ -38,7 +40,34 @@ func newSwitcherManager() (switcherManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return switcher.New(root)
+	m, err := switcher.New(root)
+	if err != nil {
+		return nil, err
+	}
+	if err := wireTokenCopyHooks(m); err != nil {
+		return nil, err
+	}
+	return cliSwitcher{m}, nil
+}
+
+// wireTokenCopyHooks gives a CLI-built manager the live-file fan-out of the
+// token-copy model, exactly as the server does: without it every switch on a
+// migrated install fails. There is no refresher in a CLI process, so a due
+// incoming profile is refused with a message pointing at the server (the server
+// refreshes profiles ahead of expiry, so this only happens after it was down).
+func wireTokenCopyHooks(m *switcher.Manager) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	reg := credtarget.NewRegistry(config.ServerDir(), home)
+	reg.LivePath = m.LiveCredPath
+	if err := reg.Load(); err != nil {
+		return fmt.Errorf("load credential targets: %w", err)
+	}
+	fan := &credtarget.FanOut{Registry: reg, Writer: &credtarget.Writer{}, Active: m.Active, WithLock: m.WithLock}
+	m.SetTokenCopyHooks(switcher.TokenCopyHooks{FanOutActive: fan.FanOutActive, ReplaceActive: fan.FanOutActiveReplacing, ClearActive: fan.ClearActive})
+	return nil
 }
 
 // ── Entry point ──────────────────────────────────────────────────────
@@ -52,7 +81,7 @@ func switcherCmd(args []string) {
 	rest := args[1:]
 
 	switch sub {
-	case "list", "status", "use", "add", "import", "rename", "remove", "enable", "disable":
+	case "list", "status", "use", "add", "import", "rename", "remove", "enable", "disable", "migrate-copies":
 		// handled below
 	case "help", "-h", "--help":
 		switcherUsage(0)
@@ -80,6 +109,8 @@ func switcherCmd(args []string) {
 		cmdErr = switcherImport(os.Stdout, m, rest)
 	case "rename":
 		cmdErr = switcherRename(os.Stdout, m, rest)
+	case "migrate-copies":
+		cmdErr = switcherMigrateCopies(os.Stdout, rest)
 	case "remove":
 		cmdErr = switcherRemove(os.Stdin, os.Stdout, m, rest)
 	case "enable":
@@ -449,6 +480,7 @@ Commands:
   remove <tool> <profile> [-y]     Delete a profile
   enable                           Enable the switcher
   disable                          Disable the switcher
+  migrate-copies [--tool t]        Convert to token-only live credential files (see docs/switcher.md)
 
 Tools: claude, codex
 
@@ -459,4 +491,66 @@ The switcher works without the aimebu server running.
 Enable it first with 'aimebu switcher enable' or in Settings → Usages.
 `)
 	os.Exit(exitCode)
+}
+
+// switcherMigrateCopies implements `aimebu switcher migrate-copies [--tool t]`:
+// convert a link-based install to the token-only model (design §8). The
+// profile store keeps the only full credentials; the live ~/.claude and
+// ~/.codex files become token-only copies that the server rewrites. It refuses,
+// exit 2 and changing nothing, when a live token has less than 15 minutes left
+// (C2). Run it with the server stopped or idle, then (re)start the server: it
+// refreshes due profiles right away.
+func switcherMigrateCopies(out io.Writer, args []string) error {
+	var tools []string
+	var allowCodex bool
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--tool":
+			if i+1 >= len(args) {
+				return errors.New("usage: aimebu switcher migrate-copies [--tool claude|codex] [--allow-running-codex]")
+			}
+			i++
+			tools = append(tools, args[i])
+		case "--allow-running-codex":
+			allowCodex = true
+		default:
+			return errors.New("usage: aimebu switcher migrate-copies [--tool claude|codex] [--allow-running-codex]")
+		}
+	}
+	root, err := switcher.DefaultRoot()
+	if err != nil {
+		return err
+	}
+	m, err := switcher.New(root)
+	if err != nil {
+		return err
+	}
+	if err := wireTokenCopyHooks(m); err != nil {
+		return err
+	}
+	res, err := m.MigrateToTokenCopies(switcher.MigrateOptions{Tools: tools, AllowRunningCodex: allowCodex})
+	if errors.Is(err, credtarget.ErrMigrateTokenExpiring) {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
+	}
+	if err != nil {
+		return err
+	}
+	if res.AlreadyMigrated {
+		fmt.Fprintln(out, "Already migrated: the profile store holds the only full credentials.")
+		return nil
+	}
+	if res.CodexChecked != "" {
+		fmt.Fprintf(out, "codex: no running codex session found (checked: %s).\n", res.CodexChecked)
+	}
+	for _, t := range res.Tools {
+		if t.Profile != "" {
+			fmt.Fprintf(out, "%s: profile %q: %s\n", t.Tool, t.Profile, t.Status)
+		} else {
+			fmt.Fprintf(out, "%s: %s\n", t.Tool, t.Status)
+		}
+	}
+	fmt.Fprintln(out, "Restart your running claude sessions to drop cached state (optional): one started before the migration may still hold a refresh token in memory and write a full login back into the live file (the server imports such a login).")
+	fmt.Fprintln(out, "Done. Start or restart the aimebu server: it refreshes due profiles right away and keeps the live credential files up to date.")
+	return nil
 }

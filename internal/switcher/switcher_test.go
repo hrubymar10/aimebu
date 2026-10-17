@@ -21,9 +21,11 @@ import (
 func newTestManager(t *testing.T) (*Manager, string) {
 	t.Helper()
 	// Injecting homeDir is not enough: claude's paths follow CLAUDE_CONFIG_DIR
-	// when set, so a value inherited from the developer's environment would
-	// send every lookup to their real credentials instead of the fixture.
+	// and codex's follow CODEX_HOME when set, so a value inherited from the
+	// developer's environment would send every lookup to their real
+	// credentials instead of the fixture.
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
 	base := t.TempDir()
 	home := filepath.Join(base, "home")
 	switcherRoot := filepath.Join(base, "config", "switcher")
@@ -44,8 +46,8 @@ func makeTestJWT(email string, expSec int64) string {
 // "valid" credential and the real value for an "expired-but-valid" test.
 func validClaudeCreds(accessToken string, expiresAtMs int64) string {
 	return fmt.Sprintf(
-		`{"claudeAiOauth":{"accessToken":%q,"refreshToken":"refresh-tok","expiresAt":%d}}`,
-		accessToken, expiresAtMs,
+		`{"claudeAiOauth":{"accessToken":%q,"refreshToken":"refresh-%s","expiresAt":%d}}`,
+		accessToken, accessToken, expiresAtMs,
 	)
 }
 
@@ -1036,5 +1038,58 @@ func TestSwitchFailsClosedWhenAccountLockUnavailable(t *testing.T) {
 	}
 	if got := readFile(t, livePath); got == credB {
 		t.Fatal("a refused switch wrote the live credentials")
+	}
+}
+
+// C1: Import stores the live login as a profile, so it must be a FULL credential;
+// a token-only live file (token-copy model) is refused rather than turned into a
+// profile that can never refresh.
+func TestImportRefusesTokenOnlyLive(t *testing.T) {
+	m, home := newTestManager(t)
+	must(t, m.SetEnabled(true))
+	writeLive(t, home, ToolClaude, `{"claudeAiOauth":{"accessToken":"a","expiresAt":4102444800000}}`)
+	if err := m.Import(ToolClaude, "p"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("Import of a token-only live file = %v, want ErrInvalidCredentials", err)
+	}
+	writeLive(t, home, ToolCodex, `{"auth_mode":"chatgptAuthTokens","tokens":{"access_token":"a","refresh_token":"","account_id":"x"}}`)
+	if err := m.Import(ToolCodex, "p"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("Import of a token-only codex file = %v, want ErrInvalidCredentials", err)
+	}
+	// A token-only live file is still a valid LIVE credential for eligibility.
+	if err := validateLiveCred(ToolCodex, filepath.Join(home, ".codex", "auth.json")); err != nil {
+		t.Fatalf("token-only live codex file rejected as a live credential: %v", err)
+	}
+	// ...but not a valid stored (profile) credential.
+	if err := validateStoredCred(ToolCodex, filepath.Join(home, ".codex", "auth.json")); err == nil {
+		t.Fatal("token-only file accepted as a stored credential")
+	}
+}
+
+// The live credential path must honour the harness's own env overrides, the
+// same way the usages readers do; the registry and fan-out resolve through it.
+func TestLiveCredPathHonoursHarnessEnv(t *testing.T) {
+	m, home := newTestManager(t)
+
+	for tool, want := range map[string]string{
+		ToolClaude: filepath.Join(home, ".claude", ".credentials.json"),
+		ToolCodex:  filepath.Join(home, ".codex", "auth.json"),
+	} {
+		got, err := m.LiveCredPath(tool)
+		if err != nil || got != want {
+			t.Fatalf("%s default = %q, %v; want %q", tool, got, err, want)
+		}
+	}
+
+	custom := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(custom, "claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(custom, "codex"))
+	for tool, want := range map[string]string{
+		ToolClaude: filepath.Join(custom, "claude", ".credentials.json"),
+		ToolCodex:  filepath.Join(custom, "codex", "auth.json"),
+	} {
+		got, err := m.LiveCredPath(tool)
+		if err != nil || got != want {
+			t.Fatalf("%s with env = %q, %v; want %q", tool, got, err, want)
+		}
 	}
 }

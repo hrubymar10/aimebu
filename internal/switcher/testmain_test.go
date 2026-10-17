@@ -40,6 +40,9 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "cannot isolate AIMEBU_URL:", err)
 		os.Exit(1)
 	}
+	// A developer machine usually has codex running; migration tests must not
+	// depend on it. Tests of the guard pass MigrateOptions.RunningCodex.
+	runningCodexScan = func() ([]string, string, error) { return nil, "test", nil }
 	code := m.Run()
 	if err := os.RemoveAll(root); err != nil {
 		fmt.Fprintln(os.Stderr, "cannot remove isolated credential test home:", err)

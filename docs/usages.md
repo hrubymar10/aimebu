@@ -115,7 +115,163 @@ fresh cache entry so CLI token rotation is picked up on the next poller tick;
 an in-flight rotation leaves the previous cache entry intact until a fetch
 owned by the new credentials completes.
 
-## Claude Auto-Refresh
+## Token-only refresher
+
+The normal path is **Settings → Usages → Account maintenance → Auto-refresh
+tokens**. Turning it on starts migration of each eligible Claude and Codex
+tool to token-only live credentials. A tool that cannot yet
+migrate shows `waiting` and the reason in Settings; it is retried on later
+ticks. The existing safety refusals apply: a token within 15 minutes of
+expiry, a running Codex process, or no active profile stops that tool's
+migration. The other tool may migrate independently. Turning the setting off
+restores a full credential to each live file, preserves unrelated live fields
+such as Claude `mcpOAuth`, relinks the active stored profile, and removes the
+tool's migration marker. A pending `/login` is imported before restore.
+
+The stored `usages/config.json` key is `token_auto_refresh` (default false).
+An internal `token_auto_refresh_managed` flag keeps an interrupted OFF cleanup
+retryable after restart; a manual `migrate-copies` while the setting is off is
+left alone. A legacy ON value carried over from `claude_auto_refresh` also
+sets this flag so a later OFF restores full live credentials.
+Old `claude_auto_refresh` config values are carried over when the new key is
+absent; saves mirror both keys for one release so a downgrade keeps the
+setting. Settings GET responses include both names for one release, with the
+old name read-only. Settings POST accepts
+either name, preferring `token_auto_refresh` when both are present.
+`token_auto_refresh_state` reports each tool as `migrated`, `waiting` with a
+reason, `pending` while a setting change is applied, `n/a` when no active
+profile exists, or `off`; `token_auto_refresh_available` reports the runtime
+gate. A setting change starts reconciliation immediately; later scans retry
+safety refusals without blocking usage refreshes. A waiting tool retries at
+most once a minute, while a changed toggle bypasses the backoff.
+
+While on, aimebu must keep running whenever Claude or Codex is used, even
+outside aimebu: a token-only live file cannot refresh itself. Turn the setting
+off before a long server shutdown or uninstalling aimebu.
+
+On a **migrated** tool (listed in `switcher/token-copies.json`, see
+[switcher.md](switcher.md)) the server is the only party that spends refresh
+tokens. The profile store holds the only full credentials; the live
+`~/.claude` and `~/.codex` files are token-only copies the server rewrites. The
+refresher replaces the legacy auto-refresh below for as long as it is enabled
+(the legacy refresh triggers and warmups stand down for that tool).
+
+The refresher is **off by default** and runs only for migrated tools. At server
+start it first settles the journal of a killed process, then runs the
+reconciler's pass, then the due pass, in that order, so a login that
+landed in a live file while the server was down is imported before any refresh
+can race it.
+
+**Knobs.** `AIMEBU_TOKEN_LEAD_CLAUDE` (default `60m`) and
+`AIMEBU_TOKEN_LEAD_CODEX` (default `24h`) set how long before expiry a profile is
+due, as Go durations between 10 minutes and 14 days; anything else is ignored.
+A lead longer than a token's life makes every profile due at once, which is how
+an acceptance run forces a refresh.
+
+**Rotation-loop guard.** A lead at or above the token's life would make a freshly
+rotated token due again on the next tick. So the refresher never rotates a
+profile again within **30 minutes** of its last successful rotation, and once it
+knows the token life it caps the lead at that life minus 30 minutes. It keeps
+the last rotation time, token life and a hash of the refresh token the rotation
+produced per profile in `switcher/refresh-last.json` (0600, no credentials). The
+floor and the cap apply only while the profile still stores that token, so a
+re-login or import is never held back by an earlier rotation. Losing the file
+only loses the cap for the first rotation after a restart.
+
+**What it refreshes.** Every profile in the store, the active one included,
+once its access token is expired or within its lead of expiry: **60 minutes**
+for Claude, **24 hours** for Codex. It runs at server start and then every 30
+seconds, one profile after another, one account at a time. A profile whose
+stored file is a symlink (an install that has not been migrated) is never
+touched, and neither is a profile switched away from in the last two minutes (an
+incoming profile in a switch is the exception: it is refreshed if due however
+recently it was last active). Codex profiles are also left alone for ten minutes
+after migration: a Codex session started before the migration caches its
+`auth.json` and may still refresh the old token itself (a switch's incoming
+profile is exempt).
+
+**One run.** Under the per-account lock (the same `switcher/.maintenance` flock
+a switch holds, so a switch and a refresh never overlap):
+
+1. re-read the profile's refresh token and compare it with the one the tick
+   decided on; if a login was imported meanwhile the tick is abandoned and the
+   older token is never spent;
+2. journal `spending` with the hash of the refresh token about to be used;
+3. run the CLI (`claude -p` / `codex exec`, in the `harness-docker` container)
+   against a throwaway copy of the credential;
+4. classify what happened from the files and the CLI output (the journal phase
+   moves from `spending` to `started` the moment the CLI process exists; a crash
+   before that never reached the CLI and is not treated as a spend);
+5. on success write the new credentials to a rescue file first, journal
+   `rotated`, commit them with the compare-and-swap on the starting refresh
+   token, delete the rescue file, and fan the token-only form out to the live
+   files. A commit that loses the compare-and-swap keeps the rescue file. If a
+   live file still holds a refresh token (a `/login` waiting for the reconciler)
+   the fan-out neither retries nor forces: it raises `login_pending` and leaves
+   the file to the reconciler.
+
+A commit that fails while the store still holds the spent token (disk full, a
+lock error, a listing error) is **not** a reason to spend again: the journal
+stays at `rotated` with its rescue file, the account backs off, and the next
+passes retry the commit from the rescue copy until it lands. The commit reaches
+**every** profile that holds the spent token (the same account stored twice),
+and it judges a rotation by the access token or expiry that moved, never by the
+refresh token alone, because a provider may rotate the access token without
+rotating the refresh token. A server shutdown lets a CLI that is already
+running finish (bounded by its own timeout) and commits its result; it starts
+no further run. The startup pass (settle the journal, reconcile, first due pass)
+runs the first time the refresher is enabled, which on a live server is also
+when the toggle migrates a tool. While the refresher owns a tool's refresh,
+that tool's legacy auto-refresh and warmup stand down.
+
+**Outcomes (spend once).**
+
+| outcome | meaning | what happens |
+|---|---|---|
+| rotated | new credentials on disk | committed and fanned out |
+| not sent | the CLI never started, or its output proves the request never left (DNS, connection refused), or it exited cleanly without rotating | nothing was spent; retried after 5 min, doubling to 30 min per account; three clean no-ops in a row report `refresh_failed` |
+| `invalid_grant` | Claude overwrote its own refresh token with `""` in the copy; Codex printed that the token expired, was already used, was revoked or rejected | terminal `reauth_required`; the stored credential is never rewritten or wiped |
+| unknown | the CLI started, failed, and rotated nothing, with no proof the request was not sent | the token is **never spent again**: terminal `needs_relogin_soon` until a human logs in |
+
+Terminal states and the journal live in `switcher/refresh-state.json` (mode
+0600, no credentials in it), keyed by the hash of the refresh token they apply
+to. A new login is a new refresh token, so it clears the state by itself, and a
+restart cannot forget one. On start, before its first pass, the refresher settles
+a journal left by a killed process: a rotated rescue file, or a temp copy that
+rotated before the crash, is committed against the spent token and fanned out;
+a spend with nothing to recover is marked `needs_relogin_soon` and not repeated.
+
+**Seeing it.** `GET /api/credentials/targets` returns, for every store profile
+and the two live files, the expiry, time left, level (`ok`, `expiring` under 15
+minutes, `expired`), the refresher state and the next attempt; it never carries a
+token, and never the free-text `detail` of a failure (CLI output and error text,
+which stays in `refresh-state.json`, the server log and `aimebu doctor`, redacted
+of anything token-shaped and with the home directory shown as `~`). The same
+alerts are in the usages response (`credential_alerts`) and
+appear as a red banner above the tiles of the Usages panel. `aimebu doctor`
+reads the files directly, so it works with the server stopped: a credential
+under 15 minutes is a warning, an expired one, `reauth_required` or
+`needs_relogin_soon` is a failure. Edge alerts (`reauth_required`,
+`needs_relogin_soon`, `refresh_failed`, `expiring`, `expired`, `fanout_failed`,
+`login_pending`, `recovery`) go to the alert hook once per credential and expiry,
+and an account's alerts are re-armed when it is healthy again. The human-facing
+kinds (`reauth_required`, `needs_relogin_soon`, `expired`) are also posted as a
+system message to the human members of every room, which every member of those
+rooms can read, so the message is a fixed sentence plus the credential
+(`claude/main`); the websocket `credential_alert` frame carries the kind only.
+
+With no refresh token in the live files a CLI cannot renew itself, so the server
+being down for longer than the remaining life of a live token (at least the lead,
+typically hours for Claude) means requests fail until it is back; the doctor
+check and the banner exist to say so in time.
+
+## Legacy link-model maintenance
+
+The following refresh and warmup rules apply only while a tool is still on
+the original linked-credential model. The `token_auto_refresh` setting first
+tries to migrate it; a safety refusal leaves it waiting and retrying on later
+ticks. Once any tool is migrated, the token-only refresher owns refresh and
+that tool's legacy warmup stands down.
 
 Claude OAuth access tokens live only about 8–12 hours. On macOS the live
 harness refreshes them lazily through the Keychain, but a stored switcher
@@ -177,8 +333,8 @@ Design notes:
 - **Rate limiting.** A profile is never refreshed twice concurrently, and after
   a genuine failure it is not retried for 5 minutes.
 
-**Gate.** Claude and Codex maintenance run only when all of these hold: the
-`claude_auto_refresh` setting is enabled (default **off**), the
+**Gate.** Claude and Codex legacy maintenance run only when all of these hold: the
+`token_auto_refresh` setting is enabled (default **off**), the
 `harness-docker-ctrl` binary is on `PATH`, and the docker daemon is reachable.
 When `harness-docker-ctrl` is absent the feature is reported unavailable and the
 Settings toggle is disabled.
@@ -186,11 +342,10 @@ Settings toggle is disabled.
 **Cost.** Enabling it incurs a small per-account cost — occasional `claude -p`
 calls against each near-expiry inactive profile — so it is opt-in.
 
-Configure it in **Settings → Usages → Claude auto-refresh**. The stored flag is
-`claude_auto_refresh` in `~/.aimebu/usages/config.json`; the GET/POST
-`/api/usages/settings` responses expose `claude_auto_refresh` and the runtime
-`claude_auto_refresh_available` availability flag. `POST /api/usages/settings`
-accepts optional `claude_auto_refresh`, `warmup_mode`, and `warmup_schedule`
+Configure it in **Settings → Usages → Account maintenance → Auto-refresh tokens**.
+The GET/POST `/api/usages/settings` responses expose `token_auto_refresh` and
+the runtime `token_auto_refresh_available` availability flag. POST accepts
+optional `token_auto_refresh`, `warmup_mode`, and `warmup_schedule`
 values alongside `refresh_interval_sec`, `percent_display`, and
 `claude_model_flag`.
 
@@ -261,8 +416,8 @@ throwaway `harness-docker` container that auto-refresh uses (the shared
 executor), which opens the account's rolling 5-hour window server-side.
 
 Warmup is an **automatic, mode-gated** poller feature — there is no button or
-endpoint that triggers it on demand. Enable it in **Settings → Usages → Claude
-account maintenance → Warm idle Claude accounts**, alongside the auto-refresh
+endpoint that triggers it on demand. Enable it in **Settings → Usages → Account
+maintenance → Warm idle Claude and Codex accounts**, alongside the auto-refresh
 toggle in the same bordered section. The stored `warmup_mode` is one of `off`,
 `force`, `scheduled`, or `smart`. The GET/POST `/api/usages/settings` responses
 expose it plus the runtime `warmup_available` flag; POST accepts optional
@@ -274,10 +429,10 @@ expose it plus the runtime `warmup_available` flag; POST accepts optional
   candidate only when a cron line matches, and `smart` starts at most one
   candidate with spacing. `off` does nothing. Exactly one mode is active.
 - **Chained to auto-refresh.** A non-off mode runs only when
-  `claude_auto_refresh` is enabled and the feature is available. The mode
-  selector is disabled while auto-refresh is off. This is deliberate: warmup
-  reuses the same container path and must persist rotated tokens back the way
-  auto-refresh does.
+  `token_auto_refresh` is enabled, the feature is available, and no tool has
+  entered the token-only model. The mode selector is disabled when those
+  conditions are not met. Legacy warmup reuses the same container path and
+  must persist rotated tokens back the way legacy auto-refresh does.
 - **Eligibility — out of the 5h window.** Any `claude` switcher profile with
   stored credentials is a candidate, **except the active profile**. An
   account is treated as “out of window” when its usages snapshot
@@ -338,7 +493,7 @@ expose it plus the runtime `warmup_available` flag; POST accepts optional
   `force`. The next config save removes the legacy fields.
 - **Gate.** Warmup shares auto-refresh's availability gate: `harness-docker-ctrl`
   must be on `PATH` and docker must be reachable; additionally auto-refresh must
-  be enabled and the mode must not be `off`. The multiline schedule editor
+  be enabled, no tool may be migrated, and the mode must not be `off`. The multiline schedule editor
   appears only for Scheduled mode and identifies unsupported or out-of-range
   entries by line. Warmup is inert otherwise.
 
@@ -492,6 +647,13 @@ the `pace` object because there is no remaining quota to project.
   marker. The `error_detail.fields` map records field names and types only,
   never values.
 - `stale_cache`: the latest fetch failed but cached values are still shown.
+- `expired`: the Claude/Codex access token (stored profile or live account) is
+  past its `expires_at`, so aimebu sends **no request** with it (Anthropic
+  answers an expired bearer with HTTP 429, which used to look like a timeout).
+  The last good windows are kept and marked `stale: true`; the profile row
+  always carries `expires_at`. It clears as soon as the credentials are
+  refreshed (by the opt-in maintenance, a harness, or a re-login). Clients such
+  as the quota watchdog should treat it as "not ok, quota unknown" and hold.
 
 Provider-specific setup and failure notes live in:
 

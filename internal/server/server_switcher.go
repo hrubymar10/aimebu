@@ -3,9 +3,6 @@ package server
 import (
 	"errors"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/switcher"
@@ -147,7 +144,9 @@ func (r switcherRoutes) handleProfileDelete(w http.ResponseWriter, req *http.Req
 // profile reads from the live harness directory; non-active profiles read from
 // their stored copy under the switcher root.
 func (r switcherRoutes) profileCredPath(p switcher.Profile) string {
-	if p.Active {
+	// Under the token-copy model the live files are token-only targets; the
+	// store file holds the only full credential, active profile included.
+	if p.Active && !r.sm.TokenCopiesFor(p.Tool) {
 		// Live credential path — harness may have refreshed tokens since capture.
 		h, err := r.sm.ResolveHome()
 		if err != nil {
@@ -157,10 +156,7 @@ func (r switcherRoutes) profileCredPath(p switcher.Profile) string {
 		case switcher.ToolClaude:
 			return usages.ClaudeLiveCredPath(h)
 		case switcher.ToolCodex:
-			if env := codexHome(); env != "" {
-				return env + "/auth.json"
-			}
-			return filepath.Join(h, ".codex", "auth.json")
+			return usages.CodexLiveCredPath(h)
 		}
 	}
 	return r.sm.StoredCredPath(p.Tool, p.Name)
@@ -173,9 +169,19 @@ func switcherHTTPStatus(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, switcher.ErrProfileExists):
 		return http.StatusConflict
-	case errors.Is(err, switcher.ErrMaintenanceBusy):
-		// 409: a background refresh of the target account is still running.
+	case errors.Is(err, switcher.ErrMaintenanceBusy),
+		errors.Is(err, switcher.ErrLoginPending),
+		errors.Is(err, switcher.ErrIncomingRefresh),
+		errors.Is(err, switcher.ErrLinkedProfile),
+		errors.Is(err, switcher.ErrCodexRunning):
+		// 409: a state that clears by itself or by one more step, never a server
+		// fault: a background refresh of the target account is still running, a
+		// login waits to be imported, the incoming profile could not be refreshed
+		// yet, a profile is still linked to the live file (not migrated), or a
+		// running codex session blocks the migration.
 		return http.StatusConflict
+	case errors.Is(err, switcher.ErrMigrateNotEnabled):
+		return http.StatusBadRequest
 	case errors.Is(err, switcher.ErrActiveProfile):
 		// 409 so the UI can ask for confirmation before retrying with force=true.
 		return http.StatusConflict
@@ -190,12 +196,31 @@ func switcherHTTPStatus(err error) int {
 	}
 }
 
+// retryAfterSeconds is the Retry-After hint for the retryable switcher errors.
+const retryAfterSeconds = "60"
+
+// retryable reports the switcher errors that clear on their own: a refresh in
+// progress, a login waiting for the reconciler, an incoming refresh the server is
+// still retrying.
+func retryable(err error) bool {
+	return errors.Is(err, switcher.ErrMaintenanceBusy) ||
+		errors.Is(err, switcher.ErrLoginPending) ||
+		errors.Is(err, switcher.ErrIncomingRefresh)
+}
+
 func writeSwitcherErr(w http.ResponseWriter, status int, err error) {
 	// Never reflect credential material. The switcher library contract ensures
 	// error text names what failed, never what was in the file. We return the
 	// full error chain, but it's safe because no error in the library carries
 	// credential bytes.
 	msg := err.Error()
+	if retryable(err) {
+		// The caller can simply try again; say how soon, in the header and the text.
+		w.Header().Set("Retry-After", retryAfterSeconds)
+		if errors.Is(err, switcher.ErrIncomingRefresh) {
+			msg += "; the server keeps retrying the refresh, try again in a few minutes"
+		}
+	}
 	writeSwitcherJSON(w, status, map[string]string{"error": msg})
 }
 
@@ -203,9 +228,4 @@ func writeSwitcherJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(data)
-}
-
-// codexHome returns the CODEX_HOME env var (trimmed), or "" if unset.
-func codexHome() string {
-	return strings.TrimSpace(os.Getenv("CODEX_HOME"))
 }

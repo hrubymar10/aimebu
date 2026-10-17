@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -605,5 +609,178 @@ func TestSwitcherErrMsgMaintenanceBusyHint(t *testing.T) {
 	err := switcherErrMsg(fmt.Errorf("%w: wait elapsed", switcher.ErrMaintenanceBusy))
 	if err == nil || !strings.Contains(err.Error(), "background token refresh") || !strings.Contains(err.Error(), "try again") {
 		t.Fatalf("hint = %v", err)
+	}
+}
+
+// F1: the CLI builds its own manager; without the token-copy hooks every switch
+// on a migrated install failed ("fan-out is not wired").
+func TestNewSwitcherManagerSwitchesAMigratedInstall(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("AIMEBU_CONFIG_DIR", filepath.Join(home, ".aimebu"))
+	t.Setenv("AIMEBU_URL", "http://127.0.0.1:1") // nothing listens: the switch runs locally
+	root, err := switcher.DefaultRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := switcher.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Now().Add(6 * time.Hour).UnixMilli()
+	full := func(access, refresh string) string {
+		return fmt.Sprintf(`{"claudeAiOauth":{"accessToken":%q,"refreshToken":%q,"expiresAt":%d}}`, access, refresh, expiry)
+	}
+	live := filepath.Join(home, ".claude", ".credentials.json")
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte(full("tok-a", "ref-a")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Import(switcher.ToolClaude, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Add(switcher.ToolClaude, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(m.StoredCredPath(switcher.ToolClaude, "b"), []byte(full("tok-b", "ref-b")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := switcherMigrateCopies(&out, []string{"--tool", "claude"}); err != nil {
+		t.Fatalf("migrate-copies: %v", err)
+	}
+
+	cli, err := newSwitcherManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cli.Switch(switcher.ToolClaude, "b"); err != nil {
+		t.Fatalf("CLI switch on a migrated install: %v", err)
+	}
+	data, err := os.ReadFile(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); !strings.Contains(got, "tok-b") || strings.Contains(got, "refreshToken") {
+		t.Fatalf("live file after the CLI switch: %s", got)
+	}
+}
+
+// migratedCLIInstall builds a migrated two-profile claude install under a temp
+// HOME and returns the CLI manager.
+func migratedCLIInstall(t *testing.T) (cli switcherManager, live string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("AIMEBU_CONFIG_DIR", filepath.Join(home, ".aimebu"))
+	t.Setenv("AIMEBU_URL", "http://127.0.0.1:1")
+	root, _ := switcher.DefaultRoot()
+	m, err := switcher.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := time.Now().Add(6 * time.Hour).UnixMilli()
+	full := func(access, refresh string) string {
+		return fmt.Sprintf(`{"claudeAiOauth":{"accessToken":%q,"refreshToken":%q,"expiresAt":%d}}`, access, refresh, expiry)
+	}
+	live = filepath.Join(home, ".claude", ".credentials.json")
+	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, []byte(full("tok-a", "ref-a")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []error{m.SetEnabled(true), m.Import(switcher.ToolClaude, "a"), m.Add(switcher.ToolClaude, "b"),
+		os.WriteFile(m.StoredCredPath(switcher.ToolClaude, "b"), []byte(full("tok-b", "ref-b")), 0o600)} {
+		if step != nil {
+			t.Fatal(step)
+		}
+	}
+	if err := switcherMigrateCopies(&bytes.Buffer{}, []string{"--tool", "claude"}); err != nil {
+		t.Fatalf("migrate-copies: %v", err)
+	}
+	cli, err = newSwitcherManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cli, live
+}
+
+// N2: on a token-copy install the CLI hands the switch to a running server (the
+// owner of the refresher) instead of switching locally.
+func TestCLISwitchGoesThroughARunningServer(t *testing.T) {
+	cli, live := migratedCLIInstall(t)
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/usages/switcher/switch" || r.Method != http.MethodPost {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"active":"b","switched":true}`))
+	}))
+	defer srv.Close()
+	t.Setenv("AIMEBU_URL", srv.URL)
+
+	active, switched, err := cli.Switch(switcher.ToolClaude, "b")
+	if err != nil || active != "b" || !switched {
+		t.Fatalf("Switch = %q %v %v", active, switched, err)
+	}
+	if got["tool"] != "claude" || got["profile"] != "b" {
+		t.Fatalf("server got %v", got)
+	}
+	if data, _ := os.ReadFile(live); !strings.Contains(string(data), "tok-a") {
+		t.Fatal("the CLI also switched locally although the server answered")
+	}
+}
+
+func TestCLISwitchReportsAServerRefusalVerbatim(t *testing.T) {
+	cli, _ := migratedCLIInstall(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"a login in the live credentials is waiting to be imported; retry in a minute"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("AIMEBU_URL", srv.URL)
+	if _, _, err := cli.Switch(switcher.ToolClaude, "b"); err == nil || !strings.Contains(err.Error(), "waiting to be imported") {
+		t.Fatalf("Switch = %v, want the server's message", err)
+	}
+}
+
+// With no server the switch runs locally; a due incoming profile is then refused
+// with a pointer to the server (the CLI process has no refresher).
+func TestCLISwitchWithoutAServerRefusesADueIncomingProfile(t *testing.T) {
+	cli, live := migratedCLIInstall(t)
+	root, _ := switcher.DefaultRoot()
+	m, _ := switcher.New(root)
+	soon := time.Now().Add(5 * time.Minute).UnixMilli()
+	due := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"tok-b","refreshToken":"ref-b","expiresAt":%d}}`, soon)
+	if err := os.WriteFile(m.StoredCredPath(switcher.ToolClaude, "b"), []byte(due), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(live)
+	_, _, err := cli.Switch(switcher.ToolClaude, "b")
+	if !errors.Is(err, switcher.ErrIncomingRefresh) || !strings.Contains(err.Error(), "start the aimebu server") {
+		t.Fatalf("Switch = %v, want ErrIncomingRefresh pointing at the server", err)
+	}
+	if after, _ := os.ReadFile(live); string(after) != string(before) {
+		t.Fatal("a refused switch changed the live file")
+	}
+}
+
+func TestIsLoopbackURL(t *testing.T) {
+	for url, want := range map[string]bool{
+		"http://localhost:9997": true, "http://127.0.0.1:9997": true, "https://[::1]:9996": true,
+		"http://host.docker.internal:9997": false, "http://192.168.1.5:9997": false, "::bad": false,
+	} {
+		if got := isLoopbackURL(url); got != want {
+			t.Errorf("isLoopbackURL(%q) = %v, want %v", url, got, want)
+		}
 	}
 }

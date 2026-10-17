@@ -33,6 +33,27 @@ type realClock struct{}
 func (realClock) Now() time.Time { return time.Now() }
 
 type Manager struct {
+	// targetFanOut distributes refreshed credentials to token-only targets
+	// (see target_fanout.go); nil means store-only.
+	targetFanOut TargetFanOut
+
+	// targetRefresher is the token-only refresher (target_refresher.go). While it
+	// is enabled it owns every refresh; the legacy inactive-profile refresh
+	// triggers stand down. maint* are the lock, root and account guard shared with
+	// the legacy coordinators, recorded by EnableClaudeAutoRefresh.
+	targetRefresher     *TargetRefresher
+	tokenCopyController func(context.Context, bool) map[string]TokenAutoRefreshToolState
+	tokenStateMu        sync.RWMutex
+	tokenState          map[string]TokenAutoRefreshToolState
+	tokenEpoch          uint64
+	tokenLastEpoch      uint64
+	tokenLastAttempt    time.Time
+	tokenCopySeed       func(string) bool
+	tokenCopyRequest    chan struct{}
+	maintWithLock       func(func() error) error
+	maintRoot           string
+	maintGuard          *maintenanceGuard
+
 	store    *Store
 	registry *Registry
 	clock    Clock
@@ -79,6 +100,7 @@ func NewManager(store *Store, registry *Registry) *Manager {
 		forceCooldown:      MinRefreshSec * time.Second,
 		profileGeneration:  map[string]uint64{},
 		activeFingerprints: map[string]string{},
+		tokenCopyRequest:   make(chan struct{}, 1),
 	}
 }
 
@@ -135,6 +157,11 @@ func (m *Manager) implicitProfile(key string) ProfileInfo {
 		p.Tool = "claude"
 		p.CredPath, _ = claudeAuthPath()
 		p.HasCredentials = hasFile(p.CredPath)
+		if p.HasCredentials {
+			if creds, _, err := loadClaudeAuth(p.CredPath); err == nil {
+				p.ExpiresAt = creds.ExpiresAt
+			}
+		}
 	case ProviderCodex:
 		p.Tool = "codex"
 		p.CredPath, _ = codexAuthPath()
@@ -265,6 +292,7 @@ func (m *Manager) EnableClaudeAutoRefresh(withLock func(func() error) error, res
 	// (tool, profile).
 	guard := newMaintenanceGuard()
 	guard.root = rescueRoot // cross-process exclusion lives under the switcher root
+	m.maintWithLock, m.maintRoot, m.maintGuard = withLock, rescueRoot, guard
 	m.claudeRefresher = newClaudeRefresher(withLock, func() ([]ProfileInfo, error) { return m.listMaintenanceProfiles("claude") })
 	m.claudeRefresher.rescueRoot = rescueRoot
 	m.claudeRefresher.guard = guard
@@ -279,6 +307,111 @@ func (m *Manager) EnableClaudeAutoRefresh(withLock func(func() error) error, res
 	m.codexMaintainer = newCodexMaintainer(withLock, func() ([]ProfileInfo, error) { return m.listMaintenanceProfiles("codex") })
 	m.codexMaintainer.rescueRoot = rescueRoot
 	m.codexMaintainer.guard = guard
+}
+
+// SetTargetRefresher installs the token-only refresher. It must be called after
+// EnableClaudeAutoRefresh (which supplies the switcher lock, the rescue root and
+// the account guard). Start runs it; legacy maintenance stands down for each
+// tool the refresher owns.
+func (m *Manager) SetTargetRefresher(r *TargetRefresher) { m.targetRefresher = r }
+
+func (m *Manager) SetTokenCopyController(fn func(context.Context, bool) map[string]TokenAutoRefreshToolState) {
+	m.tokenCopyController = fn
+}
+
+// SetTokenCopySeed supplies persisted migration markers for the first settings
+// read, before the background controller has completed its initial pass.
+func (m *Manager) SetTokenCopySeed(fn func(string) bool) { m.tokenCopySeed = fn }
+
+func (m *Manager) requestTokenCopyReconcile() {
+	if m.tokenCopyController == nil {
+		return
+	}
+	select {
+	case m.tokenCopyRequest <- struct{}{}:
+	default: // one queued pass is enough: each pass reads the latest config
+	}
+}
+
+func (m *Manager) reconcileTokenCopies(ctx context.Context) {
+	if m.tokenCopyController == nil {
+		return
+	}
+	m.tokenStateMu.RLock()
+	epoch := m.tokenEpoch
+	m.tokenStateMu.RUnlock()
+	var cfg Config
+	if err := m.store.WithLock(func() error {
+		var err error
+		cfg, err = m.store.LoadConfig()
+		return err
+	}); err != nil {
+		return
+	}
+	if cfg.ClaudeAutoRefresh && !cfg.TokenAutoRefreshManaged {
+		if err := m.store.WithLock(func() error {
+			current, err := m.store.LoadConfig()
+			if err != nil || !current.ClaudeAutoRefresh || current.TokenAutoRefreshManaged {
+				return err
+			}
+			current.TokenAutoRefreshManaged = true
+			return m.store.SaveConfig(current)
+		}); err != nil {
+			return
+		}
+	}
+	if !cfg.ClaudeAutoRefresh && !cfg.TokenAutoRefreshManaged {
+		m.tokenStateMu.Lock()
+		if m.tokenEpoch == epoch {
+			m.tokenState = map[string]TokenAutoRefreshToolState{
+				"claude": {Status: "off"}, "codex": {Status: "off"},
+			}
+		}
+		m.tokenStateMu.Unlock()
+		return
+	}
+	now := m.clock.Now()
+	m.tokenStateMu.RLock()
+	waiting := m.tokenState["claude"].Status == "waiting" || m.tokenState["codex"].Status == "waiting"
+	backoff := waiting && m.tokenLastEpoch == epoch && now.Sub(m.tokenLastAttempt) < time.Minute
+	m.tokenStateMu.RUnlock()
+	if backoff {
+		return
+	}
+	state := m.tokenCopyController(ctx, cfg.ClaudeAutoRefresh)
+	m.tokenStateMu.Lock()
+	if m.tokenEpoch == epoch {
+		m.tokenState = state
+		m.tokenLastEpoch = epoch
+		m.tokenLastAttempt = now
+	}
+	m.tokenStateMu.Unlock()
+	if !cfg.ClaudeAutoRefresh && state["claude"].Status == "off" && state["codex"].Status == "off" {
+		_ = m.store.WithLock(func() error {
+			current, err := m.store.LoadConfig()
+			if err != nil || current.ClaudeAutoRefresh || !current.TokenAutoRefreshManaged {
+				return err
+			}
+			current.TokenAutoRefreshManaged = false
+			return m.store.SaveConfig(current)
+		})
+	}
+}
+
+// TargetRefresher returns the installed refresher, or nil.
+func (m *Manager) TargetRefresher() *TargetRefresher { return m.targetRefresher }
+
+// targetRefresherOwnsRefresh reports whether the token-only refresher is active,
+// in which case the legacy coordinators must not spend refresh tokens too.
+func (m *Manager) targetRefresherOwnsRefresh() bool {
+	return m.targetRefresher != nil && m.targetRefresher.enabled()
+}
+
+// targetRefresherOwnsTool is the per-tool form: after `migrate-copies --tool
+// claude` the codex profiles are still on the link model and the legacy
+// coordinators keep refreshing them.
+func (m *Manager) targetRefresherOwnsTool(tool string) bool {
+	return m.targetRefresher != nil && m.targetRefresher.ownsTool(tool)
 }
 
 func (m *Manager) listMaintenanceProfiles(tool string) ([]ProfileInfo, error) {
@@ -301,11 +434,32 @@ func (m *Manager) claudeAutoRefreshAvailable() bool {
 	return harnessDockerCtrlAvailable()
 }
 
+func (m *Manager) TokenAutoRefreshAvailable() bool { return m.claudeAutoRefreshAvailable() }
+
 // decorateSettings fills the runtime-derived Settings fields that are not stored
 // in config (currently the auto-refresh availability flag).
 func (m *Manager) decorateSettings(info Settings) Settings {
 	info.ClaudeAutoRefreshAvailable = m.claudeAutoRefreshAvailable()
-	info.WarmupAvailable = info.ClaudeAutoRefresh && info.ClaudeAutoRefreshAvailable
+	info.TokenAutoRefreshAvailable = info.ClaudeAutoRefreshAvailable
+	m.tokenStateMu.RLock()
+	info.TokenAutoRefreshState = make(map[string]TokenAutoRefreshToolState, len(m.tokenState))
+	for tool, state := range m.tokenState {
+		info.TokenAutoRefreshState[tool] = state
+	}
+	m.tokenStateMu.RUnlock()
+	if len(info.TokenAutoRefreshState) == 0 {
+		for _, tool := range []string{"claude", "codex"} {
+			migrated := m.tokenCopySeed != nil && m.tokenCopySeed(tool)
+			status := "off"
+			if info.TokenAutoRefresh && migrated {
+				status = "migrated"
+			} else if info.TokenAutoRefresh {
+				status = "pending"
+			}
+			info.TokenAutoRefreshState[tool] = TokenAutoRefreshToolState{Status: status}
+		}
+	}
+	info.WarmupAvailable = info.ClaudeAutoRefresh && info.ClaudeAutoRefreshAvailable && !m.targetRefresherOwnsTool("claude")
 	return info
 }
 
@@ -315,7 +469,7 @@ func (m *Manager) decorateSettings(info Settings) Settings {
 // poller tick and is a no-op unless the setting is enabled and the coordinator
 // is wired.
 func (m *Manager) triggerClaudeAutoRefresh(ctx context.Context) {
-	if m.claudeRefresher == nil {
+	if m.claudeRefresher == nil || m.targetRefresherOwnsTool("claude") {
 		return
 	}
 	var cfg Config
@@ -353,7 +507,10 @@ func (m *Manager) triggerClaudeAutoRefresh(ctx context.Context) {
 // window can still be selected until the next poll refreshes its snapshot. The
 // 1h cooldown bounds the cost of acting on a slightly-stale read.
 func (m *Manager) triggerClaudeAutoWarmup(ctx context.Context) {
-	if m.claudeWarmer == nil {
+	// While the token refresher owns refresh, nothing else may spend a token: a
+	// warmup runs the CLI on a copy of the FULL stored credential, and the CLI may
+	// refresh and rotate it outside the refresher's spend-once journal.
+	if m.claudeWarmer == nil || m.targetRefresherOwnsTool("claude") {
 		return
 	}
 	var cfg Config
@@ -421,11 +578,13 @@ func (m *Manager) triggerCodexMaintenance(ctx context.Context) {
 	now := m.clock.Now()
 	profiles := m.profilesForProvider(ProviderCodex)
 	for _, p := range profiles {
-		if codexProfileNeedsRefresh(p, now) {
+		if !m.targetRefresherOwnsTool("codex") && codexProfileNeedsRefresh(p, now) {
 			m.codexMaintainer.maybeRefresh(ctx, p, cfg.CodexModelFlag)
 		}
 	}
-	if cfg.WarmupMode == WarmupModeOff {
+	// Codex warmup is a warm run on a copy of the full stored credential too: it
+	// stands down with the refresh while the token refresher owns it.
+	if cfg.WarmupMode == WarmupModeOff || m.targetRefresherOwnsTool("codex") {
 		return
 	}
 	if cfg.WarmupMode == WarmupModeScheduled {
@@ -593,6 +752,7 @@ func (m *Manager) assembleResponse(cfg Config, cache Cache) UsagesResponse {
 	if m.switcherEnabled != nil {
 		resp.SwitcherEnabled = m.switcherEnabled()
 	}
+	resp.CredentialAlerts = m.credentialAlerts()
 	for i, key := range normalizeProviderOrder(cfg.ProviderOrder) {
 		pc := cfg.Providers[key]
 		profiles := []Profile{}
@@ -760,6 +920,7 @@ func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDi
 		return Settings{}, errors.New("codex_model_flag must be empty or match --model <model-name>")
 	}
 	var info Settings
+	var tokenChanged bool
 	err := m.store.WithLock(func() error {
 		cfg, err := m.store.LoadConfig()
 		if err != nil {
@@ -775,7 +936,11 @@ func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDi
 			cfg.ProviderOrder = normalizeProviderOrder(providerOrder)
 		}
 		if claudeAutoRefresh != nil {
+			tokenChanged = cfg.ClaudeAutoRefresh != *claudeAutoRefresh
 			cfg.ClaudeAutoRefresh = *claudeAutoRefresh
+			if *claudeAutoRefresh {
+				cfg.TokenAutoRefreshManaged = true
+			}
 		}
 		if warmupMode != nil {
 			cfg.WarmupMode = *warmupMode
@@ -795,6 +960,16 @@ func (m *Manager) UpdateSettings(ctx context.Context, intervalSec int, percentDi
 		_, info = m.store.RefreshInterval(cfg)
 		return nil
 	})
+	if err == nil && tokenChanged && m.tokenCopyController != nil {
+		m.tokenStateMu.Lock()
+		m.tokenEpoch++
+		m.tokenState = map[string]TokenAutoRefreshToolState{
+			"claude": {Status: "pending"},
+			"codex":  {Status: "pending"},
+		}
+		m.tokenStateMu.Unlock()
+		m.requestTokenCopyReconcile()
+	}
 	return m.decorateSettings(info), err
 }
 
@@ -951,6 +1126,36 @@ func (m *Manager) SetMistralConfig(ctx context.Context, cookie *string) (Config,
 // after cancelling ctx.
 func (m *Manager) Start(ctx context.Context, wg *sync.WaitGroup) {
 	ticker := time.NewTicker(5 * time.Second)
+	if m.tokenCopyController != nil {
+		if wg != nil {
+			wg.Add(1)
+		}
+		go func() {
+			if wg != nil {
+				defer wg.Done()
+			}
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-m.tokenCopyRequest:
+					m.reconcileTokenCopies(ctx)
+				}
+			}
+		}()
+		m.requestTokenCopyReconcile()
+	}
+	if m.targetRefresher != nil {
+		if wg != nil {
+			wg.Add(1)
+		}
+		go func() {
+			if wg != nil {
+				defer wg.Done()
+			}
+			m.targetRefresher.Run(ctx)
+		}()
+	}
 	if wg != nil {
 		wg.Add(1)
 	}
@@ -964,6 +1169,7 @@ func (m *Manager) Start(ctx context.Context, wg *sync.WaitGroup) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				m.requestTokenCopyReconcile()
 				m.triggerClaudeAutoRefresh(ctx)
 				m.triggerClaudeAutoWarmup(ctx)
 				m.triggerCodexMaintenance(ctx)
@@ -1184,7 +1390,11 @@ func (m *Manager) fetchProfileWithProviderLock(ctx context.Context, key string, 
 	}
 	var entry CacheEntry
 	var fetchErr error
-	if profile.Active {
+	if expired, ok := expiredEntry(key, profile, previous, m.clock.Now()); ok {
+		// Never send a dead bearer: Anthropic answers it with 429 and the
+		// retry loop turned that into minutes of "timeout".
+		entry = expired
+	} else if profile.Active {
 		entry = m.fetchOne(ctx, key, previous)
 	} else {
 		entry, fetchErr = m.fetchStoredProfile(ctx, profile, previous)
@@ -1263,6 +1473,34 @@ func (m *Manager) fetchProfileWithProviderLock(ctx context.Context, key string, 
 		m.activeFingerprints[key] = owner.fingerprint
 	}
 	return fetchResult{changed: true, fetchErr: fetchErr}
+}
+
+// expiredEntry builds the cache entry for a Claude/Codex profile whose access
+// token is already past its expiry at now. It reports ok=false for any other
+// provider, an unknown expiry, or a token that is still valid. The previous
+// snapshot's windows are kept (marked stale) so the quota stays visible.
+func expiredEntry(key string, profile ProfileInfo, previous CacheEntry, now time.Time) (CacheEntry, bool) {
+	if key != ProviderClaudeCode && key != ProviderCodex {
+		return CacheEntry{}, false
+	}
+	if profile.ExpiresAt == nil || profile.ExpiresAt.After(now) {
+		return CacheEntry{}, false
+	}
+	msg := "Access token expired at " + profile.ExpiresAt.UTC().Format(time.RFC3339) + "; usage cannot be read until it is refreshed."
+	prof := Profile{ProfileName: profile.Name}
+	if previous.Profile.ProfileName != "" {
+		prof = previous.Profile
+		if len(prof.Windows) > 0 || prof.Credits != nil {
+			prof.Stale = true
+		}
+	}
+	prof.Status = StatusExpired
+	prof.Error = msg
+	prof.ErrorDetail = nil
+	if prof.LastRefreshAt == nil {
+		prof.LastRefreshAt = &now
+	}
+	return CacheEntry{Profile: prof}, true
 }
 
 func (m *Manager) fetchOne(ctx context.Context, key string, previous CacheEntry) CacheEntry {

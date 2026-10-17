@@ -69,19 +69,32 @@ type refreshExecutor interface {
 // demand and runs the verified `docker run ... claude -p` invocation.
 type dockerRefreshExecutor struct{}
 
-func (dockerRefreshExecutor) Refresh(ctx context.Context, profileDir, modelFlag string) error {
+func (e dockerRefreshExecutor) Refresh(ctx context.Context, profileDir, modelFlag string) error {
+	_, err := e.Run(ctx, profileDir, modelFlag)
+	return err
+}
+
+// Run is RunStarted without a start notification.
+func (e dockerRefreshExecutor) Run(ctx context.Context, profileDir, modelFlag string) (refreshRunResult, error) {
+	return e.RunStarted(ctx, profileDir, modelFlag, nil)
+}
+
+// RunStarted is Refresh plus what the token refresher needs to classify a
+// failure: whether the CLI process was started at all (a refresh that never
+// reached the CLI cannot have spent the refresh token), the bounded CLI output,
+// and a notification at the moment the process exists.
+func (dockerRefreshExecutor) RunStarted(ctx context.Context, profileDir, modelFlag string, onStart func()) (refreshRunResult, error) {
 	if err := ensureHarnessDockerImage(ctx); err != nil {
-		return err
+		return refreshRunResult{Started: false}, err
 	}
 	// Verified-working invocation: mount the profile dir at /config, point
 	// CLAUDE_CONFIG_DIR at it, and run any claude prompt. The image bakes its
 	// own identity, so no `-e` identity flags are needed.
-	args := dockerRefreshArgs(profileDir, modelFlag)
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("harness-docker claude refresh run failed: %w: %s", err, strings.TrimSpace(string(out)))
+	result, err := runDockerCapture(ctx, dockerRefreshArgs(profileDir, modelFlag), onStart)
+	if err != nil {
+		return result, fmt.Errorf("harness-docker claude refresh run failed: %w: %s", err, strings.TrimSpace(result.Output))
 	}
-	return nil
+	return result, nil
 }
 
 func dockerRefreshArgs(profileDir, modelFlag string) []string {
@@ -376,7 +389,7 @@ func (r *claudeRefresher) refresh(ctx context.Context, profile ProfileInfo, mode
 	if err != nil {
 		return fmt.Errorf("claude auto-refresh: read stored credentials: %w", err)
 	}
-	oldExpiry, err := ValidateClaudeCredentials(storedPath)
+	oldExpiry, err := ValidateFullClaudeCredentials(storedPath)
 	if err != nil {
 		return fmt.Errorf("claude auto-refresh: stored credentials invalid: %w", err)
 	}
@@ -506,7 +519,15 @@ func commitClaudeCredCopyBack(withLock func(func() error) error, listProfiles fu
 // shared by auto-refresh (which copies the rotated file back) and warmup (which
 // discards it). The caller owns removing tmpDir. Returns (tmpDir, tmpCredPath).
 func writeClaudeCredTemp(data []byte, prefix string) (string, string, error) {
-	tmpDir, err := os.MkdirTemp("", prefix)
+	return writeClaudeCredTempIn("", data, prefix)
+}
+
+// writeClaudeCredTempIn is writeClaudeCredTemp with the dir created under the
+// switcher root's refresh-tmp (0700) when root is set, so a crashed run's copy
+// survives a reboot for recovery and is swept later; empty root uses the system
+// temp dir.
+func writeClaudeCredTempIn(root string, data []byte, prefix string) (string, string, error) {
+	tmpDir, err := makeRefreshTempDir(root, prefix)
 	if err != nil {
 		return "", "", fmt.Errorf("create temp dir: %w", err)
 	}

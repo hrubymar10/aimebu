@@ -19,6 +19,11 @@ const (
 	StatusFetchError    Status = "fetch_error"
 	StatusTimeout       Status = "timeout"
 	StatusStaleCache    Status = "stale_cache"
+	// StatusExpired: the stored/live access token is past its expiry, so no
+	// request is made (an expired bearer is answered with HTTP 429, which used
+	// to surface as a fetch error or timeout). The last good windows stay,
+	// marked stale, until the credentials are refreshed.
+	StatusExpired Status = "expired"
 )
 
 const (
@@ -111,6 +116,10 @@ type UsagesResponse struct {
 	Providers       []Provider `json:"providers"`
 	Settings        Settings   `json:"settings"`
 	SwitcherEnabled bool       `json:"switcher_enabled"`
+	// CredentialAlerts lists credentials that need a human (token-only model):
+	// a login is required, a refresh keeps failing, or a token is about to
+	// expire. Empty and omitted when all is well or the model is off.
+	CredentialAlerts []CredentialAlert `json:"credential_alerts,omitempty"`
 }
 
 type Settings struct {
@@ -120,7 +129,9 @@ type Settings struct {
 	EnvOverride        bool   `json:"env_override"`
 	EnvValue           string `json:"env_value,omitempty"`
 	// ClaudeAutoRefresh is the stored on/off flag for claude auto-refresh.
-	ClaudeAutoRefresh bool `json:"claude_auto_refresh"`
+	ClaudeAutoRefresh     bool                                 `json:"claude_auto_refresh"` // read-only legacy alias
+	TokenAutoRefresh      bool                                 `json:"token_auto_refresh"`
+	TokenAutoRefreshState map[string]TokenAutoRefreshToolState `json:"token_auto_refresh_state"`
 	// ClaudeModelFlag is the full optional flag passed to maintenance prompts.
 	ClaudeModelFlag string `json:"claude_model_flag"`
 	CodexModelFlag  string `json:"codex_model_flag"`
@@ -128,6 +139,7 @@ type Settings struct {
 	// currently whether harness-docker-ctrl is on PATH. The UI presents the
 	// toggle as unavailable when this is false.
 	ClaudeAutoRefreshAvailable bool `json:"claude_auto_refresh_available"`
+	TokenAutoRefreshAvailable  bool `json:"token_auto_refresh_available"`
 	// WarmupMode selects off, force, scheduled, or smart warmup behavior.
 	WarmupMode string `json:"warmup_mode"`
 	// WarmupAvailable includes both the shared runtime feature gate and the
@@ -135,6 +147,11 @@ type Settings struct {
 	WarmupAvailable bool `json:"warmup_available"`
 	// WarmupSchedule is zero or more five-field cron entries, one per line.
 	WarmupSchedule string `json:"warmup_schedule"`
+}
+
+type TokenAutoRefreshToolState struct {
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // Provider absorbs the old ProviderInfo, provider_order setting, and switcher

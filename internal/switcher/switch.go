@@ -63,6 +63,16 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 	}
 	defer releaseAccount()
 
+	// Token-copy model: bring the INCOMING profile up to date first, so sessions
+	// are never handed a dying account. Runs under the account lock held above and
+	// BEFORE the switcher flock, because the refresher commits under that flock.
+	tokenCopies := m.TokenCopiesFor(tool)
+	if tokenCopies {
+		if err := m.refreshIncomingIfDue(tool, name); err != nil {
+			return "", false, err
+		}
+	}
+
 	// Check eligibility before taking the lock: reads only the live credentials
 	// file and does not touch switcher state. Failing fast here avoids the lock
 	// overhead when the tool is plainly not logged in.
@@ -80,6 +90,10 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 		return "", false, &NotEligibleError{Tool: tool, Reason: el.Reason}
 	}
 	liveAbsent := el.Absent
+
+	if m.beforeSwitchLock != nil {
+		m.beforeSwitchLock()
+	}
 
 	// Acquire the flock before reading or writing any state.
 	lock, lockErr := m.acquireLock()
@@ -126,6 +140,18 @@ func (m *Manager) Switch(tool, name string) (active string, switched bool, err e
 	// profile that is already active.
 	if name == activeProfile {
 		return name, false, nil
+	}
+
+	// Token-copy model (after `migrate-copies`): the live file is a token-only
+	// copy, so there is nothing to capture or restore. See token_copies.go.
+	if m.TokenCopiesFor(tool) {
+		if !tokenCopies {
+			// migrate-copies finished between the unlocked check and the lock: the
+			// incoming profile was not refreshed above, and the link-model steps
+			// below would be wrong. Nothing has been changed; retry.
+			return "", false, ErrMigrationRaced
+		}
+		return m.switchTokenCopies(tool, name, activeProfile)
 	}
 
 	livePath, err := m.liveCredPath(tool)
@@ -362,16 +388,17 @@ func (m *Manager) restoreProfile(tool, name, livePath string) error {
 // validateLiveCred is intentional: both reject malformed and accept expired.
 // For claude, expiresAt == 0 is the observed corruption marker. For codex,
 // the rule is loadCodexAuth success — access_token + refresh_token must be
-// present; no JWT exp check is applied (an absent or past-expired id_token
+// present (C1: a stored credential is a FULL credential; the live file is a
+// token-only target and is validated by validateLiveCred); no JWT exp check is applied (an absent or past-expired id_token
 // is structurally fine). The rule is "reject malformed, accept expired"; the
 // corruption signal differs by tool.
 func validateStoredCred(tool, path string) error {
 	var err error
 	switch tool {
 	case ToolClaude:
-		_, err = usages.ValidateClaudeCredentials(path)
+		_, err = usages.ValidateFullClaudeCredentials(path)
 	case ToolCodex:
-		_, _, err = usages.ValidateCodexCredentials(path)
+		_, _, err = usages.ValidateFullCodexCredentials(path)
 	default:
 		return fmt.Errorf("unknown tool %q", tool)
 	}

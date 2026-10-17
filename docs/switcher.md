@@ -6,6 +6,13 @@ The switcher stores a credential set per named profile and swaps the active one
 into the tool's own credential location. It is **off by default** and does
 nothing until you enable it.
 
+After creating an active profile, use **Settings → Usages → Account maintenance
+→ Auto-refresh tokens** to enable the token-only model. The setting migrates
+each eligible tool as soon as the setting is saved and shows `waiting` with a reason
+when a safety guard refuses it. Turning the setting off restores full live
+credentials and the active-profile symlink. The link-based behavior described
+below applies while the setting is off or a tool is waiting to migrate.
+
 ## Why it exists
 
 Swapping credential files is easy to get wrong in a way that destroys logins.
@@ -25,8 +32,8 @@ only in the live file, so a copy would go stale the moment it refreshed; the
 link means anything reading `profiles/<tool>/<active>/<file>` sees the current
 tokens. Inactive profiles always hold regular files.
 
-Installs from before this hold a plain copy for the active profile. The server
-converts it in place (on startup, then every 60 seconds), without a switch:
+Installs from before this hold a plain copy for the active profile. While the
+token setting is off, the server converts it on a poller tick without a switch:
 when the switcher is enabled and the live file validates, the copy is saved
 under `backups/` first, then replaced by the link. Running it again is a
 no-op — with everything linked it takes no lock and writes nothing — and
@@ -95,7 +102,7 @@ profile to capture into, switching would discard the current login
 After `claude login`, the new credentials are live and belong to `main`.
 `main` was empty, so at first it has no stored file and no link. Once the login
 writes the live file, the running server links `main`'s stored path to it
-within about a minute — with no backup, since there was nothing stored to
+on a poller tick — with no backup, since there was nothing stored to
 keep — and from then on the stored path follows live through the link. A
 regular snapshot is written into `main`'s stored copy on the next switch
 **away** from it.
@@ -112,6 +119,7 @@ regular snapshot is written into `main`'s stored copy on the next switch
 | `aimebu switcher rename <tool> <old> <new>` | rename |
 | `aimebu switcher remove <tool> <profile>` | delete a profile |
 | `aimebu switcher enable` / `disable` | turn the feature on or off |
+| `aimebu switcher migrate-copies [--tool claude\|codex] [--allow-running-codex]` | advanced manual move to the token-only credential model (normally use the Settings toggle) |
 
 `add` and `import` are deliberately different verbs: `add` creates an empty
 profile you will log into later, `import` captures the login you already have.
@@ -188,7 +196,9 @@ Switch when you don't have a session running against the outgoing account.
   backups/<tool>/<name>-<unix>.json        # newest 10 per profile
   backups/<tool>/<name>-rotated-<UTC>.json # newest 3 rescues per profile
   removed.json                           # last 50 explicit removals (token hashes only)
+  token-copies.json                      # marker: which tools run the token-only model (and since when)
   .lock
+~/.aimebu/server/credential-targets.json # extra (non-live) token-only targets
 ```
 
 Each profile keeps its newest 10 backups; older ones are pruned whenever a new
@@ -209,9 +219,9 @@ Credential files are `0600`, directories `0700` (an active profile's symlink
 has no mode of its own; its target, the live file, is `0600`). This tree is **not**
 server-owned — the CLI writes it with the server stopped. `.lock` also
 serializes the server-side writers that touch a live or stored credential path:
-the copy-back of tokens rotated by the opt-in maintenance jobs (Claude
+the copy-back of tokens rotated by the opt-in legacy maintenance jobs (Claude
 auto-refresh and warmup, Codex maintenance; see
-[usages.md](usages.md#claude-auto-refresh)). These
+[usages.md](usages.md#legacy-link-model-maintenance)). These
 maintenance jobs never run on the active profile. Each holds a per-account
 advisory lock, `switcher/.maintenance/<hash of the refresh token>.lock`
 (created for the job, removed on release), and a switch **holds the same lock
@@ -304,8 +314,8 @@ carry the same hover tooltip with the absolute expiry timestamp and a relative
 short enough that a checkmark means the token is genuinely healthy — claude
 tokens live only about 8 to 12 hours, so a wider window would leave every claude
 profile showing an hourglass permanently — and long enough to switch profiles by
-hand before one lapses. When Claude auto-refresh (see
-[usages.md](usages.md#claude-auto-refresh)) is enabled the threshold tightens to
+hand before one lapses. When Auto-refresh tokens (see
+[usages.md](usages.md#token-only-refresher)) is enabled the threshold tightens to
 1 hour: the container refresh gives the long heads-up automatically, so only a
 genuinely imminent lapse still warrants the hourglass. With it disabled the
 3-hour heads-up stays, so manual users keep the wider warning.
@@ -355,3 +365,178 @@ are plain JSON files under `~/.aimebu/switcher/backups/<tool>/` — copy one bac
 over the tool's credential file by hand if you need to.
 Rotated rescue files use the `-rotated-` suffix and retain the tokens produced
 by a maintenance run that could not safely update an existing profile.
+
+## Token-only credential model
+
+Links share one refresh token between every running session and the server,
+and a refresh-token reuse revokes the whole family. The token-only model ends
+that: **the profile store holds the only full credentials** (regular 0600
+files, the active profile included) and the server is the only party that
+spends refresh tokens. The live `~/.claude` and `~/.codex` files become
+*targets*: copies with the access token (Codex: plus the account id) and **no
+refresh token** (Claude: the `refreshToken` key is deleted; Codex:
+`refresh_token` is `""` with `auth_mode: chatgptAuthTokens`). Sessions use the
+access token until it expires and re-read the file when it is rewritten.
+
+- The **Auto-refresh tokens** setting starts converting each eligible tool
+  immediately. A tool that fails a safety check shows `waiting: <reason>` and
+  is retried on later ticks; the other tool can migrate independently. It
+  refuses a live token with under 15 minutes left (a session may be refreshing
+  it), a running Codex process that could spend the same refresh token, and a
+  tool with no active profile. This 15-minute migration guard differs from the
+  15-minute warning in doctor and Usages for a stored token near expiry.
+- `aimebu switcher migrate-copies` is an **advanced** manual command for the
+  same conversion. It does not change the saved toggle, and startup does not
+  undo a manual migration while the toggle is off. `--tool claude` leaves
+  Codex linked; `--allow-running-codex` overrides the Codex-process guard.
+  The CLI refusal for a token inside the 15-minute window exits with code 2.
+  Start or restart the server after manual migration.
+- Migration backs up the live file, saves the full credential as a regular
+  stored file, rewrites the live file token-only, then writes
+  `token-copies.json` last (version 2 has a `migrated` map of tool to time; a
+  version-1 marker means both tools). Codex process checks cover the host and,
+  best effort, running Docker containers (`docker ps`, then `docker top`).
+  If Docker is unreachable, the CLI says containers were not checked.
+  The refresher leaves Codex profiles alone for ten minutes after migration;
+  restarting running Claude sessions is optional because Claude re-reads its
+  live file before it refreshes. A second migration of a migrated tool is a
+  no-op.
+- Turning the setting **off** refreshes a near-expiry active profile first,
+  restores its full credential to the live file without losing unrelated live
+  fields such as `mcpOAuth` (the merged document goes into the profile store
+  first, so a failure at any step leaves the store and the live file
+  consistent), returns the active stored path to a symlink, and removes that
+  tool from the marker. A new `/login` in the live file is
+  imported before the restore. If restore cannot finish, Settings shows
+  `waiting` with the reason and retries on the next tick.
+- `aimebu switcher use` on a migrated tool hands the switch to the running
+  server when one answers on this machine (`AIMEBU_URL` must be a loopback
+  address; the server owns the refresher, so a due incoming profile is refreshed
+  first) and prints the server's answer, including its refusals. With no server
+  it switches locally with the same live-file fan-out; there is no refresher in
+  that process, so a switch to a profile that is due for a refresh is refused
+  with a pointer to start the server (the server refreshes profiles ahead of
+  expiry, so that only happens after it was down).
+- A **switch** no longer captures, restores or links anything. It refreshes
+  the incoming profile if it is due (a failed refresh refuses the switch with
+  409), rewrites the live targets from the profile, and moves the active
+  pointer. While a login is waiting in the live file it refuses (retry in a
+  minute; see Login import below).
+  Over HTTP these refusals are 409 (login pending, incoming refresh failed,
+  profile still linked, codex running); login pending and incoming
+  refresh carry a `Retry-After` header; a migration request while the feature is off is 400.
+  The web UI shows the server's message as-is.
+- **`import`** adopts a login that has just been made (the live file holds a
+  full credential the reconciler has not filed yet) under the name you choose,
+  without creating the link described above. It saves a rescue copy and a
+  backup, stores the login as a regular `0600` file in the profile store, moves
+  the active pointer, and only then rewrites the live file token-only, so the
+  live file and the state never disagree about whose login it holds. A failure
+  before the pointer moves undoes the profile and leaves the live file as it
+  was; if only the final rewrite fails, the profile is stored and active and
+  the reconciler strips the file within a minute. A live file that is already
+  token-only is still refused (there is no login to adopt), and so is an
+  install whose fan-out is not wired.
+- **`remove`** records the removal tombstone from the profile store for every
+  profile, the active one included: the live file is token-only and holds no
+  refresh token, so the store is the only place the removed account's token
+  can be found. It also deletes any rescued login (`backups/<tool>/_login-*`)
+  that holds one of the removed profile's refresh tokens, so a removed profile's
+  credentials do not survive in the copy that created it; rescued logins older
+  than a day are pruned whenever a new one is saved.
+- **`rename`** of the active profile makes no backup of the live file (it is
+  token-only); the profile's moved backups and its store file are the recovery
+  source.
+- The **server** keeps targets current: the refresher
+  ([usages.md](usages.md#token-only-refresher)) refreshes profiles ahead of
+  expiry and fans each new credential out to the targets bound to that
+  profile. Every live-target write takes the switcher lock and re-reads the
+  active profile under it, so a switch landing meanwhile is never overwritten.
+  `server/credential-targets.json` lists extra targets (a profile-pinned
+  or follow-the-active file elsewhere); the two live files are implicit.
+  This is **advanced: hand-edited, no CLI yet**. The file is read at server
+  start; a missing file means no extra targets:
+
+  ```json
+  {"version": 1, "targets": [
+    {"id": "ci-claude", "tool": "claude", "path": "/abs/path/.credentials.json", "profile": "main"}
+  ]}
+  ```
+
+  `id`, an absolute `path` and `tool` (`claude` or `codex`) are required (an
+  entry missing any, or with another tool, is skipped silently); `profile`
+  pins the target to one profile, and omitting it follows the tool's active
+  profile. Field names match case-insensitively.
+- After a switch to a different **Codex** account, a Codex session that was
+  already open keeps refusing the new credentials (it guards its account id)
+  until it is restarted. Claude sessions adopt the rewritten file by themselves.
+- Startup order: the reconciler pass runs first, then the refresher.
+- `aimebu doctor` reports the model's health for each tool listed in `token-copies.json`
+  (including a warning when `harness-docker-ctrl`, which the refresher needs on
+  the server's PATH, cannot be found),
+  and the Usages panel shows credential alerts. An alert that ends in "log in
+  again" (`reauth_required`, `needs_relogin_soon`, `expired`) is also posted
+  once per edge as an attention-raising system message to the human members of
+  every room that has one.
+
+## Login import (the credential reconciler)
+
+In the token-only model the live credential files hold no refresh token, so a
+`/login` in any session writes a *full* credential into a file that must never
+hold one. Every 60 seconds, and once at server start, the reconciler
+(`internal/credtarget`) looks for exactly that and files the login into the
+profile store. A login in a target that was written less than 15 seconds ago
+waits for a later pass: Claude writes the credentials first and its account
+file once it has fetched the profile, and the account file is only trusted when
+it is no older than the credentials, so a login is never filed under the
+account that was logged in before it.
+
+1. The full credential is first saved as `backups/<tool>/_login-<UTC>.json`
+   (at most five are kept; an identical one is reused), so nothing is lost if a
+   later step fails.
+2. The account is identified: Claude by `oauthAccount.emailAddress` in the
+   account-state file, Codex by the `id_token` email, else the account id. The
+   Claude file is the most recently written of `<credentials dir>/.claude.json`
+   and claude-code's default for the server's environment (`~/.claude.json`, or
+   `$CLAUDE_CONFIG_DIR/.claude.json`): which one is real depends on how the
+   sessions were started, not the server, and `aimebu doctor` should flag two
+   files that name different accounts. An account that cannot be identified
+   never matches anything.
+3. The login goes to the first rule that applies:
+   - the active profile is empty (`switcher add main`, `switcher use main`,
+     then log in): into the active profile;
+   - the same account as the active profile: replaces it;
+   - another known account (exactly one profile): replaces that profile and
+     raises a `login_imported` alert;
+   - otherwise a new profile `login-<UTC>` and the same alert. Another
+     account's profile is never overwritten without a match, and a profile that
+     cannot be read is never taken for an empty one.
+4. The profile that received the login becomes the active profile, because the
+   live file now holds its account. A replaced credential is backed up first,
+   the write happens under that profile's account lock and the switcher lock,
+   and the file is always a regular file, never written through a link.
+5. The live file is rewritten token-only and fanned out to the other targets.
+   The strip uses the writer's per-call login-replacing method; the ordinary
+   write refuses a target that still holds a refresh token, so no fan-out can
+   destroy a login nobody has rescued.
+
+Every step can be repeated, so a failure part-way is finished by the next pass:
+a login that was stored but not yet stripped is recognised by its bytes, is
+stored again (which re-asserts the active pointer if only that step failed) and
+is not imported twice. The target is read again before the strip: a login whose
+token pair changed meanwhile is imported again into the same profile, a target
+that was removed meanwhile (a logout) stays removed, and a worker adding an MCP
+login to the same file is not mistaken for a rotation.
+
+A token-only target whose access token is not its profile's (a missed fan-out,
+or another account's after a switch) is rewritten from the profile. Identity
+decides, not expiry order, and the rewrite re-reads the active profile, the
+stored credential and the target under the switcher lock, the lock a switch
+holds, so it can never put the previous account's token back over a switch. A
+credential file with open permissions is set back to `0600`. A missing file is
+left missing: that is a logout.
+
+The reconciler does nothing until the credential migration has run, and it
+refuses to import while any profile is still a link to a live file, because
+stripping that file would remove the profile's only refresh token. It says so
+once per tool, not every pass, and saves no rescue copy in that state.

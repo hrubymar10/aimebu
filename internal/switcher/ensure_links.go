@@ -3,6 +3,7 @@ package switcher
 import (
 	"errors"
 	"fmt"
+	"github.com/hrubymar10/aimebu/internal/credtarget"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -36,6 +37,10 @@ func (m *Manager) EnsureActiveLinks() error {
 	if !pre.Enabled || !anyActive(pre) {
 		return nil
 	}
+	// Token-copy model (per tool): the stored files of every profile are plain
+	// regular files and the live file is a token-only copy written by the server.
+	// Linking would recreate exactly what migrate-copies removed, so a migrated
+	// tool is skipped below while an unmigrated one keeps its link.
 
 	// Unlocked per-tool check of the link state: the steady state (every
 	// active profile already linked, or nothing to link to) must take no lock
@@ -44,6 +49,9 @@ func (m *Manager) EnsureActiveLinks() error {
 	var errs []error
 	needed := false
 	for _, tool := range Tools() {
+		if m.TokenCopiesFor(tool) {
+			continue
+		}
 		need, _, err := m.activeLinkNeeded(tool, pre.Active[tool])
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", tool, err))
@@ -69,6 +77,9 @@ func (m *Manager) EnsureActiveLinks() error {
 	}
 	errs = nil
 	for _, tool := range Tools() {
+		if m.TokenCopiesFor(tool) {
+			continue
+		}
 		if err := m.ensureActiveLink(tool, state.Active[tool]); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", tool, err))
 		}
@@ -93,6 +104,12 @@ func anyActive(s State) bool {
 // read the live file.
 func (m *Manager) activeLinkNeeded(tool, name string) (bool, string, error) {
 	if name == "" {
+		return false, "", nil
+	}
+	// Decided here, not only before the lock: ensureActiveLink calls this under
+	// the switcher lock, so a migrate-copies that completed between the caller's
+	// unlocked pre-check and the lock is seen. A migrated tool is never linked.
+	if m.TokenCopiesFor(tool) {
 		return false, "", nil
 	}
 	if err := validateProfileName(name); err != nil {
@@ -128,6 +145,13 @@ func (m *Manager) activeLinkNeeded(tool, name string) (bool, string, error) {
 	}
 	if err := validateLiveCred(tool, livePath); err != nil {
 		return false, "", nil // never link a profile to corrupt live credentials
+	}
+	// A link means "the store follows live", which only holds for a full
+	// credential. A token-only live file (a migrate-copies that crashed before
+	// writing its marker, or one racing this pass) would replace the store's only
+	// refresh token with a link to a file that has none.
+	if data, readErr := os.ReadFile(livePath); readErr == nil && !credtarget.HasRefreshToken(tool, data) {
+		return false, "", nil
 	}
 	return true, livePath, nil
 }

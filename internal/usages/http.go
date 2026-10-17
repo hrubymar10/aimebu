@@ -17,6 +17,7 @@ func (r Routes) Mount(mux *http.ServeMux) {
 		r.Copilot = newCopilotFlowStore()
 	}
 	mux.HandleFunc("GET /api/usages", r.handleGet)
+	mux.HandleFunc("GET /api/credentials/targets", r.handleCredentialTargets)
 	mux.HandleFunc("POST /api/usages/refresh", r.handleRefresh)
 	mux.HandleFunc("POST /api/usages/providers", r.handleProvider)
 	mux.HandleFunc("POST /api/usages/settings", r.handleSettings)
@@ -104,6 +105,7 @@ func (r Routes) handleSettings(w http.ResponseWriter, req *http.Request) {
 		PercentDisplay     string    `json:"percent_display"`
 		ProviderOrder      *[]string `json:"provider_order"`
 		ClaudeAutoRefresh  *bool     `json:"claude_auto_refresh"`
+		TokenAutoRefresh   *bool     `json:"token_auto_refresh"`
 		WarmupMode         *string   `json:"warmup_mode"`
 		WarmupSchedule     *string   `json:"warmup_schedule"`
 		ClaudeModelFlag    *string   `json:"claude_model_flag"`
@@ -118,7 +120,11 @@ func (r Routes) handleSettings(w http.ResponseWriter, req *http.Request) {
 	if body.ProviderOrder != nil {
 		providerOrder = *body.ProviderOrder
 	}
-	info, err := r.Manager.UpdateSettings(req.Context(), body.RefreshIntervalSec, body.PercentDisplay, providerOrder, updateProviderOrder, body.ClaudeAutoRefresh, body.WarmupMode, body.WarmupSchedule, body.ClaudeModelFlag, body.CodexModelFlag)
+	autoRefresh := body.TokenAutoRefresh
+	if autoRefresh == nil {
+		autoRefresh = body.ClaudeAutoRefresh
+	}
+	info, err := r.Manager.UpdateSettings(req.Context(), body.RefreshIntervalSec, body.PercentDisplay, providerOrder, updateProviderOrder, autoRefresh, body.WarmupMode, body.WarmupSchedule, body.ClaudeModelFlag, body.CodexModelFlag)
 	writeUsageJSON(w, map[string]any{"settings": info}, err)
 }
 

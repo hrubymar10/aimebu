@@ -136,6 +136,35 @@ func TestHTTPEmptyShapeAndSettingsValidation(t *testing.T) {
 	}
 }
 
+func TestHTTPTokenAutoRefreshAlias(t *testing.T) {
+	m := NewManager(NewStoreAt(t.TempDir()), DefaultRegistry())
+	mux := http.NewServeMux()
+	Routes{Manager: m}.Mount(mux)
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{
+		{`{"claude_auto_refresh":true}`, true},
+		{`{"claude_auto_refresh":true,"token_auto_refresh":false}`, false},
+		{`{"token_auto_refresh":true}`, true},
+	} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/usages/settings", strings.NewReader(tc.body)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("POST = %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Settings Settings `json:"settings"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Settings.TokenAutoRefresh != tc.want || resp.Settings.ClaudeAutoRefresh != tc.want {
+			t.Fatalf("settings = %+v", resp.Settings)
+		}
+	}
+}
+
 func TestHTTPUsageShapeDoesNotDependOnSwitcherEnabled(t *testing.T) {
 	m := NewManager(NewStoreAt(t.TempDir()), EmptyRegistry())
 	m.SetProfileLister(func(tool string) ([]ProfileInfo, error) {

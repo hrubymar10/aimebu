@@ -244,7 +244,7 @@ func TestRemoveRecordsRefreshTokenTombstone(t *testing.T) {
 		} `json:"entries"`
 	}
 	must(t, json.Unmarshal(data, &entries))
-	if len(entries.Entries) != 1 || entries.Entries[0].Tool != ToolClaude || entries.Entries[0].Name != "work" || len(entries.Entries[0].TokenHash) != 64 || strings.Contains(string(data), "refresh-tok") {
+	if len(entries.Entries) != 1 || entries.Entries[0].Tool != ToolClaude || entries.Entries[0].Name != "work" || len(entries.Entries[0].TokenHash) != 64 || strings.Contains(string(data), "refresh-") {
 		t.Fatalf("removed profile tombstone = %s", data)
 	}
 	info, err := os.Stat(filepath.Join(m.root, "removed.json"))

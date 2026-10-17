@@ -174,6 +174,12 @@ func (m *Manager) Import(tool, name string) error {
 	if err := validateLiveCred(tool, livePath); err != nil {
 		return err
 	}
+	// Import stores the live login as a profile, so it must be a FULL credential.
+	// A token-only live file (token-copy model) carries no refresh token: storing
+	// it would create a profile that can never be refreshed.
+	if err := validateStoredCred(tool, livePath); err != nil {
+		return fmt.Errorf("%w: live credentials are not a full login (%s); log in with the CLI first", ErrInvalidCredentials, err)
+	}
 	liveData, err := os.ReadFile(livePath)
 	if err != nil {
 		return fmt.Errorf("%w: cannot read live credentials: %s", ErrInvalidCredentials, err)
@@ -187,6 +193,14 @@ func (m *Manager) Import(tool, name string) error {
 		if err := validateProfileName(previous); err != nil {
 			return fmt.Errorf("corrupt state: active profile name invalid: %w", err)
 		}
+	}
+
+	// Token-copy model: the profile store holds the only full credentials as
+	// regular files and the live file is a token-only target. Linking the live
+	// file here would recreate the symlink layout, with a refresh token in the
+	// live file, that the migration removed.
+	if m.tokenCopiesFor(tool) {
+		return m.importTokenCopies(tool, name, livePath, liveData, state, previous)
 	}
 
 	dir := m.profileDir(tool, name)
@@ -298,8 +312,12 @@ func (m *Manager) Rename(tool, oldName, newName string) error {
 	if state.Active[tool] == oldName {
 		// Also record the active profile's current live bytes under the new
 		// name — fresher than any moved backup. Best effort: the rename itself
-		// has already happened.
-		m.backupActiveLiveAs(tool, newName)
+		// has already happened. Under the token-copy model the live file is
+		// token-only, so a backup of it would be useless; the moved backups and
+		// the store file are the recovery source there.
+		if !m.tokenCopiesFor(tool) {
+			m.backupActiveLiveAs(tool, newName)
+		}
 		state.Active[tool] = newName
 		if err := m.saveState(state); err != nil {
 			return err
@@ -345,7 +363,11 @@ func (m *Manager) Remove(tool, name string, force bool) error {
 	// Record the removed account before its credentials disappear. A concurrent
 	// maintenance run checks this under the same lock before any copy-back.
 	credPath := m.profileCredPath(tool, name)
-	if isActive {
+	// Before the token-copy model the active profile's refresh token lived in the
+	// live file (its stored file was a link to it). Under the model the live file
+	// is token-only and the profile store holds the only refresh token, so the
+	// tombstone must come from the store for every profile, active or not.
+	if isActive && !m.tokenCopiesFor(tool) {
 		credPath, err = m.liveCredPath(tool)
 		if err != nil {
 			log.Printf("ERROR switcher: %s/%s: skip removal tombstone: resolve live credentials: %v", tool, name, err)
@@ -363,12 +385,17 @@ func (m *Manager) Remove(tool, name string, force bool) error {
 		}
 	}
 
+	// The refresh tokens this profile held, read before anything is deleted, so
+	// the rescued login that created it can be deleted with it.
+	removedTokens := m.refreshTokensOf(tool, name)
+
 	// RemoveAll unlinks symlinks rather than following them, so removing an
 	// active profile whose stored file links to the live credentials deletes
 	// only the link here; the live file is handled explicitly below.
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("remove profile: %w", err)
 	}
+	m.deleteLoginRescuesFor(tool, removedTokens)
 	// Removal is the explicit destructive action: the profile's backups go
 	// with it, so a later profile of the same name cannot inherit them.
 	// Logged, not returned: the profile itself is already gone.

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hrubymar10/aimebu/internal/usages"
 	_ "modernc.org/sqlite"
 )
 
@@ -62,6 +63,7 @@ func Run(baseURL, rootDir string) []Result {
 	results = append(results, checkAllowlist())
 	results = append(results, checkAgentLiveness(baseURL))
 	results = append(results, checkSwitcher(rootDir)...)
+	results = append(results, checkCredentialTargets(rootDir)...)
 
 	return results
 }
@@ -300,8 +302,8 @@ func checkSwitcher(rootDir string) []Result {
 	var results []Result
 	home, _ := os.UserHomeDir()
 	liveCredPath := map[string]string{
-		"claude": filepath.Join(home, ".claude", ".credentials.json"),
-		"codex":  filepath.Join(home, ".codex", "auth.json"),
+		"claude": usages.ClaudeLiveCredPath(home),
+		"codex":  usages.CodexLiveCredPath(home),
 	}
 	for _, tool := range []string{"claude", "codex"} {
 		name := fmt.Sprintf("switcher/%s", tool)

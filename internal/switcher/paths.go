@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/credtarget"
 	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
@@ -55,6 +56,14 @@ func (e *NotEligibleError) Is(target error) bool { return target == ErrNotEligib
 type Manager struct {
 	root    string // <config>/switcher
 	homeDir string // overrides os.UserHomeDir() in tests; empty in production
+
+	// copyHooks wire the token-copy model (see token_copies.go). Zero hooks are
+	// valid: a Switch then refuses rather than guessing.
+	copyHooks TokenCopyHooks
+
+	// beforeSwitchLock is a test seam: it runs in Switch after the unlocked
+	// marker check and before the switcher lock is taken.
+	beforeSwitchLock func()
 }
 
 // DefaultRoot resolves the switcher root from AIMEBU_CONFIG_DIR (or the default
@@ -144,11 +153,15 @@ func (m *Manager) liveCredPath(tool string) (string, error) {
 	case ToolClaude:
 		return usages.ClaudeLiveCredPath(home), nil
 	case ToolCodex:
-		return filepath.Join(home, ".codex", "auth.json"), nil
+		return usages.CodexLiveCredPath(home), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", tool)
 	}
 }
+
+// LiveCredPath returns the live credentials file of tool (the file the harness
+// reads), honouring the same overrides as the rest of the switcher.
+func (m *Manager) LiveCredPath(tool string) (string, error) { return m.liveCredPath(tool) }
 
 // liveCredDir returns the directory containing the live credentials file.
 func (m *Manager) liveCredDir(tool string) (string, error) {
@@ -279,7 +292,13 @@ func (m *Manager) claudeEmailFromDotJSON() string {
 	if err != nil {
 		return ""
 	}
-	data, readErr := os.ReadFile(usages.ClaudeAccountFilePath(home))
+	// The same resolution the credential reconciler uses to identify a login, so
+	// a profile's captured email and an imported login's account never disagree.
+	accountFile := usages.ClaudeAccountFilePath(home)
+	if livePath, err := m.liveCredPath(ToolClaude); err == nil {
+		accountFile = credtarget.ClaudeAccountFileFor(livePath, home)
+	}
+	data, readErr := os.ReadFile(accountFile)
 	if readErr != nil {
 		return ""
 	}

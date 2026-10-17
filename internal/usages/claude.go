@@ -188,6 +188,24 @@ func ValidateClaudeCredentials(path string) (*time.Time, error) {
 	return creds.ExpiresAt, nil
 }
 
+// ValidateFullClaudeCredentials validates a profile-store credentials file: like
+// ValidateClaudeCredentials (which is the TARGET rule: no refresh token needed,
+// because the live file is a token-only copy once migrated) plus a refresh
+// token, since a stored credential must be able to refresh.
+func ValidateFullClaudeCredentials(path string) (*time.Time, error) {
+	creds, _, err := loadClaudeAuth(path)
+	if err != nil {
+		return nil, err
+	}
+	if creds.ExpiresAt == nil {
+		return nil, errors.New("claude credentials: expiresAt is zero (malformed)")
+	}
+	if creds.RefreshToken == "" {
+		return nil, errors.New("claude credentials: refresh token missing (a stored profile must be a full credential)")
+	}
+	return creds.ExpiresAt, nil
+}
+
 func claudeCodeUserAgent() string {
 	return claudeCodeUserAgentPrefix + claudeCodeUAVersion()
 }

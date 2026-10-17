@@ -44,7 +44,7 @@ func (p *codexProvider) Fetch(ctx context.Context, store *Store) (Snapshot, erro
 	}
 	creds := auth.Credentials
 	raw, detail, status, err := fetchCodexUsage(ctx, creds)
-	if err != nil && status == StatusAuthMissing && creds.RefreshToken != "" {
+	if err != nil && status == StatusAuthMissing {
 		reloaded, reloadDetail, changed, reloadErr := reloadCodexAuthIfChanged(authPath, auth.Fingerprint)
 		if changed {
 			if reloadErr != nil {
@@ -97,15 +97,23 @@ type codexCredentials struct {
 	LastRefresh  *time.Time
 }
 
-func codexAuthPath() (string, error) {
-	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" {
-		return filepath.Join(home, "auth.json"), nil
+// CodexLiveCredPath is codex's live credentials file: CODEX_HOME/auth.json
+// when CODEX_HOME is set, otherwise <home>/.codex/auth.json. Pass home
+// explicitly so callers that override HOME (tests, the switcher) stay
+// consistent.
+func CodexLiveCredPath(home string) string {
+	if dir := strings.TrimSpace(os.Getenv("CODEX_HOME")); dir != "" {
+		return filepath.Join(dir, "auth.json")
 	}
+	return filepath.Join(home, ".codex", "auth.json")
+}
+
+func codexAuthPath() (string, error) {
 	home, err := os.UserHomeDir()
-	if err != nil {
+	if err != nil && strings.TrimSpace(os.Getenv("CODEX_HOME")) == "" {
 		return "", err
 	}
-	return filepath.Join(home, ".codex", "auth.json"), nil
+	return CodexLiveCredPath(home), nil
 }
 
 type codexAuthSnapshot struct {
@@ -136,7 +144,7 @@ func loadCodexAuth(path string) (codexCredentials, *ErrorDetail, error) {
 		}
 		return codexCredentials{}, nil, errors.New("Codex auth.json could not be read.")
 	}
-	return parseCodexAuthData(data)
+	return parseCodexAuthDataFull(data)
 }
 
 func parseCodexAuthData(data []byte) (codexCredentials, *ErrorDetail, error) {
@@ -158,11 +166,28 @@ func parseCodexAuthData(data []byte) (codexCredentials, *ErrorDetail, error) {
 		codexAccountIDFromJWT(creds.IDToken),
 		codexAccountIDFromJWT(creds.AccessToken),
 	)
-	if creds.AccessToken == "" || creds.RefreshToken == "" {
+	// C1: this parse follows the TARGET rule (live/external files are token-only
+	// copies): only the access token is required, because the usage fetch needs
+	// nothing else. The FULL rule (profile store: access AND refresh token) is
+	// parseCodexAuthDataFull.
+	if creds.AccessToken == "" {
 		return codexCredentials{}, fieldDetail("auth.json.tokens", "missing_oauth_tokens"), errors.New(codexLoginRequired)
 	}
 	if t := parseCodexTime(raw.LastRefresh); t != nil {
 		creds.LastRefresh = t
+	}
+	return creds, nil, nil
+}
+
+// parseCodexAuthDataFull is the profile-store rule: a stored credential must be
+// able to refresh, so it needs a refresh token as well as an access token.
+func parseCodexAuthDataFull(data []byte) (codexCredentials, *ErrorDetail, error) {
+	creds, detail, err := parseCodexAuthData(data)
+	if err != nil {
+		return creds, detail, err
+	}
+	if creds.RefreshToken == "" {
+		return codexCredentials{}, fieldDetail("auth.json.tokens", "missing_oauth_tokens"), errors.New(codexLoginRequired)
 	}
 	return creds, nil, nil
 }
@@ -623,7 +648,21 @@ func jsonTypeName(data []byte) string {
 // tokens are returned for display only — the id_token for the account
 // email, the access token for the expiry actually worth showing.
 // API-key-only installs fail because the parser requires OAuth tokens.
+//
+// C1: this validator follows the TARGET rule (access token only), because the
+// live file is a token-only copy once migrated. Use ValidateFullCodexCredentials
+// for a profile-store file, which must also carry a refresh token.
 func ValidateCodexCredentials(path string) (idToken, accessToken string, err error) {
+	snap, _, err := loadCodexAuthSnapshot(path)
+	if err != nil {
+		return "", "", err
+	}
+	return snap.Credentials.IDToken, snap.Credentials.AccessToken, nil
+}
+
+// ValidateFullCodexCredentials validates a profile-store auth.json: access AND
+// refresh token required (the old ValidateCodexCredentials rule).
+func ValidateFullCodexCredentials(path string) (idToken, accessToken string, err error) {
 	creds, _, err := loadCodexAuth(path)
 	if err != nil {
 		return "", "", err

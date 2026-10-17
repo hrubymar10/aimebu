@@ -50,7 +50,10 @@ type Config struct {
 	// ClaudeAutoRefresh is the legacy-named shared maintenance gate for
 	// near-expiry Claude and Codex profiles. Default off: enabling it incurs a
 	// small per-account cost from ephemeral harness-docker prompt calls.
-	ClaudeAutoRefresh bool `json:"claude_auto_refresh,omitempty"`
+	ClaudeAutoRefresh bool `json:"token_auto_refresh"`
+	// TokenAutoRefreshManaged records that the setting owns migration cleanup.
+	// A manual migrate-copies command while the setting is off is independent.
+	TokenAutoRefreshManaged bool `json:"token_auto_refresh_managed,omitempty"`
 	// ClaudeModelFlag is appended to the shared claude warmup/refresh prompt.
 	// Empty deliberately opts into the Claude CLI's own default model.
 	ClaudeModelFlag string `json:"claude_model_flag"`
@@ -126,6 +129,16 @@ func (s *Store) LoadConfig() (Config, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return cfg, err
+	}
+	if _, hasNew := fields["token_auto_refresh"]; !hasNew {
+		if old, hasOld := fields["claude_auto_refresh"]; hasOld {
+			if err := json.Unmarshal(old, &cfg.ClaudeAutoRefresh); err != nil {
+				return cfg, err
+			}
+			if cfg.ClaudeAutoRefresh {
+				cfg.TokenAutoRefreshManaged = true
+			}
+		}
 	}
 	if _, hasMode := fields["warmup_mode"]; !hasMode {
 		var legacy struct {
@@ -213,7 +226,11 @@ func (s *Store) SaveConfig(cfg Config) error {
 		return err
 	}
 	cfg.ProviderOrder = normalizeProviderOrder(cfg.ProviderOrder)
-	return s.writeJSONAtomic(s.ConfigPath(), cfg, 0o600)
+	// Mirror the old name for one release so a downgrade keeps the setting.
+	return s.writeJSONAtomic(s.ConfigPath(), struct {
+		Config
+		LegacyClaudeAutoRefresh bool `json:"claude_auto_refresh"`
+	}{Config: cfg, LegacyClaudeAutoRefresh: cfg.ClaudeAutoRefresh}, 0o600)
 }
 
 func (s *Store) LoadCache() (Cache, error) {
@@ -267,6 +284,7 @@ func (s *Store) RefreshInterval(cfg Config) (time.Duration, Settings) {
 		MinRefreshSec:      MinRefreshSec,
 		PercentDisplay:     cfg.PercentDisplay,
 		ClaudeAutoRefresh:  cfg.ClaudeAutoRefresh,
+		TokenAutoRefresh:   cfg.ClaudeAutoRefresh,
 		ClaudeModelFlag:    cfg.ClaudeModelFlag,
 		CodexModelFlag:     cfg.CodexModelFlag,
 		WarmupMode:         cfg.WarmupMode,

@@ -559,3 +559,45 @@ func TestSwitcherHTTPStatusMaintenanceBusyIsConflict(t *testing.T) {
 		t.Fatalf("status = %d, want 409", got)
 	}
 }
+
+func TestSwitcherHTTPStatusTokenCopySentinels(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"login pending", switcher.ErrLoginPending, http.StatusConflict},
+		{"incoming refresh", switcher.ErrIncomingRefresh, http.StatusConflict},
+		{"linked profile", switcher.ErrLinkedProfile, http.StatusConflict},
+		{"codex running", switcher.ErrCodexRunning, http.StatusConflict},
+		{"migrate not enabled", switcher.ErrMigrateNotEnabled, http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped := fmt.Errorf("switch claude/main: %w", fmt.Errorf("%w: detail", tc.err))
+			if got := switcherHTTPStatus(wrapped); got != tc.want {
+				t.Fatalf("status = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWriteSwitcherErrRetryHints(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeSwitcherErr(rec, http.StatusConflict, fmt.Errorf("%w: claude/main", switcher.ErrIncomingRefresh))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+	if got := rec.Header().Get("Retry-After"); got == "" {
+		t.Fatal("missing Retry-After on incoming refresh")
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "try again") {
+		t.Fatalf("body %q lacks a retry hint", body)
+	}
+
+	rec = httptest.NewRecorder()
+	writeSwitcherErr(rec, http.StatusConflict, fmt.Errorf("%w: claude/main", switcher.ErrCodexRunning))
+	if rec.Header().Get("Retry-After") != "" || strings.Contains(rec.Body.String(), "try again") {
+		t.Fatalf("codex-running must not claim to be self-clearing: %s", rec.Body.String())
+	}
+}

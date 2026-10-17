@@ -79,10 +79,13 @@
   let pendingNotifPrompt = null; // { senderName } queued while the tab is hidden
   let usageProviders = [];
   let usageSwitcherEnabled = false;
+  let usageCredentialAlerts = []; // token-only model: credentials that need a human (resp.credential_alerts)
   let usagePercentDisplay = 'left';
   let usageGroupBy = localStorage.getItem('aimebu_usages_group_by') === 'active' ? 'active' : 'providers';
-  let usageClaudeAutoRefresh = false;
-  let usageClaudeAutoRefreshAvailable = false;
+  let usageTokenAutoRefresh = false;
+  let usageTokenAutoRefreshAvailable = false;
+  let usageTokenAutoRefreshState = {};
+  let usageTokenPoll = null;
   let usageWarmupMode = 'off';
   let usageWarmupAvailable = false;
   let usageWarmupSchedule = '';
@@ -2904,6 +2907,7 @@
       usagePercentDisplay = resp.settings.percent_display === 'used' ? 'used' : 'left';
     }
     usageSwitcherEnabled = !!resp.switcher_enabled;
+    usageCredentialAlerts = Array.isArray(resp.credential_alerts) ? resp.credential_alerts : [];
     renderUsageProviderRows(usageProviders);
     renderUsagesSidebar();
   }
@@ -2951,6 +2955,15 @@
     renderUsagesSidebar();
   }
 
+  // Credentials that need a human (token-only model): a login is required, a refresh
+  // keeps failing, or a token is about to expire. One line each, above the tiles.
+  function credentialAlertBanner() {
+    if (!usageCredentialAlerts.length) return '';
+    return '<div class="usages-credential-alerts" role="alert">' + usageCredentialAlerts.map(function (a) {
+      return '<div class="usages-credential-alert usages-credential-alert-' + esc(a.kind || 'alert') + '">' + esc(a.message || '') + '</div>';
+    }).join('') + '</div>';
+  }
+
   function renderUsagesSidebar() {
     if (!rightUsagesPanel) return;
     if (!usagesLoadSettled) {
@@ -2974,7 +2987,7 @@
     var divider = groups.secondary.length
       ? '<div class="usages-group-divider" role="separator" aria-label="Other profiles"></div>'
       : '';
-    rightUsagesPanel.innerHTML = empty + '<div class="usages-sidebar-list">' +
+    rightUsagesPanel.innerHTML = credentialAlertBanner() + empty + '<div class="usages-sidebar-list">' +
       renderGroups(groups.primary) + divider + renderGroups(groups.secondary) +
     '</div>';
     renderUsagesGroupButton();
@@ -3065,7 +3078,7 @@
           // Near-expiry ("soon") threshold: 3h normally, tightened to 1h when
           // claude auto-refresh is enabled — the container refresh handles the
           // long heads-up, so only a genuinely imminent lapse needs flagging.
-          var soonThresholdMs = usageClaudeAutoRefresh ? 3600000 : 10800000;
+          var soonThresholdMs = usageTokenAutoRefresh ? 3600000 : 10800000;
           var iconSvg = diffMs <= 0 ? EXPIRY_ICON_EXPIRED
             : (diffMs <= soonThresholdMs ? EXPIRY_ICON_SOON : EXPIRY_ICON_OK);
           var iconClass = 'switcher-expiry-icon' + (diffMs <= 0 ? ' switcher-expiry-icon--expired' : '');
@@ -3301,6 +3314,9 @@
     // stale: the backend kept the last good numbers through a failed refresh
     // (snap.stale / status=stale_cache). Those numbers must not look healthy —
     // surface a marker. Key on snap.stale (the flag) as well as the status.
+    if (snap.status === 'expired') {
+      return name + ' access token expired' + (snap.stale ? ' — showing last known usage.' : ' — usage unavailable until it is refreshed.');
+    }
     if (snap.stale || snap.status === 'stale_cache') {
       return "Showing last known usage — couldn't refresh from " + name + '.';
     }
@@ -3352,27 +3368,33 @@
     document.querySelectorAll('.usages-percent-option').forEach(function (btn) {
       btn.classList.toggle('active', btn.getAttribute('data-percent-display') === usagePercentDisplay);
     });
-    usageClaudeAutoRefresh = !!settings.claude_auto_refresh;
-    usageClaudeAutoRefreshAvailable = !!settings.claude_auto_refresh_available;
+    usageTokenAutoRefresh = !!settings.token_auto_refresh;
+    usageTokenAutoRefreshAvailable = !!settings.token_auto_refresh_available;
+    usageTokenAutoRefreshState = settings.token_auto_refresh_state || {};
     usageWarmupMode = ['off', 'force', 'scheduled', 'smart'].includes(settings.warmup_mode) ? settings.warmup_mode : 'off';
     usageWarmupAvailable = !!settings.warmup_available;
     usageWarmupSchedule = settings.warmup_schedule || '';
     usageClaudeModelFlag = typeof settings.claude_model_flag === 'string' ? settings.claude_model_flag : '--model haiku';
     usageCodexModelFlag = typeof settings.codex_model_flag === 'string' ? settings.codex_model_flag : '--model gpt-5.6-luna';
-    renderClaudeMaintenanceRows();
+    renderAccountMaintenanceRows();
   }
 
-  // Renders the Claude account-maintenance rows (auto-refresh + warmup mode) into
+  // Renders the account-maintenance rows (auto-refresh + warmup mode) into
   // their bordered section group. When harness-docker-ctrl is absent the whole
   // feature is unavailable: both controls are disabled with explanatory text.
-  function renderClaudeMaintenanceRows() {
-    var el = document.getElementById('usages-claude-auto-refresh-row');
+  function renderAccountMaintenanceRows() {
+    var el = document.getElementById('usages-account-maintenance-row');
     if (!el) return;
-    var available = usageClaudeAutoRefreshAvailable;
-    var refreshOn = usageClaudeAutoRefresh;
-    var refreshDesc = available
-      ? 'Periodically renew near-expiry Claude and Codex profiles in a throwaway container so they stay ready to switch to. This incurs a small per-account cost.'
-      : 'Unavailable: <code>harness-docker-ctrl</code> is not installed. Install it to enable account auto-refresh.';
+    var available = usageTokenAutoRefreshAvailable;
+    var refreshOn = usageTokenAutoRefresh;
+    var toggleEnabled = available || refreshOn; // OFF must remain possible if the executor disappears
+    var refreshDesc = 'aimebu becomes the only thing that refreshes your Claude and Codex logins. While on, aimebu must stay running whenever you use Claude or Codex, also outside aimebu: if it is stopped for more than about an hour around a token\'s expiry, sessions get auth errors until it runs again. Turn this off before stopping aimebu for long or uninstalling it.';
+    if (!available) refreshDesc += ' Unavailable: <code>harness-docker-ctrl</code> is not installed.';
+    function toolState(tool) {
+      var state = usageTokenAutoRefreshState[tool] || {status: 'off'};
+      var status = ['migrated', 'waiting', 'pending', 'n/a'].includes(state.status) ? state.status : 'off';
+      return tool.charAt(0).toUpperCase() + tool.slice(1) + ': ' + status + (status === 'waiting' && state.reason ? ': ' + state.reason : '');
+    }
 
     var warmupControlEnabled = usageWarmupAvailable;
     var warmupDescriptions = {
@@ -3384,25 +3406,29 @@
     var warmupDesc = !available
       ? 'Unavailable: <code>harness-docker-ctrl</code> is not installed.'
       : (!refreshOn
-        ? 'Unavailable until Claude auto-refresh is enabled.'
-        : warmupDescriptions[usageWarmupMode]);
+        ? 'Unavailable until Auto-refresh tokens is enabled.'
+        : (!warmupControlEnabled
+          ? 'Unavailable while the token-only refresher owns account maintenance.'
+          : warmupDescriptions[usageWarmupMode]));
 
     el.innerHTML =
-      '<div class="settings-row' + (available ? '' : ' usages-provider-row-disabled') + '">' +
+      '<div class="settings-row' + (toggleEnabled ? '' : ' usages-provider-row-disabled') + '">' +
         '<div class="settings-row-info">' +
-          '<label class="settings-label" for="claude-auto-refresh-toggle">Claude and Codex auto-refresh</label>' +
+          '<label class="settings-label" for="token-auto-refresh-toggle">Auto-refresh tokens</label>' +
           '<span class="settings-desc">' + refreshDesc + '</span>' +
+          '<span class="settings-desc">' + esc(toolState('claude')) + '</span>' +
+          '<span class="settings-desc">' + esc(toolState('codex')) + '</span>' +
         '</div>' +
         '<div class="settings-control">' +
-          '<label class="usages-provider-toggle" aria-label="Claude auto-refresh">' +
-            '<input type="checkbox" id="claude-auto-refresh-toggle"' + (refreshOn ? ' checked' : '') + (available ? '' : ' disabled') + '>' +
+          '<label class="usages-provider-toggle" aria-label="Auto-refresh tokens">' +
+            '<input type="checkbox" id="token-auto-refresh-toggle"' + (refreshOn ? ' checked' : '') + (toggleEnabled ? '' : ' disabled') + '>' +
             '<span></span>' +
           '</label>' +
         '</div>' +
       '</div>' +
       '<div class="settings-row">' +
         '<div class="settings-row-info">' +
-          '<label class="settings-label" for="claude-model-flag-input">Claude maintenance model flag</label>' +
+          '<label class="settings-label" for="claude-model-flag-input">Maintenance model flag (Claude)</label>' +
           '<span class="settings-desc">Full model flag used by both warmup and refresh, for example <code>--model haiku</code>. Leave empty to use the Claude CLI default.</span>' +
         '</div>' +
         '<div class="settings-control">' +
@@ -3410,7 +3436,7 @@
         '</div>' +
       '</div>' +
       '<div class="settings-row">' +
-        '<div class="settings-row-info"><label class="settings-label" for="codex-model-flag-input">Codex maintenance model flag</label>' +
+        '<div class="settings-row-info"><label class="settings-label" for="codex-model-flag-input">Maintenance model flag (Codex)</label>' +
           '<span class="settings-desc">Full model flag used by both warmup and refresh. Leave empty to use the Codex CLI default.</span></div>' +
         '<div class="settings-control"><input id="codex-model-flag-input" class="settings-text-input claude-model-flag-input" type="text" value="' + esc(usageCodexModelFlag) + '" placeholder="--model gpt-5.6-luna" autocomplete="off" spellcheck="false"></div>' +
       '</div>' +
@@ -3497,21 +3523,32 @@
       });
   }
 
-  function saveClaudeAutoRefresh(v) {
+  function saveTokenAutoRefresh(v) {
     var interval = usagesRefreshInput ? parseInt(usagesRefreshInput.value, 10) : 120;
     if (!Number.isFinite(interval) || interval < 15) interval = 15;
     api('POST', '/api/usages/settings', {
       refresh_interval_sec: interval,
       percent_display: usagePercentDisplay,
-      claude_auto_refresh: v
+      token_auto_refresh: v
     })
       .then(function (resp) {
         if (resp && resp.settings) renderUsageSettings(resp.settings);
-        return loadUsages();
+        if (usageTokenPoll) clearTimeout(usageTokenPoll);
+        function pollState() {
+          return loadUsages().then(function () {
+            var states = usageTokenAutoRefreshState;
+            if (['claude', 'codex'].some(function (tool) { return states[tool] && states[tool].status === 'pending'; })) {
+              usageTokenPoll = setTimeout(pollState, 500);
+            } else {
+              usageTokenPoll = null;
+            }
+          });
+        }
+        return pollState();
       })
       .catch(function (err) {
-        alert('Failed to ' + (v ? 'enable' : 'disable') + ' Claude auto-refresh: ' + (err && err.message ? err.message : err));
-        renderClaudeMaintenanceRows(); // restore toggles to actual state
+        alert('Failed to ' + (v ? 'enable' : 'disable') + ' token auto-refresh: ' + (err && err.message ? err.message : err));
+        renderAccountMaintenanceRows(); // restore toggles to actual state
       });
   }
 
@@ -3528,8 +3565,8 @@
         return loadUsages();
       })
       .catch(function (err) {
-        alert('Failed to change Claude account warmup mode: ' + (err && err.message ? err.message : err));
-        renderClaudeMaintenanceRows(); // restore toggles to actual state
+        alert('Failed to change account warmup mode: ' + (err && err.message ? err.message : err));
+        renderAccountMaintenanceRows(); // restore toggles to actual state
       });
   }
 
@@ -3546,8 +3583,8 @@
         return loadUsages();
       })
       .catch(function (err) {
-        alert('Failed to save Claude maintenance model flag: ' + (err && err.message ? err.message : err));
-        renderClaudeMaintenanceRows();
+        alert('Failed to save maintenance model flag (Claude): ' + (err && err.message ? err.message : err));
+        renderAccountMaintenanceRows();
       });
   }
 
@@ -3556,7 +3593,7 @@
     if (!Number.isFinite(interval) || interval < 15) interval = 15;
     api('POST', '/api/usages/settings', {refresh_interval_sec: interval, percent_display: usagePercentDisplay, codex_model_flag: String(value || '')})
       .then(function(resp){ if(resp&&resp.settings) renderUsageSettings(resp.settings); return loadUsages(); })
-      .catch(function(err){ alert('Failed to save Codex maintenance model flag: '+(err&&err.message?err.message:err)); renderClaudeMaintenanceRows(); });
+      .catch(function(err){ alert('Failed to save maintenance model flag (Codex): '+(err&&err.message?err.message:err)); renderAccountMaintenanceRows(); });
   }
 
   // ── Switcher ────────────────────────────────────────────────────────
@@ -3713,11 +3750,18 @@
     '</div>';
   }
 
+  // The server's own explanation (409 "login pending", "incoming refresh", ...) without
+  // the transport prefix api() adds, so the alert reads as a sentence, not "HTTP 409: ...".
+  function switcherErrText(err) {
+    var msg = err && err.message ? err.message : String(err);
+    return msg.replace(/^HTTP \d{3}: /, '');
+  }
+
   function switcherToggleEnabled(v) {
     api('POST', '/api/usages/switcher/settings', { enabled: v })
       .then(function () { return loadUsages(); })
       .catch(function (err) {
-        alert('Failed to ' + (v ? 'enable' : 'disable') + ' switcher: ' + (err && err.message ? err.message : err));
+        alert('Failed to ' + (v ? 'enable' : 'disable') + ' switcher: ' + switcherErrText(err));
         renderSwitcherSettingsRow(); // restore toggle to actual state
       });
   }
@@ -3733,11 +3777,11 @@
       .then(
         function () {
           return loadUsages().catch(function (err) {
-            alert('Switched to "' + profile + '", but refresh failed: ' + (err && err.message ? err.message : err));
+            alert('Switched to "' + profile + '", but refresh failed: ' + switcherErrText(err));
           }).then(function () { schedulePostSwitchUsageRefresh(tool, profile, 0); });
         },
         function (err) {
-          alert('Failed to switch to "' + profile + '": ' + (err && err.message ? err.message : err));
+          alert('Failed to switch to "' + profile + '": ' + switcherErrText(err));
         }
       )
       .then(function () {
@@ -3754,7 +3798,7 @@
     api('POST', '/api/usages/switcher/profiles', { tool: tool, profile: name, mode: 'add' })
       .then(function () { return loadUsages(); })
       .catch(function (err) {
-        alert('Failed to add profile: ' + (err && err.message ? err.message : err));
+        alert('Failed to add profile: ' + switcherErrText(err));
       });
   }
 
@@ -3765,7 +3809,7 @@
     api('POST', '/api/usages/switcher/profiles', { tool: tool, profile: name, mode: 'import' })
       .then(function () { return loadUsages(); })
       .catch(function (err) {
-        alert('Failed to import login: ' + (err && err.message ? err.message : err));
+        alert('Failed to import login: ' + switcherErrText(err));
       });
   }
 
@@ -3786,7 +3830,7 @@
               .catch(function (e) { alert('Failed to delete: ' + (e && e.message ? e.message : e)); });
           }
         } else {
-          alert('Failed to delete profile: ' + (err && err.message ? err.message : err));
+          alert('Failed to delete profile: ' + switcherErrText(err));
         }
       });
   }
@@ -7051,11 +7095,11 @@
     }
   });
 
-  // Claude account-maintenance controls (settings panel — delegated, dynamic).
+  // Account-maintenance controls (settings panel — delegated, dynamic).
   document.addEventListener('change', function (e) {
     if (!e.target) return;
-    if (e.target.id === 'claude-auto-refresh-toggle') {
-      saveClaudeAutoRefresh(e.target.checked);
+    if (e.target.id === 'token-auto-refresh-toggle') {
+      saveTokenAutoRefresh(e.target.checked);
     } else if (e.target.id === 'claude-warmup-mode-select') {
       saveWarmupMode(e.target.value);
     } else if (e.target.id === 'claude-warmup-schedule-input') {

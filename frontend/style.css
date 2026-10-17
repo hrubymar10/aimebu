@@ -5404,6 +5404,21 @@ body {
   padding: 8px 0;
 }
 
+.usages-credential-alerts {
+  margin: 6px 6px 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--red);
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.usages-credential-alert {
+  color: var(--red);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
 .usages-empty {
   padding: 16px 10px;
   font-size: 0.78rem;

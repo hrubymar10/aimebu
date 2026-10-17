@@ -2477,6 +2477,10 @@ func Run(addr, rootDir string, frontendFS fs.FS, promptDefaults map[string]strin
 		// copy-back holds switcher/.lock so a concurrent switch cannot be
 		// clobbered (§14.2).
 		usageManager.EnableClaudeAutoRefresh(swMgr.WithLock, swRoot)
+		// Token-only credential model (active once `aimebu switcher
+		// migrate-copies` has written the marker); must follow
+		// EnableClaudeAutoRefresh, which supplies the lock and rescue root.
+		s.startTokenCopies(cleanupCtx, &s.bgWG, swMgr, usageManager, dataDir)
 	}
 	usageManager.Start(cleanupCtx, &s.bgWG)
 	setupHandlers(mux, s, build, usageManager)

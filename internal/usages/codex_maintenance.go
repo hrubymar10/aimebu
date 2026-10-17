@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,15 +19,26 @@ const codexMaintenancePrompt = `write "hi"`
 
 type codexRefreshExecutor struct{}
 
-func (codexRefreshExecutor) Refresh(ctx context.Context, profileDir, modelFlag string) error {
+func (e codexRefreshExecutor) Refresh(ctx context.Context, profileDir, modelFlag string) error {
+	_, err := e.Run(ctx, profileDir, modelFlag)
+	return err
+}
+
+// Run is RunStarted without a start notification.
+func (e codexRefreshExecutor) Run(ctx context.Context, profileDir, modelFlag string) (refreshRunResult, error) {
+	return e.RunStarted(ctx, profileDir, modelFlag, nil)
+}
+
+// RunStarted is Refresh plus the facts the token refresher classifies a failure by.
+func (codexRefreshExecutor) RunStarted(ctx context.Context, profileDir, modelFlag string, onStart func()) (refreshRunResult, error) {
 	if err := ensureHarnessDockerImage(ctx); err != nil {
-		return err
+		return refreshRunResult{Started: false}, err
 	}
-	args := codexRefreshArgs(profileDir, modelFlag)
-	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("harness-docker codex run failed: %w: %s", err, strings.TrimSpace(string(out)))
+	result, err := runDockerCapture(ctx, codexRefreshArgs(profileDir, modelFlag), onStart)
+	if err != nil {
+		return result, fmt.Errorf("harness-docker codex run failed: %w: %s", err, strings.TrimSpace(result.Output))
 	}
-	return nil
+	return result, nil
 }
 
 func codexRefreshArgs(profileDir, modelFlag string) []string {
@@ -115,7 +125,12 @@ func codexProfileEligibleForWarmup(p ProfileInfo, now time.Time) bool {
 // dir: an active profile's stored auth.json is a symlink to the host's live
 // file, which would dangle inside the container.
 func writeCodexAuthTemp(data []byte) (string, string, error) {
-	dir, err := os.MkdirTemp("", "aimebu-codex-maintenance-*")
+	return writeCodexAuthTempIn("", data)
+}
+
+// writeCodexAuthTempIn: see writeClaudeCredTempIn.
+func writeCodexAuthTempIn(root string, data []byte) (string, string, error) {
+	dir, err := makeRefreshTempDir(root, "aimebu-codex-maintenance-*")
 	if err != nil {
 		return "", "", err
 	}

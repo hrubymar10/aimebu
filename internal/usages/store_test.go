@@ -1,6 +1,7 @@
 package usages
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -38,6 +39,46 @@ func TestStoreDefaultsAndModes(t *testing.T) {
 	}
 	if !strings.Contains(string(data), redacted) {
 		t.Fatalf("cache did not contain redaction marker: %s", data)
+	}
+}
+
+func TestTokenAutoRefreshConfigMigratesLegacyKey(t *testing.T) {
+	store := NewStoreAt(t.TempDir())
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{
+		{`{"claude_auto_refresh":true}`, true},
+		{`{"claude_auto_refresh":true,"token_auto_refresh":false}`, false},
+		{`{"claude_auto_refresh":false,"token_auto_refresh":true}`, true},
+	} {
+		if err := os.WriteFile(store.ConfigPath(), []byte(tc.body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := store.LoadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.ClaudeAutoRefresh != tc.want {
+			t.Fatalf("load %s = %v", tc.body, cfg.ClaudeAutoRefresh)
+		}
+		if err := store.SaveConfig(cfg); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(store.ConfigPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved map[string]json.RawMessage
+		if err := json.Unmarshal(data, &saved); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"claude_auto_refresh", "token_auto_refresh"} {
+			var value bool
+			if err := json.Unmarshal(saved[key], &value); err != nil || value != tc.want {
+				t.Fatalf("saved config %s = %s, want %v: %v", key, saved[key], tc.want, err)
+			}
+		}
 	}
 }
 
@@ -243,5 +284,34 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("%s mode = %o, want %o", path, got, want)
+	}
+}
+
+// SaveConfig rewrites the whole document, so an omitempty field that went back
+// to false is not left behind as a stale true.
+func TestSaveConfigClearsTheManagedFlag(t *testing.T) {
+	s := NewStoreAt(t.TempDir())
+	cfg, err := s.LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ClaudeAutoRefresh, cfg.TokenAutoRefreshManaged = true, true
+	if err := s.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.ClaudeAutoRefresh, cfg.TokenAutoRefreshManaged = false, false
+	if err := s.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(s.ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "token_auto_refresh_managed") || strings.Contains(string(data), `"token_auto_refresh": true`) {
+		t.Fatalf("stale ownership left in the config: %s", data)
+	}
+	got, err := s.LoadConfig()
+	if err != nil || got.TokenAutoRefreshManaged || got.ClaudeAutoRefresh {
+		t.Fatalf("reload = %+v, %v", got, err)
 	}
 }
