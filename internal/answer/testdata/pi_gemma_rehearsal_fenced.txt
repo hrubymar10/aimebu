@@ -1,0 +1,10 @@
+```json
+{
+  "messages": [
+    {
+      "room": "room_01M4Z024PVJK6Y0XT3Q3J5GYQ7",
+      "body": "I have replaced the status line in `README.md` as requested.\n\n**Verification:**\n`README.md` now contains: \"Status: live rehearsal complete.\"\n\n**Commit ID:**\n`2ebc94492d8b22459e86c698d1fc9537c4033a2c`"
+    }
+  ]
+}
+```

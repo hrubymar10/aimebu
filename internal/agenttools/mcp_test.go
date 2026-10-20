@@ -1,0 +1,248 @@
+package agenttools
+
+import (
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/goccy/go-json"
+)
+
+func TestAttachmentGetBoundsInlineContent(t *testing.T) {
+	for _, tc := range []struct {
+		name, contentType string
+		data              []byte
+		wantImage         bool
+		wantText          string
+	}{
+		{"png", "image/png", []byte("png"), true, ""},
+		{"bmp", "image/bmp", []byte("bmp"), false, "Inline content omitted"},
+		{"text", "text/plain", []byte("small note"), false, "small note"},
+		{"large text", "text/plain", bytes.Repeat([]byte("x"), 65<<10), false, "Inline content omitted"},
+		{"binary", "application/octet-stream", bytes.Repeat([]byte{0xff}, 1<<20), false, "Inline content omitted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				_, _ = w.Write(tc.data)
+			}))
+			defer httpServer.Close()
+			response, _ := (Server{URL: httpServer.URL, Key: "aak_test"}).Process(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"attachment_get","arguments":{"attachment_id":"att_test"}}}`))
+			if got := bytes.Contains(response, []byte(`"type":"image"`)); got != tc.wantImage {
+				t.Fatalf("image=%v response=%s", got, response)
+			}
+			if tc.wantText != "" && !bytes.Contains(response, []byte(tc.wantText)) {
+				t.Fatalf("response=%s", response)
+			}
+			if len(response) > 2<<20 {
+				t.Fatalf("unbounded response: %d bytes", len(response))
+			}
+		})
+	}
+}
+
+func TestMCPListsNarrowToolsAndSendsAgentKey(t *testing.T) {
+	requests := 0
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/api/agent/rooms" || r.Header.Get("Authorization") != "Bearer aak_test" || r.Header.Get("Cookie") != "" {
+			t.Errorf("unexpected request: %s %s %s", r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Cookie"))
+		}
+		_, _ = w.Write([]byte(`{"rooms":[]}`))
+	}))
+	defer httpServer.Close()
+	input := strings.NewReader("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}\n" +
+		"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"list_rooms\",\"arguments\":{}}}\n")
+	var output strings.Builder
+	server := Server{URL: httpServer.URL, Key: "aak_test"}
+	if err := server.Serve(context.Background(), input, &output); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 2 || requests != 1 {
+		t.Fatalf("lines=%d requests=%d", len(lines), requests)
+	}
+	var listed struct {
+		Result struct {
+			Tools []tool `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Result.Tools) != 16 {
+		t.Fatalf("tools=%+v", listed.Result.Tools)
+	}
+	for i, name := range []string{"list_rooms", "list_macros", "list_schedules", "create_schedule", "usage_left", "create_room", "close_room", "memory_add", "memory_list", "memory_update", "memory_remove", "memory_recall", "attachment_get", "spawn_agent", "stop_agent", "react"} {
+		if listed.Result.Tools[i].Name != name {
+			t.Fatalf("tool %d = %q", i, listed.Result.Tools[i].Name)
+		}
+	}
+	var called struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+			IsError bool `json:"isError"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &called); err != nil {
+		t.Fatal(err)
+	}
+	if called.Result.IsError || len(called.Result.Content) != 1 || called.Result.Content[0].Text != `{"rooms":[]}` {
+		t.Fatalf("result=%+v", called)
+	}
+}
+
+func TestReactToolRoutesAddAndRemove(t *testing.T) {
+	var requests []string
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer aak_test" {
+			t.Errorf("agent key = %q", got)
+		}
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer httpServer.Close()
+	server := Server{URL: httpServer.URL, Key: "aak_test"}
+	for _, args := range []string{
+		`{"message_id":"msg_test","emoji":"👍"}`,
+		`{"message_id":"msg_test","emoji":"👍","remove":true}`,
+	} {
+		result := server.call(t.Context(), "react", json.RawMessage(args)).(map[string]any)
+		if result["isError"] != false {
+			t.Fatalf("react result=%v", result)
+		}
+	}
+	want := []string{"PUT /api/agent/messages/msg_test/reactions/👍", "DELETE /api/agent/messages/msg_test/reactions/👍"}
+	if len(requests) != len(want) || requests[0] != want[0] || requests[1] != want[1] {
+		t.Fatalf("requests=%v", requests)
+	}
+}
+
+func TestSpawnAgentRequiresSingleChoice(t *testing.T) {
+	type forwarded struct {
+		path, key string
+		body      map[string]any
+	}
+	var requests []forwarded
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		requests = append(requests, forwarded{r.URL.Path, r.Header.Get("Idempotency-Key"), body})
+		if r.Header.Get("Authorization") != "Bearer aak_test" {
+			t.Errorf("agent key missing")
+		}
+		_, _ = w.Write([]byte(`{"id":"agt_1"}`))
+	}))
+	defer httpServer.Close()
+	input := strings.NewReader("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"spawn_agent\",\"arguments\":{\"room_id\":\"room_a\",\"team\":\"implement + review\",\"request_key\":\"team-key\"}}}\n" +
+		"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"spawn_agent\",\"arguments\":{\"room_id\":\"room_a\",\"role_key\":\"worker\",\"tool\":\"codex\",\"variant\":\"docker\",\"model\":\"gpt-6-sol\",\"worktree\":true,\"request_key\":\"single-key\"}}}\n")
+	var output strings.Builder
+	if err := (Server{URL: httpServer.URL, Key: "aak_test"}).Serve(context.Background(), input, &output); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 1 || requests[0].path != "/api/agent/agents" || requests[0].key != "single-key" || requests[0].body["model"] != "gpt-6-sol" || requests[0].body["team"] != nil || requests[0].body["worktree"] != true {
+		t.Fatalf("single request %+v", requests)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], `"isError":true`) || !strings.Contains(lines[1], `\"id\":\"agt_1\"`) {
+		t.Fatalf("responses %q", output.String())
+	}
+}
+
+func TestMemoryToolsForwardScopeAndEncodedQuery(t *testing.T) {
+	var paths []string
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.RequestURI())
+		if r.Header.Get("Authorization") != "Bearer aak_test" {
+			t.Errorf("missing agent key")
+		}
+		if r.Method == "POST" {
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["scope"] != "task" || body["room_id"] != "room_1" || body["body"] != "remember this" || body["source_message_id"] != "" {
+				t.Errorf("memory add body=%+v err=%v", body, err)
+			}
+		} else if r.Method == "PUT" {
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["rev"] != float64(2) || body["body"] != "updated" {
+				t.Errorf("memory update body=%+v err=%v", body, err)
+			}
+		}
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer httpServer.Close()
+	input := strings.NewReader("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_add\",\"arguments\":{\"scope\":\"task\",\"room_id\":\"room_1\",\"body\":\"remember this\"}}}\n" +
+		"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_list\",\"arguments\":{\"scope\":\"task\",\"room_id\":\"room_1\"}}}\n" +
+		"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_update\",\"arguments\":{\"scope\":\"project\",\"id\":\"knw_1\",\"rev\":2,\"body\":\"updated\"}}}\n" +
+		"{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_remove\",\"arguments\":{\"scope\":\"project\",\"id\":\"knw_1\",\"rev\":3}}}\n" +
+		"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"memory_recall\",\"arguments\":{\"query\":\"two words\",\"limit\":3}}}\n")
+	var output strings.Builder
+	if err := (Server{URL: httpServer.URL, Key: "aak_test"}).Serve(context.Background(), input, &output); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 5 || paths[0] != "POST /api/agent/memory" || paths[1] != "GET /api/agent/memory?room_id=room_1&scope=task" || paths[2] != "PUT /api/agent/memory/knw_1?scope=project" || paths[3] != "DELETE /api/agent/memory/knw_1?scope=project&rev=3" || paths[4] != "GET /api/agent/recall?limit=3&query=two+words" {
+		t.Fatalf("paths=%+v output=%s", paths, output.String())
+	}
+}
+
+func TestRoomToolsForwardToNarrowRoutes(t *testing.T) {
+	type call struct {
+		Method, Path, Key string
+		Body              map[string]any
+	}
+	var calls []call
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if r.Method == http.MethodPost {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+		}
+		calls = append(calls, call{r.Method, r.URL.Path, r.Header.Get("Idempotency-Key"), body})
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer httpServer.Close()
+	s := Server{URL: httpServer.URL, Key: "aak_test"}
+	for _, input := range []string{
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_room","arguments":{"title":"Task","parent_id":"room_parent","request_key":"create-key"}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"close_room","arguments":{"room_id":"room_child","lifecycle_rev":2,"cascade":true,"request_key":"close-key"}}}`,
+	} {
+		response, _ := s.Process(context.Background(), []byte(input))
+		if strings.Contains(string(response), `"isError":true`) {
+			t.Fatalf("tool failed: %s", response)
+		}
+	}
+	if len(calls) != 2 ||
+		calls[0].Method != "POST" || calls[0].Path != "/api/agent/rooms" || calls[0].Key != "create-key" || calls[0].Body["title"] != "Task" ||
+		calls[1].Method != "POST" || calls[1].Path != "/api/agent/rooms/room_child/close" || calls[1].Key != "close-key" || calls[1].Body["lifecycle_rev"] != float64(2) || calls[1].Body["cascade"] != true {
+		t.Fatalf("forwarded calls=%+v", calls)
+	}
+}
+
+func TestCreateScheduleForwardsIdempotentLeadRequest(t *testing.T) {
+	calls := 0
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != "POST" || r.URL.Path != "/api/agent/rooms/room_test/schedules" || r.Header.Get("Idempotency-Key") != "stable" {
+			t.Errorf("request=%s %s key=%q", r.Method, r.URL.Path, r.Header.Get("Idempotency-Key"))
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body["target_lead"] != true || body["interval_seconds"] != float64(300) || body["body"] != "check status" {
+			t.Errorf("body=%v", body)
+		}
+		_, _ = w.Write([]byte(`{"id":"sch_test"}`))
+	}))
+	defer httpServer.Close()
+	raw := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_schedule","arguments":{"room_id":"room_test","target_lead":true,"body":"check status","kind":"interval","timezone":"UTC","interval_seconds":300,"request_key":"stable"}}}`)
+	result, _ := (Server{URL: httpServer.URL, Key: "aak_test"}).Process(t.Context(), raw)
+	if calls != 1 || !bytes.Contains(result, []byte(`sch_test`)) {
+		t.Fatalf("calls=%d result=%s", calls, result)
+	}
+}
