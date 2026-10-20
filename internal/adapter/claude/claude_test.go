@@ -1,0 +1,472 @@
+package claude
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
+)
+
+func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
+	root := t.TempDir()
+	config := filepath.Join(root, "private.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"agt_test","AIMEBU2_AGENT_KEY":"aak_secret"}}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "claude-docker")
+	argsPath := filepath.Join(root, "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$CLAUDE_LAUNCH_FLAGS\" \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, Variant: "docker"}
+	spec := adapter.TurnSpec{TurnID: "docker", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "claude", Variant: "docker", Model: "haiku"}, CheckoutPath: root, Mode: adapter.ModeNormal, AgentToolsConfigPath: config, NativeSessionStarted: true, NativeSessionHandle: "session-1", NotesJSON: json.RawMessage(`[]`)}
+	turn, err := a.Start(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range turn.Events() {
+	}
+	if exit, err := turn.Wait(); err != nil || !exit.TerminalEvent {
+		t.Fatalf("exit=%+v err=%v", exit, err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--resume\nsession-1", "--mcp-config\n", "--strict-mcp-config\n", "host.docker.internal:9897/api/agent/mcp", "Bearer aak_secret"} {
+		if !strings.Contains(string(args), want) {
+			t.Fatalf("missing %q in %q", want, args)
+		}
+	}
+}
+
+func TestClaudeSchemaDefinesStructuredInboxQuestion(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			Items struct {
+				Properties map[string]struct {
+					Required   []string                   `json:"required"`
+					Properties map[string]json.RawMessage `json:"properties"`
+				} `json:"properties"`
+			} `json:"items"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(responseSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	ask := schema.Properties["messages"].Items.Properties["ask"]
+	for _, field := range []string{"kind", "text", "options", "free_text"} {
+		if _, ok := ask.Properties[field]; !ok {
+			t.Fatalf("ask schema lacks %s", field)
+		}
+	}
+	if len(ask.Required) != 4 || !strings.Contains(systemPrompt, "A room returned by create_room") || !strings.Contains(systemPrompt, `"ask":{"kind":`) {
+		t.Fatalf("lead question contract missing: required=%v prompt=%q", ask.Required, systemPrompt)
+	}
+	for _, want := range []string{`"reply_to":null,"thread_root":null,"attachments":null`, `"handoff":false,"visual_plan":null,"appendix_pages":null`, `"needs_attention":false,"proposed_answers":null,"open_questions":null`, "a live @slug or @agent_id mention", "after four automatic replies with no human message between them, replies stop waking anyone", "Do not send acknowledgement-only", "publish the home-room summary"} {
+		if !strings.Contains(systemPrompt, want) {
+			t.Fatalf("missing prompt guidance %q", want)
+		}
+	}
+}
+
+func TestFailedLauncherCapturesRedactedStderr(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "claude")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 'Bearer aak_secret: checkout is not mounted' >&2\nexit 17\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, AllowNative: true}
+	turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "failed-stderr", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, Mode: adapter.ModeCorrection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range turn.Events() {
+	}
+	exit, err := turn.Wait()
+	if err != nil || exit.ExitCode != 17 || exit.TerminalEvent || !strings.Contains(exit.StderrTail, "checkout is not mounted") || strings.Contains(exit.StderrTail, "aak_secret") {
+		t.Fatalf("exit=%+v err=%v", exit, err)
+	}
+}
+
+func TestFailedClaudeResultKeepsRedactedLimitEvidence(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "claude")
+	program := "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"result\",\"is_error\":true,\"result\":\"limit reached; resets at 2026-10-15T12:00:00Z aak_secret\"}'\nexit 1\n"
+	if err := os.WriteFile(path, []byte(program), 0700); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{
+		TurnID: "limit-result", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, Mode: adapter.ModeCorrection,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range turn.Events() {
+	}
+	exit, err := turn.Wait()
+	if err != nil || exit.TerminalEvent || !strings.Contains(exit.ErrorEvent, "limit reached") || !strings.Contains(exit.ErrorEvent, "resets at") || strings.Contains(exit.ErrorEvent, "aak_secret") {
+		t.Fatalf("exit=%+v error=%v", exit, err)
+	}
+}
+
+func TestConformance(t *testing.T) {
+	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	if runtime.GOOS == "windows" {
+		t.Skip("script fixture")
+	}
+	path := filepath.Join(t.TempDir(), "claude")
+	marker := filepath.Join(t.TempDir(), "effect")
+	checkout := t.TempDir()
+	toolsConfig := filepath.Join(t.TempDir(), "tools.json")
+	if err := os.WriteFile(toolsConfig, []byte(`{"mcpServers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+input=$(cat)
+case "$input" in
+  *turn-events*)
+    printf '%s\n' '{"type":"assistant"}' '{"type":"result","result":"{\"messages\":[]}","usage":{"input_tokens":11,"output_tokens":7},"modelUsage":{"x":{"contextWindow":200,"costUSD":0.1}}}' '{"type":"system","subtype":"compact_boundary","compact_metadata":{"pre_tokens":100,"post_tokens":20}}' ;;
+  *turn-no_terminal*) printf '%s\n' '{"type":"assistant"}' ;;
+  *turn-cancel*) exec sleep 30 ;;
+  *turn-crash_after_effect*) : > "EFFECT_MARKER"; exit 17 ;;
+esac
+`
+	script = strings.ReplaceAll(script, "EFFECT_MARKER", marker)
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	adaptertest.Run(t, func(t *testing.T, scenario adaptertest.Scenario) (adapter.Adapter, adapter.TurnSpec, <-chan struct{}) {
+		effected := make(chan struct{})
+		if scenario == adaptertest.ScenarioCrashAfterEffect {
+			go func() {
+				for {
+					if _, err := os.Stat(marker); err == nil {
+						close(effected)
+						return
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}()
+		} else {
+			close(effected)
+		}
+		return &Adapter{Command: path, AllowNative: true}, adapter.TurnSpec{TurnID: "turn-" + string(scenario), Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: checkout, AgentToolsConfigPath: toolsConfig, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}, effected
+	})
+}
+
+func TestResultUsageIncludesCacheTokens(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("script fixture")
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, "claude")
+	script := `#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"assistant","message":{"usage":{"input_tokens":11,"cache_read_input_tokens":10,"cache_creation_input_tokens":4}}}' '{"type":"assistant","parent_tool_use_id":"toolu_child","message":{"usage":{"input_tokens":90}}}' '{"type":"result","result":"{\"messages\":[]}","usage":{"input_tokens":111,"output_tokens":7,"cache_read_input_tokens":110,"cache_creation_input_tokens":40},"modelUsage":{"x":{"contextWindow":200,"costUSD":0.1}}}'
+`
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(t.TempDir(), "tools.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "usage", Agent: adapter.AgentSpec{ID: "agt_usage", Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usage *adapter.Usage
+	for event := range turn.Events() {
+		if event.Kind == adapter.EventUsage {
+			usage = event.Usage
+		}
+	}
+	if _, err := turn.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if usage == nil || usage.ContextUsed == nil || *usage.ContextUsed != 25 || usage.ContextWindow == nil || *usage.ContextWindow != 200 || usage.CostEstimate == nil || *usage.CostEstimate != 0.1 {
+		t.Fatalf("usage=%+v", usage)
+	}
+}
+
+func TestResumeAndRawCandidate(t *testing.T) {
+	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	if runtime.GOOS == "windows" {
+		t.Skip("script fixture")
+	}
+	path := filepath.Join(t.TempDir(), "claude")
+	var argsPath = filepath.Join(t.TempDir(), "args")
+	script := "#!/bin/sh\nprintf '%s' \"$*\" > " + argsPath + "\nprintf '%s\\n' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	implementation := &Adapter{Command: path, AllowNative: true}
+	toolsConfig := filepath.Join(t.TempDir(), "tools.json")
+	if err := os.WriteFile(toolsConfig, []byte(`{"mcpServers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := implementation.Start(context.Background(), adapter.TurnSpec{TurnID: "resume", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: t.TempDir(), AgentToolsConfigPath: toolsConfig, NativeSessionHandle: "session-1", NativeSessionStarted: true, NotesJSON: json.RawMessage(`[]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var answer string
+	for event := range turn.Events() {
+		if event.Kind == adapter.EventFinalAnswer {
+			answer = string(event.Answer)
+		}
+	}
+	if _, err := turn.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if answer != `{"messages":[]}` {
+		t.Fatalf("candidate %q", answer)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(args) == "" || !contains(string(args), "--resume session-1") || !contains(string(args), "--output-format stream-json") {
+		t.Fatalf("args %q", args)
+	}
+}
+
+func TestNewSessionReportsServerIssuedHandle(t *testing.T) {
+	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	if runtime.GOOS == "windows" {
+		t.Skip("script fixture")
+	}
+	root := t.TempDir()
+	argsPath := filepath.Join(root, "args")
+	path := filepath.Join(root, "claude")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"4c014434-9712-45a7-9d2e-a7866ef8f8dc\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "tools.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "new", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config, NativeSessionHandle: "4c014434-9712-45a7-9d2e-a7866ef8f8dc", Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`), ContextJSON: json.RawMessage(`{"role_body":"Reply concisely."}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var handle string
+	for event := range turn.Events() {
+		if event.Kind == adapter.EventNativeSessionStarted {
+			handle = event.NativeSessionHandle
+		}
+	}
+	if _, err := turn.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if handle != "4c014434-9712-45a7-9d2e-a7866ef8f8dc" {
+		t.Fatalf("handle %q", handle)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil || !contains(string(args), "--session-id\n4c014434-9712-45a7-9d2e-a7866ef8f8dc") || !contains(string(args), "Reply concisely.") {
+		t.Fatalf("args %q err %v", args, err)
+	}
+}
+
+func TestFailedFirstSessionDoesNotReportStarted(t *testing.T) {
+	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	if runtime.GOOS == "windows" {
+		t.Skip("script fixture")
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, "claude")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 17\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "tools.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "failed", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config, NativeSessionHandle: "4c014434-9712-45a7-9d2e-a7866ef8f8dc", Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for event := range turn.Events() {
+		if event.Kind == adapter.EventNativeSessionStarted {
+			t.Fatal("failed process reported a native session")
+		}
+	}
+	exit, err := turn.Wait()
+	if err != nil || exit.ExitCode != 17 {
+		t.Fatalf("exit=%+v err=%v", exit, err)
+	}
+}
+
+func contains(s, part string) bool {
+	for i := 0; i+len(part) <= len(s); i++ {
+		if s[i:i+len(part)] == part {
+			return true
+		}
+	}
+	return false
+}
+
+func TestLiveCanary(t *testing.T) {
+	docker := os.Getenv("AIMEBU2_LIVE_CC_DOCKER") == "1"
+	if !docker && os.Getenv("AIMEBU2_LIVE_CC") != "1" {
+		t.Skip("set AIMEBU2_LIVE_CC=1 or AIMEBU2_LIVE_CC_DOCKER=1 to run Claude Code canary")
+	}
+	root := t.TempDir()
+	if docker {
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		base := filepath.Join(cwd, "..", "..", "..", "tmp")
+		if err := os.MkdirAll(base, 0700); err != nil {
+			t.Fatal(err)
+		}
+		root, err = os.MkdirTemp(base, "claude-docker-canary-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(root) })
+	}
+	config := filepath.Join(t.TempDir(), "tools.json")
+	configData := `{"mcpServers":{}}`
+	if docker {
+		configData = `{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"agt_live","AIMEBU2_AGENT_KEY":"aak_canary"}}}}`
+	}
+	if err := os.WriteFile(config, []byte(configData), 0600); err != nil {
+		t.Fatal(err)
+	}
+	implementation := New()
+	var stderr bytes.Buffer
+	implementation.stderrCapture = &stderr
+	variant := "native"
+	if docker {
+		implementation = NewDocker()
+		implementation.stderrCapture = &stderr
+		variant = "docker"
+	} else {
+		t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+		implementation.AllowNative = true
+	}
+	implementation.MaxBudgetUSD = "0.25"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	const nonce = "aimebu-claude-two-turn-nonce"
+	run := func(id, handle string, started bool, body string) (string, string) {
+		notes, _ := json.Marshal([]map[string]string{{"body": body}})
+		turn, err := implementation.Start(ctx, adapter.TurnSpec{TurnID: id, Agent: adapter.AgentSpec{ID: "agt_live", Variant: variant, Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config, NativeSessionHandle: handle, NativeSessionStarted: started, Mode: adapter.ModeNormal, NotesJSON: notes, ContextJSON: json.RawMessage(`{"role_body":"Follow the user note exactly."}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var answer, session string
+		for event := range turn.Events() {
+			if event.Kind == adapter.EventFinalAnswer {
+				answer = string(event.Answer)
+			}
+			if event.Kind == adapter.EventNativeSessionStarted {
+				session = event.NativeSessionHandle
+			}
+		}
+		exit, err := turn.Wait()
+		if err != nil || !exit.TerminalEvent {
+			t.Fatalf("exit=%+v err=%v stderr=%q", exit, err, stderr.String())
+		}
+		return answer, session
+	}
+	var sessionBytes [16]byte
+	if _, err := rand.Read(sessionBytes[:]); err != nil {
+		t.Fatal(err)
+	}
+	initialSession := hex.EncodeToString(sessionBytes[0:4]) + "-" + hex.EncodeToString(sessionBytes[4:6]) + "-" + hex.EncodeToString(sessionBytes[6:8]) + "-" + hex.EncodeToString(sessionBytes[8:10]) + "-" + hex.EncodeToString(sessionBytes[10:])
+	_, session := run("live-canary-first", initialSession, false, "Remember this nonce for the next turn: "+nonce+". Return a valid empty messages response.")
+	if session == "" {
+		t.Fatal("first turn did not establish a native session")
+	}
+	answer, _ := run("live-canary-second", session, true, "What nonce did I ask you to remember? Return it in a valid message response.")
+	if !contains(answer, nonce) {
+		t.Fatalf("resume answer did not recall nonce: %s", answer)
+	}
+}
+
+func TestToolUseAndResultMarkToolEvents(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "claude")
+	script := `#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"x"},{"type":"tool_use","id":"toolu_a"},{"type":"tool_use","id":"toolu_b"}]}}' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_a"}]}}' '{"type":"user","message":{"content":"plain text"}}' '{"type":"result","result":"{\"messages\":[]}"}'
+`
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(t.TempDir(), "tools.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{TurnID: "tools", Agent: adapter.AgentSpec{ID: "agt_tools", Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got [][]adapter.ToolEvent
+	for event := range turn.Events() {
+		if event.Kind == adapter.EventActivity {
+			got = append(got, event.Tools)
+		}
+	}
+	if _, err := turn.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if lo, ok := turn.(interface{ LastOutput() time.Time }); !ok || time.Since(lo.LastOutput()) > time.Minute {
+		t.Fatalf("turn must report raw output liveness, got %v", turn)
+	}
+	want := [][]adapter.ToolEvent{{{ID: "toolu_a"}, {ID: "toolu_b"}}, {{ID: "toolu_a", Done: true}}, nil}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("tool events = %+v, want %+v", got, want)
+	}
+}
+
+func TestOversizedStdoutLineKillsProcessGroupBeforeWait(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "claude")
+	// One stdout line beyond the 8 MiB scanner limit, then the CLI stays
+	// alive holding stdout and stderr open, as a wedged harness would.
+	script := "#!/bin/sh\ncat >/dev/null\nhead -c 9437184 /dev/zero | tr '\\0' a\necho\nsleep 30\n"
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{Command: path, AllowNative: true}
+	turn, err := a.Start(context.Background(), adapter.TurnSpec{TurnID: "oversized", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "claude", Model: "haiku"},
+		CheckoutPath: root, Mode: adapter.ModeCorrection, NotesJSON: json.RawMessage(`[]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = turn.Cancel() })
+	done := make(chan struct{})
+	var exit adapter.ExitInfo
+	var waitErr error
+	go func() {
+		for range turn.Events() {
+		}
+		exit, waitErr = turn.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("turn hung after the stdout scanner failed")
+	}
+	if waitErr == nil || exit.TerminalEvent || exit.ExitCode == 0 {
+		t.Fatalf("exit=%+v err=%v", exit, waitErr)
+	}
+}

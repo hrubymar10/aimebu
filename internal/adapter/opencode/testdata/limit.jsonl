@@ -1,0 +1,1 @@
+{"type":"error","timestamp":1792175900000,"sessionID":"ses_eb9ff7679ffeTWs01Hgh3UTIS0","error":{"name":"APIError","data":{"message":"you have reached your weekly usage limit, resets in 3 hours (Bearer aak_secret)","statusCode":429,"isRetryable":true,"responseHeaders":{"content-type":"application/json"}}}}
