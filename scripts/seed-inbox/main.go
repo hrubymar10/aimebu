@@ -1,0 +1,113 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/hrubymar10/aimebu/internal/store"
+	"modernc.org/sqlite"
+)
+
+// Seeds API-backed inbox items for the isolated browser smoke server.
+
+func main() {
+	if len(os.Args) != 5 && len(os.Args) != 6 && len(os.Args) != 7 {
+		fmt.Fprintln(os.Stderr, "usage: seed-inbox DB PROJECT ROOM MESSAGE [recovery|budget AGENT]")
+		os.Exit(2)
+	}
+	if (len(os.Args) == 6 && os.Args[5] != "recovery" && os.Args[5] != "legacy") || (len(os.Args) == 7 && os.Args[5] != "budget") {
+		fmt.Fprintln(os.Stderr, "unknown seed mode")
+		os.Exit(2)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	// Store.Open configures SQLite's five-second busy timeout. The smoke
+	// server can still own the writer past one attempt, so retry the whole
+	// transaction if it encounters BUSY or LOCKED.
+	db, err := store.Open(ctx, os.Args[1], store.Options{})
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	seed := func() error {
+		return db.Tx(ctx, func(tx *store.Tx) error {
+			if len(os.Args) == 7 {
+				updated, err := tx.Exec(`UPDATE agent SET desired='not_accepting',desired_rev=desired_rev+1 WHERE id=?`, os.Args[6])
+				if err != nil {
+					return err
+				}
+				count, err := updated.RowsAffected()
+				if err != nil || count != 1 {
+					return fmt.Errorf("budget agent not found: %v", err)
+				}
+				if _, err := tx.Exec(`INSERT INTO inbox_item(id,project_id,room_id,agent_id,requester_kind,requester_id,kind,options_json,created_at)
+				VALUES (?,?,?,?,'agent',?,'recovery',?,datetime('now'))`, "inb_smoke_budget", os.Args[2], os.Args[3], os.Args[6], os.Args[6], `{"text":"Agent paused after too many turns"}`); err != nil {
+					return err
+				}
+				_, err = tx.AppendEvent(store.Event{Kind: "inbox_item_created", ProjectID: os.Args[2], RoomID: os.Args[3], AgentID: os.Args[6], PayloadJSON: `{"inbox_item_id":"inb_smoke_budget"}`})
+				return err
+			}
+			if len(os.Args) == 6 && os.Args[5] == "legacy" {
+				// An agent that exists only in imported v1 history: its session, the role v1 gave it, and a message of its own in the room.
+				for _, statement := range []string{
+					`INSERT OR IGNORE INTO legacy_agent_session(agent_id,harness,model,project,cwd,harness_session_id,registered_at,last_seen) VALUES ('veteran@old','claude-code','haiku','old','/definitely/not/in/the/project','0f7c6a1e-1111-4222-8333-444455556666','2026-10-01T10:00:00Z','2026-10-02T10:00:00Z')`,
+					`INSERT OR IGNORE INTO legacy_agent_role(agent_id,v1_room_id,role_key) VALUES ('veteran@old','old-room','reviewer')`,
+				} {
+					if _, err := tx.Exec(statement); err != nil {
+						return err
+					}
+				}
+				_, err := tx.InsertMessage(store.Message{RoomID: os.Args[3], AuthorKind: "agent", AuthorID: "veteran@old", Body: "I remember how this worked."})
+				return err
+			}
+			if len(os.Args) == 6 {
+				for _, item := range []struct{ id, kind, ask string }{
+					{"inb_smoke_recovery", "recovery", `{"text":"Agent needs recovery"}`},
+					{"inb_smoke_delivery", "delivery_failed", `{"text":"Agent reply was held"}`},
+				} {
+					if _, err := tx.Exec(`INSERT INTO inbox_item(id,project_id,room_id,requester_kind,requester_id,kind,options_json,created_at)
+					VALUES (?,?,?,'agent','agt_smoke',?,?,datetime('now'))`, item.id, os.Args[2], os.Args[3], item.kind, item.ask); err != nil {
+						return err
+					}
+					if _, err := tx.AppendEvent(store.Event{Kind: "inbox_item_created", ProjectID: os.Args[2], RoomID: os.Args[3], PayloadJSON: fmt.Sprintf(`{"inbox_item_id":%q}`, item.id)}); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			for _, item := range []struct{ id, ask string }{
+				{"inb_smoke_a", `{"text":"Approve this choice?","options":["Approve","Revise"],"free_text":true}`},
+				{"inb_smoke_b", `{"text":"Explain the choice","options":[],"free_text":true}`},
+			} {
+				if _, err := tx.Exec(`INSERT INTO inbox_item(id,project_id,room_id,message_id,requester_kind,requester_id,kind,options_json,created_at)
+				VALUES (?,?,?,?,'agent','agt_smoke','question',?,datetime('now'))`, item.id, os.Args[2], os.Args[3], os.Args[4], item.ask); err != nil {
+					return err
+				}
+				if _, err := tx.AppendEvent(store.Event{Kind: "inbox_item_created", ProjectID: os.Args[2], RoomID: os.Args[3], PayloadJSON: fmt.Sprintf(`{"inbox_item_id":%q}`, item.id)}); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	for {
+		err = seed()
+		var sqliteErr *sqlite.Error
+		if err == nil || !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != 5 && sqliteErr.Code()&0xff != 6 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+			continue
+		}
+		break
+	}
+	if err != nil {
+		panic(err)
+	}
+}

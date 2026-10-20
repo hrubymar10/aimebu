@@ -1,0 +1,17 @@
+# Live reload for `make dev`: rebuild and restart on source changes.
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/aimebu ./cmd/aimebu"
+  bin = "tmp/aimebu"
+  full_bin = "sh scripts/dev-run.sh ./tmp/aimebu"
+  include_ext = ["go", "html", "css", "js", "json"]
+  exclude_dir = ["tmp", "node_modules", "docs"]
+  delay = 1000
+  kill_delay = "45s"
+  send_interrupt = true
+  stop_on_error = false
+
+[log]
+  time = true
