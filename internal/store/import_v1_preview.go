@@ -1,0 +1,516 @@
+package store
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/sqliteutil"
+)
+
+// ErrV1BackupChanged means the backup no longer matches the key recorded when it was made: something wrote to it (a v1 server
+// started on a copy of it, or a manual edit) after the move.
+var ErrV1BackupChanged = errors.New("the v1 backup changed after the manifest was written")
+
+// v1PreviewNow is the clock the preview's room defaults use; tests replace it.
+var v1PreviewNow = time.Now
+
+var ErrV1NoRooms = errors.New("v1 source has no rooms")
+
+type V1ImportPreview struct {
+	SourceKey          string                  `json:"source_key"`
+	Rooms              []V1PreviewRoom         `json:"rooms"`
+	Humans             []string                `json:"humans"`
+	DestinationUsers   []string                `json:"destination_users"`
+	MemoryProjects     []string                `json:"memory_projects"`
+	Macros             map[string]string       `json:"macros"`
+	MacroDefaults      []string                `json:"macro_defaults"`
+	ImportedMacros     []string                `json:"imported_macros"`
+	ImportedRoles      []string                `json:"imported_roles"`
+	V1MemoryEnabled    bool                    `json:"v1_memory_enabled"`
+	V1DebugButton      bool                    `json:"v1_debug_button"`
+	SkippedSettings    []V1SkippedSetting      `json:"skipped_settings"`
+	Roles              []V1PreviewRole         `json:"roles"`
+	SourceRoles        map[string]v1ImportRole `json:"-"`
+	SkippedSourceRoles map[string]string       `json:"-"`
+	Counts             map[string]int          `json:"counts"`
+	NotCarried         map[string]int          `json:"not_carried"`
+	CarriedOverFiles   []string                `json:"carried_over_files,omitempty"`
+	HighestMessageID   int64                   `json:"-"`
+	ReservationMissed  bool                    `json:"reservation_missed"`
+	Suggested          V1ImportMap             `json:"suggested"`
+}
+
+type V1PreviewRoom struct {
+	ID               string   `json:"id"`
+	Messages         int      `json:"messages"`
+	Members          []string `json:"members"`
+	SuggestedProject string   `json:"suggested_project"`
+	SuggestedSkip    bool     `json:"suggested_skip"`
+	SkipReason       string   `json:"skip_reason,omitempty"` // set when the importer will skip the room whatever the mapping says
+	MemoryDisabled   bool     `json:"memory_disabled"`
+	// DM and Title describe a v1 direct message as v2 will show it (Title assumes the suggested people mapping).
+	DM    bool   `json:"dm,omitempty"`
+	Title string `json:"title,omitempty"`
+	// Participants lets the wizard retitle a DM when the owner remaps a person (the title depends on who maps to the owner).
+	Participants []V1DMParticipant `json:"participants,omitempty"`
+}
+
+type V1DMParticipant struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"` // "user" or "agent"
+}
+
+type V1SkippedSetting struct {
+	Key    string `json:"key"`
+	Reason string `json:"reason"`
+}
+
+func (preview *V1ImportPreview) ResolveRoles(destination []RoleDefinition) {
+	ledgered := map[string]bool{}
+	for _, key := range preview.ImportedRoles {
+		ledgered[key] = true
+	}
+	preview.Roles = resolveV1Roles(preview.SourceRoles, destinationRoleMap(destination), ledgered)
+	for _, key := range sortedImportKeys(preview.SkippedSourceRoles) {
+		preview.Roles = append(preview.Roles, V1PreviewRole{Key: key, Label: key, SkippedReason: preview.SkippedSourceRoles[key]})
+	}
+}
+
+func skippedV1Settings(settings map[string]json.RawMessage, promptOverrides int, sourceSkips []V1SkippedSetting) []V1SkippedSetting {
+	result := append([]V1SkippedSetting{}, sourceSkips...)
+	for key := range settings {
+		// The personal settings are carried into the owner's preferences; only those v2 cannot take are listed (below).
+		if key == "memory_enabled" || key == v1ExpiryKey || key == InlinePlanAppendixKey || v1PersonalKeys[key] {
+			continue
+		}
+		result = append(result, V1SkippedSetting{key, "v2 has no matching server setting"})
+	}
+	_, personal := v1PersonalPreferences(settings)
+	result = append(result, personal...)
+	if promptOverrides > 0 {
+		result = append(result, V1SkippedSetting{"prompt_overrides", fmt.Sprintf("%d v1 prompt overrides are not imported: v2 overrides different, shorter sentences (Settings → Prompts), so re-enter any you still need", promptOverrides)})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Key < result[j].Key })
+	return result
+}
+
+// PreviewV1Import exposes identifiers, counts, and global macro text for
+// conflict review. Message and memory bodies remain on disk until commit.
+func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1ImportPreview, error) {
+	out := V1ImportPreview{NotCarried: map[string]int{}, Rooms: []V1PreviewRoom{}, Humans: []string{}, DestinationUsers: []string{}, MemoryProjects: []string{}, Macros: map[string]string{}, MacroDefaults: []string{}, ImportedMacros: []string{}, ImportedRoles: []string{}, SkippedSettings: []V1SkippedSetting{}}
+	data, err := OpenV1ImportSource(ctx, sourceDir)
+	if err != nil {
+		return out, err
+	}
+	if err := ValidateMacros(data.Macros); err != nil {
+		return out, fmt.Errorf("v1 macros: %w", err)
+	}
+	if raw, ok := data.Settings["memory_enabled"]; ok && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &out.V1MemoryEnabled); err != nil {
+			return out, fmt.Errorf("v1 memory setting: %w", err)
+		}
+	}
+	if raw, ok := data.Settings["debug_button_enabled"]; ok {
+		_ = json.Unmarshal(raw, &out.V1DebugButton)
+	}
+	out.SkippedSettings = skippedV1Settings(data.Settings, data.PromptOverrideCount, data.SkippedSourceSettings)
+	path := filepath.Join(sourceDir, "server", "aimebu.sqlite")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		path = filepath.Join(sourceDir, "aimebu.sqlite")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return out, err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return out, err
+	}
+	if wal, err := os.Open(path + "-wal"); err == nil {
+		if _, err := io.Copy(hash, wal); err != nil {
+			wal.Close()
+			return out, err
+		}
+		wal.Close()
+	} else if !os.IsNotExist(err) {
+		return out, err
+	}
+	out.SourceKey = "v1-" + hex.EncodeToString(hash.Sum(nil))[:24]
+	out.NotCarried = data.NotCarried
+	out.SourceRoles = data.Roles
+	out.SkippedSourceRoles = data.SkippedSourceRoles
+	if raw, err := os.ReadFile(filepath.Join(sourceDir, "manifest.json")); err == nil {
+		var manifest struct {
+			SourceKey string `json:"source_key"`
+		}
+		if err := json.Unmarshal(raw, &manifest); err != nil {
+			return out, fmt.Errorf("backup manifest: %w", err)
+		}
+		if manifest.SourceKey != "" && manifest.SourceKey != out.SourceKey {
+			return out, ErrV1BackupChanged
+		}
+	} else if !os.IsNotExist(err) {
+		return out, err
+	}
+	humans := map[string]bool{}
+	scopes := map[string]bool{}
+	paired := map[string]bool{}
+	roomCount := map[string]int{}
+	for _, room := range data.Rooms {
+		if strings.HasSuffix(room.ID, "-leader") {
+			paired[strings.TrimSuffix(room.ID, "-leader")] = true
+		}
+	}
+	lastMessage := map[string]time.Time{}
+	for _, msg := range data.Messages {
+		if msg.ID > out.HighestMessageID {
+			out.HighestMessageID = msg.ID
+		}
+		// v1's presence bookkeeping is not imported, so it is neither a message of the room nor activity in it.
+		if isV1PresenceLine(msg) {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339Nano, msg.CreatedAt); err == nil && at.After(lastMessage[msg.RoomID]) {
+			lastMessage[msg.RoomID] = at
+		}
+		roomCount[msg.RoomID]++
+		if v1ImportMessageKind(msg, data.Agents) == "user" {
+			humans[msg.From] = true
+		}
+	}
+	for _, room := range data.Rooms {
+		for _, member := range room.Members {
+			if v1ImportKind(member, data.Agents) == "user" {
+				humans[member] = true
+			}
+		}
+	}
+	for _, reactions := range data.Reactions {
+		for _, reaction := range reactions {
+			if v1ImportKind(reaction.AgentID, data.Agents) == "user" {
+				humans[reaction.AgentID] = true
+			}
+		}
+	}
+	for _, memory := range data.Memory {
+		if memory.Scope == "project_facts" {
+			scopes[memory.ScopeKey] = true
+		}
+		if memory.Scope == "user_profile" {
+			humans[memory.ScopeKey] = true
+		}
+		if v1ImportKind(memory.Author, data.Agents) == "user" {
+			humans[memory.Author] = true
+		}
+	}
+	delete(humans, "")
+	delete(humans, "system")
+	readCursors := 0
+	for id, agent := range data.Agents {
+		if v1ImportKind(id, data.Agents) != "user" {
+			continue
+		}
+		for _, cursor := range agent.ReadCursors {
+			if cursor > 0 {
+				readCursors++
+			}
+		}
+	}
+	roomPrefs := 0
+	for _, pref := range data.RoomPrefs {
+		if (pref.Hidden || pref.Pinned) && v1ImportKind(pref.Agent, data.Agents) == "user" {
+			roomPrefs++
+		}
+	}
+	out.Counts = map[string]int{"rooms": len(data.Rooms), "messages": len(data.Messages), "attachments": len(data.Attachments), "memory": len(data.Memory), "humans": len(humans), "macros": len(data.Macros), "read_cursors": readCursors, "room_prefs": roomPrefs, "sounds": len(data.Sounds), "agent_sessions": len(data.AgentSessions)}
+	out.Macros = data.Macros
+	for key, seen := range data.MacroSeenDefault {
+		if seen {
+			out.MacroDefaults = append(out.MacroDefaults, key)
+		}
+	}
+	sort.Strings(out.MacroDefaults)
+	out.Suggested = V1ImportMap{SourceKey: out.SourceKey, OwnerLogin: ownerLogin, Projects: map[string]V1ImportProject{}, Rooms: map[string]V1ImportRoom{}, Humans: map[string]string{}, MemoryProjects: map[string]string{}}
+	// Projects are suggested from what v1 itself names: an exact x + x-leader room pair, a room with traffic and no pair, and a memory scope. There is no catch-all
+	// project: a room with no project to go to is not imported, and the wizard lists what will be dropped.
+	for _, room := range data.Rooms {
+		base := strings.TrimSuffix(room.ID, "-leader")
+		if paired[base] {
+			for _, candidate := range data.Rooms {
+				if candidate.ID == base {
+					out.Suggested.Projects[base] = V1ImportProject{Name: base}
+					break
+				}
+			}
+		}
+	}
+	// A room that has traffic and no leader pair is a project of its own, going into the root: v1 named such a room after the folder
+	// its agents worked in, and an agent that has since left does not make the room any less a project. A DM, an empty room and v1's default "general" room are not.
+	for _, room := range data.Rooms {
+		if room.ID == V1SystemRoom || isV1DM(room.ID) || strings.HasSuffix(room.ID, "-leader") || room.ID == "general" || roomCount[room.ID] == 0 || paired[room.ID] {
+			continue
+		}
+		if _, ok := out.Suggested.Projects[room.ID]; !ok {
+			out.Suggested.Projects[room.ID] = V1ImportProject{Name: room.ID}
+		}
+	}
+	for scope := range scopes {
+		if _, ok := out.Suggested.Projects[scope]; !ok {
+			out.Suggested.Projects[scope] = V1ImportProject{Name: scope}
+		}
+	}
+	for _, room := range data.Rooms {
+		alias := ""
+		if _, ok := out.Suggested.Projects[strings.TrimSuffix(room.ID, "-leader")]; ok && (paired[strings.TrimSuffix(room.ID, "-leader")] || room.ID == strings.TrimSuffix(room.ID, "-leader")) {
+			alias = strings.TrimSuffix(room.ID, "-leader")
+		}
+		skip := room.ID == V1SystemRoom || alias == "" || isV1DM(room.ID) // a DM is decided below, once its project is known
+		// A room with traffic in the last 30 days stays open; an older one is archived (the owner can flip either, or all at once).
+		lifecycle := "closed"
+		if last, ok := lastMessage[room.ID]; ok && v1PreviewNow().Sub(last) <= 30*24*time.Hour {
+			lifecycle = "open"
+		}
+		spec := V1ImportRoom{Project: alias, Lifecycle: lifecycle, Skip: skip}
+		// v1 "x-leader" was the project's lead room and "x" its working room. In v2 the first is the project root and the second a
+		// "general" sub-room of it. A room named like a project that has no leader room is the project's root.
+		if alias != "" && room.ID != V1SystemRoom && !isV1DM(room.ID) {
+			if strings.HasSuffix(room.ID, "-leader") || room.ID == alias && !paired[alias] {
+				spec.Target = V1TargetRoot
+			} else if room.ID == alias {
+				spec.Target, spec.Title = V1TargetSub, V1DefaultSubRoomTitle
+			}
+		}
+		out.Suggested.Rooms[room.ID] = spec
+		members := room.Members
+		if members == nil {
+			members = []string{}
+		}
+		skipReason := ""
+		if room.ID == V1SystemRoom {
+			skipReason = "v1 system events are not imported"
+		}
+		preview := V1PreviewRoom{ID: room.ID, Messages: roomCount[room.ID], Members: members, SuggestedProject: alias, SuggestedSkip: skip, SkipReason: skipReason, MemoryDisabled: room.MemoryEnabled != nil && !*room.MemoryEnabled}
+		preview.DM = isV1DM(room.ID)
+		out.Rooms = append(out.Rooms, preview)
+	}
+	for human := range humans {
+		out.Humans = append(out.Humans, human)
+		// Only the person who has the owner's own name is the owner. Anyone else is not merged into the owner's account without being asked:
+		// the suggestion skips them (a historical label only), and the wizard offers to make each one an account instead.
+		out.Suggested.Humans[human] = "-"
+		if strings.EqualFold(human, ownerLogin) {
+			out.Suggested.Humans[human] = ownerLogin
+		}
+	}
+	sort.Strings(out.Humans)
+	for scope := range scopes {
+		out.MemoryProjects = append(out.MemoryProjects, scope)
+		out.Suggested.MemoryProjects[scope] = scope
+	}
+	sort.Strings(out.MemoryProjects)
+	// Direct messages go to the project their AI participant belongs to when the wizard proposes it, and always start open.
+	for i, room := range data.Rooms {
+		if !isV1DM(room.ID) {
+			continue
+		}
+		spec := out.Suggested.Rooms[room.ID]
+		spec.Project = v1DMSuggestedProject(room, out.Suggested.Projects, spec.Project)
+		spec.Lifecycle = "open"
+		spec.Skip = spec.Project == "" // a chat is imported unless it has no project to live in; the owner can turn any off
+		out.Suggested.Rooms[room.ID] = spec
+		for j := range out.Rooms {
+			if out.Rooms[j].ID == data.Rooms[i].ID {
+				out.Rooms[j].SuggestedProject = spec.Project
+				out.Rooms[j].SuggestedSkip = spec.Skip
+				out.Rooms[j].Title = v1DMTitle(room, data.Agents, out.Suggested.Humans, ownerLogin)
+				for _, member := range v1DMMembers(room) {
+					out.Rooms[j].Participants = append(out.Rooms[j].Participants, V1DMParticipant{ID: member, Name: v1DMName(member, data.Agents), Kind: v1ImportKind(member, data.Agents)})
+				}
+			}
+		}
+	}
+	for project, folder := range v1WorkspaceSuggestions(sourceDir) {
+		if spec, ok := out.Suggested.Projects[project]; ok {
+			spec.Folder = folder
+			out.Suggested.Projects[project] = spec
+		}
+	}
+	if out.V1MemoryEnabled {
+		// v1 memory was on, so each destination project starts with v2 memory on too; the owner can untick any.
+		out.Suggested.EnableProjectMemory = map[string]bool{}
+		for alias := range out.Suggested.Projects {
+			out.Suggested.EnableProjectMemory[alias] = true
+		}
+	}
+	if out.Counts["rooms"] == 0 {
+		return out, ErrV1NoRooms
+	}
+	return out, nil
+}
+
+// A project's workspace folder is the working directory most of its v1 agents ran from: sessions in the registry and the cwd each
+// agent registered with. A tie goes to the shorter, then the alphabetically first path, so the suggestion is stable. Only
+// absolute paths count; a project with none is left blank for the owner to fill in.
+func v1WorkspaceSuggestions(sourceDir string) map[string]string {
+	counts := map[string]map[string]int{}
+	add := func(project, cwd string) {
+		if project == "" || !filepath.IsAbs(cwd) {
+			return
+		}
+		if counts[project] == nil {
+			counts[project] = map[string]int{}
+		}
+		counts[project][filepath.Clean(cwd)]++
+	}
+	path := filepath.Join(sourceDir, "server", "aimebu.sqlite")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		path = filepath.Join(sourceDir, "aimebu.sqlite")
+	}
+	if db, err := sql.Open("sqlite", sqliteutil.DSN(path, true)); err == nil {
+		scan := func(query string, each func(raw string)) {
+			var rows *sql.Rows
+			if err := sqliteutil.Retry(func() (queryErr error) { rows, queryErr = db.Query(query); return queryErr }); err != nil {
+				return
+			}
+			for rows.Next() {
+				var raw string
+				if rows.Scan(&raw) == nil {
+					each(raw)
+				}
+			}
+			rows.Close()
+		}
+		scan("SELECT data FROM agent_sessions", func(raw string) {
+			var item struct {
+				Project string `json:"project"`
+				CWD     string `json:"cwd"`
+			}
+			if json.Unmarshal([]byte(raw), &item) == nil {
+				add(item.Project, item.CWD)
+			}
+		})
+		scan("SELECT data FROM agents", func(raw string) {
+			var item struct {
+				Project string                     `json:"project"`
+				Meta    map[string]json.RawMessage `json:"meta"`
+			}
+			// An odd meta value (not a string) only costs that agent's suggestion, never the preview.
+			if json.Unmarshal([]byte(raw), &item) == nil {
+				var cwd string
+				if json.Unmarshal(item.Meta["cwd"], &cwd) == nil {
+					add(item.Project, cwd)
+				}
+			}
+		})
+		db.Close()
+	}
+	if len(counts) == 0 {
+		if raw, err := os.ReadFile(filepath.Join(sourceDir, "agents", "agent-sessions.json")); err == nil {
+			var items []struct {
+				CWD string `json:"cwd"`
+			}
+			if json.Unmarshal(raw, &items) == nil {
+				for _, item := range items {
+					add(filepath.Base(item.CWD), item.CWD)
+				}
+			}
+		}
+	}
+	result := map[string]string{}
+	for project, folders := range counts {
+		best, bestCount := "", 0
+		for folder, n := range folders {
+			if n > bestCount || n == bestCount && (len(folder) < len(best) || len(folder) == len(best) && folder < best) {
+				best, bestCount = folder, n
+			}
+		}
+		result[project] = best
+	}
+	return result
+}
+
+// V1ImportDigest is used as the short-lived dry-run receipt for the wizard.
+func V1ImportDigest(mapping V1ImportMap) string { return v1ImportDigest(mapping) }
+
+func (s *Store) V1ImportedMacroKeys(ctx context.Context, source string) ([]string, error) {
+	return s.v1ImportedKeys(ctx, source, "macro")
+}
+
+func (s *Store) V1ImportedRoleKeys(ctx context.Context, source string) ([]string, error) {
+	return s.v1ImportedKeys(ctx, source, "role")
+}
+
+func (s *Store) v1ImportedKeys(ctx context.Context, source, kind string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT old_id FROM legacy_import_map WHERE source_key=? AND entity_kind=? ORDER BY old_id`, source, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+func (s *Store) V1ImportLedgerCount(ctx context.Context, source string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM legacy_import_map WHERE source_key=?", source).Scan(&count)
+	return count, err
+}
+
+func (s *Store) V1ImportOwnerLogin(ctx context.Context, ownerID string) (string, error) {
+	var login string
+	err := s.db.QueryRowContext(ctx, "SELECT login FROM user WHERE id=?", ownerID).Scan(&login)
+	return login, err
+}
+
+func (s *Store) V1ImportUserLogins(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT login FROM user ORDER BY login")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	logins := []string{}
+	for rows.Next() {
+		var login string
+		if err := rows.Scan(&login); err != nil {
+			return nil, err
+		}
+		logins = append(logins, login)
+	}
+	return logins, rows.Err()
+}
+
+func (s *Store) V1ImportSavedMap(ctx context.Context, source string) (V1ImportMap, bool, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, "SELECT map_json FROM legacy_import_config WHERE source_key=?", source).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return V1ImportMap{}, false, nil
+	}
+	if err != nil {
+		return V1ImportMap{}, false, err
+	}
+	var mapping V1ImportMap
+	if err := json.Unmarshal([]byte(raw), &mapping); err != nil {
+		return V1ImportMap{}, false, err
+	}
+	return mapping, true, nil
+}

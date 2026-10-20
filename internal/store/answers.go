@@ -1,0 +1,276 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+
+	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/answer"
+)
+
+type AnswerInput struct {
+	TurnID, AgentID, Digest string
+	Generation              int
+	AnswerRev               int
+	Candidate               []byte
+	Parsed                  *answer.Candidate
+	ParseError              string
+}
+
+type AnswerReceipt struct {
+	TurnID     string          `json:"turn_id"`
+	Digest     string          `json:"digest"`
+	Result     string          `json:"result"`
+	HeldReason string          `json:"held_reason,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	AnswerRev  int             `json:"answer_rev"`
+	MessageIDs []string        `json:"message_ids,omitempty"`
+	Warnings   []string        `json:"warnings,omitempty"`
+	Additional []AnswerReceipt `json:"-"`
+}
+
+type answerTurn struct {
+	id, parentID, agentID, sessionID, roomID, mode, exec, policyJSON string
+	generation, attempt                                              int
+	terminal, blocked                                                bool
+}
+
+// ApplyAnswer owns the answer's commit and receipt in one server transaction.
+// Parsing is pure and happens before this call; mutable authorisation is
+// checked again inside the transaction immediately before message insertion.
+func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerReceipt, error) {
+	var receipt AnswerReceipt
+	err := s.Tx(ctx, func(tx *Tx) error {
+		turn, err := tx.answerTurn(input.TurnID)
+		if err != nil {
+			return err
+		}
+		if turn.agentID != input.AgentID {
+			return ErrForbidden
+		}
+		if turn.generation != input.Generation {
+			return ErrStaleGeneration
+		}
+		var oldDigest, oldJSON string
+		lookup := tx.tx.QueryRowContext(tx.ctx, `SELECT digest,result_json FROM receipt WHERE turn_id=? AND answer_rev=?`, input.TurnID, input.AnswerRev).Scan(&oldDigest, &oldJSON)
+		if lookup == nil {
+			if oldDigest != input.Digest {
+				return ErrConflict
+			}
+			return json.Unmarshal([]byte(oldJSON), &receipt)
+		}
+		if !errors.Is(lookup, sql.ErrNoRows) {
+			return lookup
+		}
+		if turn.mode == "correction" && (turn.parentID == "" || input.AnswerRev != 1) || turn.mode != "correction" && input.AnswerRev != 0 {
+			return ErrInvalidTransition
+		}
+		parent := turn
+		if turn.mode == "correction" {
+			parent, err = tx.answerTurn(turn.parentID)
+			if err != nil {
+				return err
+			}
+			if parent.agentID != turn.agentID || parent.generation != turn.generation || parent.mode != "normal" {
+				return ErrScopeMismatch
+			}
+		}
+		receipt = AnswerReceipt{TurnID: input.TurnID, AnswerRev: input.AnswerRev, Digest: input.Digest, MessageIDs: []string{}}
+		if input.Parsed != nil {
+			receipt.Warnings = input.Parsed.Warnings
+		}
+		if turn.mode == "diagnostic" {
+			if input.ParseError != "" || input.Parsed == nil {
+				detail := input.ParseError
+				if detail == "" {
+					detail = "missing parsed diagnostic answer"
+				}
+				receipt.Result, receipt.HeldReason, receipt.Error = "held", "correction_unavailable", detail
+			} else {
+				report, err := json.Marshal(input.Parsed)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.Exec(`UPDATE turn SET report_json=? WHERE id=?`, string(report), turn.id); err != nil {
+					return err
+				}
+				receipt.Result = "committed"
+			}
+		} else {
+			reason, detail, err := tx.validateAnswer(parent, input)
+			if err != nil {
+				return err
+			}
+			if reason == "" {
+				receipt.Result = "committed"
+				if err := tx.commitAnswerMessages(parent, input, &receipt); err != nil {
+					return err
+				}
+			} else if reason == "room_closed" || reason == "not_member" {
+				receipt.Result, receipt.HeldReason, receipt.Error = "held", reason, detail
+			} else if turn.mode == "normal" && tx.noActionMode(parent.policyJSON) {
+				receipt.Result, receipt.Error = "correction_requested", detail
+			} else {
+				receipt.Result, receipt.Error = "held", detail
+				if turn.mode == "correction" {
+					receipt.HeldReason = "invalid_after_correction"
+				} else {
+					receipt.HeldReason = "correction_unavailable"
+				}
+			}
+			if receipt.Result != "committed" {
+				if err := tx.recordNonCommittedOutbox(parent, input, receipt); err != nil {
+					return err
+				}
+			}
+		}
+		if receipt.Result != "correction_requested" {
+			if err := tx.settleAnswerTurn(turn); err != nil {
+				return err
+			}
+			if turn.mode == "correction" {
+				if err := tx.settleAnswerTurn(parent); err != nil {
+					return err
+				}
+				if err := tx.supersedeParentReceipt(parent.id, &receipt); err != nil {
+					return err
+				}
+			}
+		}
+		if err := tx.insertAnswerReceipt(receipt, input.Candidate); err != nil {
+			return err
+		}
+		if receipt.Result == "committed" {
+			if err := tx.resolveDeliveryFailures(turn.agentID, parent.id); err != nil {
+				return err
+			}
+		}
+		if receipt.Result == "correction_requested" && turn.exec != "pending" && turn.exec != "running" {
+			if err := tx.ensureCorrectionTurn(turn); err != nil {
+				return err
+			}
+		}
+		if receipt.Result == "held" && turn.mode != "diagnostic" {
+			if err := tx.deliveryFailedInbox(parent); err != nil {
+				return err
+			}
+		}
+		if turn.mode == "diagnostic" && turn.exec != "pending" && turn.exec != "running" {
+			if err := tx.completeDiagnostic(turn.id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return receipt, err
+}
+
+func (tx *Tx) answerTurn(id string) (answerTurn, error) {
+	var turn answerTurn
+	var parent, policy sql.NullString
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT t.id,t.parent_turn_id,t.agent_id,t.session_id,t.room_id,t.mode,t.exec,t.generation,t.attempt,t.terminal_event,a.recovery_block,t.policy_json FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.id=?`, id).
+		Scan(&turn.id, &parent, &turn.agentID, &turn.sessionID, &turn.roomID, &turn.mode, &turn.exec, &turn.generation, &turn.attempt, &turn.terminal, &turn.blocked, &policy)
+	turn.parentID, turn.policyJSON = parent.String, policy.String
+	return turn, err
+}
+
+func (tx *Tx) noActionMode(raw string) bool {
+	var policy TurnPolicy
+	return json.Unmarshal([]byte(raw), &policy) == nil && policy.Capabilities.NoActionMode
+}
+
+func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput) (reason, detail string, dbErr error) {
+	if input.ParseError != "" || input.Parsed == nil {
+		return "invalid_answer", input.ParseError, nil
+	}
+	seenAttachments := make(map[string]bool)
+	var turnRoomKind string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind FROM room WHERE id=?`, turn.roomID).Scan(&turnRoomKind); err != nil {
+		return "", "", err
+	}
+	for i, item := range input.Parsed.Messages {
+		if turnRoomKind == "dm" && item.Room != turn.roomID {
+			return "not_member", "private chat replies must stay in that chat", nil
+		}
+		var projectID, lifecycle string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,lifecycle FROM room WHERE id=?`, item.Room).Scan(&projectID, &lifecycle)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "invalid_answer", fmt.Sprintf("message %d targets an unknown room", i), nil
+		}
+		if err != nil {
+			return "", "", err
+		}
+		var agentProject string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, turn.agentID).Scan(&agentProject); err != nil {
+			return "", "", err
+		}
+		if projectID != agentProject {
+			return "not_member", "room is outside the agent project", nil
+		}
+		if lifecycle != "open" {
+			return "room_closed", "room is closing or closed", nil
+		}
+		var member int
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, item.Room, turn.agentID).Scan(&member); err != nil {
+			return "", "", err
+		}
+		if member != 1 {
+			return "not_member", "agent is not an active room member", nil
+		}
+		if item.Ask != nil || item.NeedsAttention || len(item.ProposedAnswers) > 0 || len(item.OpenQuestions) > 0 {
+			var recipients int
+			query := `SELECT COUNT(*) FROM membership WHERE project_id=? AND role IN ('owner','operator')`
+			arg := projectID
+			if turnRoomKind == "dm" {
+				query = `SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='user' AND left_at IS NULL`
+				arg = turn.roomID
+			}
+			if err := tx.tx.QueryRowContext(tx.ctx, query, arg).Scan(&recipients); err != nil {
+				return "", "", err
+			}
+			if recipients == 0 {
+				return "invalid_answer", "ask has no authorized recipient", nil
+			}
+		}
+		for _, ref := range []string{item.ReplyTo, item.ThreadRoot} {
+			if ref == "" {
+				continue
+			}
+			var refRoom string
+			err := tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM message WHERE id=?`, ref).Scan(&refRoom)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && refRoom != item.Room {
+				return "invalid_answer", fmt.Sprintf("message %d has an invalid reply or thread reference", i), nil
+			}
+			if err != nil {
+				return "", "", err
+			}
+		}
+		if item.ThreadRoot != "" {
+			var parent sql.NullString
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT thread_root FROM message WHERE id=?`, item.ThreadRoot).Scan(&parent); err != nil {
+				return "", "", err
+			}
+			if parent.Valid {
+				return "invalid_answer", fmt.Sprintf("message %d has a nested thread", i), nil
+			}
+		}
+		for _, attachment := range item.Attachments {
+			if seenAttachments[attachment] {
+				return "invalid_answer", fmt.Sprintf("message %d repeats an attachment", i), nil
+			}
+			seenAttachments[attachment] = true
+			var attachmentProject, attachmentRoom string
+			var attached sql.NullString
+			err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,COALESCE(room_id,''),message_id FROM attachment WHERE id=?`, attachment).Scan(&attachmentProject, &attachmentRoom, &attached)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && (attachmentProject != projectID || attachmentRoom != "" && attachmentRoom != item.Room || attached.Valid) {
+				return "invalid_answer", fmt.Sprintf("message %d has an invalid attachment", i), nil
+			}
+			if err != nil {
+				return "", "", err
+			}
+		}
+	}
+	return "", "", nil
+}
