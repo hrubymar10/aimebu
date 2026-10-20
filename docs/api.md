@@ -1,0 +1,671 @@
+# Slice-1 HTTP API
+
+Run `aimebu server`. On a first run it prints a one-time owner setup token
+(also in `.setup_token`, with a `/setup?token=…` shortcut, see [auth](auth.md#first-run-owner-setup)), or bootstraps
+the owner from `AIMEBU2_OWNER_LOGIN` and `AIMEBU2_OWNER_PASSWORD` when both are set. The listener defaults to
+`127.0.0.1:9897`; `AIMEBU2_BIND` must be an IP literal and `AIMEBU2_PORT` a
+TCP port. Use `AIMEBU2_CONFIG_DIR` to choose the data root. These v2 defaults
+and overrides are a temporary side-by-side setup that ignores v1's
+`AIMEBU_*` environment settings.
+`AIMEBU2_ALLOW` accepts comma-separated IPs and CIDRs and defaults to
+`127.0.0.0/8,::1/128`. Bare addresses become `/32` (IPv4) or `/128` (IPv6).
+IPv4-mapped CIDRs are rejected; use their IPv4 form instead. The embedded
+supervisor's own dial address is added to the effective list when necessary,
+including for a listener bound to a specific interface IP.
+The allowlist gates every route, including the `/api/machine` WebSocket;
+unlisted sources receive HTTP 403 before authentication. It checks the direct
+peer address (including IPv4-mapped IPv6 addresses) and ignores
+`X-Forwarded-For`. Invalid entries fail startup. Startup logs the effective
+allowlist and warns if `AIMEBU2_BIND` is non-loopback while the default
+loopback-only allowlist is active. For remote access, set both the bind and
+the allowed source network.
+When `AIMEBU2_TLS_CERT` and `AIMEBU2_TLS_KEY` are both set, the server also
+listens with HTTPS on `AIMEBU2_TLS_PORT` (default `9896`). HTTP remains on its
+configured port; both listeners apply the same allowlist. A missing or invalid
+certificate pair fails startup. See [HTTPS setup](tls.md).
+The host machine credential is written to `server/host-machine.key` with
+0600 permissions; startup logs the path only.
+
+All endpoints use JSON. `POST /api/login` establishes an HttpOnly session
+cookie and returns a CSRF token. User endpoints require the cookie;
+mutations also require `X-CSRF-Token`. The agent toolbox routes below use
+`Authorization: Bearer <aak_ agent key>` instead, without a user cookie or
+CSRF token. The global owner and the admins (accounts the owner flagged, see [auth](auth.md#global-admins)) can create projects, and the owner receives a project
+membership grant and a home room in the same transaction. Project reads
+require membership; owners and operators can write in ordinary rooms, while
+participants in a two-person private chat can write there regardless of
+project role while both remain active project members and no agent has joined.
+Project owners manage membership through single-use invitation links and the
+Users settings page.
+Errors from these routes are JSON objects with `error` and `message` fields.
+Authentication uses `unauthorized`, `invalid_credentials`, `invalid_csrf`,
+and `rate_limited`; rate limits include a `Retry-After` header in seconds.
+Validation uses `invalid_request`, `invalid_kind`, or `invalid_answer`, missing resources
+use `not_found`, and authorization uses `forbidden`. Domain-specific errors
+use the codes in [the contract](contract.md#9-error-codes).
+
+The embedded web UI is served at `/` with an SPA fallback for extensionless
+non-API paths. It uses the endpoints below, keeps the CSRF token in memory,
+and reconnects the event stream from its last seen `seq`.
+
+| Method | Path | Body or query | Result |
+| --- | --- | --- | --- |
+| GET | `/api/setup/status` | — | while a setup token waits: `{open:true, token_path}`, the file that holds it (the full path for a loopback connection with no forwarding header, `<config dir>/.setup_token` for any other; never the token); `200 {open:false}` once an owner exists |
+| POST | `/api/setup/token` | `{token}` | checks a setup token without spending it (204; 403 wrong; 429 throttled; 404 once an owner exists) |
+| POST | `/api/setup` | `{token,login,password}` | first-run owner setup (no session needed; 404 once an owner exists, 403 wrong token, 400 bad login/password, 429 throttled); creates the owner and signs in, same body as `/api/login` |
+| GET | `/api/me/preferences` | none | `{preferences:{name:value}}`: the signed-in user's personal interface preferences |
+| PUT | `/api/me/preferences` | `{preferences:{name:value}}` | stores them and returns all; names: `theme`, `inbox_muted`, `inbox_sound`, `inbox_volume`, `system_events`, `debug_inspector`, `composer_formatting`, `sidebar_sort` (`name`, `activity` or `manual`) and `sidebar_project_order` (a JSON list of project ids, up to 4096 bytes) (400 for others or values over 256 bytes). The browser keeps only a cache for painting before sign-in; per-device layout (collapsed panels) is not stored |
+| POST | `/api/login` | `{login,password}` | user ID, CSRF token, expiry, `first_run` and `owner`/`admin` (see `/api/me`) |
+| POST | `/api/logout` | — | 204; revokes session |
+| GET | `/api/session` | — | no session needed: what `/api/me` returns for a signed-in account, and `{signed_in:false}` (status 200) otherwise; the page asks this on load so the sign-in screen costs no 401 |
+| GET | `/api/me` | — | user ID, login, CSRF token, `owner` and `admin` (what the account may do instance-wide: the web turns off New project and the owner/admin settings tabs for anyone else), and `first_run`: true only for the instance owner and only until they press Continue on the first-run welcome (a database that already had people when the welcome migration ran counts as seen, and one made later, including by the v1 import, does not), so the web app shows the welcome once, between sign-in and the app |
+| POST | `/api/welcome/seen` | `{}` | owner-only; records that the owner has been through the welcome (`global_setting` `welcome_seen`), after which `first_run` is false. 204, idempotent |
+| GET | `/api/users` | `project_id?` | the owner and the admins list all accounts (each row says whether it is the `owner` or an `admin`; the answer also carries `global_owner` and `global_admin` for the caller); a project owner lists that project's members |
+| POST | `/api/invites` | `{kind:"join",project_id,role}` or `{kind:"reset",target_user_id}` | one-hour link; a project owner can invite to their own project; the owner and the admins can invite into any project at any role and send password resets (an admin only to ordinary accounts, never to the owner or another admin) |
+| POST | `/api/invites/inspect` | `{token}` | no session needed; what a usable link is for: `{kind:"join",project_name,role}` or `{kind:"reset",login}`; `401 invalid_invite` for a spent, expired, unknown or no-longer-authorised link (the same throttle as redeeming) |
+| POST | `/api/invites/redeem` | `{token,login?,password?}` | create account, grant signed-in account project access, or reset password; returns stored `login`; signed-in callers send CSRF token |
+| PUT/DELETE | `/api/projects/{project}/members/{user}` | PUT: `{role}` | project owner (or the owner / an admin, for any project) changes role or removes member; last active owner stays; an admin never changes the owner's or another admin's membership |
+| PUT | `/api/users/{user}/admin` | `{admin:boolean}` | owner only: gives or takes away the admin flag (400 for the owner or for a deactivated account when appointing, 404 unknown account); emits `user_admin_changed` |
+| POST | `/api/users/{user}/deactivate` | — | the owner, or an admin for an ordinary account, blocks sign-in and revokes sessions; never the owner, and an admin cannot deactivate another admin |
+| GET | `/api/prompts` | `project_id?` | every overridable prompt slot as seen from the scope (`key`, `title`, `desc`, `default`, `effective`, `source` = `default`/`global`/`project`, and the saved `global` / `project` override with its `rev`), plus `max` (2000), `inline_plan_appendix`, `can_edit` (global: the owner or an admin; project: its owner or operators) and `can_edit_global` (the owner or an admin); a project view needs access to that project |
+| PUT | `/api/prompts/{key}` | `{project_id?, value, rev}` | saves one override (`rev` 0 creates, otherwise the current revision); 204; `400` for an unknown slot or an empty or over-2000-character value, `403`, `409 stale_rev` |
+| DELETE | `/api/prompts/{key}` | `?project_id=&rev=` | removes one override, so the next level down (or the shipped text) applies; 204, `409 stale_rev`, `404` when there is none |
+| PUT | `/api/inline-plans` | `{value: "always"\|"optional"}` | owner or admin; whether a lead's instructions always ask for the full plan as appendix pages (default `optional`); 204 |
+| GET | `/api/retention` | — | the message-expiry window (`messages_considered_expired_after_seconds`, default 21600, `0` = never, otherwise 60 to 2592000) with its default and bounds; any signed-in user |
+| PUT | `/api/retention` | `{messages_considered_expired_after_seconds}` | owner or admin; 400 outside the bounds. Expiry only hides old messages from what an AI is given; it never deletes one |
+| GET | `/api/credentials/targets` | — | owner-only token state of the stored profiles and live files of a migrated install (`enabled`, `targets`, `alerts`); never a token or CLI output. An alert of kind `refresher_conflict` means another refresher owns that tool's live credential file (it holds the claim lock, or its switcher root's token-copy marker names the same file): this server does not refresh the tool until it is gone |
+| GET | `/api/quota-switcher` | — | owner-only automatic account switching: per-tool config, state, last decision and the newest 50; 503 until it runs (see [quota-switcher](quota-switcher.md)) |
+| PUT | `/api/quota-switcher/{tool}` | config | owner replaces a tool's configuration (400 on validation, 404 unknown tool) |
+| POST | `/api/quota-switcher/{tool}/rearm`, `/reenable` | `{}` | owner clears the after-reset latch / the circuit breaker |
+| GET | `/api/limit-guard` | — | owner-only limit guard: per tool `{config, saved, result, held, since}`; 503 until the quota switcher runs (see [quota-switcher](quota-switcher.md#limit-guard-acting-before-100)) |
+| PUT | `/api/limit-guard/{tool}` | config | owner replaces a tool's soft/hard thresholds and per-profile overrides (400 on validation, 404 unknown tool) |
+| GET | `/api/usages` | — | owner-only provider usage snapshots for Settings → Usages |
+| POST | `/api/usages/refresh` | `{provider?}` | owner-only forced refresh; `429` + `Retry-After` and `retry_after_sec` inside the 15-second cooldown |
+| GET | `/api/switcher` | — | owner-only enabled state, profiles, eligibility, and host agents affected by a switch |
+| PUT | `/api/switcher` | `{enabled}` | owner enables or disables profile switching |
+| POST | `/api/switcher/{tool}/profiles` | `{name}` | owner adds an empty profile |
+| POST | `/api/switcher/{tool}/import` | `{name}` | owner adopts the current live login |
+| POST | `/api/switcher/{tool}/use` | `{name}` | owner switches profiles; 409 with `agents` if matching turns run |
+| DELETE | `/api/switcher/{tool}/profiles/{name}` | — | owner removes a profile; active removal clears the live login |
+| POST | `/api/switcher/{tool}/profiles/{name}/rename` | `{name}` | owner renames a profile, active or not; the live login is untouched; 404 unknown profile, 409 destination exists |
+| GET | `/api/health` | — | visible agents with `room_ids` and current health flags, plus the configured stuck threshold |
+| GET | `/api/import-v1/status` | — | owner-only first-run status `{state, source_key?, ledger_rows?, job, reservation_missed?}`: `state` is `none`, `backup_incomplete`, `ready`, `resume`, `skipped`, or `done`; skipping or finishing closes the import path, and an install that already has messages reports `skipped`; `409 backup_changed` when the v1 backup was modified after it was made (it can no longer be verified, so it is not imported; the web wizard shows the message with the Skip choice, and restoring a pristine copy of `.old-v1-bkp` makes the status answer normally again); `reservation_missed` is true when an event already took a number inside the v1 message-number range, which makes the import refuse (the preview carries the same flag) |
+| GET | `/api/import-v1/preview` | — | owner-only source identifiers, counts, destination choices, and suggested mapping, including enabled host launchers, and `carried_over_files` when v1 external credential targets are present in v2 |
+| POST | `/api/import-v1/dry-run` | the import mapping itself (as returned in `suggested`, plus any edits) | owner-only validation and import report without a commit; `200 {digest, report}`. The report lists `carried_over_files` when present; the digest names these exact choices and is what `commit` needs |
+| POST | `/api/import-v1/commit` | `{mapping, digest}` with the digest from the latest dry run of the same mapping | owner-only; starts the import in the background and answers `202 {job_id, phase:"scan"}`. `409 dry_run_required` when the digest is missing, stale or for other choices, `409 import_running` while one is in progress |
+| POST | `/api/import-v1/skip` | — | owner-only first-run choice; 204, permanently closes import; preview, dry run, and commit return 410 `import_closed` afterwards, and so does a skip after a completed import (a repeated skip of a skipped import stays a 204) |
+| GET | `/api/import-v1/jobs/{id}` | — | owner-only job progress for a `job_id`: `{id, phase, error?, report?, invites?, invite_error?}` (`invites` are the one-time reset links of the accounts the import made: `{login, url, expires_at}`, each valid an hour and shown only here; `invite_error` says why they are missing). `phase` runs `scan`, `validate`, `copy`, `commit`, then `done` or `error`; `report` appears once the import has written. 404 for an unknown id |
+| GET/POST | `/api/projects` | POST (owner or admin): `{name,folder,repo_url?}`; `folder` must be an absolute path to an existing folder on the machine running the server (`invalid_folder`) | accessible projects, each with the caller's `role` (`owner`, `operator` or `viewer`) / created project: the creator becomes its owner member and picks its folder on the host, the same for an admin as for the owner |
+| GET | `/api/disk` | — | owner or admin disk report for Health: total, per project, per kind, worktrees with state, free space, last cleanup ([cleanup](cleanup.md)) |
+| POST | `/api/cleanup` | `{dry_run:boolean}` (required) | owner or admin: plan (`true`) or run (`false`) the cleanup; returns `{dry_run,items:[{category,target,project_id,reason,bytes,action}],bytes}` with action `would_remove`, `removed` or `kept` |
+| GET/PUT | `/api/cleanup/settings` | PUT: `{enabled?,hour?,orphan_days?,attachment_days?}` | owner or admin schedule of the daily cleanup and the attachment retention (`attachment_days`, default 90, 0 keeps them; a removed attachment keeps its record and its message, shows `removed_at`/`removed_after_days`, and its download answers `410`) |
+| GET | `/api/cleanup/log` | — | owner or admin cleanup log (what each cleanup removed, and why), newest first |
+| PATCH | `/api/projects/{project}` | `{name?,folder?}` (at least one) | the project's owner or an admin renames it (the home room is renamed with it when it still has the old name); only an admin moves the folder (same checks as create: `invalid_folder`), and only while the project has no agents and no live worktree (`folder_in_use`); a `folder` equal to the current one is ignored; emits `project_updated` |
+| GET/PUT | `/api/projects/{project}/settings` | PUT: `{auto_resume_after_clean_diagnostic?:boolean, worktree_mode?:"auto"|"off"}` (at least one) | project recovery and worktree settings; owner/operator may change them. `worktree_mode` defaults to `auto`: task rooms get their own Git worktree where the folder is a Git root ([cleanup](cleanup.md)) |
+| GET/POST | `/api/projects/{project}/rooms` | POST: `{title,kind?,parent_id?,worktree?:{enabled,base_ref?}}`; kind defaults to `task`, the only client-creatable kind | rooms visible to this user, including the per-user `hidden` flag / created room, with worktree state if requested |
+| GET | `/api/projects/{project}/dm-peers` | — | active people sharing the caller's project, excluding the caller, as `{id,login}`; any project member |
+| POST | `/api/projects/{project}/dms` | `{user_id}` | the one private room for this pair in the project; both must be active project members |
+| GET | `/api/projects/{project}/archive/search` | `q` (nonempty text) | up to 50 newest matching messages in closed rooms as `{room_id,room_name,message_id,snippet,created_at}`; project membership required and private chats limited to their active human member |
+| GET/POST | `/api/projects/{project}/memory` | POST: `{body}` | `{enabled,can_edit,records,cap_bytes}` / created project fact |
+| PUT | `/api/projects/{project}/memory-enabled` | `{enabled:boolean}` | enable or disable project memory; owner/operator only |
+| PUT | `/api/rooms/{room}/memory-enabled` | `{enabled:false|null}` | restrict room memory flow or inherit project setting; owner/operator only |
+| PUT/DELETE | `/api/projects/{project}/memory/{id}` | PUT: `{body,rev}`; DELETE: `?rev=…` | revised or deleted fact; pending imported facts require the installation owner |
+| GET/POST | `/api/global-memory/{scope}` | scope `user_profile` or `agent_shared_notes`; POST `{scope_key,body}` | scoped global records (`can_edit` is true for the owner and the admins) / created record (owner or admin) |
+| PUT/DELETE | `/api/global-memory/{scope}/{id}` | PUT: `{scope_key,body,rev}`; DELETE: `?scope_key=…&rev=…` | revised or deleted global record |
+| PUT | `/api/global-memory/{scope}/{id}/activation` | `{scope_key,rev,active:boolean}` | the owner or an admin activates or deactivates a global record for agent context and recall |
+| POST | `/api/agents/{id}/dm` | — | the existing or new private room for this user and agent in the agent's project |
+| GET | `/api/rooms/{room}` | — | room with the same live counts and preview as the project room list, plus the caller's `hidden` preference |
+| GET | `/api/rooms/{room}/mention-users` | — | `{logins}`: the human logins a `@login` mention addresses in this room, as server addressing reads them: its user room members plus, outside DMs, every active member of the project; same room access as the room itself |
+| GET | `/api/rooms/{room}/members` | — | read-only member list `{humans, agents, singletons}`: `humans` are `{id,login,role}` (a private chat's two people, or every active project member of an ordinary room, with the project role); `agents` are the room's agents as `{id,slug,role_key,role_label,role_emoji,singleton,desired,observed,revoked?,role_deleted?}`; `singletons` (empty for a private chat) lists each singleton role of the project as `{role_key,label,emoji,held_by}`, where `held_by` is `null` when vacant or `{agent_id,slug,in_this_room}` for the live agent holding it (the room it works in is never named). Same access as the room itself; nothing is changed |
+| PATCH | `/api/rooms/{room}/preferences` | `{hidden:boolean}` | change the caller's room view (`pinned` is not accepted: nothing is pinned) |
+| POST | `/api/rooms/{room}/read` | `{seq?:integer}` | advance the caller's server-side read cursor to `seq` (the room's newest message when omitted or above the newest); the cursor never moves backwards. Returns `{read_cursor,unread_count}` and emits `room_read_changed` (payload `user_id`) when it advances, so the user's other sessions refresh |
+| GET | `/api/rooms/{room}/read-receipts` | — | each member's read position as `[{member_kind,member_id,label,seq}]`: humans report their stored read cursor, agents the newest message they took into a turn (a note in `in_turn` or `done`) or wrote themselves, so an agent's marker moves past its own reply. Members who have read nothing are omitted. The web chat marks every member, the viewer and each sender included as v1 does, on the newest loaded message at or before their position and refreshes on `room_read_changed`, `message_created` and agent turn events |
+| POST | `/api/rooms/{room}/close` | `{lifecycle_rev,cascade?}` | 202 with `closing` room; 409 `open_children` unless cascade is confirmed, or `home_room` for the project home room |
+| POST | `/api/rooms/{room}/reopen` | `{lifecycle_rev}` | reopened room; no automatic agent respawn |
+| DELETE | `/api/rooms/{room}` | — | 204; the project owner removes an **archived task room** for good: its messages, reactions, notes, turns, inbox items, schedules, task notes, members and attachment rows and files are deleted. Its usage and cost records go with it. Events, memory records and an agent's home room that merely point at it keep existing with the reference cleared. An attachment file that cannot be removed afterwards is logged, not an error. 409 `room_not_closed` (archive first), `home_room`, `has_children` (remove child rooms first), `room_not_removable` (a private chat, or a room with a live worktree); 403 unless the caller is a project owner. Emits `room_removed` (payload `{room_id}`) |
+| GET/POST/DELETE | `/api/rooms/{room}/worktree` | `machine_id?`; POST `{enabled:true,base_ref?}`; DELETE `{force?,confirm?}` | status, opt in/retry, cancel a pending or failed opt-in while open, or remove from a closed room. Active agent checkouts block removal even with force. Dirty or unmerged work is preserved unless `force:true` and `confirm:"REMOVE <room-id>"` are supplied |
+| GET/POST | `/api/rooms/{room}/agents` | POST: `{role_key,tool,variant?,launcher_id?,model?,provider?,machine_id?,worktree?,base_ref?,resume_legacy?,confirm_v1_idle?}` and `Idempotency-Key`; `resume_legacy` (a person only) starts the agent from an imported v1 agent: its name, and its Claude Code session continued in v1's working folder (other harnesses start fresh under the name); refusals `not_found`, `already_started`, `invalid_name`, `name_in_use`, `tool_mismatch`, `v1_may_be_active` (needs `confirm_v1_idle`), `v1_folder_missing`, `session_not_found`, `needs_native` ([import](import-v1.md#start-as-v2-agent)) | agent cards / created agent; supply `launcher_id` (the harness) or a `variant` naming one (`native`/`docker` select the harnesses of those names); `launcher_id` takes precedence; omitted machine selects the host. The model must be one the harness lists (400 `model_unlisted` otherwise); with a `launcher_id` it may be omitted, which means the harness's default model |
+| GET | `/api/rooms/{room}/agents/{agent}/profile` | — | read-only detail of a member agent for the web's Agent profile panel: `native_session_id`, `session_started_at`, `start_mode`, `resume_command` (only for tools whose resume syntax is known, `claude` and `codex`, and only when the session id is known), `cwd` (always the agent's own checkout), `worktree` and `branch` (only when that checkout is the room's ready worktree on the agent's machine; an agent working elsewhere, such as a continued v1 session in its old folder, shows neither), `machine_name`, `launcher_name`, `project_name`, `repo_url`, `spawned_by`, `spawned_at`, `turns_today` and `cost_today` (the last 24 hours). Empty fields are omitted, never guessed. `resume_command` is omitted for a containerised launcher (it cannot be resumed from the host). A project **viewer** gets no `native_session_id`, `resume_command` or `cwd`. Same access as the room. It also answers for an agent that left the room but spoke in it, and for a sender that exists only in imported v1 history: the profile is then the session v1 recorded (`imported: true`, `native_session_id`, `resume_command`, `cwd`, `project_name`, `spawned_at` as v1's first-seen and `last_seen`), only for an id that wrote in this room. For an owner or operator it also carries `start` (what "Start as v2 agent" needs: `slug`, `tool`, `model`, `role_key`, `cwd`, `resumable`, `reason`, `v1_active`, `outside_folder`, and `started_agent_id`/`started_agent_slug` once started); a v2 agent started from one carries `resumed_from`. 404 otherwise |
+| GET | `/api/spawn-catalog` | `machine_id?` | the machine's harnesses with `launcher_id`, portable `launcher_name`, owner label, availability, `containerized`, `toolbox` capability and that harness's `models:[{id,label,note?,default?}]` (exactly one is the default; empty when the owner has listed none); omitted machine selects the host. A machine with no harness has an empty list; `supervisor_update_needed` is true when the connected supervisor predates harnesses |
+| GET | `/api/sounds` | — | `{sounds:[{id,name,kind,size?,uploaded_at?,ext?}]}`: the four bundled sounds (`builtin:chime`, `builtin:ding`, `builtin:beep`, `builtin:knock`, served from `/sounds/<name>.wav`) followed by uploads (`user:<id>`) in upload order |
+| POST | `/api/sounds` | multipart `file` (`.mp3` or `.wav`, at most 1 MB; the header must match the extension) | owner or admin; 201 with the new entry. 400 `invalid_sound` (bad extension, header or multipart), 413 `invalid_sound` beyond 1 MB, 409 `sound_limit` beyond 10 uploads |
+| GET | `/api/sounds/{sound}` | — | the uploaded file (`audio/mpeg` or `audio/wav`, `nosniff`, `Cache-Control: private, no-store`); any signed-in user |
+| DELETE | `/api/sounds/{sound}` | — | owner or admin; 204, removes the file |
+| GET | `/api/machines` | `project_id?` | without a project ID, owner sees all machines with approval/revocation state; with a project ID, project members (including the owner) see only approved, unrevoked picker choices; both include host marker, connection, last seen, and supervisor version; with a project ID the host row also carries `project_worktree` (`{ok, code?, reason?}`: the server's own worktree check on the project folder, so the Spawn dialog offers a worktree only where one can be made and says why when not, e.g. `not_git_repo`, `not_git_root`, or `git_unusable` with git's reason such as dubious ownership; absent when not known) |
+| GET | `/api/machines/{id}/harnesses` | — | legacy compatibility view of the six supervisor-discovered harness rows and recent setting changes |
+| PUT | `/api/machines/{id}/harnesses/{tool}/{variant}` | `{enabled,override_path}` | legacy compatibility setting endpoint; it does not change a named launcher on updated supervisors |
+| GET/POST | `/api/machines/{id}/launchers` | POST: `{tool,label?,name?,command,args,env_refs,enabled,containerized,agent_server_url?,path_maps,visible_roots,supports_toolbox}` | owner or admin sees the machine's harnesses (stored as launchers; nothing is seeded): config with `label`, observed availability/version, active agent count, each harness's `models:[{slug,label,note,default}]`, and change activity; POST creates a harness after connected supervisor validation. An omitted `label` is the family's name ("Claude Code", plus " (Docker)"); an omitted `name` is `native` (or `harness-docker`) when the machine has no such harness for the tool, otherwise a unique slug of the label. `docker` is reserved |
+| PUT/DELETE | `/api/machines/{id}/launchers/{launcher}` | PUT: full launcher definition; DELETE: — | owner or admin edits or removes a harness (its models go with it); an active or stopping agent, including a revoked one, or an in-flight switch targeting it returns 409 |
+| PUT | `/api/machines/{id}/launchers/{launcher}/models` | `{models:[{slug,label,note?,default?}]}` | owner or admin replaces a harness's whole model list, atomically (works while the machine is offline). Slugs match `^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$` (OpenCode: `provider/model`), labels are at most 80 characters, notes at most 280, at most 64 models, and a non-empty list has exactly one default; otherwise 400 `invalid_models` and nothing changes. A keyed spawn or switch retry still replays its stored result after its model is removed. An agent whose model is no longer listed starts with the harness default (its model is updated and the change is logged as `model_default` in the activity) |
+| POST | `/api/machines/{id}/launchers/detect` | — | owner or admin asks the machine's supervisor which harnesses are installed (PATH plus the usual user-level install directories, once per real file, with versions). Candidates only: `{candidates:[{family,command,containerized,version?,label,already_added}]}`; nothing is saved. 503 when the machine is offline or its supervisor predates detection; 502 `detect_failed` |
+| POST | `/api/machines/{id}/launchers/{launcher}/models/detect` | — | owner or admin asks for the models a harness offers: Pi `pi --offline --list-models`, OpenCode `opencode models`, Codex `codex debug models --bundled` (the models it lists), run by the supervisor on the machine; Claude from the Anthropic Go SDK's published `message.go` (fetched by the server only on this call, 5 s, ETag-cached, with a built-in list when unreachable). Candidates only: `{candidates:[{slug,label,note?,already_listed}],source}` with `source` `harness`, `github`, `cache` or `snapshot`; nothing is saved. 400 `detect_unsupported` for a Docker wrapper; 502 `detect_failed` with "Add the model ID manually" |
+| POST | `/api/machine-pairings` | `{name}` | owner creates a single-use, 10-minute token and copyable supervisor command |
+| POST | `/api/machine-pairings/redeem` | `{token}` | allowlisted token exchange, rate-limited per submitted token and client IP; returns pending machine ID and key once |
+| GET | `/api/machines/{id}/pair-status` | machine bearer key | pending/approved state for the paired supervisor; revoked keys get 401 |
+| POST | `/api/machines/{id}/approve` | — | owner approves a pending machine |
+| POST | `/api/machines/{id}/revoke` | — | owner revokes a remote machine and closes its socket immediately |
+| GET | `/api/projects/{project}/machine-folders` | — | effective folder per unrevoked machine; host uses the project folder |
+| PUT | `/api/projects/{project}/machine-folders/{machine}` | `{folder}` | owner/operator sets an absolute, clean remote folder path |
+| GET/POST | `/api/roles` | POST: `{role_key,label,emoji,body,extends?,cardinality,cap_is_lead,cap_can_spawn,cap_singleton_writer}` | global role definitions (each with `extends` and a read-only `resolved_body`) / created definition; roles are global only, so a `project_id` on a write is `400 invalid_request` and on the list is ignored |
+| PUT/DELETE | `/api/roles/{id}` | PUT: full definition with `rev` (an omitted `extends` clears it); DELETE: `?rev=…` | revised definition / 204; `409 role_extended` while other roles extend it |
+| POST | `/api/roles/{id}/reset` | `{rev}` | the owner or an admin restores a built-in global role (id ending `_default`) to its shipped name, emoji, instructions, parent, cardinality and capabilities; returns the definition (with `resolved_body`); `400` for a role that is not built in, `409 stale_rev`, or `409 role_in_use` when live agents hold it with other capabilities or cardinality |
+| GET/PUT | `/api/macros` | PUT: complete `{key:body}` map | shared composer macros; any signed-in user reads, instance owner replaces (CSRF required) |
+| GET | `/api/settings-backup` | — | owner or admin download of the instance's settings (an admin's file leaves out `quota_switcher` and `limit_guard`: they decide over the owner's logins, and only the owner can apply them) as `{schema:"aimebu-settings-backup", version:1, exported_at, macros, roles, retention, quota_switcher, limit_guard}`; each section is present only when it has content. `roles` are the **global** ones only; `quota_switcher` and `limit_guard` are the saved per-tool configurations (a tool on its defaults is left out) and appear only while the switcher runs. Built field by field, so it never contains credentials, tokens, provider secrets, machines, users or sessions. The web UI adds a `ui_prefs` section of its own (browser preferences, named by what they are) |
+| POST | `/api/settings-backup/preview` | `{backup}` | owner-only; saves nothing. Per section `{section, new, overwrite, unchanged, invalid:[{key,reason}], unavailable?}`, `ignored` (top-level members this version does not know) and a `digest` of the plan. 400 `invalid_request` for a wrong `schema`, 400 `unsupported_version` for a `version` other than 1 |
+| POST | `/api/settings-backup/apply` | `{backup, digest, sections?}` | owner-only; `409 preview_stale` unless `digest` is the one a preview of the same file answered against the current state: the digest covers every step and the current value of each entry it would overwrite (or that it is absent), so a different file, or an edit of any of those entries after the preview, is refused. `sections` chooses a subset: absent means every section that has changes, and a present but empty list means none. Sections apply in a fixed order (macros, spawn_models, retention, quota_switcher, roles) and independently; within a section an entry that cannot be saved is reported in `failed` while the rest still apply, so a partial import is possible and is never silent. Returns `{sections:[{section,applied}], failed:[{section,key,error}], complete}`. Matching macros and roles (by key) are overwritten, nothing is deleted; model lists belong to the harnesses now, so a `spawn_models` section in an older file is not imported and the preview lists it under `ignored`; body limit 4 MiB |
+| GET/POST | `/api/rooms/{room}/control` | POST: `{action:"pause"|"stop"|"resume",rev}` and `Idempotency-Key` | room bulk control state and per-agent results |
+| GET/POST | `/api/projects/{project}/control` | POST: `{action:"pause"|"stop"|"resume",rev}` and `Idempotency-Key` | project bulk control state and per-agent results |
+| GET/PUT | `/api/usage-limit-default` | PUT (owner): `{daily_cost_cap?,daily_turn_cap?}`, null or absent = no limit | the global default daily limits every project inherits (any signed-in user may read it; `can_edit` says whether the caller may change it); changing it re-checks the projects that inherit it: for each field (cost, turns) whose default actually changed, today's Continue raise on a project that inherits that field is cleared (a field the project sets itself, or one whose default is unchanged, keeps its raise), so a raised default lifts the pause the old one caused; saving the values it already has does nothing |
+| GET/POST | `/api/rooms/{room}/schedules` | POST: `{target_agent_id? ,target_lead?,body,kind,timezone,at?,interval_seconds?,local_time?,weekday?}` | task-room schedules / created schedule |
+| PATCH/DELETE | `/api/rooms/{room}/schedules/{id}` | PATCH: `{enabled,rev}` | pause/resume or delete a schedule |
+| GET/PUT | `/api/projects/{project}/usage-limit` | PUT: `{cost_mode?,daily_cost_cap?,turn_mode?,daily_turn_cap?,rev}`; a mode is `inherit`, `custom` (needs its value) or `none`; without modes a value means custom and null means none | the project's daily limits (all its rooms together), the caps in force, `inherited_cost_cap`/`inherited_turn_cap` (the global default), measured totals, and effective state |
+| POST | `/api/agents/{id}/control` | `{desired,rev}` | updated agent card |
+| POST | `/api/agents/{id}/switch` | `{room_id,tool,variant,launcher_id?,model,machine_id?,rev}` and `Idempotency-Key` | 202 agent card with pending switch; `launcher_id` takes precedence over `variant`; omitted machine keeps the current one; 200 on keyed replay |
+| GET/POST | `/api/rooms/{room}/messages` | GET: `limit=1..500` (default 200), one of `after=<seq>`, `before=<seq-or-id>`, or `around=<seq-or-id>`; `thread_root=<id>` filters to that root's replies with the same cursor choices. POST: `{body,reply_to?,thread_root?,attachments?:[id]}` | GET returns ascending messages: latest page by default, exclusive newer or older page with `after` or `before`, a context page containing `around`, or matching thread replies. Each GET message includes reactions and the full `thread_count` for its root, including replies outside the page. Agent `needs_attention`, `proposed_answers`, `open_questions`, `visual_plan`, and `appendix_pages` appear when present. A message from a person carries `author_name`, the person's login, next to `author_id`, so a client shows a name rather than the account id. POST creates a user message with attachment metadata and includes `thread_count` for a thread reply when the count lookup succeeds; the saved reply still returns 201 if that lookup fails. A GET also returns `expirable` on every message: true only for AI group chatter that message expiry may leave out of an agent's context (see [message expiry](retention.md)) |
+| GET/POST | `/api/rooms/{room}/task-notes` | POST: `{body}` | `{can_edit,records,cap_bytes}` / created task note |
+| PUT/DELETE | `/api/rooms/{room}/task-notes/{id}` | PUT: `{body,rev}`; DELETE: `?rev=…` | revised or deleted task note |
+| POST | `/api/rooms/{room}/attachments` | multipart `file`, any type ≤10 MB | staged `{id,name,mime,size,url,width?,height?}` (`width` and `height` are the pixel size of a PNG, JPEG or GIF, omitted when unknown, and are carried on a message's `attachments` too, so a thumbnail can hold its place); room access and CSRF required |
+| DELETE | `/api/rooms/{room}/attachments/{attachment}` | staged upload owned by caller | 204; discards unused file |
+| GET | `/api/attachments/{attachment}` | — | file bytes; caller must have access to the file's room (project membership for normal rooms, DM peer membership for DMs). Only PNG, JPEG, GIF, and WebP stay inline; every other MIME type downloads with an attachment filename (a fallback if the stored name is empty). Attachment responses use `nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`. |
+| GET | `/api/agent/attachments/{attachment}` | agent key | file bytes only for a note delivered in the caller's live turn while still a room member; used by `attachment_get`; same download and security headers as the user attachment route |
+| GET | `/api/agent/turns/{turn}/attachments/{attachment}` | turn-scoped attachment bearer | file bytes only for that live turn and current room membership; used by Pi Docker; same download and security headers as the user attachment route |
+| POST | `/api/inbox/{item}/answer` | `{body,rev}` and `Idempotency-Key` header | answer message; 200 on keyed replay, 201 on first answer |
+| POST | `/api/inbox/{item}/decision` | `{choice,rev}` and `Idempotency-Key` header | recovery or daily usage-limit decision `{item_id,choice,turn_id?,rev}`; 200 on keyed replay, 201 first time |
+| POST | `/api/inbox/{item}/dismiss` | `{rev}` | dismiss an open delivery-failed notice; owner, operator, or DM peer; 204 on success, 409 on stale revision or resolved item |
+| GET | `/api/system-events` | `limit?` (1–500, default 100) | newest-first operational events the caller may see (`events`, same shape as the live stream) and the `kinds` list the web client uses to filter live events; joins, spawns, recovery, quota, machine and access changes, never chat bookkeeping such as `message_created` or reactions. Private chats only for their members; events with no project (user, machine, session, and agent-key changes) are visible to the instance owner only, in this list and on the live stream |
+| GET | `/api/messages/{message}/debug` | — | debug inspector view of one message: the stored record (`message`, with `ask`, `proposed_answers`, `open_questions`, `visual_plan`, `appendix_pages` as parsed JSON), `addressed_to`, an `addressing` trace (for each @token: how it was read — group tag, full ID, slug, project-qualified, role, revoked, none — whether it was `addressed`, `ambiguous`, `no_match`, `ignored` (inside backticks, a code block, or escaped, and only when it would have reached someone, with `would_reach` naming them; code such as Java annotations is not reported), `self`, or `empty`, who it reached, and why; plus reply and private-chat sources, and a `drift` flag when re-reading the body against the room as it is now would address someone the recorded targets do not include; never set for an inbox answer, whose targets the answer fixes), per-agent wake `notes` (state, `wake_reason`, the turns that carried the note and their receipts), and related `events` (including `message_not_woken` reasons). Same room access as reading the message; long stored text, including the body, is truncated at 8 KiB on a character boundary; related events are those of the message's own room |
+| GET | `/api/messages/{message}/reactions` | — | reaction entries |
+| PUT/DELETE | `/api/messages/{message}/reactions/{emoji}` | — | 204; add/remove one Unicode emoji sequence for the user; DELETE accepts older stored reactions up to 128 bytes; unchanged reactions emit no event |
+| PUT/DELETE | `/api/agent/messages/{message}/reactions/{emoji}` | agent key | 204; add/remove one Unicode emoji sequence in a joined room; DELETE accepts older stored reactions up to 128 bytes; unchanged reactions emit no event |
+| GET | `/api/events?after=<seq>` | WebSocket upgrade | event stream: project events for project members (private chats for their members), events with no project for the instance owner only; owners also get transient `{type:"usages_updated"}` frames (no `seq`, never replayed) |
+| GET | `/api/events/cursor` | — | `{seq}` current global event watermark |
+| GET | `/api/inbox` | — | open questions, approvals, recovery, and delivery failures visible to authorized project members and private-chat peers |
+| GET | `/api/agent/rooms` | active or not-accepting agent key | rooms where the caller is an active member, including archived rooms; no message previews |
+| GET/POST | `/api/agent/rooms/{room}/schedules` | joined agent key; POST requires active lead, schedule fields above and `Idempotency-Key` | list or create task-room schedules |
+| POST | `/api/agent/rooms` | active lead key; `{title,parent_id?}` and `Idempotency-Key` | create task room beneath the home room by default or a joined parent, join the lead, and post one parent-room system notice |
+| POST | `/api/agent/rooms/{room}/close` | active lead key; `{lifecycle_rev,cascade?}` and `Idempotency-Key` | begin the ordinary closing grace period for a joined task room; parent-room notice and agent actor audit |
+| GET | `/api/agent/usage-left` | agent key | project live-agent and spawn-rate headroom plus provider session/weekly percent left and reset time; provider status is `unknown` when no snapshot is available |
+| POST | `/api/agent/memory` | agent key; `{scope:"project"|"task"|"user_profile"|"agent_shared_notes",room_id?,scope_key?,body,source_message_id?}` | created fact, profile, shared note, or task note; source ID is accepted for project/global records only and must belong to a joined, memory-enabled room in the caller's project |
+| GET | `/api/agent/memory` | agent key; `scope`, optional `room_id` or `scope_key` | list caller-visible records in one scope; project and global results include active records only |
+| PUT/DELETE | `/api/agent/memory/{id}` | agent key; scope query as above; PUT `{body,rev}` or DELETE `?rev=…` | revised or removed record; stale revision returns `current` |
+| GET | `/api/agent/recall` | agent key; `query`, optional `limit` (1–10) | ranked matching project facts, joined task notes, and joined room messages |
+| GET | `/api/agent/macros` | agent key | read-only shared composer macro map (managed agent `list_macros`) |
+| POST | `/api/agent/agents` | agent key; `{room_id,role_key,tool,variant,model,provider?,machine_id?}` and `Idempotency-Key` | lead-only individual agent spawn in the caller's project |
+| POST | `/api/agent/agents/{id}/stop` | agent key; `{rev}` and `Idempotency-Key` | lead-only stop in the caller's project; system room notice and agent actor audit |
+
+The import dry-run response has `digest` and `report`. A completed import job
+also includes `report`. Both reports contain `imported`, `already_present`,
+and `skipped` count maps. `skipped_memory` lists each excluded v1 memory record
+as `{id,scope,scope_key,reason}`; it is empty when every selected record is
+imported. If profiles mapped to one v2 user exceed the 2048-byte profile cap,
+the wizard's Check error points to **Skip global user profiles**.
+
+A role may **extend** another role by key. The instructions an agent receives are the parent's resolved body, a blank line, then the
+role's own body, each trimmed; a role with no parent (or whose parent is gone) gives its own body untouched. A role cannot extend
+itself or make a cycle, an `extends` that names no role is refused,
+and a chain may hold at most five ancestors (all `400 invalid_extends`). A role that others extend cannot be deleted
+(`409 role_extended`). The built-in specialist reviewers (`sec-reviewer`, `test-reviewer`, `ux-reviewer`) extend `reviewer` and hold only
+their own focus; the dispatcher sends the resolved body, so their agents receive the same text as before. Migration 54 converts the
+unedited ones and leaves an edited specialist as its owner made it. An unedited specialist follows the **current** `reviewer`, so editing `reviewer` changes what every unedited specialist's agents receive (the same as v1, where specialists were built on the reviewer text).
+
+The web composer opens a quick-command popup when the draft starts
+with `/`: it lists the built-ins `/archive` (archives the open room through
+`POST /api/rooms/{room}/close`, with confirmation) and `/spawn` (opens the
+Spawn dialog), navigable with ↑/↓/Enter/Esc.
+
+Macros are a separate shared resource. A fresh install is seeded once with
+the shipped defaults `do-cr` and `example_macro`; the seed is write-once per
+key, so a default the owner edits or deletes is never re-created or
+overwritten, an existing key keeps its body, and a key the v1 import ledger
+already records is never re-seeded. Keys match `^[a-z][a-z0-9_-]*$`;
+there are at most 256, and each body is at most 16 KiB in UTF-8 bytes.
+Settings → Macros is read-only for other users and editable by the instance
+owner. Typing `<KEY>` anywhere in the composer offers case-insensitive
+prefix matches. Selecting one inserts expanded text into the editable draft;
+nested references expand to depth 8, and `\<KEY>` inserts literal `<KEY>`.
+Escapes also work inside macro bodies. Expansion stops before exceeding
+16 Ki UTF-16 code units of inserted text and leaves remaining references literal. Unknown
+references remain literal. Message send stores the draft verbatim.
+
+Typing `@` after whitespace in the composer (main and thread) offers `@mention`
+candidates for the open room, filtered by prefix and navigable with
+↑/↓/Enter/Tab/Esc: group tags (`@everyone`, `@all`, `@channel`, `@here`,
+`@humans`, `@ais`), then assigned role keys, then agent slugs from the room's
+agent cards and human logins from `GET /api/rooms/{room}/mention-users`
+(in an ordinary room that is every active project human, because they can read
+it; a DM offers only its two peers). The login list is refetched when the room
+changes, when the composer gains focus and the list is older than 30 s, and
+immediately on a project `project_member_changed` / `user_invite_redeemed`
+event. Agent
+slugs and human logins share one namespace, as in server addressing: a role key
+that is also a slug or login is not offered as a role, a colliding human login
+is not offered, and when two agents share a slug the full `@slug@<project_id>`
+form is inserted. Sent messages highlight a mention only when it resolves under
+the same order (group tag, unique slug/login, `slug@<project id>`, else role
+key). This is narrower than the server, which also accepts member-ID tokens and
+`slug@<project name>`; those go unhighlighted. Fenced, inline and indented code,
+link text, and `\@` escapes are never highlighted.
+
+Project memory defaults off per project. Turning it off preserves saved facts
+for the human viewer, but excludes them from agent turn context and recall and
+blocks writes. Task notes stay available in task rooms regardless of that
+setting. Owners/operators and active room agents may edit; viewers read only.
+Each scope has a 4096-byte total body limit; one body is at most 2000 Unicode
+characters. Updates and deletes require the current revision and return
+`stale_rev` (409) if another edit won. A normal agent turn receives a
+`knowledge` context object containing the project memory flag, enabled facts,
+and notes for its task room. For a pi agent whose model name contains `gemma`
+the object is trimmed to a shared 2048-byte budget of record bodies: the
+record that crosses it is truncated and later records (profiles, shared notes,
+task notes) are dropped. `memory_recall` returns at most ten matches,
+returns `memory_disabled` while project memory is off, excludes rooms with a
+restrictive memory override, and does not advance message cursors.
+Global user profiles are keyed by v2 user ID and capped at 2048 bytes per
+user; shared agent notes use scope key `global` and a 4096-byte cap. Both
+retain the 2000-character body and revision rules. Humans with project access
+can inspect them even while project memory is off; only the installation
+owner can curate them as a human. Agents in memory-enabled projects can add
+global records, and active records reach agents in every memory-enabled
+project. Imported v1 records are ordinary and active on arrival. Profiles follow v1's trusted workspace model
+and are visible across projects.
+
+Roles are global only and defined by the instance owner; changing a role's capabilities needs the same authority.
+Migration 64 retired project roles: a live project role became global when no global role had its key (the first by id when several
+projects defined it) but without its lead, can-spawn or writer capabilities, which the owner sets again in Settings → Roles; any other was dropped with a log line and its agents moved to the global role of that key, and a deleted one stays
+as history. A role used by a live agent cannot be deleted. Deleting a role preserves stopped agents' historical
+cards, marks their role as deleted, and frees its key for a new definition;
+those stopped agents cannot reactivate with the deleted role. A role key is
+a live `@mention`, so creating a role whose key equals the slug of a live
+agent or the login of an active human fails with
+`409 role_name_collision`. Only live agents hold a
+name: stopped and revoked agents do not, and a revoked agent that is still a
+room member never hides `@role` from its live holders. New agent slugs skip
+visible role keys for the same reason. 
+An owner or operator can switch an active or paused agent to another model or tool
+listed by the selected connected supervisor, from a room where it is an
+active member and the lifecycle is open. The request uses the card's
+`desired_rev` as `rev`; a stale revision fails with 409, an unlisted choice
+with 400, and an unavailable adapter on that supervisor with 503. Omit
+`machine_id` to stay on the current machine. To move an agent, set its target
+machine and first map the project's folder there. A missing mapping returns
+`machine_folder_missing` (409). The switch waits for the old turn to settle,
+then moves the checkout and writer reservation, rotates the agent key, and
+starts a fresh generation. The handoff warns that target files may differ.
+The
+response retains the same agent ID, role, and room membership, with a
+`switch` object containing `state`, target `tool`, `variant`, and `model`.
+The state is `draining` while the current turn finishes, then `starting`
+while the fresh generation is spawned. An agent that was paused before the
+request returns to `not_accepting` after the new spawn is confirmed. On
+success, `switch` is omitted.
+On spawn failure it has `state:"failed"` and a short `error`; the agent card
+remains visible for another switch, including the same target, or manual
+Stop/Reactivate. Either successful control clears the failed state so it
+cannot block future dispatch. New messages queue
+during the handoff. A system handoff message addressed to the agent includes
+up to eight recent messages from one of its own joined rooms, never content
+from another room. Replaying the same idempotency key returns the current
+card and does not request a second switch. A manual Stop during a pending
+switch cancels that switch.
+
+Room responses include `lifecycle`, `gate`, `lifecycle_rev`, and `closed_at`
+when closed. Owners and operators may close or reopen ordinary non-home rooms.
+A private chat's human peer may close or reopen it regardless of project role;
+the project owner may do so even when they are not the peer. Other members
+cannot manage that private chat. Closing blocks dispatch immediately,
+withdraws open questions and approvals, and
+waits up to 30 seconds for running turns before requesting Stop for agents
+spawned in that room. Agents merely joined to it keep running in their home
+room. A dispatcher pass finishes the close, holds pending outbox messages
+with `room_closed`, and preserves room history and recovery items. Reopening
+restores the gate to the room's bulk control state without respawning agents
+or restoring withdrawn inbox items. Both mutations reject a stale
+`lifecycle_rev` with `stale_rev` (409).
+Inbox entries include `room_lifecycle` so recovery items in closed rooms can
+be labeled "in archived room".
+Room and project control GETs return `desired`, `effective_state`, `rev`, and
+persisted `failures` (`agent_id`, `action`, `error`) when a Pause or Stop has
+not yet applied to an agent.
+Only owners and operators may mutate them. Pause sets the existing dispatch
+gate and transitions active agents to `not_accepting`; Stop requests ordinary
+per-agent Stop. Room controls select current agents whose home room is that
+room; non-home room gates pause dispatch without changing the agent. Private
+DMs reject bulk mutations with `invalid_scope` (409). Each scope records
+its own hold; Resume releases that hold and restores the agent only after all
+overlapping room and project holds are gone. Agent revisions still distinguish
+a later individual control, which takes precedence over bulk restoration.
+Queued notes survive pauses. The project gate blocks dispatch in every room.
+Each changed scope emits one audit event and one system notice (in the
+project home room for project controls); replaying its idempotency key emits
+neither. Per-agent Pause/Stop transition failures appear in ordered `results`
+while the scope gate still changes. Failed Pause/Stop agents are recorded and retried by
+repeating that action with a new key and the current scope revision, even when
+the scope already has the requested state. A stopped process may need to
+finish exiting before Resume can restore it. An early Resume returns 409 and
+keeps the hold, failure records, and dispatch gate; retry with a new key and
+current scope revision after that process exits.
+Schedules are available only in open task rooms and have at most 20 active
+entries per room. The note is limited to 2000 characters and 8000 bytes;
+intervals are at least 300 seconds. `kind=once` uses `at` as an RFC3339
+instant; `interval` uses `interval_seconds`; `daily` and `weekly` use
+`local_time` (`HH:MM`) in the named IANA `timezone`, with weekly `weekday`
+0=Sunday through 6=Saturday. Responses include UTC `next_run_at`, creator,
+target, last outcome/reason, and revision. Pausing or resuming uses a matching
+revision. Closing a room disables schedules, and reopening does not resume
+them. A delayed server catches up one occurrence per schedule. While a gate
+or target prevents delivery, runs are skipped, recorded, and surfaced by a
+room notice on each changed skip reason. A spring DST gap advances to the
+next valid local minute; a fall overlap runs at its first occurrence only.
+
+Daily limits belong to a project and count the spend of all its rooms together;
+there are no room limits. A project's cost and turn limits are each inherited
+from the global default, its own value, or none. Usage-limit GETs return the
+caps in force (`daily_cost_cap`, `daily_turn_cap`), `cost_mode`, `turn_mode`,
+the inherited defaults, `daily_cost`, `daily_turns`,
+`cost_coverage` (`known`, `partial`, or `unknown`), `day_start`, `tz`,
+`desired`, `effective_state`, and `rev`. The day begins at midnight in the
+server's local time zone, including daylight-saving transitions. A turn
+counts when it starts; cost is the sum of reported cost records dated in
+that local day. A turn with unknown cost still counts toward the turn cap.
+At 80% of either cap the server posts one notice and an informational inbox
+item. At 100% it pauses dispatch for the project and opens a `usage_limit`
+inbox item. Continue displays the raised cap, raises it to at least twice
+the reached cap for that day, and clears only the budget-owned gate. It can
+be chosen once per day. Abandon keeps the scope paused. At the next local
+midnight the budget
+gate clears, prior manual control remains in force, and the room receives a
+reset notice. Project notices appear in its home room. Updating or removing
+a cap above the day's measured usage also clears a budget pause. Saving a
+project's limits clears that day's Continue raise; changing the global default
+clears it only for the field a project inherits, and only when that field's
+default changed.
+An unresolved lost turn on a home agent can keep a room in `closing` until
+reconciliation; the server emits one `room_close_blocked` event per blocked
+agent with `reason:agent_stop_invalid_transition`.
+
+The owner-only usage endpoint reads the v2 cache under `AIMEBU2_CONFIG_DIR/usages/`.
+Set `AIMEBU2_USAGES=0` to disable credential reads and background requests;
+`/api/usages` then returns 503. Enabled providers refresh in the background
+on the stored interval (120 seconds by default, minimum 15). The response
+contains ordered, normalized profiles for Codex, Claude Code, GitHub Copilot,
+Mistral, and Ollama Cloud. Copilot, Mistral, and Ollama each use one `local`
+profile; Codex and Claude retain their account-switcher views. The endpoint
+requires the global owner session and never returns credential values.
+
+Owner-only Settings routes use CSRF-protected POST requests:
+`/api/usages/providers` changes a provider's enabled state;
+`/api/usages/settings` changes refresh interval, percent display, provider order, or the
+`token_auto_refresh` setting (legacy alias `claude_auto_refresh`; see
+[usages](usages.md#auto-refresh-tokens-account-maintenance));
+`/api/usages/refresh` fetches current snapshots;
+`/api/usages/mistral/config` saves or clears a Cookie header;
+`/api/usages/ollama/config` sets auth mode, API key, or Cookie header;
+`/api/usages/copilot/login/start`, `/poll`, and `/logout` implement the
+server-side GitHub device flow. The first poll response returns only status,
+never the token. Secrets live in `usages/config.json` with mode 0600 and the
+v1 JSON format. The cache and API responses contain no secrets. See
+[usage snapshots](usages.md) for setup and provider behavior.
+
+Project responses set `repo_url` to `null` when absent. Message responses
+expose `targets` as a JSON array and omit the raw `targets_json` column.
+Project room lists and single-room details include read-only `member_count`
+(active project humans, or a private chat's own people, plus room agents; a disabled
+user counts nowhere), `message_count`, and an optional
+`last_message_body` preview (at most 160 characters) and `last_activity_at` (the newest message's time, else the room's creation, which orders the room list). Both include the
+signed-in user's `hidden` flag, plus per-user read state:
+`read_cursor` (highest read message `seq`), `unread_count` (messages after the
+cursor; posting a message advances the author's own cursor to it), and `attention_count` (open inbox entries
+the user can see in that room, the same set `GET /api/inbox` returns). Read
+cursors are stored on the server (`room_read_cursor`), so unread state is
+shared across browsers and devices; the web UI marks the active room read
+through `POST /api/rooms/{room}/read` and shows a 🔔 on rooms
+with open inbox entries. Migration 43 baselines existing rooms as read; a room or
+user with no cursor row counts every message as unread.
+The v1 import preview returns `rooms`, `humans`, `destination_users`, and
+`memory_projects` as arrays, including `[]` when a category is empty, plus
+the backed-up global `macros` map, `macro_defaults` keys,
+`imported_macros` and `imported_roles` keys already in the
+source ledger, source role previews, enabled host launcher choices,
+`v1_memory_enabled`, and a skipped-settings list with reasons. Room previews
+identify restrictive v1 memory overrides. Import maps may choose
+`enable_project_memory` per destination project, and `role_conflicts` per key; the report lists role
+conflicts plus skipped roles with reasons. v1 fleets are not imported and show
+in the report's not-carried counts. Each room's `members` is likewise an array. The preview exposes
+identifiers and counts rather than message or memory bodies; role and macro
+text is shown for
+owner conflict review.
+Reaction entries include `member_name` for a readable tooltip while retaining
+`member_id` for identity and toggling.
+Room agent cards include optional `last_activity_at` (latest server event for
+that agent) and `machine_last_seen` (latest supervisor heartbeat). These are
+different clocks; the latter does not prove that the agent itself was active.
+Cards also include `health_flags`, each with `code` and optional `since` or
+`reset_at`. Codes are `stuck`, `out_of_quota`, `machine_offline`,
+`held_answer`, and `recovery_waiting`. `GET /api/health` returns the same
+flags for every agent in a room visible to the caller, with `room_ids` for
+room badges and one entry per agent for the overall count. Machine offline
+uses the server's current supervisor connection, not its last heartbeat.
+An agent is stuck when a running turn has no server-recorded activity or
+usage for longer than `AIMEBU2_STUCK_MINUTES` (default 10). The UI refreshes
+time-derived flags every 30 seconds. The top-bar health list shows one plain
+sentence per flag ("Ada looks stuck", "An answer to Bert could not be delivered",
+"Bert needs a recovery decision"); choosing one opens the matching Inbox item
+(variant A) or the room with its inline callout (variant B) for `recovery_waiting`
+and `held_answer`, and the agent's room for the other flags.
+Listed room agent cards also include optional `latest_usage` with nullable
+`tokens_in`, `tokens_out`, `context_used`, `context_window`, and
+`cost_so_far`. Context values come from the latest reported usage in the
+agent's current generation; cost is the sum of costs reported for the agent.
+For Claude Code, context used comes from the last assistant message's prompt
+usage in the main thread when present; assistant events from sub-agents are
+ignored. The result's usage can sum several model calls. The web
+gauge caps its percentage label at 100% while retaining raw tokens in the
+tooltip.
+Absent values are unknown, not zero. Usage and compaction events refresh cards
+through the live event stream. A compaction creates one system room message
+with the reported before/after token counts; missing counts appear as `—`.
+Inbox entries include `agent_id` when present. Recovery rows include
+`turn_id` for uncertain turns and `diagnostic_report` when available. Rows
+without a `turn_id` are loop budget items.
+Posting an inbox answer resolves an open question or approval and queues the
+requester in the same transaction. Project owners and operators may answer
+questions; only project owners may answer ordinary approvals outside private
+chats. In a private chat its human peer may answer either ordinary kind
+regardless of project role. Boundary admission remains owner-only. A repeated
+idempotency key returns the original message; a changed
+answer with that key returns `conflict`. A stale revision returns `stale_rev`.
+Uncertain-turn recovery items carry Resume, Retry, and Abandon; loop-budget
+items carry Continue and Abandon. `choice` is the lowercase form of the
+button label. Project owners and operators may decide recovery in every room.
+The human peer can view a private-chat recovery item, but only a project owner
+or operator may decide it. Owners and operators can see those recovery items
+without joining the private chat because recovery blocks the agent across
+rooms. The inbox row's `can_decide` field lets the UI show peer recovery as
+read-only. Owners and operators receive recovery inbox events for those
+private chats without receiving their ordinary room events or messages.
+A folder-boundary approval uses the same decision endpoint with
+`choice:"approve"|"deny"`. Only the project owner may decide it. The item
+includes `boundary_pending`, `boundary_machine`, `boundary_path`, and
+`boundary_requester`; agent cards carry `boundary_pending` until the request
+is resolved and `boundary_grants` lists prior machine/path approvals. The
+project machine picker reports `project_allowed`. The approval question says
+that approval admits the machine for the whole project. Owners can see a
+boundary approval opened from a private DM without joining that DM. Remapping
+a machine folder withdraws pending approvals against its old mapping and
+opens fresh requests for held transitions. An
+approved remote machine is usable only after its project folder is mapped and
+verified by a connected supervisor advertising path preflight support. An old
+supervisor is rejected before a probe frame is sent. A missing host folder or
+unverified remote folder returns `folder_unverified` before agent creation.
+
+A stale `rev` or newer turn evidence returns `stale_rev` (409);
+the same key replays the
+original decision. New source-turn evidence increments the open item's `rev`,
+so clients can reload and decide against the refreshed evidence. Recovery
+rows include `agent_id`, `turn_id`, `turn_exec`,
+`turn_outcome`, and `diagnostic_report` when available. A lost process item
+warns that the old process may still be running and no diagnostic was run.
+After Resume/Retry on a lost turn, another open item has
+`recovery_phase:"quiescence_wait"` and shows the waiting state. Its choices
+are Override (`choice:"override"`, explicitly accept the risk that the old
+process can overlap and repeat an action) or `abandon`; it resolves
+automatically only when the supervisor positively reports the process gone.
+An absent journal entry after replacement is insufficient. The override actor
+and risk are recorded.
+Resume sends the original notes with evidence and a continuation instruction;
+Retry sends the notes raw and may repeat an action. Abandon aborts those
+notes without changing the agent's desired state. Continue resets the loop
+budget and makes the agent active again. Resume/Retry while the agent is not
+active return `invalid_transition` (409); Abandon remains available.
+`auto_resume_after_clean_diagnostic` defaults to false. Enabling it can
+repeat an action: a model's clean report may miss unobserved effects such as
+a network write. The server uses the setting snapshotted at diagnostic
+admission and records `system (auto-resume setting)` as the decision actor.
+Delivery-failure items link to the room and include `held_reason` and a
+redacted `delivery_error` from the parent or correction receipt, plus a
+240-character candidate preview with credentials redacted. The originating
+room receives a system notice with the fixed held reason when open;
+the candidate preview remains visible only in the authorized Inbox. They
+resolve only when an answer for the same originating turn commits. Neither kind
+uses the inbox answer endpoint for questions and approvals.
+Provider-limit failures recognized from Claude `limit reached`, Codex
+`usage limit`, or a Pi or OpenCode provider error naming a usage, weekly, hourly, daily or
+monthly limit (a plain rate limit or 429 is not enough) process evidence are recorded as failed turns without starting
+recovery. Their attempted notes return to the queue. If the turn reported
+activity beyond startup or usage, those notes carry `retry_notice` telling
+the agent to check the state before acting; a limit before the first tool
+call can retry without the notice. Later queued work waits behind the same
+provider-limit gate. An owner or operator receives one informational inbox
+item with a `Retry now` action. A parsed reset time appears on the item and
+health flag and clears the gate automatically when reached. Reactivate,
+Switch, or Retry now clears a limit without a known reset. A general
+rate-limit error does not use this path.
+
+Agent cards contain `id`, `slug`, `room_id`, `project_id`, `role_key`,
+`role_emoji`, `role_deleted` for a stopped agent whose role was deleted, and
+`role_updated` when its role was deleted and the key now has a
+different definition, plus `tool`,
+`variant`, `model`, `provider`, `machine_id`, `desired`, `desired_rev`,
+`observed`, `generation`, and `recovery_block`. Spawn and control require a
+project owner or operator. Spawn requires a connected supervisor advertising
+the chosen tool and variant. Model choices are bounded by the server, while
+CLI version is reported separately by the spawn catalog. Spawn respects
+project live-agent and per-minute spawn limits, and reserves the checkout
+for a worker. A second worker receives
+`writer_occupied` (409). A repeated idempotency key returns the same agent;
+using it for a different request returns `idempotency_conflict` (409).
+Agent toolbox requests require a current, unrevoked, not-stopped agent key.
+Claude/Codex Docker and native Pi use `POST /api/agent/mcp` with the same
+bearer key for streamable HTTP MCP. Pi Docker has no private credential
+channel and runs without this toolbox. JSON-RPC `initialize`, `ping`,
+`tools/list`, and `tools/call` map to the same ten narrow tools as the stdio
+transport;
+notifications return HTTP 202.
+The key alone identifies the caller. Room and agent control mutations require
+an active lead role; `spawn_agent` also requires the role's spawn capability.
+`create_room` records the agent in `created_by`, joins the lead atomically, and
+posts one system notice in the parent room. `close_room` uses the same
+`lifecycle_rev`, child-room check, cascade option, grace period and control
+delivery as human archive. Repeated request keys replay the original result
+without a second notice. Workers can list their rooms, check usage, and use
+memory, but cannot manage rooms and agents.
+The built-in lead role coordinates a home-room request through a new task room:
+it frames the evidence and plan first, asks the human which agents to use
+through a structured inbox question, spawns them one at a time, follows their
+handoffs and independent reviews, summarizes in the home room, and archives
+the task room. The lead does not implement the requested work. Built-in worker
+and reviewer roles call for independent plans, concrete verification, and
+evidence in the final room message. Their instructions are updated on upgrade
+only while the global default body is untouched; project and edited global
+role bodies remain under their owners' control.
+After spawning, an assignment needs a live agent mention to wake its recipient;
+code-formatted names do not count. An agent's `reply_to` another agent's message
+wakes that agent (wake reason `reply`), but only while the room has seen fewer
+than four such wakes (`ReplyWakeHops`) since the last message from a person,
+within 30 minutes: a later reply is threaded and wakes nobody (a reply to an
+older message does not start the count again), and one `loop_guard` event and
+one system notice say so, once per run. A mention or handoff is not limited by
+this, and a reply never replaces the mention, role or group reason that already
+targets its parent's author (nor does a self-reply count). Agent replies to
+humans still target them, and human replies still wake their parent author. An
+agent card's `woken_by` is `reply` while its running turn began that way.
+Acknowledgements belong in reactions,
+and the lead should publish the home-room summary as soon as review passes.
+The question is a room message with
+`ask:{kind:"question",text:"Which agents should take this task?",options:["…"],free_text:true}`;
+plain question text does not create an inbox item. A task room returned by
+`create_room` can be targeted in the same turn after the tool succeeds.
+`go test ./internal/server -run TestFakeLeadCoordinatesTaskFromHomeToArchive`
+exercises that flow with scripted fake turns. The MCP `spawn_agent` tool takes `role_key`, `tool`, `variant`, and `model` and accepts optional `machine_id`;
+it spawns one agent per call. A project
+room may also request `worktree:true` and optional `base_ref` on
+`create_room` or `spawn_agent`; a new agent then uses the room's worktree
+checkout on its selected machine. A dirty base contributes only its changed
+file count to the API response and a room notice; uncommitted content stays
+in the base checkout.
+The lead must currently be `active` to spawn or stop. An agent lead cannot
+spawn another lead or stop a different lead; it may stop itself. Notices use
+agent slugs and roles, for example `tessa (lead) stopped drew (worker)`.
+Provider quota uses the active profile snapshot for the caller's tool. A
+cached or failed-refresh snapshot with windows is marked `stale`; missing
+windows return `unknown`. It does not return credential or token material.
+The `claude` tool uses the `claude-code` provider snapshot.
+If spawn delivery fails or its acknowledgment is lost, the same key retries
+the original agent's spawn until the supervisor confirms it. The API returns
+`machine_unavailable` (503) while that machine is disconnected.
+Control accepts `active`, `not_accepting`, or `stopped` with the current
+`desired_rev` as `rev`. Stopping a running agent reports `observed` as
+`interrupting` until its process exit is confirmed; an idle agent stops
+immediately. Reactivating a stopped agent starts a new generation.
+Control with an outdated `rev` returns `stale_rev` (409).
+Reactivating a paused agent, or resuming a held room or project, checks the
+saved launcher's enabled setting and Docker bind without requiring a connected
+supervisor. The desired state reaches the supervisor on reconnect. A stopped
+remote agent still needs a connected supervisor for checkout path verification.
+Stopping a turn that was prepared but never sent cancels and settles it,
+leaving its notes queued for later reactivation. A dispatched pending turn
+keeps the writer reservation until journal reconciliation proves it never
+started or a process exit confirms it stopped. A lost process cannot be
+stopped through this endpoint until recovery resolves it. Reactivation also
+checks the project's live-agent limit.
+
+For a thread reply, set `thread_root` to a top-level message ID in the same
+room. A thread reply cannot be used as another thread's root. Invalid or
+missing roots return `invalid_answer` (400). Answering an inbox question
+posted in a thread keeps the answer in that thread.
+
+`/api/events` requires a same-origin `Origin` header (or the configured
+`AIMEBU2_PUBLIC_URL` origin) and a valid session.
+The web UI reads the authenticated `/api/events/cursor` before its HTTP
+snapshots, then opens the stream after that `seq`. Events committed during
+the snapshot are caught without scanning older history. The client
+coalesces replay frames into one silent snapshot refresh on `ready`, so
+historical inbox items do not trigger a chime or browser notification.
+If that refresh fails, reconnect replays from the last processed `seq`
+until a snapshot succeeds. After a disconnect it resumes from the last
+processed `seq`.
+The initial replay sends visible project events with `seq > after` in order,
+using bounded batches and rechecking session validity periodically during a
+long replay,
+then `{type:"ready",seq:<high-watermark>}`. Live frames use
+`{type:"event",event:{...}}`; the event's `seq` is the global cursor.
+If the cursor predates retained events, the server sends
+`{type:"snapshot_required",min_seq:<oldest>}` and closes the socket.
+The client should reload its project and room snapshots, then reconnect
+from the new high-watermark. A bounded queue disconnects slow clients;
+database writes never wait for them. Poll failures close the socket so clients
+can reconnect; transient SQLite busy errors are retried. Open sockets recheck
+their sessions every 30 seconds without renewing expiry and close after
+logout, expiry, or revocation. Database errors during a session check close
+the socket with an internal-error code so clients reconnect.
+
+The separate supervisor uses `GET /api/machine` as a WebSocket endpoint.
+Attachment bytes stay in the server's storage; the supervisor never stages
+them in a checkout. Uploads are bound to a room immediately and one message
+on send; up to four files allow a file-only message. Unbound uploads expire
+after 24 hours. The Pi Docker turn bearer is derived for one turn, is absent
+from journals and receipts, and stops working when the turn ends or room
+membership is removed.
+It authenticates with `X-Machine-ID` and `Authorization: Bearer <machine-key>`
+from the private host key file; browser sessions cannot use that endpoint.
+See [the supervisor guide](supervisor.md).
