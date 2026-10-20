@@ -1,0 +1,147 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"net/http"
+
+	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/store"
+)
+
+func (s *Server) closeRoom(w http.ResponseWriter, r *http.Request) {
+	roomID := r.PathValue("room")
+	room, err := s.Store.RoomByID(r.Context(), roomID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if !s.projectAccess(w, r, room.ProjectID) {
+		return
+	}
+	var req struct {
+		LifecycleRev int64 `json:"lifecycle_rev"`
+		Cascade      bool  `json:"cascade"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	room, controls, err := s.Store.BeginRoomClose(r.Context(), roomID, userID(r), req.LifecycleRev, req.Cascade)
+	if err != nil {
+		roomLifecycleError(w, err)
+		return
+	}
+	s.sendRoomControls(r.Context(), controls)
+	writeJSON(w, http.StatusAccepted, room)
+}
+
+func (s *Server) reopenRoom(w http.ResponseWriter, r *http.Request) {
+	roomID := r.PathValue("room")
+	room, err := s.Store.RoomByID(r.Context(), roomID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if !s.projectAccess(w, r, room.ProjectID) {
+		return
+	}
+	var req struct {
+		LifecycleRev int64 `json:"lifecycle_rev"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	room, err = s.Store.ReopenRoom(r.Context(), roomID, userID(r), req.LifecycleRev)
+	if err != nil {
+		roomLifecycleError(w, err)
+		return
+	}
+	if item, found, err := s.Store.RoomWorktree(r.Context(), roomID, ""); err == nil && found {
+		host, hostErr := s.Store.HostMachine(r.Context())
+		if hostErr == nil {
+			item, hostErr = s.ensureRoomWorktree(r.Context(), room, host, item.BaseRef)
+		}
+		if hostErr != nil {
+			item.State, item.Reason = "failed", hostErr.Error()
+		}
+		room.Worktree = &item
+	}
+	writeJSON(w, http.StatusOK, room)
+}
+
+func roomLifecycleError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrHomeRoom):
+		apiError(w, 409, "home_room", "project home room cannot be closed")
+	case errors.Is(err, store.ErrOpenChildren):
+		apiError(w, 409, "open_children", "close child rooms first or confirm cascade")
+	case errors.Is(err, store.ErrStaleRev):
+		apiError(w, 409, "stale_rev", "room lifecycle revision changed")
+	case errors.Is(err, store.ErrInvalidTransition):
+		apiError(w, 409, "invalid_transition", "room state disallows this operation")
+	default:
+		fail(w, err)
+	}
+}
+
+// sendRoomControls mirrors the normal agent-control route. It is also used
+// by the dispatcher as closure advances after an HTTP request or restart.
+func (s *Server) sendRoomControls(ctx context.Context, controls []store.AgentCard) {
+	for _, control := range controls {
+		card, err := s.Store.AgentCardByID(ctx, control.ID)
+		if err != nil {
+			continue
+		}
+		machine, err := s.machineForID(card.MachineID)
+		if err != nil {
+			continue
+		}
+		machine.boundMu.Lock()
+		machine.bound[control.ID] = control.Generation
+		machine.boundMu.Unlock()
+		_ = machine.send(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: control.ID,
+			Generation: control.Generation, DesiredRev: control.DesiredRev, DesiredState: control.Desired})
+		if control.Desired != "stopped" {
+			if pending, ok, err := s.Store.PendingSpawnByID(ctx, control.ID); err == nil && ok {
+				_ = s.sendPendingSpawn(ctx, machine, pending)
+			}
+		}
+	}
+}
+
+// DELETE /api/rooms/{room}: the project owner removes an archived task room for good.
+func (s *Server) removeRoom(w http.ResponseWriter, r *http.Request) {
+	room, err := s.Store.RoomByID(r.Context(), r.PathValue("room"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if !s.projectAccess(w, r, room.ProjectID) {
+		return
+	}
+	role, err := s.Store.UserProjectRole(r.Context(), userID(r), room.ProjectID)
+	if err != nil {
+		userError(w, err)
+		return
+	}
+	if role != "owner" {
+		apiError(w, 403, "forbidden", "project owner required")
+		return
+	}
+	if err := s.Store.RemoveRoom(r.Context(), room.ID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrHomeRoom):
+			apiError(w, 409, "home_room", "project home room cannot be removed")
+		case errors.Is(err, store.ErrRoomNotClosed):
+			apiError(w, 409, "room_not_closed", "archive the room before removing it")
+		case errors.Is(err, store.ErrOpenChildren):
+			apiError(w, 409, "has_children", "remove the child rooms first")
+		case errors.Is(err, store.ErrRoomNotRemovable):
+			apiError(w, 409, "room_not_removable", "private chats and rooms with a live worktree cannot be removed")
+		default:
+			fail(w, err)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -1,0 +1,70 @@
+// The model that will complete your prompt.
+//
+// See [models](https://docs.anthropic.com/en/docs/models-overview) for additional
+// details and options.
+type Model = string
+
+const (
+	// Fastest model for high-volume, real-time tasks
+	ModelClaudeHaiku5_5 Model = "claude-haiku-5-5"
+	// Efficient model for coding and agents
+	ModelClaudeSonnet5_5 Model = "claude-sonnet-5-5"
+	// Frontier intelligence for ambitious tasks across coding, scientific discovery,
+	// and enterprise workflows
+	ModelClaudeFable5_1 Model = "claude-fable-5-1"
+	// Powerful intelligence for coding, knowledge work, and long-running agents
+	ModelClaudeOpus5_5 Model = "claude-opus-5-5"
+	// Our most capable model for cybersecurity and biology research, available through
+	// trusted access programs
+	ModelClaudeMythos5_1 Model = "claude-mythos-5-1"
+	// Efficient model for coding and agents
+	ModelClaudeSonnet5 Model = "claude-sonnet-5"
+	// Next generation of intelligence for the hardest knowledge work and coding
+	// problems
+	ModelClaudeFable5 Model = "claude-fable-5"
+	// Most capable model for cybersecurity and biology research
+	ModelClaudeMythos5 Model = "claude-mythos-5"
+	// Powerful intelligence for long-running agents and coding
+	ModelClaudeOpus5 Model = "claude-opus-5"
+	// Powerful intelligence for long-running agents and coding
+	ModelClaudeOpus4_8 Model = "claude-opus-4-8"
+	// Powerful intelligence for long-running agents and coding
+	ModelClaudeOpus4_7 Model = "claude-opus-4-7"
+	// New class of intelligence, strongest in coding and cybersecurity
+	//
+	// Deprecated: Will reach end-of-life on June 30, 2026. Please migrate to
+	// claude-mythos-5. Visit
+	// https://docs.anthropic.com/en/docs/resources/model-deprecations for more
+	// information.
+	ModelClaudeMythosPreview Model = "claude-mythos-preview"
+	// Powerful intelligence for long-running agents and coding
+	ModelClaudeOpus4_6 Model = "claude-opus-4-6"
+	// Best combination of speed and intelligence
+	ModelClaudeSonnet4_6         Model = "claude-sonnet-4-6"
+	ModelClaudeHaiku4_5          Model = "claude-haiku-4-5"
+	ModelClaudeHaiku4_5_20251001 Model = "claude-haiku-4-5-20251001"
+	// Powerful intelligence for long-running agents and coding
+	ModelClaudeOpus4_5 Model = "claude-opus-4-5"
+	// Powerful intelligence for long-running agents and coding
+	ModelClaudeOpus4_5_20251101 Model = "claude-opus-4-5-20251101"
+	// High-performance model for agents and coding
+	//
+	// Deprecated: Will reach end-of-life on November 30, 2026. Please migrate to
+	// claude-sonnet-5-5. Visit
+	// https://docs.anthropic.com/en/docs/resources/model-deprecations for more
+	// information.
+	ModelClaudeSonnet4_5 Model = "claude-sonnet-4-5"
+	// High-performance model for agents and coding
+	//
+	// Deprecated: Will reach end-of-life on November 30, 2026. Please migrate to
+	// claude-sonnet-5-5. Visit
+	// https://docs.anthropic.com/en/docs/resources/model-deprecations for more
+	// information.
+	ModelClaudeSonnet4_5_20250929 Model = "claude-sonnet-4-5-20250929"
+)
+
+type OutputConfigParam struct {
+	// How much effort the model should put into its response. Higher effort levels may
+	// result in more thorough analysis but take longer.
+	//
+	// Valid values are `low`, `medium`, `high`, `xhigh`, or `max`.

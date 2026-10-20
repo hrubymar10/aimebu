@@ -1,0 +1,594 @@
+package server
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/answer"
+	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/store"
+)
+
+var ErrMachineUnavailable = errors.New("machine unavailable")
+var ErrSlowMachine = errors.New("slow machine")
+
+type machineConn struct {
+	id                string
+	keyHash           string
+	conn              *websocket.Conn
+	sendQueue         chan protocol.Frame
+	done              chan struct{}
+	stopOnce          sync.Once
+	bound             map[string]int
+	boundMu           sync.RWMutex
+	capabilities      []protocol.CapabilityReport
+	supportsPathProbe bool
+	supportsWorktree  bool
+	supportsLaunchers bool
+	supportsDetect    bool
+	harnessMu         sync.Mutex
+	harnessSetMu      sync.Mutex
+	harnesses         []protocol.HarnessRow
+	launchers         []protocol.LauncherRow
+	harnessPending    map[string]chan protocol.Frame
+	launcherPending   map[string]chan protocol.Frame
+	pathPending       map[string]chan protocol.Frame
+	journaled         map[string]turnBinding
+	lastSeen          atomic.Int64
+}
+
+type turnBinding struct {
+	agentID    string
+	generation int
+}
+
+func (c *machineConn) stop() { c.stopOnce.Do(func() { close(c.done); _ = c.conn.CloseNow() }) }
+func (c *machineConn) send(frame protocol.Frame) error {
+	select {
+	case <-c.done:
+		return ErrMachineUnavailable
+	default:
+	}
+	select {
+	case c.sendQueue <- frame:
+		return nil
+	case <-c.done:
+		return ErrMachineUnavailable
+	default:
+		c.stop()
+		return ErrSlowMachine
+	}
+}
+
+func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
+	if s.maintenance.Load() {
+		w.Header().Set("Retry-After", "5")
+		apiError(w, 503, "maintenance", "import in progress; reconnect shortly")
+		return
+	}
+	machineID := r.Header.Get("X-Machine-ID")
+	authHeader := r.Header.Get("Authorization")
+	if machineID == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		apiError(w, 401, "unauthorized", "invalid machine credential")
+		return
+	}
+	keyHash, authErr := s.Auth.VerifiedMachineKeyHash(r.Context(), machineID, strings.TrimPrefix(authHeader, "Bearer "))
+	if authErr != nil {
+		apiError(w, 401, "unauthorized", "invalid machine credential")
+		return
+	}
+	conn, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		return
+	}
+	conn.SetReadLimit(protocol.MaxMachineFrameBytes)
+	ctx := r.Context()
+	hello, err := readMachineFrame(ctx, conn)
+	if err != nil || hello.V != protocol.Version || hello.Type != protocol.Hello || hello.MachineID != machineID || hello.JournalID == "" {
+		conn.Close(websocket.StatusPolicyViolation, "invalid hello")
+		return
+	}
+	s.maintenanceMu.RLock()
+	handshakeLocked := true
+	defer func() {
+		if handshakeLocked {
+			s.maintenanceMu.RUnlock()
+		}
+	}()
+	if s.maintenance.Load() {
+		conn.Close(websocket.StatusTryAgainLater, "import in progress")
+		return
+	}
+	agents, err := s.Store.AgentsForMachine(ctx, machineID)
+	if err != nil {
+		conn.Close(websocket.StatusInternalError, "machine state error")
+		return
+	}
+	bound := make(map[string]int, len(agents))
+	for _, agent := range agents {
+		if !agent.Revoked {
+			bound[agent.ID] = agent.Generation
+		}
+	}
+	seenHello := map[string]bool{}
+	journaled := map[string]turnBinding{}
+	for _, item := range hello.Agents {
+		generation, ok := bound[item.AgentID]
+		if !ok || (generation != item.Generation && len(item.OpenTurns) == 0) {
+			conn.Close(websocket.StatusPolicyViolation, "invalid agent binding")
+			return
+		}
+		key := item.AgentID + "/" + strconv.Itoa(item.Generation)
+		if seenHello[key] {
+			conn.Close(websocket.StatusPolicyViolation, "duplicate agent binding")
+			return
+		}
+		seenHello[key] = true
+		for _, turn := range item.OpenTurns {
+			turnAgent, turnGeneration, err := s.Store.TurnBinding(ctx, turn.TurnID)
+			if err != nil || turnAgent != item.AgentID || turnGeneration != item.Generation {
+				conn.Close(websocket.StatusPolicyViolation, "invalid journal turn binding")
+				return
+			}
+			if _, duplicate := journaled[turn.TurnID]; duplicate {
+				conn.Close(websocket.StatusPolicyViolation, "duplicate journal turn")
+				return
+			}
+			journaled[turn.TurnID] = turnBinding{item.AgentID, item.Generation}
+		}
+	}
+	if err := s.Store.RecordMachineHello(ctx, machineID, hello.SupervisorVersion); err != nil {
+		conn.Close(websocket.StatusInternalError, "machine state error")
+		return
+	}
+	open := map[string]store.JournalTurn{}
+	for _, agent := range hello.Agents {
+		for _, turn := range agent.OpenTurns {
+			open[turn.TurnID] = store.JournalTurn{TurnID: turn.TurnID, Exec: turn.Exec, ProcessAlive: turn.ProcessAlive, HasAnswer: turn.HasAnswer, AnswerRev: turn.AnswerRev, Digest: turn.Digest}
+		}
+	}
+	capabilities, err := json.Marshal(hello.Capabilities)
+	if err != nil {
+		conn.Close(websocket.StatusPolicyViolation, "invalid capabilities")
+		return
+	}
+	records, err := s.Store.ReconcileMachineHello(ctx, machineID, hello.JournalID, capabilities, open)
+	if err != nil {
+		conn.Close(websocket.StatusInternalError, "reconciliation error")
+		return
+	}
+	resend := make([]protocol.ReceiptBody, 0, len(records))
+	for _, record := range records {
+		details, _ := json.Marshal(map[string]string{"held_reason": record.Reason})
+		resend = append(resend, protocol.ReceiptBody{TurnID: record.TurnID, AnswerRev: record.AnswerRev, Digest: record.Digest, Result: record.Result, Details: details})
+	}
+	settings, err := s.Store.HarnessSettings(ctx, machineID)
+	if err != nil {
+		conn.Close(websocket.StatusInternalError, "harness state error")
+		return
+	}
+	launchers, err := s.Store.MachineLaunchers(ctx, machineID)
+	if err != nil {
+		conn.Close(websocket.StatusInternalError, "launcher state error")
+		return
+	}
+	definitions := make([]protocol.LauncherDefinition, 0, len(launchers))
+	for _, item := range launchers {
+		definitions = append(definitions, launcherDefinition(item))
+	}
+	probeDir, err := s.Store.FirstMachineFolder(ctx, machineID)
+	if err != nil {
+		conn.Close(websocket.StatusInternalError, "machine folder error")
+		return
+	}
+	if len(hello.Harnesses) > 0 {
+		if err := s.Store.RecordMachineHarnesses(ctx, machineID, hello.Harnesses); err != nil {
+			conn.Close(websocket.StatusInternalError, "harness state error")
+			return
+		}
+	}
+	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsDetect: hello.SupportsDetect, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c.lastSeen.Store(time.Now().UnixNano())
+	s.machineMu.Lock()
+	old := s.machines[machineID]
+	s.machines[machineID] = c
+	s.machineMu.Unlock()
+	if old != nil {
+		old.stop()
+	}
+	defer func() {
+		c.stop()
+		s.machineMu.Lock()
+		if s.machines[machineID] == c {
+			delete(s.machines, machineID)
+		}
+		s.machineMu.Unlock()
+	}()
+	go s.machineWriter(ctx, c)
+	desired := make([]protocol.DesiredAgent, 0, len(agents))
+	for _, agent := range agents {
+		if agent.Revoked {
+			continue
+		}
+		desired = append(desired, protocol.DesiredAgent{AgentID: agent.ID, Generation: agent.Generation, Desired: agent.Desired, DesiredRev: agent.DesiredRev})
+	}
+	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, LauncherDefinitions: definitions}); err != nil {
+		return
+	}
+	if err := s.enqueuePendingSpawns(ctx, c); err != nil {
+		return
+	}
+	s.maintenanceMu.RUnlock()
+	handshakeLocked = false
+	go s.machinePinger(ctx, c)
+	for {
+		frame, err := readMachineFrame(ctx, conn)
+		if err != nil {
+			return
+		}
+		c.lastSeen.Store(time.Now().UnixNano())
+		if s.maintenance.Load() {
+			_ = conn.Close(websocket.StatusTryAgainLater, "import in progress")
+			return
+		}
+		if frame.V != protocol.Version {
+			_ = c.send(protocol.Frame{V: protocol.Version, Type: protocol.Error, Code: "invalid_request", Message: "unsupported protocol version"})
+			continue
+		}
+		if frame.Type == protocol.Ping || frame.Type == protocol.Pong {
+			_ = s.Store.TouchMachine(ctx, machineID)
+			if frame.Type == protocol.Ping {
+				_ = c.send(protocol.Frame{V: protocol.Version, Type: protocol.Pong, MachineID: machineID})
+			}
+			continue
+		}
+		if frame.Type == protocol.HarnessStatus {
+			if len(frame.Harnesses) > 0 {
+				c.harnessMu.Lock()
+				c.harnesses = frame.Harnesses
+				c.harnessMu.Unlock()
+				_ = s.Store.RecordMachineHarnesses(ctx, machineID, frame.Harnesses)
+			}
+			if len(frame.Capabilities) > 0 {
+				c.harnessMu.Lock()
+				c.capabilities = frame.Capabilities
+				c.harnessMu.Unlock()
+				_ = s.Store.RecordMachineCapabilities(ctx, machineID, frame.Capabilities)
+			}
+			continue
+		}
+		if frame.Type == protocol.HarnessResult {
+			c.harnessMu.Lock()
+			waiter := c.harnessPending[frame.ReqID]
+			c.harnessMu.Unlock()
+			if waiter != nil {
+				select {
+				case waiter <- frame:
+				default:
+				}
+			}
+			continue
+		}
+		if frame.Type == protocol.LauncherStatus {
+			c.harnessMu.Lock()
+			c.launchers = frame.Launchers
+			if len(frame.Capabilities) > 0 {
+				c.capabilities = frame.Capabilities
+			}
+			c.harnessMu.Unlock()
+			if len(frame.Capabilities) > 0 {
+				_ = s.Store.RecordMachineCapabilities(ctx, machineID, frame.Capabilities)
+			}
+			continue
+		}
+		if frame.Type == protocol.LauncherResult || frame.Type == protocol.DetectResult {
+			c.harnessMu.Lock()
+			waiter := c.launcherPending[frame.ReqID]
+			c.harnessMu.Unlock()
+			if waiter != nil {
+				select {
+				case waiter <- frame:
+				default:
+				}
+			}
+			continue
+		}
+		if frame.Type == protocol.PathResult || frame.Type == protocol.WorktreeResult {
+			c.harnessMu.Lock()
+			waiter := c.pathPending[frame.ReqID]
+			c.harnessMu.Unlock()
+			if waiter != nil {
+				select {
+				case waiter <- frame:
+				default:
+				}
+			}
+			continue
+		}
+		if code := s.authorizeAgentFrame(ctx, c, frame); code != "" {
+			_ = c.send(protocol.Frame{V: protocol.Version, Type: protocol.Error, AgentID: frame.AgentID, TurnID: frame.TurnID, Code: code, Message: "agent frame rejected"})
+			continue
+		}
+		if err := s.handleAgentFrame(ctx, c, frame); err != nil {
+			code := "invalid_request"
+			if errors.Is(err, store.ErrConflict) {
+				code = "conflict"
+			} else if errors.Is(err, store.ErrForbidden) {
+				code = "forbidden"
+			} else if errors.Is(err, store.ErrStaleGeneration) {
+				code = "stale_generation"
+			} else if errors.Is(err, store.ErrInvalidTransition) {
+				code = "invalid_transition"
+			}
+			_ = c.send(protocol.Frame{V: protocol.Version, Type: protocol.Error, AgentID: frame.AgentID, TurnID: frame.TurnID, Code: code, Message: err.Error()})
+		}
+	}
+}
+
+func readMachineFrame(ctx context.Context, conn *websocket.Conn) (protocol.Frame, error) {
+	_, raw, err := conn.Read(ctx)
+	if err != nil {
+		return protocol.Frame{}, err
+	}
+	var frame protocol.Frame
+	err = json.Unmarshal(raw, &frame)
+	return frame, err
+}
+
+func (s *Server) machineWriter(ctx context.Context, c *machineConn) {
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-ctx.Done():
+			c.stop()
+			return
+		case frame := <-c.sendQueue:
+			if err := s.writeFrame(ctx, c.conn, frame); err != nil {
+				c.stop()
+				return
+			}
+		}
+	}
+}
+
+func (s *Server) machinePinger(ctx context.Context, c *machineConn) {
+	interval := s.MachinePingInterval
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.Auth.VerifyMachineKeyHash(ctx, c.id, c.keyHash) != nil {
+				_ = c.conn.Close(websocket.StatusPolicyViolation, "machine credential revoked")
+				c.stop()
+				return
+			}
+			if err := s.enqueuePendingSpawns(ctx, c); err != nil {
+				c.stop()
+				return
+			}
+			if time.Since(time.Unix(0, c.lastSeen.Load())) > 60*time.Second {
+				c.stop()
+				return
+			}
+			if c.send(protocol.Frame{V: protocol.Version, Type: protocol.Ping, MachineID: c.id}) != nil {
+				return
+			}
+		}
+	}
+}
+
+func (s *Server) authorizeAgentFrame(ctx context.Context, c *machineConn, frame protocol.Frame) string {
+	if frame.AgentID == "" {
+		return "forbidden"
+	}
+	c.boundMu.RLock()
+	generation, ok := c.bound[frame.AgentID]
+	c.boundMu.RUnlock()
+	if !ok {
+		return "forbidden"
+	}
+	agent, err := s.Store.AgentRuntimeByID(ctx, frame.AgentID)
+	if err != nil {
+		return "unauthorized"
+	}
+	if agent.Revoked || agent.MachineID != c.id {
+		return "unauthorized"
+	}
+	if frame.Generation != generation || agent.Generation != generation {
+		if frame.Type == protocol.Answer || frame.Type == protocol.NativeSessionStarted {
+			if old, ok := c.journaled[frame.TurnID]; ok && old.agentID == frame.AgentID && old.generation == frame.Generation {
+				return ""
+			}
+		}
+		return "stale_generation"
+	}
+	return ""
+}
+
+func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame protocol.Frame) error {
+	s.maintenanceMu.RLock()
+	defer s.maintenanceMu.RUnlock()
+	switch frame.Type {
+	case protocol.SpawnResult:
+		if frame.ReqID != fmt.Sprintf("%s/%d", frame.AgentID, frame.Generation) {
+			return store.ErrConflict
+		}
+		if frame.Result != "ok" {
+			if err := s.Store.FailSpawn(ctx, frame.AgentID, frame.Generation, frame.Message); err != nil {
+				return err
+			}
+			s.spawnMu.Lock()
+			delete(s.spawnKeys, fmt.Sprintf("%s/%d", frame.AgentID, frame.Generation))
+			s.spawnMu.Unlock()
+			return errors.New("spawn failed: " + frame.Message)
+		}
+		if err := s.Store.ConfirmSpawn(ctx, frame.AgentID, frame.Generation); err != nil {
+			return err
+		}
+		s.spawnMu.Lock()
+		delete(s.spawnKeys, fmt.Sprintf("%s/%d", frame.AgentID, frame.Generation))
+		s.spawnMu.Unlock()
+		return nil
+	case protocol.Ack:
+		if frame.Level == "control" {
+			return s.Store.AckAgentControl(ctx, frame.AgentID, frame.Generation, frame.Ref)
+		}
+		return s.Store.AckTurn(ctx, frame.TurnID, frame.AgentID, frame.Generation, frame.Level)
+	case protocol.Activity, protocol.Usage, protocol.Compaction:
+		data, err := json.Marshal(frame)
+		if err != nil {
+			return err
+		}
+		return s.Store.RecordTurnEvent(ctx, frame.TurnID, frame.AgentID, frame.SourceEventID, frame.Type, frame.Summary, data)
+	case protocol.NativeSessionStarted:
+		return s.Store.RecordNativeSessionStarted(ctx, frame.TurnID, frame.AgentID, frame.Generation,
+			frame.SourceEventID, frame.NativeSessionHandle)
+	case protocol.Answer:
+		owner, generation, err := s.Store.TurnBinding(ctx, frame.TurnID)
+		if err != nil {
+			return err
+		}
+		if owner != frame.AgentID {
+			return store.ErrForbidden
+		}
+		if generation != frame.Generation {
+			return store.ErrStaleGeneration
+		}
+		if frame.AnswerTooLarge {
+			if frame.Candidate != "" {
+				return store.ErrConflict
+			}
+		} else {
+			sum := sha256.Sum256([]byte(frame.Candidate))
+			if frame.Digest != hex.EncodeToString(sum[:]) {
+				return store.ErrConflict
+			}
+		}
+		mode, err := s.Store.TurnMode(ctx, frame.TurnID)
+		if err != nil {
+			return err
+		}
+		var parsed answer.Candidate
+		var parseErr error
+		if frame.AnswerTooLarge {
+			parseErr = fmt.Errorf("%w: answer too large (max 2 MiB)", answer.ErrInvalid)
+		} else {
+			parsed, parseErr = answer.Parse([]byte(frame.Candidate), mode == "diagnostic")
+		}
+		input := store.AnswerInput{TurnID: frame.TurnID, AgentID: frame.AgentID, Generation: frame.Generation,
+			AnswerRev: frame.AnswerRev, Digest: frame.Digest, Candidate: []byte(frame.Candidate)}
+		if parseErr != nil {
+			input.ParseError = parseErr.Error()
+		} else {
+			input.Parsed = &parsed
+		}
+		receipt, err := s.Store.ApplyAnswer(ctx, input)
+		if errors.Is(err, store.ErrConflict) {
+			return c.send(protocol.Frame{V: protocol.Version, Type: protocol.Receipt, TurnID: frame.TurnID, AnswerRev: frame.AnswerRev, Digest: frame.Digest, Result: "conflict"})
+		}
+		if err != nil {
+			return err
+		}
+		for _, extra := range receipt.Additional {
+			if err := c.send(answerReceiptFrame(extra)); err != nil {
+				return err
+			}
+		}
+		return c.send(answerReceiptFrame(receipt))
+	case protocol.Process:
+		if frame.Exit == nil {
+			return errors.New("missing process exit")
+		}
+		if err := s.Store.RecordProcessInfo(ctx, frame.TurnID, frame.AgentID, frame.Generation, *frame.Exit); err != nil {
+			return err
+		}
+		if err := s.Store.ConfirmAgentProcessExit(ctx, frame.AgentID); err != nil {
+			return err
+		}
+		return c.send(protocol.Frame{V: protocol.Version, Type: protocol.Ack, TurnID: frame.TurnID, Level: "process"})
+	default:
+		return errors.New("unknown agent frame")
+	}
+}
+
+func answerReceiptFrame(receipt store.AnswerReceipt) protocol.Frame {
+	details, _ := json.Marshal(map[string]any{"held_reason": receipt.HeldReason, "error": receipt.Error, "message_ids": receipt.MessageIDs, "warnings": receipt.Warnings})
+	return protocol.Frame{V: protocol.Version, Type: protocol.Receipt, TurnID: receipt.TurnID, AnswerRev: receipt.AnswerRev,
+		Digest: receipt.Digest, Result: receipt.Result, Details: details}
+}
+
+// Dispatch is the T6a test hook. T8 will select queued notes and build these
+// deliveries; this boundary applies admission checks before enqueueing.
+func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error {
+	agent, err := s.Store.AgentRuntimeByID(ctx, delivery.AgentID)
+	if err != nil {
+		return err
+	}
+	c, err := s.machineForID(agent.MachineID)
+	if err != nil {
+		return err
+	}
+	if err := s.Auth.VerifyMachineKeyHash(ctx, c.id, c.keyHash); err != nil {
+		_ = c.conn.Close(websocket.StatusPolicyViolation, "machine credential revoked")
+		c.stop()
+		return err
+	}
+	c.boundMu.RLock()
+	generation, ok := c.bound[delivery.AgentID]
+	c.boundMu.RUnlock()
+	if !ok || generation != delivery.Generation {
+		return store.ErrStaleGeneration
+	}
+	for _, note := range delivery.Notes {
+		if len(note.Attachments) == 0 {
+			continue
+		}
+		keyHash, revoked, err := s.Store.AgentKeyByID(ctx, delivery.AgentID)
+		if err != nil {
+			return err
+		}
+		if revoked || keyHash == "" {
+			return store.ErrForbidden
+		}
+		delivery.AttachmentBearer = attachmentBearer(keyHash, delivery.TurnID)
+		break
+	}
+	noteIDs := make([]string, 0, len(delivery.Notes))
+	for _, note := range delivery.Notes {
+		noteIDs = append(noteIDs, note.NoteID)
+	}
+	if err := s.Store.AdmitTurn(ctx, store.Admission{TurnID: delivery.TurnID, AgentID: delivery.AgentID, MachineID: agent.MachineID, Generation: delivery.Generation, DesiredRev: delivery.DesiredRev, NoteIDs: noteIDs}); err != nil {
+		return err
+	}
+	return c.send(protocol.DeliverFrame(delivery))
+}
+
+func (s *Server) machineForID(id string) (*machineConn, error) {
+	s.machineMu.Lock()
+	defer s.machineMu.Unlock()
+	c := s.machines[id]
+	if c == nil {
+		return nil, ErrMachineUnavailable
+	}
+	return c, nil
+}

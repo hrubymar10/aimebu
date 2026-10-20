@@ -1,0 +1,334 @@
+package server
+
+import (
+	"bytes"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/store"
+)
+
+const legacyHandle = "0f7c6a1e-1111-4222-8333-444455556666"
+
+type legacyFixture struct {
+	*fixture
+	cwd string
+}
+
+// newLegacyFixture has a connected machine that lists claude natively, an imported v1 agent "sage@old" (claude-code, last seen long ago)
+// whose working folder exists inside the project folder, a message of its own in the room (so its profile opens), and its transcript in
+// a claude config directory the server's environment points at.
+func newLegacyFixture(t *testing.T) legacyFixture {
+	t.Helper()
+	f := newFixture(t)
+	f.seed()
+	machine := &machineConn{id: f.machineID, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{},
+		capabilities: []protocol.CapabilityReport{{Tool: "fake", Environment: adapter.Environment{Variant: "test"}}, {Tool: "claude", Environment: adapter.Environment{Variant: "native"}}, {Tool: "codex", Environment: adapter.Environment{Variant: "native"}}}}
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID] = machine
+	f.srv.machineMu.Unlock()
+	// An underscore and a space: claude turns every character that is not a letter or a digit into a dash.
+	cwd := filepath.Join(f.project.Folder, "my work_tree")
+	if err := os.MkdirAll(cwd, 0700); err != nil {
+		t.Fatal(err)
+	}
+	real, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", config)
+	t.Setenv("CODEX_HOME", t.TempDir())
+	writeTranscript := func(dirName string) {
+		dir := filepath.Join(config, "projects", dirName)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, legacyHandle+".jsonl"), []byte("{}\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTranscript(regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(real, "-"))
+	if _, err := f.exec(`INSERT INTO legacy_agent_session(agent_id,harness,model,project,cwd,harness_session_id,registered_at,last_seen) VALUES ('sage@old','claude-code','haiku','old',?,?,'2026-10-01T10:00:00Z','2026-10-02T10:00:00Z')`, real, legacyHandle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.exec(`INSERT INTO legacy_agent_role(agent_id,v1_room_id,role_key) VALUES ('sage@old','x','reviewer')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES ('msg_legacy',999999,?,'agent','sage@old','from the past','[]','2026-10-02T09:00:00.000000000Z')`, f.room.ID); err != nil {
+		t.Fatal(err)
+	}
+	return legacyFixture{fixture: f, cwd: real}
+}
+
+func (f legacyFixture) start(t *testing.T, key string, extra map[string]any) (int, map[string]any) {
+	t.Helper()
+	body := map[string]any{"role_key": "worker", "tool": "claude", "variant": "native", "model": "haiku", "provider": "anthropic", "resume_legacy": "sage@old"}
+	for k, v := range extra {
+		body[k] = v
+	}
+	encoded, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, f.http.URL+"/api/rooms/"+f.room.ID+"/agents", bytes.NewReader(encoded))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", f.csrf)
+	req.Header.Set("Idempotency-Key", key)
+	req.AddCookie(f.cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode, out
+}
+
+func (f legacyFixture) profile(t *testing.T, agent string) store.AgentProfile {
+	t.Helper()
+	resp := f.request(http.MethodGet, "/api/rooms/"+f.room.ID+"/agents/"+agent+"/profile", nil, false)
+	defer resp.Body.Close()
+	var profile store.AgentProfile
+	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("profile %s: %d %v", agent, resp.StatusCode, err)
+	}
+	return profile
+}
+
+func TestHistoricalProfileOffersStartingAsAV2Agent(t *testing.T) {
+	f := newLegacyFixture(t)
+	profile := f.profile(t, "sage@old")
+	if !profile.Imported || profile.Start == nil {
+		t.Fatalf("profile: %+v", profile)
+	}
+	start := profile.Start
+	if start.Slug != "sage" || start.Tool != "claude" || !start.Resumable || start.V1Active || start.OutsideFolder || start.RoleKey != "reviewer" ||
+		start.CWD != f.cwd || start.Model != "haiku" || start.StartedAgentID != "" {
+		t.Fatalf("start info: %+v", start)
+	}
+}
+
+func TestStartAsV2AgentContinuesTheSessionThroughTheAPI(t *testing.T) {
+	f := newLegacyFixture(t)
+	status, created := f.start(t, "start-1", nil)
+	if status != 201 || created["slug"] != "sage" {
+		t.Fatalf("start: %d %+v", status, created)
+	}
+	agentID, _ := created["id"].(string)
+	// The agent works in the v1 folder and its session is the v1 one, already started.
+	live := f.profile(t, agentID)
+	if live.NativeSessionID != legacyHandle || live.StartMode != "native_resume" || live.Cwd != f.cwd || live.ResumedFrom != "sage@old" {
+		t.Fatalf("v2 profile: %+v", live)
+	}
+	// The historical profile now links to it and no longer offers a second start.
+	old := f.profile(t, "sage@old")
+	if old.Start == nil || old.Start.StartedAgentID != agentID || old.Start.StartedSlug != "sage" {
+		t.Fatalf("historical profile after the start: %+v", old.Start)
+	}
+	status, again := f.start(t, "start-2", nil)
+	if status != 409 || again["error"] != "already_started" {
+		t.Fatalf("a second start: %d %+v", status, again)
+	}
+}
+
+func TestStartAsV2AgentRefusesWhatCannotWork(t *testing.T) {
+	f := newLegacyFixture(t)
+	check := func(name string, extra map[string]any, wantStatus int, wantCode string) {
+		t.Helper()
+		status, body := f.start(t, "case-"+name, extra)
+		if status != wantStatus || body["error"] != wantCode {
+			t.Fatalf("%s: %d %+v, want %d %s", name, status, body, wantStatus, wantCode)
+		}
+	}
+	check("unknown", map[string]any{"resume_legacy": "nobody@old"}, 404, "not_found")
+	models, err := f.db.HarnessModels(t.Context(), f.harness(t, "codex", "native").ID)
+	if err != nil || len(models) == 0 {
+		t.Fatalf("no codex model on the harness: %v", err)
+	}
+	check("tool", map[string]any{"tool": "codex", "model": models[0].Slug, "provider": "openai"}, 400, "tool_mismatch")
+	check("worktree", map[string]any{"worktree": true}, 400, "invalid_request")
+
+	// v1 saw the agent a moment ago: refuse until the person confirms it is stopped.
+	if _, err := f.exec(`UPDATE legacy_agent_session SET last_seen=? WHERE agent_id='sage@old'`, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	check("active", nil, 409, "v1_may_be_active")
+	if profile := f.profile(t, "sage@old"); profile.Start == nil || !profile.Start.V1Active {
+		t.Fatalf("the profile does not warn: %+v", profile.Start)
+	}
+	if _, err := f.exec(`UPDATE legacy_agent_session SET last_seen='2026-10-02T10:00:00Z' WHERE agent_id='sage@old'`); err != nil {
+		t.Fatal(err)
+	}
+
+	// No transcript at all.
+	if err := os.RemoveAll(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects")); err != nil {
+		t.Fatal(err)
+	}
+	check("missing", nil, 409, "session_not_found")
+
+	// The v1 folder is gone.
+	if err := os.RemoveAll(f.cwd); err != nil {
+		t.Fatal(err)
+	}
+	check("nofolder", nil, 409, "v1_folder_missing")
+}
+
+// A transcript that exists under a folder name this server would not have chosen is not a refusal: claude's naming has cases that are not
+// worth mirroring (long paths, other versions), so the harness is left to find the session or fail the first turn.
+func TestStartAsV2AgentDoesNotRefuseATranscriptUnderAnotherFolderName(t *testing.T) {
+	f := newLegacyFixture(t)
+	projects := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects")
+	entries, err := os.ReadDir(projects)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("transcript folders: %v %v", entries, err)
+	}
+	if err := os.Rename(filepath.Join(projects, entries[0].Name()), filepath.Join(projects, "-somewhere-else")); err != nil {
+		t.Fatal(err)
+	}
+	if status, body := f.start(t, "elsewhere", nil); status != 201 {
+		t.Fatalf("start: %d %+v", status, body)
+	}
+}
+
+// Two people press Start at once (different idempotency keys, so neither replays the other): one agent is made, and the loser is told the
+// v1 agent was already started, never that the name is in use (the winner's agent holds that name because of this very start).
+func TestStartAsV2AgentTwiceAtOnceSaysAlreadyStarted(t *testing.T) {
+	f := newLegacyFixture(t)
+	type result struct {
+		status int
+		body   map[string]any
+	}
+	results := make(chan result, 2)
+	for _, key := range []string{"race-a", "race-b"} {
+		go func() {
+			status, body := f.start(t, key, map[string]any{"role_key": "reviewer"})
+			results <- result{status, body}
+		}()
+	}
+	created, refused := 0, 0
+	for range 2 {
+		switch got := <-results; {
+		case got.status == 201:
+			created++
+		case got.status == 409 && got.body["error"] == "already_started":
+			refused++
+		default:
+			t.Fatalf("a start: %d %+v", got.status, got.body)
+		}
+	}
+	if created != 1 || refused != 1 {
+		t.Fatalf("created %d, refused %d", created, refused)
+	}
+}
+
+func TestStartAsV2AgentNeedsAPersonAndTheNameFree(t *testing.T) {
+	f := newLegacyFixture(t)
+	// A name another agent already holds in the project.
+	status, _, _ := f.spawnRequest(t, "holder", "reviewer")
+	if status != 201 {
+		t.Fatal("setup spawn")
+	}
+	if _, err := f.exec(`UPDATE agent SET slug='sage' WHERE slug<>'sage' AND project_id=?`, f.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	status, body := f.start(t, "taken", nil)
+	if status != 409 || body["error"] != "name_in_use" {
+		t.Fatalf("name in use: %d %+v", status, body)
+	}
+	// A viewer does not get the offer.
+	cookie, csrf := registerSecondUser(t, f.fixture, "viewer")
+	if _, err := f.exec(`INSERT INTO membership(project_id,user_id,role) SELECT ?,id,'viewer' FROM user WHERE login='viewer'`, f.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	response := f.requestAs(t, cookie, csrf, http.MethodGet, "/api/rooms/"+f.room.ID+"/agents/sage@old/profile", nil)
+	defer response.Body.Close()
+	var seen store.AgentProfile
+	if err := json.NewDecoder(response.Body).Decode(&seen); err != nil || response.StatusCode != 200 || seen.Start != nil {
+		t.Fatalf("viewer profile: %d %+v %v", response.StatusCode, seen.Start, err)
+	}
+}
+
+// A harness that cannot continue its v1 session (here codex, which v2 runs with a private home per agent) still starts under the same
+// name, with a fresh session, and is linked like any other.
+func TestStartAsV2AgentFreshWhenTheHarnessCannotResume(t *testing.T) {
+	f := newLegacyFixture(t)
+	if _, err := f.exec(`INSERT INTO legacy_agent_session(agent_id,harness,model,project,cwd,harness_session_id,registered_at,last_seen) VALUES ('coder@old','codex','gpt','old','/tmp/anywhere','thread-abcdef123456','2026-10-01T10:00:00Z','2026-10-02T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES ('msg_coder',999998,?,'agent','coder@old','from codex','[]','2026-10-02T09:00:00.000000000Z')`, f.room.ID); err != nil {
+		t.Fatal(err)
+	}
+	view := f.profile(t, "coder@old")
+	if view.Start == nil || view.Start.Resumable || view.Start.Tool != "codex" || view.Start.Reason == "" {
+		t.Fatalf("start info: %+v", view.Start)
+	}
+	status, created := f.start(t, "fresh-1", map[string]any{"resume_legacy": "coder@old", "tool": "fake", "variant": "test", "model": "test", "provider": ""})
+	if status != 201 || created["slug"] != "coder" {
+		t.Fatalf("fresh start: %d %+v", status, created)
+	}
+	live := f.profile(t, created["id"].(string))
+	if live.StartMode != "fresh_with_history" || live.ResumedFrom != "coder@old" || live.NativeSessionID == "thread-abcdef123456" {
+		t.Fatalf("a fresh start must not claim the v1 session: %+v", live)
+	}
+	if again := f.profile(t, "coder@old"); again.Start == nil || again.Start.StartedAgentID != created["id"] {
+		t.Fatalf("link: %+v", again.Start)
+	}
+}
+
+// The refusal to continue a session in a container follows the launcher's own flag, not its name: a containerized launcher called
+// "work" is refused, and a native one called "docker" is not.
+func TestContainerizationFollowsTheLauncherNotItsName(t *testing.T) {
+	t.Parallel()
+	if !launcherKeepsOwnSessions(&store.Launcher{Name: "work", Containerized: true}, "work") {
+		t.Fatal("a custom containerized launcher keeps its own sessions")
+	}
+	if launcherKeepsOwnSessions(&store.Launcher{Name: "docker", Containerized: false}, "docker") {
+		t.Fatal("a native launcher named docker does not")
+	}
+	if !launcherKeepsOwnSessions(nil, "docker") || launcherKeepsOwnSessions(nil, "native") {
+		t.Fatal("with no launcher record the variant name decides")
+	}
+}
+
+// An agent that wrote only in another room cannot be started from this one, and nothing about it is revealed.
+func TestStartAsV2AgentIsScopedToTheRoomsHistory(t *testing.T) {
+	f := newLegacyFixture(t)
+	elsewhere := f.newTaskRoom("elsewhere")
+	encoded, _ := json.Marshal(map[string]any{"role_key": "worker", "tool": "claude", "variant": "native", "model": "haiku", "provider": "anthropic", "resume_legacy": "sage@old"})
+	req, _ := http.NewRequest(http.MethodPost, f.http.URL+"/api/rooms/"+elsewhere.ID+"/agents", bytes.NewReader(encoded))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", f.csrf)
+	req.Header.Set("Idempotency-Key", "scoped-1")
+	req.AddCookie(f.cookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if resp.StatusCode != 404 || body["error"] != "not_found" {
+		t.Fatalf("an agent that never wrote in this room: %d %+v", resp.StatusCode, body)
+	}
+	for _, leaked := range []string{f.cwd, legacyHandle} {
+		if raw, _ := json.Marshal(body); strings.Contains(string(raw), leaked) {
+			t.Fatalf("the refusal leaks %q: %s", leaked, raw)
+		}
+	}
+	// Nor is the offer made there, and the agent is still free to be started where it did write.
+	response := f.request(http.MethodGet, "/api/rooms/"+elsewhere.ID+"/agents/sage@old/profile", nil, false)
+	response.Body.Close()
+	if response.StatusCode == 200 {
+		t.Fatal("the profile opened in a room the agent never wrote in")
+	}
+	if status, created := f.start(t, "scoped-2", nil); status != 201 {
+		t.Fatalf("start in its own room: %d %+v", status, created)
+	}
+}
