@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 282 201" role="img" aria-label="Mistral Vibe">
+  <title>Mistral Vibe</title>
+  <g transform="translate(.002)">
+    <g transform="matrix(1.481675 0 0 1.481481 0 0)">
+      <rect x="27.153" y="0" width="27.169" height="27.089" fill="white"/>
+      <rect x="135.815" y="0" width="27.169" height="27.089" fill="white"/>
+      <rect x="27.153" y="27.091" width="54.329" height="27.089" fill="white"/>
+      <rect x="108.661" y="27.091" width="54.329" height="27.089" fill="white"/>
+      <rect x="27.153" y="54.168" width="135.819" height="27.089" fill="white"/>
+      <rect x="27.153" y="81.259" width="27.169" height="27.09" fill="white"/>
+      <rect x="81.492" y="81.259" width="27.169" height="27.09" fill="white"/>
+      <rect x="135.815" y="81.259" width="27.169" height="27.09" fill="white"/>
+      <rect x="-.001" y="108.339" width="81.489" height="27.09" fill="white"/>
+      <rect x="108.661" y="108.339" width="81.498" height="27.09" fill="white"/>
+    </g>
+  </g>
+</svg>

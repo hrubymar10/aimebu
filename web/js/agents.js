@@ -1,0 +1,666 @@
+import { MachineSelection } from './machine-selection.js';
+import { healthLabel } from './health.js';
+import { request, currentUser, rights } from './api.js';
+import { harnessIcon, agentLabel } from './sender-identity.js';
+import { setGlyph } from './icon-button.js';
+import { relativeTime, stateAge } from './time.js';
+
+// Compact icon buttons for a member row (the label is the title and the accessible name; no text of their own).
+const ICONS = {
+  dm: 'M3 4h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H9l-4 3v-3H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z',
+  pause: 'M6 4h3v12H6zM11 4h3v12h-3z',
+  stop: 'M5 5h10v10H5z',
+};
+function iconButton(className, label, icon) {
+  const button = document.createElement('button'); button.type = 'button'; button.className = `icon-btn ${className}`; button.title = label; button.setAttribute('aria-label', label);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 20 20'); svg.setAttribute('width', '13'); svg.setAttribute('height', '13'); svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', ICONS[icon]); path.setAttribute('fill', 'currentColor'); svg.append(path); button.append(svg);
+  return button;
+}
+
+// A touch screen wider than a phone and up to 900px (an iPad upright): one side panel at a time.
+const TABLET = matchMedia('(min-width: 701px) and (max-width: 900px) and (pointer: coarse)');
+
+export class AgentsPanel {
+  constructor(source, onRecovery, onChange, onPrivate, onPrivateHuman) {
+    this.source = source; this.onRecovery = onRecovery; this.onChange = onChange; this.onPrivate = onPrivate; this.onPrivateHuman = onPrivateHuman;
+    this.panel = document.querySelector('#agents-panel'); this.list = document.querySelector('#agents-list'); this.humans = document.querySelector('#agents-humans'); this.humanNodes = new Map(); this.error = document.querySelector('#agents-error'); this.nodes = new Map();
+    this.dialog = document.querySelector('#spawn-dialog'); this.form = document.querySelector('#spawn-form');
+    const worktreeLabel = document.createElement('label'); worktreeLabel.className = 'spawn-worktree-option';
+    worktreeLabel.innerHTML = '<input type="checkbox" name="worktree"><span>Use a Git worktree for this task room</span><small class="spawn-worktree-note" hidden></small>';
+    this.form.querySelector('#spawn-agent-fields').before(worktreeLabel);
+    const baseLabel = document.createElement('label'); baseLabel.className = 'spawn-worktree-base';
+    baseLabel.innerHTML = 'Base branch or ref (optional)<input name="base_ref" placeholder="Current HEAD">';
+    worktreeLabel.after(baseLabel);
+    this.form.elements.worktree.onchange = () => { baseLabel.hidden = !this.form.elements.worktree.checked; };
+    baseLabel.hidden = true;
+    this.switchDialog = document.querySelector('#switch-dialog'); this.switchForm = document.querySelector('#switch-form'); this.cards = new Map();
+    this.spawnMachine = new MachineSelection('spawn', () => { this.syncWorktreeOption(); return this.loadSpawnCatalog(); }, () => this.updateSpawnSubmit());
+    this.switchMachine = new MachineSelection('switch', () => this.loadSwitchCatalog(), () => this.renderSwitchModels(false));
+    document.querySelector('#agents-toggle').onclick = () => matchMedia('(max-width: 700px)').matches
+      ? this.setMobileOpen(!this.panel.classList.contains('mobile-open'))
+      : this.setDesktopOpen(document.querySelector('.chat').classList.contains('agents-collapsed'));
+    document.querySelector('#agents-close').onclick = () => matchMedia('(max-width: 700px)').matches ? this.setMobileOpen(false) : this.setDesktopOpen(false);
+    document.querySelector('#edge-agents').onclick = () => this.setDesktopOpen(false);
+    document.querySelector('#edge-agents-expand').onclick = () => this.setDesktopOpen(true);
+    document.querySelector('#agents-scrim').onclick = () => this.setMobileOpen(false);
+    document.querySelector('#spawn-open').onclick = () => this.openSpawn();
+    this.profileClose = document.querySelector('#agent-profile-close'); this.profileClose.onclick = () => this.closeProfile();
+    this.panelTitle = this.panel.querySelector('header h2');
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && this.profileID && !document.querySelector('dialog[open]')) { event.preventDefault(); this.closeProfile(); } });
+    document.querySelector('#spawn-cancel').onclick = () => this.dialog.close();
+    this.dialog.addEventListener('close', () => { this.pendingResume = null; this.renderResume(); });
+    this.form.elements.tool.onchange = () => this.renderSpawnModels();
+    this.form.onsubmit = event => { event.preventDefault(); this.spawn(); };
+    document.querySelector('#switch-cancel').onclick = () => this.switchDialog.close();
+    this.switchForm.elements.tool.onchange = () => this.renderSwitchModels();
+    this.switchForm.elements.model.onchange = () => this.renderSwitchModels(false);
+    this.switchForm.onsubmit = event => { event.preventDefault(); this.switchAgent(); };
+    this.source.subscribe(() => this.refresh());
+    document.querySelector('#spawn-open').disabled = !source.available;
+    setInterval(() => this.updateLiveChips(), 1000);
+    // A touch tablet has room for one side panel next to the chat: the members panel starts closed, and opening one panel closes the
+    // other. Those changes are not remembered; the desktop preference is.
+    if (TABLET.matches) this.setDesktopOpen(false, false);
+    else if (localStorage.getItem('aimebu_right_collapsed') === 'true' && !matchMedia('(max-width: 700px)').matches) this.setDesktopOpen(false);
+    document.addEventListener('side-panel-open', event => { if (event.detail === 'rooms' && TABLET.matches) this.setDesktopOpen(false, false); });
+  }
+  setMobileOpen(open) {
+    this.panel.classList.toggle('mobile-open', open);
+    document.querySelector('.chat').classList.toggle('agents-open', open);
+    document.querySelector('#agents-toggle').setAttribute('aria-expanded', String(open));
+  }
+  setDesktopOpen(open, remember = !TABLET.matches) {
+    document.querySelector('.chat').classList.toggle('agents-collapsed', !open);
+    document.querySelector('#agents-toggle').setAttribute('aria-expanded', String(open));
+    if (remember) localStorage.setItem('aimebu_right_collapsed', String(!open));
+    if (open && TABLET.matches) document.dispatchEvent(new CustomEvent('side-panel-open', { detail: 'agents' }));
+  }
+  async setRoom(room) {
+    this.setRoomFacts(room); this.setMobileOpen(false);
+    await this.refresh();
+  }
+  reset() { this.refreshGeneration = (this.refreshGeneration || 0) + 1; this.room = null; this.cardsRoomID = null; this.profileID = null; this.panel.classList.remove('profile-open'); this.panelTitle.textContent = 'Room members'; this.profileClose.hidden = true; this.cards.clear(); this.nodes.clear(); this.list.replaceChildren(); this.humans.replaceChildren(); this.humanNodes.clear(); this.setMobileOpen(false); this.dialog.close(); this.switchDialog.close(); document.querySelector('#spawn-open').disabled = true; }
+  setRoomFacts(room) {
+    // Room facts change before the chat and agent list finish loading. Use the
+    // room represented by the visible cards to retire old controls at once.
+    if (this.cardsRoomID !== room.id) {
+      this.refreshGeneration = (this.refreshGeneration || 0) + 1;
+      this.cardsRoomID = room.id;
+      this.switchDialog.close(); this.switchAgentID = null;
+      this.profileID = null; this.panel.classList.remove('profile-open'); this.panelTitle.textContent = 'Room members'; this.profileClose.hidden = true;
+      this.cards.clear(); this.nodes.clear(); this.list.replaceChildren(); this.humans.replaceChildren(); this.humanNodes.clear();
+      this.onChange?.([]);
+    }
+    this.room = room;
+    document.querySelector('#spawn-open').disabled = !this.source.available || room.kind === 'dm' || !!room.lifecycle && room.lifecycle !== 'open';
+    this.syncWorktreeOption();
+  }
+  // The worktree choice exists only in a task room, and is offered only where the server would make one: the machine's row carries the
+  // server's own check for the host (with git's reason when it refuses), and is silent for other machines, where the box stays available.
+  syncWorktreeOption() {
+    const option = this.form.querySelector('.spawn-worktree-option'), box = this.form.elements.worktree;
+    const check = this.spawnMachine?.machine?.project_worktree, refused = check?.ok === false;
+    option.hidden = this.room?.kind !== 'task' || !!this.pendingResume?.resumable;
+    box.disabled = refused;
+    if (refused) { box.checked = false; this.form.querySelector('.spawn-worktree-base').hidden = true; }
+    const note = option.querySelector('.spawn-worktree-note');
+    note.hidden = !refused; note.textContent = refused ? `No worktree here: ${check.reason || 'the project folder cannot have one.'}` : '';
+  }
+  async refresh() {
+    if (!this.room) return;
+    const generation = this.refreshGeneration;
+    const roomID = this.room.id;
+    const agents = await this.source.list(roomID);
+    if (generation !== this.refreshGeneration || this.room?.id !== roomID) return;
+    this.cards = new Map(agents.map(agent => [agent.id, agent]));
+    const spawn = document.querySelector('#spawn-open'), viewer = this.projectRole?.(this.room.project_id) === 'viewer';
+    spawn.disabled = !this.source.available || this.room.kind === 'dm' || !!this.room.lifecycle && this.room.lifecycle !== 'open' || viewer;
+    this.spawnTitle ||= spawn.title; spawn.title = viewer ? 'Viewers cannot spawn agents' : this.spawnTitle;
+    const active = new Set(agents.map(agent => agent.id));
+    for (const [id, node] of this.nodes) if (!active.has(id)) { node.remove(); this.nodes.delete(id); }
+    for (const agent of agents) { let node = this.nodes.get(agent.id); if (!node) { node = this.card(agent); this.nodes.set(agent.id, node); this.list.append(node); } this.update(node, agent); }
+    if (this.profileID && !active.has(this.profileID)) this.closeProfile();
+    else if (this.profileID) { this.renderProfile(this.nodes.get(this.profileID), this.cards.get(this.profileID)); if (Date.now() - (this.profileLoadedAt || 0) > 30000) this.loadProfile(this.profileID); }
+    this.onChange?.(agents);
+    this.refreshHumans(roomID, generation);
+    let empty = this.list.querySelector('.agents-empty');
+    if (!agents.length && !empty) { empty = document.createElement('p'); empty.className = 'agents-empty'; empty.textContent = 'No agents in this room'; this.list.append(empty); }
+    else if (agents.length) empty?.remove();
+  }
+  // The people in the room come from the members list (the agents already come from the agent source).
+  async refreshHumans(roomID, generation) {
+    let members;
+    try { members = await request(`/api/rooms/${encodeURIComponent(roomID)}/members`); } catch { return; }
+    if (generation !== this.refreshGeneration || this.room?.id !== roomID) return;
+    const people = members?.humans || [];
+    const present = new Set(people.map(human => human.id));
+    for (const [id, node] of this.humanNodes) if (!present.has(id)) { node.remove(); this.humanNodes.delete(id); }
+    for (const human of people) {
+      let node = this.humanNodes.get(human.id);
+      if (!node) {
+        node = document.createElement('article'); node.className = 'agent-card human-card'; node.dataset.humanId = human.id;
+        const title = document.createElement('div'); title.className = 'agent-title';
+        const dot = document.createElement('span'); dot.className = 'presence-dot'; dot.setAttribute('aria-hidden', 'true');
+        const glyph = document.createElement('img'); glyph.className = 'agent-harness-icon'; glyph.src = '/icons/human.svg'; glyph.alt = ''; glyph.title = 'human'; glyph.setAttribute('aria-hidden', 'true');
+        const name = document.createElement('strong'); name.className = 'agent-name human-name';
+        const role = document.createElement('small'); role.className = 'human-role';
+        const quick = document.createElement('div'); quick.className = 'agent-quick';
+        title.append(dot, glyph, name, role, quick); node.append(title);
+        this.humanNodes.set(human.id, node); this.humans.append(node);
+      }
+      node.querySelector('.human-name').textContent = human.login;
+      node.querySelector('.human-role').textContent = human.role || '';
+      const quick = node.querySelector('.agent-quick');
+      const mine = human.id === currentUser;
+      node.classList.toggle('is-you', mine);
+      if (mine) node.querySelector('.human-name').title = 'You';
+      if (!mine && !quick.children.length && this.room?.kind !== 'dm') {
+        const dm = iconButton('human-dm', `Message ${human.login} privately`, 'dm');
+        dm.onclick = () => this.onPrivateHuman?.(human); quick.append(dm);
+      }
+    }
+  }
+  // The Agent profile: clicking a member opens one agent's full detail in place of the members list (as in v1);
+  // the close button, Escape or the agent leaving the room brings the list back. The card itself becomes the
+  // profile, so the same elements are updated in both views.
+  toggleProfile(id) { if (this.profileID === id) this.closeProfile(); else this.openProfile(id); }
+  openProfile(id) {
+    const node = this.nodes.get(id), agent = this.cards.get(id);
+    if (!node || !agent) return;
+    for (const other of this.nodes.values()) other.classList.toggle('expanded', other === node);
+    this.profileID = id; this.profileData = null; this.profileLoadedAt = 0;
+    this.panel.classList.add('profile-open');
+    this.panelTitle.textContent = 'Agent profile'; this.profileClose.hidden = false;
+    for (const [other, item] of this.nodes) { const button = item.querySelector('.agent-expand'); button.setAttribute('aria-expanded', String(other === id)); button.title = other === id ? 'Close agent profile' : 'Open agent profile'; button.setAttribute('aria-label', button.title); }
+    this.renderProfile(node, agent);
+    this.loadProfile(id);
+    this.panel.scrollTop = 0; this.list.scrollTop = 0;
+  }
+  closeProfile() {
+    if (!this.profileID) return;
+    const id = this.profileID; this.profileID = null; this.profileData = null;
+    for (const item of this.nodes.values()) { item.classList.remove('expanded'); const button = item.querySelector('.agent-expand'); button.setAttribute('aria-expanded', 'false'); button.title = 'Open agent profile'; button.setAttribute('aria-label', button.title); }
+    this.panel.classList.remove('profile-open');
+    this.panelTitle.textContent = 'Room members'; this.profileClose.hidden = true;
+    this.nodes.get(id)?.querySelector('.agent-expand')?.focus();
+  }
+  async loadProfile(id) {
+    const roomID = this.room?.id, generation = this.refreshGeneration;
+    if (!roomID) return;
+    let profile = null;
+    try { profile = await request(`/api/rooms/${encodeURIComponent(roomID)}/agents/${encodeURIComponent(id)}/profile`); } catch { profile = null; }
+    if (this.profileID !== id || generation !== this.refreshGeneration || this.room?.id !== roomID) return;
+    this.profileData = profile; this.profileLoadedAt = Date.now();
+    const node = this.nodes.get(id), agent = this.cards.get(id);
+    if (node && agent) this.renderProfile(node, agent);
+  }
+  // One label/value row; ids, paths and commands are monospace, and a command can be copied.
+  fact(label, value, { mono = false, copy = false } = {}) {
+    if (value === undefined || value === null || value === '') return null;
+    const row = document.createElement('div'); row.className = 'profile-fact';
+    const key = document.createElement('span'); key.className = 'profile-fact-label'; key.textContent = label;
+    const text = document.createElement(mono ? 'code' : 'strong'); text.className = 'profile-fact-value'; text.textContent = String(value);
+    row.append(key, text);
+    if (copy) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'icon-btn profile-copy'; const copyLabel = `Copy ${label.toLowerCase()}`; setGlyph(button, 'copy', copyLabel);
+      button.onclick = async () => {
+        try { await navigator.clipboard.writeText(String(value)); setGlyph(button, 'check', 'Copied'); } catch { setGlyph(button, 'copy', 'Copy failed: press Ctrl or ⌘ C'); const range = document.createRange(); range.selectNodeContents(text); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range); }
+        setTimeout(() => setGlyph(button, 'copy', copyLabel), 1500);
+      };
+      row.append(button);
+    }
+    return row;
+  }
+  renderProfile(node, agent) {
+    const box = node.querySelector('.agent-profile-facts');
+    if (this.profileID !== agent.id) { box.replaceChildren(); return; }
+    const profile = this.profileData || {};
+    const status = agent.desired === 'stopped' ? 'Stopped' : agent.desired === 'not_accepting' ? 'Paused' : agent.observed === 'in_turn' ? 'Working' : agent.observed === 'lost' ? 'Lost' : agent.observed === 'stopped' ? 'Stopped' : 'Online';
+    const seen = agent.last_activity_at || agent.machine_last_seen;
+    const variant = agent.variant && agent.variant !== agent.tool ? `${agent.tool}/${agent.variant}` : agent.tool;
+    const today = profile.turns_today || profile.cost_today ? `${profile.turns_today || 0} turn${profile.turns_today === 1 ? '' : 's'}${profile.cost_today ? ` · $${profile.cost_today.toFixed(profile.cost_today < 0.01 ? 4 : 2)}` : ''}` : '';
+    const rows = [
+      this.fact('Status', status), this.fact('Presence', agent.activity || (agent.observed === 'in_turn' ? 'Working on a turn' : agent.observed === 'lost' ? 'Unconfirmed; recovery needed' : 'Idle')),
+      this.fact('Last seen', seen ? relativeTime(seen) : ''), this.fact('Runtime', `${agent.model || 'unknown'} · ${variant || 'unknown'}`),
+      this.fact('Role', `${agent.role_emoji ? agent.role_emoji + ' ' : ''}${agent.role_key || agent.role || ''}`.trim()),
+      this.fact('Session', profile.native_session_id, { mono: true }), this.fact('Resume', profile.resume_command, { mono: true, copy: true }),
+      this.fact('CWD', profile.cwd, { mono: true }), this.fact('Branch', profile.branch, { mono: true }),
+      this.fact('Machine', profile.machine_name), this.fact('Launcher', profile.launcher_name),
+      this.fact('Project', profile.project_name), this.fact('Repo', profile.repo_url, { mono: true }),
+      this.fact('Spawned', profile.spawned_by ? `${profile.spawned_by}${profile.spawned_at ? ` · ${relativeTime(profile.spawned_at)}` : ''}` : ''),
+      profile.resumed_from ? this.fact('Continues', `the v1 session of ${profile.resumed_from}`) : null,
+      this.fact('Last 24 h', today), this.fact('Agent ID', agent.id, { mono: true }),
+    ].filter(Boolean);
+    const list = document.createElement('div'); list.className = 'profile-facts-list'; list.append(...rows);
+    box.replaceChildren(list);
+  }
+  card(agent) {
+    const card = document.createElement('article'); card.className = 'agent-card'; card.dataset.agentId = agent.id;
+    const title = document.createElement('div'); title.className = 'agent-title';
+    const dot = document.createElement('span'); dot.className = 'presence-dot agent-dot'; dot.setAttribute('aria-hidden', 'true');
+    const emoji = document.createElement('span'); emoji.className = 'agent-emoji'; emoji.setAttribute('aria-hidden', 'true');
+    const identity = document.createElement('span'); identity.className = 'agent-identity';
+    const icon = document.createElement('img'); icon.className = 'agent-harness-icon'; icon.alt = '';
+    const name = document.createElement('strong'); name.className = 'agent-name'; identity.append(name);
+    const role = document.createElement('span'); role.className = 'agent-role';
+    const expand = document.createElement('button'); expand.type = 'button'; expand.className = 'icon-btn agent-expand'; setGlyph(expand, 'chevron-right', 'Open agent profile'); expand.setAttribute('aria-expanded', 'false');
+    expand.onclick = () => this.toggleProfile(agent.id);
+    const quick = document.createElement('div'); quick.className = 'agent-quick';
+    // v1's state reading: the state and how long it has lasted, "idle 0:44". The label and the age are separate so the age can tick.
+    const state = document.createElement('div'); state.className = 'agent-state';
+    const stateLabel = document.createElement('span'); stateLabel.className = 'agent-state-label'; const stateAge = document.createElement('span'); stateAge.className = 'agent-state-age'; const statePill = document.createElement('span'); statePill.className = 'agent-state-pill'; statePill.append(stateLabel, document.createTextNode(' '), stateAge); state.append(statePill);
+    title.append(dot, icon, emoji, identity, state, role, quick); card.append(title);
+    // A click anywhere on the row that is not one of its buttons opens the agent's profile.
+    card.onclick = event => { if (!event.target.closest('button, a, input, select, textarea')) expand.click(); };
+    const meta = document.createElement('small'); meta.className = 'agent-meta'; card.append(meta);
+    const roleUpdate = document.createElement('small'); roleUpdate.className = 'agent-role-update'; card.append(roleUpdate);
+    const health = document.createElement('div'); health.className = 'agent-health'; card.append(health);
+    const activity = document.createElement('p'); activity.className = 'agent-activity'; card.append(activity);
+    const switchStatus = document.createElement('p'); switchStatus.className = 'agent-switch-status'; switchStatus.hidden = true; card.append(switchStatus);
+    const boundaryGrants = document.createElement('small'); boundaryGrants.className = 'agent-boundary-grants'; boundaryGrants.hidden = true; card.append(boundaryGrants);
+    const context = document.createElement('div'); context.className = 'agent-context';
+    const contextLabel = document.createElement('span'); contextLabel.textContent = 'Memory';
+    const contextTrack = document.createElement('span'); contextTrack.className = 'agent-context-track';
+    const contextFill = document.createElement('span'); contextFill.className = 'agent-context-fill'; contextTrack.append(contextFill);
+    const contextValue = document.createElement('span'); contextValue.className = 'agent-context-value';
+    context.append(contextLabel, contextTrack, contextValue); card.append(context);
+    const live = document.createElement('span'); live.className = 'agent-live-chip'; live.hidden = true; card.append(live);
+    const recovery = document.createElement('button'); recovery.type = 'button'; recovery.className = 'row-btn agent-recovery'; recovery.textContent = 'Recovery needed →'; recovery.onclick = () => this.onRecovery(agent); card.append(recovery);
+    const facts = document.createElement('div'); facts.className = 'agent-profile-facts'; card.append(facts);
+    const actions = document.createElement('div'); actions.className = 'agent-actions';
+    const privateButton = iconButton('agent-private', `Message ${agent.name || agent.slug || 'agent'} privately`, 'dm'); privateButton.onclick = () => this.onPrivate?.(agent); quick.prepend(privateButton);
+    // The row's hover icons and the profile's text buttons do the same things; the profile shows the labelled ones.
+    for (const [label, action, icon] of [['Pause', 'pause', 'pause'], ['Stop', 'stop', 'stop']]) {
+      const button = iconButton(`agent-${action}`, label, icon); if (action === 'stop') button.classList.add('icon-btn-danger');
+      button.onclick = () => this.control(agent.id, action); quick.append(button);
+    }
+    const iconAction = (name, label, glyph, className, handler) => { const button = document.createElement('button'); button.type = 'button'; button.className = `icon-btn ${className} agent-act agent-${name}`.replace(/\s+/g, ' '); setGlyph(button, glyph, label); button.onclick = handler; return button; };
+    const hints = document.createElement('div'); hints.className = 'agent-action-hints';
+    const list = [
+      ['message', 'Message', 'message', '', () => this.onPrivate?.(agent)],
+      ['act-pause', 'Pause', 'pause', '', () => this.control(agent.id, 'pause')],
+      ['act-stop', 'Stop', 'stop', 'icon-btn-danger', () => this.control(agent.id, 'stop')],
+      ['switch', 'Switch…', 'switch', '', () => this.openSwitch(agent.id)],
+      ['reactivate', 'Reactivate', 'play', '', () => this.control(agent.id, 'reactivate')],
+    ];
+    for (const [name, label, glyph, className, handler] of list) {
+      const button = iconAction(name, label, glyph, className, handler); actions.append(button);
+      const hint = document.createElement('small'); hint.className = 'agent-action-hint'; hint.id = `agent-hint-${agent.id}-${name}`; hint.hidden = true; hints.append(hint);
+    }
+    quick.append(expand);
+    card.append(actions, hints); return card;
+  }
+  update(node, agent) {
+    { const name = node.querySelector('.agent-name'); name.textContent = agentLabel(agent) || agent.id; name.title = name.textContent; }
+    node.querySelector('.agent-emoji').textContent = agent.role_emoji || '';
+    { const dm = node.querySelector('.agent-private'); dm.setAttribute('aria-label', `Message ${agent.name || agent.slug || 'agent'} privately`); dm.title = dm.getAttribute('aria-label'); }
+    node.querySelector('.agent-role').textContent = `${agent.role_emoji || ''} ${agent.role || 'Agent'}${agent.role_deleted ? ' (deleted)' : ''}`.trim();
+    node.querySelector('.agent-role').title = agent.role_updated ? 'Role updated; respawn to apply the project definition.' : '';
+    node.querySelector('.agent-role-update').textContent = agent.role_updated ? 'Role updated · respawn to apply' : '';
+    node.querySelector('.agent-meta').textContent = `${agent.tool || 'unknown'} · ${agent.model || 'unknown'}`;
+    const icon = node.querySelector('.agent-harness-icon');
+    const { src, label } = harnessIcon(agent.tool || '');
+    icon.src = src;
+    icon.title = `${agent.model || 'unknown'} · ${label}`;
+    const interrupted = agent.observed === 'interrupting' || (agent.desired === 'stopped' && agent.observed !== 'stopped');
+    const control = interrupted ? 'Interrupt requested' : agent.desired === 'stopped' ? 'Stopped' : agent.desired === 'not_accepting' ? 'Not accepting' : 'Active';
+    const observed = agent.observed === 'in_turn' ? 'Working' : agent.observed === 'lost' ? 'Lost' : agent.observed === 'stopped' ? 'Stopped' : agent.observed === 'interrupting' ? 'Interrupting' : 'Idle';
+    const state = node.querySelector('.agent-state');
+    const stateName = agent.boundary_pending ? 'awaiting approval' : interrupted ? 'stopping' : agent.observed === 'in_turn' ? 'working' : agent.observed === 'lost' ? 'lost' : agent.desired === 'stopped' ? 'stopped' : agent.desired === 'not_accepting' ? 'paused' : 'idle';
+    state.querySelector('.agent-state-label').textContent = stateName;
+    // How long it has been so: a working agent counts from the start of its turn, any other state from the last thing it did.
+    state.dataset.since = (agent.observed === 'in_turn' ? agent.activity_at || agent.last_activity_at : agent.last_activity_at) || '';
+    this.updateStateAge(state);
+    state.dataset.state = agent.boundary_pending ? 'paused'
+      : interrupted || agent.observed === 'in_turn' ? 'working'
+      : agent.observed === 'lost' ? 'error'
+      : agent.desired === 'stopped' ? 'stopped'
+      : agent.desired === 'not_accepting' ? 'paused' : 'idle';
+    state.title = agent.boundary_pending ? 'Waiting for project owner approval in Inbox.'
+      : agent.desired === 'stopped' ? 'Stopped; no new work is accepted.'
+      : agent.desired === 'not_accepting' ? 'Paused; no new work is accepted.'
+      : agent.observed === 'in_turn' ? 'Working on a turn.'
+      : agent.observed === 'lost' ? 'The previous process is unconfirmed; recovery is needed.'
+      : 'Idle; waiting for new work.';
+    if (agent.recovery_block && agent.last_exit_evidence) state.title += `\n${agent.last_exit_evidence}`;
+    node.querySelector('.agent-dot').dataset.state = state.dataset.state; node.querySelector('.agent-dot').title = state.title;
+    const health = node.querySelector('.agent-health');
+    health.replaceChildren(...(agent.health_flags || []).map(flag => {
+      const pill = document.createElement('span'); pill.className = `health-flag health-${flag.code}`;
+      pill.textContent = healthLabel(flag); pill.title = healthLabel(flag); return pill;
+    }));
+    // A turn that began because another agent replied to this one says so, so an exchange between agents is visible as it happens.
+    const woken = agent.woken_by === 'reply' ? 'Woken by reply · ' : '';
+    node.querySelector('.agent-activity').textContent = woken + (agent.activity || (observed === 'Working' ? 'Working…' : 'No recent activity'));
+    node.dataset.wokenBy = agent.woken_by || '';
+    const switchStatus = node.querySelector('.agent-switch-status');
+    const handoff = agent.switch;
+    const phase = { draining: 'Finishing current turn', stopping: 'Stopping old session', starting: 'Starting new session', failed: 'Switch failed' }[handoff?.state];
+    switchStatus.hidden = !phase && !agent.boundary_pending;
+    if (agent.boundary_pending) {
+      switchStatus.textContent = 'Folder or machine approval needed · Open Inbox';
+      switchStatus.onclick = () => document.querySelector('#inbox-toggle')?.click();
+    } else if (phase) {
+      switchStatus.textContent = `${phase}: ${handoff.tool} · ${handoff.model}${handoff.state === 'failed' && handoff.error ? ` — ${handoff.error}` : ''}`;
+      switchStatus.onclick = null;
+    } else switchStatus.onclick = null;
+    const grants = node.querySelector('.agent-boundary-grants');
+    grants.hidden = !(agent.boundary_grants || []).length;
+    grants.textContent = (agent.boundary_grants || []).map(grant => `Approved: ${grant.machine_id} · ${grant.path}`).join(' · ');
+    this.updateContext(node, agent.latest_usage);
+    const last = agent.last_activity_at || agent.activity_at;
+    const seen = agent.machine_last_seen;
+    node.querySelector('.agent-activity').title = [last && `Last agent event: ${new Date(last).toLocaleString()}`, seen && `Supervisor seen: ${new Date(seen).toLocaleString()}`].filter(Boolean).join(' · ') || 'No activity time recorded';
+    node.dataset.liveAt = agent.observed === 'in_turn' ? (agent.activity_at || agent.last_activity_at || '') : '';
+    node.dataset.liveLabel = /^tool\b/i.test(agent.activity || '') ? 'tool' : 'working';
+    this.updateLiveChip(node);
+    const recovery = node.querySelector('.agent-recovery'); recovery.hidden = !agent.recovery_block; recovery.onclick = () => this.onRecovery(agent);
+    // Every action says what it does, and a disabled one says why, both as a tooltip and as a line under the buttons.
+    const down = !this.source.available ? 'Agent controls are unavailable' : '';
+    const quotaFlag = (agent.health_flags || []).some(flag => flag.code === 'out_of_quota');
+    const reasons = {
+      message: ['Send this agent a private message', ''],
+      'act-pause': ['Pause: finish the current turn, then accept no new work', down || (agent.desired === 'not_accepting' ? 'it is already paused' : agent.desired === 'stopped' ? 'it is stopped; reactivate it first' : '')],
+      'act-stop': ['Stop: interrupt the current turn and accept no new work', down || (agent.desired === 'stopped' ? 'it is already stopped' : '')],
+      reactivate: ['Reactivate: accept new work again', down || (agent.boundary_pending ? 'it is waiting for folder or machine approval' : agent.role_deleted ? 'its role was deleted' : agent.desired === 'active' && !quotaFlag ? 'it is already active' : '')],
+      switch: ['Switch: change this agent\'s tool, model or machine', down || (this.room?.lifecycle && this.room.lifecycle !== 'open' ? 'reopen the room first' : agent.recovery_block ? 'resolve the recovery item first' : agent.desired === 'stopped' ? 'reactivate it first' : agent.boundary_pending ? 'it is waiting for folder or machine approval' : handoff && handoff.state !== 'failed' ? 'a switch is already in progress' : '')],
+    };
+    const labels = { message: 'Message', 'act-pause': 'Pause', 'act-stop': 'Stop', reactivate: 'Reactivate', switch: 'Switch' };
+    for (const [name, [what, why]] of Object.entries(reasons)) {
+      const button = node.querySelector(`.agent-${name}`), hint = node.querySelector(`#agent-hint-${CSS.escape(agent.id)}-${name}`);
+      button.disabled = !!why;
+      button.setAttribute('aria-label', labels[name]);
+      button.title = why ? `${labels[name]} is unavailable: ${why}` : what;
+      hint.hidden = !why; hint.textContent = why ? `${labels[name]} is unavailable: ${why}.` : '';
+      if (why) button.setAttribute('aria-describedby', hint.id); else button.removeAttribute('aria-describedby');
+    }
+    node.querySelector('.agent-stop').disabled = !!reasons['act-stop'][1];
+    node.querySelector('.agent-pause').disabled = !!reasons['act-pause'][1];
+  }
+  updateLiveChips() { for (const node of this.nodes.values()) { this.updateLiveChip(node); this.updateStateAge(node.querySelector('.agent-state')); } }
+  // The time in a state is M:SS under an hour, then 3h, then 4d (stateAge); nothing when it is unknown.
+  updateStateAge(state) {
+    const since = Date.parse(state.dataset.since || ''), age = state.querySelector('.agent-state-age');
+    if (!Number.isFinite(since)) { age.textContent = ''; return; }
+    age.textContent = stateAge((Date.now() - since) / 1000);
+  }
+  updateContext(node, usage) {
+    const context = node.querySelector('.agent-context');
+    const track = context.querySelector('.agent-context-track');
+    const value = context.querySelector('.agent-context-value');
+    const used = usage?.context_used, window = usage?.context_window;
+    const usedKnown = Number.isFinite(used) && used >= 0;
+    const windowKnown = Number.isFinite(window) && window > 0;
+    const known = usedKnown && windowKnown;
+    track.hidden = !known;
+    track.querySelector('.agent-context-fill').style.width = known ? `${Math.min(100, used / window * 100)}%` : '0%';
+    value.textContent = known ? `${Math.round(Math.min(100, used / window * 100))}%` : '—';
+    const number = amount => Number.isFinite(amount) && amount >= 0 ? new Intl.NumberFormat().format(amount) : '—';
+    const cost = Number.isFinite(usage?.cost_so_far) && usage.cost_so_far >= 0 ? `$${usage.cost_so_far.toFixed(usage.cost_so_far > 0 && usage.cost_so_far < 0.01 ? 4 : 2)}` : '—';
+    context.title = `Context ${usedKnown ? number(used) : '—'} / ${windowKnown ? number(window) : '—'} tokens · Input ${number(usage?.tokens_in)} · Output ${number(usage?.tokens_out)} · Cost so far ${cost}`;
+    context.setAttribute('aria-label', `Memory: ${context.title}`);
+  }
+  updateLiveChip(node) {
+    const chip = node.querySelector('.agent-live-chip');
+    const at = Date.parse(node.dataset.liveAt || '');
+    chip.hidden = !Number.isFinite(at);
+    if (chip.hidden) return;
+    const seconds = Math.max(0, Math.floor((Date.now() - at) / 1000));
+    chip.textContent = `${node.dataset.liveLabel} ${stateAge(seconds)}`;
+  }
+  async control(id, action) { this.error.textContent = ''; try { await this.source.control(id, action); await this.refresh(); } catch (error) { this.error.textContent = error.message; } }
+  async openSwitch(id) {
+    const agent = this.cards.get(id); if (!agent) return;
+    this.switchAgentID = id;
+    this.switchRoomID = this.room.id;
+    this.switchDialog.showModal();
+    document.querySelector('#switch-agent-name').textContent = `${agentLabel(agent) || id} · ${agent.tool} · ${agent.model}`;
+    const tools = this.switchForm.elements.tool, models = this.switchForm.elements.model;
+    const reason = document.querySelector('#switch-tool-reason');
+    tools.replaceChildren(); models.replaceChildren();
+    reason.textContent = 'Loading available tools…'; document.querySelector('#switch-version').textContent = '';
+    document.querySelector('#switch-error').textContent = '';
+    this.switchForm.querySelector('button[type=submit]').disabled = true;
+    try {
+      await this.loadOwner(); // before the catalog, whose hints depend on it
+      await this.switchMachine.load(this.room.project_id, agent.machine_id);
+    } catch (error) {
+      if (this.switchDialog.open) reason.textContent = `Machines unavailable: ${error.message}`;
+    }
+  }
+  async loadSwitchCatalog() {
+    const id = this.switchAgentID, machineID = this.switchMachine.id;
+    const requestID = (this.switchCatalogRequestID || 0) + 1; this.switchCatalogRequestID = requestID;
+    const tools = this.switchForm.elements.tool, models = this.switchForm.elements.model;
+    tools.replaceChildren(); models.replaceChildren(); this.switchForm.querySelector('button[type=submit]').disabled = true;
+    document.querySelector('#switch-tool-reason').textContent = 'Loading available tools…';
+    if (!machineID) return;
+    try {
+      const result = await this.source.catalog(machineID);
+      if (!this.switchDialog.open || this.switchAgentID !== id || requestID !== this.switchCatalogRequestID) return;
+      this.switchCatalog = Array.isArray(result?.tools) ? result.tools : [];
+      this.switchNeedsUpdate = !!result?.supervisor_update_needed;
+      this.switchCatalog.forEach((tool, index) => {
+        const option = document.createElement('option'); option.value = String(index);
+        option.textContent = `${tool.label || tool.tool}${tool.available ? '' : ` — ${tool.unavailable_reason || 'unavailable'}`}`;
+        option.disabled = !tool.available; tools.append(option);
+      });
+      const agent = this.cards.get(id);
+      const current = this.switchCatalog.findIndex(tool => tool.available && tool.tool === agent?.tool && tool.variant === agent?.variant);
+      tools.selectedIndex = current >= 0 ? current : this.switchCatalog.findIndex(tool => tool.available);
+      this.renderSwitchModels();
+    } catch (error) {
+      if (this.switchDialog.open && requestID === this.switchCatalogRequestID) document.querySelector('#switch-tool-reason').textContent = `Tool catalog unavailable: ${error.message}`;
+    }
+  }
+  renderSwitchModels(resetModels = true) {
+    const agent = this.cards.get(this.switchAgentID);
+    const tools = this.switchForm.elements.tool, models = this.switchForm.elements.model;
+    const tool = tools.selectedIndex < 0 ? null : this.switchCatalog?.[Number(tools.value)];
+    if (resetModels) {
+      models.replaceChildren();
+      for (const model of tool?.models || []) {
+        const option = document.createElement('option'); option.value = model.id; option.textContent = model.label || model.id; if (model.note) option.title = model.note; models.append(option);
+      }
+      const preferred = (tool?.models || []).find(model => model.default);
+      if (preferred) models.value = preferred.id;
+      if (tool?.tool === agent?.tool && tool?.variant === agent?.variant && [...models.options].some(option => option.value === agent.model)) models.value = agent.model;
+    }
+    document.querySelector('#switch-version').textContent = tool?.cli_version ? `CLI version ${tool.cli_version}` : '';
+    const unchanged = tool?.tool === agent?.tool && tool?.variant === agent?.variant && models.value === agent?.model && (!agent?.machine_id || this.switchMachine.id === agent.machine_id);
+    this.setHint(document.querySelector('#switch-tool-reason'), this.switchNeedsUpdate && !tool?.available ? 'This machine\'s supervisor predates harnesses. Update the supervisor to add harnesses.'
+      : !tool ? 'No harness is available on a connected machine. Add one in Settings → Harnesses.'
+      : !models.options.length ? 'This harness has no models yet. Add one under Settings → Harnesses.'
+        : unchanged ? 'Choose a different model or tool.'
+          : tool.toolbox === false ? `No agent toolbox: ${tool.toolbox_reason || 'unavailable for this launcher'}.` : '');
+    this.switchForm.querySelector('button[type=submit]').disabled = !tool?.available || !models.options.length || unchanged || !this.switchMachine.folderReady;
+  }
+  async switchAgent() {
+    const id = this.switchAgentID;
+    const tools = this.switchForm.elements.tool;
+    const selected = tools.selectedIndex < 0 ? null : this.switchCatalog?.[Number(tools.value)];
+    const model = this.switchForm.elements.model.value;
+    if (!id || !selected?.available || !model) return;
+    const submit = this.switchForm.querySelector('button[type=submit]');
+    const cancel = document.querySelector('#switch-cancel');
+    submit.disabled = true; cancel.disabled = true;
+    document.querySelector('#switch-error').textContent = '';
+    try {
+      await this.source.switch(id, { room_id: this.switchRoomID, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, machine_id: this.switchMachine.id });
+      await this.refresh();
+      this.switchDialog.close();
+    } catch (error) { document.querySelector('#switch-error').textContent = error.message; this.renderSwitchModels(false); }
+    finally { cancel.disabled = false; }
+  }
+  // The worktree choice, as a request carries it: only a task room can have a worktree, so from any other room nothing is sent, however the
+  // box was left (it is hidden there and could not be unticked).
+  worktreeChoice() {
+    if (this.room?.kind !== 'task' || !this.form.elements.worktree.checked) return { worktree: false, base_ref: '' };
+    return { worktree: true, base_ref: this.form.elements.base_ref.value };
+  }
+  // A refused or cancelled spawn leaves the form as it was; each opening of the dialog starts without a worktree.
+  resetWorktreeChoice() {
+    this.form.elements.worktree.checked = false; this.form.elements.base_ref.value = '';
+    this.form.querySelector('.spawn-worktree-base').hidden = true;
+  }
+  // openSpawn({ resume }) opens the dialog to start an agent from imported v1 history: the name is the old one, the tool and model are
+  // what v1 ran, and the v1 session is continued when the harness can. Without it, it is the ordinary spawn dialog.
+  async openSpawn({ resume = null } = {}) {
+    this.resetWorktreeChoice();
+    this.pendingResume = resume;
+    this.renderResume();
+    this.dialog.showModal();
+    this.renderSpawnModels();
+    const toolSelect = this.form.elements.tool;
+    const modelSelect = this.form.elements.model;
+    const reason = document.querySelector('#spawn-tool-reason');
+    const version = document.querySelector('#spawn-version');
+    const submit = this.form.querySelector('button[type=submit]');
+    toolSelect.replaceChildren(); modelSelect.replaceChildren();
+    reason.textContent = 'Loading available tools…'; version.textContent = ''; submit.disabled = true;
+    try {
+      const roomID = this.room.id;
+      await this.loadOwner(); // before the catalog, whose hints depend on it
+      const [roles] = await Promise.all([this.source.roles(), this.spawnMachine.load(this.room.project_id)]);
+      if (!this.dialog.open || this.room?.id !== roomID) return;
+      this.form.elements.role.replaceChildren(...roles.map(role => {
+        const node = document.createElement('option'); node.value = role.role_key; node.textContent = `${role.emoji || ''} ${role.label}`.trim(); return node;
+      }));
+      if (roles.some(role => role.role_key === 'worker')) this.form.elements.role.value = 'worker';
+      if (resume?.role_key && roles.some(role => role.role_key === resume.role_key)) this.form.elements.role.value = resume.role_key;
+    } catch (error) {
+      if (!this.dialog.open) return;
+      this.catalog = [];
+      reason.textContent = `Machines or tools unavailable: ${error.message}`;
+      submit.disabled = true;
+    }
+  }
+  async loadSpawnCatalog() {
+    const machineID = this.spawnMachine.id;
+    const requestID = (this.catalogRequestID || 0) + 1; this.catalogRequestID = requestID;
+    const toolSelect = this.form.elements.tool, modelSelect = this.form.elements.model;
+    toolSelect.replaceChildren(); modelSelect.replaceChildren();
+    this.form.querySelector('button[type=submit]').disabled = true;
+    document.querySelector('#spawn-tool-reason').textContent = 'Loading available tools…';
+    if (!machineID) return;
+    try {
+      const result = await this.source.catalog(machineID);
+      if (!this.dialog.open || requestID !== this.catalogRequestID) return;
+      this.catalog = Array.isArray(result?.tools) ? result.tools : [];
+      this.spawnNeedsUpdate = !!result?.supervisor_update_needed;
+      this.catalog.forEach((tool, index) => {
+        const option = document.createElement('option'); option.value = String(index);
+        const detail = tool.unavailable_reason || 'unavailable';
+        const help = detail.includes('Settings → Harnesses') ? detail : `${detail}; check Settings → Harnesses`;
+        option.textContent = `${tool.label || tool.tool}${tool.available ? '' : ` — ${help}`}`;
+        option.disabled = !tool.available; toolSelect.append(option);
+      });
+      toolSelect.selectedIndex = this.catalog.findIndex(tool => tool.available);
+      this.applyResumeChoice(toolSelect);
+      this.renderSpawnModels();
+      this.applyResumeModel();
+    } catch (error) {
+      if (this.dialog.open && requestID === this.catalogRequestID) document.querySelector('#spawn-tool-reason').textContent = `Tool catalog unavailable: ${error.message}`;
+    }
+  }
+  // The v1 tool is picked when this machine offers it. A session that can be continued needs that tool natively (a container has its own
+  // home and cannot see it), so only the native entries of it stay selectable and the first of those is picked, whatever order the
+  // catalog lists them in. A fresh start only preselects the v1 tool; the others stay available.
+  applyResumeChoice(toolSelect) {
+    const resume = this.pendingResume;
+    if (!resume?.tool) return;
+    const fits = tool => tool.tool === resume.tool && tool.available && !(resume.resumable && tool.containerized);
+    const index = this.catalog.findIndex(fits);
+    if (index >= 0) toolSelect.selectedIndex = index;
+    if (resume.resumable) for (const option of toolSelect.options) option.disabled = option.disabled || !fits(this.catalog[Number(option.value)]);
+    // Nothing fits: no entry is selected, so the dialog cannot submit a start that the server would refuse.
+    if (index < 0 && resume.resumable) toolSelect.selectedIndex = -1;
+    if (index < 0 && resume.resumable) document.querySelector('#spawn-resume-notes').textContent = `${resume.tool} is not available natively on the chosen machine, so the session cannot be continued here.`;
+  }
+  applyResumeModel() {
+    const resume = this.pendingResume;
+    if (!resume?.model) return;
+    const options = [...this.form.elements.model.options];
+    const match = options.find(option => option.value === resume.model);
+    if (match) this.form.elements.model.value = match.value;
+  }
+  // The banner of the start-from-v1 dialog: what is being started, where it will work, and what to confirm.
+  renderResume() {
+    const resume = this.pendingResume;
+    const box = document.querySelector('#spawn-resume'), text = document.querySelector('#spawn-resume-text'), notes = document.querySelector('#spawn-resume-notes');
+    const confirm = document.querySelector('#spawn-resume-confirm'), confirmLabel = document.querySelector('#spawn-resume-confirm-label');
+    box.hidden = !resume;
+    this.syncWorktreeOption();
+    this.form.querySelector('h2').textContent = resume ? `Start ${resume.slug} as a v2 agent` : 'Spawn';
+    confirm.checked = false; confirmLabel.hidden = !resume?.v1_active; notes.textContent = '';
+    if (!resume) return;
+    text.textContent = resume.resumable
+      ? `This continues the v1 session of ${resume.legacy_id}, working in ${resume.cwd}.`
+      : `${resume.reason || 'This agent starts fresh with the same name.'}`;
+    const lines = [];
+    if (resume.resumable && resume.outside_folder) lines.push(`It works in ${resume.cwd}, outside the project folder, so the owner must approve it in the Inbox before it starts.`);
+    if (resume.v1_active) lines.push('v1 saw this agent a moment ago and may still be using the session. Stop it in v1 first: two processes on one session corrupt it.');
+    notes.textContent = lines.join(' ');
+  }
+  updateSpawnSubmit() {
+    const tool = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)];
+    // A resumed session runs in the v1 folder, which the server checks itself, so the machine's project folder is not needed for it.
+    this.form.querySelector('button[type=submit]').disabled = (!this.pendingResume?.resumable && !this.spawnMachine.folderReady) || (!tool?.available || !this.form.elements.model.options.length);
+  }
+  // A hint that names Settings → Harnesses makes that name a button that opens it, so an empty machine says where to go.
+  // Only an owner or admin can add or change a harness, so anyone else gets plain words (the link would only end in a refusal).
+  setHint(node, text) {
+    const marker = 'Settings → Harnesses', at = text.indexOf(marker);
+    node.replaceChildren();
+    if (at < 0) { node.textContent = text; return; }
+    if (!this.canManageHarnesses) {
+      node.textContent = text.replace(/Add a harness in Settings → Harnesses/, 'Ask an admin to add a harness').replace(/Add one (?:in|under) Settings → Harnesses/, 'Ask an admin to add one')
+        .replace(/; [Cc]heck Settings → Harnesses/, '; ask an admin to check the harnesses').replace(/[Cc]heck Settings → Harnesses/, 'Ask an admin to check the harnesses').replace(/enable it in Settings → Harnesses/, 'ask an admin to enable it');
+      return;
+    }
+    const link = document.createElement('button'); link.type = 'button'; link.className = 'inline-link'; link.textContent = marker;
+    // Settings opens on the machine the dialog is showing.
+    const machineID = this.switchDialog.open ? this.switchMachine.id : this.spawnMachine.id;
+    link.onclick = () => { this.dialog.close(); this.switchDialog.close(); document.dispatchEvent(new CustomEvent('aimebu:open-settings', { detail: { section: 'harnesses', machineID } })); };
+    node.append(text.slice(0, at), link, text.slice(at + marker.length));
+  }
+  // Whether this person is the owner or an admin (who are trusted alike), read when a dialog opens; it decides what the hints can offer.
+  async loadOwner() {
+    this.canManageHarnesses = rights.admin;
+  }
+  renderSpawnModels() {
+    const tool = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)];
+    const models = this.form.elements.model;
+    const reason = document.querySelector('#spawn-tool-reason');
+    const version = document.querySelector('#spawn-version');
+    models.replaceChildren();
+    for (const model of tool?.models || []) {
+      const option = document.createElement('option');
+      option.value = typeof model === 'string' ? model : model.id;
+      option.textContent = typeof model === 'string' ? model : model.label || model.id;
+      if (model.note) option.title = model.note;
+      models.append(option);
+    }
+    const preferred = (tool?.models || []).find(model => model.default);
+    if (preferred) models.value = preferred.id;
+    version.textContent = tool?.cli_version ? `CLI version ${tool.cli_version}` : '';
+    this.setHint(reason, this.spawnNeedsUpdate && !tool?.available ? 'This machine\'s supervisor predates harnesses. Update the supervisor to add harnesses.'
+      : !tool ? (this.catalog?.length ? 'No tool is available on a connected machine. Check Settings → Harnesses.' : 'No harness yet. Add a harness in Settings → Harnesses.')
+      : !tool.available ? (tool.unavailable_reason?.includes('Settings → Harnesses')
+        ? tool.unavailable_reason : `${tool.unavailable_reason || 'This tool is unavailable'}; check Settings → Harnesses`)
+        : models.options.length ? (tool.toolbox === false ? `No agent toolbox: ${tool.toolbox_reason || 'unavailable for this launcher'}.` : '') : 'This harness has no models yet. Add one under Settings → Harnesses.');
+    this.updateSpawnSubmit();
+  }
+  async spawn() {
+    if (!this.room) return;
+    this.error.textContent = '';
+    const role = this.form.elements.role.value, selected = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)], model = this.form.elements.model.value;
+    if (!selected?.available || !model) return;
+    const resume = this.pendingResume;
+    if (resume?.resumable && selected.tool !== resume.tool) { this.error.textContent = `To continue this session the tool must be ${resume.tool}.`; return; }
+    if (resume?.v1_active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that v1 is not running this session any more.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
+    try { await this.source.spawn(this.room.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume ? { resume_legacy: resume.legacy_id, confirm_v1_idle: document.querySelector('#spawn-resume-confirm').checked } : {}) }); this.dialog.close(); this.form.reset(); await this.refresh(); }
+    catch (error) { this.error.textContent = error.message; this.dialog.close(); }
+  }
+}
