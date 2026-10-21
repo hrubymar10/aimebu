@@ -31,12 +31,13 @@ Historical messages and reactions retain their agent authors.
 
 `aimebu prune -a` removes the contents of `server/` and `supervisor/`, including
 the database, attachments, machine credentials, journal, and private runtime
-files. The two stable lock files (`server/.writer.lock` and
+files. It preserves `server/backups/`, including the verified database copies
+made before schema migrations. The two stable lock files (`server/.writer.lock` and
 `supervisor/journal.sqlite.lock`) and their parent directories remain so a
 starting process cannot race by locking a replacement inode. A fresh server
 needs owner bootstrap again.
 
-Both modes preserve `switcher/` (stored logins and backups), `usages/`
+Both modes preserve `server/backups/`, `switcher/` (stored logins and backups), `usages/`
 (provider secrets, settings, and cache), and unknown files directly under the
 config root. They never walk project checkout paths, so harness session files
 outside `AIMEBU2_CONFIG_DIR` are untouched. Symlinked config roots, ancestors,

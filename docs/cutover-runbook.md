@@ -37,19 +37,26 @@ this page is the operational order and rollback path.
    [`runServer`](../cmd/aimebu/main.go),
    [`StartTokenCopies`](../internal/server/credtargets.go), and
    [switcher cutover](switcher.md).
-3. Back up an **existing v2** data root before starting a newer v2 binary:
-   stop its server and copy the entire root, or use SQLite's online backup for
-   `server/aimebu.sqlite` while it is running and separately copy its files
-   while writers are stopped. For an online database snapshot:
+3. Before upgrading an **existing v2** root, keep an independent full-root
+   archive if you need attachments, credentials, and agent runtime state for
+   recovery. Stop its server before copying those files. An optional manual
+   online database snapshot can be made while the server runs:
 
    ```sh
    sqlite3 "$HOME/.aimebu2/server/aimebu.sqlite" ".backup '$HOME/aimebu2-before-upgrade.sqlite'"
    ```
 
-   **Current gap:** v2 does not make an automatic backup before schema
-   migrations. [`store.Open`](../internal/store/store.go) calls
-   [`migrateUpTo`](../internal/store/migrations.go) on startup; each migration
-   is transactional, but there is no automatic pre-migration database copy.
+   When the existing database has pending schema migrations, startup also
+   makes its own standalone SQLite backup under `server/backups/`, verifies
+   `integrity_check`, and normally keeps the new copy plus the four newest
+   older copies. It stops before migrating if the backup fails. If removal of
+   an older copy fails, startup
+   logs a warning and continues with the verified new backup. A fresh database
+   needs no schema backup. These automatic
+   copies contain the database only, and `prune -a` preserves them. See
+   [`backupBeforeMigration`](../internal/store/migration_backup.go),
+   [`store.Open`](../internal/store/store.go), and
+   [`migrateUpTo`](../internal/store/migrations.go).
 
 ## 2. Move the live root and import
 

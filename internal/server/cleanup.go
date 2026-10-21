@@ -406,6 +406,7 @@ func (s *Server) buildDiskReport(ctx context.Context) (*diskReport, error) {
 	soundBytes := dirSize(ctx, filepath.Join(root, "server", "sounds"))
 	supervisorBytes := dirSize(ctx, filepath.Join(root, "supervisor"))
 	backupBytes := dirSize(ctx, filepath.Join(root, ".old-v1-bkp"))
+	migrationBackupBytes := dirSize(ctx, filepath.Join(root, "server", "backups"))
 	switcherBytes := dirSize(ctx, filepath.Join(root, "switcher"))
 	usagesBytes := dirSize(ctx, filepath.Join(root, "usages"))
 	facts, err := s.inspectWorktrees(ctx)
@@ -463,6 +464,7 @@ func (s *Server) buildDiskReport(ctx context.Context) (*diskReport, error) {
 	for _, c := range []diskCategory{
 		{"database", "Database", footprint.Bytes}, {"attachments", "Attachments", attachmentBytes}, {"worktrees", "Worktrees", worktreeBytes},
 		{"supervisor", "Agent runtime", supervisorBytes}, {"sounds", "Sounds", soundBytes}, {"v1_backup", "v1 backup", backupBytes},
+		{"migration_backups", "Migration backups", migrationBackupBytes},
 		{"switcher", "Account switcher", switcherBytes}, {"usages", "Usage cache", usagesBytes},
 	} {
 		report.Categories = append(report.Categories, c)

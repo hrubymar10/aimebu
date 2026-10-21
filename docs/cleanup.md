@@ -67,9 +67,11 @@ the counts of messages and rooms are unchanged and that the cleanup's source
 contains no statement that deletes either.
 
 Aimebu's agent runtime state (`supervisor/`: adapter homes, sessions, its
-journal file), the v1 backup `.old-v1-bkp`, `switcher/` and `usages/` are
-reported (Health shows each size) but never pruned: they hold logins and
-history, and removing one costs more than the space returns.
+journal file), the v1 backup `.old-v1-bkp`, schema-migration copies under
+`server/backups/`, `switcher/` and `usages/` are reported in Health and left
+alone by cleanup and `aimebu prune`. Startup normally keeps the newly verified
+schema-migration copy and the four newest older copies; if rotation fails,
+it logs a warning and retains the verified new copy.
 
 ## When it runs
 
@@ -93,7 +95,7 @@ nothing. Everything above is owner-only.
 
 `GET /api/disk` feeds the top of the Health panel: a total, the breakdown by
 project (attachments and worktrees), by kind (database, attachments,
-worktrees, agent runtime, sounds, v1 backup, account switcher, usage cache),
+worktrees, agent runtime, sounds, v1 backup, migration backups, account switcher, usage cache),
 each worktree with its size and state, free space on the data disk with a
 warning under 10 GB or 10%, and the last cleanup. Worktree sizes come from the
 machine that holds them (`worktree_op` action `inspect`; a remote supervisor

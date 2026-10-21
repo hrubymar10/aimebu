@@ -36,11 +36,16 @@ worktree checkout, including when forced.
 A machine runs harnesses: the Claude Code, Codex, Pi and OpenCode installs the owner sets up
 under Settings → Harnesses (a harness is stored as a named launcher). A new machine has none:
 nothing is seeded, and nothing is added until the owner adds it by hand or ticks what
-Auto-detect found. Spawn and switch use the selected harness's stable ID. Upgraded machines keep the launchers that were enabled or in use (the unused
-seeded ones are deleted by migration 69, which logs what it removed and moved: back up
-`aimebu.sqlite` before upgrading, as for any migration; an agent's model that the old list lacked is
-added to its harness so no running agent changes model, and a tool whose model list was edited
-keeps one disabled harness so the list survives). The spawn dialog
+Auto-detect found. Spawn and switch use the selected harness's stable ID. Upgraded machines keep the launchers that were enabled or in use. Migration 69 deletes unused
+seeded ones and logs what it removed and moved.
+When an existing v2 database has pending migrations, startup saves and verifies an
+online SQLite snapshot in `server/backups/` before changing it. Each snapshot
+is one standalone `.sqlite` file. Startup keeps the new copy and the four
+newest older copies; if removal of an older copy fails, it logs a warning and
+continues with the verified new copy. An agent's model that the old list lacked
+is added to its harness
+so no running agent changes model. A tool whose model list was edited keeps
+one disabled harness so the list survives. The spawn dialog
 shows unavailable harnesses with the reason and points to Settings → Harnesses for setup (a link that opens it on
 the dialog's machine for an owner or admin; anyone else is told to ask an admin). A
 harness can be selected by ID or by its name in `variant`; `native` and `docker` keep their

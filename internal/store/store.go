@@ -106,7 +106,7 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 	// every operation. A later reader pool can be added without changing Tx.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	if err := openStoreWithBusyRetry(ctx, db); err != nil {
+	if err := openStoreWithBusyRetry(ctx, db, path); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -116,10 +116,23 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 // Another process may be opening or checkpointing the same WAL database while
 // this server starts. Retry only SQLite lock contention; a genuine migration
 // error must still fail immediately.
-func openStoreWithBusyRetry(ctx context.Context, db *sql.DB) error {
+func openStoreWithBusyRetry(ctx context.Context, db *sql.DB, path string) error {
 	deadline := time.Now().Add(15 * time.Second)
+	backedUp := false
 	for {
 		err := db.PingContext(ctx)
+		if err == nil {
+			var current int
+			var existing bool
+			current, existing, err = pendingMigrationState(ctx, db)
+			if err == nil && existing && current < LatestSchemaVersion() && !backedUp {
+				if err = backupBeforeMigration(ctx, db, path, current, LatestSchemaVersion(), rotateMigrationBackups); err != nil {
+					err = fmt.Errorf("pre-migration backup: %w", err)
+				} else {
+					backedUp = true
+				}
+			}
+		}
 		if err == nil {
 			err = migrate(ctx, db)
 		}

@@ -44,7 +44,7 @@ func TestStoreStartupRetriesSQLiteBusy(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- openStoreWithBusyRetry(ctx, db) }()
+	go func() { done <- openStoreWithBusyRetry(ctx, db, path) }()
 	// Wait for startup to use and release the connection twice. A quick Ping
 	// may account for one cycle; the locked schema write accounts for the
 	// other. This observes an actual busy attempt before unlocking, without

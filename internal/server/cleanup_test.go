@@ -239,7 +239,7 @@ func TestDiskReportBreaksDownByProjectAndCategory(t *testing.T) {
 	for _, c := range report.Categories {
 		keys[c.Key] = true
 	}
-	for _, key := range []string{"database", "attachments", "worktrees", "supervisor", "sounds", "v1_backup"} {
+	for _, key := range []string{"database", "attachments", "worktrees", "supervisor", "sounds", "v1_backup", "migration_backups"} {
 		if !keys[key] {
 			t.Fatalf("missing category %q in %+v", key, report.Categories)
 		}

@@ -15,6 +15,17 @@ reactions and 325 attachments (150 MB) took 0.2 s to review, 1.3 s to check and
 own copy of the attachments, so plan for roughly twice the attachment space on
 disk until you delete the backup.
 
+This `.old-v1-bkp/` copy is separate from v2's schema-migration backups. On
+later starts, if an existing v2 database needs a schema migration, startup
+first writes a verified online snapshot to `server/backups/` and normally keeps
+the new copy plus the four newest older ones. A fresh v2 database needs no
+schema backup. If the snapshot or its integrity check fails, startup stops
+before changing the schema; fix the backup error and retry. If deletion of an
+older copy fails, startup logs a
+warning and continues with the verified new backup. These database snapshots
+do not include attachments,
+switcher credentials, or agent runtime files.
+
 The v1 backup must be in place **before the first v2 start**: that start reserves
 v1's message numbers so the imported history keeps them, and a backup that
 arrives later cannot be imported (the wizard then offers only to skip).

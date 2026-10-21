@@ -141,7 +141,7 @@ func pruneRoot(ctx context.Context, root string, all bool) error {
 	}
 	defer unlockServerDirectory(supervisorLock)
 	if all {
-		if err := removeChildrenExcept(serverDir, ".writer.lock"); err != nil {
+		if err := removeChildrenExcept(serverDir, ".writer.lock", "backups"); err != nil {
 			return err
 		}
 		return removeChildrenExcept(supervisorDir, "journal.sqlite.lock")
@@ -198,7 +198,7 @@ func pruneLock(path, owner string) (*os.File, error) {
 	return file, nil
 }
 
-func removeChildrenExcept(dir, keep string) error {
+func removeChildrenExcept(dir string, keep ...string) error {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return nil
@@ -207,7 +207,14 @@ func removeChildrenExcept(dir, keep string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Name() == keep {
+		preserved := false
+		for _, name := range keep {
+			if entry.Name() == name {
+				preserved = true
+				break
+			}
+		}
+		if preserved {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
