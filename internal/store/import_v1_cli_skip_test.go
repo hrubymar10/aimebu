@@ -112,9 +112,10 @@ func TestV1WizardSuggestedMapImportsThroughTheCLIPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import of the wizard's suggested map: %v", err)
 	}
-	// _system is skipped by suggestion; the fixture's "work" is a project of its own and the DM goes into its agent's project.
-	if report.Skipped["rooms"] != 1 || report.Skipped["messages"] != 1 {
-		t.Fatalf("only _system should be skipped: %+v", report)
+	// _system and the DM are skipped by suggestion (a DM is imported only when the owner ticks it); the fixture's "work" is a
+	// project of its own and is imported.
+	if report.Skipped["rooms"] != 2 || report.Skipped["messages"] != 2 || len(report.DMOnlyAccess) != 0 {
+		t.Fatalf("only _system and the DM should be skipped: %+v", report)
 	}
 	var imported int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM room r JOIN legacy_room l ON l.room_id=r.id WHERE r.title='_system'`).Scan(&imported); err != nil || imported != 0 {

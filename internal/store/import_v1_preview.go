@@ -321,7 +321,8 @@ func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1Impor
 		out.Suggested.MemoryProjects[scope] = scope
 	}
 	sort.Strings(out.MemoryProjects)
-	// Direct messages go to the project their AI participant belongs to when the wizard proposes it, and always start open.
+	// Direct messages are private chats, so none is imported unless the owner ticks it. Each still names the project its AI
+	// participant belongs to (when the wizard proposes it), so ticking one needs no further choice, and each is open.
 	for i, room := range data.Rooms {
 		if !isV1DM(room.ID) {
 			continue
@@ -329,7 +330,7 @@ func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1Impor
 		spec := out.Suggested.Rooms[room.ID]
 		spec.Project = v1DMSuggestedProject(room, out.Suggested.Projects, spec.Project)
 		spec.Lifecycle = "open"
-		spec.Skip = spec.Project == "" // a chat is imported unless it has no project to live in; the owner can turn any off
+		spec.Skip = true
 		out.Suggested.Rooms[room.ID] = spec
 		for j := range out.Rooms {
 			if out.Rooms[j].ID == data.Rooms[i].ID {

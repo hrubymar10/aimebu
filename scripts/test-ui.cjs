@@ -828,10 +828,10 @@ async function main() {
         rooms.created = { alias: Object.keys(wizard.mapping.projects).includes('fresh-start'), project: wizard.mapping.projects['fresh-start'], memory: wizard.mapping.enable_project_memory['fresh-start'], placed: into('scratch').value, panelGone: !find('.import-new-project') };
         out.rooms = rooms;
         press('Next'); await settle();
-        // Step 4: Direct messages. Off by default; turning one on asks for a project.
+        // Step 4: Direct messages. Off by default; turning one on shows its suggested project, and clearing it asks for one.
         const dms = { label: wizard.progressLabel.textContent, status: count(wizard.status.textContent), checked: find('input[type=checkbox]').checked, retitle: find('legend[data-dm-room]').textContent };
         find('input[type=checkbox]').click(); await settle();
-        dms.after = { status: count(wizard.status.textContent), hasProject: !!label('Project') };
+        dms.after = { status: count(wizard.status.textContent), hasProject: !!label('Project'), prefilled: find('select', label('Project'))?.value };
         choose(find('select', label('Project')), ''); await settle(); press('Next'); await settle();
         dms.blocked = wizard.error.textContent.includes('Choose a project for the chat') && wizard.progressLabel.textContent.includes('Direct messages');
         choose(find('select', label('Project')), 'a'); await settle(); press('Next'); await settle();
@@ -915,7 +915,7 @@ async function main() {
         merged: ['2 v1 rooms will be merged into the root of a: a-leader, a.'], unmerged: 0, panel: true,
         created: { alias: true, project: { name: 'Fresh Start', folder: '/tmp/fresh' }, memory: true, placed: 'general:fresh-start', panelGone: true },
       },
-      dms: { label: 'Step 4 of 8 · Direct messages', status: '0 of 1 chats', checked: false, retitle: 'nina', after: { status: '1 of 1 chats', hasProject: true }, blocked: true },
+      dms: { label: 'Step 4 of 8 · Direct messages', status: '0 of 1 chats', checked: false, retitle: 'nina', after: { status: '1 of 1 chats', hasProject: true, prefilled: 'a' }, blocked: true },
       memory: { label: 'Step 5 of 8 · Memory', scopes: 2, enableBoxes: [true, true, true] },
       macros: { label: 'Step 6 of 8 · Macros', status: '2 of 2 macros', none: ['greet', 'other'], noneStatus: '0 of 2 macros', all: 0, one: ['other'], conflict: true },
       roles: { label: 'Step 7 of 8 · Roles', choice: 'use_v1' },

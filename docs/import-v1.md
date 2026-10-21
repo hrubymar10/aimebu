@@ -54,8 +54,8 @@ suggests projects from what v1 itself names: an exact `x` + `x-leader` room pair
 room that has messages and no leader pair (suggested as project `x` with the room in its root,
 even when its agent has since left), and a memory scope (a memory scope with no matching project is suggested as a new project on the
 first page). There is no catch-all project: a room with no project to go to starts as **Don't
-import**, a direct message starts as **Don't import** only when it has no project to go into
-(otherwise it is imported), and a room or memory scope that
+import**, every direct message starts as **Don't import** (it is imported only when the owner
+ticks it), and a room or memory scope that
 reaches an import with no project is not imported and is listed in the report as
 `skipped_no_project`. An import with no projects at all is allowed (the rest of the backup,
 macros and the like, still imports). `_system` is never imported and is not listed: the preview skips it (with a `skip_reason`) and the importer ignores any mapping that puts it in a project, so a saved draft or a hand-written map cannot bring it across. A room with a message in the last 30 days starts open and an older one
@@ -71,7 +71,11 @@ you choose (default `general`). For an exact `x` + `x-leader` pair the review su
 no `x-leader` goes into the root. Like a project made in v2, a project the import creates
 starts with an open `general` task room under its home room, and the `general` sub-room
 target is that room; importing into an existing project fills the project's own
-`general` task room rather than making a second one. Rooms placed in the
+**open** `general` task room rather than making a second one. A `general` the owner
+has closed takes no new conversation, so v1 rooms that are imported open get a new
+open `general` beside it and the closed one stays as it was; when every v1 room going
+into the sub-room is imported archived, the owner's closed `general` takes them and no
+second closed room of that name is made. Rooms placed in the
 same root or the same-titled sub-room are merged: their messages keep their v1 numbers
 and times and so interleave in time order. The review and the Check step list every merge
 as a warning (`target_warnings` in the report). A merged sub-room is open when any of its
@@ -102,8 +106,10 @@ projects. A v1 direct message (`dm:a:b`) imports as a v2 direct message: it
 is listed under Direct messages and titled by the other participant (an
 agent's slug, `nina · wren` for two agents or an agent and
 another person), and the wizard shows these in their own **Direct messages**
-section with a skip box and a project choice (the agent's own project when the
-wizard proposes one). Direct messages always import open, because v2 has no
+section with an import box and a project choice. No direct message is imported
+unless the owner ticks it; the project is already filled in (the agent's own
+project when the wizard proposes one), so ticking a chat needs no further
+choice. Direct messages always import open, because v2 has no
 archive for them; when a mapping asked for the archive default the Check
 report lists those DMs under **Direct messages opened** (`opened_dms`). Each
 entry shows its source id and message count, since two chats can share a title,
@@ -112,7 +118,8 @@ agents is readable history for the owner; its other participants remain
 historical names. A new account made for a person whose only link to a
 project is a chat that goes into it gets access to that project; the Summary
 lists each as "X gets viewer access to project Y through a direct message"
-(`dm_only_access` in the report), and skipping the chat leaves them out. The wizard offers separate
+(`dm_only_access` in the report). Only a ticked chat counts, so a chat left
+unticked leaves them out. The wizard offers separate
 choices for project facts, global profiles, and shared notes. Global profiles
 and shared notes are included by default and arrive as ordinary records;
 the Check report names every skipped memory record and its reason. If profiles

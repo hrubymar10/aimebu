@@ -290,8 +290,8 @@ func TestV1PreviewSuggestsNoDefaultProject(t *testing.T) {
 	if rooms["repo"].Skip || rooms["repo"].Project != "repo" || rooms["repo"].Target != V1TargetRoot || rooms["repo"].Title != "" {
 		t.Errorf("a room named like a project with no leader room is the project's root: %+v", rooms["repo"])
 	}
-	if got := rooms["dm:alice:bot@repo"]; got.Skip || got.Project != "repo" {
-		t.Errorf("a DM with a project to go to is imported: %+v", got)
+	if got := rooms["dm:alice:bot@repo"]; !got.Skip || got.Project != "repo" {
+		t.Errorf("a DM is not imported by default, but its project is already chosen: %+v", got)
 	}
 	if rooms["proj-leader"].Target != V1TargetRoot || rooms["proj"].Target != V1TargetSub {
 		t.Errorf("with both x-leader and x, the leader is the root and x is general: %+v %+v", rooms["proj-leader"], rooms["proj"])
@@ -439,5 +439,107 @@ func TestV1ImportReusesTheProjectsGeneralRoom(t *testing.T) {
 	}
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM room WHERE title='general'`).Scan(&generals); err != nil || generals != 2 {
 		t.Fatalf("general rooms after a rerun: %d %v", generals, err)
+	}
+}
+
+// A general room the owner closed (or is closing) is not a place for v1's open rooms: the import makes a new open general and leaves the
+// closed one as it was; when the project also has an open general, that one is used and nothing is duplicated. When every v1 room going
+// in is archived anyway, the owner's closed general takes them and no second closed room of that name is made.
+func TestV1ImportReusesOnlyAnOpenGeneralRoom(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		lifecycle  string // of the project's own general room, as the import finds it
+		extraOpen  bool   // the project has a second, open general as well
+		archived   bool   // every v1 room going into general is imported archived
+		wantReused bool   // the v1 rooms land in the project's own general room
+		wantTotal  int    // general rooms in the project afterwards
+		newState   string // the lifecycle of the room made when the own one is not used (open unless everything is archived)
+	}{
+		{"closed", "closed", false, false, false, 2, "open"},
+		{"closing", "closing", false, false, false, 2, "open"},
+		{"open", "open", false, false, true, 1, ""},
+		{"closed beside an open one", "closed", true, false, false, 2, "open"},
+		{"all archived into a closed one", "closed", false, true, true, 1, ""},
+		{"all archived beside an open one", "closed", true, true, false, 2, ""},
+		{"all archived, own one closing", "closing", false, true, false, 2, "closed"},
+		{"all archived into an open one", "open", false, true, true, 1, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source, base := v1Fixture(t)
+			addV1Rooms(t, source, []string{"proj", "proj-leader", "extra"}, map[int64]string{10: "proj-leader", 11: "proj", 12: "extra", 13: "proj-leader"})
+			s := newV1RoleStore(t)
+			ctx := context.Background()
+			if _, err := s.ReserveV1MessageIDs(ctx, source); err != nil {
+				t.Fatal(err)
+			}
+			project, err := s.CreateProject(ctx, Project{Name: "proj", Folder: "/tmp/proj"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			home, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, Kind: "home", Title: "proj", CreatedBy: "usr_owner"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			own, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, ParentID: home.ID, Kind: "task", Title: GeneralRoomTitle, CreatedBy: "usr_owner"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(`UPDATE room SET lifecycle=? WHERE id=?`, tc.lifecycle, own.ID); err != nil {
+				t.Fatal(err)
+			}
+			wantRoom := own.ID
+			if tc.extraOpen {
+				open, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, ParentID: home.ID, Kind: "task", Title: GeneralRoomTitle, CreatedBy: "usr_owner"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantRoom = open.ID
+				tc.wantReused = true
+			}
+			mapping := targetMapping(t, t.TempDir(), base)
+			mapping.Projects["proj"] = V1ImportProject{ExistingID: project.ID}
+			if tc.archived {
+				room := mapping.Rooms["proj"]
+				room.Lifecycle = ""
+				mapping.Rooms["proj"] = room
+			}
+			if _, err := s.ImportV1(ctx, source, mapping, false); err != nil {
+				t.Fatalf("import: %v", err)
+			}
+			var generals int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM room WHERE project_id=? AND title='general'`, project.ID).Scan(&generals); err != nil || generals != tc.wantTotal {
+				t.Fatalf("general rooms in the project: %d %v, want %d", generals, err, tc.wantTotal)
+			}
+			var landed string
+			if err := s.db.QueryRow(`SELECT room_id FROM message WHERE seq=11`).Scan(&landed); err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantReused && landed != wantRoom {
+				t.Fatalf("message 11 is in %s, want the project's own general %s", landed, wantRoom)
+			}
+			if !tc.wantReused {
+				if landed == own.ID {
+					t.Fatalf("message 11 went into the %s general room %s", tc.lifecycle, own.ID)
+				}
+				var lifecycle, title, parent string
+				if err := s.db.QueryRow(`SELECT lifecycle,title,parent_id FROM room WHERE id=?`, landed).Scan(&lifecycle, &title, &parent); err != nil || lifecycle != tc.newState || title != GeneralRoomTitle || parent != home.ID {
+					t.Fatalf("the new room: %q %q %q %v, want a %s general under the home room", lifecycle, title, parent, err, tc.newState)
+				}
+			}
+			// The room the owner closed is untouched.
+			var after string
+			if err := s.db.QueryRow(`SELECT lifecycle FROM room WHERE id=?`, own.ID).Scan(&after); err != nil || after != tc.lifecycle {
+				t.Fatalf("the project's own general room is now %q (%v), want %q", after, err, tc.lifecycle)
+			}
+			// A rerun adds no room.
+			if _, err := s.ImportV1(ctx, source, mapping, false); err != nil {
+				t.Fatalf("rerun: %v", err)
+			}
+			var again int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM room WHERE project_id=? AND title='general'`, project.ID).Scan(&again); err != nil || again != generals {
+				t.Fatalf("a rerun changed the general rooms: %d then %d (%v)", generals, again, err)
+			}
+		})
 	}
 }

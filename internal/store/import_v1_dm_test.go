@@ -78,8 +78,8 @@ func TestV1ImportDirectMessages(t *testing.T) {
 			t.Errorf("the wizard retitles from participants: %+v", room.Participants)
 		}
 	}
-	if got := preview.Suggested.Rooms[agentDM]; got.Lifecycle != "open" || got.Project != "repo" || got.Skip {
-		t.Errorf("a DM starts imported and open, in its agent's project when there is one: %+v", got)
+	if got := preview.Suggested.Rooms[agentDM]; got.Lifecycle != "open" || got.Project != "repo" || !got.Skip {
+		t.Errorf("a DM starts as don't import, open and in its agent's project when there is one: %+v", got)
 	}
 
 	s, _ := testStore(t, Options{})

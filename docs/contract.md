@@ -32,8 +32,9 @@ Projects, rooms, people
   gate_rev, control_desired[active|paused|stopped], lifecycle_rev, title,
   summary?, created_by, created_at, closed_at?) — a project is created with
   one home room and a `general` task room beneath it (also a project the v1
-  import creates; an import into an existing project fills its `general`
-  rather than adding a second one)
+  import creates; an import into an existing project fills its open `general`
+  rather than adding a second one, and uses a closed `general` only for v1
+  rooms that are all imported archived)
 - **scope_control_agent**(scope_kind[room|project], scope_id, agent_id,
   restore_desired, hold_desired, bulk_desired, bulk_rev) — records each
   scope's pause or stop hold, a shared pre-scope desired state, and the last

@@ -40,6 +40,20 @@ func v1RoomTarget(spec V1ImportRoom, roomID string) string {
 	return spec.Target
 }
 
+// v1SubRoomWantsOpen reports whether any v1 room that goes into the project's shared sub-room of this title asked to be imported open
+// (the others come in archived).
+func v1SubRoomWantsOpen(mapping V1ImportMap, project, title string) bool {
+	for id, spec := range mapping.Rooms {
+		if spec.Skip || spec.Project != project || v1RoomTarget(spec, id) != V1TargetSub || v1SubRoomTitle(spec) != title {
+			continue
+		}
+		if spec.Lifecycle == "open" {
+			return true
+		}
+	}
+	return false
+}
+
 func v1SubRoomTitle(spec V1ImportRoom) string {
 	if title := strings.TrimSpace(spec.Title); title != "" {
 		return title
@@ -179,8 +193,14 @@ func (t *v1Targets) place(ctx context.Context, tx *sql.Tx, data *v1ImportData, m
 		}
 		if !present && title == GeneralRoomTitle {
 			// A project made in v2 already has its "general" task room beside the home room: the import fills that one instead of
-			// making a second room of the same name.
-			err := tx.QueryRowContext(ctx, "SELECT id FROM room WHERE project_id=? AND parent_id=? AND kind='task' AND title=? ORDER BY created_at,id LIMIT 1", projectID, home, title).Scan(&sub)
+			// making a second room of the same name. An open one takes the v1 rooms whatever they asked for. A closed (or closing) one
+			// takes no new conversation, so open v1 rooms must not land in it: they get a new open general below. When every v1 room
+			// going into this sub-room is archived anyway, the owner's closed general is the right place and no second closed room of
+			// the same name is made next to it.
+			err := tx.QueryRowContext(ctx, "SELECT id FROM room WHERE project_id=? AND parent_id=? AND kind='task' AND title=? AND lifecycle='open' ORDER BY created_at,id LIMIT 1", projectID, home, title).Scan(&sub)
+			if errors.Is(err, sql.ErrNoRows) && !v1SubRoomWantsOpen(mapping, spec.Project, title) {
+				err = tx.QueryRowContext(ctx, "SELECT id FROM room WHERE project_id=? AND parent_id=? AND kind='task' AND title=? AND lifecycle='closed' ORDER BY created_at,id LIMIT 1", projectID, home, title).Scan(&sub)
+			}
 			switch {
 			case err == nil:
 				if err := addImportMap(ctx, tx, mapping.SourceKey, "room", key, sub); err != nil {

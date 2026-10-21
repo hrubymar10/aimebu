@@ -581,7 +581,7 @@ export class ImportV1Wizard {
     const p = this.preview;
     const direct = (p.rooms || []).filter(room => room.dm);
     const picked = direct.filter(room => !this.mapping.rooms[room.id]?.skip).length;
-    this.status.textContent = `${picked} of ${direct.length} chats will be imported. Each private chat becomes a v2 direct message titled by the other person or agent, always open. A chat between two agents is imported as history you can read. A chat starts imported when it has a project to go into, and one with none starts skipped; untick any you do not want.`;
+    this.status.textContent = `${picked} of ${direct.length} chats will be imported. Each private chat becomes a v2 direct message titled by the other person or agent, always open. A chat between two agents is imported as history you can read. No chat is imported unless you tick it; a ticked chat goes into its agent's project when there is one, and you can pick another.`;
     for (const room of direct) {
       const spec = this.mapping.rooms[room.id] ||= { skip: true };
       const box = node('fieldset'); const legend = node('legend', this.dmTitle(room)); legend.dataset.dmRoom = room.id; box.append(legend);
