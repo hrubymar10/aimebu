@@ -1307,9 +1307,9 @@ async function main() {
     assert.deepEqual(identityHeader.live, { icon: '/icons/codex.svg', title: 'gpt-6-sol · Codex', dot: ['dot-active', 'working'], bell: false });
     assert.deepEqual(identityHeader.stopped, { icon: '/icons/claude-code.svg', title: 'opus · Claude Code', dot: ['dot-offline', 'stopped'], bell: false });
     assert.deepEqual(identityHeader.wait, { icon: '/icons/pi.svg', title: 'gemma · Pi', dot: ['dot-stale', 'needs recovery'], bell: false });
-    assert.deepEqual(identityHeader.historical, { icon: '/icons/unknown.svg', title: 'unknown (historical)', dot: ['dot-historical', 'historical'], bell: false }, 'a sender known only from imported history has a neutral dot');
+    assert.deepEqual(identityHeader.historical, { icon: '/icons/unknown.svg', title: 'unknown (historical)', dot: ['dot-historical', 'Imported from v1 (no live agent)'], bell: false }, 'a sender known only from imported history has the departed dot, and its tooltip says why');
     assert.deepEqual(identityHeader.departed, { icon: '/icons/claude-code.svg', title: 'opus4.8 · Claude Code (departed)', dot: ['dot-departed', 'departed'], bell: false }, 'an agent that was in a v2 room and left keeps the red departed dot');
-    assert.deepEqual(identityHeader.importedKnown.dot, ['dot-historical', 'historical']);
+    assert.deepEqual(identityHeader.importedKnown.dot, ['dot-historical', 'Imported from v1 (no live agent)']);
     assert.deepEqual(identityHeader.attention, { icon: '/icons/human.svg', title: 'human', dot: null, bell: true });
     assert.equal(identityHeader.plain.bell, false);
     assert.deepEqual(identityHeader.liveAfter, ['dot-offline', 'lost']);
@@ -1801,7 +1801,10 @@ async function main() {
     assert.equal(await first.$eval('.message:first-child .message-actions', el => getComputedStyle(el).opacity), '0', 'the message actions stay out of the way until the message is hovered or focused');
     await first.hover('.message:first-child');
     await first.waitForFunction(() => getComputedStyle(document.querySelector('.message:first-child .message-actions')).opacity === '1');
-    assert.deepEqual(await first.evaluate(() => { const bubble = document.querySelector('.message:first-child .message-bubble').getBoundingClientRect(), bar = document.querySelector('.message:first-child .message-actions').getBoundingClientRect(); const items = [...document.querySelector('.message:first-child .message-meta').children].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect()); const clear = items.every(meta => bar.right <= meta.left || bar.left >= meta.right || bar.bottom <= meta.top || bar.top >= meta.bottom); const side = bar.right <= bubble.right && bubble.right - bar.right < 12; return { onTheCorner: side && bar.top < bubble.top + 4 && bubble.top - bar.top < 20, clearOfTheSenderLine: clear, buttons: document.querySelectorAll('.message:first-child .message-actions > .message-action').length }; }), { onTheCorner: true, clearOfTheSenderLine: true, buttons: 6 }, 'the toolbar (react, more reactions, reply, thread, copy, link) sits on a bubble corner and covers neither the sender, the number nor the time');
+    assert.deepEqual(await first.evaluate(() => { const bubble = document.querySelector('.message:first-child .message-bubble').getBoundingClientRect(), bar = document.querySelector('.message:first-child .message-actions').getBoundingClientRect(); const items = [...document.querySelector('.message:first-child .message-meta').children].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect()); const clear = items.every(meta => bar.right <= meta.left || bar.left >= meta.right || bar.bottom <= meta.top || bar.top >= meta.bottom); const text = document.querySelector('.message:first-child .message-body').getBoundingClientRect(); const clearOfText = bar.right <= text.left || bar.left >= text.right || bar.bottom <= text.top || bar.top >= text.bottom; const beside = bar.right <= bubble.left + 1, corner = bar.right <= bubble.right && bubble.right - bar.right < 12 && bar.top < bubble.top + 4 && bubble.top - bar.top < 24; return { onTheBubble: beside || corner, clearOfTheText: clearOfText, clearOfTheSenderLine: clear, buttons: document.querySelectorAll('.message:first-child .message-actions > .message-action').length }; }), { onTheBubble: true, clearOfTheText: true, clearOfTheSenderLine: true, buttons: 6 }, 'the toolbar (react, more reactions, reply, thread, copy, link) sits at the right end of the sender line over the bubble corner (or beside the bubble when it is the viewer\'s own) and covers neither the message text nor the sender, the number or the time');
+    // v1 parity of the message frame: the bubble sits right under the sender line (the hover toolbar reserves no space), and the sender's
+    // name is plain text until it is hovered or focused.
+    assert.deepEqual(await first.evaluate(() => { const meta = document.querySelector('.message:first-child .message-meta').getBoundingClientRect(), bubble = document.querySelector('.message:first-child .message-bubble').getBoundingClientRect(), author = document.querySelector('.message:first-child .message-author'); return { gap: Math.round(bubble.top - meta.bottom), underline: getComputedStyle(author).textDecorationLine }; }), { gap: 2, underline: 'none' }, 'the bubble is 2px under the sender line and the sender name has no permanent underline');
     // The shared in-app dialog (the page's own flows have it answered for them above): focus, Escape, Enter, validation, one at a time.
     {
       const page = second;
@@ -2046,6 +2049,37 @@ async function main() {
     await first.evaluate(() => { delete window.__anchorLog; });
     await new Promise(resolve => setTimeout(resolve, 1500));
     assert.equal(await first.$eval('#live-announcer', el => el.textContent), '', 'loading older history must not announce');
+    // Narrow columns: the viewer's own long message stays readable (it is not squeezed to leave room for the toolbar beside it), and the
+    // hover toolbar of an own message and of someone else's stays inside the list and covers neither the text nor any item of the sender
+    // line (name, #number, time), at a window with both panels open (a column under 420px) and at the usual one.
+    {
+      await post('Narrow column check. ' + 'This is a long message of my own that wraps across lines. '.repeat(8));
+      await first.waitForFunction(() => [...document.querySelectorAll('.message.self .message-body')].some(el => el.textContent.startsWith('Narrow column check.')));
+      await first.evaluate(() => {
+        const own = [...document.querySelectorAll('.message.self')].find(item => item.querySelector('.message-body').textContent.startsWith('Narrow column check.'));
+        own.dataset.narrowCheck = 'own';
+        const other = own.cloneNode(true); other.classList.remove('self'); other.dataset.narrowCheck = 'other'; // someone else's message, laid out by the same rules
+        own.after(other);
+      });
+      for (const width of [800, 1100]) {
+        await first.setViewport({ width, height: 720 });
+        for (const kind of ['own', 'other']) {
+          const message = `[data-narrow-check=${kind}]`;
+          await first.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), message);
+          await first.hover(`${message} .message-bubble`);
+          await first.waitForFunction(selector => getComputedStyle(document.querySelector(`${selector} .message-actions`)).opacity === '1', {}, message);
+          const geometry = await first.evaluate(selector => {
+            const box = node => node.getBoundingClientRect(), hit = (a, b) => !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
+            const list = box(document.querySelector('#messages')), root = document.querySelector(selector), bubble = box(root.querySelector('.message-bubble')), bar = box(root.querySelector('.message-actions')), text = box(root.querySelector('.message-body'));
+            const items = [...root.querySelector('.message-meta').children].filter(node => node.getClientRects().length).map(box);
+            return { readable: bubble.width >= Math.min(0.6 * list.width, 200), insideList: bubble.right <= list.right + 1 && bar.left >= list.left - 1 && bar.right <= list.right + 1, clearOfText: !hit(bar, text), clearOfSenderLine: !items.some(item => hit(bar, item)), list: Math.round(list.width), bubble: Math.round(bubble.width) };
+          }, message);
+          assert.deepEqual([geometry.readable, geometry.insideList, geometry.clearOfText, geometry.clearOfSenderLine], [true, true, true, true], `${kind} message at ${width}px: ${JSON.stringify(geometry)}`);
+        }
+      }
+      await first.setViewport({ width: 1100, height: 720 });
+      await first.evaluate(() => { document.querySelector('[data-narrow-check=other]').remove(); delete document.querySelector('[data-narrow-check=own]').dataset.narrowCheck; });
+    }
     const markdown = '## Heading\n\n**bold** *italic* `inline`\n\n- one\n- two\n\n> quoted\n\n| Left | Right |\n| :--- | ---: |\n| cell | **value** |\n\n[Safe](https://example.com/path) [Bad](javascript:alert(1))\n\n```js\nconst n = 1;\n```';
     await post(markdown);
     await first.waitForFunction(() => [...document.querySelectorAll('.message-body h2')].some(el => el.textContent === 'Heading'));
@@ -7354,14 +7388,15 @@ print(rows[0][1])
         return { old: window.__oldIDs, order, expired: [...document.querySelectorAll('#messages > article.message-expired')].map(item => item.dataset.messageId),
           marks: document.querySelectorAll('#messages .message-expired-mark').length, dividers: document.querySelectorAll('#messages > article.expiry-boundary').length,
           after: document.querySelector('#messages > article.expiry-boundary')?.dataset.messageId || null,
-          tops: [...document.querySelectorAll('#messages > article.message')].map(item => item.offsetTop) };
+          tops: [...document.querySelectorAll('#messages > article.message')].map(item => item.offsetTop),
+          boxes: [...document.querySelectorAll('#messages > article.message')].map(item => [item.getBoundingClientRect().top, item.querySelector('.message-meta, .system-row')?.getBoundingClientRect().height, item.querySelector('.message-bubble')?.getBoundingClientRect().height, getComputedStyle(item).borderTopWidth].join(' ')) };
       });
       await waitDump(expiryPage, 'expired marks', () => window.__oldIDs?.length === 3 && document.querySelectorAll('#messages > article.message-expired').length === 3, () => ({ old: window.__oldIDs, expired: document.querySelectorAll('#messages > article.message-expired').length, messages: document.querySelectorAll('#messages > article').length }));
       let state = await expiryState();
       assert.deepEqual(state.expired, state.old, 'only the three old messages are expired');
       assert.equal(state.marks, 3, 'each expired message carries one hourglass');
       assert.equal(state.dividers, 1, 'exactly one boundary');
-      const topsExpired = state.tops;
+      const topsExpired = state.tops, boxesExpired = state.boxes;
       assert.equal(state.after, state.order[4], 'the boundary marks the first message newer than the window (the old human message sits above it, unmarked)');
       assert.equal(await expiryPage.$eval('#messages .message-expired-mark', el => el.getAttribute('aria-label')), 'Expired from AI context');
       await openSettings(expiryPage);
@@ -7378,7 +7413,7 @@ print(rows[0][1])
       await expiryPage.waitForFunction(() => document.querySelectorAll('#messages > article.message-expired').length === 0 && document.querySelectorAll('#messages > article.expiry-boundary').length === 0);
       state = await expiryState();
       assert.equal(state.marks, 0, 'with expiry off no message is marked');
-      assert.deepEqual(state.tops, topsExpired, 'the boundary label is out of flow: removing it moves no message');
+      assert.deepEqual(state.tops, topsExpired, `the boundary label is out of flow: removing it moves no message (expired ${JSON.stringify(boxesExpired)}, then ${JSON.stringify(state.boxes)})`);
       await setExpiry(21600);
       await expiryPage.waitForFunction(() => document.querySelectorAll('#messages > article.message-expired').length === 3 && document.querySelectorAll('#messages > article.expiry-boundary').length === 1);
       assert.deepEqual((await expiryState()).tops, topsExpired, 'adding the boundary label moves no message');

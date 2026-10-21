@@ -42,7 +42,7 @@ export function senderIdentity(message, agent) {
   const kind = senderKind(message, agent);
   const known = message.author_model || message.author_harness;
   const title = agent ? `${agent.model || 'unknown'} · ${harness}` : known ? `${message.author_model || 'unknown'} · ${harness} (${kind})` : `unknown (${kind})`;
-  const dot = kind === 'historical' ? { cls: 'dot-historical', title: 'historical' } : livenessDot(agent);
+  const dot = kind === 'historical' ? { cls: 'dot-historical', title: 'Imported from v1 (no live agent)' } : livenessDot(agent);
   return { icon, alt: harness, title, dot, kind };
 }
 

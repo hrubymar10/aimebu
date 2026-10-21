@@ -274,12 +274,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .message.self { align-self: flex-end; background: var(--bg-tertiary); border-color: var(--green); }
 .message.self:hover { border-color: var(--green-text); }
 .message-meta { gap: 8px; margin-bottom: 3px; }
-.message-meta strong { color: var(--accent); font-size: 11px; }
+.message-meta strong { color: var(--accent); font-size: 10.5px; }
 .message.self .message-meta strong { color: var(--green-text); }
-.message-meta time { color: var(--text-muted); font-size: 9px; }
-.message-number { color: var(--text-muted); font: 9px var(--font-mono); }
+.message-meta time { color: var(--text-muted); font-size: 9.1px; }
+.message-number { color: var(--text-muted); font: 8.7px var(--font-mono); }
 .message-role { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 9px; }
-.message-body { margin: 4px 0; color: var(--text-primary); font: 11px/1.55 var(--font-mono); overflow-wrap: anywhere; }
+.message-body { margin: 4px 0; color: var(--text-primary); font: 11.2px/1.55 var(--font-mono); overflow-wrap: anywhere; }
 .reaction-pill { background: var(--bg-tertiary); border-color: var(--border); color: var(--text-secondary); }
 .reaction-pill[aria-pressed=true] { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 .quote { border-color: var(--border-hover); color: var(--text-muted); font-size: 11px; }
@@ -288,6 +288,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .system-notice .message-meta { justify-content: center; }
 .system-notice .message-meta strong, .system-notice .message-body { color: var(--text-muted); font: italic 10px/1.5 var(--font-sans); }
 .system-notice .message-body { margin: 0; }
+.message-body > :first-child { margin-top: 0; }
+.message-body > :last-child { margin-bottom: 0; }
 
 .message-body code { background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); }
 .message-body blockquote { border-color: var(--border-hover); color: var(--text-secondary); }
@@ -1011,7 +1013,7 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .message, .message.self { display: flex; flex-direction: column; align-self: flex-start; width: fit-content; max-width: 75%; padding: 0; border: 0; background: transparent; }
 .message-meta { align-items: center; gap: 8px; margin-bottom: 2px; padding-left: 2px; }
 .message-author-wrap { display: inline-flex; align-items: center; gap: 6px; }
-.message-meta strong, .message.self .message-meta strong { color: var(--accent); font-size: 11px; }
+.message-meta strong, .message.self .message-meta strong { color: var(--accent); font-size: 10.5px; }
 .message-role { padding: 0; border: 0; background: transparent; font-size: 13.3px; line-height: 1; }
 .message-bubble { position: relative; min-width: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
 .answer-controls { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
@@ -1447,6 +1449,7 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 /* The viewer's own messages sit on the right, as in v1: shrink-wrapped, at most 75% wide, the header line (name, #id, time) right-aligned
    over a green-bordered bubble. Everyone else's stay full width on the left. */
 .message.self { align-self: flex-end; width: fit-content; max-width: 75%; }
+/* Overridden on non-touch screens by the clamp near the message toolbar rules below; it still caps own messages on touch screens. */
 @media (max-width: 700px) { .message.self { max-width: 94%; } }
 .message.self .message-meta { justify-content: flex-end; padding-left: 0; padding-right: 2px; }
 .message.self .message-meta strong { color: var(--green-text); }
@@ -1504,7 +1507,7 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 /* Not dimmed: opacity would drop the text below the contrast floor. A dashed outline and the hourglass say it. */
 .message-expired:not(.system-notice) { border-style: dashed; }
 .message-expired.system-notice .system-row { font-style: italic; }
-.message-expired-mark { margin-right: 4px; font-size: 11px; cursor: help; }
+.message-expired-mark { margin-right: 4px; font-size: 10.5px; line-height: 1; cursor: help; }
 .expiry-boundary { position: relative; }
 .expiry-boundary > .expiry-label { position: absolute; left: 0; bottom: 100%; z-index: 1; white-space: nowrap; pointer-events: none; color: var(--text-muted); font: 9px/9px var(--font-sans); }
 
@@ -1616,14 +1619,28 @@ button.icon-btn[aria-pressed="true"] { border-color: var(--accent); color: var(-
 .sidebar > header { justify-content: flex-start; gap: 6px; padding-right: 12px; }
 .sidebar > header > strong { flex: 1 1 auto; }
 .sidebar form.room-filter { margin: 8px 0 10px; padding: 0; border: 0; }
-/* Message actions: one compact toolbar of framed icon buttons at the bubble's top-right corner, revealed by hover or focus and
-   shown by a tap on touch screens (chosen over two other looks in the A/B/C trial). */
-.message-actions { position: absolute; top: -12px; right: 4px; z-index: 2; display: flex; align-items: center; gap: 4px; margin: 0; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); box-shadow: 0 2px 8px var(--overlay-shadow); opacity: 0; pointer-events: none; transition: opacity .12s; }
+/* Message actions: one compact toolbar of framed icon buttons, revealed by hover or focus and shown by a tap on touch screens (chosen over
+   two other looks in the A/B/C trial). It overlays and reserves no space, so the bubble sits right under the sender line, and it covers no
+   text. Someone else's message is full width: the toolbar sits at the right end of its sender line (the line's own items are at the left),
+   level with that line and reaching only the bubble's padding. The viewer's own message is shrink-wrapped, so in a wide column a toolbar over it
+   would cover its text: it sits beside the bubble, in the free space to its left (own messages stop short of it, see below). */
+.message-actions { position: absolute; top: -20px; right: 6px; z-index: 2; display: flex; align-items: center; gap: 4px; margin: 0; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); box-shadow: 0 2px 8px var(--overlay-shadow); opacity: 0; pointer-events: none; transition: opacity .12s; }
 .message:hover .message-actions, .message:focus-within .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
-/* The toolbar straddles the bubble's top edge, up to 12px above it. The sender, number and time sit just above the bubble, so there is that much room between them and the bubble, and the toolbar covers none of them whatever the width of the bubble. */
-.message:not(.system-notice) > .message-meta { margin-bottom: 14px; }
-/* On a touch screen the toolbar is in the bubble's flow instead, so the gap is not needed. */
-@media (hover: none) and (pointer: coarse) { .message:not(.system-notice) > .message-meta { margin-bottom: 2px; } }
+/* The toolbar of the viewer's own message sits beside the bubble, in the free space to its left: it is about 165px wide, so an own
+   message stops short of that (but never narrower than 60% of the column, so it stays readable in a narrow one). In a column too narrow
+   for the toolbar to sit beside the sender line or the bubble (under 420px: a half-width window with panels or a thread open) there is
+   no free place for it next to anything, so there, and only there, the sender line gets room below it and the toolbar sits in that room,
+   over the bubble's top edge, covering neither the sender line nor the text. */
+.message.self .message-actions { top: 0; right: calc(100% + 6px); }
+@media not ((hover: none) and (pointer: coarse)) { .message.self { max-width: clamp(60%, calc(100% - 200px), 75%); } }
+#messages { container-type: inline-size; }
+@container (max-width: 420px) {
+  @media not ((hover: none) and (pointer: coarse)) {
+    .message.self { max-width: 75%; }
+    .message:not(.system-notice) > .message-meta { margin-bottom: 22px; }
+    .message-actions, .message.self .message-actions { top: -20px; right: 6px; left: auto; }
+  }
+}
 .message-actions .message-action { width: 22px; height: 22px; flex: 0 0 22px; border-radius: 6px; background: transparent; border-color: transparent; }
 .message-actions .message-action:hover, .message-actions .message-action:focus-visible { border-color: var(--border-hover); }
 .message-reaction-row { position: absolute; top: calc(100% + 4px); right: 0; z-index: 3; display: flex; gap: 2px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); box-shadow: 0 4px 14px var(--overlay-shadow); }
@@ -2038,8 +2055,8 @@ button > .icon-mask { pointer-events: none; }
 .backup-issue { margin: 0 0 0 26px; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
 
 /* A sender with no live record: its name opens a read-only profile. */
-.message-author.message-author-link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
-.message-author.message-author-link:hover, .message-author.message-author-link:focus-visible { text-decoration-style: solid; }
+.message-author.message-author-link { cursor: pointer; text-underline-offset: 3px; }
+.message-author.message-author-link:hover, .message-author.message-author-link:focus-visible { text-decoration: underline; }
 .sender-profile { max-width: min(440px, 94vw); }
 .sender-profile-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .sender-profile-header h2 { margin: 0; font-size: 16px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }

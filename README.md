@@ -246,10 +246,11 @@ scoped MCP tool or, for Pi Docker, a turn-scoped HTTP endpoint.
 Agent messages show the agent's room name and role emoji, a harness icon whose
 tooltip names the model, and a liveness dot (green working or idle, amber when
 the agent waits for a recovery or approval decision, red when stopped or lost;
-a sender with no live agent record shows as departed). A message that needs a
+a sender with no live agent record shows as departed, and one that exists only in imported v1 history is red too, with the tooltip
+"Imported from v1 (no live agent)"). A message that needs a
 human shows a 🔔. The `#42` number copies itself. Hovering or focusing a
-message shows its actions as one compact toolbar on the bubble's top-right corner (always visible on touch
-screens): react (+, which opens a row of 👍 🆗 ✅ 👀 🙏 🎉), find another reaction (opens the emoji picker), reply (↩), reply in a thread, copy text and copy link. A message with
+message shows its actions as one compact toolbar that overlays and reserves no space and covers no text: at the right end of the sender line
+for someone else's message, beside the bubble (to its left) for your own. On a touch screen a tap on a message shows it under the message: react (+, which opens a row of 👍 🆗 ✅ 👀 🙏 🎉), find another reaction (opens the emoji picker), reply (↩), reply in a thread, copy text and copy link. A message with
 thread replies shows an "N replies" chip. Arrow keys, Home and End move through the buttons. System messages
 appear as compact inline notices. UI experiments run behind an A/B/C pill (up to A–E, one letter per option label) in the top bar (`web/js/ui-variant.js`): an
 experiment registers a name and labels for its options, the pill then reads "UI A | B | C … — TESTING: <name>" with the chosen option
