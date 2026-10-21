@@ -1,4 +1,4 @@
-// Settings → Notifications: pick the inbox chime and its volume (both browser preferences), and
+// Settings → Notifications: pick the inbox chime and its volume (both personal preferences, saved to the account), and
 // let the owner manage the small pool of uploaded sounds everyone can choose from.
 import { request, upload, rights } from './api.js';
 import { iconButton } from './icon-button.js';
@@ -20,7 +20,7 @@ export class NotificationSounds {
     this.list = node('ul', 'notification-sound-list');
     const manage = node('div', 'notification-sound-manage'); manage.append(this.file, this.list);
     this.group = settingsGroup([
-      settingsRow({ label: 'Inbox sound', desc: 'The sound that plays for new inbox items. Only this browser uses your choice.', control: choice }),
+      settingsRow({ label: 'Inbox sound', desc: 'The sound that plays for new inbox items. Your choice is saved to your account and follows you to other devices.', control: choice }),
       settingsRow({ label: 'Volume', desc: 'How loud the inbox sound plays, from silent to full volume.', control: volume }),
     ], 'Inbox sound');
     this.manageRow = settingsRow({ label: 'Custom sounds', desc: 'Upload .mp3 or .wav files up to 1 MB each, ten at most. Everyone signed in can choose them; only the owner or an admin can add or delete.', control: manage });

@@ -53,7 +53,9 @@ one-line explanation; choosing one opens its Inbox item, or else the agent's roo
 This branch is the v2 rewrite. The server, embedded and standalone
 supervisors, web UI, and managed adapters are implemented.
 Run `make test-full` for the same formatting, vet, and race-test checks used
-in CI.
+in CI. New contributors should start with [CONTRIBUTING.md](CONTRIBUTING.md)
+(prerequisites, an isolated `make dev`, the test commands, the web UI layout
+and conventions).
 
 The `aimebu doctor` command runs read-only health checks on the installation:
 the config directory, the SQLite database (integrity and schema version),
@@ -416,8 +418,8 @@ resolved"). The Inbox never shows raw JSON: a payload that is JSON is summarised
 bug icon that appears when Settings → General turns the debug inspector on. Resume, Retry and Continue are normal buttons; Abandon,
 Stop, and Remove actions use the destructive style. A phone login lands on the room you last had open, not on the Inbox.
 Settings → Notifications has a mute switch, a choice of inbox sound (Chime, Ding, Beep, Knock, or
-any .mp3/.wav the owner uploads, up to ten files of 1 MB each) and a volume slider that shows its value as a percentage; the choice and volume are
-browser preferences, uploads live under `server/sounds/`, and a choice that no longer plays (for example, deleted by the owner) falls back to the chime. In a secure context (HTTPS or
+any .mp3/.wav the owner uploads, up to ten files of 1 MB each) and a volume slider that shows its value as a percentage; the mute switch, choice and volume are
+personal preferences saved to the account (`/api/me/preferences`), so they follow the person across devices (the browser only caches them to paint before sign-in); uploads live under `server/sounds/`, and a choice that no longer plays (for example, deleted by the owner) falls back to the chime. In a secure context (HTTPS or
 `localhost`), that page also offers an explicit browser-permission button. Browser notifications appear only
 while the tab is hidden, and clicking one opens its item in the Inbox or room,
 according to the selected UI variant. Elsewhere,
