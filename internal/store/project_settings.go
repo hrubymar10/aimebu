@@ -11,6 +11,15 @@ type ProjectRecoverySettings struct {
 	AutoResumeAfterCleanDiagnostic bool `json:"auto_resume_after_clean_diagnostic"`
 	// WorktreeMode is "auto" (task rooms get their own Git worktree when the project folder is a Git root) or "off".
 	WorktreeMode string `json:"worktree_mode"`
+	// HomeLeadOnly limits spawning into the project's home room to roles with the lead capability (default on).
+	HomeLeadOnly bool `json:"home_lead_only"`
+}
+
+// ProjectSettingsUpdate is a partial update of the project settings; a nil field is left as it is.
+type ProjectSettingsUpdate struct {
+	AutoResumeAfterCleanDiagnostic *bool
+	WorktreeMode                   *string
+	HomeLeadOnly                   *bool
 }
 
 // RoomCheckoutMode is where a task room's agents work once that has been decided: "worktree", "project_folder", or "" before the first spawn.
@@ -54,13 +63,14 @@ func (s *Store) GetProjectRecoverySettings(ctx context.Context, projectID, userI
 		return ProjectRecoverySettings{}, err
 	}
 	var settings ProjectRecoverySettings
-	err := s.db.QueryRowContext(ctx, `SELECT auto_resume_after_clean_diagnostic,worktree_mode FROM settings_project WHERE project_id=?`, projectID).
-		Scan(&settings.AutoResumeAfterCleanDiagnostic, &settings.WorktreeMode)
+	err := s.db.QueryRowContext(ctx, `SELECT auto_resume_after_clean_diagnostic,worktree_mode,home_lead_only FROM settings_project WHERE project_id=?`, projectID).
+		Scan(&settings.AutoResumeAfterCleanDiagnostic, &settings.WorktreeMode, &settings.HomeLeadOnly)
 	return settings, err
 }
 
 // SetProjectRecoverySettings stores the project settings that were sent; a nil field is left as it is.
-func (s *Store) SetProjectRecoverySettings(ctx context.Context, projectID, userID string, autoResume *bool, worktreeMode *string) (ProjectRecoverySettings, error) {
+func (s *Store) SetProjectRecoverySettings(ctx context.Context, projectID, userID string, update ProjectSettingsUpdate) (ProjectRecoverySettings, error) {
+	autoResume, worktreeMode := update.AutoResumeAfterCleanDiagnostic, update.WorktreeMode
 	if worktreeMode != nil && *worktreeMode != "auto" && *worktreeMode != "off" {
 		return ProjectRecoverySettings{}, ErrInvalidTransition
 	}
@@ -81,6 +91,11 @@ func (s *Store) SetProjectRecoverySettings(ctx context.Context, projectID, userI
 				return err
 			}
 		}
+		if update.HomeLeadOnly != nil {
+			if _, err := tx.Exec(`UPDATE settings_project SET home_lead_only=? WHERE project_id=?`, *update.HomeLeadOnly, projectID); err != nil {
+				return err
+			}
+		}
 		if worktreeMode != nil {
 			var current string
 			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT worktree_mode FROM settings_project WHERE project_id=?`, projectID).Scan(&current); err != nil {
@@ -93,12 +108,12 @@ func (s *Store) SetProjectRecoverySettings(ctx context.Context, projectID, userI
 				}
 			}
 		}
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT auto_resume_after_clean_diagnostic,worktree_mode FROM settings_project WHERE project_id=?`, projectID).
-			Scan(&settings.AutoResumeAfterCleanDiagnostic, &settings.WorktreeMode); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT auto_resume_after_clean_diagnostic,worktree_mode,home_lead_only FROM settings_project WHERE project_id=?`, projectID).
+			Scan(&settings.AutoResumeAfterCleanDiagnostic, &settings.WorktreeMode, &settings.HomeLeadOnly); err != nil {
 			return err
 		}
 		_, err := tx.AppendEvent(Event{Kind: "project_settings_updated", ProjectID: projectID,
-			PayloadJSON: payloadJSON(map[string]string{"auto_resume_after_clean_diagnostic": strconv.FormatBool(settings.AutoResumeAfterCleanDiagnostic), "worktree_mode": settings.WorktreeMode})})
+			PayloadJSON: payloadJSON(map[string]string{"auto_resume_after_clean_diagnostic": strconv.FormatBool(settings.AutoResumeAfterCleanDiagnostic), "worktree_mode": settings.WorktreeMode, "home_lead_only": strconv.FormatBool(settings.HomeLeadOnly)})})
 		return err
 	})
 	return settings, err

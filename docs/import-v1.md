@@ -68,7 +68,10 @@ with **+ New project…**, which makes the project in place. Each room is
 **project root** (the home room itself), or in a **sub-room** of the root with a title
 you choose (default `general`). For an exact `x` + `x-leader` pair the review suggests
 `x-leader` into the root and `x` into a sub-room called `general`; a project's room `x` with
-no `x-leader` goes into the root. Rooms placed in the
+no `x-leader` goes into the root. Like a project made in v2, a project the import creates
+starts with an open `general` task room under its home room, and the `general` sub-room
+target is that room; importing into an existing project fills the project's own
+`general` task room rather than making a second one. Rooms placed in the
 same root or the same-titled sub-room are merged: their messages keep their v1 numbers
 and times and so interleave in time order. The review and the Check step list every merge
 as a warning (`target_warnings` in the report). A merged sub-room is open when any of its
@@ -321,7 +324,12 @@ An imported sender's profile (the dialog its name opens in the chat) offers
 automatic. The button opens the Spawn dialog prefilled with the old name (the
 v1 slug, if it is free in the project and fits the agent-name rule; otherwise
 the start is refused), the tool and model v1 ran, and the role v1 gave the
-agent most often, if v2 has it (otherwise worker). The dialog states what will
+agent most often, if v2 has it (otherwise worker). The role is the agent's own,
+so in a home room with **Home room: lead only** the dialog still lists every role
+and keeps the one v1 gave: when that is not a lead role it says the home room
+does not take it and keeps Start off (the server refuses the same start with
+409 `home_is_lead_only`); start the agent from a task room such as general, pick
+a lead role, or turn the setting off. The dialog states what will
 happen; submitting sends `resume_legacy` with the v1 agent id on
 `POST /api/rooms/{room}/agents`. The server reads the session itself: the
 client never supplies a session id.

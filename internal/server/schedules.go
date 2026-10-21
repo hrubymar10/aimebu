@@ -28,8 +28,8 @@ func (s *Server) schedules(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if room.Kind != "task" {
-		apiError(w, 409, "invalid_scope", "schedules belong to task rooms")
+	if !store.SchedulableRoomKind(room.Kind) {
+		apiError(w, 409, "invalid_scope", "schedules belong to task rooms and the project home room")
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -135,8 +135,8 @@ func (s *Server) agentToolSchedules(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if room.ProjectID != caller.ProjectID || room.Kind != "task" {
-		apiError(w, 403, "forbidden", "task room in your project required")
+	if room.ProjectID != caller.ProjectID || !store.SchedulableRoomKind(room.Kind) {
+		apiError(w, 403, "forbidden", "task or home room in your project required")
 		return
 	}
 	joined, err := s.Store.AgentInRoom(r.Context(), caller.ID, roomID)

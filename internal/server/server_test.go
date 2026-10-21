@@ -136,7 +136,8 @@ func TestProjectHomeAndRoomKindValidation(t *testing.T) {
 		}
 		kinds[room.Kind]++
 	}
-	if len(rooms) != 2 || kinds["home"] != 1 || kinds["task"] != 1 {
+	// The home room, the "general" task room every project starts with, and the seeded task room.
+	if len(rooms) != 3 || kinds["home"] != 1 || kinds["task"] != 2 {
 		t.Fatalf("project rooms: %+v", rooms)
 	}
 	for _, kind := range []string{"home", "lobby", "dm", "unknown"} {

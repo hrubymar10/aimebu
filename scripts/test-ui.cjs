@@ -4106,9 +4106,39 @@ async function main() {
     await domClick(first, '#spawn-open');
     await first.waitForFunction(() => document.querySelector('#spawn-form [name=model]')?.value === 'test' && !document.querySelector('#spawn-form button[type=submit]').disabled);
     assert.deepEqual(await first.evaluate(() => ({ ticked: document.querySelector('#spawn-form [name=worktree]').checked, hidden: document.querySelector('.spawn-worktree-option').hidden, base: document.querySelector('#spawn-form [name=base_ref]').value })), { ticked: false, hidden: true, base: '' }, 'the worktree box must start clear, and be hidden outside task rooms');
+    // Home room: lead only is on for a new project, so the home room offers the lead roles alone, with the reason.
+    assert.deepEqual(await first.evaluate(() => ({ roles: [...document.querySelectorAll('#spawn-form [name=role] option')].map(option => option.value), hint: !document.querySelector('#spawn-home-hint').hidden })),
+      { roles: ['lead'], hint: true }, 'the home room spawn dialog offers only lead roles while the project keeps it for the lead');
+    // Start stays off until the roles are read. The tool catalog arrives on its own and used to enable Start while the role list of the
+    // last opening (here the lead alone) was still in the form, so a stale role could be started. The roles are held back here to see it.
+    {
+      await domClick(first, '#spawn-cancel');
+      await first.evaluate(() => {
+        const inner = window.fetch; window.__rolesHeld = true;
+        window.fetch = (input, options) => String(input).endsWith('/api/roles') && window.__rolesHeld ? new Promise(resolve => { window.__releaseRoles = () => { window.__rolesHeld = false; window.fetch = inner; resolve(inner(input, options)); }; }) : inner(input, options);
+      });
+      await domClick(first, '#spawn-open');
+      await first.waitForFunction(() => document.querySelector('#spawn-form [name=model]')?.value === 'test');
+      assert.deepEqual(await first.evaluate(() => ({ roles: document.querySelectorAll('#spawn-form [name=role] option').length, submit: document.querySelector('#spawn-form button[type=submit]').disabled })), { roles: 0, submit: true }, 'Start is off, and no role from the last opening is left, until the roles are read');
+      await first.evaluate(() => window.__releaseRoles());
+      await first.waitForFunction(() => document.querySelectorAll('#spawn-form [name=role] option').length === 1 && !document.querySelector('#spawn-form button[type=submit]').disabled);
+    }
     await domClick(first, '#spawn-form .dialog-actions button:last-child');
     await first.waitForFunction(() => window.__spawnBodies.length === 2 && !document.querySelector('#spawn-dialog').open);
-    assert.deepEqual(await first.evaluate(() => [Object.hasOwn(window.__spawnBodies[1], 'worktree'), Object.hasOwn(window.__spawnBodies[1], 'base_ref')]), [false, false], 'a spawn from a room that is not a task room must not carry a worktree');
+    assert.deepEqual(await first.evaluate(() => [Object.hasOwn(window.__spawnBodies[1], 'worktree'), Object.hasOwn(window.__spawnBodies[1], 'base_ref'), window.__spawnBodies[1].role_key || window.__spawnBodies[1].role]), [false, false, 'lead'], 'a spawn from a room that is not a task room must not carry a worktree');
+    // Turned off (from the home room's Project section), the home room offers every role again; turned back on, only the lead.
+    await domClick(first, '#room-info');
+    await first.waitForFunction(() => !!document.querySelector('#room-project #project-home-lead-only') && !document.querySelector('#project-home-lead-only').disabled);
+    assert.equal(await first.$eval('#project-home-lead-only', el => el.checked), true, 'Home room: lead only starts on');
+    await domClick(first, '#project-home-lead-only');
+    await first.waitForFunction(() => !document.querySelector('#project-home-lead-only').disabled);
+    assert.equal(await first.evaluate(async id => (await (await fetch(`/api/projects/${id}/settings`)).json()).home_lead_only, actualProjectID), false, 'the toggle saves the project setting');
+    await domClick(first, '#room-info-close');
+    await domClick(first, '#spawn-open');
+    await first.waitForFunction(() => document.querySelector('#spawn-form [name=model]')?.value === 'test' && document.querySelectorAll('#spawn-form [name=role] option').length > 1);
+    assert.deepEqual(await first.evaluate(() => ({ worker: [...document.querySelectorAll('#spawn-form [name=role] option')].some(option => option.value === 'worker'), hint: document.querySelector('#spawn-home-hint').hidden })), { worker: true, hint: true }, 'with the setting off the home room offers every role');
+    await domClick(first, '#spawn-cancel');
+    await first.evaluate(async id => { const { csrf_token } = await (await fetch('/api/me')).json(); await fetch(`/api/projects/${id}/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ home_lead_only: true }) }); }, actualProjectID);
     await domClick(first, `[data-room-id="${roomID}"] .room-name`);
     await first.waitForFunction(id => location.hash.slice(1) === id, {}, roomID);
     await first.evaluate(() => {
@@ -5674,6 +5704,62 @@ async function main() {
       await fetch(`/api/projects/${id}/usage-limit`, { method: 'PUT', headers, body: JSON.stringify({ cost_mode: 'none', turn_mode: 'none', daily_cost_cap: null, daily_turn_cap: null, rev: current.rev }) });
     }, actualProjectID);
     await domClick(first, '#settings-close');
+    // Every room has the same Room settings. The home room's adds the Project section (the very form of Settings → Project), its schedules,
+    // the project's memory where a task room has task notes, and a line instead of the worktree controls.
+    {
+      const homeID = await first.evaluate(async id => (await (await fetch(`/api/projects/${id}/rooms`)).json()).find(room => room.kind === 'home').id, actualProjectID);
+      await domClick(first, `[data-room-id="${homeID}"] .room-name`);
+      await first.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, homeID);
+      await first.waitForFunction(() => !document.querySelector('#task-notes-toggle').hidden && document.querySelector('#task-notes-toggle').getAttribute('aria-label') === 'Project memory').catch(() => {});
+      assert.deepEqual(await first.$eval('#task-notes-toggle', el => ({ hidden: el.hidden, label: el.getAttribute('aria-label'), title: el.title })), { hidden: false, label: 'Project memory', title: 'Project memory' }, 'the home room\'s notes button opens the project memory');
+      await domClick(first, '#room-info');
+      await first.waitForSelector('#room-info-dialog[open]');
+      await first.waitForFunction(() => document.querySelector('#room-schedules .schedule-list')?.textContent.includes('No schedules') && !document.querySelector('#project-auto-resume').disabled);
+      const home = await first.evaluate(() => {
+        const shown = selector => { const el = document.querySelector(selector); return !!el && !el.closest('[hidden]') && el.getClientRects().length > 0; };
+        return {
+          schedules: shown('#room-schedules'), lead: document.querySelector('#room-schedules [name=target] option[value=lead]')?.textContent,
+          project: shown('#room-project'), form: !!document.querySelector('#room-project #project-details') && !!document.querySelector('#room-project #project-usage-limit') && !!document.querySelector('#room-project #project-scope-control'),
+          settingsEmpty: !document.querySelector('#settings-project #project-details'), name: document.querySelector('#project-details-name').value,
+          notes: document.querySelector('.room-notes h3')?.textContent, notesButton: document.querySelector('.room-notes button')?.textContent, notesShown: shown('.room-notes'),
+          worktree: document.querySelector('.room-worktree p')?.textContent, worktreeButtons: [...document.querySelectorAll('.room-worktree button')].filter(button => !button.hidden).length,
+          wide: document.querySelector('#room-info-dialog').classList.contains('room-info-home'), archive: document.querySelector('#room-lifecycle').hidden,
+        };
+      });
+      assert.deepEqual(home, { schedules: true, lead: 'Current room lead', project: true, form: true, settingsEmpty: true, name: 'UI smoke', notes: 'Project memory', notesButton: 'Open project memory', notesShown: true,
+        worktree: 'The home room works in the project folder. Task rooms can have their own Git worktree.', worktreeButtons: 0, wide: true, archive: true }, 'the home room settings carry every room section plus the project');
+      // A home-room schedule is created like a task room's.
+      await first.locator('#room-schedules [name=body]').fill('UI home note');
+      await first.select('#room-schedules [name=kind]', 'interval');
+      await first.locator('#room-schedules [name=minutes]').fill('5');
+      await domClick(first, '#room-schedules .schedule-form button');
+      await first.waitForFunction(() => document.querySelector('#room-schedules .schedule-row')?.textContent.includes('UI home note'));
+      await domClick(first, '#room-schedules [data-action=delete]');
+      await first.waitForFunction(() => document.querySelector('#room-schedules .schedule-list')?.textContent.includes('No schedules'));
+      // The project memory entry opens the Memory viewer on this project's facts.
+      await domClick(first, '.room-notes button');
+      await first.waitForFunction(() => document.querySelector('#knowledge-dialog').open && !document.querySelector('#room-info-dialog').open);
+      assert.deepEqual(await first.evaluate(id => ({ scope: document.querySelector('#knowledge-scope').value, project: document.querySelector('#knowledge-project').value === id, title: document.querySelector('#knowledge-title').textContent }), actualProjectID),
+        { scope: 'project', project: true, title: 'Project facts' }, 'the home room links to the project facts');
+      await domClick(first, '#knowledge-close');
+      // Settings → Project is a shortcut to the same form: it moves there, and back while the home room settings are still open underneath.
+      await domClick(first, '#room-info');
+      await first.waitForSelector('#room-project #project-details');
+      await openSettings(first);
+      await domClick(first, '#settings-project-tab');
+      await first.waitForFunction(() => !!document.querySelector('#settings-project #project-details') && !document.querySelector('#project-auto-resume').disabled);
+      await domClick(first, '#settings-close');
+      await first.waitForFunction(() => !!document.querySelector('#room-project #project-details'));
+      await domClick(first, '#room-info-close');
+      // A task room keeps its task notes and worktree controls and has no Project section.
+      await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+      await first.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#task-notes-toggle').getAttribute('aria-label') === 'Task notes', {}, roomID);
+      await domClick(first, '#room-info');
+      await first.waitForSelector('#room-info-dialog[open]');
+      assert.deepEqual(await first.evaluate(() => ({ project: document.querySelector('#room-project').hidden, notes: document.querySelector('.room-notes h3').textContent, wide: document.querySelector('#room-info-dialog').classList.contains('room-info-home'), toggle: document.querySelector('#task-notes-toggle').getAttribute('aria-label') })),
+        { project: true, notes: 'Task notes', wide: false, toggle: 'Task notes' }, 'a task room has no Project section');
+      await domClick(first, '#room-info-close');
+    }
     // Hide is set from the room settings, not from the rows; nothing has a pin.
     await domClick(first, `[data-room-id="${roomID}"] .room-name`);
     await first.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, roomID);
@@ -5763,6 +5849,17 @@ async function main() {
     const viewerNav = await settingsNav(invitedPage);
     assert.deepEqual([viewerNav.agentsHidden, viewerNav.gap, viewerNav.items.filter(item => item === item.toUpperCase())], [true, null, ['SETTINGS']], `a viewer's Settings nav has no AGENTS group: ${JSON.stringify(viewerNav)}`);
     await domClick(invitedPage, '#settings-close');
+    // A viewer sees the home room's Project section with the same locks Settings → Project has.
+    {
+      const viewerHome = await invitedPage.evaluate(async () => { const [project] = await (await fetch('/api/projects')).json(); return (await (await fetch(`/api/projects/${project.id}/rooms`)).json()).find(room => room.kind === 'home').id; });
+      await domClick(invitedPage, `[data-room-id="${viewerHome}"] .room-name`);
+      await invitedPage.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, viewerHome);
+      await domClick(invitedPage, '#room-info');
+      await invitedPage.waitForFunction(() => document.querySelector('#project-details-status')?.textContent === 'Only the project owner can change these.' && document.querySelector('#room-project #project-details'));
+      assert.deepEqual(await invitedPage.evaluate(() => ({ project: document.querySelector('#room-project').hidden, name: document.querySelector('#project-details-name').disabled, folder: document.querySelector('#project-details-folder').disabled, save: document.querySelector('#project-details-save').disabled, schedules: document.querySelector('#room-schedules').hidden })),
+        { project: false, name: true, folder: true, save: true, schedules: false }, 'a viewer cannot edit the project from the home room settings');
+      await domClick(invitedPage, '#room-info-close');
+    }
     const dmResponses = [];
     invitedPage.on('response', response => { if (/\/dms$/.test(response.url())) dmResponses.push(`${response.request().method()} ${response.status()}`); });
     assert.equal(await invitedPage.$eval('.human-dm', el => el.getAttribute('aria-label')), 'Message owner privately', 'the person card offers the private chat');
@@ -7068,7 +7165,7 @@ print(rows[0][1])
       // moved with its buttons, and the order is a stored personal preference.
       const projectOrder = () => listPage.$$eval('#projects > .room-group', nodes => nodes.map(node => node.querySelector(':scope > .room-row .room-name')?.textContent || '').filter(text => text.startsWith('⌂')).map(text => text.replace(/^⌂\s*/, '')));
       const homeIDs = () => listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => (node.querySelector(':scope > .room-row .room-name')?.textContent || '').startsWith('⌂')).map(node => node.dataset.roomId));
-      const roomOrder = () => listPage.$$eval(`[data-room-id="${home2.id}"] > .room-children > .room-group`, nodes => nodes.map(node => node.querySelector('.room-name').textContent.replace(/^#\s*/, '')));
+      const roomOrder = () => listPage.$$eval(`[data-room-id="${home2.id}"] > .room-children > .room-group`, nodes => nodes.map(node => node.querySelector('.room-name').textContent.replace(/^#\s*/, '')).filter(title => title !== 'general')); // general: every project's own task room, not under test here
       const setSort = async key => { await domClick(listPage, '#rooms-sort'); await domClick(listPage, `#rooms-sort-menu .sort-item[data-sort="${key}"]`); await listPage.waitForFunction(() => document.querySelector('#rooms-sort-menu').hidden); };
       assert.deepEqual(await listPage.$$eval('#room-pin, .project-pin, .room-pin, .room-pinned', nodes => nodes.length), 0, 'there is no pin anywhere: not on a room, not on a project');
       assert.equal(await listPage.evaluate(async id => (await fetch(`/api/rooms/${id}/preferences`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': (await (await fetch('/api/me')).json()).csrf_token }, body: JSON.stringify({ pinned: true }) })).status, beta.id), 400, 'a room cannot be pinned through the API either');
@@ -7104,7 +7201,7 @@ print(rows[0][1])
       // Choosing manual starts from the order on screen; the rooms are left as the server lists them.
       await setSort('manual');
       assert.deepEqual(await projectOrder(), ['UI smoke', 'Second project'], 'manual starts from what the list showed');
-      const served = (await api('GET', `/api/projects/${project2.id}/rooms`)).filter(room => room.parent_id === home2.id && room.lifecycle !== 'closed').map(room => room.title);
+      const served = (await api('GET', `/api/projects/${project2.id}/rooms`)).filter(room => room.parent_id === home2.id && room.lifecycle !== 'closed' && room.title !== 'general').map(room => room.title);
       assert.deepEqual(await roomOrder(), served, 'manual leaves rooms in the order the server lists them');
       // Manual: the move buttons and the drag handle reorder projects; the end buttons are disabled.
       const moveState = () => listPage.$$eval('#projects > .room-group > .room-row', rows => rows.filter(row => (row.querySelector('.room-name')?.textContent || '').startsWith('⌂')).map(row => `${row.querySelector('.room-name').textContent.replace(/^⌂\s*/, '')}:${row.querySelector('.project-move-up')?.disabled}:${row.querySelector('.project-move-down')?.disabled}:${row.draggable}`));
@@ -7245,6 +7342,47 @@ print(rows[0][1])
       assert.deepEqual((await expiryState()).tops, topsExpired, 'adding the boundary label moves no message');
       assert.equal(await expiryPage.evaluate(async () => (await (await fetch('/api/retention')).json()).messages_considered_expired_after_seconds), 21600, 'the setting is back at its default');
       await expiryContext.close();
+    }
+    // Last, because the v1 agent seeded into the home room is one more historical sender there for every check that lists them.
+    {
+      // In a lead-only home room a v1 agent keeps its role: every role stays listed, the reviewer v1 gave it is preselected, and the dialog
+      // says the home room does not take it and keeps Start off, instead of quietly offering the lead role alone. A lead role clears it.
+      const homeRoomID = await first.evaluate(async project => (await (await fetch(`/api/projects/${project}/rooms`)).json()).find(room => room.kind === 'home').id, actualProjectID);
+      const homeSeed = spawnSync(seedBinary, [path.join(tmp, 'server', 'aimebu.sqlite'), actualProjectID, homeRoomID, id, 'legacy']);
+      if (homeSeed.status !== 0) throw new Error(`legacy home seed failed: ${homeSeed.stderr}`);
+      await first.goto(`${origin}/#${homeRoomID}`); await first.reload();
+      await first.waitForSelector('#app-view:not([hidden])', { timeout: APP_READY_TIMEOUT });
+      await first.waitForFunction(room => location.hash.slice(1) === room, {}, homeRoomID);
+      await first.waitForSelector('.message-author[data-sender-kind="historical"]');
+      // An answer meant for an earlier opening must not fill a later one. The ordinary spawn dialog of this home room is opened with its roles
+      // held back (it would offer the lead alone) and closed again; the start dialog for the v1 agent is opened and filled; then the held
+      // answer is let through and must change nothing.
+      await first.evaluate(() => {
+        const inner = window.fetch; window.__holdRoles = true;
+        window.fetch = (input, options) => String(input).endsWith('/api/roles') && window.__holdRoles
+          ? (window.__holdRoles = false, new Promise(resolve => { window.__releaseStaleRoles = () => { window.fetch = inner; resolve(inner(input, options)); }; }))
+          : inner(input, options);
+      });
+      await first.waitForFunction(() => !document.querySelector('#spawn-open').disabled); // the page was just reloaded: the member list is still loading
+      await domClick(first, '#spawn-open');
+      await waitDump(first, 'ordinary spawn with the roles held', () => typeof window.__releaseStaleRoles === 'function' && document.querySelector('#spawn-dialog').open, () => ({ held: typeof window.__releaseStaleRoles, open: document.querySelector('#spawn-dialog').open, disabled: document.querySelector('#spawn-open').disabled, model: document.querySelector('#spawn-form [name=model]')?.value, reason: document.querySelector('#spawn-tool-reason').textContent }));
+      await domClick(first, '#spawn-cancel');
+      await first.evaluate(() => { const author = [...document.querySelectorAll('.message-author[data-sender-kind="historical"]')].find(node => node.textContent.includes('veteran')); author.click(); });
+      await first.waitForSelector('#sender-profile-dialog #sender-profile-start');
+      await domClick(first, '#sender-profile-start');
+      await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
+      await first.waitForFunction(() => !document.querySelector('#spawn-home-hint').hidden);
+      await first.evaluate(() => window.__releaseStaleRoles());
+      await new Promise(resolve => setTimeout(resolve, 500));
+      assert.deepEqual(await first.evaluate(() => ({ roles: document.querySelectorAll('#spawn-form [name=role] option').length > 1, role: document.querySelector('#spawn-form [name=role]').value, resume: !document.querySelector('#spawn-resume').hidden })), { roles: true, role: 'reviewer', resume: true }, 'the roles of an earlier opening arrived late and changed the start dialog');
+      const blocked = await first.evaluate(() => ({ roles: [...document.querySelectorAll('#spawn-form [name=role] option')].map(option => option.value), role: document.querySelector('#spawn-form [name=role]').value, hint: document.querySelector('#spawn-home-hint').textContent, submit: document.querySelector('#spawn-form button[type=submit]').disabled }));
+      assert.ok(blocked.roles.length > 1 && blocked.roles.includes('worker') && blocked.role === 'reviewer' && /home room is for the lead.*veteran would start as .*Reviewer/i.test(blocked.hint) && blocked.submit === true, `the home room refuses the v1 role and says so: ${JSON.stringify(blocked)}`);
+      await first.select('#spawn-form [name=role]', 'lead');
+      assert.equal(await first.$eval('#spawn-home-hint', el => el.hidden), true, 'a lead role is taken by the home room, so the explanation goes');
+      await first.select('#spawn-form [name=role]', 'worker');
+      assert.equal(await first.$eval('#spawn-home-hint', el => el.hidden), false, 'another role the home room does not take brings it back');
+      await domClick(first, '#spawn-cancel');
+
     }
     console.log('UI smoke passed: login, rooms, chat, threads, reactions, stable DOM, Markdown/XSS, inbox recovery, mock controls, scope controls, usage limits, real fake-agent spawn/echo/control');
   } finally {

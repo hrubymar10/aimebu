@@ -754,6 +754,8 @@ func spawnError(w http.ResponseWriter, err error) {
 		apiError(w, 403, "forbidden", "actor is not allowed to manage this agent")
 	case errors.Is(err, store.ErrWriterOccupied):
 		apiError(w, 409, "writer_occupied", "checkout already has a writer")
+	case errors.Is(err, store.ErrHomeLeadOnly):
+		apiError(w, 409, "home_is_lead_only", "this project's home room accepts only lead roles; spawn other agents into a task room such as general, or turn off Home room: lead only in the project settings")
 	case errors.Is(err, store.ErrRoleOccupied):
 		apiError(w, 409, "role_occupied", "project already has an active agent in this singleton role")
 	case errors.Is(err, store.ErrSpawnLimit):

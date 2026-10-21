@@ -92,6 +92,9 @@ type SpawnInput struct {
 	ResumeLegacyID, ResumeHandle string
 }
 
+// ErrHomeLeadOnly is a spawn of a role without the lead capability into a home room whose project keeps it for the lead.
+var ErrHomeLeadOnly = errors.New("home room is lead only")
+
 // ErrSlugTaken is a requested agent name that a project already uses (an agent, a person or a role key).
 var ErrSlugTaken = errors.New("agent name in use")
 
@@ -141,6 +144,17 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	}
 	if actorKind == "agent" && leadRole {
 		return AgentCard{}, ErrForbidden
+	}
+	if !leadRole {
+		// "Home room: lead only" (on by default): the home room is the lead's; other roles are spawned into task rooms.
+		var leadOnly bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.kind='home' AND COALESCE((SELECT home_lead_only FROM settings_project WHERE project_id=r.project_id),1)=1
+			FROM room r WHERE r.id=?`, in.RoomID).Scan(&leadOnly); err != nil {
+			return AgentCard{}, err
+		}
+		if leadOnly {
+			return AgentCard{}, ErrHomeLeadOnly
+		}
 	}
 	if cardinality == "singleton" {
 		var occupied int

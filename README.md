@@ -17,8 +17,9 @@ who is a peer in a private chat can answer its pending questions. See
 Owners and operators can pause, stop, or resume a whole room or project;
 queued messages remain available when the scope resumes.
 Optional daily cost and turn limits warn at 80% and pause dispatch at 100%.
-Task rooms can schedule a note for a member agent or the room lead, once or on
-an interval, daily time, or weekly time. Room settings shows each schedule's
+Task rooms and the project home room can schedule a note for a member agent
+or the room lead, once or on an interval, daily time, or weekly time (private
+chats cannot). Room settings shows each schedule's
 time zone, next run in the viewer's local time, and last result. Schedules
 stop when their room closes and stay stopped after it reopens.
 Task rooms can opt into a Git worktree at
@@ -163,6 +164,12 @@ The embedded supervisor's own dial address is added to the effective
 allowlist when necessary, including when binding to a specific interface IP.
 The API can close (archive) and reopen non-home rooms while preserving their
 history; see the room lifecycle routes in the API guide.
+A new project starts with its home room and a `general` task room beneath it.
+The home room is the lead's: with the project setting **Home room: lead only**
+(on by default, in the home room's Project section) the spawn dialog there
+offers only lead roles and the server refuses others with `home_is_lead_only`;
+workers go into task rooms such as `general`. Turning it on leaves agents
+already in the home room alone.
 Settings → Usages shows Codex, Claude Code, GitHub Copilot, Mistral, and
 Ollama Cloud usage snapshots. Codex and Claude use local OAuth files; the
 other providers are configured in Settings. Provider secrets stay in the
@@ -309,8 +316,15 @@ text and Copy link actions). The HTML revalidates on refresh and its CSS and JS
 modules use a content version, so a deploy reaches a normal browser refresh.
 The sidebar header's + button opens the New project dialog. The room header
 shows member count and
-the room's icon buttons (task notes (v1's brain, task rooms), Room settings, go to
-message, raw Markdown, export). Room settings (one control size throughout; Kind and Room ID show only while the message debug
+the room's icon buttons (task notes (v1's brain; in task rooms, and in the home room it
+opens the project's memory instead), Room settings, go to
+message, raw Markdown, export). Every room has the same Room settings dialog with
+the sections that apply to it. The home room's adds a **Project** section, the
+same form as Settings → Project (name and folder, agents in this project, daily
+limits, recovery and worktrees; Settings → Project stays as a shortcut to it),
+its Schedules, a Project memory entry where task rooms have Task notes, and one
+line saying that the home room works in the project folder while task rooms can
+have their own Git worktree. Room settings (one control size throughout; Kind and Room ID show only while the message debug
 inspector is on) offers
 Archive/Reopen for non-home rooms and, for an archived task room, a destructive
 Remove room (project owner only; the room and its messages are deleted for good,

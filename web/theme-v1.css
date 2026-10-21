@@ -1249,25 +1249,25 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 #settings-dialog nav .settings-selected { background: rgba(88,166,255,.1); color: var(--accent); }
 #settings-dialog .settings-content { grid-column: 2; grid-row: 2; min-width: 0; padding: 20px; }
 #settings-dialog .settings-content h3 { font-size: 12.6px; margin: 0 0 12px; }
-#settings-dialog .settings-intro { font-size: 10.5px; }
+:is(#settings-dialog, #room-project) .settings-intro { font-size: 10.5px; }
 #settings-dialog .settings-content :is(input:not([type="checkbox"], [type="range"]), select, textarea) { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; margin: 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: 11.5px var(--font-sans); }
 #settings-dialog .settings-content :is(input, select, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 #settings-dialog .settings-content textarea { min-height: 84px; resize: vertical; }
 #settings-dialog #role-editor { max-width: none; }
 #settings-dialog .settings-content input[type="checkbox"] { width: 18px; height: 18px; min-height: 18px; }
 /* Settings rows: label + description on the left, the control on the right, in bordered groups. */
-#settings-dialog .settings-group { display: flex; flex-direction: column; margin: 0 0 14px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--bg-secondary); }
-#settings-dialog .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 52px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
-#settings-dialog .settings-row:last-child { border-bottom: 0; }
-#settings-dialog .settings-row-info { flex: 1 1 auto; min-width: 0; }
-#settings-dialog .settings-label { display: block; margin: 0 0 2px; color: var(--text-primary); font-size: 11.48px; font-weight: 500; }
-#settings-dialog .settings-desc { display: block; color: var(--text-muted); font-size: 10.5px; line-height: 1.45; }
-#settings-dialog .settings-row-info .settings-risk { display: block; max-width: none; margin: 3px 0 0; font-size: 10.5px; line-height: 1.45; }
-#settings-dialog .settings-control { flex: 0 1 min(260px, 42%); display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 150px; }
-#settings-dialog .settings-row-toggle .settings-control { flex: 0 0 auto; min-width: 0; }
-#settings-dialog .settings-row-stack { flex-direction: column; align-items: stretch; gap: 8px; }
-#settings-dialog .settings-row-stack .settings-control { flex: 1 1 auto; width: 100%; }
-#settings-dialog .settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+:is(#settings-dialog, #room-project) .settings-group { display: flex; flex-direction: column; margin: 0 0 14px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--bg-secondary); }
+:is(#settings-dialog, #room-project) .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 52px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+:is(#settings-dialog, #room-project) .settings-row:last-child { border-bottom: 0; }
+:is(#settings-dialog, #room-project) .settings-row-info { flex: 1 1 auto; min-width: 0; }
+:is(#settings-dialog, #room-project) .settings-label { display: block; margin: 0 0 2px; color: var(--text-primary); font-size: 11.48px; font-weight: 500; }
+:is(#settings-dialog, #room-project) .settings-desc { display: block; color: var(--text-muted); font-size: 10.5px; line-height: 1.45; }
+:is(#settings-dialog, #room-project) .settings-row-info .settings-risk { display: block; max-width: none; margin: 3px 0 0; font-size: 10.5px; line-height: 1.45; }
+:is(#settings-dialog, #room-project) .settings-control { flex: 0 1 min(260px, 42%); display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 150px; }
+:is(#settings-dialog, #room-project) .settings-row-toggle .settings-control { flex: 0 0 auto; min-width: 0; }
+:is(#settings-dialog, #room-project) .settings-row-stack { flex-direction: column; align-items: stretch; gap: 8px; }
+:is(#settings-dialog, #room-project) .settings-row-stack .settings-control { flex: 1 1 auto; width: 100%; }
+:is(#settings-dialog, #room-project) .settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 /* Settings -> Models is not on the stack layout yet: its action rows keep the spacing they had. */
 #settings-dialog .model-group .settings-actions { margin: -4px 0 14px; }
 #settings-dialog :is(.machine-card, .usage-provider) { border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); }
@@ -1295,9 +1295,9 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
   #settings-dialog > header { grid-column: 1; grid-row: 1; }
   #settings-dialog nav { grid-column: 1; grid-row: 2; flex-direction: row; }
   #settings-dialog .settings-content { grid-column: 1; grid-row: 3; }
-  #settings-dialog .settings-row { flex-direction: column; align-items: stretch; gap: 8px; }
-  #settings-dialog .settings-control { flex: 1 1 auto; justify-content: stretch; }
-  #settings-dialog .settings-row-toggle { flex-direction: row; align-items: center; }
+  :is(#settings-dialog, #room-project) .settings-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  :is(#settings-dialog, #room-project) .settings-control { flex: 1 1 auto; justify-content: stretch; }
+  :is(#settings-dialog, #room-project) .settings-row-toggle { flex-direction: row; align-items: center; }
 }
 
 /* UI part B: spawn, inbox, and shared dialog details. */
@@ -1571,16 +1571,16 @@ code.profile-fact-value { font: 400 11px/1.4 var(--font-mono); background: var(-
    children, so no block carries its own outer margin and no margin can collapse, go negative or stay behind when a
    section is wrapped in an element of its own. A label after other content gets the extra section space on top; the
    gap between a label and its card is always the plain stack gap. */
-#settings-dialog { --settings-gap: 8px; --settings-section-gap: 24px; --settings-card-pad-y: 12px; --settings-card-pad-x: 16px; }
-#settings-dialog :is(.settings-content:not([hidden]), .settings-section, .settings-card, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool, .usage-limit form, .usage-switcher-controls, .usage-config-controls) { display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: var(--settings-gap); }
-#settings-dialog :is(.scope-control, .usage-limit) { border: 0; padding: 0; }
-#settings-dialog :is(.settings-content, .settings-section, .settings-card, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool, .usage-limit form, .usage-switcher-controls, .usage-config-controls) > * { flex-shrink: 0; min-width: 0; margin-top: 0; margin-bottom: 0; }
-#settings-dialog :is(.settings-content, .settings-section, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool) > :is(h3, h4, h5):not(:first-child),
-#settings-dialog :is(.settings-content, .settings-section) > :is(.settings-section, .quota-settings, .limit-guard-settings):not(:first-child) { margin-top: calc(var(--settings-section-gap) - var(--settings-gap)); }
-#settings-dialog :is(.settings-content, .settings-section, .usage-switcher-controls, .usage-config-controls) > button { align-self: flex-start; }
+:is(#settings-dialog, #room-project) { --settings-gap: 8px; --settings-section-gap: 24px; --settings-card-pad-y: 12px; --settings-card-pad-x: 16px; }
+:is(#settings-dialog, #room-project) :is(.settings-content:not([hidden]), .settings-section, .settings-card, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool, .usage-limit form, .usage-switcher-controls, .usage-config-controls) { display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: var(--settings-gap); }
+:is(#settings-dialog, #room-project) :is(.scope-control, .usage-limit) { border: 0; padding: 0; }
+:is(#settings-dialog, #room-project) :is(.settings-content, .settings-section, .settings-card, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool, .usage-limit form, .usage-switcher-controls, .usage-config-controls) > * { flex-shrink: 0; min-width: 0; margin-top: 0; margin-bottom: 0; }
+:is(#settings-dialog, #room-project) :is(.settings-content, .settings-section, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool) > :is(h3, h4, h5):not(:first-child),
+:is(#settings-dialog, #room-project) :is(.settings-content, .settings-section) > :is(.settings-section, .quota-settings, .limit-guard-settings):not(:first-child) { margin-top: calc(var(--settings-section-gap) - var(--settings-gap)); }
+:is(#settings-dialog, #room-project) :is(.settings-content, .settings-section, .usage-switcher-controls, .usage-config-controls) > button { align-self: flex-start; }
 #settings-dialog .settings-content :is(h3, .settings-section-label) { color: var(--text-secondary); font-size: 10.5px; font-weight: 600; line-height: 1.4; letter-spacing: .04em; text-transform: uppercase; }
-#settings-dialog .settings-group { min-width: 0; border-radius: 8px; }
-#settings-dialog .settings-row { padding: var(--settings-card-pad-y) var(--settings-card-pad-x); background: var(--bg-secondary); }
+:is(#settings-dialog, #room-project) .settings-group { min-width: 0; border-radius: 8px; }
+:is(#settings-dialog, #room-project) .settings-row { padding: var(--settings-card-pad-y) var(--settings-card-pad-x); background: var(--bg-secondary); }
 /* A range slider looks the same in WebKit, Blink and Gecko: a thin track filled in the accent colour up to the centre of a round
    thumb that travels the full track, with the value beside it. --range-value (0 to 1) is set by the script with the value. */
 .settings-range { display: flex; align-items: center; gap: 10px; width: 100%; }
@@ -1594,9 +1594,9 @@ code.profile-fact-value { font: 400 11px/1.4 var(--font-mono); background: var(-
 .range-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .range-input:disabled { opacity: .5; cursor: default; }
 /* A card that holds free content rather than rows (status lines, a button bar) keeps the rows' padding. */
-#settings-dialog .settings-card { padding: var(--settings-card-pad-y) var(--settings-card-pad-x); border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
-#settings-dialog .settings-card :is(.scope-control-status, .scope-control-results) { margin: 0; }
-#settings-dialog .settings-card :is(p, .error):empty { display: none; }
+:is(#settings-dialog, #room-project) .settings-card { padding: var(--settings-card-pad-y) var(--settings-card-pad-x); border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
+:is(#settings-dialog, #room-project) .settings-card :is(.scope-control-status, .scope-control-results) { margin: 0; }
+:is(#settings-dialog, #room-project) .settings-card :is(p, .error):empty { display: none; }
 @media (max-width: 700px) { #settings-dialog .settings-nav-title { display: none; } #settings-dialog nav button { white-space: nowrap; } #settings-dialog > header { padding: 12px 14px 10px; } #settings-dialog .settings-content:not([hidden]) { padding: 12px; } }
 /* Phones drop the captions, but the AGENTS group keeps its gap: the caption stays as an empty spacer. */
 @media (max-width: 700px) { #settings-dialog .settings-nav-group-title:not([hidden]) { display: block; height: 0; padding: 0; overflow: hidden; visibility: hidden; } }
@@ -2259,3 +2259,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #spawn-dialog .spawn-worktree-option { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 10px 0; font-weight: 400; }
 #spawn-dialog .spawn-worktree-option input { width: auto; margin: 0; }
 #spawn-dialog .spawn-worktree-note { flex-basis: 100%; color: var(--text-muted); font-size: 12px; }
+/* The home room's settings carry the Project section (the Settings → Project form), so that dialog is wider. */
+#room-info-dialog.room-info-home { width: min(96vw, 620px); }
+#room-project { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 10px; }
+#room-project .project-settings-body > h3, #room-project .project-settings-body .settings-section > h3 { font-size: 13px; }

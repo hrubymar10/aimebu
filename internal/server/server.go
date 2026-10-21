@@ -807,7 +807,12 @@ func (s *Server) projects(w http.ResponseWriter, r *http.Request) {
 		if err := tx.AddProjectOwner(p.ID, userID(r)); err != nil {
 			return err
 		}
-		_, err = tx.CreateRoom(store.Room{ProjectID: p.ID, Kind: "home", Title: p.Name, CreatedBy: userID(r)})
+		home, err := tx.CreateRoom(store.Room{ProjectID: p.ID, Kind: "home", Title: p.Name, CreatedBy: userID(r)})
+		if err != nil {
+			return err
+		}
+		// Nearly all work happens in a task room, and the home room is the lead's: every project starts with a "general" one beside it.
+		_, err = tx.CreateRoom(store.Room{ProjectID: p.ID, ParentID: home.ID, Kind: "task", Title: store.GeneralRoomTitle, CreatedBy: userID(r)})
 		return err
 	})
 	if err != nil {

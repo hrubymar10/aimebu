@@ -95,6 +95,9 @@ func TestRenamingAProjectRenamesItsHomeRoom(t *testing.T) {
 		resp.Body.Close()
 		out := map[string]string{}
 		for _, room := range rooms {
+			if room.Kind == "task" && room.Title == store.GeneralRoomTitle {
+				continue // every project's own general room; the seeded task room is the one checked
+			}
 			out[room.Kind] = room.Title
 		}
 		return out

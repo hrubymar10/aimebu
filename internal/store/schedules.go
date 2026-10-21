@@ -13,6 +13,11 @@ import (
 var ErrScheduleInvalid = errors.New("invalid schedule")
 var ErrScheduleLimit = errors.New("schedule limit")
 
+// SchedulableRoomKind reports whether a room of this kind may hold schedules:
+// task rooms and the project home room, which is an ordinary open room with
+// the project lead in it. Private chats and the lobby never do.
+func SchedulableRoomKind(kind string) bool { return kind == "task" || kind == "home" }
+
 type Schedule struct {
 	ID              string `json:"id"`
 	RoomID          string `json:"room_id"`
@@ -179,7 +184,7 @@ func (tx *Tx) CreateSchedule(item Schedule, now time.Time) (Schedule, error) {
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind,lifecycle,project_id FROM room WHERE id=?`, item.RoomID).Scan(&kind, &lifecycle, &projectID); err != nil {
 		return Schedule{}, err
 	}
-	if kind != "task" || lifecycle != "open" {
+	if !SchedulableRoomKind(kind) || lifecycle != "open" {
 		return Schedule{}, ErrScheduleInvalid
 	}
 	if item.ProjectID != "" && item.ProjectID != projectID {
@@ -256,7 +261,7 @@ func (tx *Tx) SetScheduleEnabled(id, roomID string, enabled bool, rev int64, now
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind,lifecycle FROM room WHERE id=?`, roomID).Scan(&kind, &lifecycle); err != nil {
 			return Schedule{}, err
 		}
-		if kind != "task" || lifecycle != "open" || s.Kind == "once" && s.LastOutcome != "" {
+		if !SchedulableRoomKind(kind) || lifecycle != "open" || s.Kind == "once" && s.LastOutcome != "" {
 			return Schedule{}, ErrScheduleInvalid
 		}
 		var count int
@@ -354,7 +359,7 @@ func (tx *Tx) advanceSchedule(id string, now time.Time) error {
 		reason = "project_paused_or_limited"
 	}
 	if reason == "" && s.TargetLead {
-		err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.id FROM agent a JOIN role role ON role.id=a.role_id JOIN room_member rm ON rm.member_id=a.id AND rm.member_kind='agent' AND rm.left_at IS NULL WHERE rm.room_id=? AND role.cap_is_lead=1 AND a.revoked_at IS NULL ORDER BY a.id LIMIT 1`, s.RoomID).Scan(&target)
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.id FROM agent a JOIN role role ON role.id=a.role_id JOIN room_member rm ON rm.member_id=a.id AND rm.member_kind='agent' AND rm.left_at IS NULL WHERE rm.room_id=? AND role.cap_is_lead=1 AND a.revoked_at IS NULL ORDER BY a.desired='active' DESC,a.id LIMIT 1`, s.RoomID).Scan(&target)
 		if errors.Is(err, sql.ErrNoRows) {
 			reason = "lead_not_in_room"
 		} else if err != nil {

@@ -6,8 +6,7 @@ import { settingsRow, settingsGroup } from './settings-row.js';
 import { iconButton } from './icon-button.js';
 import { createProjectSettingsSource } from './project-settings-source.js';
 import { RoleSettings } from './role-settings.js';
-import { ScopeControl } from './scope-control.js';
-import { UsageLimit } from './usage-limit.js';
+import { ProjectSettings } from './project-settings.js';
 import { MachinesSettings } from './machines.js';
 import { HarnessSettings } from './harness-settings.js';
 import { MacroSettings } from './macro-settings.js';
@@ -24,6 +23,8 @@ export class SettingsPanel {
   constructor(source, projectContext, notifications) {
     this.source = source;
     this.projectSource = createProjectSettingsSource();
+    // One project-settings form, shared with the Project section of the home room's settings.
+    this.project = new ProjectSettings(this.projectSource, projectContext);
     this.projectContext = projectContext;
     this.roleSettings = new RoleSettings();
     this.machinesSettings = new MachinesSettings();
@@ -74,12 +75,7 @@ export class SettingsPanel {
     this.permissionStatus = document.querySelector('#notification-status');
     this.sounds = new NotificationSounds(this.notificationsSection, notifications);
     this.projectSelect = document.querySelector('#project-settings-select');
-    this.scopeControl = new ScopeControl(document.querySelector('#project-scope-control'), 'project');
-    this.usageLimit = new UsageLimit(document.querySelector('#project-usage-limit'));
-    this.autoResume = document.querySelector('#project-auto-resume');
-    this.worktrees = document.querySelector('#project-worktrees');
-    this.projectError = document.querySelector('#project-settings-error');
-    this.details = document.querySelector('#project-details');
+    this.project.onRenamed = (id, name) => { const option = [...this.projectSelect.options].find(item => item.value === id); if (option) option.textContent = name; };
     this.usagesTab.onclick = () => this.selectSection('usages');
     this.generalTab.onclick = () => this.selectSection('general');
     this.themeSelect.onchange = () => {
@@ -101,10 +97,9 @@ export class SettingsPanel {
       catch (error) { this.permissionStatus.textContent = error.message; return; }
       this.renderNotifications();
     };
-    this.projectSelect.onchange = () => this.loadProject();
-    this.details.onsubmit = event => { event.preventDefault(); this.saveDetails(); };
-    this.autoResume.onchange = () => this.saveProject();
-    this.worktrees.onchange = () => this.saveWorktrees();
+    this.projectSelect.onchange = () => this.project.mount(this.projectSection, this.projectSelect.value);
+    // The shared form goes back to the home room's settings if those are still open underneath.
+    this.dialog.addEventListener('close', () => this.project.release(this.projectSection));
     document.querySelector('#settings-toggle').onclick = () => this.open();
     document.querySelector('#settings-close').onclick = () => this.dialog.close();
     // v1's global shortcuts: Cmd/Ctrl+, opens Settings, and Cmd/Ctrl+W closes it while it is open.
@@ -281,91 +276,18 @@ export class SettingsPanel {
   async showProjects() {
     let { projects, selectedProjectID } = this.projectContext();
     const ticket = (this.projectLoadSeq || 0) + 1; this.projectLoadSeq = ticket;
-    this.autoResume.disabled = true; this.worktrees.disabled = true;
-    this.projectError.textContent = '';
+    this.project.autoResume.disabled = true; this.project.worktrees.disabled = true;
+    this.project.error.textContent = '';
     if (!projects.length) {
       try { projects = await this.projectSource.projects(); }
-      catch (error) { if (ticket === this.projectLoadSeq) this.projectError.textContent = error.message; return; }
+      catch (error) { if (ticket === this.projectLoadSeq) this.project.error.textContent = error.message; return; }
     }
     if (ticket !== this.projectLoadSeq || this.projectSection.hidden) return;
     this.projectSelect.replaceChildren(...projects.map(project => {
       const option = document.createElement('option'); option.value = project.id; option.textContent = project.name; return option;
     }));
     if (projects.some(project => project.id === selectedProjectID)) this.projectSelect.value = selectedProjectID;
-    this.loadProject();
-  }
-  // The project's name and folder. Its owner or an admin renames it; moving the folder is the admins' alone (the server decides; the form
-  // says so up front). Whether this account is an admin is read from the rights, which opening Settings has just read again.
-  async isAdmin() { return rights.admin; }
-  async showDetails(id) {
-    const admin = await this.isAdmin();
-    if (this.projectSelect.value !== id) return;
-    const project = this.projectContext().projects.find(item => item.id === id);
-    const canName = !!project && (project.role === 'owner' || admin), canFolder = !!project && admin;
-    const form = this.details;
-    form.elements.name.value = project?.name || ''; form.elements.folder.value = project?.folder || '';
-    this.detailsLoaded = { name: form.elements.name.value, folder: form.elements.folder.value };
-    form.elements.name.disabled = !canName; form.elements.folder.disabled = !canFolder;
-    form.querySelector('#project-details-save').disabled = !canName && !canFolder;
-    form.querySelector('#project-details-status').textContent = !project || canFolder ? '' : canName ? 'Only an admin can change the folder.' : 'Only the project owner can change these.';
-  }
-  async saveDetails() {
-    const id = this.projectSelect.value, form = this.details, status = form.querySelector('#project-details-status'), save = form.querySelector('#project-details-save');
-    // Only what changed goes to the server: a project from before folders were checked can still be renamed.
-    const body = {};
-    if (!form.elements.name.disabled && form.elements.name.value !== this.detailsLoaded?.name) body.name = form.elements.name.value;
-    if (!form.elements.folder.disabled && form.elements.folder.value !== this.detailsLoaded?.folder) body.folder = form.elements.folder.value;
-    status.textContent = '';
-    if (!Object.keys(body).length) { status.textContent = 'Nothing changed.'; return; }
-    save.disabled = true;
-    try {
-      const project = await this.projectSource.edit(id, body);
-      if (this.projectSelect.value !== id) return;
-      form.elements.name.value = project.name; form.elements.folder.value = project.folder;
-      this.detailsLoaded = { name: project.name, folder: project.folder };
-      const option = [...this.projectSelect.options].find(item => item.value === id); if (option) option.textContent = project.name;
-      status.textContent = 'Saved.';
-    } catch (error) { if (this.projectSelect.value === id) status.textContent = error.message; }
-    finally { if (this.projectSelect.value === id) save.disabled = false; }
-  }
-  async loadProject() {
-    const id = this.projectSelect.value;
-    this.showDetails(id);
-    this.scopeControl.load(id);
-    this.usageLimit.load(id);
-    this.projectError.textContent = '';
-    this.autoResume.checked = false;
-    this.autoResume.disabled = true; this.worktrees.checked = false; this.worktrees.disabled = true;
-    if (!id) { this.projectError.textContent = 'Choose a project first.'; return; }
-    try {
-      const settings = await this.projectSource.get(id);
-      if (this.projectSelect.value !== id) return;
-      this.autoResume.checked = !!settings.auto_resume_after_clean_diagnostic;
-      this.autoResume.disabled = false;
-      this.worktrees.checked = settings.worktree_mode !== 'off'; this.worktrees.disabled = false;
-    } catch (error) { if (this.projectSelect.value === id) this.projectError.textContent = error.message; }
-  }
-  async saveProject() {
-    const id = this.projectSelect.value, enabled = this.autoResume.checked;
-    this.projectError.textContent = '';
-    this.autoResume.disabled = true;
-    try {
-      await this.projectSource.update(id, { auto_resume_after_clean_diagnostic: enabled });
-      if (this.projectSelect.value === id) this.autoResume.disabled = false;
-    } catch (error) {
-      if (this.projectSelect.value === id) { this.autoResume.checked = !enabled; this.autoResume.disabled = false; this.projectError.textContent = error.message; }
-    }
-  }
-  async saveWorktrees() {
-    const id = this.projectSelect.value, enabled = this.worktrees.checked;
-    this.projectError.textContent = '';
-    this.worktrees.disabled = true;
-    try {
-      await this.projectSource.update(id, { worktree_mode: enabled ? 'auto' : 'off' });
-      if (this.projectSelect.value === id) this.worktrees.disabled = false;
-    } catch (error) {
-      if (this.projectSelect.value === id) { this.worktrees.checked = !enabled; this.worktrees.disabled = false; this.projectError.textContent = error.message; }
-    }
+    this.project.mount(this.projectSection, this.projectSelect.value);
   }
   providerCard() {
     const card = element('article', 'usage-provider');

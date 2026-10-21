@@ -189,6 +189,7 @@ chat.setSpawnOpener(() => agents.openSpawn());
 chat.setLegacyActions(start => agents.openSpawn({ resume: start }), id => { agents.setMobileOpen(true); agents.openProfile(id); });
 agents.projectRole = chat.projectRole;
 const settings = new SettingsPanel(createUsagesSource(), () => ({ projects: [...sidebar.projects.values()], selectedProjectID: chat.room?.project_id }), notifications);
+chat.projectSettings = settings.project; // the home room's settings show the same project form
 settings.onRights = () => applyRights();
 document.addEventListener('aimebu:open-settings', event => settings.open(event.detail?.section || 'general', event.detail));
 const importWizard = new ImportV1Wizard(() => {
@@ -211,11 +212,8 @@ async function createFirstProject({ name, folder }) {
   const generation = sessionGeneration;
   const project = await request('/api/projects', { method: 'POST', body: { name, folder } });
   if (generation !== sessionGeneration) return;
-  const rooms = await sidebar.addProject(project);
-  const home = rooms.find(room => room.kind === 'home') || rooms[0];
-  // The owner's direction: nearly all work happens in "general", so the first project starts with one.
-  if (home) await request(`/api/projects/${project.id}/rooms`, { method: 'POST', body: { parent_id: home.id, title: 'general' } });
-  await sidebar.refreshProject(project.id);
+  // The server creates every project with its home room and a "general" task room beside it, where nearly all work happens.
+  await sidebar.addProject(project);
   if (generation !== sessionGeneration) return;
   const general = [...sidebar.rooms.values()].find(room => room.project_id === project.id && room.title === 'general');
   if (general) await selectRoom(general);
@@ -227,6 +225,8 @@ const usagesPopover = new UsagesPopover(settings.source, () => settings.open('us
 new TopbarMenu();
 new RoomMenu();
 const knowledge = new KnowledgePanel(() => ({ projects: [...sidebar.projects.values()], selectedProjectID: chat.room?.project_id }), () => chat.room);
+chat.openProjectMemory = projectID => knowledge.openProjectFacts(projectID);
+chat.openTaskNotes = () => knowledge.openTask();
 let stream;
 let startupController;
 let sessionGeneration = 0;
@@ -341,7 +341,7 @@ async function signedIn(session) {
     const seq = await snapshot(generation);
     if (!active() || seq === null) return;
     if (['mock_inbox', 'mock_delivery', 'mock_resolved'].some(key => new URLSearchParams(location.search).has(key))) {
-      const room = (new URLSearchParams(location.search).has('mock_delivery') && chat.room) || [...sidebar.rooms.values()].find(item => item.kind === 'task');
+      const room = (new URLSearchParams(location.search).has('mock_delivery') && chat.room) || (rooms => rooms.find(item => item.kind === 'task' && item.title !== 'general') || rooms.find(item => item.kind === 'task'))([...sidebar.rooms.values()]); // the mocks point at a room with work in it, not the empty general every project starts with
       if (room) { const messages = await request(`/api/rooms/${room.id}/messages?after=0&limit=1`); if (!active()) return; inbox.source.setLocation(room.project_id, room.id, messages[0]?.id || ''); }
     }
     // Independent reads, so they run together rather than one after the other.

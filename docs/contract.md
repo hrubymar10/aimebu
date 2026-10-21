@@ -30,7 +30,10 @@ Projects, rooms, people
 - **room**(id, project_id, parent_id?, depth, kind[home|task|lobby|dm],
   dm_key? UNIQUE, lifecycle[open|closing|closed], gate[open|paused],
   gate_rev, control_desired[active|paused|stopped], lifecycle_rev, title,
-  summary?, created_by, created_at, closed_at?)
+  summary?, created_by, created_at, closed_at?) — a project is created with
+  one home room and a `general` task room beneath it (also a project the v1
+  import creates; an import into an existing project fills its `general`
+  rather than adding a second one)
 - **scope_control_agent**(scope_kind[room|project], scope_id, agent_id,
   restore_desired, hold_desired, bulk_desired, bulk_rev) — records each
   scope's pause or stop hold, a shared pre-scope desired state, and the last
@@ -61,8 +64,8 @@ Projects, rooms, people
   suppresses this room's messages and task notes from memory recall and
   task-note turn context. Rooms cannot enable memory above a disabled project.
   The override controls content flow and does not erase saved records.
-- **schedule**(id, task room, project, creator kind/id, target agent or lead,
-  body, kind[once|interval|daily|weekly], IANA time zone, interval/local time/
+- **schedule**(id, task or home room (never dm/lobby), project, creator
+  kind/id, target agent or lead, body, kind[once|interval|daily|weekly], IANA time zone, interval/local time/
   weekday, enabled, next UTC run, last outcome/reason/time, rev, timestamps).
   At most 20 enabled schedules per room; note length ≤2000 characters and
   ≤8000 bytes; interval ≥5 minutes. **schedule_run**(schedule_id, due_at,
@@ -282,7 +285,7 @@ Inbox, usage, events, settings
   turn_id?, payload_json, created_at) — same transaction as the change
 - **settings_project**(project_id, max_live_agents=10, spawn_rate_per_min=6,
   auto_resume_after_clean_diagnostic=false, memory_enabled=false,
-  worktree_mode='auto', worktree_auto_since); **cleanup_log**(id, seq, category, target, project_id,
+  worktree_mode='auto', worktree_auto_since, home_lead_only=true); **cleanup_log**(id, seq, category, target, project_id,
   reason, bytes, action, actor, created_at) (the cleanup log: what each cleanup
   removed and why; also `attachment.removed_at`, `removed_after_days`)
 - **seq_counter**(id=1, value) — internal sequence allocator, seeded in
@@ -904,8 +907,11 @@ that equals an agent slug is ambiguous, as for two agents with one slug.
 
 Adapter-listed (tool, variant, model, provider) with provider pinned; actor
 authorised (owner/operator, or an agent whose role has `cap_can_spawn`);
-`max_live_agents` and spawn rate; depth cap; writer rule (§3.6); idempotent
-via request_key; system message + event for each.
+`max_live_agents` and spawn rate; depth cap; writer rule (§3.6); while the
+project's `home_lead_only` is on (the default, migration 70 turns it on for
+existing projects), a spawn into its home room needs a role with
+`cap_is_lead` (`home_is_lead_only` otherwise; agents already there are not
+touched); idempotent via request_key; system message + event for each.
 Folder admission runs before a new supervisor process starts. The host project
 folder and an owner-admitted remote project's mapped folder are allowed
 roots. Paths are canonicalized on the owning machine and compared by path

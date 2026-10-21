@@ -98,6 +98,13 @@ export class Chat {
     this.worktreeSection = document.createElement('section'); this.worktreeSection.className = 'room-worktree';
     this.worktreeSection.innerHTML = '<h3>Git worktree</h3><p role="status"></p><button type="button" class="btn btn-primary">Create worktree</button><button type="button" class="btn btn-danger" hidden>Remove worktree</button>';
     document.querySelector('#room-info-error').before(this.worktreeSection);
+    // Task rooms keep task notes; the home room has none of its own and points at the project's memory instead.
+    this.notesSection = document.createElement('section'); this.notesSection.className = 'room-notes'; this.notesSection.setAttribute('aria-labelledby', 'room-notes-title');
+    this.notesSection.hidden = true;
+    this.notesSection.innerHTML = '<h3 id="room-notes-title">Task notes</h3><p class="settings-intro"></p><button type="button" class="btn">Open task notes</button>';
+    this.notesSection.querySelector('button').onclick = () => this.openRoomNotes();
+    document.querySelector('#room-info-error').before(this.notesSection);
+    this.projectSection = document.querySelector('#room-project');
     this.memorySection = document.createElement('section');
     this.memorySection.className = 'room-memory-setting';
     this.memorySection.innerHTML = '<h3>Room memory</h3><label>Message memory <select><option value="inherit">Use project setting</option><option value="off">Off in this room</option></select></label><p role="status"></p><p>Turning this off prevents this room’s messages from feeding memory or recall. It does not erase saved memory.</p>';
@@ -111,6 +118,7 @@ export class Chat {
     this.exportDialog = document.querySelector('#room-export-dialog');
     document.querySelector('#room-info').onclick = () => this.showRoomInfo();
     document.querySelector('#room-info-close').onclick = () => this.infoDialog.close();
+    this.infoDialog.addEventListener('close', () => this.projectSettings?.release(this.projectSection));
     document.querySelector('#room-lifecycle').onclick = () => this.changeRoomLifecycle();
     document.querySelector('#room-remove').onclick = () => this.removeRoom();
     document.querySelector('#room-jump').onclick = () => this.promptJump();
@@ -460,7 +468,13 @@ export class Chat {
     this.renderRoomActions();
     document.querySelector('#room-info-error').textContent = '';
     this.renderViewActions();
+    const home = this.room.kind === 'home';
+    this.infoDialog.classList.toggle('room-info-home', home);
+    this.renderRoomNotes();
+    this.projectSection.hidden = !home || !this.projectSettings;
     this.infoDialog.showModal();
+    // The home room's settings carry the project's own (Settings → Project shows the same form).
+    if (!this.projectSection.hidden) this.projectSettings.mount(this.projectSection, this.room.project_id);
     this.loadWorktree();
     this.loadRoomMemory();
     if (!controls.hidden) this.scopeControl.load(this.room.id);
@@ -518,10 +532,32 @@ export class Chat {
       select.disabled = false;
     } catch (error) { if (this.current(session, room.id)) { select.value = room.memory_enabled === false ? 'off' : 'inherit'; status.textContent = error.message || 'Could not change room memory'; select.disabled = false; } }
   }
+  renderRoomNotes() {
+    const kind = this.room?.kind, home = kind === 'home';
+    this.notesSection.hidden = kind !== 'task' && !home;
+    this.notesSection.querySelector('h3').textContent = home ? 'Project memory' : 'Task notes';
+    this.notesSection.querySelector('p').textContent = home ? 'The home room has no task notes of its own: its agents use the project\u2019s memory (project facts).' : 'Notes the agents keep for this task. They stay with this room.';
+    this.notesSection.querySelector('button').textContent = home ? 'Open project memory' : 'Open task notes';
+  }
+  openRoomNotes() {
+    const room = this.room;
+    if (!room) return;
+    this.infoDialog.close();
+    if (room.kind === 'home') this.openProjectMemory?.(room.project_id); else this.openTaskNotes?.();
+  }
   async loadWorktree() {
+    const buttons = this.worktreeSection.querySelectorAll('button');
+    if (this.room?.kind === 'home') {
+      // The home room always works in the project folder; only task rooms get a worktree of their own.
+      this.worktreeSection.hidden = false;
+      for (const button of buttons) button.hidden = true;
+      this.worktreeSection.querySelector('p').textContent = 'The home room works in the project folder. Task rooms can have their own Git worktree.';
+      return;
+    }
     if (!this.room || this.room.kind !== 'task') { this.worktreeSection.hidden = true; return; }
     const room = this.room, session = this.sessionGeneration;
     this.worktreeSection.hidden = false;
+    this.worktreeSection.querySelector('p').textContent = '';
     try {
       const item = await request(`/api/rooms/${room.id}/worktree`);
       if (!this.current(session, room.id)) return;

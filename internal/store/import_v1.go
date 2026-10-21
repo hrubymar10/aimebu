@@ -1383,6 +1383,19 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 			}
 			targets.freshHomes[homeID] = true
 			report.Imported["home_rooms"]++
+			// Like a project made in v2, an imported one starts with a "general" task room beside the home room. It is recorded as the
+			// shared "general" sub-room, so v1 rooms mapped to that sub-room land in it rather than in a second room of the same name.
+			generalID, err := newID("room")
+			if err != nil {
+				return report, err
+			}
+			if _, err := tx.ExecContext(ctx, "INSERT INTO room(id,project_id,parent_id,depth,kind,title,created_by,created_at) VALUES (?,?,?,1,'task',?,?,?)", generalID, id, homeID, GeneralRoomTitle, ownerID, timestamp()); err != nil {
+				return report, err
+			}
+			if err := addImportMap(ctx, tx, mapping.SourceKey, "room", v1SubRoomKey(alias, GeneralRoomTitle), generalID); err != nil {
+				return report, err
+			}
+			targets.freshSubs[generalID] = true
 		} else {
 			report.AlreadyPresent["home_rooms"]++
 		}

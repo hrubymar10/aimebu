@@ -332,3 +332,36 @@ func TestStartAsV2AgentIsScopedToTheRoomsHistory(t *testing.T) {
 		t.Fatalf("start in its own room: %d %+v", status, created)
 	}
 }
+
+// A v1 agent started in a lead-only home room is held to the room's rule like any other spawn: a role that is not a lead role is refused
+// (home_is_lead_only), the lead role is taken, and a task room takes any role. The dialog explains the refusal before it gets here.
+func TestStartAsV2AgentInALeadOnlyHomeRoomNeedsALeadRole(t *testing.T) {
+	f := newLegacyFixture(t)
+	task := f.room
+	resp := f.request(http.MethodGet, "/api/projects/"+f.project.ID+"/rooms", nil, false)
+	var rooms []store.Room
+	_ = json.NewDecoder(resp.Body).Decode(&rooms)
+	resp.Body.Close()
+	for _, room := range rooms {
+		if room.Kind == "home" {
+			f.room = room
+		}
+	}
+	if f.room.ID == task.ID {
+		t.Fatal("the project has no home room")
+	}
+	if _, err := f.exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES ('msg_legacy_home',999998,?,'agent','sage@old','from the past, at home','[]','2026-10-02T09:30:00.000000000Z')`, f.room.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"reviewer", "worker"} {
+		status, body := f.start(t, "home-"+role, map[string]any{"role_key": role})
+		if status != 409 || body["error"] != "home_is_lead_only" {
+			t.Errorf("%s into the lead-only home room: %d %+v, want 409 home_is_lead_only", role, status, body)
+		}
+	}
+	// Nothing was started, so the agent can still be started where its role is allowed.
+	f.room = task
+	if status, body := f.start(t, "task-room", map[string]any{"role_key": "reviewer"}); status != 201 {
+		t.Fatalf("reviewer into a task room: %d %+v", status, body)
+	}
+}

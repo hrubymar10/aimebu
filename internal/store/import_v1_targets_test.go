@@ -387,3 +387,57 @@ func TestV1ImportSharedRoomKeysDoNotCollide(t *testing.T) {
 		t.Fatalf("each target is its own room in its own project: %s/%s %s/%s", p1, r1, p2, r2)
 	}
 }
+
+// Every project starts with a "general" task room under its home room, the imported ones too. Importing into a v2 project that already
+// has its own "general" fills that room instead of adding a second one, and a project the import creates gets one even when no v1 room
+// is placed in a sub-room.
+func TestV1ImportReusesTheProjectsGeneralRoom(t *testing.T) {
+	t.Parallel()
+	source, base := v1Fixture(t)
+	addV1Rooms(t, source, []string{"proj", "proj-leader", "extra"}, map[int64]string{10: "proj-leader", 11: "proj", 12: "extra", 13: "proj-leader"})
+	s := newV1RoleStore(t)
+	ctx := context.Background()
+	// The project is made in v2 during the first run, after the history numbers were reserved.
+	if _, err := s.ReserveV1MessageIDs(ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	project, err := s.CreateProject(ctx, Project{Name: "proj", Folder: "/tmp/proj"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, Kind: "home", Title: "proj", CreatedBy: "usr_owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	general, err := s.CreateRoom(ctx, Room{ProjectID: project.ID, ParentID: home.ID, Kind: "task", Title: GeneralRoomTitle, CreatedBy: "usr_owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapping := targetMapping(t, t.TempDir(), base)
+	mapping.Projects["proj"] = V1ImportProject{ExistingID: project.ID}
+	if _, err := s.ImportV1(ctx, source, mapping, false); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	var generals int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM room WHERE project_id=? AND title='general'`, project.ID).Scan(&generals); err != nil || generals != 1 {
+		t.Fatalf("general rooms in the existing project: %d %v", generals, err)
+	}
+	for _, number := range []int64{11, 12} {
+		var roomID string
+		if err := s.db.QueryRow(`SELECT room_id FROM message WHERE seq=?`, number).Scan(&roomID); err != nil || roomID != general.ID {
+			t.Errorf("message %d should be in the project's own general room %s, got %s (%v)", number, general.ID, roomID, err)
+		}
+	}
+	var repoGeneral int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM room r JOIN project p ON p.id=r.project_id JOIN room h ON h.id=r.parent_id AND h.kind='home'
+		WHERE p.name='Imported' AND r.kind='task' AND r.title='general' AND r.lifecycle='open'`).Scan(&repoGeneral); err != nil || repoGeneral != 1 {
+		t.Fatalf("an imported project starts with one open general task room: %d %v", repoGeneral, err)
+	}
+	// A rerun adds nothing twice.
+	if _, err := s.ImportV1(ctx, source, mapping, false); err != nil {
+		t.Fatalf("rerun: %v", err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM room WHERE title='general'`).Scan(&generals); err != nil || generals != 2 {
+		t.Fatalf("general rooms after a rerun: %d %v", generals, err)
+	}
+}

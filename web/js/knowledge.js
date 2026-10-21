@@ -39,7 +39,7 @@ export class KnowledgePanel {
     this.error = document.querySelector('#knowledge-error');
     this.taskButton = document.querySelector('#task-notes-toggle');
     document.querySelector('#knowledge-toggle').onclick = () => this.openProject();
-    this.taskButton.onclick = () => this.openTask();
+    this.taskButton.onclick = () => { const room = this.roomContext(); if (room?.kind === 'home') this.openProjectFacts(room.project_id); else this.openTask(); };
     document.querySelector('#knowledge-close').onclick = () => this.dialog.close();
     this.dialog.addEventListener('close', () => { this.shownPath = null; });
     this.projectSelect.onchange = () => this.load();
@@ -56,8 +56,12 @@ export class KnowledgePanel {
     this.addForm.onsubmit = event => this.add(event);
   }
 
+  // Task rooms open their task notes; the home room has none of its own, so the same button opens the project's facts.
   setRoom(room) {
-    this.taskButton.hidden = room?.kind !== 'task';
+    const home = room?.kind === 'home';
+    this.taskButton.hidden = room?.kind !== 'task' && !home;
+    const label = home ? 'Project memory' : 'Task notes';
+    this.taskButton.title = label; this.taskButton.setAttribute('aria-label', label);
   }
 
   // In the All view the project picker only chooses whose project facts are listed next to the global records.
@@ -67,18 +71,20 @@ export class KnowledgePanel {
     if (first?.nodeType === Node.TEXT_NODE) first.textContent = text; else this.projectLabel.prepend(text);
   }
 
-  // The viewer opens on "All visible": project facts, user profiles and shared notes together.
-  async openProject() {
-    this.mode = 'all';
-    this.scopeSelect.value = 'all';
+  // The viewer opens on "All visible": project facts, user profiles and shared notes together. The home room opens it on its project's
+  // facts instead (openProjectFacts).
+  async openProject(scope = 'all', projectID = '') {
+    this.mode = scope;
+    this.scopeSelect.value = scope;
     this.scopeLabel.hidden = false;
     this.scopeKeyLabel.hidden = true;
     this.room = null;
-    this.title.textContent = SCOPE_TITLES.all;
+    this.title.textContent = SCOPE_TITLES[scope];
     this.projectLabel.hidden = false;
     this.labelProject();
-    this.enabledLabel.hidden = true;
-    const { projects, selectedProjectID } = this.projectContext();
+    this.enabledLabel.hidden = scope !== 'project';
+    let { projects, selectedProjectID } = this.projectContext();
+    if (projectID) selectedProjectID = projectID;
     this.projectSelect.replaceChildren(...projects.map(project => {
       const option = document.createElement('option');
       option.value = project.id;
@@ -89,6 +95,8 @@ export class KnowledgePanel {
     this.dialog.showModal();
     await this.load();
   }
+
+  openProjectFacts(projectID) { return this.openProject('project', projectID); }
 
   async openTask() {
     const room = this.roomContext();

@@ -37,7 +37,7 @@ export class Schedules {
   reset() { this.generation = (this.generation || 0) + 1; this.ticket = (this.ticket || 0) + 1; this.roomID = null; this.items = []; this.list.replaceChildren(); this.error.textContent = ''; this.root.hidden = true; this.form.reset(); this.form.elements.timezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; this.form.elements.target.replaceChildren(); this.fields(); }
   async load(room) {
     const generation = this.generation;
-    this.roomID = room?.id; this.closed = room?.lifecycle !== 'open'; const ticket = this.ticket = (this.ticket || 0) + 1; this.root.hidden = room?.kind !== 'task'; this.list.replaceChildren(); this.error.textContent = '';
+    this.roomID = room?.id; this.closed = room?.lifecycle !== 'open'; const ticket = this.ticket = (this.ticket || 0) + 1; this.root.hidden = room?.kind !== 'task' && room?.kind !== 'home'; this.list.replaceChildren(); this.error.textContent = '';
     this.form.querySelector('button[type=submit]').disabled = this.closed;
     if (this.root.hidden) return;
     try {

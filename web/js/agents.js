@@ -51,6 +51,7 @@ export class AgentsPanel {
     document.querySelector('#spawn-cancel').onclick = () => this.dialog.close();
     this.dialog.addEventListener('close', () => { this.pendingResume = null; this.renderResume(); });
     this.form.elements.tool.onchange = () => this.renderSpawnModels();
+    this.form.elements.role.onchange = () => this.syncRoleGate();
     this.form.onsubmit = event => { event.preventDefault(); this.spawn(); };
     document.querySelector('#switch-cancel').onclick = () => this.switchDialog.close();
     this.switchForm.elements.tool.onchange = () => this.renderSwitchModels();
@@ -508,6 +509,11 @@ export class AgentsPanel {
   // what v1 ran, and the v1 session is continued when the harness can. Without it, it is the ordinary spawn dialog.
   async openSpawn({ resume = null } = {}) {
     this.resetWorktreeChoice();
+    // Nothing of the last opening is left to act on: the role list, the lead-only rule and the roles that count as lead are read again
+    // below, and until they are, Start stays off. Otherwise a role picked in the last opening (the lead, in a lead-only home room) could
+    // still be selected while the tool catalog arrives first and enables Start, and the agent would be started as that role.
+    this.rolesReady = false; this.roleBlocked = false; this.homeLeadOnly = false; this.leadRoles = new Set();
+    this.form.elements.role.replaceChildren();
     this.pendingResume = resume;
     this.renderResume();
     this.dialog.showModal();
@@ -519,22 +525,50 @@ export class AgentsPanel {
     const submit = this.form.querySelector('button[type=submit]');
     toolSelect.replaceChildren(); modelSelect.replaceChildren();
     reason.textContent = 'Loading available tools…'; version.textContent = ''; submit.disabled = true;
+    // Each opening has a number. The answers below (the owner, the roles, the lead-only rule) arrive later, possibly after the dialog was
+    // closed and opened again for another room or another v1 agent; an answer meant for an earlier opening must not fill this one.
+    const opening = this.spawnOpening = (this.spawnOpening || 0) + 1;
+    const current = () => opening === this.spawnOpening && this.dialog.open;
     try {
-      const roomID = this.room.id;
+      const room = this.room, roomID = room.id;
       await this.loadOwner(); // before the catalog, whose hints depend on it
-      const [roles] = await Promise.all([this.source.roles(), this.spawnMachine.load(this.room.project_id)]);
-      if (!this.dialog.open || this.room?.id !== roomID) return;
+      if (!current()) return;
+      const home = room.kind === 'home', hint = document.querySelector('#spawn-home-hint');
+      hint.hidden = true;
+      const [allRoles, leadOnly] = await Promise.all([this.source.roles(), home ? Promise.resolve(this.source.homeLeadOnly?.(room.project_id)).catch(() => true) : false, this.spawnMachine.load(room.project_id)]);
+      if (!current() || this.room?.id !== roomID) return;
+      // With Home room: lead only (the default) the home room offers the lead roles alone; the server refuses the others. Starting a v1
+      // agent is different: it keeps the role v1 gave it, so every role stays listed and a role the home room refuses is explained
+      // (and Start disabled) instead of being swapped for a lead role without a word (see syncRoleGate).
+      const roles = leadOnly && !resume ? allRoles.filter(role => role.cap_is_lead) : allRoles;
+      this.homeLeadOnly = !!leadOnly; this.leadRoles = new Set(allRoles.filter(role => role.cap_is_lead).map(role => role.role_key));
+      hint.hidden = !leadOnly || !!resume;
       this.form.elements.role.replaceChildren(...roles.map(role => {
         const node = document.createElement('option'); node.value = role.role_key; node.textContent = `${role.emoji || ''} ${role.label}`.trim(); return node;
       }));
       if (roles.some(role => role.role_key === 'worker')) this.form.elements.role.value = 'worker';
       if (resume?.role_key && roles.some(role => role.role_key === resume.role_key)) this.form.elements.role.value = resume.role_key;
+      this.rolesReady = true;
+      this.syncRoleGate();
     } catch (error) {
-      if (!this.dialog.open) return;
+      if (!current()) return;
       this.catalog = [];
       reason.textContent = `Machines or tools unavailable: ${error.message}`;
       submit.disabled = true;
     }
+  }
+  // A v1 agent started in a lead-only home room with a role that is not a lead role: the server would refuse it (home_is_lead_only), so
+  // the dialog says so and keeps Start off, instead of the role having been changed for the person.
+  syncRoleGate() {
+    const resume = this.pendingResume, hint = document.querySelector('#spawn-home-hint');
+    this.roleBlocked = !!resume && this.room?.kind === 'home' && !!this.homeLeadOnly && !this.leadRoles?.has(this.form.elements.role.value);
+    if (resume) {
+      hint.hidden = !this.roleBlocked;
+      if (this.roleBlocked) hint.textContent = `The home room is for the lead, and ${resume.slug} would start as ${this.form.elements.role.selectedOptions[0]?.textContent || this.form.elements.role.value}. Start it from a task room such as general, pick a lead role, or turn off Home room: lead only in the project settings.`;
+    } else {
+      hint.textContent = 'The home room is for the lead. Spawn workers into a task room such as general.';
+    }
+    this.updateSpawnSubmit();
   }
   async loadSpawnCatalog() {
     const machineID = this.spawnMachine.id;
@@ -606,7 +640,7 @@ export class AgentsPanel {
   updateSpawnSubmit() {
     const tool = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)];
     // A resumed session runs in the v1 folder, which the server checks itself, so the machine's project folder is not needed for it.
-    this.form.querySelector('button[type=submit]').disabled = (!this.pendingResume?.resumable && !this.spawnMachine.folderReady) || (!tool?.available || !this.form.elements.model.options.length);
+    this.form.querySelector('button[type=submit]').disabled = !this.rolesReady || !!this.roleBlocked || (!this.pendingResume?.resumable && !this.spawnMachine.folderReady) || (!tool?.available || !this.form.elements.model.options.length);
   }
   // A hint that names Settings → Harnesses makes that name a button that opens it, so an empty machine says where to go.
   // Only an owner or admin can add or change a harness, so anyone else gets plain words (the link would only end in a refusal).
@@ -656,7 +690,7 @@ export class AgentsPanel {
     if (!this.room) return;
     this.error.textContent = '';
     const role = this.form.elements.role.value, selected = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)], model = this.form.elements.model.value;
-    if (!selected?.available || !model) return;
+    if (!role || !selected?.available || !model) return;
     const resume = this.pendingResume;
     if (resume?.resumable && selected.tool !== resume.tool) { this.error.textContent = `To continue this session the tool must be ${resume.tool}.`; return; }
     if (resume?.v1_active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that v1 is not running this session any more.'; document.querySelector('#spawn-resume-confirm').focus(); return; }

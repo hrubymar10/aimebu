@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ const (
 	V1TargetRoot = "root"
 	V1TargetSub  = "sub"
 	// V1DefaultSubRoomTitle is the title a sub-room target gets when the owner does not choose one.
-	V1DefaultSubRoomTitle = "general"
+	V1DefaultSubRoomTitle = GeneralRoomTitle
 	maxV1SubRoomTitle     = 80
 )
 
@@ -65,6 +66,12 @@ func validateV1RoomTarget(roomID string, spec V1ImportRoom) error {
 		}
 	}
 	return nil
+}
+
+// v1SubRoomKey is the import ledger key of a shared sub-room. The title can hold ':' (and so can a project alias), so both parts are
+// quoted: ("a", "b:c") and ("a:b", "c") are two keys.
+func v1SubRoomKey(alias, title string) string {
+	return "target:" + strconv.Quote(alias) + ":" + strconv.Quote(title)
 }
 
 // v1HomeRoom is the project's home room: the one this import made, or the project's existing one.
@@ -165,11 +172,24 @@ func (t *v1Targets) place(ctx context.Context, tx *sql.Tx, data *v1ImportData, m
 	if v1RoomTarget(spec, room.ID) == V1TargetSub {
 		title := v1SubRoomTitle(spec)
 		label = title + " under ⌂ " + projectName
-		// The title can hold ':' (and so can a project alias), so both parts are quoted: ("a", "b:c") and ("a:b", "c") are two keys.
-		key := "target:" + strconv.Quote(spec.Project) + ":" + strconv.Quote(title)
+		key := v1SubRoomKey(spec.Project, title)
 		sub, present, err := importMapID(ctx, tx, mapping.SourceKey, "room", key)
 		if err != nil {
 			return "", err
+		}
+		if !present && title == GeneralRoomTitle {
+			// A project made in v2 already has its "general" task room beside the home room: the import fills that one instead of
+			// making a second room of the same name.
+			err := tx.QueryRowContext(ctx, "SELECT id FROM room WHERE project_id=? AND parent_id=? AND kind='task' AND title=? ORDER BY created_at,id LIMIT 1", projectID, home, title).Scan(&sub)
+			switch {
+			case err == nil:
+				if err := addImportMap(ctx, tx, mapping.SourceKey, "room", key, sub); err != nil {
+					return "", err
+				}
+				present = true
+			case !errors.Is(err, sql.ErrNoRows):
+				return "", err
+			}
 		}
 		if present {
 			var owner string
@@ -198,7 +218,10 @@ func (t *v1Targets) place(ctx context.Context, tx *sql.Tx, data *v1ImportData, m
 			}
 			t.freshSubs[sub] = true
 			newRooms[sub] = true
-		} else if t.freshSubs[sub] && spec.Lifecycle == "open" {
+		} else if t.freshSubs[sub] {
+			newRooms[sub] = true
+		}
+		if present && t.freshSubs[sub] && spec.Lifecycle == "open" {
 			// Rooms sharing a sub-room: it is open if any of them is asked to be.
 			if _, err := tx.ExecContext(ctx, "UPDATE room SET lifecycle='open',closed_at=NULL WHERE id=?", sub); err != nil {
 				return "", err

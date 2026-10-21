@@ -1302,6 +1302,10 @@ UPDATE harness_model SET is_default=1 WHERE rowid IN (
     AND NOT EXISTS (SELECT 1 FROM harness_model d WHERE d.launcher_id=m.launcher_id AND d.is_default=1));
 DROP TABLE spawn_model;
 DROP TABLE IF EXISTS harness_keep;
+`}, {70, `
+-- Home room: lead only. While on, spawning into a project's home room accepts only roles with the lead capability, so workers go to
+-- task rooms (such as general). Every project, existing ones included, starts with it on; agents already in a home room are untouched.
+ALTER TABLE settings_project ADD COLUMN home_lead_only INTEGER NOT NULL DEFAULT 1 CHECK (home_lead_only IN (0,1));
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

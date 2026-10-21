@@ -17,7 +17,9 @@ export class MockAgentSource {
     { tool: 'claude', variant: 'native', label: 'Claude Code', cli_version: '', models: [{ id: 'haiku', label: 'Haiku' }], available: false, unavailable_reason: 'not offered by a connected machine' },
     { tool: 'codex', variant: 'native', label: 'Codex', cli_version: 'mock-1', models: [{ id: 'gpt-6-luna', label: 'GPT-6 Luna' }], available: true },
   ] }; }
-  async roles() { return [{ id: 'role_worker', role_key: 'worker', label: 'Worker' }, { id: 'role_reviewer', role_key: 'reviewer', label: 'Reviewer' }, { id: 'role_lead', role_key: 'lead', label: 'Lead' }]; }
+  async roles() { return [{ id: 'role_worker', role_key: 'worker', label: 'Worker' }, { id: 'role_reviewer', role_key: 'reviewer', label: 'Reviewer' }, { id: 'role_lead', role_key: 'lead', label: 'Lead', cap_is_lead: true }]; }
+  // The mock projects keep today's behaviour: every role may be spawned into the home room.
+  async homeLeadOnly() { return false; }
   async spawn(roomID, params) {
     if (!this.available) throw new Error('Agent controls are not available yet');
     const id = `agt_mock_${uuid()}`;
@@ -58,6 +60,8 @@ export class HttpAgentSource {
   normalize(agent) { const activity = this.activity.get(agent.id); return { ...agent, name: agent.slug, role: agent.role_key, activity: activity?.summary || '', activity_at: activity?.at || agent.last_activity_at || '' }; }
   catalog(machineID) { return request('/api/spawn-catalog' + (machineID ? `?machine_id=${encodeURIComponent(machineID)}` : '')); }
   roles() { return request('/api/roles'); }
+  // Whether the project's home room takes only lead roles (Home room: lead only, on unless the project turned it off).
+  async homeLeadOnly(projectID) { return (await request(`/api/projects/${encodeURIComponent(projectID)}/settings`)).home_lead_only !== false; }
   async list(roomID) {
     try {
       const cards = await request(`/api/rooms/${roomID}/agents`);

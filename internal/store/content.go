@@ -129,6 +129,9 @@ func (s *Store) CreateRoom(ctx context.Context, room Room) (Room, error) {
 	return room, err
 }
 
+// GeneralRoomTitle is the task room every project starts with beside its home room.
+const GeneralRoomTitle = "general"
+
 func (tx *Tx) CreateRoom(room Room) (Room, error) {
 	if room.ParentID != "" {
 		var parentProject, parentLifecycle, parentKind string
