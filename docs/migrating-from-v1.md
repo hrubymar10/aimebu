@@ -5,6 +5,9 @@ Keep the v1 executable until you have checked the result. The commands below
 use v1's usual data folder (`~/.aimebu`) and port (`9997`); substitute your
 own folder and port if you changed them.
 
+For the full backup, cutover, agent restart, rehearsal, and rollback sequence,
+follow the [cutover runbook](cutover-runbook.md).
+
 Expect the whole move to take a few minutes of your attention. The import itself
 is quick: a rehearsal with a real history of about 21,000 messages, 3,600
 reactions and 325 attachments (150 MB) took 0.2 s to review, 1.3 s to check and
