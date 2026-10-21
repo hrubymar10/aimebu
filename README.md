@@ -50,6 +50,26 @@ held answers, and recovery waiting on agent cards, rooms, and the top bar. The a
 ("Not responding", "Reply not delivered", "Needs your decision"), and the Health list gives each problem a sentence and a
 one-line explanation; choosing one opens its Inbox item, or else the agent's room and profile.
 
+## Install
+
+Clone the repository and run `bin/aimebu`, a wrapper that builds the binary on
+your machine on first use and re-uses the cached build afterwards. It needs a
+Go toolchain at least as new as the `go` line in `go.mod`; an older Go
+downloads the right one itself.
+
+```sh
+git clone https://github.com/hrubymar10/aimebu.git
+export PATH="$PATH:<path-to-clone>/bin"
+aimebu version   # builds on first run, then runs
+```
+
+A symlink to `bin/aimebu` on your `PATH` works too. The cached binary is
+`aimebu-<os>-<arch>` in the clone and is not rebuilt when the source changes:
+after `git pull`, delete it, or run once with `AIMEBU_FORCE_BUILD=1` to build
+into a temporary binary for that run only (the cache is left alone; any other
+value, including `0`, uses the cache). The binary reports the output of
+`git describe` as its version.
+
 This branch is the v2 rewrite. The server, embedded and standalone
 supervisors, web UI, and managed adapters are implemented.
 Run `make test-full` for the same formatting, vet, and race-test checks used

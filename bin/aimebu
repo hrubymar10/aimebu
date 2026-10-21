@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# aimebu wrapper — builds the binary on first use or when forced, then runs it.
+#
+# Install: clone the repository and add its bin/ directory to PATH:
+#   export PATH="$PATH:/path/to/aimebu/bin"
+# A symlink to this file also works. Requires a Go toolchain at least as new as
+# the "go" line in go.mod (an older Go downloads the right one by default).
+
+set -euo pipefail
+
+# Resolve the real location of this script, so a symlink on PATH still finds the
+# repository (readlink -f is not available on every macOS).
+resolve_script_dir() {
+    local source="$1" dir
+    while [ -L "$source" ]; do
+        dir="$(cd -P "$(dirname "$source")" && pwd)"
+        source="$(readlink "$source")"
+        case "$source" in
+            /*) ;;
+            *) source="$dir/$source" ;;
+        esac
+    done
+    cd -P "$(dirname "$source")" && pwd
+}
+
+SCRIPT_DIR="$(resolve_script_dir "${BASH_SOURCE[0]}")"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+BINARY="$REPO_DIR/aimebu-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+FORCE_BUILD="${AIMEBU_FORCE_BUILD:-}"
+TEMP_BINARY=""
+pid=""
+
+cleanup() {
+    if [ -n "$TEMP_BINARY" ]; then
+        rm -f "$TEMP_BINARY"
+    fi
+}
+
+forward_signal() {
+    if [ -n "$pid" ]; then
+        kill "-$1" "$pid" 2>/dev/null || true
+    fi
+}
+
+# Build if the binary doesn't exist or a rebuild is explicitly requested.
+# Set AIMEBU_FORCE_BUILD=1 to force a rebuild into a per-run tmp binary; the
+# cached binary is left alone. Any other value (including 0) uses the cache.
+# Cleanup is best-effort; SIGKILL or host crashes can leak the tmp file.
+if [ "$FORCE_BUILD" = "1" ]; then
+    BINARY="$(mktemp "${TMPDIR:-/tmp}/aimebu-XXXXXX")"
+    TEMP_BINARY="$BINARY"
+    trap cleanup EXIT
+    trap 'forward_signal INT' INT
+    trap 'forward_signal TERM' TERM
+fi
+
+if [ ! -f "$BINARY" ] || [ "$FORCE_BUILD" = "1" ]; then
+    echo "Building aimebu..." >&2
+    # version is a full string ("aimebu v2.0.0"); without git metadata keep the
+    # default, so "aimebu version" still appends the VCS revision when it can.
+    LDFLAGS="-s -w"
+    if DESCRIBED="$(cd "$REPO_DIR" && git describe --tags --always --dirty 2>/dev/null)" && [ -n "$DESCRIBED" ]; then
+        LDFLAGS="$LDFLAGS -X 'main.version=aimebu $DESCRIBED'"
+    fi
+    (cd "$REPO_DIR" && go build -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/aimebu) || {
+        echo "Build failed" >&2
+        exit 1
+    }
+fi
+
+if [ "$FORCE_BUILD" = "1" ]; then
+    # <&0 keeps the child's stdin pointing at the wrapper's stdin. Without
+    # it, bash redirects asynchronous commands' stdin to /dev/null when job
+    # control is off (as in any non-interactive script), which breaks
+    # interactive prompts.
+    "$BINARY" "$@" <&0 &
+    pid=$!
+    status=0
+    while true; do
+        # wait returns early when a trapped signal arrives; loop until the child is gone
+        # and keep its exit status (an "if wait" would report 0 for a failed child).
+        status=0
+        wait "$pid" || status=$?
+        if ! kill -0 "$pid" 2>/dev/null; then
+            break
+        fi
+    done
+    trap - INT TERM
+    exit "$status"
+fi
+
+exec "$BINARY" "$@"
