@@ -1,4 +1,4 @@
-import { request, upload, currentUser } from './api.js';
+import { request, upload, currentUser, rights } from './api.js';
 import { retention } from './retention.js';
 import { expiryCutoffMs, planExpiry } from './expiry.js';
 import { renderMarkdown, renderRaw, copyText } from './markdown.js';
@@ -105,6 +105,11 @@ export class Chat {
     this.notesSection.querySelector('button').onclick = () => this.openRoomNotes();
     document.querySelector('#room-info-error').before(this.notesSection);
     this.projectSection = document.querySelector('#room-project');
+    // The title of the room, edited here and nowhere else: the home room's is the project's name.
+    this.renameForm = document.querySelector('#room-rename-form');
+    setGlyph(this.renameForm.querySelector('#room-rename-save'), 'check', 'Save title');
+    this.renameForm.onsubmit = event => { event.preventDefault(); this.saveRoomTitle(); };
+    this.renameForm.elements.title.oninput = () => { this.renameForm.querySelector('#room-rename-status').textContent = ''; };
     this.memorySection = document.createElement('section');
     this.memorySection.className = 'room-memory-setting';
     this.memorySection.innerHTML = '<h3>Room memory</h3><label>Message memory <select><option value="inherit">Use project setting</option><option value="off">Off in this room</option></select></label><p role="status"></p><p>Turning this off prevents this room’s messages from feeding memory or recall. It does not erase saved memory.</p>';
@@ -425,6 +430,7 @@ export class Chat {
   setRoomFacts(room) {
     if (this.room?.id !== room.id) { this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1; }
     this.room = room;
+    this.title.textContent = room.title; // a rename by someone else reaches here through the room list
     this.refreshMentions();
     this.loadMentionLogins(room);
     const count = room.member_count || 0;
@@ -459,7 +465,11 @@ export class Chat {
     controls.hidden = this.room.kind === 'dm';
     const facts = document.querySelector('#room-info-facts'); facts.replaceChildren();
     // Kind and Room ID are for debugging: they show only while the message debug inspector is on (Settings → General).
-    for (const [label, value, debug] of [['Name', this.room.title], ['Kind', this.room.kind, true], ['Status', this.room.lifecycle || 'open'], ['Members', String(this.room.member_count || 0)], ['Room ID', this.room.id, true]]) {
+    // Whoever may rename the room edits its title in the form above the facts instead of reading it among them.
+    const canRename = this.canRenameRoom(this.room);
+    this.renameForm.hidden = !canRename;
+    if (canRename) { this.renameForm.elements.title.value = this.room.title; this.renameForm.querySelector('#room-rename-status').textContent = ''; }
+    for (const [label, value, debug] of [...(canRename ? [] : [['Name', this.room.title]]), ['Kind', this.room.kind, true], ['Status', this.room.lifecycle || 'open'], ['Members', String(this.room.member_count || 0)], ['Room ID', this.room.id, true]]) {
       const term = document.createElement('dt'); term.textContent = label;
       const detail = document.createElement('dd'); detail.textContent = value;
       if (debug) { term.className = detail.className = 'room-fact-debug'; }
@@ -480,6 +490,32 @@ export class Chat {
     if (!controls.hidden) this.scopeControl.load(this.room.id);
     this.schedules.load(this.room);
     this.memberList.load(this.room.id);
+  }
+  // The server decides; this only keeps a field out of sight that it would refuse. A task room's title is for owners and operators, the home
+  // room's is the project's name (its owner or an admin), and a private chat has none of its own.
+  canRenameRoom(room) {
+    const role = this.projectRole?.(room.project_id);
+    if (room.kind === 'dm') return false;
+    return room.kind === 'home' ? role === 'owner' || rights.admin : !!role && role !== 'viewer';
+  }
+  async saveRoomTitle() {
+    const room = this.room, form = this.renameForm, input = form.elements.title, save = form.querySelector('#room-rename-save'), status = form.querySelector('#room-rename-status');
+    if (!room) return;
+    const title = input.value.trim();
+    status.className = 'room-rename-status'; status.textContent = '';
+    if (!title) { status.className = 'room-rename-status error'; status.textContent = 'A room needs a title.'; input.focus(); return; }
+    // The home room's title is the project's name, which this field may not show (a title that drifted from it), so only the server can
+    // tell a home room's rename from no change.
+    if (room.kind !== 'home' && title === room.title) { input.value = title; status.textContent = 'Nothing changed.'; return; }
+    save.disabled = true;
+    try {
+      const updated = await request(`/api/rooms/${encodeURIComponent(room.id)}`, { method: 'PATCH', body: { title } });
+      if (this.room?.id !== room.id) return;
+      room.title = updated.title; this.title.textContent = updated.title; input.value = updated.title;
+      status.textContent = 'Saved.';
+    } catch (error) {
+      if (this.room?.id === room.id) { status.className = 'room-rename-status error'; status.textContent = error.message; input.focus(); }
+    } finally { save.disabled = false; }
   }
   // Archive/Reopen and Remove follow the room's lifecycle, also while the dialog is open (a room goes closing, then closed).
   renderRoomActions() {

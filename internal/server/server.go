@@ -218,6 +218,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{project}/archive/search", s.Auth.RequireUser(http.HandlerFunc(s.archiveSearch)))
 	mux.Handle("POST /api/projects/{project}/rooms", s.Auth.RequireUser(http.HandlerFunc(s.rooms)))
 	mux.Handle("GET /api/rooms/{room}", s.Auth.RequireUser(http.HandlerFunc(s.room)))
+	mux.Handle("PATCH /api/rooms/{room}", s.Auth.RequireUser(http.HandlerFunc(s.roomRename)))
 	mux.Handle("PATCH /api/rooms/{room}/preferences", s.Auth.RequireUser(http.HandlerFunc(s.roomPreferences)))
 	mux.Handle("POST /api/rooms/{room}/read", s.Auth.RequireUser(http.HandlerFunc(s.roomRead)))
 	mux.Handle("GET /api/rooms/{room}/read-receipts", s.Auth.RequireUser(http.HandlerFunc(s.roomReadReceipts)))
@@ -841,23 +842,75 @@ func checkProjectFolder(folder string) (string, error) {
 // projectUpdate renames a project or moves its folder. The project's owner or an admin may rename it; moving the folder points agents at
 // a different place on the host, so it stays with the admins, as creating a project does. The folder can only change while the project has
 // no agents or worktrees, because their checkouts live under it.
-func (s *Server) projectUpdate(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("project")
+// projectOwnerOrAdmin lets a global admin or the project's owner through, and answers the refusal itself otherwise. admin says which.
+func (s *Server) projectOwnerOrAdmin(w http.ResponseWriter, r *http.Request, id string) (allowed, admin bool) {
 	admin, err := s.Store.IsGlobalAdmin(r.Context(), userID(r))
 	if err != nil {
 		fail(w, err)
-		return
+		return false, false
 	}
 	if !admin {
 		role, err := s.Store.UserProjectRole(r.Context(), userID(r), id)
 		if err != nil {
 			userError(w, err)
-			return
+			return false, false
 		}
 		if role != "owner" {
 			apiError(w, 403, "forbidden", "project owner or admin required")
+			return false, false
+		}
+	}
+	return true, admin
+}
+
+// roomRename sets a room's title (PATCH /api/rooms/{room} {title}). A task room's title is for the project's owners and operators, like
+// creating a room; the home room's title is the project's name, so renaming it takes what renaming the project takes (its owner or an
+// admin). A private chat has no title to change.
+func (s *Server) roomRename(w http.ResponseWriter, r *http.Request) {
+	room, ok := s.roomAccess(w, r, r.PathValue("room"))
+	if !ok {
+		return
+	}
+	var req struct {
+		Title string `json:"title"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	switch room.Kind {
+	case "dm":
+		apiError(w, 409, "invalid_kind", "a private chat cannot be renamed")
+		return
+	case "home":
+		if allowed, _ := s.projectOwnerOrAdmin(w, r, room.ProjectID); !allowed {
 			return
 		}
+	default:
+		if !s.projectOperator(w, r, room.ProjectID) {
+			return
+		}
+	}
+	title, err := store.NormalizeRoomTitle(req.Title)
+	if err != nil {
+		apiError(w, 400, "invalid_title", fmt.Sprintf("a room title is 1 to %d characters on one line", store.MaxRoomTitleRunes))
+		return
+	}
+	renamed, err := s.Store.RenameRoom(r.Context(), room.ID, title, userID(r))
+	switch {
+	case errors.Is(err, store.ErrRoomNotRenamable):
+		apiError(w, 409, "invalid_kind", "a private chat cannot be renamed")
+	case err != nil:
+		fail(w, err)
+	default:
+		writeJSON(w, 200, renamed)
+	}
+}
+
+func (s *Server) projectUpdate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("project")
+	allowed, admin := s.projectOwnerOrAdmin(w, r, id)
+	if !allowed {
+		return
 	}
 	var req struct {
 		Name   *string `json:"name"`

@@ -325,7 +325,10 @@ shows member count and
 the room's icon buttons (task notes (v1's brain; in task rooms, and in the home room it
 opens the project's memory instead), Room settings, go to
 message, raw Markdown, export). Every room has the same Room settings dialog with
-the sections that apply to it. The home room's adds a **Project** section, the
+the sections that apply to it. Its **Title** field (for owners and operators; a
+private chat has none) is the only place a room is renamed: the header and the
+room list follow at once, and the home room's title is the project's name, so
+editing it renames the project too (the project's owner or an admin). The home room's adds a **Project** section, the
 same form as Settings → Project (name and folder, agents in this project, daily
 limits, recovery and worktrees; Settings → Project stays as a shortcut to it),
 its Schedules, a Project memory entry where task rooms have Task notes, and one

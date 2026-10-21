@@ -355,7 +355,7 @@ async function signedIn(session) {
       if (event.kind === 'project_created' || event.kind === 'project_updated') { const projects = await request('/api/projects'); if (!active()) return; const project = projects.find(p => p.id === event.project_id); if (project) { await sidebar.addProject(project); if (!active()) return; refreshEmptyState(); const open = chat.room && sidebar.rooms.get(chat.room.id); if (open && open.project_id === event.project_id && event.kind === 'project_updated') { chat.title.textContent = open.title; chat.setRoomFacts(open); } } }
       else if ((event.kind === 'room_preference_changed' || event.kind === 'room_read_changed') && payload.user_id === currentUser) await sidebar.refreshProject(event.project_id);
       else if (event.kind === 'room_removed') await roomRemoved(event.project_id, payload.room_id);
-      else if (event.kind === 'room_created' || ['room_closing', 'room_closed', 'room_reopened', 'room_close_blocked'].includes(event.kind)) {
+      else if (event.kind === 'room_created' || ['room_renamed', 'room_closing', 'room_closed', 'room_reopened', 'room_close_blocked'].includes(event.kind)) {
         await sidebar.refreshProject(event.project_id);
         if (!active()) return;
         if (event.kind === 'room_close_blocked') chat.showCloseBlocked(event.room_id, payload.reason);

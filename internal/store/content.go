@@ -61,37 +61,46 @@ var ErrProjectFolderInUse = errors.New("project has agents or worktrees")
 // somebody retitled keeps its title).
 func (s *Store) UpdateProject(ctx context.Context, id string, name, folder *string, actorID string) (Project, error) {
 	var project Project
-	err := s.Tx(ctx, func(tx *Tx) error {
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id, name, folder, COALESCE(repo_url,'') FROM project WHERE id=?`, id).Scan(&project.ID, &project.Name, &project.Folder, &project.RepoURL); err != nil {
-			return err
-		}
-		oldName := project.Name
-		if folder != nil && *folder != project.Folder {
-			var inUse int
-			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT
-				(SELECT COUNT(*) FROM agent WHERE project_id=?1) +
-				(SELECT COUNT(*) FROM room_worktree w JOIN room r ON r.id=w.room_id WHERE r.project_id=?1 AND w.state<>'removed')`, id).Scan(&inUse); err != nil {
-				return err
-			}
-			if inUse > 0 {
-				return ErrProjectFolderInUse
-			}
-			project.Folder = *folder
-		}
-		if name != nil {
-			project.Name = *name
-		}
-		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE project SET name=?, folder=? WHERE id=?`, project.Name, project.Folder, id); err != nil {
-			return err
-		}
-		if project.Name != oldName {
-			if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET title=? WHERE project_id=? AND kind='home' AND title=?`, project.Name, id, oldName); err != nil {
-				return err
-			}
-		}
-		_, err := tx.AppendEvent(Event{Kind: "project_updated", ProjectID: id, PayloadJSON: payloadJSON(map[string]string{"project_id": id, "actor_id": actorID})})
+	err := s.Tx(ctx, func(tx *Tx) (err error) {
+		project, err = tx.updateProject(id, name, folder, actorID, false)
 		return err
 	})
+	return project, err
+}
+
+// updateProject is the one path that changes a project's name or folder, whether it comes from Settings → Project or from the home room's
+// title. renameHome sets the home room's title to the new name whatever it was; otherwise the home room follows only when it still carries
+// the old name.
+func (tx *Tx) updateProject(id string, name, folder *string, actorID string, renameHome bool) (Project, error) {
+	var project Project
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id, name, folder, COALESCE(repo_url,'') FROM project WHERE id=?`, id).Scan(&project.ID, &project.Name, &project.Folder, &project.RepoURL); err != nil {
+		return project, err
+	}
+	oldName := project.Name
+	if folder != nil && *folder != project.Folder {
+		var inUse int
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT
+			(SELECT COUNT(*) FROM agent WHERE project_id=?1) +
+			(SELECT COUNT(*) FROM room_worktree w JOIN room r ON r.id=w.room_id WHERE r.project_id=?1 AND w.state<>'removed')`, id).Scan(&inUse); err != nil {
+			return project, err
+		}
+		if inUse > 0 {
+			return project, ErrProjectFolderInUse
+		}
+		project.Folder = *folder
+	}
+	if name != nil {
+		project.Name = *name
+	}
+	if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE project SET name=?, folder=? WHERE id=?`, project.Name, project.Folder, id); err != nil {
+		return project, err
+	}
+	if project.Name != oldName || renameHome {
+		if _, err := tx.tx.ExecContext(tx.ctx, `UPDATE room SET title=? WHERE project_id=? AND kind='home' AND (title=? OR ?)`, project.Name, id, oldName, renameHome); err != nil {
+			return project, err
+		}
+	}
+	_, err := tx.AppendEvent(Event{Kind: "project_updated", ProjectID: id, PayloadJSON: payloadJSON(map[string]string{"project_id": id, "actor_id": actorID})})
 	return project, err
 }
 

@@ -1648,13 +1648,13 @@ async function main() {
     assert.deepEqual(await first.$eval('#composer .composer-aa', el => ({ icon: el.querySelectorAll('svg').length, text: el.textContent.trim() })), { icon: 1, text: '' }, 'the formatting switch is an icon, not the letters Aa');
     await domClick(first, '#room-info');
     assert.equal(await first.$eval('#room-info-dialog', el => el.open), true);
-    assert.equal(await first.$eval('#room-info-facts', el => el.textContent.includes('Nested task')), true);
+    assert.equal(await first.$eval('#room-rename-title', el => el.value), 'Nested task', 'the room title is the field at the top of its settings');
     // Room settings: one control size, the debugging facts hidden unless the inspector is on, Pause / Stop as secondary / danger.
     {
       const visibleFacts = () => first.$$eval('#room-info-facts dt', els => els.filter(el => getComputedStyle(el).display !== 'none').map(el => el.textContent));
-      assert.deepEqual(await visibleFacts(), ['Name', 'Status', 'Members'], 'Kind and Room ID stay behind the inspector');
+      assert.deepEqual(await visibleFacts(), ['Status', 'Members'], 'Kind and Room ID stay behind the inspector, and the title is the field above');
       await first.evaluate(() => { document.documentElement.dataset.debugInspector = 'on'; });
-      assert.deepEqual(await visibleFacts(), ['Name', 'Kind', 'Status', 'Members', 'Room ID'], 'the inspector shows Kind and Room ID');
+      assert.deepEqual(await visibleFacts(), ['Kind', 'Status', 'Members', 'Room ID'], 'the inspector shows Kind and Room ID');
       await first.evaluate(() => { document.documentElement.dataset.debugInspector = 'off'; });
       const sizes = await first.evaluate(() => {
         const dialog = document.querySelector('#room-info-dialog');
@@ -4184,6 +4184,22 @@ async function main() {
     // Turned off (from the home room's Project section), the home room offers every role again; turned back on, only the lead.
     await domClick(first, '#room-info');
     await first.waitForFunction(() => !!document.querySelector('#room-project #project-home-lead-only') && !document.querySelector('#project-home-lead-only').disabled);
+    // Renaming: the title is a field of the room's settings and nowhere else. In the home room it is the project's name, so the project form's
+    // own Name row is not shown a second time, and a rename reaches the header, the room list and the project.
+    {
+      const homeTitle = await first.$eval('#room-title', el => el.textContent);
+      const form = await first.evaluate(() => ({ shown: !document.querySelector('#room-rename-form').hidden, value: document.querySelector('#room-rename-title').value, nameFact: [...document.querySelectorAll('#room-info-facts dt')].some(dt => dt.textContent === 'Name'),
+        projectNameRow: getComputedStyle(document.querySelector('#project-details-name').closest('.settings-row')).display, button: (button => ({ title: button.title, name: button.getAttribute('aria-label'), text: button.textContent.trim(), glyph: !!button.querySelector('.icon-mask-check') }))(document.querySelector('#room-rename-save')) }));
+      assert.deepEqual(form, { shown: true, value: homeTitle, nameFact: false, projectNameRow: 'none', button: { title: 'Save title', name: 'Save title', text: '', glyph: true } }, `the home room's settings carry its title as a field: ${JSON.stringify(form)}`);
+      await first.$eval('#room-rename-title', el => { el.value = 'Renamed project'; el.dispatchEvent(new Event('input')); });
+      await domClick(first, '#room-rename-save');
+      await first.waitForFunction(() => document.querySelector('#room-rename-status').textContent === 'Saved.');
+      await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] .room-name`)?.textContent.includes('Renamed project') && document.querySelector('#room-title').textContent === 'Renamed project', {}, homeRoomForSpawn);
+      assert.equal(await first.evaluate(async id => (await (await fetch('/api/projects')).json()).find(project => project.id === id).name, actualProjectID), 'Renamed project', 'renaming the home room renames the project');
+      await first.$eval('#room-rename-title', (el, value) => { el.value = value; el.dispatchEvent(new Event('input')); }, homeTitle);
+      await domClick(first, '#room-rename-save');
+      await first.waitForFunction(title => document.querySelector('#room-title').textContent === title && document.querySelector('#room-rename-status').textContent === 'Saved.', {}, homeTitle);
+    }
     assert.equal(await first.$eval('#project-home-lead-only', el => el.checked), true, 'Home room: lead only starts on');
     await domClick(first, '#project-home-lead-only');
     await first.waitForFunction(() => !document.querySelector('#project-home-lead-only').disabled);
@@ -4196,6 +4212,23 @@ async function main() {
     await first.evaluate(async id => { const { csrf_token } = await (await fetch('/api/me')).json(); await fetch(`/api/projects/${id}/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ home_lead_only: true }) }); }, actualProjectID);
     await domClick(first, `[data-room-id="${roomID}"] .room-name`);
     await first.waitForFunction(id => location.hash.slice(1) === id, {}, roomID);
+    // A task room is renamed the same way: the title field, the header and the room list; a refused title is answered under the field.
+    {
+      await domClick(first, '#room-info');
+      await first.waitForFunction(() => !document.querySelector('#room-rename-form').hidden);
+      const before = await first.$eval('#room-rename-title', el => el.value);
+      await first.$eval('#room-rename-title', el => { el.value = 'Renamed task'; el.dispatchEvent(new Event('input')); });
+      await domClick(first, '#room-rename-save');
+      await first.waitForFunction(() => document.querySelector('#room-rename-status').textContent === 'Saved.');
+      await first.waitForFunction((id, title) => document.querySelector(`[data-room-id="${id}"] .room-name`)?.textContent.includes(title) && document.querySelector('#room-title').textContent === title, {}, roomID, 'Renamed task');
+      await first.$eval('#room-rename-title', el => { el.value = '   '; el.dispatchEvent(new Event('input')); });
+      await domClick(first, '#room-rename-save');
+      await first.waitForFunction(() => document.querySelector('#room-rename-status').textContent === 'A room needs a title.');
+      await first.$eval('#room-rename-title', (el, value) => { el.value = value; el.dispatchEvent(new Event('input')); }, before);
+      await domClick(first, '#room-rename-save');
+      await first.waitForFunction((id, title) => document.querySelector(`[data-room-id="${id}"] .room-name`)?.textContent.includes(title) && document.querySelector('#room-title').textContent === title, {}, roomID, before);
+      await domClick(first, '#room-info-close');
+    }
     await first.evaluate(() => {
       // Put the page back as it was: the real fetch, and an unticked worktree box (a refused submit leaves the form as it was).
       window.fetch = window.__spawnInner; delete window.__spawnInner; delete window.__spawnBodies;

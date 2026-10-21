@@ -2281,3 +2281,14 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #room-info-dialog.room-info-home { width: min(96vw, 620px); }
 #room-project { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 10px; }
 #room-project .project-settings-body > h3, #room-project .project-settings-body .settings-section > h3 { font-size: 13px; }
+
+/* The room's title in its settings: the field with a save button beside it, and what became of it right under. In the home room the title is the
+   project's name, so the project form's own Name row is not shown a second time. */
+.room-rename-form { display: grid; gap: 4px; margin: 0 0 12px; }
+.room-rename-form > label { font-size: 12px; color: var(--text-secondary); }
+.room-rename-row { display: flex; gap: 6px; align-items: center; }
+.room-rename-row input { flex: 1 1 auto; min-width: 0; }
+.room-rename-status { margin: 0; font-size: 12px; color: var(--text-muted); }
+.room-rename-status:empty { display: none; }
+.room-rename-status.error { color: var(--red); }
+#room-info-dialog.room-info-home #project-details .settings-row:has(#project-details-name) { display: none; }

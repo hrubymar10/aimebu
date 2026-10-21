@@ -30,7 +30,9 @@ Projects, rooms, people
 - **room**(id, project_id, parent_id?, depth, kind[home|task|lobby|dm],
   dm_key? UNIQUE, lifecycle[open|closing|closed], gate[open|paused],
   gate_rev, control_desired[active|paused|stopped], lifecycle_rev, title,
-  summary?, created_by, created_at, closed_at?) — a project is created with
+  summary?, created_by, created_at, closed_at?) — a task room's title can be
+  changed (`room_renamed`); the home room's title is its project's name and
+  changes only together with it; a project is created with
   one home room and a `general` task room beneath it (also a project the v1
   import creates; an import into an existing project fills its open `general`
   rather than adding a second one, and uses a closed `general` only for v1

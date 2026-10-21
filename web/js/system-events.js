@@ -12,7 +12,7 @@ const labels = {
   agent_control_requested: 'Agent control requested', agent_control_applied: 'Agent control applied',
   agent_switch_requested: 'Agent switch requested', agent_switch_starting: 'Agent switch starting', agent_switch_completed: 'Agent switched', agent_switch_failed: 'Agent switch failed',
   agent_turn_budget_exceeded: 'Agent paused: turn budget exceeded', loop_guard: 'Agents stopped answering each other',
-  room_created: 'Room created', room_closing: 'Room closing', room_closed: 'Room closed', room_reopened: 'Room reopened', room_removed: 'Room removed', room_close_blocked: 'Room close blocked',
+  room_created: 'Room created', room_renamed: 'Room renamed', room_closing: 'Room closing', room_closed: 'Room closed', room_reopened: 'Room reopened', room_removed: 'Room removed', room_close_blocked: 'Room close blocked',
   room_member_joined: 'Joined the room', room_member_left: 'Left the room',
   room_worktree_requested: 'Worktree requested', room_worktree_updated: 'Worktree updated', room_worktree_cancelled: 'Worktree cancelled',
   project_created: 'Project created', project_updated: 'Project changed', project_member_joined: 'Joined the project', project_member_changed: 'Project member changed', project_settings_updated: 'Project settings updated',
