@@ -48,3 +48,22 @@ func (s *Server) messageDebug(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, debug)
 }
+
+// GET /api/message-numbers/{no}: where the message numbered #no lives, for a "#N" link that may point into another room. The caller must
+// have access to that room, like any other read of it.
+func (s *Server) messageByNo(w http.ResponseWriter, r *http.Request) {
+	no, err := strconv.ParseInt(r.PathValue("no"), 10, 64)
+	if err != nil || no < 1 {
+		apiError(w, 400, "invalid_request", "message number must be a positive integer")
+		return
+	}
+	message, err := s.Store.MessageByNo(r.Context(), no)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if _, ok := s.roomAccess(w, r, message.RoomID); !ok {
+		return
+	}
+	writeJSON(w, 200, map[string]any{"id": message.ID, "no": message.No, "seq": message.Seq, "room_id": message.RoomID})
+}

@@ -165,7 +165,8 @@ starts without v1's reset latch, so an old pre-reset order could otherwise
 remain in effect for a week.
 
 The wizard preserves v1 message numbers, including `#number` references and
-reply links. New v2 messages continue after the highest v1 message number.
+reply links: a v1 message's number is its v2 message number (`no`). New v2
+messages continue after the highest v1 message number, in every room.
 See the [import guide](import-v1.md) for mapping choices.
 
 ## 4. Check the result

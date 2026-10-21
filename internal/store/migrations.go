@@ -1306,6 +1306,22 @@ DROP TABLE IF EXISTS harness_keep;
 -- Home room: lead only. While on, spawning into a project's home room accepts only roles with the lead capability, so workers go to
 -- task rooms (such as general). Every project, existing ones included, starts with it on; agents already in a home room are untouched.
 ALTER TABLE settings_project ADD COLUMN home_lead_only INTEGER NOT NULL DEFAULT 1 CHECK (home_lead_only IN (0,1));
+`}, {71, `
+-- Message numbers: one global sequence for messages alone (system messages included), the "#N" people read, copy and write, as in v1. It
+-- is separate from seq_counter, which keeps ordering messages and events for paging, read cursors and the event stream: events never move
+-- a message number. A trigger numbers every message row inserted without one, so no insert path can skip it; an import writes the v1 id.
+-- This migration refuses to run over existing messages (see the check in migrateUpTo): nothing is renumbered.
+CREATE TABLE message_no_counter (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  value INTEGER NOT NULL CHECK (value >= 0)
+);
+INSERT INTO message_no_counter(id, value) VALUES (1, 0);
+ALTER TABLE message ADD COLUMN no INTEGER NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX message_no_unique ON message(no) WHERE no > 0;
+CREATE TRIGGER message_assign_no AFTER INSERT ON message WHEN NEW.no = 0 BEGIN
+  UPDATE message_no_counter SET value = value + 1 WHERE id = 1;
+  UPDATE message SET no = (SELECT value FROM message_no_counter WHERE id = 1) WHERE id = NEW.id;
+END;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
@@ -1400,6 +1416,11 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 		if m.version == 38 {
 			err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_memory WHERE legacy_payload_json IS NOT NULL`).Scan(&deactivated)
 		}
+		if err == nil && m.version == 71 {
+			if ctx.Value(keepHistoryUnnumbered{}) == nil {
+				err = refuseMessageNumbersOverHistory(ctx, tx)
+			}
+		}
 		var harnessFacts []string
 		if err == nil && m.version == 69 {
 			harnessFacts, err = harnessMigrationFacts(ctx, tx)
@@ -1450,6 +1471,25 @@ func migrateUpTo(ctx context.Context, db *sql.DB, limit int) error {
 				log.Printf("migration 69: %s", line)
 			}
 		}
+	}
+	return nil
+}
+
+// keepHistoryUnnumbered, as a context value, lets a test run migration 71 over messages (they stay unnumbered): the tests of the old
+// migrations seed history at old versions and migrate it all the way up.
+type keepHistoryUnnumbered struct{}
+
+// refuseMessageNumbersOverHistory stops migration 71 on a database that already holds messages. Message numbers are assigned from
+// that version on and nothing is renumbered, so a development database from before it is reset rather than converted.
+func refuseMessageNumbersOverHistory(ctx context.Context, tx *sql.Tx) error {
+	var messages int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM message`).Scan(&messages); err != nil {
+		return err
+	}
+	if messages > 0 {
+		return fmt.Errorf("this database already has %d messages, and message numbers (#N) are assigned from this version on without renumbering old ones: "+
+			"reset the development data and start again (stop the server and run `aimebu prune -a`, or remove the config directory's server/aimebu.sqlite); "+
+			"a copy of this database was saved in server/backups before this migration", messages)
 	}
 	return nil
 }

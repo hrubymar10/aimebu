@@ -123,6 +123,12 @@ async function roomRemoved(projectID, roomID) {
   if (home) await selectRoom(home);
 }
 chat.onRoomRemoved = room => roomRemoved(room.project_id, room.id);
+// A "#N" link to a message of another room: open that room on the message (the server told which room holds it).
+chat.onOpenMessage = async found => {
+  const room = sidebar.rooms.get(found.room_id);
+  if (!room) { chat.error.textContent = `Message #${found.no} is in a room that is not in your list.`; return; }
+  await selectRoom(room, found.id);
+};
 const notifications = new InboxNotifications(item => {
   inbox.show();
   requestAnimationFrame(() => document.querySelector(`[data-inbox-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'center' }));

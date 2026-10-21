@@ -66,7 +66,7 @@ function appendInline(parent, source, depth = 0, inLink = false) {
     }
     if (!inLink && source[i] === '#' && refStart(source, i)) {
       const ref = source.slice(i).match(/^#([1-9]\d*)\b/);
-      if (ref) { const link = document.createElement('a'); link.className = 'msg-ref'; link.href = `#${ref[1]}`; link.dataset.seq = ref[1]; link.textContent = ref[0]; parent.append(link); i += ref[0].length; continue; }
+      if (ref) { const link = document.createElement('a'); link.className = 'msg-ref'; link.href = `#${ref[1]}`; link.dataset.no = ref[1]; link.textContent = ref[0]; parent.append(link); i += ref[0].length; continue; }
     }
     if (source.startsWith('<u>', i)) {
       const end = source.indexOf('</u>', i + 3);

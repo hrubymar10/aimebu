@@ -50,7 +50,7 @@ const FIXTURE = async () => {
     highlightMentions(content, new MentionIndex([{ slug: 'ada', role_key: 'worker', tool: 'codex', model: 'm' }], 'p'));
     const plan = renderVisualPlan({ visual_plan: [{ type: 'markdown', title: 'Plan', data: { markdown: 'Plan **text**' } }, { type: 'checklist', data: { items: [{ text: 'a', checked: true }, { text: 'b' }] } }, { type: 'file-tree', data: { root: { name: 'src', type: 'dir', children: [{ name: 'a.js', type: 'file', note: 'entry' }] } } }] });
     if (plan) bubble.append(plan);
-    bubble.append(buildMessageActions({ setReply() {}, toggleReaction() {}, openThread() {}, threadLabel: () => 'Reply in thread' }, { id: 'fixture', seq: 7, body: 'text' }));
+    bubble.append(buildMessageActions({ setReply() {}, toggleReaction() {}, openThread() {}, threadLabel: () => 'Reply in thread' }, { id: 'fixture', seq: 7, no: 7, body: 'text' }));
     make('button', 'row-btn quiet-glyph chat-msg-debug-toggle', '', meta); meta.lastChild.append(Object.assign(document.createElement('span'), { className: 'icon-mask icon-mask-bug' })); meta.lastChild.setAttribute('aria-label', 'Open debug inspector');
     const pills = make('span', 'reaction-pills', '', bubble); const pill = make('button', 'row-btn reaction-pill', '👍 2', pills); pill.setAttribute('aria-pressed', 'true');
     return article;

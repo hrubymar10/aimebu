@@ -673,7 +673,7 @@ func TestHelloRequeuesTurnNeverJournaled(t *testing.T) {
 		t.Fatalf("never started state=%+v %v", state, err)
 	}
 	redelivery, ready, err := f.db.PrepareDispatch(ctx, agent.ID, "")
-	if err != nil || !ready || redelivery.TurnID == turn.ID || len(redelivery.Notes) != 1 || redelivery.Notes[0].NoteID != note.ID {
+	if err != nil || !ready || redelivery.TurnID == turn.ID || len(redelivery.Notes) != 1 || redelivery.Notes[0].NoteID != note.ID || redelivery.Notes[0].No < 1 {
 		t.Fatalf("never started redispatch=%+v ready=%v err=%v", redelivery, ready, err)
 	}
 }

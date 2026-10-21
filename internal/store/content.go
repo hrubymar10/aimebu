@@ -256,8 +256,11 @@ func (tx *Tx) RemoveMember(roomID, kind, memberID string) error {
 }
 
 type Message struct {
-	ID                  string       `json:"id"`
-	Seq                 int64        `json:"seq"`
+	ID  string `json:"id"`
+	Seq int64  `json:"seq"`
+	// No is the message's number, "#N" to people and agents: one sequence across every room, counted by messages alone. Seq is the
+	// internal order shared with events (paging, read cursors, the event stream).
+	No                  int64        `json:"no"`
 	RoomID              string       `json:"room_id"`
 	AuthorKind          string       `json:"author_kind"`
 	AuthorID            string       `json:"author_id"`
@@ -331,6 +334,10 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 	if err != nil {
 		return Message{}, err
 	}
+	// The message_assign_no trigger numbered the row (events do not take message numbers).
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT no FROM message WHERE id = ?`, message.ID).Scan(&message.No); err != nil {
+		return Message{}, err
+	}
 	var projectID string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM room WHERE id = ?`,
 		message.RoomID).Scan(&projectID); err != nil {
@@ -377,7 +384,7 @@ func (s *Store) ListMessagesAfter(ctx context.Context, roomID string, afterSeq i
 	return s.listMessages(ctx, `WHERE room_id = ? AND seq > ? ORDER BY seq`, roomID, afterSeq)
 }
 
-const messageSelect = `SELECT id, seq, room_id, author_kind, author_id,
+const messageSelect = `SELECT id, seq, no, room_id, author_kind, author_id,
 	body, reply_to, thread_root, targets_json, ask_json, source_out_id, created_at,
 	COALESCE(author_harness,''), COALESCE(author_model,''),
 	COALESCE((SELECT login FROM user WHERE user.id=message.author_id AND message.author_kind='user'),''),
@@ -398,7 +405,7 @@ func (s *Store) listMessages(ctx context.Context, clause string, args ...any) ([
 	for rows.Next() {
 		var message Message
 		var replyTo, threadRoot, askJSON, sourceOutID sql.NullString
-		if err := rows.Scan(&message.ID, &message.Seq, &message.RoomID,
+		if err := rows.Scan(&message.ID, &message.Seq, &message.No, &message.RoomID,
 			&message.AuthorKind, &message.AuthorID, &message.Body, &replyTo,
 			&threadRoot, &message.TargetsJSON, &askJSON, &sourceOutID,
 			&message.CreatedAt, &message.AuthorHarness, &message.AuthorModel, &message.AuthorName,

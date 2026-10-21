@@ -145,14 +145,14 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 				if err := tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.choice') FROM event WHERE turn_id=? AND kind='recovery_decision' ORDER BY seq DESC LIMIT 1`, special.ID).Scan(&choice); err != nil {
 					return err
 				}
-				rows, err := tx.tx.QueryContext(tx.ctx, `SELECT n.id,m.id,m.room_id,m.author_id,m.body,COALESCE(m.reply_to,''),COALESCE(m.thread_root,''),COALESCE(m.visual_plan_json,''),COALESCE(m.appendix_pages_json,'') FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id WHERE tn.turn_id=? AND n.state='queued' ORDER BY m.seq`, special.ID)
+				rows, err := tx.tx.QueryContext(tx.ctx, `SELECT n.id,m.id,m.no,m.room_id,m.author_id,m.body,COALESCE(m.reply_to,''),COALESCE(m.thread_root,''),COALESCE(m.visual_plan_json,''),COALESCE(m.appendix_pages_json,'') FROM turn_note tn JOIN note n ON n.id=tn.note_id JOIN message m ON m.id=n.message_id WHERE tn.turn_id=? AND n.state='queued' ORDER BY m.seq`, special.ID)
 				if err != nil {
 					return err
 				}
 				for rows.Next() {
 					var note protocol.DeliveryNote
 					var planJSON, pagesJSON string
-					if err := rows.Scan(&note.NoteID, &note.MessageID, &note.RoomID, &note.From, &note.Body, &note.ReplyTo, &note.ThreadRoot, &planJSON, &pagesJSON); err != nil {
+					if err := rows.Scan(&note.NoteID, &note.MessageID, &note.No, &note.RoomID, &note.From, &note.Body, &note.ReplyTo, &note.ThreadRoot, &planJSON, &pagesJSON); err != nil {
 						rows.Close()
 						return err
 					}
@@ -280,7 +280,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if expiryWindow > 0 {
 			expiryCutoff = time.Now().UTC().Add(-time.Duration(expiryWindow) * time.Second).Format(timestampLayout)
 		}
-		rows, err = tx.tx.QueryContext(tx.ctx, `SELECT n.id,m.id,m.room_id,m.author_id,m.body,COALESCE(m.reply_to,''),COALESCE(m.thread_root,''),COALESCE(m.visual_plan_json,''),COALESCE(m.appendix_pages_json,''),m.author_kind,
+		rows, err = tx.tx.QueryContext(tx.ctx, `SELECT n.id,m.id,m.no,m.room_id,m.author_id,m.body,COALESCE(m.reply_to,''),COALESCE(m.thread_root,''),COALESCE(m.visual_plan_json,''),COALESCE(m.appendix_pages_json,''),m.author_kind,
 			EXISTS(SELECT 1 FROM provider_limit_retry retry WHERE retry.note_id=n.id AND retry.caution=1),n.wake_reason,m.created_at,
 			COALESCE((SELECT r.kind FROM room r WHERE r.id=m.room_id),'')
 			FROM note n JOIN message m ON m.id=n.message_id WHERE n.agent_id=? AND n.room_id=? AND n.state='queued'
@@ -298,7 +298,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			var planJSON, pagesJSON string
 			var retryCaution bool
 			var wakeReason, createdAt, roomKind string
-			if err := rows.Scan(&note.NoteID, &note.MessageID, &note.RoomID, &note.From, &note.Body, &note.ReplyTo, &note.ThreadRoot, &planJSON, &pagesJSON, &authorKind, &retryCaution, &wakeReason, &createdAt, &roomKind); err != nil {
+			if err := rows.Scan(&note.NoteID, &note.MessageID, &note.No, &note.RoomID, &note.From, &note.Body, &note.ReplyTo, &note.ThreadRoot, &planJSON, &pagesJSON, &authorKind, &retryCaution, &wakeReason, &createdAt, &roomKind); err != nil {
 				rows.Close()
 				return err
 			}

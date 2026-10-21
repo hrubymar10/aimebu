@@ -41,7 +41,7 @@ export class MessageDebug {
     head.append(this.title, this.position, this.prev, this.next, this.threadButton, this.copyText, this.copyLink, this.copy, close);
     this.prev.onclick = () => this.step(-1); this.next.onclick = () => this.step(1);
     this.threadButton.onclick = () => { if (this.current) { this.dialog.close(); this.context?.thread?.(this.current); } };
-    for (const [button, label, text] of [[this.copyText, 'Copy text', () => this.current?.body || ''], [this.copyLink, 'Copy link', () => this.current ? `#${this.current.seq}` : '']]) {
+    for (const [button, label, text] of [[this.copyText, 'Copy text', () => this.current?.body || ''], [this.copyLink, 'Copy link', () => this.current ? `#${this.current.no}` : '']]) {
       button.onclick = async () => { try { await this.context?.copy?.(text()); button.textContent = 'Copied'; } catch { button.textContent = 'Copy failed'; } setTimeout(() => { button.textContent = label; }, 1500); };
     }
     this.status = node('p', 'message-debug-status'); this.status.setAttribute('role', 'status');
@@ -75,7 +75,7 @@ export class MessageDebug {
   async open(message) {
     const ticket = ++this.ticket;
     this.current = message; this.syncNavigation();
-    this.title.textContent = `Message #${message.seq ?? ''}`.trim();
+    this.title.textContent = `Message #${message.no ?? ''}`.trim();
     this.status.textContent = 'Loading…'; this.body.replaceChildren(); this.json = '';
     if (!this.dialog.open) this.dialog.showModal();
     try {
@@ -112,7 +112,7 @@ export class MessageDebug {
   render(debug) {
     const m = debug.message || {};
     const parts = [];
-    parts.push(section('Record', rows([['id', m.id], ['seq', m.seq], ['room', m.room_id], ['from', `${m.author_kind}: ${m.author_id}`], ['created', m.created_at], ['reply_to', m.reply_to], ['thread_root', m.thread_root], ['needs_attention', String(!!m.needs_attention)], ['ask', m.ask], ['proposed_answers', m.proposed_answers], ['open_questions', m.open_questions]])));
+    parts.push(section('Record', rows([['id', m.id], ['number', m.no], ['seq', m.seq], ['room', m.room_id], ['from', `${m.author_kind}: ${m.author_id}`], ['created', m.created_at], ['reply_to', m.reply_to], ['thread_root', m.thread_root], ['needs_attention', String(!!m.needs_attention)], ['ask', m.ask], ['proposed_answers', m.proposed_answers], ['open_questions', m.open_questions]])));
     const addressed = debug.addressed_to || [];
     parts.push(section('Addressed to', addressed.length ? rows(addressed.map((target, index) => [String(index + 1), target])) : node('p', 'message-debug-empty', 'Nobody in particular (a room-wide message).')));
     parts.push(this.addressingSection(debug.addressing));

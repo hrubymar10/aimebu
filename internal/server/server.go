@@ -263,6 +263,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/inbox/{item}/decision", s.Auth.RequireUser(http.HandlerFunc(s.decideRecovery)))
 	mux.Handle("POST /api/inbox/{item}/dismiss", s.Auth.RequireUser(http.HandlerFunc(s.dismissDeliveryFailure)))
 	mux.Handle("GET /api/system-events", s.Auth.RequireUser(http.HandlerFunc(s.systemEvents)))
+	mux.Handle("GET /api/message-numbers/{no}", s.Auth.RequireUser(http.HandlerFunc(s.messageByNo)))
 	mux.Handle("GET /api/messages/{message}/debug", s.Auth.RequireUser(http.HandlerFunc(s.messageDebug)))
 	mux.Handle("GET /api/messages/{message}/reactions", s.Auth.RequireUser(http.HandlerFunc(s.reactions)))
 	mux.Handle("PUT /api/messages/{message}/reactions/{emoji}", s.Auth.RequireUser(http.HandlerFunc(s.reactions)))
@@ -420,7 +421,7 @@ func projectView(p store.Project) map[string]any {
 func messageView(m store.Message) map[string]any {
 	targets := []string{}
 	_ = json.Unmarshal([]byte(m.TargetsJSON), &targets)
-	view := map[string]any{"id": m.ID, "seq": m.Seq, "room_id": m.RoomID, "author_kind": m.AuthorKind, "author_id": m.AuthorID, "body": m.Body, "targets": targets, "created_at": m.CreatedAt}
+	view := map[string]any{"id": m.ID, "seq": m.Seq, "no": m.No, "room_id": m.RoomID, "author_kind": m.AuthorKind, "author_id": m.AuthorID, "body": m.Body, "targets": targets, "created_at": m.CreatedAt}
 	if m.ReplyTo != "" {
 		view["reply_to"] = m.ReplyTo
 	}

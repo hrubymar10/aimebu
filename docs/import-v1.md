@@ -255,8 +255,10 @@ messages from people or agents (system notices do not count) and never started
 an import is never offered it: status, preview, dry run and commit all close the
 offer (the status goes to `skipped`, the others return 410), and the store
 itself and the offline CLI refuse as well. The first start with a backup raises
-the sequence counter to the highest v1 message number before anything else is
-written, so setup events land above the history. If an event still sits inside
+the sequence counter and the message-number counter to the highest v1 message
+number before anything else is written, so setup events land above the history
+and native messages are numbered after it; each imported message keeps its v1
+number as its `no`. If an event still sits inside
 that range the status and preview report `reservation_missed` and the wizard
 offers only **Skip import forever**; a number that is already taken makes the
 import stop with a clear error instead of renumbering anything, so a second copy

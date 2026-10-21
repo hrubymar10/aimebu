@@ -85,7 +85,7 @@ func TestMigrationOneToTwoPreservesContent(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(context.Background(), path, Options{})
+	s, err := Open(context.WithValue(context.Background(), keepHistoryUnnumbered{}, true), path, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -219,10 +219,12 @@ type Delivery struct {
 }
 
 type DeliveryNote struct {
-	NoteID      string               `json:"note_id"`
-	RoomID      string               `json:"room_id"`
-	From        string               `json:"from"`
-	MessageID   string               `json:"message_id"`
+	NoteID    string `json:"note_id"`
+	RoomID    string `json:"room_id"`
+	From      string `json:"from"`
+	MessageID string `json:"message_id"`
+	// No is the message's number, the "#N" people see; the agent may name a message by it (reply_to, thread_root, reactions).
+	No          int64                `json:"no,omitempty"`
 	Body        string               `json:"body"`
 	RetryNotice string               `json:"retry_notice,omitempty"`
 	ReplyTo     string               `json:"reply_to,omitempty"`

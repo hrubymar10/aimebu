@@ -19,6 +19,16 @@ isolation. Migrations may reshape tables later.
   replay from a client high-watermark; if the gap exceeds retention or
   permissions changed, the server answers `snapshot_required` and the client
   reloads a snapshot.
+- **Message numbers** (`message.no`, int64, unique): the "#N" people read, copy
+  and write, and agents may name a message by. One sequence across every room,
+  counted by messages alone (system messages included) from the
+  `message_no_counter` row, so events never take one and a number has no gaps.
+  A trigger numbers every message row inserted without a number, in the same
+  transaction; the v1 import writes the v1 id as the number and raises the
+  counter to the highest, so native messages continue after it. `seq` stays the
+  internal order shared with events (paging, read cursors, the event stream).
+  Migration 71 refuses a database that already holds messages: nothing is
+  renumbered, a development database is reset.
 - Supervisor-local stable output identity: `(turn_id, answer_rev, idx)`;
   mapped to `out_` ids at commit. `answer_rev` increments per correction.
 
@@ -293,6 +303,8 @@ Inbox, usage, events, settings
   removed and why; also `attachment.removed_at`, `removed_after_days`)
 - **seq_counter**(id=1, value) — internal sequence allocator, seeded in
   migration 1; `schema_version` records migrations only.
+- **message_no_counter**(id=1, value) — the message-number allocator
+  (migration 71); `message.no` is unique where it is positive.
 
 Project memory starts disabled and saved records remain readable to humans
 when disabled. Owners/operators and current project agents can write project

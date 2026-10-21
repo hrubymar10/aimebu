@@ -204,6 +204,11 @@ func (s *Server) agentToolReact(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "invalid_request", "invalid emoji")
 		return
 	}
+	id, err := s.Store.ResolveMessageRef(r.Context(), id) // a message may be named by its number ("#12") as well as its id
+	if err != nil {
+		fail(w, err)
+		return
+	}
 	message, err := s.Store.MessageByID(r.Context(), id)
 	if err != nil {
 		fail(w, err)

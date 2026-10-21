@@ -89,7 +89,7 @@ export function messageAction(chat, button, message) {
   else if (is('message-react')) { const popup = button.closest('.message-actions')?.querySelector(':scope > .message-reaction-row'); if (popup) togglePopup(button, popup); }
   else if (is('message-find')) findReaction(chat, message, button);
   else if (is('message-reply')) chat.setReply(message);
-  else if (is('message-link')) copyWithFeedback(button, `#${message.seq}`);
+  else if (is('message-link')) copyWithFeedback(button, `#${message.no}`);
   else if (is('message-copy')) copyWithFeedback(button, message.body);
   else if (is('thread-action')) chat.openThread(message);
   else return false;
@@ -98,13 +98,13 @@ export function messageAction(chat, button, message) {
 
 export function buildMessageActions(chat, message) {
   const bar = document.createElement('div'); bar.className = 'message-actions';
-  bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', `Actions for message #${message.seq}`);
+  bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', `Actions for message #${message.no}`);
   const react = iconButton('react', 'Add reaction', 'message-react');
-  const reply = iconButton('reply', `Reply to #${message.seq}`, 'message-reply');
+  const reply = iconButton('reply', `Reply to #${message.no}`, 'message-reply');
   const reactionRow = emojiRow(message, chat); attachPopup(react, reactionRow);
   const find = iconButton('find', 'Find another reaction', 'message-find'); find.setAttribute('aria-haspopup', 'dialog'); find.setAttribute('aria-expanded', 'false');
   const copyText_ = iconButton('copy', 'Copy message text', 'message-copy');
-  const copyLink = iconButton('link', `Copy link to #${message.seq}`, 'message-copy message-link');
+  const copyLink = iconButton('link', `Copy link to #${message.no}`, 'message-copy message-link');
   const thread = iconButton('thread', chat.threadLabel(message.id), 'thread-action');
   bar.append(react, find, reply, thread, copyText_, copyLink, reactionRow);
   return bar;

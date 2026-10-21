@@ -206,7 +206,7 @@ func TestMigrationTwentySixUpgradesImportedDatabase(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := migrate(context.Background(), db); err != nil {
+	if err := migrate(context.WithValue(context.Background(), keepHistoryUnnumbered{}, true), db); err != nil {
 		t.Fatal(err)
 	}
 	var version int
@@ -301,7 +301,7 @@ func TestMigrationTwentySevenUpgradesExistingTwentySixDatabase(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := migrate(context.Background(), db); err != nil {
+	if err := migrate(context.WithValue(context.Background(), keepHistoryUnnumbered{}, true), db); err != nil {
 		t.Fatal(err)
 	}
 	var version int

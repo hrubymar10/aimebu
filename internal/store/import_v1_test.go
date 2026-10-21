@@ -467,6 +467,10 @@ func TestV1ImportDryRunRerunAndHistory(t *testing.T) {
 	if err != nil || native.Seq <= 3 {
 		t.Fatalf("native message after import=%+v err=%v", native, err)
 	}
+	// The imported messages keep their v1 numbers (#N), and the first native message continues after the highest.
+	if messages[0].No != 1 || messages[1].No != 2 || native.No != 4 {
+		t.Fatalf("message numbers after import: v1 #%d #%d, native #%d", messages[0].No, messages[1].No, native.No)
+	}
 	profiles, err := s.ListGlobalKnowledge(ctx, "user_profile", "usr_owner")
 	if err != nil || len(profiles) != 1 || profiles[0].Body != "preference" || profiles[0].ScopeLabel != "owner" || !profiles[0].Active {
 		t.Fatalf("profiles: %+v %v", profiles, err)

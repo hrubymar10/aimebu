@@ -116,15 +116,15 @@ func (s *Store) MessageDebug(ctx context.Context, messageID string) (MessageDebu
 		return MessageDebug{}, err
 	}
 	var id, roomID, authorKind, authorID, body, targets, createdAt string
-	var seq int64
+	var seq, no int64
 	var needs bool
 	var replyTo, threadRoot, askJSON, proposed, questions, plan, appendix, sourceOut sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT id,seq,room_id,author_kind,author_id,body,reply_to,thread_root,targets_json,ask_json,needs_attention,proposed_answers_json,open_questions_json,visual_plan_json,appendix_pages_json,source_out_id,created_at FROM message WHERE id=?`, messageID).
-		Scan(&id, &seq, &roomID, &authorKind, &authorID, &body, &replyTo, &threadRoot, &targets, &askJSON, &needs, &proposed, &questions, &plan, &appendix, &sourceOut, &createdAt)
+	err := s.db.QueryRowContext(ctx, `SELECT id,seq,no,room_id,author_kind,author_id,body,reply_to,thread_root,targets_json,ask_json,needs_attention,proposed_answers_json,open_questions_json,visual_plan_json,appendix_pages_json,source_out_id,created_at FROM message WHERE id=?`, messageID).
+		Scan(&id, &seq, &no, &roomID, &authorKind, &authorID, &body, &replyTo, &threadRoot, &targets, &askJSON, &needs, &proposed, &questions, &plan, &appendix, &sourceOut, &createdAt)
 	if err != nil {
 		return MessageDebug{}, err
 	}
-	message := map[string]any{"id": id, "seq": seq, "room_id": roomID, "author_kind": authorKind, "author_id": authorID, "body": truncateRunes(body),
+	message := map[string]any{"id": id, "seq": seq, "no": no, "room_id": roomID, "author_kind": authorKind, "author_id": authorID, "body": truncateRunes(body),
 		"reply_to": nullString(replyTo), "thread_root": nullString(threadRoot), "needs_attention": needs, "source_out_id": nullString(sourceOut), "created_at": createdAt,
 		"targets": rawOrString(targets), "ask": rawOrNil(askJSON), "proposed_answers": rawOrNil(proposed), "open_questions": rawOrNil(questions),
 		"visual_plan": rawOrNil(plan), "appendix_pages": rawOrNil(appendix)}

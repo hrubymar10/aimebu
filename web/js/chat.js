@@ -58,7 +58,7 @@ export class Chat {
     this.pendingAttachments = []; this.pendingUploads = 0; this.pendingNode = document.querySelector('#pending-attachments'); this.attachmentInput = document.querySelector('#attachment-input');
     this.attachmentInput.onchange = () => { this.addFiles([...this.attachmentInput.files]); this.attachmentInput.value = ''; };
     this.draft.addEventListener('input', () => this.resizeDraft());
-    document.addEventListener('click', event => { const ref = event.target.closest?.('a.msg-ref'); if (!ref || event.defaultPrevented || event.button) return; event.preventDefault(); this.jumpToMessage(Number(ref.dataset.seq)); });
+    document.addEventListener('click', event => { const ref = event.target.closest?.('a.msg-ref'); if (!ref || event.defaultPrevented || event.button) return; event.preventDefault(); this.jumpToMessage(Number(ref.dataset.no)); });
     this.draft.addEventListener('paste', event => { const files = [...event.clipboardData?.files || []]; if (files.length) { event.preventDefault(); this.addFiles(files); } });
     this.form.addEventListener('dragover', event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); this.form.classList.add('drag-attachment'); } });
     this.form.addEventListener('dragleave', event => { if (!this.form.contains(event.relatedTarget)) this.form.classList.remove('drag-attachment'); });
@@ -360,7 +360,7 @@ export class Chat {
     event.preventDefault(); this.openSender(message);
   }
   async copyNumber(number, message) {
-    try { await copyText(`#${message.seq}`); number.classList.add('copied'); } catch { number.title = 'Copy failed'; }
+    try { await copyText(`#${message.no}`); number.classList.add('copied'); } catch { number.title = 'Copy failed'; }
     setTimeout(() => { number.classList.remove('copied'); number.title = 'Click to copy'; }, 1500);
   }
   // The record behind a rendered row or thread entry. The open thread's root keeps its panel entry after its row was
@@ -705,17 +705,31 @@ export class Chat {
     if (value === null) return;
     this.jumpToMessage(Number(value.trim()));
   }
+  // `key` is a message number (the "#N" people write, one sequence across every room) or a message id. A number is looked up on the
+  // server when this room has not loaded it, and a message of another room opens that room (onOpenMessage) on that message.
   async jumpToMessage(key) {
     if (!this.room) return;
+    if (typeof key === 'number') {
+      const loaded = [...this.messages.values()].find(item => item.no === key);
+      if (loaded) key = loaded.id;
+      else {
+        let found;
+        try { found = await request(`/api/message-numbers/${encodeURIComponent(key)}`); }
+        catch (error) { this.error.textContent = error.status === 404 ? `Message #${key} does not exist or is not visible to you.` : error.message; return; }
+        if (!this.room) return;
+        if (found.room_id !== this.room.id) { this.error.textContent = ''; this.onOpenMessage?.(found); return; }
+        key = found.id;
+      }
+    }
     const roomID = this.room.id, session = this.sessionGeneration;
     let generation = this.openGeneration;
     const jump = this.jumpGeneration = (this.jumpGeneration || 0) + 1;
-    let message = typeof key === 'number' ? [...this.messages.values()].find(item => item.seq === key) : this.messages.get(key);
+    let message = this.messages.get(key);
     try {
       if (!message) {
         const messages = await request(`/api/rooms/${roomID}/messages?around=${encodeURIComponent(key)}&limit=${this.pageSize}`);
         if (!this.current(session, roomID) || generation !== this.openGeneration || jump !== this.jumpGeneration) return;
-        message = messages.find(item => typeof key === 'number' ? item.seq === key : item.id === key);
+        message = messages.find(item => item.id === key);
         if (!message) throw new Error('Message is not in this room.');
         generation = ++this.openGeneration;
         // A page in flight belongs to the old view (its generation no longer matches, so it will not clear its own flag).
@@ -827,7 +841,7 @@ export class Chat {
         after = page.at(-1).seq;
       }
       const data = format === 'json' ? JSON.stringify({ room, messages }, null, 2)
-        : `# ${room.title}\n\n` + messages.map(message => `## #${message.seq} · ${this.authorName(message)} · ${message.created_at}\n\n${message.body}\n`).join('\n');
+        : `# ${room.title}\n\n` + messages.map(message => `## #${message.no} · ${this.authorName(message)} · ${message.created_at}\n\n${message.body}\n`).join('\n');
       const type = format === 'json' ? 'application/json' : 'text/markdown';
       const url = URL.createObjectURL(new Blob([data], { type }));
       const anchor = document.createElement('a'); anchor.href = url;
@@ -1024,7 +1038,7 @@ export class Chat {
     // these are read only for a live appended message, which is the one case that uses them.
     const oldTop = quiet ? 0 : this.list.scrollTop;
     if (this.list.dataset.empty === 'true' && message.author_kind !== 'system') this.list.dataset.empty = 'false';
-    const article = document.createElement('article'); article.className = message.author_kind === 'system' ? 'message system-notice' : message.author_kind === 'user' && message.author_id === currentUser ? 'message self' : 'message'; article.dataset.messageId = message.id; article.dataset.seq = String(message.seq);
+    const article = document.createElement('article'); article.className = message.author_kind === 'system' ? 'message system-notice' : message.author_kind === 'user' && message.author_id === currentUser ? 'message self' : 'message'; article.dataset.messageId = message.id; article.dataset.seq = String(message.seq); article.dataset.no = String(message.no);
     if (message.author_kind === 'system') {
       const row = document.createElement('div'); row.className = 'system-row';
       const body = document.createElement('span'); body.className = 'message-body'; body.textContent = message.body;
@@ -1040,7 +1054,7 @@ export class Chat {
     const bubble = document.createElement('div'); bubble.className = 'message-bubble'; article.append(bubble);
     if (message.reply_to) {
       const quote = document.createElement('button'); quote.className = 'row-btn quote'; quote.type = 'button';
-      const parent = this.messages.get(message.reply_to); quote.textContent = parent ? `↪ #${parent.seq} ${this.authorName(parent)}` : '↪ Earlier message';
+      const parent = this.messages.get(message.reply_to); quote.textContent = parent ? `↪ #${parent.no} ${this.authorName(parent)}` : '↪ Earlier message';
       bubble.append(quote);
     }
     const body = document.createElement('div'); body.className = 'message-body'; this.renderBody(body, message); bubble.append(body);
@@ -1099,7 +1113,7 @@ export class Chat {
     const meta = document.createElement('div'); meta.className = 'message-meta';
     meta.append(this.authorMeta(message));
     const date = stampTime(document.createElement('time'), message.created_at);
-    const number = document.createElement('button'); number.type = 'button'; number.className = 'row-btn quiet-glyph message-number'; number.textContent = `#${message.seq}`; number.title = 'Click to copy';
+    const number = document.createElement('button'); number.type = 'button'; number.className = 'row-btn quiet-glyph message-number'; number.textContent = `#${message.no}`; number.title = 'Click to copy';
     const attention = message.needs_attention ? document.createElement('span') : null;
     if (attention) { attention.className = 'message-attention'; attention.textContent = '🔔'; attention.title = 'Needs human attention'; attention.setAttribute('aria-label', 'Needs human attention'); article.classList.add('needs-attention'); }
     meta.append(...(attention ? [attention] : []), number, this.debugButton(message), date);
@@ -1107,7 +1121,7 @@ export class Chat {
   }
   threadEntry(message) {
     this.delegateRows(this.threadList);
-    const entry = document.createElement('article'); entry.className = 'thread-entry'; entry.dataset.messageId = message.id; entry.dataset.seq = String(message.seq);
+    const entry = document.createElement('article'); entry.className = 'thread-entry'; entry.dataset.messageId = message.id; entry.dataset.seq = String(message.seq); entry.dataset.no = String(message.no);
     const body = document.createElement('div'); body.className = 'message-body'; this.renderBody(body, message);
     entry.append(this.messageMeta(message, entry), body);
     const visualPlan = renderVisualPlan(message); if (visualPlan) entry.append(visualPlan);

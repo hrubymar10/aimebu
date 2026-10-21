@@ -1179,7 +1179,7 @@ async function main() {
       const roomNode = document.createElement('article');
       const bubble = document.createElement('div'); bubble.className = 'message-bubble'; roomNode.append(bubble);
       chat.nodes.set(item.message_id, roomNode);
-      const threadNode = chat.threadEntry({ id: item.message_id, seq: 1, body: 'Choose' });
+      const threadNode = chat.threadEntry({ id: item.message_id, seq: 1, no: 1, body: 'Choose' });
       chat.threadList.append(threadNode);
       chat.updateAnswerControls([item]);
       const roomControls = bubble.querySelector('.answer-controls');
@@ -1214,8 +1214,8 @@ async function main() {
       const chat = Object.create(Chat.prototype);
       chat.nodes = new Map(); chat.threadList = document.createElement('div'); chat.inbox = { answer: async () => true }; chat.answerItems = new Map();
       chat.answeredMessages = new Set(); chat.repliedTo = new Set();
-      const asked = { id: 'ask-1', seq: 1, proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Which?', options: ['a', 'b'] }] };
-      chat.messages = new Map([[asked.id, asked], ['plain', { id: 'plain', seq: 2, body: 'hi' }]]);
+      const asked = { id: 'ask-1', seq: 1, no: 1, proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Which?', options: ['a', 'b'] }] };
+      chat.messages = new Map([[asked.id, asked], ['plain', { id: 'plain', seq: 2, no: 2, body: 'hi' }]]);
       const read = node => ({ buttons: [...node.querySelectorAll('.answer-history button')].map(button => [button.textContent.trim(), button.disabled, button.title]), status: node.querySelector('.answer-history-status')?.textContent || '', blocks: node.querySelectorAll('.answer-history').length });
       const bubble = document.createElement('div'); document.body.append(bubble);
       chat.syncAnswerControl(bubble, undefined, 'ask-1');
@@ -1255,7 +1255,7 @@ async function main() {
       chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.agents = new Map(); chat.raw = false;
       chat.refreshReactions = () => {};
       const visual_plan = [{ type: 'future', data: { text: '<img src=x onerror=alert(1)>' } }];
-      chat.add({ id: '123', seq: 123, room_id: 'room_test', author_kind: 'agent', author_id: 'bot@repo',
+      chat.add({ id: '123', seq: 123, no: 123, room_id: 'room_test', author_kind: 'agent', author_id: 'bot@repo',
         author_harness: 'codex', author_model: 'gpt-6-sol', body: 'Historical body', created_at: '2026-10-14T00:00:00Z', visual_plan });
       const article = chat.list.firstElementChild;
       const result = { label: article.querySelector('.message-author')?.textContent,
@@ -1274,14 +1274,14 @@ async function main() {
       chat.agents = new Map([['live', { id: 'live', name: 'Live', tool: 'codex', model: 'gpt-6-sol', observed: 'in_turn' }], ['gone', { id: 'gone', name: 'Gone', tool: 'claude', model: 'opus', observed: 'stopped' }], ['wait', { id: 'wait', name: 'Wait', tool: 'pi', model: 'gemma', observed: 'idle', recovery_block: true }]]);
       chat.refreshReactions = () => {};
       const base = { room_id: 'room_test', body: 'hi', created_at: '2026-10-14T00:00:00Z' };
-      chat.add({ ...base, id: 'i1', seq: 901, author_kind: 'agent', author_id: 'live' });
-      chat.add({ ...base, id: 'i2', seq: 902, author_kind: 'agent', author_id: 'gone' });
-      chat.add({ ...base, id: 'i3', seq: 903, author_kind: 'agent', author_id: 'wait' });
-      chat.add({ ...base, id: 'i4', seq: 904, author_kind: 'agent', author_id: 'missing' });
-      chat.add({ ...base, id: 'i5', seq: 905, author_kind: 'user', author_id: 'someone', needs_attention: true });
-      chat.add({ ...base, id: 'i6', seq: 906, author_kind: 'user', author_id: 'someone' });
-      chat.add({ ...base, id: 'i7', seq: 907, author_kind: 'agent', author_id: 'agt_01GONE0000', author_model: 'opus4.8', author_harness: 'claude-code' });
-      chat.add({ ...base, id: 'i8', seq: 908, author_kind: 'agent', author_id: 'imported-bot', author_model: 'sonnet4.6', author_harness: 'codex' });
+      chat.add({ ...base, id: 'i1', seq: 901, no: 901, author_kind: 'agent', author_id: 'live' });
+      chat.add({ ...base, id: 'i2', seq: 902, no: 902, author_kind: 'agent', author_id: 'gone' });
+      chat.add({ ...base, id: 'i3', seq: 903, no: 903, author_kind: 'agent', author_id: 'wait' });
+      chat.add({ ...base, id: 'i4', seq: 904, no: 904, author_kind: 'agent', author_id: 'missing' });
+      chat.add({ ...base, id: 'i5', seq: 905, no: 905, author_kind: 'user', author_id: 'someone', needs_attention: true });
+      chat.add({ ...base, id: 'i6', seq: 906, no: 906, author_kind: 'user', author_id: 'someone' });
+      chat.add({ ...base, id: 'i7', seq: 907, no: 907, author_kind: 'agent', author_id: 'agt_01GONE0000', author_model: 'opus4.8', author_harness: 'claude-code' });
+      chat.add({ ...base, id: 'i8', seq: 908, no: 908, author_kind: 'agent', author_id: 'imported-bot', author_model: 'sonnet4.6', author_harness: 'codex' });
       const read = id => { const el = chat.list.querySelector(`[data-message-id="${id}"]`); const dot = el.querySelector('.msg-sender-dot'); const icon = el.querySelector('.msg-sender-icon');
         return { icon: icon.getAttribute('src'), title: icon.title, dot: dot.hidden ? null : [dot.className.replace('msg-sender-dot ', ''), dot.title], bell: Boolean(el.querySelector('.message-attention')) }; };
       const out = { live: read('i1'), stopped: read('i2'), wait: read('i3'), historical: read('i4'), attention: read('i5'), plain: read('i6'), departed: read('i7'), importedKnown: read('i8') };
@@ -1325,7 +1325,7 @@ async function main() {
         chat.refreshReactions = () => {}; chat.toggleReaction = (id, emoji) => { (chat.reacted ||= []).push([id, emoji]); };
         chat.list.addEventListener('keydown', event => chat.moveActionFocus(event));
         const base = { room_id: 'room_test', created_at: '2026-10-14T00:00:00Z', author_kind: 'user', author_id: 'someone' };
-        chat.add({ ...base, id: 'a1', seq: 801, body: '**raw** body' });
+        chat.add({ ...base, id: 'a1', seq: 801, no: 801, body: '**raw** body' });
         const one = chat.list.querySelector('.message');
         const bar = one.querySelector('.message-actions');
         const writes = []; const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
@@ -1367,7 +1367,7 @@ async function main() {
       const { Chat } = await import('/js/chat.js');
       const chat = Object.create(Chat.prototype);
       chat.threadList = document.createElement('div'); chat.threadCounts = new Map(); chat.serverThreadCounts = new Map(); chat.nodes = new Map(); chat.messages = new Map(); chat.agents = new Map(); chat.raw = false;
-      const root = { id: 'thread-root', seq: 1, body: 'root', author_kind: 'user', author_id: 'owner' };
+      const root = { id: 'thread-root', seq: 1, no: 1, body: 'root', author_kind: 'user', author_id: 'owner' };
       chat.threadRoot = root; chat.threadEntryIDs = new Set([root.id]); chat.threadList.append(chat.threadEntry(root));
       for (const seq of [4, 3, 2]) chat.add({ id: `reply-${seq}`, seq, thread_root: root.id, body: `reply ${seq}`, author_kind: 'user', author_id: 'owner' }, true);
       return [...chat.threadList.children].map(entry => Number(entry.dataset.seq));
@@ -2178,7 +2178,7 @@ async function main() {
       return {
         upper: [...upper.querySelectorAll('a')].map(a => a.textContent),
         autoLinks: [...auto.querySelectorAll('a')].map(a => [a.textContent, a.getAttribute('href'), a.rel]),
-        refs: [...ref.querySelectorAll('a.msg-ref')].map(a => [a.textContent, a.dataset.seq]), refLinks: [...ref.querySelectorAll('a:not(.msg-ref)')].map(a => a.getAttribute('href')),
+        refs: [...ref.querySelectorAll('a.msg-ref')].map(a => [a.textContent, a.dataset.no]), refLinks: [...ref.querySelectorAll('a:not(.msg-ref)')].map(a => a.getAttribute('href')),
         mail: [...mail.querySelectorAll('a')].map(a => a.getAttribute('href')), mailText: mail.textContent,
         strike: [...strike.querySelectorAll('del')].map(el => el.textContent), strikeText: strike.textContent,
         indented: [...code.querySelectorAll('pre code')].map(el => el.textContent), codeHTML: code.innerHTML.includes('<b>'), paragraphs: [...code.querySelectorAll('p')].map(el => el.textContent),
@@ -2209,7 +2209,7 @@ async function main() {
     assert.deepEqual(await first.evaluate(() => [...document.querySelectorAll('#room-raw svg')].map(svg => svg.getAttribute('class') + ':' + (getComputedStyle(svg).display !== 'none'))), ['icon-rendered:true', 'icon-raw:false'], 'while raw the toggle shows the eye icon (v1)');
     await domClick(first, '#room-raw');
     assert.equal(await first.$eval('.message:last-child .message-body h2', el => el.textContent), 'Heading');
-    jumpSeq = String(await first.evaluate(async id => { const messages = await (await fetch(`/api/rooms/${id}/messages`)).json(); return messages.find(item => item.body === 'Thread reply').seq; }, roomID));
+    jumpSeq = String(await first.evaluate(async id => { const messages = await (await fetch(`/api/rooms/${id}/messages`)).json(); return messages.find(item => item.body === 'Thread reply').no; }, roomID));
     await domClick(first, '#room-jump');
     await first.waitForFunction(() => !document.querySelector('#thread-panel').hidden && [...document.querySelectorAll('.thread-entry .message-body')].some(el => el.textContent === 'Thread reply'));
     // A long unbroken word and a long sentence must wrap inside the panel, not run past it.
@@ -2280,6 +2280,31 @@ async function main() {
     assert.equal(await first.$eval('.message:last-child .message-body code', el => el.textContent), 'nested ` ticks');
     assert.deepEqual(await first.$$eval('.message:last-child .quick-reaction', els => els.map(el => el.textContent)), ['👍', '🆗', '✅', '👀', '🙏', '🎉']);
     const actualProjectID = await first.evaluate(async () => (await (await fetch('/api/projects')).json()).find(p => p.name === 'UI smoke').id);
+    // Message numbers: "#N" is one sequence across every room, shown and written by people. A #N in a message jumps to that message, in
+    // another room too (it opens that room), and an unknown number says so.
+    {
+      const originalTitle = await first.$eval('#room-title', el => el.textContent);
+      const other = await first.evaluate(async projectID => {
+        const { csrf_token } = await (await fetch('/api/me')).json();
+        const call = async (path, body) => { const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify(body) }); if (!response.ok) throw new Error(`${path}: ${response.status}`); return response.json(); };
+        const rooms = await (await fetch(`/api/projects/${projectID}/rooms`)).json();
+        const room = rooms.find(item => item.kind === 'task' && item.lifecycle === 'open' && item.id !== location.hash.slice(1));
+        const message = await call(`/api/rooms/${room.id}/messages`, { body: 'a message in another room' });
+        return { roomID: room.id, title: room.title, no: message.no };
+      }, actualProjectID);
+      assert.ok(other.no > 0, 'a posted message has a number');
+      await post(`see #${other.no} and #999999`);
+      await first.waitForFunction(() => document.querySelectorAll('#messages a.msg-ref').length >= 2);
+      const refs = await first.$$eval('#messages a.msg-ref', links => links.slice(-2).map(link => [link.textContent, link.dataset.no]));
+      assert.deepEqual(refs, [[`#${other.no}`, String(other.no)], ['#999999', '999999']], 'both numbers are links');
+      await first.evaluate(() => [...document.querySelectorAll('#messages a.msg-ref')].at(-1).click());
+      await first.waitForFunction(() => /does not exist or is not visible/.test(document.querySelector('#chat-error').textContent));
+      await first.evaluate(() => { document.querySelector('#chat-error').textContent = ''; [...document.querySelectorAll('#messages a.msg-ref')].at(-2).click(); });
+      await first.waitForFunction(title => document.querySelector('#room-title').textContent === title && [...document.querySelectorAll('#messages .message-body')].some(el => el.textContent === 'a message in another room'), {}, other.title);
+      assert.equal(await first.evaluate(() => [...document.querySelectorAll('#messages .message')].find(item => item.querySelector('.message-body')?.textContent === 'a message in another room').querySelector('.message-number').textContent), `#${other.no}`, 'the message shows its number, not its internal order');
+      await first.evaluate(title => [...document.querySelectorAll('.room-name')].find(node => node.textContent.includes(title)).click(), originalTitle);
+      await first.waitForFunction(title => document.querySelector('#room-title').textContent === title, {}, originalTitle);
+    }
     assert.ok(actualProjectID);
     assert.equal(await first.title(), 'aimebu');
     // The chat never scrolls sideways: wide content (code, tables, URLs, plans, diffs) scrolls inside its own block or wraps, at desktop
@@ -2300,8 +2325,8 @@ async function main() {
             '# ' + 'H'.repeat(300) + '\n\n1. item\n   ```\n   ' + 'n'.repeat(300) + '\n   ```\n2. [' + 'link'.repeat(80) + '](https://e.test/x)',
             '```diff\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-short\n+' + 'long '.repeat(120) + '\n```',
           ];
-          bodies.forEach((body, index) => chat.add({ id: `9${index}`, seq: 9000 + index, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body, created_at: '2026-10-14T00:00:00Z' }));
-          chat.add({ id: '99', seq: 9099, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body: 'plan', created_at: '2026-10-14T00:00:00Z', visual_plan: [
+          bodies.forEach((body, index) => chat.add({ id: `9${index}`, seq: 9000, no: 9000 + index, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body, created_at: '2026-10-14T00:00:00Z' }));
+          chat.add({ id: '99', seq: 9099, no: 9099, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body: 'plan', created_at: '2026-10-14T00:00:00Z', visual_plan: [
             { type: 'markdown', data: { markdown: '| a | b |\n|---|---|\n| ' + 'cell '.repeat(60) + ' | z |\n\n```\n' + 'x'.repeat(300) + '\n```\n\nhttps://example.test/' + 'a'.repeat(300) } },
             { type: 'file-tree', data: { root: { name: long, type: 'dir', note: 'n'.repeat(300), children: [{ name: long + '.go', note: 'm'.repeat(300) }] } } },
             { type: 'data-model', data: { entities: [{ name: long, fields: [{ name: long, type: 'string'.repeat(30), note: 'q'.repeat(200) }] }] } },
@@ -2333,7 +2358,7 @@ async function main() {
         chat.list = list; chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.agents = new Map(); chat.raw = false; chat.refreshReactions = () => {};
         const pic = (w, h) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="steelblue"/></svg>`);
         const kept = new Set(list.children);
-        chat.add({ id: '9801', seq: 9801, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body: 'pictures', created_at: '2026-10-14T00:00:00Z', attachments: [
+        chat.add({ id: '9801', seq: 9801, no: 9801, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body: 'pictures', created_at: '2026-10-14T00:00:00Z', attachments: [
           { mime: 'image/png', url: pic(900, 450), name: 'a-very-long-file-name-that-must-not-widen-its-figure-' + 'x'.repeat(80) + '.png', width: 900, height: 450 },
           { mime: 'image/png', url: pic(200, 100), name: 'small.png', width: 200, height: 100 },
           { mime: 'image/png', url: pic(300, 900), name: 'tall.png', width: 300, height: 900 }] });
@@ -4472,7 +4497,7 @@ async function main() {
       const { MessageDebug } = await import('/js/message-debug.js');
       const original = window.fetch;
       const payload = {
-        message: { id: 'msg_trace', seq: 7, room_id: 'room_x', author_kind: 'user', author_id: 'usr_x', body: '`@ghost` @bob @nobody @ada', created_at: '2026-10-16T12:00:00Z' },
+        message: { id: 'msg_trace', seq: 7, no: 7, room_id: 'room_x', author_kind: 'user', author_id: 'usr_x', body: '`@ghost` @bob @nobody @ada', created_at: '2026-10-16T12:00:00Z' },
         addressed_to: ['agt_ada'],
         addressing: {
           mentions: [
@@ -4489,7 +4514,7 @@ async function main() {
       window.fetch = async (url, init) => String(url).includes('/debug') ? new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } }) : original(url, init);
       const inspector = new MessageDebug();
       try {
-        await inspector.open({ id: 'msg_trace', seq: 7 });
+        await inspector.open({ id: 'msg_trace', seq: 7, no: 7 });
         const dialog = inspector.dialog;
         const row = token => dialog.querySelector(`.message-debug-mention[data-token="${token}"]`);
         return {
@@ -6884,12 +6909,12 @@ with con:
       }
       window.__holdNewer = true;
     });
-    const jumpPerf = async seq => {
-      await answerDialogs(perfPage, () => ({ accept: true, values: { value: String(seq) } }));
+    const jumpPerf = async no => {
+      await answerDialogs(perfPage, () => ({ accept: true, values: { value: String(no) } }));
       await perfPage.evaluate(() => document.querySelector('#room-jump').click());
-      await perfPage.waitForFunction(seq => document.querySelector(`#messages > article.message[data-seq="${seq}"]`) && !document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, {}, seq);
+      await perfPage.waitForFunction(no => document.querySelector(`#messages > article.message[data-no="${no}"]`) && !document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, {}, no);
     };
-    const nearEndSeq = await perfPage.evaluate(() => Number([...document.querySelectorAll('#messages > article.message')].at(-60).dataset.seq));
+    const nearEndSeq = await perfPage.evaluate(() => Number([...document.querySelectorAll('#messages > article.message')].at(-60).dataset.no));
     // The window's last forward page is in flight when a live message arrives: it is counted, and must still be shown when
     // the window reaches the live end, with the room marked read only after that.
     await scrollBack(8);
@@ -7143,10 +7168,10 @@ with con:
     con.executemany('INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES (?,?,?,?,?,?,?,?)', rows)
     con.execute("UPDATE message SET thread_root='msg_large_00000',reply_to='msg_large_00000' WHERE id BETWEEN 'msg_large_01000' AND 'msg_large_01159' OR id IN ('msg_large_03000','msg_large_04000')")
     con.execute('UPDATE seq_counter SET value=? WHERE id=1', (seq+len(rows),))
-print(rows[0][1])
+print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone()[0])  # the trigger numbered the rows
 `, path.join(tmp, 'server', 'aimebu.sqlite'), largeRoomID], { encoding: 'utf8' });
     if (seedLarge.status !== 0) throw new Error(`large-room seed failed: ${seedLarge.stderr}`);
-    const firstLargeSeq = Number(seedLarge.stdout.trim());
+    const firstLargeSeq = Number(seedLarge.stdout.trim()); // the message number of the first seeded message (consecutive)
     const largeContext = await browser.createBrowserContext();
     const largePage = await largeContext.newPage();
     await largePage.evaluateOnNewDocument(() => {
@@ -7301,8 +7326,8 @@ print(rows[0][1])
       if (!response.ok) throw new Error(`latest thread reply: ${response.status}`);
       return (await response.json())[0];
     }, largeRoomID);
-    assert(newestThreadReply?.seq && newestThreadReply.body === 'Second live reply in old thread', 'latest thread reply was not selected deterministically');
-    jumpTarget = newestThreadReply.seq;
+    assert(newestThreadReply?.no && newestThreadReply.body === 'Second live reply in old thread', 'latest thread reply was not selected deterministically');
+    jumpTarget = newestThreadReply.no;
     await largePage.click('#room-jump');
     await largePage.waitForFunction(body => document.querySelector('#thread-messages')?.textContent.includes(body) && document.querySelector('.thread-latest')?.hidden, {}, newestThreadReply.body);
     assert.equal(await largePage.$eval('.thread-latest', node => node.hidden), true, 'jump to newest reply showed Latest replies');

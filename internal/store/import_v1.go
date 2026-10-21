@@ -299,10 +299,14 @@ func (s *Store) ReserveV1MessageIDs(ctx context.Context, sourceDir string) (over
 		return false, nil
 	}
 	err = s.Tx(ctx, func(tx *Tx) error {
-		if err := tx.tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM event WHERE seq<=?) OR EXISTS(SELECT 1 FROM message WHERE seq<=?)`, highest, highest).Scan(&overlap); err != nil {
+		if err := tx.tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM event WHERE seq<=?) OR EXISTS(SELECT 1 FROM message WHERE seq<=?) OR EXISTS(SELECT 1 FROM message WHERE no>0 AND no<=?)`, highest, highest, highest).Scan(&overlap); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`UPDATE seq_counter SET value=MAX(value,?) WHERE id=1`, highest)
+		if _, err := tx.Exec(`UPDATE seq_counter SET value=MAX(value,?) WHERE id=1`, highest); err != nil {
+			return err
+		}
+		// Message numbers too: a v1 message keeps its v1 id as its number, so native messages continue after the highest.
+		_, err := tx.Exec(`UPDATE message_no_counter SET value=MAX(value,?) WHERE id=1`, highest)
 		return err
 	})
 	return overlap, err
@@ -1636,7 +1640,7 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 			return report, fmt.Errorf("v1 message #%d overlaps existing v2 activity; import requires a fresh first-run reservation", message.ID)
 		}
 		var taken int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM message WHERE id=? OR seq=?`, key, message.ID).Scan(&taken); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM message WHERE id=? OR seq=? OR (no=? AND no>0)`, key, message.ID, message.ID).Scan(&taken); err != nil {
 			return report, err
 		}
 		if taken > 0 {
@@ -1676,9 +1680,9 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 		if len(message.ProposedAnswers) > 0 {
 			proposed, _ = json.Marshal(message.ProposedAnswers)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO message(id,seq,room_id,author_kind,author_id,body,reply_to,targets_json,created_at,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO message(id,seq,no,room_id,author_kind,author_id,body,reply_to,targets_json,created_at,
 			needs_attention,proposed_answers_json,open_questions_json,visual_plan_json,appendix_pages_json,author_harness,author_model)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, seq, roomIDs[message.RoomID], authorKind, authorID, message.Body, reply, string(targets), createdAt,
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, seq, message.ID, roomIDs[message.RoomID], authorKind, authorID, message.Body, reply, string(targets), createdAt,
 			message.NeedsAttention, nullable(string(proposed)), rawJSONOrNil(message.OpenQuestions), rawJSONOrNil(message.VisualPlan), rawJSONOrNil(message.AppendixPages), message.FromHarness, message.FromModel); err != nil {
 			return report, err
 		}
@@ -1692,6 +1696,9 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE seq_counter SET value=MAX(value,?) WHERE id=1`, sourceMaxID); err != nil {
+		return report, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE message_no_counter SET value=MAX(value,?) WHERE id=1`, sourceMaxID); err != nil {
 		return report, err
 	}
 	// Files are copied only after all source and destination checks succeed.

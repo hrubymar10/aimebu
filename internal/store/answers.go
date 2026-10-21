@@ -99,6 +99,11 @@ func (s *Store) ApplyAnswer(ctx context.Context, input AnswerInput) (AnswerRecei
 				receipt.Result = "committed"
 			}
 		} else {
+			if input.Parsed != nil {
+				if err := tx.resolveMessageRefs(input.Parsed.Messages); err != nil {
+					return err
+				}
+			}
 			reason, detail, err := tx.validateAnswer(parent, input)
 			if err != nil {
 				return err
