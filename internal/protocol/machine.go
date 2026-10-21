@@ -54,6 +54,7 @@ type Frame struct {
 	SupportsWorktree     bool                 `json:"supports_worktree,omitempty"`
 	SupportsLaunchers    bool                 `json:"supports_launchers,omitempty"`
 	SupportsDetect       bool                 `json:"supports_detect,omitempty"`
+	SupportsDetectDir    bool                 `json:"supports_detect_dir,omitempty"`
 	Capabilities         []CapabilityReport   `json:"capabilities,omitempty"`
 	Harnesses            []HarnessRow         `json:"harnesses,omitempty"`
 	HarnessSettings      []HarnessSetting     `json:"harness_settings,omitempty"`
@@ -246,11 +247,16 @@ type ReceiptBody struct {
 }
 
 // DetectRequest asks a supervisor to look at its own machine: what harnesses are installed ("harnesses"), or what models one harness
-// offers ("models", for the family and the executable given). Nothing it finds is saved by the supervisor.
+// offers ("models", for the family and the executable given). Nothing it finds is saved by the supervisor. For "models", Args are the
+// launcher's own configured arguments, put before the listing arguments, and Dir is an absolute directory on the supervisor's machine
+// to run in instead of its aimebu config directory (chosen by the person when a harness will not answer from there). Both are optional:
+// a supervisor that does not advertise supports_detect_dir ignores them.
 type DetectRequest struct {
-	Kind    string `json:"kind"`
-	Family  string `json:"family,omitempty"`
-	Command string `json:"command,omitempty"`
+	Kind    string   `json:"kind"`
+	Family  string   `json:"family,omitempty"`
+	Command string   `json:"command,omitempty"`
+	Args    []string `json:"args,omitempty"`
+	Dir     string   `json:"dir,omitempty"`
 }
 
 // HarnessCandidate is an executable found on the machine that looks like a harness. Command is the absolute path.

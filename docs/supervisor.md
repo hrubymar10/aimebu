@@ -69,8 +69,15 @@ questions on its own machine, each a `detect` frame (see the contract): which
 harness executables are installed (PATH plus `~/.local/bin`, `/usr/local/bin`,
 `/opt/homebrew/bin`, `~/.npm-global/bin`, `~/.bun/bin`, `~/.opencode/bin` and the
 global npm prefix, once per real file, with `--version`), and which models a Pi,
-OpenCode or Codex harness lists (run with a 20-second limit and an 8 MiB output
-limit). It never saves what it finds.
+OpenCode or Codex harness lists, native or containerized (run with the harness's
+own arguments first, a 20-second limit and an 8 MiB output limit). That command
+runs in a fresh private `detect/run-*` subfolder of the supervisor's aimebu
+config directory, removed after the command, unless the request names another
+existing absolute folder on the machine. A removal error is logged without failing a successful
+listing, and the next detection removes leftover `run-*` folders older than one hour. Other files
+and recent run folders are left alone. The owner can enter another folder in the Models
+panel when a harness refuses to answer from the default one. When the command
+fails, the run path and the end of its stderr are in the error shown. It never saves what it finds.
 Docker discovery uses `PATH` without probing from an unmounted supervisor cwd.
 A version probe uses a known mirrored directory when available; spawn preflights
 the selected checkout through the launcher before admitting the agent. A

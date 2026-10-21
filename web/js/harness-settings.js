@@ -1,6 +1,7 @@
 import { request } from './api.js';
 import { settingsRow, settingsGroup } from './settings-row.js';
 import { confirmDialog } from './dialogs.js';
+import { iconButton } from './icon-button.js';
 
 const node = (tag, className, value = '') => {
   const element = document.createElement(tag);
@@ -61,6 +62,8 @@ export class HarnessSettings {
     this.sequence = 0;
     this.openLaunchers = new Set();
     this.openModels = new Set();
+    // Why the last model detection of a harness failed (by harness id), so its Models panel opens on the reason and the folder retry.
+    this.modelFailures = new Map();
     this.wanted = ''; // a machine to open on, set by whoever sent the person here
     this.addButton.onclick = () => this.showPanel(this.addForm());
     this.detectButton.onclick = () => this.runDetect();
@@ -300,19 +303,23 @@ export class HarnessSettings {
     finally { this.detectButton.disabled = false; this.detectButton.textContent = 'Auto-detect harnesses'; }
   }
 
-  // Detect a new harness's models and save them (at most MODELS_MAX), the first as the default. Resolves to whether it ended up with models
-  // and how many were left out to fit the limit.
+  // Detect a new harness's models and save them (at most MODELS_MAX), the first as the default. Resolves to whether it ended up with models,
+  // how many were left out to fit the limit, and why detection failed when it did.
   async fillModels(machineID, harnessID) {
     if (!harnessID) return { saved: false, cut: 0 };
     const base = `/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harnessID)}/models`;
     try {
-      const found = await request(`${base}/detect`, { method: 'POST', body: {} });
+      let found;
+      try { found = await request(`${base}/detect`, { method: 'POST', body: {} }); } catch (problem) {
+        const reason = problem.message || "Couldn't detect the models.";
+        (this.modelFailures ||= new Map()).set(harnessID, reason); return { saved: false, cut: 0, reason };
+      }
       const all = (found.candidates || []).filter(candidate => !candidate.already_listed);
       const models = all.slice(0, MODELS_MAX).map((candidate, index) => ({ slug: candidate.slug, label: candidate.label || candidate.slug, note: candidate.note || '', default: index === 0 }));
       if (!models.length) return { saved: false, cut: 0 };
       await request(base, { method: 'PUT', body: { models } });
       return { saved: true, cut: all.length - models.length, kept: models.length };
-    } catch { return { saved: false, cut: 0 }; }
+    } catch (problem) { return { saved: false, cut: 0, reason: problem.message || '' }; }
   }
 
   detectPanel(machineID, candidates) {
@@ -340,13 +347,15 @@ export class HarnessSettings {
         const created = [];
         for (const candidate of chosen) created.push(await this.createHarness(machineID, { tool: candidate.family, label: candidate.label, command: candidate.command, containerized: candidate.containerized }));
         // A harness with no models cannot start an agent, so ask each new one what it offers and keep that list. It is best effort: a
-        // harness that cannot answer is left empty, and its Models panel still has Auto-detect and the by-hand form.
+        // harness that cannot answer is left empty with its reason shown, and its Models panel opens on that reason with a folder to
+        // retry in, besides Auto-detect and the by-hand form.
         const filled = await Promise.all(created.map(item => this.fillModels(machineID, item?.config?.id || item?.id)));
         const empty = filled.filter(done => !done.saved).length;
         const cut = filled.find(done => done.cut > 0);
         this.showPanel(null); await this.loadHarnesses();
         const notes = [];
-        if (empty) notes.push(`${empty === 1 ? 'A harness has' : `${empty} harnesses have`} no models yet. Open Models and use Auto-detect, or add one by hand.`);
+        const reason = filled.find(done => !done.saved && done.reason)?.reason;
+        if (empty) notes.push(`${empty === 1 ? 'A harness has' : `${empty} harnesses have`} no models yet.${reason ? ` ${reason}` : ''} Open Models to retry Auto-detect, in a folder you choose if the harness needs one, or add a model by hand.`);
         if (cut) notes.push(`A harness offered more models than a list can hold, so only the first ${cut.kept} were added.`);
         this.error.textContent = notes.join(' ');
       } catch (problem) { error.textContent = problem.message || 'Could not add the harnesses'; add.disabled = false; await this.loadHarnesses(); }
@@ -405,12 +414,25 @@ export class HarnessSettings {
       try { addModel(slugInput.value, labelInput.value, noteInput.value); } catch (problem) { error.textContent = problem.message; return; }
       slugInput.value = labelInput.value = noteInput.value = ''; mark(); draw(); slugInput.focus();
     };
-    // From the harness itself (or, for Claude, the SDK's published list): candidates to tick, nothing saved until Save models.
+    // From the harness itself (or, for Claude, the SDK's published list): candidates to tick, nothing saved until Save models. The command
+    // runs in the machine's aimebu config folder; when it fails there, the person may name another folder on that machine to retry in.
+    // The folder is sent with that one request and never saved.
     const detect = button('Auto-detect models'); const detectBox = node('div', 'harness-detect-models');
-    detect.onclick = async () => {
-      error.textContent = ''; detect.disabled = true; detect.textContent = 'Detecting…';
+    const retryRow = node('div', 'harness-detect-retry'); retryRow.hidden = true;
+    const dirLabel = node('label', 'harness-detect-dir', 'Run the command in this folder');
+    const dirInput = Object.assign(document.createElement('input'), { type: 'text', name: 'detect-dir', autocomplete: 'off', spellcheck: false, placeholder: 'Absolute path on that machine' });
+    dirLabel.append(dirInput);
+    const retry = iconButton('refresh', 'Retry auto-detect in this folder', { className: 'harness-detect-retry-button' });
+    retryRow.append(dirLabel, retry);
+    const failed = message => {
+      error.textContent = message || "Couldn't detect the models. Add the model ID manually.";
+      if (harness.tool !== 'claude') retryRow.hidden = false;
+    };
+    const runDetect = async dir => {
+      error.textContent = ''; detect.disabled = retry.disabled = true; detect.textContent = 'Detecting…';
       try {
-        const found = await request(`/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harness.id)}/models/detect`, { method: 'POST', body: {} });
+        const found = await request(`/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harness.id)}/models/detect`, { method: 'POST', body: dir ? { dir } : {} });
+        this.modelFailures?.delete(harness.id); retryRow.hidden = true;
         detectBox.replaceChildren(this.modelCandidates(found, models => {
           let added = 0;
           for (const model of models) { try { if (addModel(model.slug, model.label, model.note)) added++; } catch { /* a candidate the list would refuse is skipped */ } }
@@ -418,9 +440,17 @@ export class HarnessSettings {
           status.textContent = added ? `${added} added to the list. Save models to keep them.` : 'Nothing new to add.';
           detectBox.replaceChildren();
         }, () => detectBox.replaceChildren()));
-      } catch (problem) { error.textContent = problem.message || "Couldn't detect the models. Add the model ID manually."; }
-      finally { detect.disabled = false; detect.textContent = 'Auto-detect models'; }
+      } catch (problem) { failed(problem.message); }
+      finally { detect.disabled = retry.disabled = false; detect.textContent = 'Auto-detect models'; }
     };
+    detect.onclick = () => runDetect('');
+    retry.onclick = () => {
+      const dir = dirInput.value.trim();
+      if (!dir.startsWith('/')) { error.textContent = 'Enter an absolute folder path on that machine.'; dirInput.focus(); return; }
+      runDetect(dir);
+    };
+    dirInput.onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); retry.click(); } };
+    if (this.modelFailures?.has(harness.id)) failed(this.modelFailures.get(harness.id));
     save.onclick = async () => {
       error.textContent = ''; status.textContent = '';
       if (draft.length && draft.filter(model => model.default).length !== 1) { error.textContent = 'Choose exactly one default model.'; return; }
@@ -432,7 +462,7 @@ export class HarnessSettings {
       } catch (problem) { error.textContent = problem.message || 'Could not save the models'; save.disabled = false; }
     };
     const actions = node('div', 'machine-harness-actions'); actions.append(detect, save);
-    panel.append(node('h4', '', `Models of ${harness.label || harness.name}`), rows, form, actions, detectBox, status, error);
+    panel.append(node('h4', '', `Models of ${harness.label || harness.name}`), rows, form, actions, retryRow, detectBox, status, error);
     return panel;
   }
 

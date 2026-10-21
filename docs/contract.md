@@ -618,7 +618,8 @@ it never silently reruns a turn with uncertain effects.
 
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
-  supports_path_probe?, supports_worktree?, supports_launchers?,
+  supports_path_probe?, supports_worktree?, supports_launchers?, supports_detect?,
+  supports_detect_dir?,
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}]}`
@@ -646,15 +647,26 @@ it never silently reruns a turn with uncertain effects.
   supervisor resolves its own values, executable path and version, and probes
   the mapped checkout before spawn. A launcher ID binds an agent to its selected definition. Older
   supervisors do not receive launcher update frames.
-- S→M `detect{v,req_id,detect:{kind:"harnesses"|"models",family?,command?}}`;
+- S→M `detect{v,req_id,detect:{kind:"harnesses"|"models",family?,command?,args?,dir?}}`;
   M→S `detect_result{v,req_id,harness_candidates?[{family,command,containerized,
   version?}],model_candidates?[{slug,label,note?}],code?,message?}` (hello
   carries `supports_detect`). `harnesses` lists the Claude, Codex, Pi and OpenCode
   executables on PATH and the usual user-level install directories, once per real
   file; `models` runs the family's own listing command (`pi --offline
   --list-models`, `opencode models`, `codex debug models --bundled`) on the
-  absolute `command` with a 20 s limit and an 8 MiB output limit. Detection only
-  reports; the server returns the candidates to the owner and saves nothing.
+  absolute `command` with a 20 s limit and an 8 MiB output limit, for native and
+  containerized launchers alike. `args` are the launcher's own arguments, placed
+  before the listing ones. The default working directory is a fresh private
+  `detect/run-*` folder under the supervisor's aimebu config directory, removed
+  after the command when possible; leftover run folders older than one hour are
+  removed before the next default-folder detection. A removal error is logged
+  and does not fail a successful listing. The request's `dir` overrides it
+  when given: an absolute directory that must exist on the supervisor's machine, else
+  `code:"invalid_dir"`. A failure message includes the run path and ends with
+  the last lines the command wrote to stderr (from its last 2 KiB). The server sends
+  `dir` only to a supervisor whose hello carries `supports_detect_dir`; older
+  supervisors ignore both fields. Detection only reports; the server returns the
+  candidates to the owner and saves nothing.
 - S→M `path_probe{v,req_id,checkout_path,launcher_id?}`; M→S
   `path_result{v,req_id,canonical_path?,code?,message?}`. The supervisor
   verifies an existing directory and resolves symlinks on its own machine.

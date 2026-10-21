@@ -404,6 +404,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .harness-detect-row { padding: 3px 0; }
 .harness-candidate-list { display: grid; gap: 2px; max-height: 260px; overflow: auto; }
 .harness-models .error:empty { display: none; }
+.harness-detect-retry { display: flex; gap: 8px; align-items: flex-end; }
+.harness-detect-retry[hidden] { display: none; }
+.harness-detect-dir { display: grid; flex: 1; gap: 4px; min-width: 0; font-size: 11px; color: var(--text-secondary); }
+.harness-detect-dir input { min-width: 0; width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 12px; }
 @media (max-width: 700px) {
   .harness-model-row, .harness-model-add { grid-template-columns: minmax(0, 1fr); }
 }
@@ -1957,6 +1961,7 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-reopen { -webkit-mask-image: url("/icons/reopen.svg"); mask-image: url("/icons/reopen.svg"); }
 .icon-mask-more { -webkit-mask-image: url("/icons/more.svg"); mask-image: url("/icons/more.svg"); }
 .icon-mask-chevron-right { -webkit-mask-image: url("/icons/chevron-right.svg"); mask-image: url("/icons/chevron-right.svg"); }
+.icon-mask-refresh { -webkit-mask-image: url("/icons/refresh.svg"); mask-image: url("/icons/refresh.svg"); }
 .icon-mask-message { -webkit-mask-image: url("/icons/message.svg"); mask-image: url("/icons/message.svg"); }
 .back-to-latest.icon-btn { position: relative; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; margin-left: 10px; }
 .back-to-latest .badge { position: absolute; top: -6px; right: -6px; min-width: 15px; height: 15px; margin: 0; padding: 0 3px; border-radius: 8px; font-size: 9px; line-height: 15px; text-align: center; pointer-events: none; }

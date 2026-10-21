@@ -260,6 +260,7 @@ func supervisorCommand(ctx context.Context, stderr io.Writer) int {
 		adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode"))))
 	client.OnError = func(err error) { fmt.Fprintln(stderr, err) }
 	client.TurnLimits = turnLimits
+	client.ConfigDir = config.root
 	if err := client.Run(ctx); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -600,6 +601,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 			adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode"))))
 		client.OnError = func(err error) { fmt.Fprintln(stderr, "supervisor:", err) }
 		client.TurnLimits = turnLimits
+		client.ConfigDir = config.root
 		var embeddedCtx context.Context
 		embeddedStarts.Add(1)
 		embeddedCtx, stopEmbedded = context.WithCancel(context.Background())

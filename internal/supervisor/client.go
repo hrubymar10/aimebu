@@ -38,21 +38,24 @@ type Client struct {
 	Harnesses         []protocol.HarnessRow
 	Launchers         []protocol.LauncherRow
 	harnessProbeDir   string
-	Journal           *Journal
-	Adapter           adapter.Adapter
-	PingInterval      time.Duration
-	TurnLimits        TurnLimitOverrides
-	ReconnectDelay    time.Duration
-	OnError           func(error)
-	OnReady           func()
-	writeMu           sync.Mutex
-	mu                sync.Mutex
-	desired           map[string]protocol.DesiredAgent
-	active            map[string]string
-	running           map[string]adapter.Turn
-	currentConn       *websocket.Conn
-	stopping          bool
-	turns             sync.WaitGroup
+	// ConfigDir is the machine's aimebu config root; model detection uses a private detect/run-* folder unless the request names a folder.
+	ConfigDir      string
+	Journal        *Journal
+	Adapter        adapter.Adapter
+	PingInterval   time.Duration
+	TurnLimits     TurnLimitOverrides
+	ReconnectDelay time.Duration
+	OnError        func(error)
+	OnReady        func()
+	writeMu        sync.Mutex
+	detectMu       sync.Mutex
+	mu             sync.Mutex
+	desired        map[string]protocol.DesiredAgent
+	active         map[string]string
+	running        map[string]adapter.Turn
+	currentConn    *websocket.Conn
+	stopping       bool
+	turns          sync.WaitGroup
 }
 
 func NewClient(machineID, machineKey, serverURL string, journal *Journal, implementation adapter.Adapter) *Client {
@@ -188,7 +191,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)

@@ -540,13 +540,21 @@ the supervisor found on PATH and in the usual user-level install directories
 (`~/.local/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, `~/.npm-global/bin`, `~/.bun/bin`,
 `~/.opencode/bin`, the global npm prefix), once per real file, and adds only the ones ticked; each added
 harness then has its models detected and saved (the first is the default), and one that cannot answer is
-left empty with a note to use Models. Each
+left empty with its reason and a note to use Models, where it can be retried. Each
 harness is one summary row (label, status, version and active agents, its command, an Enabled
 switch that saves on its own, Models and Edit); Edit opens the label, executable, arguments,
 environment, container and path settings, and Models opens its model list: slug (the exact id, never
 an alias), label, a note, and one default. Auto-detect models asks Pi (`pi --offline
 --list-models`), OpenCode (`opencode models`) and Codex (`codex debug models --bundled`, the models
-it lists) on the machine itself; for Claude the server reads the model constants of the
+it lists) on the machine itself, native or containerized alike: the harness's own arguments come
+first, and the command runs in a fresh private `detect/run-*` subfolder of that machine's aimebu config
+directory (`AIMEBU2_CONFIG_DIR`, by default `~/.aimebu2`). The supervisor removes the run folder after
+detection, even when the command fails; a failed removal is logged without hiding a successful model list.
+Before the next detection with the default folder, it also removes its own marked `run-*`
+folders older than one hour; owner-chosen folders, even under `detect/run-*`, and recent runs
+stay untouched. The panel shows the run path and the end of what it printed to stderr
+and a "Run the command in this folder" field: an absolute path on that machine, sent with the Retry
+(nothing remembers it). For Claude, native or containerized, the server reads the model constants of the
 `anthropic-sdk-go` source on GitHub (only when the owner clicks, 5 s, cached by ETag, with a built-in
 list when it cannot be reached). Nothing detected is saved until it is ticked and Save models is
 pressed. Disabled or

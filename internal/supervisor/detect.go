@@ -5,11 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/goccy/go-json"
@@ -33,6 +36,10 @@ const (
 	detectModelsTimeout = 20 * time.Second
 	detectOutputLimit   = 8 << 20
 	detectNoteMax       = 280
+	detectStderrKeep    = 2 << 10
+	detectStderrLines   = 3
+	detectStderrChars   = 400
+	detectStaleRunAge   = time.Hour
 )
 
 func (c *Client) detectResult(ctx context.Context, frame protocol.Frame) protocol.Frame {
@@ -45,9 +52,32 @@ func (c *Client) detectResult(ctx context.Context, frame protocol.Frame) protoco
 	case "harnesses":
 		result.HarnessCandidates = detectHarnesses(ctx)
 	case "models":
-		models, err := detectModels(ctx, frame.Detect.Family, frame.Detect.Command)
+		dir := frame.Detect.Dir
+		temporary := dir == ""
+		if dir != "" {
+			if err := usableDetectDir(dir); err != nil {
+				result.Code, result.Message = "invalid_dir", err.Error()
+				return result
+			}
+			if err := c.protectChosenDetectDir(dir); err != nil {
+				result.Code, result.Message = "invalid_dir", err.Error()
+				return result
+			}
+		} else {
+			var err error
+			dir, err = c.detectDefaultDir()
+			if err != nil {
+				result.Code, result.Message = "detect_failed", err.Error()
+				return result
+			}
+		}
+		var remove func(string) error
+		if temporary {
+			remove = os.RemoveAll
+		}
+		models, err := detectModelsInRun(ctx, frame.Detect.Family, frame.Detect.Command, frame.Detect.Args, dir, remove)
 		if err != nil {
-			result.Code, result.Message = "detect_failed", err.Error()
+			result.Code, result.Message = "detect_failed", fmt.Sprintf("model detection in %s: %v", dir, err)
 			return result
 		}
 		result.ModelCandidates = models
@@ -55,6 +85,16 @@ func (c *Client) detectResult(ctx context.Context, frame protocol.Frame) protoco
 		result.Code, result.Message = "invalid_request", "unknown detect kind"
 	}
 	return result
+}
+
+func detectModelsInRun(ctx context.Context, family, command string, args []string, dir string, remove func(string) error) ([]protocol.ModelCandidate, error) {
+	models, err := detectModels(ctx, family, command, args, dir)
+	if remove != nil {
+		if cleanupErr := remove(dir); cleanupErr != nil {
+			log.Printf("model detection: remove run folder %s: %v", dir, cleanupErr)
+		}
+	}
+	return models, err
 }
 
 // detectHarnesses looks for the known harness executables on PATH and in the places a user-level install puts them, and reports each
@@ -121,37 +161,210 @@ func commandVersion(ctx context.Context, path string) string {
 	return strings.TrimSpace(line)
 }
 
+// usableDetectDir checks a folder the person chose to run model detection in: absolute, and an existing directory on this machine.
+func usableDetectDir(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("the folder to run the command in must be an absolute path: %s", dir)
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return fmt.Errorf("the folder to run the command in does not exist on this machine: %s", dir)
+	}
+	return nil
+}
+
+// detectDefaultDir keeps model detection out of the config root, which contains credentials. Each run gets its own private folder,
+// allowing concurrent probes and commands that write into their working directory. The caller removes the run folder after detection.
+func (c *Client) detectDefaultDir() (string, error) {
+	c.detectMu.Lock()
+	defer c.detectMu.Unlock()
+	if c.ConfigDir == "" {
+		return "", errors.New("the machine's config directory is not known")
+	}
+	root, err := filepath.Abs(c.ConfigDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve the machine's config directory: %w", err)
+	}
+	if err := usableDetectDir(root); err != nil {
+		return "", err
+	}
+	base := filepath.Join(root, "detect")
+	if err := os.Mkdir(base, 0700); err != nil && !os.IsExist(err) {
+		return "", fmt.Errorf("create the model detection folder %s: %w", base, err)
+	}
+	info, err := os.Lstat(base)
+	if err != nil {
+		return "", fmt.Errorf("inspect the model detection folder %s: %w", base, err)
+	}
+	if !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+		return "", fmt.Errorf("the model detection folder %s must be a private directory", base)
+	}
+	pruneStaleDetectRuns(base, time.Now())
+	dir, err := os.MkdirTemp(base, "run-")
+	if err != nil {
+		return "", fmt.Errorf("create a model detection run folder in %s: %w", base, err)
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("secure the model detection run folder %s: %w", dir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".aimebu-detect-run"), nil, 0600); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("mark the model detection run folder %s: %w", dir, err)
+	}
+	return dir, nil
+}
+
+// A person may explicitly reuse a run folder left by a failed cleanup. Retire our marker before using it, so a later default probe
+// cannot prune the person's chosen folder. Only a direct child of this machine's detect directory can carry our marker.
+func (c *Client) protectChosenDetectDir(dir string) error {
+	c.detectMu.Lock()
+	defer c.detectMu.Unlock()
+	if c.ConfigDir == "" {
+		return nil
+	}
+	base, err := filepath.EvalSymlinks(filepath.Join(c.ConfigDir, "detect"))
+	if err != nil {
+		return nil // A default probe cannot prune this directory either.
+	}
+	chosen, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("resolve the chosen folder: %w", err)
+	}
+	if filepath.Dir(chosen) != base || !strings.HasPrefix(filepath.Base(chosen), "run-") {
+		return nil
+	}
+	marker := filepath.Join(chosen, ".aimebu-detect-run")
+	if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("protect the chosen folder %s from cleanup: %w", chosen, err)
+	}
+	return nil
+}
+
+// pruneStaleDetectRuns removes only old marked run folders created by model detection. A matching owner-chosen folder has no marker
+// and must survive. A live probe lasts at most 20 seconds, so the one-hour grace leaves concurrent probes alone. Cleanup is advisory.
+func pruneStaleDetectRuns(base string, now time.Time) {
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		log.Printf("model detection: list stale run folders in %s: %v", base, err)
+		return
+	}
+	cutoff := now.Add(-detectStaleRunAge)
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "run-") || len(entry.Name()) == len("run-") || !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(base, entry.Name())
+		marker, err := os.Lstat(filepath.Join(path, ".aimebu-detect-run"))
+		if err != nil || !marker.Mode().IsRegular() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			log.Printf("model detection: inspect run folder %s: %v", path, err)
+			continue
+		}
+		if !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			log.Printf("model detection: remove stale run folder %s: %v", path, err)
+		}
+	}
+}
+
 // detectModels asks one harness's own executable which models it offers, with the command line each family has for that. Claude has no
-// such command; its models are looked up by the server.
-func detectModels(ctx context.Context, family, command string) ([]protocol.ModelCandidate, error) {
+// such command; its models are looked up by the server. launcherArgs are the launcher's own arguments, put before the listing ones; dir,
+// when set, is the working directory. When the command fails, the end of what it wrote to stderr is part of the error, so the person
+// sees the harness's own reason rather than a bare exit status.
+func detectModels(ctx context.Context, family, command string, launcherArgs []string, dir string) ([]protocol.ModelCandidate, error) {
 	if err := executablePath(command); err != nil {
 		return nil, fmt.Errorf("the harness command is not usable: %w", err)
 	}
-	var args []string
+	for _, arg := range launcherArgs {
+		if strings.ContainsRune(arg, '\x00') {
+			return nil, errors.New("a harness argument contains NUL")
+		}
+	}
+	var listArgs []string
 	var parse func([]byte) ([]protocol.ModelCandidate, error)
 	switch family {
 	case "pi":
-		args, parse = []string{"--offline", "--list-models"}, parsePiModels
+		listArgs, parse = []string{"--offline", "--list-models"}, parsePiModels
 	case "opencode":
-		args, parse = []string{"models"}, parseOpencodeModels
+		listArgs, parse = []string{"models"}, parseOpencodeModels
 	case "codex":
-		args, parse = []string{"debug", "models", "--bundled"}, parseCodexModels
+		listArgs, parse = []string{"debug", "models", "--bundled"}, parseCodexModels
 	default:
 		return nil, errors.New("this family has no model listing command")
 	}
+	args := append(append([]string{}, launcherArgs...), listArgs...)
 	run, cancel := context.WithTimeout(ctx, detectModelsTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(run, command, args...)
+	cmd.Dir = dir
 	var out bytes.Buffer
+	stderr := &tailWriter{keep: detectStderrKeep}
 	cmd.Stdout = &limitWriter{buf: &out, left: detectOutputLimit}
+	cmd.Stderr = stderr
 	cmd.WaitDelay = time.Second
 	if err := cmd.Run(); err != nil {
 		if run.Err() != nil {
 			return nil, errors.New("the harness did not answer in time")
 		}
+		if said := stderr.lastLines(detectStderrLines, detectStderrChars); said != "" {
+			return nil, fmt.Errorf("the harness could not list its models (%v): %s", err, said)
+		}
 		return nil, fmt.Errorf("the harness could not list its models: %w", err)
 	}
 	return parse(out.Bytes())
+}
+
+// tailWriter keeps only the last keep bytes written to it.
+type tailWriter struct {
+	buf  []byte
+	keep int
+}
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	if extra := len(w.buf) - w.keep; extra > 0 {
+		w.buf = append(w.buf[:0], w.buf[extra:]...)
+	}
+	return len(p), nil
+}
+
+// lastLines is the last few non-empty lines kept, joined by spaces and cut to at most chars runes, valid UTF-8 and without control
+// characters (terminal colour codes included).
+func (w *tailWriter) lastLines(lines, chars int) string {
+	text := strings.ToValidUTF8(string(w.buf), "")
+	var kept []string
+	all := strings.Split(text, "\n")
+	for i := len(all) - 1; i >= 0 && len(kept) < lines; i-- {
+		if line := cleanStderrLine(all[i]); line != "" {
+			kept = append([]string{line}, kept...)
+		}
+	}
+	said := strings.Join(kept, " ")
+	if utf8.RuneCountInString(said) > chars {
+		said = "…" + string([]rune(said)[utf8.RuneCountInString(said)-chars+1:])
+	}
+	return said
+}
+
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+func cleanStderrLine(line string) string {
+	line = ansiEscape.ReplaceAllString(line, "")
+	line = strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return ' '
+		}
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, line)
+	return strings.TrimSpace(line)
 }
 
 type limitWriter struct {

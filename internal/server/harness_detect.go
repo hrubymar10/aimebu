@@ -124,7 +124,9 @@ func (s *Server) machineHarnessDetect(w http.ResponseWriter, r *http.Request) {
 
 // machineHarnessModelsDetect lists the models a harness offers, as candidates the owner ticks. Claude's come from the Anthropic SDK's
 // published source (fetched only now, on the owner's click, with a built-in list as the fallback); the others are asked of the harness
-// itself on its machine. Nothing is saved.
+// itself on its machine, native or containerized alike, with the harness's own arguments first. The command runs in the supervisor's
+// config directory unless the request names a folder on that machine (dir), which the person picks when a harness refuses to answer
+// from the default one. Nothing is saved.
 func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Request) {
 	if !s.adminMachine(w, r) {
 		return
@@ -133,6 +135,16 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 	harness, err := s.Store.LauncherByID(r.Context(), machineID, launcherID)
 	if err != nil {
 		s.launcherMutationError(w, err)
+		return
+	}
+	var body struct {
+		Dir string `json:"dir"`
+	}
+	if r.ContentLength != 0 && !readJSON(w, r, &body) {
+		return
+	}
+	if body.Dir != "" && (!filepath.IsAbs(body.Dir) || strings.ContainsRune(body.Dir, '\x00')) {
+		apiError(w, 400, "invalid_dir", "The folder to run the command in must be an absolute path on that machine.")
 		return
 	}
 	listed, err := s.Store.HarnessModels(r.Context(), launcherID)
@@ -145,12 +157,13 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 	switch {
 	case harness.Tool == "claude":
 		found, source = s.claudeModelCandidates(r.Context())
-	case harness.Containerized:
-		apiError(w, 400, "detect_unsupported", "Auto-detect asks the harness's own command, which a Docker wrapper cannot answer here. Add the model ID manually.")
-		return
 	default:
 		conn, ok := s.detectConn(w, machineID)
 		if !ok {
+			return
+		}
+		if body.Dir != "" && !conn.supportsDetectDir {
+			apiError(w, 503, "machine_unavailable", "the machine needs an updated supervisor to run auto-detect in a chosen folder")
 			return
 		}
 		conn.harnessMu.Lock()
@@ -165,13 +178,18 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 			apiError(w, 409, "launcher_unavailable", "The harness was not found on the machine. "+detectFailedHint)
 			return
 		}
-		answer, err := s.requestDetect(r.Context(), conn, protocol.DetectRequest{Kind: "models", Family: harness.Tool, Command: resolved}, detectModelsWait)
+		request := protocol.DetectRequest{Kind: "models", Family: harness.Tool, Command: resolved, Args: harness.Args, Dir: body.Dir}
+		answer, err := s.requestDetect(r.Context(), conn, request, detectModelsWait)
 		if err != nil {
 			apiError(w, 502, "detect_failed", "Couldn't detect the models: "+err.Error()+". "+detectFailedHint)
 			return
 		}
+		if answer.Code == "invalid_dir" {
+			apiError(w, 400, "invalid_dir", answer.Message)
+			return
+		}
 		if answer.Code != "" {
-			apiError(w, 502, "detect_failed", "Couldn't detect the models: "+answer.Message+". "+detectFailedHint)
+			apiError(w, 502, "detect_failed", "Couldn't detect the models: "+strings.TrimRight(answer.Message, ". ")+". "+detectFailedHint)
 			return
 		}
 		found, source = answer.ModelCandidates, "harness"

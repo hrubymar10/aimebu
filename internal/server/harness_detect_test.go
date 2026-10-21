@@ -91,7 +91,7 @@ func TestClaudeModelsAreFetchedCachedAndFallBackToTheSnapshot(t *testing.T) {
 	}
 }
 
-func connectSupervisor(t *testing.T, f *fixture) {
+func connectSupervisor(t *testing.T, f *fixture) string {
 	t.Helper()
 	journal, err := supervisor.OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
 	if err != nil {
@@ -99,6 +99,7 @@ func connectSupervisor(t *testing.T, f *fixture) {
 	}
 	t.Cleanup(func() { journal.Close() })
 	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, adapter.NewFake())
+	client.ConfigDir = t.TempDir()
 	ready := make(chan struct{}, 1)
 	client.OnReady = func() { ready <- struct{}{} }
 	ctx, cancel := context.WithCancel(t.Context())
@@ -109,6 +110,7 @@ func connectSupervisor(t *testing.T, f *fixture) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("supervisor did not connect")
 	}
+	return client.ConfigDir
 }
 
 // The owner finds a harness on the machine, adds it, finds its models, and saves the ones they tick; none of the finding saves anything.
@@ -197,14 +199,12 @@ func TestOwnerDetectsAndAddsAHarnessAndItsModels(t *testing.T) {
 			t.Fatalf("already_listed after saving: %v", candidate)
 		}
 	}
-	// Claude's list comes from the SDK source; offline it is the built-in snapshot, and a Docker wrapper cannot be asked.
-	claude := f.harness(t, "claude", "native")
-	if status, models = post(base+"/"+claude.ID+"/models/detect", nil); status != 200 || models["source"] != "snapshot" || len(models["candidates"].([]any)) != len(claudeModelSnapshot) {
-		t.Fatalf("claude models: %d %v", status, models)
-	}
-	docker := f.harness(t, "codex", "harness-docker")
-	if status, models = post(base+"/"+docker.ID+"/models/detect", nil); status != 400 || models["error"] != "detect_unsupported" {
-		t.Fatalf("docker wrapper: %d %v", status, models)
+	// Claude's list comes from the SDK source; offline it is the built-in snapshot, for the Docker wrapper too.
+	for _, name := range []string{"native", "harness-docker"} {
+		claude := f.harness(t, "claude", name)
+		if status, models = post(base+"/"+claude.ID+"/models/detect", nil); status != 200 || models["source"] != "snapshot" || len(models["candidates"].([]any)) != len(claudeModelSnapshot) {
+			t.Fatalf("claude %s models: %d %v", name, status, models)
+		}
 	}
 	// Nobody but the owner finds anything.
 	otherCookie, otherCSRF := registerSecondUser(t, f, "second")
@@ -212,5 +212,87 @@ func TestOwnerDetectsAndAddsAHarnessAndItsModels(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 403 {
 		t.Fatalf("non-owner detect: %d", resp.StatusCode)
+	}
+}
+
+// A containerized harness is asked for its models like a native one, with its own arguments first; a folder the person chose is passed
+// through to the supervisor, and the harness's own complaint reaches the person when it refuses.
+func TestContainerizedHarnessModelsAreDetectedAndAChosenFolderIsPassed(t *testing.T) {
+	bin := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", bin)
+	chosen, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := filepath.Join(t.TempDir(), "seen")
+	script := "#!/bin/sh\n" +
+		"if [ \"$(pwd -P)\" = \"" + refused + "\" ]; then echo \"cannot answer from '$(pwd -P)'\" >&2; exit 1; fi\n" +
+		"printf '%s\\n%s\\n' \"$(pwd -P)\" \"$*\" > " + seen + "\n" +
+		"echo '{\"models\":[{\"slug\":\"gpt-6-astra\",\"display_name\":\"GPT-6-Astra\",\"visibility\":\"list\"}]}'\n"
+	if err := os.WriteFile(filepath.Join(bin, "codex-docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f := newFixture(t)
+	docker := f.harness(t, "codex", "harness-docker")
+	docker.Args = []string{"--profile", "work"}
+	if _, err := f.db.SaveLauncher(t.Context(), "test", docker); err != nil {
+		t.Fatal(err)
+	}
+	configRoot := connectSupervisor(t, f)
+	post := func(body any) (int, map[string]any) {
+		t.Helper()
+		resp := f.request(http.MethodPost, "/api/machines/"+f.machineID+"/launchers/"+docker.ID+"/models/detect", body, true)
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	ran := func() []string {
+		t.Helper()
+		out, err := os.ReadFile(seen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Split(strings.TrimSpace(string(out)), "\n")
+	}
+	status, out := post(nil)
+	if status != 200 || out["source"] != "harness" || len(out["candidates"].([]any)) != 1 || out["candidates"].([]any)[0].(map[string]any)["slug"] != "gpt-6-astra" {
+		t.Fatalf("a containerized harness is detected: %d %v", status, out)
+	}
+	if got := ran(); !strings.HasPrefix(got[0], filepath.Join(configRoot, "detect")+string(os.PathSeparator)+"run-") || got[1] != "--profile work debug models --bundled" {
+		t.Fatalf("the default folder and launcher's arguments: %q", got)
+	}
+	if _, err := os.Stat(ran()[0]); !os.IsNotExist(err) {
+		t.Fatalf("the default run folder was not removed: %v", err)
+	}
+	if status, out = post(map[string]string{"dir": chosen}); status != 200 || ran()[0] != chosen {
+		t.Fatalf("the chosen folder is used: %d %v %q", status, out, ran())
+	}
+	status, out = post(map[string]string{"dir": refused})
+	if message, _ := out["message"].(string); status != 502 || out["error"] != "detect_failed" || !strings.Contains(message, "cannot answer from '"+refused+"'. Add the model ID manually.") {
+		t.Fatalf("the harness's complaint reaches the person: %d %v", status, out)
+	}
+	if status, out = post(map[string]string{"dir": "relative/dir"}); status != 400 || out["error"] != "invalid_dir" {
+		t.Fatalf("a relative folder: %d %v", status, out)
+	}
+	if status, out = post(map[string]string{"dir": filepath.Join(chosen, "missing")}); status != 400 || out["error"] != "invalid_dir" || !strings.Contains(out["message"].(string), "does not exist") {
+		t.Fatalf("a missing folder: %d %v", status, out)
+	}
+	// A supervisor too old to run in a chosen folder is not asked to (it would silently ignore it); without a folder it still is.
+	conn, err := f.srv.machineForID(f.machineID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.supportsDetectDir = false
+	if status, out = post(map[string]string{"dir": chosen}); status != 503 || out["error"] != "machine_unavailable" {
+		t.Fatalf("an old supervisor with a folder: %d %v", status, out)
+	}
+	if status, out = post(nil); status != 200 {
+		t.Fatalf("an old supervisor without a folder: %d %v", status, out)
 	}
 }

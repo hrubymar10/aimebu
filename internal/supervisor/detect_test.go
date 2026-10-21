@@ -1,10 +1,12 @@
 package supervisor
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hrubymar10/aimebu/internal/protocol"
 )
@@ -107,18 +109,287 @@ func TestDetectHarnessesFindsWhatIsInstalled(t *testing.T) {
 func TestDetectModelsRunsTheHarnessAndRefusesWhatItCannotDo(t *testing.T) {
 	dir := t.TempDir()
 	opencode := writeScript(t, dir, "opencode", `[ "$1" = models ] && printf 'opencode/a\nopencode/b\n'`)
-	got, err := detectModels(t.Context(), "opencode", opencode)
+	got, err := detectModels(t.Context(), "opencode", opencode, nil, "")
 	if err != nil || len(got) != 2 || got[1].Slug != "opencode/b" {
 		t.Fatalf("models: %+v %v", got, err)
 	}
 	failing := writeScript(t, dir, "pi", `exit 3`)
-	if _, err := detectModels(t.Context(), "pi", failing); err == nil {
+	if _, err := detectModels(t.Context(), "pi", failing, nil, ""); err == nil {
 		t.Error("a failing command is an error")
 	}
-	if _, err := detectModels(t.Context(), "claude", opencode); err == nil {
+	if _, err := detectModels(t.Context(), "claude", opencode, nil, ""); err == nil {
 		t.Error("claude has no listing command")
 	}
-	if _, err := detectModels(t.Context(), "pi", "relative/pi"); err == nil {
+	if _, err := detectModels(t.Context(), "pi", "relative/pi", nil, ""); err == nil {
 		t.Error("a relative command is refused")
+	}
+}
+
+// Model detection runs in a fresh private subfolder of the machine's config directory by default and in a folder the person chose, with the
+// launcher's own arguments before the listing ones; when the command refuses, what it said on stderr reaches the person instead of a bare
+// exit status. The script stands in for any harness that only answers from some folders.
+func TestDetectDefaultDirPrunesOnlyStaleRunFolders(t *testing.T) {
+	config := t.TempDir()
+	base := filepath.Join(config, "detect")
+	if err := os.Mkdir(base, 0700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * detectStaleRunAge)
+	for _, name := range []string{"run-old", "run-recent", "run-chosen", "other-old"} {
+		path := filepath.Join(base, name)
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if name == "run-old" || name == "run-recent" {
+			if err := os.WriteFile(filepath.Join(path, ".aimebu-detect-run"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if name != "run-recent" {
+			if err := os.Chtimes(path, old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	file := filepath.Join(base, "run-old-file")
+	if err := os.WriteFile(file, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(file, old, old); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	link := filepath.Join(base, "run-link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	run, err := (&Client{ConfigDir: config}).detectDefaultDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(run, base+string(os.PathSeparator)+"run-") {
+		t.Fatalf("fresh run folder: %q", run)
+	}
+	if _, err := os.Stat(filepath.Join(base, "run-old")); !os.IsNotExist(err) {
+		t.Errorf("stale run folder remains: %v", err)
+	}
+	for _, path := range []string{filepath.Join(base, "run-recent"), filepath.Join(base, "run-chosen"), filepath.Join(base, "other-old"), file, link, outside} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Errorf("unrelated or recent path %s was removed: %v", path, err)
+		}
+	}
+}
+
+func TestDetectModelsCleanupFailureKeepsSuccessfulListing(t *testing.T) {
+	harness := writeScript(t, t.TempDir(), "codex", `echo '{"models":[{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list"}]}'`)
+	called := false
+	models, err := detectModelsInRun(t.Context(), "codex", harness, nil, t.TempDir(), func(string) error {
+		called = true
+		return errors.New("cannot remove run folder")
+	})
+	if err != nil || len(models) != 1 || models[0].Slug != "gpt-6-astra" || !called {
+		t.Fatalf("cleanup failure hid the model listing: %+v, %v, cleanup called %t", models, err, called)
+	}
+}
+
+func TestDetectModelsRunsInPrivateDetectDirOrTheChosenFolder(t *testing.T) {
+	resolved := func(dir string) string {
+		t.Helper()
+		out, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	bin, config, chosen, refused := t.TempDir(), resolved(t.TempDir()), resolved(t.TempDir()), resolved(t.TempDir())
+	if err := os.WriteFile(filepath.Join(config, "host-machine.key"), []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	seen := filepath.Join(t.TempDir(), "seen")
+	harness := writeScript(t, bin, "codex", `
+if [ "$(pwd -P)" = "`+refused+`" ]; then
+  echo "noise first" >&2
+  printf '\033[31mcannot answer from %s\033[0m\n\n' "$(pwd -P)" >&2
+  exit 1
+fi
+pwd -P > `+seen+`
+[ "$*" = "--profile work debug models --bundled" ] || { echo "unexpected arguments: $*" >&2; exit 2; }
+[ ! -e host-machine.key ] || { echo "config secret exposed" >&2; exit 2; }
+echo generated > generated.txt
+echo '{"models":[{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list"}]}'`)
+	client := &Client{ConfigDir: config}
+	ask := func(dir string, args ...string) protocol.Frame {
+		t.Helper()
+		return client.detectResult(t.Context(), protocol.Frame{ReqID: "r", Detect: &protocol.DetectRequest{Kind: "models", Family: "codex", Command: harness, Args: args, Dir: dir}})
+	}
+	ranIn := func() string {
+		t.Helper()
+		out, err := os.ReadFile(seen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	detectDir := filepath.Join(config, "detect")
+	if answer := ask("", "--profile", "work"); answer.Code != "" || len(answer.ModelCandidates) != 1 || answer.ModelCandidates[0].Slug != "gpt-6-astra" || !strings.HasPrefix(ranIn(), detectDir+string(os.PathSeparator)+"run-") {
+		t.Fatalf("default folder: %+v ran in %q", answer, ranIn())
+	}
+	firstRun := ranIn()
+	if info, err := os.Stat(detectDir); err != nil || info.Mode().Perm() != 0700 {
+		t.Fatalf("default folder is not private: %v, %v", info, err)
+	}
+	if _, err := os.Stat(firstRun); !os.IsNotExist(err) {
+		t.Fatalf("the first run folder was not removed: %v", err)
+	}
+	if answer := ask("", "--profile", "work"); answer.Code != "" || ranIn() == firstRun {
+		t.Fatalf("each run needs a fresh folder: %+v ran in %q", answer, ranIn())
+	}
+	if _, err := os.Stat(ranIn()); !os.IsNotExist(err) {
+		t.Fatalf("the second run folder was not removed: %v", err)
+	}
+	if answer := ask(""); answer.Code != "detect_failed" || !strings.Contains(answer.Message, ranIn()) {
+		t.Errorf("a failed command must report its temporary working directory: %+v", answer)
+	}
+	if _, err := os.Stat(ranIn()); !os.IsNotExist(err) {
+		t.Fatalf("the failed run folder was not removed: %v", err)
+	}
+	if answer := ask(chosen, "--profile", "work"); answer.Code != "" || ranIn() != chosen {
+		t.Fatalf("a chosen folder wins: %+v ran in %q", answer, ranIn())
+	}
+	chosenRun := filepath.Join(detectDir, "run-chosen")
+	if err := os.Mkdir(chosenRun, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(chosenRun, ".aimebu-detect-run"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if answer := ask(chosenRun, "--profile", "work"); answer.Code != "" || ranIn() != chosenRun {
+		t.Fatalf("chosen folder under detect: %+v ran in %q", answer, ranIn())
+	}
+	if _, err := os.Lstat(filepath.Join(chosenRun, ".aimebu-detect-run")); !os.IsNotExist(err) {
+		t.Fatalf("owner-chosen run folder retained its cleanup marker: %v", err)
+	}
+	old := time.Now().Add(-2 * detectStaleRunAge)
+	if err := os.Chtimes(chosenRun, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if answer := ask("", "--profile", "work"); answer.Code != "" {
+		t.Fatalf("default detection after chosen folder: %+v", answer)
+	}
+	if _, err := os.Stat(filepath.Join(chosenRun, "generated.txt")); err != nil {
+		t.Fatalf("default detection removed the owner-chosen folder: %v", err)
+	}
+	answer := ask(refused, "--profile", "work")
+	if answer.Code != "detect_failed" || !strings.Contains(answer.Message, "noise first cannot answer from "+refused) || strings.Contains(answer.Message, "\033") || !strings.Contains(answer.Message, "exit status 1") {
+		t.Fatalf("the harness's stderr reaches the person: %+v", answer)
+	}
+	if answer := ask(chosen); answer.Code != "detect_failed" || !strings.Contains(answer.Message, "unexpected arguments: debug models --bundled") {
+		t.Fatalf("without launcher arguments only the listing ones are passed: %+v", answer)
+	}
+	if answer := ask("relative/dir"); answer.Code != "invalid_dir" || !strings.Contains(answer.Message, "absolute path") {
+		t.Errorf("a relative folder: %+v", answer)
+	}
+	if answer := ask(filepath.Join(chosen, "missing")); answer.Code != "invalid_dir" || !strings.Contains(answer.Message, "does not exist") {
+		t.Errorf("a missing folder: %+v", answer)
+	}
+	if answer := ask(seen); answer.Code != "invalid_dir" {
+		t.Errorf("a file is not a folder: %+v", answer)
+	}
+	if _, err := detectModels(t.Context(), "codex", harness, []string{"a\x00b"}, chosen); err == nil {
+		t.Error("a NUL in a launcher argument is refused")
+	}
+	if err := os.WriteFile(filepath.Join(detectDir, "leftover"), []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if answer := ask("", "--profile", "work"); answer.Code != "" || ranIn() == firstRun {
+		t.Errorf("a leftover in the parent folder must not affect a new run: %+v", answer)
+	}
+	if answer := ask(chosen, "--profile", "work"); answer.Code != "" || ranIn() != chosen {
+		t.Errorf("an explicit folder still takes precedence: %+v", answer)
+	}
+	if _, err := (&Client{ConfigDir: filepath.Join(config, "gone")}).detectDefaultDir(); err == nil {
+		t.Error("a missing config directory must fail")
+	}
+	if _, err := (&Client{}).detectDefaultDir(); err == nil {
+		t.Error("an unknown config directory must fail")
+	}
+	if err := os.RemoveAll(detectDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(chosen, detectDir); err != nil {
+		t.Fatal(err)
+	}
+	if answer := ask("", "--profile", "work"); answer.Code != "detect_failed" || !strings.Contains(answer.Message, "private directory") || !strings.Contains(answer.Message, detectDir) {
+		t.Errorf("a symlinked default folder must fail: %+v", answer)
+	}
+	if err := os.Remove(detectDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(detectDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(detectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if answer := ask("", "--profile", "work"); answer.Code != "detect_failed" || !strings.Contains(answer.Message, "private directory") || !strings.Contains(answer.Message, detectDir) {
+		t.Errorf("a public default folder must fail: %+v", answer)
+	}
+}
+
+func TestConcurrentModelDetectionsUseSeparateRunFolders(t *testing.T) {
+	config, bin := t.TempDir(), t.TempDir()
+	seen := []string{filepath.Join(t.TempDir(), "first"), filepath.Join(t.TempDir(), "second")}
+	harness := writeScript(t, bin, "codex", `
+out="$1"
+shift
+pwd -P > "$out"
+echo generated > generated.txt
+sleep 0.1
+echo '{"models":[{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list"}]}'`)
+	client := &Client{ConfigDir: config}
+	results := make(chan protocol.Frame, len(seen))
+	for _, output := range seen {
+		go func(output string) {
+			results <- client.detectResult(t.Context(), protocol.Frame{Detect: &protocol.DetectRequest{Kind: "models", Family: "codex", Command: harness, Args: []string{output}}})
+		}(output)
+	}
+	for range seen {
+		if answer := <-results; answer.Code != "" || len(answer.ModelCandidates) != 1 {
+			t.Fatalf("concurrent model detection: %+v", answer)
+		}
+	}
+	var paths []string
+	for _, output := range seen {
+		data, err := os.ReadFile(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := strings.TrimSpace(string(data))
+		if !strings.HasPrefix(path, filepath.Join(config, "detect")+string(os.PathSeparator)+"run-") {
+			t.Fatalf("unexpected working directory: %s", path)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("run folder %s was not removed: %v", path, err)
+		}
+		paths = append(paths, path)
+	}
+	if paths[0] == paths[1] {
+		t.Fatalf("concurrent detections shared a working directory: %v", paths)
+	}
+}
+
+func TestTailWriterKeepsTheEndOfStderr(t *testing.T) {
+	t.Parallel()
+	tail := &tailWriter{keep: 16}
+	_, _ = tail.Write([]byte(strings.Repeat("x", 40) + "\nfirst\n"))
+	_, _ = tail.Write([]byte("second\n\n"))
+	if len(tail.buf) != 16 {
+		t.Fatalf("kept %d bytes", len(tail.buf))
+	}
+	if got := tail.lastLines(3, 400); got != "x first second" {
+		t.Errorf("last lines: %q", got)
+	}
+	if got := tail.lastLines(1, 4); got != "…ond" {
+		t.Errorf("cut to the end: %q", got)
 	}
 }

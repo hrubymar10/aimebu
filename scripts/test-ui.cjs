@@ -3144,14 +3144,20 @@ async function main() {
         if (path === '/api/machines') return json({ machines: [{ id: 'mch_mock', name: 'Host', approved: true, last_seen: new Date().toISOString() }] });
         if (path === '/api/machines/mch_mock/launchers' && options.method !== 'POST') return json({ machine_id: 'mch_mock', launchers: window.__harnessRows, activity: window.__harnessWrites.map(change => ({ ...change, created_at: new Date().toISOString(), actor: 'owner' })) });
         // Auto-detect harnesses -> Add selected also detects and saves the new harness's models.
-        if (path === '/api/machines/mch_mock/launchers/detect') return json({ candidates: [{ family: 'pi', label: 'Pi', command: '/usr/bin/pi', containerized: false, already_added: false }] });
+        if (path === '/api/machines/mch_mock/launchers/detect') return json({ candidates: [{ family: 'pi', label: 'Pi', command: '/usr/bin/pi', containerized: false, already_added: false }, { family: 'pi', label: 'Pi (Docker)', command: '/usr/bin/pi-docker', containerized: true, already_added: false }] });
         if (path === '/api/machines/mch_mock/launchers' && options.method === 'POST') {
           const body = JSON.parse(options.body);
-          const config = { ...body, id: 'mln_auto', machine_id: 'mch_mock', name: 'native', agent_server_url: '' };
+          const config = { ...body, id: body.containerized ? 'mln_auto_docker' : 'mln_auto', machine_id: 'mch_mock', name: body.containerized ? 'pi-docker' : 'native', agent_server_url: '' };
           window.__harnessRows.push({ config, available: true, unavailable_reason: '' });
           return json({ config, observed: window.__harnessRows.at(-1) });
         }
         if (path === '/api/machines/mch_mock/launchers/mln_auto/models/detect') return json({ source: 'harness', candidates: Array.from({ length: 66 }, (_, index) => ({ slug: `pi-${index}`, label: `Pi ${index}`, note: '', already_listed: false })) });
+        // The Docker one cannot answer from the default folder; asked in a chosen folder, it lists one model.
+        if (path === '/api/machines/mch_mock/launchers/mln_auto_docker/models/detect') {
+          const body = JSON.parse(options.body || '{}'); (window.__dockerDetect ||= []).push(body);
+          if (!body.dir) return new Response(JSON.stringify({ error: 'detect_failed', message: "Couldn't detect the models: the harness could not list its models (exit status 1): the harness container is not running. Add the model ID manually." }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+          return json({ source: 'harness', candidates: [{ slug: 'ollama-cloud/gemma4:31b', label: 'gemma4:31b', note: '', already_listed: false }] });
+        }
         if (path === '/api/machines/mch_mock/launchers/mln_auto/models' && options.method === 'PUT') { window.__autoModels = JSON.parse(options.body).models; return json({ models: window.__autoModels }); }
         if (path.startsWith('/api/machines/mch_mock/launchers/') && options.method === 'PUT') {
           const id = path.split('/').pop();
@@ -3173,13 +3179,26 @@ async function main() {
     // Adding a detected harness also detects its models and saves them, the first as the default.
     await domClick(settingsPage, '#harness-detect');
     await settingsPage.waitForSelector('#harness-detect-panel input[type=checkbox]');
-    await settingsPage.$eval('#harness-detect-panel input[type=checkbox]', el => el.click());
+    await settingsPage.$$eval('#harness-detect-panel input[type=checkbox]', boxes => boxes.forEach(el => el.click()));
     await domClick(settingsPage, '#harness-detect-panel button[type=submit]');
     await settingsPage.waitForFunction(() => window.__autoModels);
     // 66 were offered, a list holds 64: the first 64 are saved, the first is the only default, and the page says it cut the list.
     assert.deepEqual(await settingsPage.evaluate(() => ({ count: window.__autoModels.length, first: window.__autoModels[0].slug, last: window.__autoModels.at(-1).slug, defaults: window.__autoModels.filter(model => model.default).map(model => model.slug) })), { count: 64, first: 'pi-0', last: 'pi-63', defaults: ['pi-0'] }, 'detected models are capped at 64 with the first as the default');
     await settingsPage.waitForFunction(() => document.querySelector('#settings-harnesses > .error')?.textContent.includes('only the first 64'));
-    await settingsPage.evaluate(() => { window.__harnessRows = window.__harnessRows.filter(row => row.config.id !== 'mln_auto'); });
+    // The Docker one could not list its models: the page says why, and its Models panel opens on that reason with a folder to retry in.
+    assert.ok((await settingsPage.$eval('#settings-harnesses > .error', el => el.textContent)).includes('A harness has no models yet. Couldn\'t detect the models: the harness could not list its models (exit status 1): the harness container is not running.'), 'the auto-fill failure says why');
+    await domClick(settingsPage, '[aria-controls="harness-models-mln_auto_docker"]');
+    await settingsPage.waitForFunction(() => !document.querySelector('#harness-models-mln_auto_docker').hidden && !document.querySelector('#harness-models-mln_auto_docker .harness-detect-retry').hidden);
+    assert.ok((await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent)).includes('the harness container is not running'), 'the Models panel opens on the failure');
+    assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-detect-retry-button', el => [el.title, el.getAttribute('aria-label'), !!el.querySelector('.icon-mask-refresh'), el.textContent.trim()]), ['Retry auto-detect in this folder', 'Retry auto-detect in this folder', true, ''], 'Retry is an icon button with a tooltip and an accessible name');
+    await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-detect-retry-button');
+    assert.ok((await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent)).includes('absolute folder path'), 'a retry needs an absolute folder');
+    await settingsPage.locator('#harness-models-mln_auto_docker [name=detect-dir]').fill('/work/project');
+    await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-detect-retry-button');
+    await settingsPage.waitForSelector('#harness-models-mln_auto_docker .harness-model-candidates [data-slug="ollama-cloud/gemma4:31b"]');
+    assert.deepEqual(await settingsPage.evaluate(() => window.__dockerDetect), [{}, { dir: '/work/project' }], 'the retry sends the chosen folder; the first try sent none');
+    assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker', panel => [panel.querySelector('.harness-detect-retry').hidden, panel.querySelector('.error').textContent]), [true, ''], 'a successful retry clears the failure');
+    await settingsPage.evaluate(() => { window.__harnessRows = window.__harnessRows.filter(row => row.config.id !== 'mln_auto' && row.config.id !== 'mln_auto_docker'); });
     await domClick(settingsPage, '#settings-usages-tab');
     await settingsPage.click('#settings-harnesses-tab');
     await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-harness').length === 2);
