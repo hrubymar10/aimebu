@@ -2413,6 +2413,8 @@ async function main() {
     assert.equal(await heldPage.$eval('[data-inbox-id="mock_delivery"] .inbox-preview', el => el.textContent), 'The requested review is ready.');
     assert.equal(await heldPage.$eval('[data-inbox-id="mock_delivery"]', el => el.textContent.includes('{"messages"')), false);
     await domClick(heldPage, '#inbox-toggle');
+    // Dismissing a held reply is an icon button with a tooltip and an accessible name, and no text of its own.
+    assert.deepEqual(await heldPage.$eval('[data-inbox-id="mock_delivery"] button:last-child', el => ({ icon: el.classList.contains('icon-btn'), title: el.title, name: el.getAttribute('aria-label'), glyph: !!el.querySelector('.icon-mask-close'), text: el.textContent.trim() })), { icon: true, title: 'Dismiss', name: 'Dismiss', glyph: true, text: '' }, 'Dismiss is an icon button');
     await domClick(heldPage, '[data-inbox-id="mock_delivery"] button:last-child');
     await heldPage.waitForFunction(() => document.querySelector('.inbox-empty')?.textContent === 'All caught up');
     const quotaPage = await a.newPage();
@@ -5235,6 +5237,52 @@ async function main() {
       }
     });
     assert.deepEqual(copiedPair, { copied: pairCommand, label: 'Copied', title: 'Copied', check: true, text: '' });
+    // The confirmation does not stay: after a moment the button is "Copy command" again.
+    await first.waitForFunction(() => { const button = document.querySelector('#machine-pair-copy'); return button.title === 'Copy command' && button.getAttribute('aria-label') === 'Copy command' && !!button.querySelector('.icon-mask-copy') && !button.querySelector('.icon-mask-check'); }, { timeout: 8000 });
+    // A copy that fails right after one that worked does not leave "Copied" standing beside "Copy failed", and the earlier timer does not
+    // fire into the next state.
+    const failedAfterCopy = await first.evaluate(async () => {
+      const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+      const press = async writeText => {
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+        document.querySelector('#machine-pair-copy').click();
+        await new Promise(resolve => setTimeout(resolve, 0));
+      };
+      try {
+        await press(async () => {});
+        const first = document.querySelector('#machine-pair-copy').title;
+        await press(async () => { throw new Error('denied'); });
+        const button = document.querySelector('#machine-pair-copy');
+        return { first, title: button.title, check: !!button.querySelector('.icon-mask-check'), error: document.querySelector('#machine-pair-error').textContent };
+      } finally {
+        if (original) Object.defineProperty(navigator, 'clipboard', original); else delete navigator.clipboard;
+      }
+    });
+    assert.deepEqual(failedAfterCopy, { first: 'Copied', title: 'Copy command', check: false, error: 'Copy failed. Select the command and copy it manually.' }, 'a failed copy resets the button');
+    // Two copies in flight: whichever settles last decides what the button and the error say, so a failure that settles first leaves no
+    // error under a "Copied", and a success that settles first leaves "Copy command" beside the failure.
+    const overlapping = await first.evaluate(async () => {
+      const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+      const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+      const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+      const read = () => { const button = document.querySelector('#machine-pair-copy'); return { title: button.title, error: document.querySelector('#machine-pair-error').textContent }; };
+      const run = async (settle) => {
+        const one = deferred(), two = deferred(), writes = [one, two];
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () => writes.shift().promise } });
+        document.querySelector('#machine-pair-copy').click(); document.querySelector('#machine-pair-copy').click();
+        await settle(one, two);
+        return read();
+      };
+      try {
+        const failFirst = await run(async (one, two) => { one.reject(new Error('denied')); await tick(); two.resolve(); await tick(); });
+        const successFirst = await run(async (one, two) => { two.resolve(); await tick(); one.reject(new Error('denied')); await tick(); });
+        return { failFirst, successFirst };
+      } finally {
+        if (original) Object.defineProperty(navigator, 'clipboard', original); else delete navigator.clipboard;
+      }
+    });
+    assert.deepEqual(overlapping, { failFirst: { title: 'Copied', error: '' }, successFirst: { title: 'Copy command', error: 'Copy failed. Select the command and copy it manually.' } }, 'the copy that settles last decides');
+    await first.evaluate(() => { document.querySelector('#machine-pair-error').textContent = ''; });
     const token = pairCommand.match(/'(amp_[^']+)'$/)?.[1]; assert.ok(token);
     const paired = await first.evaluate(async token => {
       const response = await fetch('/api/machine-pairings/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });

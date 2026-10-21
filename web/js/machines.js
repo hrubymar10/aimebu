@@ -56,7 +56,7 @@ export class MachinesSettings {
   }
   openPairing() {
     this.form.reset(); this.form.hidden = false; this.result.hidden = true;
-    setGlyph(document.querySelector('#machine-pair-copy'), 'copy', 'Copy command');
+    clearTimeout(this.copiedTimer); setGlyph(document.querySelector('#machine-pair-copy'), 'copy', 'Copy command');
     document.querySelector('#machine-pair-error').textContent = '';
     this.dialog.showModal(); this.form.elements.name.focus();
   }
@@ -72,9 +72,18 @@ export class MachinesSettings {
     } catch (error) { errorNode.textContent = error.message; }
     finally { button.disabled = false; }
   }
+  // "Copied" is a confirmation, not a state: the button goes back to "Copy command" after a moment, like the other copy buttons, so the
+  // command can be copied again without wondering whether the first copy is still what the clipboard holds.
   async copyCommand() {
-    const errorNode = document.querySelector('#machine-pair-error'); errorNode.textContent = '';
-    try { await navigator.clipboard.writeText(this.command.textContent); setGlyph(document.querySelector('#machine-pair-copy'), 'check', 'Copied'); }
-    catch { errorNode.textContent = 'Copy failed. Select the command and copy it manually.'; }
+    const errorNode = document.querySelector('#machine-pair-error'), button = document.querySelector('#machine-pair-copy'); errorNode.textContent = '';
+    // One timer for the button: every outcome clears it first and a success sets it afresh, so a copy that finishes after another one (or
+    // fails after a success) can neither restore the label early nor leave "Copied" next to "Copy failed".
+    try {
+      await navigator.clipboard.writeText(this.command.textContent);
+      errorNode.textContent = ''; // an earlier copy that failed may settle first
+      clearTimeout(this.copiedTimer); setGlyph(button, 'check', 'Copied');
+      this.copiedTimer = setTimeout(() => setGlyph(button, 'copy', 'Copy command'), 2000);
+    }
+    catch { clearTimeout(this.copiedTimer); setGlyph(button, 'copy', 'Copy command'); errorNode.textContent = 'Copy failed. Select the command and copy it manually.'; }
   }
 }
