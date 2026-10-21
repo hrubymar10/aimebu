@@ -1549,6 +1549,8 @@ code.profile-fact-value { font: 400 11px/1.4 var(--font-mono); background: var(-
 @media (min-width: 701px) { #settings-dialog { width: min(760px, 96vw); height: 100dvh; max-height: 100dvh; margin: auto; border: 0; border-left: 1px solid var(--border); border-right: 1px solid var(--border); border-radius: 0; box-shadow: 0 0 40px rgba(0, 0, 0, .5); } #settings-dialog nav { padding: 16px 8px; gap: 2px; overflow-y: auto; } #settings-dialog > header { padding: 14px 20px 12px; } #settings-dialog .settings-content:not([hidden]) { padding: 20px; } }
 #settings-dialog::backdrop { background: rgba(0, 0, 0, .5); }
 #settings-dialog .settings-nav-title { padding: 4px 8px 10px; color: var(--text-muted); font-size: 9.8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+/* A later nav group (AGENTS) gets the caption above and the same 14px gap that separates settings groups. */
+#settings-dialog .settings-nav-group-title { margin-top: 14px; }
 #settings-dialog nav button { border: 0; border-radius: 6px; font-size: 11.5px; transition: background .15s, color .15s; }
 #settings-dialog nav button:hover { background: transparent; color: var(--text-primary); outline: 1px dotted var(--accent); outline-offset: -1px; }
 #settings-dialog nav .settings-selected, #settings-dialog nav .settings-selected:hover { background: transparent; color: var(--text-primary); font-weight: 500; outline: 1px solid var(--accent); outline-offset: -1px; }
@@ -1592,6 +1594,8 @@ code.profile-fact-value { font: 400 11px/1.4 var(--font-mono); background: var(-
 #settings-dialog .settings-card :is(.scope-control-status, .scope-control-results) { margin: 0; }
 #settings-dialog .settings-card :is(p, .error):empty { display: none; }
 @media (max-width: 700px) { #settings-dialog .settings-nav-title { display: none; } #settings-dialog nav button { white-space: nowrap; } #settings-dialog > header { padding: 12px 14px 10px; } #settings-dialog .settings-content:not([hidden]) { padding: 12px; } }
+/* Phones drop the captions, but the AGENTS group keeps its gap: the caption stays as an empty spacer. */
+@media (max-width: 700px) { #settings-dialog .settings-nav-group-title:not([hidden]) { display: block; height: 0; padding: 0; overflow: hidden; visibility: hidden; } }
 
 /* .icon-btn geometry (its colours, hover and focus come from the shared button system): a 28px square with a 16px icon. */
 button.icon-btn, :is(header, .room-controls) button.icon-btn, #project-open.icon-btn, .chat header button.icon-btn { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; flex: 0 0 28px; width: 28px; height: 28px; min-width: 0; min-height: 0; margin: 0; padding: 0; gap: 0; font-size: 15px; line-height: 1; }

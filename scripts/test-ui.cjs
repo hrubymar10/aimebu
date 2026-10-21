@@ -147,6 +147,21 @@ async function main() {
       await appReady(page); await page.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected'); }
     // puppeteer has no check()/uncheck(); toggle through the element's own click so change handlers run.
     async function setChecked(page, selector, checked) { await page.$eval(selector, (el, want) => { if (el.checked !== want) el.click(); }, checked); }
+    // The Settings nav in two groups: SETTINGS (General ... Macros), then a gap and AGENTS (Machines, Harnesses). `items` lists the shown
+    // entries in DOM order (a caption as its upper-case text, a tab as its section); `gap` is the space between the last tab above the AGENTS
+    // caption and the first one below it, `tabGap` the space between two neighbouring tabs. The AGENTS caption is styled like the SETTINGS
+    // one, and neither caption can take focus.
+    const settingsNav = page => page.evaluate(() => {
+      const nav = document.querySelector('#settings-dialog nav'), [settings, agents] = nav.querySelectorAll('.settings-nav-title');
+      const items = [...nav.children].filter(el => !el.hidden).map(el => el.classList.contains('settings-nav-title') ? el.textContent.toUpperCase() : el.id.replace(/^settings-|-tab$/g, ''));
+      const style = el => { const s = getComputedStyle(el); return [s.color, s.fontSize, s.fontWeight, s.letterSpacing, s.textTransform, s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft, s.display]; };
+      const shownSibling = (el, step) => { do el = el[step]; while (el && el.hidden); return el; };
+      const above = shownSibling(agents, 'previousElementSibling'), below = shownSibling(agents, 'nextElementSibling');
+      const gap = agents.hidden || !above || !below ? null : Math.round(below.getBoundingClientRect().top - above.getBoundingClientRect().bottom);
+      const general = document.querySelector('#settings-general-tab'), usages = document.querySelector('#settings-usages-tab');
+      return { items, agentsHidden: agents.hidden, sameStyle: JSON.stringify(style(settings)) === JSON.stringify(style(agents)), gap, tabGap: Math.round(usages.getBoundingClientRect().top - general.getBoundingClientRect().bottom),
+        focusable: [settings, agents].some(el => el.tabIndex >= 0 || el.getAttribute('aria-hidden') !== 'true') };
+    });
     async function openSettings(page) {
       await domClick(page, '#settings-toggle');
       const state = await page.evaluate(() => ({
@@ -159,6 +174,11 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => { const nav = document.querySelector('#settings-dialog nav'), caption = nav.querySelector('.settings-nav-title'), selected = nav.querySelector('.settings-selected'), close = document.querySelector('#settings-close'), box = document.querySelector('#settings-dialog').getBoundingClientRect();
         return { caption: caption.textContent, captionFirst: nav.firstElementChild === caption, title: document.querySelector('#settings-title').textContent, selected: selected.textContent, closeGlyph: close.querySelector('.icon-mask-close') ? 'icon' : close.textContent, closeQuiet: getComputedStyle(close).borderTopWidth === '0px', navWidth: Math.round(nav.getBoundingClientRect().width), fullHeight: Math.abs(box.height - innerHeight) < 1, selectedStyle: [getComputedStyle(selected).backgroundColor, getComputedStyle(selected).outlineStyle, getComputedStyle(selected).outlineWidth] }; }),
         { caption: 'Settings', captionFirst: true, title: 'General', selected: 'General', closeGlyph: 'icon', closeQuiet: true, navWidth: 180, fullHeight: true, selectedStyle: ['rgba(0, 0, 0, 0)', 'solid', '1px'] }, 'the Settings dialog follows v1');
+      const nav = await settingsNav(page);
+      if (nav.items.includes('AGENTS')) { // the owner and admins: both groups, the AGENTS caption a group gap below Macros
+        assert.deepEqual(nav.items.filter(item => item !== 'usages' && item !== 'users'), ['SETTINGS', 'general', 'project', 'notifications', 'roles', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], 'Settings nav groups');
+        assert.ok(nav.sameStyle && !nav.focusable && nav.gap >= nav.tabGap + 14, `the AGENTS caption looks like SETTINGS, takes no focus and opens a gap: ${JSON.stringify(nav)}`);
+      }
     }
     // The owner's first sign-in on a new install shows the welcome before the app: the art, then the name, then Continue, in bands
     // from top to bottom. The rest of the smoke signs in many times; the welcome is gone for good once Continue is pressed.
@@ -2857,6 +2877,10 @@ async function main() {
       const tabs = await settingsPage.$$eval('#settings-dialog nav button', els => els.filter(el => !el.hidden && !['settings-import-tab', 'settings-machines-tab', 'settings-models-tab'].includes(el.id)).map(el => el.id));
       for (const [width, height] of [[1100, 720], [390, 844]]) {
         await settingsPage.setViewport({ width, height });
+        // The owner's full nav in both groups; on a phone the captions are gone but the gap before Machines stays.
+        const nav = await settingsNav(settingsPage);
+        assert.deepEqual(nav.items, ['SETTINGS', 'general', 'usages', 'project', 'notifications', 'roles', 'users', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], `Settings nav order at ${width}px`);
+        assert.ok(!nav.focusable && nav.gap >= nav.tabGap + 14, `the AGENTS group is set apart at ${width}px: ${JSON.stringify(nav)}`);
         for (const tab of tabs) {
           await domClick(settingsPage, `#${tab}`);
           const section = tab.replace(/-tab$/, '');
@@ -5716,6 +5740,9 @@ async function main() {
       { send: true, note: true, spawn: true, spawnTitle: 'Viewers cannot spawn agents', project: true, projectTitle: 'Only the owner or an admin can create projects' }, 'a viewer sees the disabled controls with the reason');
     await domClick(invitedPage, '#settings-toggle');
     assert.deepEqual(await invitedPage.evaluate(() => ['#settings-roles-tab', '#settings-machines-tab', '#settings-harnesses-tab', '#settings-prompts-tab', '#settings-macros-tab'].map(id => document.querySelector(id)?.hidden ?? 'missing')), [true, true, true, true, true], 'the owner-only settings tabs are gone for a viewer');
+    // With Machines and Harnesses both gone, so is the AGENTS caption and its gap: the viewer's nav is one SETTINGS group.
+    const viewerNav = await settingsNav(invitedPage);
+    assert.deepEqual([viewerNav.agentsHidden, viewerNav.gap, viewerNav.items.filter(item => item === item.toUpperCase())], [true, null, ['SETTINGS']], `a viewer's Settings nav has no AGENTS group: ${JSON.stringify(viewerNav)}`);
     await domClick(invitedPage, '#settings-close');
     const dmResponses = [];
     invitedPage.on('response', response => { if (/\/dms$/.test(response.url())) dmResponses.push(`${response.request().method()} ${response.status()}`); });

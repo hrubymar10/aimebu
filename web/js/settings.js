@@ -64,6 +64,11 @@ export class SettingsPanel {
     this.macroSettings.tab.onclick = () => this.selectSection('macros');
     this.harnessSettings = new HarnessSettings(this.dialog);
     this.harnessSettings.tab.onclick = () => this.selectSection('harnesses');
+    // Two nav groups: the account and instance settings under SETTINGS, then what runs the agents (Machines, Harnesses) under AGENTS.
+    // The tabs the other modules add are appended at the end of the nav, so the order is set here once they all exist.
+    this.agentsTitle = this.dialog.querySelector('#settings-agents-title');
+    this.agentsTitle.parentElement.append(this.generalTab, this.usagesTab, this.projectTab, this.notificationsTab, this.rolesTab, this.usersSettings.tab,
+      this.promptSettings.tab, this.macroSettings.tab, this.agentsTitle, this.machinesTab, this.harnessSettings.tab);
     this.muteToggle = document.querySelector('#notification-muted');
     this.permissionButton = document.querySelector('#notification-permission');
     this.permissionStatus = document.querySelector('#notification-status');
@@ -115,6 +120,7 @@ export class SettingsPanel {
     const settings = owner || admin;
     this.rolesTab.hidden = !settings; this.promptSettings.tab.hidden = !settings; this.macroSettings.tab.hidden = !settings; 
     this.machinesTab.hidden = !settings; this.harnessSettings.tab.hidden = !settings;
+    this.agentsTitle.hidden = this.machinesTab.hidden && this.harnessSettings.tab.hidden; // no AGENTS caption over an empty group
     // Provider usages and the account switcher are the owner's alone.
     this.usagesTab.hidden = !owner; document.querySelector('#usages-toggle').hidden = !owner;
   }
