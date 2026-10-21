@@ -131,8 +131,29 @@ func TestFakeDispatcherWakesHumanRoomAndTargetedAgent(t *testing.T) {
 	go func() { done <- client.RunOnce(runCtx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
-		t.Fatal("supervisor not ready")
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
+	_, cursor, err := f.db.EventBounds(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := f.dial(t, cursor, f.http.URL)
+	defer events.CloseNow()
+	for {
+		_, initial, err := events.Read(t.Context())
+		if err != nil {
+			t.Fatalf("event stream not ready: %v", err)
+		}
+		var frame struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(initial, &frame); err != nil {
+			t.Fatal(err)
+		}
+		if frame.Type == "ready" {
+			break
+		}
 	}
 	dispatcher := NewDispatcher(f.srv)
 	post := func(body string) string {
@@ -150,16 +171,17 @@ func TestFakeDispatcherWakesHumanRoomAndTargetedAgent(t *testing.T) {
 		return message.ID
 	}
 	waitDone := func(agentID, messageID string) {
-		deadline := time.Now().Add(4 * time.Second)
 		for {
 			note, err := f.db.NoteForAgentMessage(ctx, agentID, messageID)
 			if err == nil && note.State == "done" {
 				return
 			}
-			if time.Now().After(deadline) {
-				t.Fatalf("note did not finish: %+v %v", note, err)
+			_, _, readErr := events.Read(t.Context())
+			if readErr != nil {
+				t.Fatalf("waiting for note %s for agent %s: %+v %v; event stream: %v", messageID, agentID, note, err, readErr)
 			}
-			time.Sleep(10 * time.Millisecond)
+			// State transitions and their events commit together. Each event
+			// gives us a new point at which to check the note.
 		}
 	}
 	first := post("everyone please work")
@@ -224,9 +246,5 @@ func TestFakeDispatcherWakesHumanRoomAndTargetedAgent(t *testing.T) {
 	}
 	waitDone(agents[0].ID, stopped)
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("supervisor did not stop")
-	}
+	<-done
 }

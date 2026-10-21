@@ -134,11 +134,12 @@ func TestServerServesHTTPAndHTTPSWithSameAllowlist(t *testing.T) {
 			defer cancel()
 			done := make(chan int, 1)
 			var stdout, stderr bytes.Buffer
+			ready := watchServing(t)
 			go func() { done <- serverCommand(ctx, &stdout, &stderr) }()
-			client := tlsclient.NewHTTPClient(2 * time.Second)
+			client := tlsclient.NewHTTPClient(10 * time.Second)
 			origins := []string{fmt.Sprintf("http://127.0.0.1:%d", httpPort), fmt.Sprintf("https://127.0.0.1:%d", httpsPort)}
 			for _, origin := range origins {
-				waitServerStatus(t, origin+"/api/me", client, tc.status, done, cancel, &stderr)
+				waitServerStatus(t, origin+"/api/me", client, tc.status, ready, done, &stderr)
 			}
 			if tc.name == "allowed" {
 				// A self-signed server is accepted only under the explicit escape hatch.

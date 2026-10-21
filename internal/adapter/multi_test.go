@@ -71,19 +71,32 @@ func TestMultiCatalogIncludesCodex(t *testing.T) {
 	t.Fatal("Codex missing from catalog")
 }
 
-// slowTool stands in for an adapter whose Catalog runs a CLI to read its version.
+// slowTool stands in for an adapter whose Catalog runs a CLI to read its version. The first Catalog call
+// of every tool waits until all of them are inside it, so the tools only get past that point when they were
+// asked at the same time. The wait is bounded only so that a regression fails instead of hanging.
 type slowTool struct {
-	tool  string
-	delay time.Duration
-	calls *atomic.Int32
+	tool     string
+	calls    *atomic.Int32
+	entered  *atomic.Int32
+	all      chan struct{} // closed when every tool has entered Catalog
+	total    int32
+	timedOut *atomic.Bool
 }
 
 func (s *slowTool) Start(context.Context, adapter.TurnSpec) (adapter.Turn, error) {
 	return nil, errors.New("not used")
 }
 func (s *slowTool) Catalog() []adapter.CatalogEntry {
-	s.calls.Add(1)
-	time.Sleep(s.delay)
+	if s.calls.Add(1) <= s.total { // only the first round of asks takes part in the rendezvous
+		if s.entered.Add(1) == s.total {
+			close(s.all)
+		}
+		select {
+		case <-s.all:
+		case <-time.After(10 * time.Second):
+			s.timedOut.Store(true)
+		}
+	}
 	return []adapter.CatalogEntry{{Tool: s.tool, Version: "1.0", Environment: adapter.Environment{Variant: "native"}}}
 }
 func (s *slowTool) Capabilities(string, adapter.Environment) adapter.Capabilities {
@@ -93,15 +106,17 @@ func (s *slowTool) Capabilities(string, adapter.Environment) adapter.Capabilitie
 // The supervisor asks the catalog once per advertised entry, and each ask used to run every adapter's CLI again, one after the other:
 // seconds at start, and the first-run setup waited for them. Each adapter is now asked once, all at the same time.
 func TestMultiAsksEachAdapterOnceAndAtTheSameTime(t *testing.T) {
-	var calls atomic.Int32
-	adapters := make([]adapter.Adapter, 6)
+	const n = 6
+	var calls, entered atomic.Int32
+	var timedOut atomic.Bool
+	all := make(chan struct{})
+	adapters := make([]adapter.Adapter, n)
 	for i := range adapters {
-		adapters[i] = &slowTool{tool: fmt.Sprintf("tool%d", i), delay: 300 * time.Millisecond, calls: &calls}
+		adapters[i] = &slowTool{tool: fmt.Sprintf("tool%d", i), calls: &calls, entered: &entered, all: all, total: n, timedOut: &timedOut}
 	}
-	start := time.Now()
 	multi := adapter.NewMulti(adapters...)
-	if elapsed := time.Since(start); elapsed > 1500*time.Millisecond {
-		t.Fatalf("six adapters of 300ms took %v: they were asked one by one", elapsed)
+	if timedOut.Load() {
+		t.Fatal("the adapters were asked one by one: not all of them were inside Catalog at the same time")
 	}
 	for _, item := range multi.Catalog() {
 		multi.Capabilities(item.Version, item.Environment)

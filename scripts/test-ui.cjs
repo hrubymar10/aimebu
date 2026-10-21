@@ -2024,10 +2024,25 @@ async function main() {
     assert.equal(await first.$eval('#live-announcer', el => el.textContent), '', 're-opening a room announces nothing');
     const beforeOlder = await first.$$eval('.message', els => els.length);
     // Keyboard only: put the reader in the middle of the list, focus a message, press Home. That scrolls to the top and the older page loads.
+    // The re-opened room is still settling when this runs (late layout from the 100 rows, live arrivals of the burst above): a resize
+    // callback that lands between the key's scroll and the scroll event re-pins the list to the bottom and the older page is never
+    // asked for. So the list is first waited until its height and position are unchanged for several frames, both before and after
+    // the click, and the key is pressed on a quiet list. On a failure the page names its state and the scroll anchor's decision log.
+    const quiet = () => first.evaluate(() => new Promise(resolve => {
+      const list = document.querySelector('#messages'); let last = '', stable = 0;
+      const tick = () => { const now = [list.scrollTop, list.scrollHeight, document.querySelectorAll('.message').length].join(); stable = now === last ? stable + 1 : 0; last = now; if (stable >= 5) resolve(true); else requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }));
+    await first.evaluate(() => { window.__anchorLog = []; });
+    await quiet();
     await first.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = Math.floor((list.scrollHeight - list.clientHeight) / 2); });
+    await quiet();
     await first.click('#messages .message:nth-child(40) .message-body');
+    await quiet();
     await first.keyboard.press('Home');
-    await first.waitForFunction(count => document.querySelectorAll('.message').length > count, {}, beforeOlder);
+    await waitDump(first, 'keyboard Home', count => document.querySelectorAll('.message').length > count,
+      () => ({ messages: document.querySelectorAll('.message').length, scrollTop: document.querySelector('#messages').scrollTop, scrollHeight: document.querySelector('#messages').scrollHeight, hasOlder: document.querySelector('#messages').dataset.hasOlder, status: document.querySelector('.older-status')?.hidden, anchorLog: (window.__anchorLog || []).slice(-30) }), beforeOlder);
+    await first.evaluate(() => { delete window.__anchorLog; });
     await new Promise(resolve => setTimeout(resolve, 1500));
     assert.equal(await first.$eval('#live-announcer', el => el.textContent), '', 'loading older history must not announce');
     const markdown = '## Heading\n\n**bold** *italic* `inline`\n\n- one\n- two\n\n> quoted\n\n| Left | Right |\n| :--- | ---: |\n| cell | **value** |\n\n[Safe](https://example.com/path) [Bad](javascript:alert(1))\n\n```js\nconst n = 1;\n```';
@@ -3085,16 +3100,20 @@ async function main() {
         const { Health } = await import(`/js/health.js${version}`);
         const health = new Health({ setHealth() {}, rooms: new Map() }, { cards: new Map() }, () => {}, () => {});
         clearInterval(health.limitTimer);
+        // Count this instance's own reads: the signed-in page's Health also polls the same mock on its timer, so the mock's global
+        // counter can include a read that is not this instance's.
+        let reads = 0; const load = health.limitGuard.load.bind(health.limitGuard);
+        health.limitGuard.load = (...args) => { reads++; return load(...args); };
         for (let i = 0; i < 3; i++) await health.refresh();
-        return health.guardGone;
+        return { gone: health.guardGone, reads };
       });
-      const before = guardMock.calls;
-      assert.equal(await fresh(), false);
-      assert.equal(guardMock.calls - before, 1, 'three rebuilds of the health list read the limit guard once');
+      const rebuilt = await fresh();
+      assert.equal(rebuilt.gone, false);
+      assert.equal(rebuilt.reads, 1, 'three rebuilds of the health list read the limit guard once');
       guardMock.forbidden = true;
-      const beforeForbidden = guardMock.calls;
-      assert.equal(await fresh(), true, 'a 403 marks the guard as not for this person');
-      assert.equal(guardMock.calls - beforeForbidden, 1, 'a non-owner is asked once and then left alone');
+      const refused = await fresh();
+      assert.equal(refused.gone, true, 'a 403 marks the guard as not for this person');
+      assert.equal(refused.reads, 1, 'a non-owner is asked once and then left alone');
       guardMock.forbidden = false;
     }
     await settingsPage.$eval('.usage-provider[data-provider="mistral"] textarea', el => { el.value = 'Cookie: csrftoken=abc; ory_session_test=secret'; el.dispatchEvent(new Event('input', { bubbles: true })); });

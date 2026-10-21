@@ -29,8 +29,9 @@ func startupClaudeCreds(access, refresh string, expires time.Time) string {
 // it records which refresh token it was handed and writes the rotated credential
 // the real CLI would. Everything is fake and lives under t.TempDir().
 type startupCLI struct {
-	mu    sync.Mutex
-	spent map[string]int
+	mu        sync.Mutex
+	spent     map[string]int
+	refreshed chan<- struct{}
 }
 
 func (c *startupCLI) Refresh(_ context.Context, dir, _ string) error {
@@ -50,7 +51,16 @@ func (c *startupCLI) Refresh(_ context.Context, dir, _ string) error {
 	c.spent[string(m[1])]++
 	n := len(c.spent)
 	c.mu.Unlock()
-	return os.WriteFile(path, []byte(startupClaudeCreds(fmt.Sprintf("acc-r%d", n), fmt.Sprintf("ref-r%d", n), time.Now().Add(8*time.Hour))), 0o600)
+	if err := os.WriteFile(path, []byte(startupClaudeCreds(fmt.Sprintf("acc-r%d", n), fmt.Sprintf("ref-r%d", n), time.Now().Add(8*time.Hour))), 0o600); err != nil {
+		return err
+	}
+	if c.refreshed != nil {
+		select {
+		case c.refreshed <- struct{}{}:
+		default:
+		}
+	}
+	return nil
 }
 
 func (c *startupCLI) calls() (total int, twice []string) {
@@ -115,8 +125,9 @@ func TestStartTokenCopiesStartsTheRefresherExactlyOnce(t *testing.T) {
 	f, m, live := startupEnv(t, 20*time.Minute) // inside the 60 min claude lead: due
 	migrateClaude(t, m)
 
-	cli := &startupCLI{}
-	ctx, cancel := context.WithCancel(context.Background())
+	refreshed := make(chan struct{}, 1)
+	cli := &startupCLI{refreshed: refreshed}
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	tr := f.srv.StartTokenCopies(ctx, func(tr *usages.TargetRefresher) {
 		tr.SetExecutor("claude", cli)
@@ -130,18 +141,12 @@ func TestStartTokenCopiesStartsTheRefresherExactlyOnce(t *testing.T) {
 		t.Fatal("a second start must return the same refresher, not build another owner")
 	}
 
-	deadline := time.Now().Add(20 * time.Second)
-	for total, _ := cli.calls(); total == 0 && time.Now().Before(deadline); total, _ = cli.calls() {
-		time.Sleep(20 * time.Millisecond)
-	}
+	<-refreshed
 	done := make(chan struct{})
 	go func() { tr.Run(ctx); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("a second Run must return immediately")
-	}
-	time.Sleep(1500 * time.Millisecond)
+	<-done
+	cancel()
+	f.srv.WaitTokenCopies() // joins an in-flight spend and its store/fan-out commit
 	if total, twice := cli.calls(); total != 1 || len(twice) != 0 {
 		t.Fatalf("the due profile was handed to the CLI %d times (spent twice: %v), want exactly once", total, twice)
 	}

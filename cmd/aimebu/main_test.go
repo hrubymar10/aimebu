@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -22,18 +23,36 @@ import (
 	"github.com/hrubymar10/aimebu/internal/supervisor"
 )
 
-// waitServerListening waits for the actual listener, while reporting an early
-// server exit immediately. Race builds and password hashing can exceed the old
-// five-second startup window on a busy development machine.
-func waitServerListening(t *testing.T, url string, done <-chan int, cancel context.CancelFunc, stderr *bytes.Buffer) {
-	waitServerStatus(t, url, &http.Client{Timeout: time.Second}, http.StatusUnauthorized, done, cancel, stderr)
+// watchServing returns a channel that is closed when the server a test starts next is serving. The listeners are open long before that: a
+// start runs the migrations and hashes the owner's password, which on a loaded machine under the race detector takes longer than any
+// wait a test could choose, so the test waits for the server to say so instead of polling against a deadline. Call it before starting
+// the server; tests that start one set environment variables, so they do not run in parallel and one hook is enough.
+func watchServing(t *testing.T) <-chan struct{} {
+	t.Helper()
+	ready := make(chan struct{})
+	var once sync.Once
+	hook := func() { once.Do(func() { close(ready) }) }
+	servingHook.Store(&hook)
+	t.Cleanup(func() { servingHook.Store(nil) })
+	return ready
 }
 
-func waitServerStatus(t *testing.T, url string, client *http.Client, wantStatus int, done <-chan int, cancel context.CancelFunc, stderr *bytes.Buffer) {
+// waitServerListening waits for the server to be serving, reporting an early exit immediately, then for its first answer.
+func waitServerListening(t *testing.T, url string, ready <-chan struct{}, done <-chan int, stderr *bytes.Buffer) {
+	waitServerStatus(t, url, &http.Client{Timeout: 10 * time.Second}, http.StatusUnauthorized, ready, done, stderr)
+}
+
+func waitServerStatus(t *testing.T, url string, client *http.Client, wantStatus int, ready <-chan struct{}, done <-chan int, stderr *bytes.Buffer) {
 	t.Helper()
-	deadline := time.NewTimer(30 * time.Second)
-	defer deadline.Stop()
-	var lastErr error
+	select {
+	case <-ready:
+	case code := <-done:
+		t.Fatalf("server exited before serving: code=%d stderr=%q", code, stderr.String())
+	case <-t.Context().Done():
+		t.Fatalf("test ended before the server was serving: %v", t.Context().Err())
+	}
+	// Serving has begun, so an answer is a matter of scheduling; retry a refused or timed-out first try (a handshake that waited for
+	// the scheduler under load) until the server answers or exits. The only bound is the test's own.
 	for {
 		resp, err := client.Get(url)
 		if err == nil {
@@ -43,13 +62,11 @@ func waitServerStatus(t *testing.T, url string, client *http.Client, wantStatus 
 			}
 			return
 		}
-		lastErr = err
 		select {
 		case code := <-done:
-			t.Fatalf("server exited before listening: code=%d stderr=%q", code, stderr.String())
-		case <-deadline.C:
-			cancel()
-			t.Fatalf("server did not listen within 30 seconds: %v", lastErr)
+			t.Fatalf("server exited while answering its first request: code=%d stderr=%q err=%v", code, stderr.String(), err)
+		case <-t.Context().Done():
+			t.Fatalf("test ended before the server answered: %v (last error: %v)", t.Context().Err(), err)
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
@@ -224,9 +241,10 @@ func TestServerCommandServesHTTP(t *testing.T) {
 	defer cancel()
 	done := make(chan int, 1)
 	var stdout, stderr bytes.Buffer
+	ready := watchServing(t)
 	go func() { done <- serverCommand(ctx, &stdout, &stderr) }()
 	url := fmt.Sprintf("http://127.0.0.1:%d/api/me", port)
-	waitServerListening(t, url, done, cancel, &stderr)
+	waitServerListening(t, url, ready, done, &stderr)
 	if _, err := os.Stat(filepath.Join(root, "usages", "cache.json")); !os.IsNotExist(err) {
 		t.Fatalf("disabled usage reader touched HOME credentials: cache stat = %v", err)
 	}
@@ -283,8 +301,9 @@ func TestServerCanDisableEmbeddedSupervisor(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	var stdout, stderr bytes.Buffer
+	ready := watchServing(t)
 	go func() { done <- serverCommand(ctx, &stdout, &stderr) }()
-	waitServerListening(t, fmt.Sprintf("http://127.0.0.1:%d/api/me", port), done, cancel, &stderr)
+	waitServerListening(t, fmt.Sprintf("http://127.0.0.1:%d/api/me", port), ready, done, &stderr)
 	cancel()
 	if code := <-done; code != 0 {
 		t.Fatalf("serve code=%d stderr=%q", code, stderr.String())

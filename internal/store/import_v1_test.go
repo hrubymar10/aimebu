@@ -17,6 +17,18 @@ import (
 	"github.com/hrubymar10/aimebu/internal/sqliteutil"
 )
 
+// skipFsync turns off fsync on a fixture database that a test builds by hand. Each autocommit
+// statement otherwise waits for the disk, and on a slow or busy disk those waits (not any CPU work)
+// made the import tests take minutes. The database is thrown away with the test directory, and the
+// pragma is per connection, so the pool is limited to one.
+func skipFsync(t *testing.T, db *sql.DB) {
+	t.Helper()
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("PRAGMA synchronous=OFF"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func v1Fixture(t *testing.T) (string, V1ImportMap) {
 	t.Helper()
 	root := t.TempDir()
@@ -29,6 +41,7 @@ func v1Fixture(t *testing.T) (string, V1ImportMap) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	skipFsync(t, db)
 	for _, statement := range []string{
 		"CREATE TABLE schema_meta(version INTEGER)",
 		"INSERT INTO schema_meta(version) VALUES (1)",
@@ -1255,6 +1268,7 @@ func insertV1CustomRoles(t *testing.T, source string, rows map[string]string) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	skipFsync(t, db)
 	for key, data := range rows {
 		if _, err := db.Exec(`INSERT INTO role_custom(key,data) VALUES (?,?)`, key, data); err != nil {
 			t.Fatal(err)

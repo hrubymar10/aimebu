@@ -663,6 +663,9 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		remaining++
 		go func() { serveDone <- httpsServer.Serve(tlsListener) }()
 	}
+	if hook := servingHook.Load(); hook != nil {
+		(*hook)()
+	}
 	var serveErr error
 	select {
 	case <-ctx.Done():
@@ -899,6 +902,8 @@ var (
 	embeddedStartHook atomic.Pointer[func()]
 	listenerHook      atomic.Pointer[func(net.Listener)]
 	embeddedStarts    atomic.Int32
+	// servingHook runs once every listener is being served: startup (migrations, the owner's password hash) is over and a request is answered.
+	servingHook atomic.Pointer[func()]
 	// embeddedStartFinished runs when the background start has returned, whatever it did.
 	embeddedStartFinished atomic.Pointer[func()]
 )

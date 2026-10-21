@@ -43,7 +43,7 @@ func TestDockerSpawnRejectsUnreachableCheckoutBeforeWritingKey(t *testing.T) {
 }
 
 func TestSpawnWriteFailureKeepsMachineConnection(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	responses := make(chan []protocol.Frame, 1)
 	checkout := t.TempDir()
@@ -109,11 +109,7 @@ func TestSpawnWriteFailureKeepsMachineConnection(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("supervisor did not leave closed machine connection")
-	}
+	<-done
 }
 
 func TestSpawnConfigFailureIsAgentScopedAndStaleSpawnCannotReplaceKey(t *testing.T) {
