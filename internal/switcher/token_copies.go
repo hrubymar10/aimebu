@@ -451,10 +451,16 @@ func (m *Manager) switchTokenCopies(tool, name, activeProfile string) (active st
 	return name, true, nil
 }
 
-// validateLiveForCopies accepts an absent live file or a parseable token-only
+// validateLiveForCopies accepts an absent live file, a logged-out placeholder
+// (the same shapes eligibilityFor reports as absent) or a parseable token-only
 // one; a corrupt file refuses the switch (never overwrite what we cannot read).
+// A token-copy switch never captures the live file, so a placeholder is simply
+// replaced.
 func (m *Manager) validateLiveForCopies(tool, livePath string) error {
 	if _, err := os.Stat(livePath); os.IsNotExist(err) {
+		return nil
+	}
+	if emptyLiveLogin(livePath, tool) {
 		return nil
 	}
 	return validateLiveCred(tool, livePath)
