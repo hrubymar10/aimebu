@@ -115,6 +115,14 @@ export class ScrollAnchor {
   }
   restore() {
     const list = this.list;
+    // The list is not where it was last recorded, and nothing of ours moved it: a reader scrolled (a key, the wheel) and the scroll event
+    // has not been delivered yet, so a pinned list must not be dragged back to the bottom over that. Record where the reader is; the
+    // list stays pinned only if that is still near the bottom (a list that shrank is clamped there).
+    if (this.pinned && Math.abs(list.scrollTop - this.settledTop) >= 1) {
+      trace(list, 'restore-moved', () => ({ settled: this.settledTop }));
+      this.update(true);
+      if (!this.pinned) return;
+    }
     this.reconcile();
     trace(list, 'restore', () => ({ pinned: this.pinned, settled: this.settledTop, anchor: this.anchorEl?.isConnected ? [...list.querySelectorAll(this.itemSelector)].indexOf(this.anchorEl) : null, offset: Math.round(this.visibleOffset) }));
     if (this.pinned) list.scrollTop = list.scrollHeight;

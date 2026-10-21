@@ -2075,6 +2075,21 @@ async function main() {
     await waitDump(first, 'keyboard Home', count => document.querySelectorAll('.message').length > count,
       () => ({ messages: document.querySelectorAll('.message').length, scrollTop: document.querySelector('#messages').scrollTop, scrollHeight: document.querySelector('#messages').scrollHeight, hasOlder: document.querySelector('#messages').dataset.hasOlder, status: document.querySelector('.older-status')?.hidden, anchorLog: (window.__anchorLog || []).slice(-30) }), beforeOlder);
     await first.evaluate(() => { delete window.__anchorLog; });
+    // A reader's scroll that lands in a frame after its scroll-event step, followed by a resize callback in the same frame, must not be undone:
+    // the pinned list is not dragged back to the bottom (that swallowed the older-page request above). A detached list of its own, so no
+    // message of the room moves.
+    assert.deepEqual(await first.evaluate(async () => {
+      const { ScrollAnchor } = await import('/js/scroll-anchor.js');
+      const list = document.createElement('div'); list.style.cssText = 'position:fixed;left:0;top:0;width:200px;height:300px;overflow:auto;overflow-anchor:none;visibility:hidden';
+      for (let i = 0; i < 30; i++) { const item = document.createElement('article'); item.className = 'message'; item.style.height = '60px'; list.append(item); }
+      document.body.append(list);
+      const frames = count => new Promise(resolve => { const tick = () => --count <= 0 ? resolve() : requestAnimationFrame(tick); requestAnimationFrame(tick); });
+      const anchor = new ScrollAnchor(list); list.scrollTop = list.scrollHeight; anchor.update(); await frames(5);
+      await new Promise(resolve => requestAnimationFrame(() => { list.scrollTop = 0; list.children[10].style.height = '80px'; resolve(); }));
+      await frames(6); const stayed = list.scrollTop;
+      list.remove();
+      return { stayedAtTop: stayed === 0 };
+    }), { stayedAtTop: true }, 'a pinned list was dragged back to the bottom over a reader scroll that had not been delivered yet');
     await new Promise(resolve => setTimeout(resolve, 1500));
     assert.equal(await first.$eval('#live-announcer', el => el.textContent), '', 'loading older history must not announce');
     // Narrow columns: the viewer's own long message stays readable (it is not squeezed to leave room for the toolbar beside it), and the
