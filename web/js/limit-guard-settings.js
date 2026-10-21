@@ -116,7 +116,7 @@ export class LimitGuardSettings {
       const field = (text, input) => { const wrap = element('span', 'quota-entry-field'); const caption = element('span', 'quota-entry-caption', text); caption.setAttribute('aria-hidden', 'true'); wrap.append(caption, input); return wrap; };
       controls.append(field('Soft %', numberInput(`guard-${tool}-o${index}-soft`, limit.soft, `${name} soft threshold in percent`, value => { limit.soft = value; this.touch(tool); })),
         field('Hard %', numberInput(`guard-${tool}-o${index}-hard`, limit.hard, `${name} hard threshold in percent`, value => { limit.hard = value; this.touch(tool); })),
-        (() => { const remove = iconButton('close', `Remove the own thresholds of ${name}`, { danger: true }); remove.onclick = () => { delete draft.profiles[name]; this.change(tool); }; return remove; })());
+        (() => { const remove = iconButton('trash', `Remove the own thresholds of ${name}`, { danger: true }); remove.onclick = () => { delete draft.profiles[name]; this.change(tool); }; return remove; })());
       const missing = !stored.includes(name);
       return settingsRow({ label: `${name}${missing ? ' (not found)' : ''}`, desc: missing ? 'This profile no longer exists. Remove the override or restore the profile.' : `Thresholds for ${name} only.`, control: controls, id: `guard-${tool}-o${index}-row`, className: 'settings-row-stack' });
     });

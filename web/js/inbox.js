@@ -247,7 +247,7 @@ export class Inbox {
     }
     if (item.kind === 'delivery_failed') {
       if (item.can_decide) {
-        const dismiss = document.createElement('button'); dismiss.type = 'button'; dismiss.className = 'btn'; dismiss.textContent = 'Dismiss';
+        const dismiss = document.createElement('button'); dismiss.type = 'button'; dismiss.className = 'icon-btn'; setGlyph(dismiss, 'close', 'Dismiss');
         dismiss.onclick = () => this.dismiss(item); card.append(dismiss);
       }
       return card;

@@ -210,7 +210,7 @@ export class QuotaSettings {
       controls.append(field('Session %', session), field('Weekly %', weekly),
         button('', `Move ${entry.name} up`, () => move(-1), { disabled: index === 0, focus: key('up'), glyph: 'arrow-up' }),
         button('', `Move ${entry.name} down`, () => move(1), { disabled: index === entries.length - 1, focus: key('down'), glyph: 'arrow-down' }),
-        button('', `Remove ${entry.name} from the order`, () => { entries.splice(index, 1); this.change(tool, `${kind}-add`); }, { focus: key('remove'), glyph: 'close', danger: true }));
+        button('', `Remove ${entry.name} from the order`, () => { entries.splice(index, 1); this.change(tool, `${kind}-add`); }, { focus: key('remove'), glyph: 'trash', danger: true }));
       const missing = !stored.includes(entry.name);
       return settingsRow({ label: `${index + 1}. ${entry.name}${missing ? ' (not found)' : ''}`, desc: missing ? 'This profile no longer exists, so it is skipped. Remove it or restore the profile.' : `Switch away from ${entry.name} once its session or weekly usage reaches these limits.`, control: controls, id: `quota-${tool}-${kind}-${index}-row`, className: 'settings-row-stack' });
     });

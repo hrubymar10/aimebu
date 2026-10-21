@@ -84,7 +84,7 @@ export class MacroSettings {
       text.append(node('strong', `<${key.toUpperCase()}>`), node('p', this.macros[key])); row.append(text);
       if (this.owner) {
         const edit = node('button', 'Edit'); edit.type = 'button'; edit.className = 'btn'; edit.onclick = () => { this.editing = key; this.key.value = key; this.body.value = this.macros[key]; this.cancelButton.hidden = false; this.key.focus(); };
-        const remove = iconButton('close', `Delete <${key.toUpperCase()}>`, { danger: true }); remove.onclick = () => this.remove(key);
+        const remove = iconButton('trash', `Delete <${key.toUpperCase()}>`, { danger: true }); remove.onclick = () => this.remove(key);
         const actions = node('div'); actions.className = 'snippet-actions-row'; actions.append(edit, remove); row.append(actions);
       }
       this.list.append(row);

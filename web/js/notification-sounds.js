@@ -58,7 +58,7 @@ export class NotificationSounds {
     this.manageRow.hidden = !this.owner; this.file.disabled = !this.owner;
     this.list.replaceChildren(...this.sounds.filter(sound => sound.kind === 'user').map(sound => {
       const item = node('li'); item.dataset.soundId = sound.id;
-      const remove = iconButton('close', `Delete ${sound.name}`, { danger: true });
+      const remove = iconButton('trash', `Delete ${sound.name}`, { danger: true });
       remove.onclick = () => this.remove(sound);
       item.append(node('span', '', `${sound.name} · ${Math.max(1, Math.round(sound.size / 1024))} KB `), remove);
       return item;

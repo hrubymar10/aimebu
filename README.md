@@ -399,8 +399,12 @@ the composer stays at the bottom. The top bar is v1's height (53px, 49px up to 4
 wide) and every control in it is an icon button with a tooltip and an accessible name (Inbox,
 Health, Usages, Memory, Settings, Sign out, and Rooms on phones; the Agents button is an icon too; the members
 panel's Spawn button is the one exception, the green Send look with a glyph and the word "Spawn"); the Inbox and Health counts are a small pill in the button's corner, and the accessible name carries the
-number. Only the experiment pill is text. The same rule covers the close buttons, the sidebar's +, person and reopen buttons, the code-block and profile Copy buttons, the agent card's Message, Pause, Stop, Switch and Reactivate buttons, the scroll helpers (Back to latest and its thread twins, with a count pill), the Inbox card's "View in room" and the room menu's ⋯: icons with a tooltip and an accessible name, from Lucide (ISC) glyph files in `web/icons/`. Dialog and form actions, tabs and content-driven buttons (answer choices, reactions, #ids) stay text. The glyphs are files in `web/icons/` drawn through a CSS mask, so one is
-replaced by replacing its file. The bar also has a live connection indicator
+number. Only the experiment pill is text. The same rule covers the close buttons, the sidebar's +, person and reopen buttons, the code-block and profile Copy buttons, the agent card's Message, Pause, Stop, Switch and Reactivate buttons, the scroll helpers (Back to latest and its thread twins, with a count pill), the Inbox card's "View in room" and the room menu's ⋯: icons with a tooltip and an accessible name, from glyph files in `web/icons/` (sources are credited in `web/vendor/README.md`). Primary dialog and form actions, tabs and content-driven buttons (answer choices, reactions, #ids) stay text. The glyphs are files in `web/icons/` drawn through a CSS mask, so one is
+replaced by replacing its file. Secondary controls such as machine Refresh and
+Copy command, card Approve, memory activation and row Delete use the same
+tooltip and accessible-name rule; their icon and label follow the current
+action. The bar
+also has a live connection indicator
 at its far right. The Usages icon opens the usages column in place of the members column (instance
 owner only), laid out as in v1: a toolbar on the left (close, refresh, group by) and the title on
 the right; one card per provider with its icon, "Updated Ns ago" and each profile (the active

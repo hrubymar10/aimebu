@@ -1,5 +1,6 @@
 import { request, rights } from './api.js';
 import { confirmDialog } from './dialogs.js';
+import { setGlyph } from './icon-button.js';
 
 export class MachinesSettings {
   constructor() {
@@ -39,14 +40,14 @@ export class MachinesSettings {
       status.textContent = machine.revoked_at ? 'Revoked' : !machine.approved ? 'Pending approval' : machine.connected ? 'Connected' : 'Offline';
       const detail = document.createElement('small'); detail.textContent = [machine.supervisor_version && `Supervisor ${machine.supervisor_version}`, machine.last_seen && `Last seen ${new Date(machine.last_seen).toLocaleString()}`].filter(Boolean).join(' · ');
       const actions = document.createElement('div'); actions.className = 'machine-card-actions';
-      if (!machine.approved && !machine.revoked_at) actions.append(this.action('Approve', () => this.change(machine, 'approve')));
+      if (!machine.approved && !machine.revoked_at) actions.append(this.action('Approve', () => this.change(machine, 'approve'), 'check'));
       if (!machine.is_host && !machine.revoked_at) actions.append(this.action('Revoke', () => this.change(machine, 'revoke')));
-      if (!rights.owner) for (const button of actions.children) { button.disabled = true; button.title = `Only the owner can ${button.textContent.toLowerCase()} machines`; }
+      if (!rights.owner) for (const button of actions.children) { button.disabled = true; button.title = `Only the owner can ${button.getAttribute('aria-label').toLowerCase()} machines`; }
       card.append(title, status, detail, actions); this.list.append(card);
     }
     if (!machines.length) { const empty = document.createElement('p'); empty.className = 'settings-intro'; empty.textContent = 'No machines yet.'; this.list.append(empty); }
   }
-  action(label, callback) { const button = document.createElement('button'); button.type = 'button'; button.className = 'btn'; button.textContent = label; button.onclick = callback; return button; }
+  action(label, callback, glyph) { const button = document.createElement('button'); button.type = 'button'; button.className = glyph ? 'icon-btn' : 'btn'; if (glyph) setGlyph(button, glyph, label); else { button.textContent = label; button.setAttribute('aria-label', label); } button.onclick = callback; return button; }
   async change(machine, action) {
     if (action === 'revoke' && !await confirmDialog(`Revoke ${machine.name}? Its supervisor will disconnect and cannot reconnect with this key.`, { title: 'Revoke machine', confirm: 'Revoke', danger: true })) return;
     this.error.textContent = '';
@@ -55,7 +56,7 @@ export class MachinesSettings {
   }
   openPairing() {
     this.form.reset(); this.form.hidden = false; this.result.hidden = true;
-    document.querySelector('#machine-pair-copy').textContent = 'Copy command';
+    setGlyph(document.querySelector('#machine-pair-copy'), 'copy', 'Copy command');
     document.querySelector('#machine-pair-error').textContent = '';
     this.dialog.showModal(); this.form.elements.name.focus();
   }
@@ -73,7 +74,7 @@ export class MachinesSettings {
   }
   async copyCommand() {
     const errorNode = document.querySelector('#machine-pair-error'); errorNode.textContent = '';
-    try { await navigator.clipboard.writeText(this.command.textContent); document.querySelector('#machine-pair-copy').textContent = 'Copied'; }
+    try { await navigator.clipboard.writeText(this.command.textContent); setGlyph(document.querySelector('#machine-pair-copy'), 'check', 'Copied'); }
     catch { errorNode.textContent = 'Copy failed. Select the command and copy it manually.'; }
   }
 }

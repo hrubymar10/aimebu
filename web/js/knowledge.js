@@ -1,6 +1,7 @@
 import { request, currentUser } from './api.js';
 import { relativeTime } from './time.js';
 import { confirmDialog } from './dialogs.js';
+import { setGlyph } from './icon-button.js';
 
 
 const SCOPE_TITLES = { all: 'All visible memory', project: 'Project facts', user_profile: 'User profiles', agent_shared_notes: 'Shared agent notes' };
@@ -261,7 +262,7 @@ export class KnowledgePanel {
         save.type = 'button'; save.className = 'btn btn-primary'; save.textContent = 'Save';
         save.onclick = () => this.changeRecord(item, body.value, false);
         const remove = document.createElement('button');
-        remove.type = 'button'; remove.className = 'btn btn-danger'; remove.textContent = 'Delete';
+        remove.type = 'button'; remove.className = 'icon-btn btn-danger'; setGlyph(remove, 'trash', 'Delete');
         remove.onclick = async () => {
           if (await confirmDialog('Delete this record?', { title: 'Delete record', confirm: 'Delete', danger: true })) this.changeRecord(item, '', true);
         };
@@ -269,8 +270,8 @@ export class KnowledgePanel {
         if (GLOBAL_SCOPES.includes(scope)) {
           const activation = document.createElement('button');
           activation.type = 'button';
-          activation.className = 'btn';
-          activation.textContent = item.active ? 'Deactivate' : 'Activate for agents';
+          activation.className = 'icon-btn';
+          setGlyph(activation, item.active ? 'stop' : 'play', item.active ? 'Deactivate' : 'Activate for agents');
           activation.onclick = () => this.changeActivation(item, !item.active);
           actions.append(activation);
         }

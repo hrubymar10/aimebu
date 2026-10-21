@@ -40,6 +40,10 @@ Vendored frontend dependency:
 - Icons that came from an icon catalogue's downloads (SVG Repo) are MIT or another permissive licence, per the owner. No SVG file in
   the repository carries the catalogue's header comment, and `scripts/test-svg-headers.cjs` (in `make test-web`) fails if one does.
 
+- `web/icons/trash.svg` is the SVG Repo "trash can" icon, MIT per the owner. The paths are unchanged; it was adapted to the
+  repository's icon format (the download's XML declaration, header comment and fixed 800 px size removed, the black strokes changed
+  to `currentColor`), and it is drawn through a CSS mask like the other glyphs.
+
 - The close, plus, person-plus, eye, stop, pause, play, arrow-down, arrow-up, arrow-up-down (sort), external-link, switch (arrow-left-right), copy, check,
   reopen (rotate-ccw), more (ellipsis), chevron-right and message (message-square) glyphs in `web/icons/` are Lucide icons
   (ISC licence, Copyright (c) 2026 Lucide Icons and Contributors; the licence text is `web/icons/LICENSE-lucide.txt`), release

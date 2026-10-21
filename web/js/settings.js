@@ -303,7 +303,7 @@ export class SettingsPanel {
     card.append(header, element('p', 'usage-profile-email'), element('div', 'usage-windows'), element('p', 'usage-profile-credits'), element('p', 'usage-profile-status'));
     const action = element('button', 'btn usage-switch', 'Switch');
     action.type = 'button';
-    const remove = iconButton('close', 'Delete profile', { danger: true, className: 'usage-remove' });
+    const remove = iconButton('trash', 'Delete profile', { danger: true, className: 'usage-remove' });
     const rename = element('button', 'btn usage-rename', 'Rename'); rename.type = 'button';
     card.append(action, rename, remove);
     return card;

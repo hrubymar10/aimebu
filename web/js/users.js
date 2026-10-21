@@ -91,7 +91,7 @@ export class UsersSettings {
         try { await request(`/api/projects/${projectID}/members/${user.id}`, { method: 'PUT', body: { role: role.value } }); await this.load(); }
         catch (error) { role.value = user.role; this.error.textContent = error.message; }
       };
-      const remove = iconButton('close', `Remove ${user.login} from this project`, { danger: true });
+      const remove = iconButton('trash', `Remove ${user.login} from this project`, { danger: true });
       remove.onclick = async () => {
         if (!await confirmDialog(`Remove ${user.login} from this project?`, { title: 'Remove member', confirm: 'Remove', danger: true })) return;
         try { await request(`/api/projects/${projectID}/members/${user.id}`, { method: 'DELETE' }); await this.load(); }

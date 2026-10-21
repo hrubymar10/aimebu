@@ -267,7 +267,7 @@ export class AgentsPanel {
     const contextValue = document.createElement('span'); contextValue.className = 'agent-context-value';
     context.append(contextLabel, contextTrack, contextValue); card.append(context);
     const live = document.createElement('span'); live.className = 'agent-live-chip'; live.hidden = true; card.append(live);
-    const recovery = document.createElement('button'); recovery.type = 'button'; recovery.className = 'row-btn agent-recovery'; recovery.textContent = 'Recovery needed →'; recovery.onclick = () => this.onRecovery(agent); card.append(recovery);
+    const recovery = document.createElement('button'); recovery.type = 'button'; recovery.className = 'icon-btn agent-recovery'; setGlyph(recovery, 'health', 'Recovery needed'); recovery.onclick = () => this.onRecovery(agent); card.append(recovery);
     const facts = document.createElement('div'); facts.className = 'agent-profile-facts'; card.append(facts);
     const actions = document.createElement('div'); actions.className = 'agent-actions';
     const privateButton = iconButton('agent-private', `Message ${agent.name || agent.slug || 'agent'} privately`, 'dm'); privateButton.onclick = () => this.onPrivate?.(agent); quick.prepend(privateButton);

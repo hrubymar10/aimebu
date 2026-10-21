@@ -1696,6 +1696,7 @@ async function main() {
     await first.locator('#knowledge-add textarea').fill('Project fact from smoke');
     await first.click('#knowledge-add button');
     await first.waitForFunction(() => document.querySelector('#knowledge-records textarea')?.value === 'Project fact from smoke');
+    assert.deepEqual(await first.$eval('#knowledge-records .knowledge-actions button.btn-danger', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-trash'), el.textContent]), ['Delete', 'Delete', true, '']);
     // v1's memory cards use small record text.
     assert.deepEqual(await first.evaluate(() => { const card = document.querySelector('#knowledge-records .knowledge-record'); return { textPx: parseFloat(getComputedStyle(card.querySelector('textarea')).fontSize), metaPx: parseFloat(getComputedStyle(card.querySelector('small')).fontSize) }; }), { textPx: 12, metaPx: 11 }, 'knowledge cards use v1\'s small record text');
     await first.select('#knowledge-scope', 'agent_shared_notes');
@@ -1706,17 +1707,17 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#knowledge-records textarea')?.value === 'Shared note from smoke');
     await first.waitForFunction(() => {
       const button = document.querySelector('#knowledge-records .knowledge-actions button:last-child');
-      if (button?.textContent !== 'Deactivate') return false;
+      if (button?.getAttribute('aria-label') !== 'Deactivate' || button.title !== 'Deactivate' || !button.querySelector('.icon-mask-stop')) return false;
       button.click(); // Find and click in one browser task so refresh cannot detach it.
       return true;
     });
     await waitDump(first, 'knowledge Deactivate', () => document.querySelector('#knowledge-records article small')?.textContent.includes('Inactive'), () => ({
       error: document.querySelector('#knowledge-error')?.textContent, status: document.querySelector('#knowledge-status')?.textContent,
-      records: [...document.querySelectorAll('#knowledge-records article')].map(article => ({ meta: article.querySelector('small')?.textContent, buttons: [...article.querySelectorAll('.knowledge-actions button')].map(button => button.textContent) })),
+      records: [...document.querySelectorAll('#knowledge-records article')].map(article => ({ meta: article.querySelector('small')?.textContent, buttons: [...article.querySelectorAll('.knowledge-actions button')].map(button => button.getAttribute('aria-label') || button.textContent) })),
     }));
     await first.waitForFunction(() => {
       const button = document.querySelector('#knowledge-records .knowledge-actions button:last-child');
-      if (button?.textContent !== 'Activate for agents') return false;
+      if (button?.getAttribute('aria-label') !== 'Activate for agents' || button.title !== 'Activate for agents' || !button.querySelector('.icon-mask-play')) return false;
       button.click();
       return true;
     });
@@ -3886,6 +3887,7 @@ async function main() {
     await agentPage.click('#edge-agents-expand');
     assert.notEqual(await agentPage.$eval('#agents-panel', el => getComputedStyle(el).display), 'none');
     await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-recovery', el => el.scrollIntoView({ block: 'center' }));
+    assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-recovery', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-health'), el.textContent]), ['Recovery needed', 'Recovery needed', true, '']);
     await agentPage.waitForFunction(() => {
       const button = document.querySelector('[data-agent-id="agt_mock_reviewer"] .agent-recovery');
       if (!button || button.hidden || getComputedStyle(button).visibility !== 'visible') return false;
@@ -4923,6 +4925,7 @@ async function main() {
       assert.equal(sec.resolvedShown && sec.readonly && sec.resolved.includes('ordered by severity') && sec.resolved.includes('Additional focus:'), true, 'the effective instructions show the parent text and the focus');
       assert.equal(sec.body.startsWith('Additional focus:') && !sec.body.includes('ordered by severity'), true, 'the specialist holds only its own focus');
       assert.deepEqual([sec.reset, sec.remove], [true, false], 'a built-in can be reset and not deleted');
+      assert.deepEqual(await first.$eval('#role-reset', el => [el.getAttribute('aria-label'), el.title.startsWith('Reset to default'), !!el.querySelector('.icon-mask-refresh'), el.textContent]), ['Reset to default', true, true, '']);
       // Edit it, then reset it to what shipped.
       await first.locator('#role-editor [name=body]').fill('my own words'); await saveRole();
       // The editor shows what was typed at once; the saved role (with its new revision and effective text) is back when the effective text has it.
@@ -5057,6 +5060,7 @@ async function main() {
       await pick([['huge.bin', BIG]]);
       await first.waitForFunction(() => !document.querySelector('#composer-notice').hidden);
       assert.deepEqual(await notice(), { hidden: false, text: 'huge.bin is too big (11.1 MB). Use files up to 10 MB.' }, 'the notice names the file and its size');
+      assert.deepEqual(await first.$eval('#composer-notice .composer-notice-close', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-close'), el.textContent]), ['Dismiss message', 'Dismiss message', true, '']);
       assert.deepEqual(await first.evaluate(async limit => { const { megabytes } = await import('/js/notice.js' + new URL(document.querySelector('script[type=module]').src).search); return [megabytes(limit + 1), megabytes(limit), megabytes(1)]; }, 10 * 1024 * 1024), ['10.1 MB', '10.0 MB', '0.1 MB'], 'a file just over the limit never reads as the limit');
       // Dismiss.
       await first.evaluate(() => document.querySelector('#composer-notice .composer-notice-close').click());
@@ -5146,8 +5150,24 @@ async function main() {
     await first.locator('#machine-pair-form [name=name]').fill('Remote UI smoke');
     await domClick(first, '#machine-pair-form button[type=submit]');
     await first.waitForFunction(() => !document.querySelector('#machine-pair-result').hidden);
+    assert.deepEqual(await first.$eval('#machine-pair-copy', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-copy'), el.textContent]), ['Copy command', 'Copy command', true, '']);
+    assert.deepEqual(await first.$eval('#machine-refresh', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-refresh'), el.textContent]), ['Refresh', 'Refresh', true, '']);
     const pairCommand = await first.$eval('#machine-pair-command', el => el.textContent);
     assert.ok(pairCommand.includes('aimebu supervisor --pair'));
+    const copiedPair = await first.evaluate(async () => {
+      const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+      let copied = '';
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { copied = text; } } });
+      try {
+        document.querySelector('#machine-pair-copy').click();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const button = document.querySelector('#machine-pair-copy');
+        return { copied, label: button.getAttribute('aria-label'), title: button.title, check: !!button.querySelector('.icon-mask-check'), text: button.textContent };
+      } finally {
+        if (original) Object.defineProperty(navigator, 'clipboard', original); else delete navigator.clipboard;
+      }
+    });
+    assert.deepEqual(copiedPair, { copied: pairCommand, label: 'Copied', title: 'Copied', check: true, text: '' });
     const token = pairCommand.match(/'(amp_[^']+)'$/)?.[1]; assert.ok(token);
     const paired = await first.evaluate(async token => {
       const response = await fetch('/api/machine-pairings/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
@@ -5158,7 +5178,7 @@ async function main() {
       const card = document.querySelector(`[data-machine-id="${id}"]`);
       if (card?.querySelector('.machine-status')?.textContent !== 'Pending approval') return false;
       const approve = card.querySelector('.machine-card-actions button:first-child');
-      if (approve?.textContent !== 'Approve') return false;
+      if (approve?.getAttribute('aria-label') !== 'Approve' || approve.title !== 'Approve' || !approve.querySelector('.icon-mask-check')) return false;
       approve.click(); // Find and click in one browser task so refresh cannot detach it.
       return true;
     }, {}, paired.machine_id);
@@ -5680,8 +5700,11 @@ async function main() {
     await domClick(first, '#room-schedules .schedule-form button');
     await first.waitForFunction(() => document.querySelector('#room-schedules .schedule-row')?.textContent.includes('UI scheduled note'));
     assert.equal(await first.$eval('#room-schedules .schedule-row', el => el.textContent.includes('next') && el.textContent.includes(document.querySelector('#room-schedules [name=timezone]').value)), true);
+    assert.deepEqual(await first.$eval('#room-schedules [data-action=toggle]', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-pause'), el.textContent]), ['Pause', 'Pause', true, '']);
+    assert.deepEqual(await first.$eval('#room-schedules [data-action=delete]', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-trash'), el.textContent]), ['Delete', 'Delete', true, '']);
     await domClick(first, '#room-schedules [data-action=toggle]');
     await first.waitForFunction(() => document.querySelector('#room-schedules .schedule-row')?.textContent.includes('paused'));
+    assert.deepEqual(await first.$eval('#room-schedules [data-action=toggle]', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-play'), el.textContent]), ['Resume', 'Resume', true, '']);
     await domClick(first, '#room-info-close');
     await openSettings(first);
     await domClick(first, '#settings-project-tab');
@@ -6287,7 +6310,7 @@ async function main() {
       ] };
       panel.render();
       const record = panel.records.querySelector('article');
-      const buttons = [...record.querySelectorAll('button')].map(button => button.textContent);
+      const buttons = [...record.querySelectorAll('button')].map(button => button.getAttribute('aria-label') || button.textContent);
       panel.data.can_edit = false;
       panel.data.records[0]._edit = false;
       panel.render();
