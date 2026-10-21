@@ -1582,13 +1582,13 @@ async function main() {
     await domClick(first, '#settings-close');
     await first.locator('#composer textarea').fill('/');
     await first.waitForFunction(() => !document.querySelector('.quick-commands')?.hidden);
-    assert.deepEqual(await first.$$eval('.quick-command strong', els => els.map(el => el.textContent)), ['/archive', '/spawn']);
+    assert.deepEqual(await first.$$eval('.quick-command strong', els => els.map(el => el.textContent)), ['/spawn'], 'home room has no archive command');
     await first.locator('#composer textarea').fill('');
-    await first.locator('#composer textarea').fill('/ar');
-    await first.waitForFunction(() => document.querySelector('.quick-commands')?.textContent.includes('/archive'));
+    await first.locator('#composer textarea').fill('/sp');
+    await first.waitForFunction(() => document.querySelector('.quick-commands')?.textContent.includes('/spawn'));
     await first.keyboard.press('Escape');
     await first.waitForFunction(() => document.querySelector('.quick-commands')?.hidden);
-    assert.equal(await first.$eval('#composer textarea', el => el.value), '/ar', 'Escape keeps the typed command');
+    assert.equal(await first.$eval('#composer textarea', el => el.value), '/sp', 'Escape keeps the typed command');
     await first.locator('#composer textarea').fill('');
     // The macro picker (typing <) looks like v1's autocomplete: one outlined list over the composer, one line per macro.
     {
@@ -5463,18 +5463,42 @@ async function main() {
     });
     assert.equal(alignment.own, true, 'the archive room has a message of the viewer');
     assert.deepEqual(alignment, { own: true, ownRight: true, ownNarrow: true, ownHeaderRight: true, ownBorder: true, other: alignment.other === null ? null : true }, `own messages right, others left: ${JSON.stringify(alignment)}`);
+    const openCommands = await first.evaluate(() => {
+      const draft = document.querySelector('#composer textarea');
+      draft.value = '/'; draft.dispatchEvent(new Event('input', { bubbles: true }));
+      const offered = [...document.querySelectorAll('#composer .quick-commands:not([hidden]) [role="option"]')].map(item => item.querySelector('strong')?.textContent);
+      draft.value = ''; draft.dispatchEvent(new Event('input', { bubbles: true }));
+      return offered;
+    });
+    assert.equal(openCommands.includes('/archive'), true, 'slash picker offers archive in an open task room');
     await domClick(first, '#room-info');
     await first.waitForSelector('#room-info-dialog[open]');
     assert.equal(await first.$eval('#room-lifecycle', el => el.textContent), 'Archive room');
     assert.deepEqual(await first.$eval('#room-remove', el => [el.hidden, el.disabled, el.classList.contains('btn-danger')]), [false, true, true], 'Remove is shown, destructive and disabled until the room is archived');
-    await domClick(first, '#room-lifecycle');
+    await domClick(first, '#room-info-close');
+    const archiveConfirmations = [];
+    await answerDialogs(first, text => { archiveConfirmations.push(text); return { accept: true }; });
+    await first.locator('#composer textarea').fill('/archive');
+    await first.waitForFunction(() => document.querySelector('#composer .quick-commands:not([hidden]) [role="option"] strong')?.textContent === '/archive');
+    await first.keyboard.press('Enter');
     await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-row`)?.classList.contains('archived') && document.querySelector('#composer textarea').disabled, {}, archiveRoomID);
+    assert.equal(archiveConfirmations.some(text => text.includes('Archive room |')), true, 'slash archive kept the confirmation');
+    await answerDialogs(first, text => (text.includes('New task room under') ? { accept: true, values: { title: 'Nested task' } } : text.includes('Go to message') ? { accept: true, values: { value: jumpSeq } } : text.includes('Base branch or ref') ? { accept: true, values: { value: '' } } : { accept: true, values: { title: 'Nested task', value: 'Nested task' } }));
     assert.equal(await first.$eval(`[data-room-id="${archiveChildID}"] > .room-row`, el => el.classList.contains('archived')), true, 'cascade did not archive the child room');
     await first.waitForFunction(() => document.querySelector('#room-members')?.textContent.includes('Archived'));
     assert.deepEqual(await first.$eval('#room-members', el => { const status = el.querySelector('.room-header-status'), css = getComputedStyle(status); return [status.textContent, css.fontSize, css.margin, Math.round(el.getBoundingClientRect().height), /^\d+ members? · Archived$/.test(el.title)]; }), ['Archived', '9.1px', '0px', 22, true], 'the archived member chip stays compact');
     // The app closes the settings dialog once the archive has been applied (after the room list refresh), which can come after the
     // row and the member line already look archived: reopen only once it has closed, or the wait below sees the old dialog.
     await first.waitForFunction(() => !document.querySelector('#room-info-dialog').open);
+    const closedCommands = await first.evaluate(() => {
+      const draft = document.querySelector('#composer textarea');
+      draft.value = '/archive'; draft.dispatchEvent(new Event('input', { bubbles: true }));
+      const offered = [...document.querySelectorAll('#composer .quick-commands:not([hidden]) [role="option"]')].map(item => item.querySelector('strong')?.textContent);
+      draft.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      return offered;
+    });
+    assert.equal(closedCommands.includes('/archive'), false, 'slash picker hides archive in a closed room');
+    assert.equal(await first.$eval('#room-members', el => el.textContent.includes('Archived')), true, 'slash command did not reopen a closed room');
     await domClick(first, '#room-info');
     await first.waitForSelector('#room-info-dialog[open]');
     assert.equal(await first.$eval('#room-lifecycle', el => el.textContent), 'Reopen room');

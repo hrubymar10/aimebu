@@ -10,10 +10,12 @@ export const BUILTIN_COMMANDS = [
 ];
 
 export class QuickCommands {
-  constructor(draft, onArchive, onSpawn) {
+  constructor(draft, onArchive, onSpawn, canArchive, canSpawn) {
     this.draft = draft;
     this.onArchive = onArchive;
     this.onSpawn = onSpawn;
+    this.canArchive = canArchive;
+    this.canSpawn = canSpawn;
     this.items = [];
     this.list = new Picker(draft, '', index => this.pick(index));
     this.popup = this.list.popup;
@@ -35,7 +37,8 @@ export class QuickCommands {
   refresh() {
     const query = this.match();
     if (query === null) { this.close(); return; }
-    this.items = BUILTIN_COMMANDS.filter(command => command.name.slice(1).startsWith(query))
+    this.items = BUILTIN_COMMANDS.filter(command => command.name.slice(1).startsWith(query)
+      && (command.builtin === 'archive' ? this.canArchive?.() : this.canSpawn?.()))
       .map(command => ({ name: command.name.slice(1), builtin: command.builtin, label: command.label }));
     if (!this.items.length) { this.close(); return; }
     this.list.show(this.items.map(item => ({ key: `/${item.name}`, preview: item.label, className: 'quick-command-builtin' })));
@@ -46,6 +49,8 @@ export class QuickCommands {
   pick(index) {
     const item = this.items[index];
     if (!item) return;
+    // The room or permissions may have changed while the popup was open.
+    if (item.builtin === 'archive' && !this.canArchive?.() || item.builtin === 'spawn' && !this.canSpawn?.()) { this.close(); return; }
     this.close();
     this.draft.value = '';
     this.draft.dispatchEvent(new Event('input', { bubbles: true }));

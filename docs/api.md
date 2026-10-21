@@ -211,9 +211,11 @@ their own focus; the dispatcher sends the resolved body, so their agents receive
 unedited ones and leaves an edited specialist as its owner made it. An unedited specialist follows the **current** `reviewer`, so editing `reviewer` changes what every unedited specialist's agents receive (the same as v1, where specialists were built on the reviewer text).
 
 The web composer opens a quick-command popup when the draft starts
-with `/`: it lists the built-ins `/archive` (archives the open room through
-`POST /api/rooms/{room}/close`, with confirmation) and `/spawn` (opens the
-Spawn dialog), navigable with ↑/↓/Enter/Esc.
+with `/`: it lists `/archive` only in an open task room where the user can
+archive, and `/spawn` only when the Spawn button is available. `/archive`
+confirms and explicitly archives through `POST /api/rooms/{room}/close`;
+it never reopens a closed room. `/spawn` opens the Spawn dialog. The list
+is navigable with ↑/↓/Enter/Esc.
 
 Macros are a separate shared resource. A fresh install is seeded once with
 the shipped defaults `do-cr` and `example_macro`; the seed is write-once per

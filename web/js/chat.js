@@ -131,7 +131,8 @@ export class Chat {
     document.querySelector('#room-export').onclick = () => this.exportDialog.showModal();
     document.querySelector('#room-export-close').onclick = () => this.exportDialog.close();
     for (const button of this.exportDialog.querySelectorAll('[data-format]')) button.onclick = () => this.exportRoom(button.dataset.format);
-    this.quickCommands = new QuickCommands(this.formatting.input, () => this.changeRoomLifecycle(), () => this.spawnCallback?.());
+    this.quickCommands = new QuickCommands(this.formatting.input, () => this.archiveRoom(), () => this.spawnCallback?.(),
+      () => this.canArchiveRoom(), () => this.canSpawnAgent());
     this.macroAutocomplete = new MacroAutocomplete(this.formatting.input);
     this.notice = new Notice(this.form, 'composer-notice'); this.threadNotice = new Notice(this.threadForm, 'thread-notice'); this.mentionAutocomplete = new MentionAutocomplete(this.formatting.input); this.threadMentionAutocomplete = new MentionAutocomplete(this.threadFormatting.input); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
     this.emojiAutocomplete = new EmojiAutocomplete(this.formatting.input); this.threadEmojiAutocomplete = new EmojiAutocomplete(this.threadFormatting.input);
@@ -643,13 +644,23 @@ export class Chat {
       await this.loadWorktree();
     } catch (error) { if (this.current(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
   }
-  async changeRoomLifecycle() {
+  canArchiveRoom() {
+    const room = this.room, role = room && this.projectRole?.(room.project_id);
+    return !!room && room.kind === 'task' && (!room.lifecycle || room.lifecycle === 'open') && (role === 'owner' || role === 'operator');
+  }
+  canSpawnAgent() { return !!this.room && !document.querySelector('#spawn-open').disabled; }
+  archiveRoom() {
+    if (!this.canArchiveRoom()) return;
+    return this.changeRoomLifecycle('archive');
+  }
+  async changeRoomLifecycle(intent = 'toggle') {
     const room = this.room;
+    if (intent === 'archive' && !this.canArchiveRoom()) return;
     if (!room || room.kind === 'home' || room.lifecycle === 'closing') return;
     const session = this.sessionGeneration;
     const action = document.querySelector('#room-lifecycle');
     const errorNode = document.querySelector('#room-info-error');
-    const closing = room.lifecycle !== 'closed';
+    const closing = intent === 'archive' || room.lifecycle !== 'closed';
     if (closing && !await confirmDialog(`Archive ${room.title}? Agents homed here stop, and open questions are withdrawn. Its history remains available.`, { title: 'Archive room', confirm: 'Archive' })) return;
     action.disabled = true; errorNode.textContent = '';
     const path = `/api/rooms/${room.id}/${closing ? 'close' : 'reopen'}`;
