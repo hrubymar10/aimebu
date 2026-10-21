@@ -321,7 +321,8 @@ and the related events, with previous and next to walk the room's messages and t
 text and Copy link actions). The HTML revalidates on refresh and its CSS and JS
 modules use a content version, so a deploy reaches a normal browser refresh.
 The sidebar header's + button opens the New project dialog. The room header
-shows member count and
+shows the room kind glyph and a member-count chip, with the full count in its
+tooltip, and
 the room's icon buttons (task notes (v1's brain; in task rooms, and in the home room it
 opens the project's memory instead), Room settings, go to
 message, raw Markdown, export). Every room has the same Room settings dialog with
@@ -479,7 +480,7 @@ with the risk of repeated actions explained beside it. Open
 `/?mock_recovery=1` to preview recovery and budget decisions. The
 right-hand room-members column and Spawn dialog can run the listed fake
 adapter through the local supervisor. The column lists the room's people and
-agents one per line (presence dot, role emoji, the full name, the state and how long it has lasted as small
+agents one per line (state-coloured presence dot, role emoji, the full name, the state and how long it has lasted as small
 text, as in v1: `idle 0:44`, `working 1:12`, `paused`, `stopped`); DM, Pause and Stop are icon buttons that appear on hover or focus (always
 shown on touch screens); clicking a row opens that agent's Agent profile in place
 of the list, as in v1 (status, presence, last seen, runtime, role, native session,

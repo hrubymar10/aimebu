@@ -37,7 +37,7 @@ function setLatest(button, label, count = 0) {
 export class Chat {
   constructor(onRoomMutation) {
     this.onRoomMutation = onRoomMutation;
-    this.list = document.querySelector('#messages'); this.title = document.querySelector('#room-title'); this.members = document.querySelector('#room-members'); this.form = document.querySelector('#composer'); this.draft = this.form.elements.body; this.formatting = new ComposerFormatting(this.draft, { onFiles: files => this.addFiles(files) });
+    this.list = document.querySelector('#messages'); this.title = document.querySelector('#room-title'); this.roomIcon = document.querySelector('#room-icon'); this.members = document.querySelector('#room-members'); this.form = document.querySelector('#composer'); this.draft = this.form.elements.body; this.formatting = new ComposerFormatting(this.draft, { onFiles: files => this.addFiles(files) });
     this.pageSize = 100;
     this.olderPageSize = 50;
     this.announcer = new LiveAnnouncer(document.querySelector('#live-announcer'));
@@ -187,7 +187,7 @@ export class Chat {
     this.openGeneration++; this.sessionGeneration++; if (this.recall) this.recall.index = null; this.announcer.reset();
     for (const controller of this.uploadRequests) controller.abort();
     this.uploadRequests.clear();
-    this.room = null; this.syncEmpty(); this.title.textContent = 'Choose a room'; this.members.textContent = '';
+    this.room = null; this.syncEmpty(); this.title.textContent = 'Choose a room'; this.roomIcon.hidden = true; this.members.hidden = true;
     this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.answeredMessages = new Set(); this.repliedTo = new Set(); this.nodes.clear(); this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear(); this.agents.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.initialLoading = false; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0; this.loadingNewer = false; this.missedIDs = new Set(); this.updateLatestLabel(); this.answerItems = new Map(); this.closeBlocked?.clear(); this.worktree = null;
     this.setReply(null); this.closeThread(); this.pendingAttachments = []; this.pendingUploads = 0; this.pendingNode.replaceChildren(); this.draft.value = ''; this.resizeDraft();
     this.infoDialog.close(); this.exportDialog.close(); this.lightbox.close();
@@ -434,8 +434,17 @@ export class Chat {
     this.refreshMentions();
     this.loadMentionLogins(room);
     const count = room.member_count || 0;
-    const status = room.lifecycle === 'closing' ? ' · Closing…' : room.lifecycle === 'closed' ? ' · Archived' : '';
-    this.members.textContent = `${count} ${count === 1 ? 'member' : 'members'}${status}`;
+    const status = room.lifecycle === 'closing' ? 'Closing…' : room.lifecycle === 'closed' ? 'Archived' : '';
+    this.roomIcon.textContent = room.kind === 'home' ? '⌂' : room.kind === 'dm' ? '@' : '#';
+    this.roomIcon.classList.toggle('dm', room.kind === 'dm'); this.roomIcon.hidden = false;
+    this.members.querySelector('.room-members-count').textContent = String(count);
+    this.members.querySelector('.room-header-status')?.remove();
+    if (status) {
+      const statusNode = document.createElement('span'); statusNode.className = 'room-header-status'; statusNode.textContent = status;
+      this.members.append(statusNode);
+    }
+    const membersLabel = `${count} ${count === 1 ? 'member' : 'members'}${status ? ` · ${status}` : ''}`;
+    this.members.title = membersLabel; this.members.setAttribute('aria-label', membersLabel); this.members.hidden = false;
     const blocked = this.closeBlocked?.get(room.id);
     if (blocked && room.lifecycle === 'closing') this.error.textContent = `Room closing blocked: ${blocked}`;
     else if (this.error.textContent.startsWith('Room closing blocked:')) this.error.textContent = '';

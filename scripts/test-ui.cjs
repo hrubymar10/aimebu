@@ -1777,9 +1777,37 @@ async function main() {
     await first.waitForSelector('.message[data-message-id]');
     await second.waitForFunction(() => [...document.querySelectorAll('.message-body')].some(el => el.textContent === 'First message'));
     await first.waitForFunction(() => [...document.querySelectorAll('.room-preview')].some(el => el.textContent === 'First message'));
-    assert.equal(await first.$eval('#room-members', el => el.textContent), '1 member');
+    assert.deepEqual(await first.$eval('#room-members', el => [el.querySelector('.room-members-count')?.textContent, el.getAttribute('aria-label'), el.title, !!el.querySelector('svg'), el.hidden]), ['1', '1 member', '1 member', true, false]);
+    assert.equal(await first.$eval('#room-members', el => !!el.querySelector('.room-header-status')), false, 'the idle member chip has no empty status gap');
+    assert.equal(await first.$eval('#room-icon', el => el.textContent), '#', 'a task room shows its kind glyph');
+    const panelParity = await first.evaluate(() => {
+      const css = selector => getComputedStyle(document.querySelector(selector));
+      const box = selector => document.querySelector(selector).getBoundingClientRect();
+      const sample = document.createElement('div'); sample.className = 'room-row active';
+      sample.innerHTML = '<button class="row-btn room-name"># sample</button><span class="unread-count">2</span>';
+      document.querySelector('#projects').append(sample);
+      const result = {
+        label: [css('.sidebar > header strong').fontSize, css('.sidebar > header strong').lineHeight],
+        room: [Math.round(box('.room-row:not(.active)').height), css('.room-row:not(.active)').padding],
+        unread: [getComputedStyle(sample.querySelector('.room-name')).fontWeight, getComputedStyle(sample.querySelector('.unread-count')).fontSize, getComputedStyle(sample.querySelector('.unread-count')).padding, getComputedStyle(sample.querySelector('.unread-count')).backgroundColor, getComputedStyle(sample.querySelector('.unread-count')).color],
+        preview: [css('.room-preview').fontSize, css('.room-preview').lineHeight],
+        header: [Math.round(box('.chat > header').height), css('.chat > header').gap, css('.chat > header').padding],
+        count: [Math.round(box('#room-members').height), css('#room-members').backgroundColor, css('#room-members').fontSize],
+        bar: [Math.round(box('.workspace-bar').height), Math.round(box('#settings-toggle').width), css('#settings-toggle').backgroundColor, css('#build-version').fontSize, css('#build-version').opacity],
+      };
+      sample.remove();
+      return result;
+    });
+    assert.deepEqual(panelParity, {
+      label: ['9.8px', '14.7px'], room: [38, '4px 8px'],
+      unread: ['700', '9.1px', '1px 7px', 'rgb(31, 111, 235)', 'rgb(255, 255, 255)'],
+      preview: ['10.5px', '15.75px'], header: [43, '12px', '0px 16px'],
+      count: [22, 'rgb(28, 33, 40)', '9.1px'],
+      bar: [53, 30, 'rgba(0, 0, 0, 0)', '8.4px', '1'],
+    }, 'desktop panels retain the v1 measurements');
     await second.evaluate(() => [...document.querySelectorAll('.room-name')].find(el => el.textContent.startsWith('⌂'))?.click());
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke');
+    assert.equal(await second.$eval('#room-icon', el => el.textContent), '⌂', 'the home room shows its glyph');
     await second.locator('#composer textarea').fill('Unread preview'); await second.locator('#composer button[type=submit]').click();
     const homeID = await second.evaluate(() => location.hash.slice(1));
     // Read cursors are per account, so a post from another tab of the same account is not unread here.
@@ -3784,6 +3812,19 @@ async function main() {
     assert.deepEqual(await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .agent-quick button', els => els.map(el => el.getAttribute('aria-label'))), ['Message Ada privately', 'Pause', 'Stop', 'Open agent profile'], 'DM, Pause, Stop (v1 order) and the detail toggle are icon buttons with accessible names');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-name', el => el.title === el.textContent && el.textContent.length > 0), true, 'the member name carries its full text as a title');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-dot', el => el.dataset.state), 'working');
+    const cardParity = await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => {
+      const name = getComputedStyle(card.querySelector('.agent-name'));
+      const colors = {};
+      for (const state of ['idle', 'working', 'paused', 'error', 'stopped']) {
+        const dot = document.createElement('span'); dot.className = 'presence-dot'; dot.dataset.state = state; card.append(dot);
+        colors[state] = getComputedStyle(dot).backgroundColor; dot.remove();
+      }
+      return { padding: getComputedStyle(card).padding, titleHeight: getComputedStyle(card.querySelector('.agent-title')).minHeight,
+        name: [name.fontSize, name.lineHeight, name.fontWeight], colors };
+    });
+    assert.deepEqual(cardParity, { padding: '7px 8px', titleHeight: '17px', name: ['11.2px', '16.8px', '600'], colors: {
+      idle: 'rgb(66, 186, 83)', working: 'rgb(66, 186, 83)', paused: 'rgb(210, 154, 35)', error: 'rgb(248, 81, 73)', stopped: 'rgb(248, 81, 73)',
+    } }, 'compact member rows match v1 sizing and state colours');
     // One line per member: the whole name is readable, the state sits on the same line, and the buttons only show on hover.
     const rowShape = await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => { const name = card.querySelector('.agent-name'), state = card.querySelector('.agent-state'), quick = card.querySelector('.agent-quick'); return { whole: name.scrollWidth <= name.clientWidth, wide: name.clientWidth >= 12 * 6, sameLine: Math.abs(name.getBoundingClientRect().top - state.getBoundingClientRect().top) < 8, quickRest: getComputedStyle(quick).opacity }; });
     assert.deepEqual(rowShape, { whole: true, wide: true, sameLine: true, quickRest: '0' }, `member row shape: ${JSON.stringify(rowShape)}`);
@@ -3891,8 +3932,8 @@ async function main() {
     const topAfter = await agentPage.evaluate(() => { const cs = getComputedStyle(document.querySelector('#inbox-toggle')); return { border: cs.borderTopColor, colour: cs.color, primary: getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim() }; });
     assert.ok(topAfter.border !== topBefore.border && topAfter.border === topAfter.colour, `a top-bar hover must light the border up to the text colour: ${JSON.stringify([topBefore, topAfter])}`);
     await agentPage.mouse.move(5, 5); await new Promise(resolve => setTimeout(resolve, 400)); // the Inbox button just lost its hover; let the colour transition finish
-    // Every header icon button shares one style (v1's room-settings button): the same size, border, radius and icon size.
-    const iconButtons = await agentPage.evaluate(() => [...document.querySelectorAll('header button.icon-btn, .room-controls button.icon-btn')].filter(el => el.getClientRects().length && !el.matches('.btn-primary, .btn-danger')).map(el => { const cs = getComputedStyle(el), r = el.getBoundingClientRect(), svg = el.querySelector('svg'); return { id: el.id, size: [Math.round(r.width), Math.round(r.height)], border: cs.borderTopWidth + ' ' + cs.borderTopStyle + ' ' + cs.borderTopColor, radius: cs.borderTopLeftRadius, background: cs.backgroundColor, icon: svg ? [Math.round(svg.getBoundingClientRect().width), Math.round(svg.getBoundingClientRect().height)].join('x') : 'text' }; }));
+    // Room header icon buttons share one style; the workspace bar uses its own v1-sized transparent buttons.
+    const iconButtons = await agentPage.evaluate(() => [...document.querySelectorAll('.sidebar header button.icon-btn, .chat header button.icon-btn, .room-controls button.icon-btn')].filter(el => el.getClientRects().length && !el.matches('.btn-primary, .btn-danger')).map(el => { const cs = getComputedStyle(el), r = el.getBoundingClientRect(), svg = el.querySelector('svg'); return { id: el.id, size: [Math.round(r.width), Math.round(r.height)], border: cs.borderTopWidth + ' ' + cs.borderTopStyle + ' ' + cs.borderTopColor, radius: cs.borderTopLeftRadius, background: cs.backgroundColor, icon: svg ? [Math.round(svg.getBoundingClientRect().width), Math.round(svg.getBoundingClientRect().height)].join('x') : 'text' }; }));
     assert.ok(iconButtons.length >= 6, `header icon buttons found: ${JSON.stringify(iconButtons.map(item => item.id))}`);
     for (const key of ['size', 'border', 'radius', 'background']) assert.equal(new Set(iconButtons.map(item => JSON.stringify(item[key]))).size, 1, `header icon buttons differ in ${key}: ${JSON.stringify(iconButtons)}`);
     const iconBefore = await agentPage.$eval('#room-info', el => ({ fill: getComputedStyle(el).backgroundColor, colour: getComputedStyle(el).color }));
@@ -4724,11 +4765,11 @@ async function main() {
           const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
           const visible = element => !element.hidden && getComputedStyle(element).display !== 'none';
           const buttons = [...document.querySelectorAll('.room-controls button')].filter(visible).map(el => el.getBoundingClientRect().toJSON());
-          const topButtons = [...document.querySelectorAll('.workspace-bar nav button')].filter(visible).map(el => el.getBoundingClientRect().toJSON());
+          const topButtons = [...document.querySelectorAll('.workspace-bar nav button')].filter(visible).map(el => ({ ...el.getBoundingClientRect().toJSON(), icon: el.classList.contains('icon-btn') }));
           return { viewport: innerWidth, bar: box('.workspace-bar'), header: box('.chat > header'), panel: box('#agents-panel'), toolbar: box('.room-controls'), buttons, topButtons, connection: box('#connection') };
         });
         const noOverlap = boxes => boxes.every((a, i) => boxes.slice(i + 1).every(b => a.right <= b.left || b.right <= a.left));
-        assert.ok(layout.topButtons.every(box => box.top >= 0 && box.bottom <= layout.bar.bottom && box.right <= width && Math.abs(box.height - 28) < 1) && layout.connection.right <= width && noOverlap(layout.topButtons), `${theme} top bar clips, overlaps, or has uneven button heights at ${width}: ${JSON.stringify(layout)}`);
+        assert.ok(layout.topButtons.every(box => box.top >= 0 && box.bottom <= layout.bar.bottom && box.right <= width && Math.abs(box.height - (box.icon ? 30 : 28)) < 1) && layout.connection.right <= width && noOverlap(layout.topButtons), `${theme} top bar clips, overlaps, or has uneven button heights at ${width}: ${JSON.stringify(layout)}`);
         assert.ok(layout.header.right <= layout.panel.left + 1 && layout.toolbar.right <= layout.header.right + 1 && noOverlap(layout.buttons), `${theme} room toolbar overlaps at ${width}: ${JSON.stringify(layout)}`);
       }
       await first.setViewport(originalViewport);
@@ -4816,6 +4857,7 @@ async function main() {
     if (await first.$eval(`[data-agent-id="${realAgentID}"]`, el => !el.classList.contains('expanded'))) await domClick(first, `[data-agent-id="${realAgentID}"] .agent-name`);
     await domClick(first, `[data-agent-id="${realAgentID}"] .agent-message`);
     await first.waitForFunction(name => document.querySelector('#room-title')?.textContent === name && !!document.querySelector('.direct-rooms .room-row.active'), {}, realAgentSlug);
+    assert.equal(await first.$eval('#room-icon', el => el.textContent), '@', 'a private room shows its kind glyph');
     await first.waitForFunction(() => document.querySelector('#spawn-open')?.disabled);
     assert.equal(await first.$eval('#spawn-open', el => el.disabled), true, 'private chat allows spawning another agent');
     await domClick(first, '#room-info');
@@ -5429,6 +5471,7 @@ async function main() {
     await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-row`)?.classList.contains('archived') && document.querySelector('#composer textarea').disabled, {}, archiveRoomID);
     assert.equal(await first.$eval(`[data-room-id="${archiveChildID}"] > .room-row`, el => el.classList.contains('archived')), true, 'cascade did not archive the child room');
     await first.waitForFunction(() => document.querySelector('#room-members')?.textContent.includes('Archived'));
+    assert.deepEqual(await first.$eval('#room-members', el => { const status = el.querySelector('.room-header-status'), css = getComputedStyle(status); return [status.textContent, css.fontSize, css.margin, Math.round(el.getBoundingClientRect().height), /^\d+ members? · Archived$/.test(el.title)]; }), ['Archived', '9.1px', '0px', 22, true], 'the archived member chip stays compact');
     // The app closes the settings dialog once the archive has been applied (after the room list refresh), which can come after the
     // row and the member line already look archived: reopen only once it has closed, or the wait below sees the old dialog.
     await first.waitForFunction(() => !document.querySelector('#room-info-dialog').open);
