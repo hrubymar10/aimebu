@@ -15,7 +15,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/store"
 )
 
-func TestImportV1WizardOwnerDryRunCommitAndMarker(t *testing.T) {
+func TestImportV1SoleHumanOwnerDryRunCommitAndMarker(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	root := t.TempDir()
@@ -143,7 +143,7 @@ func TestImportV1WizardOwnerDryRunCommitAndMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != 200 || len(preview.Rooms) != 1 || preview.Suggested.Humans["alice"] != "-" {
+	if resp.StatusCode != 200 || len(preview.Rooms) != 1 || preview.Suggested.Humans["alice"] != "owner" || len(preview.Suggested.NewUsers) != 0 {
 		t.Fatalf("preview: %d %+v", resp.StatusCode, preview)
 	}
 	if len(preview.CarriedOverFiles) != 1 || preview.CarriedOverFiles[0] != "server/credential-targets.json" {

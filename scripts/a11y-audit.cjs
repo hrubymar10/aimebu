@@ -23,6 +23,7 @@ const SURFACES = [
   { name: 'import wizard (blocked)', root: '#import-v1-blocked', dialog: true },
   { name: 'message debug dialog', root: '.message-debug-dialog', dialog: true },
   { name: 'emoji picker', root: '.emoji-picker', show: true },
+  { name: 'first-run theme picker', root: '#theme-view', show: true },
 ];
 
 // Runs inside the page. Returns { names, contrast, focus } for one surface.
@@ -64,7 +65,8 @@ function auditSurface({ root, show, dialog, exclude }) {
   const unclassed = [];
   for (const element of rootEl.querySelectorAll('button')) {
     if (!within(element)) continue;
-    if (!element.matches('.btn, .icon-btn, .row-btn')) unclassed.push(`${label(element)} "${text(element).slice(0, 24)}"`);
+    // A theme tile is a radio drawn as a preview of its theme (the first-run picker), not one of the three button kinds.
+    if (!element.matches('.btn, .icon-btn, .row-btn, .theme-tile[role="radio"]')) unclassed.push(`${label(element)} "${text(element).slice(0, 24)}"`);
   }
 
   // 2. contrast

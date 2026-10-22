@@ -309,6 +309,7 @@ func (s *Server) importV1Preview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	preview.ResolveRoles(roles)
+	preview.ResolvePeople()
 	if saved, ok, err := s.Store.V1ImportSavedMap(r.Context(), preview.SourceKey); err != nil {
 		fail(w, err)
 		return

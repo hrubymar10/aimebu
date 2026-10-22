@@ -49,6 +49,17 @@ type V1ImportPreview struct {
 	HighestMessageID   int64                   `json:"-"`
 	ReservationMissed  bool                    `json:"reservation_missed"`
 	Suggested          V1ImportMap             `json:"suggested"`
+	// HumanStakes is, for each v1 person, what is lost for good if the owner skips them (maps nobody to them): an import cannot be repeated,
+	// and these records belong to the person's account. The wizard says so next to a skipped person.
+	HumanStakes map[string]V1HumanStakes `json:"human_stakes"`
+}
+
+// V1HumanStakes counts what belongs to one v1 person and is only imported when they are mapped to an account.
+type V1HumanStakes struct {
+	MemoryProfiles int `json:"memory_profiles"`
+	Reactions      int `json:"reactions"`
+	ReadPositions  int `json:"read_positions"`
+	RoomView       int `json:"room_view"` // rooms they hid or pinned
 }
 
 type V1PreviewRoom struct {
@@ -216,6 +227,16 @@ func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1Impor
 			humans[memory.Author] = true
 		}
 	}
+	for id := range data.Agents {
+		if v1ImportKind(id, data.Agents) == "user" {
+			humans[id] = true
+		}
+	}
+	for _, pref := range data.RoomPrefs {
+		if v1ImportKind(pref.Agent, data.Agents) == "user" {
+			humans[pref.Agent] = true
+		}
+	}
 	delete(humans, "")
 	delete(humans, "system")
 	readCursors := 0
@@ -306,16 +327,76 @@ func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1Impor
 		preview.DM = isV1DM(room.ID)
 		out.Rooms = append(out.Rooms, preview)
 	}
+	// The owner's v1 counterpart is the person with the owner's own name, or else the one person in the data at all: a single-person
+	// install is the owner, and mapping them elsewhere would leave their read positions, memory profile, pins and reactions behind. With
+	// several people there is no telling which is the owner (the busiest writer may be a colleague), so nobody is merged into the owner's
+	// account without being asked (ResolvePeople gives each of them an account to start from, and the wizard says so).
+	counterpart := ""
+	if len(humans) == 1 {
+		for human := range humans {
+			counterpart = human
+		}
+	} else {
+		// The exact spelling wins; otherwise the first of the case-variants in sorted order, so a rerun never flips the suggestion.
+		var variants []string
+		for human := range humans {
+			if human == ownerLogin {
+				variants = []string{human}
+				break
+			}
+			if strings.EqualFold(human, ownerLogin) {
+				variants = append(variants, human)
+			}
+		}
+		if len(variants) > 0 {
+			sort.Strings(variants)
+			counterpart = variants[0]
+		}
+	}
 	for human := range humans {
 		out.Humans = append(out.Humans, human)
-		// Only the person who has the owner's own name is the owner. Anyone else is not merged into the owner's account without being asked:
-		// the suggestion skips them (a historical label only), and the wizard offers to make each one an account instead.
 		out.Suggested.Humans[human] = "-"
-		if strings.EqualFold(human, ownerLogin) {
+		if human == counterpart {
 			out.Suggested.Humans[human] = ownerLogin
 		}
 	}
 	sort.Strings(out.Humans)
+	out.HumanStakes = map[string]V1HumanStakes{}
+	for _, human := range out.Humans {
+		out.HumanStakes[human] = V1HumanStakes{}
+	}
+	for _, memory := range data.Memory {
+		if stakes, ok := out.HumanStakes[memory.ScopeKey]; ok && memory.Scope == "user_profile" {
+			stakes.MemoryProfiles++
+			out.HumanStakes[memory.ScopeKey] = stakes
+		}
+	}
+	for _, reactions := range data.Reactions {
+		for _, reaction := range reactions {
+			if stakes, ok := out.HumanStakes[reaction.AgentID]; ok {
+				stakes.Reactions++
+				out.HumanStakes[reaction.AgentID] = stakes
+			}
+		}
+	}
+	for id, agent := range data.Agents {
+		stakes, ok := out.HumanStakes[id]
+		if !ok {
+			continue
+		}
+		for _, cursor := range agent.ReadCursors {
+			if cursor > 0 {
+				stakes.ReadPositions++
+			}
+		}
+		out.HumanStakes[id] = stakes
+	}
+	for _, pref := range data.RoomPrefs {
+		if stakes, ok := out.HumanStakes[pref.Agent]; ok && (pref.Hidden || pref.Pinned) {
+			stakes.RoomView++
+			out.HumanStakes[pref.Agent] = stakes
+		}
+	}
 	for scope := range scopes {
 		out.MemoryProjects = append(out.MemoryProjects, scope)
 		out.Suggested.MemoryProjects[scope] = scope
@@ -349,6 +430,7 @@ func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1Impor
 			out.Suggested.Projects[project] = spec
 		}
 	}
+	suggestSiblingFolders(out.Suggested.Projects)
 	if out.V1MemoryEnabled {
 		// v1 memory was on, so each destination project starts with v2 memory on too; the owner can untick any.
 		out.Suggested.EnableProjectMemory = map[string]bool{}
@@ -514,4 +596,96 @@ func (s *Store) V1ImportSavedMap(ctx context.Context, source string) (V1ImportMa
 		return V1ImportMap{}, false, err
 	}
 	return mapping, true, nil
+}
+
+// ResolvePeople gives every v1 person who is not the owner an account to start from (a viewer named after them, for the owner to keep, change
+// or skip), which is what the wizard does by default; the preview answers it so a client of the API sees the same suggestion. It needs the
+// accounts that exist already, so it runs once the preview knows them.
+func (p *V1ImportPreview) ResolvePeople() {
+	taken := map[string]bool{strings.ToLower(p.Suggested.OwnerLogin): true}
+	for _, login := range p.DestinationUsers {
+		taken[strings.ToLower(login)] = true
+	}
+	for _, human := range p.Humans {
+		if p.Suggested.Humans[human] != "-" {
+			continue
+		}
+		login := v1SuggestedLogin(human, taken)
+		taken[login] = true
+		if p.Suggested.NewUsers == nil {
+			p.Suggested.NewUsers = map[string]V1NewUser{}
+		}
+		p.Suggested.NewUsers[human] = V1NewUser{Login: login, Role: "viewer"}
+		p.Suggested.Humans[human] = login
+	}
+}
+
+// v1SuggestedLogin is a login for a new account from a v1 name: lowercase, 3 to 32 characters, not taken. The wizard derives it the same way
+// (newLogin in import-v1.js).
+func v1SuggestedLogin(name string, taken map[string]bool) string {
+	var b strings.Builder
+	dash := false
+	for _, ch := range strings.ToLower(name) {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
+			b.WriteRune(ch)
+			dash = false
+		} else if !dash {
+			b.WriteByte('-')
+			dash = true
+		}
+	}
+	base := b.String()
+	for base != "" && (base[0] < 'a' || base[0] > 'z') {
+		base = base[1:]
+	}
+	if len(base) > 28 {
+		base = base[:28]
+	}
+	if len(base) < 3 {
+		base = strings.TrimSuffix("user-"+base, "-")
+	}
+	if len(base) < 3 {
+		base = "user"
+	}
+	login := base
+	for n := 2; taken[login]; n++ {
+		login = fmt.Sprintf("%s-%d", base, n)
+	}
+	return login
+}
+
+// suggestSiblingFolders looks for a project whose folder v1 never recorded (its agents have left the registry) next to the folders v1 does
+// know: v1 named a project after its folder and projects mostly sit side by side (.../a/x, .../b/y). A candidate is an existing directory
+// of the project's name beside a known one (the cutover is on the same machine); when several exist, the parent that most known folders
+// share wins, then the alphabetically first. A project with no such directory stays blank for the owner to fill in.
+func suggestSiblingFolders(projects map[string]V1ImportProject) {
+	parents := map[string]int{}
+	for _, project := range projects {
+		if project.Folder != "" {
+			parents[filepath.Dir(project.Folder)]++
+		}
+	}
+	if len(parents) == 0 {
+		return
+	}
+	for alias, project := range projects {
+		name := project.Name
+		if project.Folder != "" || name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+			continue
+		}
+		best, bestCount := "", 0
+		for parent, count := range parents {
+			candidate := filepath.Join(parent, name)
+			if info, err := os.Stat(candidate); err != nil || !info.IsDir() {
+				continue
+			}
+			if count > bestCount || (count == bestCount && candidate < best) {
+				best, bestCount = candidate, count
+			}
+		}
+		if best != "" {
+			project.Folder = best
+			projects[alias] = project
+		}
+	}
 }

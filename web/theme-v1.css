@@ -2236,9 +2236,10 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .theme-preview-line { height: 6px; border-radius: 3px; background: var(--text-secondary); opacity: .7; }
 .theme-preview-line.short { width: 60%; }
 .theme-preview-accent { width: 34%; height: 10px; border-radius: 3px; background: var(--accent); }
-.theme-step { --theme-step-text: var(--text-primary); }
-/* The tile redefines the palette for its preview, so its label takes the page's text colour, not the previewed theme's. */
-.theme-label { font-size: 13px; color: var(--theme-step-text); }
+/* The tile redefines the palette and paints its own background (the previewed theme's), so its label takes the previewed theme's text colour: the
+   page's own text colour is dark on a dark tile in a light theme and the other way round. */
+.theme-grid .theme-tile { background: var(--bg-secondary); color: var(--text-primary); }
+.theme-label { font-size: 13px; color: var(--text-primary); }
 .theme-step .theme-continue { width: 100%; }
 
 /* Empty state: with no room open, the chat shows a card instead of the composer, room controls, members and the room heading. */

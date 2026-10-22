@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -150,5 +151,54 @@ func TestV1ImportRejectsMemoryChoiceForUnknownProject(t *testing.T) {
 	_, err = validateV1Import(data, source, mapping)
 	if err == nil || !strings.Contains(err.Error(), `enable_project_memory names unknown project "removed"`) {
 		t.Fatalf("want a readable error for the leftover memory choice, got %v", err)
+	}
+}
+
+// A project whose folder v1 never recorded is looked for beside the folders v1 does know, only where such a directory exists; of several,
+// the parent most known folders share wins. The rest stay blank for the owner.
+func TestV1SiblingFolderSuggestion(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	mkdir := func(path string) string {
+		t.Helper()
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(full, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return full
+	}
+	// Two parents hold the folders v1 knows: "work" has three of them, "other" one.
+	known := map[string]string{"a": mkdir("work/a"), "b": mkdir("work/b"), "c": mkdir("work/c"), "d": mkdir("other/d")}
+	onlyWork := mkdir("work/only-work")
+	onlyOther := mkdir("other/only-other")
+	both := mkdir("work/both")
+	mkdir("other/both")
+	mkdir("elsewhere/hidden") // beside nothing v1 knows: never searched
+	if err := os.WriteFile(filepath.Join(root, "work", "afile"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	projects := map[string]V1ImportProject{
+		"only-work": {Name: "only-work"}, "only-other": {Name: "only-other"}, "both": {Name: "both"}, "hidden": {Name: "hidden"}, "missing": {Name: "missing"},
+		"afile": {Name: "afile"}, "dots": {Name: ".."}, "slash": {Name: "x/y"},
+	}
+	for alias, folder := range known {
+		projects[alias] = V1ImportProject{Name: alias, Folder: folder}
+	}
+	suggestSiblingFolders(projects)
+	for alias, want := range map[string]string{"only-work": onlyWork, "only-other": onlyOther, "both": both, "hidden": "", "missing": "", "afile": "", "dots": "", "slash": ""} {
+		if got := projects[alias].Folder; got != want {
+			t.Errorf("%s: folder %q, want %q", alias, got, want)
+		}
+	}
+	for alias, folder := range known {
+		if projects[alias].Folder != folder {
+			t.Errorf("a recorded folder is never replaced: %s is %q", alias, projects[alias].Folder)
+		}
+	}
+	// With nothing recorded at all there is nothing to look beside.
+	blank := map[string]V1ImportProject{"x": {Name: "x"}}
+	suggestSiblingFolders(blank)
+	if blank["x"].Folder != "" {
+		t.Errorf("no known folder, no suggestion: %+v", blank)
 	}
 }

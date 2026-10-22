@@ -95,11 +95,15 @@ into. Once the import has committed the server creates a one-time reset link for
 each new account (valid an hour, working once, shown only on the finished page and
 in the job); a failure to make a link is reported there and never undoes the import,
 and the owner can make one in Settings → Users. A taken login, a duplicate login or a
-malformed one is refused before anything is written. The original name stays on messages. Only the person with
-the owner's own name (any case) is suggested into the owner's account: the server's suggestion skips everyone
-else, and the wizard turns each of those into a new account by default, but only where nobody has decided yet
-(a fresh suggestion, Start over, or a person a saved draft has no choice for; a saved skip stays a skip). A
-skipped person's row says what skipping means. In the wizard a typed value counts at once, and Enter in a text
+malformed one is refused before anything is written. The original name stays on messages. The person with
+the owner's own name (any case; the exact spelling first, then sorted order) is suggested into the owner's account, and so is the one person in the data when there is only one (messages, members, reactions, memory profiles, human agent records with read cursors, and room preferences count: a lone writer next to people who never wrote is not guessed at, and the wizard says so)
+(a single-person install is the owner, and mapping them elsewhere would leave their read positions, memory profile,
+pins and reactions behind). Everyone else is not merged into the owner's account unasked: the server's suggestion gives
+each of them a new viewer account named after them (`suggested.new_users`, with the matching `suggested.humans`), which
+is also what the wizard shows; a saved skip stays a skip, and Start over suggests everyone again. A
+skipped person's row says what skipping means, counted from the preview's `human_stakes` (memory profiles, reactions,
+read positions and pinned or hidden rooms that belong to that person and would not be imported, which an import cannot
+repeat). In the wizard a typed value counts at once, and Enter in a text
 field goes to the next page (in the New project form it creates the project). Skipped people receive no
 live room membership, and their imported rooms must be in owner-only
 projects. A v1 direct message (`dm:a:b`) imports as a v2 direct message: it

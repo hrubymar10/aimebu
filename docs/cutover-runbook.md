@@ -82,13 +82,27 @@ this page is the operational order and rollback path.
    completed or skipped import cannot be reopened. See
    [`ImportV1Wizard`](../web/js/import-v1.js) and
    [`importV1Status`](../internal/server/import_v1.go).
-3. On **Projects**, confirm each workspace folder is an absolute path. The
+3. On **Projects**, confirm each workspace folder is an absolute path. A
+   folder is suggested for a project whose v1 agents recorded a working
+   folder, or whose name matches an existing folder beside the known ones.
+   The others (4 of 20 on a real history, whose agents had long left v1's
+   registry) are empty and must be filled in before the wizard goes on: any
+   existing folder will do, since it can be changed in the project's settings
+   until its first agent starts, or remove the project (its rooms are then
+   not imported). The
    suggestion pairs `x-leader` with `x`: the leader room becomes the project
    root, and `x` becomes its `general` sub-room. A room `x` without a leader
    pair, including a solo room, is suggested into its own project's root.
    Check unrelated rooms and any merge warnings before continuing. On
    **People**, map each historical person to a v2 login, create an account, or
-   keep only a historical label. Review project readers: project members can
+   keep only a historical label. The wizard maps the person with your name, or
+   the one person in the data when there is only one (including people present
+   only in agent records, read cursors, or room preferences), to the owner login, and starts everyone
+   else on a new passwordless viewer account named after them. Check this
+   page: **Skip person** says what it would drop for good (the person's memory
+   profiles, reactions, read positions, and pinned or hidden rooms), and an
+   import cannot be repeated, so what is dropped cannot be added back
+   after the import. Review project readers: project members can
    read imported ordinary rooms. See [`PreviewV1Import`](../internal/store/import_v1_preview.go)
    and [`v1Targets.place`](../internal/store/import_v1_targets.go).
 4. On **Rooms**, confirm destinations and open/archive choices. The v1
@@ -115,6 +129,12 @@ this page is the operational order and rollback path.
 
 ## 3. Bring agents back, leaders first
 
+v1's tools are not carried over, so a fresh v2 has no harness and nothing can
+be started. After the import the first load opens the **Harnesses** step when
+no harness has a model yet; if it does not open (another browser, say), add one
+in **Settings → Harnesses**. Add and auto-detect the harnesses, with their
+models, before starting any agent.
+
 Open a room with an imported agent message, then open the historical sender's
 profile and choose **Start as v2 agent**. Start the leader in each active
 project first; check that it can read the intended room and respond before
@@ -132,7 +152,9 @@ exist; an outside-project folder requires the ordinary boundary approval.
 The host checks for a transcript before starting. Codex, Pi, OpenCode, and
 unsupported v1 harnesses start fresh under the same name because their v2
 session homes or adapters cannot see the old session. A v1 session seen in
-the last ten minutes needs explicit confirmation that v1 is stopped.
+the last ten minutes needs explicit confirmation that v1 is stopped (a profile
+of an agent that was active when the backup was made shows it as active, which
+is normal for a rehearsal taken from a running v1).
 Do not run the v1 wrapper and v2 agent on the same Claude session at once:
 two writers to one transcript can corrupt it. See
 [`ResumableTool`](../internal/store/legacy_start.go),
@@ -143,8 +165,15 @@ and [`spawnAgentRequest`](../internal/server/agents.go).
 
 Check several familiar rooms, replies, reactions, attachments, direct
 messages, readers, memory, and macros. Quiet rooms may be under **Archived**.
-Run `aimebu doctor` with the v2 executable and inspect the import report for
-skipped records. Keep v1 stopped after cutover. Its `.old-v1-bkp/` is an
+Message numbers are v1's: a message that was `#N` in v1 is `#N` in v2, and the
+first new message is the highest v1 number plus one. The messages that are not
+imported are those of the `_system` room, v1's own join/leave lines, and the
+rooms and direct messages you chose to leave out. Run `aimebu doctor` with the
+v2 executable (it should report every check ok and the schema matching the
+binary) and inspect the import report for skipped records. v2 also keeps its
+own log, `server/aimebu.log` (rotated), and a `server/aimebu.pid` while the
+server runs, in the v2 root beside the database. Keep v1 stopped after
+cutover. Its `.old-v1-bkp/` is an
 unchanged **source for inspection and rollback**, not a live read-only v1
 service. There is no automatic expiry for this backup; retain it for as long
 as your rollback window requires and remove it only after an independent
@@ -176,6 +205,10 @@ does not flow back into v1. See [`backupV1Layout`](../cmd/aimebu/migration_v1.go
    AIMEBU_CONFIG_DIR="$restore" /path/to/v1/aimebu server serve
    ```
 
+   The copy also brings `manifest.json` into the restored root; v1 ignores it.
+   Expect v1 to write its own `server started` and `server stopping` lines to
+   its `_system` room.
+
 3. Resume v1 wrappers only after that server is healthy. The restored state
    stops at the cutover; v2 messages and agent turns are not replayed into it.
    If you retry later, take a fresh stopped-v1 snapshot and use a **new** v2
@@ -188,7 +221,20 @@ does not flow back into v1. See [`backupV1Layout`](../cmd/aimebu/migration_v1.go
 ## 6. Rehearse on a copy
 
 Start with a **stopped, independent copy** of v1's data, not the live root.
-Make that copy self-contained first: replace or remove symlinks to external
+To rehearse while v1 is still running, take a consistent online copy of the
+database and leave the credential and transcript folders out, since the
+rehearsal needs neither (v2 accepts a copy that holds only `server/` and an
+empty `agents/`):
+
+```sh
+V1_SNAPSHOT="$(mktemp -d)"
+mkdir -p "$V1_SNAPSHOT/server" "$V1_SNAPSHOT/agents"
+sqlite3 "$HOME/.aimebu/server/aimebu.sqlite" ".backup '$V1_SNAPSHOT/server/aimebu.sqlite'"
+cp -Rp "$HOME/.aimebu/server/attachments" "$V1_SNAPSHOT/server/attachments"
+```
+
+That copy is only for the rehearsal; the real cutover still starts from the
+stopped v1. Make the copy self-contained first: replace or remove symlinks to external
 credential files and external credential targets. The commands below refuse
 remaining symlinks and remove the copied external-target registry, so a
 rehearsal cannot refresh a live credential through the copied root. Use a
@@ -216,14 +262,21 @@ export CLAUDE_CONFIG_DIR="$rehearsal_root/home/.claude"
 export AIMEBU_CONFIG_DIR="$rehearsal_root/v1"
 export AIMEBU2_CONFIG_DIR="$rehearsal_root/v2"
 export AIMEBU2_BIND=127.0.0.1
-export AIMEBU2_PORT=9985
+export AIMEBU2_PORT=9985 # any free port; this one may be taken
 export HTTPS_PROXY=http://127.0.0.1:9
 export HTTP_PROXY=http://127.0.0.1:9
 export AIMEBU2_DEV_SKIP_V1_PROBE=1
 /path/to/v2/aimebu server
 ```
 
-Complete the wizard and verify rooms and reports on the rehearsal port. Test
+Complete the wizard (fill any empty folder with a directory under the
+rehearsal root, and check that you are mapped to the owner, as in step 2.3)
+and verify rooms and reports on the rehearsal port. With a real history the first
+sign-in after the import took about four seconds to load. The checks that
+confirm a rehearsal: every imported v2 message number is a v1 id with the same
+body, the counter starts at the highest v1 id, replies and reactions match the
+report, an attachment downloads, and nothing in the process (`/proc/<pid>/fd`,
+its environment, the log) names the real home or `~/.aimebu*`. Test
 the rollback with the rehearsal `.old-v1-bkp/`, a third temporary root, and
 the saved v1 executable. The development probe escape hatch above only skips
 the v1 listener probe; the daemon PID check and SQLite write lock still run.

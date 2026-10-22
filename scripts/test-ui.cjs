@@ -978,6 +978,24 @@ async function main() {
           selectsFit: [...dialog.querySelectorAll('select')].every(select => select.getBoundingClientRect().right <= window.innerWidth), treeBelow: dialog.querySelector('.import-room-tree').getBoundingClientRect().top >= dialog.querySelector('.import-room-list').getBoundingClientRect().bottom - 1 };
       } finally { window.fetch = original; localStorage.removeItem('aimebu2.import-draft.v1-phone'); wizard.dialog.close(); wizard.dialog.remove(); }
     });
+    // Projects: a project whose folder v1 never recorded says so under its folder field, and how to go on (a folder can be changed in the
+    // project's settings until its first agent starts); one with a suggested folder has no such note.
+    const folderHints = await first.evaluate(async () => {
+      const { ImportV1Wizard } = await import('/js/import-v1.js');
+      const original = window.fetch;
+      const json = body => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const source = { source_key: 'v1-folders', rooms: [], humans: [], memory_projects: [], macros: {}, counts: { rooms: 0, messages: 0, attachments: 0, memory: 0, macros: 0 }, destination_users: ['sam'], roles: [], fleets: [],
+        suggested: { source_key: 'v1-folders', owner_login: 'sam', projects: { known: { name: 'known', folder: '/work/known' }, unknown: { name: 'unknown', folder: '' } }, rooms: {}, humans: {}, memory_projects: {}, enable_project_memory: {}, skip_profiles: false, skip_shared_notes: false } };
+      window.fetch = async (path, options) => String(path) === '/api/import-v1/preview' ? json(source) : String(path) === '/api/macros' ? json({}) : original(path, options);
+      const wizard = new ImportV1Wizard();
+      try {
+        localStorage.removeItem('aimebu2.import-draft.v1-folders');
+        await wizard.open(); wizard.stepID = 'projects'; wizard.render();
+        const boxes = [...wizard.content.querySelectorAll('[data-project-folder]')].map(input => ({ alias: input.dataset.projectFolder, value: input.value, hint: (input.closest('label')?.nextElementSibling?.classList.contains('import-folder-hint') && input.closest('label').nextElementSibling.textContent) || '' }));
+        return boxes;
+      } finally { window.fetch = original; localStorage.removeItem('aimebu2.import-draft.v1-folders'); wizard.dialog.close(); wizard.dialog.remove(); }
+    });
+    assert.deepEqual(folderHints, [{ alias: 'known', value: '/work/known', hint: '' }, { alias: 'unknown', value: '', hint: 'v1 did not record a folder for this project. Enter the folder its agents will work in; you can change it in the project\'s settings until its first agent starts. Or remove the project: its rooms are then not imported.' }], 'a project without a recorded folder explains what to do');
     // People: the owner (by name) maps to the owner's account; anyone else is offered a new account by default, never merged into the
     // owner. Skipping someone says what that means.
     const peopleDefault = await first.evaluate(async () => {
@@ -985,7 +1003,8 @@ async function main() {
       const original = window.fetch;
       const json = body => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
       const source = { source_key: 'v1-people', rooms: [], humans: ['sam', 'tomas', 'rae'], memory_projects: [], macros: {}, counts: { rooms: 0, messages: 0, attachments: 0, memory: 0, macros: 0 }, destination_users: ['sam'], roles: [], fleets: [],
-        suggested: { source_key: 'v1-people', owner_login: 'sam', projects: {}, rooms: {}, humans: { sam: 'sam', tomas: '-', rae: '-' }, memory_projects: {}, enable_project_memory: {}, skip_profiles: false, skip_shared_notes: false } };
+        human_stakes: { sam: { memory_profiles: 0, reactions: 0, read_positions: 0, room_view: 0 }, tomas: { memory_profiles: 2, reactions: 5, read_positions: 1, room_view: 3 }, rae: { memory_profiles: 0, reactions: 0, read_positions: 0, room_view: 0 } },
+        suggested: { source_key: 'v1-people', owner_login: 'sam', projects: {}, rooms: {}, humans: { sam: 'sam', tomas: '-', rae: 'rae' }, new_users: { rae: { login: 'rae', role: 'viewer' } }, memory_projects: {}, enable_project_memory: {}, skip_profiles: false, skip_shared_notes: false } };
       window.fetch = async (path, options) => String(path) === '/api/import-v1/preview' ? json(source) : String(path) === '/api/macros' ? json({}) : original(path, options);
       const wizard = new ImportV1Wizard();
       try {
@@ -1003,7 +1022,7 @@ async function main() {
         out.enter = advanced;
         loginInput.value = 'tomas'; loginInput.dispatchEvent(new Event('input'));
         select('tomas').value = '-'; select('tomas').dispatchEvent(new Event('change'));
-        out.skipped = { select: select('tomas').value, warned: [...wizard.content.querySelectorAll('.import-warning')].map(item => item.textContent.startsWith('No account')) };
+        out.skipped = { select: select('tomas').value, warned: [...wizard.content.querySelectorAll('.import-warning')].map(item => item.textContent.startsWith('No account')), says: wizard.content.querySelector('.import-warning').textContent };
         // A saved skip is a decision and stays; a person the saved draft has no choice for gets the default; Start over defaults everyone again.
         wizard.save();
         const draftKey = 'aimebu2.import-draft.v1-people', saved = JSON.parse(localStorage.getItem(draftKey));
@@ -1018,7 +1037,48 @@ async function main() {
         return out;
       } finally { window.fetch = original; localStorage.removeItem('aimebu2.import-draft.v1-people'); wizard.dialog.close(); wizard.dialog.remove(); }
     });
-    assert.deepEqual(peopleDefault, { owner: 'sam', tomas: '__new_account__', login: 'tomas', role: 'viewer', mapped: 'tomas', warnedBefore: false, selectedOnFocus: true, typed: 'tomas2', enter: 1, skipped: { select: '-', warned: [true] }, reopened: { tomas: '-', tomasAccount: false, rae: 'rae', raeAccount: true, owner: 'sam' }, startedOver: { tomas: 'tomas', rae: 'rae' } }, 'a person who is not the owner is offered a new account, not merged into the owner');
+    assert.deepEqual(peopleDefault, { owner: 'sam', tomas: '__new_account__', login: 'tomas', role: 'viewer', mapped: 'tomas', warnedBefore: false, selectedOnFocus: true, typed: 'tomas2', enter: 1, skipped: { select: '-', warned: [true], says: 'No account: their messages keep their name as a label, and nobody can sign in as them. Their 2 memory profiles, 5 reactions, 1 read position, 3 pinned or hidden rooms would not be imported, and an import cannot be repeated. Choose an account, or "Create a new account…", to keep them.' }, reopened: { tomas: '-', tomasAccount: false, rae: 'rae', raeAccount: true, owner: 'sam' }, startedOver: { tomas: 'tomas', rae: 'rae' } }, 'a person who is not the owner is offered a new account, not merged into the owner');
+    // Nobody maps to the owner (several people, none with the owner's name): the page says so; logins are compared case-insensitively.
+    const noOwner = await first.evaluate(async () => {
+      const { ImportV1Wizard } = await import('/js/import-v1.js');
+      const original = window.fetch;
+      const json = body => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const source = { source_key: 'v1-noowner', rooms: [], humans: ['ann', 'Ann2'], memory_projects: [], macros: {}, counts: { rooms: 0, messages: 0, attachments: 0, memory: 0, macros: 0 }, destination_users: ['Ann-2', 'sam'], roles: [], fleets: [],
+        suggested: { source_key: 'v1-noowner', owner_login: 'sam', projects: {}, rooms: {}, humans: { ann: '-', Ann2: '-' }, memory_projects: {}, enable_project_memory: {}, skip_profiles: false, skip_shared_notes: false } };
+      window.fetch = async (path, options) => String(path) === '/api/import-v1/preview' ? json(source) : String(path) === '/api/macros' ? json({}) : original(path, options);
+      const wizard = new ImportV1Wizard();
+      try {
+        localStorage.removeItem('aimebu2.import-draft.v1-noowner');
+        await wizard.open(); wizard.stepID = 'people'; wizard.render();
+        const hint = wizard.content.querySelector('.people-owner-hint');
+        const out = { hint: !!hint, explainsNewAccount: hint?.textContent.includes('New accounts keep their own importable data'), logins: Object.values(wizard.mapping.new_users).map(user => user.login) };
+        wizard.mapping.new_users.ann.login = 'ann-2'; out.taken = wizard.problem_people()?.message.includes('already an account');
+        return out;
+      } finally { window.fetch = original; localStorage.removeItem('aimebu2.import-draft.v1-noowner'); wizard.dialog.close(); wizard.dialog.remove(); }
+    });
+    assert.deepEqual(noOwner, { hint: true, explainsNewAccount: true, logins: ['ann', 'ann2'], taken: true }, 'when several people have no owner name match, the page explains the choice and case-insensitive login collision');
+    // The server already suggests an owner counterpart when it has one and new accounts for the other people; the wizard shows exactly
+    // that suggestion and does not default anyone a second time.
+    const peopleSuggested = await first.evaluate(async () => {
+      const { ImportV1Wizard } = await import('/js/import-v1.js');
+      const original = window.fetch;
+      const json = body => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const source = { source_key: 'v1-solo', rooms: [], humans: ['solo', 'guest'], memory_projects: [], macros: {}, counts: { rooms: 0, messages: 0, attachments: 0, memory: 0, macros: 0 }, destination_users: ['sam'], roles: [], fleets: [],
+        human_stakes: { solo: { memory_profiles: 1, reactions: 0, read_positions: 2, room_view: 0 }, guest: { memory_profiles: 0, reactions: 0, read_positions: 0, room_view: 0 } },
+        suggested: { source_key: 'v1-solo', owner_login: 'sam', projects: {}, rooms: {}, humans: { solo: 'sam', guest: 'guest-2' }, new_users: { guest: { login: 'guest-2', role: 'viewer' } }, memory_projects: {}, enable_project_memory: {}, skip_profiles: false, skip_shared_notes: false } };
+      window.fetch = async (path, options) => String(path) === '/api/import-v1/preview' ? json(source) : String(path) === '/api/macros' ? json({}) : original(path, options);
+      const wizard = new ImportV1Wizard();
+      try {
+        localStorage.removeItem('aimebu2.import-draft.v1-solo');
+        await wizard.open(); wizard.stepID = 'people'; wizard.render();
+        const select = person => wizard.content.querySelector(`select[data-person="${person}"]`);
+        const out = { solo: select('solo').value, guest: select('guest').value, guestLogin: wizard.content.querySelector('input[data-new-login="guest"]')?.value, accounts: Object.keys(wizard.mapping.new_users), warned: wizard.content.querySelectorAll('.import-warning').length };
+        wizard.mapping.humans.solo = '-'; wizard.render();
+        out.warnedAfterManualUnmap = !!wizard.content.querySelector('.people-owner-hint');
+        return out;
+      } finally { window.fetch = original; localStorage.removeItem('aimebu2.import-draft.v1-solo'); wizard.dialog.close(); wizard.dialog.remove(); }
+    });
+    assert.deepEqual(peopleSuggested, { solo: 'sam', guest: '__new_account__', guestLogin: 'guest-2', accounts: ['guest'], warned: 0, warnedAfterManualUnmap: false }, 'the wizard shows the server\'s suggestion and does not claim a name mismatch after a manual unmap');
     // The wizard fits the window at any size: the title and progress stay on top, Next/Back and Skip stay at the bottom, and only the content
     // between them scrolls (no scrollbar on the dialog itself).
     const wizardFit = () => first.evaluate(async () => {

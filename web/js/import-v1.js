@@ -72,6 +72,19 @@ const NEW_ACCOUNT = '__new_account__';
 
 function draftKey(sourceKey) { return `aimebu2.import-draft.${sourceKey}`; }
 
+// What choosing "Skip person" costs, said next to the choice: their messages keep their name as a label, but what belongs to the person's
+// account is not imported at all, and an import cannot be repeated. `stakes` counts it (see human_stakes in the preview).
+export function skippedPersonWarning(stakes) {
+  const plural = (count, one, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+  const lost = [];
+  if (stakes?.memory_profiles) lost.push(plural(stakes.memory_profiles, 'memory profile'));
+  if (stakes?.reactions) lost.push(plural(stakes.reactions, 'reaction'));
+  if (stakes?.read_positions) lost.push(plural(stakes.read_positions, 'read position'));
+  if (stakes?.room_view) lost.push(plural(stakes.room_view, 'pinned or hidden room'));
+  return 'No account: their messages keep their name as a label, and nobody can sign in as them.'
+    + (lost.length ? ` Their ${lost.join(', ')} would not be imported, and an import cannot be repeated.` : '')
+    + ' Choose an account, or "Create a new account…", to keep them.';
+}
 export class ImportV1Wizard {
   constructor(currentSession = () => () => true) {
     this.currentSession = currentSession;
@@ -162,7 +175,11 @@ export class ImportV1Wizard {
     mapping.skip_macros ||= [];
     // A person the draft has no choice for gets the suggestion (and its default); a person it does have a choice for keeps it, a skip included.
     const undecided = new Set((this.preview.humans || []).filter(human => mapping.humans[human] === undefined));
-    for (const human of undecided) mapping.humans[human] = this.preview.suggested.humans?.[human] ?? '-';
+    for (const human of undecided) {
+      mapping.humans[human] = this.preview.suggested.humans?.[human] ?? '-';
+      const account = this.preview.suggested.new_users?.[human];
+      if (account) mapping.new_users[human] = { ...account }; // the suggested login is a new account, not a link to an existing one
+    }
     this.defaultPeople(mapping, human => undecided.has(human));
     this.mapping = mapping;
     if (this.steps.some(step => step.id === draft.step)) this.stepID = draft.step;
@@ -394,6 +411,9 @@ export class ImportV1Wizard {
       const folder = this.field('Workspace folder (absolute path)', project.folder, value => { project.folder = value; });
       folder.querySelector('input').dataset.projectFolder = alias; folder.querySelector('input').placeholder = '/path/to/the/project';
       box.append(folder);
+      // v1 did not record where this project's agents worked (they are gone from its registry) and no folder of that name was found beside the
+      // others, so the owner says. Any existing folder will do for now: it can be changed in the project's settings until its first agent starts.
+      if (!project.folder) box.append(node('p', 'v1 did not record a folder for this project. Enter the folder its agents will work in; you can change it in the project\'s settings until its first agent starts. Or remove the project: its rooms are then not imported.', 'settings-intro import-folder-hint'));
       for (const login of p.destination_users || []) {
         if (login === this.mapping.owner_login) continue;
         box.append(this.checkbox(`Grant ${login} project viewer access`, (this.mapping.project_members[alias] || []).includes(login), checked => {
@@ -437,6 +457,12 @@ export class ImportV1Wizard {
     this.mapping.new_users ||= {};
     this.status.textContent = 'People sharing one destination account are merged for access. Their original names remain on historical messages. A person can get a new account made by the import (no password: you get a one-time link for each at the end). Skipped people keep a historical label and receive no live room membership.';
     const people = [['-', 'Skip person (legacy label only)'], ...(p.destination_users || [this.mapping.owner_login]).map(login => [login, login === this.mapping.owner_login ? `${login} (owner)` : login]), [NEW_ACCOUNT, 'Create a new account…']];
+    const owner = this.mapping.owner_login;
+    const noSuggestedOwner = !Object.values(p.suggested?.humans || {}).includes(owner);
+    const noMappedOwner = !(p.humans || []).some(human => this.mapping.humans[human] === owner);
+    if ((p.humans || []).length > 1 && noSuggestedOwner && noMappedOwner) {
+      this.content.append(node('p', `None of these people is mapped to your account (${owner}): the backup has no one with your name, and more than one person. Choose which one is you to carry that person's read positions, memory profile, pins and reactions into ${owner}. New accounts keep their own importable data; skipping a person drops theirs.`, 'import-warning people-owner-hint'));
+    }
     for (const human of p.humans || []) {
       const created = this.mapping.new_users[human];
       const row = this.field(human, created ? NEW_ACCOUNT : this.mapping.humans[human], () => {}, people);
@@ -450,7 +476,7 @@ export class ImportV1Wizard {
         this.save(); this.refresh();
       };
       this.content.append(row);
-      if (!created && this.mapping.humans[human] === '-') this.content.append(node('p', 'No account: their messages keep their name as a label, and nobody can sign in as them. Choose "Create a new account…" to give them one.', 'import-warning'));
+      if (!created && this.mapping.humans[human] === '-') this.content.append(node('p', skippedPersonWarning(this.preview.human_stakes?.[human]), 'import-warning'));
       if (created) {
         const box = node('div', '', 'import-new-account');
         const login = this.field('Login for the new account', created.login, value => { created.login = value.trim(); this.mapping.humans[human] = created.login; });
@@ -477,24 +503,24 @@ export class ImportV1Wizard {
 
   // A login for a new account from a v1 name: lowercase, 3 to 32 characters, not one already in use here or chosen for someone else.
   newLogin(name, mapping = this.mapping) {
-    const taken = new Set([...(this.preview.destination_users || []), ...Object.values(mapping.new_users || {}).map(user => user.login)]);
+    const taken = new Set([...(this.preview.destination_users || []), ...Object.values(mapping.new_users || {}).map(user => user.login)].map(login => String(login).toLowerCase()));
     let base = name.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^[^a-z]+/, '').slice(0, 28);
     if (base.length < 3) base = `user-${base}`.replace(/-$/, '');
     if (base.length < 3) base = 'user';
     let login = base, n = 2;
-    while (taken.has(login)) login = `${base}-${n++}`;
+    while (taken.has(login.toLowerCase())) login = `${base}-${n++}`;
     return login;
   }
 
   problem_people() {
-    const taken = new Set(this.preview.destination_users || []);
+    const taken = new Set((this.preview.destination_users || []).map(login => login.toLowerCase())); // logins are compared case-insensitively, as the server does
     const seen = new Set();
     for (const [human, user] of Object.entries(this.mapping.new_users || {})) {
       const selector = `input[data-new-login="${CSS.escape(human)}"]`;
       if (!/^[a-z][a-z0-9_-]{2,31}$/.test(user.login || '')) return { message: `The login for ${human} must be 3 to 32 characters: a lowercase letter, then lowercase letters, digits, - or _.`, selector };
-      if (taken.has(user.login)) return { message: `The login "${user.login}" is already an account here; map ${human} to it instead, or choose another login.`, selector };
-      if (seen.has(user.login)) return { message: `Two people would both be "${user.login}"; give each their own login.`, selector };
-      seen.add(user.login);
+      if (taken.has(user.login.toLowerCase())) return { message: `The login "${user.login}" is already an account here; map ${human} to it instead, or choose another login.`, selector };
+      if (seen.has(user.login.toLowerCase())) return { message: `Two people would both be "${user.login}"; give each their own login.`, selector };
+      seen.add(user.login.toLowerCase());
     }
     return null;
   }
