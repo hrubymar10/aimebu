@@ -123,11 +123,32 @@ func (service *Service) Authenticate(ctx context.Context, token string) (store.A
 	}
 	now := service.Now().UTC()
 	newExpiry := now.Add(service.SessionTTL)
+	// Every commit costs an fsync and the store has one connection, so a
+	// write per request queues a page load's parallel calls behind each
+	// other. Only slide the expiry once it lags noticeably.
+	if stored, err := time.Parse(sessionTimeFormat, session.ExpiresAt); err == nil &&
+		newExpiry.Sub(stored) < service.slideThreshold() {
+		return session, nil
+	}
 	if err := service.Store.ExtendAuthSession(ctx, session.ID, now, newExpiry); err != nil {
 		return store.AuthSession{}, err
 	}
 	session.ExpiresAt = newExpiry.Format(sessionTimeFormat)
 	return session, nil
+}
+
+// slideThreshold is how far the stored expiry may lag the would-be new one
+// before Authenticate writes: a tenth of the TTL, at least five minutes, and
+// never more than half the TTL so short TTLs still slide.
+func (service *Service) slideThreshold() time.Duration {
+	threshold := service.SessionTTL / 10
+	if threshold < 5*time.Minute {
+		threshold = 5 * time.Minute
+	}
+	if limit := service.SessionTTL / 2; threshold > limit {
+		threshold = limit
+	}
+	return threshold
 }
 
 // CheckSession validates a bearer token without renewing its expiry. Long-lived

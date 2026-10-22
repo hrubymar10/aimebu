@@ -676,3 +676,54 @@ func TestLoginWithOlderStoredPolicy(t *testing.T) {
 		t.Fatalf("old-hash upgrade: %v", err)
 	}
 }
+
+func TestAuthenticateSlidesExpiryOnlyWhenItLags(t *testing.T) {
+	service, _, _ := testService(t)
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	service.Now = func() time.Time { return now }
+	login, err := service.Login(context.Background(), "owner", testPassword, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := func() string {
+		t.Helper()
+		session, err := service.Store.SessionByTokenHash(context.Background(), hashToken(login.SessionToken))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return session.ExpiresAt
+	}
+	initial := stored()
+	// Well inside the threshold (TTL/10 = 16.8h): authenticated, not written.
+	now = now.Add(time.Hour)
+	if _, err := service.Authenticate(context.Background(), login.SessionToken); err != nil {
+		t.Fatal(err)
+	}
+	if got := stored(); got != initial {
+		t.Fatalf("fresh session was rewritten: %s -> %s", initial, got)
+	}
+	// Past the threshold: the expiry slides to now+TTL.
+	now = now.Add(service.slideThreshold())
+	if _, err := service.Authenticate(context.Background(), login.SessionToken); err != nil {
+		t.Fatal(err)
+	}
+	want := now.Add(service.SessionTTL).Format(sessionTimeFormat)
+	if got := stored(); got != want {
+		t.Fatalf("lagging session not extended: got %s want %s", got, want)
+	}
+}
+
+func TestSlideThresholdBounds(t *testing.T) {
+	service := &Service{SessionTTL: 7 * 24 * time.Hour}
+	if got := service.slideThreshold(); got != 7*24*time.Hour/10 {
+		t.Fatalf("week TTL threshold = %s", got)
+	}
+	service.SessionTTL = 30 * time.Minute
+	if got := service.slideThreshold(); got != 5*time.Minute {
+		t.Fatalf("half-hour TTL threshold = %s", got)
+	}
+	service.SessionTTL = 4 * time.Minute
+	if got := service.slideThreshold(); got != 2*time.Minute {
+		t.Fatalf("short TTL threshold = %s", got)
+	}
+}

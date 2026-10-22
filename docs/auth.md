@@ -95,7 +95,10 @@ Sessions use 256-bit random bearer tokens. SQLite stores only SHA-256 token
 hashes. Session cookies are HttpOnly and SameSite=Strict, with Secure set on
 TLS requests and on proxied requests whose `Host` is the host of an HTTPS
 `AIMEBU2_PUBLIC_URL`. The default lifetime is seven days and slides on
-authenticated HTTP requests. An open event socket checks session validity every 30 seconds
+authenticated HTTP requests, but the stored expiry is moved only once it lags
+the new one by more than a tenth of the lifetime (at least five minutes, at most
+half the lifetime), so a page load's parallel requests do not each write. The
+effective idle timeout is therefore between about 6 days 7 hours and 7 days. An open event socket checks session validity every 30 seconds
 without renewing its expiry. Unsafe HTTP methods require `X-CSRF-Token`; WebSocket upgrades need
 a valid session cookie and a same-origin `Origin`; behind a reverse proxy the
 configured `AIMEBU2_PUBLIC_URL` origin also counts as same-origin. Failed logins are throttled
