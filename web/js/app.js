@@ -32,6 +32,7 @@ import { copyText } from './markdown.js';
 import { ImportV1Wizard } from './import-v1.js';
 import { offerHarnessSetup, anyHarnessConfigured, HARNESS_SKIP_PREFERENCE } from './harness-offer.js';
 import { DiskUsage } from './disk-usage.js';
+import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
 
 
 initUIVariants();
@@ -134,6 +135,10 @@ const notifications = new InboxNotifications(item => {
   inbox.show();
   requestAnimationFrame(() => document.querySelector(`[data-inbox-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'center' }));
 }, (room, messageID) => { void selectRoom(sidebar.rooms.get(room.id) || room, messageID); });
+// The bar that offers browser notifications the first time something needs the person's attention; dismissing it is the account's choice.
+const notificationBanner = new NotificationBanner({ notifications, saveDismissed: () => request('/api/me/preferences', { method: 'PUT', body: { preferences: { [BANNER_DISMISSED_PREFERENCE]: '1' } } }) });
+notifications.onAttention = () => notificationBanner.attention();
+notifications.onPermission = () => notificationBanner.sync();
 const inbox = new Inbox(createInboxSource(), sidebar.projects, sidebar.rooms, async item => {
   const room = sidebar.rooms.get(item.room_id); if (!room) return;
   const generation = sessionGeneration;
@@ -355,7 +360,7 @@ async function signedIn(session) {
   const startupAbort = new AbortController();
   const startupActive = () => active() && !startupExpired && !startupAbort.signal.aborted;
   startupController = startupAbort;
-  setSession(session); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); document.title = 'aimebu'; loginView.hidden = true;
+  setSession(session); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; loginView.hidden = true;
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
   if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
   setStartupState('loading'); appView.hidden = false;
@@ -442,6 +447,8 @@ async function signedIn(session) {
     if (!importWizard.dialog.open && sidebar.projects.size === 0) onboarding.show();
     if (pendingInvite && !inviteDialog.open) inviteDialog.showModal();
     startupSucceeded = true;
+    // Items already waiting for the person are something that needs them too: the bar is offered once, the first time.
+    if (inbox.items?.length) notificationBanner.attention();
     // An owner or admin with no harness that has a model is offered the Harnesses step (after a v1 import, which carries no harness over; on
     // a first sign-in from another browser; when every harness was removed): nothing can be spawned without one. The answer comes from the
     // server, and so does a skip. Outside the startup deadline: a slow supervisor must not turn a loaded workspace into a timeout.

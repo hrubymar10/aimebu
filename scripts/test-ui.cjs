@@ -70,6 +70,9 @@ async function main() {
     // The smoke exercises threads, copy and links through the compact toolbar (style C); style A, the product default, has
     // its own steps. Every page starts with that choice stored, before any navigation.
     const prepare = async page => { await page.evaluateOnNewDocument(() => { try { if (!localStorage.getItem('aimebu2.ui.variant')) localStorage.setItem('aimebu2.ui.variant', 'c'); } catch {}
+      // Browser notifications are not asked for: every smoke page reports the permission as refused, so the bar that offers them never shows
+      // over unrelated flows. The page that tests the bar replaces this with a permission that has not been asked yet.
+      try { if ('Notification' in window) Object.defineProperty(Notification, 'permission', { configurable: true, get: () => 'denied' }); } catch {}
       // Most of the smoke drives the composer's textarea directly, so it starts with formatting off; the composer block turns it on (and checks the default by clearing this, which a page marks with a session flag).
       try { if (!sessionStorage.getItem('smoke-default-formatting') && !localStorage.getItem('aimebu2.composer.formatting')) localStorage.setItem('aimebu2.composer.formatting', 'off'); } catch {} }); return page; };
     const createBrowserContext = browser.createBrowserContext.bind(browser);
@@ -2653,6 +2656,51 @@ async function main() {
       assert.equal(await resolvedPage.$eval('.inbox-card', el => el.dataset.inboxId), 'mock_open_failure', 'only the archived rooms\' failures are dismissed');
       await resolvedContext.close();
     }
+    // The bar that offers browser notifications: shown once, the first time something needs the person (here the Inbox items already waiting),
+    // only while the browser has not been asked, on a phone as well. Enable is the click that raises the permission prompt; Dismiss is kept on
+    // the account, so a reload and a brand new browser do not show it again.
+    {
+      const askedPage = async () => {
+        const context = await browser.createBrowserContext(), page = await context.newPage();
+        await page.setViewport({ width: 390, height: 780 });
+        await page.evaluateOnNewDocument(() => {
+          let permission = 'default';
+          Object.defineProperty(Notification, 'permission', { configurable: true, get: () => permission });
+          Notification.requestPermission = async () => { window.__permissionAsks = (window.__permissionAsks || 0) + 1; permission = 'granted'; return permission; };
+        });
+        await login(page, `${origin}/?mock_inbox=1`);
+        return { context, page };
+      };
+      const barState = page => page.evaluate(() => {
+        const bar = document.querySelector('.notification-banner'); if (!bar) return null;
+        const box = bar.getBoundingClientRect(), buttons = [...bar.querySelectorAll('button')];
+        return { shown: !bar.hidden, role: bar.getAttribute('role'), label: bar.getAttribute('aria-label'), afterHeader: bar.previousElementSibling === document.querySelector('.chat > header'),
+          buttons: buttons.map(button => [button.title, button.getAttribute('aria-label'), button.textContent.trim(), !!button.querySelector('.icon-mask')]),
+          inside: box.left >= 0 && box.right <= window.innerWidth + 0.5, targets: buttons.every(button => button.getBoundingClientRect().width >= 36 && button.getBoundingClientRect().height >= 36), text: bar.querySelector('.notification-banner-text').textContent };
+      });
+      const enabled = await askedPage();
+      try {
+        await enabled.page.waitForSelector('.notification-banner:not([hidden])');
+        assert.deepEqual(await barState(enabled.page), { shown: true, role: 'region', label: 'Browser notifications', afterHeader: true,
+          buttons: [['Enable browser notifications', 'Enable browser notifications', '', true], ['Dismiss this and do not ask again', 'Dismiss this and do not ask again', '', true]], inside: true, targets: true, text: 'Get a browser notification when something needs you.' }, 'the bar is a labelled region with icon buttons');
+        assert.equal(await enabled.page.evaluate(() => window.__permissionAsks || 0), 0, 'nothing asks for the permission before the click');
+        await domClick(enabled.page, '.notification-banner-enable');
+        await enabled.page.waitForSelector('.notification-banner', { hidden: true });
+        assert.equal(await enabled.page.evaluate(() => window.__permissionAsks), 1, 'Enable raises the permission prompt once');
+      } finally { await enabled.context.close(); }
+      const dismissed = await askedPage();
+      try {
+        await dismissed.page.waitForSelector('.notification-banner:not([hidden])');
+        await domClick(dismissed.page, '.notification-banner-dismiss');
+        await dismissed.page.waitForSelector('.notification-banner', { hidden: true });
+        assert.equal(await dismissed.page.evaluate(() => window.__permissionAsks || 0), 0, 'Dismiss does not ask for the permission');
+        await dismissed.page.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.notification_banner_dismissed === '1');
+        await dismissed.page.reload(); await appReady(dismissed.page); await new Promise(resolve => setTimeout(resolve, 2500));
+        assert.equal(await dismissed.page.$eval('.notification-banner', bar => bar.hidden), true, 'a reload does not show it again after Dismiss');
+      } finally { await dismissed.context.close(); }
+      const fresh = await askedPage();
+      try { await new Promise(resolve => setTimeout(resolve, 2500)); assert.equal(await fresh.page.$eval('.notification-banner', bar => bar.hidden), true, 'a brand new browser is not shown it either: Dismiss is the account\'s'); } finally { await fresh.context.close(); }
+    }
     const mockContext = await browser.createBrowserContext(), mock = await mockContext.newPage();
     await mock.setViewport({ width: 390, height: 780 });
     await login(mock, `${origin}/?mock_inbox=1`);
@@ -2957,6 +3005,9 @@ async function main() {
       }
     }
     const settingsContext = await browser.createBrowserContext(), settingsPage = await settingsContext.newPage();
+    // This page checks the Settings button for the browser permission, which follows the real value (not asked yet). The bar that offers
+    // browser notifications cannot show here: the owner dismissed it above, and Dismiss is kept on the account.
+    await settingsPage.evaluateOnNewDocument(() => { try { Object.defineProperty(Notification, 'permission', { configurable: true, get: () => 'default' }); } catch {} });
     await settingsPage.setViewport({ width: 1100, height: 720 });
     // The quota switcher API is answered by a Node-side mock (scripts/quota-mock.cjs) through request interception, so the
     // production Settings code runs over plain HTTP with no test hooks. Everything else goes to the real server.

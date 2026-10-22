@@ -27,6 +27,7 @@ function setup({ muted = false, permission = 'granted', hidden = true } = {}) {
     constructor(title, options) { log.notes.push({ title, ...options }); }
     close() {}
     static permission = permission;
+    static async requestPermission() { log.asked = (log.asked || 0) + 1; return 'granted'; }
   }
   const storage = new Map(muted ? [['aimebu2:inbox-muted:me', '1']] : []);
   const context = {
@@ -125,4 +126,30 @@ for (const [notify, message, plays] of [['default', mention, 1], ['default', pla
   assert.equal(unaddressed.log.plays, 1, 'a message that did not address you claims nothing, so a later item still chimes');
 }
 
-console.log('inbox notifications test passed');
+{ // Whatever needs the person's attention tells the app (it may then offer browser notifications), whether or not it makes a sound: an
+  // item, or a message that addresses them. A room that is quiet for them, a message that does not address them, and their own messages do not.
+  const attention = [];
+  const t = setup({ muted: true }); t.notifier.onAttention = () => attention.push('x');
+  t.notifier.arrived([item], t.projects, new Map([['r1', room()]]));
+  assert.equal(attention.length, 1, 'an item');
+  t.advance(10000); t.notifier.message(mention, room(), t.projects, 'me', false);
+  assert.equal(attention.length, 2, 'a message that addresses them');
+  t.advance(10000); t.notifier.message(mention, room(), t.projects, 'me', true);
+  assert.equal(attention.length, 3, 'also while they are looking at that room');
+  t.advance(10000);
+  t.notifier.arrived([item], t.projects, new Map([['r1', room({ notify: 'none' })]]));
+  t.notifier.message(plain, room(), t.projects, 'me', false);
+  t.notifier.message({ ...mention, author_kind: 'user', author_id: 'me' }, room({ notify: 'all' }), t.projects, 'me', false);
+  assert.equal(attention.length, 3, 'a quiet room, an unaddressed message and their own message are not attention');
+}
+
+(async () => { // Asking for the permission (the Settings button) tells whoever offers notifications, so the bar can re-read the answer; nothing when it
+  // was asked before or notifications are unavailable.
+  const t = setup({ permission: 'default' }); let told = 0; t.notifier.onPermission = () => { told++; };
+  await t.notifier.requestPermission();
+  assert.deepEqual([t.log.asked, told], [1, 1]);
+  const asked = setup({ permission: 'granted' }); asked.notifier.onPermission = () => { told++; };
+  await asked.notifier.requestPermission();
+  assert.deepEqual([asked.log.asked || 0, told], [0, 1], 'already answered: no prompt, nobody told');
+  console.log('inbox notifications test passed');
+})().catch(error => { console.error(error); process.exit(1); });

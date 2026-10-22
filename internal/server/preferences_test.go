@@ -107,3 +107,21 @@ func TestHarnessSetupSkipIsAPerAccountPreference(t *testing.T) {
 		t.Fatalf("the skip leaked to another person: %v", got)
 	}
 }
+
+// Dismissing the bar that offers browser notifications is the account's choice, kept on the server and never seen by another person.
+func TestNotificationBannerDismissalIsAPerAccountPreference(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	cookie, csrf := registerSecondUser(t, f, "second")
+	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"notification_banner_dismissed": "1"}}, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("store: %d", resp.StatusCode)
+	}
+	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["notification_banner_dismissed"] != "1" {
+		t.Fatalf("stored, read back %v", got)
+	}
+	other := f.requestAs(t, cookie, csrf, "GET", "/api/me/preferences", nil)
+	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["notification_banner_dismissed"] != "" {
+		t.Fatalf("the dismissal leaked to another person: %v", got)
+	}
+}

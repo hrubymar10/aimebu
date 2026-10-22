@@ -1972,6 +1972,12 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 @media (max-width: 480px) { :root { --bar-h: 49px; } .app > .workspace-bar { height: 49px; min-height: 49px; } }
 
 /* The composer's notices (web/js/notice.js): a short message with a dismiss button, under the composer. */
+/* The quiet bar that offers browser notifications, under the room header: one line, an icon, the text, Enable and Dismiss as icon buttons. */
+.notification-banner { display: flex; align-items: center; gap: 10px; padding: 4px 16px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 12px; }
+.notification-banner[hidden] { display: none; }
+.notification-banner > .icon-mask { flex: 0 0 auto; width: 16px; height: 16px; color: var(--text-muted); }
+.notification-banner-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.notification-banner .icon-btn { flex: 0 0 auto; }
 .composer-notice { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .composer-notice[hidden] { display: none; }
 .composer-notice-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }

@@ -11,6 +11,8 @@ const COALESCE_MS = 3000;
 export class InboxNotifications {
   constructor(onOpen, onOpenRoom) {
     this.onOpen = onOpen; this.onOpenRoom = onOpenRoom;
+    // Called whenever something needs the person's attention (an Inbox item or a message that addresses them), whatever the room's sound level.
+    this.onAttention = null; this.onPermission = null;
     this.messageClaimed = new Map(); this.inboxClaimed = new Map();
     this.audio = new Audio('/sounds/chime.wav');
     this.audio.preload = 'auto';
@@ -69,11 +71,13 @@ export class InboxNotifications {
   async requestPermission() {
     if (!this.available || Notification.permission !== 'default') return;
     await Notification.requestPermission();
+    this.onPermission?.(); // whoever shows an offer of notifications (the bar) re-reads the answer
   }
   arrived(items, projects, rooms) {
     // A room set to nothing, or muted for now, stays quiet; the item is in the Inbox all the same.
     items = items.filter(item => !roomSilenced(rooms.get(item.room_id)) && !this.recent(this.messageClaimed, item.room_id));
     if (!items.length) return;
+    this.onAttention?.();
     const now = Date.now();
     for (const item of items) this.inboxClaimed.set(item.room_id, now);
     if (!this.muted) {
@@ -99,6 +103,7 @@ export class InboxNotifications {
   // The global mute is the master switch for the sound; the desktop note only shows while the tab is hidden, as for the inbox.
   message(message, room, projects, me, watching) {
     if (!messageNotifies(room, message, me)) return;
+    this.onAttention?.();
     if (this.recent(this.inboxClaimed, room.id) || this.recent(this.messageClaimed, room.id)) return;
     // The room being read is claimed too, without a sound: the Inbox item the same message opens must not chime for what is on screen.
     this.messageClaimed.set(room.id, Date.now());
