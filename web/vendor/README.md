@@ -66,3 +66,10 @@ Vendored frontend dependency:
 - `web/icons/bell.svg` and `web/icons/bell-disabled.svg` are the SVG Repo "bell" and "bell disabled" icons, MIT per the owner. Their
   geometry is unchanged; the downloads' XML declaration, header comment and fixed size were removed, and the black strokes use
   `currentColor`. The bell marks the room's Notifications settings; the disabled bell marks a muted room in the room list.
+- `preact/` is the component runtime: Preact **11.0.1** (MIT; `preact.mjs` and `hooks.mjs`) and htm **3.1.1**
+  (Apache-2.0; `htm.mjs`), byte-for-byte copies from the npm registry tarballs, loaded through the import map in
+  `web/index.html` and imported only by `web/js/ui.js`. The owner approved both on 2026-10-21 (AMB-70). Sources,
+  integrity hashes, maintenance notes and how to update are in `preact/README.md`; `preact/SHA256SUMS` lists every file
+  (`preact.mjs` is `3a3201e9ccef7d30ef1273427f1b17ef8323e464b2c8d73b4fd5636af730433e`, `hooks.mjs`
+  `6cb79fe9959ad185b8b86134aff47c12fd20216b24837597b19be59a133d9947`, `htm.mjs`
+  `ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4`).

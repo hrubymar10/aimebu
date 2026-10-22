@@ -11,7 +11,7 @@ const quotaMock = new QuotaMock();
 const { LimitGuardMock } = require('./limit-guard-mock.cjs');
 const guardMock = new LimitGuardMock();
 const root = process.env.CSS_WEB_ROOT || path.join(__dirname, '..', 'web');
-const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname.startsWith('/api/quota-switcher')) {

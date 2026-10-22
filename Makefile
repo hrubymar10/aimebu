@@ -36,7 +36,7 @@ fmt-check: ## Fail if Go source is unformatted
 
 test-full: fmt-check vet test-race test-web ## Full local and CI gate
 
-WEB_TESTS := system-events limit-guard sidebar-order preferences expiry room-unread room-notify inbox-notifications harness-offer notification-banner humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown markdown import-tree quick-commands message-usage
+WEB_TESTS := system-events limit-guard sidebar-order preferences expiry room-unread room-notify inbox-notifications harness-offer notification-banner humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown markdown import-tree quick-commands message-usage harness-model preact-vendor
 
 test-web: ## Run the browser-free web unit tests (vm over the module source)
 	@set -e; total=$(words $(WEB_TESTS)); n=0; \
@@ -47,8 +47,9 @@ test-web: ## Run the browser-free web unit tests (vm over the module source)
 		printf '[web %d/%d] ok     %s (%ds)\n' $$n $$total $$name $$(( $$(date +%s) - started )); \
 	done
 
-test-ui: ## Run Chromium smoke against a scratch server
+test-ui: ## Run Chromium smoke against a scratch server, then the Preact page tests
 	node scripts/test-ui.cjs
+	node scripts/test-harness-page.cjs
 
 dev: ## Run the server with live reload
 	go tool air -c .air.toml

@@ -1697,7 +1697,7 @@ button.icon-btn[aria-pressed="true"] { border-color: var(--accent); color: var(-
 .ui-variant-toggle .ui-variant-options { display: inline-flex; align-items: center; gap: 3px; }
 .ui-variant-toggle .ui-variant-opt { font-weight: 600; }
 .ui-variant-toggle[data-active="a"] .ui-variant-a, .ui-variant-toggle[data-active="b"] .ui-variant-b, .ui-variant-toggle[data-active="c"] .ui-variant-c, .ui-variant-toggle[data-active="d"] .ui-variant-d, .ui-variant-toggle[data-active="e"] .ui-variant-e { color: var(--text-primary); font-weight: 800; text-decoration: underline; text-underline-offset: 2px; }
-@media (max-width: 700px) { .workspace-bar nav button.ui-variant-toggle { height: 40px; min-width: 0; padding: 0 5px; } }
+@media (max-width: 700px) { .workspace-bar nav button.ui-variant-toggle { height: 40px; min-width: 40px; padding: 0 5px; } } /* a tap target, even with only A | B */
 @media (max-width: 700px) { .ui-variant-toggle > span:first-child { display: none; } }
 .workspace-bar nav button.ui-variant-toggle[hidden] { display: none; }
 .ui-variant-toggle .ui-variant-testing { margin-left: 4px; color: var(--text-secondary); font-weight: 600; letter-spacing: .02em; }

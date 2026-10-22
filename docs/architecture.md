@@ -107,10 +107,14 @@ retention. Per-agent stderr capture alongside the journal, on the machine that
 ran the harness, read back on demand for owners and admins (see
 [the supervisor](supervisor.md#agent-output)); stdout is not captured.
 
-**Frontend** — framework-free, modular from day one, patch live lists in
-place (no innerHTML rebuilds); tests for stable message identity, draft
-preservation, scroll under live updates. Preact + htm (vendored) is an option
-for the owner only if a concrete case arises (dependency consent + licence).
+**Frontend** — modular from day one, patch live lists in place (no innerHTML
+rebuilds); tests for stable message identity, draft preservation, scroll
+under live updates. Moving to Preact + htm, vendored and without a build step
+(owner approval 2026-10-21, AMB-70; plan in `docs/design/frontend-preact.md`):
+pages move one at a time, each behind a UI experiment whose option A is the
+legacy page and stays the default until the owner switches it. One rendering
+owner per DOM subtree: a container is either Preact's or hand-written code's,
+never both; pure logic stays in import-free modules.
 
 **Tasks (order)** — T-contract (tables, states, ack vocabulary, versioned
 envelope) → T1 skeleton → T2 core → T3 auth ∥ T4 API/events ∥ T13 usages/

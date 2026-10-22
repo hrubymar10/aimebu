@@ -40,7 +40,7 @@ If you change `HOME`, keep your Go caches by exporting `GOPATH`, `GOCACHE` and
 `GOMODCACHE` from `go env` first, or the build starts from scratch.
 
 `make dev` runs the server under `air` (`.air.toml`). It rebuilds `./tmp/aimebu`
-when a `.go`, `.html`, `.css`, `.js` or `.json` file changes and restarts the
+when a `.go`, `.html`, `.css`, `.js`, `.mjs` or `.json` file changes and restarts the
 server, so edit a file under `web/`, wait a second or two, and reload the
 browser. Ctrl-C stops it. If you start it without a terminal, stop it by its
 process ID, never with `pkill -f`: that pattern also matches your own shell.
@@ -79,7 +79,7 @@ For UI work without agents, the web app has mock switches such as
 | --- | --- | --- |
 | `make test` | `go test ./...`, with progress output | while iterating on Go code |
 | `make test-web` | the browser-free web unit tests (`scripts/test-*.cjs`, run in Node's `vm` over the module source) | while iterating on `web/js`; fast, no browser |
-| `make test-ui` | builds the server, starts a scratch one and drives Chromium through the UI | after any visible UI change; needs Chromium and `puppeteer-core` |
+| `make test-ui` | builds the server, starts a scratch one and drives Chromium through the UI; then `scripts/test-harness-page.cjs`, the Preact Harnesses page in Chromium with held, reordered and failing responses | after any visible UI change; needs Chromium and `puppeteer-core` |
 | `make test-race` | `go test -race ./...`, with progress output | after touching concurrency, the store, WebSocket or supervisor code |
 | `make test-full` | `fmt-check`, `vet`, `test-race`, `test-web` | before every commit; it is also what CI runs |
 
@@ -155,11 +155,16 @@ executable on the test's
 
 ## The `web/` layout
 
-The UI is hand-written ES modules, with no bundler and no framework. `web/` is
-embedded into the Go binary (`embed.go`) and served as is.
+The UI is ES modules with no bundler and no build step. Most of it is
+hand-written DOM code; pages are moving to Preact + htm one at a time (see
+[docs/design/frontend-preact.md](docs/design/frontend-preact.md)). `web/` is
+embedded into the Go binary (`embed.go`) and served as is; the server adds a
+content version to every relative module import (`./x.js`, `../x.js`) and to
+the import map, so each module has exactly one URL.
 
 - `web/index.html`: the page shell and the static markup of dialogs and
-  panels. Loads `js/app.js` as a module.
+  panels. Its import map names the vendored Preact runtime; then it loads
+  `js/app.js` as a module.
 - `web/js/`: one module per concern. `app.js` boots the page and wires the
   rest; `api.js` holds the session (CSRF token, current user, rights) and the
   `request` helper every call uses; `events.js` is the live event stream.
@@ -173,6 +178,19 @@ embedded into the Go binary (`embed.go`) and served as is.
   Logic that can run without a DOM (`*-format.js`, `settings-backup-format.js`,
   `preferences.js` and similar) is loaded straight into Node's `vm` by the
   `scripts/test-*.cjs` tests, so keep browser APIs out of those modules.
+- Preact code: `web/js/ui.js` is the only module that imports Preact and htm
+  (`scripts/test-preact-vendor.cjs` checks it); components import `html`,
+  `render` and the hooks from it. `web/js/components/` holds shared pieces
+  (`IconButton`, `SettingsRow`, `SettingsGroup`: the same markup as
+  `icon-button.js` and `settings-row.js`), `web/js/hooks/` shared hooks, and
+  `web/js/pages/<page>/` one page each: its components, a `model.js` with the
+  page's pure logic (import-free, tested in `vm`), and a `switch.js` that
+  picks the legacy page or the Preact one from the page's UI experiment.
+  Markup is written with `html` tagged templates:
+  ``html`<button class="btn" onClick=${save}>Save</button>` ``. A container
+  belongs to Preact or to hand-written code, never both. A Preact page keeps
+  the legacy page's ids, classes and text, so `test-ui` runs the same checks
+  against both.
 - `web/style.css`: the original base stylesheet; it is small and mostly legacy.
   `web/theme-v1.css`: the stylesheet that matters, which carries the colour
   variables (themes switch through `data-theme` on `<html>`) and nearly all of
@@ -184,7 +202,7 @@ embedded into the Go binary (`embed.go`) and served as is.
   with `iconButton('<name>', 'Label')`. Raster icons are built by
   `node scripts/build-icons.cjs` from the masters in `assets/`.
 - `web/vendor/`: third-party files (Mermaid, the emoji database, syntax
-  highlighting, the editor). Never edit them by hand. `web/vendor/README.md`
+  highlighting, the editor, Preact and htm). Never edit them by hand. `web/vendor/README.md`
   records each file's source, version, checksum and licence; update it in the
   same commit as any change here, including when a new icon comes from a
   catalogue. `scripts/test-svg-headers.cjs` fails if an SVG still carries a
@@ -220,7 +238,11 @@ uses one of the shared classes (`.btn`, `.icon-btn`, `.row-btn`).
 - **Plain words for users.** Say "Not responding", not an internal state name,
   and never show raw JSON.
 - **Experiments.** A/B questions run behind the top-bar pill in
-  `ui-variant.js`; its header comment explains how to define one.
+  `ui-variant.js`; its header comment explains how to define one. A page
+  moved to Preact is one, defined with `{ hidden: true }`: option A is the
+  legacy page and the default, and the pill shows only in a browser that
+  opted in with `?ui=` once; `?ui=<experiment>:b` opens the Preact page (for
+  Harnesses, `?ui=preact-harnesses:b`).
 
 ## Commits
 

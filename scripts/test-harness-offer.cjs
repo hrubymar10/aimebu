@@ -65,6 +65,7 @@ const run = async ({ canSetUp = true, skipped = false, configured = false, stora
   assert.equal(await anyHarnessConfigured(api([], {}).request), false, 'no machine');
   assert.equal(await anyHarnessConfigured(api([ok], { a: [launcher(true, 2)] }).request), true, 'an enabled harness with models');
   assert.equal(await anyHarnessConfigured(api([ok], { a: [launcher(false, 2)] }).request), false, 'a disabled harness is not set up');
+  assert.equal(await anyHarnessConfigured(api([{ id: 'a', approved: true, connected: false, last_seen: '2026-01-01T00:00:00Z' }], { a: [launcher(true, 1)] }).request), true, 'a harness on a disconnected machine still counts');
   assert.equal(await anyHarnessConfigured(api([ok], { a: [launcher(true, 0)] }).request), false, 'a harness with no model is not ready to spawn');
   const skipped = api([{ id: 'c', approved: false }, { id: 'd', approved: true, revoked_at: '2026-01-01T00:00:00Z' }, ok2], { c: [launcher(true, 1)], d: [launcher(true, 1)], b: [] });
   assert.equal(await anyHarnessConfigured(skipped.request), false, 'a pending or revoked machine does not count');

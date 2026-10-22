@@ -8,7 +8,13 @@ import (
 	"strings"
 )
 
-var moduleImport = regexp.MustCompile(`(from\s+['"]\./[^'"]+\.js)(['"])`)
+// One module under two URLs would run twice (a second api.js session, a second copy of Preact).
+var moduleImport = regexp.MustCompile(`(from\s+['"]\.\.?/[^'"]+\.js)(['"])`)
+
+var (
+	importMap      = regexp.MustCompile(`(?s)<script type="importmap">.*?</script>`)
+	importMapEntry = regexp.MustCompile(`("/[^"?]+\.m?js)(")`)
+)
 
 type webAssets struct {
 	version string
@@ -47,6 +53,9 @@ func prepareWebAssets(files fs.FS) (webAssets, error) {
 	for _, path := range []string{"/style.css", "/theme-v1.css", "/js/app.js"} {
 		page = strings.ReplaceAll(page, path+`"`, path+"?v="+version+`"`)
 	}
+	page = importMap.ReplaceAllStringFunc(page, func(block string) string {
+		return importMapEntry.ReplaceAllString(block, "${1}?v="+version+"${2}")
+	})
 	assets := webAssets{version: version, index: []byte(page), scripts: make(map[string][]byte)}
 	for name, data := range raw {
 		if strings.HasPrefix(name, "js/") && strings.HasSuffix(name, ".js") {

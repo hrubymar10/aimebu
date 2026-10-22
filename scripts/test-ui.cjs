@@ -2018,10 +2018,11 @@ async function main() {
       });
       assert.equal(html, 'thanks 🙏 and :nope_not_real: at 10:30:15 <code>:pray:</code> <a href="#">:pray:</a>', 'shortcodes in message text become emoji outside code and links');
     }
-    // No experiment is running, so the pill is hidden. The message width is final: text keeps to about 80 characters, and code,
-    // tables and plans use the whole bubble.
+    // The one running experiment (preact-harnesses) is hidden: without ?ui= naming it the pill stays hidden and the legacy page shows.
+    // The message width is final: text keeps to about 80 characters, and code, tables and plans use the whole bubble.
     {
-      assert.deepEqual(await first.$$eval('.workspace-bar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), [true], 'with no experiment running the pill is hidden');
+      assert.deepEqual(await first.$$eval('.workspace-bar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), [true], 'a hidden experiment shows no pill unless asked for');
+      assert.equal(await first.evaluate(() => document.documentElement.getAttribute('data-ui-preact-harnesses')), null, 'and its option is A');
       const widths = await first.evaluate(async () => {
         const { renderMarkdown } = await import('/js/markdown.js');
         const host = document.createElement('div'); host.className = 'message-body'; host.style.width = '1200px';
@@ -3628,119 +3629,155 @@ async function main() {
     await domClick(settingsPage, '#settings-project-tab');
     await settingsPage.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     assert.equal(await settingsPage.$eval('#project-auto-resume', el => el.checked), true, 'saved project toggle was lost');
-    await settingsPage.evaluate(() => {
-      window.__harnessFetch = window.fetch;
-      window.__harnessWrites = [];
-      window.__harnessRows = [
-        { config: { id: 'mln_claude', machine_id: 'mch_mock', tool: 'claude', name: 'native', command: '/usr/bin/claude', args: [], env_refs: {}, enabled: false, containerized: false, agent_server_url: '', path_maps: [], visible_roots: [], supports_toolbox: true, preset: true }, version: '2.1', available: false, unavailable_reason: 'disabled by owner', active_agents: 0 },
-        { config: { id: 'mln_codex', machine_id: 'mch_mock', tool: 'codex', name: 'harness-docker', command: '/usr/bin/docker', args: [], env_refs: {}, enabled: true, containerized: true, agent_server_url: '', path_maps: [], visible_roots: [], supports_toolbox: true, preset: true }, version: '29.1', available: true, active_agents: 0 },
-      ];
-      const json = value => new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      window.fetch = async (input, options = {}) => {
-        const path = String(input);
-        if (path === '/api/machines') return json({ machines: [{ id: 'mch_mock', name: 'Host', approved: true, last_seen: new Date().toISOString() }] });
-        if (path === '/api/machines/mch_mock/launchers' && options.method !== 'POST') return json({ machine_id: 'mch_mock', launchers: window.__harnessRows, activity: window.__harnessWrites.map(change => ({ ...change, created_at: new Date().toISOString(), actor: 'owner' })) });
-        // Auto-detect harnesses -> Add selected also detects and saves the new harness's models.
-        if (path === '/api/machines/mch_mock/launchers/detect') return json({ candidates: [{ family: 'pi', label: 'Pi', command: '/usr/bin/pi', containerized: false, already_added: false }, { family: 'pi', label: 'Pi (Docker)', command: '/usr/bin/pi-docker', containerized: true, already_added: false }] });
-        if (path === '/api/machines/mch_mock/launchers' && options.method === 'POST') {
-          const body = JSON.parse(options.body);
-          const config = { ...body, id: body.containerized ? 'mln_auto_docker' : 'mln_auto', machine_id: 'mch_mock', name: body.containerized ? 'pi-docker' : 'native', agent_server_url: '' };
-          window.__harnessRows.push({ config, available: true, unavailable_reason: '' });
-          return json({ config, observed: window.__harnessRows.at(-1) });
-        }
-        if (path === '/api/machines/mch_mock/launchers/mln_auto/models/detect') return json({ source: 'harness', candidates: Array.from({ length: 66 }, (_, index) => ({ slug: `pi-${index}`, label: `Pi ${index}`, note: '', already_listed: false })) });
-        // The Docker one cannot answer from the default folder; asked in a chosen folder, it lists one model.
-        if (path === '/api/machines/mch_mock/launchers/mln_auto_docker/models/detect') {
-          const body = JSON.parse(options.body || '{}'); (window.__dockerDetect ||= []).push(body);
-          if (!body.dir) return new Response(JSON.stringify({ error: 'detect_failed', detect_dir: '/home/test/.aimebu2/detect', message: window.__dockerFailure || "Couldn't detect the models: the harness could not list its models (exit status 1): the folder does not exist or is not visible in the harness container. Add the model ID manually." }), { status: 502, headers: { 'Content-Type': 'application/json' } });
-          return json({ source: 'harness', candidates: [
-            { slug: 'ollama-cloud/gemma4:31b', label: 'gemma4:31b', note: '', already_listed: false },
-            { slug: 'ollama-cloud/gemma4:7b', label: 'gemma4:7b', note: '', already_listed: false },
-            { slug: 'ollama-cloud/previous', label: 'previous', note: '', already_listed: true },
-          ] });
-        }
-        if (path === '/api/machines/mch_mock/launchers/mln_auto/models' && options.method === 'PUT') { window.__autoModels = JSON.parse(options.body).models; return json({ models: window.__autoModels }); }
-        if (path.startsWith('/api/machines/mch_mock/launchers/') && options.method === 'PUT') {
-          const id = path.split('/').pop();
-          const body = JSON.parse(options.body);
-          const row = window.__harnessRows.find(item => item.config.id === id);
-          window.__harnessWrites.push({ id, old_command: row.config.command, new_command: body.command, old_enabled: row.config.enabled, new_enabled: body.enabled });
-          Object.assign(row.config, body);
-          row.available = body.enabled;
-          row.unavailable_reason = body.enabled ? '' : 'disabled by owner';
-          return json({ config: row.config, observed: row });
-        }
-        return window.__harnessFetch(input, options);
-      };
-    });
-    await settingsPage.click('#settings-harnesses-tab');
-    await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-harness').length === 2);
-    assert.equal(await settingsPage.$eval('.machine-harness[data-variant="native"] [name=enabled]', el => el.disabled), false, 'owner must be able to enable native launcher');
-    assert.equal(await settingsPage.$eval('.machine-harness[data-variant="native"] .machine-harness-status', el => el.textContent), 'Disabled');
-    // Adding a detected harness also detects its models and saves them, the first as the default.
-    await domClick(settingsPage, '#harness-detect');
-    await settingsPage.waitForSelector('#harness-detect-panel input[type=checkbox]');
-    await settingsPage.$$eval('#harness-detect-panel input[type=checkbox]', boxes => boxes.forEach(el => el.click()));
-    await domClick(settingsPage, '#harness-detect-panel button[type=submit]');
-    await settingsPage.waitForFunction(() => window.__autoModels);
-    // 66 were offered, a list holds 64: the first 64 are saved, the first is the only default, and the page says it cut the list.
-    assert.deepEqual(await settingsPage.evaluate(() => ({ count: window.__autoModels.length, first: window.__autoModels[0].slug, last: window.__autoModels.at(-1).slug, defaults: window.__autoModels.filter(model => model.default).map(model => model.slug) })), { count: 64, first: 'pi-0', last: 'pi-63', defaults: ['pi-0'] }, 'detected models are capped at 64 with the first as the default');
-    await settingsPage.waitForFunction(() => document.querySelector('#settings-harnesses > .error')?.textContent.includes('only the first 64'));
-    // The Docker one could not list its models: the page says why, and its Models panel opens on that reason with a folder to retry in.
-    assert.ok((await settingsPage.$eval('#settings-harnesses > .error', el => el.textContent)).includes('A harness has no models yet. Detection blocked — please mount /home/test/.aimebu2/detect to your harness Docker'), 'the auto-fill failure gives only the private folder as the mount action');
-    assert.deepEqual(await settingsPage.$eval('#settings-harnesses > .harness-detect-details', el => [el.open, el.hidden, el.querySelector('p').textContent.includes('not visible')]), [false, false, true], 'the auto-fill stderr stays behind collapsed Details');
-    await domClick(settingsPage, '[aria-controls="harness-models-mln_auto_docker"]');
-    await settingsPage.waitForFunction(() => !document.querySelector('#harness-models-mln_auto_docker').hidden && !document.querySelector('#harness-models-mln_auto_docker .harness-detect-retry').hidden);
-    assert.equal(await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent), 'Detection blocked — please mount /home/test/.aimebu2/detect to your harness Docker, or pick a mounted folder below.', 'the Models panel opens on a concise private-folder mount instruction');
-    assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-detect-details', el => [el.open, el.hidden, el.querySelector('p').textContent.includes('not visible')]), [false, false, true], 'the original stderr is available only in collapsed Details');
-    assert.ok((await settingsPage.$eval('#harness-models-mln_auto_docker .harness-detect-dir', el => el.textContent)).includes('or pick a folder that is mounted in the container'), 'the retry field explains the mounted-folder option');
-    await settingsPage.evaluate(() => { window.__dockerFailure = "Couldn't detect the models: pi reports no models — is it logged in? Run /login in it"; });
-    await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-model-detect');
-    await settingsPage.waitForFunction(() => document.querySelector('#harness-models-mln_auto_docker .error')?.textContent.includes('pi reports no models'));
-    assert.equal(await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent), 'pi reports no models — is it logged in? Run /login in it', 'login errors keep their real cause without a mount hint');
-    await settingsPage.evaluate(() => { window.__dockerFailure = "Couldn't detect the models: the harness did not answer in time. Add the model ID manually."; });
-    await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-model-detect');
-    await settingsPage.waitForFunction(() => document.querySelector('#harness-models-mln_auto_docker .error')?.textContent.includes('the harness did not answer in time'));
-    assert.ok((await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent)).includes('the harness did not answer in time'), 'timeouts keep their real cause without a mount hint');
-    await settingsPage.evaluate(() => { delete window.__dockerFailure; });
-    assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-detect-retry-button', el => [el.title, el.getAttribute('aria-label'), !!el.querySelector('.icon-mask-refresh'), el.textContent.trim()]), ['Retry auto-detect in this folder', 'Retry auto-detect in this folder', true, ''], 'Retry is an icon button with a tooltip and an accessible name');
-    await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-detect-retry-button');
-    assert.ok((await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent)).includes('absolute folder path'), 'a retry needs an absolute folder');
-    await settingsPage.locator('#harness-models-mln_auto_docker [name=detect-dir]').fill('/work/project');
-    await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-detect-retry-button');
-    await settingsPage.waitForSelector('#harness-models-mln_auto_docker .harness-model-candidates [data-slug="ollama-cloud/gemma4:31b"]');
-    assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-candidate-controls', el => [el.querySelector('.harness-candidate-count').textContent, el.querySelector('button').title, el.querySelector('button').getAttribute('aria-label'), el.querySelector('button').getAttribute('aria-pressed'), !!el.querySelector('.icon-mask-select-all')]), ['0/2 selected', 'Select all available models', 'Select all available models', 'false', true], 'the select-all icon counts only available candidates and has a tooltip');
-    await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-candidate-select-all');
-    assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-model-candidates', el => [el.querySelector('.harness-candidate-count').textContent, el.querySelector('.harness-candidate-select-all').getAttribute('aria-pressed'), [...el.querySelectorAll('.harness-detect-row input')].map(check => [check.checked, check.disabled])]), ['2/2 selected', 'true', [[true, false], [true, false], [false, true]]], 'select all ticks only available models and updates the count');
-    await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-detect-row input');
-    assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-candidate-controls', el => [el.querySelector('.harness-candidate-count').textContent, el.querySelector('button').getAttribute('aria-pressed')]), ['1/2 selected', 'mixed'], 'individual untick updates the header count and mixed state');
-    assert.deepEqual(await settingsPage.evaluate(() => window.__dockerDetect), [{}, {}, {}, { dir: '/work/project' }], 'the retry sends the chosen folder; the default attempts sent none');
-    assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker', panel => [panel.querySelector('.harness-detect-retry').hidden, panel.querySelector('.error').textContent]), [true, ''], 'a successful retry clears the failure');
-    await settingsPage.evaluate(() => { window.__harnessRows = window.__harnessRows.filter(row => row.config.id !== 'mln_auto' && row.config.id !== 'mln_auto_docker'); });
-    await domClick(settingsPage, '#settings-usages-tab');
-    await settingsPage.click('#settings-harnesses-tab');
-    await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-harness').length === 2);
-    // A launcher is a summary row: name, status, summary line and the Enabled switch. The executable, arguments and the rest sit behind Edit.
-    assert.deepEqual(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"]', card => { const form = card.querySelector('form'), edit = card.querySelector('.machine-harness-edit'); return { row: !!card.querySelector(':scope > .settings-row .settings-label'), formHidden: form.hidden || getComputedStyle(form).display === 'none', edit: [edit.title, edit.getAttribute('aria-label'), !!edit.querySelector('.icon-mask-edit'), edit.getAttribute('aria-expanded'), edit.getAttribute('aria-controls') === form.id], switchInRow: !!card.querySelector(':scope > .settings-row [name=enabled]'), commandVisible: !!card.querySelector('[name=command]')?.offsetParent }; }), { row: true, formHidden: true, edit: ['Edit Codex (Docker)', 'Edit Codex (Docker)', true, 'false', true], switchInRow: true, commandVisible: false }, 'the launcher edit action is a labelled pencil icon');
-    await domClick(settingsPage, '.machine-harness[data-variant="harness-docker"] .machine-harness-edit');
-    assert.deepEqual(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"]', card => [card.querySelector('.machine-harness-edit').title, !!card.querySelector('.machine-harness-edit .icon-mask-close'), card.querySelector('.machine-harness-edit').getAttribute('aria-expanded'), !!card.querySelector('[name=command]').offsetParent]), ['Close settings for Codex (Docker)', true, 'true', true]);
-    await settingsPage.locator('.machine-harness[data-variant="harness-docker"] [name=command]').fill('/opt/custom/docker');
-    await domClick(settingsPage, '.machine-harness[data-variant="harness-docker"] button[type=submit]');
-    await settingsPage.waitForFunction(() => document.querySelector('.machine-harness[data-variant="harness-docker"] [name=command]')?.value === '/opt/custom/docker' && document.querySelectorAll('.machine-activity-item').length === 1);
-    assert.deepEqual(await settingsPage.evaluate(() => window.__harnessWrites[0]), { id: 'mln_codex', old_command: '/usr/bin/docker', new_command: '/opt/custom/docker', old_enabled: true, new_enabled: true });
-    // The card stays open across a save, and the Enabled switch saves on its own and only itself: edits still open in the form stay unsaved.
-    assert.equal(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"] [name=command]', el => !!el.offsetParent), true, 'the Edit form stays open after Save');
-    await settingsPage.$eval('.machine-harness[data-variant="harness-docker"] [name=command]', el => { el.value = '/opt/unsaved/docker'; el.dispatchEvent(new Event('input', { bubbles: true })); });
-    await domClick(settingsPage, '.machine-harness[data-variant="harness-docker"] [name=enabled]');
-    await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-activity-item').length === 2);
-    assert.equal(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"] [name=command]', el => el.value), '/opt/unsaved/docker', 'toggling Enabled must keep the unsaved command text in the form');
-    assert.deepEqual(await settingsPage.evaluate(() => window.__harnessWrites[1]), { id: 'mln_codex', old_command: '/opt/custom/docker', new_command: '/opt/custom/docker', old_enabled: true, new_enabled: false });
-    // Saving the form afterwards does send the edited command.
-    await settingsPage.click('.machine-harness[data-variant="harness-docker"] button[type=submit]');
-    await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-activity-item').length === 3);
-    assert.deepEqual(await settingsPage.evaluate(() => window.__harnessWrites[2]), { id: 'mln_codex', old_command: '/opt/custom/docker', new_command: '/opt/unsaved/docker', old_enabled: false, new_enabled: false });
-    assert.equal(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"] .machine-harness-status', el => el.textContent), 'Disabled');
-    await settingsPage.evaluate(() => { window.fetch = window.__harnessFetch; });
+    // Settings -> Harnesses runs in both implementations of the preact-harnesses experiment: the legacy page (A, the default) and
+    // the Preact page (B). The same checks, over the same mock, hold for both. The experiment is hidden, so B is opened with
+    // ?ui=preact-harnesses:b, which shows the pill; the pill then switches back to A in place.
+    const harnessChecks = async variant => {
+      assert.equal(await settingsPage.$eval('#settings-harnesses > h3', el => el.textContent.trim()), variant === 'b' ? 'Harnesses Preact' : 'Harnesses', 'only the Preact page shows its badge');
+      assert.deepEqual(await settingsPage.evaluate(() => [document.documentElement.getAttribute('data-ui-preact-harnesses') || 'a', document.querySelector('#settings-harnesses').dataset.implementation || 'legacy', document.querySelectorAll('#settings-harnesses').length, document.querySelectorAll('#settings-harnesses-tab').length]), [variant, variant === 'b' ? 'preact' : 'legacy', 1, 1], `exactly one Harnesses page is built, the ${variant === 'b' ? 'Preact' : 'legacy'} one`);
+      await settingsPage.evaluate(() => {
+        window.__harnessFetch = window.fetch;
+        window.__harnessWrites = []; window.__autoModels = undefined; window.__dockerDetect = undefined; delete window.__dockerFailure;
+        window.__harnessRows = [
+          { config: { id: 'mln_claude', machine_id: 'mch_mock', tool: 'claude', name: 'native', command: '/usr/bin/claude', args: [], env_refs: {}, enabled: false, containerized: false, agent_server_url: '', path_maps: [], visible_roots: [], supports_toolbox: true, preset: true }, version: '2.1', available: false, unavailable_reason: 'disabled by owner', active_agents: 0 },
+          { config: { id: 'mln_codex', machine_id: 'mch_mock', tool: 'codex', name: 'harness-docker', command: '/usr/bin/docker', args: [], env_refs: {}, enabled: true, containerized: true, agent_server_url: '', path_maps: [], visible_roots: [], supports_toolbox: true, preset: true }, version: '29.1', available: true, active_agents: 0 },
+        ];
+        const json = value => new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        window.fetch = async (input, options = {}) => {
+          const path = String(input);
+          if (path === '/api/machines') return json({ machines: [{ id: 'mch_mock', name: 'Host', approved: true, last_seen: new Date().toISOString() }] });
+          if (path === '/api/machines/mch_mock/launchers' && options.method !== 'POST') return json({ machine_id: 'mch_mock', launchers: window.__harnessRows, activity: window.__harnessWrites.map(change => ({ ...change, created_at: new Date().toISOString(), actor: 'owner' })) });
+          // Auto-detect harnesses -> Add selected also detects and saves the new harness's models.
+          if (path === '/api/machines/mch_mock/launchers/detect') return json({ candidates: [{ family: 'pi', label: 'Pi', command: '/usr/bin/pi', containerized: false, already_added: false }, { family: 'pi', label: 'Pi (Docker)', command: '/usr/bin/pi-docker', containerized: true, already_added: false }] });
+          if (path === '/api/machines/mch_mock/launchers' && options.method === 'POST') {
+            const body = JSON.parse(options.body);
+            const config = { ...body, id: body.containerized ? 'mln_auto_docker' : 'mln_auto', machine_id: 'mch_mock', name: body.containerized ? 'pi-docker' : 'native', agent_server_url: '' };
+            window.__harnessRows.push({ config, available: true, unavailable_reason: '' });
+            return json({ config, observed: window.__harnessRows.at(-1) });
+          }
+          if (path === '/api/machines/mch_mock/launchers/mln_auto/models/detect') return json({ source: 'harness', candidates: Array.from({ length: 66 }, (_, index) => ({ slug: `pi-${index}`, label: `Pi ${index}`, note: '', already_listed: false })) });
+          // The Docker one cannot answer from the default folder; asked in a chosen folder, it lists one model.
+          if (path === '/api/machines/mch_mock/launchers/mln_auto_docker/models/detect') {
+            const body = JSON.parse(options.body || '{}'); (window.__dockerDetect ||= []).push(body);
+            if (!body.dir) return new Response(JSON.stringify({ error: 'detect_failed', detect_dir: '/home/test/.aimebu2/detect', message: window.__dockerFailure || "Couldn't detect the models: the harness could not list its models (exit status 1): the folder does not exist or is not visible in the harness container. Add the model ID manually." }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+            return json({ source: 'harness', candidates: [
+              { slug: 'ollama-cloud/gemma4:31b', label: 'gemma4:31b', note: '', already_listed: false },
+              { slug: 'ollama-cloud/gemma4:7b', label: 'gemma4:7b', note: '', already_listed: false },
+              { slug: 'ollama-cloud/previous', label: 'previous', note: '', already_listed: true },
+            ] });
+          }
+          if (path === '/api/machines/mch_mock/launchers/mln_auto/models' && options.method === 'PUT') { window.__autoModels = JSON.parse(options.body).models; return json({ models: window.__autoModels }); }
+          if (path.startsWith('/api/machines/mch_mock/launchers/') && options.method === 'PUT') {
+            const id = path.split('/').pop();
+            const body = JSON.parse(options.body);
+            const row = window.__harnessRows.find(item => item.config.id === id);
+            window.__harnessWrites.push({ id, old_command: row.config.command, new_command: body.command, old_enabled: row.config.enabled, new_enabled: body.enabled });
+            Object.assign(row.config, body);
+            row.available = body.enabled;
+            row.unavailable_reason = body.enabled ? '' : 'disabled by owner';
+            return json({ config: row.config, observed: row });
+          }
+          return window.__harnessFetch(input, options);
+        };
+      });
+      await settingsPage.click('#settings-harnesses-tab');
+      await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-harness').length === 2);
+      assert.equal(await settingsPage.$eval('.machine-harness[data-variant="native"] [name=enabled]', el => el.disabled), false, 'owner must be able to enable native launcher');
+      assert.equal(await settingsPage.$eval('.machine-harness[data-variant="native"] .machine-harness-status', el => el.textContent), 'Disabled');
+      // Adding a detected harness also detects its models and saves them, the first as the default.
+      await domClick(settingsPage, '#harness-detect');
+      await settingsPage.waitForSelector('#harness-detect-panel input[type=checkbox]');
+      await settingsPage.$$eval('#harness-detect-panel input[type=checkbox]', boxes => boxes.forEach(el => el.click()));
+      await domClick(settingsPage, '#harness-detect-panel button[type=submit]');
+      await settingsPage.waitForFunction(() => window.__autoModels);
+      // 66 were offered, a list holds 64: the first 64 are saved, the first is the only default, and the page says it cut the list.
+      assert.deepEqual(await settingsPage.evaluate(() => ({ count: window.__autoModels.length, first: window.__autoModels[0].slug, last: window.__autoModels.at(-1).slug, defaults: window.__autoModels.filter(model => model.default).map(model => model.slug) })), { count: 64, first: 'pi-0', last: 'pi-63', defaults: ['pi-0'] }, 'detected models are capped at 64 with the first as the default');
+      await settingsPage.waitForFunction(() => document.querySelector('#settings-harnesses > .error')?.textContent.includes('only the first 64'));
+      // The Docker one could not list its models: the page says why, and its Models panel opens on that reason with a folder to retry in.
+      assert.ok((await settingsPage.$eval('#settings-harnesses > .error', el => el.textContent)).includes('A harness has no models yet. Detection blocked — please mount /home/test/.aimebu2/detect to your harness Docker'), 'the auto-fill failure gives only the private folder as the mount action');
+      assert.deepEqual(await settingsPage.$eval('#settings-harnesses > .harness-detect-details', el => [el.open, el.hidden, el.querySelector('p').textContent.includes('not visible')]), [false, false, true], 'the auto-fill stderr stays behind collapsed Details');
+      await domClick(settingsPage, '[aria-controls="harness-models-mln_auto_docker"]');
+      await settingsPage.waitForFunction(() => !document.querySelector('#harness-models-mln_auto_docker').hidden && !document.querySelector('#harness-models-mln_auto_docker .harness-detect-retry').hidden);
+      assert.equal(await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent), 'Detection blocked — please mount /home/test/.aimebu2/detect to your harness Docker, or pick a mounted folder below.', 'the Models panel opens on a concise private-folder mount instruction');
+      assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-detect-details', el => [el.open, el.hidden, el.querySelector('p').textContent.includes('not visible')]), [false, false, true], 'the original stderr is available only in collapsed Details');
+      assert.ok((await settingsPage.$eval('#harness-models-mln_auto_docker .harness-detect-dir', el => el.textContent)).includes('or pick a folder that is mounted in the container'), 'the retry field explains the mounted-folder option');
+      await settingsPage.evaluate(() => { window.__dockerFailure = "Couldn't detect the models: pi reports no models — is it logged in? Run /login in it"; });
+      await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-model-detect');
+      await settingsPage.waitForFunction(() => document.querySelector('#harness-models-mln_auto_docker .error')?.textContent.includes('pi reports no models'));
+      assert.equal(await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent), 'pi reports no models — is it logged in? Run /login in it', 'login errors keep their real cause without a mount hint');
+      await settingsPage.evaluate(() => { window.__dockerFailure = "Couldn't detect the models: the harness did not answer in time. Add the model ID manually."; });
+      await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-model-detect');
+      await settingsPage.waitForFunction(() => document.querySelector('#harness-models-mln_auto_docker .error')?.textContent.includes('the harness did not answer in time'));
+      assert.ok((await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent)).includes('the harness did not answer in time'), 'timeouts keep their real cause without a mount hint');
+      await settingsPage.evaluate(() => { delete window.__dockerFailure; });
+      assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-detect-retry-button', el => [el.title, el.getAttribute('aria-label'), !!el.querySelector('.icon-mask-refresh'), el.textContent.trim()]), ['Retry auto-detect in this folder', 'Retry auto-detect in this folder', true, ''], 'Retry is an icon button with a tooltip and an accessible name');
+      await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-detect-retry-button');
+      assert.ok((await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent)).includes('absolute folder path'), 'a retry needs an absolute folder');
+      await settingsPage.locator('#harness-models-mln_auto_docker [name=detect-dir]').fill('/work/project');
+      await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-detect-retry-button');
+      await settingsPage.waitForSelector('#harness-models-mln_auto_docker .harness-model-candidates [data-slug="ollama-cloud/gemma4:31b"]');
+      assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-candidate-controls', el => [el.querySelector('.harness-candidate-count').textContent, el.querySelector('button').title, el.querySelector('button').getAttribute('aria-label'), el.querySelector('button').getAttribute('aria-pressed'), !!el.querySelector('.icon-mask-select-all')]), ['0/2 selected', 'Select all available models', 'Select all available models', 'false', true], 'the select-all icon counts only available candidates and has a tooltip');
+      await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-candidate-select-all');
+      assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-model-candidates', el => [el.querySelector('.harness-candidate-count').textContent, el.querySelector('.harness-candidate-select-all').getAttribute('aria-pressed'), [...el.querySelectorAll('.harness-detect-row input')].map(check => [check.checked, check.disabled])]), ['2/2 selected', 'true', [[true, false], [true, false], [false, true]]], 'select all ticks only available models and updates the count');
+      await domClick(settingsPage, '#harness-models-mln_auto_docker .harness-detect-row input');
+      assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-candidate-controls', el => [el.querySelector('.harness-candidate-count').textContent, el.querySelector('button').getAttribute('aria-pressed')]), ['1/2 selected', 'mixed'], 'individual untick updates the header count and mixed state');
+      assert.deepEqual(await settingsPage.evaluate(() => window.__dockerDetect), [{}, {}, {}, { dir: '/work/project' }], 'the retry sends the chosen folder; the default attempts sent none');
+      assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker', panel => [panel.querySelector('.harness-detect-retry').hidden, panel.querySelector('.error').textContent]), [true, ''], 'a successful retry clears the failure');
+      await settingsPage.evaluate(() => { window.__harnessRows = window.__harnessRows.filter(row => row.config.id !== 'mln_auto' && row.config.id !== 'mln_auto_docker'); });
+      await domClick(settingsPage, '#settings-usages-tab');
+      await settingsPage.click('#settings-harnesses-tab');
+      await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-harness').length === 2);
+      // A launcher is a summary row: name, status, summary line and the Enabled switch. The executable, arguments and the rest sit behind Edit.
+      assert.deepEqual(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"]', card => { const form = card.querySelector('form'), edit = card.querySelector('.machine-harness-edit'); return { row: !!card.querySelector(':scope > .settings-row .settings-label'), formHidden: form.hidden || getComputedStyle(form).display === 'none', edit: [edit.title, edit.getAttribute('aria-label'), !!edit.querySelector('.icon-mask-edit'), edit.getAttribute('aria-expanded'), edit.getAttribute('aria-controls') === form.id], switchInRow: !!card.querySelector(':scope > .settings-row [name=enabled]'), commandVisible: !!card.querySelector('[name=command]')?.offsetParent }; }), { row: true, formHidden: true, edit: ['Edit Codex (Docker)', 'Edit Codex (Docker)', true, 'false', true], switchInRow: true, commandVisible: false }, 'the launcher edit action is a labelled pencil icon');
+      await domClick(settingsPage, '.machine-harness[data-variant="harness-docker"] .machine-harness-edit');
+      assert.deepEqual(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"]', card => [card.querySelector('.machine-harness-edit').title, !!card.querySelector('.machine-harness-edit .icon-mask-close'), card.querySelector('.machine-harness-edit').getAttribute('aria-expanded'), !!card.querySelector('[name=command]').offsetParent]), ['Close settings for Codex (Docker)', true, 'true', true]);
+      await settingsPage.locator('.machine-harness[data-variant="harness-docker"] [name=command]').fill('/opt/custom/docker');
+      await domClick(settingsPage, '.machine-harness[data-variant="harness-docker"] button[type=submit]');
+      await settingsPage.waitForFunction(() => document.querySelector('.machine-harness[data-variant="harness-docker"] [name=command]')?.value === '/opt/custom/docker' && document.querySelectorAll('.machine-activity-item').length === 1);
+      assert.deepEqual(await settingsPage.evaluate(() => window.__harnessWrites[0]), { id: 'mln_codex', old_command: '/usr/bin/docker', new_command: '/opt/custom/docker', old_enabled: true, new_enabled: true });
+      // The card stays open across a save, and the Enabled switch saves on its own and only itself: edits still open in the form stay unsaved.
+      assert.equal(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"] [name=command]', el => !!el.offsetParent), true, 'the Edit form stays open after Save');
+      await settingsPage.$eval('.machine-harness[data-variant="harness-docker"] [name=command]', el => { el.value = '/opt/unsaved/docker'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+      await domClick(settingsPage, '.machine-harness[data-variant="harness-docker"] [name=enabled]');
+      await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-activity-item').length === 2);
+      assert.equal(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"] [name=command]', el => el.value), '/opt/unsaved/docker', 'toggling Enabled must keep the unsaved command text in the form');
+      assert.deepEqual(await settingsPage.evaluate(() => window.__harnessWrites[1]), { id: 'mln_codex', old_command: '/opt/custom/docker', new_command: '/opt/custom/docker', old_enabled: true, new_enabled: false });
+      // Saving the form afterwards does send the edited command.
+      await settingsPage.click('.machine-harness[data-variant="harness-docker"] button[type=submit]');
+      await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-activity-item').length === 3);
+      assert.deepEqual(await settingsPage.evaluate(() => window.__harnessWrites[2]), { id: 'mln_codex', old_command: '/opt/custom/docker', new_command: '/opt/unsaved/docker', old_enabled: false, new_enabled: false });
+      assert.equal(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"] .machine-harness-status', el => el.textContent), 'Disabled');
+      await settingsPage.evaluate(() => { window.fetch = window.__harnessFetch; });
+    };
+    const reopenSettings = async () => {
+      await domClick(settingsPage, '#settings-toggle');
+      await settingsPage.waitForFunction(() => document.querySelector('#settings-dialog').open);
+    };
+    await harnessChecks('a');
+    await settingsPage.goto(`${origin}/?mock_usages=1&mock_project_settings=1&ui=preact-harnesses:b`);
+    await appReady(settingsPage);
+    assert.deepEqual(await settingsPage.$eval('#ui-variant-toggle', el => [el.hidden, el.dataset.active, document.documentElement.getAttribute('data-ui-preact-harnesses')]), [false, 'b', 'b'], '?ui=preact-harnesses:b shows the pill on B');
+    await reopenSettings();
+    await harnessChecks('b');
+    // The pill switches back in place (Settings is closed meanwhile: its modal makes the top bar inert).
+    await domClick(settingsPage, '#settings-close');
+    // Onboarding builds its own legacy Harnesses component: Settings on B changes nothing there, and the swap below leaves it alone.
+    assert.deepEqual(await settingsPage.evaluate(async () => {
+      const { Onboarding } = await import('/js/onboarding.js');
+      document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
+      const step = window.__onboarding = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => true, pollMs: 50 });
+      await step.showHarnesses('first');
+      const section = window.__onboardingSection = document.querySelector('#onboarding-harnesses-host #onboarding-settings-harnesses');
+      const ids = [...document.querySelectorAll('[id]')].map(node => node.id);
+      const shown = { own: section === step.harnesses.section, legacy: !section.dataset.implementation, settings: document.querySelector('#settings-harnesses').dataset.implementation, enabled: !document.querySelector('#onboarding-harnesses-continue').disabled, repeatedIds: ids.filter((id, at) => ids.indexOf(id) !== at) };
+      step.stopWatching(); step.root.hidden = true;
+      return shown;
+    }), { own: true, legacy: true, settings: 'preact', enabled: true, repeatedIds: [] }, 'onboarding keeps its legacy Harnesses step while Settings is on B');
+    await domClick(settingsPage, '#ui-variant-toggle');
+    assert.deepEqual(await settingsPage.evaluate(() => [document.documentElement.getAttribute('data-ui-preact-harnesses'), new URL(location.href).searchParams.getAll('ui'), document.querySelector('#settings-harnesses').dataset.implementation || 'legacy', document.querySelectorAll('#settings-harnesses, #settings-harnesses-tab').length, document.querySelector('#settings-dialog nav').lastElementChild.id]), ['a', ['preact-harnesses:a'], 'legacy', 2, 'settings-harnesses-tab'], 'the pill switches the Harnesses page in place and the tab keeps its place');
+    assert.deepEqual(await settingsPage.evaluate(() => [window.__onboardingSection.isConnected, window.__onboarding.harnesses.section === window.__onboardingSection, document.querySelectorAll('#onboarding-settings-harnesses').length]), [true, true, 1], 'the A/B swap does not replace or remove onboarding\'s Harnesses component');
+    await settingsPage.evaluate(() => window.__onboarding.close());
+    await reopenSettings();
     await settingsPage.setViewport({ width: 390, height: 780 });
     assert.equal(await settingsPage.$eval('#settings-dialog', el => Math.abs(el.getBoundingClientRect().height - innerHeight) < 1), true);
     await settingsPage.click('#settings-close');

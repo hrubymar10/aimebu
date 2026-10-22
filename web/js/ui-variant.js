@@ -13,10 +13,13 @@ const LETTERS = ['a', 'b', 'c', 'd', 'e'];
 const optionsOf = key => LETTERS.slice(0, Math.min(LETTERS.length, experiments[key]?.labels?.length || 3));
 
 export const experiments = {};
-export function defineExperiment(key, name, labels) { experiments[key] = { name, labels }; }
+// The running pills by experiment, so code can set one back (chooseVariant) as a click would.
+const choosers = {};
+export function chooseVariant(key, variant) { choosers[key]?.(variant, true); }
+export function defineExperiment(key, name, labels, { hidden = false } = {}) { experiments[key] = { name, labels, hidden }; }
 
 // The experiments that are on right now (each gets its own pill), or [] for none.
-export const ACTIVE = [];
+export const ACTIVE = ['preact-harnesses'];
 
 // The option of experiment `key`: its pill's choice while it runs ('a' otherwise). Each experiment keeps its own attribute on <html>
 // (data-ui-<key>), so several can run at once; data-ui and data-ui-experiment still say which pill was set last.
@@ -62,6 +65,7 @@ export function initUIVariant(button = document.querySelector('#ui-variant-toggl
   const keep = raws.filter(raw => { const match = /^([\w-]+):([a-e])$/.exec(raw); return match && (running.includes(match[1]) || match[1] === key) && experiments[match[1]] && optionsOf(match[1]).includes(match[2]); });
   if (raws.length && keep.length !== raws.length) { url.searchParams.delete('ui'); for (const raw of keep) url.searchParams.append('ui', raw); history.replaceState(history.state, '', url); }
   const saved = storedVariant(key);
+  if (experiment.hidden && !requested && !valid(saved)) { button.hidden = true; document.documentElement.removeAttribute(attr(key)); return; }
   let variant = valid(requested) ? requested : valid(saved) ? saved : 'a';
   button.hidden = false;
   // The options of the pill: "A | B | C ...", one per option of this experiment.
@@ -96,5 +100,6 @@ export function initUIVariant(button = document.querySelector('#ui-variant-toggl
   }
 
   show(variant, false);
+  choosers[key] = show;
   button.addEventListener('click', () => show(variants[(variants.indexOf(variant) + 1) % variants.length], true));
 }
