@@ -416,7 +416,7 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 			return map[string]any{"content": []any{map[string]string{"type": "image", "data": base64.StdEncoding.EncodeToString(data), "mimeType": contentType}}, "isError": false}
 		}
 		const maxInlineText = 64 << 10
-		if len(data) <= maxInlineText && utf8.Valid(data) && (strings.HasPrefix(contentType, "text/") || contentType == "application/json" || contentType == "application/xml") {
+		if len(data) <= maxInlineText && utf8.Valid(data) && (strings.HasPrefix(contentType, "text/") || contentType == "application/json" || contentType == "application/xml" || contentType == "image/svg+xml") {
 			return toolResult(string(data), false)
 		}
 		return toolResult(fmt.Sprintf("Attachment: %s, %d bytes. Inline content omitted; download the file through an authenticated room client if you need its bytes.", contentType, len(data)), false)

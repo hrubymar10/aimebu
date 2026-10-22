@@ -5321,6 +5321,44 @@ async function main() {
     await first.waitForFunction(() => [...document.querySelectorAll('#messages .message-body')].some(node => node.textContent.includes('Room switch upload check')));
     await domClick(first, `[data-room-id="${uploadRoomA}"] .room-name`);
     await first.waitForFunction(({ id, title }) => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent === title, {}, { id: uploadRoomA, title: uploadRoomATitle });
+    // SVG attachments: a plain SVG is an image shown through an <img> only (never as markup in the page); one with script in it stays a
+    // download link, and the script never runs. An SVG fetched any way but by an <img> is a download.
+    {
+      const svgDir = fs.mkdtempSync(path.join(tmp, 'svg-'));
+      const plain = path.join(svgDir, 'diagram.svg'), active = path.join(svgDir, 'active.svg');
+      fs.writeFileSync(plain, '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="24"><rect width="48" height="24" fill="#58a6ff"/></svg>');
+      fs.writeFileSync(active, '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>window.__svgRan = true</script><rect width="10" height="10"/></svg>');
+      // The room-switch probe above leaves a fetch stub holding every upload to the first room, so this runs in the second one.
+      const titleA = await first.$eval('#room-title', node => node.textContent);
+      await domClick(first, `[data-room-id="${uploadRoomB}"] .room-name`);
+      await first.waitForFunction(({ id, title }) => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent !== title, {}, { id: uploadRoomB, title: titleA });
+      await first.evaluate(() => { window.__svgRan = false; });
+      await (await first.$('#attachment-input')).uploadFile(plain, active);
+      await waitDump(first, 'svg uploads', () => document.querySelectorAll('#pending-attachments .pending-image').length === 2 && !document.querySelector('#pending-attachments').textContent.includes('Uploading'),
+        () => ({ pending: document.querySelector('#pending-attachments').innerHTML.slice(0, 600), notice: document.querySelector('.composer-notice')?.textContent, room: document.querySelector('#room-title')?.textContent, error: document.querySelector('#chat-error')?.textContent }));
+      await first.locator('#composer textarea').fill('SVG attachments check');
+      await first.keyboard.press('Enter');
+      await waitDump(first, 'svg message', () => [...document.querySelectorAll('#messages .message')].some(item => item.querySelector('.message-body')?.textContent.includes('SVG attachments check') && item.querySelector('.message-images')),
+        () => ({ room: document.querySelector('#room-title')?.textContent, error: document.querySelector('#chat-error')?.textContent, pending: document.querySelector('#pending-attachments').innerHTML.slice(0, 300), last: [...document.querySelectorAll('#messages .message')].slice(-2).map(item => item.innerHTML.slice(0, 400)) }));
+      const shown = await first.evaluate(async () => {
+        const row = [...document.querySelectorAll('#messages .message')].find(item => item.querySelector('.message-body')?.textContent.includes('SVG attachments check'));
+        const image = row.querySelector('.message-images img');
+        await image.decode().catch(() => {});
+        const fetched = await fetch(image.src);
+        return { images: row.querySelectorAll('.message-images img').length, downloads: [...row.querySelectorAll('.message-images a.attachment-file')].map(link => link.textContent), loaded: image.naturalWidth, size: [image.width, image.height],
+          markup: row.querySelectorAll('.message-images svg, .message-images object, .message-images embed, .message-images iframe').length, ran: window.__svgRan, fetchedDisposition: fetched.headers.get('Content-Disposition') || '', type: fetched.headers.get('Content-Type') };
+      });
+      assert.equal(shown.images, 1, 'the plain SVG is one <img>');
+      assert.deepEqual(shown.downloads, ['active.svg'], 'the SVG with script is a download link');
+      assert.equal(shown.loaded, 48, 'the <img> loaded the SVG');
+      assert.deepEqual(shown.size, [48, 24], 'the thumbnail holds the SVG size');
+      assert.equal(shown.markup, 0, 'no SVG is ever put into the page as markup');
+      assert.equal(shown.ran, false, 'the SVG script ran');
+      assert.match(shown.fetchedDisposition, /^attachment/, 'an SVG fetched by anything but an <img> is a download');
+      assert.equal(shown.type, 'image/svg+xml');
+      await domClick(first, `[data-room-id="${uploadRoomA}"] .room-name`);
+      await first.waitForFunction(({ id, title }) => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent === title, {}, { id: uploadRoomA, title: titleA });
+    }
     // The composer's notices (a file that is too big, an upload or send that failed) never stay: they clear on dismiss, on a timer, on
     // the next pick, on send and on a room switch, and they name the file.
     {

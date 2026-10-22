@@ -3,9 +3,11 @@ package server
 import (
 	"bytes"
 	"encoding/base64"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-json"
@@ -191,7 +193,8 @@ func TestAttachmentDownloadHeaders(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.seed()
-	resp, xml := uploadFile(t, f, f.room.ID, "drawing.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))
+	// An SVG with script in it is not classified as an image: it keeps its sniffed text type and stays a download.
+	resp, xml := uploadFile(t, f, f.room.ID, "drawing.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`))
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("SVG upload: %d", resp.StatusCode)
 	}
@@ -328,5 +331,72 @@ func TestUploadedImageReportsItsSize(t *testing.T) {
 	resp, text := uploadFile(t, f, f.room.ID, "note.txt", []byte("plain words"))
 	if resp.StatusCode != http.StatusCreated || text.Width != 0 || text.Height != 0 {
 		t.Fatalf("text upload: %d %+v", resp.StatusCode, text)
+	}
+}
+
+func TestSVGAttachmentIsAnImageOnlyForImageRequests(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	const plain = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20"/></svg>`
+	resp, svg := uploadFile(t, f, f.room.ID, "drawing.svg", []byte(plain))
+	if resp.StatusCode != http.StatusCreated || svg.MIME != "image/svg+xml" || svg.Width != 40 || svg.Height != 20 {
+		t.Fatalf("a plain SVG upload: %d %+v", resp.StatusCode, svg)
+	}
+	get := func(dest string) *http.Response {
+		req, err := http.NewRequest(http.MethodGet, f.http.URL+svg.URL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(f.cookie)
+		if dest != "" {
+			req.Header.Set("Sec-Fetch-Dest", dest)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	// Loaded by an <img>: inline, with the strict headers.
+	resp = get("image")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "image/svg+xml" || resp.Header.Get("Content-Disposition") != "" || string(body) != plain {
+		t.Fatalf("image request: %d %v", resp.StatusCode, resp.Header)
+	}
+	if got := resp.Header.Get("Content-Security-Policy"); got != "sandbox; default-src 'none'; style-src 'unsafe-inline'" || resp.Header.Get("X-Content-Type-Options") != "nosniff" || resp.Header.Get("Cross-Origin-Resource-Policy") != "same-origin" {
+		t.Fatalf("SVG headers: %v", resp.Header)
+	}
+	// Any other request is a download: a tab opened on the address, a script fetch, a client that sends nothing.
+	for _, dest := range []string{"document", "iframe", "embed", "object", "script", "empty", ""} {
+		resp = get(dest)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Disposition"), "attachment") {
+			t.Fatalf("Sec-Fetch-Dest %q was not a download: %v", dest, resp.Header)
+		}
+	}
+	// An SVG with active content is stored as it was before: text, download only.
+	for name, active := range map[string]string{
+		"script":  `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
+		"handler": `<svg xmlns="http://www.w3.org/2000/svg" onload="x()"/>`,
+		"link":    `<svg xmlns="http://www.w3.org/2000/svg"><a href="https://example.test/"><rect/></a></svg>`,
+		"doctype": `<!DOCTYPE svg [<!ENTITY a "b">]><svg xmlns="http://www.w3.org/2000/svg">&a;</svg>`,
+	} {
+		resp, att := uploadFile(t, f, f.room.ID, name+".svg", []byte(active))
+		if resp.StatusCode != http.StatusCreated || att.MIME == "image/svg+xml" || !strings.HasPrefix(att.MIME, "text/") {
+			t.Fatalf("%s: %d %+v", name, resp.StatusCode, att)
+		}
+		req, _ := http.NewRequest(http.MethodGet, f.http.URL+att.URL, nil)
+		req.AddCookie(f.cookie)
+		req.Header.Set("Sec-Fetch-Dest", "image")
+		got, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got.Body.Close()
+		if !strings.HasPrefix(got.Header.Get("Content-Disposition"), "attachment") {
+			t.Fatalf("%s was shown inline: %v", name, got.Header)
+		}
 	}
 }

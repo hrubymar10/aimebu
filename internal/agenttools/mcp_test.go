@@ -20,6 +20,8 @@ func TestAttachmentGetBoundsInlineContent(t *testing.T) {
 	}{
 		{"png", "image/png", []byte("png"), true, ""},
 		{"bmp", "image/bmp", []byte("bmp"), false, "Inline content omitted"},
+		{"svg is read as source text", "image/svg+xml", []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), false, "svg xmlns"},
+		{"large svg", "image/svg+xml", bytes.Repeat([]byte("x"), 65<<10), false, "Inline content omitted"},
 		{"text", "text/plain", []byte("small note"), false, "small note"},
 		{"large text", "text/plain", bytes.Repeat([]byte("x"), 65<<10), false, "Inline content omitted"},
 		{"binary", "application/octet-stream", bytes.Repeat([]byte{0xff}, 1<<20), false, "Inline content omitted"},

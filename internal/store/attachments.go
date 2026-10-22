@@ -79,6 +79,12 @@ func (s *Store) SaveAttachment(ctx context.Context, roomID, userID, filename str
 		return Attachment{}, ErrInvalidAttachment
 	}
 	mime := http.DetectContentType(data)
+	// Go does not sniff SVG (it reads as plain text or XML). A file that is plainly a still image becomes image/svg+xml; any other keeps its
+	// sniffed type and stays a download (see ClassifySVG).
+	svg := ClassifySVG(data)
+	if svg.Image {
+		mime = "image/svg+xml"
+	}
 	name := safeAttachmentName(filename)
 	id, err := newID("att")
 	if err != nil {
@@ -113,7 +119,9 @@ func (s *Store) SaveAttachment(ctx context.Context, roomID, userID, filename str
 	}
 	hash := sha256.Sum256(data)
 	result := Attachment{ID: id, Name: name, MIME: mime, Size: int64(len(data)), URL: "/api/attachments/" + id}
-	if strings.HasPrefix(mime, "image/") {
+	if svg.Image {
+		result.Width, result.Height = svg.Width, svg.Height
+	} else if strings.HasPrefix(mime, "image/") {
 		if config, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
 			result.Width, result.Height = config.Width, config.Height
 		}

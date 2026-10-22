@@ -132,6 +132,13 @@ func serveAttachment(w http.ResponseWriter, r *http.Request, a store.Attachment,
 	switch a.MIME {
 	case "image/png", "image/jpeg", "image/gif", "image/webp":
 		inlineImage = true
+	case "image/svg+xml":
+		// An SVG is an image only inside an <img> (no script runs there and nothing outside the file is fetched). A request for anything
+		// else (opening the address in a tab, a download link, a client that sends no Sec-Fetch-Dest) gets it as a download, so the
+		// file can never be shown as a document of this origin.
+		inlineImage = r.Header.Get("Sec-Fetch-Dest") == "image"
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	}
 	if !inlineImage {
 		name := a.Name
