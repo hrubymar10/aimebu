@@ -32,13 +32,18 @@ import (
 )
 
 type Server struct {
-	Store       *store.Store
-	Auth        *auth.Service
-	Usages      *usages.Reader
-	refresherMu sync.Mutex
-	refresher   *usages.TargetRefresher
-	claimsDone  chan struct{} // closed once the live-file claims are released after shutdown
-	liveClaims  *switcher.LiveClaims
+	Store *store.Store
+	// exportPageFn reads one page of a room for the export (a test replaces it to fail partway; nil means the store's own), and exportPageSize
+	// is the page size (a test makes it small; 0 means 500).
+	exportMu       sync.RWMutex
+	exportPageSize int
+	exportPageFn   func(ctx context.Context, roomID string, after int64, limit int) ([]store.Message, error)
+	Auth           *auth.Service
+	Usages         *usages.Reader
+	refresherMu    sync.Mutex
+	refresher      *usages.TargetRefresher
+	claimsDone     chan struct{} // closed once the live-file claims are released after shutdown
+	liveClaims     *switcher.LiveClaims
 	// refresherBlocked is why this process may not refresh a tool's live login: another refresher's claim, or another
 	// root's token-copy marker for the same live file. "" means it may.
 	refresherBlocked func(tool string) string
@@ -230,6 +235,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/rooms/{room}/worktree", s.Auth.RequireUser(http.HandlerFunc(s.roomWorktree)))
 	mux.Handle("DELETE /api/rooms/{room}/worktree", s.Auth.RequireUser(http.HandlerFunc(s.roomWorktree)))
 	mux.Handle("GET /api/rooms/{room}/messages", s.Auth.RequireUser(http.HandlerFunc(s.messages)))
+	mux.Handle("GET /api/rooms/{room}/export", s.Auth.RequireUser(http.HandlerFunc(s.exportRoom)))
 	mux.Handle("GET /api/rooms/{room}/schedules", s.Auth.RequireUser(http.HandlerFunc(s.schedules)))
 	mux.Handle("POST /api/rooms/{room}/schedules", s.Auth.RequireUser(http.HandlerFunc(s.schedules)))
 	mux.Handle("PATCH /api/rooms/{room}/schedules/{id}", s.Auth.RequireUser(http.HandlerFunc(s.schedule)))

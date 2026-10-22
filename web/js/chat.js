@@ -1,5 +1,5 @@
 import { RoomNotifySettings } from './room-notify-settings.js';
-import { request, upload, currentUser, currentLogin, rights } from './api.js';
+import { request, upload, download, currentUser, currentLogin, rights } from './api.js';
 import { PREFERENCE_KEYS, savePreference } from './preferences.js';
 import { retention } from './retention.js';
 import { expiryCutoffMs, planExpiry } from './expiry.js';
@@ -866,21 +866,12 @@ export class Chat {
     if (!this.room) return;
     const room = this.room, session = this.sessionGeneration;
     try {
-      const messages = [];
-      let after = 0;
-      for (;;) {
-        const page = await request(`/api/rooms/${room.id}/messages?after=${after}&limit=500`);
-        if (!this.current(session, room.id)) return;
-        messages.push(...page);
-        if (page.length < 500) break;
-        after = page.at(-1).seq;
-      }
-      const data = format === 'json' ? JSON.stringify({ room, messages }, null, 2)
-        : `# ${room.title}\n\n` + messages.map(message => `## #${message.no} · ${this.authorName(message)} · ${message.created_at}\n\n${message.body}\n`).join('\n');
-      const type = format === 'json' ? 'application/json' : 'text/markdown';
-      const url = URL.createObjectURL(new Blob([data], { type }));
+      // The server writes the file (every message of the room, with replies, attachments and reactions); the page only saves it.
+      const { blob, filename } = await download(`/api/rooms/${room.id}/export?format=${format === 'json' ? 'json' : 'markdown'}`);
+      if (!this.current(session, room.id)) return;
+      const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a'); anchor.href = url;
-      anchor.download = `${room.title.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '') || 'room'}.${format === 'json' ? 'json' : 'md'}`;
+      anchor.download = filename || `${room.title.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '') || 'room'}.${format === 'json' ? 'json' : 'md'}`;
       anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
       this.exportDialog.close();
     } catch (error) { if (this.current(session, room.id)) { this.error.textContent = error.message; this.exportDialog.close(); } }

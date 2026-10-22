@@ -2315,9 +2315,12 @@ async function main() {
     await first.waitForFunction(() => !!window.__downloadName);
     assert.equal(await first.evaluate(() => window.__downloadName), 'Nested-task.md');
     assert.equal(await first.evaluate(async () => (await window.__exportBlob.text()).includes('Thread reply')), true);
+    // The file is written by the server: a heading for the room, a heading per message with its number and author, and a quote for a reply.
+    assert.match(await first.evaluate(async () => window.__exportBlob.text()), /^# Nested task\n[\s\S]*\n## #\d+ · [^\n]+ · \d{4}-[\s\S]*\n> ↪ in reply to #\d+ /, 'the Markdown export names the room, each message and the replies');
     await domClick(first, '#room-export'); await first.click('#room-export-dialog [data-format="json"]');
     await first.waitForFunction(() => window.__downloadName?.endsWith('.json'));
     assert.equal(await first.evaluate(async () => JSON.parse(await window.__exportBlob.text()).messages.some(item => item.body === 'Thread reply')), true);
+    assert.equal(await first.evaluate(async () => JSON.parse(await window.__exportBlob.text()).messages.every(item => item.author_label && Array.isArray(item.reactions))), true, 'the JSON export resolves authors and carries reactions');
     await first.evaluate(() => { URL.createObjectURL = window.__originalCreateObjectURL; URL.revokeObjectURL = window.__originalRevokeObjectURL; HTMLAnchorElement.prototype.click = window.__originalAnchorClick; });
     assert.equal(await md.$eval('em', el => el.textContent), 'italic');
     assert.equal(await md.$eval('table tbody td:last-child strong', el => el.textContent), 'value');

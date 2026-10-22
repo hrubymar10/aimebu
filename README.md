@@ -361,7 +361,7 @@ the latest view, keeping an open thread and its unsent reply.
 At the latest view, messages that arrive while the room stays open drop the
 oldest rendered rows once more than 300 are shown (800 while the list is
 scrolled up, never rows on screen); scrolling to the top loads them again.
-Live updates use a message cursor; room export still includes full history.
+Live updates use a message cursor; room export still includes full history. The export is written by the server (`GET /api/rooms/{room}/export`), so a script can fetch it too: it names replies and attachments and carries reactions.
 Message timestamps are relative (`5m ago`) with the full date as a tooltip. The
 left and right panel collapse state persists across reloads. A message list scrolled to the
 bottom stays pinned there while images, diagrams, and attachments finish

@@ -31,6 +31,17 @@ export async function request(path, options = {}) {
   return response.status === 204 ? null : response.json();
 }
 
+// Fetches a file the server builds (a room export): the bytes and the name the server gave it in Content-Disposition.
+export async function download(path) {
+  const response = await fetch(path, { credentials: 'same-origin' });
+  if (!response.ok) {
+    let problem = {}; try { problem = await response.json(); } catch {}
+    const error = new Error(problem.message || `Download failed (${response.status})`); error.status = response.status; error.code = problem.error; throw error;
+  }
+  const named = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') || '');
+  return { blob: await response.blob(), filename: named ? named[1] : '' };
+}
+
 export async function upload(path, file, { signal } = {}) {
   const body = new FormData(); body.append('file', file);
   const response = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf }, body, signal });
