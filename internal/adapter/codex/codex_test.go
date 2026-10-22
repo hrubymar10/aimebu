@@ -418,3 +418,47 @@ printf '%s\n' '{"type":"thread.started","thread_id":"th"}' '{"type":"item.starte
 		t.Fatalf("tool events = %+v, want %+v", got, want)
 	}
 }
+
+// The version probe has a 5 s deadline, and the deadline kills the launcher only. A launcher that starts helpers (an npm shim runs node)
+// leaves them holding the pipe the probe reads, and the probe then waited for them for as long as they lived: a supervisor start that
+// never finished. The helper here lives 20 s; the probe must give up at about 5 s plus the one second it grants for the pipe to close.
+func TestVersionProbeDoesNotWaitForHelpersTheLauncherLeftBehind(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX shell")
+	}
+	script := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 20 &\nsleep 20\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	implementation := New(t.TempDir())
+	implementation.Command = script
+	started := time.Now()
+	entries := implementation.Catalog()
+	if elapsed := time.Since(started); elapsed > 12*time.Second {
+		t.Fatalf("the version probe took %v: it waited for the launcher's helpers", elapsed)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("a probe that timed out reported a version: %+v", entries)
+	}
+}
+
+// The same launcher, when it exits 0: the version it printed is the version, and the probe is not delayed by the helper.
+func TestVersionProbeSucceedsForALauncherThatExitedZeroAndLeftAHelperBehind(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX shell")
+	}
+	script := filepath.Join(t.TempDir(), "codex")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho 'codex-cli 0.162.1'\nsleep 4 &\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	implementation := New(t.TempDir())
+	implementation.Command = script
+	started := time.Now()
+	entries := implementation.Catalog()
+	if len(entries) != 1 || entries[0].Version != "0.162.1" {
+		t.Fatalf("catalog = %+v, want codex 0.162.1", entries)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("the probe took %v: it waited for the helper", elapsed)
+	}
+}

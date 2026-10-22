@@ -68,7 +68,7 @@ harness named `harness-docker`. The supervisor also answers two read-only
 questions on its own machine, each a `detect` frame (see the contract): which
 harness executables are installed (PATH plus `~/.local/bin`, `/usr/local/bin`,
 `/opt/homebrew/bin`, `~/.npm-global/bin`, `~/.bun/bin`, `~/.opencode/bin` and the
-global npm prefix, once per real file, with `--version`), and which models a Pi,
+global npm prefix, once per real file, with `--version`; the test helpers set `AIMEBU2_TEST_RESTRICT_PATH=1`, which limits the search to `PATH` so a test never finds the developer's own CLIs), and which models a Pi,
 OpenCode or Codex harness lists, native or containerized (run with the harness's
 own arguments first, a 20-second limit and an 8 MiB output limit). That command
 runs in a fresh private `detect/run-*` subfolder of the supervisor's aimebu

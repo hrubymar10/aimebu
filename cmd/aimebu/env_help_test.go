@@ -20,6 +20,10 @@ func TestEnvironmentHelpMatchesSourceAndDocs(t *testing.T) {
 			if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || filepath.Base(path) == "env_help.go" {
 				return err
 			}
+			// internal/testenv is test support, imported by _test.go files only: it names the variables it clears, it does not read them.
+			if strings.HasPrefix(filepath.ToSlash(path), "../../internal/testenv/") {
+				return nil
+			}
 			data, err := os.ReadFile(path)
 			if err != nil {
 				return err

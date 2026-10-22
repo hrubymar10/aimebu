@@ -31,7 +31,7 @@ func (b *lockedBuffer) String() string { b.mu.Lock(); defer b.mu.Unlock(); retur
 func setupPost(t *testing.T, base, token, login, password string) (int, map[string]any) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"token": token, "login": login, "password": password})
-	resp, err := http.Post(base+"/api/setup", "application/json", bytes.NewReader(body))
+	resp, err := testHTTP.Post(base+"/api/setup", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func setupPost(t *testing.T, base, token, login, password string) (int, map[stri
 
 func getJSON(t *testing.T, url string) (int, map[string]any) {
 	t.Helper()
-	resp, err := http.Get(url)
+	resp, err := testHTTP.Get(url)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func getJSON(t *testing.T, url string) (int, map[string]any) {
 func postToken(t *testing.T, base, token string) (int, map[string]any) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"token": token})
-	resp, err := http.Post(base+"/api/setup/token", "application/json", bytes.NewReader(body))
+	resp, err := testHTTP.Post(base+"/api/setup/token", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func runFirstRunSetup(t *testing.T, root string, embedded bool) {
 	var stdout, stderr lockedBuffer
 	done := make(chan int, 1)
 	go func() { done <- serverCommand(ctx, &stdout, &stderr) }()
-	t.Cleanup(func() { cancel(); <-done })
+	t.Cleanup(func() { cancel(); receive(t, "the server stopping", done, serverStopLimit) })
 	select {
 	case code := <-done:
 		t.Fatalf("the server exited with %d before setup: %s", code, stderr.String())
@@ -139,13 +139,13 @@ func runFirstRunSetup(t *testing.T, root string, embedded bool) {
 		t.Fatalf("token file: %v %v", info, err)
 	}
 	waitFor(t, "server", func() bool {
-		resp, err := http.Get(base + "/setup")
+		resp, err := testHTTP.Get(base + "/setup")
 		if err == nil {
 			resp.Body.Close()
 		}
 		return err == nil
 	})
-	if resp, err := http.Get(base + "/setup?token=" + token); err != nil || resp.StatusCode != 200 {
+	if resp, err := testHTTP.Get(base + "/setup?token=" + token); err != nil || resp.StatusCode != 200 {
 		t.Fatalf("/setup while open: %v %v", resp, err)
 	}
 	// The setup screen asks where the token is, then checks it before it asks for a login.
@@ -177,7 +177,7 @@ func runFirstRunSetup(t *testing.T, root string, embedded bool) {
 	if _, err := os.Stat(filepath.Join(root, "server", "host-machine.key")); err != nil {
 		t.Fatalf("host machine key: %v", err)
 	}
-	if resp, err := http.Get(base + "/setup?token=" + token); err != nil || resp.StatusCode != 404 {
+	if resp, err := testHTTP.Get(base + "/setup?token=" + token); err != nil || resp.StatusCode != 404 {
 		t.Fatalf("/setup after setup: %v %v", resp, err)
 	}
 	if code, _ := setupPost(t, base, token, "second", "correct horse battery staple"); code != 404 {
@@ -259,10 +259,10 @@ func TestServerAnswersBeforeTheEmbeddedSupervisorIsUp(t *testing.T) {
 			close(release)
 		}
 		cancel()
-		<-done
+		receive(t, "the server stopping", done, serverStopLimit)
 	})
 	waitFor(t, "the server to answer", func() bool {
-		resp, err := http.Get(base + "/")
+		resp, err := testHTTP.Get(base + "/")
 		if err == nil {
 			resp.Body.Close()
 		}
@@ -271,7 +271,7 @@ func TestServerAnswersBeforeTheEmbeddedSupervisorIsUp(t *testing.T) {
 	hostConnected := func() bool {
 		body, _ := json.Marshal(map[string]string{"login": "owner", "password": "correct horse battery staple"})
 		jar, _ := cookiejar.New(nil)
-		client := &http.Client{Jar: jar}
+		client := &http.Client{Jar: jar, Timeout: 30 * time.Second}
 		login, err := client.Post(base+"/api/login", "application/json", bytes.NewReader(body))
 		if err != nil {
 			return false
@@ -335,7 +335,7 @@ func TestAServeErrorDoesNotLetAPendingSupervisorStart(t *testing.T) {
 	go func() { done <- serverCommand(context.Background(), &stdout, &stderr) }()
 	base := "http://127.0.0.1:" + os.Getenv("AIMEBU2_PORT")
 	waitFor(t, "the server to answer", func() bool {
-		resp, err := http.Get(base + "/")
+		resp, err := testHTTP.Get(base + "/")
 		if err == nil {
 			resp.Body.Close()
 		}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDockerMCPReadsPrivateConfigWithoutCopyingIt(t *testing.T) {
@@ -36,5 +37,27 @@ func TestDockerPreflightRejectsUnmountedCheckout(t *testing.T) {
 	err := DockerPreflight("claude", checkout)
 	if err == nil || !strings.Contains(err.Error(), "not mounted") {
 		t.Fatalf("preflight=%v", err)
+	}
+}
+
+// A launcher that passes its check and leaves a helper holding the output pipe passed: refusing the spawn for it would turn a working
+// launcher into an unusable one. (The check also must not wait for the helper.)
+func TestDockerPreflightPassesForALauncherThatLeavesAHelperBehind(t *testing.T) {
+	root := t.TempDir()
+	launcher := filepath.Join(root, "claude-docker")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\necho 'claude 1.0'\nsleep 4 &\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	checkout := filepath.Join(root, "checkout")
+	if err := os.Mkdir(checkout, 0700); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if err := DockerPreflight("claude", checkout); err != nil {
+		t.Fatalf("a launcher that exited 0 failed its preflight: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("the preflight took %v: it waited for the launcher's helper", elapsed)
 	}
 }

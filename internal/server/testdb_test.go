@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // blankTestDB is immutable after TestMain initializes it. Every fixture gets
@@ -15,6 +16,10 @@ import (
 var blankTestDB []byte
 
 func TestMain(m *testing.M) {
+	home, cleanupHome := testenv.Isolate()
+	// The server's supervisor discovers harnesses on PATH: without this these tests ran the real claude, codex, opencode and pi, their docker
+	// launchers (about forty times each), as real processes with the person's own configuration.
+	testenv.RestrictPATH(home)
 	root, err := os.MkdirTemp("", "aimebu-server-tests-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -31,10 +36,12 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		_ = os.RemoveAll(root)
+		cleanupHome()
 		os.Exit(1)
 	}
 	code := m.Run()
 	_ = os.RemoveAll(root)
+	cleanupHome()
 	os.Exit(code)
 }
 

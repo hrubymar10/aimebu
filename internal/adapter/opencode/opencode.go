@@ -29,6 +29,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/prompt"
+	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 )
 
 // SupportedVersion is the OpenCode release this adapter's event parsing and
@@ -52,7 +53,7 @@ func (a *Adapter) Catalog() []adapter.CatalogEntry {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, a.Command, "--version")
 		cmd.Env = versionEnv()
-		out, err := cmd.Output()
+		out, err := cmdprobe.Output(cmd) // bounded by the deadline, not by helpers the launcher leaves behind
 		if err != nil {
 			return nil
 		}

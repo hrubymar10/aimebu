@@ -77,10 +77,10 @@ For UI work without agents, the web app has mock switches such as
 
 | Command | What it runs | Use it |
 | --- | --- | --- |
-| `make test` | `go test ./...` | while iterating on Go code |
+| `make test` | `go test ./...`, with progress output | while iterating on Go code |
 | `make test-web` | the browser-free web unit tests (`scripts/test-*.cjs`, run in Node's `vm` over the module source) | while iterating on `web/js`; fast, no browser |
 | `make test-ui` | builds the server, starts a scratch one and drives Chromium through the UI | after any visible UI change; needs Chromium and `puppeteer-core` |
-| `make test-race` | `go test -race ./...` | after touching concurrency, the store, WebSocket or supervisor code |
+| `make test-race` | `go test -race ./...`, with progress output | after touching concurrency, the store, WebSocket or supervisor code |
 | `make test-full` | `fmt-check`, `vet`, `test-race`, `test-web` | before every commit; it is also what CI runs |
 
 `test-ui` is not part of `test-full`, so run it yourself for UI changes. Two
@@ -90,12 +90,68 @@ and tablet sizes) and `node scripts/a11y-audit.cjs` (accessible names,
 contrast, focus rings).
 
 A new web unit test is a `scripts/test-<name>.cjs` file; add it to the
-`test-web` target in the `Makefile`, or it never runs.
+`WEB_TESTS` list in the `Makefile`, or it never runs.
+
+### Reading the test output
+
+`make test` and `make test-race` run `go test -json` through
+`scripts/gotestprogress` (the standard library and the JSON package the repo already
+uses, no new dependency; `make` builds it into `tmp/`).
+Plain `go test ./...` prints nothing for a package until the whole package is
+done, so a stuck test looks like silence. The runner prints:
+
+```
+[12:00:01] start  github.com/hrubymar10/aimebu/internal/store
+[12:03:10] ok     github.com/hrubymar10/aimebu/internal/store (3m09s)  [4/23 packages]
+[12:03:10] slow   github.com/hrubymar10/aimebu/internal/server TestSomething (41s)
+[12:03:40] still running after 3m39s, nothing new for 30s  [4/23 packages]
+         running github.com/hrubymar10/aimebu/cmd/aimebu TestServerFoo for 2m10s
+[12:08:01] HANG?  github.com/hrubymar10/aimebu/cmd/aimebu TestServerFoo has been running for 5m00s
+           kill -QUIT 12345    # aimebu.test
+```
+
+- `start` / `ok` / `FAIL` per package, with its duration and an `X/Y packages` count
+  (`cached` marks a result that was not re-run). A package with no test files only counts.
+- A failing test prints right away with everything it logged, and a package that fails
+  without a failing test of its own (a build error, a timeout, a crash) prints its output
+  and names the tests that never finished. The end of the run lists every failure again,
+  the three slowest packages, and the exit status, which is `go test`'s (non-zero on any failure).
+- `slow` names a passing top-level test that took 30 s or more (`-slow`).
+- **`still running`** appears whenever nothing has happened for 30 s and lists what is running
+  and for how long. A package that is only compiling or between tests says so. This is the line
+  that tells you where a hung run is stuck.
+- **`HANG?`** appears once for a test that has been running for 5 minutes (a normal
+  package takes about 5 to 10 minutes under `-race`, but one test should not). It prints the
+  `kill -QUIT <pid>` command for the test binary: `SIGQUIT` makes a Go program print the stack
+  of every goroutine and exit, the dump appears in that package's FAIL output, and the
+  goroutine that is waiting (on a channel, a lock, a socket) shows what the test is waiting for.
+  `kill -USR1 <pid of gotestprogress>` does the same for every package that has a test running for
+  30 s or more; `-quit-on-hang` does it by itself when the 5 minutes pass.
+
+Flags go in `PROGRESS_FLAGS`, for example `make test-race PROGRESS_FLAGS='-quiet 10s -hang 2m'`
+(`-quiet`, `-slow`, `-hang`, `-quit-on-hang`). `make test PLAIN=1` runs plain `go test`.
+`make test-web` prints a `[web n/N]` start and end line with the duration for each script.
+
+Tests wait on servers, subprocesses and channels, and a wait with no deadline is how a
+test hangs without a word. `cmd/aimebu/testwait_test.go` has the helpers: `receive` waits on
+a channel for a limit and dumps the goroutines when it gives up, and `testHTTP` is a client
+whose requests have a deadline (`http.DefaultClient` has none). Use them for a new wait, and
+make the limit generous: it is for a hang, not for a slow machine.
 
 Run tests in the isolated environment above. When several people or agents
 share one machine, run the slow commands (`test-ui`, `test-full`) one at a
 time; the shared workspace gate is `flock` on `~/xcode/.aimebu-v2-gate.lock`.
 Redirect long output to a file and search that, rather than re-running.
+
+Every Go package with tests needs a `TestMain` that calls `testenv.Main(m)`;
+packages with custom setup call `testenv.Isolate()` before any test work.
+The helper moves home and credential directories to a temporary root and
+preserves the effective Go cache paths before changing `HOME`. Tests in the
+adapter, supervisor, server, and command packages also call
+`testenv.RestrictPATH` after isolation. It exposes only basic tools and skips
+machine-wide harness install directories during discovery. Put a fake
+executable on the test's
+`PATH` when a case needs a harness; never run a real login or launcher.
 
 ## The `web/` layout
 

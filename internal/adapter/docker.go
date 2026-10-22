@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+
+	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 )
 
 // DockerPreflight checks the requested checkout through the actual launcher.
@@ -32,7 +34,7 @@ func DockerPreflight(tool, checkout string, launcherPath ...string) error {
 	cmd := exec.CommandContext(ctx, launcher, "--version")
 	cmd.Dir = checkout
 	cmd.Env = append(os.Environ(), strings.ToUpper(tool)+"_LAUNCH_FLAGS=")
-	out, err := cmd.CombinedOutput()
+	out, err := cmdprobe.CombinedOutput(cmd) // a launcher that exits 0 and leaves a helper behind passed its preflight
 	if err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("Docker launcher preflight: %w", ctx.Err())

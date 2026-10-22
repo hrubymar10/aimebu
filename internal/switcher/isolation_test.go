@@ -7,31 +7,20 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 var packageTestRoot string
 
 func TestMain(m *testing.M) {
-	root, err := os.MkdirTemp("", "aimebu-v2-switcher-tests-")
-	if err != nil {
-		panic(err)
-	}
+	root, cleanup := testenv.Isolate()
 	packageTestRoot = root
-	for name, value := range map[string]string{
-		"HOME":               root,
-		"CODEX_HOME":         filepath.Join(root, ".codex"),
-		"CLAUDE_CONFIG_DIR":  filepath.Join(root, ".claude"),
-		"AIMEBU2_CONFIG_DIR": filepath.Join(root, ".aimebu2"),
-	} {
-		if err := os.Setenv(name, value); err != nil {
-			panic(err)
-		}
-	}
 	// The default running-codex scan reads the host's process table and docker
 	// containers; a test must never depend on what happens to run on the machine.
 	runningCodexScan = func() ([]string, string, error) { return nil, "tests: no host scan", nil }
 	code := m.Run()
-	_ = os.RemoveAll(root)
+	cleanup()
 	os.Exit(code)
 }
 

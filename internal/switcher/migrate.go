@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/internal/credtarget"
 	"github.com/hrubymar10/aimebu/internal/usages"
 )
@@ -581,14 +582,14 @@ func scanContainersForCodex() ([]string, string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	list, err := exec.CommandContext(ctx, "docker", "ps", "-q").Output()
+	list, err := cmdprobe.Output(exec.CommandContext(ctx, "docker", "ps", "-q"))
 	if err != nil {
 		return nil, "docker is not reachable, so container sessions were NOT checked (stop them by hand)"
 	}
 	var found []string
 	ids := strings.Fields(string(list))
 	for _, id := range ids {
-		top, terr := exec.CommandContext(ctx, "docker", "top", id, "-eo", "pid,comm").Output()
+		top, terr := cmdprobe.Output(exec.CommandContext(ctx, "docker", "top", id, "-eo", "pid,comm"))
 		if terr != nil {
 			continue
 		}

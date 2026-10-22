@@ -106,6 +106,16 @@ func TestDetectHarnessesFindsWhatIsInstalled(t *testing.T) {
 	}
 }
 
+func TestRestrictedPathDoesNotSearchMachineInstallDirs(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	t.Setenv("AIMEBU2_TEST_RESTRICT_PATH", "1")
+	got := searchDirs(t.Context())
+	if len(got) != 1 || got[0] != dir {
+		t.Fatalf("restricted search dirs = %v, want only %s", got, dir)
+	}
+}
+
 func TestDetectModelsRunsTheHarnessAndRefusesWhatItCannotDo(t *testing.T) {
 	dir := t.TempDir()
 	opencode := writeScript(t, dir, "opencode", `[ "$1" = models ] && printf 'opencode/a\nopencode/b\n'`)
@@ -122,6 +132,19 @@ func TestDetectModelsRunsTheHarnessAndRefusesWhatItCannotDo(t *testing.T) {
 	}
 	if _, err := detectModels(t.Context(), "pi", "relative/pi", nil, ""); err == nil {
 		t.Error("a relative command is refused")
+	}
+}
+
+func TestDetectModelsAcceptsSuccessfulLauncherWithOpenPipe(t *testing.T) {
+	harness := writeScript(t, t.TempDir(), "opencode", `sleep 4 &
+printf 'opencode/a\n'`)
+	start := time.Now()
+	models, err := detectModels(t.Context(), "opencode", harness, nil, "")
+	if err != nil || len(models) != 1 || models[0].Slug != "opencode/a" {
+		t.Fatalf("models = %+v, err = %v", models, err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("model listing waited for the child: %v", took)
 	}
 }
 

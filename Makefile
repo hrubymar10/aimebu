@@ -1,40 +1,51 @@
 .PHONY: test test-race vet fmt fmt-check test-full test-ui test-web dev
 
-test: ## Run unit tests
-	go test ./...
+# A bare `make` runs the Go tests, as it did before the progress runner.
+.DEFAULT_GOAL := test
 
-test-race: ## Run tests with the race detector
-	go test -race ./...
+# Go tests run through scripts/gotestprogress, which turns `go test -json` into progress: each package's start and end with a count, every
+# failing test with its output, and, when nothing happens for a while, which tests are running and for how long (see CONTRIBUTING.md,
+# "Reading the test output"). It is built into tmp/ and rebuilt when its source changes. Its exit status is go test's.
+# PLAIN=1 runs plain go test instead; PROGRESS_FLAGS passes flags to it (for example PROGRESS_FLAGS='-quiet 10s -hang 2m').
+GOTESTPROGRESS := tmp/gotestprogress
+PROGRESS_FLAGS ?=
+
+$(GOTESTPROGRESS): $(wildcard scripts/gotestprogress/*.go) go.mod
+	@mkdir -p tmp
+	go build -o $@ ./scripts/gotestprogress
+
+# gotest runs go test with the given arguments, through the progress runner unless PLAIN=1.
+define gotest
+	@if [ -n "$(PLAIN)" ]; then go test $(1); else $(GOTESTPROGRESS) $(PROGRESS_FLAGS) -- $(1); fi
+endef
+
+test: $(GOTESTPROGRESS) ## Run unit tests
+	$(call gotest,./...)
+
+test-race: $(GOTESTPROGRESS) ## Run tests with the race detector
+	$(call gotest,-race ./...)
 
 vet: ## Run go vet
 	go vet ./...
 
 fmt: ## Format Go source
-	gofmt -w cmd internal
+	gofmt -w cmd internal scripts
 
 fmt-check: ## Fail if Go source is unformatted
-	@test -z "$$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }
+	@test -z "$$(gofmt -l cmd internal scripts)" || { gofmt -l cmd internal scripts; exit 1; }
 
 test-full: fmt-check vet test-race test-web ## Full local and CI gate
 
+WEB_TESTS := system-events limit-guard sidebar-order preferences expiry room-unread humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown markdown import-tree
+
 test-web: ## Run the browser-free web unit tests (vm over the module source)
-	node scripts/test-system-events.cjs
-	node scripts/test-limit-guard.cjs
-	node scripts/test-sidebar-order.cjs
-	node scripts/test-preferences.cjs
-	node scripts/test-expiry.cjs
-	node scripts/test-room-unread.cjs
-	node scripts/test-humanize.cjs
-	node scripts/test-time.cjs
-	node scripts/test-emoji.cjs
-	node scripts/test-highlight.cjs
-	node scripts/test-preview.cjs
-	node scripts/test-svg-headers.cjs
-	node scripts/test-macro-import.cjs
-	node scripts/test-settings-backup.cjs
-	node scripts/test-composer-markdown.cjs
-	node scripts/test-markdown.cjs
-	node scripts/test-import-tree.cjs
+	@set -e; total=$(words $(WEB_TESTS)); n=0; \
+	for name in $(WEB_TESTS); do \
+		n=$$((n+1)); started=$$(date +%s); \
+		printf '[web %d/%d] start  %s\n' $$n $$total $$name; \
+		node scripts/test-$$name.cjs; \
+		printf '[web %d/%d] ok     %s (%ds)\n' $$n $$total $$name $$(( $$(date +%s) - started )); \
+	done
 
 test-ui: ## Run Chromium smoke against a scratch server
 	node scripts/test-ui.cjs

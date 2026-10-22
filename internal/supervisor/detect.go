@@ -17,6 +17,7 @@ import (
 
 	"github.com/goccy/go-json"
 
+	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 )
 
@@ -134,6 +135,11 @@ func searchDirs(ctx context.Context) []string {
 			dirs = append(dirs, dir)
 		}
 	}
+	// TestMain restricts PATH to fixture tools. Do not bypass it with the
+	// normal machine-wide install directories or an npm prefix probe.
+	if os.Getenv("AIMEBU2_TEST_RESTRICT_PATH") == "1" {
+		return dirs
+	}
 	dirs = append(dirs, "/usr/local/bin", "/opt/homebrew/bin")
 	if home != "" {
 		dirs = append(dirs, filepath.Join(home, ".local", "bin"), filepath.Join(home, ".npm-global", "bin"), filepath.Join(home, ".bun", "bin"), filepath.Join(home, ".opencode", "bin"))
@@ -141,7 +147,7 @@ func searchDirs(ctx context.Context) []string {
 	if npm, err := exec.LookPath("npm"); err == nil {
 		probe, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
-		if out, err := exec.CommandContext(probe, npm, "prefix", "-g").Output(); err == nil {
+		if out, err := cmdprobe.Output(exec.CommandContext(probe, npm, "prefix", "-g")); err == nil { // npm is a node script: its helpers must not keep this waiting
 			if prefix := strings.TrimSpace(string(out)); filepath.IsAbs(prefix) {
 				dirs = append(dirs, filepath.Join(prefix, "bin"))
 			}
@@ -153,7 +159,7 @@ func searchDirs(ctx context.Context) []string {
 func commandVersion(ctx context.Context, path string) string {
 	probe, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(probe, path, "--version").Output()
+	out, err := cmdprobe.Output(exec.CommandContext(probe, path, "--version"))
 	if err != nil {
 		return ""
 	}
@@ -306,8 +312,7 @@ func detectModels(ctx context.Context, family, command string, launcherArgs []st
 	stderr := &tailWriter{keep: detectStderrKeep}
 	cmd.Stdout = &limitWriter{buf: &out, left: detectOutputLimit}
 	cmd.Stderr = stderr
-	cmd.WaitDelay = time.Second
-	if err := cmd.Run(); err != nil {
+	if err := cmdprobe.Run(cmd); err != nil {
 		if run.Err() != nil {
 			return nil, errors.New("the harness did not answer in time")
 		}

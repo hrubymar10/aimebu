@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // blankTestDB is migrated once, then copied for isolated test stores. Opening
@@ -13,6 +15,7 @@ import (
 var blankTestDB []byte
 
 func TestMain(m *testing.M) {
+	_, cleanupHome := testenv.Isolate()
 	root, err := os.MkdirTemp("", "aimebu-store-tests-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -29,9 +32,11 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		_ = os.RemoveAll(root)
+		cleanupHome()
 		os.Exit(1)
 	}
 	code := m.Run()
 	_ = os.RemoveAll(root)
+	cleanupHome()
 	os.Exit(code)
 }

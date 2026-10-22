@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+
+	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 )
 
 const (
@@ -218,7 +220,7 @@ func detectClaudeCodeVersion() string {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "--allowed-tools", "", "--version")
 	cmd.Env = append(os.Environ(), "DISABLE_AUTOUPDATER=1")
-	out, err := cmd.CombinedOutput()
+	out, err := cmdprobe.CombinedOutput(cmd) // a claude that exits 0 and leaves a helper behind still reported its version
 	if err != nil {
 		return ""
 	}

@@ -39,7 +39,7 @@ func watchServing(t *testing.T) <-chan struct{} {
 
 // waitServerListening waits for the server to be serving, reporting an early exit immediately, then for its first answer.
 func waitServerListening(t *testing.T, url string, ready <-chan struct{}, done <-chan int, stderr *bytes.Buffer) {
-	waitServerStatus(t, url, &http.Client{Timeout: 10 * time.Second}, http.StatusUnauthorized, ready, done, stderr)
+	waitServerStatus(t, url, testHTTP, http.StatusUnauthorized, ready, done, stderr)
 }
 
 func waitServerStatus(t *testing.T, url string, client *http.Client, wantStatus int, ready <-chan struct{}, done <-chan int, stderr *bytes.Buffer) {
@@ -48,11 +48,13 @@ func waitServerStatus(t *testing.T, url string, client *http.Client, wantStatus 
 	case <-ready:
 	case code := <-done:
 		t.Fatalf("server exited before serving: code=%d stderr=%q", code, stderr.String())
-	case <-t.Context().Done():
-		t.Fatalf("test ended before the server was serving: %v", t.Context().Err())
+	case <-time.After(serverStartLimit):
+		dumpGoroutines("the server never started serving")
+		t.Fatalf("the server was not serving within %s (stderr %q; the goroutines are on stderr)", serverStartLimit, stderr.String())
 	}
 	// Serving has begun, so an answer is a matter of scheduling; retry a refused or timed-out first try (a handshake that waited for
-	// the scheduler under load) until the server answers or exits. The only bound is the test's own.
+	// the scheduler under load) until the server answers or exits, within a bound meant for a hang rather than a slow machine.
+	answerBy := time.Now().Add(serverStartLimit)
 	for {
 		resp, err := client.Get(url)
 		if err == nil {
@@ -65,9 +67,11 @@ func waitServerStatus(t *testing.T, url string, client *http.Client, wantStatus 
 		select {
 		case code := <-done:
 			t.Fatalf("server exited while answering its first request: code=%d stderr=%q err=%v", code, stderr.String(), err)
-		case <-t.Context().Done():
-			t.Fatalf("test ended before the server answered: %v (last error: %v)", t.Context().Err(), err)
 		case <-time.After(20 * time.Millisecond):
+		}
+		if time.Now().After(answerBy) {
+			dumpGoroutines("the server never answered")
+			t.Fatalf("the server was serving but did not answer within %s (last error: %v; stderr %q)", serverStartLimit, err, stderr.String())
 		}
 	}
 }
@@ -305,7 +309,7 @@ func TestServerCanDisableEmbeddedSupervisor(t *testing.T) {
 	go func() { done <- serverCommand(ctx, &stdout, &stderr) }()
 	waitServerListening(t, fmt.Sprintf("http://127.0.0.1:%d/api/me", port), ready, done, &stderr)
 	cancel()
-	if code := <-done; code != 0 {
+	if code := receive(t, "the server stopping", done, serverStopLimit); code != 0 {
 		t.Fatalf("serve code=%d stderr=%q", code, stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(root, "supervisor", "journal.sqlite")); !os.IsNotExist(err) {
@@ -427,13 +431,13 @@ func TestEmbeddedSupervisorReconcilesCrashedTurn(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			cancel()
-			<-done
+			receive(t, "the server stopping", done, serverStopLimit)
 			t.Fatalf("crashed turn was not reconciled: %v", err)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	cancel()
-	if code := <-done; code != 0 {
+	if code := receive(t, "the server stopping", done, serverStopLimit); code != 0 {
 		t.Fatalf("restart code=%d stderr=%q", code, stderr.String())
 	}
 	contents, err := os.ReadFile(effectPath)

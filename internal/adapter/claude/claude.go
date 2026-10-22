@@ -18,6 +18,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/prompt"
+	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/internal/harness"
 )
 
@@ -88,7 +89,7 @@ func (a *Adapter) Catalog() []adapter.CatalogEntry {
 		if a.variant() == "docker" {
 			cmd.Env = append(childEnv(), "CLAUDE_LAUNCH_FLAGS=")
 		}
-		out, err := cmd.Output()
+		out, err := cmdprobe.Output(cmd) // bounded by the deadline, not by helpers the launcher leaves behind
 		if err != nil {
 			return nil
 		}

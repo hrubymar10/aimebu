@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 )
 
@@ -78,7 +79,7 @@ func inspectHarness(setting protocol.HarnessSetting, mountedDir ...string) (prot
 			cmd.Dir = mountedDir[0]
 			cmd.Env = append(os.Environ(), strings.ToUpper(setting.Tool)+"_LAUNCH_FLAGS=")
 		}
-		out, err := cmd.Output()
+		out, err := cmdprobe.Output(cmd) // a launcher that exits 0 and leaves a helper behind still reported its version
 		versionErr = err
 		if err == nil {
 			row.Version = strings.TrimSpace(string(out))

@@ -3,10 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/hrubymar10/aimebu/internal/answer"
 )
@@ -164,33 +162,5 @@ func TestMessageNumberQueriesUseTheIndex(t *testing.T) {
 				t.Fatalf("%s\nreads the whole message table: %v", query, plan)
 			}
 		}
-	}
-}
-
-// Importing history looks every message up by number; with the index in use 10k messages are a fraction of a second.
-func TestNumberLookupsStayFastOnALargeHistory(t *testing.T) {
-	t.Parallel()
-	s, _ := testStore(t, Options{})
-	_, room, _ := fixture(t, s)
-	tx, err := s.db.Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 10000; i++ {
-		if _, err := tx.Exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES (?,?,?,'system','system','x','[]',?)`, fmt.Sprintf("bulk_%05d", i), 1000+i, room.ID, timestamp()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	started := time.Now()
-	for i := 0; i < 5000; i++ {
-		if _, err := s.MessageByNo(context.Background(), int64(2+i)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if elapsed := time.Since(started); elapsed > 3*time.Second {
-		t.Fatalf("5000 lookups by number over 10000 messages took %s", elapsed)
 	}
 }

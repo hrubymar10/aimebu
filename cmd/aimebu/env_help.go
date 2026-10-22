@@ -51,6 +51,10 @@ var environment = []envVar{
 	{[]string{"AIMEBU2_TURN_IDLE", "AIMEBU2_TURN_MAX"}, []string{
 		"Supervisor stall deadlines per turn: silence with no tool running, and",
 		"wall-clock cap (Go durations, 0 disables; defaults depend on the harness)"}},
+	{[]string{"AIMEBU2_TEST_RESTRICT_PATH"}, []string{
+		"Set to 1 by the test helpers: harness discovery then reads PATH only, not the",
+		"machine-wide install directories, so a test never finds the developer's CLIs;",
+		"never set it in production"}},
 	{[]string{"AIMEBU2_INSECURE_SKIP_VERIFY"}, []string{"Disable client TLS verification for development self-signed certificates"}},
 	{[]string{"AIMEBU_BIND"}, []string{
 		"v1's bind address; probed for a running v1 server before the first start",

@@ -2,28 +2,18 @@ package usages
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
+
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 func TestMain(m *testing.M) {
-	root, err := os.MkdirTemp("", "aimebu-v2-usages-tests-")
-	if err != nil {
+	root, cleanup := testenv.Isolate()
+	// An empty PATH keeps the Claude user-agent probe from running a real claude.
+	if err := os.Setenv("PATH", root); err != nil {
 		panic(err)
 	}
-	for name, value := range map[string]string{
-		"HOME": root,
-		// An empty PATH keeps the Claude user-agent probe from running a real claude.
-		"PATH":               root,
-		"CODEX_HOME":         filepath.Join(root, ".codex"),
-		"CLAUDE_CONFIG_DIR":  filepath.Join(root, ".claude"),
-		"AIMEBU2_CONFIG_DIR": filepath.Join(root, ".aimebu2"),
-	} {
-		if err := os.Setenv(name, value); err != nil {
-			panic(err)
-		}
-	}
 	code := m.Run()
-	_ = os.RemoveAll(root)
+	cleanup()
 	os.Exit(code)
 }
