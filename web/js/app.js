@@ -137,7 +137,7 @@ const inbox = new Inbox(createInboxSource(), sidebar.projects, sidebar.rooms, as
   const room = sidebar.rooms.get(item.room_id); if (!room) return;
   const generation = sessionGeneration;
   inbox.hide(); if (!await selectRoom(room) || generation !== sessionGeneration) return;
-  chat.nodes.get(item.message_id)?.scrollIntoView({ block: 'center' });
+  if (item.message_id) await chat.jumpToMessage(item.message_id); // loads an older message or a thread reply too, then highlights it
 }, notifications, items => chat.updateAnswerControls(items));
 chat.setInbox(inbox);
 const agents = new AgentsPanel(createAgentSource(), agent => {

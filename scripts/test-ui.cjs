@@ -2307,6 +2307,23 @@ async function main() {
       await first.evaluate(() => { document.querySelector('#chat-error').textContent = ''; [...document.querySelectorAll('#messages a.msg-ref')].at(-2).click(); });
       await first.waitForFunction(title => document.querySelector('#room-title').textContent === title && [...document.querySelectorAll('#messages .message-body')].some(el => el.textContent === 'a message in another room'), {}, other.title);
       assert.equal(await first.evaluate(() => [...document.querySelectorAll('#messages .message')].find(item => item.querySelector('.message-body')?.textContent === 'a message in another room').querySelector('.message-number').textContent), `#${other.no}`, 'the message shows its number, not its internal order');
+      // The message a jump lands on is highlighted for a moment, then the highlight is gone again.
+      const flashed = () => first.evaluate(() => [...document.querySelectorAll('#messages .message')].filter(item => item.querySelector('.message-flash') || item.classList.contains('message-flash')).map(item => item.querySelector('.message-body')?.textContent));
+      await first.waitForFunction(() => document.querySelector('#messages .message-flash'));
+      assert.deepEqual(await flashed(), ['a message in another room'], 'the jump highlighted the target message');
+      await first.waitForFunction(() => !document.querySelector('#messages .message-flash'), { timeout: 5000 });
+
+      await first.evaluate(title => [...document.querySelectorAll('.room-name')].find(node => node.textContent.includes(title)).click(), originalTitle);
+      await first.waitForFunction(title => document.querySelector('#room-title').textContent === title, {}, originalTitle);
+      // With reduced motion the highlight does not animate: the same class is a plain outline.
+      await first.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
+      await post(`again #${other.no}`);
+      await first.waitForFunction(text => [...document.querySelectorAll('#messages .message-body')].some(el => el.textContent === text), {}, `again #${other.no}`);
+      await first.evaluate(() => [...document.querySelectorAll('#messages a.msg-ref')].at(-1).click());
+      await first.waitForFunction(() => document.querySelector('#messages .message-flash'));
+      assert.deepEqual(await first.evaluate(() => { const style = getComputedStyle(document.querySelector('#messages .message-flash')); return { animation: style.animationName, outline: style.outlineStyle }; }), { animation: 'none', outline: 'solid' }, 'with reduced motion the highlight is a static outline');
+      await first.waitForFunction(() => !document.querySelector('#messages .message-flash'), { timeout: 5000 });
+      await first.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
       await first.evaluate(title => [...document.querySelectorAll('.room-name')].find(node => node.textContent.includes(title)).click(), originalTitle);
       await first.waitForFunction(title => document.querySelector('#room-title').textContent === title, {}, originalTitle);
     }

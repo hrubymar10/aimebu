@@ -253,7 +253,8 @@ a sender with no live agent record shows as departed, and one that exists only i
 "Imported from v1 (no live agent)"). A message that needs a
 human shows a 🔔. The `#42` number is the message's own number, one sequence across every room (as in v1, where an imported message keeps its v1 number); it copies itself, a `#42` in text links to that message (opening its room when it is elsewhere), and an agent may name a message by it. Hovering or focusing a
 message shows its actions as one compact toolbar that overlays and reserves no space and covers no text: at the right end of the sender line
-for someone else's message, beside the bubble (to its left) for your own. On a touch screen a tap on a message shows it under the message: react (+, which opens a row of 👍 🆗 ✅ 👀 🙏 🎉), find another reaction (opens the emoji picker), reply (↩), reply in a thread, copy text and copy link. A message with
+for someone else's message, beside the bubble (to its left) for your own. The one exception is a chat column under 420px, where nothing fits
+beside either: the sender line then leaves 22px below it and the toolbar sits in that room over the bubble's top edge. On a touch screen a tap on a message shows it under the message: react (+, which opens a row of 👍 🆗 ✅ 👀 🙏 🎉), find another reaction (opens the emoji picker), reply (↩), reply in a thread, copy text and copy link. A message with
 thread replies shows an "N replies" chip. Arrow keys, Home and End move through the buttons. System messages
 appear as compact inline notices. UI experiments run behind an A/B/C pill (up to A–E, one letter per option label) in the top bar (`web/js/ui-variant.js`): an
 experiment registers a name and labels for its options, the pill then reads "UI A | B | C … — TESTING: <name>" with the chosen option
@@ -345,7 +346,7 @@ see `DELETE /api/rooms/{room}`), and shows room information (Room settings also
 lists the room's members read-only: people with their project role, agents with
 their role emoji and label, and each singleton role with the agent holding it
 or "vacant"), message-number
-jump, raw Markdown view, and Markdown/JSON export. Archiving confirms that
+jump, raw Markdown view, and Markdown/JSON export. A jump lands on its message (a `#N` link, a reply quote, jump-to or an Inbox item, in another room too) and highlights it for about 1.5 seconds: a ring that fades out, or a plain outline when reduced motion is preferred. Archiving confirms that
 agents homed in the room stop and open questions are withdrawn; its history
 stays readable. Chat opens the latest 100 messages, loads 50 older messages
 when scrolled to the top, and fetches context for jumps to older messages.

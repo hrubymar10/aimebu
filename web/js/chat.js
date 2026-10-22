@@ -34,6 +34,7 @@ function setLatest(button, label, count = 0) {
   button.title = label; button.setAttribute('aria-label', label);
 }
 
+export const FLASH_MS = 1500;
 export class Chat {
   constructor(onRoomMutation) {
     this.onRoomMutation = onRoomMutation;
@@ -705,6 +706,13 @@ export class Chat {
     if (value === null) return;
     this.jumpToMessage(Number(value.trim()));
   }
+  // A short highlight on a message the reader was just taken to (a #N link, a reply quote, jump-to, an Inbox item), so the eye finds it. It
+  // lasts FLASH_MS; with reduced motion the same class is a plain outline and does not animate (see the stylesheet).
+  flash(node) {
+    if (!node) return;
+    clearTimeout(node.flashTimer); node.classList.remove('message-flash'); void node.offsetWidth; node.classList.add('message-flash');
+    node.flashTimer = setTimeout(() => node.classList.remove('message-flash'), FLASH_MS);
+  }
   // `key` is a message number (the "#N" people write, one sequence across every room) or a message id. A number is looked up on the
   // server when this room has not loaded it, and a message of another room opens that room (onOpenMessage) on that message.
   async jumpToMessage(key) {
@@ -748,8 +756,8 @@ export class Chat {
         }
         if (root) await this.openThread(root, message);
         if (!this.current(session, roomID) || generation !== this.openGeneration || jump !== this.jumpGeneration) return;
-        this.threadList.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`)?.scrollIntoView({ block: 'center' });
-      } else { this.nodes.get(message.id)?.scrollIntoView({ block: 'center' }); this.scrollAnchor?.update(); }
+        { const entry = this.threadList.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`); entry?.scrollIntoView({ block: 'center' }); this.flash(entry); }
+      } else { const row = this.nodes.get(message.id); row?.scrollIntoView({ block: 'center' }); this.scrollAnchor?.update(); this.flash(row?.querySelector('.message-bubble') || row); }
       this.error.textContent = '';
     } catch (error) { if (this.current(session, roomID) && jump === this.jumpGeneration) this.error.textContent = error.message; }
   }
