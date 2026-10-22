@@ -57,7 +57,9 @@ Renaming a profile (`POST /api/switcher/<tool>/profiles/<name>/rename` with
 allowed while the profile is active and while agents run: only the stored
 profile moves, never the live credential file. The profile's backups and
 rotated-credential rescue files move with it, and a destination name that
-already exists is refused with 409.
+already exists is refused with 409. The profile directory also carries a
+private opaque `usage-alert-id` file when needed for usage alerts; it moves on
+rename and is deleted with the profile, so a reused name gets a new identity.
 
 Removing a profile first records a tombstone in `switcher/removed.json`: the
 tool, profile name, removal time and the SHA-256 hash of its refresh token,

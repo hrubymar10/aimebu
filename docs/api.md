@@ -176,7 +176,7 @@ and reconnects the event stream from its last seen `seq`.
 | GET | `/api/agent/turns/{turn}/attachments/{attachment}` | turn-scoped attachment bearer | file bytes only for that live turn and current room membership; used by Pi Docker; same download and security headers as the user attachment route |
 | POST | `/api/inbox/{item}/answer` | `{body,rev}` and `Idempotency-Key` header | answer message; 200 on keyed replay, 201 on first answer |
 | POST | `/api/inbox/{item}/decision` | `{choice,rev}` and `Idempotency-Key` header | recovery or daily usage-limit decision `{item_id,choice,turn_id?,rev}`; 200 on keyed replay, 201 first time |
-| POST | `/api/inbox/{item}/dismiss` | `{rev}` | dismiss an open delivery-failed notice; owner, operator, or DM peer; 204 on success, 409 on stale revision or resolved item |
+| POST | `/api/inbox/{item}/dismiss` | `{rev}` | dismiss an open delivery-failed notice (owner, operator, or DM peer), or a `usage_alert` notice (owner or global admin); 204 on success, 409 on stale revision or resolved delivery item, 404 for an absent usage alert |
 | GET | `/api/system-events` | `limit?` (1–500, default 100) | newest-first operational events the caller may see (`events`, same shape as the live stream) and the `kinds` list the web client uses to filter live events; joins, spawns, recovery, quota, machine and access changes, never chat bookkeeping such as `message_created` or reactions. Private chats only for their members; events with no project (user, machine, session, and agent-key changes) are visible to the instance owner only, in this list and on the live stream |
 | GET | `/api/rooms/{room}/export` | `format=json` or `format=markdown` (required; 400 for anything else) | the whole history of the room, oldest first, as a download named after the room (`<title>.json` or `<title>.md`, letters, digits, `-` and `_` only). Whoever may read the room may export it (same access as the messages route). JSON is `{room, exported_at, messages:[…]}` with each message as the messages route returns it (`reactions`, `thread_count`, `expirable` included), plus `author_label` (the login, `slug@project`, or `System`) and, for a reply, `reply_to_no`; an attachment's server path is never included, and `reply_preview` is not (a reply has `reply_to_no` instead). Markdown has a heading for the room and one per message (`## #no · author · time`), a quote naming the message a reply answers, a line for each attachment (name, type, size; the bytes are not included) and the reactions per emoji. Streamed in pages of 500, so only a small id-to-number map grows with the room. The first page is read before anything is sent (an error there is an ordinary 500); an error after that ends the connection abruptly, so a truncated file is a failed download and never one that ends cleanly |
 | GET | `/api/messages/{message}/debug` | — | debug inspector view of one message: the stored record (`message`, with `ask`, `proposed_answers`, `open_questions`, `visual_plan`, `appendix_pages` as parsed JSON), `addressed_to`, an `addressing` trace (for each @token: how it was read — group tag, full ID, slug, project-qualified, role, revoked, none — whether it was `addressed`, `ambiguous`, `no_match`, `ignored` (inside backticks, a code block, or escaped, and only when it would have reached someone, with `would_reach` naming them; code such as Java annotations is not reported), `self`, or `empty`, who it reached, and why; plus reply and private-chat sources, and a `drift` flag when re-reading the body against the room as it is now would address someone the recorded targets do not include; never set for an inbox answer, whose targets the answer fixes), per-agent wake `notes` (state, `wake_reason`, the turns that carried the note and their receipts), and related `events` (including `message_not_woken` reasons). Same room access as reading the message; long stored text, including the body, is truncated at 8 KiB on a character boundary; related events are those of the message's own room |
@@ -184,7 +184,7 @@ and reconnects the event stream from its last seen `seq`.
 | PUT/DELETE | `/api/messages/{message}/reactions/{emoji}` | — | 204; add/remove one Unicode emoji sequence for the user; DELETE accepts older stored reactions up to 128 bytes; unchanged reactions emit no event |
 | PUT/DELETE | `/api/agent/messages/{message}/reactions/{emoji}` | agent key | `{message}` is a message id or its number (`#12` or `12`); 204; add/remove one Unicode emoji sequence in a joined room; DELETE accepts older stored reactions up to 128 bytes; unchanged reactions emit no event |
 | GET | `/api/message-numbers/{no}` | — | where the message numbered `#no` lives: `{id,no,seq,room_id}`; the caller needs access to its room (404 when no message has the number, 400 for a number that is not a positive integer); the web UI uses it for a `#N` link into another room |
-| GET | `/api/events?after=<seq>` | WebSocket upgrade | event stream: project events for project members (private chats for their members), events with no project for the instance owner only; owners also get transient `{type:"usages_updated"}` frames (no `seq`, never replayed) |
+| GET | `/api/events?after=<seq>` | WebSocket upgrade | event stream: project events for project members (private chats for their members), events with no project for the instance owner only; owners and global admins also get transient `{type:"usages_updated"}` frames (no `seq`, never replayed) |
 | GET | `/api/events/cursor` | — | `{seq}` current global event watermark |
 | GET | `/api/inbox` | — | open questions, approvals, recovery, and delivery failures visible to authorized project members and private-chat peers |
 | GET | `/api/agent/rooms` | active or not-accepting agent key | rooms where the caller is an active member, including archived rooms; no message previews |
@@ -408,7 +408,9 @@ requires the global owner session and never returns credential values.
 
 Owner-only Settings routes use CSRF-protected POST requests:
 `/api/usages/providers` changes a provider's enabled state;
-`/api/usages/settings` changes refresh interval, percent display, provider order, or the
+`/api/usages/settings` changes refresh interval, percent display, provider order,
+`alert_warning_remaining` and `alert_critical_remaining` (20 and 10 by default;
+1–99, critical below warning), or the
 `token_auto_refresh` setting (legacy alias `claude_auto_refresh`; see
 [usages](usages.md#auto-refresh-tokens-account-maintenance));
 `/api/usages/refresh` fetches current snapshots;
@@ -419,6 +421,18 @@ server-side GitHub device flow. The first poll response returns only status,
 never the token. Secrets live in `usages/config.json` with mode 0600 and the
 v1 JSON format. The cache and API responses contain no secrets. See
 [usage snapshots](usages.md) for setup and provider behavior.
+Fresh provider windows at either remaining-quota threshold add a virtual
+`usage_alert` entry to `GET /api/inbox` for the owner and global admins. Its
+question gives the provider, profile name, window, remaining percentage, and
+reset time; it carries no email or credential. The owner alone can open the
+Usages view from that entry. A critical alert supersedes a warning for the
+same window, and each threshold fires once per reset cycle. The server stores
+this dedupe state in private `usages/alerts.json` rather than SQLite. The
+alert closes when its reset time passes, its account disappears, or the provider
+is disabled. The Inbox card has a dismiss control; dismissing does not rearm
+that threshold in the same cycle. A renamed stored profile keeps its opaque
+account identity. Invalid saved thresholds fall back to 20/10 on load while
+other saved usage settings and credentials remain intact.
 
 Project responses set `repo_url` to `null` when absent. Message responses
 expose `targets` as a JSON array and omit the raw `targets_json` column.

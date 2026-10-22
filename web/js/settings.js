@@ -317,8 +317,11 @@ export class SettingsPanel {
       const option = element('option', '', label); option.value = value; display.append(option);
     }
     display.value = settings?.percent_display || 'left';
+    const warning = element('input'); warning.type = 'number'; warning.min = '1'; warning.max = '99'; warning.value = String(settings?.alert_warning_remaining ?? 20);
+    const critical = element('input'); critical.type = 'number'; critical.min = '1'; critical.max = '99'; critical.value = String(settings?.alert_critical_remaining ?? 10);
     const save = element('button', 'btn btn-primary', 'Save usage settings'); save.type = 'button';
-    save.onclick = () => this.mutateUsage(() => this.source.settings({ refresh_interval_sec: Number(interval.value), percent_display: display.value }));
+    save.onclick = () => this.mutateUsage(() => this.source.settings({ refresh_interval_sec: Number(interval.value), percent_display: display.value,
+      alert_warning_remaining: Number(warning.value), alert_critical_remaining: Number(critical.value) }));
     const refresh = element('button', 'btn', 'Refresh now'); refresh.type = 'button';
     refresh.onclick = () => this.mutateUsage(async () => {
       try { await this.source.refresh(); }
@@ -331,6 +334,8 @@ export class SettingsPanel {
     controls.append(settingsGroup([
       settingsRow({ label: 'Refresh interval (seconds)', desc: 'How often the server re-reads provider limits in the background. Minimum 15 seconds.', control: interval, id: 'usage-refresh-interval' }),
       settingsRow({ label: 'Percentages', desc: 'Show usage bars as the share still left or the share already used, here and in the usages popover.', control: display, id: 'usage-percent-display' }),
+      settingsRow({ label: 'Usage warning (% remaining)', desc: 'Send one global inbox alert per provider window and reset when this much quota remains.', control: warning, id: 'usage-alert-warning' }),
+      settingsRow({ label: 'Usage critical (% remaining)', desc: 'Send a stronger alert at this lower remaining percentage. It must be below the warning threshold.', control: critical, id: 'usage-alert-critical' }),
     ], 'Usage refresh'), actions, this.tokenAutoRefreshGroup(settings));
     this.switcherControls.append(controls);
   }

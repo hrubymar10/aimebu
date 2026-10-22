@@ -95,9 +95,11 @@ func (s *Server) usageSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		RefreshIntervalSec *int      `json:"refresh_interval_sec"`
-		PercentDisplay     *string   `json:"percent_display"`
-		ProviderOrder      *[]string `json:"provider_order"`
+		RefreshIntervalSec     *int      `json:"refresh_interval_sec"`
+		PercentDisplay         *string   `json:"percent_display"`
+		ProviderOrder          *[]string `json:"provider_order"`
+		AlertWarningRemaining  *int      `json:"alert_warning_remaining"`
+		AlertCriticalRemaining *int      `json:"alert_critical_remaining"`
 		// TokenAutoRefresh is the "Auto-refresh tokens" setting; ClaudeAutoRefresh is
 		// its legacy name, accepted for older clients. The new key wins.
 		TokenAutoRefresh  *bool `json:"token_auto_refresh"`
@@ -127,6 +129,12 @@ func (s *Server) usageSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.ProviderOrder != nil {
 			cfg.ProviderOrder = *body.ProviderOrder
+		}
+		if body.AlertWarningRemaining != nil {
+			cfg.AlertWarningRemaining = *body.AlertWarningRemaining
+		}
+		if body.AlertCriticalRemaining != nil {
+			cfg.AlertCriticalRemaining = *body.AlertCriticalRemaining
 		}
 		return nil
 	})

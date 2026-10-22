@@ -197,6 +197,7 @@ agents.projectRole = chat.projectRole;
 agents.projectRooms = projectID => [...sidebar.rooms.values()].filter(room => room.project_id === projectID);
 agents.showRoom = room => selectRoom(room);
 const settings = new SettingsPanel(createUsagesSource(), () => ({ projects: [...sidebar.projects.values()], selectedProjectID: chat.room?.project_id }), notifications);
+inbox.openUsages = () => settings.open('usages');
 chat.projectSettings = settings.project; // the home room's settings show the same project form
 settings.onRights = () => applyRights();
 document.addEventListener('aimebu:open-settings', event => settings.open(event.detail?.section || 'general', event.detail));
@@ -413,7 +414,7 @@ async function signedIn(session) {
       dot.classList.toggle('disconnected', label !== 'Connected');
       dot.title = label; dot.setAttribute('aria-label', label);
     }, seq);
-    stream.onUsagesUpdated = () => { settings.usagesChanged(); usagesPopover.changed(); };
+    stream.onUsagesUpdated = () => { settings.usagesChanged(); usagesPopover.changed(); inbox.refresh().catch(() => {}); };
     stream.start();
     clearTimeout(preStreamDeadline);
     // A slow read can still recover; the first-run import decision remains

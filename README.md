@@ -193,7 +193,10 @@ quota ([automatic account switching](docs/quota-switcher.md), off by default), a
 says so at 99% of a window (on by default). Separately, **daily limits** cap what a
 project may spend in a day (cost and turns, all its rooms together): the owner sets a
 default in Settings → Usages, and each project inherits it, sets its own, or has no
-limit in Project settings. See
+limit in Project settings. Fresh provider windows at or below 20% and 10%
+remaining create global Inbox alerts for the owner and global admins. The
+owner can change those thresholds in Settings → Usages; only the owner can
+open the detailed Usages view. See
 [usage snapshots](docs/usages.md) and
 [account switching](docs/switcher.md).
 Its files use the v1 switcher format under the selected v2 config root:
@@ -466,7 +469,7 @@ count. An explicit `ask` cannot be combined with these fields; `proposed_answers
 The open-item count appears on the Inbox button and in the tab title. New items play a short chime after a tab interaction. So do chat messages that address you (a mention, a reply, a group you are in), unless the room is quiet for you (Room settings → Notifications).
 The Inbox lists open items with message requests highlighted beside their replies. Delivery-failed notices show readable draft text when
 available and can be dismissed after review; failures of archived rooms can be dismissed all at once ("Dismiss all
-resolved"). The Inbox never shows raw JSON: a payload that is JSON is summarised in plain words, and the raw record is behind a
+resolved"). Usage alerts show the provider, account name, window, remaining percentage and reset time inline and can be dismissed by an admin. The Inbox never shows raw JSON: a payload that is JSON is summarised in plain words, and the raw record is behind a
 bug icon that appears when Settings → General turns the debug inspector on. Resume, Retry and Continue are normal buttons; Abandon,
 Stop, and Remove actions use the destructive style. A phone login lands on the room you last had open, not on the Inbox.
 Settings → Notifications has a mute switch, a choice of inbox sound (Chime, Ding, Beep, Knock, or

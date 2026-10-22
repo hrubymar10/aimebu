@@ -32,19 +32,19 @@ func (m *Manager) OverlayUsages(response *usages.Response) error {
 			if profile.Tool != tool {
 				continue
 			}
-			item := usages.Profile{ProfileName: profile.Name, Active: profile.Active, HasCredentials: profile.HasCreds, Email: profile.Email, ExpiresAt: profile.ExpiresAt, Status: "not_selected"}
+			item := usages.Profile{ProfileName: profile.Name, AlertIdentity: profile.AlertIdentity, Active: profile.Active, HasCredentials: profile.HasCreds, Email: profile.Email, ExpiresAt: profile.ExpiresAt, Status: "not_selected"}
 			if !profile.Active {
 				// A read-only snapshot of the stored login, when the reader has one.
 				for _, stored := range response.Providers[i].Profiles[1:] {
 					if stored.ProfileName == profile.Name {
 						item = stored
-						item.Active, item.HasCredentials, item.Email, item.ExpiresAt = false, profile.HasCreds, profile.Email, profile.ExpiresAt
+						item.Active, item.HasCredentials, item.Email, item.ExpiresAt, item.AlertIdentity = false, profile.HasCreds, profile.Email, profile.ExpiresAt, profile.AlertIdentity
 					}
 				}
 			}
 			if profile.Active {
 				item = base
-				item.ProfileName, item.Active, item.HasCredentials, item.Email, item.ExpiresAt = profile.Name, true, profile.HasCreds, profile.Email, profile.ExpiresAt
+				item.ProfileName, item.Active, item.HasCredentials, item.Email, item.ExpiresAt, item.AlertIdentity = profile.Name, true, profile.HasCreds, profile.Email, profile.ExpiresAt, profile.AlertIdentity
 			}
 			configured = append(configured, item)
 		}

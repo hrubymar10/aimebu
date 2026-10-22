@@ -149,7 +149,8 @@ func (r *Reader) refreshExtraOne(ctx context.Context, key string) {
 		return
 	}
 	now := time.Now().UTC()
-	profile := applySnapshot(Profile{ProfileName: "local", Active: true, HasCredentials: pc.Token != "" || pc.Cookie != "" || pc.APIKey != "", Email: email}, snap)
+	profile := applySnapshot(Profile{ProfileName: "local", Active: true, HasCredentials: pc.Token != "" || pc.Cookie != "" || pc.APIKey != "", Email: email,
+		AlertCredential: alertHash(key + "\x00" + pc.Token + "\x00" + pc.Cookie + "\x00" + pc.APIKey)}, snap)
 	profile.LastRefreshAt = &now
 	r.mu.Lock()
 	if generation != r.generation || providerGeneration != r.providerGeneration[key] {

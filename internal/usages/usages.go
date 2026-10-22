@@ -43,19 +43,21 @@ type Window struct {
 	History []HistoryPoint `json:"history,omitempty"`
 }
 type Profile struct {
-	ProfileName    string                 `json:"profile_name"`
-	Active         bool                   `json:"active"`
-	HasCredentials bool                   `json:"has_credentials"`
-	Email          string                 `json:"email,omitempty"`
-	ExpiresAt      *time.Time             `json:"expires_at,omitempty"`
-	Status         string                 `json:"status"`
-	Plan           string                 `json:"plan,omitempty"`
-	Windows        []Window               `json:"windows,omitempty"`
-	Credits        *Credits               `json:"credits,omitempty"`
-	LastRefreshAt  *time.Time             `json:"last_refresh_at,omitempty"`
-	Stale          bool                   `json:"stale,omitempty"`
-	Error          string                 `json:"error,omitempty"`
-	ErrorDetail    *providers.ErrorDetail `json:"error_detail,omitempty"`
+	ProfileName     string                 `json:"profile_name"`
+	AlertIdentity   string                 `json:"-"`
+	AlertCredential string                 `json:"-"`
+	Active          bool                   `json:"active"`
+	HasCredentials  bool                   `json:"has_credentials"`
+	Email           string                 `json:"email,omitempty"`
+	ExpiresAt       *time.Time             `json:"expires_at,omitempty"`
+	Status          string                 `json:"status"`
+	Plan            string                 `json:"plan,omitempty"`
+	Windows         []Window               `json:"windows,omitempty"`
+	Credits         *Credits               `json:"credits,omitempty"`
+	LastRefreshAt   *time.Time             `json:"last_refresh_at,omitempty"`
+	Stale           bool                   `json:"stale,omitempty"`
+	Error           string                 `json:"error,omitempty"`
+	ErrorDetail     *providers.ErrorDetail `json:"error_detail,omitempty"`
 }
 type Provider struct {
 	ProviderName     string    `json:"provider_name"`
@@ -73,8 +75,10 @@ type Provider struct {
 type Response struct {
 	Providers []Provider `json:"providers"`
 	Settings  struct {
-		PercentDisplay     string `json:"percent_display"`
-		RefreshIntervalSec int    `json:"refresh_interval_sec"`
+		PercentDisplay         string `json:"percent_display"`
+		RefreshIntervalSec     int    `json:"refresh_interval_sec"`
+		AlertWarningRemaining  int    `json:"alert_warning_remaining"`
+		AlertCriticalRemaining int    `json:"alert_critical_remaining"`
 		// TokenAutoRefresh is the "Auto-refresh tokens" setting; the claude_ key
 		// is its read-only legacy alias.
 		TokenAutoRefresh          bool                                 `json:"token_auto_refresh"`
@@ -192,6 +196,8 @@ func defaultResponse() Response {
 	}}
 	r.Settings.PercentDisplay = "left"
 	r.Settings.RefreshIntervalSec = 120
+	r.Settings.AlertWarningRemaining = 20
+	r.Settings.AlertCriticalRemaining = 10
 	return r
 }
 
@@ -223,6 +229,8 @@ func (r *Reader) Snapshot() Response {
 		decorateResponse(&out, cfg)
 		out.Settings.TokenAutoRefresh = cfg.TokenAutoRefresh
 		out.Settings.ClaudeAutoRefresh = cfg.TokenAutoRefresh
+		out.Settings.AlertWarningRemaining = cfg.AlertWarningRemaining
+		out.Settings.AlertCriticalRemaining = cfg.AlertCriticalRemaining
 	} else {
 		for i := range out.Providers {
 			if !out.Providers[i].Enabled {
@@ -435,6 +443,11 @@ func failedLogin(base Profile, fallback string, err error) (Profile, error) {
 // until the harness renews its own login.
 func (r *Reader) fetchLocal(ctx context.Context, p Profile, login providers.Login, name string, provider providers.UsageProvider, reread func() (providers.Login, error)) (Profile, error) {
 	p.HasCredentials = true
+	// Rotating access tokens must not rearm an alert in the same account and
+	// cycle. A missing durable account claim leaves this fingerprint empty.
+	if login.StableAccountID != "" {
+		p.AlertCredential = alertHash("account\x00" + login.StableAccountID)
+	}
 	if login.ExpiresAt != nil {
 		p.ExpiresAt = login.ExpiresAt
 		if !login.ExpiresAt.After(time.Now()) {

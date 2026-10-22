@@ -99,6 +99,8 @@ type Server struct {
 	spawnKeys            map[string]string
 	usageWatchMu         sync.Mutex
 	usageWatchers        map[chan struct{}]struct{}
+	usageAlerts          *usages.AlertTracker
+	usageAlertWake       chan struct{}
 }
 
 func New(db *store.Store) *Server {

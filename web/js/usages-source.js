@@ -21,7 +21,7 @@ export class HttpUsagesSource {
 }
 
 export class MockUsagesSource {
-  constructor() { this.renamed = {}; this.flags = { 'github-copilot': {}, mistral: {}, 'ollama-cloud': {} }; this.preferences = { percent_display: 'left', refresh_interval_sec: 120 }; }
+  constructor() { this.renamed = {}; this.flags = { 'github-copilot': {}, mistral: {}, 'ollama-cloud': {} }; this.preferences = { percent_display: 'left', refresh_interval_sec: 120, alert_warning_remaining: 20, alert_critical_remaining: 10 }; }
   async refresh() { return this.list(); }
   async use(tool, name) { (this.activeProfile ||= {})[tool] = name; this.used = { tool, name }; return {}; }
   // Token state of the stored profiles, as the server reports it: one healthy, one expiring, one expired.

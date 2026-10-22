@@ -60,6 +60,7 @@ func (m *Manager) List() ([]Profile, error) {
 // whoever is currently active.
 func (m *Manager) buildProfile(tool, name string, active bool) Profile {
 	p := Profile{Tool: tool, Name: name, Active: active}
+	p.AlertIdentity = m.alertIdentity(tool, name)
 
 	var credPath string
 	if active {

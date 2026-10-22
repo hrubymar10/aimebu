@@ -2,6 +2,7 @@ package providers
 
 import (
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -10,6 +11,9 @@ import (
 // caller can redact it from error text; never persist or log it.
 type Login struct {
 	AccessToken string
+	// StableAccountID is an account claim, never an access or refresh token.
+	// It is empty when the credential does not expose a durable identity.
+	StableAccountID string
 	// ExpiresAt is when the access token stops working, when the credentials
 	// say so (Claude: expiresAt; Codex: the access token's JWT exp claim).
 	ExpiresAt *time.Time
@@ -33,7 +37,7 @@ func ReadCodexLogin(path string) (Login, error) {
 	if err != nil {
 		return Login{}, err
 	}
-	login := Login{AccessToken: creds.AccessToken}
+	login := Login{AccessToken: creds.AccessToken, StableAccountID: codexStableAccountID(creds)}
 	if exp, ok := codexJWTClaims(creds.AccessToken)["exp"].(float64); ok && exp > 0 {
 		t := time.Unix(int64(exp), 0).UTC()
 		login.ExpiresAt = &t
@@ -57,12 +61,24 @@ func ParseCodexLogin(data []byte) (Login, error) {
 	if err != nil {
 		return Login{}, err
 	}
-	login := Login{AccessToken: creds.AccessToken}
+	login := Login{AccessToken: creds.AccessToken, StableAccountID: codexStableAccountID(creds)}
 	if exp, ok := codexJWTClaims(creds.AccessToken)["exp"].(float64); ok && exp > 0 {
 		t := time.Unix(int64(exp), 0).UTC()
 		login.ExpiresAt = &t
 	}
 	return login, nil
+}
+
+func codexStableAccountID(creds codexCredentials) string {
+	if accountID := codexAccountIDFromJWT(creds.IDToken); accountID != "" {
+		return accountID
+	}
+	if subject, ok := codexJWTClaims(creds.IDToken)["sub"].(string); ok {
+		if subject = strings.TrimSpace(subject); subject != "" {
+			return subject
+		}
+	}
+	return creds.FileAccountID
 }
 
 // NewUsageHTTPClient returns an HTTP client for usage endpoints that strips

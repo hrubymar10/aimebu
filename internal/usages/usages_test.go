@@ -28,7 +28,9 @@ func TestRefreshReadsCredentialsWithoutWritingThem(t *testing.T) {
 	if err := os.WriteFile(claudePath, claude, 0400); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(codexPath, []byte(`{"tokens":{"access_token":"codex-token"}}`), 0400); err != nil {
+	idToken := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"chatgpt_account_id":"acct-stable"}`)) + ".signature"
+	codex, _ := json.Marshal(map[string]any{"tokens": map[string]any{"access_token": "codex-token", "id_token": idToken}})
+	if err := os.WriteFile(codexPath, codex, 0400); err != nil {
 		t.Fatal(err)
 	}
 	beforeClaude, _ := os.Stat(claudePath)
@@ -67,6 +69,10 @@ func TestRefreshReadsCredentialsWithoutWritingThem(t *testing.T) {
 		p := got.Providers[i].Profiles[0]
 		if p.Status != "ok" || len(p.Windows) != 1 || p.Windows[0].Pace == nil {
 			t.Errorf("provider %d: %+v", i, p)
+		}
+		want := []string{alertHash("account\x00acct-stable"), ""}[i]
+		if p.AlertCredential != want {
+			t.Errorf("provider %d credential fingerprint = %q, want %q", i, p.AlertCredential, want)
 		}
 	}
 	for _, item := range []struct {
@@ -244,6 +250,84 @@ func (p leakyProvider) Fetch(context.Context, *providers.Store) (providers.Snaps
 	return providers.Snapshot{Status: providers.StatusFetchError, Error: p.message}, errors.New(p.message)
 }
 
+type alertUsageProvider struct{}
+
+func (alertUsageProvider) Key() string { return providers.ProviderCodex }
+func (alertUsageProvider) Fetch(context.Context, *providers.Store) (providers.Snapshot, error) {
+	return providers.Snapshot{Status: providers.StatusOK, Windows: []providers.Window{{Key: "session", PercentUsed: 81}}}, nil
+}
+
+func TestLocalAlertIgnoresRotatedAccessToken(t *testing.T) {
+	r, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker, err := NewAlertTracker(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	tracker.clock = func() time.Time { return now }
+	idToken := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"same-account"}`)) + ".signature"
+	observe := func(access string) {
+		t.Helper()
+		data, _ := json.Marshal(map[string]any{"tokens": map[string]any{"access_token": access, "id_token": idToken}})
+		login, err := providers.ParseCodexLogin(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		profile, err := r.fetchLocal(context.Background(), Profile{ProfileName: "local"}, login, "Codex", alertUsageProvider{}, func() (providers.Login, error) { return login, nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		profile.LastRefreshAt = &now
+		response := Response{Providers: []Provider{{ProviderName: "codex", Enabled: true, Available: true, Profiles: []Profile{profile}}}}
+		response.Settings.AlertWarningRemaining, response.Settings.AlertCriticalRemaining = 20, 10
+		if _, err := tracker.Observe(response); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe("token-one")
+	first := tracker.OpenAlerts()
+	if len(first) != 1 {
+		t.Fatalf("first alert: %+v", first)
+	}
+	now = now.Add(time.Minute)
+	observe("token-two")
+	second := tracker.OpenAlerts()
+	if len(second) != 1 || second[0].ID != first[0].ID {
+		t.Fatalf("rotation rearmed alert: %+v", second)
+	}
+	if err := tracker.Dismiss(first[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	observe("token-three")
+	if alerts := tracker.OpenAlerts(); len(alerts) != 0 {
+		t.Fatalf("rotation revived dismissed alert: %+v", alerts)
+	}
+}
+
+func TestCodexAlertIdentityIgnoresAccessTokenClaim(t *testing.T) {
+	access := "header." + base64.RawURLEncoding.EncodeToString([]byte(`{"chatgpt_account_id":"access-only"}`)) + ".signature"
+	data, _ := json.Marshal(map[string]any{"tokens": map[string]any{"access_token": access}})
+	login, err := providers.ParseCodexLogin(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if login.StableAccountID != "" {
+		t.Fatalf("access-token claim used for alert identity: %q", login.StableAccountID)
+	}
+	data, _ = json.Marshal(map[string]any{"tokens": map[string]any{"access_token": access, "account_id": "file-account"}})
+	login, err = providers.ParseCodexLogin(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if login.StableAccountID != "file-account" {
+		t.Fatalf("plain account ID fallback = %q", login.StableAccountID)
+	}
+}
+
 // A provider may retry with a token the harness rotated into the file after
 // the reader first looked; error text naming either token must be redacted.
 func TestFetchLocalRedactsTheRereadToken(t *testing.T) {
@@ -256,5 +340,11 @@ func TestFetchLocalRedactsTheRereadToken(t *testing.T) {
 	p, _ := r.fetchLocal(context.Background(), Profile{ProfileName: "local"}, providers.Login{AccessToken: "old-token"}, "Codex", provider, reread)
 	if strings.Contains(p.Error, "old-token") || strings.Contains(p.Error, "rotated-token") {
 		t.Fatalf("token leaked: %q", p.Error)
+	}
+	if p.AlertCredential != "" {
+		t.Fatalf("token-only login must not make an alert fingerprint: %q", p.AlertCredential)
+	}
+	if data, err := json.Marshal(p); err != nil || strings.Contains(string(data), "old-token") {
+		t.Fatalf("credential leaked in profile JSON: %s %v", data, err)
 	}
 }

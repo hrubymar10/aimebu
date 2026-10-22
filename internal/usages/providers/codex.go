@@ -133,11 +133,12 @@ type codexAuthTokens struct {
 }
 
 type codexCredentials struct {
-	AccessToken  string
-	RefreshToken string
-	IDToken      string
-	AccountID    string
-	LastRefresh  *time.Time
+	AccessToken   string
+	RefreshToken  string
+	IDToken       string
+	AccountID     string
+	FileAccountID string
+	LastRefresh   *time.Time
 }
 
 func codexAuthPath() (string, error) {
@@ -191,10 +192,11 @@ func parseCodexAuthData(data []byte) (codexCredentials, *ErrorDetail, error) {
 		return codexCredentials{}, fieldDetail("auth.json.OPENAI_API_KEY", "oauth_required"), errors.New("Codex auth.json contains only an API key; OAuth tokens are required.")
 	}
 	creds := codexCredentials{
-		AccessToken:  firstNonEmpty(raw.Tokens.AccessToken, raw.Tokens.AccessTokenC),
-		RefreshToken: firstNonEmpty(raw.Tokens.RefreshToken, raw.Tokens.RefreshTokenC),
-		IDToken:      firstNonEmpty(raw.Tokens.IDToken, raw.Tokens.IDTokenC),
-		AccountID:    firstNonEmpty(raw.Tokens.AccountID, raw.Tokens.AccountIDC),
+		AccessToken:   firstNonEmpty(raw.Tokens.AccessToken, raw.Tokens.AccessTokenC),
+		RefreshToken:  firstNonEmpty(raw.Tokens.RefreshToken, raw.Tokens.RefreshTokenC),
+		IDToken:       firstNonEmpty(raw.Tokens.IDToken, raw.Tokens.IDTokenC),
+		AccountID:     firstNonEmpty(raw.Tokens.AccountID, raw.Tokens.AccountIDC),
+		FileAccountID: firstNonEmpty(raw.Tokens.AccountID, raw.Tokens.AccountIDC),
 	}
 	creds.AccountID = firstNonEmpty(
 		creds.AccountID,

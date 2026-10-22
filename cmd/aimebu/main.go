@@ -541,6 +541,11 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		}
 		usageReader.SetProfiles(service.Switcher.UsageProfiles, service.Switcher.WithLock)
 		service.Usages = usageReader
+		if err := service.StartUsageAlerts(ctx, filepath.Join(config.root, "usages")); err != nil {
+			listener.Close()
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		go usageReader.Run(ctx)
 	}
 	// After the usage reader exists (the refresher reads its model-flag setting)

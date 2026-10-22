@@ -220,8 +220,8 @@ func (s *Server) streamEvents(ctx context.Context, conn *websocket.Conn, user, t
 			}
 		case <-usageUpdates:
 			// A transient hint, not a logged event: it has no seq and is
-			// never replayed. The owner re-reads GET /api/usages.
-			if owner, err := s.Store.IsGlobalOwner(ctx, user); err != nil || !owner {
+			// never replayed. The owner re-reads usages; admins re-read Inbox alerts.
+			if admin, err := s.Store.IsGlobalAdmin(ctx, user); err != nil || !admin {
 				continue
 			}
 			if err := s.writeFrame(ctx, conn, map[string]any{"type": "usages_updated"}); err != nil {

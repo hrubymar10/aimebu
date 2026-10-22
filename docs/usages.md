@@ -8,6 +8,47 @@ account details are visible only to the owner. Disabled providers keep their cre
 owner explicitly clears them. `AIMEBU2_USAGES=0` disables local credential
 reads and usage requests, and `/api/usages` returns 503.
 
+## Remaining-quota alerts
+
+Settings → Usages sets global warning and critical thresholds (20% and 10%
+remaining by default; each must be between 1 and 99, with warning above
+critical). Each fresh, successful provider window that reaches a threshold
+opens a global Inbox alert for the owner and global admins. The alert shows
+the provider, profile name, window, remaining percentage, and reset time
+inline. The owner alone gets an **Open Usages** action; the Usages cards and
+`GET /api/usages` remain owner-only. Inbox alerts omit email and credentials.
+They trigger the normal Inbox sound and hidden-tab browser notification.
+
+The server records one alert per threshold for each provider, account,
+window, and reset cycle. A critical alert replaces that window's warning.
+Stale or failed snapshots do not create alerts. Alerts survive a server
+restart or account switch and close when a new reset cycle is observed, their
+reset time passes, their account disappears, or their provider is disabled. An
+admin can dismiss an alert without rearming it in the same cycle; then
+the thresholds can fire again. An active limit guard holds new turns as
+described in [automatic account switching](quota-switcher.md#limit-guard-acting-before-100)
+and hides both warning and critical quota Inbox alerts for that tool. Alert
+state is stored in private `usages/alerts.json` with mode 0600; account
+identity is hashed there. Stored profiles receive an opaque ID in their directory,
+so renaming a profile keeps its alert identity and reusing its name does not.
+The account switcher's profile overlay is applied before alert tracking, so
+an active account and its stored profile share one identity and the alert
+shows the profile name. A configured token, cookie, or key replacement resets
+that local provider's alert threshold state.
+Codex local alerts use a stable account or subject claim from the login file's
+ID token, falling back to its plain `account_id` field. Claude Code does not
+expose a stable account ID in the usage data
+read here, so its local alerts cannot detect an account swap within one reset
+cycle. Rotating OAuth tokens never rearm an alert. The first fresh observation
+with a newly available stable identity after upgrading re-keys any open alert
+once; it also re-arms a dismissed alert once in that cycle.
+Reset timestamps within two minutes of the previous reset are one cycle despite
+provider clock jitter. If the alert state is corrupt, the server logs the error,
+moves the file aside with a `.corrupt-*` suffix, and starts with empty alert
+state while continuing to serve.
+Invalid saved alert thresholds fall back to 20/10 on load without discarding
+other usage settings or credentials; settings writes still reject invalid values.
+
 Codex and Claude Code read their local OAuth access tokens. Usage polling
 never rotates or writes those files; a login that expired or was rejected is
 renewed by running `claude` or `codex` yourself, unless **Auto-refresh tokens**
@@ -149,9 +190,10 @@ token.
 
 Live updates: whenever a snapshot is written (a poll, a forced refresh, a
 credential or enablement change, an account switch), the server sends the
-owner's open event sockets a transient `{"type":"usages_updated"}` frame. It
-carries no data and no `seq`, is never logged or replayed, and is sent only to
-a global owner. The web client answers by re-reading `GET /api/usages`, so an
+owner's and global admins' open event sockets a transient
+`{"type":"usages_updated"}` frame. It carries no data and no `seq`, and is
+never logged or replayed. The browser refreshes Inbox alerts on that signal;
+the owner also re-reads `GET /api/usages`, so an
 open Settings → Usages panel updates without a reload. While a field in the
 panel has focus the reload is held so typing is not lost, and it runs once focus
 leaves; a push that arrives during a reload triggers one more reload afterwards.

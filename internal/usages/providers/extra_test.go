@@ -86,6 +86,22 @@ func TestMalformedConfigFallsBackAndCanBeRepaired(t *testing.T) {
 	}
 }
 
+func TestOutOfRangeAlertThresholdsPreserveOtherConfig(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "config.json")
+	data := []byte(`{"alert_warning_remaining":120,"alert_critical_remaining":10,"percent_display":"used","providers":{"github-copilot":{"enabled":true,"token":"saved-secret"}}}`)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := NewStore(root).LoadConfig()
+	if err != nil || cfg.AlertWarningRemaining != 20 || cfg.AlertCriticalRemaining != 10 || cfg.PercentDisplay != "used" || !cfg.Providers["github-copilot"].Enabled {
+		t.Fatalf("threshold fallback lost config: %+v %v", cfg, err)
+	}
+	if cfg.Providers["github-copilot"].Token != "saved-secret" {
+		t.Fatal("credential was dropped")
+	}
+}
+
 func TestWrongTypeConfigRefusesSaveWithoutLosingCredentials(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "config.json")

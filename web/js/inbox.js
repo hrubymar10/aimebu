@@ -1,6 +1,7 @@
 import { setGlyph } from './icon-button.js';
 import { uuid } from './uuid.js';
 import { answerControls } from './answer-controls.js';
+import { rights } from './api.js';
 
 // The server cuts a long draft off with an ellipsis, which leaves invalid JSON; the text of its "body" fields is still there.
 function salvageBodies(text) {
@@ -140,10 +141,10 @@ export class Inbox {
     for (const [key, items] of groups) {
       let group = this.groups.get(key);
       if (!group) { group = document.createElement('section'); group.className = 'inbox-group'; group.append(document.createElement('h2')); this.groups.set(key, group); this.list.append(group); }
-      const first = items[0]; group.querySelector('h2').textContent = `${this.projects.get(first.project_id)?.name || 'Project'} / ${this.rooms.get(first.room_id)?.title || 'Room'}`;
+      const first = items[0]; group.querySelector('h2').textContent = first.kind === 'usage_alert' ? 'Usages' : `${this.projects.get(first.project_id)?.name || 'Project'} / ${this.rooms.get(first.room_id)?.title || 'Room'}`;
       for (const item of items) {
         let card = this.nodes.get(item.id);
-        if (!card || ((item.kind === 'recovery' || item.kind === 'delivery_failed') && (card.dataset.rev !== String(item.rev) || card.dataset.roomLifecycle !== (item.room_lifecycle || '')))) {
+        if (!card || (item.kind === 'usage_alert' && card.dataset.question !== item.question) || ((item.kind === 'recovery' || item.kind === 'delivery_failed') && (card.dataset.rev !== String(item.rev) || card.dataset.roomLifecycle !== (item.room_lifecycle || '')))) {
           const next = this.card(item);
           if (card) card.replaceWith(next);
           card = next; this.nodes.set(item.id, card);
@@ -172,13 +173,23 @@ export class Inbox {
   card(item) {
     const card = document.createElement('article'); card.className = 'inbox-card'; card.dataset.inboxId = item.id;
     card.dataset.rev = String(item.rev);
+    card.dataset.question = item.question || '';
     card.dataset.roomLifecycle = item.room_lifecycle || '';
-    const kind = document.createElement('small'); kind.textContent = ({ approval: 'Approval', question: 'Question', recovery: 'Recovery', delivery_failed: 'Delivery failed', usage_info: 'Usage notice', usage_limit: 'Usage limit' })[item.kind] || item.kind; if (item.kind === 'delivery_failed') kind.className = 'inbox-kind-error'; card.append(kind);
+    const kind = document.createElement('small'); kind.textContent = ({ approval: 'Approval', question: 'Question', recovery: 'Recovery', delivery_failed: 'Delivery failed', usage_info: 'Usage notice', usage_limit: 'Usage limit', usage_alert: 'Usage alert' })[item.kind] || item.kind; if (item.kind === 'delivery_failed') kind.className = 'inbox-kind-error'; card.append(kind);
     if ((item.kind === 'recovery' || item.kind === 'delivery_failed') && ['closed', 'closing'].includes(item.room_lifecycle)) {
       const archived = document.createElement('small'); archived.className = 'inbox-archived'; archived.textContent = item.room_lifecycle === 'closing' ? 'Room is being archived' : 'In archived room'; card.append(archived);
     }
     card.append(this.rawToggle(item));
     const question = document.createElement('h3'); question.textContent = humanize(item.question); card.append(question);
+    if (item.kind === 'usage_alert') {
+      if (rights.owner && this.openUsages) {
+        const open = document.createElement('button'); open.type = 'button'; open.className = 'btn btn-primary'; open.textContent = 'Open Usages';
+        open.onclick = () => this.openUsages(); card.append(open);
+      }
+      const dismiss = document.createElement('button'); dismiss.type = 'button'; dismiss.className = 'icon-btn'; setGlyph(dismiss, 'close', 'Dismiss usage alert');
+      dismiss.onclick = () => this.dismiss(item); card.append(dismiss);
+      return card;
+    }
     if (item.boundary_pending) {
       const detail = document.createElement('p'); detail.className = 'inbox-evidence';
       detail.textContent = humanize(`Requested by ${item.boundary_requester} · Machine ${item.boundary_machine} · Folder ${item.boundary_path}`);

@@ -22,9 +22,11 @@ type ProviderConfig struct {
 }
 
 type Config struct {
-	RefreshIntervalSec int      `json:"refresh_interval_sec"`
-	PercentDisplay     string   `json:"percent_display"`
-	ProviderOrder      []string `json:"provider_order,omitempty"`
+	RefreshIntervalSec     int      `json:"refresh_interval_sec"`
+	PercentDisplay         string   `json:"percent_display"`
+	ProviderOrder          []string `json:"provider_order,omitempty"`
+	AlertWarningRemaining  int      `json:"alert_warning_remaining"`
+	AlertCriticalRemaining int      `json:"alert_critical_remaining"`
 	// TokenAutoRefresh is the "Auto-refresh tokens" setting: on, the server owns
 	// every refresh token (the token-copy model) and migrates each tool to it. It
 	// was `claude_auto_refresh` before v1 renamed it; the old key is still read
@@ -58,7 +60,7 @@ func (s *Store) httpClient() *http.Client {
 var ErrInvalidConfig = errors.New("invalid usage config")
 
 func DefaultConfig() Config {
-	return Config{RefreshIntervalSec: 120, PercentDisplay: "left", ClaudeModelFlag: "--model haiku", CodexModelFlag: "--model gpt-5.6-luna", WarmupMode: "off", Providers: map[string]ProviderConfig{}}
+	return Config{RefreshIntervalSec: 120, PercentDisplay: "left", AlertWarningRemaining: 20, AlertCriticalRemaining: 10, ClaudeModelFlag: "--model haiku", CodexModelFlag: "--model gpt-5.6-luna", WarmupMode: "off", Providers: map[string]ProviderConfig{}}
 }
 
 func NewStore(root string) *Store { return &Store{Root: root} }
@@ -101,6 +103,9 @@ func (s *Store) LoadConfig() (Config, error) {
 	if cfg.PercentDisplay != "used" {
 		cfg.PercentDisplay = "left"
 	}
+	if err := validateAlertThresholds(cfg); err != nil {
+		cfg.AlertWarningRemaining, cfg.AlertCriticalRemaining = 20, 10
+	}
 	cfg.ProviderOrder = normalizeProviderOrder(cfg.ProviderOrder)
 	return cfg, nil
 }
@@ -132,6 +137,9 @@ func (s *Store) UpdateConfig(update func(*Config) error) (Config, error) {
 	}
 	if cfg.PercentDisplay != "left" && cfg.PercentDisplay != "used" {
 		return Config{}, errors.New("percent_display must be left or used")
+	}
+	if err := validateAlertThresholds(cfg); err != nil {
+		return Config{}, err
 	}
 	cfg.ProviderOrder = normalizeProviderOrder(cfg.ProviderOrder)
 	path := filepath.Join(s.Root, "config.json")
@@ -199,4 +207,11 @@ func (s *Store) UpdateConfig(update func(*Config) error) (Config, error) {
 		return Config{}, fmt.Errorf("save usage config: %w", err)
 	}
 	return cfg, nil
+}
+
+func validateAlertThresholds(cfg Config) error {
+	if cfg.AlertCriticalRemaining < 1 || cfg.AlertWarningRemaining > 99 || cfg.AlertCriticalRemaining >= cfg.AlertWarningRemaining {
+		return errors.New("alert remaining thresholds must be between 1 and 99, with warning above critical")
+	}
+	return nil
 }

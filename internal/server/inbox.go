@@ -3,10 +3,15 @@ package server
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
+	"github.com/hrubymar10/aimebu/internal/usages"
+	"github.com/hrubymar10/aimebu/internal/usages/providers"
 )
 
 func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
@@ -15,10 +20,72 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	if s.usageAlerts != nil {
+		admin, err := s.Store.IsGlobalAdmin(r.Context(), userID(r))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		if admin {
+			for _, alert := range s.usageAlerts.OpenAlerts() {
+				if s.strongerUsageGuard(r, alert) {
+					continue
+				}
+				reset := "reset time unavailable"
+				if alert.ResetAt != nil {
+					reset = "resets " + alert.ResetAt.UTC().Format("2 Jan 2006 15:04 MST")
+				}
+				question := fmt.Sprintf("%s · %s · %s: %.1f%% remaining; %s.", providers.ProviderLabel(alert.Provider), alert.Profile, alert.Window, alert.Remaining, reset)
+				items = append(items, store.InboxEntry{ID: alert.ID, Kind: "usage_alert", Question: question, State: "open",
+					Options: []string{}, CreatedAt: alert.CreatedAt.UTC().Format("2006-01-02T15:04:05.000000000Z")})
+			}
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].CreatedAt < items[j].CreatedAt || items[i].CreatedAt == items[j].CreatedAt && items[i].ID < items[j].ID
+			})
+		}
+	}
 	writeJSON(w, http.StatusOK, items)
 }
 
+func (s *Server) strongerUsageGuard(r *http.Request, alert usages.UsageAlert) bool {
+	guard := s.limitGuard()
+	if guard == nil {
+		return false
+	}
+	tool := alert.Provider
+	if tool == "claude-code" {
+		tool = "claude"
+	}
+	if tool != "claude" && tool != "codex" {
+		return false
+	}
+	view, err := guard.View(r.Context(), tool)
+	return err == nil && view.Held
+}
+
 func (s *Server) dismissDeliveryFailure(w http.ResponseWriter, r *http.Request) {
+	if s.usageAlerts != nil && strings.HasPrefix(r.PathValue("item"), "usage_alert_") {
+		admin, err := s.Store.IsGlobalAdmin(r.Context(), userID(r))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		if !admin {
+			apiError(w, 403, "forbidden", "cannot dismiss this alert")
+			return
+		}
+		if err := s.usageAlerts.Dismiss(r.PathValue("item")); err != nil {
+			if errors.Is(err, usages.ErrAlertNotFound) {
+				apiError(w, 404, "not_found", "usage alert does not exist")
+			} else {
+				fail(w, err)
+			}
+			return
+		}
+		s.nudgeUsageWatchers()
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	var req struct {
 		Rev int `json:"rev"`
 	}

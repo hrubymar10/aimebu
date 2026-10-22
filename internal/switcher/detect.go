@@ -11,12 +11,13 @@ import (
 
 // Profile is the public view of one stored profile entry.
 type Profile struct {
-	Tool      string     `json:"tool"`
-	Name      string     `json:"name"`
-	Active    bool       `json:"active"`
-	HasCreds  bool       `json:"has_credentials"`
-	Email     string     `json:"email,omitempty"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Tool          string     `json:"tool"`
+	Name          string     `json:"name"`
+	AlertIdentity string     `json:"-"`
+	Active        bool       `json:"active"`
+	HasCreds      bool       `json:"has_credentials"`
+	Email         string     `json:"email,omitempty"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	// SwitchedAwayAt is when the profile last stopped being the active one, when
 	// that was recorded (by this version or v1; the file is shared).
 	SwitchedAwayAt *time.Time `json:"switched_away_at,omitempty"`

@@ -81,7 +81,7 @@ export class InboxNotifications {
     }
     if (!this.available || Notification.permission !== 'granted' || !document.hidden) return;
     for (const item of items) {
-      const room = rooms.get(item.room_id)?.title || 'a room';
+      const room = item.kind === 'usage_alert' ? 'Usages' : rooms.get(item.room_id)?.title || 'a room';
       const project = projects.get(item.project_id)?.name;
       try {
         const note = new Notification(`aimebu · ${room}`, {

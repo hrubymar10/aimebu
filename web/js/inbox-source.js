@@ -24,6 +24,9 @@ const resolvedFixture = [
 const providerLimitFixture = [
   { id: 'mock_provider_limit', project_id: '', room_id: '', kind: 'usage_info', question: 'Codex reached its provider limit.', options: ['Retry now'], rev: 0, state: 'open' },
 ];
+const usageAlertFixture = [
+  { id: 'mock_usage_alert', project_id: '', room_id: '', kind: 'usage_alert', question: 'Codex · work · session: 19.0% remaining; resets 22 Oct 2026 12:00 UTC.', options: [], rev: 0, state: 'open' },
+];
 const boundaryFixture = [
   { id: 'mock_boundary', project_id: '', room_id: '', kind: 'approval', boundary_pending: true,
     boundary_machine: 'Remote workstation', boundary_path: '/work/project', boundary_requester: 'lead',
@@ -79,6 +82,7 @@ export function createInboxSource() {
   if (query.has('mock_resolved')) { const source = new MockInboxSource(); source.items = resolvedFixture.map(item => ({ ...item })); window.__mockInbox = source; return source; }
   if (query.has('mock_delivery')) { const source = new MockInboxSource(); source.items = deliveryFixture.map(item => ({ ...item })); return source; }
   if (query.has('mock_provider_limit')) { const source = new MockInboxSource(); source.items = providerLimitFixture.map(item => ({ ...item })); return source; }
+  if (query.has('mock_usage_alert')) { const source = new MockInboxSource(); source.items = usageAlertFixture.map(item => ({ ...item })); window.__mockInbox = source; return source; }
   if (query.has('mock_boundary')) { const source = new MockInboxSource(); source.items = boundaryFixture.map(item => ({ ...item })); return source; }
   if (query.has('mock_recovery')) { const source = new MockInboxSource(); source.items = recoveryFixture.map(item => ({ ...item })); source.staleOnce = query.has('mock_stale'); return source; }
   if (query.has('mock_inbox')) {

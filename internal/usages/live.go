@@ -89,6 +89,8 @@ func ReadCache(cacheDir string) (Response, time.Time, error) {
 	}
 	cfg, err := providers.NewStore(cacheDir).LoadConfig()
 	decorateResponse(&response, cfg)
+	response.Settings.AlertWarningRemaining = cfg.AlertWarningRemaining
+	response.Settings.AlertCriticalRemaining = cfg.AlertCriticalRemaining
 	sort.SliceStable(response.Providers, func(i, j int) bool { return response.Providers[i].OrderNumber < response.Providers[j].OrderNumber })
 	return response, written, err
 }
