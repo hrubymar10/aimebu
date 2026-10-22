@@ -37,7 +37,12 @@ export class Picker {
   }
   close() {
     this.popup.hidden = true; this.popup.replaceChildren(); this.items = []; this.active = 0;
-    this.draft.removeAttribute('aria-activedescendant'); this.draft.setAttribute('aria-expanded', 'false');
+    // Several lists share the one draft, and every list closes itself on every keystroke it does not match. Only the list that the draft
+    // currently names may clear that naming, or the list that is open would be reported as closed.
+    const named = this.draft.getAttribute('aria-controls');
+    if (!named || named === this.id) {
+      this.draft.removeAttribute('aria-activedescendant'); this.draft.setAttribute('aria-expanded', 'false');
+    }
   }
   // Returns true when the key was for the list.
   keydown(event) {

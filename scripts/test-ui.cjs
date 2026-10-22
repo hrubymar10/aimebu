@@ -1594,6 +1594,20 @@ async function main() {
     await first.keyboard.press('Escape');
     await first.waitForFunction(() => document.querySelector('.quick-commands')?.hidden);
     assert.equal(await first.$eval('#composer textarea', el => el.value), '/sp', 'Escape keeps the typed command');
+    // Assistive technology: the draft names the open list and its active row, even though the other lists (mentions, macros, emoji) share
+    // the draft and each close themselves on the same keystroke. Only a draft that is a command from its first character opens it.
+    await first.locator('#composer textarea').fill('');
+    await first.locator('#composer textarea').fill('/sp');
+    await first.waitForFunction(() => [...document.querySelectorAll('#composer .quick-commands:not([hidden])')].some(list => list.textContent.includes('/spawn')));
+    assert.deepEqual(await first.evaluate(() => {
+      const draft = document.querySelector('#composer textarea'), list = document.getElementById(draft.getAttribute('aria-controls')), active = document.getElementById(draft.getAttribute('aria-activedescendant'));
+      return { expanded: draft.getAttribute('aria-expanded'), open: !!list && !list.hidden && list.textContent.includes('/spawn'), role: list?.getAttribute('role'), option: active?.getAttribute('role'), inList: !!active && list.contains(active), selected: active?.getAttribute('aria-selected') };
+    }), { expanded: 'true', open: true, role: 'listbox', option: 'option', inList: true, selected: 'true' }, 'the slash list is a listbox the draft names, with one active option');
+    // (A command on a later line is covered by test-quick-commands.cjs: typing the newline here would press Enter while the list is open.)
+    for (const draft of ['hi /sp', '/sp now']) {
+      await first.locator('#composer textarea').fill(draft);
+      assert.equal(await first.evaluate(() => [...document.querySelectorAll('#composer .quick-commands:not([hidden])')].some(list => list.textContent.includes('/spawn')), true), false, `${JSON.stringify(draft)} does not open the slash list`);
+    }
     await first.locator('#composer textarea').fill('');
     // The macro picker (typing <) looks like v1's autocomplete: one outlined list over the composer, one line per macro.
     {

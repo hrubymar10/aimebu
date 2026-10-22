@@ -116,6 +116,15 @@ function surfaceAudit(MIN) {
   if (box(chat).bottom > vh + 0.5) out.push(`chat: its bottom edge (${Math.round(box(chat).bottom)}px) is below the viewport (${vh}px), so the composer is cut off`);
   if (box(composer).bottom > vh + 0.5) out.push(`composer: bottom edge ${Math.round(box(composer).bottom)}px is below the viewport (${vh}px)`);
   if (box(list).height < 120) out.push(`messages: the list is only ${Math.round(box(list).height)}px tall`);
+  // The "/" command list (fixture: /archive and /spawn) opens above the composer and stays on screen, with rows a thumb can hit.
+  const slash = document.querySelector('.quick-commands[data-fixture=quick]');
+  if (slash) {
+    slash.hidden = false;
+    const at = box(slash);
+    if (at.width && (at.left < -0.5 || at.right > vw + 0.5)) out.push(`slash list: ${Math.round(at.left)}..${Math.round(at.right)}px leaves the ${vw}px viewport`);
+    if (at.width && at.top < -0.5) out.push(`slash list: its top edge (${Math.round(at.top)}px) is above the viewport`);
+    for (const row of slash.querySelectorAll('.quick-command')) if (box(row).height && box(row).height < MIN) out.push(`slash list: ${row.textContent} is only ${Math.round(box(row).height)}px tall`);
+  }
   // Thread panel
   const thread = document.querySelector('#thread-panel'); thread.hidden = false;
   fits(thread, 'thread panel'); small(thread, 'thread panel');

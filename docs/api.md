@@ -214,12 +214,14 @@ and a chain may hold at most five ancestors (all `400 invalid_extends`). A role 
 their own focus; the dispatcher sends the resolved body, so their agents receive the same text as before. Migration 54 converts the
 unedited ones and leaves an edited specialist as its owner made it. An unedited specialist follows the **current** `reviewer`, so editing `reviewer` changes what every unedited specialist's agents receive (the same as v1, where specialists were built on the reviewer text).
 
-The web composer opens a quick-command popup when the draft starts
-with `/`: it lists `/archive` only in an open task room where the user can
+The web composer opens a quick-command popup only when the whole draft is
+a single command typed from its first character (`/`, `/ar`, but not
+` /ar`, `hi /ar`, `/ar now` or a command on a later line); it lists `/archive` only in an open task room where the user can
 archive, and `/spawn` only when the Spawn button is available. `/archive`
 confirms and explicitly archives through `POST /api/rooms/{room}/close`;
 it never reopens a closed room. `/spawn` opens the Spawn dialog. The list
-is navigable with ↑/↓/Enter/Esc.
+is navigable with ↑/↓/Enter/Esc and is a labelled listbox for assistive
+technology. Macros are not slash commands: they stay on `<`.
 
 Macros are a separate shared resource. A fresh install is seeded once with
 the shipped defaults `do-cr` and `example_macro`; the seed is write-once per
