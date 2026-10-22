@@ -328,10 +328,13 @@ type ocEvent struct {
 
 // usageTotals sums the steps of one turn: a tool-using turn is several steps.
 type usageTotals struct {
-	in, out    int64
-	cost       float64
-	contextNow int64
-	seen       bool
+	in, out               int64
+	cacheRead, cacheWrite int64
+	haveRead, haveWrite   bool
+	cost                  float64
+	haveCost              bool // some step reported a cost; none means the cost is unknown, not zero
+	contextNow            int64
+	seen                  bool
 }
 
 func (u *usageTotals) add(e ocEvent) {
@@ -347,13 +350,16 @@ func (u *usageTotals) add(e ocEvent) {
 	}
 	if tokens.Cache.Read != nil {
 		input += *tokens.Cache.Read
+		u.cacheRead, u.haveRead = u.cacheRead+*tokens.Cache.Read, true
 	}
 	if tokens.Cache.Write != nil {
 		input += *tokens.Cache.Write
+		u.cacheWrite, u.haveWrite = u.cacheWrite+*tokens.Cache.Write, true
 	}
 	u.contextNow = input
 	if e.Part.Cost != nil {
 		u.cost += *e.Part.Cost
+		u.haveCost = true
 	}
 }
 
@@ -417,13 +423,25 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		}
 	}
 	terminal := sessionSeen && stopped && candidate != nil && lastError == "" && scanError == nil
-	if terminal {
-		if usage.seen {
-			in, out := usage.in, usage.out
-			total := usage.contextNow
+	// What the steps cost is known whether or not the turn finished; one that did not is recorded as partial, so a failed or killed turn's
+	// spend still counts against the limits.
+	if usage.seen {
+		in, out := usage.in, usage.out
+		total := usage.contextNow
+		spent := &adapter.Usage{TokensIn: &in, TokensOut: &out, ContextUsed: &total, Partial: !terminal}
+		if usage.haveCost {
 			cost := usage.cost
-			t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: &adapter.Usage{TokensIn: &in, TokensOut: &out, ContextUsed: &total, CostEstimate: &cost}})
+			spent.CostEstimate = &cost
 		}
+		if usage.haveRead {
+			spent.TokensCacheRead = &usage.cacheRead
+		}
+		if usage.haveWrite {
+			spent.TokensCacheWrite = &usage.cacheWrite
+		}
+		t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: spent})
+	}
+	if terminal {
 		t.emit(adapter.Event{Kind: adapter.EventFinalAnswer, Answer: candidate})
 	}
 	<-stderrDone

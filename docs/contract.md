@@ -307,8 +307,18 @@ Inbox, usage, events, settings
   state[open|resolved|withdrawn], rev, answer_message_id?, resolved_by?,
   resolved_at?, created_at) — `assignee` returns in slice 4
 - **usage_record**(id, source_event_id UNIQUE, turn_id, agent_id, room_id,
-  project_id, tokens_in?, tokens_out?, context_used?, context_window?,
-  cost_est?, source[measured|estimated|unavailable], created_at) — indexed by
+  project_id, tokens_in?, tokens_out?, tokens_cache_read?, tokens_cache_write?,
+  context_used?, context_window?, cost_est?, cost_total?, model?, partial,
+  source[measured|estimated|unavailable], created_at) — `cost_est` is what one
+  turn cost and is the only cost anything sums (limits, cards, totals). Claude
+  reports a resumed session's whole spend in every result, so the store keeps
+  that running total in `cost_total` and prices a turn as the difference from
+  the session's previous total (a session's first report is its own cost; a
+  total that went down is an unknown cost, never zero). `partial` marks what a
+  turn spent before it ended without a report (killed, crashed): Claude gives
+  its input and cache tokens only, opencode its steps' totals; output tokens
+  and cost stay unknown. `model` is the one the harness named, else the agent's.
+  Indexed by
   (agent_id, created_at), (room_id, created_at), (project_id, created_at) and (turn_id) (migration 75),
   with turn(room_id, started_at) and room(project_id), so the limit checks, the
   agent card and the profile never scan the table; a test asks SQLite for
@@ -766,8 +776,9 @@ it never silently reruns a turn with uncertain effects.
   member of its room; MCP agents use `attachment_get` with the same checks.
 - M→S `ack{v, agent_id, generation, ref, level[persisted|accepted]}`
 - M→S `activity{…, turn_id, source_event_id, kind, summary}`,
-  `usage{…, source_event_id, tokens_in?, tokens_out?, context_used?,
-  context_window?, cost_est?}`, `compaction{…, pre_tokens, post_tokens}`
+  `usage{…, source_event_id, tokens_in?, tokens_out?, tokens_cache_read?,
+  tokens_cache_write?, context_used?, context_window?, cost_est?,
+  cost_cumulative?, model?, partial?}`, `compaction{…, pre_tokens, post_tokens}`
 - M→S `answer{v, agent_id, generation, turn_id, answer_rev, digest,
   candidate}`. `candidate` is the raw final-answer string, including malformed
   output or an empty string. The digest covers its exact UTF-8 bytes. The

@@ -462,3 +462,16 @@ func TestSuccessfulRetryLeavesNoProviderError(t *testing.T) {
 		t.Fatalf("a retry that succeeded left an error behind: %q", exit.ErrorEvent)
 	}
 }
+
+func TestPiUsageCarriesCacheTokensWhenReported(t *testing.T) {
+	var usage piUsage
+	if err := json.Unmarshal([]byte(`{"input":11,"output":3,"cacheRead":40,"cacheWrite":6,"cost":{"total":0.01}}`), &usage); err != nil {
+		t.Fatal(err)
+	}
+	if usage.CacheRead == nil || *usage.CacheRead != 40 || usage.CacheWrite == nil || *usage.CacheWrite != 6 {
+		t.Fatalf("cache: %+v", usage)
+	}
+	if err := json.Unmarshal([]byte(`{"input":11,"output":3}`), &usage); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -67,6 +67,16 @@ type Usage struct {
 	ContextUsed   *int64   `json:"context_used,omitempty"`
 	ContextWindow *int64   `json:"context_window,omitempty"`
 	CostEstimate  *float64 `json:"cost_estimate,omitempty"`
+	// TokensCacheRead and TokensCacheWrite are the tokens served from and written to the prompt cache, where the harness reports them.
+	TokensCacheRead  *int64 `json:"tokens_cache_read,omitempty"`
+	TokensCacheWrite *int64 `json:"tokens_cache_write,omitempty"`
+	// Model is the model the harness says it used, when it says; empty means the agent's configured model.
+	Model string `json:"model,omitempty"`
+	// CostCumulative says CostEstimate is the harness session's total so far (Claude reports it so, and a resumed session carries the
+	// earlier spend), not this turn's: the store turns it into the turn's own cost by subtracting the session's previous total.
+	CostCumulative bool `json:"cost_cumulative,omitempty"`
+	// Partial marks what a turn spent before it ended without a final report (killed, crashed, cancelled): what was seen, not a total.
+	Partial bool `json:"partial,omitempty"`
 }
 
 type Compaction struct {

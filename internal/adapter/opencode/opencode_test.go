@@ -496,3 +496,67 @@ func TestCatalogAndCapabilities(t *testing.T) {
 		t.Fatal("a missing executable must not be listed")
 	}
 }
+
+// What a turn's steps spent is known whether or not the turn finished: one that was cut off or failed still reports it, marked partial, so the
+// limits count it; a finished one is not partial. Cache reads and writes are summed over the steps.
+func TestUsageIsReportedForAnUnfinishedTurnAsPartial(t *testing.T) {
+	finish := func(reason string) string {
+		return `{"type":"step_start","sessionID":"` + testSession + `","part":{"type":"step-start"}}` + "\n" +
+			`{"type":"step_finish","sessionID":"` + testSession + `","part":{"type":"step-finish","reason":"` + reason + `","cost":0.002,"tokens":{"input":4,"output":2,"cache":{"read":30,"write":5}}}}` + "\n"
+	}
+	for name, c := range map[string]struct {
+		output  string
+		partial bool
+	}{
+		"cut off in tool calls": {finish("tool-calls") + finish("tool-calls"), true},
+		"failed after a step":   {finish("stop") + `{"type":"error","sessionID":"` + testSession + `","error":{"name":"UnknownError","data":{"message":"boom"}}}` + "\n", true},
+		"finished": {finish("tool-calls") + `{"type":"step_start","sessionID":"` + testSession + `","part":{"type":"step-start"}}` + "\n" +
+			`{"type":"text","sessionID":"` + testSession + `","part":{"type":"text","text":"{\"messages\":[]}"}}` + "\n" +
+			`{"type":"step_finish","sessionID":"` + testSession + `","part":{"type":"step-finish","reason":"stop","cost":0.002,"tokens":{"input":4,"output":2,"cache":{"read":30,"write":5}}}}` + "\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			path, _ := script(t, root, "cat <<'EVENTS'\n"+c.output+"EVENTS\n")
+			turn, err := (&Adapter{Command: path, RuntimeRoot: filepath.Join(root, "runtime")}).Start(context.Background(), spec(t, t.TempDir()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			events, _, _ := drain(t, turn)
+			var usage *adapter.Usage
+			for _, event := range events {
+				if event.Kind == adapter.EventUsage {
+					usage = event.Usage
+				}
+			}
+			if usage == nil || usage.Partial != c.partial || usage.CostEstimate == nil || usage.TokensCacheRead == nil || usage.TokensCacheWrite == nil || *usage.TokensCacheWrite < 5 {
+				t.Fatalf("usage=%+v, want partial=%v with cost and cache", usage, c.partial)
+			}
+			if usage.CostCumulative {
+				t.Fatalf("opencode reports each step's own cost, not a running total: %+v", usage)
+			}
+		})
+	}
+}
+
+// A step that reports no cost leaves the turn's cost unknown, not zero: a free-looking turn would be counted as free by every limit.
+func TestAnUnpricedStepLeavesTheCostUnknown(t *testing.T) {
+	output := `{"type":"step_start","sessionID":"` + testSession + `","part":{"type":"step-start"}}` + "\n" +
+		`{"type":"text","sessionID":"` + testSession + `","part":{"type":"text","text":"{\"messages\":[]}"}}` + "\n" +
+		`{"type":"step_finish","sessionID":"` + testSession + `","part":{"type":"step-finish","reason":"stop","tokens":{"input":4,"output":2,"cache":{}}}}` + "\n"
+	root := t.TempDir()
+	path, _ := script(t, root, "cat <<'EVENTS'\n"+output+"EVENTS\n")
+	turn, err := (&Adapter{Command: path, RuntimeRoot: filepath.Join(root, "runtime")}).Start(context.Background(), spec(t, t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, _, _ := drain(t, turn)
+	var usage *adapter.Usage
+	for _, event := range events {
+		if event.Kind == adapter.EventUsage {
+			usage = event.Usage
+		}
+	}
+	if usage == nil || usage.TokensIn == nil || *usage.TokensIn != 4 || usage.CostEstimate != nil {
+		t.Fatalf("usage=%+v, want tokens and no cost", usage)
+	}
+}

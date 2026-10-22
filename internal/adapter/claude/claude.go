@@ -269,6 +269,8 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	terminal := false
 	var lastAssistantContext *int64
+	steps := map[string]claudeStep{} // the main loop's API responses seen so far, by message id
+	sawResult := false
 	var candidate json.RawMessage
 	var errorResult string
 	haveCandidate := false
@@ -293,6 +295,7 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 				var assistant struct {
 					ParentToolUseID *string `json:"parent_tool_use_id"`
 					Message         struct {
+						ID    string `json:"id"`
 						Usage struct {
 							InputTokens              *int64 `json:"input_tokens"`
 							CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
@@ -309,6 +312,10 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 						used += *assistant.Message.Usage.CacheCreationInputTokens
 					}
 					lastAssistantContext = &used
+					// One API response is several assistant events that repeat its usage: each response counts once, by its message id.
+					if id := assistant.Message.ID; id != "" {
+						steps[id] = claudeStep{in: *assistant.Message.Usage.InputTokens, cacheRead: assistant.Message.Usage.CacheReadInputTokens, cacheWrite: assistant.Message.Usage.CacheCreationInputTokens}
+					}
 				}
 			}
 			activity := adapter.Event{Kind: adapter.EventActivity, Summary: event.Type}
@@ -341,7 +348,8 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 			if result.IsError {
 				errorResult = adapter.SanitizeStderr(string(event.Raw))
 			}
-			usage := &adapter.Usage{TokensIn: result.Usage.InputTokens, TokensOut: result.Usage.OutputTokens}
+			sawResult = true
+			usage := &adapter.Usage{TokensIn: result.Usage.InputTokens, TokensOut: result.Usage.OutputTokens, TokensCacheRead: result.Usage.CacheReadInputTokens, TokensCacheWrite: result.Usage.CacheCreationInputTokens}
 			if result.Usage.InputTokens != nil {
 				used := *result.Usage.InputTokens
 				if result.Usage.CacheReadInputTokens != nil {
@@ -375,7 +383,13 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 				}
 			}
 			if costKnown {
-				usage.CostEstimate = &cost
+				// The result of a resumed session reports the whole session's spend so far; the store subtracts the previous total.
+				usage.CostEstimate, usage.CostCumulative = &cost, true
+			}
+			if len(result.ModelUsage) == 1 {
+				for name := range result.ModelUsage {
+					usage.Model = name
+				}
 			}
 			if windowKnown {
 				usage.ContextWindow = &window
@@ -386,6 +400,11 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 				haveCandidate = true
 			}
 		}
+	}
+	// A turn that ended with no result (killed, cancelled, crashed) still spent what its API responses used. The input and cache tokens of
+	// those responses are known; the output count and the cost are only in the result, so they stay unknown, and the record says it is partial.
+	if !sawResult && len(steps) > 0 {
+		t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: partialUsage(steps)})
 	}
 	scanError := scanner.Err()
 	if scanError != nil {
@@ -419,6 +438,34 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 	t.exit, t.err = exit, scanError
 	t.mu.Unlock()
 	t.emit(adapter.Event{Kind: adapter.EventProcessExit, Exit: &exit})
+}
+
+// claudeStep is what one API response of the main loop reported about its input.
+type claudeStep struct {
+	in                    int64
+	cacheRead, cacheWrite *int64
+}
+
+func partialUsage(steps map[string]claudeStep) *adapter.Usage {
+	var in, read, write int64
+	var haveRead, haveWrite bool
+	for _, step := range steps {
+		in += step.in
+		if step.cacheRead != nil {
+			read, haveRead = read+*step.cacheRead, true
+		}
+		if step.cacheWrite != nil {
+			write, haveWrite = write+*step.cacheWrite, true
+		}
+	}
+	usage := &adapter.Usage{TokensIn: &in, Partial: true}
+	if haveRead {
+		usage.TokensCacheRead = &read
+	}
+	if haveWrite {
+		usage.TokensCacheWrite = &write
+	}
+	return usage
 }
 
 func (t *turn) confirmSession(raw json.RawMessage) {

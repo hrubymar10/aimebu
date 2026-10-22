@@ -499,7 +499,7 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		case "turn.completed":
 			completed = true
 			input, output := harness.CodexUsage(event)
-			t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: &adapter.Usage{TokensIn: input, TokensOut: output}})
+			t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: &adapter.Usage{TokensIn: input, TokensOut: output, TokensCacheRead: harness.CodexCachedInput(event)}})
 		case "turn.failed", "error":
 			failed = true
 			errorEvent = adapter.SanitizeStderr(string(event.Raw))

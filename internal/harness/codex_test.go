@@ -24,3 +24,19 @@ func TestCodexEventClassification(t *testing.T) {
 		t.Fatal("invalid JSON reported as supported")
 	}
 }
+
+func TestCodexCachedInputIsReadOnlyWhenReported(t *testing.T) {
+	read := func(line string) *int64 {
+		event, _ := ParseCodex([]byte(line))
+		return CodexCachedInput(event)
+	}
+	if got := read(`{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":7}}`); got == nil || *got != 80 {
+		t.Fatalf("cached input: %v", got)
+	}
+	if got := read(`{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":7}}`); got != nil {
+		t.Fatalf("a turn that does not report it has none: %v", *got)
+	}
+	if got := read(`{"type":"turn.started","usage":{"cached_input_tokens":5}}`); got != nil {
+		t.Fatalf("only a completed turn reports usage: %v", *got)
+	}
+}

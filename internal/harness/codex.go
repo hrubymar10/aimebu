@@ -54,6 +54,22 @@ func CodexAgentMessage(event CodexEvent) (string, bool) {
 	return value.Item.Text, true
 }
 
+// CodexCachedInput is the part of the turn's input the harness says was read from the prompt cache, when it says (nil otherwise).
+func CodexCachedInput(event CodexEvent) *int64 {
+	if event.Type != "turn.completed" {
+		return nil
+	}
+	var value struct {
+		Usage struct {
+			CachedInputTokens *int64 `json:"cached_input_tokens"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal(event.Raw, &value) != nil {
+		return nil
+	}
+	return value.Usage.CachedInputTokens
+}
+
 func CodexUsage(event CodexEvent) (input, output *int64) {
 	if event.Type != "turn.completed" {
 		return nil, nil

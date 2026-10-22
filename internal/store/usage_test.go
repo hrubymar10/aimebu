@@ -107,3 +107,23 @@ func TestAgentUsageReadsTheNewestRecordOfTheGeneration(t *testing.T) {
 		t.Fatalf("an earlier generation's record was read: %+v err=%v", usage, err)
 	}
 }
+
+// A partial record (a turn that ended with no report) has no context, so the card keeps showing the last complete report.
+func TestAgentUsageSkipsPartialRecords(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	f := seedExecution(t, s)
+	ctx := context.Background()
+	full, _ := json.Marshal(map[string]any{"type": "usage", "usage": map[string]any{"tokens_in": 10, "context_used": 5000, "context_window": 200000}})
+	partial, _ := json.Marshal(map[string]any{"type": "usage", "usage": map[string]any{"tokens_in": 3, "partial": true}})
+	if err := s.RecordTurnEvent(ctx, f.turn.ID, f.agent.ID, "full", "usage", "", full); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordTurnEvent(ctx, f.turn.ID, f.agent.ID, "partial", "usage", "", partial); err != nil {
+		t.Fatal(err)
+	}
+	usage, err := s.AgentUsage(ctx, f.agent.ID)
+	if err != nil || usage == nil || usage.ContextUsed == nil || *usage.ContextUsed != 5000 || usage.TokensIn == nil || *usage.TokensIn != 10 {
+		t.Fatalf("the card must show the last complete report: %+v %v", usage, err)
+	}
+}

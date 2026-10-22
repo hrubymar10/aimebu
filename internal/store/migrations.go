@@ -1382,6 +1382,18 @@ CREATE TABLE role_spawn_warning (
   last_warned_at TEXT NOT NULL,
   PRIMARY KEY (room_id,role_id)
 );
+`}, {78, `
+-- What a turn spent, in more detail. The cache tokens and the model are what each message's usage shows; partial marks what a turn spent before
+-- it ended with no report (killed, crashed); cost_total is the harness session's running total, kept only so the next turn of the session can be
+-- priced as the difference (Claude reports a resumed session's whole spend, so cost_est, which every limit sums, is the difference).
+ALTER TABLE usage_record ADD COLUMN tokens_cache_read INTEGER;
+ALTER TABLE usage_record ADD COLUMN tokens_cache_write INTEGER;
+ALTER TABLE usage_record ADD COLUMN model TEXT;
+ALTER TABLE usage_record ADD COLUMN partial INTEGER NOT NULL DEFAULT 0 CHECK (partial IN (0,1));
+ALTER TABLE usage_record ADD COLUMN cost_total REAL;
+-- Claude's cost_est, as stored before this migration, is the session's running total, which is exactly what cost_total remembers: a session that
+-- spans the upgrade continues from its last total instead of counting the whole session again on its next turn.
+UPDATE usage_record SET cost_total=cost_est WHERE cost_total IS NULL AND cost_est IS NOT NULL AND agent_id IN (SELECT id FROM agent WHERE tool='claude');
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

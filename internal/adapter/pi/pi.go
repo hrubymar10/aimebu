@@ -473,9 +473,11 @@ type piEvent struct {
 }
 
 type piUsage struct {
-	Input  *int64 `json:"input"`
-	Output *int64 `json:"output"`
-	Cost   struct {
+	Input      *int64 `json:"input"`
+	Output     *int64 `json:"output"`
+	CacheRead  *int64 `json:"cacheRead"`
+	CacheWrite *int64 `json:"cacheWrite"`
+	Cost       struct {
 		Total *float64 `json:"total"`
 	} `json:"cost"`
 }
@@ -502,7 +504,7 @@ func (t *turn) emitUsage(usage piUsage) {
 		return
 	}
 	t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: &adapter.Usage{
-		TokensIn: usage.Input, TokensOut: usage.Output, CostEstimate: usage.Cost.Total}})
+		TokensIn: usage.Input, TokensOut: usage.Output, TokensCacheRead: usage.CacheRead, TokensCacheWrite: usage.CacheWrite, CostEstimate: usage.Cost.Total}})
 }
 
 func (t *turn) emit(event adapter.Event) {
