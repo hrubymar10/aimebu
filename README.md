@@ -142,6 +142,9 @@ variant through task, pause, kill, and recovery on a real server; see
 See [the architecture](docs/architecture.md) for component decisions and
 [the contract](docs/contract.md) for the slice-1 data and protocol contract.
 
+`aimebu fe` opens the web UI of the configured server in the browser (`AIMEBU2_PUBLIC_URL` when set, otherwise the
+address from `AIMEBU2_BIND` and `AIMEBU2_PORT`); over SSH or with no display it only prints the address.
+
 Owner and host-machine bootstrap is available through `aimebu server`. With
 no owner yet, the server prints a one-time setup token (and writes it to
 `.setup_token` in the config directory); open the server's address and enter it to

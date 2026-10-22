@@ -78,7 +78,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: aimebu <server|supervisor|agent-tools|switcher|prune|doctor|sessions|usages|version|help>")
+		fmt.Fprintln(stderr, "usage: aimebu <server|supervisor|agent-tools|switcher|prune|doctor|sessions|usages|fe|version|help>")
 		return 2
 	}
 
@@ -102,6 +102,8 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		return sessionsCommand(ctx, args[1:], stdout, stderr)
 	case "usages":
 		return usagesCommand(args[1:], stdout, stderr)
+	case "fe":
+		return feCommand(args[1:], stdout, stderr)
 	case "version":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "usage: aimebu version")
@@ -200,6 +202,7 @@ Utilities:
   usages [provider] [--json|--plain]  Print the usage snapshots the server last cached
   switcher <command>                  Manage Claude Code / Codex credential profiles (works with the server stopped)
   prune [-a] [-y]                     Clear runtime agent state, or everything with -a (stop the server first)
+  fe                                  Open the web UI in the browser (prints the address where there is no browser)
 
 Other:
   version                             Print version and VCS revision
