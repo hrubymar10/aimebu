@@ -159,6 +159,58 @@ Secondary options, none required for 2.0.0 and none verified here:
 - `aimebu update --check` is parked by the owner and not a release
   blocker; v2 has no self-update.
 
+### Homebrew formula draft
+
+This is the proposed HEAD-only `Formula/aimebu.rb` for the existing tap after
+the public repo cutover. It is text for review, not a change to the tap. The
+formula builds the v2 command from `./cmd/aimebu` and runs the foreground
+`aimebu server` process under `brew services`. The v1 `server start` daemon
+command is not a v2 command, and the service manager needs the running server
+process to supervise.
+
+```ruby
+class Aimebu < Formula
+  desc "Rooms and agents for project work"
+  homepage "https://github.com/hrubymar10/aimebu"
+  license "MIT"
+  head "https://github.com/hrubymar10/aimebu.git", branch: "master"
+
+  depends_on "go" => :build
+
+  def install
+    system "go", "build", "-trimpath", "-o", bin/"aimebu", "./cmd/aimebu"
+  end
+
+  service do
+    run [opt_bin/"aimebu", "server"]
+    keep_alive true
+    environment_variables AIMEBU2_BIND: "127.0.0.1",
+                          AIMEBU2_PORT: "9897"
+  end
+
+  test do
+    assert_match "aimebu", shell_output("#{bin}/aimebu version")
+  end
+end
+```
+
+The `AIMEBU2_*` names and port 9897 match the current development build. It
+uses the default `~/.aimebu2` data root and browser owner setup; no owner
+password belongs in a formula. Before publishing the tap, apply B1's final
+environment-variable names, data root and port to this draft. Keep the
+service command as `aimebu server` after that rename. A service that must
+reach harness CLIs outside Homebrew's service `PATH` needs that path configured
+on the host.
+
+After the tap has been updated, the v1 install flow remains `brew tap
+hrubymar10/tap`, `brew trust hrubymar10/tap`, then `brew install --HEAD
+aimebu`. `brew services start aimebu` registers and starts the service at
+login; `brew services run aimebu` starts it without registration. The formula
+and those commands need a macOS and Linux smoke check before the tap is
+published. See Homebrew's [formula service
+syntax](https://docs.brew.sh/Formula-Cookbook.html#service-files) and
+[`brew services` behavior](https://docs.brew.sh/Manpage#services-subcommand).
+
 **Before the public push:** keep v1 reachable. The v1 history on `master` is
 replaced by v2, so tag or branch its last commit first (for example tag
 `v1-final` and keep a `v1` branch), and decide whether `master` is force-pushed
