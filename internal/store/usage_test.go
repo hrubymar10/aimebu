@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -58,5 +59,51 @@ func TestUsageReadAndCompactionNoticeDedup(t *testing.T) {
 	usage, err = s.AgentUsage(ctx, f.agent.ID)
 	if err != nil || usage == nil || usage.ContextUsed != nil || usage.CostSoFar == nil || *usage.CostSoFar != 0.35 {
 		t.Fatalf("new generation usage=%+v err=%v", usage, err)
+	}
+}
+
+// The newest record of the agent's generation is the one with the latest timestamp, and the later insert when two share a timestamp.
+func TestAgentUsageReadsTheNewestRecordOfTheGeneration(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	f := seedExecution(t, s)
+	ctx := context.Background()
+	for i, used := range []int{100, 200} {
+		frame, _ := json.Marshal(map[string]any{"type": "usage", "usage": map[string]any{"context_used": used, "context_window": 1000}})
+		if err := s.RecordTurnEvent(ctx, f.turn.ID, f.agent.ID, fmt.Sprintf("usage-%d", i), "usage", "", frame); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set := func(first, second string) int64 {
+		t.Helper()
+		if _, err := s.db.Exec(`UPDATE usage_record SET created_at=? WHERE source_event_id='usage-0'`, first); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`UPDATE usage_record SET created_at=? WHERE source_event_id='usage-1'`, second); err != nil {
+			t.Fatal(err)
+		}
+		usage, err := s.AgentUsage(ctx, f.agent.ID)
+		if err != nil || usage == nil || usage.ContextUsed == nil {
+			t.Fatalf("usage=%+v err=%v", usage, err)
+		}
+		return *usage.ContextUsed
+	}
+	const early, late = "2026-01-01T10:00:00.000Z", "2026-01-01T10:05:00.000Z"
+	if got := set(early, late); got != 200 {
+		t.Fatalf("the later timestamp should win: %d", got)
+	}
+	if got := set(late, early); got != 100 {
+		t.Fatalf("the order is by timestamp, not by insert order: %d", got)
+	}
+	if got := set(early, early); got != 200 {
+		t.Fatalf("with equal timestamps the later insert should win: %d", got)
+	}
+	// A record of an older generation is never the newest, however late it is stamped.
+	if _, err := s.db.Exec(`UPDATE agent SET generation=generation+1 WHERE id=?`, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	usage, err := s.AgentUsage(ctx, f.agent.ID)
+	if err != nil || (usage != nil && usage.ContextUsed != nil) {
+		t.Fatalf("an earlier generation's record was read: %+v err=%v", usage, err)
 	}
 }

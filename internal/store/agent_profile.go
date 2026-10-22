@@ -116,7 +116,7 @@ func (s *Store) AgentProfile(ctx context.Context, roomID, agentID string) (Agent
 	}
 	since := time.Now().UTC().Add(-24 * time.Hour).Format(timestampLayout)
 	var cost sql.NullFloat64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT turn_id),SUM(cost_est) FROM usage_record WHERE agent_id=? AND created_at>=?`, agentID, since).Scan(&p.TurnsToday, &cost); err != nil {
+	if err := s.db.QueryRowContext(ctx, agentTodaySQL, agentID, since).Scan(&p.TurnsToday, &cost); err != nil {
 		return AgentProfile{}, err
 	}
 	if cost.Valid {
@@ -124,6 +124,9 @@ func (s *Store) AgentProfile(ctx context.Context, roomID, agentID string) (Agent
 	}
 	return p, nil
 }
+
+// agentTodaySQL counts the agent's turns that reported usage, and their cost, since a time.
+const agentTodaySQL = `SELECT COUNT(DISTINCT turn_id),SUM(cost_est) FROM usage_record WHERE agent_id=? AND created_at>=?`
 
 // resumeCommand is the command a person types to continue the agent's native session by hand. It is only
 // given for tools whose resume syntax is known, and only when the session id is known.

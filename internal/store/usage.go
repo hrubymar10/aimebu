@@ -18,14 +18,21 @@ type AgentUsage struct {
 	CostSoFar     *float64 `json:"cost_so_far,omitempty"`
 }
 
+// latestUsageSQL reads the newest record (by timestamp, the later insert on a tie) of the agent's current process generation. The generation comes from a subquery, not a join, so the
+// agent+time index also gives the order and no sort is needed (the agent's history can be long).
+const latestUsageSQL = `SELECT u.tokens_in,u.tokens_out,u.context_used,u.context_window
+	FROM usage_record u JOIN turn t ON t.id=u.turn_id
+	WHERE u.agent_id=? AND t.generation=(SELECT generation FROM agent WHERE id=?) ORDER BY u.created_at DESC,u.rowid DESC LIMIT 1`
+
+// agentCostSQL is the agent's cost over its lifetime.
+const agentCostSQL = `SELECT SUM(cost_est) FROM usage_record WHERE agent_id=?`
+
 func (s *Store) AgentUsage(ctx context.Context, agentID string) (*AgentUsage, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
 	var input, output, used, window sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT u.tokens_in,u.tokens_out,u.context_used,u.context_window
-		FROM usage_record u JOIN turn t ON t.id=u.turn_id JOIN agent a ON a.id=u.agent_id
-		WHERE u.agent_id=? AND t.generation=a.generation ORDER BY u.rowid DESC LIMIT 1`, agentID).
+	err := s.db.QueryRowContext(ctx, latestUsageSQL, agentID, agentID).
 		Scan(&input, &output, &used, &window)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
@@ -44,7 +51,7 @@ func (s *Store) AgentUsage(ctx context.Context, agentID string) (*AgentUsage, er
 		usage.ContextWindow = &window.Int64
 	}
 	var cost sql.NullFloat64
-	if err := s.db.QueryRowContext(ctx, `SELECT SUM(cost_est) FROM usage_record WHERE agent_id=?`, agentID).Scan(&cost); err != nil {
+	if err := s.db.QueryRowContext(ctx, agentCostSQL, agentID).Scan(&cost); err != nil {
 		return nil, err
 	}
 	if cost.Valid {

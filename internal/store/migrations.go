@@ -1343,6 +1343,16 @@ ALTER TABLE room_view_preference ADD COLUMN muted_until TEXT;
 -- "Start as v2 agent" asks whether a v1 agent wrote anywhere in a project: look the agent up by author, then check its rooms, instead of
 -- reading every message of every room of the project.
 CREATE INDEX message_agent_author_room ON message(author_id, room_id) WHERE author_kind = 'agent';
+`}, {75, `
+-- Every usage limit check, the agent card and the agent profile read usage_record by agent, room or project and a time range, and the
+-- limit check counts a scope's turns by room and start time; with no index each of those read the whole table. usage_record gets one
+-- index per way it is read, turn gets the room and time one, and room the project one (a project's turns are found through its rooms).
+CREATE INDEX usage_record_agent_time ON usage_record(agent_id, created_at);
+CREATE INDEX usage_record_room_time ON usage_record(room_id, created_at);
+CREATE INDEX usage_record_project_time ON usage_record(project_id, created_at);
+CREATE INDEX usage_record_turn ON usage_record(turn_id);
+CREATE INDEX turn_room_started ON turn(room_id, started_at);
+CREATE INDEX room_project ON room(project_id);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

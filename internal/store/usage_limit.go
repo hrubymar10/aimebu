@@ -114,9 +114,7 @@ func (tx *Tx) usageLimit(kind, id string, now time.Time) (UsageLimit, error) {
 		where, turnWhere = "project_id=?", "r.project_id=?"
 	}
 	var knownTurns int64
-	if err = tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN EXISTS(
-		SELECT 1 FROM usage_record u WHERE u.turn_id=t.id AND u.cost_est IS NOT NULL) THEN 1 ELSE 0 END),0)
-		FROM turn t JOIN room r ON r.id=t.room_id WHERE `+turnWhere+` AND t.started_at>=? AND t.started_at<?`, id, startUTC, endUTC).
+	if err = tx.tx.QueryRowContext(tx.ctx, usageLimitTurnsSQL(turnWhere), id, startUTC, endUTC).
 		Scan(&out.DailyTurns, &knownTurns); err != nil {
 		return UsageLimit{}, err
 	}
@@ -128,7 +126,7 @@ func (tx *Tx) usageLimit(kind, id string, now time.Time) (UsageLimit, error) {
 			out.CostCoverage = "unknown"
 		}
 	}
-	if err = tx.tx.QueryRowContext(tx.ctx, `SELECT COALESCE(SUM(cost_est),0) FROM usage_record WHERE `+where+` AND created_at>=? AND created_at<?`, id, startUTC, endUTC).
+	if err = tx.tx.QueryRowContext(tx.ctx, usageLimitCostSQL(where), id, startUTC, endUTC).
 		Scan(&out.DailyCost); err != nil {
 		return UsageLimit{}, err
 	}
@@ -408,6 +406,18 @@ func (tx *Tx) reconcileUsageLimit(kind, id, actor string) error {
 		}
 	}
 	return tx.evaluateUsageLimit(kind, id, time.Now())
+}
+
+// The two reads behind a scope's daily figures: its turns (and how many have a cost) and its summed cost, both over a time range. The
+// scope is a room or a project; where and turnWhere name its column. They are functions so a test can ask SQLite how it runs them.
+func usageLimitTurnsSQL(turnWhere string) string {
+	return `SELECT COUNT(*),COALESCE(SUM(CASE WHEN EXISTS(
+		SELECT 1 FROM usage_record u WHERE u.turn_id=t.id AND u.cost_est IS NOT NULL) THEN 1 ELSE 0 END),0)
+		FROM turn t JOIN room r ON r.id=t.room_id WHERE ` + turnWhere + ` AND t.started_at>=? AND t.started_at<?`
+}
+
+func usageLimitCostSQL(where string) string {
+	return `SELECT COALESCE(SUM(cost_est),0) FROM usage_record WHERE ` + where + ` AND created_at>=? AND created_at<?`
 }
 
 func (tx *Tx) evaluateUsageFor(roomID, projectID string) error {

@@ -293,7 +293,11 @@ Inbox, usage, events, settings
   resolved_at?, created_at) — `assignee` returns in slice 4
 - **usage_record**(id, source_event_id UNIQUE, turn_id, agent_id, room_id,
   project_id, tokens_in?, tokens_out?, context_used?, context_window?,
-  cost_est?, source[measured|estimated|unavailable], created_at)
+  cost_est?, source[measured|estimated|unavailable], created_at) — indexed by
+  (agent_id, created_at), (room_id, created_at), (project_id, created_at) and (turn_id) (migration 75),
+  with turn(room_id, started_at) and room(project_id), so the limit checks, the
+  agent card and the profile never scan the table; a test asks SQLite for
+  each plan
 - **event**(id, seq UNIQUE, kind, project_id?, room_id?, agent_id?,
   turn_id?, payload_json, created_at) — same transaction as the change
 - **settings_project**(project_id, max_live_agents=10, spawn_rate_per_min=6,
