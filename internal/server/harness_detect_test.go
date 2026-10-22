@@ -274,7 +274,7 @@ func TestContainerizedHarnessModelsAreDetectedAndAChosenFolderIsPassed(t *testin
 		t.Fatalf("the chosen folder is used: %d %v %q", status, out, ran())
 	}
 	status, out = post(map[string]string{"dir": refused})
-	if message, _ := out["message"].(string); status != 502 || out["error"] != "detect_failed" || !strings.Contains(message, "cannot answer from '"+refused+"'. Add the model ID manually.") {
+	if message, _ := out["message"].(string); status != 502 || out["error"] != "detect_failed" || out["detect_dir"] != refused || !strings.Contains(message, "cannot answer from '"+refused+"'. Add the model ID manually.") {
 		t.Fatalf("the harness's complaint reaches the person: %d %v", status, out)
 	}
 	if status, out = post(map[string]string{"dir": "relative/dir"}); status != 400 || out["error"] != "invalid_dir" {

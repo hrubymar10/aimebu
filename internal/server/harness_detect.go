@@ -189,7 +189,10 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if answer.Code != "" {
-			apiError(w, 502, "detect_failed", "Couldn't detect the models: "+strings.TrimRight(answer.Message, ". ")+". "+detectFailedHint)
+			writeJSON(w, 502, map[string]any{
+				"error": "detect_failed", "message": "Couldn't detect the models: " + strings.TrimRight(answer.Message, ". ") + ". " + detectFailedHint,
+				"detect_dir": answer.DetectDir,
+			})
 			return
 		}
 		found, source = answer.ModelCandidates, "harness"

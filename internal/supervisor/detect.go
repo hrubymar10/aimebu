@@ -74,7 +74,10 @@ func (c *Client) detectResult(ctx context.Context, frame protocol.Frame) protoco
 		}
 		var remove func(string) error
 		if temporary {
+			result.DetectDir = filepath.Dir(dir)
 			remove = os.RemoveAll
+		} else {
+			result.DetectDir = dir
 		}
 		models, err := detectModelsInRun(ctx, frame.Detect.Family, frame.Detect.Command, frame.Detect.Args, dir, remove)
 		if err != nil {
@@ -316,6 +319,11 @@ func detectModels(ctx context.Context, family, command string, launcherArgs []st
 		if run.Err() != nil {
 			return nil, errors.New("the harness did not answer in time")
 		}
+		// Keep line boundaries for login diagnostics; lastLines joins them for
+		// display and may put unrelated prose before the meaningful line.
+		if reportsNoModels(string(stderr.buf)) || reportsNoModels(out.String()) {
+			return nil, noModelsError(family)
+		}
 		if said := stderr.lastLines(detectStderrLines, detectStderrChars); said != "" {
 			return nil, fmt.Errorf("the harness could not list its models (%v): %s", err, said)
 		}
@@ -387,21 +395,47 @@ func (w *limitWriter) Write(p []byte) (int, error) {
 
 // parsePiModels reads `pi --offline --list-models`: a header, then one row per model with provider, model, context, max output,
 // thinking and images columns. The slug is provider/model.
+var modelID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$`)
+var modelProvider = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@+-]*$`)
+var modelSize = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?[KMGTP]?$`)
+
+func noModelsError(family string) error {
+	return fmt.Errorf("%s reports no models — is it logged in? Run /login in it", family)
+}
+
+func reportsNoModels(output string) bool {
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.ToLower(cleanStderrLine(raw))
+		for _, prefix := range []string{"error:", "warning:", "fatal:"} {
+			if strings.HasPrefix(line, prefix) {
+				line = strings.TrimSpace(strings.TrimPrefix(line, prefix))
+				break
+			}
+		}
+		if strings.HasPrefix(line, "no models available") || strings.HasPrefix(line, "no models found") ||
+			strings.HasPrefix(line, "not logged in") || strings.HasPrefix(line, "use /login") ||
+			strings.HasPrefix(line, "please run /login") {
+			return true
+		}
+	}
+	return false
+}
+
 func parsePiModels(out []byte) ([]protocol.ModelCandidate, error) {
 	models := []protocol.ModelCandidate{}
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] == "provider" && fields[1] == "model" {
+		if len(fields) != 6 || !modelProvider.MatchString(fields[0]) || !modelID.MatchString(fields[0]+"/"+fields[1]) ||
+			!modelSize.MatchString(fields[2]) || !modelSize.MatchString(fields[3]) ||
+			(fields[4] != "yes" && fields[4] != "no") || (fields[5] != "yes" && fields[5] != "no") {
 			continue
 		}
 		model := protocol.ModelCandidate{Slug: fields[0] + "/" + fields[1], Label: fields[1]}
-		if len(fields) >= 6 {
-			model.Note = fmt.Sprintf("context %s, max output %s, thinking %s, images %s", fields[2], fields[3], fields[4], fields[5])
-		}
+		model.Note = fmt.Sprintf("context %s, max output %s, thinking %s, images %s", fields[2], fields[3], fields[4], fields[5])
 		models = append(models, model)
 	}
 	if len(models) == 0 {
-		return nil, errors.New("the harness listed no models")
+		return nil, noModelsError("pi")
 	}
 	return models, nil
 }
@@ -411,14 +445,17 @@ func parseOpencodeModels(out []byte) ([]protocol.ModelCandidate, error) {
 	models := []protocol.ModelCandidate{}
 	for _, line := range strings.Split(string(out), "\n") {
 		slug := strings.TrimSpace(line)
+		if strings.EqualFold(slug, "use/login") {
+			continue
+		}
 		provider, name, ok := strings.Cut(slug, "/")
-		if !ok || provider == "" || name == "" || strings.ContainsAny(slug, " \t") {
+		if !ok || !modelProvider.MatchString(provider) || !modelID.MatchString(slug) || name == "" {
 			continue
 		}
 		models = append(models, protocol.ModelCandidate{Slug: slug, Label: name})
 	}
 	if len(models) == 0 {
-		return nil, errors.New("the harness listed no models")
+		return nil, noModelsError("opencode")
 	}
 	return models, nil
 }
@@ -434,11 +471,14 @@ func parseCodexModels(out []byte) ([]protocol.ModelCandidate, error) {
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(out, &catalog); err != nil {
+		if reportsNoModels(string(out)) || len(strings.TrimSpace(string(out))) == 0 {
+			return nil, noModelsError("codex")
+		}
 		return nil, errors.New("the harness's model list could not be read")
 	}
 	models := []protocol.ModelCandidate{}
 	for _, item := range catalog.Models {
-		if item.Visibility != "list" || item.Slug == "" {
+		if item.Visibility != "list" || !modelID.MatchString(item.Slug) {
 			continue
 		}
 		label := item.DisplayName
@@ -452,7 +492,7 @@ func parseCodexModels(out []byte) ([]protocol.ModelCandidate, error) {
 		models = append(models, protocol.ModelCandidate{Slug: item.Slug, Label: label, Note: note})
 	}
 	if len(models) == 0 {
-		return nil, errors.New("the harness listed no models")
+		return nil, noModelsError("codex")
 	}
 	return models, nil
 }

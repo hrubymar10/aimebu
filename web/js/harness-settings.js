@@ -1,13 +1,19 @@
 import { request } from './api.js';
 import { settingsRow, settingsGroup } from './settings-row.js';
 import { confirmDialog } from './dialogs.js';
-import { iconButton } from './icon-button.js';
+import { iconButton, setGlyph } from './icon-button.js';
 
 const node = (tag, className, value = '') => {
   const element = document.createElement(tag);
   element.className = className;
   element.textContent = value;
   return element;
+};
+const starGlyph = () => {
+  const star = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  star.setAttribute('class', 'harness-model-star'); star.setAttribute('viewBox', '0 0 24 24'); star.setAttribute('aria-hidden', 'true');
+  const shape = document.createElementNS('http://www.w3.org/2000/svg', 'use'); shape.setAttribute('href', '/icons/star.svg#star');
+  star.append(shape); return star;
 };
 
 // The server refuses a list longer than this, so a longer detected list is cut to it rather than failing the save.
@@ -34,6 +40,25 @@ const FAMILIES = [['claude', 'Claude Code'], ['codex', 'Codex'], ['pi', 'Pi'], [
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/;
 const familyName = family => FAMILIES.find(([key]) => key === family)?.[1] || family;
 const button = (label, className = 'btn', type = 'button') => { const item = node('button', className, label); item.type = type; return item; };
+const detectionFailure = (problem, containerized) => {
+  const detail = problem.message || "Couldn't detect the models.";
+  const noModels = detail.match(/(?:pi|opencode|codex) reports no models — is it logged in\? Run \/login in it/);
+  const folderMissing = /(?:not mounted|not visible|does not exist or is not visible)/i.test(detail);
+  const summary = containerized && problem.code === 'detect_failed' && problem.detectDir && folderMissing
+    ? `Detection blocked — please mount ${problem.detectDir} to your harness Docker, or pick a mounted folder below.`
+    : noModels ? noModels[0] : containerized ? detail : problem.code === 'detect_failed' ? 'Model detection failed. Check the harness or try another folder.' : detail;
+  return { summary, detail: detail === summary ? '' : detail };
+};
+const showDetectionDetails = (details, detail) => {
+  details.hidden = !detail;
+  details.querySelector('p').textContent = detail;
+  details.open = false;
+};
+const detectionDetails = () => {
+  const details = node('details', 'harness-detect-details'); details.hidden = true;
+  details.append(node('summary', '', 'Details'), node('p', ''));
+  return details;
+};
 
 // Settings → Harnesses: a machine's harnesses (the coding tools installed on it: Claude Code, Codex, Pi, OpenCode) and, under each, the
 // models it can start agents with. Nothing is there until the owner adds it, by hand or by ticking what auto-detect found. Only the owner
@@ -49,6 +74,7 @@ export class HarnessSettings {
     this.section.append(settingsGroup([settingsRow({ label: 'Machine', desc: 'The supervisor whose harnesses and recent changes are shown below.', control: this.select })], 'Harness machine'));
     this.summary = node('p', 'settings-intro'); this.summary.setAttribute('role', 'status');
     this.error = node('p', 'error'); this.error.setAttribute('role', 'alert');
+    this.errorDetails = detectionDetails();
     this.toolbar = node('div', 'machine-actions');
     this.addButton = button('Add harness', 'btn btn-primary'); this.addButton.id = 'harness-add';
     this.detectButton = button('Auto-detect harnesses'); this.detectButton.id = 'harness-detect';
@@ -57,7 +83,7 @@ export class HarnessSettings {
     this.list = node('div'); this.list.id = 'harnesses-list';
     this.activityHeading = node('h4', 'machine-activity-heading', 'Activity');
     this.activity = node('div'); this.activity.id = 'machine-activity';
-    this.section.append(this.summary, this.error, this.toolbar, this.panel, this.list, this.activityHeading, this.activity);
+    this.section.append(this.summary, this.error, this.errorDetails, this.toolbar, this.panel, this.list, this.activityHeading, this.activity);
     dialog.append(this.section);
     this.sequence = 0;
     this.openLaunchers = new Set();
@@ -74,6 +100,7 @@ export class HarnessSettings {
   async open() {
     const sequence = ++this.sequence;
     this.error.textContent = '';
+    showDetectionDetails(this.errorDetails, '');
     this.summary.textContent = 'Loading machines…';
     this.list.replaceChildren();
     this.activity.replaceChildren();
@@ -111,6 +138,7 @@ export class HarnessSettings {
     const machineID = this.select.value;
     const sequence = ++this.sequence;
     this.error.textContent = '';
+    showDetectionDetails(this.errorDetails, '');
     this.list.replaceChildren();
     this.activity.replaceChildren();
     if (!machineID) return;
@@ -151,6 +179,7 @@ export class HarnessSettings {
   // changes (executable, arguments, environment, container and path settings) sits behind Edit; the models sit behind Models.
   harnessCard(machineID, harness) {
     const card = node('article', 'machine-harness settings-group');
+    const harnessLabel = harness.label || `${familyName(harness.tool)}${harness.containerized ? ' (Docker)' : ''}`;
     card.dataset.tool = harness.tool;
     card.dataset.variant = harness.variant;
     const status = !harness.enabled ? 'Disabled' : harness.available ? 'Available' : 'Unavailable';
@@ -168,7 +197,7 @@ export class HarnessSettings {
     const enabled = document.createElement('input'); enabled.type = 'checkbox'; enabled.name = 'enabled'; enabled.checked = !!harness.enabled;
     enabled.setAttribute('aria-label', `Enable ${harness.label || harness.tool}`);
     enabledLabel.append(enabled, document.createTextNode('Enabled'));
-    const edit = node('button', 'btn machine-harness-edit', 'Edit'); edit.type = 'button'; edit.setAttribute('aria-expanded', 'false');
+    const edit = iconButton('pencil', `Edit ${harnessLabel}`, { className: 'machine-harness-edit' }); edit.setAttribute('aria-expanded', 'false');
     const modelsButton = node('button', 'btn machine-harness-models-toggle', `Models (${(harness.models || []).length})`); modelsButton.type = 'button'; modelsButton.setAttribute('aria-expanded', 'false');
     control.append(enabledLabel, modelsButton, edit);
     row.append(info, control);
@@ -204,7 +233,7 @@ export class HarnessSettings {
     const error = node('p', 'error'); error.setAttribute('role', 'alert');
     actions.append(save);
     {
-      const remove = node('button', 'btn btn-danger', 'Remove'); remove.type = 'button';
+      const remove = iconButton('trash', `Remove ${harnessLabel}`, { danger: true, className: 'machine-harness-remove' });
       remove.onclick = async () => {
         if (!await confirmDialog(`Remove ${harness.label || harness.name}? Its models go with it.`, { title: 'Remove harness', confirm: 'Remove', danger: true })) return;
         try {
@@ -215,7 +244,7 @@ export class HarnessSettings {
       actions.append(remove);
     }
     form.append(actions, error);
-    const setOpen = open => { form.hidden = !open; edit.setAttribute('aria-expanded', String(open)); edit.textContent = open ? 'Done' : 'Edit'; if (open) this.openLaunchers.add(harness.id); else this.openLaunchers.delete(harness.id); };
+    const setOpen = open => { form.hidden = !open; edit.setAttribute('aria-expanded', String(open)); setGlyph(edit, open ? 'close' : 'pencil', `${open ? 'Close settings for' : 'Edit'} ${harnessLabel}`); if (open) this.openLaunchers.add(harness.id); else this.openLaunchers.delete(harness.id); };
     edit.onclick = () => setOpen(form.hidden);
     if (this.openLaunchers.has(harness.id)) setOpen(true);
     form.onsubmit = async event => {
@@ -295,7 +324,7 @@ export class HarnessSettings {
   // Auto-detect asks the machine's supervisor what is installed. It only reports: nothing is added until it is ticked and confirmed.
   async runDetect() {
     const machineID = this.select.value;
-    this.error.textContent = ''; this.detectButton.disabled = true; this.detectButton.textContent = 'Detecting…';
+    this.error.textContent = ''; showDetectionDetails(this.errorDetails, ''); this.detectButton.disabled = true; this.detectButton.textContent = 'Detecting…';
     try {
       const found = await request(`/api/machines/${encodeURIComponent(machineID)}/launchers/detect`, { method: 'POST', body: {} });
       this.showPanel(this.detectPanel(machineID, found.candidates || []));
@@ -305,14 +334,14 @@ export class HarnessSettings {
 
   // Detect a new harness's models and save them (at most MODELS_MAX), the first as the default. Resolves to whether it ended up with models,
   // how many were left out to fit the limit, and why detection failed when it did.
-  async fillModels(machineID, harnessID) {
+  async fillModels(machineID, harnessID, containerized = false) {
     if (!harnessID) return { saved: false, cut: 0 };
     const base = `/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harnessID)}/models`;
     try {
       let found;
       try { found = await request(`${base}/detect`, { method: 'POST', body: {} }); } catch (problem) {
-        const reason = problem.message || "Couldn't detect the models.";
-        (this.modelFailures ||= new Map()).set(harnessID, reason); return { saved: false, cut: 0, reason };
+        const failure = detectionFailure(problem, containerized);
+        (this.modelFailures ||= new Map()).set(harnessID, failure); return { saved: false, cut: 0, reason: failure.summary, detail: failure.detail };
       }
       const all = (found.candidates || []).filter(candidate => !candidate.already_listed);
       const models = all.slice(0, MODELS_MAX).map((candidate, index) => ({ slug: candidate.slug, label: candidate.label || candidate.slug, note: candidate.note || '', default: index === 0 }));
@@ -339,7 +368,7 @@ export class HarnessSettings {
     if (candidates.length) actions.append(add); actions.append(close); panel.append(actions, error);
     close.onclick = () => this.showPanel(null);
     panel.onsubmit = async event => {
-      event.preventDefault(); error.textContent = '';
+      event.preventDefault(); error.textContent = ''; showDetectionDetails(this.errorDetails, '');
       const chosen = boxes.filter(([box]) => box.checked).map(([, candidate]) => candidate);
       if (!chosen.length) { error.textContent = 'Tick at least one harness to add.'; return; }
       add.disabled = true;
@@ -349,15 +378,17 @@ export class HarnessSettings {
         // A harness with no models cannot start an agent, so ask each new one what it offers and keep that list. It is best effort: a
         // harness that cannot answer is left empty with its reason shown, and its Models panel opens on that reason with a folder to
         // retry in, besides Auto-detect and the by-hand form.
-        const filled = await Promise.all(created.map(item => this.fillModels(machineID, item?.config?.id || item?.id)));
+        const filled = await Promise.all(created.map(item => this.fillModels(machineID, item?.config?.id || item?.id, !!item?.config?.containerized)));
         const empty = filled.filter(done => !done.saved).length;
         const cut = filled.find(done => done.cut > 0);
         this.showPanel(null); await this.loadHarnesses();
         const notes = [];
         const reason = filled.find(done => !done.saved && done.reason)?.reason;
+        const detail = filled.find(done => !done.saved && done.detail)?.detail;
         if (empty) notes.push(`${empty === 1 ? 'A harness has' : `${empty} harnesses have`} no models yet.${reason ? ` ${reason}` : ''} Open Models to retry Auto-detect, in a folder you choose if the harness needs one, or add a model by hand.`);
         if (cut) notes.push(`A harness offered more models than a list can hold, so only the first ${cut.kept} were added.`);
         this.error.textContent = notes.join(' ');
+        showDetectionDetails(this.errorDetails, detail);
       } catch (problem) { error.textContent = problem.message || 'Could not add the harnesses'; add.disabled = false; await this.loadHarnesses(); }
     };
     return panel;
@@ -379,15 +410,21 @@ export class HarnessSettings {
       draft.forEach((model, index) => {
         const row = node('div', 'harness-model-row'); row.dataset.slug = model.slug;
         const def = document.createElement('input'); def.type = 'radio'; def.name = `default-${harness.id}`; def.checked = !!model.default;
-        def.setAttribute('aria-label', `Make ${model.label || model.slug} the default`);
-        def.onchange = () => { draft.forEach(item => { item.default = false; }); model.default = true; mark(); };
-        const defLabel = node('label', 'harness-model-default'); defLabel.append(def, document.createTextNode('Default'));
+        def.setAttribute('aria-label', model.default ? `${model.label || model.slug} is the default model` : `Make ${model.label || model.slug} the default`);
+        def.onchange = () => {
+          draft.forEach(item => { item.default = false; }); model.default = true; mark(); draw();
+          [...rows.querySelectorAll('.harness-model-row')].find(item => item.dataset.slug === model.slug)?.querySelector('input[type=radio]')?.focus();
+        };
+        const defLabel = node('label', `harness-model-default${model.default ? ' is-default' : ''}`);
+        defLabel.title = model.default ? 'Default model' : 'Make default';
+        defLabel.append(def, starGlyph(), node('span', 'harness-model-default-text', model.default ? 'Default' : ''));
         const slug = node('code', 'harness-model-slug', model.slug);
         const label = document.createElement('input'); label.type = 'text'; label.value = model.label; label.maxLength = 80; label.name = 'label'; label.setAttribute('aria-label', `Label of ${model.slug}`);
         label.oninput = () => { model.label = label.value; mark(); };
         const note = document.createElement('input'); note.type = 'text'; note.value = model.note || ''; note.maxLength = 280; note.name = 'note'; note.placeholder = 'Note (optional)'; note.setAttribute('aria-label', `Note of ${model.slug}`);
-        note.oninput = () => { model.note = note.value; mark(); };
-        const remove = button('Remove', 'btn btn-danger'); remove.setAttribute('aria-label', `Remove ${model.slug}`);
+        note.title = note.value;
+        note.oninput = () => { model.note = note.value; note.title = note.value; mark(); };
+        const remove = iconButton('trash', `Remove ${model.slug}`, { danger: true, className: 'harness-model-remove' });
         remove.onclick = () => { draft.splice(index, 1); if (model.default && draft.length) draft[0].default = true; mark(); draw(); };
         row.append(defLabel, slug, label, note, remove); rows.append(row);
       });
@@ -417,31 +454,38 @@ export class HarnessSettings {
     // From the harness itself (or, for Claude, the SDK's published list): candidates to tick, nothing saved until Save models. The command
     // runs in the machine's aimebu config folder; when it fails there, the person may name another folder on that machine to retry in.
     // The folder is sent with that one request and never saved.
-    const detect = button('Auto-detect models'); const detectBox = node('div', 'harness-detect-models');
+    const detect = iconButton('refresh', 'Auto-detect models', { className: 'harness-model-detect' }); const detectBox = node('div', 'harness-detect-models');
     const retryRow = node('div', 'harness-detect-retry'); retryRow.hidden = true;
+    const details = detectionDetails();
     const dirLabel = node('label', 'harness-detect-dir', 'Run the command in this folder');
+    if (harness.containerized) dirLabel.append(node('span', 'harness-detect-dir-hint', 'or pick a folder that is mounted in the container'));
     const dirInput = Object.assign(document.createElement('input'), { type: 'text', name: 'detect-dir', autocomplete: 'off', spellcheck: false, placeholder: 'Absolute path on that machine' });
     dirLabel.append(dirInput);
     const retry = iconButton('refresh', 'Retry auto-detect in this folder', { className: 'harness-detect-retry-button' });
     retryRow.append(dirLabel, retry);
-    const failed = message => {
-      error.textContent = message || "Couldn't detect the models. Add the model ID manually.";
+    const failed = problem => {
+      const failure = problem?.summary ? problem : detectionFailure(problem, !!harness.containerized);
+      error.textContent = failure.summary;
+      showDetectionDetails(details, failure.detail);
       if (harness.tool !== 'claude') retryRow.hidden = false;
     };
     const runDetect = async dir => {
-      error.textContent = ''; detect.disabled = retry.disabled = true; detect.textContent = 'Detecting…';
+      error.textContent = ''; showDetectionDetails(details, ''); detect.disabled = retry.disabled = true; detect.title = 'Detecting models…'; detect.setAttribute('aria-label', detect.title);
       try {
         const found = await request(`/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harness.id)}/models/detect`, { method: 'POST', body: dir ? { dir } : {} });
         this.modelFailures?.delete(harness.id); retryRow.hidden = true;
         detectBox.replaceChildren(this.modelCandidates(found, models => {
           let added = 0;
-          for (const model of models) { try { if (addModel(model.slug, model.label, model.note)) added++; } catch { /* a candidate the list would refuse is skipped */ } }
+          for (const model of models) {
+            if (draft.length >= MODELS_MAX) break;
+            try { if (addModel(model.slug, model.label, model.note)) added++; } catch { /* a candidate the list would refuse is skipped */ }
+          }
           if (added) { mark(); draw(); }
-          status.textContent = added ? `${added} added to the list. Save models to keep them.` : 'Nothing new to add.';
+          status.textContent = added ? `${added} added to the list${added < models.length && draft.length >= MODELS_MAX ? ` (limit ${MODELS_MAX})` : ''}. Save models to keep them.` : draft.length >= MODELS_MAX ? `The list is full (limit ${MODELS_MAX}).` : 'Nothing new to add.';
           detectBox.replaceChildren();
         }, () => detectBox.replaceChildren()));
-      } catch (problem) { failed(problem.message); }
-      finally { detect.disabled = retry.disabled = false; detect.textContent = 'Auto-detect models'; }
+      } catch (problem) { failed(problem); }
+      finally { detect.disabled = retry.disabled = false; detect.title = 'Auto-detect models'; detect.setAttribute('aria-label', detect.title); }
     };
     detect.onclick = () => runDetect('');
     retry.onclick = () => {
@@ -462,7 +506,7 @@ export class HarnessSettings {
       } catch (problem) { error.textContent = problem.message || 'Could not save the models'; save.disabled = false; }
     };
     const actions = node('div', 'machine-harness-actions'); actions.append(detect, save);
-    panel.append(node('h4', '', `Models of ${harness.label || harness.name}`), rows, form, actions, retryRow, detectBox, status, error);
+    panel.append(node('h4', '', `Models of ${harness.label || harness.name}`), rows, form, actions, error, retryRow, details, detectBox, status);
     return panel;
   }
 
@@ -470,7 +514,12 @@ export class HarnessSettings {
   modelCandidates(found, onAdd, onClose) {
     const box = node('form', 'machine-harness-form harness-model-candidates');
     const candidates = found.candidates || [];
-    box.append(node('strong', '', `${candidates.length} found${found.source === 'snapshot' ? ' (built-in list: the published source could not be reached)' : ''} — tick the ones to add`));
+    const header = node('div', 'harness-candidate-header');
+    const title = node('strong', '', `${candidates.length} found${found.source === 'snapshot' ? ' (built-in list: the published source could not be reached)' : ''} — tick the ones to add`);
+    const selectControls = node('div', 'harness-candidate-controls');
+    const selectAll = iconButton('select-all', 'Select all available models', { className: 'harness-candidate-select-all' });
+    const selectedCount = node('span', 'harness-candidate-count');
+    selectControls.append(selectedCount, selectAll); header.append(title, selectControls); box.append(header);
     const list = node('div', 'harness-candidate-list');
     const boxes = [];
     for (const candidate of candidates) {
@@ -480,6 +529,18 @@ export class HarnessSettings {
       row.append(check, node('span', '', `${candidate.label} · ${candidate.slug}${candidate.note ? ` · ${candidate.note}` : ''}${candidate.already_listed ? ' · already listed' : ''}`));
       list.append(row); boxes.push([check, candidate]);
     }
+    const available = boxes.filter(([check]) => !check.disabled);
+    const updateSelection = () => {
+      const selected = available.filter(([check]) => check.checked).length;
+      selectedCount.textContent = `${selected}/${available.length} selected`;
+      selectAll.setAttribute('aria-pressed', selected === available.length && available.length ? 'true' : selected ? 'mixed' : 'false');
+      selectAll.title = selected === available.length && available.length ? 'Clear selection' : 'Select all available models';
+      selectAll.setAttribute('aria-label', selectAll.title);
+      selectAll.disabled = available.length === 0;
+    };
+    selectAll.onclick = () => { const checkAll = available.some(([check]) => !check.checked); for (const [check] of available) check.checked = checkAll; updateSelection(); };
+    for (const [check] of available) check.onchange = updateSelection;
+    updateSelection();
     const actions = node('div', 'machine-harness-actions'); const add = button('Add selected', 'btn btn-primary', 'submit'); const close = button('Close');
     actions.append(add, close); box.append(list, actions);
     close.onclick = onClose;

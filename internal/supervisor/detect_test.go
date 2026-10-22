@@ -29,6 +29,18 @@ func TestParsePiModels(t *testing.T) {
 	if _, err := parsePiModels([]byte("provider model context\n")); err == nil {
 		t.Error("a header only is not a model list")
 	}
+	for _, out := range []string{
+		"No models available. Use /login to authenticate.\n",
+		"provider model context max-out thinking images\nNo models available. Use /login to authenticate.\n",
+		"models - No/models - context available., max output Use, thinking /login, images to\n",
+	} {
+		if got, err := parsePiModels([]byte(out)); len(got) != 0 || err == nil || !strings.Contains(err.Error(), "pi reports no models — is it logged in? Run /login in it") {
+			t.Errorf("Pi login/help output %q: %+v %v", out, got, err)
+		}
+	}
+	if got, err := parsePiModels([]byte("Use /login to authenticate.\ngithub-copilot claude-haiku-5.5 1M 128K yes yes\n")); err != nil || len(got) != 1 {
+		t.Errorf("valid Pi row after prose: %+v %v", got, err)
+	}
 }
 
 func TestParseOpencodeModels(t *testing.T) {
@@ -39,6 +51,29 @@ func TestParseOpencodeModels(t *testing.T) {
 	}
 	if _, err := parseOpencodeModels([]byte("")); err == nil {
 		t.Error("nothing listed is an error")
+	}
+	if got, err := parseOpencodeModels([]byte("No models available. Use /login to authenticate.\nUse/login\n")); len(got) != 0 || err == nil || !strings.Contains(err.Error(), "opencode reports no models") {
+		t.Errorf("OpenCode login/help output: %+v %v", got, err)
+	}
+	if got, err := parseOpencodeModels([]byte("opencode/big-pickle\nNo models available for another account\n")); err != nil || len(got) != 1 || got[0].Slug != "opencode/big-pickle" {
+		t.Errorf("a valid listing survives unrelated status prose: %+v %v", got, err)
+	}
+}
+
+func TestReportsNoModelsKeepsDiagnosticLineBoundaries(t *testing.T) {
+	for _, output := range []string{
+		"Error: not logged in\n",
+		"first diagnostic\nPlease run /login\nlast diagnostic\n",
+		"\x1b[31mWarning: no models found\x1b[0m\n",
+	} {
+		if !reportsNoModels(output) {
+			t.Errorf("missed login diagnostic %q", output)
+		}
+	}
+	for _, output := range []string{"opencode/big-pickle\n", "Use/login\n", "first diagnostic not logged in\n"} {
+		if reportsNoModels(output) {
+			t.Errorf("mistook model or unrelated prose for login diagnostic %q", output)
+		}
 	}
 }
 
@@ -59,6 +94,17 @@ func TestParseCodexModelsKeepsOnlyListedOnes(t *testing.T) {
 	}
 	if _, err := parseCodexModels([]byte("not json")); err == nil {
 		t.Error("invalid JSON is an error")
+	}
+	if got, err := parseCodexModels([]byte(`{"models":[{"slug":"bad slug","visibility":"list"}]}`)); len(got) != 0 || err == nil || !strings.Contains(err.Error(), "codex reports no models") {
+		t.Errorf("invalid Codex slug: %+v %v", got, err)
+	}
+	if got, err := parseCodexModels([]byte("No models available. Use /login to authenticate.\n")); len(got) != 0 || err == nil || !strings.Contains(err.Error(), "codex reports no models") {
+		t.Errorf("Codex login/help output: %+v %v", got, err)
+	}
+	for _, out := range []string{"Error: not logged in\n", "Please run /login\n"} {
+		if got, err := parseCodexModels([]byte(out)); len(got) != 0 || err == nil || !strings.Contains(err.Error(), "codex reports no models") {
+			t.Errorf("Codex prefixed login output %q: %+v %v", out, got, err)
+		}
 	}
 }
 
@@ -126,6 +172,19 @@ func TestDetectModelsRunsTheHarnessAndRefusesWhatItCannotDo(t *testing.T) {
 	failing := writeScript(t, dir, "pi", `exit 3`)
 	if _, err := detectModels(t.Context(), "pi", failing, nil, ""); err == nil {
 		t.Error("a failing command is an error")
+	}
+	login := writeScript(t, dir, "pi-login", `printf 'No models available. Use /login to authenticate.\n'`)
+	if _, err := detectModels(t.Context(), "pi", login, nil, ""); err == nil || !strings.Contains(err.Error(), "pi reports no models — is it logged in? Run /login in it") {
+		t.Errorf("Pi login prompt: %v", err)
+	}
+	for name, output := range map[string]string{
+		"prefixed": "first diagnostic\\nError: not logged in\\nlast diagnostic\\n",
+		"request":  "Please run /login\\n",
+	} {
+		command := writeScript(t, dir, "pi-"+name, "printf '"+output+"' >&2; exit 3")
+		if _, err := detectModels(t.Context(), "pi", command, nil, ""); err == nil || !strings.Contains(err.Error(), "pi reports no models — is it logged in? Run /login in it") {
+			t.Errorf("Pi %s stderr login prompt: %v", name, err)
+		}
 	}
 	if _, err := detectModels(t.Context(), "claude", opencode, nil, ""); err == nil {
 		t.Error("claude has no listing command")
@@ -270,7 +329,7 @@ echo '{"models":[{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility"
 	if _, err := os.Stat(ranIn()); !os.IsNotExist(err) {
 		t.Fatalf("the second run folder was not removed: %v", err)
 	}
-	if answer := ask(""); answer.Code != "detect_failed" || !strings.Contains(answer.Message, ranIn()) {
+	if answer := ask(""); answer.Code != "detect_failed" || answer.DetectDir != detectDir || !strings.Contains(answer.Message, ranIn()) {
 		t.Errorf("a failed command must report its temporary working directory: %+v", answer)
 	}
 	if _, err := os.Stat(ranIn()); !os.IsNotExist(err) {

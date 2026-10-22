@@ -68,6 +68,7 @@ type Frame struct {
 	Detect               *DetectRequest       `json:"detect,omitempty"`
 	HarnessCandidates    []HarnessCandidate   `json:"harness_candidates,omitempty"`
 	ModelCandidates      []ModelCandidate     `json:"model_candidates,omitempty"`
+	DetectDir            string               `json:"detect_dir,omitempty"`
 	Agents               []HelloAgent         `json:"agents,omitempty"`
 	Desired              []DesiredAgent       `json:"desired,omitempty"`
 	Redeliver            []Delivery           `json:"redeliver,omitempty"`

@@ -399,17 +399,28 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .harness-models h4 { margin: 0; font-size: 13px; }
 .harness-model-rows { display: grid; gap: 8px; }
 .harness-model-row { display: grid; grid-template-columns: auto minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px; align-items: center; }
-.harness-model-default { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
-.harness-model-default input { accent-color: var(--accent); }
+.harness-model-default { display: flex; align-items: center; gap: 5px; min-width: 98px; font-size: 11px; color: var(--text-secondary); white-space: nowrap; cursor: pointer; }
+.harness-model-default input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.harness-model-default.is-default { color: var(--accent); font-weight: 600; }
+.harness-model-star { width: 16px; height: 16px; flex: none; fill: none; }
+.harness-model-default.is-default .harness-model-star { fill: var(--accent); }
 .harness-model-slug { overflow-wrap: anywhere; font-size: 11px; color: var(--text-secondary); }
 .harness-model-row input[type=text], .harness-model-add input[type=text] { min-width: 0; width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: inherit; }
 .harness-model-add { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px; align-items: center; }
 .harness-detect-row { padding: 3px 0; }
+.harness-candidate-header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.harness-candidate-controls { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+.harness-candidate-count { font-size: 12px; color: var(--text-secondary); }
 .harness-candidate-list { display: grid; gap: 2px; max-height: 260px; overflow: auto; }
 .harness-models .error:empty { display: none; }
+.harness-detect-details { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.harness-detect-details[hidden] { display: none; }
+.harness-detect-details summary { width: fit-content; cursor: pointer; }
+.harness-detect-details p { margin: 5px 0 0; white-space: pre-wrap; }
 .harness-detect-retry { display: flex; gap: 8px; align-items: flex-end; }
 .harness-detect-retry[hidden] { display: none; }
 .harness-detect-dir { display: grid; flex: 1; gap: 4px; min-width: 0; font-size: 11px; color: var(--text-secondary); }
+.harness-detect-dir-hint { color: var(--text-muted); }
 .harness-detect-dir input { min-width: 0; width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: inherit; font-size: 12px; }
 @media (max-width: 700px) {
   .harness-model-row, .harness-model-add { grid-template-columns: minmax(0, 1fr); }
@@ -1969,6 +1980,8 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
    web/vendor/README.md), drawn through a mask in the current colour like the navbar glyphs. */
 .icon-mask-close { -webkit-mask-image: url("/icons/close.svg"); mask-image: url("/icons/close.svg"); }
 .icon-mask-trash { -webkit-mask-image: url("/icons/trash.svg"); mask-image: url("/icons/trash.svg"); }
+.icon-mask-pencil { -webkit-mask-image: url("/icons/pencil.svg"); mask-image: url("/icons/pencil.svg"); }
+.icon-mask-select-all { -webkit-mask-image: url("/icons/select-all.svg"); mask-image: url("/icons/select-all.svg"); }
 .icon-mask-plus { -webkit-mask-image: url("/icons/plus.svg"); mask-image: url("/icons/plus.svg"); }
 .icon-mask-person-plus { -webkit-mask-image: url("/icons/person-plus.svg"); mask-image: url("/icons/person-plus.svg"); }
 .icon-mask-eye { -webkit-mask-image: url("/icons/eye.svg"); mask-image: url("/icons/eye.svg"); }

@@ -22,6 +22,7 @@ export async function request(path, options = {}) {
     const error = new Error(problem.message || `Request failed (${response.status})`);
     error.status = response.status;
     error.code = problem.error;
+    error.detectDir = problem.detect_dir;
     error.retryAfter = problem.retry_after_sec;
     throw error;
   }

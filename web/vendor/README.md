@@ -44,6 +44,12 @@ Vendored frontend dependency:
   repository's icon format (the download's XML declaration, header comment and fixed 800 px size removed, the black strokes changed
   to `currentColor`), and it is drawn through a CSS mask like the other glyphs.
 
+- `web/icons/pencil.svg` is a project-drawn outline glyph for editing a harness. It uses `currentColor` through the same CSS mask.
+
+- `web/icons/star.svg` and `web/icons/select-all.svg` are the owner's SVG Repo assets (MIT). Their catalogue headers, fixed sizes,
+  fixed colours and unused wrappers were removed. The star keeps its outline path for CSS fill on the selected model; select-all is
+  drawn through a `currentColor` mask.
+
 - The close, plus, person-plus, eye, stop, pause, play, arrow-down, arrow-up, arrow-up-down (sort), external-link, switch (arrow-left-right), copy, check,
   reopen (rotate-ccw), more (ellipsis), chevron-right and message (message-square) glyphs in `web/icons/` are Lucide icons
   (ISC licence, Copyright (c) 2026 Lucide Icons and Contributors; the licence text is `web/icons/LICENSE-lucide.txt`), release
