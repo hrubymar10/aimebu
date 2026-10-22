@@ -29,7 +29,8 @@ import { MessageDebug } from './message-debug.js';
 import { initMobileTabs } from './mobile-tabs.js';
 import { initUIVariants } from './ui-variant.js';
 import { copyText } from './markdown.js';
-import { ImportV1Wizard, AFTER_IMPORT_KEY } from './import-v1.js';
+import { ImportV1Wizard } from './import-v1.js';
+import { offerHarnessSetup, anyHarnessConfigured, HARNESS_SKIP_PREFERENCE } from './harness-offer.js';
 import { DiskUsage } from './disk-usage.js';
 
 
@@ -239,7 +240,20 @@ async function anyHarnessReady() {
   }
   return false;
 }
-const onboarding = new Onboarding({ create: createFirstProject, spawn: () => agents.openSpawn(), harnessReady: anyHarnessReady, canSetUp: () => rights.admin });
+// Skipping the harness step is a preference of the account, so it holds on every browser until a harness exists. `harnessSkipStored` is what
+// the server holds for whoever is signed in. `generation` is the session a decision was made in: after a sign-out or another person signing in,
+// the answer no longer belongs to the account now signed in, so nothing is sent (as a queued preference save is dropped).
+let harnessSkipStored = false;
+const setHarnessSkipped = async (skipped, generation = sessionGeneration) => {
+  if (generation !== sessionGeneration) return;
+  const before = harnessSkipStored; harnessSkipStored = skipped;
+  try { await request('/api/me/preferences', { method: 'PUT', body: { preferences: { [HARNESS_SKIP_PREFERENCE]: skipped ? '1' : '0' } } }); } catch (error) { if (generation === sessionGeneration) harnessSkipStored = before; throw error; }
+};
+// Onboarding or Settings sees a harness that can start an agent: a skip from earlier no longer applies, so it is reset now rather than at the
+// next sign-in (a later removal of every harness then offers the step again).
+const harnessSeen = () => { if (harnessSkipStored) void setHarnessSkipped(false).catch(() => {}); };
+settings.harnessSettings.onReady = harnessSeen;
+const onboarding = new Onboarding({ create: createFirstProject, spawn: () => agents.openSpawn(), harnessReady: anyHarnessReady, canSetUp: () => rights.admin, onSkip: () => setHarnessSkipped(true), onReady: harnessSeen });
 // Skipping or postponing the v1 import closes its dialog; with no project yet the onboarding takes its place.
 importWizard.dialog.addEventListener('close', () => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
 const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'));
@@ -341,7 +355,7 @@ async function signedIn(session) {
   const startupAbort = new AbortController();
   const startupActive = () => active() && !startupExpired && !startupAbort.signal.aborted;
   startupController = startupAbort;
-  setSession(session); void retention.load(); await loadPreferences(session.id || session.user_id); settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); document.title = 'aimebu'; loginView.hidden = true;
+  setSession(session); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); document.title = 'aimebu'; loginView.hidden = true;
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
   if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
   setStartupState('loading'); appView.hidden = false;
@@ -425,17 +439,17 @@ async function signedIn(session) {
     if (!startupActive()) return;
     refreshEmptyState();
     // The last step of the first run: with no project yet (nothing imported, or the import skipped) the owner makes the first one.
-    // After a v1 import (it reloads the page) the owner may have no harness yet: v1's tools are not carried over, and nothing can be
-    // spawned without one. Asked once, on the first load after the import: the flag is spent whatever this load finds.
-    const afterImport = !!localStorage.getItem(AFTER_IMPORT_KEY);
-    if (afterImport) localStorage.removeItem(AFTER_IMPORT_KEY);
     if (!importWizard.dialog.open && sidebar.projects.size === 0) onboarding.show();
     if (pendingInvite && !inviteDialog.open) inviteDialog.showModal();
     startupSucceeded = true;
-    // Outside the startup deadline: a slow supervisor must not turn a loaded workspace into a timeout, so this runs once it is ready.
-    if (afterImport && rights.admin && !importWizard.dialog.open && !onboarding.open && sidebar.projects.size > 0) {
-      void anyHarnessReady().catch(() => true).then(ready => { if (!ready && active() && !onboarding.open) return onboarding.showHarnesses('harness-only'); })
-        .catch(error => { if (active()) console.error('harness setup:', error); });
+    // An owner or admin with no harness that has a model is offered the Harnesses step (after a v1 import, which carries no harness over; on
+    // a first sign-in from another browser; when every harness was removed): nothing can be spawned without one. The answer comes from the
+    // server, and so does a skip. Outside the startup deadline: a slow supervisor must not turn a loaded workspace into a timeout.
+    if (!importWizard.dialog.open && !onboarding.open && sidebar.projects.size > 0) {
+      void offerHarnessSetup({
+        user: currentUser, canSetUp: rights.admin, skipped: harnessSkipStored, configured: () => anyHarnessConfigured(request),
+        show: async () => { if (active() && !onboarding.open) await onboarding.showHarnesses('harness-only'); }, setSkipped: value => setHarnessSkipped(value, generation),
+      }).catch(error => { if (active()) console.error('harness setup:', error); });
     }
   } catch (error) {
     if (!active()) return;

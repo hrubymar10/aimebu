@@ -81,3 +81,29 @@ func TestTheManualProjectOrderMayBeLongerThanOtherPreferences(t *testing.T) {
 		}
 	}
 }
+
+// Skipping the offer to set up a harness is the account's choice, kept on the server: it is stored, changed back to 0 once a harness
+// exists, read back on the next sign-in, and never seen by another person.
+func TestHarnessSetupSkipIsAPerAccountPreference(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	cookie, csrf := registerSecondUser(t, f, "second")
+	for _, value := range []string{"1", "0"} {
+		resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"harness_setup_skipped": value}}, true)
+		if resp.StatusCode != 200 {
+			t.Fatalf("store %q: %d", value, resp.StatusCode)
+		}
+		if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["harness_setup_skipped"] != value {
+			t.Fatalf("stored %q, read back %v", value, got)
+		}
+	}
+	f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"harness_setup_skipped": "1"}}, true).Body.Close()
+	resp := f.request("GET", "/api/me/preferences", nil, false)
+	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["harness_setup_skipped"] != "1" {
+		t.Fatalf("the skip is not there on the next read: %v", got)
+	}
+	other := f.requestAs(t, cookie, csrf, "GET", "/api/me/preferences", nil)
+	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["harness_setup_skipped"] != "" {
+		t.Fatalf("the skip leaked to another person: %v", got)
+	}
+}

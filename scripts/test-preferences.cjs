@@ -27,6 +27,9 @@ const { loadPreferences, savePreference, PREFERENCE_KEYS, PREFERENCE_LIMITS, set
   await savePreference('sidebar_sort', 'name', { send });
   assert.equal(sent.length, 0, 'no save before sign-in');
   await loadPreferences('user1', { send: async () => ({ preferences: {} }), storage: { getItem: () => null, setItem() {} } });
+  // What the server holds is answered too, for the preferences that have no browser cache (the offer to set up a harness is decided at sign-in).
+  assert.deepEqual(JSON.parse(JSON.stringify(await loadPreferences('user1', { send: async () => ({ preferences: { harness_setup_skipped: '1', theme: 'dark' } }), storage: { getItem: () => null, setItem() {} } }))), { harness_setup_skipped: '1', theme: 'dark' });
+  assert.deepEqual(JSON.parse(JSON.stringify(await loadPreferences('user1', { send: async () => { throw new Error('offline'); }, storage: { getItem: () => null, setItem() {} } }))), {}, 'an unreadable server answers nothing stored');
   await savePreference('nonsense', 'x', { send });
   assert.equal(sent.length, 0, 'an unknown name is not sent');
 

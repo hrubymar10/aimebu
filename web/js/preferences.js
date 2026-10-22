@@ -22,11 +22,12 @@ const limitOf = name => PREFERENCE_LIMITS[name] || 256;
 let user = '';
 
 // Called once after sign-in: server values replace the cache; values only the cache has (set before this feature, or offline) are
-// uploaded, so an existing browser's choices are not lost.
+// uploaded, so an existing browser's choices are not lost. Answers what the server holds (an empty object when it could not be read), for
+// the preferences that have no browser cache because they only matter at sign-in.
 export async function loadPreferences(userID, { send = request, storage = localStorage } = {}) {
   user = userID;
   let stored;
-  try { stored = (await send('/api/me/preferences')).preferences || {}; } catch { return; }
+  try { stored = (await send('/api/me/preferences')).preferences || {}; } catch { return {}; }
   const upload = {};
   for (const [name, keyOf] of Object.entries(PREFERENCE_KEYS)) {
     const key = keyOf(userID);
@@ -36,6 +37,7 @@ export async function loadPreferences(userID, { send = request, storage = localS
     } catch { /* private browsing: the server copy still applies on the next load */ }
   }
   if (Object.keys(upload).length) { try { await send('/api/me/preferences', { method: 'PUT', body: { preferences: upload } }); } catch { /* retried on the next sign-in */ } }
+  return stored;
 }
 
 // Stores one preference on the server; the caller has already written its own cache. Failures are silent: the next change or sign-in retries.

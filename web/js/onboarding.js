@@ -18,11 +18,12 @@ export class Onboarding {
   // create(project) makes the project (and returns its general room, already selected); spawn() opens the Spawn dialog in it;
   // harnessReady() answers whether a harness with a model can start an agent right now (true when it cannot be told). canSetUp says
   // whether this person may add harnesses (an owner or an admin): only they get the Harnesses step, anyone else is told to ask one.
-  constructor({ create, spawn, harnessReady = async () => true, canSetUp = () => true, send = request, root = document.querySelector('#onboarding-view'), pollMs = 2000 }) {
-    this.create = create; this.spawn = spawn; this.harnessReady = harnessReady; this.canSetUp = canSetUp; this.send = send; this.root = root; this.pollMs = pollMs;
+  constructor({ create, spawn, harnessReady = async () => true, canSetUp = () => true, onSkip = () => {}, onReady = () => {}, send = request, root = document.querySelector('#onboarding-view'), pollMs = 2000 }) {
+    this.create = create; this.spawn = spawn; this.onSkip = onSkip; this.onReady = onReady; this.harnessReady = harnessReady; this.canSetUp = canSetUp; this.send = send; this.root = root; this.pollMs = pollMs;
     this.form = root.querySelector('#onboarding-form'); this.error = root.querySelector('#onboarding-error');
     this.steps = { project: root.querySelector('[data-step="project"]'), harnesses: root.querySelector('[data-step="harnesses"]'), how: root.querySelector('[data-step="how"]') };
     this.harnesses = new HarnessSettings(null, { embedded: true, host: root.querySelector('#onboarding-harnesses-host') });
+    this.harnesses.onReady = () => this.onReady();
     this.harnessStatus = root.querySelector('#onboarding-harness-status'); this.harnessContinue = root.querySelector('#onboarding-harnesses-continue');
     // 'first': the step after creating the first project (Spawn follows). 'harness-only': opened on its own, for an import that left no
     // harness: there is no new room to spawn into, so both buttons just close it.
@@ -65,10 +66,13 @@ export class Onboarding {
     let ready = false; try { ready = await this.harnessReady(); } catch { ready = false; }
     if (this.steps.harnesses.hidden) return;
     this.harnessContinue.disabled = !ready;
+    if (ready) this.onReady();
     this.harnessStatus.textContent = ready ? 'A harness with a model is ready.' : 'No harness with a model yet.';
   }
   async leaveHarnesses(ready) {
     this.stopWatching(); this.harnesses.clear();
+    // Skipping the step is remembered by the app (on the person's account), so it is not offered again until a harness exists.
+    if (!ready) { try { await this.onSkip(this.mode); } catch { /* the offer may come back on the next sign-in */ } }
     if (this.mode === 'harness-only') { this.close(); return; }
     this.showStep('how'); await this.offerSpawn(ready);
   }

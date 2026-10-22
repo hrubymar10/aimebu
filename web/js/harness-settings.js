@@ -1,3 +1,4 @@
+import { launcherReady } from './harness-offer.js';
 import { request } from './api.js';
 import { settingsRow, settingsGroup } from './settings-row.js';
 import { confirmDialog } from './dialogs.js';
@@ -70,6 +71,9 @@ export class HarnessSettings {
   constructor(dialog, { embedded = false, host = null } = {}) {
     const prefix = this.prefix = embedded ? 'onboarding-' : '';
     this.embedded = embedded;
+    // Called whenever the list this component shows has a harness that can start an agent (enabled, with a model): the app then forgets that the
+    // person skipped setting one up.
+    this.onReady = null;
     this.tab = button('Harnesses', 'row-btn'); this.tab.id = 'settings-harnesses-tab';
     if (!embedded) dialog.querySelector('nav').append(this.tab);
     this.section = node('section', 'settings-content'); this.section.id = `${prefix}settings-harnesses`; this.section.hidden = !embedded;
@@ -163,12 +167,15 @@ export class HarnessSettings {
         launcher_path: row.resolved_command, version: row.version, available: row.available,
         unavailable_reason: row.unavailable_reason, active_agents: row.active_agents || 0, models: row.models || [] }));
       this.list.replaceChildren(...this.rows.map(harness => this.harnessCard(machineID, harness)));
+      this.noteReady();
       if (!this.rows.length) this.list.append(node('p', 'settings-intro', 'No harnesses on this machine yet. Add one, or auto-detect what is installed.'));
       this.renderActivity(response?.activity || []);
     } catch (error) {
       if (sequence === this.sequence) this.error.textContent = error.message || 'Could not load harnesses';
     }
   }
+
+  noteReady() { if (this.rows?.some(row => launcherReady(row.enabled, row.models))) this.onReady?.(); }
 
   // Re-reads the machine's launchers and the activity list, and refreshes one card's summary from them without touching its form.
   async refreshCard(machineID, harness, summary, setStatus) {
@@ -184,6 +191,7 @@ export class HarnessSettings {
       if (harness.unavailable_reason) { if (!reason) { reason = node('span', 'settings-desc machine-harness-reason'); summary.version.after(reason); } reason.textContent = harness.unavailable_reason; } else reason?.remove();
     }
     this.renderActivity(response?.activity || []);
+    this.noteReady(); // the Enabled switch lands here: turning a harness on can make one ready
   }
 
   // A harness is one summary row: its label and status, a one-line summary, the Enabled switch, Models and Edit. Everything that rarely

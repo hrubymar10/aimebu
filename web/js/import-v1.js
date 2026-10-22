@@ -72,8 +72,6 @@ const NEW_ACCOUNT = '__new_account__';
 
 function draftKey(sourceKey) { return `aimebu2.import-draft.${sourceKey}`; }
 
-// Set when an import finishes, read once by the next page load: with no harness yet the owner is taken to set one up.
-export const AFTER_IMPORT_KEY = 'aimebu2.import.check-harness';
 export class ImportV1Wizard {
   constructor(currentSession = () => () => true) {
     this.currentSession = currentSession;
@@ -855,7 +853,7 @@ export class ImportV1Wizard {
         this.renderInvites(job);
         if (job.report) { this.renderReportCounts(job.report); this.renderSkippedMemory(job.report); this.content.append(...(job.report.carried_over_files?.length ? [node('h3', 'Files kept for v2'), ...job.report.carried_over_files.map(path => node('p', path))] : [])); }
         else this.content.append(node('p', 'Import completed. Refresh to see the imported rooms.'));
-        this.actions.append(this.button('Close and refresh', () => { try { localStorage.setItem(AFTER_IMPORT_KEY, '1'); } catch { /* the check after an import is only a convenience */ } location.reload(); }));
+        this.actions.append(this.button('Close and refresh', () => location.reload()));
         return;
       }
       if (job.phase === 'error') { this.status.textContent = 'Import paused'; this.actions.append(this.button('Review choices', () => { this.phase = 'review'; this.render(); })); return; }

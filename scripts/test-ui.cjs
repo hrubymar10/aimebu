@@ -199,6 +199,22 @@ async function main() {
       assert.ok(state.logo.height > 100 && state.logo.top >= state.view.top && state.logo.bottom <= state.view.top + state.view.height / 2 + 1, `${label}: the logo is full size within the top half: ${JSON.stringify(state)}`);
       assert.deepEqual([state.stage, state.text, state.focused, state.logoOpacity, state.versionOpacity, state.buttonOpacity, state.inert], ['done', 'aimebu v2', 'welcome-continue', '1', '1', '1', false], `${label}: the finished welcome is the logo, "aimebu v2" and a focused Continue`);
     };
+    // The owner of the main server has skipped the offer to set up a harness before anything else: the smoke sets one up itself, later, through
+    // the UI, and the offer would otherwise cover the page of every flow that signs in while there is none. The offer has its own checks (the
+    // first-run section). The skip is the account's, a preference on the server, so every page of this owner starts as if it was dealt with.
+    const skipHarnessOffer = async (base, loginName = 'owner', password = 'test-password-123') => {
+      const context = await browser.createBrowserContext(); const page = await context.newPage();
+      try {
+        await page.goto(base);
+        assert.deepEqual(await page.evaluate(async (login, secret) => {
+          const signedIn = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password: secret }) });
+          const { csrf_token } = await signedIn.json();
+          const saved = await fetch('/api/me/preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ preferences: { harness_setup_skipped: '1' } }) });
+          return [signedIn.status, saved.status];
+        }, loginName, password), [200, 200], 'the owner could not skip the harness offer');
+      } finally { await context.close(); }
+    };
+    await skipHarnessOffer(origin);
     {
       await first.goto(origin);
       await first.locator('#login-form [name=login]').fill('owner'); await first.locator('#login-form [name=password]').fill('test-password-123'); await first.locator('#login-form button').click();
@@ -701,11 +717,16 @@ async function main() {
       await domClick(first, '#harnesses-list .harness-model-add button[type=submit]');
       assert.ok((await first.$eval('#harnesses-list .harness-models .error', el => el.textContent)).includes('not a valid model id'));
       await first.locator('#harnesses-list .harness-model-add [name=slug]').fill('');
+      // Settings now lists a harness that can start an agent (enabled, with a model): the skip this owner started with is forgotten on the
+      // server at once, not at the next sign-in.
+      await first.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.harness_setup_skipped === '0', { timeout: 20000 });
       // Remove the harness again so later steps start clean.
       await domClick(first, '#harnesses-list .machine-harness .machine-harness-edit');
       assert.deepEqual(await first.$eval('#harnesses-list .machine-harness-remove', button => [button.title, button.getAttribute('aria-label'), !!button.querySelector('.icon-mask-trash')]), ['Remove Codex', 'Remove Codex', true], 'the harness remove action is a trash icon');
       await domClick(first, '#harnesses-list .machine-harness-remove');
       await first.waitForFunction(() => !document.querySelector('#harnesses-list .machine-harness'));
+      // With no harness again, a new sign-in would be offered the Harnesses step: the owner skips it again, as the pages that follow expect.
+      await skipHarnessOffer(origin);
     }
     await domClick(first, '#settings-close');
     // The import wizard is a stepper: one page per category, a progress bar, Back and Next, the draft kept across a reload, and a
@@ -2776,15 +2797,22 @@ async function main() {
             const opening = early.showHarnesses('first'); early.close(); await opening;
             await new Promise(resolve => setTimeout(resolve, 150));
             const lateWatch = early.watch;
-            const step = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => true, pollMs: 50 });
+            let readyCalls = 0;
+            const step = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => true, onReady: () => { readyCalls++; }, pollMs: 50 });
             await step.showHarnesses('first');
             await new Promise(resolve => setTimeout(resolve, 200));
             const enabled = !document.querySelector('#onboarding-harnesses-continue').disabled;
             document.querySelector('#onboarding-harnesses-continue').click();
             await new Promise(resolve => setTimeout(resolve, 200));
-            return { lateWatch, enabled, spawn: document.querySelector('#onboarding-spawn').hidden, setup: document.querySelector('#onboarding-setup-harness').hidden, note: document.querySelector('#onboarding-harness-note').hidden };
+            return { lateWatch, enabled, ready: readyCalls > 0, spawn: document.querySelector('#onboarding-spawn').hidden, setup: document.querySelector('#onboarding-setup-harness').hidden, note: document.querySelector('#onboarding-harness-note').hidden };
           });
-          assert.deepEqual(withHarness, { lateWatch: null, enabled: true, spawn: false, setup: true, note: true }, 'with a harness the onboarding continues to Spawn');
+          assert.deepEqual(withHarness, { lateWatch: null, enabled: true, ready: true, spawn: false, setup: true, note: true }, 'with a harness the onboarding continues to Spawn, and tells the app one is ready (a skip from earlier is then forgotten)');
+          // The Harnesses list tells the app the same, but only for a harness that can start an agent: enabled, with a model.
+          assert.deepEqual(await setupPage.evaluate(async () => {
+            const { HarnessSettings } = await import('/js/harness-settings.js');
+            const answers = rows => { const list = Object.create(HarnessSettings.prototype); let calls = 0; list.rows = rows; list.onReady = () => { calls++; }; list.noteReady(); return calls; };
+            return [answers([{ enabled: true, models: [{ slug: 'm' }] }]), answers([{ enabled: false, models: [{ slug: 'm' }] }]), answers([{ enabled: true, models: [] }]), answers([])];
+          }), [1, 0, 0, 0], 'a harness that is enabled and has a model is ready; a disabled one, or one with no model, is not');
           await setupPage.click('#onboarding-done');
           assert.equal(await setupPage.evaluate(() => document.querySelector('#onboarding-view').hidden), true, 'Not now closes the onboarding');
           assert.equal(new URL(setupPage.url()).pathname, '/', 'the setup address stays in the address bar after setup');
@@ -2793,18 +2821,54 @@ async function main() {
           assert.deepEqual(await (await fetch(`${setupOrigin}/api/setup/status`)).json(), { open: false }, 'the token path is not offered once an owner exists');
           await setupPage.reload(); await setupPage.waitForSelector('#app-view:not([hidden])', { timeout: APP_READY_TIMEOUT });
           assert.equal(await setupPage.$('#welcome-view'), null, 'the welcome came back after the setup marked it seen');
-          // After a v1 import that left no harness: the wizard's "Close and refresh" marks the next load, and that load opens the Harnesses step on
-          // its own (the project already exists, so there is nothing to spawn into: both its buttons just close it). The mark is used once.
-          await setupPage.evaluate(() => localStorage.setItem('aimebu2.import.check-harness', '1'));
-          await setupPage.reload(); await setupPage.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])', { timeout: APP_READY_TIMEOUT });
-          assert.equal(await setupPage.evaluate(() => localStorage.getItem('aimebu2.import.check-harness')), null, 'the after-import mark is used once');
-          assert.deepEqual(await setupPage.evaluate(() => ({ project: document.querySelector('#onboarding-view [data-step="project"]').hidden, how: document.querySelector('#onboarding-view [data-step="how"]').hidden, continueDisabled: document.querySelector('#onboarding-harnesses-continue').disabled })),
-            { project: true, how: true, continueDisabled: true }, 'after an import only the Harnesses step opens, and cannot continue without a harness');
-          await setupPage.click('#onboarding-harnesses-skip');
-          await setupPage.waitForFunction(() => document.querySelector('#onboarding-view').hidden);
-          assert.equal(await setupPage.evaluate(() => document.querySelector('#onboarding-view [data-step="how"]').hidden), true, 'skipping after an import closes the step; there is no spawn to offer');
-          await setupPage.reload(); await setupPage.waitForSelector('#app-view:not([hidden])', { timeout: APP_READY_TIMEOUT });
-          assert.equal(await setupPage.evaluate(() => document.querySelector('#onboarding-view').hidden), true, 'without the mark a reload does not open the step again');
+          // The offer to set up a harness is decided by the server, not the browser. Skipping the step in the first run (above) is kept on the account,
+          // so a reload and a brand new browser are not asked again while there is no harness.
+          const skippedOnServer = () => setupPage.evaluate(async () => (await (await fetch('/api/me/preferences')).json()).preferences.harness_setup_skipped);
+          assert.equal(await skippedOnServer(), '1', 'skipping the harness step is kept on the account');
+          const settle = page => new Promise(resolve => setTimeout(resolve, 2500)); // the offer is decided a moment after the app is ready
+          const hiddenOnboarding = page => page.$eval('#onboarding-view', view => view.hidden);
+          const freshSignIn = async () => {
+            const context = await browser.createBrowserContext(); const page = await context.newPage();
+            await page.goto(setupOrigin);
+            await page.locator('#login-form [name=login]').fill('Boss'); await page.locator('#login-form [name=password]').fill('a-long-enough-password'); await page.locator('#login-form button').click();
+            await page.waitForSelector('#app-view:not([hidden]):not([aria-busy])', { timeout: APP_READY_TIMEOUT });
+            return { context, page };
+          };
+          await settle(); assert.equal(await hiddenOnboarding(setupPage), true, 'a reload after the skip does not offer the step again');
+          {
+            const { context, page } = await freshSignIn();
+            try { await settle(); assert.equal(await hiddenOnboarding(page), true, 'a new browser is not asked either: the account skipped it'); } finally { await context.close(); }
+          }
+          // Reset the skip (an account that was never asked, as after an import) and sign in from a new browser: the Harnesses step is offered on its
+          // own (the project exists, so there is nothing to spawn into), and cannot continue without a harness.
+          const setSkip = value => setupPage.evaluate(async skip => { const { csrf_token } = await (await fetch('/api/me')).json(); await fetch('/api/me/preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ preferences: { harness_setup_skipped: skip } }) }); }, value);
+          await setSkip('0');
+          {
+            const { context, page } = await freshSignIn();
+            try {
+              await page.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])', { timeout: APP_READY_TIMEOUT });
+              assert.deepEqual(await page.evaluate(() => ({ project: document.querySelector('#onboarding-view [data-step="project"]').hidden, how: document.querySelector('#onboarding-view [data-step="how"]').hidden, continueDisabled: document.querySelector('#onboarding-harnesses-continue').disabled })),
+                { project: true, how: true, continueDisabled: true }, 'only the Harnesses step opens, and cannot continue without a harness');
+              // Closing it without choosing is not a skip: nothing is stored, and this browser session is not asked again on a reload.
+              await page.$eval('#onboarding-view', view => { view.hidden = true; });
+              await page.reload(); await page.waitForSelector('#app-view:not([hidden]):not([aria-busy])', { timeout: APP_READY_TIMEOUT }); await settle();
+              assert.equal(await hiddenOnboarding(page), true, 'a reload in the same session does not ask again');
+              assert.equal(await skippedOnServer(), '0', 'closing the step without choosing stores no skip');
+            } finally { await context.close(); }
+          }
+          {
+            // Skip is the choice that is kept: it is stored on the account, and the next new browser is not asked.
+            const { context, page } = await freshSignIn();
+            try {
+              await page.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])', { timeout: APP_READY_TIMEOUT });
+              await page.click('#onboarding-harnesses-skip');
+              await page.waitForFunction(() => document.querySelector('#onboarding-view').hidden);
+              assert.equal(await page.$eval('#onboarding-view [data-step="how"]', step => step.hidden), true, 'skipping an offer made on its own just closes it, there is no spawn to offer');
+              await page.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.harness_setup_skipped === '1');
+            } finally { await context.close(); }
+            const again = await freshSignIn();
+            try { await settle(); assert.equal(await hiddenOnboarding(again.page), true, 'after Skip a new browser is not asked'); } finally { await again.context.close(); }
+          }
           assert.equal(await setupPage.evaluate(() => document.documentElement.dataset.theme), 'red-light', 'the chosen theme did not survive a reload');
           // The theme belongs to the user, not the browser: with this browser's cache gone, a new sign-in still gets it.
           await setupPage.evaluate(() => localStorage.clear()); await setupPage.reload(); await setupPage.waitForSelector('#app-view:not([hidden])', { timeout: APP_READY_TIMEOUT });
