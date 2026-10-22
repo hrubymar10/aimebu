@@ -24,11 +24,11 @@ const Switch = ({ label, checked, onChange }) => html`
   />${label}</label>
 `;
 
-// Edits are a draft apart from the server's data: other cards' refreshes leave it alone, a save clears it only if nothing
-// was typed meanwhile, and a save whose re-read fails keeps the saved values (onSnapshot).
-export function HarnessCard({ machineID, harness, formOpen, modelsOpen, onFormOpen, onModelsOpen, modelFailure, onModelFailure, onReload, onRefresh, onModelsSaved, onSnapshot, onDirty }) {
+// Drafts survive other cards' refreshes; a save clears its draft only if nothing was typed meanwhile.
+export function HarnessCard({ machineID, harness, formOpen, modelsOpen, onFormOpen, onModelsOpen, draft, onDraft, modelFailure, onModelFailure, onReload, onRefresh, onModelsSaved, onSnapshot, onDirty }) {
   const alive = useAlive();
-  const [edits, setEdits] = useState(null);
+  const edits = draft?.form ?? null;
+  const setEdits = update => onDraft('form', update);
   const revision = useRef(0);
   const form = edits || formFromHarness(harness);
   // A function of the latest draft, so two events before the next render both count.
@@ -38,8 +38,7 @@ export function HarnessCard({ machineID, harness, formOpen, modelsOpen, onFormOp
   };
   useDirty(onDirty, `form:${harness.id}`, edits !== null);
   const [error, setError] = useState('');
-  // One write at a time per card (Save, Enabled, Remove), held through the re-read that follows it. The ref closes the gap
-  // before the disabled controls render; a form can still be submitted with its button disabled.
+  // A ref as well as disabled controls: a form can still be submitted with its button disabled.
   const writeLock = useRef(false);
   const [writing, setWriting] = useState(false);
   const lock = () => {
@@ -188,6 +187,8 @@ export function HarnessCard({ machineID, harness, formOpen, modelsOpen, onFormOp
       <${ModelsPanel}
         machineID=${machineID}
         harness=${harness}
+        draft=${draft?.models ?? null}
+        setDraft=${update => onDraft('models', update)}
         hidden=${!modelsOpen}
         failure=${modelFailure}
         onFailure=${onModelFailure}

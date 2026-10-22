@@ -1,55 +1,73 @@
-import { useState, useEffect, useLayoutEffect, useRef } from '../../ui.js';
+import { useEffect, useLayoutEffect, useMemo, useRef, signal, batch } from '../../ui.js';
 import { request } from '../../api.js';
 import { useAlive } from '../../hooks/use-alive.js';
 import { launcherReady } from '../../harness-offer.js';
 import { harnessFromLauncher, createBody, initialModels, detectNotes, detectionFailure, machineSummary } from './model.js';
 
 const launchersURL = machineID => `/api/machines/${encodeURIComponent(machineID)}/launchers`;
+const toggled = (set, id, open) => {
+  const next = new Set(set);
+  if (open) next.add(id);
+  else next.delete(id);
+  return next;
+};
 
-// Every read carries a generation and every page action the view (machine and opening) it started in, so a late answer
-// for another machine, an earlier opening or an unmounted page is dropped.
+const createState = () => ({
+  machines: signal([]),
+  machineID: signal(''),
+  summary: signal(''),
+  error: signal(''),
+  errorDetail: signal(''),
+  toolbarHidden: signal(false),
+  rows: signal(null),
+  activity: signal(null),
+  detecting: signal(false),
+  openForms: signal(new Set()),
+  openModels: signal(new Set()),
+  modelFailures: signal(new Map()),
+  // Unsaved edits by harness id ({ form, models }), dropped with the list they belong to.
+  drafts: signal(new Map()),
+});
+
+// Answers for another machine, an earlier opening or an unmounted page are dropped (generation and view tokens).
 export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {} }) {
   const alive = useAlive();
+  const state = useMemo(createState, []);
   const generation = useRef(0);
   const view = useRef(0);
   const current = token => alive() && token === view.current;
-  const machinesRef = useRef([]), machineRef = useRef(''), shownRef = useRef('');
-  const [machines, setMachines] = useState([]);
-  const [machineID, setMachineID] = useState('');
-  const [summary, setSummary] = useState('');
-  const [error, setErrorText] = useState('');
-  const [errorDetail, setErrorDetail] = useState('');
-  const setError = (text, detail = '') => {
-    setErrorText(text);
-    setErrorDetail(detail);
-  };
-  const [toolbarHidden, setToolbarHidden] = useState(false);
-  const [rows, setRows] = useState(null);
-  const [activity, setActivity] = useState(null);
-  const [detecting, setDetecting] = useState(false);
-  const [modelFailures, setModelFailures] = useState(() => new Map());
+  const shownRef = useRef('');
+  const setError = (text, detail = '') => batch(() => {
+    state.error.value = text;
+    state.errorDetail.value = detail;
+  });
   useLayoutEffect(() => () => { generation.current++; }, []);
 
+  const clearList = () => batch(() => {
+    state.rows.value = null;
+    state.activity.value = null;
+    state.drafts.value = new Map();
+    shownRef.current = '';
+  });
+
   // A read for a machine that is no longer selected does nothing: it must not cancel or clear the selected one's list.
-  const load = async (id = machineRef.current, { keepError = false } = {}) => {
-    if (id !== machineRef.current || !alive()) return false;
+  const load = async (id = state.machineID.peek(), { keepError = false } = {}) => {
+    if (id !== state.machineID.peek() || !alive()) return false;
     const ticket = ++generation.current;
     if (!keepError) setError('');
-    if (shownRef.current !== id) {
-      setRows(null);
-      setActivity(null);
-      shownRef.current = '';
-    }
+    if (shownRef.current !== id) clearList();
     if (!id) return false;
-    setSummary(machineSummary(machinesRef.current.find(item => item.id === id)));
+    state.summary.value = machineSummary(state.machines.peek().find(item => item.id === id));
     try {
       const response = await request(launchersURL(id));
-      if (ticket !== generation.current || machineRef.current !== id || !alive()) return false;
+      if (ticket !== generation.current || state.machineID.peek() !== id || !alive()) return false;
       shownRef.current = id;
       const list = (response?.launchers || []).map(harnessFromLauncher);
-      setRows(list);
+      batch(() => {
+        state.rows.value = list;
+        state.activity.value = response?.activity || [];
+      });
       if (list.some(row => launcherReady(row.enabled, row.models))) onReady();
-      setActivity(response?.activity || []);
       return true;
     } catch (problem) {
       if (ticket === generation.current && alive()) setError(problem.message || 'Could not load harnesses');
@@ -60,32 +78,35 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
   const open = async preferred => {
     view.current++;
     const ticket = ++generation.current;
-    setError('');
-    setSummary('Loading machines…');
-    setRows(null);
-    setActivity(null);
+    batch(() => {
+      setError('');
+      state.summary.value = 'Loading machines…';
+      clearList();
+    });
     closePanel();
-    shownRef.current = '';
     try {
       const answer = await request('/api/machines');
       if (ticket !== generation.current || !alive()) return;
       const list = Array.isArray(answer) ? answer : answer?.machines || [];
-      let selected = list.some(machine => machine.id === machineRef.current) ? machineRef.current : list[0]?.id || '';
+      const previous = state.machineID.peek();
+      let selected = list.some(machine => machine.id === previous) ? previous : list[0]?.id || '';
       if (preferred && list.some(machine => machine.id === preferred)) selected = preferred;
-      machinesRef.current = list;
-      machineRef.current = selected;
-      setMachines(list);
-      setMachineID(selected);
-      setToolbarHidden(!list.length);
+      batch(() => {
+        state.machines.value = list;
+        state.machineID.value = selected;
+        state.toolbarHidden.value = !list.length;
+      });
       if (!list.length) {
-        setSummary('No machines are registered.');
+        state.summary.value = 'No machines are registered.';
         return;
       }
       await load(selected);
     } catch (problem) {
       if (ticket === generation.current && alive()) {
-        setSummary('');
-        setError(problem.message || 'Could not load machines');
+        batch(() => {
+          state.summary.value = '';
+          setError(problem.message || 'Could not load machines');
+        });
       }
     }
   };
@@ -93,8 +114,7 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
 
   const chooseMachine = id => {
     view.current++;
-    machineRef.current = id;
-    setMachineID(id);
+    state.machineID.value = id;
     closePanel();
     load(id);
   };
@@ -109,7 +129,7 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
         found = await request(`${base}/detect`, { method: 'POST', body: {} });
       } catch (problem) {
         const failure = detectionFailure(problem, containerized);
-        if (current(token)) setModelFailures(failures => new Map(failures).set(harnessID, failure));
+        if (current(token)) setModelFailure(harnessID, failure);
         return { saved: false, cut: 0, reason: failure.summary, detail: failure.detail };
       }
       const { models, cut } = initialModels(found.candidates);
@@ -121,11 +141,12 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
     }
   };
 
-  // Resolves to what auto-detect found, or null when the page moved on or the request failed.
   const detect = async () => {
-    const id = machineRef.current, token = view.current;
-    setError('');
-    setDetecting(true);
+    const id = state.machineID.peek(), token = view.current;
+    batch(() => {
+      setError('');
+      state.detecting.value = true;
+    });
     try {
       const found = await request(`${launchersURL(id)}/detect`, { method: 'POST', body: {} });
       return current(token) ? { machineID: id, candidates: found.candidates || [] } : null;
@@ -133,12 +154,12 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
       if (current(token)) setError(problem.message || "Couldn't detect harnesses");
       return null;
     } finally {
-      if (alive()) setDetecting(false);
+      if (alive()) state.detecting.value = false;
     }
   };
   const addDetected = async (id, chosen) => {
     const token = view.current, created = [];
-    setErrorDetail('');
+    state.errorDetail.value = '';
     for (const candidate of chosen) {
       created.push(await createHarness(id, { tool: candidate.family, label: candidate.label, command: candidate.command, containerized: candidate.containerized }));
     }
@@ -155,16 +176,28 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
     await load(id);
   };
 
-  const setModelFailure = (id, reason) => setModelFailures(failures => {
-    const next = new Map(failures);
+  const setModelFailure = (id, reason) => {
+    const next = new Map(state.modelFailures.peek());
     if (reason) next.set(id, reason);
     else next.delete(id);
-    return next;
-  });
-  const patchRow = (id, changes) => setRows(list => list?.map(item => item.id === id ? { ...item, ...changes } : item));
+    state.modelFailures.value = next;
+  };
+  const patchRow = (id, changes) => {
+    state.rows.value = state.rows.peek()?.map(item => item.id === id ? { ...item, ...changes } : item);
+  };
+  const setFormOpen = (id, open) => { state.openForms.value = toggled(state.openForms.peek(), id, open); };
+  const setModelsOpen = (id, open) => { state.openModels.value = toggled(state.openModels.peek(), id, open); };
+  // `update` is a value or a function of the current one, so two edits before the next render both count.
+  const setDraft = (id, kind, update) => {
+    const next = new Map(state.drafts.peek());
+    const entry = { ...next.get(id) };
+    entry[kind] = typeof update === 'function' ? update(entry[kind] ?? null) : update;
+    next.set(id, entry);
+    state.drafts.value = next;
+  };
 
   return {
-    alive, machines, machineID, summary, error, errorDetail, setError, toolbarHidden, rows, activity, detecting, modelFailures,
-    load, chooseMachine, detect, addDetected, addByHand, setModelFailure, patchRow,
+    state, alive, load, chooseMachine, detect, addDetected, addByHand,
+    setModelFailure, patchRow, setFormOpen, setModelsOpen, setDraft,
   };
 }

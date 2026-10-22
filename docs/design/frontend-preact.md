@@ -40,11 +40,14 @@ B stays open: if TypeScript or JSX is wanted, decide it with the incoming fronte
 | `web/vendor/preact/preact.mjs` | preact | 11.0.1 | MIT | 4,960 B |
 | `web/vendor/preact/hooks.mjs` | preact | 11.0.1 | MIT | 1,582 B |
 | `web/vendor/preact/htm.mjs` | htm | 3.1.1 | Apache-2.0 | 646 B |
+| `web/vendor/preact/signals.mjs` | @preact/signals | 2.11.3 | MIT | 1,771 B |
+| `web/vendor/preact/signals-core.mjs` | @preact/signals-core | 1.14.4 | MIT | 1,935 B |
 
 Sources, integrity hashes, SHA-256 and the update steps are in [web/vendor/preact/README.md](../../web/vendor/preact/README.md).
 Preact 11 is a new major line (11.0.0 on 2026-09-30): it is pinned and tested in the page, not assumed to behave like 10.x.
-htm has had no release since 2022: small and stable, but quiet. Neither has runtime dependencies. Not used: the htm
-"standalone" bundle (it carries its own older Preact), signals, a router, CSS libraries, jsdom or component-test packages.
+htm has had no release since 2022: small and stable, but quiet. Signals (owner approval 2026-10-22) imports Preact, its
+hooks and signals-core through the same import map, so it extends the one copy of Preact. Not used: the htm "standalone"
+bundle (it carries its own older Preact), a router, CSS libraries, jsdom or component-test packages.
 
 ## 3. How it ships
 
@@ -85,6 +88,15 @@ Rules:
 - Lists are keyed by a stable id (a harness id, a model slug, a message id), never by position or status.
 - The Preact page keeps the legacy page's ids, classes, roles and text, so the same CSS styles both and `test-ui` runs the
   same checks against both.
+
+### State
+
+A page's shared state is signals the page owns: created once per page (for Harnesses in `pages/harnesses/use-harnesses.js`)
+and read with `.value` by the components that render it, so a change re-renders only what reads it. Shared means what more
+than one component reads or what outlives a component: for Harnesses the machines, the selected machine, the rows and
+activity, which cards have Edit or Models open, the drafts, and the model detection failures. Writes go through the
+page's actions, never from render. A flag only one component uses (a button's busy state, a form's error, an input the
+component submits itself) stays `useState`. `.peek()` reads a signal without subscribing, in actions and guards.
 
 ## 5. Old and new side by side
 

@@ -72,4 +72,7 @@ Vendored frontend dependency:
   integrity hashes, maintenance notes and how to update are in `preact/README.md`; `preact/SHA256SUMS` lists every file
   (`preact.mjs` is `3a3201e9ccef7d30ef1273427f1b17ef8323e464b2c8d73b4fd5636af730433e`, `hooks.mjs`
   `6cb79fe9959ad185b8b86134aff47c12fd20216b24837597b19be59a133d9947`, `htm.mjs`
-  `ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4`).
+  `ab33dd3f38059b9be4d5f5350128eefb2356639c4e0bbe9d9e8b3ba75847e9e4`). The same folder holds @preact/signals **2.11.3**
+  and @preact/signals-core **1.14.4** (MIT; `signals.mjs`, `signals-core.mjs`), approved by the owner on 2026-10-22
+  (`signals.mjs` is `19c5ca080f54f3b36d1b687555dc82c0c8ce29eaedc0ca42b237012892861841`, `signals-core.mjs`
+  `0676238240715faeb4eb8b0a329837dc06ef7f37e7103601e13af3ed309c042c`).

@@ -8,12 +8,11 @@ import { addModel, addFoundModels, removeModel, setDefaultModel, updateModel, mo
 
 const modelsURL = (machineID, harnessID) => `/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harnessID)}/models`;
 
-export function ModelsPanel({ machineID, harness, hidden, failure, onFailure, onSaved, onSnapshot, onDirty }) {
+export function ModelsPanel({ machineID, harness, draft, setDraft, hidden, failure, onFailure, onSaved, onSnapshot, onDirty }) {
   const alive = useAlive();
-  const [draft, setDraft] = useState(null);
   const revision = useRef(0);
   const models = draft || harness.models || [];
-  const [dirty, setDirty] = useState(false);
+  const dirty = draft !== null;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [failureDetail, setFailureDetail] = useState('');
@@ -27,7 +26,6 @@ export function ModelsPanel({ machineID, harness, hidden, failure, onFailure, on
   const edit = change => {
     revision.current++;
     setDraft(current => change(current || harness.models || []));
-    setDirty(true);
     setStatus('');
   };
   useDirty(onDirty, `models:${harness.id}`, dirty);
@@ -56,8 +54,7 @@ export function ModelsPanel({ machineID, harness, hidden, failure, onFailure, on
     slugInput.current?.focus();
   };
   // The folder is sent with that one request and never saved.
-  // One detection at a time, whatever starts it (the button, Retry, Enter in the folder field): the ref is taken before the
-  // disabled controls render. Each run has a number, and only the latest run may write its answer.
+  // One detection at a time, and only the latest run writes its answer: Enter can fire while the button is disabled.
   const detectBusy = useRef(false), detectRun = useRef(0);
   const detect = async folder => {
     if (detectBusy.current) return;
@@ -113,10 +110,7 @@ export function ModelsPanel({ machineID, harness, hidden, failure, onFailure, on
       const refreshed = await onSaved(harness.id);
       if (!alive()) return;
       if (!refreshed) onSnapshot(harness.id, { models: sent });
-      if (revision.current === started) {
-        setDraft(null);
-        setDirty(false);
-      }
+      if (revision.current === started) setDraft(null);
     } catch (failure) {
       if (alive()) setError(failure.message || 'Could not save the models');
     } finally {

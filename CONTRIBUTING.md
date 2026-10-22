@@ -178,9 +178,10 @@ the import map, so each module has exactly one URL.
   Logic that can run without a DOM (`*-format.js`, `settings-backup-format.js`,
   `preferences.js` and similar) is loaded straight into Node's `vm` by the
   `scripts/test-*.cjs` tests, so keep browser APIs out of those modules.
-- Preact code: `web/js/ui.js` is the only module that imports Preact and htm
+- Preact code: `web/js/ui.js` is the only module that imports Preact, htm and signals
   (`scripts/test-preact-vendor.cjs` checks it); components import `html`,
-  `render` and the hooks from it. `web/js/components/` holds shared pieces
+  `render`, the hooks and the signals from it. A page's shared state is
+  signals the page owns (see the design doc's State section). `web/js/components/` holds shared pieces
   (`IconButton`, `SettingsRow`, `SettingsGroup`: the same markup as
   `icon-button.js` and `settings-row.js`), `web/js/hooks/` shared hooks, and
   `web/js/pages/<page>/` one page each: its components, a `model.js` with the
@@ -202,7 +203,7 @@ the import map, so each module has exactly one URL.
   with `iconButton('<name>', 'Label')`. Raster icons are built by
   `node scripts/build-icons.cjs` from the masters in `assets/`.
 - `web/vendor/`: third-party files (Mermaid, the emoji database, syntax
-  highlighting, the editor, Preact and htm). Never edit them by hand. `web/vendor/README.md`
+  highlighting, the editor, Preact, htm and signals). Never edit them by hand. `web/vendor/README.md`
   records each file's source, version, checksum and licence; update it in the
   same commit as any change here, including when a new icon comes from a
   catalogue. `scripts/test-svg-headers.cjs` fails if an SVG still carries a

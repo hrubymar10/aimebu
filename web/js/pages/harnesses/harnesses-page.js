@@ -7,20 +7,12 @@ import { DetectPanel } from './detect-panel.js';
 import { useHarnesses } from './use-harnesses.js';
 import { DetectionDetails } from './detection-details.js';
 
-const toggled = (set, id, open) => {
-  const next = new Set(set);
-  if (open) next.add(id);
-  else next.delete(id);
-  return next;
-};
-
 export function HarnessesPage({ openToken, wanted, onDirty = () => {}, onView = () => {}, onReady = () => {} }) {
   const [panel, setPanel] = useState(null);
   const panelRef = useRef(null);
-  const [openForms, setOpenForms] = useState(() => new Set());
-  const [openModels, setOpenModels] = useState(() => new Set());
   const data = useHarnesses({ openToken, wanted, closePanel: () => setPanel(null), onReady });
-  const { machines, machineID, summary, error, toolbarHidden, rows, activity, detecting, modelFailures, load } = data;
+  const { state, load } = data;
+  const machineID = state.machineID.value, rows = state.rows.value, openForms = state.openForms.value, openModels = state.openModels.value;
   useEffect(() => { if (panel) panelRef.current?.querySelector('input,select,button')?.focus(); }, [panel]);
   useLayoutEffect(() => { onView(machineID); }, [machineID]);
 
@@ -32,14 +24,16 @@ export function HarnessesPage({ openToken, wanted, onDirty = () => {}, onView = 
   const cardProps = harness => ({
     machineID, harness, key: harness.id,
     formOpen: openForms.has(harness.id), modelsOpen: openModels.has(harness.id),
-    onFormOpen: (id, open) => setOpenForms(current => toggled(current, id, open)),
-    onModelsOpen: (id, open) => setOpenModels(current => toggled(current, id, open)),
-    modelFailure: modelFailures.get(harness.id) || '',
+    onFormOpen: data.setFormOpen,
+    onModelsOpen: data.setModelsOpen,
+    draft: state.drafts.value.get(harness.id),
+    onDraft: (kind, update) => data.setDraft(harness.id, kind, update),
+    modelFailure: state.modelFailures.value.get(harness.id) || '',
     onModelFailure: data.setModelFailure,
     onReload: () => load(machineID),
     onRefresh: () => load(machineID, { keepError: true }),
     onModelsSaved: id => {
-      setOpenModels(current => toggled(current, id, true));
+      data.setModelsOpen(id, true);
       return load(machineID);
     },
     onSnapshot: data.patchRow,
@@ -53,17 +47,17 @@ export function HarnessesPage({ openToken, wanted, onDirty = () => {}, onView = 
       <${SettingsGroup} label="Harness machine">
         <${SettingsRow} label="Machine" desc="The supervisor whose harnesses and recent changes are shown below." id="harness-machine">
           <select value=${machineID} onChange=${event => data.chooseMachine(event.currentTarget.value)}>
-            ${machines.map(machine => html`<option value=${machine.id} key=${machine.id}>${machine.name || machine.id}</option>`)}
+            ${state.machines.value.map(machine => html`<option value=${machine.id} key=${machine.id}>${machine.name || machine.id}</option>`)}
           </select>
         <//>
       <//>
-      <p class="settings-intro" role="status">${summary}</p>
-      <p class="error" role="alert">${error}</p>
-      <${DetectionDetails} detail=${data.errorDetail} />
-      <div class="machine-actions" hidden=${toolbarHidden}>
+      <p class="settings-intro" role="status">${state.summary.value}</p>
+      <p class="error" role="alert">${state.error.value}</p>
+      <${DetectionDetails} detail=${state.errorDetail.value} />
+      <div class="machine-actions" hidden=${state.toolbarHidden.value}>
         <button type="button" class="btn btn-primary" id="harness-add" onClick=${() => setPanel({ kind: 'add', machineID })}>Add harness</button>
-        <button type="button" class="btn" id="harness-detect" disabled=${detecting} onClick=${detect}>
-          ${detecting ? 'Detecting…' : 'Auto-detect harnesses'}
+        <button type="button" class="btn" id="harness-detect" disabled=${state.detecting.value} onClick=${detect}>
+          ${state.detecting.value ? 'Detecting…' : 'Auto-detect harnesses'}
         </button>
       </div>
       <div id="harness-panel" ref=${panelRef}>
@@ -91,7 +85,7 @@ export function HarnessesPage({ openToken, wanted, onDirty = () => {}, onView = 
         ${rows?.map(harness => html`<${HarnessCard} ...${cardProps(harness)} />`)}
       </div>
       <h4 class="machine-activity-heading">Activity</h4>
-      <div id="machine-activity"><${Activity} activity=${activity} /></div>
+      <div id="machine-activity"><${Activity} activity=${state.activity.value} /></div>
     <//>
   `;
 }

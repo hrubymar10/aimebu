@@ -52,7 +52,7 @@ func TestStaticAssetsUseContentVersionAndRevalidateHTML(t *testing.T) {
 		t.Fatalf("unversioned script cache=%q", plain.Header.Get("Cache-Control"))
 	}
 	// A browser refuses a module served with any type but JavaScript.
-	for _, path := range []string{"/vendor/preact/preact.mjs", "/vendor/preact/hooks.mjs", "/vendor/preact/htm.mjs"} {
+	for _, path := range []string{"/vendor/preact/preact.mjs", "/vendor/preact/hooks.mjs", "/vendor/preact/htm.mjs", "/vendor/preact/signals.mjs", "/vendor/preact/signals-core.mjs"} {
 		if !strings.Contains(html, `"`+path+"?v="+version+`"`) {
 			t.Fatalf("import map does not version %s", path)
 		}
