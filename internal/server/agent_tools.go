@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -238,4 +239,21 @@ func (s *Server) agentToolReact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// GET /api/agent/message-numbers/{no}: the message_get tool. A message is returned only from a room of the agent's own project (and a
+// private chat only to a member of it); any other number, one that does not exist included, answers the same "not available" with nothing else.
+func (s *Server) agentToolMessageByNo(w http.ResponseWriter, r *http.Request) {
+	caller := agentToolCaller(r)
+	no, err := strconv.ParseInt(r.PathValue("no"), 10, 64)
+	if err != nil || no < 1 {
+		apiError(w, http.StatusBadRequest, "invalid_request", "message number must be a positive integer")
+		return
+	}
+	message, err := s.Store.AgentMessageByNo(r.Context(), caller.ID, caller.ProjectID, no)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, message)
 }

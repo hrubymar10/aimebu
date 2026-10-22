@@ -26,7 +26,13 @@ Each delivery context includes `you_are` (the current agent's ID, name, role,
 harness, and model) and `team_roster` (those fields for up to 20 current agent
 members of the turn's room). The recipient, leads, and agents who authored or
 were mentioned in delivered notes come first. `team_roster_more` says `N more`
-when members are omitted. The roster is read at dispatch time, so a later
+when members are omitted. A `#N` in a delivered note is a message number: the messages
+it names (at most five, not ones the delivery already carries, code spans ignored) are
+listed in the context as `referenced_messages` (`{no, available, room_id?, room?, from?,
+body?, created_at?}`, the body cut to 1500 characters). Only rooms of the agent's own
+project qualify (a private chat only for a member of it); anything else is `{no,
+available:false}` with nothing more, so another project's messages and unknown numbers look
+alike. The roster is read at dispatch time, so a later
 turn reflects joins, leaves, and role changes. A recipient may be absent from
 the roster after leaving a room but is still identified by `you_are` for a
 recovery turn. The roster is a snapshot, not an access grant; room membership

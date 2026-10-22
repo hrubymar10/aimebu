@@ -1322,6 +1322,17 @@ CREATE TRIGGER message_assign_no AFTER INSERT ON message WHEN NEW.no = 0 BEGIN
   UPDATE message_no_counter SET value = value + 1 WHERE id = 1;
   UPDATE message SET no = (SELECT value FROM message_no_counter WHERE id = 1) WHERE id = NEW.id;
 END;
+`}, {72, `
+-- A project's lead is a member of every open room of its project (private chats aside), so it can read a child room it did not make and
+-- resolve a #N into it. New rooms and newly spawned leads join in code; this brings the existing rooms up to date. Such a membership is
+-- marked auto: it lets the lead read the room, but an unaddressed human message does not wake the lead through it (only a lead that was put
+-- in the room on purpose is woken by those).
+ALTER TABLE room_member ADD COLUMN auto INTEGER NOT NULL DEFAULT 0 CHECK (auto IN (0,1));
+INSERT INTO room_member(room_id, member_kind, member_id, joined_at, auto)
+SELECT r.id, 'agent', a.id, strftime('%Y-%m-%dT%H:%M:%S.000000000Z', 'now'), 1
+FROM agent a JOIN role ro ON ro.id = a.role_id JOIN room r ON r.project_id = a.project_id
+WHERE a.revoked_at IS NULL AND ro.cap_is_lead = 1 AND r.kind <> 'dm' AND r.lifecycle = 'open'
+  AND NOT EXISTS (SELECT 1 FROM room_member m WHERE m.room_id = r.id AND m.member_kind = 'agent' AND m.member_id = a.id AND m.left_at IS NULL);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

@@ -286,6 +286,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/agent/memory", s.requireAgentTool(http.HandlerFunc(s.agentToolMemoryList)))
 	mux.Handle("PUT /api/agent/memory/{id}", s.requireAgentTool(http.HandlerFunc(s.agentToolMemoryRecord)))
 	mux.Handle("DELETE /api/agent/memory/{id}", s.requireAgentTool(http.HandlerFunc(s.agentToolMemoryRecord)))
+	mux.Handle("GET /api/agent/message-numbers/{no}", s.requireAgentTool(http.HandlerFunc(s.agentToolMessageByNo)))
 	mux.Handle("GET /api/agent/recall", s.requireAgentTool(http.HandlerFunc(s.agentToolRecall)))
 	mux.Handle("POST /api/agent/agents", s.requireAgentTool(http.HandlerFunc(s.agentToolSpawn)))
 	mux.Handle("POST /api/agent/agents/{id}/stop", s.requireAgentTool(http.HandlerFunc(s.agentToolStop)))

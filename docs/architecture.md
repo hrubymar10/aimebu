@@ -62,7 +62,9 @@ gate (paused) at room and project level, inherited by spawned/moved agents.
   crash → must end in `recovery_needed`, no duplicate execution.
 
 **Wake rules** — human message wakes every AI member of the room unless
-addressed elsewhere; AI message wakes explicit mentions, DM peers, addressed
+addressed elsewhere (a lead that is in the room only because leads are put into
+every project room, see `room_member.auto` in the contract, is woken only when
+addressed: by name, role, group tag, a reply to it, or a handoff); AI message wakes explicit mentions, DM peers, addressed
 roles, and the lead on task-result handoffs. An AI reply to another AI alone
 keeps the thread link without waking its parent author; replies to humans
 still target them. Inbox answers

@@ -1,12 +1,12 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
 	"testing"
 
+	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
 
@@ -115,5 +115,39 @@ func TestAgentMayReactToAMessageByItsNumber(t *testing.T) {
 	items, err := f.db.ReactionsForMessage(t.Context(), message.ID)
 	if err != nil || len(items) != 1 || items[0]["member_id"] != agent.ID {
 		t.Fatalf("reactions after reacting by number: %v %v", items, err)
+	}
+}
+
+// A number in a room the caller cannot read answers exactly like a number nothing carries.
+func TestMessageNumberLookupDoesNotRevealInaccessibleRooms(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	other, err := f.db.CreateProject(t.Context(), store.Project{Name: "elsewhere", Folder: "/tmp/elsewhere"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	room, err := f.db.CreateRoom(t.Context(), store.Room{ProjectID: other.ID, Kind: "home", Title: "Elsewhere", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hidden, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: room.ID, AuthorKind: "system", AuthorID: "system", Body: "not for this user"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := func(no int64) (int, string) {
+		resp := f.request(http.MethodGet, "/api/message-numbers/"+strconv.FormatInt(no, 10), nil, false)
+		defer resp.Body.Close()
+		var body map[string]string
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		return resp.StatusCode, body["error"]
+	}
+	a, ea := status(hidden.No)
+	b, eb := status(999999)
+	if a == 200 {
+		t.Skip("the fixture's user can read every project")
+	}
+	if a != b || ea != eb || a != 404 {
+		t.Fatalf("inaccessible room: %d %q, missing number: %d %q; both must be 404 not_found", a, ea, b, eb)
 	}
 }

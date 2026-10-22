@@ -660,7 +660,7 @@ The supervisor also creates a private per-agent config for `aimebu
 agent-tools`, a stdio MCP server with `list_rooms`,
 `create_room`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `usage_left`, `spawn_agent`, `stop_agent`,
 `memory_add`, `memory_list`, `memory_update`, `memory_remove`, `memory_recall`,
-`attachment_get`, and `react`. Its HTTP routes use the agent's key and scope
+`attachment_get`, `message_get` and `react`. Its HTTP routes use the agent's key and scope
 reads and mutations to that agent's project; only an active lead can manage
 rooms or agents.
 `spawn_agent` takes `role_key`, `tool`, `variant` and `model`, one agent per call.

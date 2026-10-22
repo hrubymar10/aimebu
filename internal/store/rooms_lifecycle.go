@@ -418,6 +418,12 @@ func (s *Store) ReopenRoom(ctx context.Context, id, actor string, rev int64) (Ro
 			lifecycle_rev=lifecycle_rev+1,closed_at=NULL WHERE id=?`, id); err != nil {
 			return err
 		}
+		// A closed room gets no automatic lead, so a lead that arrived or was backfilled meanwhile is put in now.
+		if kind != "dm" {
+			if err := tx.joinLeadsToRoom(id, projectID); err != nil {
+				return err
+			}
+		}
 		_, err := tx.AppendEvent(Event{Kind: "room_reopened", ProjectID: projectID, RoomID: id, PayloadJSON: payloadJSON(map[string]string{"room_id": id})})
 		return err
 	})

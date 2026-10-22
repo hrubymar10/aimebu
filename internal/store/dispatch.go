@@ -202,6 +202,21 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if more > 0 {
 				contextData["team_roster_more"] = fmt.Sprintf("%d more", more)
 			}
+			// A recovered turn re-delivers notes too: the #N they mention are put into its context the same way (a harness without the
+			// message_get tool has no other way to read them).
+			var recoveredBodies []string
+			recoveredNumbers := map[int64]bool{}
+			for _, note := range specialNotes {
+				recoveredBodies = append(recoveredBodies, note.Body)
+				recoveredNumbers[note.No] = true
+			}
+			recoveredRefs, err := tx.referencedMessages(agentID, projectID, recoveredBodies, recoveredNumbers)
+			if err != nil {
+				return err
+			}
+			if len(recoveredRefs) > 0 {
+				contextData["referenced_messages"] = recoveredRefs
+			}
 			contextJSON, err := json.Marshal(contextData)
 			if err != nil {
 				return err
@@ -419,6 +434,21 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		}
 		if expiredMarker != nil {
 			contextData["expired"] = expiredMarker
+		}
+		// A "#N" in what the agent is shown is a message number: the messages it names are put into the context (project rooms only).
+		// What the agent is shown is note.Body, which includes a visual plan and appendix pages, so references are read from that.
+		var noteBodies []string
+		delivered := map[int64]bool{}
+		for _, note := range notes {
+			noteBodies = append(noteBodies, note.Body)
+			delivered[note.No] = true
+		}
+		refs, err := tx.referencedMessages(agentID, projectID, noteBodies, delivered)
+		if err != nil {
+			return err
+		}
+		if len(refs) > 0 {
+			contextData["referenced_messages"] = refs
 		}
 		contextJSON, err := json.Marshal(contextData)
 		if err != nil {

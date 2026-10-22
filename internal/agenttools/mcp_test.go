@@ -73,10 +73,10 @@ func TestMCPListsNarrowToolsAndSendsAgentKey(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Result.Tools) != 16 {
+	if len(listed.Result.Tools) != 17 {
 		t.Fatalf("tools=%+v", listed.Result.Tools)
 	}
-	for i, name := range []string{"list_rooms", "list_macros", "list_schedules", "create_schedule", "usage_left", "create_room", "close_room", "memory_add", "memory_list", "memory_update", "memory_remove", "memory_recall", "attachment_get", "spawn_agent", "stop_agent", "react"} {
+	for i, name := range []string{"list_rooms", "list_macros", "list_schedules", "create_schedule", "usage_left", "create_room", "close_room", "memory_add", "memory_list", "memory_update", "memory_remove", "memory_recall", "attachment_get", "spawn_agent", "stop_agent", "message_get", "react"} {
 		if listed.Result.Tools[i].Name != name {
 			t.Fatalf("tool %d = %q", i, listed.Result.Tools[i].Name)
 		}

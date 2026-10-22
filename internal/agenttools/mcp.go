@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -91,6 +92,9 @@ var catalog = []tool{
 		"agent_id": map[string]string{"type": "string"}, "rev": map[string]string{"type": "integer"},
 		"request_key": map[string]string{"type": "string", "description": "Stable idempotency key for this stop request"},
 	}, "required": []string{"agent_id", "rev", "request_key"}}},
+	{"message_get", "Read a message by its number (the #N people write), from any room of your own project. A number from another project, or one that does not exist, is reported as not available.", map[string]any{"type": "object", "properties": map[string]any{
+		"no": map[string]string{"type": "integer", "description": "The message number, without the #"},
+	}, "required": []string{"no"}}},
 	{"react", "Add or remove a single-emoji reaction on an existing message.", map[string]any{"type": "object", "properties": map[string]any{
 		"message_id": map[string]string{"type": "string"}, "emoji": map[string]string{"type": "string"}, "remove": map[string]string{"type": "boolean"},
 	}, "required": []string{"message_id", "emoji"}}},
@@ -301,6 +305,20 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 			values.Set("limit", fmt.Sprint(limit))
 		}
 		path = "/api/agent/recall?" + values.Encode()
+	case "message_get":
+		var no int64
+		if json.Unmarshal(args["no"], &no) != nil || no < 1 {
+			if text := strings.TrimPrefix(strings.TrimSpace(getString("no")), "#"); text != "" {
+				parsed, err := strconv.ParseInt(text, 10, 64)
+				if err != nil || parsed < 1 {
+					return toolResult("no must be a positive message number", true)
+				}
+				no = parsed
+			} else {
+				return toolResult("no must be a positive message number", true)
+			}
+		}
+		path = "/api/agent/message-numbers/" + strconv.FormatInt(no, 10)
 	case "attachment_get":
 		id := getString("attachment_id")
 		if !strings.HasPrefix(id, "att_") || len(id) > 100 {

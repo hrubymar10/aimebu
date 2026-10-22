@@ -303,6 +303,18 @@ Inbox, usage, events, settings
   removed and why; also `attachment.removed_at`, `removed_after_days`)
 - **seq_counter**(id=1, value) — internal sequence allocator, seeded in
   migration 1; `schema_version` records migrations only.
+- **room_member.auto** (migration 72): 1 when the membership is only the lead
+  being put into a project room (a new room, a newly spawned lead, the backfill):
+  quiet (no join event, nothing un-hidden), addressable, and not woken by
+  unaddressed human messages. Joining the room on purpose (spawn, the lead
+  creating it) makes it 0. Private chats and closed rooms get no automatic
+  lead. Reopening a room joins the
+  project's leads then. An automatic member has full member rights (closing and
+  reopening rooms, sub-rooms, recall scope): the lead manages its project's rooms.
+- **Message references from agents** are project-wide on purpose: an agent may
+  read, by number, any message of any room of its own project (rooms it is not
+  in and archived ones included; a private chat only as a member), for
+  `referenced_messages` and `message_get`. Another project's messages never.
 - **message_no_counter**(id=1, value) — the message-number allocator
   (migration 71); `message.no` is unique where it is positive.
 
@@ -723,7 +735,7 @@ it never silently reruns a turn with uncertain effects.
   context{role_body, rooms[{room_id, title, kind}],
   you_are:{id,name,role,harness,model},
   team_roster:[{id,name,role,harness,model}],
-  team_roster_more?:string,
+  team_roster_more?:string, referenced_messages?:[{no, available, room_id?, room?, from?, body?, created_at?}],
   knowledge?:{project_memory_enabled, project_memory[], user_profiles[],
   agent_shared_notes[], task_notes[]},
   control_changes?, recovery_evidence?, correction_error?}, desired_rev,
@@ -885,7 +897,10 @@ CC/Codex, prompt-only on pi):
 Computed in the message-insert transaction; every decision → note or
 "not woken because …" event:
 - human message → every AI member of the room, unless it addresses specific
-  members (then only those);
+  members (then only those). The exception is a lead whose membership is
+  `auto` (below): it is not woken by an unaddressed human message
+  (`message_not_woken` reason `auto_member`), only when addressed by name,
+  role, group tag, reply or handoff;
 - AI message → resolved targets (mentions, addressed role), the human peer in
   a DM; `handoff` → the lead. An AI reply to another AI wakes the parent author
   (reason `reply`) while the room has seen fewer than 4 such wakes since the last

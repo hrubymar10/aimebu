@@ -32,7 +32,7 @@ const (
 	AckByReaction = `Do not send acknowledgement-only or status-only messages in response to agent updates; use a reaction when available.`
 	// ReturnOneObject opens the output contract for adapters that take the
 	// reply as one JSON object in their final message.
-	ReturnOneObject = `Return only one JSON object with a messages array. Each message needs room and body. Use reply_to, thread_root, attachments, ask, needs_attention, proposed_answers, open_questions, handoff, visual_plan, and appendix_pages only when needed. A delivered message carries its number as no; people write it as #no, and reply_to and thread_root accept that number or the message_id.`
+	ReturnOneObject = `Return only one JSON object with a messages array. Each message needs room and body. Use reply_to, thread_root, attachments, ask, needs_attention, proposed_answers, open_questions, handoff, visual_plan, and appendix_pages only when needed. A delivered message carries its number as no; people write it as #no, and reply_to and thread_root accept that number or the message_id. A #no written in a message you are given is a message number: the ones that name a message of your project are in your context as referenced_messages, and the message_get tool reads any other message of your project by its number.`
 	// OutsideRoomContext closes the prompt for adapters that read it from
 	// standard input ahead of the turn JSON, so it ends with a newline.
 	OutsideRoomContext = "Do not send messages outside the given room context.\n"

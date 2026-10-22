@@ -95,6 +95,7 @@ func (tx *Tx) CreateTaskRoomAsTool(agentID, projectID, parentID, title string) (
 	if err != nil {
 		return Room{}, err
 	}
+	// CreateRoom joined the leads quietly; the one that made the room is a member on purpose.
 	if err := tx.AddMember(room.ID, "agent", agentID); err != nil {
 		return Room{}, err
 	}

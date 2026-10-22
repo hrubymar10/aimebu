@@ -139,6 +139,10 @@ func TestLeadCreateSubroomRequiresParentMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The lead joins every project room automatically; a room it has left is one it is not in.
+	if err := f.db.RemoveMember(t.Context(), other.ID, "agent", lead.ID); err != nil {
+		t.Fatal(err)
+	}
 	resp := f.toolPost(t, "/api/agent/rooms", key, "outside", map[string]string{"title": "Child", "parent_id": other.ID})
 	resp.Body.Close()
 	if resp.StatusCode != 403 {

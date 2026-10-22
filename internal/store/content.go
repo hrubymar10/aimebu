@@ -181,7 +181,75 @@ func (tx *Tx) CreateRoom(room Room) (Room, error) {
 	}
 	room.Lifecycle = "open"
 	room.Gate = "open"
+	// The project's lead is in every room of its project, so it can read what happens in a child room it did not make.
+	if room.Kind != "dm" {
+		if err := tx.joinLeadsToRoom(room.ID, room.ProjectID); err != nil {
+			return Room{}, err
+		}
+	}
 	return room, nil
+}
+
+// joinLeadsToRoom makes every live lead agent of the project a member of the room (each it already belongs to is left alone).
+func (tx *Tx) joinLeadsToRoom(roomID, projectID string) error {
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT a.id FROM agent a JOIN role r ON r.id=a.role_id
+		WHERE a.project_id=? AND a.revoked_at IS NULL AND r.cap_is_lead=1
+		AND NOT EXISTS (SELECT 1 FROM room_member m WHERE m.room_id=? AND m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL)`, projectID, roomID)
+	if err != nil {
+		return err
+	}
+	var leads []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		leads = append(leads, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range leads {
+		if err := tx.addMemberOnly(roomID, "agent", id, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// joinLeadToProjectRooms puts a lead agent into every open room of its project that it is not in yet (a lead spawned or made lead after
+// rooms exist). Private chats are not project rooms for this.
+func (tx *Tx) joinLeadToProjectRooms(agentID string) error {
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT r.id FROM agent a JOIN role ro ON ro.id=a.role_id JOIN room r ON r.project_id=a.project_id
+		WHERE a.id=? AND a.revoked_at IS NULL AND ro.cap_is_lead=1 AND r.kind<>'dm' AND r.lifecycle='open'
+		AND NOT EXISTS (SELECT 1 FROM room_member m WHERE m.room_id=r.id AND m.member_kind='agent' AND m.member_id=a.id AND m.left_at IS NULL)
+		ORDER BY r.created_at,r.id`, agentID)
+	if err != nil {
+		return err
+	}
+	var rooms []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		rooms = append(rooms, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range rooms {
+		if err := tx.addMemberOnly(id, "agent", agentID, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) AddMember(ctx context.Context, roomID, kind, memberID string) error {
@@ -189,14 +257,46 @@ func (s *Store) AddMember(ctx context.Context, roomID, kind, memberID string) er
 }
 
 func (tx *Tx) AddMember(roomID, kind, memberID string) error {
+	if err := tx.addMemberOnly(roomID, kind, memberID, false); err != nil {
+		return err
+	}
+	if kind == "agent" {
+		return tx.joinLeadToProjectRooms(memberID)
+	}
+	return nil
+}
+
+// addMemberOnly is AddMember without the lead's follow-up joins (those use it, so they cannot call each other). An automatic join (auto) is
+// the lead being put into a project room it was not asked into: it is quiet (no join event, nothing un-hidden for anyone) and the member
+// is marked so that it is not woken by every unaddressed human message (see queueMessageWakes). Joining on purpose a room the lead is
+// already in by automatic join makes it an ordinary member.
+func (tx *Tx) addMemberOnly(roomID, kind, memberID string, auto bool) error {
+	var already, wasAuto int
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*),COALESCE(MAX(auto),0) FROM room_member WHERE room_id=? AND member_kind=? AND member_id=? AND left_at IS NULL`, roomID, kind, memberID).Scan(&already, &wasAuto); err != nil {
+		return err
+	}
+	if already > 0 && kind == "agent" {
+		if !auto && wasAuto == 1 {
+			_, err := tx.tx.ExecContext(tx.ctx, `UPDATE room_member SET auto=0 WHERE room_id=? AND member_kind='agent' AND member_id=? AND left_at IS NULL`, roomID, memberID)
+			return err
+		}
+		return nil
+	}
 	var projectID string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM room WHERE id=?`, roomID).Scan(&projectID); err != nil {
 		return err
 	}
+	autoValue := 0
+	if auto {
+		autoValue = 1
+	}
 	if _, err := tx.tx.ExecContext(tx.ctx, `INSERT INTO room_member
-		(room_id, member_kind, member_id, joined_at) VALUES (?, ?, ?, ?)`,
-		roomID, kind, memberID, timestamp()); err != nil {
+		(room_id, member_kind, member_id, joined_at, auto) VALUES (?, ?, ?, ?, ?)`,
+		roomID, kind, memberID, timestamp(), autoValue); err != nil {
 		return err
+	}
+	if auto {
+		return nil
 	}
 	if _, err := tx.Exec(`UPDATE room_view_preference SET hidden=0 WHERE room_id=? AND hidden=1`, roomID); err != nil {
 		return err

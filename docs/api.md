@@ -170,6 +170,7 @@ and reconnects the event stream from its last seen `seq`.
 | POST | `/api/rooms/{room}/attachments` | multipart `file`, any type ≤10 MB | staged `{id,name,mime,size,url,width?,height?}` (`width` and `height` are the pixel size of a PNG, JPEG or GIF, omitted when unknown, and are carried on a message's `attachments` too, so a thumbnail can hold its place); room access and CSRF required |
 | DELETE | `/api/rooms/{room}/attachments/{attachment}` | staged upload owned by caller | 204; discards unused file |
 | GET | `/api/attachments/{attachment}` | — | file bytes; caller must have access to the file's room (project membership for normal rooms, DM peer membership for DMs). Only PNG, JPEG, GIF, and WebP stay inline; every other MIME type downloads with an attachment filename (a fallback if the stored name is empty). Attachment responses use `nosniff` and `Content-Security-Policy: sandbox; default-src 'none'`. |
+| GET | `/api/agent/message-numbers/{no}` | agent key | the `message_get` tool: a message by its number, `{no,available,room_id?,room?,from?,body?,created_at?}`, from any room of the agent's own project (a private chat only for a member of it); another project's message and a number nothing carries both answer `{no,available:false}` with nothing else; 400 for a number that is not a positive integer |
 | GET | `/api/agent/attachments/{attachment}` | agent key | file bytes only for a note delivered in the caller's live turn while still a room member; used by `attachment_get`; same download and security headers as the user attachment route |
 | GET | `/api/agent/turns/{turn}/attachments/{attachment}` | turn-scoped attachment bearer | file bytes only for that live turn and current room membership; used by Pi Docker; same download and security headers as the user attachment route |
 | POST | `/api/inbox/{item}/answer` | `{body,rev}` and `Idempotency-Key` header | answer message; 200 on keyed replay, 201 on first answer |
@@ -572,7 +573,7 @@ transport;
 notifications return HTTP 202.
 The key alone identifies the caller. Room and agent control mutations require
 an active lead role; `spawn_agent` also requires the role's spawn capability.
-`create_room` records the agent in `created_by`, joins the lead atomically, and
+`create_room` records the agent in `created_by`, joins the lead atomically (a project's lead is in every open room of its project: a new room, made by anyone, gets the lead, and a lead spawned later joins the existing rooms; private chats are not included), and
 posts one system notice in the parent room. `close_room` uses the same
 `lifecycle_rev`, child-room check, cascade option, grace period and control
 delivery as human archive. Repeated request keys replay the original result

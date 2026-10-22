@@ -15,6 +15,9 @@ var mentionPattern = regexp.MustCompile(`(?i)@([a-z][a-z0-9_-]*(?:@[a-z0-9_.-]+)
 type roomRecipient struct {
 	id, slug, kind, role string
 	lead, revoked        bool
+	// auto marks a lead that is in the room only because leads are put into every project room: it is addressable, and woken when addressed,
+	// but an unaddressed human message does not wake it.
+	auto bool
 	// implicit marks a project human who can read the room without a
 	// room_member row. They are addressable by login, but group tags
 	// (@channel, @humans, ...) keep meaning the room's explicit members.
@@ -26,7 +29,7 @@ func (tx *Tx) roomRecipients(roomID string) ([]roomRecipient, error) {
 }
 
 func roomRecipientsFrom(query func(context.Context, string, ...any) (*sql.Rows, error), ctx context.Context, roomID string) ([]roomRecipient, error) {
-	rows, err := query(ctx, `SELECT a.id,a.slug,r.role_key,r.cap_is_lead,a.revoked_at IS NOT NULL
+	rows, err := query(ctx, `SELECT a.id,a.slug,r.role_key,r.cap_is_lead,a.revoked_at IS NOT NULL,m.auto=1
 		FROM room_member m JOIN agent a ON a.id=m.member_id JOIN role r ON r.id=a.role_id
 		WHERE m.room_id=? AND m.member_kind='agent' AND m.left_at IS NULL
 		ORDER BY a.id`, roomID)
@@ -37,7 +40,7 @@ func roomRecipientsFrom(query func(context.Context, string, ...any) (*sql.Rows, 
 	for rows.Next() {
 		var item roomRecipient
 		item.kind = "agent"
-		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.lead, &item.revoked); err != nil {
+		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.lead, &item.revoked, &item.auto); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -477,6 +480,8 @@ func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, proj
 			skip = "system_chatter"
 		case reason == "":
 			skip = "not_addressed"
+		case reason == "human_message" && member.auto:
+			skip = "auto_member" // the lead reads this room but was not put in it; an unaddressed message is the worker's
 		}
 		if skip != "" {
 			if _, err := tx.AppendEvent(Event{Kind: "message_not_woken", ProjectID: projectID, RoomID: message.RoomID,

@@ -69,6 +69,7 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 	}
 	raw, unwrapped := unwrapJSONFence(raw)
 	normalized, warnings := tolerateMessageMetadata(raw)
+	normalized = numbersAsMessageRefs(normalized)
 	if unwrapped {
 		warnings = append(warnings, "surrounding Markdown JSON fence removed")
 	}
@@ -548,4 +549,47 @@ func visualFiniteNumber(value any) bool {
 	default:
 		return false
 	}
+}
+
+// numbersAsMessageRefs lets a message name the message it replies to (or the thread root) by its number written as a JSON number
+// ("reply_to": 36226), as the prompt invites, by reading it as the string "36226"; the number is resolved to an id when the answer is
+// committed. Anything that is not a plain positive integer is left for the strict decoder to refuse.
+func numbersAsMessageRefs(raw []byte) []byte {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(raw, &envelope) != nil {
+		return raw
+	}
+	var messages []map[string]json.RawMessage
+	if json.Unmarshal(envelope["messages"], &messages) != nil {
+		return raw
+	}
+	changed := false
+	for _, fields := range messages {
+		for _, key := range []string{"reply_to", "thread_root"} {
+			value := bytes.TrimSpace(fields[key])
+			if len(value) == 0 || value[0] < '1' || value[0] > '9' {
+				continue
+			}
+			digits := true
+			for _, b := range value {
+				if b < '0' || b > '9' {
+					digits = false
+					break
+				}
+			}
+			if digits {
+				fields[key], _ = json.Marshal(string(value))
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return raw
+	}
+	envelope["messages"], _ = json.Marshal(messages)
+	out, err := json.Marshal(envelope)
+	if err != nil {
+		return raw
+	}
+	return out
 }

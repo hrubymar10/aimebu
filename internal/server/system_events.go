@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -62,7 +63,13 @@ func (s *Server) messageByNo(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	if _, ok := s.roomAccess(w, r, message.RoomID); !ok {
+	// A room the caller may not read answers like a number nothing carries (404, not 403), so the lookup does not tell that it exists.
+	if err := s.Store.UserRoomAccess(r.Context(), userID(r), message.RoomID); err != nil {
+		if errors.Is(err, store.ErrForbidden) {
+			apiError(w, 404, "not_found", "not found")
+		} else {
+			fail(w, err)
+		}
 		return
 	}
 	writeJSON(w, 200, map[string]any{"id": message.ID, "no": message.No, "seq": message.Seq, "room_id": message.RoomID})

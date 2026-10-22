@@ -311,7 +311,8 @@ func TestAgentToolRoomsAreKeyAuthenticatedAndProjectScoped(t *testing.T) {
 	if err := json.Unmarshal(body, &result); err != nil {
 		t.Fatal(err)
 	}
-	if resp.StatusCode != http.StatusOK || len(result.Rooms) != 2 {
+	// The lead is in every open room of its project (home, the fixture's task room, general), plus the archive it was added to; not the room it left, not the private chat.
+	if resp.StatusCode != http.StatusOK || len(result.Rooms) != 4 {
 		t.Fatalf("rooms status=%d result=%+v", resp.StatusCode, result)
 	}
 	if strings.Contains(string(body), "last_message_body") || strings.Contains(string(body), "private-dm-secret") || strings.Contains(string(body), "joined-archive-secret") {
