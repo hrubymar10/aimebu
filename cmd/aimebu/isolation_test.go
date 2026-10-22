@@ -16,6 +16,12 @@ var packageTestRoot string
 // (which a running v1 server holds for as long as it works, and the test then waits for it, at 0% CPU, with nothing printed), and read
 // their credentials.
 func TestMain(m *testing.M) {
+	// `server start` runs this test binary as the detached server (see daemon_test.go): it already has the parent test's isolated
+	// environment, so it runs the command line it was given and nothing else.
+	if os.Getenv(daemonHelperEnv) == "1" {
+		main()
+		return
+	}
 	root, cleanup := testenv.Isolate()
 	packageTestRoot = root
 	// The tests that start a server run its supervisor's harness discovery: without this they ran the real claude, codex, opencode and pi

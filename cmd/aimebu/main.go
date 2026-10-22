@@ -112,8 +112,11 @@ func runWithContext(ctx context.Context, args []string, stdout, stderr io.Writer
 		fmt.Fprintln(stdout, resolveVersion())
 		return 0
 	case "server":
+		if len(args) == 2 {
+			return serverDaemonCommand(args[1], stdout, stderr)
+		}
 		if len(args) != 1 {
-			fmt.Fprintln(stderr, "usage: aimebu server")
+			fmt.Fprintln(stderr, "usage: aimebu server [start|stop|status]")
 			return 2
 		}
 		return serverCommand(ctx, stdout, stderr)
@@ -193,6 +196,7 @@ Usage: aimebu <command> [args]
 
 Server:
   server                              Run the server in the foreground (embedded supervisor)
+  server start|stop|status            Run the server in the background (pid file, log in server/aimebu.log)
   supervisor [--pair <url> <token>]   Run a standalone host supervisor, or pair it with a server
   agent-tools                         Managed agent toolbox over stdio (needs AIMEBU2_URL, AIMEBU2_AGENT_KEY)
 
@@ -298,6 +302,21 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	// A root that still holds v1's files is about to have them moved: the log starts after that, so it is never in the way of the move.
+	moving, err := v1MovePending(config.root)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	// What the person at a terminal must see but a log must not hold (the one-time setup token and link) goes to where the server's
+	// output went before the log was attached.
+	terminal := stderr
+	var serverLogs serverLog
+	if !moving {
+		serverLogs = attachServerLog(config.root, stdout, stderr)
+		stdout, stderr = serverLogs.stdout, serverLogs.stderr
+		defer serverLogs.close()
+	}
 	tlsConfig, err := resolveServerTLSConfig(config.port)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -336,11 +355,6 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	}
 	// Everything that is certain to fail later (a missing owner login, a bad turn limit, a read-only root) is checked
 	// here, before v1's files move: a start that dies after the move leaves a v1 root that looks empty.
-	moving, err := v1MovePending(config.root)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
 	if moving {
 		if err := preflightV1Cutover(config.root, os.Getenv); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -372,12 +386,27 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if moving {
+		serverLogs = attachServerLog(config.root, stdout, stderr)
+		stdout, stderr = serverLogs.stdout, serverLogs.stderr
+		defer serverLogs.close()
+	}
 	serverLock, err := lockServerDirectory(dir)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	defer unlockServerDirectory(serverLock)
+	// This process is the one server of the directory now: cap its log, and record its own pid (the one the lock belongs to) for
+	// `aimebu server stop|status`. The pid file goes before the lock does.
+	if serverLogs.enableRotation != nil {
+		serverLogs.enableRotation()
+	}
+	if err := writePIDFile(config.root); err != nil {
+		fmt.Fprintf(stderr, "warning: no pid file (aimebu server stop and status cannot find this server): %v\n", err)
+	} else {
+		defer removePIDFile(config.root)
+	}
 	path := filepath.Join(dir, "aimebu.sqlite")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
@@ -485,7 +514,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 			return 1
 		}
 		defer ownerSetup.Close()
-		fmt.Fprintf(stderr, "No owner exists yet. Open the setup page and enter this setup token (single use, valid until the server restarts):\n  %s\nThe token is also in %s\nShortcut that fills the token in for you:\n  %s\n",
+		fmt.Fprintf(terminal, "No owner exists yet. Open the setup page and enter this setup token (single use, valid until the server restarts):\n  %s\nThe token is also in %s\nShortcut that fills the token in for you:\n  %s\n",
 			token, setupPath, setupLink(publicURL, config.bind, config.port, tlsConfig, token))
 	} else {
 		if users == 0 {

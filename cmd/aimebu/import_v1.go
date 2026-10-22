@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/store"
@@ -20,11 +21,20 @@ func lockServerDirectory(dir string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("server database is in use; stop the v2 server before importing: %w", err)
+	// `aimebu server status`, stop and start look for a running server by taking this lock for an instant, so a refusal is tried a few
+	// more times before it is believed: a server that is another's loses after a quarter of a second, not on a probe's microsecond.
+	var err2 error
+	for attempt := 0; attempt < 10; attempt++ {
+		if err2 = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err2 == nil {
+			return file, nil
+		}
+		if !errors.Is(err2, syscall.EWOULDBLOCK) {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
-	return file, nil
+	_ = file.Close()
+	return nil, fmt.Errorf("server database is in use by a running v2 server; stop it first (aimebu server stop, or where it runs): %w", err2)
 }
 
 func unlockServerDirectory(file *os.File) {

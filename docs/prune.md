@@ -37,6 +37,9 @@ made before schema migrations. The two stable lock files (`server/.writer.lock` 
 starting process cannot race by locking a replacement inode. A fresh server
 needs owner bootstrap again.
 
+`aimebu prune -a` also keeps the server's log, `server/aimebu.log` and its rotated backups (`aimebu.log.1` to `.3`): they are
+diagnostics, not data.
+
 Both modes preserve `server/backups/`, `switcher/` (stored logins and backups), `usages/`
 (provider secrets, settings, and cache), and unknown files directly under the
 config root. They never walk project checkout paths, so harness session files

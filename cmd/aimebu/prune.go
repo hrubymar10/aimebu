@@ -141,7 +141,7 @@ func pruneRoot(ctx context.Context, root string, all bool) error {
 	}
 	defer unlockServerDirectory(supervisorLock)
 	if all {
-		if err := removeChildrenExcept(serverDir, ".writer.lock", "backups"); err != nil {
+		if err := removeChildrenExcept(serverDir, append([]string{".writer.lock", "backups"}, keptServerLogs()...)...); err != nil {
 			return err
 		}
 		return removeChildrenExcept(supervisorDir, "journal.sqlite.lock")

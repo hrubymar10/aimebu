@@ -140,6 +140,49 @@ section 6). The v1 wrapper carries over almost unchanged:
 README Install section for 2.0.0: Manual (clone, add `bin/` to PATH, `aimebu
 version`) first, with the Go toolchain requirement.
 
+### Running as a service
+
+A service manager wants the process in the foreground and does its own restarts, so it runs `aimebu server`, not `server start`
+(which detaches). The server writes `server/aimebu.log` itself, so the manager's output can go to its own journal as well. Both
+definitions below are examples, not verified here: set the path to the binary and the environment (`AIMEBU2_CONFIG_DIR`, the
+owner variables for a first start, bind and allowlist) to the installation's own, and move a root that still holds v1's files
+with a foreground `aimebu server` first.
+
+launchd (`~/Library/LaunchAgents/dev.aimebu.server.plist`, loaded with `launchctl bootstrap gui/$(id -u) <file>`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.aimebu.server</string>
+  <key>ProgramArguments</key><array><string>/usr/local/bin/aimebu</string><string>server</string></array>
+  <key>EnvironmentVariables</key><dict><key>AIMEBU2_CONFIG_DIR</key><string>/Users/me/.aimebu2</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ExitTimeOut</key><integer>60</integer>
+</dict></plist>
+```
+
+systemd (`~/.config/systemd/user/aimebu.service`, then `systemctl --user enable --now aimebu`):
+
+```ini
+[Unit]
+Description=aimebu v2 server
+
+[Service]
+ExecStart=/usr/local/bin/aimebu server
+Environment=AIMEBU2_CONFIG_DIR=%h/.aimebu2
+Restart=on-failure
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target
+```
+
+Stop such a service with its manager (`launchctl bootout`, `systemctl --user stop`), not with `aimebu server stop`, which would only
+have the manager start it again. Both give a clean shutdown a minute (the server stops its agents and closes the database before it exits). A Homebrew formula's
+`service` block takes the same `aimebu server` command.
+
 Secondary options, none required for 2.0.0 and none verified here:
 
 - **Homebrew:** v1 shipped a HEAD-only formula in `hrubymar10/tap` (`brew install
@@ -164,9 +207,10 @@ Secondary options, none required for 2.0.0 and none verified here:
 This is the proposed HEAD-only `Formula/aimebu.rb` for the existing tap after
 the public repo cutover. It is text for review, not a change to the tap. The
 formula builds the v2 command from `./cmd/aimebu` and runs the foreground
-`aimebu server` process under `brew services`. The v1 `server start` daemon
-command is not a v2 command, and the service manager needs the running server
-process to supervise.
+`aimebu server` process under `brew services`. v2 also has `aimebu server
+start`, which detaches, but a service manager needs the running server process
+to supervise, so the formula uses the foreground command (see [Running as a
+service](#running-as-a-service)).
 
 ```ruby
 class Aimebu < Formula

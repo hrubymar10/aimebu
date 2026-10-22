@@ -145,6 +145,27 @@ See [the architecture](docs/architecture.md) for component decisions and
 `aimebu fe` opens the web UI of the configured server in the browser (`AIMEBU2_PUBLIC_URL` when set, otherwise the
 address from `AIMEBU2_BIND` and `AIMEBU2_PORT`); over SSH or with no display it only prints the address.
 
+The server writes `server/aimebu.log`: what it prints (each line stamped with its UTC time) and what the rest of the process logs, but not
+the one-time setup token and link (those go to the terminal only). The file is capped by rotation at 10 MiB, with the three newest older
+files kept as `aimebu.log.1` to `.3`; a start that loses the race to run only appends to it, and rotation begins once the server holds the
+lock. `aimebu prune -a` keeps the log and its backups.
+
+`aimebu server` runs in the foreground; `aimebu server start` runs the same server in the background (the way v1's `server start`
+did), `aimebu server status` says whether one is running (exit status 0 or 1) and `aimebu server stop` shuts it down cleanly. A
+server is "running" while it holds the lock on `server/.writer.lock`, so these also see a server started in the foreground or by a
+service manager. The server writes its own pid file, `server/aimebu.pid`, once it holds the lock (in every mode) and removes it when
+it exits; `stop` signals only the process that file names, only while the lock is held, and only if that process can be inspected and
+is an aimebu server (otherwise nothing is signalled and the message says what to do by hand), so a stale file does not get an unrelated
+process killed (use the service manager's own stop for a managed server, or it restarts it). `start` succeeds only when its server holds
+the lock and answers as an aimebu server (another service on the port is not mistaken for it); after 30 seconds without that it fails
+(exit status 1). It tells you when the server dies at startup (with the end of its log), and prints the one-time setup link when no owner
+exists yet. Two starts at once run one server. `status` and `stop` leave a config directory that still holds v1's files alone. `start`
+also
+refuses a config directory that still holds v1's files: the first start moves them, with notices, so run `aimebu server`
+in the foreground for that one (see [the cutover runbook](docs/cutover-runbook.md)). Stop waits up to a minute for a clean
+shutdown and never kills the process. To run the server as a service, give the service manager the foreground `aimebu server`
+(see [release notes](docs/release.md#running-as-a-service)).
+
 Owner and host-machine bootstrap is available through `aimebu server`. With
 no owner yet, the server prints a one-time setup token (and writes it to
 `.setup_token` in the config directory); open the server's address and enter it to

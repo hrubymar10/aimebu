@@ -57,6 +57,8 @@ func TestPruneAllPreservesCredentialsAndOutsidePaths(t *testing.T) {
 	writePruneFixture(t, filepath.Join(root, "usages", "config.json"), "usages")
 	writePruneFixture(t, filepath.Join(root, "server", "backups", "aimebu-pre-migrate-1-to-2-20261020T000000.000000000Z.sqlite"), "backup")
 	writePruneFixture(t, filepath.Join(root, "server", "aimebu.sqlite"), "server")
+	writePruneFixture(t, filepath.Join(root, "server", "aimebu.log"), "log")
+	writePruneFixture(t, filepath.Join(root, "server", "aimebu.log.1"), "older log")
 	writePruneFixture(t, filepath.Join(root, "supervisor", "machine.key"), "machine")
 	writePruneFixture(t, filepath.Join(root, "unknown.txt"), "unknown")
 	if err := os.Symlink(outside, filepath.Join(root, "server", "outside-link")); err != nil {
@@ -70,6 +72,7 @@ func TestPruneAllPreservesCredentialsAndOutsidePaths(t *testing.T) {
 		outside: "outside", filepath.Join(root, "switcher", "state.json"): "switcher",
 		filepath.Join(root, "usages", "config.json"): "usages", filepath.Join(root, "unknown.txt"): "unknown",
 		filepath.Join(root, "server", "backups", "aimebu-pre-migrate-1-to-2-20261020T000000.000000000Z.sqlite"): "backup",
+		filepath.Join(root, "server", "aimebu.log"):                                                             "log", filepath.Join(root, "server", "aimebu.log.1"): "older log",
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil || string(data) != want {

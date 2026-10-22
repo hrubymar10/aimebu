@@ -124,7 +124,12 @@ var processInfo = func(pid int) (exe, command string, err error) {
 	}
 	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
 	if err != nil {
-		return "", "", err
+		// No ps (or it failed): Linux has the command line in /proc, its arguments separated by NULs.
+		raw, readErr := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+		if readErr != nil || len(raw) == 0 {
+			return "", "", err
+		}
+		return exe, strings.TrimSpace(strings.ReplaceAll(strings.TrimRight(string(raw), "\x00"), "\x00", " ")), nil
 	}
 	command = strings.TrimSpace(string(out))
 	if exe == "" {
