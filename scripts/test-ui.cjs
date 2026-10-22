@@ -2440,6 +2440,7 @@ async function main() {
       })), { title: 'Start veteran as a v2 agent', worktree: true, text: 'This continues the v1 session of veteran@old, working in /definitely/not/in/the/project.', confirm: true });
       assert.equal(await first.$eval('.spawn-name', el => el.hidden), true, 'a v1 agent keeps its own name, so the start dialog has no Name field');
       await first.waitForFunction(() => document.querySelector('#spawn-form [name=role]').value === 'reviewer', {}, {});
+      assert.deepEqual(await first.evaluate(() => ({ shown: !document.querySelector('#spawn-start-in').hidden, value: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent })), { shown: true, value: 'general' }, 'a start from v1 history says which room it starts in, general by default');
       // Which entry the dialog picks: a continued claude session takes the native claude entry even when a Docker one sorts first (and leaves
       // other tools and containers unselectable), and a fresh start only preselects the v1 tool without locking the others.
       assert.deepEqual(await first.evaluate(async () => {
@@ -2457,6 +2458,7 @@ async function main() {
       await domClick(first, '#spawn-cancel');
       await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
       assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, banner: document.querySelector('#spawn-resume').hidden })), { title: 'Spawn', banner: true }, 'closing the start dialog restores the ordinary one');
+      assert.equal(await first.$eval('#spawn-start-in', el => el.hidden), true, 'the ordinary spawn dialog has no Start in picker');
     }
     assert.equal(await first.title(), '(2) aimebu');
     assert.ok(await first.evaluate(() => window.__soundPlays > 0), 'new inbox items did not play the chime');
@@ -4443,7 +4445,7 @@ async function main() {
       const { AgentsPanel } = await import('/js/agents.js');
       const form = document.querySelector('#spawn-form'), option = form.querySelector('.spawn-worktree-option');
       const state = () => ({ hidden: option.hidden, disabled: form.elements.worktree.disabled, note: option.querySelector('.spawn-worktree-note').hidden, display: getComputedStyle(option).display });
-      const sync = (git, kind = 'task') => { AgentsPanel.prototype.syncWorktreeOption.call({ form, room: { kind }, spawnMachine: { machine: git === undefined ? {} : { project_worktree: git ? { ok: true } : { ok: false, code: 'git_unusable', reason: 'Git cannot use the project folder: detected dubious ownership' } } }, pendingResume: null }); return state(); };
+      const sync = (git, kind = 'task') => { AgentsPanel.prototype.syncWorktreeOption.call({ form, room: { kind }, spawnRoom() { return this.room; }, spawnMachine: { machine: git === undefined ? {} : { project_worktree: git ? { ok: true } : { ok: false, code: 'git_unusable', reason: 'Git cannot use the project folder: detected dubious ownership' } } }, pendingResume: null }); return state(); };
       const live = state(), notRepo = sync(false), reason = option.querySelector('.spawn-worktree-note').textContent, unknown = sync(undefined), home = sync(false, 'home'); sync(undefined);
       return { live, notRepo, reason, unknown, home };
     }), {
@@ -7767,8 +7769,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     }
     // Last, because the v1 agent seeded into the home room is one more historical sender there for every check that lists them.
     {
-      // In a lead-only home room a v1 agent keeps its role: every role stays listed, the reviewer v1 gave it is preselected, and the dialog
-      // says the home room does not take it and keeps Start off, instead of quietly offering the lead role alone. A lead role clears it.
+      // A v1 agent whose history is in a lead-only home room is started from there in a task room of the project.
       const homeRoomID = await first.evaluate(async project => (await (await fetch(`/api/projects/${project}/rooms`)).json()).find(room => room.kind === 'home').id, actualProjectID);
       const homeSeed = spawnSync(seedBinary, [path.join(tmp, 'server', 'aimebu.sqlite'), actualProjectID, homeRoomID, id, 'legacy']);
       if (homeSeed.status !== 0) throw new Error(`legacy home seed failed: ${homeSeed.stderr}`);
@@ -7782,7 +7783,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await first.evaluate(() => {
         const inner = window.fetch; window.__holdRoles = true;
         window.fetch = (input, options) => String(input).endsWith('/api/roles') && window.__holdRoles
-          ? (window.__holdRoles = false, new Promise(resolve => { window.__releaseStaleRoles = () => { window.fetch = inner; resolve(inner(input, options)); }; }))
+          ? (window.__holdRoles = false, new Promise(resolve => { window.__releaseStaleRoles = () => { window.fetch = inner; resolve(inner(input, options).then(response => { window.__staleDelivered = true; return response; })); }; }))
           : inner(input, options);
       });
       await first.waitForFunction(() => !document.querySelector('#spawn-open').disabled); // the page was just reloaded: the member list is still loading
@@ -7793,16 +7794,32 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await first.waitForSelector('#sender-profile-dialog #sender-profile-start');
       await domClick(first, '#sender-profile-start');
       await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
-      await first.waitForFunction(() => !document.querySelector('#spawn-home-hint').hidden);
+      // The start dialog's own roles must be in before the held answer of the earlier opening is let through (the picker is filled at once,
+      // so it says nothing about the roles): that answer is the lead-only list of the home room, and it would drop the reviewer.
+      await first.waitForFunction(() => !document.querySelector('#spawn-start-in').hidden && document.querySelector('#spawn-start-room').options.length > 0
+        && document.querySelectorAll('#spawn-form [name=role] option').length > 1 && document.querySelector('#spawn-form [name=role]').value === 'reviewer');
       await first.evaluate(() => window.__releaseStaleRoles());
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait for the held answer to have reached the page (not for a guessed time), then for the page to have run whatever it does with it.
+      await first.waitForFunction(() => window.__staleDelivered === true);
+      await first.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))));
       assert.deepEqual(await first.evaluate(() => ({ roles: document.querySelectorAll('#spawn-form [name=role] option').length > 1, role: document.querySelector('#spawn-form [name=role]').value, resume: !document.querySelector('#spawn-resume').hidden })), { roles: true, role: 'reviewer', resume: true }, 'the roles of an earlier opening arrived late and changed the start dialog');
-      const blocked = await first.evaluate(() => ({ roles: [...document.querySelectorAll('#spawn-form [name=role] option')].map(option => option.value), role: document.querySelector('#spawn-form [name=role]').value, hint: document.querySelector('#spawn-home-hint').textContent, submit: document.querySelector('#spawn-form button[type=submit]').disabled }));
-      assert.ok(blocked.roles.length > 1 && blocked.roles.includes('worker') && blocked.role === 'reviewer' && /home room is for the lead.*veteran would start as .*Reviewer/i.test(blocked.hint) && blocked.submit === true, `the home room refuses the v1 role and says so: ${JSON.stringify(blocked)}`);
-      await first.select('#spawn-form [name=role]', 'lead');
-      assert.equal(await first.$eval('#spawn-home-hint', el => el.hidden), true, 'a lead role is taken by the home room, so the explanation goes');
-      await first.select('#spawn-form [name=role]', 'worker');
-      assert.equal(await first.$eval('#spawn-home-hint', el => el.hidden), false, 'another role the home room does not take brings it back');
+      // The agent is started in a task room picked in "Start in" (general by default), so the home room's lead-only rule does not come up:
+      // every role stays listed, the reviewer v1 gave it is kept and no explanation is shown.
+      const picker = await first.evaluate(() => {
+        const label = document.querySelector('#spawn-start-in'), select = document.querySelector('#spawn-start-room');
+        return { shown: !label.hidden, text: label.firstChild.textContent, value: select.selectedOptions[0]?.textContent, options: [...select.options].map(option => option.textContent), roles: [...document.querySelectorAll('#spawn-form [name=role] option')].map(option => option.value), role: document.querySelector('#spawn-form [name=role]').value, hint: document.querySelector('#spawn-home-hint').hidden };
+      });
+      assert.ok(picker.shown && picker.text === 'Start in' && picker.value === 'general' && picker.options.includes('general') && !picker.options.includes('home'), `the start dialog offers the project's task rooms, general first: ${JSON.stringify(picker)}`);
+      assert.ok(picker.roles.length > 1 && picker.roles.includes('worker') && picker.role === 'reviewer' && picker.hint === true, `a start in a task room keeps the role v1 gave and shows no home-room note: ${JSON.stringify(picker)}`);
+      // Keyboard: the picker takes focus and a different room can be chosen with the arrow keys; it names itself to assistive technology.
+      await first.focus('#spawn-start-room');
+      assert.equal(await first.evaluate(() => document.activeElement.id), 'spawn-start-room', 'the picker is focusable');
+      assert.equal(await first.evaluate(() => document.querySelector('#spawn-start-room').labels[0]?.textContent.startsWith('Start in')), true, 'the picker has an accessible name');
+      // Phone: the picker fits the dialog.
+      await first.setViewport({ width: 390, height: 780 });
+      const fit = await first.evaluate(() => { const box = document.querySelector('#spawn-start-room').getBoundingClientRect(), dialog = document.querySelector('#spawn-dialog').getBoundingClientRect(); return box.width > 0 && box.left >= dialog.left && box.right <= dialog.right + 1; });
+      assert.ok(fit, 'on a phone the picker stays inside the dialog');
+      await first.setViewport({ width: 1100, height: 720 });
       await domClick(first, '#spawn-cancel');
 
     }

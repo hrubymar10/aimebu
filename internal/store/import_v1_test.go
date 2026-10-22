@@ -1603,7 +1603,11 @@ func TestV1ImportCarriesAgentSessionsAndImageSizes(t *testing.T) {
 	}
 	// What v1 had recorded is what "Start as v2 agent" works from: the session id and folder carry over, the role v1 gave the agent most
 	// often is suggested, and codex (which v2 cannot continue a v1 session for) is not resumable.
-	start, err := s.LegacyStart(t.Context(), roomID, "bot@repo")
+	var projectID string
+	if err := s.db.QueryRow(`SELECT project_id FROM room WHERE id=?`, roomID).Scan(&projectID); err != nil {
+		t.Fatal(err)
+	}
+	start, err := s.LegacyStart(t.Context(), projectID, "bot@repo")
 	if err != nil || start.Tool != "" || start.Harness != "codex" || start.SessionID != "sess-1" || start.CWD != "/work/repo" || start.RoleKey != "reviewer" || start.Slug != "bot" || start.StartedID != "" {
 		t.Fatalf("legacy start: %+v %v", start, err)
 	}

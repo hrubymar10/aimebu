@@ -332,17 +332,23 @@ An imported sender's profile (the dialog its name opens in the chat) offers
 **Start as v2 agent** to an owner or operator of the project. It is never
 automatic. The button opens the Spawn dialog for the old name (the
 v1 slug, if it is free in the project and fits the agent-name rule; otherwise
-the start is refused; the dialog has no Name field because the agent keeps it),
-the tool and model v1 ran, and the role v1 gave the agent most often, if v2
-has it (otherwise worker). The role is the agent's own, so in a home room with
-**Home room: lead only** the dialog still lists every role and keeps the one
-v1 gave: when that is not a lead role it says the home room does not take it
-and keeps Start off (the server refuses the same start with 409
-`home_is_lead_only`); start the agent from a task room such as general, pick
-a lead role, or turn the setting off. The dialog states what will
-happen; submitting sends `resume_legacy` with the v1 agent id on
-`POST /api/rooms/{room}/agents`. The server reads the session itself: the
-client never supplies a session id.
+the start is refused; the dialog has no Name field because the agent keeps it), the tool and model v1 ran, and the role v1 gave the
+agent most often, if v2 has it (otherwise worker). The dialog has a **Start in**
+picker listing the project's open task rooms, `general` by default: the agent
+is started in the room picked there, not necessarily the room whose profile was
+opened. The lookup is **per project**: an agent that wrote in any room of the
+project can be started, so a worker whose v1 history is only in a home room
+with **Home room: lead only** is started in `general`. An agent that wrote only
+in another project is never found (404 `not_found`). Every check of the
+chosen room still applies (permissions, limits, `v1_may_be_active`, and the
+lead-only home room, which the picker does not offer; the server refuses a
+non-lead role posted to it with 409 `home_is_lead_only`). The role is the
+agent's own: the dialog lists every role and keeps the one v1 gave. A project
+with no open task room cannot start it (Start stays off and the dialog says
+so). After the start the web shows the room the agent was started in. The
+dialog states what will happen; submitting sends `resume_legacy` with the v1
+agent id on `POST /api/rooms/{room}/agents` for the room picked in Start in.
+The server reads the session itself: the client never supplies a session id.
 
 - **Claude Code** sessions are **continued**: the new agent's session is
   created already started with v1's session id, so its first turn runs

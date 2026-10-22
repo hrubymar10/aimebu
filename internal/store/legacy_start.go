@@ -74,17 +74,24 @@ var sessionHandlePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{7,199
 // ValidSessionHandle reports whether a harness session id looks like one: letters, digits and a few separators, never a path or an option.
 func ValidSessionHandle(handle string) bool { return sessionHandlePattern.MatchString(handle) }
 
-// LegacyStart reads one legacy agent for starting, as seen from roomID: it must be an agent that wrote in that room (the condition under
-// which its profile opens there), so that one project's owner cannot start, or learn anything about, an agent that only worked elsewhere.
-// sql.ErrNoRows when v1 recorded no session for it or it never wrote in the room.
-func (s *Store) LegacyStart(ctx context.Context, roomID, agentID string) (LegacyStart, error) {
+// legacyStartQuery reads the recorded session of a v1 agent that wrote in a room of the project; it goes by author first (the partial
+// index message_agent_author_room), so it does not read the messages of every room of the project. A private chat is not a room of the
+// project for this purpose.
+const legacyStartQuery = `SELECT harness,model,cwd,harness_session_id,last_seen,started_agent_id FROM legacy_agent_session l
+	WHERE l.agent_id=? AND EXISTS (SELECT 1 FROM message m JOIN room r ON r.id=m.room_id WHERE m.author_kind='agent' AND m.author_id=l.agent_id AND r.project_id=? AND r.kind<>'dm')`
+
+// LegacyStart reads one legacy agent for starting in projectID: it must be an agent that wrote in some room of that project (a private chat
+// does not count: whoever is not in it must not learn that the agent wrote there), so that one
+// project's owner cannot start, or learn anything about, an agent that only worked in another project. Which room of the project it is
+// started in is up to the caller: the room's own rules (lead-only home, permissions, limits) are checked there, not here.
+// sql.ErrNoRows when v1 recorded no session for it or it never wrote in the project.
+func (s *Store) LegacyStart(ctx context.Context, projectID, agentID string) (LegacyStart, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return LegacyStart{}, err
 	}
 	out := LegacyStart{AgentID: agentID, Slug: LegacySlug(agentID)}
 	var started sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT harness,model,cwd,harness_session_id,last_seen,started_agent_id FROM legacy_agent_session l
-		WHERE l.agent_id=? AND EXISTS (SELECT 1 FROM message WHERE room_id=? AND author_kind='agent' AND author_id=l.agent_id)`, agentID, roomID).
+	err := s.db.QueryRowContext(ctx, legacyStartQuery, agentID, projectID).
 		Scan(&out.Harness, &out.Model, &out.CWD, &out.SessionID, &out.LastSeen, &started)
 	if err != nil {
 		return LegacyStart{}, err

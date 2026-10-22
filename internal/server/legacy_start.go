@@ -90,10 +90,10 @@ func (s *Server) legacyStartChecks(w http.ResponseWriter, r *http.Request, room 
 		apiError(w, 403, "forbidden", "only a person starts an agent from v1 history")
 		return legacy, false, false
 	}
-	// Scoped to the room: an agent that never wrote here is not found, with nothing said about it.
-	legacy, err := s.Store.LegacyStart(r.Context(), room.ID, req.ResumeLegacy)
+	// Scoped to the project: an agent that never wrote in any of its rooms is not found, with nothing said about it.
+	legacy, err := s.Store.LegacyStart(r.Context(), room.ProjectID, req.ResumeLegacy)
 	if errors.Is(err, sql.ErrNoRows) {
-		apiError(w, 404, "not_found", "no such agent in this room's history")
+		apiError(w, 404, "not_found", "no such agent in this project's history")
 		return legacy, false, false
 	}
 	if err != nil {

@@ -1339,6 +1339,10 @@ WHERE a.revoked_at IS NULL AND ro.cap_is_lead = 1 AND r.kind <> 'dm' AND r.lifec
 -- included) and an optional time until which the room is muted. The mute is an instant in the future, so it ends by itself.
 ALTER TABLE room_view_preference ADD COLUMN notify TEXT NOT NULL DEFAULT 'default' CHECK (notify IN ('default','all','mentions','none'));
 ALTER TABLE room_view_preference ADD COLUMN muted_until TEXT;
+`}, {74, `
+-- "Start as v2 agent" asks whether a v1 agent wrote anywhere in a project: look the agent up by author, then check its rooms, instead of
+-- reading every message of every room of the project.
+CREATE INDEX message_agent_author_room ON message(author_id, room_id) WHERE author_kind = 'agent';
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

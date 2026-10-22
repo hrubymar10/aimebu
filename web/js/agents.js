@@ -49,14 +49,13 @@ export class AgentsPanel {
     this.panelTitle = this.panel.querySelector('header h2');
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && this.profileID && !document.querySelector('dialog[open]')) { event.preventDefault(); this.closeProfile(); } });
     document.querySelector('#spawn-cancel').onclick = () => this.dialog.close();
-    this.dialog.addEventListener('close', () => { this.pendingResume = null; this.renderResume(); });
+    this.dialog.addEventListener('close', () => { this.pendingResume = null; this.renderStartRooms(); this.renderResume(); });
     this.form.elements.tool.onchange = () => this.renderSpawnModels();
-    this.form.elements.role.onchange = () => this.syncRoleGate();
     this.nameInput = this.form.elements.name; this.nameError = this.form.querySelector('#spawn-name-error');
     this.nameDice = setGlyph(this.form.querySelector('#spawn-name-dice'), 'dice', 'Another name');
     this.nameDice.onclick = () => this.fillSpawnName();
     this.nameInput.oninput = () => { this.nameRequestID = (this.nameRequestID || 0) + 1; this.nameError.textContent = ''; };
-
+    this.form.elements.start_room.onchange = () => { this.syncWorktreeOption(); this.updateSpawnSubmit(); };
     this.form.onsubmit = event => { event.preventDefault(); this.spawn(); };
     document.querySelector('#switch-cancel').onclick = () => this.switchDialog.close();
     this.switchForm.elements.tool.onchange = () => this.renderSwitchModels();
@@ -107,7 +106,7 @@ export class AgentsPanel {
   syncWorktreeOption() {
     const option = this.form.querySelector('.spawn-worktree-option'), box = this.form.elements.worktree;
     const check = this.spawnMachine?.machine?.project_worktree, refused = check?.ok === false;
-    option.hidden = this.room?.kind !== 'task' || !!this.pendingResume?.resumable;
+    option.hidden = this.spawnRoom()?.kind !== 'task' || !!this.pendingResume?.resumable;
     box.disabled = refused;
     if (refused) { box.checked = false; this.form.querySelector('.spawn-worktree-base').hidden = true; }
     const note = option.querySelector('.spawn-worktree-note');
@@ -502,8 +501,29 @@ export class AgentsPanel {
   // The worktree choice, as a request carries it: only a task room can have a worktree, so from any other room nothing is sent, however the
   // box was left (it is hidden there and could not be unticked).
   worktreeChoice() {
-    if (this.room?.kind !== 'task' || !this.form.elements.worktree.checked) return { worktree: false, base_ref: '' };
+    if (this.spawnRoom()?.kind !== 'task' || !this.form.elements.worktree.checked) return { worktree: false, base_ref: '' };
     return { worktree: true, base_ref: this.form.elements.base_ref.value };
+  }
+  // The room the dialog starts the agent in: the open room, or for a start from v1 history the one picked in "Start in".
+  spawnRoom() {
+    if (!this.pendingResume) return this.room;
+    return this.startRooms?.get(this.form.elements.start_room.value) || null;
+  }
+  // The rooms a v1 agent can be started in: the project's open task rooms. Its history may be only in the home room (which keeps its own
+  // lead-only rule) or in a room since archived, so the start is not tied to the room the profile was opened in.
+  renderStartRooms() {
+    const label = document.querySelector('#spawn-start-in'), select = this.form.elements.start_room;
+    label.hidden = !this.pendingResume;
+    select.replaceChildren(); this.startRooms = new Map();
+    if (!this.pendingResume || !this.room) return;
+    const rooms = (this.projectRooms?.(this.room.project_id) || []).filter(room => room.kind === 'task' && room.lifecycle === 'open');
+    for (const room of rooms) {
+      this.startRooms.set(room.id, room);
+      const option = document.createElement('option'); option.value = room.id; option.textContent = room.title; select.append(option);
+    }
+    // general is the project's shared task room; otherwise the open room if it is one, else the first.
+    const preferred = rooms.filter(room => room.title === 'general').sort((a, b) => a.depth - b.depth)[0] || rooms.find(room => room.id === this.room.id) || rooms[0];
+    if (preferred) select.value = preferred.id;
   }
   // A refused or cancelled spawn leaves the form as it was; each opening of the dialog starts without a worktree.
   resetWorktreeChoice() {
@@ -514,12 +534,13 @@ export class AgentsPanel {
   // what v1 ran, and the v1 session is continued when the harness can. Without it, it is the ordinary spawn dialog.
   async openSpawn({ resume = null } = {}) {
     this.resetWorktreeChoice();
-    // Nothing of the last opening is left to act on: the role list, the lead-only rule and the roles that count as lead are read again
+    // Nothing of the last opening is left to act on: the role list and the lead-only rule are read again
     // below, and until they are, Start stays off. Otherwise a role picked in the last opening (the lead, in a lead-only home room) could
     // still be selected while the tool catalog arrives first and enables Start, and the agent would be started as that role.
-    this.rolesReady = false; this.roleBlocked = false; this.homeLeadOnly = false; this.leadRoles = new Set();
+    this.rolesReady = false;
     this.form.elements.role.replaceChildren();
     this.pendingResume = resume;
+    this.renderStartRooms();
     this.renderResume();
     this.dialog.showModal();
     // A v1 agent keeps its own name, so the dialog has no name field then; otherwise it starts with a free one.
@@ -543,42 +564,27 @@ export class AgentsPanel {
       const room = this.room, roomID = room.id;
       await this.loadOwner(); // before the catalog, whose hints depend on it
       if (!current()) return;
-      const home = room.kind === 'home', hint = document.querySelector('#spawn-home-hint');
+      // A start from v1 history goes to a task room, so the home room's lead-only rule does not apply to it.
+      const home = room.kind === 'home' && !resume, hint = document.querySelector('#spawn-home-hint');
       hint.hidden = true;
       const [allRoles, leadOnly] = await Promise.all([this.source.roles(), home ? Promise.resolve(this.source.homeLeadOnly?.(room.project_id)).catch(() => true) : false, this.spawnMachine.load(room.project_id)]);
       if (!current() || this.room?.id !== roomID) return;
-      // With Home room: lead only (the default) the home room offers the lead roles alone; the server refuses the others. Starting a v1
-      // agent is different: it keeps the role v1 gave it, so every role stays listed and a role the home room refuses is explained
-      // (and Start disabled) instead of being swapped for a lead role without a word (see syncRoleGate).
-      const roles = leadOnly && !resume ? allRoles.filter(role => role.cap_is_lead) : allRoles;
-      this.homeLeadOnly = !!leadOnly; this.leadRoles = new Set(allRoles.filter(role => role.cap_is_lead).map(role => role.role_key));
-      hint.hidden = !leadOnly || !!resume;
+      // With Home room: lead only (the default) the home room offers the lead roles alone; the server refuses the others.
+      const roles = leadOnly ? allRoles.filter(role => role.cap_is_lead) : allRoles;
+      hint.hidden = !leadOnly;
       this.form.elements.role.replaceChildren(...roles.map(role => {
         const node = document.createElement('option'); node.value = role.role_key; node.textContent = `${role.emoji || ''} ${role.label}`.trim(); return node;
       }));
       if (roles.some(role => role.role_key === 'worker')) this.form.elements.role.value = 'worker';
       if (resume?.role_key && roles.some(role => role.role_key === resume.role_key)) this.form.elements.role.value = resume.role_key;
       this.rolesReady = true;
-      this.syncRoleGate();
+      this.updateSpawnSubmit();
     } catch (error) {
       if (!current()) return;
       this.catalog = [];
       reason.textContent = `Machines or tools unavailable: ${error.message}`;
       submit.disabled = true;
     }
-  }
-  // A v1 agent started in a lead-only home room with a role that is not a lead role: the server would refuse it (home_is_lead_only), so
-  // the dialog says so and keeps Start off, instead of the role having been changed for the person.
-  syncRoleGate() {
-    const resume = this.pendingResume, hint = document.querySelector('#spawn-home-hint');
-    this.roleBlocked = !!resume && this.room?.kind === 'home' && !!this.homeLeadOnly && !this.leadRoles?.has(this.form.elements.role.value);
-    if (resume) {
-      hint.hidden = !this.roleBlocked;
-      if (this.roleBlocked) hint.textContent = `The home room is for the lead, and ${resume.slug} would start as ${this.form.elements.role.selectedOptions[0]?.textContent || this.form.elements.role.value}. Start it from a task room such as general, pick a lead role, or turn off Home room: lead only in the project settings.`;
-    } else {
-      hint.textContent = 'The home room is for the lead. Spawn workers into a task room such as general.';
-    }
-    this.updateSpawnSubmit();
   }
   // Puts a free name from the server in the Name field (the dialog's first look, and the dice button). Failing to get one leaves the
   // field as it was: empty still spawns, under a name the server picks.
@@ -660,6 +666,7 @@ export class AgentsPanel {
       ? `This continues the v1 session of ${resume.legacy_id}, working in ${resume.cwd}.`
       : `${resume.reason || 'This agent starts fresh with the same name.'}`;
     const lines = [];
+    if (!this.spawnRoom()) lines.push('This project has no open task room to start it in.');
     if (resume.resumable && resume.outside_folder) lines.push(`It works in ${resume.cwd}, outside the project folder, so the owner must approve it in the Inbox before it starts.`);
     if (resume.v1_active) lines.push('v1 saw this agent a moment ago and may still be using the session. Stop it in v1 first: two processes on one session corrupt it.');
     notes.textContent = lines.join(' ');
@@ -667,7 +674,7 @@ export class AgentsPanel {
   updateSpawnSubmit() {
     const tool = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)];
     // A resumed session runs in the v1 folder, which the server checks itself, so the machine's project folder is not needed for it.
-    this.form.querySelector('button[type=submit]').disabled = !this.rolesReady || !!this.roleBlocked || (!this.pendingResume?.resumable && !this.spawnMachine.folderReady) || (!tool?.available || !this.form.elements.model.options.length);
+    this.form.querySelector('button[type=submit]').disabled = !this.rolesReady || (!!this.pendingResume && !this.spawnRoom()) || (!this.pendingResume?.resumable && !this.spawnMachine.folderReady) || (!tool?.available || !this.form.elements.model.options.length);
   }
   // A hint that names Settings → Harnesses makes that name a button that opens it, so an empty machine says where to go.
   // Only an owner or admin can add or change a harness, so anyone else gets plain words (the link would only end in a refusal).
@@ -714,7 +721,8 @@ export class AgentsPanel {
     this.updateSpawnSubmit();
   }
   async spawn() {
-    if (!this.room) return;
+    const target = this.spawnRoom();
+    if (!this.room || !target) return;
     this.error.textContent = '';
     const role = this.form.elements.role.value, selected = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)], model = this.form.elements.model.value;
     if (!role || !selected?.available || !model) return;
@@ -723,7 +731,7 @@ export class AgentsPanel {
     if (name && !/^[a-z][a-z0-9_-]{1,19}[a-z0-9]$/.test(name)) { this.nameError.textContent = 'A name is 3 to 21 characters: lowercase letters, digits, - and _, starting with a letter and ending with a letter or digit.'; this.nameInput.focus(); return; }
     if (resume?.resumable && selected.tool !== resume.tool) { this.error.textContent = `To continue this session the tool must be ${resume.tool}.`; return; }
     if (resume?.v1_active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that v1 is not running this session any more.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
-    try { await this.source.spawn(this.room.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(name ? { name } : {}), ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume ? { resume_legacy: resume.legacy_id, confirm_v1_idle: document.querySelector('#spawn-resume-confirm').checked } : {}) }); this.dialog.close(); this.form.reset(); await this.refresh(); }
+    try { await this.source.spawn(target.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(name ? { name } : {}), ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume ? { resume_legacy: resume.legacy_id, confirm_v1_idle: document.querySelector('#spawn-resume-confirm').checked } : {}) }); this.dialog.close(); this.form.reset(); if (target.id !== this.room.id) await this.showRoom?.(target); else await this.refresh(); }
     catch (error) {
       // A refused name is answered under its field and the dialog stays open, with everything else as it was, so another name can be tried.
       if (error.code === 'name_in_use' || error.code === 'invalid_name') { this.nameError.textContent = error.message; this.nameInput.focus(); return; }

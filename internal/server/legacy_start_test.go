@@ -297,16 +297,15 @@ func TestContainerizationFollowsTheLauncherNotItsName(t *testing.T) {
 	}
 }
 
-// An agent that wrote only in another room cannot be started from this one, and nothing about it is revealed.
-func TestStartAsV2AgentIsScopedToTheRoomsHistory(t *testing.T) {
-	f := newLegacyFixture(t)
-	elsewhere := f.newTaskRoom("elsewhere")
+// startIn posts a start of sage@old into any room, not only the fixture's.
+func (f legacyFixture) startIn(t *testing.T, roomID, key string, cookie *http.Cookie, csrf string) (int, map[string]any) {
+	t.Helper()
 	encoded, _ := json.Marshal(map[string]any{"role_key": "worker", "tool": "claude", "variant": "native", "model": "haiku", "provider": "anthropic", "resume_legacy": "sage@old"})
-	req, _ := http.NewRequest(http.MethodPost, f.http.URL+"/api/rooms/"+elsewhere.ID+"/agents", bytes.NewReader(encoded))
+	req, _ := http.NewRequest(http.MethodPost, f.http.URL+"/api/rooms/"+roomID+"/agents", bytes.NewReader(encoded))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-CSRF-Token", f.csrf)
-	req.Header.Set("Idempotency-Key", "scoped-1")
-	req.AddCookie(f.cookie)
+	req.Header.Set("X-CSRF-Token", csrf)
+	req.Header.Set("Idempotency-Key", key)
+	req.AddCookie(cookie)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -314,22 +313,51 @@ func TestStartAsV2AgentIsScopedToTheRoomsHistory(t *testing.T) {
 	defer resp.Body.Close()
 	var body map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if resp.StatusCode != 404 || body["error"] != "not_found" {
-		t.Fatalf("an agent that never wrote in this room: %d %+v", resp.StatusCode, body)
-	}
-	for _, leaked := range []string{f.cwd, legacyHandle} {
-		if raw, _ := json.Marshal(body); strings.Contains(string(raw), leaked) {
-			t.Fatalf("the refusal leaks %q: %s", leaked, raw)
-		}
-	}
-	// Nor is the offer made there, and the agent is still free to be started where it did write.
+	return resp.StatusCode, body
+}
+
+// The lookup is per project: an agent that wrote in one room of the project can be started in another room of it, and the profile still
+// opens only where it wrote.
+func TestStartAsV2AgentIsScopedToTheProjectsHistory(t *testing.T) {
+	f := newLegacyFixture(t)
+	elsewhere := f.newTaskRoom("elsewhere")
+	// Nothing is offered in a room the agent never wrote in...
 	response := f.request(http.MethodGet, "/api/rooms/"+elsewhere.ID+"/agents/sage@old/profile", nil, false)
 	response.Body.Close()
 	if response.StatusCode == 200 {
 		t.Fatal("the profile opened in a room the agent never wrote in")
 	}
-	if status, created := f.start(t, "scoped-2", nil); status != 201 {
-		t.Fatalf("start in its own room: %d %+v", status, created)
+	// ...but the start works there, since it wrote in the project.
+	status, created := f.startIn(t, elsewhere.ID, "project-1", f.cookie, f.csrf)
+	if status != 201 {
+		t.Fatalf("start in another room of the project: %d %+v", status, created)
+	}
+	if again, _ := f.startIn(t, f.room.ID, "project-2", f.cookie, f.csrf); again != 409 {
+		t.Fatalf("started twice: %d", again)
+	}
+}
+
+// An agent that wrote only in another project is not found, and nothing about it is revealed.
+func TestStartAsV2AgentRefusesAnAgentFromAnotherProject(t *testing.T) {
+	f := newLegacyFixture(t)
+	resp := f.request("POST", "/api/projects", map[string]string{"name": "q", "folder": f.t.TempDir()}, true)
+	var other store.Project
+	_ = json.NewDecoder(resp.Body).Decode(&other)
+	resp.Body.Close()
+	if other.ID == "" || other.ID == f.project.ID {
+		t.Fatalf("second project: %+v", other)
+	}
+	if _, err := f.exec(`UPDATE message SET room_id=(SELECT id FROM room WHERE project_id=? AND kind='task' LIMIT 1) WHERE author_id='sage@old'`, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	status, body := f.start(t, "foreign-1", nil)
+	if status != 404 || body["error"] != "not_found" {
+		t.Fatalf("an agent that never wrote in this project: %d %+v", status, body)
+	}
+	for _, leaked := range []string{f.cwd, legacyHandle} {
+		if raw, _ := json.Marshal(body); strings.Contains(string(raw), leaked) {
+			t.Fatalf("the refusal leaks %q: %s", leaked, raw)
+		}
 	}
 }
 
@@ -353,13 +381,18 @@ func TestStartAsV2AgentInALeadOnlyHomeRoomNeedsALeadRole(t *testing.T) {
 	if _, err := f.exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES ('msg_legacy_home',999998,?,'agent','sage@old','from the past, at home','[]','2026-10-02T09:30:00.000000000Z')`, f.room.ID); err != nil {
 		t.Fatal(err)
 	}
+	// The agent's history is only in the home room (the one message it had in the task room goes), as for a worker that v1 kept at home.
+	if _, err := f.exec(`DELETE FROM message WHERE id='msg_legacy'`); err != nil {
+		t.Fatal(err)
+	}
 	for _, role := range []string{"reviewer", "worker"} {
 		status, body := f.start(t, "home-"+role, map[string]any{"role_key": role})
 		if status != 409 || body["error"] != "home_is_lead_only" {
 			t.Errorf("%s into the lead-only home room: %d %+v, want 409 home_is_lead_only", role, status, body)
 		}
 	}
-	// Nothing was started, so the agent can still be started where its role is allowed.
+	// Nothing was started, so the agent can still be started where its role is allowed: its history is only in the home room, and a task
+	// room of the same project takes it.
 	f.room = task
 	if status, body := f.start(t, "task-room", map[string]any{"role_key": "reviewer"}); status != 201 {
 		t.Fatalf("reviewer into a task room: %d %+v", status, body)

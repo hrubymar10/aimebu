@@ -1126,7 +1126,7 @@ func (s *Server) agentProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	// An imported sender can be started as a v2 agent by someone who may spawn agents here.
 	if historical && (role == "owner" || role == "operator") && room.Kind != "dm" {
-		if legacy, lerr := s.Store.LegacyStart(r.Context(), room.ID, r.PathValue("agent")); lerr == nil {
+		if legacy, lerr := s.Store.LegacyStart(r.Context(), room.ProjectID, r.PathValue("agent")); lerr == nil {
 			folder, _ := s.Store.ProjectFolder(r.Context(), room.ProjectID)
 			info := legacy.StartInfo(time.Now(), folder)
 			profile.Start = &info

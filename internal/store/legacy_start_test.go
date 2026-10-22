@@ -74,7 +74,7 @@ func TestStartFromLegacyContinuesTheSessionKeepsTheNameAndLinksBothWays(t *testi
 	t.Parallel()
 	s, _, room := legacyStartFixture(t)
 	ctx := context.Background()
-	info, err := s.LegacyStart(ctx, room.ID, "sage@old")
+	info, err := s.LegacyStart(ctx, room.ProjectID, "sage@old")
 	if err != nil || info.Tool != "claude" || info.RoleKey != "leader" || info.Slug != "sage" || info.StartedID != "" {
 		t.Fatalf("before: %+v %v", info, err)
 	}
@@ -102,7 +102,7 @@ func TestStartFromLegacyContinuesTheSessionKeepsTheNameAndLinksBothWays(t *testi
 		t.Fatalf("dispatch would not resume: started=%v err=%v", started, err)
 	}
 	// Both directions are linked.
-	again, err := s.LegacyStart(ctx, room.ID, "sage@old")
+	again, err := s.LegacyStart(ctx, room.ProjectID, "sage@old")
 	if err != nil || again.StartedID != card.ID || again.StartedSlg != "sage" {
 		t.Fatalf("legacy link: %+v %v", again, err)
 	}
@@ -164,7 +164,7 @@ func TestStartFromLegacyWithoutAResumableSessionStartsFreshUnderTheSameName(t *t
 	t.Parallel()
 	s, _, room := legacyStartFixture(t)
 	ctx := context.Background()
-	info, _ := s.LegacyStart(ctx, room.ID, "vib@old")
+	info, _ := s.LegacyStart(ctx, room.ProjectID, "vib@old")
 	if info.Tool != "" {
 		t.Fatalf("vibe cannot resume: %+v", info)
 	}
@@ -181,7 +181,7 @@ func TestStartFromLegacyWithoutAResumableSessionStartsFreshUnderTheSameName(t *t
 	if err := s.db.QueryRow(`SELECT start_mode,native_session_started_at FROM session WHERE agent_id=?`, card.ID).Scan(&mode, &startedAt); err != nil || mode != "fresh_with_history" || startedAt != nil {
 		t.Fatalf("session: mode=%q started=%v err=%v", mode, startedAt, err)
 	}
-	if got, _ := s.LegacyStart(ctx, room.ID, "vib@old"); got.StartedID != card.ID {
+	if got, _ := s.LegacyStart(ctx, room.ProjectID, "vib@old"); got.StartedID != card.ID {
 		t.Fatalf("link: %+v", got)
 	}
 }
@@ -191,7 +191,7 @@ func TestResumeOutsideTheProjectFolderWaitsForBoundaryApproval(t *testing.T) {
 	t.Parallel()
 	s, _, room := legacyStartFixture(t)
 	ctx := context.Background()
-	info, _ := s.LegacyStart(ctx, room.ID, "far@old")
+	info, _ := s.LegacyStart(ctx, room.ProjectID, "far@old")
 	if view := info.StartInfo(time.Now(), "/tmp/wake"); !view.Resumable || !view.OutsideFolder || view.V1Active {
 		t.Fatalf("start info: %+v", view)
 	}
@@ -222,7 +222,9 @@ func TestV1SeenRecentlyUsesAWindow(t *testing.T) {
 	}
 }
 
-func TestLegacyStartIsScopedToTheRoomTheAgentWroteIn(t *testing.T) {
+// The lookup is per project: an agent that wrote in any room of the project is found, whichever room asks; one that wrote only in another
+// project is not found at all.
+func TestLegacyStartIsScopedToTheProjectTheAgentWroteIn(t *testing.T) {
 	t.Parallel()
 	s, project, room := legacyStartFixture(t)
 	ctx := context.Background()
@@ -230,11 +232,21 @@ func TestLegacyStartIsScopedToTheRoomTheAgentWroteIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.LegacyStart(ctx, other.ID, "sage@old"); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("an agent that never wrote in the room: %v", err)
+	if other.ID == room.ID || other.ProjectID != room.ProjectID {
+		t.Fatalf("expected a second room of the same project: %+v %+v", other, room)
 	}
-	if _, err := s.LegacyStart(ctx, room.ID, "sage@old"); err != nil {
-		t.Fatalf("in its own room: %v", err)
+	if got, err := s.LegacyStart(ctx, other.ProjectID, "sage@old"); err != nil || got.AgentID != "sage@old" {
+		t.Fatalf("an agent that wrote in another room of the project: %+v %v", got, err)
+	}
+	foreign, err := s.CreateProject(ctx, Project{Name: "foreign", Folder: "/tmp/foreign"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LegacyStart(ctx, foreign.ID, "sage@old"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("an agent that never wrote in the project: %v", err)
+	}
+	if _, err := s.LegacyStart(ctx, project.ID, "nobody@old"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("an unknown agent: %v", err)
 	}
 }
 
@@ -272,4 +284,62 @@ func TestProfileShowsTheWorktreeOnlyForTheAgentThatUsesIt(t *testing.T) {
 		t.Fatalf("the continued agent works in its own folder: %+v %v", profile, err)
 	}
 	_ = project
+}
+
+// A private chat is not part of the project's history for this lookup: an agent whose only messages are in a private chat is not found,
+// so someone who is not in that chat cannot start it (or learn it wrote there).
+func TestLegacyStartIgnoresPrivateChats(t *testing.T) {
+	t.Parallel()
+	s, project, room := legacyStartFixture(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(`INSERT INTO room(id,project_id,depth,kind,dm_key,title,created_by,created_at) VALUES ('rm_dm_only',?,0,'dm','dm:one:two','dm','owner','now')`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE message SET room_id='rm_dm_only' WHERE author_id='sage@old'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LegacyStart(ctx, project.ID, "sage@old"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("an agent with only private-chat history: %v", err)
+	}
+	if _, err := s.db.Exec(`UPDATE message SET room_id=? WHERE author_id='sage@old'`, room.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.LegacyStart(ctx, project.ID, "sage@old"); err != nil {
+		t.Fatalf("back in a project room: %v", err)
+	}
+}
+
+// The lookup goes through an index on the author and never reads the whole message table or every message of a project's rooms.
+func TestLegacyStartQueryUsesTheAuthorIndex(t *testing.T) {
+	t.Parallel()
+	s, _, _ := legacyStartFixture(t)
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN `+legacyStartQuery, "sage@old", "prj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	usesIndex := false
+	for _, step := range plan {
+		if strings.Contains(step, "message_agent_author_room") {
+			usesIndex = true
+		}
+		if strings.HasPrefix(step, "SCAN message") || strings.HasPrefix(step, "SCAN m") && !strings.Contains(step, "USING") {
+			t.Fatalf("the lookup reads every message: %v", plan)
+		}
+	}
+	if !usesIndex {
+		t.Fatalf("the lookup does not use the author index: %v", plan)
+	}
 }

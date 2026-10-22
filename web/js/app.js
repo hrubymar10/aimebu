@@ -194,6 +194,8 @@ setInterval(() => {
 chat.setSpawnOpener(() => agents.openSpawn());
 chat.setLegacyActions(start => agents.openSpawn({ resume: start }), id => { agents.setMobileOpen(true); agents.openProfile(id); });
 agents.projectRole = chat.projectRole;
+agents.projectRooms = projectID => [...sidebar.rooms.values()].filter(room => room.project_id === projectID);
+agents.showRoom = room => selectRoom(room);
 const settings = new SettingsPanel(createUsagesSource(), () => ({ projects: [...sidebar.projects.values()], selectedProjectID: chat.room?.project_id }), notifications);
 chat.projectSettings = settings.project; // the home room's settings show the same project form
 settings.onRights = () => applyRights();
