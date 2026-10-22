@@ -244,6 +244,22 @@ func TestContainerizedHarnessModelsAreDetectedAndAChosenFolderIsPassed(t *testin
 		t.Fatal(err)
 	}
 	configRoot := connectSupervisor(t, f)
+	// OnReady follows the supervisor's send, but the server can still be
+	// processing the launcher status frame when the first request arrives.
+	waitForGuard(t, machineWaitGuard, func() bool {
+		conn, err := f.srv.machineForID(f.machineID)
+		if err != nil {
+			return false
+		}
+		conn.harnessMu.Lock()
+		defer conn.harnessMu.Unlock()
+		for _, row := range conn.launchers {
+			if row.ID == docker.ID && row.ResolvedCommand != "" {
+				return true
+			}
+		}
+		return false
+	})
 	post := func(body any) (int, map[string]any) {
 		t.Helper()
 		resp := f.request(http.MethodPost, "/api/machines/"+f.machineID+"/launchers/"+docker.ID+"/models/detect", body, true)

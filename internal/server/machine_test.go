@@ -140,6 +140,10 @@ func TestMachineAuthenticationAndFullFakeTurn(t *testing.T) {
 	}
 }
 
+// machineWaitGuard is how long the machine-wire tests wait for a state that stays once it is reached. It only stops a test that would
+// otherwise hang for good; the tests never depend on how soon a state arrives, so a loaded machine makes them slower, not red.
+const machineWaitGuard = 30 * time.Second
+
 func TestMachineReconnectReplaysExitWithoutRerun(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -156,7 +160,6 @@ func TestMachineReconnectReplaysExitWithoutRerun(t *testing.T) {
 		adapter.Step{Kind: adapter.StepGate, Gate: gate},
 		adapter.Step{Kind: adapter.StepExit, Exit: adapter.ExitInfo{TerminalEvent: true}})
 	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, fake)
-	client.ReconnectDelay = 300 * time.Millisecond
 	errorsSeen := make(chan error, 16)
 	client.OnError = func(err error) {
 		select {
@@ -168,17 +171,25 @@ func TestMachineReconnectReplaysExitWithoutRerun(t *testing.T) {
 	client.OnReady = func() { ready <- struct{}{} }
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- client.Run(ctx) }()
-	select {
-	case <-ready:
-	case <-time.After(3 * time.Second):
-		t.Fatal("initial supervisor connect timed out")
+	// The two connections are made one at a time (RunOnce), not by Run's loop that reconnects on its own clock. The exit is journaled while
+	// nothing is connected and stays pending until the second connection replays it; a loop that reconnected by itself could replay and
+	// acknowledge it before a slow test looked, and the test would wait for a state that had already passed. Each wait below is for a state
+	// that stays until the test itself moves on.
+	waitReady := func(what string) {
+		t.Helper()
+		select {
+		case <-ready:
+		case <-time.After(machineWaitGuard):
+			t.Fatalf("%s timed out", what)
+		}
 	}
+	first := make(chan error, 1)
+	go func() { first <- client.RunOnce(ctx) }()
+	waitReady("initial supervisor connect")
 	if err := f.srv.Dispatch(ctx, delivery); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(machineWaitGuard)
 	for {
 		started, err := journal.HasStart(context.Background(), turn.ID)
 		if err != nil {
@@ -202,8 +213,13 @@ func TestMachineReconnectReplaysExitWithoutRerun(t *testing.T) {
 		t.Fatal(err)
 	}
 	machine.stop()
+	select {
+	case <-first:
+	case <-time.After(machineWaitGuard):
+		t.Fatal("the supervisor did not notice the disconnect")
+	}
 	close(gate)
-	deadline = time.Now().Add(3 * time.Second)
+	deadline = time.Now().Add(machineWaitGuard)
 	for {
 		exits, err := journal.PendingExits(context.Background())
 		if err != nil {
@@ -222,12 +238,10 @@ func TestMachineReconnectReplaysExitWithoutRerun(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	select {
-	case <-ready:
-	case <-time.After(4 * time.Second):
-		t.Fatal("supervisor did not reconnect")
-	}
-	deadline = time.Now().Add(3 * time.Second)
+	second := make(chan error, 1)
+	go func() { second <- client.RunOnce(ctx) }()
+	waitReady("supervisor reconnect")
+	deadline = time.Now().Add(machineWaitGuard)
 	for {
 		state, err := f.db.DeliveryState(context.Background(), turn.ID)
 		if err != nil {
@@ -241,7 +255,7 @@ func TestMachineReconnectReplaysExitWithoutRerun(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	deadline = time.Now().Add(3 * time.Second)
+	deadline = time.Now().Add(machineWaitGuard)
 	for {
 		exits, err := journal.PendingExits(context.Background())
 		if err != nil {
@@ -257,8 +271,8 @@ func TestMachineReconnectReplaysExitWithoutRerun(t *testing.T) {
 	}
 	cancel()
 	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-second:
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not stop")
 	}
 }
@@ -937,13 +951,13 @@ func TestMalformedFinalCandidateSurvivesMachineWire(t *testing.T) {
 	go func() { done <- client.RunOnce(ctx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor not ready")
 	}
 	if err := f.srv.Dispatch(ctx, delivery); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(machineWaitGuard)
 	for {
 		_, result, err := f.db.ReceiptByTurn(context.Background(), turn.ID, 0)
 		if err == nil {
@@ -964,7 +978,7 @@ func TestMalformedFinalCandidateSurvivesMachineWire(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not stop")
 	}
 }

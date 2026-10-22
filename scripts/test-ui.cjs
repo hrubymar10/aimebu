@@ -374,10 +374,18 @@ async function main() {
     await startupPage.locator('#login-form [name=password]').fill('test-password-123');
     await startupPage.click('#login-form button');
     await startupPage.waitForFunction(() => typeof window.__releaseImportCheck === 'function');
-    assert.equal(await startupPage.evaluate(() => document.querySelector('#app-view').getAttribute('aria-busy') === 'true' && document.querySelector('#settings-toggle').inert && !document.querySelector('#logout').inert && !document.querySelector('#startup-status').hidden), true, 'workspace controls or loading state were wrong before the import check finished');
-    await startupPage.click('#settings-toggle');
-    assert.equal(await startupPage.$eval('#settings-dialog', node => node.open), false, 'Settings opened during the import check');
-    await startupPage.evaluate(() => window.__releaseImportCheck());
+    // The checks while the import check is held run in one go in the page, and the check is released in the same task: the app gives startup
+    // ten seconds of its own, and every round trip to a page on a loaded machine eats into them (a slow release was reported as an abort).
+    // A click cannot reach the inert Settings button, which is what a person's click would hit: the element under its centre is not the button.
+    const held = await startupPage.evaluate(() => {
+      const toggle = document.querySelector('#settings-toggle'), box = toggle.getBoundingClientRect();
+      const under = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      const state = { busy: document.querySelector('#app-view').getAttribute('aria-busy') === 'true', settingsInert: toggle.inert, logoutInert: document.querySelector('#logout').inert,
+        loading: !document.querySelector('#startup-status').hidden, reachable: under === toggle || toggle.contains(under), settingsOpen: document.querySelector('#settings-dialog').open };
+      void window.__releaseImportCheck();
+      return state;
+    });
+    assert.deepEqual(held, { busy: true, settingsInert: true, logoutInert: false, loading: true, reachable: false, settingsOpen: false }, 'workspace controls or loading state were wrong before the import check finished, or Settings could be reached');
     await appReady(startupPage);
     await startupPage.click('#settings-toggle');
     assert.equal(await startupPage.$eval('#settings-dialog', node => node.open), true, 'Settings did not open after the import check');
@@ -2565,12 +2573,15 @@ async function main() {
           { mime: 'image/png', url: pic(900, 450), name: 'a-very-long-file-name-that-must-not-widen-its-figure-' + 'x'.repeat(80) + '.png', width: 900, height: 450 },
           { mime: 'image/png', url: pic(200, 100), name: 'small.png', width: 200, height: 100 },
           { mime: 'image/png', url: pic(300, 900), name: 'tall.png', width: 300, height: 900 }] });
+        // The probe's own nodes are counted before the page gets a turn: a message that arrives over the live stream in the next moments
+        // is another node in the list, not something chat.add made.
+        const added = [...list.children].filter(node => !kept.has(node)).length;
         list.lastElementChild.dataset.thumbProbe = '1';
         list.lastElementChild.scrollIntoView();
         await new Promise(resolve => setTimeout(resolve, 400));
-        return [...list.children].filter(node => !kept.has(node)).length;
+        return { added, probes: list.querySelectorAll('[data-thumb-probe]').length };
       });
-      assert.equal(added, 1);
+      assert.deepEqual(added, { added: 1, probes: 1 }, 'the probe message is one node and is still there once it has had time to lay out');
       const frames = () => first.evaluate(() => [...document.querySelectorAll('[data-thumb-probe] .image-item')].map(item => {
         const figure = item.getBoundingClientRect(), frame = item.querySelector('.image-thumb').getBoundingClientRect(), img = item.querySelector('img').getBoundingClientRect(), caption = item.querySelector('figcaption').getBoundingClientRect();
         const style = getComputedStyle(item.querySelector('.image-thumb')), shot = getComputedStyle(item.querySelector('img'));
@@ -3185,8 +3196,11 @@ async function main() {
     }
     assert.equal(await settingsPage.$('#usages-popover [data-provider="mistral"]'), null, 'unconfigured providers stay out of the popover');
     await settingsPage.setViewport({ width: 390, height: 780 });
-    const popoverFits = await settingsPage.$eval('#usages-popover', el => { const box = el.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight; });
-    assert.equal(popoverFits, true, 'the popover fits a phone viewport');
+    // The layout of a phone is finished a few frames after the viewport changes (the bar's height is measured in script), so wait for the popover
+    // to fit rather than measure in the same instant: a page under load is slower to settle, and the claim is where it ends up.
+    const popoverFits = () => { const box = document.querySelector('#usages-popover').getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight; };
+    await settingsPage.waitForFunction(popoverFits, { timeout: 10000 }).catch(() => {});
+    assert.equal(await settingsPage.evaluate(popoverFits), true, `the popover fits a phone viewport: ${await settingsPage.evaluate(() => { const box = document.querySelector('#usages-popover').getBoundingClientRect(); return JSON.stringify({ left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: innerWidth, height: innerHeight, bar: getComputedStyle(document.documentElement).getPropertyValue('--bar-h') }); })}`);
     await settingsPage.setViewport({ width: 1100, height: 720 });
     await settingsPage.keyboard.press('Escape');
     assert.equal(await settingsPage.$eval('#usages-popover', el => el.hidden), true, 'Escape closes the popover');
@@ -5450,19 +5464,33 @@ async function main() {
         const draft = await first.evaluate(async () => {
           const original = window.fetch, box = document.querySelector('#prompt-tail');
           const failWith = status => { window.fetch = async (path, options) => String(path).startsWith('/api/prompts/') && options?.method === 'PUT' ? new Response(JSON.stringify({ error: 'x', message: 'nope' }), { status, headers: { 'Content-Type': 'application/json' } }) : original(path, options); };
-          const wait = () => new Promise(resolve => setTimeout(resolve, 400));
+          // Every wait is for a state the page reaches (the save settled, the lock is on), never for a guessed time: the saves round-trip to
+          // the server, and how long that takes depends on the machine.
+          const until = async (condition, what) => {
+            const started = Date.now();
+            while (!condition()) {
+              if (Date.now() - started > 30000) throw new Error(`timed out waiting for ${what}`);
+              await new Promise(resolve => setTimeout(resolve, 20));
+            }
+          };
+          const section = () => document.querySelector('#settings-prompts'), alertText = () => document.querySelector('#settings-prompts [role=alert]').textContent;
           const out = {};
           try {
             box.value = 'DRAFT NOT SAVED'; box.dispatchEvent(new Event('input'));
-            failWith(500); document.querySelector('.prompt-slot[data-key=tail] .prompt-save').click(); await wait();
+            failWith(500); document.querySelector('.prompt-slot[data-key=tail] .prompt-save').click();
+            await until(() => alertText() !== '' && !section().hasAttribute('aria-busy'), 'the failed save to be reported');
             out.failed = { same: document.querySelector('#prompt-tail') === box, value: box.value, error: document.querySelector('#settings-prompts [role=alert]').textContent };
-            failWith(409); document.querySelector('.prompt-slot[data-key=tail] .prompt-save').click(); await wait();
+            failWith(409); document.querySelector('.prompt-slot[data-key=tail] .prompt-save').click();
+            await until(() => alertText().includes('your text is still in the box') && !section().hasAttribute('aria-busy'), 'the conflict to be reported after the reload');
             out.conflict = { value: document.querySelector('#prompt-tail').value, error: document.querySelector('#settings-prompts [role=alert]').textContent.includes('your text is still in the box') };
             // While a save is pending the scope select and every box and button are locked (and aria-busy), and they unlock afterwards.
             window.fetch = async (path, options) => { if (String(path).startsWith('/api/prompts/') && options?.method === 'PUT') { await new Promise(resolve => setTimeout(resolve, 500)); return new Response(JSON.stringify({ error: 'x', message: 'slow nope' }), { status: 500, headers: { 'Content-Type': 'application/json' } }); } return original(path, options); };
-            document.querySelector('.prompt-slot[data-key=tail] .prompt-save').click(); await new Promise(resolve => setTimeout(resolve, 150));
+            document.querySelector('.prompt-slot[data-key=tail] .prompt-save').click();
+            await until(() => section().hasAttribute('aria-busy'), 'the page to lock while the save is pending');
             const locked = () => ({ scope: document.querySelector('#prompt-scope').disabled, boxes: [...document.querySelectorAll('#prompt-list textarea')].every(box => box.disabled), buttons: [...document.querySelectorAll('#prompt-list button')].every(button => button.disabled), busy: document.querySelector('#settings-prompts').hasAttribute('aria-busy') });
-            out.pending = locked(); await wait(); await wait(); out.after = locked();
+            out.pending = locked();
+            await until(() => !section().hasAttribute('aria-busy') && alertText() !== '', 'the slow save to settle and the page to unlock');
+            out.after = locked();
           } finally { window.fetch = original; }
           return out;
         });
@@ -5473,7 +5501,14 @@ async function main() {
           const { csrf_token } = await (await fetch('/api/me')).json();
           const call = async (path, method, body) => { const response = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: body ? JSON.stringify(body) : undefined }); return response.json().catch(() => ({})); };
           const field = key => document.querySelector(`#prompt-${key}`);
-          const settle = () => new Promise(resolve => setTimeout(resolve, 600));
+          // The save is done when the page says so: it unlocks and reports "Saved" after reloading the list and putting the drafts back.
+          const settle = async () => {
+            const started = Date.now();
+            while (document.querySelector('#settings-prompts').hasAttribute('aria-busy') || !document.querySelector('#settings-prompts [role=status]').textContent.startsWith('Saved')) {
+              if (Date.now() - started > 30000) throw new Error('timed out waiting for the save to settle');
+              await new Promise(resolve => setTimeout(resolve, 20));
+            }
+          };
           const view = await (await fetch('/api/prompts?project_id=')).json();
           // Another editor saves "identity" while this page still shows the old text.
           await call('/api/prompts/identity', 'PUT', { project_id: '', value: 'NEWER FROM ELSEWHERE', rev: view.slots.find(slot => slot.key === 'identity').global?.rev || 0 });

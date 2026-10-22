@@ -63,7 +63,7 @@ func TestHomeRoomLeadOnlySpawn(t *testing.T) {
 	go func() { _ = client.RunOnce(ctx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not connect")
 	}
 	settingsPath := "/api/projects/" + f.project.ID + "/settings"

@@ -422,8 +422,12 @@ func TestPiDockerRequiresReachableBindForCatalogSpawnSwitchAndReactivate(t *test
 }
 
 func waitFor(t *testing.T, test func() bool) {
+	waitForGuard(t, 4*time.Second, test)
+}
+
+func waitForGuard(t *testing.T, guard time.Duration, test func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(4 * time.Second)
+	deadline := time.Now().Add(guard)
 	for time.Now().Before(deadline) {
 		if test() {
 			return
@@ -453,7 +457,7 @@ func TestSpawnEchoIdempotencyWriterAndControl(t *testing.T) {
 	go func() { done <- client.RunOnce(ctx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not connect")
 	}
 	status, card, raw := f.spawnRequest(t, "same", "worker")
@@ -474,7 +478,7 @@ func TestSpawnEchoIdempotencyWriterAndControl(t *testing.T) {
 		t.Fatalf("human message %d", response.StatusCode)
 	}
 	dispatcher := NewDispatcher(f.srv)
-	waitFor(t, func() bool {
+	waitForGuard(t, machineWaitGuard, func() bool {
 		_, _ = dispatcher.Pass(context.Background())
 		messages, err := f.db.ListMessagesAfter(context.Background(), f.room.ID, 0)
 		if err != nil {
@@ -487,7 +491,7 @@ func TestSpawnEchoIdempotencyWriterAndControl(t *testing.T) {
 		}
 		return false
 	})
-	waitFor(t, func() bool {
+	waitForGuard(t, machineWaitGuard, func() bool {
 		agent, err := f.db.AgentRuntimeByID(context.Background(), card.ID)
 		if err != nil || agent.Observed != "idle" {
 			return false
@@ -522,7 +526,7 @@ func TestSpawnEchoIdempotencyWriterAndControl(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not stop")
 	}
 }
@@ -547,7 +551,7 @@ func TestStopRunningAgentConfirmsExit(t *testing.T) {
 	go func() { done <- client.RunOnce(ctx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not connect")
 	}
 	status, card, raw := f.spawnRequest(t, "running", "worker")
@@ -557,7 +561,7 @@ func TestStopRunningAgentConfirmsExit(t *testing.T) {
 	response := f.request("POST", "/api/rooms/"+f.room.ID+"/messages", map[string]string{"body": "do work"}, true)
 	response.Body.Close()
 	dispatcher := NewDispatcher(f.srv)
-	waitFor(t, func() bool {
+	waitForGuard(t, machineWaitGuard, func() bool {
 		_, _ = dispatcher.Pass(context.Background())
 		agent, err := f.db.AgentRuntimeByID(context.Background(), card.ID)
 		return err == nil && agent.Observed == "in_turn"
@@ -576,14 +580,14 @@ func TestStopRunningAgentConfirmsExit(t *testing.T) {
 	if interrupt.Observed != "interrupting" {
 		t.Fatalf("interrupt request %+v", interrupt)
 	}
-	waitFor(t, func() bool {
+	waitForGuard(t, machineWaitGuard, func() bool {
 		agent, err := f.db.AgentRuntimeByID(context.Background(), card.ID)
 		return err == nil && agent.Observed == "stopped"
 	})
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not stop")
 	}
 }

@@ -60,15 +60,47 @@ func testCertificate(t *testing.T) (string, string) {
 	return certPath, keyPath
 }
 
-func freeTCPPort(t *testing.T) int {
+// freeTCPPorts picks n distinct free loopback ports. The listeners stay open until every port is picked: closing each one right away
+// lets the next pick get the same port back, and a test that needs two ports (HTTP and HTTPS) would be handed one twice.
+func freeTCPPorts(t *testing.T, n int) []int {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	listeners := make([]net.Listener, 0, n)
+	defer func() {
+		for _, listener := range listeners {
+			listener.Close()
+		}
+	}()
+	ports := make([]int, 0, n)
+	seen := map[int]bool{}
+	for range n {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		listeners = append(listeners, listener)
+		port := listener.Addr().(*net.TCPAddr).Port
+		if seen[port] {
+			t.Fatalf("port %d was picked twice while its listener was open", port)
+		}
+		seen[port] = true
+		ports = append(ports, port)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-	return port
+	return ports
+}
+
+// Several ports picked at once are distinct, however many.
+func TestFreeTCPPortsAreDistinct(t *testing.T) {
+	t.Parallel()
+	for round := 0; round < 50; round++ {
+		ports := freeTCPPorts(t, 4)
+		seen := map[int]bool{}
+		for _, port := range ports {
+			if port <= 0 || seen[port] {
+				t.Fatalf("round %d: ports %v are not distinct and valid", round, ports)
+			}
+			seen[port] = true
+		}
+	}
 }
 
 func TestResolveServerTLSConfig(t *testing.T) {
@@ -125,7 +157,8 @@ func TestServerServesHTTPAndHTTPSWithSameAllowlist(t *testing.T) {
 		{"blocked", "192.0.2.0/24", http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			httpPort, httpsPort := freeTCPPort(t), freeTCPPort(t)
+			ports := freeTCPPorts(t, 2)
+			httpPort, httpsPort := ports[0], ports[1]
 			t.Setenv("AIMEBU2_CONFIG_DIR", t.TempDir())
 			t.Setenv("AIMEBU2_PORT", fmt.Sprint(httpPort))
 			t.Setenv("AIMEBU2_TLS_PORT", fmt.Sprint(httpsPort))
