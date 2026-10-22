@@ -173,7 +173,7 @@ export class AgentsPanel {
     this.profileID = id; this.profileData = null; this.profileLoadedAt = 0;
     this.panel.classList.add('profile-open');
     this.panelTitle.textContent = 'Agent profile'; this.profileClose.hidden = false;
-    for (const [other, item] of this.nodes) { const button = item.querySelector('.agent-expand'); button.setAttribute('aria-expanded', String(other === id)); button.title = other === id ? 'Close agent profile' : 'Open agent profile'; button.setAttribute('aria-label', button.title); }
+    for (const [other, item] of this.nodes) { const button = item.querySelector('.agent-expand'); button.setAttribute('aria-expanded', String(other === id)); setGlyph(button, other === id ? 'close' : 'chevron-right', other === id ? 'Close agent profile' : 'Open agent profile'); }
     this.renderProfile(node, agent);
     this.loadProfile(id);
     this.panel.scrollTop = 0; this.list.scrollTop = 0;
@@ -181,7 +181,7 @@ export class AgentsPanel {
   closeProfile() {
     if (!this.profileID) return;
     const id = this.profileID; this.profileID = null; this.profileData = null;
-    for (const item of this.nodes.values()) { item.classList.remove('expanded'); const button = item.querySelector('.agent-expand'); button.setAttribute('aria-expanded', 'false'); button.title = 'Open agent profile'; button.setAttribute('aria-label', button.title); }
+    for (const item of this.nodes.values()) { item.classList.remove('expanded'); const button = item.querySelector('.agent-expand'); button.setAttribute('aria-expanded', 'false'); setGlyph(button, 'chevron-right', 'Open agent profile'); }
     this.panel.classList.remove('profile-open');
     this.panelTitle.textContent = 'Room members'; this.profileClose.hidden = true;
     this.nodes.get(id)?.querySelector('.agent-expand')?.focus();

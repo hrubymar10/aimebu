@@ -29,7 +29,7 @@ import { MessageDebug } from './message-debug.js';
 import { initMobileTabs } from './mobile-tabs.js';
 import { initUIVariants } from './ui-variant.js';
 import { copyText } from './markdown.js';
-import { ImportV1Wizard } from './import-v1.js';
+import { ImportV1Wizard, AFTER_IMPORT_KEY } from './import-v1.js';
 import { DiskUsage } from './disk-usage.js';
 
 
@@ -224,7 +224,19 @@ async function createFirstProject({ name, folder }) {
   const general = [...sidebar.rooms.values()].find(room => room.project_id === project.id && room.title === 'general');
   if (general) await selectRoom(general);
 }
-const onboarding = new Onboarding({ create: createFirstProject, spawn: () => agents.openSpawn() });
+// Whether some approved, connected machine has a harness that can start an agent now and a model to start it with; the onboarding
+// offers Spawn only then. The owner and admins read every machine, anyone else the machines of the open room's project.
+async function anyHarnessReady() {
+  const project = chat.room?.project_id;
+  if (!rights.admin && !project) return true;
+  const machines = (await request(rights.admin ? '/api/machines' : `/api/machines?project_id=${encodeURIComponent(project)}`)).machines || [];
+  for (const machine of machines.filter(item => item.approved && !item.revoked_at && item.connected !== false)) {
+    const catalog = await request(`/api/spawn-catalog?machine_id=${encodeURIComponent(machine.id)}`);
+    if ((catalog?.tools || []).some(tool => tool.available && (tool.models || []).length)) return true;
+  }
+  return false;
+}
+const onboarding = new Onboarding({ create: createFirstProject, spawn: () => agents.openSpawn(), harnessReady: anyHarnessReady, canSetUp: () => rights.admin });
 // Skipping or postponing the v1 import closes its dialog; with no project yet the onboarding takes its place.
 importWizard.dialog.addEventListener('close', () => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
 const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'));
@@ -408,9 +420,18 @@ async function signedIn(session) {
     if (!startupActive()) return;
     refreshEmptyState();
     // The last step of the first run: with no project yet (nothing imported, or the import skipped) the owner makes the first one.
+    // After a v1 import (it reloads the page) the owner may have no harness yet: v1's tools are not carried over, and nothing can be
+    // spawned without one. Asked once, on the first load after the import: the flag is spent whatever this load finds.
+    const afterImport = !!localStorage.getItem(AFTER_IMPORT_KEY);
+    if (afterImport) localStorage.removeItem(AFTER_IMPORT_KEY);
     if (!importWizard.dialog.open && sidebar.projects.size === 0) onboarding.show();
     if (pendingInvite && !inviteDialog.open) inviteDialog.showModal();
     startupSucceeded = true;
+    // Outside the startup deadline: a slow supervisor must not turn a loaded workspace into a timeout, so this runs once it is ready.
+    if (afterImport && rights.admin && !importWizard.dialog.open && !onboarding.open && sidebar.projects.size > 0) {
+      void anyHarnessReady().catch(() => true).then(ready => { if (!ready && active() && !onboarding.open) return onboarding.showHarnesses('harness-only'); })
+        .catch(error => { if (active()) console.error('harness setup:', error); });
+    }
   } catch (error) {
     if (!active()) return;
     if (error.status === 401 || error.status === 403) {

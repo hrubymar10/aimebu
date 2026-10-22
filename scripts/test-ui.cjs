@@ -2660,20 +2660,60 @@ async function main() {
           await setupPage.type('#onboarding-form [name=name]', 'demo'); fs.mkdirSync(path.join(tmp, 'demo-folder'), { recursive: true });
           await setupPage.type('#onboarding-form [name=folder]', path.join(tmp, 'demo-folder'));
           await setupPage.click('#onboarding-form button[type=submit]');
-          await setupPage.waitForSelector('#onboarding-view [data-step="how"]:not([hidden])');
-          assert.equal(await setupPage.$$eval('.onboarding-principles li', items => items.length), 7, 'seven principles');
+          // This server has no machine, so no harness: after the project the first run does not go on to a spawn that cannot start. It asks
+          // for a harness first, with the Settings → Harnesses component itself, and offers Continue only once a harness has a model.
+          await setupPage.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])');
           await setupPage.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'general');
           assert.equal(await setupPage.$eval('#app-view', view => view.classList.contains('no-room')), false, 'the empty state is gone once the general room opens');
           assert.deepEqual(await setupPage.evaluate(async () => (await (await fetch('/api/projects')).json()).map(project => project.name)), ['demo']);
-          await setupPage.click('#onboarding-spawn');
-          await setupPage.waitForFunction(() => document.querySelector('#spawn-dialog')?.open);
-          await setupPage.keyboard.press('Escape');
+          assert.deepEqual(await setupPage.evaluate(() => ({ continueDisabled: document.querySelector('#onboarding-harnesses-continue').disabled, status: document.querySelector('#onboarding-harness-status').textContent, embedded: !!document.querySelector('#onboarding-harnesses-host #onboarding-settings-harnesses'), repeatedIds: [...document.querySelectorAll('[id]')].map(node => node.id).filter((id, at, all) => all.indexOf(id) !== at) })),
+            { continueDisabled: true, status: 'No harness with a model yet.', embedded: true, repeatedIds: [] }, 'the Harnesses step embeds the Settings component and cannot continue without a harness');
+          await setupPage.click('#onboarding-harnesses-skip');
+          await setupPage.waitForSelector('#onboarding-view [data-step="how"]:not([hidden])');
+          assert.equal(await setupPage.$$eval('.onboarding-principles li', items => items.length), 7, 'seven principles');
+          await setupPage.waitForFunction(() => !document.querySelector('#onboarding-setup-harness').hidden);
+          assert.deepEqual(await setupPage.evaluate(() => ({ spawn: document.querySelector('#onboarding-spawn').hidden, setup: document.querySelector('#onboarding-setup-harness').textContent, note: document.querySelector('#onboarding-harness-note').textContent })),
+            { spawn: true, setup: 'Set up a harness first', note: 'No harness with a model is set up yet, so there is nothing for an agent to run on. Set one up, then spawn your first agent.' }, 'skipping the harness step leaves a hint to set one up, not a spawn button');
+          await setupPage.click('#onboarding-setup-harness');
+          await setupPage.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])');
+          // Once a harness with a model exists (stubbed through the same module) Continue is enabled and the last step offers Spawn.
+          const withHarness = await setupPage.evaluate(async () => {
+            const { Onboarding } = await import('/js/onboarding.js');
+            document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
+            // Leaving the step while it is still loading must not start the readiness poll afterwards.
+            const early = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => false, pollMs: 50 });
+            const opening = early.showHarnesses('first'); early.close(); await opening;
+            await new Promise(resolve => setTimeout(resolve, 150));
+            const lateWatch = early.watch;
+            const step = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => true, pollMs: 50 });
+            await step.showHarnesses('first');
+            await new Promise(resolve => setTimeout(resolve, 200));
+            const enabled = !document.querySelector('#onboarding-harnesses-continue').disabled;
+            document.querySelector('#onboarding-harnesses-continue').click();
+            await new Promise(resolve => setTimeout(resolve, 200));
+            return { lateWatch, enabled, spawn: document.querySelector('#onboarding-spawn').hidden, setup: document.querySelector('#onboarding-setup-harness').hidden, note: document.querySelector('#onboarding-harness-note').hidden };
+          });
+          assert.deepEqual(withHarness, { lateWatch: null, enabled: true, spawn: false, setup: true, note: true }, 'with a harness the onboarding continues to Spawn');
+          await setupPage.click('#onboarding-done');
+          assert.equal(await setupPage.evaluate(() => document.querySelector('#onboarding-view').hidden), true, 'Not now closes the onboarding');
           assert.equal(new URL(setupPage.url()).pathname, '/', 'the setup address stays in the address bar after setup');
           assert.equal((await fetch(`${setupOrigin}/setup?token=${setupToken}`)).status, 404, '/setup must be gone once an owner exists');
           assert.equal(fs.existsSync(tokenFile), false, 'the token file must be removed after use');
           assert.deepEqual(await (await fetch(`${setupOrigin}/api/setup/status`)).json(), { open: false }, 'the token path is not offered once an owner exists');
           await setupPage.reload(); await setupPage.waitForSelector('#app-view:not([hidden])', { timeout: APP_READY_TIMEOUT });
           assert.equal(await setupPage.$('#welcome-view'), null, 'the welcome came back after the setup marked it seen');
+          // After a v1 import that left no harness: the wizard's "Close and refresh" marks the next load, and that load opens the Harnesses step on
+          // its own (the project already exists, so there is nothing to spawn into: both its buttons just close it). The mark is used once.
+          await setupPage.evaluate(() => localStorage.setItem('aimebu2.import.check-harness', '1'));
+          await setupPage.reload(); await setupPage.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])', { timeout: APP_READY_TIMEOUT });
+          assert.equal(await setupPage.evaluate(() => localStorage.getItem('aimebu2.import.check-harness')), null, 'the after-import mark is used once');
+          assert.deepEqual(await setupPage.evaluate(() => ({ project: document.querySelector('#onboarding-view [data-step="project"]').hidden, how: document.querySelector('#onboarding-view [data-step="how"]').hidden, continueDisabled: document.querySelector('#onboarding-harnesses-continue').disabled })),
+            { project: true, how: true, continueDisabled: true }, 'after an import only the Harnesses step opens, and cannot continue without a harness');
+          await setupPage.click('#onboarding-harnesses-skip');
+          await setupPage.waitForFunction(() => document.querySelector('#onboarding-view').hidden);
+          assert.equal(await setupPage.evaluate(() => document.querySelector('#onboarding-view [data-step="how"]').hidden), true, 'skipping after an import closes the step; there is no spawn to offer');
+          await setupPage.reload(); await setupPage.waitForSelector('#app-view:not([hidden])', { timeout: APP_READY_TIMEOUT });
+          assert.equal(await setupPage.evaluate(() => document.querySelector('#onboarding-view').hidden), true, 'without the mark a reload does not open the step again');
           assert.equal(await setupPage.evaluate(() => document.documentElement.dataset.theme), 'red-light', 'the chosen theme did not survive a reload');
           // The theme belongs to the user, not the browser: with this browser's cache gone, a new sign-in still gets it.
           await setupPage.evaluate(() => localStorage.clear()); await setupPage.reload(); await setupPage.waitForSelector('#app-view:not([hidden])', { timeout: APP_READY_TIMEOUT });
@@ -3805,8 +3845,12 @@ async function main() {
     await agentPage.click('#health-popover .health-item[data-code="stuck"]');
     await agentPage.waitForFunction(() => document.querySelector('#agents-panel').classList.contains('profile-open') && document.querySelector('#agents-panel header h2').textContent === 'Agent profile');
     assert.equal(await agentPage.$eval('#health-popover', el => el.hidden), true, 'choosing a health entry closes the list');
+    // The button that closes the open profile is an X, not the chevron that opens it.
+    assert.deepEqual(await agentPage.$eval('.agent-card.expanded .agent-expand', button => ({ glyph: button.querySelector('.icon-mask')?.className.replace('icon-mask ', ''), title: button.title, label: button.getAttribute('aria-label') })),
+      { glyph: 'icon-mask-close', title: 'Close agent profile', label: 'Close agent profile' }, 'the open profile is closed by an X');
     await agentPage.keyboard.press('Escape');
     await agentPage.waitForFunction(() => !document.querySelector('#agents-panel').classList.contains('profile-open'));
+    assert.deepEqual(await agentPage.$$eval('.agent-card .agent-expand', buttons => [...new Set(buttons.map(button => `${button.querySelector('.icon-mask')?.className.replace('icon-mask ', '')}|${button.title}`))]), ['icon-mask-chevron-right|Open agent profile'], 'a closed profile is opened by the chevron');
     await agentPage.evaluate(() => document.activeElement?.blur()); // closing returns focus to the row; the member-row steps below start from rest
     const staleRead = await agentPage.evaluate(async () => {
       const { HttpAgentSource } = await import('/js/agent-source.js');
@@ -3898,7 +3942,7 @@ async function main() {
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-quick', el => getComputedStyle(el).opacity), '1', 'hovering a member shows its buttons');
     await domClick(agentPage, '[data-agent-id="agt_mock_worker"] .agent-name');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-switch', el => el.offsetParent !== null), true, 'clicking the row opens its profile');
-    assert.deepEqual(await agentPage.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, closeShown: !document.querySelector('#agent-profile-close').hidden, others: [...document.querySelectorAll('#agents-list .agent-card:not(.expanded)')].every(card => getComputedStyle(card).display === 'none'), humans: getComputedStyle(document.querySelector('#agents-humans')).display })), { title: 'Agent profile', closeShown: true, others: true, humans: 'none' }, 'the profile replaces the members list');
+    assert.deepEqual(await agentPage.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, closeShown: !document.querySelector('#agent-profile-close').hidden, closeIsX: !!document.querySelector('#agent-profile-close .icon-mask-close') && document.querySelector('#agent-profile-close').getAttribute('aria-label') === 'Close agent profile' && document.querySelector('#agent-profile-close').title === 'Close agent profile' && document.querySelector('#agent-profile-close').textContent.trim() === '', others: [...document.querySelectorAll('#agents-list .agent-card:not(.expanded)')].every(card => getComputedStyle(card).display === 'none'), humans: getComputedStyle(document.querySelector('#agents-humans')).display })), { title: 'Agent profile', closeShown: true, closeIsX: true, others: true, humans: 'none' }, 'the profile replaces the members list');
     // The state reads like v1, "working 0:12": the state and how long it has lasted, in a readable pill (not tiny mono text).
     assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-state-pill', el => { const cs = getComputedStyle(el); return { text: el.textContent.replace(/\s+/g, ' ').trim().replace(/\d+:\d\d$/, 'M:SS'), size: parseFloat(cs.fontSize) >= 12, sans: !/mono/i.test(cs.fontFamily), pill: parseFloat(cs.borderTopWidth) === 1 && parseFloat(cs.borderTopLeftRadius) > 10 }; }), { text: 'working M:SS', size: true, sans: true, pill: true }, 'the profile state is "state age" in a readable pill');
     const ageBefore = await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-state-age', el => el.textContent);
@@ -3985,6 +4029,17 @@ async function main() {
       assert.equal(await agentPage.$eval('#room-menu-toggle', el => el.getClientRects().length === 0), true, `the overflow button is hidden at ${width}px`);
     }
     await agentPage.setViewport({ width: 1100, height: 720 });
+    // The glyphs of a room row's small buttons (the + under a room, the move icon) sit on the row's centre line, with the room name.
+    const rowAxis = await agentPage.evaluate(() => {
+      const centre = node => { const box = node.getBoundingClientRect(); return box.top + box.height / 2; };
+      const off = [];
+      for (const row of document.querySelectorAll('.room-row')) {
+        if (!row.getClientRects().length) continue;
+        for (const glyph of row.querySelectorAll(':is(.add-room, .project-move, .branch, .room-pin, .room-hide) .icon-mask')) if (Math.abs(centre(glyph) - centre(row)) > 1) off.push(`${glyph.parentElement.className}: ${(centre(glyph) - centre(row)).toFixed(1)}`);
+      }
+      return { checked: document.querySelectorAll('.room-row .add-room .icon-mask').length, off };
+    });
+    assert.ok(rowAxis.checked > 0 && rowAxis.off.length === 0, `room row glyphs are off the row's centre line: ${JSON.stringify(rowAxis)}`);
     const cards = await iconOnlyReport(agentPage, ['.agent-expand', '.agent-act', '.profile-copy', '.agent-card .agent-quick .icon-btn', '.add-room']);
     assert.deepEqual(cards.bad, [], 'the agent card buttons are icon buttons with a tooltip and a name'); assert.ok(cards.found >= 10, `agent card icon buttons found: ${cards.found}`);
     // Rooms header: the + and ‹ sit together at the right with a 6px gap, and the filter box starts right under the header.

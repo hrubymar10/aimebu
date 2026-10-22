@@ -45,7 +45,10 @@ newest older copies; if removal of an older copy fails, it logs a warning and
 continues with the verified new copy. An agent's model that the old list lacked
 is added to its harness
 so no running agent changes model. A tool whose model list was edited keeps
-one disabled harness so the list survives. The spawn dialog
+one disabled harness so the list survives. After the first project is created and no machine has a harness with a model, the first run continues with a **Set up a harness** step (the
+Settings → Harnesses component itself: Add, Auto-detect and models) and offers "Spawn your first agent" only once one is ready; "Skip for now" leaves a
+"Set up a harness first" hint in place of the spawn button, and someone who cannot change harnesses is told to ask an admin. The same step opens on the
+first load after a v1 import when no harness exists. The spawn dialog
 shows unavailable harnesses with the reason and points to Settings → Harnesses for setup (a link that opens it on
 the dialog's machine for an owner or admin; anyone else is told to ask an admin). A
 harness can be selected by ID or by its name in `variant`; `native` and `docker` keep their

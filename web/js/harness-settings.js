@@ -63,28 +63,33 @@ const detectionDetails = () => {
 // Settings → Harnesses: a machine's harnesses (the coding tools installed on it: Claude Code, Codex, Pi, OpenCode) and, under each, the
 // models it can start agents with. Nothing is there until the owner adds it, by hand or by ticking what auto-detect found. Only the owner
 // reads or edits it (launchers run code on the host).
+//
+// With `embedded` it is the same component placed in another page (the first-run onboarding) instead of the Settings dialog: no tab, shown
+// at once inside `host`, and its element ids carry a prefix so they never repeat those of the Settings copy.
 export class HarnessSettings {
-  constructor(dialog) {
+  constructor(dialog, { embedded = false, host = null } = {}) {
+    const prefix = this.prefix = embedded ? 'onboarding-' : '';
+    this.embedded = embedded;
     this.tab = button('Harnesses', 'row-btn'); this.tab.id = 'settings-harnesses-tab';
-    dialog.querySelector('nav').append(this.tab);
-    this.section = node('section', 'settings-content'); this.section.id = 'settings-harnesses'; this.section.hidden = true;
+    if (!embedded) dialog.querySelector('nav').append(this.tab);
+    this.section = node('section', 'settings-content'); this.section.id = `${prefix}settings-harnesses`; this.section.hidden = !embedded;
     this.section.append(node('h3', '', 'Harnesses'), node('p', 'settings-intro', 'A harness is a coding tool installed on a machine, with the models it can start agents with. Nothing is listed until you add it. Pick a machine, add its harnesses (or auto-detect them), then give each harness its models: exactly one is the default, which an agent falls back to when its own model is removed.'));
-    this.select = document.createElement('select'); this.select.id = 'harness-machine';
+    this.select = document.createElement('select'); this.select.id = `${prefix}harness-machine`;
     this.select.onchange = () => this.loadHarnesses();
     this.section.append(settingsGroup([settingsRow({ label: 'Machine', desc: 'The supervisor whose harnesses and recent changes are shown below.', control: this.select })], 'Harness machine'));
     this.summary = node('p', 'settings-intro'); this.summary.setAttribute('role', 'status');
     this.error = node('p', 'error'); this.error.setAttribute('role', 'alert');
     this.errorDetails = detectionDetails();
     this.toolbar = node('div', 'machine-actions');
-    this.addButton = button('Add harness', 'btn btn-primary'); this.addButton.id = 'harness-add';
-    this.detectButton = button('Auto-detect harnesses'); this.detectButton.id = 'harness-detect';
+    this.addButton = button('Add harness', 'btn btn-primary'); this.addButton.id = `${prefix}harness-add`;
+    this.detectButton = button('Auto-detect harnesses'); this.detectButton.id = `${prefix}harness-detect`;
     this.toolbar.append(this.addButton, this.detectButton);
-    this.panel = node('div'); this.panel.id = 'harness-panel';
-    this.list = node('div'); this.list.id = 'harnesses-list';
+    this.panel = node('div'); this.panel.id = `${prefix}harness-panel`;
+    this.list = node('div'); this.list.id = `${prefix}harnesses-list`;
     this.activityHeading = node('h4', 'machine-activity-heading', 'Activity');
-    this.activity = node('div'); this.activity.id = 'machine-activity';
+    this.activity = node('div'); this.activity.id = `${prefix}machine-activity`;
     this.section.append(this.summary, this.error, this.errorDetails, this.toolbar, this.panel, this.list, this.activityHeading, this.activity);
-    dialog.append(this.section);
+    (embedded ? host : dialog).append(this.section);
     this.sequence = 0;
     this.openLaunchers = new Set();
     this.openModels = new Set();
@@ -93,6 +98,12 @@ export class HarnessSettings {
     this.wanted = ''; // a machine to open on, set by whoever sent the person here
     this.addButton.onclick = () => this.showPanel(this.addForm());
     this.detectButton.onclick = () => this.runDetect();
+  }
+
+  // Forgets what was shown (the embedded copy, when its page is left), so no element of it is left in the page.
+  clear() {
+    this.sequence++;
+    this.list.replaceChildren(); this.activity.replaceChildren(); this.panel.replaceChildren(); this.summary.textContent = ''; this.error.textContent = '';
   }
 
   showPanel(content) { this.panel.replaceChildren(...(content ? [content] : [])); content?.querySelector('input,select,button')?.focus(); }
@@ -204,7 +215,7 @@ export class HarnessSettings {
     const summary = { title, version: info.querySelector('.machine-harness-meta'), path: info.querySelector('.machine-harness-path'), info };
 
     const form = node('form', 'machine-harness-form');
-    form.id = `launcher-form-${harness.id}`; form.hidden = true; edit.setAttribute('aria-controls', form.id);
+    form.id = `${this.prefix}launcher-form-${harness.id}`; form.hidden = true; edit.setAttribute('aria-controls', form.id);
     const labelField = node('label', 'machine-harness-path-label', 'Label');
     const labelInput = document.createElement('input'); labelInput.type = 'text'; labelInput.name = 'label'; labelInput.value = harness.label || ''; labelInput.maxLength = 80; labelInput.autocomplete = 'off';
     labelField.append(labelInput); form.append(labelField);
@@ -293,7 +304,7 @@ export class HarnessSettings {
   // Add a harness by hand: the family, an executable name or absolute path, and a label (the family's name by default).
   addForm() {
     const machineID = this.select.value;
-    const form = node('form', 'machine-harness-form harness-add-form'); form.id = 'harness-add-form';
+    const form = node('form', 'machine-harness-form harness-add-form'); form.id = `${this.prefix}harness-add-form`;
     const family = document.createElement('select'); family.name = 'family';
     family.replaceChildren(...FAMILIES.map(([value, name]) => { const option = document.createElement('option'); option.value = value; option.textContent = name; return option; }));
     const field = (text, input) => { const label = node('label', 'machine-harness-path-label', text); label.append(input); form.append(label); return input; };
@@ -352,7 +363,7 @@ export class HarnessSettings {
   }
 
   detectPanel(machineID, candidates) {
-    const panel = node('form', 'machine-harness-form harness-detect-panel'); panel.id = 'harness-detect-panel';
+    const panel = node('form', 'machine-harness-form harness-detect-panel'); panel.id = `${this.prefix}harness-detect-panel`;
     panel.append(node('strong', '', candidates.length ? 'Found on this machine — tick the ones to add' : 'Nothing found on this machine'));
     if (!candidates.length) panel.append(node('p', 'machine-harness-help', 'No Claude Code, Codex, Pi or OpenCode executable was found. Add one by hand with its path.'));
     const boxes = [];
@@ -397,7 +408,7 @@ export class HarnessSettings {
   // The models of one harness: an editable list (label, note, which one is the default), added to by hand or from auto-detect, saved as a
   // whole. Slugs are exact model ids, never aliases.
   modelsPanel(machineID, harness) {
-    const panel = node('div', 'harness-models'); panel.id = `harness-models-${harness.id}`;
+    const panel = node('div', 'harness-models'); panel.id = `${this.prefix}harness-models-${harness.id}`;
     let draft = (harness.models || []).map(model => ({ ...model }));
     const rows = node('div', 'harness-model-rows');
     const error = node('p', 'error'); error.setAttribute('role', 'alert');
