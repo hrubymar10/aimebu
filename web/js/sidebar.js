@@ -1,6 +1,7 @@
 import { previewText } from './preview.js';
 import { setGlyph, iconGlyph } from './icon-button.js';
 import { rowUnread, ReadMarker } from './room-unread.js';
+import { roomSilenced, mutedNow } from './room-notify.js';
 import { request, currentUser } from './api.js';
 import { savePreference } from './preferences.js';
 import { SORTS, DEFAULT_SORT, orderProjects, orderRooms, moveProject, placeProject } from './sidebar-order.js';
@@ -61,11 +62,14 @@ export class Sidebar {
   // move the cursor past what the reader saw. Nothing is marked while the chat has rendered nothing of the room yet. The
   // unread count left after the mark comes back from the server, so a later render can mark the rest.
   markSeen(room) {
-    if (!room || !this.unreadCount(room)) return;
+    if (!room) return;
     const seq = this.shownSeq ? this.shownSeq(room.id) : 0;
+    // A room set to mentions only has nothing to count for most of what it shows, yet it is read all the same: the position moves on, so
+    // switching the room back to counting everything does not bring the old messages back as unread.
+    if (!this.unreadCount(room) && !(room.notify === 'mentions' && seq > (room.read_cursor || 0))) return;
     if (this.shownSeq && !(seq > 0)) return;
     // One request per room at a time; a further mark asked for meanwhile follows it (ReadMarker).
-    this.reads.mark(room.id, seq, state => { if (this.rooms.get(room.id) === room && Number.isInteger(state?.unread_count)) room.unread_count = state.unread_count; });
+    this.reads.mark(room.id, seq, state => { if (this.rooms.get(room.id) !== room) return; if (Number.isInteger(state?.unread_count)) room.unread_count = state.unread_count; if (Number.isInteger(state?.read_cursor)) room.read_cursor = state.read_cursor; });
   }
   async load() {
     const generation = this.generation;
@@ -116,7 +120,16 @@ export class Sidebar {
     const text = this.filter.trim().toLocaleLowerCase();
     return !text || (room.title || '').toLocaleLowerCase().includes(text) || (this.projects.get(room.project_id)?.name || '').toLocaleLowerCase().includes(text);
   }
+  // A mute ends by itself: draw the list again when the first running one runs out, so its bell goes without a reload.
+  scheduleMuteEnd() {
+    clearTimeout(this.muteTimer);
+    const now = Date.now();
+    const ends = [...this.rooms.values()].map(room => Date.parse(room.muted_until || '')).filter(end => end > now);
+    if (!ends.length) return;
+    this.muteTimer = setTimeout(() => this.render(), Math.min(Math.min(...ends) - now + 250, 2 ** 31 - 1));
+  }
   render() {
+    this.scheduleMuteEnd();
     const projects = [...this.projects.values()], many = projects.length > 1;
     const all = [...this.rooms.values()], filtering = !!this.filter.trim();
     const live = all.filter(room => !room.hidden && room.lifecycle !== 'closed' && this.matches(room));
@@ -336,6 +349,15 @@ export class Sidebar {
     const affected = this.health.get(room.id) || [];
     if (affected.length && !health) { health = document.createElement('span'); health.className = 'room-health'; row.insertBefore(health, row.querySelector('.add-room')); }
     if (health) { health.textContent = `⚠ ${affected.length}`; health.title = affected.map(agent => `${agent.name}: ${agent.flags.map(flag => flag.code.replaceAll('_', ' ')).join(', ')}`).join('\n'); health.hidden = !affected.length; }
+    // A room that is quiet for this person (level Nothing, or a mute that is still running) shows a disabled bell.
+    let muted = row.querySelector('.room-muted');
+    const quiet = roomSilenced(room);
+    if (quiet && !muted) { muted = document.createElement('span'); muted.className = 'room-muted'; muted.setAttribute('role', 'img'); muted.append(iconGlyph('bell-disabled')); row.insertBefore(muted, row.querySelector('.add-room')); }
+    if (muted) {
+      muted.hidden = !quiet;
+      muted.title = mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room';
+      muted.setAttribute('aria-label', muted.title);
+    }
     const add = row.querySelector('.add-room');
     add.disabled = !!room.lifecycle && room.lifecycle !== 'open';
     add.hidden = room.kind === 'dm' || room.lifecycle === 'closed';

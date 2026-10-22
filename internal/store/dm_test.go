@@ -26,7 +26,7 @@ func TestPrivateChatPairMembershipAndRoomTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	hidden := true
-	if _, err := s.SetRoomViewPreference(ctx, "usr_peer", dm.ID, &hidden); err != nil {
+	if _, err := s.SetRoomViewPreference(ctx, "usr_peer", dm.ID, RoomViewUpdate{Hidden: &hidden}); err != nil {
 		t.Fatal(err)
 	}
 	again, err := s.OpenDM(ctx, "usr_peer", agent.ID)

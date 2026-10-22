@@ -27,7 +27,7 @@ func TestRoomViewPreferencesArePrivateAndUnhideOnAttentionOrJoin(t *testing.T) {
 		}
 	}
 	trueValue := true
-	if _, err := s.SetRoomViewPreference(ctx, "one", room.ID, &trueValue); err != nil {
+	if _, err := s.SetRoomViewPreference(ctx, "one", room.ID, RoomViewUpdate{Hidden: &trueValue}); err != nil {
 		t.Fatal(err)
 	}
 	view := func(user string) Room {
@@ -53,7 +53,7 @@ func TestRoomViewPreferencesArePrivateAndUnhideOnAttentionOrJoin(t *testing.T) {
 	if view("one").Hidden {
 		t.Fatal("addressed message did not unhide")
 	}
-	if _, err := s.SetRoomViewPreference(ctx, "one", room.ID, &trueValue); err != nil {
+	if _, err := s.SetRoomViewPreference(ctx, "one", room.ID, RoomViewUpdate{Hidden: &trueValue}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.AddMember(ctx, room.ID, "user", "three"); err != nil {

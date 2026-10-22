@@ -119,7 +119,7 @@ and reconnects the event stream from its last seen `seq`.
 | GET | `/api/rooms/{room}` | — | room with the same live counts and preview as the project room list, plus the caller's `hidden` preference |
 | GET | `/api/rooms/{room}/mention-users` | — | `{logins}`: the human logins a `@login` mention addresses in this room, as server addressing reads them: its user room members plus, outside DMs, every active member of the project; same room access as the room itself |
 | GET | `/api/rooms/{room}/members` | — | read-only member list `{humans, agents, singletons}`: `humans` are `{id,login,role}` (a private chat's two people, or every active project member of an ordinary room, with the project role); `agents` are the room's agents as `{id,slug,role_key,role_label,role_emoji,singleton,desired,observed,revoked?,role_deleted?}`; `singletons` (empty for a private chat) lists each singleton role of the project as `{role_key,label,emoji,held_by}`, where `held_by` is `null` when vacant or `{agent_id,slug,in_this_room}` for the live agent holding it (the room it works in is never named). Same access as the room itself; nothing is changed |
-| PATCH | `/api/rooms/{room}/preferences` | `{hidden:boolean}` | change the caller's room view (`pinned` is not accepted: nothing is pinned) |
+| PATCH | `/api/rooms/{room}/preferences` | `{hidden?:boolean, notify?:"default"\|"all"\|"mentions"\|"none", muted_until?:string}` (at least one) | change the caller's own view of the room and answer it as `{hidden,notify,muted_until?}` (`pinned` is not accepted: nothing is pinned). `notify` is how the room notifies this person: `default` (the Inbox, and messages that address them), `all` (every message from somebody else), `mentions` (only messages that address them, and the room's `unread_count` counts only those) and `none` (no sound or notification from the room, its Inbox items included). `muted_until` is an RFC 3339 time in the future, at most a year ahead, until which the room is muted for them (the client sends the end of "1 hour", "8 hours" or "until tomorrow"); an empty string ends the mute, and it ends by itself at the time. A level or time the server cannot keep is 400 `invalid_request`. A change emits `room_preference_changed` (payload `user_id`) |
 | POST | `/api/rooms/{room}/read` | `{seq?:integer}` | advance the caller's server-side read cursor to `seq` (the room's newest message when omitted or above the newest); the cursor never moves backwards. Returns `{read_cursor,unread_count}` and emits `room_read_changed` (payload `user_id`) when it advances, so the user's other sessions refresh |
 | GET | `/api/rooms/{room}/read-receipts` | — | each member's read position as `[{member_kind,member_id,label,seq}]`: humans report their stored read cursor, agents the newest message they took into a turn (a note in `in_turn` or `done`) or wrote themselves, so an agent's marker moves past its own reply. Members who have read nothing are omitted. The web chat marks every member, the viewer and each sender included as v1 does, on the newest loaded message at or before their position and refreshes on `room_read_changed`, `message_created` and agent turn events |
 | POST | `/api/rooms/{room}/close` | `{lifecycle_rev,cascade?}` | 202 with `closing` room; 409 `open_children` unless cascade is confirmed, or `home_room` for the project home room |
@@ -422,9 +422,9 @@ Project room lists and single-room details include read-only `member_count`
 (active project humans, or a private chat's own people, plus room agents; a disabled
 user counts nowhere), `message_count`, and an optional
 `last_message_body` preview (at most 160 characters) and `last_activity_at` (the newest message's time, else the room's creation, which orders the room list). Both include the
-signed-in user's `hidden` flag, plus per-user read state:
+signed-in user's `hidden`, `notify` (`default` until they choose) and `muted_until` (omitted unless a mute is set; it may be in the past) preferences, plus per-user read state:
 `read_cursor` (highest read message `seq`), `unread_count` (messages after the
-cursor; posting a message advances the author's own cursor to it), and `attention_count` (open inbox entries
+cursor; posting a message advances the author's own cursor to it; in a room whose `notify` is `mentions`, only the messages that address the user, which `POST /api/rooms/{room}/read` answers the same way), and `attention_count` (open inbox entries
 the user can see in that room, the same set `GET /api/inbox` returns). Read
 cursors are stored on the server (`room_read_cursor`), so unread state is
 shared across browsers and devices; the web UI marks the active room read
@@ -651,6 +651,7 @@ snapshots, then opens the stream after that `seq`. Events committed during
 the snapshot are caught without scanning older history. The client
 coalesces replay frames into one silent snapshot refresh on `ready`, so
 historical inbox items do not trigger a chime or browser notification.
+`message_created` carries `message_id`, `author_kind`, `author_id` and `targets` (the ids of the members the message addresses, an empty list when none), so a client can decide whether the message is worth a sound or a notification, by the room's `notify` level and `muted_until`, without fetching it.
 If that refresh fails, reconnect replays from the last processed `seq`
 until a snapshot succeeds. After a disconnect it resumes from the last
 processed `seq`.

@@ -6263,6 +6263,45 @@ async function main() {
     await first.waitForFunction(id => { const badge = document.querySelector(`[data-room-id="${id}"] .unread-count`); return !badge || badge.hidden; }, {}, peopleDMID);
     await first.waitForFunction(async id => (await (await fetch(`/api/rooms/${id}`)).json()).unread_count === 0, {}, peopleDMID);
     if (roomBeforePeopleDM && roomBeforePeopleDM !== peopleDMID) await domClick(first, `[data-room-id="${roomBeforePeopleDM}"] .room-name`);
+    // Room settings -> Notifications: the level and a timed mute are the person's own, kept on the server; a room that is quiet for them
+    // shows a disabled bell in the list that says why, and the bell goes with the setting.
+    {
+      await domClick(first, `[data-room-id="${peopleDMID}"] .room-name`);
+      await domClick(first, '#room-info');
+      await first.waitForSelector('#room-info-dialog[open] .room-notify-setting');
+      assert.deepEqual(await first.evaluate(() => {
+        const level = document.querySelector('#room-notify-level'), mute = document.querySelector('#room-notify-mute'), label = el => el.closest('label').textContent.trim();
+        return { levels: [...level.options].map(option => option.textContent), level: level.value, mutes: [...mute.options].map(option => option.textContent), mute: mute.value,
+          labels: [label(level), label(mute)], described: level.getAttribute('aria-describedby'), help: document.querySelector('#room-notify-help').textContent.length > 0,
+          heading: document.querySelector('#room-notify-title').textContent.trim(), bell: !!document.querySelector('#room-notify-title .icon-mask-bell'), muted: !!document.querySelector(`[data-room-id="${decodeURIComponent(location.hash.slice(1))}"] .room-muted:not([hidden])`) };
+      }), {
+        levels: ['Default', 'All messages', 'Only mentions and replies to me', 'Nothing'], level: 'default', mutes: ['Not muted', 'Mute for 1 hour', 'Mute for 8 hours', 'Mute until tomorrow'], mute: 'off',
+        labels: ['Notify me about DefaultAll messagesOnly mentions and replies to meNothing', 'Mute Not mutedMute for 1 hourMute for 8 hoursMute until tomorrow'], described: 'room-notify-help', help: true, heading: 'Notifications', bell: true, muted: false,
+      }, 'the notification settings start at Default, not muted');
+      // Nothing: the room is quiet, its row says so, and the choice is on the server.
+      await first.select('#room-notify-level', 'none');
+      await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] .room-muted:not([hidden])`)?.getAttribute('aria-label') === 'Notifications are off for this room', {}, peopleDMID);
+      assert.equal(await first.$eval('#room-notify-help', el => el.textContent.includes('Inbox')), true, 'the help says the Inbox still gets the items');
+      assert.deepEqual(await first.evaluate(async id => { const room = await (await fetch(`/api/rooms/${id}`)).json(); return [room.notify, room.muted_until || '']; }, peopleDMID), ['none', ''], 'the level is stored on the server');
+      assert.equal(await first.$eval(`[data-room-id="${peopleDMID}"] .room-muted`, el => [el.getAttribute('role'), el.title === el.getAttribute('aria-label'), !!el.querySelector('.icon-mask-bell-disabled')].join()), 'img,true,true', 'the bell is an image with a tooltip and a name');
+      // A mute for an hour on top of Default shows when it ends; unmuting takes the bell away.
+      await first.select('#room-notify-level', 'default');
+      await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] .room-muted:not([hidden])`), {}, peopleDMID);
+      await first.select('#room-notify-mute', '1h');
+      await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] .room-muted:not([hidden])`)?.getAttribute('aria-label')?.startsWith('Muted until'), {}, peopleDMID);
+      await first.waitForFunction(() => document.querySelector('#room-notify-mute').selectedOptions[0].textContent.startsWith('Muted until'));
+      const mutedUntil = await first.evaluate(async id => (await (await fetch(`/api/rooms/${id}`)).json()).muted_until, peopleDMID);
+      assert.ok(Date.parse(mutedUntil) > Date.now() + 50 * 60 * 1000 && Date.parse(mutedUntil) < Date.now() + 70 * 60 * 1000, `the mute ends in about an hour: ${mutedUntil}`);
+      await first.select('#room-notify-mute', 'off');
+      await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] .room-muted:not([hidden])`) && document.querySelector('#room-notify-mute').value === 'off', {}, peopleDMID);
+      // Mentions only is a level too; it persists across a reload of the page.
+      await first.select('#room-notify-level', 'mentions');
+      await first.waitForFunction(async id => (await (await fetch(`/api/rooms/${id}`)).json()).notify === 'mentions', {}, peopleDMID);
+      await first.select('#room-notify-level', 'default');
+      await first.waitForFunction(async id => (await (await fetch(`/api/rooms/${id}`)).json()).notify === 'default', {}, peopleDMID);
+      await domClick(first, '#room-info-close');
+      if (roomBeforePeopleDM && roomBeforePeopleDM !== peopleDMID) await domClick(first, `[data-room-id="${roomBeforePeopleDM}"] .room-name`);
+    }
     // Global admins: the owner flags an account in Settings -> Users -> Accounts (the toggle is the owner's alone), the row says Admin, the
     // account then has the admin's reach and no more, and an admin's own list offers no way to act on the owner.
     {

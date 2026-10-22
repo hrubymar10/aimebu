@@ -42,8 +42,11 @@ func (s *Store) MarkRoomRead(ctx context.Context, userID, roomID string, seq int
 				return err
 			}
 		}
-		return tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM message WHERE room_id=? AND seq>?`,
-			roomID, state.ReadCursor).Scan(&state.UnreadCount)
+		// A room set to mentions only counts the messages that address this person, as the room list does.
+		return tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM message WHERE room_id=? AND seq>?
+			AND (COALESCE((SELECT notify FROM room_view_preference WHERE user_id=? AND room_id=?),'default')<>'mentions'
+				OR EXISTS (SELECT 1 FROM json_each(message.targets_json) WHERE value=?))`,
+			roomID, state.ReadCursor, userID, roomID, userID).Scan(&state.UnreadCount)
 	})
 	return state, err
 }

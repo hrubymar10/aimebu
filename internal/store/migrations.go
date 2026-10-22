@@ -1333,6 +1333,12 @@ SELECT r.id, 'agent', a.id, strftime('%Y-%m-%dT%H:%M:%S.000000000Z', 'now'), 1
 FROM agent a JOIN role ro ON ro.id = a.role_id JOIN room r ON r.project_id = a.project_id
 WHERE a.revoked_at IS NULL AND ro.cap_is_lead = 1 AND r.kind <> 'dm' AND r.lifecycle = 'open'
   AND NOT EXISTS (SELECT 1 FROM room_member m WHERE m.room_id = r.id AND m.member_kind = 'agent' AND m.member_id = a.id AND m.left_at IS NULL);
+`}, {73, `
+-- Per-room notifications, per person: how loudly a room speaks to them (default: the inbox and messages that address them; all: every
+-- message; mentions: only messages that address them, and the unread badge counts only those; none: nothing, the inbox chime of that room
+-- included) and an optional time until which the room is muted. The mute is an instant in the future, so it ends by itself.
+ALTER TABLE room_view_preference ADD COLUMN notify TEXT NOT NULL DEFAULT 'default' CHECK (notify IN ('default','all','mentions','none'));
+ALTER TABLE room_view_preference ADD COLUMN muted_until TEXT;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

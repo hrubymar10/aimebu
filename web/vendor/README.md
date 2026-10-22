@@ -59,3 +59,6 @@ Vendored frontend dependency:
   `1.59.0`, from `https://github.com/lucide-icons/lucide/tree/1.59.0/icons`. The only change is dropping the fixed
   `width="24" height="24"` and the line breaks; they are drawn through a CSS mask in the current colour.
 
+- `web/icons/bell.svg` and `web/icons/bell-disabled.svg` are the SVG Repo "bell" and "bell disabled" icons, MIT per the owner. Their
+  geometry is unchanged; the downloads' XML declaration, header comment and fixed size were removed, and the black strokes use
+  `currentColor`. The bell marks the room's Notifications settings; the disabled bell marks a muted room in the room list.

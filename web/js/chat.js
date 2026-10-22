@@ -1,3 +1,4 @@
+import { RoomNotifySettings } from './room-notify-settings.js';
 import { request, upload, currentUser, rights } from './api.js';
 import { retention } from './retention.js';
 import { expiryCutoffMs, planExpiry } from './expiry.js';
@@ -111,6 +112,7 @@ export class Chat {
     setGlyph(this.renameForm.querySelector('#room-rename-save'), 'check', 'Save title');
     this.renameForm.onsubmit = event => { event.preventDefault(); this.saveRoomTitle(); };
     this.renameForm.elements.title.oninput = () => { this.renameForm.querySelector('#room-rename-status').textContent = ''; };
+    this.notifySettings = new RoomNotifySettings(document.querySelector('#room-member-list'), (field, value) => this.setRoomPreference?.(this.roomView?.(this.room?.id) || this.room, field, value), () => this.roomView?.(this.room?.id) || this.room);
     this.memorySection = document.createElement('section');
     this.memorySection.className = 'room-memory-setting';
     this.memorySection.innerHTML = '<h3>Room memory</h3><label>Message memory <select><option value="inherit">Use project setting</option><option value="off">Off in this room</option></select></label><p role="status"></p><p>Turning this off prevents this room’s messages from feeding memory or recall. It does not erase saved memory.</p>';
@@ -489,6 +491,7 @@ export class Chat {
     this.renderRoomActions();
     document.querySelector('#room-info-error').textContent = '';
     this.renderViewActions();
+    this.notifySettings.render();
     const home = this.room.kind === 'home';
     this.infoDialog.classList.toggle('room-info-home', home);
     this.renderRoomNotes();

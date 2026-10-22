@@ -203,13 +203,14 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id),
 		COALESCE((SELECT substr(m.body,1,160) FROM message m WHERE m.room_id=r.id ORDER BY m.seq DESC LIMIT 1),''),
 		COALESCE((SELECT m.created_at FROM message m WHERE m.room_id=r.id ORDER BY m.seq DESC LIMIT 1),r.created_at),
-		COALESCE(v.hidden,0),COALESCE(c.last_read_seq,0),
-		(SELECT COUNT(*) FROM message um WHERE um.room_id=r.id AND um.seq>COALESCE(c.last_read_seq,0))
+		COALESCE(v.hidden,0),COALESCE(v.notify,'default'),COALESCE(v.muted_until,''),COALESCE(c.last_read_seq,0),
+		(SELECT COUNT(*) FROM message um WHERE um.room_id=r.id AND um.seq>COALESCE(c.last_read_seq,0)
+			AND (COALESCE(v.notify,'default')<>'mentions' OR EXISTS (SELECT 1 FROM json_each(um.targets_json) WHERE value=?)))
 		FROM room r LEFT JOIN room_view_preference v ON v.room_id=r.id AND v.user_id=?
 		LEFT JOIN room_read_cursor c ON c.room_id=r.id AND c.user_id=?
 		WHERE r.project_id=? AND (?='' OR r.id=?) AND (r.kind!='dm' OR EXISTS (
 			SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='user'
-			AND own.member_id=? AND own.left_at IS NULL)) ORDER BY r.depth,r.created_at,r.id`, userID, userID, projectID, roomID, roomID, userID)
+			AND own.member_id=? AND own.left_at IS NULL)) ORDER BY r.depth,r.created_at,r.id`, userID, userID, userID, projectID, roomID, roomID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +221,7 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 		var parent, dm, closed sql.NullString
 		var memory sql.NullBool
 		if err := rows.Scan(&r.ID, &r.ProjectID, &parent, &r.Depth, &r.Kind, &dm, &r.Title, &r.CreatedBy,
-			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.MemberCount, &r.MessageCount, &r.LastMessageBody, &r.LastActivityAt, &r.Hidden, &r.ReadCursor, &r.UnreadCount); err != nil {
+			&r.Lifecycle, &r.Gate, &r.LifecycleRev, &closed, &memory, &r.MemberCount, &r.MessageCount, &r.LastMessageBody, &r.LastActivityAt, &r.Hidden, &r.Notify, &r.MutedUntil, &r.ReadCursor, &r.UnreadCount); err != nil {
 			return nil, err
 		}
 		r.ParentID, r.DMKey, r.ClosedAt = parent.String, dm.String, closed.String

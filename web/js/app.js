@@ -132,7 +132,7 @@ chat.onOpenMessage = async found => {
 const notifications = new InboxNotifications(item => {
   inbox.show();
   requestAnimationFrame(() => document.querySelector(`[data-inbox-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'center' }));
-});
+}, (room, messageID) => { void selectRoom(sidebar.rooms.get(room.id) || room, messageID); });
 const inbox = new Inbox(createInboxSource(), sidebar.projects, sidebar.rooms, async item => {
   const room = sidebar.rooms.get(item.room_id); if (!room) return;
   const generation = sessionGeneration;
@@ -384,6 +384,8 @@ async function signedIn(session) {
         if (event.kind !== 'room_created') await inbox.refresh();
       }
       else if (event.kind === 'message_created' || event.kind === 'room_member_joined' || event.kind === 'room_member_left') {
+        // The room's own level decides before the list refreshes; the room being read, in a focused tab, needs no alert.
+        if (event.kind === 'message_created') notifications.message(payload, sidebar.rooms.get(event.room_id), sidebar.projects, currentUser, chat.room?.id === event.room_id && document.visibilityState === 'visible' && document.hasFocus());
         await sidebar.refreshProject(event.project_id);
         if (!active()) return;
         if (chat.room?.id === event.room_id) {

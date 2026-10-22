@@ -381,7 +381,7 @@ room marks it read. Refreshes while a history window is shown do not mark the
 room read; returning to the latest view does. The open room is only ever marked
 read up to the newest message the chat has shown: if a window cannot load the
 messages that arrived while it was shown, it stays a window with them counted
-and the room stays unread until they are shown. Hide is a per-user button in Room settings (the rows carry none). Nothing is
+and the room stays unread until they are shown. Room settings → Notifications sets, per person and room, how the room notifies you: **Default** (the Inbox, and chat messages that address you), **All messages**, **Only mentions and replies to me** (the room's unread badge then counts only those) or **Nothing** (no sound or notification from the room, its Inbox items included; they still arrive in the Inbox), plus a mute for 1 hour, 8 hours or until tomorrow 08:00. A room that is quiet this way (Nothing, or a running mute) shows a disabled bell in the room list; the open room, in a focused tab, needs no alert. The settings are stored on the server with the rest of the person's view of the room (`PATCH /api/rooms/{room}/preferences`). Hide is a per-user button in Room settings (the rows carry none). Nothing is
 pinned. The sort button in the ROOMS header orders projects, and the rooms inside them, by name, by latest
 activity, or manually (drag a project, or use its move up and move down buttons; in the manual sort the rooms keep
 the order the server lists them); the choice and the manual order are personal preferences that follow the person across devices. The room list is
@@ -463,7 +463,7 @@ Other. The button shows the same
 count. An explicit `ask` cannot be combined with these fields; `proposed_answers` and
 `open_questions` cannot be combined with each other.
 
-The open-item count appears on the Inbox button and in the tab title. New items play a short chime after a tab interaction.
+The open-item count appears on the Inbox button and in the tab title. New items play a short chime after a tab interaction. So do chat messages that address you (a mention, a reply, a group you are in), unless the room is quiet for you (Room settings → Notifications).
 The Inbox lists open items with message requests highlighted beside their replies. Delivery-failed notices show readable draft text when
 available and can be dismissed after review; failures of archived rooms can be dismissed all at once ("Dismiss all
 resolved"). The Inbox never shows raw JSON: a payload that is JSON is summarised in plain words, and the raw record is behind a
@@ -475,7 +475,7 @@ personal preferences saved to the account (`/api/me/preferences`), so they follo
 `localhost`), that page also offers an explicit browser-permission button. Browser notifications appear only
 while the tab is hidden, and clicking one opens its item in the Inbox or room,
 according to the selected UI variant. Elsewhere,
-Settings explains that browser notifications are unavailable. Recovery
+Settings explains that browser notifications are unavailable. The mute switch is the master switch for every chime, Inbox and chat. Recovery
 actions use the decision endpoint: uncertain turns offer Resume,
 Retry, and Abandon; loop budget items offer Continue and Abandon. Settings →
 Project has an off-by-default auto-resume toggle for clean diagnostic reports,

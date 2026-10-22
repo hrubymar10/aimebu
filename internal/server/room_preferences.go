@@ -1,6 +1,11 @@
 package server
 
-import "net/http"
+import (
+	"errors"
+	"net/http"
+
+	"github.com/hrubymar10/aimebu/internal/store"
+)
 
 func (s *Server) roomPreferences(w http.ResponseWriter, r *http.Request) {
 	room, ok := s.roomAccess(w, r, r.PathValue("room"))
@@ -8,16 +13,22 @@ func (s *Server) roomPreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Hidden *bool `json:"hidden"`
+		Hidden     *bool   `json:"hidden"`
+		Notify     *string `json:"notify"`
+		MutedUntil *string `json:"muted_until"`
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if body.Hidden == nil {
-		apiError(w, 400, "invalid_request", "hidden is required")
+	if body.Hidden == nil && body.Notify == nil && body.MutedUntil == nil {
+		apiError(w, 400, "invalid_request", "hidden, notify or muted_until is required")
 		return
 	}
-	preference, err := s.Store.SetRoomViewPreference(r.Context(), userID(r), room.ID, body.Hidden)
+	preference, err := s.Store.SetRoomViewPreference(r.Context(), userID(r), room.ID, store.RoomViewUpdate{Hidden: body.Hidden, Notify: body.Notify, MutedUntil: body.MutedUntil})
+	if errors.Is(err, store.ErrInvalidRoomPreference) {
+		apiError(w, 400, "invalid_request", err.Error())
+		return
+	}
 	if err != nil {
 		userError(w, err)
 		return

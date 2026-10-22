@@ -1,12 +1,17 @@
 import { savePreference } from './preferences.js';
 import { currentUser } from './api.js';
+import { roomSilenced, messageNotifies } from './room-notify.js';
 
 const DEFAULT_SOUND = 'builtin:chime';
 const BUILTIN_SOUNDS = ['chime', 'ding', 'beep', 'knock'];
+// An inbox item and the chat message it came from reach the browser as two events. Whichever is first speaks; the other, in the same room
+// within this window, stays quiet. A burst of messages in one room is likewise one sound.
+const COALESCE_MS = 3000;
 
 export class InboxNotifications {
-  constructor(onOpen) {
-    this.onOpen = onOpen;
+  constructor(onOpen, onOpenRoom) {
+    this.onOpen = onOpen; this.onOpenRoom = onOpenRoom;
+    this.messageClaimed = new Map(); this.inboxClaimed = new Map();
     this.audio = new Audio('/sounds/chime.wav');
     this.audio.preload = 'auto';
     this.audio.volume = 0.7;
@@ -66,7 +71,11 @@ export class InboxNotifications {
     await Notification.requestPermission();
   }
   arrived(items, projects, rooms) {
+    // A room set to nothing, or muted for now, stays quiet; the item is in the Inbox all the same.
+    items = items.filter(item => !roomSilenced(rooms.get(item.room_id)) && !this.recent(this.messageClaimed, item.room_id));
     if (!items.length) return;
+    const now = Date.now();
+    for (const item of items) this.inboxClaimed.set(item.room_id, now);
     if (!this.muted) {
       this.play();
     }
@@ -84,5 +93,28 @@ export class InboxNotifications {
         note.onclick = () => { window.focus(); this.onOpen(item); note.close(); };
       } catch { /* Permission may have changed between the check and display. */ }
     }
+  }
+  recent(claims, roomID) { return Date.now() - (claims.get(roomID) || 0) < COALESCE_MS; }
+  // A chat message from the event stream. `watching` is true when the person is looking at that room right now, which needs no alert.
+  // The global mute is the master switch for the sound; the desktop note only shows while the tab is hidden, as for the inbox.
+  message(message, room, projects, me, watching) {
+    if (!messageNotifies(room, message, me)) return;
+    if (this.recent(this.inboxClaimed, room.id) || this.recent(this.messageClaimed, room.id)) return;
+    // The room being read is claimed too, without a sound: the Inbox item the same message opens must not chime for what is on screen.
+    this.messageClaimed.set(room.id, Date.now());
+    if (watching) return;
+    if (!this.muted) this.play();
+    if (!this.available || Notification.permission !== 'granted' || !document.hidden) return;
+    const project = projects.get(room.project_id)?.name;
+    const addressed = Array.isArray(message.targets) && message.targets.includes(me);
+    try {
+      const note = new Notification(`aimebu · ${room.title || 'a room'}`, {
+        body: `${project ? `${project} · ` : ''}${addressed ? 'A message for you' : 'New message'}`.slice(0, 180),
+        icon: '/icons/icon-192.png',
+        tag: `aimebu-room-${room.id}`,
+        silent: true,
+      });
+      note.onclick = () => { window.focus(); this.onOpenRoom?.(room, message.message_id); note.close(); };
+    } catch { /* Permission may have changed between the check and display. */ }
   }
 }

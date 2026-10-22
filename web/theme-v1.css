@@ -261,6 +261,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .room-memory-setting { border-top: 1px solid var(--border); margin: 14px 0; padding-top: 10px; }
 .room-memory-setting h3 { margin: 0 0 8px; font-size: 12px; }
 .room-memory-setting p { color: var(--text-secondary); font-size: 11px; margin: 6px 0; }
+.room-notify-setting { border-top: 1px solid var(--border); margin: 14px 0; padding-top: 10px; }
+.room-notify-setting h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 12px; }
+.room-notify-setting label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0; font-size: 12px; }
+.room-notify-setting select { min-width: 44px; max-width: 60%; }
+.room-notify-setting .settings-intro, .room-notify-status { color: var(--text-secondary); font-size: 11px; margin: 6px 0; }
+.room-notify-status:empty { display: none; }
 #room-lifecycle { background: var(--bg-tertiary); border-color: var(--border); color: var(--text-primary); }
 #room-lifecycle[hidden] { display: none; }
 .inbox-archived { margin-left: 8px; color: var(--orange) !important; }
@@ -1385,6 +1391,10 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 :is(#spawn-dialog, #switch-dialog, #room-export-dialog, #room-info-dialog, #machine-pair-dialog, #knowledge-dialog, .answer-dialog, .invite-dialog, .import-v1-dialog) h2 { margin: 0 0 12px; font-size: 12.6px; }
 .room-item-attention { flex: 0 0 auto; margin-right: 3px; font-size: 11px; }
 .room-item-attention[hidden] { display: none; }
+/* The disabled bell of a room that is quiet for the person: level Nothing, or a mute that is running. */
+.room-muted { flex: 0 0 auto; display: inline-flex; align-items: center; margin-right: 4px; color: var(--text-muted); }
+.room-muted[hidden] { display: none; }
+.room-muted .icon-mask { width: 13px; height: 13px; }
 
 /* Phone top bar: 40px targets in a bar that scrolls sideways instead of clipping or wrapping. */
 @media (max-width: 700px) {
@@ -2001,6 +2011,8 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-refresh { -webkit-mask-image: url("/icons/refresh.svg"); mask-image: url("/icons/refresh.svg"); }
 .icon-mask-dice { -webkit-mask-image: url("/icons/dice.svg"); mask-image: url("/icons/dice.svg"); }
 .icon-mask-message { -webkit-mask-image: url("/icons/message.svg"); mask-image: url("/icons/message.svg"); }
+.icon-mask-bell { -webkit-mask-image: url("/icons/bell.svg"); mask-image: url("/icons/bell.svg"); }
+.icon-mask-bell-disabled { -webkit-mask-image: url("/icons/bell-disabled.svg"); mask-image: url("/icons/bell-disabled.svg"); }
 .back-to-latest.icon-btn { position: relative; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; margin-left: 10px; }
 .back-to-latest .badge { position: absolute; top: -6px; right: -6px; min-width: 15px; height: 15px; margin: 0; padding: 0 3px; border-radius: 8px; font-size: 9px; line-height: 15px; text-align: center; pointer-events: none; }
 .icon-btn.inbox-jump, .profile-copy.icon-btn { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; }

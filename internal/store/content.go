@@ -123,10 +123,22 @@ type Room struct {
 	LastMessageBody string        `json:"last_message_body,omitempty"`
 	LastActivityAt  string        `json:"last_activity_at,omitempty"`
 	Hidden          bool          `json:"hidden"`
+	Notify          string        `json:"notify"`
+	MutedUntil      string        `json:"muted_until,omitempty"`
 	ReadCursor      int64         `json:"read_cursor"`
 	UnreadCount     int           `json:"unread_count"`
 	AttentionCount  int           `json:"attention_count"`
 	Worktree        *RoomWorktree `json:"worktree,omitempty"`
+}
+
+// MarshalJSON gives a room that no list has described yet (just created, or answered by a tool) the default notification level, so the
+// field never reads as empty.
+func (r Room) MarshalJSON() ([]byte, error) {
+	type plain Room
+	if r.Notify == "" {
+		r.Notify = "default"
+	}
+	return json.Marshal(plain(r))
 }
 
 func (s *Store) CreateRoom(ctx context.Context, room Room) (Room, error) {
@@ -443,8 +455,15 @@ func (tx *Tx) InsertMessage(message Message) (Message, error) {
 		message.RoomID).Scan(&projectID); err != nil {
 		return Message{}, err
 	}
+	// The author and the members the message addresses ride along, so a browser decides whether it is worth a sound or a notification
+	// without fetching the message first.
+	addressed := targets
+	if addressed == nil {
+		addressed = []string{}
+	}
+	created, _ := json.Marshal(map[string]any{"message_id": message.ID, "author_kind": message.AuthorKind, "author_id": message.AuthorID, "targets": addressed})
 	if _, err = tx.AppendEvent(Event{Kind: "message_created", ProjectID: projectID,
-		RoomID: message.RoomID, PayloadJSON: payloadJSON(map[string]string{"message_id": message.ID})}); err != nil {
+		RoomID: message.RoomID, PayloadJSON: string(created)}); err != nil {
 		return Message{}, err
 	}
 	if message.AuthorKind == "user" {
