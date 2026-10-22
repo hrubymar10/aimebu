@@ -13,7 +13,9 @@ const GROUPS = new Set(GROUP_TAGS.map(([tag]) => tag));
 const TOKEN = /@([a-z][a-z0-9_-]*(?:@[a-z0-9_.-]+)?)/gi;
 
 export class MentionIndex {
-  constructor(cards = [], projectID = '', logins = [], historical = []) {
+  constructor(cards = [], projectID = '', logins = [], historical = [], me = '') {
+    // The viewer's own login: a mention of it is highlighted as theirs.
+    this.me = String(me || '').toLowerCase();
     // Authors seen in the room's history whose agent record is gone (departed, or imported from v1): their @name still reads as a mention.
     this.historical = new Set(historical.map(name => String(name).toLowerCase()));
     this.projectID = String(projectID || '');
@@ -25,7 +27,16 @@ export class MentionIndex {
     this.roles = new Map();
     for (const card of this.cards) if (card.role_key) { const key = card.role_key.toLowerCase(); if (!this.roles.has(key)) this.roles.set(key, { emoji: card.role_emoji || '', slugs: [] }); this.roles.get(key).slugs.push(card.slug); }
   }
-  get signature() { return JSON.stringify([this.projectID, this.humans, this.cards.map(card => [card.slug, card.role_key]), [...this.historical].sort()]); }
+  get signature() { return JSON.stringify([this.me, this.projectID, this.humans, this.cards.map(card => [card.slug, card.role_key]), [...this.historical].sort()]); }
+  isSelf(token) { return !!this.me && token === this.me; }
+  // A mention that opens a profile: a live agent of the room, or an author of its history whose agent record is gone.
+  // The qualified form (`slug@project`) names an agent even when a person's login shares the slug, so it does not need the slug to be unique.
+  opensProfile(token) {
+    const at = token.indexOf('@'), slug = at < 0 ? token : token.slice(0, at);
+    if (this.historical.has(token)) return true;
+    if (at >= 0) return token.slice(at + 1) === this.projectID.toLowerCase() && this.agentSlugs.has(slug);
+    return this.agentSlugs.has(slug) && this.slugs.get(slug) === 1;
+  }
   resolve(token) {
     if (GROUPS.has(token)) return 'group';
     const at = token.indexOf('@');
@@ -77,7 +88,11 @@ export function highlightMentions(root, index) {
       if (!kind) continue;
       if (match.index > last) fragment.append(document.createTextNode(value.slice(last, match.index)));
       const span = document.createElement('span');
-      span.className = kind === 'group' ? 'mention mention-group' : 'mention'; span.textContent = `@${raw}`;
+      const token = raw.toLowerCase();
+      span.className = kind === 'group' ? 'mention mention-group' : index.isSelf(token) ? 'mention mention-self' : 'mention'; span.textContent = `@${raw}`;
+      // A mention of an agent opens its profile; it is a button for the keyboard too.
+      if (kind === 'mention' && index.opensProfile(token)) { span.tabIndex = 0; span.setAttribute('role', 'button'); span.title = 'Open profile'; }
+      else if (index.isSelf(token)) span.title = 'You';
       fragment.append(span); last = match.index + 1 + raw.length;
     }
     if (!last) continue;

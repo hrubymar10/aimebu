@@ -340,7 +340,7 @@ async function signedIn(session) {
   const startupAbort = new AbortController();
   const startupActive = () => active() && !startupExpired && !startupAbort.signal.aborted;
   startupController = startupAbort;
-  setSession(session); void retention.load(); await loadPreferences(session.id || session.user_id); settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); document.title = 'aimebu'; loginView.hidden = true;
+  setSession(session); void retention.load(); await loadPreferences(session.id || session.user_id); settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); document.title = 'aimebu'; loginView.hidden = true;
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
   if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
   setStartupState('loading'); appView.hidden = false;

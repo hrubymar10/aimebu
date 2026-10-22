@@ -1,5 +1,6 @@
 import { RoomNotifySettings } from './room-notify-settings.js';
-import { request, upload, currentUser, rights } from './api.js';
+import { request, upload, currentUser, currentLogin, rights } from './api.js';
+import { PREFERENCE_KEYS, savePreference } from './preferences.js';
 import { retention } from './retention.js';
 import { expiryCutoffMs, planExpiry } from './expiry.js';
 import { renderMarkdown, renderRaw, copyText } from './markdown.js';
@@ -26,6 +27,13 @@ import { confirmDialog, promptDialog } from './dialogs.js';
 import { expandShortcodes } from './emoji-data.js';
 
 const MENTION_LOGINS_TTL_MS = 30000;
+
+// One line of a message for a quote or a reply chip: whitespace collapsed, cut to 96 characters, "[attachment]" for a message that is only files.
+export function messageSnippet(message) {
+  let text = String(message?.body || '').replace(/\s+/g, ' ').trim();
+  if (!text && message?.attachments?.length) text = '[attachment]';
+  return text.length > 96 ? `${text.slice(0, 95).trimEnd()}…` : text;
+}
 
 // "Back to latest" and its thread twins are icon buttons; a count of missed messages is a pill on the icon, and the tooltip and
 // accessible name carry the full wording ("Back to latest · 2 new").
@@ -56,7 +64,7 @@ export class Chat {
     });
     this.scrollAnchor = new ScrollAnchor(this.list);
     this.list.addEventListener('keydown', event => this.moveActionFocus(event));
-    this.chip = document.querySelector('#reply-chip'); this.error = document.querySelector('#chat-error'); this.nodes = new Map(); this.messages = new Map(); this.reactions = new Map(); this.threadCounts = new Map(); this.serverThreadCounts = new Map();
+    this.chip = document.querySelector('#reply-chip'); this.chipText = this.chip.querySelector('#reply-chip-jump'); this.chipText.onclick = () => { if (this.reply) this.jumpToMessage(this.reply.id); }; this.error = document.querySelector('#chat-error'); this.nodes = new Map(); this.messages = new Map(); this.reactions = new Map(); this.threadCounts = new Map(); this.serverThreadCounts = new Map();
     this.pendingAttachments = []; this.pendingUploads = 0; this.pendingNode = document.querySelector('#pending-attachments'); this.attachmentInput = document.querySelector('#attachment-input');
     this.attachmentInput.onchange = () => { this.addFiles([...this.attachmentInput.files]); this.attachmentInput.value = ''; };
     this.draft.addEventListener('input', () => this.resizeDraft());
@@ -339,12 +347,13 @@ export class Chat {
   }
   // The row controls of the message list and the thread panel, delegated: the control's row names the message.
   onMessageClick(event) {
-    const control = event.target.closest?.('button, strong.message-author');
+    const control = event.target.closest?.('button, strong.message-author, span.mention[role=button]');
     if (!control || !event.currentTarget.contains(control)) return;
     const holder = control.closest('[data-message-id]'); if (!holder || !event.currentTarget.contains(holder)) return;
     const message = this.entryMessage(holder.dataset.messageId); if (!message) return;
     const is = name => control.classList.contains(name);
-    if (is('message-author')) { if (control.dataset.senderKind && control.dataset.senderKind !== 'live') this.openSender(message); return; }
+    if (is('message-author')) { if (control.getAttribute('role') === 'button') this.openSender(message); return; }
+    if (is('mention')) { this.openMention(control.textContent); return; }
     if (is('message-number')) this.copyNumber(control, message);
     else if (is('chat-msg-debug-toggle')) this.debugCallback?.(message);
     else if (is('quote')) this.jumpToMessage(message.reply_to);
@@ -356,11 +365,12 @@ export class Chat {
   // A departed or historical sender's name is a role=button: Enter and Space open its profile like a click.
   onAuthorKey(event) {
     if (event.key !== 'Enter' && event.key !== ' ') return;
-    const author = event.target.closest?.('strong.message-author');
-    if (!author || !author.dataset.senderKind || author.dataset.senderKind === 'live') return;
+    const author = event.target.closest?.('strong.message-author[role=button], span.mention[role=button]');
+    if (!author) return;
     const holder = author.closest('[data-message-id]'), message = holder && this.entryMessage(holder.dataset.messageId);
     if (!message) return;
-    event.preventDefault(); this.openSender(message);
+    event.preventDefault();
+    if (author.classList.contains('mention')) this.openMention(author.textContent); else this.openSender(message);
   }
   async copyNumber(number, message) {
     try { await copyText(`#${message.no}`); number.classList.add('copied'); } catch { number.title = 'Copy failed'; }
@@ -828,8 +838,21 @@ export class Chat {
     if (this.pendingUploads) { const status = document.createElement('span'); status.textContent = `Uploading ${this.pendingUploads}…`; this.pendingNode.append(status); }
     this.form.querySelector('button[type=submit]').disabled = this.pendingUploads > 0 || this.room?.lifecycle !== 'open';
   }
+  // Whether message bodies show as raw Markdown is a personal preference kept on the server (see preferences.js); the browser copy lets the
+  // page paint it at once. It is read again after sign-in, when the server's value is known.
+  applyMarkdownMode() {
+    let stored = null;
+    try { stored = localStorage.getItem(PREFERENCE_KEYS.markdown_mode(currentUser)); } catch { /* private browsing: rendered */ }
+    this.setRaw(stored === 'raw');
+  }
   toggleRaw() {
-    this.raw = !this.raw;
+    this.setRaw(!this.raw);
+    const mode = this.raw ? 'raw' : 'rendered';
+    try { localStorage.setItem(PREFERENCE_KEYS.markdown_mode(currentUser), mode); } catch { /* the server copy still applies */ }
+    savePreference('markdown_mode', mode);
+  }
+  setRaw(raw) {
+    this.raw = raw;
     const button = document.querySelector('#room-raw');
     button.setAttribute('aria-pressed', String(this.raw));
     button.title = this.raw ? 'Show rendered Markdown' : 'Show raw Markdown';
@@ -925,7 +948,7 @@ export class Chat {
     if (added && !this.mentionTimer) this.mentionTimer = setTimeout(() => { this.mentionTimer = null; this.refreshMentions(); }, 60);
   }
   refreshMentions() {
-    const index = this.room ? new MentionIndex([...this.agents.values()].filter(agent => agent.room_id === this.room.id), this.room.project_id, this.mentionLogins, [...(this.historicalAuthors || [])]) : null;
+    const index = this.room ? new MentionIndex([...this.agents.values()].filter(agent => agent.room_id === this.room.id), this.room.project_id, this.mentionLogins, [...(this.historicalAuthors || [])], currentLogin) : null;
     if (index?.signature === this.mentionIndex?.signature) return;
     this.mentionIndex = index;
     this.mentionAutocomplete?.setIndex(index); this.threadMentionAutocomplete?.setIndex(index);
@@ -938,7 +961,7 @@ export class Chat {
     this.refreshMentions();
     for (const [id, node] of this.nodes) this.updateAuthor(node, this.messages.get(id));
     for (const node of this.threadList.querySelectorAll('.thread-entry')) this.updateAuthor(node, this.entryMessage(node.dataset.messageId));
-    if (this.reply) this.chip.querySelector('span').textContent = `Replying to ${this.authorName(this.reply)}: ${this.reply.body.slice(0, 100)}`;
+    if (this.reply) this.chipText.textContent = `Replying to ${this.authorName(this.reply)}: ${messageSnippet(this.reply)}`;
   }
   authorName(message) {
     if (message.author_kind === 'system') return 'System';
@@ -963,14 +986,25 @@ export class Chat {
     // A sender with no live record (imported history, or an agent that left) has its name open a read-only profile.
     const kind = senderKind(message, this.agents.get(message.author_id));
     author.dataset.senderKind = kind;
-    const link = kind !== 'live';
+    // A live agent's name opens its profile in the members panel; a sender with no live record opens the read-only one.
+    const live = kind === 'live' && message.author_kind === 'agent';
+    const link = kind !== 'live' || live;
     author.classList.toggle('message-author-link', link);
-    if (link) { author.tabIndex = 0; author.setAttribute('role', 'button'); author.title = `${kind === 'historical' ? 'Historical sender' : 'Departed agent'}: open profile`; }
+    if (link) { author.tabIndex = 0; author.setAttribute('role', 'button'); author.title = live ? 'Open profile' : `${kind === 'historical' ? 'Historical sender' : 'Departed agent'}: open profile`; }
     else { author.removeAttribute('tabindex'); author.removeAttribute('role'); author.removeAttribute('title'); }
+  }
+  // A mention of an agent opens its profile: the live one in this room, or else an author of the history that has left.
+  openMention(text) {
+    const token = String(text).replace(/^@/, '').toLowerCase(), slug = token.split('@')[0];
+    const live = [...this.agents.values()].filter(agent => agent.room_id === this.room?.id && String(agent.slug).toLowerCase() === slug);
+    if (live.length === 1) { this.legacyOpener?.(live[0].id); return; }
+    const written = [...this.messages.values()].find(message => message.author_kind === 'agent' && !this.agents.has(message.author_id)
+      && [this.authorName(message), this.authorName(message).split('@')[0]].some(name => name.toLowerCase() === token));
+    if (written) this.openSender(written);
   }
   openSender(message) {
     const kind = senderKind(message, this.agents.get(message.author_id));
-    if (kind === 'live') return;
+    if (kind === 'live') { if (message.author_kind === 'agent') this.legacyOpener?.(message.author_id); return; }
     return openSenderProfile({ name: this.authorName(message), authorID: message.author_id, kind, roomID: this.room?.id, messages: this.messages.values(), identity: senderIdentity(message, undefined), onStartAgent: this.legacyStarter, onOpenAgent: this.legacyOpener });
   }
   authorMeta(message) {
@@ -1066,7 +1100,8 @@ export class Chat {
     const bubble = document.createElement('div'); bubble.className = 'message-bubble'; article.append(bubble);
     if (message.reply_to) {
       const quote = document.createElement('button'); quote.className = 'row-btn quote'; quote.type = 'button';
-      const parent = this.messages.get(message.reply_to); quote.textContent = parent ? `↪ #${parent.no} ${this.authorName(parent)}` : '↪ Earlier message';
+      const parent = this.messages.get(message.reply_to); quote.textContent = parent ? `↪ #${parent.no} ${this.authorName(parent)}: ${messageSnippet(parent)}`.trimEnd().replace(/:$/, '') : '↪ Earlier message';
+      if (parent) quote.title = `Go to #${parent.no}`;
       bubble.append(quote);
     }
     const body = document.createElement('div'); body.className = 'message-body'; this.renderBody(body, message); bubble.append(body);
@@ -1247,7 +1282,7 @@ export class Chat {
       }
     } catch (error) { if (this.current(session, room)) this.threadNotice.show(error.message); }
   }
-  setReply(message) { this.reply = message; this.chip.hidden = !message; this.chip.querySelector('span').textContent = message ? `Replying to ${this.authorName(message)}: ${message.body.slice(0, 100)}` : ''; if (message) this.draft.focus(); }
+  setReply(message) { this.reply = message; this.chip.hidden = !message; this.chipText.textContent = message ? `Replying to ${this.authorName(message)}: ${messageSnippet(message)}` : ''; if (message) this.draft.focus(); }
   async send() {
     if (!this.room || this.pendingUploads || (!this.draft.value.trim() && !this.pendingAttachments.length)) return;
     const room = this.room.id, body = this.draft.value, reply = this.reply, attachments = this.pendingAttachments.map(a => a.id), session = this.sessionGeneration;

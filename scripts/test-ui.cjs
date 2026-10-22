@@ -1295,7 +1295,7 @@ async function main() {
       const number = chat.list.querySelector('[data-message-id="i5"] .message-number');
       out.numberText = number.textContent; number.click(); await new Promise(resolve => setTimeout(resolve, 200));
       out.copied = number.classList.contains('copied');
-      // The name of a sender with no live record opens a read-only profile; a live sender's name does nothing.
+      // The name of a sender with no live record opens a read-only profile; the name of a live agent opens its profile in the members panel.
       const author = id => chat.list.querySelector(`[data-message-id="${id}"] .message-author`);
       out.links = ['i1', 'i4', 'i7'].map(id => [author(id).classList.contains('message-author-link'), author(id).getAttribute('role')]);
       author('i8').click(); await new Promise(resolve => setTimeout(resolve, 100));
@@ -1303,10 +1303,12 @@ async function main() {
       out.profile = dialog && { open: dialog.open, title: dialog.querySelector('h2').textContent, badge: dialog.querySelector('.sender-profile-badge').textContent, facts: [...dialog.querySelectorAll('.profile-fact')].map(row => row.textContent.replace(/\s+/g, ' ').trim()), note: dialog.querySelector('.sender-profile-note').textContent.slice(0, 22) };
       dialog?.querySelector('.sender-profile-close').click(); await new Promise(resolve => setTimeout(resolve, 50));
       out.closed = !document.querySelector('#sender-profile-dialog');
+      chat.legacyOpener = id => { out.openedAgent = id; };
       author('i1').click(); await new Promise(resolve => setTimeout(resolve, 50)); out.liveOpens = Boolean(document.querySelector('#sender-profile-dialog'));
       chat.list.remove(); return out;
     });
-    assert.deepEqual(identityHeader.links, [[false, null], [true, 'button'], [true, 'button']], 'only senders with no live record have a clickable name');
+    assert.deepEqual(identityHeader.links, [[true, 'button'], [true, 'button'], [true, 'button']], 'the name of an agent is clickable, live or not');
+    assert.equal(identityHeader.openedAgent, 'live', 'the name of a live agent opens its profile in the members panel, not the read-only dialog');
     assert.deepEqual([identityHeader.profile.open, identityHeader.profile.title, identityHeader.profile.badge, identityHeader.profile.note, identityHeader.closed, identityHeader.liveOpens], [true, 'imported-bot', 'Historical (imported)', 'This sender comes from', true, false]);
     assert.ok(identityHeader.profile.facts.some(fact => /^Runtime\s*sonnet4\.6 · Codex$/.test(fact)) && identityHeader.profile.facts.some(fact => /^Messages loaded\s*1$/.test(fact)) && identityHeader.profile.facts.some(fact => /^Last heard\s*\S/.test(fact)), `the profile shows what is known: ${JSON.stringify(identityHeader.profile.facts)}`);
     assert.deepEqual(identityHeader.live, { icon: '/icons/codex.svg', title: 'gpt-6-sol · Codex', dot: ['dot-active', 'working'], bell: false });
@@ -1977,9 +1979,18 @@ async function main() {
     await first.waitForFunction(() => !document.querySelector('.reaction-pill'));
     await first.hover('.message:first-child');
     await domClick(first, '.message-actions .message-reply');
+    // The chip over the composer names the message being answered, and jumps to it, with the same highlight as any jump.
+    assert.match(await first.$eval('#reply-chip-jump', el => el.textContent), /^Replying to .+: \S/);
+    await domClick(first, '#reply-chip-jump');
+    await first.waitForFunction(() => document.querySelector('#messages .message:first-child.message-flash, #messages .message:first-child .message-flash'), { timeout: 5000 });
+    assert.equal(await first.$eval('#reply-chip', el => el.hidden), false, 'jumping to the parent keeps the reply pending');
     await first.locator('#composer textarea').fill('Reply body'); await first.locator('#composer button[type=submit]').click();
     await first.waitForFunction(() => document.querySelectorAll('.message').length === 2);
-    assert.equal(await first.$eval('.message:nth-child(2) .quote', el => /^↪ #\d+ (You|owner)$/.test(el.textContent)), true);
+    assert.equal(await first.$eval('.message:nth-child(2) .quote', el => /^↪ #\d+ (You|owner): \S/.test(el.textContent)), true, 'a reply quotes a snippet of its parent');
+    assert.deepEqual(await first.evaluate(async () => {
+      const { messageSnippet } = await import('/js/chat.js' + new URL(document.querySelector('script[type=module]').src).search);
+      return [messageSnippet({ body: '  a\n\n  b   c ' }), messageSnippet({ body: '', attachments: [{}] }), messageSnippet({ body: 'x'.repeat(200) }).length, messageSnippet({ body: 'word '.repeat(40) }).endsWith('…'), messageSnippet({ body: '' }), messageSnippet(undefined)];
+    }), ['a b c', '[attachment]', 96, true, '', ''], 'the snippet is one line, cut with an ellipsis');
     await first.hover('.message:first-child');
     await domClick(first, '.message:first-child .thread-action');
     await second.hover('.message:first-child');
@@ -2071,6 +2082,8 @@ async function main() {
     await first.waitForFunction(() => [...document.querySelectorAll('.message-body')].some(el => el.textContent === 'History 119'));
     await first.evaluate(async () => { await document.querySelector('.room-row.active .room-name').onclick(); });
     await first.waitForFunction(() => document.querySelector('#messages').dataset.hasOlder === 'true');
+    // With older messages still to load, the top of the list is not the start of the room.
+    assert.equal(await first.$eval('#messages', el => getComputedStyle(el, '::before').content), 'none', 'no start-of-room marker while older messages remain');
     assert.equal(await first.$('button.load-older'), null, 'there is no Load older messages button: older pages load on scroll');
     assert.equal(await first.$eval('#live-announcer', el => el.textContent), '', 're-opening a room announces nothing');
     const beforeOlder = await first.$$eval('.message', els => els.length);
@@ -2226,7 +2239,20 @@ async function main() {
     assert.equal(await first.$eval('#room-raw', el => el.getAttribute('aria-pressed')), 'true');
     assert.equal(await first.$eval('.message:last-child .message-body', el => el.textContent.startsWith('## Heading')), true);
     assert.deepEqual(await first.evaluate(() => [...document.querySelectorAll('#room-raw svg')].map(svg => svg.getAttribute('class') + ':' + (getComputedStyle(svg).display !== 'none'))), ['icon-rendered:true', 'icon-raw:false'], 'while raw the toggle shows the eye icon (v1)');
+    // A room whose whole history is loaded says where it starts.
+    assert.deepEqual(await first.$eval('#messages', el => [el.dataset.hasOlder, getComputedStyle(el, '::before').content]), ['false', '"Start of room"'], 'the start of the room is marked once nothing older remains');
+    // The choice is a server-side preference: a browser that has never seen it opens the room raw, and choosing rendered again is kept too.
+    const markdownMode = page => page.evaluate(async () => (await (await fetch('/api/me/preferences')).json()).preferences.markdown_mode);
+    await first.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.markdown_mode === 'raw', { timeout: 10000 });
+    {
+      const fresh = await browser.createBrowserContext(), freshPage = await fresh.newPage();
+      await login(freshPage, `${origin}/#${encodeURIComponent(roomID)}`);
+      await freshPage.waitForFunction(() => document.querySelector('#room-raw')?.getAttribute('aria-pressed') === 'true' && document.querySelector('.message:last-child .message-body')?.textContent.startsWith('## Heading'), { timeout: 15000 });
+      await fresh.close();
+    }
     await domClick(first, '#room-raw');
+    await first.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.markdown_mode === 'rendered', { timeout: 10000 });
+    assert.equal(await markdownMode(first), 'rendered');
     assert.equal(await first.$eval('.message:last-child .message-body h2', el => el.textContent), 'Heading');
     jumpSeq = String(await first.evaluate(async id => { const messages = await (await fetch(`/api/rooms/${id}/messages`)).json(); return messages.find(item => item.body === 'Thread reply').no; }, roomID));
     await domClick(first, '#room-jump');
@@ -3528,6 +3554,29 @@ async function main() {
     await agentPage.keyboard.press('Enter');
     await agentPage.waitForFunction(() => [...document.querySelectorAll('.message-body')].some(el => el.textContent.includes('@nobody')));
     assert.deepEqual(await agentPage.$$eval('.message:last-child .message-body .mention', els => els.map(el => el.textContent)), ['@ada', '@worker'], 'only live in-room mentions are highlighted');
+    // A mention of an agent opens its profile (a button for the keyboard too); roles and groups do not; a mention of the viewer is marked.
+    {
+      assert.deepEqual(await agentPage.$$eval('.message:last-child .message-body .mention', els => els.map(el => el.getAttribute('role'))), ['button', null], 'an agent mention is a button, a role is not');
+      await agentPage.$eval('.message:last-child .message-body .mention[role=button]', el => el.click());
+      await agentPage.waitForFunction(() => document.querySelector('#agents-panel').classList.contains('profile-open'), { timeout: 10000 });
+      await agentPage.$eval('#agent-profile-close', el => el.click());
+      const marked = await agentPage.evaluate(async () => {
+        const { MentionIndex, highlightMentions } = await import('/js/mentions.js');
+        const host = document.createElement('div'); host.innerHTML = '<p>@owner and @ada and @bert and @here</p>'; document.body.append(host);
+        highlightMentions(host, new MentionIndex([{ slug: 'ada', role_key: 'worker' }], 'proj-1', ['owner', 'bert'], [], 'Owner'));
+        const out = [...host.querySelectorAll('.mention')].map(node => [node.textContent, node.classList.contains('mention-self'), node.getAttribute('role')]); host.remove(); return out;
+      });
+      assert.deepEqual(marked, [['@owner', true, null], ['@ada', false, 'button'], ['@bert', false, null], ['@here', false, null]], 'only a mention of the viewer is marked as theirs; only an agent opens a profile');
+      // The qualified form names the agent even when a person's login shares its slug (the plain form is then ambiguous and not a mention).
+      const qualified = await agentPage.evaluate(async () => {
+        const { MentionIndex, highlightMentions } = await import('/js/mentions.js');
+        const host = document.createElement('div'); host.innerHTML = '<p>@ada and @ada@proj-1 and @ada@other</p>'; document.body.append(host);
+        highlightMentions(host, new MentionIndex([{ slug: 'ada', role_key: 'worker' }], 'proj-1', ['ada'], [], ''));
+        const out = [...host.querySelectorAll('.mention')].map(node => [node.textContent, node.getAttribute('role')]); host.remove(); return out;
+      });
+      assert.deepEqual(qualified, [['@ada@proj-1', 'button']], 'a qualified mention opens the agent even when a login shares the slug');
+      await agentPage.focus('#composer textarea'); // the clicks above moved the focus; the typing below goes to the composer
+    }
     await agentPage.keyboard.type('x @ad there'); for (let i = 0; i < 6; i++) await agentPage.keyboard.press('ArrowLeft');
     await agentPage.waitForFunction(() => !document.querySelector('.mention-commands').hidden);
     await agentPage.keyboard.press('Enter');

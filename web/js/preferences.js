@@ -10,6 +10,7 @@ export const PREFERENCE_KEYS = {
   inbox_volume: user => `aimebu2:inbox-volume:${user}`,
   system_events: user => `aimebu2.ui.show-system-events.${user}`,
   debug_inspector: user => `aimebu2.ui.debug-inspector.${user}`,
+  markdown_mode: user => `aimebu2.ui.markdown-mode.${user}`,
   composer_formatting: () => 'aimebu2.composer.formatting',
   sidebar_sort: user => `aimebu2.ui.sidebar_sort.${user}`,
   sidebar_project_order: user => `aimebu2.ui.sidebar_project_order.${user}`,

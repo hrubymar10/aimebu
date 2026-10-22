@@ -24,19 +24,19 @@ func TestUserPreferencesArePerUserAndValidated(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	cookie, csrf := registerSecondUser(t, f, "second")
-	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"theme": "light", "inbox_volume": "30"}}, true)
+	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"theme": "light", "inbox_volume": "30", "markdown_mode": "raw"}}, true)
 	if resp.StatusCode != 200 {
 		t.Fatalf("put: %d", resp.StatusCode)
 	}
 	got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode)
-	if got["theme"] != "light" || got["inbox_volume"] != "30" {
+	if got["theme"] != "light" || got["inbox_volume"] != "30" || got["markdown_mode"] != "raw" {
 		t.Fatalf("put result: %v", got)
 	}
 	// A later write replaces a value and keeps the others.
 	f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"theme": "dark"}}, true).Body.Close()
 	resp = f.request("GET", "/api/me/preferences", nil, false)
 	got = prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode)
-	if got["theme"] != "dark" || got["inbox_volume"] != "30" {
+	if got["theme"] != "dark" || got["inbox_volume"] != "30" || got["markdown_mode"] != "raw" {
 		t.Fatalf("after replace: %v", got)
 	}
 	// Another user sees none of it.
