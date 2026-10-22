@@ -4,6 +4,9 @@ import { PREFERENCE_KEYS, savePreference } from './preferences.js';
 import { retention } from './retention.js';
 import { expiryCutoffMs, planExpiry } from './expiry.js';
 import { EXPIRED_HOURGLASS } from './usage-expiry.js';
+import { usageTooltip } from './message-usage-format.js';
+import { toggleMessageUsage, closeMessageUsage } from './message-usage.js';
+import { UsageSummary } from './usage-summary.js';
 import { renderMarkdown, renderRaw, copyText } from './markdown.js';
 import { setGlyph, iconGlyph } from './icon-button.js';
 import { stampTime, refreshRelativeTimes } from './time.js';
@@ -133,6 +136,7 @@ export class Chat {
     this.schedules = new Schedules(document.querySelector('#room-schedules'));
     this.memberList = new RoomMembers(document.querySelector('#room-member-list'));
     this.exportDialog = document.querySelector('#room-export-dialog');
+    this.roomUsage = new UsageSummary(document.querySelector('#room-usage'), id => `/api/rooms/${id}/usage`);
     document.querySelector('#room-info').onclick = () => this.showRoomInfo();
     document.querySelector('#room-info-close').onclick = () => this.infoDialog.close();
     this.infoDialog.addEventListener('close', () => this.projectSettings?.release(this.projectSection));
@@ -159,7 +163,7 @@ export class Chat {
     const session = this.sessionGeneration;
     this.announcer.reset();
     if (this.room?.id !== room.id) { this.pendingAttachments = []; this.renderPending(); if (this.recall) this.recall.index = null; }
-    this.room = room; this.syncEmpty(); this.title.textContent = room.title; this.setRoomFacts(room); this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.answeredMessages = new Set(); this.repliedTo = new Set(); this.nodes.clear(); this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.initialLoading = true; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0; this.loadingNewer = false; this.missedIDs = new Set(); this.updateLatestLabel(); this.setReply(null); this.closeThread();
+    closeMessageUsage(); this.room = room; this.syncEmpty(); this.title.textContent = room.title; this.setRoomFacts(room); this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.answeredMessages = new Set(); this.repliedTo = new Set(); this.nodes.clear(); this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.initialLoading = true; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0; this.loadingNewer = false; this.missedIDs = new Set(); this.updateLatestLabel(); this.setReply(null); this.closeThread();
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = false;
     this.setRoomFacts(room);
     this.scrollAnchor.reset();
@@ -333,6 +337,14 @@ export class Chat {
   setLegacyActions(start, open) { this.legacyStarter = start; this.legacyOpener = open; }
   setDebugInspector(open) { this.debugCallback = open; }
   // v1's bug icon: opens the message's debug inspector. It is hidden unless Settings > General turns the inspector on.
+  // The turn's spend, from the chart icon beside the number, on a message an agent wrote (the server sends `usage` with it).
+  usageButton(message) {
+    if (!message.usage) return null;
+    const button = document.createElement('button'); button.type = 'button'; button.className = 'row-btn quiet-glyph chat-msg-usage-toggle';
+    button.title = usageTooltip(message.usage); button.setAttribute('aria-label', button.title); button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-expanded', 'false');
+    const glyph = document.createElement('span'); glyph.className = 'icon-mask icon-mask-chart-column'; glyph.setAttribute('aria-hidden', 'true'); button.append(glyph);
+    return button;
+  }
   debugButton(message) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'row-btn quiet-glyph chat-msg-debug-toggle'; button.title = 'Open debug inspector'; button.setAttribute('aria-label', 'Open debug inspector');
     const glyph = document.createElement('span'); glyph.className = 'icon-mask icon-mask-bug'; glyph.setAttribute('aria-hidden', 'true'); button.append(glyph);
@@ -357,6 +369,7 @@ export class Chat {
     if (is('mention')) { this.openMention(control.textContent); return; }
     if (is('message-number')) this.copyNumber(control, message);
     else if (is('chat-msg-debug-toggle')) this.debugCallback?.(message);
+    else if (is('chat-msg-usage-toggle')) toggleMessageUsage(control, message.usage);
     else if (is('quote')) this.jumpToMessage(message.reply_to);
     else if (is('image-thumb')) { const full = this.lightbox.querySelector('img'); full.src = control.dataset.url; this.lightbox.showModal(); }
     else if (is('thread-chip')) this.openThread(message);
@@ -485,6 +498,7 @@ export class Chat {
   }
   showRoomInfo() {
     if (!this.room) return;
+    this.roomUsage.load(this.room.id);
     const controls = document.querySelector('#room-scope-control');
     controls.hidden = this.room.kind === 'dm';
     const facts = document.querySelector('#room-info-facts'); facts.replaceChildren();
@@ -1159,7 +1173,7 @@ export class Chat {
     const number = document.createElement('button'); number.type = 'button'; number.className = 'row-btn quiet-glyph message-number'; number.textContent = `#${message.no}`; number.title = 'Click to copy';
     const attention = message.needs_attention ? document.createElement('span') : null;
     if (attention) { attention.className = 'message-attention'; attention.textContent = '🔔'; attention.title = 'Needs human attention'; attention.setAttribute('aria-label', 'Needs human attention'); article.classList.add('needs-attention'); }
-    meta.append(...(attention ? [attention] : []), number, this.debugButton(message), date);
+    meta.append(...(attention ? [attention] : []), number, ...[this.usageButton(message)].filter(Boolean), this.debugButton(message), date);
     return meta;
   }
   threadEntry(message) {

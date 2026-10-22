@@ -241,6 +241,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/rooms/{room}/worktree", s.Auth.RequireUser(http.HandlerFunc(s.roomWorktree)))
 	mux.Handle("GET /api/rooms/{room}/messages", s.Auth.RequireUser(http.HandlerFunc(s.messages)))
 	mux.Handle("GET /api/rooms/{room}/export", s.Auth.RequireUser(http.HandlerFunc(s.exportRoom)))
+	mux.Handle("GET /api/rooms/{room}/usage", s.Auth.RequireUser(http.HandlerFunc(s.roomUsage)))
+	mux.Handle("GET /api/projects/{project}/usage", s.Auth.RequireUser(http.HandlerFunc(s.projectUsage)))
 	mux.Handle("GET /api/rooms/{room}/schedules", s.Auth.RequireUser(http.HandlerFunc(s.schedules)))
 	mux.Handle("POST /api/rooms/{room}/schedules", s.Auth.RequireUser(http.HandlerFunc(s.schedules)))
 	mux.Handle("PATCH /api/rooms/{room}/schedules/{id}", s.Auth.RequireUser(http.HandlerFunc(s.schedule)))
@@ -1265,11 +1267,19 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 			fail(w, err)
 			return
 		}
+		usages, err := s.Store.UsageForMessages(r.Context(), messages)
+		if err != nil {
+			fail(w, err)
+			return
+		}
 		views := make([]map[string]any, 0, len(messages))
 		for _, message := range messages {
 			view := messageView(message)
 			if preview, ok := previews[message.ReplyTo]; ok && message.ReplyTo != "" {
 				view["reply_preview"] = preview
+			}
+			if usage, ok := usages[message.ID]; ok {
+				view["usage"] = usage
 			}
 			view["expirable"] = store.ExpirableMessage(message.AuthorKind, message.ReplyTo, room.Kind, groupOnly[message.ID])
 			items := reactions[message.ID]

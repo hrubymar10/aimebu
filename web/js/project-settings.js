@@ -1,3 +1,4 @@
+import { UsageSummary } from './usage-summary.js';
 import { request, rights } from './api.js';
 import { ScopeControl } from './scope-control.js';
 import { UsageLimit } from './usage-limit.js';
@@ -13,6 +14,7 @@ export class ProjectSettings {
     this.body = document.querySelector('#project-settings-body');
     this.scopeControl = new ScopeControl(document.querySelector('#project-scope-control'), 'project');
     this.usageLimit = new UsageLimit(document.querySelector('#project-usage-limit'));
+    this.usageSummary = new UsageSummary(document.querySelector('#project-usage'), id => `/api/projects/${id}/usage`);
     this.autoResume = document.querySelector('#project-auto-resume');
     this.worktrees = document.querySelector('#project-worktrees');
     this.homeLeadOnly = document.querySelector('#project-home-lead-only');
@@ -83,6 +85,7 @@ export class ProjectSettings {
     this.scopeControl.load(id);
     this.usageLimit.load(id);
     this.loadRoleDefaults(id);
+    this.usageSummary.load(id);
     this.error.textContent = '';
     this.autoResume.checked = false;
     this.autoResume.disabled = true; this.worktrees.checked = false; this.worktrees.disabled = true;

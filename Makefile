@@ -36,7 +36,7 @@ fmt-check: ## Fail if Go source is unformatted
 
 test-full: fmt-check vet test-race test-web ## Full local and CI gate
 
-WEB_TESTS := system-events limit-guard sidebar-order preferences expiry room-unread room-notify inbox-notifications harness-offer notification-banner humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown markdown import-tree quick-commands
+WEB_TESTS := system-events limit-guard sidebar-order preferences expiry room-unread room-notify inbox-notifications harness-offer notification-banner humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown markdown import-tree quick-commands message-usage
 
 test-web: ## Run the browser-free web unit tests (vm over the module source)
 	@set -e; total=$(words $(WEB_TESTS)); n=0; \

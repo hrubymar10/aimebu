@@ -1334,10 +1334,28 @@ async function main() {
       chat.add({ ...base, id: 'q2', seq: 952, no: 952, author_kind: 'user', author_id: 'someone', reply_to: 'msg_unloaded_too' });
       const quote = id => { const el = chat.list.querySelector(`[data-message-id="${id}"] .quote`); return [el.textContent, el.title]; };
       out.quotes = [quote('q1'), quote('q2')];
+      // An agent message carries the usage of its turn: a chart icon with a tooltip and an accessible name opens a popover with every figure
+      // (a dash for one nobody reported), Escape closes it and gives the focus back to the icon; a message with no usage has no icon.
+      chat.add({ ...base, id: 'u1', seq: 961, no: 961, author_kind: 'agent', author_id: 'live', usage: { turn_id: 'turn_1', index: 2, count: 3, tokens_in: 1200, tokens_out: 34, tokens_cache_read: 5000, cost: 0.0042, model: 'claude-haiku-4-5', partial: true } });
+      const usageButton = chat.list.querySelector('[data-message-id="u1"] .chat-msg-usage-toggle');
+      out.usageButton = { present: !!usageButton, title: usageButton?.title, label: usageButton?.getAttribute('aria-label'), glyph: !!usageButton?.querySelector('.icon-mask-chart-column'), text: usageButton?.textContent, withoutUsage: !chat.list.querySelector('[data-message-id="i1"] .chat-msg-usage-toggle') };
+      usageButton.click(); await new Promise(resolve => setTimeout(resolve, 50));
+      const usagePopover = document.querySelector('.usage-popover');
+      out.usagePopover = usagePopover && { rows: [...usagePopover.querySelectorAll('dt')].map((dt, i) => [dt.textContent, usagePopover.querySelectorAll('dd')[i].textContent]), notes: [...usagePopover.querySelectorAll('.usage-popover-note')].map(note => note.textContent).join(' '), focused: document.activeElement === usagePopover, expanded: usageButton.getAttribute('aria-expanded'), role: usagePopover.getAttribute('role'), inside: (() => { const box = usagePopover.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth && box.width > 100; })() };
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await new Promise(resolve => setTimeout(resolve, 50));
+      out.usageClosed = { gone: !document.querySelector('.usage-popover'), focusBack: document.activeElement === usageButton, expanded: usageButton.getAttribute('aria-expanded') };
+      usageButton.click(); usageButton.click(); await new Promise(resolve => setTimeout(resolve, 50));
+      out.usageToggled = !document.querySelector('.usage-popover');
       chat.list.remove(); return out;
     });
     assert.match(identityHeader.quotes[0][0], /^↪ #77 \S+: quoted text$/, 'a parent outside the loaded window is quoted from the preview');
     assert.equal(identityHeader.quotes[0][1], 'Go to #77');
+    assert.deepEqual(identityHeader.usageButton, { present: true, title: 'Usage: 1,200 in \u00b7 34 out \u00b7 $0.0042 (partial) (turn of 3 messages)', label: 'Usage: 1,200 in \u00b7 34 out \u00b7 $0.0042 (partial) (turn of 3 messages)', glyph: true, text: '', withoutUsage: true });
+    assert.deepEqual(identityHeader.usagePopover.rows, [['Model', 'claude-haiku-4-5'], ['Input', '1,200'], ['Output', '34'], ['Cache read', '5,000'], ['Cache written', '\u2014'], ['Cost (estimate)', '$0.0042']], 'the popover lists every figure, a dash for the one nobody reported');
+    assert.deepEqual([identityHeader.usagePopover.focused, identityHeader.usagePopover.expanded, identityHeader.usagePopover.role, identityHeader.usagePopover.inside], [true, 'true', 'dialog', true]);
+    assert.match(identityHeader.usagePopover.notes, /wrote 3 messages; this is 2 of 3.*floor/, 'the popover says it is 2 of 3 and partial');
+    assert.deepEqual(identityHeader.usageClosed, { gone: true, focusBack: true, expanded: 'false' }, 'Escape closes the popover and gives the focus back to the icon');
+    assert.equal(identityHeader.usageToggled, true, 'clicking the icon again closes it');
     assert.deepEqual(identityHeader.quotes[1], ['↪ Earlier message', ''], 'with no preview the quote says only that the parent is earlier');
     assert.deepEqual(identityHeader.links, [[true, 'button'], [true, 'button'], [true, 'button']], 'the name of an agent is clickable, live or not');
     assert.equal(identityHeader.openedAgent, 'live', 'the name of a live agent opens its profile in the members panel, not the read-only dialog');
@@ -2346,6 +2364,34 @@ async function main() {
     assert.equal(await first.evaluate(async () => JSON.parse(await window.__exportBlob.text()).messages.some(item => item.body === 'Thread reply')), true);
     assert.equal(await first.evaluate(async () => JSON.parse(await window.__exportBlob.text()).messages.every(item => item.author_label && Array.isArray(item.reactions))), true, 'the JSON export resolves authors and carries reactions');
     await first.evaluate(() => { URL.createObjectURL = window.__originalCreateObjectURL; URL.revokeObjectURL = window.__originalRevokeObjectURL; HTMLAnchorElement.prototype.click = window.__originalAnchorClick; });
+    // Room settings show what the room's turns spent (the server's answer is stubbed): the totals, a note on the unpriced turns, a line per agent and
+    // per model, and the range picker asks again.
+    {
+      await first.evaluate(() => {
+        window.__usageFetch = window.fetch; window.__usageRanges = [];
+        window.fetch = (input, options) => {
+          const match = /\/api\/rooms\/[^/]+\/usage\?range=(\w+)/.exec(String(input));
+          if (!match) return window.__usageFetch(input, options);
+          window.__usageRanges.push(match[1]);
+          const all = match[1] === 'all';
+          return Promise.resolve(new Response(JSON.stringify({ range: match[1], turns: all ? 5 : 3, turns_with_cost: all ? 4 : 2, cost_coverage: 'partial', tokens_in: all ? 9000 : 2200, tokens_out: 40, tokens_cache_read: 9000, cost: all ? 12.5 : 1.5, partial: !all,
+            by_agent: [{ key: 'agt_1', label: 'worker@proj', turns: 2, tokens_in: 2000, tokens_out: 30, cost: 1.4 }], by_model: [{ key: 'm1', label: 'm1', turns: 1, tokens_in: 100, tokens_out: 10, cost: 1.4 }, { key: '', label: 'unknown', turns: 2 }] }), { headers: { 'Content-Type': 'application/json' } }));
+        };
+      });
+      await domClick(first, '#room-info');
+      await first.waitForFunction(() => document.querySelector('#room-usage .usage-popover-rows dd'));
+      const readUsage = () => first.$eval('#room-usage', el => ({ rows: [...el.querySelectorAll('.usage-popover-rows dt')].map((dt, i) => [dt.textContent, el.querySelectorAll('.usage-popover-rows dd')[i].textContent]), groups: [...el.querySelectorAll('.usage-summary-groups li')].map(li => li.textContent), notes: [...el.querySelectorAll('.usage-popover-note')].map(note => note.textContent), range: el.querySelector('select').value, title: el.querySelector('h3').textContent }));
+      const today = await readUsage();
+      assert.deepEqual(today.rows, [['Turns', '3'], ['Input', '2,200'], ['Output', '40'], ['Cache read', '9,000'], ['Cache written', '\u2014'], ['Cost (estimate)', '$1.50']]);
+      assert.deepEqual([today.range, today.title, today.groups], ['today', 'Usage', ['worker@proj 2 turns \u00b7 2,000 in / 30 out \u00b7 $1.40', 'm1 1 turn \u00b7 100 in / 10 out \u00b7 $1.40', 'unknown 2 turns \u00b7 \u2014']]);
+      assert.equal(today.notes.length, 2, 'the note on the unpriced turn and on the partial ones');
+      await first.select('#room-usage select', 'all');
+      await first.waitForFunction(() => [...document.querySelectorAll('#room-usage .usage-popover-rows dd')][5]?.textContent === '$12.50');
+      assert.deepEqual(await first.evaluate(() => window.__usageRanges), ['today', 'all'], 'the picker asks the server again');
+      assert.equal((await readUsage()).notes.length, 1, 'a range with no partial turn drops that note');
+      await first.evaluate(() => { window.fetch = window.__usageFetch; });
+      await domClick(first, '#room-info-close');
+    }
     assert.equal(await md.$eval('em', el => el.textContent), 'italic');
     assert.equal(await md.$eval('table tbody td:last-child strong', el => el.textContent), 'value');
     assert.equal(await md.$eval('a', el => el.getAttribute('rel').includes('noopener') && el.protocol === 'https:'), true);

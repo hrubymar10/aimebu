@@ -58,7 +58,7 @@ Vendored frontend dependency:
   declaration, header comment and fixed size were removed, and black strokes and pips use `currentColor`.
 
 - The close, plus, person-plus, eye, stop, pause, play, arrow-down, arrow-up, arrow-up-down (sort), external-link, switch (arrow-left-right), copy, check,
-  reopen (rotate-ccw), more (ellipsis), chevron-right and message (message-square) glyphs in `web/icons/` are Lucide icons
+  reopen (rotate-ccw), more (ellipsis), chevron-right, message (message-square) and chart-column (the Usage of a message) glyphs in `web/icons/` are Lucide icons
   (ISC licence, Copyright (c) 2026 Lucide Icons and Contributors; the licence text is `web/icons/LICENSE-lucide.txt`), release
   `1.59.0`, from `https://github.com/lucide-icons/lucide/tree/1.59.0/icons`. The only change is dropping the fixed
   `width="24" height="24"` and the line breaks; they are drawn through a CSS mask in the current colour.
