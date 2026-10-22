@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/goccy/go-json"
 )
 
 var roleKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,31}$`)
@@ -24,17 +26,19 @@ func (tx *Tx) AuthorizeSpawn(roomID, actorKind, actorID string) error {
 }
 
 type RoleDefinition struct {
-	ID          string `json:"id"`
-	Key         string `json:"role_key"`
-	Label       string `json:"label"`
-	Emoji       string `json:"emoji"`
-	Body        string `json:"body"`
-	Cardinality string `json:"cardinality"`
-	Lead        bool   `json:"cap_is_lead"`
-	CanSpawn    bool   `json:"cap_can_spawn"`
-	Writer      bool   `json:"cap_singleton_writer"`
-	Rev         int64  `json:"rev"`
-	Builtin     bool   `json:"builtin"`
+	ID            string               `json:"id"`
+	Key           string               `json:"role_key"`
+	Label         string               `json:"label"`
+	Emoji         string               `json:"emoji"`
+	Body          string               `json:"body"`
+	Cardinality   string               `json:"cardinality"`
+	Lead          bool                 `json:"cap_is_lead"`
+	CanSpawn      bool                 `json:"cap_can_spawn"`
+	Writer        bool                 `json:"cap_singleton_writer"`
+	DefaultAgents []SpawnDefaultChoice `json:"default_agents"`
+	PickMode      string               `json:"pick_mode"`
+	Rev           int64                `json:"rev"`
+	Builtin       bool                 `json:"builtin"`
 	// Extends is the key of the role this one adds to ("" for none); ResolvedBody, set only when listing, is the text an agent
 	// with the role receives (see role_extends.go).
 	Extends      string `json:"extends"`
@@ -68,11 +72,15 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 		existing := r.ID != ""
 		if deleteRole || r.ID != "" {
 			var old RoleDefinition
+			var defaultsJSON string
 			err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,role_key,label,emoji,body,cardinality,
-   cap_is_lead,cap_can_spawn,cap_singleton_writer,rev FROM role WHERE id=? AND deleted_at IS NULL`, r.ID).
+   cap_is_lead,cap_can_spawn,cap_singleton_writer,rev,spawn_defaults_json,spawn_pick_mode FROM role WHERE id=? AND deleted_at IS NULL`, r.ID).
 				Scan(&old.ID, &old.Key, &old.Label, &old.Emoji, &old.Body, &old.Cardinality,
-					&old.Lead, &old.CanSpawn, &old.Writer, &old.Rev)
+					&old.Lead, &old.CanSpawn, &old.Writer, &old.Rev, &defaultsJSON, &old.PickMode)
 			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal([]byte(defaultsJSON), &old.DefaultAgents); err != nil {
 				return err
 			}
 			if old.Rev != r.Rev {
@@ -99,6 +107,14 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 				}
 				_, err = tx.Exec(`UPDATE role SET deleted_at=?,key='deleted:'||id,rev=rev+1 WHERE id=?`, timestamp(), old.ID)
 				return err
+			}
+			// Older callers omit these fields. An omitted list keeps the current
+			// defaults; an explicit [] clears them.
+			if r.DefaultAgents == nil {
+				r.DefaultAgents = old.DefaultAgents
+			}
+			if r.PickMode == "" {
+				r.PickMode = old.PickMode
 			}
 			if r.Key != old.Key {
 				return ErrInvalidTransition
@@ -166,6 +182,16 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 			(r.Cardinality != "multi" && r.Cardinality != "singleton") {
 			return ErrInvalidTransition
 		}
+		if r.PickMode == "" {
+			r.PickMode = "in_turn"
+		}
+		if err := tx.validateSpawnDefaults(r.DefaultAgents, r.PickMode); err != nil {
+			return err
+		}
+		defaultsJSON, err := json.Marshal(r.DefaultAgents)
+		if err != nil {
+			return err
+		}
 		visible, err := allLiveRoles(tx.ctx, tx.tx)
 		if err != nil {
 			return err
@@ -175,17 +201,17 @@ func (s *Store) ManageRole(ctx context.Context, actorID string, r RoleDefinition
 		}
 		if existing {
 			_, err := tx.Exec(`UPDATE role SET label=?,emoji=?,body=?,extends=?,cardinality=?,cap_is_lead=?,
-   cap_can_spawn=?,cap_singleton_writer=?,rev=rev+1 WHERE id=?`,
-				r.Label, r.Emoji, r.Body, r.Extends, r.Cardinality, r.Lead, r.CanSpawn, r.Writer, r.ID)
+   cap_can_spawn=?,cap_singleton_writer=?,spawn_defaults_json=?,spawn_pick_mode=?,rev=rev+1 WHERE id=?`,
+				r.Label, r.Emoji, r.Body, r.Extends, r.Cardinality, r.Lead, r.CanSpawn, r.Writer, string(defaultsJSON), r.PickMode, r.ID)
 			if err != nil {
 				return err
 			}
 			r.Rev++
 		} else {
 			_, err := tx.Exec(`INSERT INTO role(id,key,project_id,role_key,label,emoji,body,extends,cardinality,
-   cap_is_lead,cap_can_spawn,cap_singleton_writer)
-   VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?)`, r.ID, r.Key, r.Key, r.Label, r.Emoji,
-				r.Body, r.Extends, r.Cardinality, r.Lead, r.CanSpawn, r.Writer)
+   cap_is_lead,cap_can_spawn,cap_singleton_writer,spawn_defaults_json,spawn_pick_mode)
+   VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?,?,?)`, r.ID, r.Key, r.Key, r.Label, r.Emoji,
+				r.Body, r.Extends, r.Cardinality, r.Lead, r.CanSpawn, r.Writer, string(defaultsJSON), r.PickMode)
 			if err != nil {
 				return err
 			}

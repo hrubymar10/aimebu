@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/store"
 )
 
 func decodeBackupBody(t *testing.T, resp *http.Response, out any) {
@@ -64,6 +65,138 @@ func sectionOf(preview backupPreview, name string) backupSectionPreview {
 		}
 	}
 	return backupSectionPreview{Section: name}
+}
+
+func TestSettingsBackupAndLegacyRoleUpdatePreserveSpawnDefaults(t *testing.T) {
+	f := newFixture(t)
+	f.seed()
+	launcher := f.harness(t, "codex", "native")
+	choice := store.SpawnDefaultChoice{LauncherID: launcher.ID, Model: "gpt-6-sol"}
+	resp := f.request("POST", "/api/roles", store.RoleDefinition{
+		Key: "planner", Label: "Planner", Body: "Plan", Cardinality: "multi",
+		DefaultAgents: []store.SpawnDefaultChoice{choice}, PickMode: "randomly",
+	}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create role: %d", resp.StatusCode)
+	}
+	var role store.RoleDefinition
+	decodeBackupBody(t, resp, &role)
+	role.Label = "Planning"
+	role.DefaultAgents, role.PickMode = nil, "" // an older role client does not send these fields
+	resp = f.request("PUT", "/api/roles/"+role.ID, role, true)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update role: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	defaults, err := f.db.RoleSpawnDefaults(t.Context(), f.project.ID, "planner")
+	if err != nil || len(defaults.DefaultAgents) != 1 || defaults.DefaultAgents[0] != choice || defaults.PickMode != "randomly" {
+		t.Fatalf("legacy role update lost defaults: %+v %v", defaults, err)
+	}
+	backup := exportBackup(t, f)
+	var saved map[string]any
+	for _, value := range backup["roles"].([]any) {
+		item := value.(map[string]any)
+		if item["role_key"] == "planner" {
+			saved = item
+			break
+		}
+	}
+	if saved == nil || saved["pick_mode"] != "randomly" || len(saved["default_agents"].([]any)) != 1 {
+		t.Fatalf("backup omitted role defaults: %+v", saved)
+	}
+	delete(saved, "default_agents")
+	delete(saved, "pick_mode")
+	saved["label"] = "Plan again"
+	status, preview := previewBackup(t, f, backup)
+	if status != http.StatusOK || sectionOf(preview, "roles").Overwrite == 0 {
+		t.Fatalf("old backup preview: %d %+v", status, preview)
+	}
+	resp = f.request("POST", "/api/settings-backup/apply", map[string]any{"backup": backup, "digest": preview.Digest}, true)
+	var result backupResult
+	decodeBackupBody(t, resp, &result)
+	if resp.StatusCode != http.StatusOK || !result.Complete {
+		t.Fatalf("old backup apply: %d %+v", resp.StatusCode, result)
+	}
+	defaults, err = f.db.RoleSpawnDefaults(t.Context(), f.project.ID, "planner")
+	if err != nil || len(defaults.DefaultAgents) != 1 || defaults.DefaultAgents[0] != choice || defaults.PickMode != "randomly" {
+		t.Fatalf("old backup lost defaults: %+v %v", defaults, err)
+	}
+}
+
+func TestSettingsBackupRestoresRoleWithoutForeignDefaults(t *testing.T) {
+	source := newFixture(t)
+	source.seed()
+	launcher := source.harness(t, "codex", "native")
+	resp := source.request("POST", "/api/roles", store.RoleDefinition{
+		Key: "planner", Label: "Planner", Body: "Plan", Cardinality: "multi",
+		DefaultAgents: []store.SpawnDefaultChoice{{LauncherID: launcher.ID, Model: "gpt-6-sol"}}, PickMode: "in_turn",
+	}, true)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("source role: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	backup := exportBackup(t, source)
+	target := newFixture(t)
+	target.seed()
+	status, preview := previewBackup(t, target, backup)
+	rolePreview := sectionOf(preview, "roles")
+	if status != http.StatusOK || rolePreview.New != 1 || len(rolePreview.Invalid) != 1 ||
+		rolePreview.Invalid[0].Key != "planner.default_agents" {
+		t.Fatalf("foreign role preview: %d %+v", status, preview)
+	}
+	resp = target.request("POST", "/api/settings-backup/apply", map[string]any{"backup": backup, "digest": preview.Digest}, true)
+	var result backupResult
+	decodeBackupBody(t, resp, &result)
+	if resp.StatusCode != http.StatusOK || result.Complete || len(result.Failed) != 1 ||
+		result.Failed[0].Key != "planner.default_agents" {
+		t.Fatalf("foreign defaults report: %d %+v", resp.StatusCode, result)
+	}
+	roles, err := target.db.ListRoles(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, role := range roles {
+		if role.Key == "planner" {
+			found = role.Label == "Planner" && role.Body == "Plan" && len(role.DefaultAgents) == 0
+		}
+	}
+	if !found {
+		t.Fatalf("role itself was not restored: %+v", roles)
+	}
+}
+
+func TestSettingsBackupRestoresRoleWithInvalidPickMode(t *testing.T) {
+	f := newFixture(t)
+	backup := map[string]any{"schema": settingsBackupSchema, "version": 1, "roles": []map[string]any{{
+		"role_key": "planner", "label": "Planner", "body": "Plan", "cardinality": "multi", "pick_mode": "later",
+	}}}
+	status, preview := previewBackup(t, f, backup)
+	roles := sectionOf(preview, "roles")
+	if status != http.StatusOK || roles.New != 1 || len(roles.Invalid) != 1 ||
+		roles.Invalid[0].Key != "planner.default_agents" {
+		t.Fatalf("invalid pick mode preview: %d %+v", status, preview)
+	}
+	resp := f.request("POST", "/api/settings-backup/apply", map[string]any{"backup": backup, "digest": preview.Digest}, true)
+	var result backupResult
+	decodeBackupBody(t, resp, &result)
+	if resp.StatusCode != http.StatusOK || result.Complete || len(result.Failed) != 1 ||
+		result.Failed[0].Key != "planner.default_agents" {
+		t.Fatalf("invalid pick mode apply: %d %+v", resp.StatusCode, result)
+	}
+	stored, err := f.db.ListRoles(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range stored {
+		if role.Key == "planner" {
+			if role.Body != "Plan" || role.PickMode != "in_turn" {
+				t.Fatalf("role restored without invalid mode: %+v", role)
+			}
+			return
+		}
+	}
+	t.Fatal("role missing after invalid pick mode")
 }
 
 func TestSettingsBackupExportCarriesOnlySettingsAndNoSecrets(t *testing.T) {

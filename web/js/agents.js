@@ -35,7 +35,7 @@ export class AgentsPanel {
     this.form.elements.worktree.onchange = () => { baseLabel.hidden = !this.form.elements.worktree.checked; };
     baseLabel.hidden = true;
     this.switchDialog = document.querySelector('#switch-dialog'); this.switchForm = document.querySelector('#switch-form'); this.cards = new Map();
-    this.spawnMachine = new MachineSelection('spawn', () => { this.syncWorktreeOption(); return this.loadSpawnCatalog(); }, () => this.updateSpawnSubmit());
+    this.spawnMachine = new MachineSelection('spawn', () => { this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1; this.syncWorktreeOption(); return this.loadSpawnCatalog(); }, () => this.updateSpawnSubmit());
     this.switchMachine = new MachineSelection('switch', () => this.loadSwitchCatalog(), () => this.renderSwitchModels(false));
     document.querySelector('#agents-toggle').onclick = () => matchMedia('(max-width: 700px)').matches
       ? this.setMobileOpen(!this.panel.classList.contains('mobile-open'))
@@ -50,7 +50,9 @@ export class AgentsPanel {
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && this.profileID && !document.querySelector('dialog[open]')) { event.preventDefault(); this.closeProfile(); } });
     document.querySelector('#spawn-cancel').onclick = () => this.dialog.close();
     this.dialog.addEventListener('close', () => { this.pendingResume = null; this.renderStartRooms(); this.renderResume(); });
-    this.form.elements.tool.onchange = () => this.renderSpawnModels();
+    this.form.elements.tool.onchange = () => { this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1; this.renderSpawnModels(); };
+    this.form.elements.model.onchange = () => { this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1; };
+    this.form.elements.role.onchange = () => this.prefillRoleDefault();
     this.nameInput = this.form.elements.name; this.nameError = this.form.querySelector('#spawn-name-error');
     this.nameDice = setGlyph(this.form.querySelector('#spawn-name-dice'), 'dice', 'Another name');
     this.nameDice.onclick = () => this.fillSpawnName();
@@ -579,6 +581,7 @@ export class AgentsPanel {
       if (resume?.role_key && roles.some(role => role.role_key === resume.role_key)) this.form.elements.role.value = resume.role_key;
       this.rolesReady = true;
       this.updateSpawnSubmit();
+      if (!resume) await this.prefillRoleDefault();
     } catch (error) {
       if (!current()) return;
       this.catalog = [];
@@ -602,6 +605,27 @@ export class AgentsPanel {
     } catch (error) {
       if (this.dialog.open && requestID === this.nameRequestID) this.nameError.textContent = `Could not get a name: ${error.message}`;
     } finally { if (requestID === this.namePendingID) this.nameDice.disabled = false; }
+  }
+  async prefillRoleDefault() {
+    if (this.pendingResume || !this.room?.project_id || !this.form.elements.role.value) return;
+    const token = this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1;
+    const roleKey = this.form.elements.role.value;
+    try {
+      const choice = await request(`/api/projects/${encodeURIComponent(this.room.project_id)}/role-spawn-defaults/${encodeURIComponent(roleKey)}/next`);
+      if (token !== this.defaultPreviewToken || !this.dialog.open || this.form.elements.role.value !== roleKey || !choice.available) return;
+      if (choice.machine_id && this.spawnMachine.id !== choice.machine_id) {
+        this.spawnMachine.select.value = choice.machine_id;
+        this.spawnMachine.renderFolder();
+        await this.loadSpawnCatalog();
+      }
+      if (token !== this.defaultPreviewToken || !this.dialog.open) return;
+      const index = this.catalog?.findIndex(item => item.launcher_id === choice.launcher_id && item.available);
+      if (index >= 0) {
+        this.form.elements.tool.value = String(index);
+        this.renderSpawnModels();
+        if ([...this.form.elements.model.options].some(option => option.value === choice.model)) this.form.elements.model.value = choice.model;
+      }
+    } catch { /* The ordinary first-available choice remains usable. */ }
   }
   async loadSpawnCatalog() {
     const machineID = this.spawnMachine.id;

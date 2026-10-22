@@ -129,6 +129,7 @@ func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 		Tool      string `json:"tool"`
 		Variant   string `json:"variant"`
 		Model     string `json:"model"`
+		Reason    string `json:"reason"`
 		Provider  string `json:"provider"`
 		MachineID string `json:"machine_id"`
 		Worktree  bool   `json:"worktree"`
@@ -147,7 +148,7 @@ func (s *Server) agentToolSpawn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.spawnAgentRequest(w, r, room, spawnRequest{RoleKey: req.RoleKey, Tool: req.Tool,
-		Variant: req.Variant, Model: req.Model, Provider: req.Provider, MachineID: req.MachineID, Worktree: req.Worktree, BaseRef: req.BaseRef}, "agent", caller.ID)
+		Variant: req.Variant, Model: req.Model, Provider: req.Provider, MachineID: req.MachineID, Worktree: req.Worktree, BaseRef: req.BaseRef, Reason: req.Reason}, "agent", caller.ID)
 }
 
 func (s *Server) agentToolStop(w http.ResponseWriter, r *http.Request) {

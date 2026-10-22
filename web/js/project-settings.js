@@ -1,6 +1,7 @@
-import { rights } from './api.js';
+import { request, rights } from './api.js';
 import { ScopeControl } from './scope-control.js';
 import { UsageLimit } from './usage-limit.js';
+import { SpawnDefaultsEditor } from './spawn-defaults-editor.js';
 
 // The project's own settings (name and folder, its agents, daily limits, the home room's lead-only rule, recovery and worktrees). One implementation, two places: the
 // Project section of the home room's settings and Settings → Project. Both dialogs are modal, so the one form body moves into whichever
@@ -17,6 +18,10 @@ export class ProjectSettings {
     this.homeLeadOnly = document.querySelector('#project-home-lead-only');
     this.error = document.querySelector('#project-settings-error');
     this.details = document.querySelector('#project-details');
+    this.roleDefaultsSection = document.createElement('section'); this.roleDefaultsSection.className = 'settings-section';
+    this.roleDefaultsSection.innerHTML = '<h3>Default agents per role</h3><p class="settings-intro">Inherit the global list or set an ordered list for this project.</p>';
+    this.roleDefaultsRows = document.createElement('div'); this.roleDefaultsSection.append(this.roleDefaultsRows);
+    this.body.querySelector('#project-usage-limit').after(this.roleDefaultsSection);
     this.projectID = '';
     this.mounts = [];
     this.details.onsubmit = event => { event.preventDefault(); this.saveDetails(); };
@@ -77,6 +82,7 @@ export class ProjectSettings {
     this.showDetails(id);
     this.scopeControl.load(id);
     this.usageLimit.load(id);
+    this.loadRoleDefaults(id);
     this.error.textContent = '';
     this.autoResume.checked = false;
     this.autoResume.disabled = true; this.worktrees.checked = false; this.worktrees.disabled = true;
@@ -90,6 +96,48 @@ export class ProjectSettings {
       this.worktrees.checked = settings.worktree_mode !== 'off'; this.worktrees.disabled = false;
       this.homeLeadOnly.checked = settings.home_lead_only !== false; this.homeLeadOnly.disabled = false;
     } catch (error) { if (this.projectID === id) this.error.textContent = error.message; }
+  }
+  async loadRoleDefaults(id) {
+    this.roleDefaultsRows.replaceChildren();
+    if (!id) return;
+    try {
+      const roles = await request(`/api/projects/${encodeURIComponent(id)}/role-spawn-defaults`);
+      if (this.projectID !== id) return;
+      for (const role of roles) {
+        const card = document.createElement('section'); card.className = 'settings-card project-role-default';
+        const title = document.createElement('h4'); title.textContent = role.role_key;
+        const source = document.createElement('select'); source.setAttribute('aria-label', `${role.role_key} default source`);
+        const sourceRow = document.createElement('div'); sourceRow.className = 'settings-row';
+        const sourceGroup = document.createElement('div'); sourceGroup.className = 'settings-group';
+        const sourceInfo = document.createElement('div'); sourceInfo.className = 'settings-row-info';
+        const sourceLabel = document.createElement('label'); sourceLabel.className = 'settings-label';
+        source.id = `project-role-default-${role.role_key}`; sourceLabel.htmlFor = source.id; sourceLabel.textContent = 'Default source';
+        const sourceDesc = document.createElement('span'); sourceDesc.className = 'settings-desc';
+        sourceDesc.id = `${source.id}-desc`; sourceDesc.textContent = 'Use global choices or set project choices.';
+        source.setAttribute('aria-describedby', sourceDesc.id);
+        sourceInfo.append(sourceLabel, sourceDesc); sourceRow.append(sourceInfo, source); sourceGroup.append(sourceRow);
+        for (const [value, label] of [['inherit', `Inherit global (${role.global_agents.length} agents)`], ['custom', 'Custom']]) {
+          const option = document.createElement('option'); option.value = value; option.textContent = label; source.append(option);
+        }
+        source.value = role.inherited ? 'inherit' : 'custom';
+        const editorHost = document.createElement('div'); const editor = new SpawnDefaultsEditor(editorHost);
+        editor.set(role.default_agents, role.pick_mode); editor.loadOptions(id).catch(error => { status.textContent = error.message; });
+        const sync = () => { editorHost.hidden = source.value === 'inherit'; };
+        source.onchange = sync; sync();
+        const save = document.createElement('button'); save.type = 'button'; save.className = 'btn btn-primary'; save.textContent = 'Save';
+        const status = document.createElement('p'); status.className = 'settings-desc'; status.setAttribute('role', 'status');
+        save.onclick = async () => {
+          status.textContent = ''; save.disabled = true;
+          try {
+            const saved = await request(`/api/projects/${encodeURIComponent(id)}/role-spawn-defaults/${encodeURIComponent(role.role_key)}`,
+              { method: 'PUT', body: { inherit: source.value === 'inherit', ...editor.get() } });
+            if (this.projectID === id) { status.textContent = 'Saved.'; source.value = saved.inherited ? 'inherit' : 'custom'; sync(); }
+          } catch (error) { status.textContent = error.message; }
+          finally { save.disabled = false; }
+        };
+        card.append(title, sourceGroup, editorHost, save, status); this.roleDefaultsRows.append(card);
+      }
+    } catch (error) { if (this.projectID === id) this.roleDefaultsRows.textContent = error.message; }
   }
   async saveProject() {
     const id = this.projectID, enabled = this.autoResume.checked;

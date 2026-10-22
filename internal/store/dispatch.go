@@ -52,6 +52,13 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if roleBody, err = tx.withInlinePlan(roleID, roleBody); err != nil {
 			return err
 		}
+		var lead bool
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT cap_is_lead FROM role WHERE id=?`, roleID).Scan(&lead); err != nil {
+			return err
+		}
+		if lead {
+			roleBody += "\n\nWhen spawning a role, strongly prefer its configured default agent. Call spawn_agent with role_key and omit tool, variant, and model to select the next available default. If you need a different harness or model, provide a concrete reason. If no default is available, choose a listed harness and model yourself and tell the room why."
+		}
 		overrides, err := tx.promptOverrides(projectID)
 		if err != nil {
 			return err

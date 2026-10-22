@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -27,14 +28,16 @@ const (
 )
 
 type backupRole struct {
-	Key         string `json:"role_key"`
-	Label       string `json:"label"`
-	Emoji       string `json:"emoji"`
-	Body        string `json:"body"`
-	Cardinality string `json:"cardinality"`
-	Lead        bool   `json:"cap_is_lead"`
-	CanSpawn    bool   `json:"cap_can_spawn"`
-	Writer      bool   `json:"cap_singleton_writer"`
+	Key           string                     `json:"role_key"`
+	Label         string                     `json:"label"`
+	Emoji         string                     `json:"emoji"`
+	Body          string                     `json:"body"`
+	Cardinality   string                     `json:"cardinality"`
+	Lead          bool                       `json:"cap_is_lead"`
+	CanSpawn      bool                       `json:"cap_can_spawn"`
+	Writer        bool                       `json:"cap_singleton_writer"`
+	DefaultAgents []store.SpawnDefaultChoice `json:"default_agents"`
+	PickMode      string                     `json:"pick_mode,omitempty"`
 }
 
 type backupRetention struct {
@@ -121,7 +124,8 @@ func (s *Server) exportSettingsBackup(ctx context.Context, user string) (setting
 	}
 	for _, role := range roles {
 		b.Roles = append(b.Roles, backupRole{Key: role.Key, Label: role.Label, Emoji: role.Emoji, Body: role.Body, Cardinality: role.Cardinality,
-			Lead: role.Lead, CanSpawn: role.CanSpawn, Writer: role.Writer})
+			Lead: role.Lead, CanSpawn: role.CanSpawn, Writer: role.Writer,
+			DefaultAgents: append([]store.SpawnDefaultChoice{}, role.DefaultAgents...), PickMode: role.PickMode})
 	}
 	seconds, err := s.Store.MessageExpirySeconds(ctx)
 	if err != nil {
@@ -391,7 +395,9 @@ func (s *Server) planSettingsBackup(ctx context.Context, user string, b settings
 			seen[role.Key] = true
 			existing, ok := byKey[role.Key]
 			same := ok && existing.Label == role.Label && existing.Emoji == role.Emoji && existing.Body == role.Body && existing.Cardinality == role.Cardinality &&
-				existing.Lead == role.Lead && existing.CanSpawn == role.CanSpawn && existing.Writer == role.Writer
+				existing.Lead == role.Lead && existing.CanSpawn == role.CanSpawn && existing.Writer == role.Writer &&
+				(role.DefaultAgents == nil || slices.Equal(existing.DefaultAgents, role.DefaultAgents)) &&
+				(role.PickMode == "" || existing.PickMode == role.PickMode)
 			switch {
 			case !ok:
 				sections["roles"].New++
@@ -403,6 +409,24 @@ func (s *Server) planSettingsBackup(ctx context.Context, user string, b settings
 				sections["roles"].Overwrite++
 				note("roles", "overwrite", role.Key, hashOf(role), hashOf(existing))
 			}
+			defaults, mode := role.DefaultAgents, role.PickMode
+			if defaults == nil && ok {
+				defaults = existing.DefaultAgents
+			}
+			if mode == "" && ok {
+				mode = existing.PickMode
+			}
+			if mode == "" {
+				mode = "in_turn"
+			}
+			if err := s.Store.ValidateSpawnDefaults(ctx, defaults, mode); err != nil {
+				if !errors.Is(err, store.ErrInvalidSpawnDefaults) {
+					return nil, err
+				}
+				sections["roles"].Invalid = append(sections["roles"].Invalid, backupIssue{
+					Key: role.Key + ".default_agents", Reason: backupErrorText(err) + "; the role will still be restored",
+				})
+			}
 			steps = append(steps, role)
 		}
 		if len(steps) > 0 {
@@ -411,11 +435,31 @@ func (s *Server) planSettingsBackup(ctx context.Context, user string, b settings
 				applied := 0
 				for _, role := range steps {
 					definition := store.RoleDefinition{Key: role.Key, Label: role.Label, Emoji: role.Emoji, Body: role.Body, Cardinality: role.Cardinality,
-						Lead: role.Lead, CanSpawn: role.CanSpawn, Writer: role.Writer}
+						Lead: role.Lead, CanSpawn: role.CanSpawn, Writer: role.Writer,
+						DefaultAgents: role.DefaultAgents, PickMode: role.PickMode}
 					if existing, ok := byKey[role.Key]; ok {
 						definition.ID, definition.Rev = existing.ID, existing.Rev
 					}
 					if _, err := s.Store.ManageRole(ctx, user, definition, false); err != nil {
+						if errors.Is(err, store.ErrInvalidSpawnDefaults) {
+							// Invalid defaults can come from foreign launchers, missing
+							// models, or a bad pick mode. Restore the role and preserve
+							// existing defaults when they remain valid.
+							definition.DefaultAgents, definition.PickMode = nil, ""
+							_, restoreErr := s.Store.ManageRole(ctx, user, definition, false)
+							if errors.Is(restoreErr, store.ErrInvalidSpawnDefaults) {
+								// Even inherited destination defaults may now be invalid.
+								definition.DefaultAgents, definition.PickMode = []store.SpawnDefaultChoice{}, "in_turn"
+								_, restoreErr = s.Store.ManageRole(ctx, user, definition, false)
+							}
+							if restoreErr == nil {
+								applied++
+								failed = append(failed, backupFailure{Section: "roles", Key: role.Key + ".default_agents", Error: backupErrorText(err)})
+								continue
+							} else {
+								err = restoreErr
+							}
+						}
 						failed = append(failed, backupFailure{Section: "roles", Key: role.Key, Error: backupErrorText(err)})
 					} else {
 						applied++

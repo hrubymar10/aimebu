@@ -5359,6 +5359,13 @@ async function main() {
     await domClick(first, '#role-editor button[type=submit]');
     await first.waitForFunction(() => [...document.querySelectorAll('#roles-list option')].some(el => el.textContent.includes('Analyst')) || !!document.querySelector('#roles-error')?.textContent);
     assert.equal(await first.$eval('#roles-error', el => el.textContent), '');
+    // Global selection mode is editable with a keyboard-operable native select.
+    await first.waitForFunction(() => document.querySelector('#roles-list').dataset.loaded === '1' && !!document.querySelector('#roles-cards [data-role-key="analyst"]'));
+    const analystCardBeforeSave = await first.$('#roles-cards [data-role-key="analyst"]');
+    await first.select('#role-editor .spawn-defaults select[aria-label="Default agent selection mode"]', 'randomly');
+    await domClick(first, '#role-editor button[type=submit]');
+    await first.waitForFunction(card => !card.isConnected && document.querySelector('#roles-list').dataset.loaded === '1', {}, analystCardBeforeSave);
+    assert.equal(await first.evaluate(async () => (await (await fetch('/api/roles')).json()).find(role => role.role_key === 'analyst')?.pick_mode), 'randomly');
     // Roles can extend other roles, and a built-in role can be reset: the built-in specialists extend reviewer.
     {
       await first.waitForFunction(() => [...document.querySelectorAll('#roles-list option')].some(option => option.textContent.includes('(sec-reviewer)')));
@@ -6302,6 +6309,17 @@ async function main() {
     await domClick(first, '#room-info-close');
     await openSettings(first);
     await domClick(first, '#settings-project-tab');
+    await first.waitForFunction(() => [...document.querySelectorAll('.project-role-default h4')].some(item => item.textContent === 'analyst'));
+    const analystDefaults = await first.evaluate(() => [...document.querySelectorAll('.project-role-default')].find(item => item.querySelector('h4')?.textContent === 'analyst')?.outerHTML);
+    assert.ok(analystDefaults?.includes('Inherit global'), 'the project shows the global source');
+    const analystIndex = await first.evaluate(() => [...document.querySelectorAll('.project-role-default')].findIndex(item => item.querySelector('h4')?.textContent === 'analyst'));
+    await first.select(`.project-role-default:nth-child(${analystIndex + 1}) select[aria-label="analyst default source"]`, 'custom');
+    await first.select(`.project-role-default:nth-child(${analystIndex + 1}) select[aria-label="Default agent selection mode"]`, 'in_turn');
+    await domClick(first, `.project-role-default:nth-child(${analystIndex + 1}) > button`);
+    await first.waitForFunction(index => document.querySelector(`.project-role-default:nth-child(${index + 1}) [role=status]`)?.textContent === 'Saved.', {}, analystIndex);
+    assert.deepEqual(await first.evaluate(async id => { const rows = await (await fetch(`/api/projects/${id}/role-spawn-defaults`)).json(); const item = rows.find(row => row.role_key === 'analyst'); return [item.inherited, item.pick_mode, item.default_agents.length]; }, actualProjectID), [false, 'in_turn', 0]);
+    await first.select(`.project-role-default:nth-child(${analystIndex + 1}) select[aria-label="analyst default source"]`, 'inherit');
+    await domClick(first, `.project-role-default:nth-child(${analystIndex + 1}) > button`);
     await first.waitForFunction(() => document.querySelector('#project-scope-control .scope-control-status')?.textContent === 'State: Active');
     await domClick(first, '#project-scope-control [data-scope-action="pause"]');
     await waitDump(first, 'project scope paused', () => document.querySelector('#project-scope-control .scope-control-status')?.textContent === 'State: Paused', scopeDump, 'project');

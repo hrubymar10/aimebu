@@ -145,7 +145,8 @@ Roles, agents
 - **role**(id, key UNIQUE (legacy internal key), project_id? (always NULL since migration 64), role_key,
   label, emoji, body (editable instructions), extends (role_key of a parent
   role, '' for none), cardinality[multi|singleton],
-  cap_is_lead, cap_can_spawn, cap_singleton_writer, rev, deleted_at?) — active
+  cap_is_lead, cap_can_spawn, cap_singleton_writer, spawn_defaults_json,
+  spawn_pick_mode[in_turn|randomly], rev, deleted_at?) — active
   public `role_key` is unique. Roles are global only. Deletion preserves historical agent
   references and hides the role from new selection; stopped agents with a
   deleted role cannot reactivate. Existing agents retain their `role_id` until
@@ -157,6 +158,20 @@ Roles, agents
   owner.
   Capability and cardinality changes are rejected while live agents use the
   row; `cap_*` changes require the host owner.
+  `spawn_defaults_json` stores at most 32 ordered `{launcher_id,model}` pairs
+  listed by detected harness models when saved. Empty means manual choice. A
+  removed model or unavailable launcher is skipped at spawn.
+- **project_role_spawn_default**(project_id, role_id, items_json,
+  pick_mode[in_turn|randomly]) — a row replaces the role's global list and mode
+  for one project; no row inherits both.
+- **role_spawn_cursor**(project_id, role_id, next_position) — the next in-turn
+  position, advanced in the successful spawn transaction after skipped
+  unavailable choices. A random pick does not change the cursor. A competing
+  pick reports `role_default_changed` and may be retried with the same key.
+- **role_spawn_warning**(room_id, role_id, last_warned_at) — throttles the
+  room-local unavailable-default warning to once per role per hour without
+  scanning message bodies. These role tables and columns arrive in
+  migration 77.
 - **prompt_override**(id, project_id?, key, value, rev, updated_at) — an
   owner-edited replacement for one shared prose sentence of an adapter's turn
   prompt (keys are the slots of `internal/adapter/prompt`: `identity`,
@@ -941,7 +956,19 @@ that equals an agent slug is ambiguous, as for two agents with one slug.
 
 Adapter-listed (tool, variant, model, provider) with provider pinned; actor
 authorised (owner/operator, or an agent whose role has `cap_can_spawn`);
-`max_live_agents` and spawn rate; depth cap; writer rule (§3.6); while the
+`max_live_agents` and spawn rate; depth cap; writer rule (§3.6).
+
+When the role has a nonempty effective default list, a spawn that omits the harness
+and model uses its next available `{launcher_id,model}`. In-turn selection
+starts at the durable project/role cursor and skips unavailable machines,
+unmapped project folders, launchers, and models;
+random selection samples uniformly from available entries. The cursor
+advances only in the successful spawn transaction. An agent's explicit
+deviation from an available default requires a reason in the room notice.
+When none is available, an explicit choice is accepted with a room warning;
+an omitted choice is refused and also warns the room. The original request,
+before default resolution, is the idempotency digest, so a retry replays the
+same spawned agent even if the next default changed. While the
 project's `home_lead_only` is on (the default, migration 70 turns it on for
 existing projects), a spawn into its home room needs a role with
 `cap_is_lead` (`home_is_lead_only` otherwise; agents already there are not

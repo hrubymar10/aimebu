@@ -1,6 +1,7 @@
 import { request } from './api.js';
 import { confirmDialog } from './dialogs.js';
 import { setGlyph } from './icon-button.js';
+import { SpawnDefaultsEditor } from './spawn-defaults-editor.js';
 
 const $ = selector => document.querySelector(selector);
 const option = (value, label) => { const node = document.createElement('option'); node.value = value; node.textContent = label; return node; };
@@ -10,6 +11,9 @@ export class RoleSettings {
   constructor() {
     this.rolesList = $('#roles-list');
     this.roleForm = $('#role-editor');
+    const defaults = document.createElement('section'); defaults.className = 'settings-section spawn-defaults';
+    this.roleForm.querySelector('.dialog-actions').before(defaults);
+    this.defaults = new SpawnDefaultsEditor(defaults);
     this.rolesList.onchange = () => { this.showRole(); this.setRoleEditorOpen(true); };
     this.roleForm.onsubmit = event => { event.preventDefault(); this.saveRole(); };
     // Every role is shown as a card above the editor (v1's list); a card opens that role in the editor below.
@@ -32,7 +36,7 @@ export class RoleSettings {
     $('#role-reset').onclick = () => this.resetRole();
   }
   async open() {
-    try { await this.loadRoles(); } catch (error) { this.error(error.message); }
+    try { await Promise.all([this.loadRoles(), this.defaults.loadOptions()]); } catch (error) { this.error(error.message); }
   }
   error(value = '') { $('#roles-error').textContent = value; }
   async loadRoles(selected = '') {
@@ -100,7 +104,7 @@ export class RoleSettings {
   // What the editor holds now, to tell whether closing it would throw an edit away.
   roleFormState() {
     const elements = this.roleForm.elements;
-    return JSON.stringify([...['role_key', 'label', 'emoji', 'body', 'extends', 'cardinality'].map(key => elements[key].value), ...['cap_is_lead', 'cap_can_spawn', 'cap_singleton_writer'].map(key => elements[key].checked)]);
+    return JSON.stringify([...['role_key', 'label', 'emoji', 'body', 'extends', 'cardinality'].map(key => elements[key].value), ...['cap_is_lead', 'cap_can_spawn', 'cap_singleton_writer'].map(key => elements[key].checked), this.defaults.get()]);
   }
   // Closes the editor without saving (after a confirmation when something was changed) and gives focus back to what opened it.
   async cancelRole() {
@@ -119,6 +123,7 @@ export class RoleSettings {
     for (const key of ['cap_is_lead', 'cap_can_spawn', 'cap_singleton_writer']) this.roleForm.elements[key].checked = !!role?.[key];
     this.roleForm.elements.role_key.readOnly = !!role;
     this.showExtends(role);
+    this.defaults.set(role?.default_agents, role?.pick_mode);
     // The text an agent gets once the parent's is added in front (only a saved role has one to show).
     const resolved = $('#role-resolved'), row = $('#role-resolved-row');
     resolved.value = role?.resolved_body ?? ''; row.hidden = !role || !role.extends;
@@ -145,6 +150,7 @@ export class RoleSettings {
       label: this.roleForm.elements.label.value.trim(), emoji: this.roleForm.elements.emoji.value.trim(),
       body: this.roleForm.elements.body.value, extends: this.roleForm.elements.extends.value, cardinality: this.roleForm.elements.cardinality.value };
     for (const key of ['cap_is_lead', 'cap_can_spawn', 'cap_singleton_writer']) data[key] = this.roleForm.elements[key].checked;
+    Object.assign(data, this.defaults.get());
     if (selected) { data.id = selected.id; data.rev = selected.rev; }
     return data;
   }

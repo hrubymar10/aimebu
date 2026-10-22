@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+
+	"github.com/goccy/go-json"
 )
 
 // A role may extend another role by key: the instructions an agent receives are the parent's resolved body, a blank line, then the
@@ -29,7 +31,7 @@ func allLiveRoles(ctx context.Context, q roleQuerier) ([]RoleDefinition, error) 
 
 func queryRoles(ctx context.Context, q roleQuerier, where string, args ...any) ([]RoleDefinition, error) {
 	rows, err := q.QueryContext(ctx, `SELECT id,role_key,label,emoji,body,cardinality,
- cap_is_lead,cap_can_spawn,cap_singleton_writer,rev,extends FROM role`+where+` ORDER BY role_key`, args...)
+ cap_is_lead,cap_can_spawn,cap_singleton_writer,rev,extends,spawn_defaults_json,spawn_pick_mode FROM role`+where+` ORDER BY role_key`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -37,9 +39,16 @@ func queryRoles(ctx context.Context, q roleQuerier, where string, args ...any) (
 	result := []RoleDefinition{}
 	for rows.Next() {
 		var r RoleDefinition
+		var defaultsJSON string
 		if err := rows.Scan(&r.ID, &r.Key, &r.Label, &r.Emoji, &r.Body, &r.Cardinality,
-			&r.Lead, &r.CanSpawn, &r.Writer, &r.Rev, &r.Extends); err != nil {
+			&r.Lead, &r.CanSpawn, &r.Writer, &r.Rev, &r.Extends, &defaultsJSON, &r.PickMode); err != nil {
 			return nil, err
+		}
+		if err := json.Unmarshal([]byte(defaultsJSON), &r.DefaultAgents); err != nil {
+			return nil, err
+		}
+		if r.DefaultAgents == nil {
+			r.DefaultAgents = []SpawnDefaultChoice{}
 		}
 		r.Builtin = strings.HasSuffix(r.ID, "_default")
 		result = append(result, r)
@@ -227,10 +236,11 @@ func (s *Store) ResetRole(ctx context.Context, actorID, id string, rev int64) (R
 			}
 		}
 		if _, err := tx.Exec(`UPDATE role SET label=?,emoji=?,body=?,extends=?,cardinality=?,cap_is_lead=?,
-   cap_can_spawn=?,cap_singleton_writer=?,rev=rev+1 WHERE id=?`,
+   cap_can_spawn=?,cap_singleton_writer=?,spawn_defaults_json='[]',spawn_pick_mode='in_turn',rev=rev+1 WHERE id=?`,
 			reset.Label, reset.Emoji, reset.Body, reset.Extends, reset.Cardinality, reset.Lead, reset.CanSpawn, reset.Writer, id); err != nil {
 			return err
 		}
+		reset.DefaultAgents, reset.PickMode = []SpawnDefaultChoice{}, "in_turn"
 		reset.Rev++
 		for i := range all {
 			if all[i].ID == id {

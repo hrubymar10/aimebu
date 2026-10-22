@@ -1357,6 +1357,31 @@ CREATE INDEX room_project ON room(project_id);
 -- A message's attachments are looked up by message id (loading a message, and previewing the message a reply answers), and attachment had
 -- no index on it, so each lookup read the whole table.
 CREATE INDEX attachment_message ON attachment(message_id);
+`}, {77, `
+-- A role's ordered default harness/model choices are global. Projects may
+-- override the complete list and picking mode; a missing row inherits both.
+ALTER TABLE role ADD COLUMN spawn_defaults_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE role ADD COLUMN spawn_pick_mode TEXT NOT NULL DEFAULT 'in_turn'
+  CHECK (spawn_pick_mode IN ('in_turn','randomly'));
+CREATE TABLE project_role_spawn_default (
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  role_id TEXT NOT NULL REFERENCES role(id) ON DELETE CASCADE,
+  items_json TEXT NOT NULL DEFAULT '[]',
+  pick_mode TEXT NOT NULL DEFAULT 'in_turn' CHECK (pick_mode IN ('in_turn','randomly')),
+  PRIMARY KEY (project_id,role_id)
+);
+CREATE TABLE role_spawn_cursor (
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  role_id TEXT NOT NULL REFERENCES role(id) ON DELETE CASCADE,
+  next_position INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_id,role_id)
+);
+CREATE TABLE role_spawn_warning (
+  room_id TEXT NOT NULL REFERENCES room(id) ON DELETE CASCADE,
+  role_id TEXT NOT NULL REFERENCES role(id) ON DELETE CASCADE,
+  last_warned_at TEXT NOT NULL,
+  PRIMARY KEY (room_id,role_id)
+);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

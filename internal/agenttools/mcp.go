@@ -79,15 +79,16 @@ var catalog = []tool{
 	{"attachment_get", "Read a file attached to a note in your current turn while you remain a member of its room.", map[string]any{"type": "object", "properties": map[string]any{
 		"attachment_id": map[string]string{"type": "string"},
 	}, "required": []string{"attachment_id"}}},
-	{"spawn_agent", "Active lead only. Spawn one non-lead agent in a room in your project, giving role_key, tool, variant, and model. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+	{"spawn_agent", "Active lead only. Spawn one non-lead agent. Supply role_key and omit tool, variant, and model to use the next available role default. Give a concrete reason when choosing a different harness or model. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"room_id": map[string]string{"type": "string"}, "role_key": map[string]string{"type": "string"},
 		"tool": map[string]string{"type": "string"}, "variant": map[string]string{"type": "string"},
 		"model": map[string]string{"type": "string"}, "provider": map[string]string{"type": "string"},
+		"reason":      map[string]string{"type": "string", "description": "Required when an explicit choice differs from an available role default"},
 		"machine_id":  map[string]string{"type": "string", "description": "Optional target machine; defaults to the host"},
 		"worktree":    map[string]string{"type": "boolean", "description": "Create or use this task room's Git worktree"},
 		"base_ref":    map[string]string{"type": "string", "description": "Committed base ref for a newly created worktree"},
 		"request_key": map[string]string{"type": "string", "description": "Stable idempotency key for this spawn request"},
-	}, "required": []string{"room_id", "request_key", "role_key", "tool", "variant", "model"}}},
+	}, "required": []string{"room_id", "request_key", "role_key"}}},
 	{"stop_agent", "Active lead only. Stop a non-lead agent in your project, or yourself, using the current desired_rev. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"agent_id": map[string]string{"type": "string"}, "rev": map[string]string{"type": "integer"},
 		"request_key": map[string]string{"type": "string", "description": "Stable idempotency key for this stop request"},
@@ -334,10 +335,10 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		if roomID == "" {
 			return toolResult("room_id is required", true)
 		}
-		if role == "" || toolName == "" || variant == "" || model == "" {
-			return toolResult("role_key, tool, variant, and model required", true)
+		if role == "" {
+			return toolResult("role_key required", true)
 		}
-		body = map[string]any{"room_id": roomID, "role_key": role, "tool": toolName, "variant": variant, "model": model, "provider": provider, "machine_id": machineID, "worktree": getBool("worktree"), "base_ref": getString("base_ref")}
+		body = map[string]any{"room_id": roomID, "role_key": role, "tool": toolName, "variant": variant, "model": model, "provider": provider, "machine_id": machineID, "reason": getString("reason"), "worktree": getBool("worktree"), "base_ref": getString("base_ref")}
 	case "stop_agent":
 		agentID := getString("agent_id")
 		if !agentIDPattern.MatchString(agentID) {

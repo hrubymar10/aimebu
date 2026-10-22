@@ -2016,6 +2016,17 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-arrow-down { -webkit-mask-image: url("/icons/arrow-down.svg"); mask-image: url("/icons/arrow-down.svg"); }
 .icon-mask-arrow-up { -webkit-mask-image: url("/icons/arrow-up.svg"); mask-image: url("/icons/arrow-up.svg"); }
 .icon-mask-arrow-up-down { -webkit-mask-image: url("/icons/arrow-up-down.svg"); mask-image: url("/icons/arrow-up-down.svg"); }
+
+.spawn-defaults { margin-block: 1rem; }
+.spawn-defaults h4, .project-role-default h4 { margin: 0 0 .5rem; }
+.spawn-default-list { margin-block: .75rem; }
+.spawn-default-row { display: flex; align-items: center; gap: .35rem; min-width: 0; }
+.spawn-default-row select { flex: 1; min-width: 0; }
+.project-role-default { margin-block: .75rem; }
+@media (max-width: 600px) {
+  .spawn-default-row { flex-wrap: wrap; }
+  .spawn-default-row select { flex-basis: 100%; }
+}
 .icon-mask-external-link { -webkit-mask-image: url("/icons/external-link.svg"); mask-image: url("/icons/external-link.svg"); }
 .icon-mask-switch { -webkit-mask-image: url("/icons/switch.svg"); mask-image: url("/icons/switch.svg"); }
 .icon-mask-copy { -webkit-mask-image: url("/icons/copy.svg"); mask-image: url("/icons/copy.svg"); }

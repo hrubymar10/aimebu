@@ -320,8 +320,13 @@ detected CLI versions, and model choices from the server catalog (the owner edit
 the models of each harness in Settings → Harnesses; exactly one is the harness's default,
 which is preselected and which an agent falls back to when its model is removed); unavailable
 tools show the reason and cannot be selected. Settings → Roles edits the
-global role names, emoji, instructions, cardinality, and capabilities; roles
-are global only, with no per-project roles.
+global role names, emoji, instructions, cardinality, capabilities, and ordered
+default harness/model choices. Each role picks defaults in turn (with a durable
+cursor per project and role) or randomly. Project settings can inherit or
+override each role's list and mode; an empty list leaves the choice manual.
+Unavailable machines, unmapped project folders, launchers, and models are skipped. The Spawn dialog
+prefills the next available choice and remains editable. Roles are global
+only, with no per-project roles.
 Each role is a card; Edit opens it in the editor below, and Cancel, Esc or the
 card's close button shut the editor without saving (asking first when it holds
 changes).
@@ -694,7 +699,14 @@ agent-tools`, a stdio MCP server with `list_rooms`,
 `attachment_get`, `message_get` and `react`. Its HTTP routes use the agent's key and scope
 reads and mutations to that agent's project; only an active lead can manage
 rooms or agents.
-`spawn_agent` takes `role_key`, `tool`, `variant` and `model`, one agent per call.
+`spawn_agent` takes `role_key` and uses the next available role default when
+the tool and model are omitted. An explicit machine limits defaults to that
+machine; a matching default supplies the machine when none was named. A lead
+choosing a different harness or model from an available
+default supplies a reason, recorded in the room. Using a default is recorded
+there too. An explicit choice is required when the role has no available
+default. One agent is started per call; the response identifies a default
+that was used.
 See [the API guide](docs/api.md) for the toolbox routes.
 Spawned agents receive short names from a human-like pool, avoiding agent
 names and member logins in their project, with numeric suffixes if the pool

@@ -19,32 +19,34 @@ var ErrRoleOccupied = errors.New("role_occupied")
 var ErrSpawnLimit = errors.New("spawn_limit")
 
 type AgentCard struct {
-	WorktreeWarning  string          `json:"worktree_warning,omitempty"`
-	ID               string          `json:"id"`
-	Slug             string          `json:"slug"`
-	RoomID           string          `json:"room_id"`
-	ProjectID        string          `json:"project_id"`
-	RoleKey          string          `json:"role_key"`
-	RoleEmoji        string          `json:"role_emoji,omitempty"`
-	RoleDeleted      bool            `json:"role_deleted,omitempty"`
-	RoleUpdated      bool            `json:"role_updated,omitempty"`
-	Tool             string          `json:"tool"`
-	Variant          string          `json:"variant"`
-	LauncherID       string          `json:"launcher_id,omitempty"`
-	Model            string          `json:"model"`
-	Provider         string          `json:"provider"`
-	MachineID        string          `json:"machine_id"`
-	Desired          string          `json:"desired"`
-	DesiredRev       int64           `json:"desired_rev"`
-	Observed         string          `json:"observed"`
-	Generation       int             `json:"generation"`
-	RecoveryBlock    bool            `json:"recovery_block"`
-	LastExitEvidence string          `json:"last_exit_evidence,omitempty"`
-	LastActivityAt   string          `json:"last_activity_at,omitempty"`
-	MachineLastSeen  string          `json:"machine_last_seen,omitempty"`
-	Switch           *AgentSwitch    `json:"switch,omitempty"`
-	BoundaryPending  string          `json:"boundary_pending,omitempty"`
-	BoundaryGrants   []BoundaryGrant `json:"boundary_grants,omitempty"`
+	DefaultUsed      bool                `json:"default_used,omitempty"`
+	DefaultSelection *SpawnDefaultChoice `json:"default_selection,omitempty"`
+	WorktreeWarning  string              `json:"worktree_warning,omitempty"`
+	ID               string              `json:"id"`
+	Slug             string              `json:"slug"`
+	RoomID           string              `json:"room_id"`
+	ProjectID        string              `json:"project_id"`
+	RoleKey          string              `json:"role_key"`
+	RoleEmoji        string              `json:"role_emoji,omitempty"`
+	RoleDeleted      bool                `json:"role_deleted,omitempty"`
+	RoleUpdated      bool                `json:"role_updated,omitempty"`
+	Tool             string              `json:"tool"`
+	Variant          string              `json:"variant"`
+	LauncherID       string              `json:"launcher_id,omitempty"`
+	Model            string              `json:"model"`
+	Provider         string              `json:"provider"`
+	MachineID        string              `json:"machine_id"`
+	Desired          string              `json:"desired"`
+	DesiredRev       int64               `json:"desired_rev"`
+	Observed         string              `json:"observed"`
+	Generation       int                 `json:"generation"`
+	RecoveryBlock    bool                `json:"recovery_block"`
+	LastExitEvidence string              `json:"last_exit_evidence,omitempty"`
+	LastActivityAt   string              `json:"last_activity_at,omitempty"`
+	MachineLastSeen  string              `json:"machine_last_seen,omitempty"`
+	Switch           *AgentSwitch        `json:"switch,omitempty"`
+	BoundaryPending  string              `json:"boundary_pending,omitempty"`
+	BoundaryGrants   []BoundaryGrant     `json:"boundary_grants,omitempty"`
 	// WokenBy is why the turn in progress started, when that was an agent's reply to this one ("reply"); the card tags it so a person can
 	// see an exchange between agents as it happens. Empty when idle or for any other reason.
 	WokenBy string `json:"woken_by,omitempty"`
@@ -82,6 +84,7 @@ func nullableString(value string) sql.NullString {
 }
 
 type SpawnInput struct {
+	SpawnNote                                                                          string
 	RoomID, ActorID, MachineID, Path, RoleKey, Tool, Variant, Model, Provider, KeyHash string
 	LauncherID                                                                         string
 	ActorKind                                                                          string
@@ -306,6 +309,9 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 		if in.ResumeHandle != "" {
 			notice += fmt.Sprintf("; it continues a v1 session and works in %s, outside the project folder", in.Path)
 		}
+	}
+	if in.SpawnNote != "" {
+		notice += "; " + in.SpawnNote
 	}
 	if _, err = tx.InsertMessage(Message{RoomID: in.RoomID, AuthorKind: "system", AuthorID: "system", Body: notice}); err != nil {
 		return AgentCard{}, err

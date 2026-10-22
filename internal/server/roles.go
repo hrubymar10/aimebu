@@ -44,6 +44,8 @@ func definitionError(w http.ResponseWriter, err error) {
 		apiError(w, 409, "role_extended", "other roles extend this role; change or delete them first")
 	case errors.Is(err, store.ErrRoleExtends):
 		apiError(w, 400, "invalid_extends", "extends must name another role and may not make a cycle or chain deeper than 5")
+	case errors.Is(err, store.ErrInvalidSpawnDefaults):
+		apiError(w, 400, "invalid_spawn_defaults", err.Error())
 	case errors.Is(err, store.ErrInvalidTransition):
 		apiError(w, 400, "invalid_request", "invalid role definition")
 	case errors.Is(err, sql.ErrNoRows):
@@ -51,6 +53,33 @@ func definitionError(w http.ResponseWriter, err error) {
 	default:
 		fail(w, err)
 	}
+}
+
+func (s *Server) projectRoleSpawnDefaults(w http.ResponseWriter, r *http.Request) {
+	items, err := s.Store.ProjectRoleSpawnDefaults(r.Context(), r.PathValue("project"), userID(r))
+	if err != nil {
+		definitionError(w, err)
+		return
+	}
+	writeJSON(w, 200, items)
+}
+
+func (s *Server) projectRoleSpawnDefault(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Inherit       bool                       `json:"inherit"`
+		DefaultAgents []store.SpawnDefaultChoice `json:"default_agents"`
+		PickMode      string                     `json:"pick_mode"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	item, err := s.Store.SetProjectRoleSpawnDefaults(r.Context(), r.PathValue("project"), userID(r), r.PathValue("role"),
+		body.Inherit, body.DefaultAgents, body.PickMode)
+	if err != nil {
+		definitionError(w, err)
+		return
+	}
+	writeJSON(w, 200, item)
 }
 
 func (s *Server) roles(w http.ResponseWriter, r *http.Request) {

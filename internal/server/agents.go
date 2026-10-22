@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -29,6 +30,7 @@ type spawnRequest struct {
 	LauncherID string `json:"launcher_id,omitempty"`
 	Model      string `json:"model"`
 	Provider   string `json:"provider"`
+	Reason     string `json:"reason,omitempty"`
 	Worktree   bool   `json:"worktree,omitempty"`
 	BaseRef    string `json:"base_ref,omitempty"`
 	// Name is the agent's name; empty lets the server pick a free one from its pool. A v1 agent that is resumed keeps its own name.
@@ -491,8 +493,13 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		apiError(w, 400, "invalid_kind", "private chats cannot add agents")
 		return
 	}
-	if req.RoleKey == "" || req.Tool == "" || (req.Variant == "" && req.LauncherID == "") || (req.Model == "" && req.LauncherID == "") {
-		apiError(w, 400, "invalid_request", "role_key, tool, and either launcher_id (model optional: the harness default) or variant and model required")
+	if req.RoleKey == "" {
+		apiError(w, 400, "invalid_request", "role_key required")
+		return
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if len(req.Reason) > 500 {
+		apiError(w, 400, "invalid_request", "reason is too long")
 		return
 	}
 	if req.Name != "" {
@@ -531,6 +538,38 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			return
 		}
 		writeJSON(w, 201, card)
+		return
+	}
+	if err := s.Store.Tx(r.Context(), func(tx *store.Tx) error { return tx.AuthorizeSpawn(room.ID, actorKind, actorID) }); err != nil {
+		spawnError(w, err)
+		return
+	}
+	// The cursor is checked in the successful spawn transaction. Slow checkout
+	// preparation does not serialize spawns in unrelated rooms or projects.
+	selection, defaultAvailable, err := s.nextRoleSpawnDefault(r.Context(), room.ProjectID, req.RoleKey, req.MachineID)
+	if err != nil {
+		definitionError(w, err)
+		return
+	}
+	defaultUsed, defaultUnavailable := false, len(selection.Defaults.DefaultAgents) > 0 && !defaultAvailable
+	if req.Tool == "" && req.Variant == "" && req.LauncherID == "" && req.Model == "" && defaultAvailable {
+		req.MachineID, req.Tool, req.Variant, req.LauncherID, req.Model = selection.Request.MachineID,
+			selection.Request.Tool, selection.Request.Variant, selection.Request.LauncherID, selection.Request.Model
+	}
+	if defaultAvailable {
+		if err := s.inheritRoleDefaultMachine(r.Context(), &req, selection); err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	if req.Tool == "" || (req.Variant == "" && req.LauncherID == "") || (req.Model == "" && req.LauncherID == "") {
+		if defaultUnavailable {
+			if err := s.Store.WarnRoleSpawnUnavailable(r.Context(), room.ID, req.RoleKey); err != nil {
+				fail(w, err)
+				return
+			}
+		}
+		apiError(w, 400, "invalid_request", "tool, and either launcher_id (model optional: the harness default) or variant and model required; no available role default could fill them")
 		return
 	}
 	// A keyed retry replays the stored result above even if the model has
@@ -599,6 +638,16 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		}
 		req.Model = model
 	}
+	if defaultAvailable {
+		launcherMatches := launcherID == selection.Request.LauncherID || launcherID == "" &&
+			(req.LauncherID == selection.Request.LauncherID || req.LauncherID == "" && req.Variant == selection.Request.Variant)
+		defaultUsed = req.Tool == selection.Request.Tool && req.Model == selection.Request.Model &&
+			launcherMatches && machine.id == selection.Request.MachineID
+		if !defaultUsed && actorKind == "agent" && req.Reason == "" {
+			apiError(w, 400, "reason_required", "give a reason for choosing a different harness or model than the role default")
+			return
+		}
+	}
 	if resuming && containerized {
 		apiError(w, 409, "needs_native", "a containerized launcher keeps its own Claude sessions, so a v1 session can only be continued with the native claude launcher")
 		return
@@ -643,6 +692,13 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	result, reused, err := s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "spawn", Key: key, Digest: digest}, func(tx *store.Tx) (string, error) {
 		input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: path, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, KeyHash: hex.EncodeToString(keyHashBytes[:])}
 		input.Slug = req.Name
+		if defaultUsed {
+			input.SpawnNote = "spawned per role default: " + req.Tool + "/" + req.Variant + "/" + req.Model
+		} else if defaultAvailable && actorKind == "agent" {
+			input.SpawnNote = "Different from the role default: " + req.Reason
+		} else if defaultUnavailable {
+			input.SpawnNote = "Role defaults are unavailable; a manual harness and model were used."
+		}
 		if req.ResumeLegacy != "" {
 			input.Slug, input.ResumeLegacyID = legacy.Slug, legacy.AgentID
 			if resuming {
@@ -652,6 +708,15 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		created, err := tx.SpawnAgent(input)
 		if err != nil {
 			return "", err
+		}
+		if defaultUsed && selection.Defaults.PickMode == "in_turn" {
+			if err := tx.AdvanceRoleSpawnCursor(room.ProjectID, selection.Defaults.RoleID, selection.Defaults.NextPosition, selection.Steps); err != nil {
+				return "", err
+			}
+		}
+		created.DefaultUsed = defaultUsed
+		if defaultUsed {
+			created.DefaultSelection = &selection.Choice
 		}
 		if worktreeItem != nil && worktreeItem.DirtyBaseCount > 0 {
 			created.WorktreeWarning = fmt.Sprintf("the base has %d uncommitted changes, which are not in the worktree", worktreeItem.DirtyBaseCount)
@@ -805,6 +870,8 @@ func spawnError(w http.ResponseWriter, err error) {
 		apiError(w, 409, "name_in_use", "this project already has an agent, person or role with that name")
 	case errors.Is(err, store.ErrLegacyStarted):
 		apiError(w, 409, "already_started", "this v1 agent was already started as a v2 agent; restart that agent instead")
+	case errors.Is(err, store.ErrRoleSpawnCursorChanged):
+		apiError(w, 409, "role_default_changed", "another agent used this role default first; retry the spawn")
 	case errors.Is(err, store.ErrConflict):
 		apiError(w, 409, "idempotency_conflict", "key reused with different request")
 	case errors.Is(err, store.ErrStaleRev):
