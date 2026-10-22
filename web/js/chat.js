@@ -1100,7 +1100,11 @@ export class Chat {
     const bubble = document.createElement('div'); bubble.className = 'message-bubble'; article.append(bubble);
     if (message.reply_to) {
       const quote = document.createElement('button'); quote.className = 'row-btn quote'; quote.type = 'button';
-      const parent = this.messages.get(message.reply_to); quote.textContent = parent ? `↪ #${parent.no} ${this.authorName(parent)}: ${messageSnippet(parent)}`.trimEnd().replace(/:$/, '') : '↪ Earlier message';
+      // A parent in the loaded window is read from it; one outside it comes with the reply itself (reply_preview, from the server).
+      const loaded = this.messages.get(message.reply_to), preview = message.reply_preview;
+      const parent = loaded ? { no: loaded.no, name: this.authorName(loaded), snippet: messageSnippet(loaded) }
+        : preview ? { no: preview.no, name: this.authorName({ author_kind: preview.author_kind, author_id: preview.author_id, author_name: preview.author_name }), snippet: preview.snippet } : null;
+      quote.textContent = parent ? `↪ #${parent.no} ${parent.name}: ${parent.snippet}`.trimEnd().replace(/:$/, '') : '↪ Earlier message';
       if (parent) quote.title = `Go to #${parent.no}`;
       bubble.append(quote);
     }

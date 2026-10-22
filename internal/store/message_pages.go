@@ -170,3 +170,88 @@ func (s *Store) ThreadCountsForMessages(ctx context.Context, roomID string, mess
 	}
 	return out, rows.Err()
 }
+
+// ReplyPreview is what a client needs to quote the message a reply answers when that message is not in the page it has loaded: its number,
+// who wrote it (as the message carries it, so the client names the author the way it names any author) and one line of its text.
+type ReplyPreview struct {
+	No         int64  `json:"no"`
+	AuthorKind string `json:"author_kind"`
+	AuthorID   string `json:"author_id"`
+	AuthorName string `json:"author_name,omitempty"`
+	Snippet    string `json:"snippet"`
+}
+
+// MessageSnippet is one line of a message: whitespace collapsed and cut to 96 characters, "[attachment]" for a message that is only files.
+func MessageSnippet(body string, attachments int) string {
+	text := strings.Join(strings.Fields(body), " ")
+	if text == "" && attachments > 0 {
+		return "[attachment]"
+	}
+	if runes := []rune(text); len(runes) > 96 {
+		return strings.TrimRight(string(runes[:95]), " ") + "…"
+	}
+	return text
+}
+
+// ReplyPreviewsForMessages reads, in one query for the page, the message each reply on it answers, keyed by that message's ID. Only a
+// message of the same room is ever returned, so a reply link that points elsewhere (an import can leave one) previews nothing. Only the
+// start of each body is read (after leading whitespace), which is all a one-line snippet needs.
+func (s *Store) ReplyPreviewsForMessages(ctx context.Context, roomID string, messages []Message) (map[string]ReplyPreview, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	out := make(map[string]ReplyPreview)
+	seen := map[string]bool{}
+	args := []any{roomID}
+	for _, message := range messages {
+		if message.ReplyTo != "" && !seen[message.ReplyTo] {
+			seen[message.ReplyTo] = true
+			args = append(args, message.ReplyTo)
+		}
+	}
+	if len(args) == 1 {
+		return out, nil
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?,", len(args)-1), ",")
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.no,m.author_kind,m.author_id,COALESCE(u.login,''),substr(ltrim(m.body, ' '||char(9)||char(10)||char(13)),1,600)
+		FROM message m LEFT JOIN user u ON m.author_kind='user' AND u.id=m.author_id
+		WHERE m.room_id=? AND m.id IN (`+marks+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var textless []any // parents with no text of their own: the attachments are looked at only for these
+	for rows.Next() {
+		var id, body string
+		var preview ReplyPreview
+		if err := rows.Scan(&id, &preview.No, &preview.AuthorKind, &preview.AuthorID, &preview.AuthorName, &body); err != nil {
+			return nil, err
+		}
+		if preview.Snippet = MessageSnippet(body, 0); preview.Snippet == "" {
+			textless = append(textless, id)
+		}
+		out[id] = preview
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if len(textless) == 0 {
+		return out, nil
+	}
+	files, err := s.db.QueryContext(ctx, `SELECT DISTINCT message_id FROM attachment WHERE message_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(textless)), ",")+`)`, textless...)
+	if err != nil {
+		return nil, err
+	}
+	defer files.Close()
+	for files.Next() {
+		var id string
+		if err := files.Scan(&id); err != nil {
+			return nil, err
+		}
+		preview := out[id]
+		preview.Snippet = MessageSnippet("", 1)
+		out[id] = preview
+	}
+	return out, files.Err()
+}

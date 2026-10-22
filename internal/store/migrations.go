@@ -1353,6 +1353,10 @@ CREATE INDEX usage_record_project_time ON usage_record(project_id, created_at);
 CREATE INDEX usage_record_turn ON usage_record(turn_id);
 CREATE INDEX turn_room_started ON turn(room_id, started_at);
 CREATE INDEX room_project ON room(project_id);
+`}, {76, `
+-- A message's attachments are looked up by message id (loading a message, and previewing the message a reply answers), and attachment had
+-- no index on it, so each lookup read the whole table.
+CREATE INDEX attachment_message ON attachment(message_id);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

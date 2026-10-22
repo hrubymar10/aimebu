@@ -1249,9 +1249,17 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 			fail(w, err)
 			return
 		}
+		previews, err := s.Store.ReplyPreviewsForMessages(r.Context(), room.ID, messages)
+		if err != nil {
+			fail(w, err)
+			return
+		}
 		views := make([]map[string]any, 0, len(messages))
 		for _, message := range messages {
 			view := messageView(message)
+			if preview, ok := previews[message.ReplyTo]; ok && message.ReplyTo != "" {
+				view["reply_preview"] = preview
+			}
 			view["expirable"] = store.ExpirableMessage(message.AuthorKind, message.ReplyTo, room.Kind, groupOnly[message.ID])
 			items := reactions[message.ID]
 			if items == nil {
@@ -1334,6 +1342,14 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	view := messageView(m)
+	if m.ReplyTo != "" {
+		// The message is saved: failing now would make a retry post it twice. A reply without its preview is quoted from the page instead.
+		if previews, err := s.Store.ReplyPreviewsForMessages(r.Context(), room.ID, []store.Message{m}); err != nil {
+			log.Printf("reply preview for saved message %s: %v", m.ID, err)
+		} else if preview, ok := previews[m.ReplyTo]; ok {
+			view["reply_preview"] = preview
+		}
+	}
 	groupOnly, err := s.Store.GroupOnlyMessages(r.Context(), []string{m.ID})
 	if err != nil {
 		fail(w, err)

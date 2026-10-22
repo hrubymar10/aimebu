@@ -113,7 +113,7 @@ Content
 - **attachment**(id, project_id, room_id?, message_id?, sha256, mime, size,
   path, filename, width, height, created_by, created_at) — file bytes under the server config root,
   room fixed at upload, message bound atomically on send; width and height are
-  an image's pixel size (0 when unknown); unattached rows swept after 24 h. Reads require room membership.
+  an image's pixel size (0 when unknown); unattached rows swept after 24 h; indexed by `message_id` (migration 76). Reads require room membership.
 - **reaction**(message_id, member_kind, member_id, emoji, created_at) —
   UNIQUE all four keys
 - **project_memory**(id, project_id, body, rev, author_kind[user|agent],

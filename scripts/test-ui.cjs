@@ -1305,8 +1305,16 @@ async function main() {
       out.closed = !document.querySelector('#sender-profile-dialog');
       chat.legacyOpener = id => { out.openedAgent = id; };
       author('i1').click(); await new Promise(resolve => setTimeout(resolve, 50)); out.liveOpens = Boolean(document.querySelector('#sender-profile-dialog'));
+      // A reply whose parent is not loaded quotes it from the preview the server sent along; with no preview it says only that it is earlier.
+      chat.add({ ...base, id: 'q1', seq: 951, no: 951, author_kind: 'user', author_id: 'someone', reply_to: 'msg_unloaded', reply_preview: { no: 77, author_kind: 'agent', author_id: 'live', snippet: 'quoted text' } });
+      chat.add({ ...base, id: 'q2', seq: 952, no: 952, author_kind: 'user', author_id: 'someone', reply_to: 'msg_unloaded_too' });
+      const quote = id => { const el = chat.list.querySelector(`[data-message-id="${id}"] .quote`); return [el.textContent, el.title]; };
+      out.quotes = [quote('q1'), quote('q2')];
       chat.list.remove(); return out;
     });
+    assert.match(identityHeader.quotes[0][0], /^↪ #77 \S+: quoted text$/, 'a parent outside the loaded window is quoted from the preview');
+    assert.equal(identityHeader.quotes[0][1], 'Go to #77');
+    assert.deepEqual(identityHeader.quotes[1], ['↪ Earlier message', ''], 'with no preview the quote says only that the parent is earlier');
     assert.deepEqual(identityHeader.links, [[true, 'button'], [true, 'button'], [true, 'button']], 'the name of an agent is clickable, live or not');
     assert.equal(identityHeader.openedAgent, 'live', 'the name of a live agent opens its profile in the members panel, not the read-only dialog');
     assert.deepEqual([identityHeader.profile.open, identityHeader.profile.title, identityHeader.profile.badge, identityHeader.profile.note, identityHeader.closed, identityHeader.liveOpens], [true, 'imported-bot', 'Historical (imported)', 'This sender comes from', true, false]);
