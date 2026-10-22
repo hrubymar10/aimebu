@@ -1999,6 +1999,7 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-more { -webkit-mask-image: url("/icons/more.svg"); mask-image: url("/icons/more.svg"); }
 .icon-mask-chevron-right { -webkit-mask-image: url("/icons/chevron-right.svg"); mask-image: url("/icons/chevron-right.svg"); }
 .icon-mask-refresh { -webkit-mask-image: url("/icons/refresh.svg"); mask-image: url("/icons/refresh.svg"); }
+.icon-mask-dice { -webkit-mask-image: url("/icons/dice.svg"); mask-image: url("/icons/dice.svg"); }
 .icon-mask-message { -webkit-mask-image: url("/icons/message.svg"); mask-image: url("/icons/message.svg"); }
 .back-to-latest.icon-btn { position: relative; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; margin-left: 10px; }
 .back-to-latest .badge { position: absolute; top: -6px; right: -6px; min-width: 15px; height: 15px; margin: 0; padding: 0 3px; border-radius: 8px; font-size: 9px; line-height: 15px; text-align: center; pointer-events: none; }
@@ -2296,6 +2297,13 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #spawn-dialog .spawn-worktree-option { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 10px 0; font-weight: 400; }
 #spawn-dialog .spawn-worktree-option input { width: auto; margin: 0; }
 #spawn-dialog .spawn-worktree-note { flex-basis: 100%; color: var(--text-muted); font-size: 12px; }
+/* The agent's name in the Spawn dialog: the field with a dice button beside it, and a refusal of the name right under it. */
+#spawn-dialog .spawn-name { display: grid; gap: 4px; margin: 0 0 12px; }
+#spawn-dialog .spawn-name > label { font-size: 12px; color: var(--text-secondary); }
+#spawn-dialog .spawn-name-row { display: flex; gap: 6px; align-items: center; }
+#spawn-dialog .spawn-name-row input { flex: 1 1 auto; min-width: 0; }
+#spawn-dialog .spawn-name-error { margin: 0; font-size: 12px; }
+#spawn-dialog .spawn-name-error:empty { display: none; }
 /* The home room's settings carry the Project section (the Settings → Project form), so that dialog is wider. */
 #room-info-dialog.room-info-home { width: min(96vw, 620px); }
 #room-project { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 10px; }

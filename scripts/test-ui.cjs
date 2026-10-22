@@ -2438,6 +2438,7 @@ async function main() {
         title: document.querySelector('#spawn-form h2').textContent, worktree: document.querySelector('.spawn-worktree-option').hidden,
         text: document.querySelector('#spawn-resume-text').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
       })), { title: 'Start veteran as a v2 agent', worktree: true, text: 'This continues the v1 session of veteran@old, working in /definitely/not/in/the/project.', confirm: true });
+      assert.equal(await first.$eval('.spawn-name', el => el.hidden), true, 'a v1 agent keeps its own name, so the start dialog has no Name field');
       await first.waitForFunction(() => document.querySelector('#spawn-form [name=role]').value === 'reviewer', {}, {});
       // Which entry the dialog picks: a continued claude session takes the native claude entry even when a Docker one sorts first (and leaves
       // other tools and containers unselectable), and a fresh start only preselects the v1 tool without locking the others.
@@ -4025,10 +4026,29 @@ async function main() {
     await agentPage.waitForFunction(() => document.querySelectorAll('#spawn-form [name=tool] option').length === 3);
     assert.equal(await agentPage.$eval('#spawn-form [name=tool] option:nth-child(2)', el => el.disabled && el.textContent.includes('not offered by a connected machine')), true);
     assert.equal(await agentPage.$eval('#spawn-version', el => el.textContent), 'CLI version fixture-1');
+    // The agent's name: prefilled with a free one, a dice button for another (an icon button with a tooltip and a name), an invalid name and a
+    // name in use refused under the field with the dialog still open, and the name that is kept reaches the new agent.
+    await agentPage.waitForFunction(() => document.querySelector('#spawn-name').value !== '');
+    const nameField = await agentPage.evaluate(() => { const dice = document.querySelector('#spawn-name-dice'); return { value: document.querySelector('#spawn-name').value, label: document.querySelector('label[for=spawn-name]').textContent, dice: { title: dice.title, name: dice.getAttribute('aria-label'), text: dice.textContent.trim(), glyph: !!dice.querySelector('.icon-mask-dice'), button: dice.classList.contains('icon-btn') }, hidden: document.querySelector('.spawn-name').hidden }; });
+    assert.ok(/^[a-z][a-z0-9_-]{1,19}[a-z0-9]$/.test(nameField.value), `the prefilled name is a valid one: ${JSON.stringify(nameField)}`);
+    assert.deepEqual([nameField.label, nameField.dice, nameField.hidden], ['Name', { title: 'Another name', name: 'Another name', text: '', glyph: true, button: true }, false]);
+    const firstName = nameField.value;
+    await domClick(agentPage, '#spawn-name-dice');
+    await agentPage.waitForFunction(first => document.querySelector('#spawn-name').value !== first, {}, firstName);
     await agentPage.select('#spawn-form [name=role]', 'reviewer');
     await agentPage.select('#spawn-form [name=model]', 'fake-reviewer');
+    for (const [typed, expected] of [['Bad Name', /3 to 21 characters/], ['ada', /already has an agent, person or role with that name/]]) {
+      await agentPage.$eval('#spawn-name', (el, value) => { el.value = value; el.dispatchEvent(new Event('input')); }, typed);
+      await domClick(agentPage, '#spawn-form .dialog-actions button:last-child');
+      await agentPage.waitForFunction(() => document.querySelector('#spawn-name-error').textContent !== '');
+      const refused = await agentPage.evaluate(() => ({ error: document.querySelector('#spawn-name-error').textContent, open: document.querySelector('#spawn-dialog').open, focus: document.activeElement.id, shown: getComputedStyle(document.querySelector('#spawn-name-error')).display !== 'none', page: document.querySelector('#agents-panel .error')?.textContent || '' }));
+      assert.ok(expected.test(refused.error) && refused.open && refused.focus === 'spawn-name' && refused.shown && refused.page === '', `a refused name "${typed}" is answered under the field: ${JSON.stringify(refused)}`);
+    }
+    await agentPage.$eval('#spawn-name', el => { el.value = 'kept-name'; el.dispatchEvent(new Event('input')); });
+    assert.equal(await agentPage.$eval('#spawn-name-error', el => el.textContent), '', 'typing a new name clears the refusal');
     await domClick(agentPage, '#spawn-form .dialog-actions button:last-child');
     await agentPage.waitForFunction(() => document.querySelectorAll('.agent-card[data-agent-id]').length === 3 && !document.querySelector('#spawn-dialog').open);
+    assert.ok(await agentPage.$$eval('.agent-card .agent-name', els => els.some(el => el.textContent === 'kept-name')), 'the name chosen in the dialog is the new agent\'s name');
     await agentPage.waitForFunction(() => getComputedStyle(document.querySelector('.chat')).display === 'flex' && document.querySelectorAll('.agent-card[data-agent-id]').length === 3);
     assert.equal(await agentPage.$eval('#rooms-toggle', el => getComputedStyle(el).display), 'none', 'the top-bar Rooms button is gone on desktop (the edge toggle replaces it)');
     // v1-style column toggles: the shared 28px outlined square with a thin chevron inside each column's header. A collapsed column is 0px

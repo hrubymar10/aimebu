@@ -285,7 +285,7 @@ in its tooltip;
 Claude Code uses its last main-thread assistant message for the context
 estimate, and the gauge label caps at 100%;
 unknown values appear as “—”. Compaction posts a room notice with the reported
-before and after token counts. The spawn dialog reads tool availability,
+before and after token counts. The spawn dialog's Name field starts with a free name from the server's pool (its dice button asks for another; an empty field lets the server pick), and a refused name is answered under the field. The dialog reads tool availability,
 detected CLI versions, and model choices from the server catalog (the owner edits
 the models of each harness in Settings → Harnesses; exactly one is the harness's default,
 which is preselected and which an agent falls back to when its model is removed); unavailable

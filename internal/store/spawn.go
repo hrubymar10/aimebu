@@ -352,7 +352,15 @@ var agentNamePool = []string{"alice", "bob", "carol", "dave", "eve", "frank", "g
 
 // takenSlugs is every name a new agent in the project cannot have: an agent's, a person's, or a role key that @name would clash with.
 func (tx *Tx) takenSlugs(projectID string) (map[string]bool, error) {
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug FROM agent WHERE project_id=? UNION SELECT u.login FROM user u JOIN membership m ON m.user_id=u.id WHERE m.project_id=? UNION SELECT role_key FROM role WHERE deleted_at IS NULL AND (project_id IS NULL OR project_id=?)`, projectID, projectID, projectID)
+	return takenSlugs(tx.ctx, tx.tx, projectID)
+}
+
+type rowQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func takenSlugs(ctx context.Context, q rowQuerier, projectID string) (map[string]bool, error) {
+	rows, err := q.QueryContext(ctx, `SELECT slug FROM agent WHERE project_id=? UNION SELECT u.login FROM user u JOIN membership m ON m.user_id=u.id WHERE m.project_id=? UNION SELECT role_key FROM role WHERE deleted_at IS NULL AND (project_id IS NULL OR project_id=?)`, projectID, projectID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -369,43 +377,15 @@ func (tx *Tx) takenSlugs(projectID string) (map[string]bool, error) {
 }
 
 func (tx *Tx) nextAgentSlug(projectID string) (string, error) {
-	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug FROM agent WHERE project_id=? UNION SELECT u.login FROM user u JOIN membership m ON m.user_id=u.id WHERE m.project_id=?`, projectID, projectID)
+	taken, err := tx.takenSlugs(projectID)
 	if err != nil {
 		return "", err
 	}
-	taken := map[string]bool{}
-	for rows.Next() {
-		var slug string
-		if err := rows.Scan(&slug); err != nil {
-			rows.Close()
-			return "", err
-		}
-		taken[strings.ToLower(slug)] = true
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return "", err
-	}
-	// A slug equal to a visible role key would make @slug ambiguous with the
-	// role mention, so treat role keys as taken.
-	rows, err = tx.tx.QueryContext(tx.ctx, `SELECT role_key FROM role WHERE deleted_at IS NULL`)
-	if err != nil {
-		return "", err
-	}
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			rows.Close()
-			return "", err
-		}
-		taken[strings.ToLower(key)] = true
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return "", err
-	}
+	return pickAgentSlug(taken)
+}
+
+// pickAgentSlug is a random pool name that is not taken; once the pool is used up the names get a number ("alice2").
+func pickAgentSlug(taken map[string]bool) (string, error) {
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", err
@@ -423,6 +403,34 @@ func (tx *Tx) nextAgentSlug(projectID string) (string, error) {
 			}
 		}
 	}
+}
+
+// SuggestAgentSlug is a free name for the next agent of the project: one SpawnAgent would accept as it is (nothing is reserved, so a
+// later spawn can still find it taken). exclude is a name never to suggest, such as the one the asker is already looking at; empty excludes none.
+func (s *Store) SuggestAgentSlug(ctx context.Context, projectID, exclude string) (string, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return "", err
+	}
+	taken, err := takenSlugs(ctx, s.db, projectID)
+	if err != nil {
+		return "", err
+	}
+	if exclude != "" {
+		taken[strings.ToLower(exclude)] = true
+	}
+	return pickAgentSlug(taken)
+}
+
+// AgentSlugTaken reports whether the project already has an agent, a person or a role by that name.
+func (s *Store) AgentSlugTaken(ctx context.Context, projectID, slug string) (bool, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return false, err
+	}
+	taken, err := takenSlugs(ctx, s.db, projectID)
+	if err != nil {
+		return false, err
+	}
+	return taken[strings.ToLower(slug)], nil
 }
 
 func (s *Store) AgentCardsForRoom(ctx context.Context, roomID string) ([]AgentCard, error) {

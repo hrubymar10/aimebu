@@ -330,14 +330,15 @@ each agent in its rooms (the `roles` map of a v1 room) are kept as well
 
 An imported sender's profile (the dialog its name opens in the chat) offers
 **Start as v2 agent** to an owner or operator of the project. It is never
-automatic. The button opens the Spawn dialog prefilled with the old name (the
+automatic. The button opens the Spawn dialog for the old name (the
 v1 slug, if it is free in the project and fits the agent-name rule; otherwise
-the start is refused), the tool and model v1 ran, and the role v1 gave the
-agent most often, if v2 has it (otherwise worker). The role is the agent's own,
-so in a home room with **Home room: lead only** the dialog still lists every role
-and keeps the one v1 gave: when that is not a lead role it says the home room
-does not take it and keeps Start off (the server refuses the same start with
-409 `home_is_lead_only`); start the agent from a task room such as general, pick
+the start is refused; the dialog has no Name field because the agent keeps it),
+the tool and model v1 ran, and the role v1 gave the agent most often, if v2
+has it (otherwise worker). The role is the agent's own, so in a home room with
+**Home room: lead only** the dialog still lists every role and keeps the one
+v1 gave: when that is not a lead role it says the home room does not take it
+and keeps Start off (the server refuses the same start with 409
+`home_is_lead_only`); start the agent from a task room such as general, pick
 a lead role, or turn the setting off. The dialog states what will
 happen; submitting sends `resume_legacy` with the v1 agent id on
 `POST /api/rooms/{room}/agents`. The server reads the session itself: the

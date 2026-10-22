@@ -246,6 +246,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/rooms/{room}/mention-users", s.Auth.RequireUser(http.HandlerFunc(s.roomMentionUsers)))
 	mux.Handle("GET /api/rooms/{room}/members", s.Auth.RequireUser(http.HandlerFunc(s.roomMembers)))
 	mux.Handle("GET /api/rooms/{room}/agents", s.Auth.RequireUser(http.HandlerFunc(s.roomAgents)))
+	mux.Handle("GET /api/rooms/{room}/agent-name", s.Auth.RequireUser(http.HandlerFunc(s.agentNameSuggestion)))
 	mux.Handle("GET /api/rooms/{room}/agents/{agent}/profile", s.Auth.RequireUser(http.HandlerFunc(s.agentProfile)))
 	mux.Handle("POST /api/rooms/{room}/agents", s.Auth.RequireUser(http.HandlerFunc(s.roomAgents)))
 	mux.Handle("GET /api/rooms/{room}/control", s.Auth.RequireUser(http.HandlerFunc(s.scopeControl)))

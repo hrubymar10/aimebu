@@ -52,6 +52,11 @@ export class AgentsPanel {
     this.dialog.addEventListener('close', () => { this.pendingResume = null; this.renderResume(); });
     this.form.elements.tool.onchange = () => this.renderSpawnModels();
     this.form.elements.role.onchange = () => this.syncRoleGate();
+    this.nameInput = this.form.elements.name; this.nameError = this.form.querySelector('#spawn-name-error');
+    this.nameDice = setGlyph(this.form.querySelector('#spawn-name-dice'), 'dice', 'Another name');
+    this.nameDice.onclick = () => this.fillSpawnName();
+    this.nameInput.oninput = () => { this.nameRequestID = (this.nameRequestID || 0) + 1; this.nameError.textContent = ''; };
+
     this.form.onsubmit = event => { event.preventDefault(); this.spawn(); };
     document.querySelector('#switch-cancel').onclick = () => this.switchDialog.close();
     this.switchForm.elements.tool.onchange = () => this.renderSwitchModels();
@@ -517,6 +522,11 @@ export class AgentsPanel {
     this.pendingResume = resume;
     this.renderResume();
     this.dialog.showModal();
+    // A v1 agent keeps its own name, so the dialog has no name field then; otherwise it starts with a free one.
+    this.form.querySelector('.spawn-name').hidden = !!resume;
+    this.nameRequestID = (this.nameRequestID || 0) + 1;
+    this.nameInput.value = ''; this.nameError.textContent = '';
+    if (!resume) this.fillSpawnName();
     this.renderSpawnModels();
     const toolSelect = this.form.elements.tool;
     const modelSelect = this.form.elements.model;
@@ -569,6 +579,23 @@ export class AgentsPanel {
       hint.textContent = 'The home room is for the lead. Spawn workers into a task room such as general.';
     }
     this.updateSpawnSubmit();
+  }
+  // Puts a free name from the server in the Name field (the dialog's first look, and the dice button). Failing to get one leaves the
+  // field as it was: empty still spawns, under a name the server picks.
+  async fillSpawnName() {
+    const roomID = this.room?.id; if (!roomID) return;
+    const requestID = this.nameRequestID = (this.nameRequestID || 0) + 1;
+    const previous = this.nameInput.value;
+    this.namePendingID = requestID;
+    this.nameDice.disabled = true;
+    try {
+      const name = await this.source.suggestName(roomID, previous);
+      if (this.dialog.open && this.room?.id === roomID && requestID === this.nameRequestID && this.nameInput.value === previous && name) {
+        this.nameInput.value = name; this.nameError.textContent = '';
+      }
+    } catch (error) {
+      if (this.dialog.open && requestID === this.nameRequestID) this.nameError.textContent = `Could not get a name: ${error.message}`;
+    } finally { if (requestID === this.namePendingID) this.nameDice.disabled = false; }
   }
   async loadSpawnCatalog() {
     const machineID = this.spawnMachine.id;
@@ -692,9 +719,15 @@ export class AgentsPanel {
     const role = this.form.elements.role.value, selected = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)], model = this.form.elements.model.value;
     if (!role || !selected?.available || !model) return;
     const resume = this.pendingResume;
+    const name = resume ? '' : this.nameInput.value.trim();
+    if (name && !/^[a-z][a-z0-9_-]{1,19}[a-z0-9]$/.test(name)) { this.nameError.textContent = 'A name is 3 to 21 characters: lowercase letters, digits, - and _, starting with a letter and ending with a letter or digit.'; this.nameInput.focus(); return; }
     if (resume?.resumable && selected.tool !== resume.tool) { this.error.textContent = `To continue this session the tool must be ${resume.tool}.`; return; }
     if (resume?.v1_active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that v1 is not running this session any more.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
-    try { await this.source.spawn(this.room.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume ? { resume_legacy: resume.legacy_id, confirm_v1_idle: document.querySelector('#spawn-resume-confirm').checked } : {}) }); this.dialog.close(); this.form.reset(); await this.refresh(); }
-    catch (error) { this.error.textContent = error.message; this.dialog.close(); }
+    try { await this.source.spawn(this.room.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(name ? { name } : {}), ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume ? { resume_legacy: resume.legacy_id, confirm_v1_idle: document.querySelector('#spawn-resume-confirm').checked } : {}) }); this.dialog.close(); this.form.reset(); await this.refresh(); }
+    catch (error) {
+      // A refused name is answered under its field and the dialog stays open, with everything else as it was, so another name can be tried.
+      if (error.code === 'name_in_use' || error.code === 'invalid_name') { this.nameError.textContent = error.message; this.nameInput.focus(); return; }
+      this.error.textContent = error.message; this.dialog.close();
+    }
   }
 }

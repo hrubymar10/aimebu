@@ -50,6 +50,9 @@ Vendored frontend dependency:
   fixed colours and unused wrappers were removed. The star keeps its outline path for CSS fill on the selected model; select-all is
   drawn through a `currentColor` mask.
 
+- `web/icons/dice.svg` is the SVG Repo "dice-outline" icon, MIT per the owner. Its geometry is unchanged; the download's XML
+  declaration, header comment and fixed size were removed, and black strokes and pips use `currentColor`.
+
 - The close, plus, person-plus, eye, stop, pause, play, arrow-down, arrow-up, arrow-up-down (sort), external-link, switch (arrow-left-right), copy, check,
   reopen (rotate-ccw), more (ellipsis), chevron-right and message (message-square) glyphs in `web/icons/` are Lucide icons
   (ISC licence, Copyright (c) 2026 Lucide Icons and Contributors; the licence text is `web/icons/LICENSE-lucide.txt`), release

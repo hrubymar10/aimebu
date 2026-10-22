@@ -20,10 +20,21 @@ export class MockAgentSource {
   async roles() { return [{ id: 'role_worker', role_key: 'worker', label: 'Worker' }, { id: 'role_reviewer', role_key: 'reviewer', label: 'Reviewer' }, { id: 'role_lead', role_key: 'lead', label: 'Lead', cap_is_lead: true }]; }
   // The mock projects keep today's behaviour: every role may be spawned into the home room.
   async homeLeadOnly() { return false; }
+  // The mock's pool of names, like the server's: the next free one, in a fixed order so a test can tell two asks apart.
+  takenNames() { return new Set([...this.agents.values()].flatMap(agent => [agent.slug, agent.name].filter(Boolean).map(name => name.toLowerCase()))); }
+  async suggestName(roomID, exclude = '') {
+    const taken = this.takenNames(); if (exclude) taken.add(exclude.toLowerCase());
+    const free = ['nova-one', 'mira', 'orbit', 'quill', 'tango', 'ember'].filter(name => !taken.has(name));
+    this.nameAsks = (this.nameAsks || 0) + 1;
+    return free.length ? free[(this.nameAsks - 1) % free.length] : `agent${taken.size + 1}`;
+  }
   async spawn(roomID, params) {
     if (!this.available) throw new Error('Agent controls are not available yet');
+    if (params.name && this.takenNames().has(params.name)) {
+      throw Object.assign(new Error('this project already has an agent, person or role with that name'), { status: 409, code: 'name_in_use' });
+    }
     const id = `agt_mock_${uuid()}`;
-    const agent = { id, room_id: roomID, name: `Agent ${this.agents.size + 1}`, role: params.role, tool: params.tool, model: params.model, desired: 'active', observed: 'idle', activity: 'Waiting', recovery_block: false };
+    const agent = { id, room_id: roomID, name: params.name || `Agent ${this.agents.size + 1}`, ...(params.name ? { slug: params.name } : {}), role: params.role, tool: params.tool, model: params.model, desired: 'active', observed: 'idle', activity: 'Waiting', recovery_block: false };
     this.agents.set(id, agent); this.notify(); return { ...agent };
   }
   async switch(id, params) {
@@ -82,10 +93,12 @@ export class HttpAgentSource {
       throw error;
     }
   }
+  // A free name for the next agent of the room's project (nothing is reserved; the spawn decides if it is still free).
+  async suggestName(roomID, exclude = '') { return (await request(`/api/rooms/${roomID}/agent-name${exclude ? `?exclude=${encodeURIComponent(exclude)}` : ''}`)).name; }
   async spawn(roomID, params) {
     const card = await request(`/api/rooms/${roomID}/agents`, {
       method: 'POST', headers: { 'Idempotency-Key': uuid() },
-      body: { role_key: params.role, tool: params.tool, variant: params.variant, model: params.model, ...(params.launcher_id ? { launcher_id: params.launcher_id } : {}), ...(params.provider ? { provider: params.provider } : {}), ...(params.machine_id ? { machine_id: params.machine_id } : {}), ...(params.resume_legacy ? { resume_legacy: params.resume_legacy, confirm_v1_idle: !!params.confirm_v1_idle } : {}),
+      body: { role_key: params.role, tool: params.tool, variant: params.variant, model: params.model, ...(params.name ? { name: params.name } : {}), ...(params.launcher_id ? { launcher_id: params.launcher_id } : {}), ...(params.provider ? { provider: params.provider } : {}), ...(params.machine_id ? { machine_id: params.machine_id } : {}), ...(params.resume_legacy ? { resume_legacy: params.resume_legacy, confirm_v1_idle: !!params.confirm_v1_idle } : {}),
         // The dialog's worktree choice reaches the server; it used to be dropped here, so the checkbox did nothing.
         ...(params.worktree ? { worktree: true, ...(params.base_ref ? { base_ref: params.base_ref } : {}) } : {}) },
     });

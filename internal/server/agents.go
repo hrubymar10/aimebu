@@ -31,6 +31,8 @@ type spawnRequest struct {
 	Provider   string `json:"provider"`
 	Worktree   bool   `json:"worktree,omitempty"`
 	BaseRef    string `json:"base_ref,omitempty"`
+	// Name is the agent's name; empty lets the server pick a free one from its pool. A v1 agent that is resumed keeps its own name.
+	Name string `json:"name,omitempty"`
 	// ResumeLegacy starts the agent from an imported v1 agent: the same name, and its harness session continued when the harness can.
 	// ConfirmV1Idle acknowledges the warning that v1 may still be using that session.
 	ResumeLegacy  string `json:"resume_legacy,omitempty"`
@@ -434,6 +436,21 @@ type agentCardWithUsage struct {
 	HealthFlags []store.HealthFlag `json:"health_flags"`
 }
 
+// agentNameSuggestion answers a free name for the next agent of the room's project: what the Spawn dialog prefills, and what its dice
+// button asks for again with `exclude` set to the name it already shows, so a new roll is never the same name. Nothing is reserved; the spawn itself decides if the name is still free.
+func (s *Server) agentNameSuggestion(w http.ResponseWriter, r *http.Request) {
+	room, ok := s.roomAccess(w, r, r.PathValue("room"))
+	if !ok {
+		return
+	}
+	name, err := s.Store.SuggestAgentSlug(r.Context(), room.ProjectID, r.URL.Query().Get("exclude"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"name": name})
+}
+
 func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 	room, ok := s.roomAccess(w, r, r.PathValue("room"))
 	if !ok {
@@ -478,6 +495,16 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		apiError(w, 400, "invalid_request", "role_key, tool, and either launcher_id (model optional: the harness default) or variant and model required")
 		return
 	}
+	if req.Name != "" {
+		if req.ResumeLegacy != "" {
+			apiError(w, 400, "invalid_request", "a v1 agent keeps its own name; leave name out of resume_legacy")
+			return
+		}
+		if !store.ValidAgentSlug(req.Name) {
+			apiError(w, 400, "invalid_name", "a name is 3 to 21 characters: lowercase letters, digits, - and _, starting with a letter, ending with a letter or digit, and not a group tag such as all or here")
+			return
+		}
+	}
 	key := r.Header.Get("Idempotency-Key")
 	if key == "" || len(key) > 200 {
 		apiError(w, 400, "invalid_request", "Idempotency-Key required (at most 200 characters)")
@@ -520,6 +547,19 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	if err := s.Store.Tx(r.Context(), func(tx *store.Tx) error { return tx.AuthorizeSpawn(room.ID, actorKind, actorID) }); err != nil {
 		spawnError(w, err)
 		return
+	}
+	// Before anything is prepared for the agent (a worktree, a folder check): a name that is already in use is the commonest refusal.
+	// The check in the spawn transaction stays the arbiter when two requests race for the same name.
+	if req.Name != "" {
+		taken, err := s.Store.AgentSlugTaken(r.Context(), room.ProjectID, req.Name)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		if taken {
+			spawnError(w, store.ErrSlugTaken)
+			return
+		}
 	}
 	var legacy store.LegacyStart
 	resuming := false
@@ -602,6 +642,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	var card store.AgentCard
 	result, reused, err := s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "spawn", Key: key, Digest: digest}, func(tx *store.Tx) (string, error) {
 		input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: path, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, KeyHash: hex.EncodeToString(keyHashBytes[:])}
+		input.Slug = req.Name
 		if req.ResumeLegacy != "" {
 			input.Slug, input.ResumeLegacyID = legacy.Slug, legacy.AgentID
 			if resuming {

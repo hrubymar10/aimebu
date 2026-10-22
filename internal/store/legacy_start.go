@@ -60,8 +60,11 @@ func LegacySlug(agentID string) string {
 	return strings.ToLower(name)
 }
 
-// ValidAgentSlug reports whether a name fits the AI agent slug rule.
-func ValidAgentSlug(slug string) bool { return agentSlugPattern.MatchString(slug) }
+// ValidAgentSlug reports whether a name fits the AI agent slug rule and is not one of the group tags (@all, @here, ...), which win over
+// a name in a mention and would leave the agent impossible to address.
+func ValidAgentSlug(slug string) bool {
+	return agentSlugPattern.MatchString(slug) && groupTag(slug) == ""
+}
 
 // RecentlySeenWindow is how recently v1 must have seen an agent for its session to count as possibly still in use by v1.
 const RecentlySeenWindow = 10 * time.Minute
