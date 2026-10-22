@@ -208,7 +208,7 @@ export class HarnessSettings {
     const enabled = document.createElement('input'); enabled.type = 'checkbox'; enabled.name = 'enabled'; enabled.checked = !!harness.enabled;
     enabled.setAttribute('aria-label', `Enable ${harness.label || harness.tool}`);
     enabledLabel.append(enabled, document.createTextNode('Enabled'));
-    const edit = iconButton('pencil', `Edit ${harnessLabel}`, { className: 'machine-harness-edit' }); edit.setAttribute('aria-expanded', 'false');
+    const edit = iconButton('edit', `Edit ${harnessLabel}`, { className: 'machine-harness-edit' }); edit.setAttribute('aria-expanded', 'false');
     const modelsButton = node('button', 'btn machine-harness-models-toggle', `Models (${(harness.models || []).length})`); modelsButton.type = 'button'; modelsButton.setAttribute('aria-expanded', 'false');
     control.append(enabledLabel, modelsButton, edit);
     row.append(info, control);
@@ -255,7 +255,7 @@ export class HarnessSettings {
       actions.append(remove);
     }
     form.append(actions, error);
-    const setOpen = open => { form.hidden = !open; edit.setAttribute('aria-expanded', String(open)); setGlyph(edit, open ? 'close' : 'pencil', `${open ? 'Close settings for' : 'Edit'} ${harnessLabel}`); if (open) this.openLaunchers.add(harness.id); else this.openLaunchers.delete(harness.id); };
+    const setOpen = open => { form.hidden = !open; edit.setAttribute('aria-expanded', String(open)); setGlyph(edit, open ? 'close' : 'edit', `${open ? 'Close settings for' : 'Edit'} ${harnessLabel}`); if (open) this.openLaunchers.add(harness.id); else this.openLaunchers.delete(harness.id); };
     edit.onclick = () => setOpen(form.hidden);
     if (this.openLaunchers.has(harness.id)) setOpen(true);
     form.onsubmit = async event => {

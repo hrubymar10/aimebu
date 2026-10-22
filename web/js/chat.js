@@ -537,10 +537,11 @@ export class Chat {
     if (!room) return;
     action.hidden = room.kind === 'home';
     action.disabled = room.lifecycle === 'closing';
-    action.textContent = room.lifecycle === 'closed' ? 'Reopen room' : room.lifecycle === 'closing' ? 'Closing…' : 'Archive room';
+    setGlyph(action, room.lifecycle === 'closed' ? 'reopen' : 'archive', room.lifecycle === 'closed' ? 'Reopen room' : room.lifecycle === 'closing' ? 'Closing…' : 'Archive room');
     // Removing is for archived task rooms only: never a home room or a private chat, and not while the room is open.
     remove.hidden = room.kind === 'home' || room.kind === 'dm' || this.projectRole?.(room.project_id) !== 'owner';
     remove.disabled = room.lifecycle !== 'closed';
+    setGlyph(remove, 'trash', 'Remove room');
     remove.title = remove.disabled ? 'Archive the room before removing it' : 'Remove this room and its messages for good';
   }
   // Hide (per user, on the room lists) is set here rather than on the rows. Pinning is for projects, from the room list.

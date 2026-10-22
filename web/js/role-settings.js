@@ -77,7 +77,7 @@ export class RoleSettings {
       const summary = document.createElement('p'); summary.className = 'role-card-summary';
       const text = (role.body || role.resolved_body || '').trim().replace(/\s+/g, ' ');
       summary.textContent = text.length > 160 ? text.slice(0, 157) + '…' : text || 'No instructions of its own.';
-      const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'btn role-card-edit'; edit.textContent = 'Edit'; edit.setAttribute('aria-label', `Edit ${role.label}`);
+      const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'icon-btn role-card-edit'; setGlyph(edit, 'edit', `Edit ${role.label}`);
       edit.dataset.roleLabel = role.label; edit.setAttribute('aria-controls', 'role-editor');
       edit.onclick = () => { if (this.roleEditorOpen && this.rolesList.value === role.id) this.cancelRole(); else this.editRole(role.id); };
       card.append(head, chips, summary, edit); this.roleCards.append(card);
@@ -94,7 +94,7 @@ export class RoleSettings {
       const open = !!this.roleEditorOpen && edit.closest('.role-card').dataset.roleId === this.rolesList.value, label = edit.dataset.roleLabel;
       edit.setAttribute('aria-expanded', String(open));
       if (open) { setGlyph(edit, 'close', `Close ${label} without saving`); edit.classList.add('role-card-close'); continue; }
-      edit.classList.remove('role-card-close'); edit.removeAttribute('title'); edit.textContent = 'Edit'; edit.setAttribute('aria-label', `Edit ${label}`);
+      edit.classList.remove('role-card-close'); setGlyph(edit, 'edit', `Edit ${label}`);
     }
   }
   // What the editor holds now, to tell whether closing it would throw an edit away.

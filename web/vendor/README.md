@@ -44,11 +44,15 @@ Vendored frontend dependency:
   repository's icon format (the download's XML declaration, header comment and fixed 800 px size removed, the black strokes changed
   to `currentColor`), and it is drawn through a CSS mask like the other glyphs.
 
-- `web/icons/pencil.svg` is a project-drawn outline glyph for editing a harness. It uses `currentColor` through the same CSS mask.
-
 - `web/icons/star.svg` and `web/icons/select-all.svg` are the owner's SVG Repo assets (MIT). Their catalogue headers, fixed sizes,
   fixed colours and unused wrappers were removed. The star keeps its outline path for CSS fill on the selected model; select-all is
   drawn through a `currentColor` mask.
+
+- `web/icons/edit.svg`, `eye-off.svg`, `link.svg`, `archive.svg` and `key-off.svg` are the owner's SVG Repo assets (MIT per the owner:
+  the "edit", "eye-off", "link-6", "archive" and "key-no" downloads). Their catalogue headers, doctype, fixed 800 px sizes, embedded
+  styles, element ids and fixed colours were removed and the fills use `currentColor`; the paths are unchanged. They are drawn
+  through the CSS mask: edit is Edit/Rename on a role card, a macro, a usage profile and an open question; eye-off is Hide room; link
+  is Add link in the composer; archive is Dismiss all resolved in the Inbox; key-off is Revoke on a machine.
 
 - `web/icons/dice.svg` is the SVG Repo "dice-outline" icon, MIT per the owner. Its geometry is unchanged; the download's XML
   declaration, header comment and fixed size were removed, and black strokes and pips use `currentColor`.

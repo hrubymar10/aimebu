@@ -594,7 +594,7 @@ the supervisor found on PATH and in the usual user-level install directories
 harness then has its models detected and saved (the first is the default), and one that cannot answer is
 left empty with its reason and a note to use Models, where it can be retried. Each
 harness is one summary row (label, status, version and active agents, its command, an Enabled
-switch that saves on its own, Models and a pencil Edit icon); Edit opens the label, executable, arguments,
+switch that saves on its own, Models and an Edit icon); Edit opens the label, executable, arguments,
 environment, container and path settings, and Models opens its model list: slug (the exact id, never
 an alias), label, a note with the full text on hover, and one default. Each row has a visible radio
 and star; only the selected row has a filled star and says "Default". Trash icons remove harnesses or models, a refresh

@@ -2542,18 +2542,18 @@ async function main() {
       await resolvedPage.evaluate(() => { document.documentElement.dataset.debugInspector = 'on'; });
       await resolvedPage.click('[data-inbox-id="mock_resolved_a"] .inbox-raw-toggle');
       assert.equal(await resolvedPage.$eval('[data-inbox-id="mock_resolved_a"] .inbox-raw', el => !el.hidden && el.textContent.includes('validation_failed') && el.textContent.includes('mock_resolved_a')), true, 'the raw record opens behind the bug icon');
-      // Resume / Retry are .btn, Abandon is .btn-danger (checked on the recovery fixture elsewhere); the bulk dismiss is a .btn.
-      assert.equal(await resolvedPage.$eval('.inbox-dismiss-resolved', el => [el.hidden, el.textContent, el.classList.contains('btn')]).then(JSON.stringify), JSON.stringify([false, 'Dismiss all resolved (2)', true]));
+      // Resume / Retry are .btn, Abandon is .btn-danger (checked on the recovery fixture elsewhere); the bulk dismiss is an archive icon with the count beside it.
+      assert.equal(await resolvedPage.$eval('.inbox-dismiss-resolved', el => [el.hidden, el.getAttribute('aria-label'), el.title.startsWith('Dismiss all resolved (2)'), el.classList.contains('icon-btn'), !!el.querySelector('.icon-mask-archive'), el.textContent]).then(JSON.stringify), JSON.stringify([false, 'Dismiss all resolved (2)', true, true, true, '2']));
       // A hidden room list leaves no empty column.
       const gutter = await resolvedPage.evaluate(() => { document.querySelector('.sidebar').hidden = true; const r = document.querySelector('#inbox-view').getBoundingClientRect(); const out = { left: Math.round(r.left), width: Math.round(r.width), viewport: innerWidth }; document.querySelector('.sidebar').hidden = false; return out; });
       assert.deepEqual([gutter.left, gutter.width], [0, gutter.viewport], `an empty gutter is left when the room list is hidden: ${JSON.stringify(gutter)}`);
       // A room that is archived while the card is on screen updates the card and the bulk count (open -> closing -> closed).
       await resolvedPage.evaluate(() => { const item = window.__mockInbox.items.find(entry => entry.id === 'mock_open_failure'); item.room_lifecycle = 'closing'; window.__mockInbox.notify(); });
-      await resolvedPage.waitForFunction(() => document.querySelector('[data-inbox-id="mock_open_failure"] .inbox-archived')?.textContent === 'Room is being archived' && document.querySelector('.inbox-dismiss-resolved').textContent === 'Dismiss all resolved (3)');
+      await resolvedPage.waitForFunction(() => document.querySelector('[data-inbox-id="mock_open_failure"] .inbox-archived')?.textContent === 'Room is being archived' && document.querySelector('.inbox-dismiss-resolved').getAttribute('aria-label') === 'Dismiss all resolved (3)' && document.querySelector('.inbox-dismiss-resolved').textContent === '3');
       await resolvedPage.evaluate(() => { const item = window.__mockInbox.items.find(entry => entry.id === 'mock_open_failure'); item.room_lifecycle = 'closed'; window.__mockInbox.notify(); });
       await resolvedPage.waitForFunction(() => document.querySelector('[data-inbox-id="mock_open_failure"] .inbox-archived')?.textContent === 'In archived room');
       await resolvedPage.evaluate(() => { const item = window.__mockInbox.items.find(entry => entry.id === 'mock_open_failure'); item.room_lifecycle = 'open'; window.__mockInbox.notify(); });
-      await resolvedPage.waitForFunction(() => !document.querySelector('[data-inbox-id="mock_open_failure"] .inbox-archived') && document.querySelector('.inbox-dismiss-resolved').textContent === 'Dismiss all resolved (2)');
+      await resolvedPage.waitForFunction(() => !document.querySelector('[data-inbox-id="mock_open_failure"] .inbox-archived') && document.querySelector('.inbox-dismiss-resolved').getAttribute('aria-label') === 'Dismiss all resolved (2)' && document.querySelector('.inbox-dismiss-resolved').textContent === '2');
       // The held reason reads as a sentence (a known reason needs no technical error after it).
       assert.ok((await resolvedPage.$eval('[data-inbox-id="mock_resolved_a"]', el => el.innerText)).includes('The revised reply still did not pass validation.'), 'a known held reason is a sentence');
       await domClick(resolvedPage, '.inbox-dismiss-resolved');
@@ -3091,6 +3091,7 @@ async function main() {
     assert.equal(await settingsPage.$$eval('.usage-provider[data-provider="codex"] .usage-window strong:first-child', els => els.map(el => el.textContent).includes('Codex Spark')), true, 'spark window label should render');
     assert.equal(await settingsPage.$eval('.usage-provider[data-provider="codex"] .usage-switch:not([hidden])', el => el.disabled), false, 'configured profile switch should be available');
     await answerDialogs(settingsPage, () => ({ accept: true, values: { value: 'reserve' } }));
+    assert.deepEqual(await settingsPage.evaluate(() => { const button = [...document.querySelectorAll('.usage-provider[data-provider="codex"] .usage-profile')].find(el => el.querySelector('.usage-profile-name').textContent === 'backup').querySelector('.usage-rename'); return [button.title, button.getAttribute('aria-label'), !!button.querySelector('.icon-mask-edit'), button.textContent]; }), ['Rename backup', 'Rename backup', true, ''], 'Rename is an edit icon with a tooltip');
     await settingsPage.evaluate(() => [...document.querySelectorAll('.usage-provider[data-provider="codex"] .usage-profile')].find(el => el.querySelector('.usage-profile-name').textContent === 'backup').querySelector('.usage-rename').click());
     await settingsPage.waitForFunction(() => [...document.querySelectorAll('.usage-provider[data-provider="codex"] .usage-profile-name')].some(el => el.textContent === 'reserve'));
     assert.equal(await settingsPage.$$eval('.usage-provider[data-provider="codex"] .usage-profile-name', els => els.some(el => el.textContent === 'backup')), false, 'renamed profile kept its old name');
@@ -3413,7 +3414,7 @@ async function main() {
     await settingsPage.click('#settings-harnesses-tab');
     await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-harness').length === 2);
     // A launcher is a summary row: name, status, summary line and the Enabled switch. The executable, arguments and the rest sit behind Edit.
-    assert.deepEqual(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"]', card => { const form = card.querySelector('form'), edit = card.querySelector('.machine-harness-edit'); return { row: !!card.querySelector(':scope > .settings-row .settings-label'), formHidden: form.hidden || getComputedStyle(form).display === 'none', edit: [edit.title, edit.getAttribute('aria-label'), !!edit.querySelector('.icon-mask-pencil'), edit.getAttribute('aria-expanded'), edit.getAttribute('aria-controls') === form.id], switchInRow: !!card.querySelector(':scope > .settings-row [name=enabled]'), commandVisible: !!card.querySelector('[name=command]')?.offsetParent }; }), { row: true, formHidden: true, edit: ['Edit Codex (Docker)', 'Edit Codex (Docker)', true, 'false', true], switchInRow: true, commandVisible: false }, 'the launcher edit action is a labelled pencil icon');
+    assert.deepEqual(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"]', card => { const form = card.querySelector('form'), edit = card.querySelector('.machine-harness-edit'); return { row: !!card.querySelector(':scope > .settings-row .settings-label'), formHidden: form.hidden || getComputedStyle(form).display === 'none', edit: [edit.title, edit.getAttribute('aria-label'), !!edit.querySelector('.icon-mask-edit'), edit.getAttribute('aria-expanded'), edit.getAttribute('aria-controls') === form.id], switchInRow: !!card.querySelector(':scope > .settings-row [name=enabled]'), commandVisible: !!card.querySelector('[name=command]')?.offsetParent }; }), { row: true, formHidden: true, edit: ['Edit Codex (Docker)', 'Edit Codex (Docker)', true, 'false', true], switchInRow: true, commandVisible: false }, 'the launcher edit action is a labelled pencil icon');
     await domClick(settingsPage, '.machine-harness[data-variant="harness-docker"] .machine-harness-edit');
     assert.deepEqual(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"]', card => [card.querySelector('.machine-harness-edit').title, !!card.querySelector('.machine-harness-edit .icon-mask-close'), card.querySelector('.machine-harness-edit').getAttribute('aria-expanded'), !!card.querySelector('[name=command]').offsetParent]), ['Close settings for Codex (Docker)', true, 'true', true]);
     await settingsPage.locator('.machine-harness[data-variant="harness-docker"] [name=command]').fill('/opt/custom/docker');
@@ -5135,8 +5136,8 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#roles-list').dataset.loaded === '1');
     // Every role is a card with its emoji, name, key and a line of instructions; Edit opens it in the editor, New role blanks it.
     {
-      const cards = await first.evaluate(() => [...document.querySelectorAll('#roles-cards .role-card')].map(card => ({ key: card.dataset.roleKey, label: card.querySelector('.role-card-label').textContent, summary: card.querySelector('.role-card-summary').textContent.length > 0, edit: card.querySelector('.role-card-edit').getAttribute('aria-label') })));
-      assert.ok(cards.length >= 0 && cards.every(card => card.key && card.label && card.summary && /^Edit /.test(card.edit)), JSON.stringify(cards));
+      const cards = await first.evaluate(() => [...document.querySelectorAll('#roles-cards .role-card')].map(card => ({ key: card.dataset.roleKey, label: card.querySelector('.role-card-label').textContent, summary: card.querySelector('.role-card-summary').textContent.length > 0, edit: card.querySelector('.role-card-edit').getAttribute('aria-label'), icon: !!card.querySelector('.role-card-edit .icon-mask-edit') && card.querySelector('.role-card-edit').title === card.querySelector('.role-card-edit').getAttribute('aria-label') && card.querySelector('.role-card-edit').textContent === '' })));
+      assert.ok(cards.length >= 0 && cards.every(card => card.key && card.label && card.summary && card.icon && /^Edit /.test(card.edit)), JSON.stringify(cards));
       assert.equal(await first.evaluate(() => document.querySelector('#roles-list').closest('.settings-row').hidden), true, 'the role list replaces the dropdown');
       assert.equal(await first.$eval('#role-editor', el => el.hidden), true, 'the role editor stays closed until a role is opened');
     }
@@ -5172,14 +5173,14 @@ async function main() {
         await first.locator('#role-editor [name=label]').fill('Cancelled name');
         await domClick(first, '#role-cancel');
         await first.waitForFunction(() => document.querySelector('#role-editor').hidden);
-        assert.deepEqual(await editor(), { open: false, focused: true, label: 'Edit Security reviewer', title: '', glyph: false, expanded: 'false', settings: true }, 'Cancel closes the editor and focuses Edit');
+        assert.deepEqual(await editor(), { open: false, focused: true, label: 'Edit Security reviewer', title: 'Edit Security reviewer', glyph: false, expanded: 'false', settings: true }, 'Cancel closes the editor and focuses Edit');
         assert.deepEqual(asked.splice(0), ['Discard your changes to this role?'], 'Cancel asks before throwing an edit away');
         assert.equal(await savedLabel(), original, 'Cancel saves nothing');
         await domClick(first, secEdit);
         await first.locator('#role-editor [name=label]').fill('Escaped name');
         await first.focus('#role-editor [name=label]'); await first.keyboard.press('Escape');
         await first.waitForFunction(() => document.querySelector('#role-editor').hidden);
-        assert.deepEqual(await editor(), { open: false, focused: true, label: 'Edit Security reviewer', title: '', glyph: false, expanded: 'false', settings: true }, 'Esc closes only the editor and focuses Edit');
+        assert.deepEqual(await editor(), { open: false, focused: true, label: 'Edit Security reviewer', title: 'Edit Security reviewer', glyph: false, expanded: 'false', settings: true }, 'Esc closes only the editor and focuses Edit');
         assert.deepEqual(asked.splice(0), ['Discard your changes to this role?'], 'Esc asks before throwing an edit away');
         assert.equal(await savedLabel(), original, 'Esc saves nothing');
         await domClick(first, secEdit); await domClick(first, secEdit);
@@ -5616,6 +5617,7 @@ async function main() {
     await first.waitForSelector(`[data-agent-id="${realAgentID}"]`);
     await openSettings(first); await domClick(first, '#settings-machines-tab');
     await first.waitForSelector(`[data-machine-id="${paired.machine_id}"]`);
+    assert.deepEqual(await first.$eval(`[data-machine-id="${paired.machine_id}"] .machine-card-actions button`, el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-key-off'), el.textContent]), ['Revoke', 'Revoke', true, ''], 'Revoke is a key-off icon with a tooltip');
     await domClick(first, `[data-machine-id="${paired.machine_id}"] .machine-card-actions button`);
     await first.waitForFunction(id => document.querySelector(`[data-machine-id="${id}"] .machine-status`)?.textContent === 'Revoked', {}, paired.machine_id);
     await domClick(first, '#settings-close');
@@ -5671,7 +5673,8 @@ async function main() {
     assert.equal(openCommands.includes('/archive'), true, 'slash picker offers archive in an open task room');
     await domClick(first, '#room-info');
     await first.waitForSelector('#room-info-dialog[open]');
-    assert.equal(await first.$eval('#room-lifecycle', el => el.textContent), 'Archive room');
+    assert.deepEqual(await first.$eval('#room-lifecycle', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-archive'), el.textContent]), ['Archive room', 'Archive room', true, ''], 'Archive is an archive icon with a tooltip');
+    assert.deepEqual(await first.$eval('#room-remove', el => [el.getAttribute('aria-label'), !!el.querySelector('.icon-mask-trash'), el.textContent]), ['Remove room', true, ''], 'Remove room is a trash icon with an accessible name');
     assert.deepEqual(await first.$eval('#room-remove', el => [el.hidden, el.disabled, el.classList.contains('btn-danger')]), [false, true, true], 'Remove is shown, destructive and disabled until the room is archived');
     await domClick(first, '#room-info-close');
     const archiveConfirmations = [];
@@ -5699,7 +5702,7 @@ async function main() {
     assert.equal(await first.$eval('#room-members', el => el.textContent.includes('Archived')), true, 'slash command did not reopen a closed room');
     await domClick(first, '#room-info');
     await first.waitForSelector('#room-info-dialog[open]');
-    assert.equal(await first.$eval('#room-lifecycle', el => el.textContent), 'Reopen room');
+    assert.deepEqual(await first.$eval('#room-lifecycle', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-reopen'), el.textContent]), ['Reopen room', 'Reopen room', true, ''], 'Reopen is a reopen icon with a tooltip');
     // The parent has an archived child, so it cannot be removed yet.
     assert.equal(await first.$eval('#room-remove', el => el.disabled), false, 'an archived room can be removed');
     await domClick(first, '#room-info-close');
@@ -5877,6 +5880,7 @@ async function main() {
       const linkRow = () => first.evaluate(() => { const row = document.querySelector('#composer .composer-link'), input = row.querySelector('input'); return { open: !row.hidden, focused: document.activeElement === input, value: input.value, error: row.querySelector('.composer-link-error').textContent, aboveInput: row.getBoundingClientRect().top >= document.querySelector('#composer .composer-toolbar').getBoundingClientRect().bottom - 1 && row.getBoundingClientRect().bottom <= document.querySelector('#composer .composer-field').getBoundingClientRect().top + 1 }; });
       await first.click('#composer .composer-format[data-format="link"]');
       assert.deepEqual(await linkRow(), { open: true, focused: true, value: 'https://', error: '', aboveInput: true }, 'the link button opens the address row under the toolbar');
+      assert.deepEqual(await first.$eval('#composer .composer-link-apply', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-link'), el.textContent]), ['Add link', 'Add link', true, ''], 'Add link is a link icon with a tooltip');
       await first.keyboard.press('Escape'); assert.equal((await linkRow()).open, false, 'Escape cancels the link row'); assert.equal(await first.$(`${editor} a`), null);
       assert.equal(await first.evaluate(() => document.querySelector('#composer .ProseMirror').contains(document.activeElement)), true, 'focus goes back to the editor');
       await first.click('#composer .composer-format[data-format="link"]');
@@ -6188,6 +6192,7 @@ async function main() {
     await domClick(first, '#room-info');
     assert.equal(await first.$('#room-pin'), null, 'room settings have no Pin room button');
     assert.equal(await first.$$eval(`[data-room-id="${roomID}"] > .room-row .room-pin, [data-room-id="${roomID}"] > .room-row .room-hide, [data-room-id="${roomID}"] > .room-row .room-pinned`, nodes => nodes.length), 0, 'the rows carry no pin or hide buttons and no star');
+    assert.deepEqual(await first.$eval('#room-hide', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-eye-off'), el.textContent, el.classList.contains('icon-btn')]), ['Hide room', 'Hide room', true, '', true], 'Hide room is an eye-off icon with a tooltip');
     await domClick(first, '#room-hide');
     await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"]`) && !!document.querySelector('.hidden-rooms') && !document.querySelector('#room-info-dialog').open, {}, roomID);
     await first.click('.hidden-rooms summary');

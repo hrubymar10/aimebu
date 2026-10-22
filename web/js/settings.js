@@ -304,7 +304,7 @@ export class SettingsPanel {
     const action = element('button', 'btn usage-switch', 'Switch');
     action.type = 'button';
     const remove = iconButton('trash', 'Delete profile', { danger: true, className: 'usage-remove' });
-    const rename = element('button', 'btn usage-rename', 'Rename'); rename.type = 'button';
+    const rename = iconButton('edit', 'Rename profile', { className: 'usage-rename' });
     card.append(action, rename, remove);
     return card;
   }
@@ -483,6 +483,7 @@ export class SettingsPanel {
           }
         };
         const renameButton = node.querySelector('.usage-rename');
+        renameButton.title = `Rename ${profile.profile_name}`; renameButton.setAttribute('aria-label', renameButton.title);
         renameButton.hidden = !switchable || !state.enabled || !state.owner || !configured;
         renameButton.onclick = async () => {
           const next = (await promptDialog(`Rename ${profile.profile_name} to`, { title: 'Rename profile', label: 'New name', value: profile.profile_name, required: true, confirm: 'Rename' }))?.trim();

@@ -1990,11 +1990,15 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
    web/vendor/README.md), drawn through a mask in the current colour like the navbar glyphs. */
 .icon-mask-close { -webkit-mask-image: url("/icons/close.svg"); mask-image: url("/icons/close.svg"); }
 .icon-mask-trash { -webkit-mask-image: url("/icons/trash.svg"); mask-image: url("/icons/trash.svg"); }
-.icon-mask-pencil { -webkit-mask-image: url("/icons/pencil.svg"); mask-image: url("/icons/pencil.svg"); }
 .icon-mask-select-all { -webkit-mask-image: url("/icons/select-all.svg"); mask-image: url("/icons/select-all.svg"); }
 .icon-mask-plus { -webkit-mask-image: url("/icons/plus.svg"); mask-image: url("/icons/plus.svg"); }
 .icon-mask-person-plus { -webkit-mask-image: url("/icons/person-plus.svg"); mask-image: url("/icons/person-plus.svg"); }
 .icon-mask-eye { -webkit-mask-image: url("/icons/eye.svg"); mask-image: url("/icons/eye.svg"); }
+.icon-mask-eye-off { -webkit-mask-image: url("/icons/eye-off.svg"); mask-image: url("/icons/eye-off.svg"); }
+.icon-mask-edit { -webkit-mask-image: url("/icons/edit.svg"); mask-image: url("/icons/edit.svg"); }
+.icon-mask-link { -webkit-mask-image: url("/icons/link.svg"); mask-image: url("/icons/link.svg"); }
+.icon-mask-archive { -webkit-mask-image: url("/icons/archive.svg"); mask-image: url("/icons/archive.svg"); }
+.icon-mask-key-off { -webkit-mask-image: url("/icons/key-off.svg"); mask-image: url("/icons/key-off.svg"); }
 .icon-mask-stop { -webkit-mask-image: url("/icons/stop.svg"); mask-image: url("/icons/stop.svg"); }
 .icon-mask-pause { -webkit-mask-image: url("/icons/pause.svg"); mask-image: url("/icons/pause.svg"); }
 .icon-mask-play { -webkit-mask-image: url("/icons/play.svg"); mask-image: url("/icons/play.svg"); }
@@ -2015,6 +2019,9 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-bell-disabled { -webkit-mask-image: url("/icons/bell-disabled.svg"); mask-image: url("/icons/bell-disabled.svg"); }
 .back-to-latest.icon-btn { position: relative; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; margin-left: 10px; }
 .back-to-latest .badge { position: absolute; top: -6px; right: -6px; min-width: 15px; height: 15px; margin: 0; padding: 0 3px; border-radius: 8px; font-size: 9px; line-height: 15px; text-align: center; pointer-events: none; }
+/* "Dismiss all resolved" is an archive icon with the count beside it, so it is wider than the 28px square. */
+button.icon-btn.inbox-dismiss-resolved { width: auto; min-width: 28px; gap: 6px; padding: 0 8px; flex-basis: auto; }
+.inbox-dismiss-count { font-size: 12px; font-variant-numeric: tabular-nums; }
 .icon-btn.inbox-jump, .profile-copy.icon-btn { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; }
 .agent-act.icon-btn { display: inline-grid; place-items: center; width: 28px; height: 28px; min-height: 28px; padding: 0; }
 .agent-actions .icon-btn .icon-mask { width: 15px; height: 15px; }

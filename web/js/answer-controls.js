@@ -1,3 +1,4 @@
+import { setGlyph } from './icon-button.js';
 import { renderMarkdown } from './markdown.js';
 
 export function answerControls(item, submit) {
@@ -205,8 +206,7 @@ function openQuestions(item, submit, onChange) {
     reviewList.replaceChildren(...questions.map((question, qIndex) => {
       const line = document.createElement('li');
       const strong = document.createElement('strong'); strong.textContent = `Q${qIndex + 1}) ${question.question} `;
-      const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'btn open-questions-edit'; edit.textContent = 'Edit';
-      edit.setAttribute('aria-label', `Edit question ${qIndex + 1}`); edit.onclick = () => go(qIndex);
+      const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'icon-btn open-questions-edit'; setGlyph(edit, 'edit', `Edit question ${qIndex + 1}`); edit.onclick = () => go(qIndex);
       line.append(strong, isAnswered(answers[qIndex]) ? answerLine(question, qIndex, answers[qIndex]).replace(/^Q\d+\) /, '') : 'Not answered', ' ', edit);
       return line;
     }));

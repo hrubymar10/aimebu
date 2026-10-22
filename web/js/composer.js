@@ -76,7 +76,7 @@ export class ComposerFormatting {
     this.linkInput = document.createElement('input'); this.linkInput.type = 'text'; this.linkInput.className = 'composer-link-input'; this.linkInput.placeholder = 'https://'; this.linkInput.setAttribute('aria-label', 'Link address'); this.linkInput.autocomplete = 'off'; this.linkInput.spellcheck = false;
     this.linkError = document.createElement('span'); this.linkError.className = 'composer-link-error error'; this.linkError.setAttribute('role', 'alert');
     const apply = document.createElement('button'); apply.type = 'button'; apply.addEventListener('click', () => this.applyLink());
-    apply.className = 'icon-btn composer-link-apply'; apply.textContent = 'Add link'; apply.setAttribute('aria-label', 'Add link');
+    apply.className = 'icon-btn composer-link-apply'; setGlyph(apply, 'link', 'Add link');
     const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'icon-btn composer-link-cancel'; setGlyph(cancel, 'close', 'Cancel link'); cancel.addEventListener('click', () => this.closeLink());
     this.linkForm.append(this.linkInput, apply, cancel, this.linkError);
     // Enter applies and Escape cancels. This row sits inside the composer's own form, so Enter must not submit the message, and

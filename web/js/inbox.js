@@ -89,7 +89,7 @@ export class Inbox {
     this.view = document.querySelector('#inbox-view'); this.list = document.querySelector('#inbox-list'); this.badge = document.querySelector('#inbox-count'); this.error = document.querySelector('#inbox-error');
     this.nodes = new Map(); this.groups = new Map(); this.keys = new Map();
     // "Dismiss all resolved": delivery failures in archived rooms need nothing more from anyone.
-    this.bulk = document.createElement('button'); this.bulk.type = 'button'; this.bulk.className = 'btn inbox-dismiss-resolved'; this.bulk.hidden = true;
+    this.bulk = document.createElement('button'); this.bulk.type = 'button'; this.bulk.className = 'icon-btn inbox-dismiss-resolved'; this.bulk.hidden = true;
     this.bulk.onclick = () => this.dismissResolved();
     this.view.querySelector('header').append(this.bulk);
     this.source.subscribe(() => this.refresh());
@@ -157,8 +157,9 @@ export class Inbox {
   syncBulk() {
     const count = this.resolvedItems().length;
     this.bulk.hidden = count === 0;
-    this.bulk.textContent = `Dismiss all resolved (${count})`;
-    this.bulk.title = 'Dismiss the delivery failures of archived rooms';
+    const label = `Dismiss all resolved (${count})`;
+    setGlyph(this.bulk, 'archive', label); this.bulk.title = `${label}: the delivery failures of archived rooms`;
+    const total = document.createElement('span'); total.className = 'inbox-dismiss-count'; total.textContent = String(count); this.bulk.append(total);
   }
   async dismissResolved() {
     const items = this.resolvedItems();

@@ -41,7 +41,7 @@ export class MachinesSettings {
       const detail = document.createElement('small'); detail.textContent = [machine.supervisor_version && `Supervisor ${machine.supervisor_version}`, machine.last_seen && `Last seen ${new Date(machine.last_seen).toLocaleString()}`].filter(Boolean).join(' · ');
       const actions = document.createElement('div'); actions.className = 'machine-card-actions';
       if (!machine.approved && !machine.revoked_at) actions.append(this.action('Approve', () => this.change(machine, 'approve'), 'check'));
-      if (!machine.is_host && !machine.revoked_at) actions.append(this.action('Revoke', () => this.change(machine, 'revoke')));
+      if (!machine.is_host && !machine.revoked_at) actions.append(this.action('Revoke', () => this.change(machine, 'revoke'), 'key-off'));
       if (!rights.owner) for (const button of actions.children) { button.disabled = true; button.title = `Only the owner can ${button.getAttribute('aria-label').toLowerCase()} machines`; }
       card.append(title, status, detail, actions); this.list.append(card);
     }
