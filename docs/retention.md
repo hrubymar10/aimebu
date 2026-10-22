@@ -58,9 +58,9 @@ though the message is still stored and `recall` finds it.
 ## What humans see
 
 Everything is shown. An AI message older than the window gets a dashed outline and an
-hourglass (⏳); human messages are never marked, because they are always delivered. The
-first message newer than the window carries a small label above it ("older room-wide AI
-messages aren't delivered to agents"). The label is a real element drawn out of flow in
+hourglass icon; human messages are never marked, because they are always delivered. The
+first message newer than the window carries a label above it with a dashed rule ("Older AI
+chatter won't reach agents automatically"). The label is a real element drawn out of flow in
 the gap between messages, so its appearing or disappearing never moves the text under the
 reader. Which messages carry the mark is decided by the server from what dispatch did, not from the text:
 each message in the room's message list has an `expirable` flag, true when an agent wrote it, it is not

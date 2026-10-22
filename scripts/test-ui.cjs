@@ -7884,6 +7884,10 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       const topsExpired = state.tops, boxesExpired = state.boxes;
       assert.equal(state.after, state.order[4], 'the boundary marks the first message newer than the window (the old human message sits above it, unmarked)');
       assert.equal(await expiryPage.$eval('#messages .message-expired-mark', el => el.getAttribute('aria-label')), 'Expired from AI context');
+      // The hourglass is the SVG icon, not an emoji, with the explaining tooltip; the boundary says in words what it means.
+      assert.deepEqual(await expiryPage.$eval('#messages .message-expired-mark', el => [el.textContent, !!el.querySelector('svg'), /not delivered to agents/.test(el.title), Math.round(el.getBoundingClientRect().width) > 0]), ['', true, true, true]);
+      assert.equal(await expiryPage.$eval('#messages > article.expiry-boundary > .expiry-label', el => el.textContent), "Older AI chatter won't reach agents automatically");
+      assert.equal(await expiryPage.$eval('#messages > article.expiry-boundary > .expiry-label', el => getComputedStyle(el, '::after').borderTopStyle), 'dashed', 'a rule runs on from the words');
       await openSettings(expiryPage);
       await domClick(expiryPage, '#settings-general-tab');
       await expiryPage.waitForSelector('#message-expiry-seconds');

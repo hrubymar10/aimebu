@@ -59,8 +59,9 @@ const FIXTURE = async () => {
   // Highlighted code and a diff, from the real renderer; the audits wait for the lazy highlight.js load.
   const codeFixture = message('code-fixture', '```go\npackage main\n\n// greet says hello\nfunc greet(name string) string { return \"hi \" + name + \" 42\" }\n```\n\n```diff\ndiff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,3 +1,3 @@\n package main\n-var x = 1\n+var x = 2\n```\n\n```html\n<div class=\"a\">x</div>\n```');
   for (let i = 0; i < 100 && !codeFixture.querySelector('.hljs-keyword'); i++) await new Promise(resolve => setTimeout(resolve, 50));
-  expiredFixture.classList.add('message-expired'); make('span', 'message-expired-mark', '⏳', expiredFixture.querySelector('.message-meta') || expiredFixture);
-  boundaryFixture.classList.add('expiry-boundary'); boundaryFixture.prepend(make('span', 'expiry-label', "⏳ older room-wide AI messages aren't delivered to agents"));
+  expiredFixture.classList.add('message-expired');
+  { const { EXPIRED_HOURGLASS } = await import('/js/usage-expiry.js'); const mark = make('span', 'message-expired-mark', '', expiredFixture.querySelector('.message-meta') || expiredFixture); mark.innerHTML = EXPIRED_HOURGLASS; mark.setAttribute('role', 'img'); mark.setAttribute('aria-label', 'Expired from AI context'); }
+  boundaryFixture.classList.add('expiry-boundary'); boundaryFixture.prepend(make('span', 'expiry-label', "Older AI chatter won't reach agents automatically"));
   const system = make('article', 'message system-notice', '', list); const row = make('div', 'system-row', '', system); make('span', 'message-body', 'ada joined', row); make('time', '', '12:00', row);
   const agents = document.querySelector('#agents-panel') || document.querySelector('.agents-panel');
   if (agents) {

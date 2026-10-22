@@ -3,6 +3,7 @@ import { request, upload, download, currentUser, currentLogin, rights } from './
 import { PREFERENCE_KEYS, savePreference } from './preferences.js';
 import { retention } from './retention.js';
 import { expiryCutoffMs, planExpiry } from './expiry.js';
+import { EXPIRED_HOURGLASS } from './usage-expiry.js';
 import { renderMarkdown, renderRaw, copyText } from './markdown.js';
 import { setGlyph, iconGlyph } from './icon-button.js';
 import { stampTime, refreshRelativeTimes } from './time.js';
@@ -1129,7 +1130,7 @@ export class Chat {
       article.classList.toggle('message-expired', expired);
       article.querySelector('.message-expired-mark')?.remove();
       if (expired) {
-        const mark = document.createElement('span'); mark.className = 'message-expired-mark'; mark.textContent = '⏳'; mark.title = 'Older than the expiry window: AI room chatter this old is not delivered to agents. Still shown here.'; mark.setAttribute('role', 'img'); mark.setAttribute('aria-label', 'Expired from AI context');
+        const mark = document.createElement('span'); mark.className = 'message-expired-mark'; mark.innerHTML = EXPIRED_HOURGLASS; mark.title = 'Older than the expiry window: AI room chatter this old is not delivered to agents. Still shown here.'; mark.setAttribute('role', 'img'); mark.setAttribute('aria-label', 'Expired from AI context');
         const holder = article.querySelector('.message-meta, .system-row'); const time = holder?.querySelector('time'); if (time) time.before(mark); else holder?.append(mark);
       }
     }
@@ -1139,7 +1140,7 @@ export class Chat {
     for (const marked of this.list.querySelectorAll(':scope > .expiry-boundary')) if (marked !== target) { marked.classList.remove('expiry-boundary'); marked.querySelector(':scope > .expiry-label')?.remove(); }
     if (target && this.list.contains(target) && !target.classList.contains('expiry-boundary')) {
       target.classList.add('expiry-boundary');
-      const label = document.createElement('span'); label.className = 'expiry-label'; label.textContent = "⏳ older room-wide AI messages aren't delivered to agents";
+      const label = document.createElement('span'); label.className = 'expiry-label'; label.textContent = "Older AI chatter won't reach agents automatically";
       target.prepend(label);
     }
   }

@@ -1535,9 +1535,12 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 /* Not dimmed: opacity would drop the text below the contrast floor. A dashed outline and the hourglass say it. */
 .message-expired:not(.system-notice) { border-style: dashed; }
 .message-expired.system-notice .system-row { font-style: italic; }
-.message-expired-mark { margin-right: 4px; font-size: 10.5px; line-height: 1; cursor: help; }
+.message-expired-mark { display: inline-flex; margin-right: 4px; color: var(--text-muted); line-height: 1; cursor: help; }
+.message-expired-mark svg { display: block; width: 11px; height: 11px; }
 .expiry-boundary { position: relative; }
-.expiry-boundary > .expiry-label { position: absolute; left: 0; bottom: 100%; z-index: 1; white-space: nowrap; pointer-events: none; color: var(--text-muted); font: 9px/9px var(--font-sans); }
+/* Out of flow, in the gap above the first newer message, so adding or removing it moves nothing; a rule runs on from the words. */
+.expiry-boundary > .expiry-label { position: absolute; left: 0; bottom: 100%; z-index: 1; display: flex; align-items: center; gap: 8px; min-width: min(300px, 70cqw); white-space: nowrap; pointer-events: none; color: var(--text-secondary); font: 10.5px/10px var(--font-sans); }
+.expiry-boundary > .expiry-label::after { content: ""; flex: 1 1 auto; min-width: 24px; border-top: 1px dashed var(--border-hover); }
 
 .room-group.collapsed > .room-children { display: none; }
 .room-row .room-collapse svg { display: block; }
