@@ -100,8 +100,14 @@ export class AgentsPanel {
       this.onChange?.([]);
     }
     this.room = room;
-    document.querySelector('#spawn-open').disabled = !this.source.available || room.kind === 'dm' || !!room.lifecycle && room.lifecycle !== 'open';
+    this.syncSpawnControl();
     this.syncWorktreeOption();
+  }
+  syncSpawnControl() {
+    if (!this.room) return;
+    const spawn = document.querySelector('#spawn-open'), viewer = this.projectRole?.(this.room.project_id) === 'viewer';
+    spawn.disabled = !this.source.available || this.room.kind === 'dm' || !!this.room.lifecycle && this.room.lifecycle !== 'open' || viewer;
+    this.spawnTitle ||= spawn.title; spawn.title = viewer ? 'Viewers cannot spawn agents' : this.spawnTitle;
   }
   // The worktree choice exists only in a task room, and is offered only where the server would make one: the machine's row carries the
   // server's own check for the host (with git's reason when it refuses), and is silent for other machines, where the box stays available.
@@ -121,9 +127,7 @@ export class AgentsPanel {
     const agents = await this.source.list(roomID);
     if (generation !== this.refreshGeneration || this.room?.id !== roomID) return;
     this.cards = new Map(agents.map(agent => [agent.id, agent]));
-    const spawn = document.querySelector('#spawn-open'), viewer = this.projectRole?.(this.room.project_id) === 'viewer';
-    spawn.disabled = !this.source.available || this.room.kind === 'dm' || !!this.room.lifecycle && this.room.lifecycle !== 'open' || viewer;
-    this.spawnTitle ||= spawn.title; spawn.title = viewer ? 'Viewers cannot spawn agents' : this.spawnTitle;
+    this.syncSpawnControl();
     const active = new Set(agents.map(agent => agent.id));
     for (const [id, node] of this.nodes) if (!active.has(id)) { node.remove(); this.nodes.delete(id); }
     for (const agent of agents) { let node = this.nodes.get(agent.id); if (!node) { node = this.card(agent); this.nodes.set(agent.id, node); this.list.append(node); } this.update(node, agent); }
