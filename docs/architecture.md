@@ -103,7 +103,9 @@ owner or operator write permission.
 transparent rehash on login; parameters verified at T3 time, e.g. 600k
 iterations, 16-byte salt); CSRF; authenticated WS upgrade + origin check;
 login throttling; private/held output redacted with defined access and
-retention. Per-agent raw stdout/stderr capture alongside the journal.
+retention. Per-agent stderr capture alongside the journal, on the machine that
+ran the harness, read back on demand for owners and admins (see
+[the supervisor](supervisor.md#agent-output)); stdout is not captured.
 
 **Frontend** — framework-free, modular from day one, patch live lists in
 place (no innerHTML rebuilds); tests for stable message identity, draft

@@ -2400,3 +2400,12 @@ dialog:focus, dialog:focus-visible { outline: none; }
 @keyframes message-flash { 0% { box-shadow: 0 0 0 2px var(--accent), 0 0 14px var(--accent-dim); } 100% { box-shadow: 0 0 0 2px transparent, 0 0 14px transparent; } }
 .message-flash { animation: message-flash 1.5s ease-out forwards; }
 @media (prefers-reduced-motion: reduce) { .message-flash { animation: none; outline: 2px solid var(--accent); outline-offset: 0; } }
+
+/* An agent profile's Output section: what the harness printed to stderr, for an owner or admin. */
+.profile-output { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.profile-output > summary { cursor: pointer; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.profile-output-bar { display: flex; gap: 6px; margin: 8px 0 4px; }
+.profile-output-note { margin: 4px 0 6px; color: var(--text-muted); font-size: 11px; }
+.profile-output-text { margin: 0; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 11px/1.4 var(--font-mono); background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
+.profile-output-status { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
+.profile-output-status:empty { display: none; }

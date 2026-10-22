@@ -182,7 +182,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	t := &turn{id: spec.TurnID, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, cmd: cmd, events: make(chan adapter.Event, 128), done: make(chan struct{}), stderrCapture: a.stderrCapture, stdoutCapture: a.stdoutCapture}
+	t := &turn{id: spec.TurnID, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, cmd: cmd, events: make(chan adapter.Event, 128), done: make(chan struct{}), stderrCapture: adapter.JoinWriters(a.stderrCapture, spec.StderrSink), stdoutCapture: a.stdoutCapture}
 	go func() { _, _ = stdin.Write(input); _ = stdin.Close() }()
 	go func() {
 		select {

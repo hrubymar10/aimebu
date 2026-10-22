@@ -22,6 +22,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/agentlog"
 	"github.com/hrubymar10/aimebu/internal/answer"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/tlsclient"
@@ -39,8 +40,11 @@ type Client struct {
 	Launchers         []protocol.LauncherRow
 	harnessProbeDir   string
 	// ConfigDir is the machine's aimebu config root; model detection uses a private detect/run-* folder unless the request names a folder.
-	ConfigDir      string
-	Journal        *Journal
+	ConfigDir string
+	Journal   *Journal
+	// AgentLogs holds what each agent's harness wrote to stderr, on this machine (supervisor/agent-logs/ beside the journal). The server
+	// reads a bounded tail of it for an owner or admin; nothing else leaves the machine.
+	AgentLogs      *agentlog.Store
 	Adapter        adapter.Adapter
 	PingInterval   time.Duration
 	TurnLimits     TurnLimitOverrides
@@ -64,6 +68,9 @@ func NewClient(machineID, machineKey, serverURL string, journal *Journal, implem
 		client.CapabilityReports = append(client.CapabilityReports, protocol.CapabilityReport{Tool: item.Tool, Version: item.Version, Environment: item.Environment, Flags: implementation.Capabilities(item.Version, item.Environment)})
 	}
 	client.Harnesses = defaultHarnesses()
+	if journal != nil && journal.path != "" {
+		client.AgentLogs = agentlog.New(filepath.Join(filepath.Dir(journal.path), "agent-logs"))
+	}
 	return client
 }
 
@@ -127,6 +134,7 @@ func (c *Client) refreshCapabilities() {
 }
 
 func (c *Client) Run(ctx context.Context) error {
+	go c.sweepAgentLogs(ctx)
 	for {
 		err := c.RunOnce(ctx)
 		if ctx.Err() != nil {
@@ -191,7 +199,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -367,6 +375,21 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				}
 			} else {
 				result.Details, _ = json.Marshal(info)
+			}
+			if err := c.send(ctx, conn, result); err != nil {
+				return err
+			}
+		case protocol.AgentLogRead:
+			result := protocol.Frame{V: protocol.Version, Type: protocol.AgentLogResult, ReqID: frame.ReqID, AgentID: frame.AgentID}
+			if c.AgentLogs == nil {
+				result.Code, result.Message = "no_log", "this machine keeps no agent output"
+			} else if page, err := c.AgentLogs.Tail(frame.AgentID, frame.LogLines, frame.LogMaxBytes); errors.Is(err, agentlog.ErrNoLog) {
+				result.Code, result.Message = "no_log", "no output has been captured for this agent on this machine"
+			} else if err != nil {
+				result.Code, result.Message = "log_failed", "the output could not be read"
+				c.report(fmt.Errorf("agent %s output log: %w", frame.AgentID, err))
+			} else {
+				result.Details, _ = json.Marshal(page)
 			}
 			if err := c.send(ctx, conn, result); err != nil {
 				return err
@@ -839,8 +862,22 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Ack, AgentID: delivery.AgentID, Generation: delivery.Generation, TurnID: delivery.TurnID, Ref: delivery.TurnID, Level: "accepted"}); err != nil {
 		return err
 	}
+	// The harness's stderr is kept in the agent's output log for as long as the turn runs. A log that cannot be opened is reported and the
+	// turn runs without one: it is a debugging aid, never a reason not to work.
+	var sink *agentlog.Turn
+	if c.AgentLogs != nil {
+		if opened, err := c.AgentLogs.OpenTurn(delivery.AgentID, delivery.TurnID, delivery.Generation, string(delivery.Mode)); err != nil {
+			c.report(fmt.Errorf("agent %s turn %s: output log: %w", delivery.AgentID, delivery.TurnID, err))
+		} else {
+			sink = opened
+			spec.StderrSink = sink
+		}
+	}
 	turn, err := c.Adapter.Start(ctx, spec)
 	if err != nil {
+		if sink != nil {
+			_ = sink.Close()
+		}
 		return c.reportStartFailure(ctx, conn, delivery, err)
 	}
 	c.mu.Lock()
@@ -852,7 +889,13 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 	}
 	release = false
 	tracked = false
-	go c.runTurn(ctx, delivery, turn)
+	go func() {
+		c.runTurn(ctx, delivery, turn)
+		if sink != nil {
+			// The adapter closes its event stream only after it has read the harness's stderr to the end, so nothing is written after this.
+			_ = sink.Close()
+		}
+	}()
 	return nil
 }
 
@@ -1116,5 +1159,28 @@ func (c *Client) handleControl(frame protocol.Frame) {
 func (c *Client) report(err error) {
 	if c.OnError != nil {
 		c.OnError(err)
+	}
+}
+
+// sweepAgentLogs removes agents' captured output that is older than its retention, or past the size cap, once at start and then daily.
+func (c *Client) sweepAgentLogs(ctx context.Context) {
+	if c.AgentLogs == nil {
+		return
+	}
+	run := func() {
+		if _, err := c.AgentLogs.Sweep(agentlog.DefaultMaxAge, agentlog.DefaultMaxTotal); err != nil {
+			c.report(fmt.Errorf("agent output logs: sweep: %w", err))
+		}
+	}
+	run()
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
 	}
 }

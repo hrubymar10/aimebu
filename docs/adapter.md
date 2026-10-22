@@ -43,7 +43,11 @@ affect roster order.
 On an exit without a final answer, both native and Docker adapters attach the
 last 4 KiB of launcher stderr to the exit evidence. Agent keys and bearer
 tokens are redacted before the tail enters the supervisor journal, server
-events, recovery inbox, or agent-card tooltip.
+events, recovery inbox, or agent-card tooltip. Every adapter also tees the
+whole of the harness's stderr into `TurnSpec.StderrSink` when the supervisor
+sets one (the per-agent output log, see
+[the supervisor](supervisor.md#agent-output)); a sink that fails never stops
+the stderr pipe from being read.
 Normal turns may carry `AgentToolsConfigPath`, a supervisor-owned 0600 MCP
 config file path. A real adapter can pass that file to its CLI's MCP config
 flag without placing the agent key in argv or the prompt. Docker variants read

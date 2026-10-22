@@ -12,6 +12,7 @@ export class MockAgentSource {
     }
     return [...this.agents.values()].filter(agent => agent.room_id === roomID).map(agent => ({ ...agent }));
   }
+  async output() { throw Object.assign(new Error('no output has been captured for this agent'), { status: 404, code: 'no_output' }); }
   async catalog() { return { tools: [
     { tool: 'fake', variant: 'test', label: 'Fake', cli_version: 'fixture-1', models: [{ id: 'test', label: 'Test' }, { id: 'fake-reviewer', label: 'Fake reviewer' }], available: true },
     { tool: 'claude', variant: 'native', label: 'Claude Code', cli_version: '', models: [{ id: 'haiku', label: 'Haiku' }], available: false, unavailable_reason: 'not offered by a connected machine' },
@@ -73,6 +74,10 @@ export class HttpAgentSource {
   roles() { return request('/api/roles'); }
   // Whether the project's home room takes only lead roles (Home room: lead only, on unless the project turned it off).
   async homeLeadOnly(projectID) { return (await request(`/api/projects/${encodeURIComponent(projectID)}/settings`)).home_lead_only !== false; }
+  // The end of what an agent's harness wrote to stderr, for a project's owner or an admin (the server refuses anyone else).
+  async output(roomID, agentID, lines = 200) {
+    return request(`/api/rooms/${encodeURIComponent(roomID)}/agents/${encodeURIComponent(agentID)}/output?lines=${encodeURIComponent(lines)}`);
+  }
   async list(roomID) {
     try {
       const cards = await request(`/api/rooms/${roomID}/agents`);

@@ -371,3 +371,46 @@ The standalone and embedded supervisors route turns by tool: the fake
 adapter provides a short echo for local demos, while installed Claude Code,
 Codex, and Pi CLIs use their native adapters. An unavailable CLI does not
 appear in the supervisor's catalog.
+
+## Agent output
+
+Each agent's harness writes to stderr while a turn runs (warnings, launcher
+errors, what a tool printed). The supervisor keeps that in a per-agent log on
+the machine that ran it: `supervisor/agent-logs/<agent-dir>/stderr.log`, with
+rotated backups `stderr.log.1` to `.3`. It is the harness's stderr only: stdout
+is its event stream (the whole conversation and every tool result) and is not
+captured.
+
+- **Capture.** The supervisor gives each turn a process-only sink
+  (`adapter.TurnSpec.StderrSink`, never journaled) and every adapter (Claude
+  Code, Codex, Pi and OpenCode, native and Docker) tees the harness's stderr
+  into it beside the 4 KiB tail it already keeps as exit evidence. A log that
+  cannot be opened is reported and the turn runs without one.
+- **Format.** One line per line of output, each prefixed with its UTC time,
+  and a marker line `=== turn <id> gen <n> <mode> ===` before a turn's first
+  line, so output of consecutive turns can be told apart. A turn that prints
+  nothing adds nothing. A line longer than 256 KiB is written in pieces, cut only
+  at a space or tab (so never inside a key or a multi-byte character); a line
+  with no space in it is held until it ends, and one that reaches 1 MiB with no
+  space at all is replaced by `[long token redacted; rest of line dropped]` and the rest of that line dropped, up to its end.
+- **Redaction.** Agent keys and bearer tokens are removed before a line is
+  written (the same rules as the exit-evidence tail), whichever way the stream
+  was cut into chunks, including a `Bearer` at the end of one line and its token
+  at the start of the next. Whatever else a tool printed is not recognisable,
+  which is why the log is only ever shown to an owner or admin.
+- **Where, and how big.** Files are 0600 in 0700 directories. An agent's
+  directory is named from a slug of its id and a hash of the whole id, never the
+  id itself, so nothing in an id can reach a path. A file rotates at 1 MiB with
+  three backups (4 MiB per agent).
+- **Retention.** A file whose last write is more than 14 days old is removed; if
+  all agents' logs together exceed 256 MiB the oldest files go first, except
+  anything written in the last five minutes or of an agent whose turn is
+  running. The supervisor sweeps at start and daily.
+- **Reading.** The output never leaves the machine on its own. The server asks
+  for a bounded tail (`agent_log_read`, see [the contract](contract.md)) when a
+  project's owner or an admin opens the Output section of an agent's profile, so
+  a remote machine that is offline, or a supervisor without
+  `supports_agent_logs`, simply has nothing to show (the web says which). An
+  agent that moved to another machine keeps its earlier output on the first.
+- **Prune.** `aimebu prune` leaves the logs; `aimebu prune -a` removes them with
+  the rest of `supervisor/` (see [pruning](prune.md)).

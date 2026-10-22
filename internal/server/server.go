@@ -33,6 +33,9 @@ import (
 
 type Server struct {
 	Store *store.Store
+	// outputReads is when each person last read an agent's output, for the limit on how often they may (see agentOutput).
+	outputMu    sync.Mutex
+	outputReads map[string][]time.Time
 	// exportPageFn reads one page of a room for the export (a test replaces it to fail partway; nil means the store's own), and exportPageSize
 	// is the page size (a test makes it small; 0 means 500).
 	exportMu       sync.RWMutex
@@ -261,6 +264,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/rooms/{room}/agents", s.Auth.RequireUser(http.HandlerFunc(s.roomAgents)))
 	mux.Handle("GET /api/rooms/{room}/agent-name", s.Auth.RequireUser(http.HandlerFunc(s.agentNameSuggestion)))
 	mux.Handle("GET /api/rooms/{room}/agents/{agent}/profile", s.Auth.RequireUser(http.HandlerFunc(s.agentProfile)))
+	mux.Handle("GET /api/rooms/{room}/agents/{agent}/output", s.Auth.RequireUser(http.HandlerFunc(s.agentOutput)))
 	mux.Handle("POST /api/rooms/{room}/agents", s.Auth.RequireUser(http.HandlerFunc(s.roomAgents)))
 	mux.Handle("GET /api/rooms/{room}/control", s.Auth.RequireUser(http.HandlerFunc(s.scopeControl)))
 	mux.Handle("POST /api/rooms/{room}/control", s.Auth.RequireUser(http.HandlerFunc(s.scopeControl)))

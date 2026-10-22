@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"io"
 
 	"github.com/goccy/go-json"
 )
@@ -48,6 +49,10 @@ type TurnSpec struct {
 	// the supervisor journal or its persisted turn spec.
 	AttachmentBaseURL string `json:"-"`
 	AttachmentBearer  string `json:"-"`
+	// StderrSink, when set, receives everything the harness writes to stderr, as it is written (the per-agent output log). It is
+	// supervisor-owned and process-only like the capabilities above: it is never journaled, and the adapter tees into it beside the tail
+	// it keeps as exit evidence. A sink that fails changes nothing for the turn.
+	StderrSink io.Writer `json:"-"`
 }
 
 type EventKind string

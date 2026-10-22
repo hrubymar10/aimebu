@@ -644,8 +644,10 @@ answer → receipt. On reconnect the supervisor reports running turns (even
 after a terminal answer receipt), unreceipted starts, and unacknowledged exits
 in `hello`; a turn with no `turn_start`
 record in an intact journal was never started (the only proof that permits
-requeue). Raw tool
-stdout/stderr per agent are kept alongside for debugging (retention 14 d).
+requeue). What each agent's
+harness writes to stderr (not stdout) is kept on the machine that ran it, beside
+the journal, for debugging (retention 14 d): see "Agent output" in
+`docs/supervisor.md`.
 
 ## 3c. Provider accounts (slice 1)
 
@@ -678,7 +680,7 @@ it never silently reruns a turn with uncertain effects.
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
   supports_path_probe?, supports_worktree?, supports_launchers?, supports_detect?,
-  supports_detect_dir?,
+  supports_detect_dir?, supports_agent_logs?,
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}]}`
@@ -741,6 +743,16 @@ it never silently reruns a turn with uncertain effects.
   Actions are `validate`, `ensure`, `remove`, and `inspect` (read-only: size,
   uncommitted file count, merge state, head commit and last activity, used by
   the cleanup); typed Git error codes are preserved in `worktree_result`.
+- S→M `agent_log_read{v,req_id,agent_id,log_lines?,log_max_bytes?}`; M→S
+  `agent_log_result{v,req_id,agent_id,details?,code?,message?}`. The server asks
+  the machine that ran an agent for the end of that agent's captured stderr,
+  only for a project's owner or an admin who asked (`GET
+  /api/rooms/{room}/agents/{agent}/output`), and only when the hello advertised
+  `supports_agent_logs`. `details` is `{text, bytes, files, truncated,
+  updated_at}`: at most `log_lines` lines (default 200, never more than 2000)
+  and `log_max_bytes` bytes (never more than 256 KiB), cut at a line start;
+  `code` is `no_log` when nothing was captured for the agent and `log_failed`
+  when it could not be read. The frame names an agent id, never a path.
 - M⇄S `ping/pong` every 15 s → `machine.last_seen`; offline after 60 s.
 - S→M `spawn{v, req_id, agent_id, generation, desired_rev,
   agent:{id, tool, variant, launcher_id?, model, provider}, agent_key,

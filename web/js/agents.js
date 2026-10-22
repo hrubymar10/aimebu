@@ -176,7 +176,7 @@ export class AgentsPanel {
     const node = this.nodes.get(id), agent = this.cards.get(id);
     if (!node || !agent) return;
     for (const other of this.nodes.values()) other.classList.toggle('expanded', other === node);
-    this.profileID = id; this.profileData = null; this.profileLoadedAt = 0;
+    this.profileID = id; this.profileData = null; this.profileLoadedAt = 0; this.output = null;
     this.panel.classList.add('profile-open');
     this.panelTitle.textContent = 'Agent profile'; this.profileClose.hidden = false;
     for (const [other, item] of this.nodes) { const button = item.querySelector('.agent-expand'); button.setAttribute('aria-expanded', String(other === id)); setGlyph(button, other === id ? 'close' : 'chevron-right', other === id ? 'Close agent profile' : 'Open agent profile'); }
@@ -186,7 +186,7 @@ export class AgentsPanel {
   }
   closeProfile() {
     if (!this.profileID) return;
-    const id = this.profileID; this.profileID = null; this.profileData = null;
+    const id = this.profileID; this.profileID = null; this.profileData = null; this.output = null;
     for (const item of this.nodes.values()) { item.classList.remove('expanded'); const button = item.querySelector('.agent-expand'); button.setAttribute('aria-expanded', 'false'); setGlyph(button, 'chevron-right', 'Open agent profile'); }
     this.panel.classList.remove('profile-open');
     this.panelTitle.textContent = 'Room members'; this.profileClose.hidden = true;
@@ -240,7 +240,64 @@ export class AgentsPanel {
       this.fact('Last 24 h', today), this.fact('Agent ID', agent.id, { mono: true }),
     ].filter(Boolean);
     const list = document.createElement('div'); list.className = 'profile-facts-list'; list.append(...rows);
+    // The Output section is kept across redraws (they run with every refresh of the member list): replacing it would close it under a
+    // person's click and drop where they were reading.
+    const output = box.querySelector('.profile-output');
     box.replaceChildren(list);
+    if (this.canReadOutput()) box.append(output && this.output?.agentID === agent.id ? output : this.outputSection(agent));
+  }
+  // What an agent's harness printed to stderr is for a project's owner or an admin: it can hold whatever its tools printed.
+  canReadOutput() { return !!this.room && (rights.admin || this.projectRole?.(this.room.project_id) === 'owner'); }
+  // The Output section of the profile: collapsed until asked for, read from the machine that ran the agent when it is opened or
+  // refreshed. It belongs to one agent and is built once; what it shows follows this.output (see updateOutput).
+  outputSection(agent) {
+    this.output = { agentID: agent.id, open: false, loading: false, text: '', status: '', loaded: false };
+    const state = this.output;
+    const section = document.createElement('details'); section.className = 'profile-output';
+    const summary = document.createElement('summary'); summary.textContent = 'Output';
+    const bar = document.createElement('div'); bar.className = 'profile-output-bar';
+    const refresh = document.createElement('button'); refresh.type = 'button'; refresh.className = 'icon-btn profile-output-refresh'; setGlyph(refresh, 'refresh', 'Refresh output');
+    const download = document.createElement('button'); download.type = 'button'; download.className = 'icon-btn profile-output-download'; setGlyph(download, 'arrow-down', 'Download output'); download.disabled = true;
+    bar.append(refresh, download);
+    const note = document.createElement('p'); note.className = 'profile-output-note';
+    note.textContent = 'The end of what this agent\'s harness printed to stderr, kept on its machine for 14 days. It can contain secrets from tool output.';
+    const text = document.createElement('pre'); text.className = 'profile-output-text'; text.tabIndex = 0; text.setAttribute('role', 'region'); text.setAttribute('aria-label', 'Agent output'); text.hidden = true;
+    const status = document.createElement('p'); status.className = 'profile-output-status'; status.setAttribute('role', 'status');
+    section.append(summary, bar, note, text, status);
+    const slug = agent.slug || agent.id;
+    section.addEventListener('toggle', () => { state.open = section.open; if (section.open && !state.loaded && !state.loading) this.loadOutput(agent.id); });
+    refresh.onclick = () => this.loadOutput(agent.id);
+    download.onclick = () => {
+      const url = URL.createObjectURL(new Blob([state.text], { type: 'text/plain;charset=utf-8' }));
+      const link = document.createElement('a'); link.href = url; link.download = `${slug}-output.txt`; document.body.append(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+    return section;
+  }
+  async loadOutput(agentID) {
+    const state = this.output, roomID = this.room?.id;
+    if (!state || state.agentID !== agentID || !roomID) return;
+    state.loading = true; this.updateOutput();
+    try {
+      const view = await this.source.output(roomID, agentID, 200);
+      if (state !== this.output) return;
+      state.text = view.text || ''; state.loaded = true;
+      state.status = !view.text ? 'No output has been captured for this agent yet.' : view.truncated ? 'Earlier output is not shown.' : '';
+    } catch (error) {
+      if (state !== this.output) return;
+      state.text = ''; state.loaded = error.code === 'no_output';
+      state.status = error.code === 'no_output' ? 'No output has been captured for this agent yet.' : (error.message || 'The output could not be read.');
+    } finally { if (state === this.output) { state.loading = false; this.updateOutput(); } }
+  }
+  // Brings the section on screen up to date with its state, in place.
+  updateOutput() {
+    const state = this.output, node = state && this.nodes.get(state.agentID), section = node?.querySelector('.profile-output');
+    if (!section || this.profileID !== state.agentID) return;
+    const text = section.querySelector('.profile-output-text');
+    text.textContent = state.text; text.hidden = !state.text;
+    section.querySelector('.profile-output-status').textContent = state.loading ? 'Loading…' : state.status;
+    section.querySelector('.profile-output-refresh').disabled = state.loading;
+    section.querySelector('.profile-output-download').disabled = !state.text;
   }
   card(agent) {
     const card = document.createElement('article'); card.className = 'agent-card'; card.dataset.agentId = agent.id;
@@ -258,8 +315,8 @@ export class AgentsPanel {
     const state = document.createElement('div'); state.className = 'agent-state';
     const stateLabel = document.createElement('span'); stateLabel.className = 'agent-state-label'; const stateAge = document.createElement('span'); stateAge.className = 'agent-state-age'; const statePill = document.createElement('span'); statePill.className = 'agent-state-pill'; statePill.append(stateLabel, document.createTextNode(' '), stateAge); state.append(statePill);
     title.append(dot, icon, emoji, identity, state, role, quick); card.append(title);
-    // A click anywhere on the row that is not one of its buttons opens the agent's profile.
-    card.onclick = event => { if (!event.target.closest('button, a, input, select, textarea')) expand.click(); };
+    // A click anywhere on the row that is not one of its buttons opens the agent's profile; the Output section (a disclosure and text to select) is not part of that.
+    card.onclick = event => { if (!event.target.closest('button, a, input, select, textarea, .profile-output')) expand.click(); };
     const meta = document.createElement('small'); meta.className = 'agent-meta'; card.append(meta);
     const roleUpdate = document.createElement('small'); roleUpdate.className = 'agent-role-update'; card.append(roleUpdate);
     const health = document.createElement('div'); health.className = 'agent-health'; card.append(health);

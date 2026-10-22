@@ -31,11 +31,12 @@ func TestPlainPruneKeepsServerDataAndMachineKeys(t *testing.T) {
 	writePruneFixture(t, filepath.Join(root, "supervisor", "machine.key"), "remote key")
 	writePruneFixture(t, filepath.Join(root, "supervisor", "journal.sqlite"), "journal")
 	writePruneFixture(t, filepath.Join(root, "supervisor", "agent-tools", "agent.json"), "agent key")
+	writePruneFixture(t, filepath.Join(root, "supervisor", "agent-logs", "agent-abc123", "stderr.log"), "what the harness printed")
 	var out, errOut bytes.Buffer
 	if got := pruneCommand(context.Background(), []string{"-y"}, strings.NewReader(""), &out, &errOut); got != 0 {
 		t.Fatalf("plain prune = %d, stderr=%q", got, errOut.String())
 	}
-	for _, path := range []string{dbPath, filepath.Join(serverDir, "host-machine.key"), filepath.Join(serverDir, "attachments", "image"), filepath.Join(root, "supervisor", "machine.key")} {
+	for _, path := range []string{dbPath, filepath.Join(serverDir, "host-machine.key"), filepath.Join(serverDir, "attachments", "image"), filepath.Join(root, "supervisor", "agent-logs", "agent-abc123", "stderr.log"), filepath.Join(root, "supervisor", "machine.key")} {
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("preserved %s: %v", path, err)
 		}
@@ -60,6 +61,7 @@ func TestPruneAllPreservesCredentialsAndOutsidePaths(t *testing.T) {
 	writePruneFixture(t, filepath.Join(root, "server", "aimebu.log"), "log")
 	writePruneFixture(t, filepath.Join(root, "server", "aimebu.log.1"), "older log")
 	writePruneFixture(t, filepath.Join(root, "supervisor", "machine.key"), "machine")
+	writePruneFixture(t, filepath.Join(root, "supervisor", "agent-logs", "agent-abc123", "stderr.log"), "what the harness printed")
 	writePruneFixture(t, filepath.Join(root, "unknown.txt"), "unknown")
 	if err := os.Symlink(outside, filepath.Join(root, "server", "outside-link")); err != nil {
 		t.Fatal(err)
@@ -79,7 +81,7 @@ func TestPruneAllPreservesCredentialsAndOutsidePaths(t *testing.T) {
 			t.Errorf("preserved %s = %q, %v", path, data, err)
 		}
 	}
-	for _, path := range []string{filepath.Join(root, "server", "aimebu.sqlite"), filepath.Join(root, "supervisor", "machine.key"), filepath.Join(root, "server", "outside-link")} {
+	for _, path := range []string{filepath.Join(root, "server", "aimebu.sqlite"), filepath.Join(root, "supervisor", "machine.key"), filepath.Join(root, "supervisor", "agent-logs"), filepath.Join(root, "server", "outside-link")} {
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Errorf("removed %s: %v", path, err)
 		}

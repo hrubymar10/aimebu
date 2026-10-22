@@ -4805,6 +4805,52 @@ async function main() {
     const realFacts = await first.$$eval(`[data-agent-id="${realAgentID}"] .profile-fact`, rows => Object.fromEntries(rows.map(row => [row.querySelector('.profile-fact-label').textContent, row.querySelector('.profile-fact-value').textContent])));
     for (const label of ['Machine', 'Project', 'Spawned', 'CWD', 'Agent ID']) assert.ok(realFacts[label], `the real profile lacks ${label}: ${JSON.stringify(realFacts)}`);
     assert.equal(realFacts['Agent ID'], realAgentID);
+    // The Output section (what the agent's harness printed to stderr) is for a project's owner or an admin, which this person is: it
+    // is there, collapsed, with named icon buttons, and reads from the server only when opened.
+    {
+      const section = `[data-agent-id="${realAgentID}"] .profile-output`;
+      assert.deepEqual(await first.$eval(section, el => ({ open: el.open, summary: el.querySelector('summary').textContent, buttons: [...el.querySelectorAll('button')].map(button => [button.getAttribute('aria-label'), button.title, button.textContent, !!button.querySelector('.icon-mask')]),
+        region: [el.querySelector('pre').getAttribute('role'), el.querySelector('pre').getAttribute('aria-label'), el.querySelector('pre').tabIndex] })),
+      { open: false, summary: 'Output', buttons: [['Refresh output', 'Refresh output', '', true], ['Download output', 'Download output', '', true]], region: ['region', 'Agent output', 0] }, 'the Output section is collapsed, with icon buttons that carry their names');
+      // Opened, it asks the server (the real supervisor keeps agent output; this agent has printed nothing to stderr).
+      await first.click(`${section} summary`);
+      assert.equal(await first.$eval(`[data-agent-id="${realAgentID}"]`, el => el.classList.contains('expanded')), true, 'opening the Output section keeps the profile open (a click inside it is not a click on the row)');
+      await waitDump(first, 'the Output section after opening it', selector => document.querySelector(`${selector} .profile-output-status`)?.textContent === 'No output has been captured for this agent yet.', async selector => {
+        const el = document.querySelector(selector), room = location.hash.slice(1), agent = el.closest('[data-agent-id]').dataset.agentId;
+        const direct = await fetch(`/api/rooms/${room}/agents/${agent}/output?lines=5`);
+        return { open: el.open, status: el.querySelector('.profile-output-status').textContent, text: el.querySelector('pre').textContent.slice(0, 200), direct: [direct.status, (await direct.text()).slice(0, 300)] };
+      }, section);
+      // What it shows is text, never markup: stub the route with a page of output, ask again, and read it back.
+      await first.evaluate(() => {
+        window.__outputAsked = [];
+        const inner = window.fetch;
+        window.fetch = (input, options) => /\/agents\/[^/]+\/output\?/.test(String(input))
+          ? (window.__outputAsked.push(String(input)), Promise.resolve(new Response(JSON.stringify({ agent_id: 'x', machine_id: 'm', text: '2026-10-22T12:00:00Z <img src=x onerror="window.__pwned=1">\n2026-10-22T12:00:01Z second line\n', bytes: 9999, files: 1, truncated: true, updated_at: '2026-10-22T12:00:01Z' }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+          : inner(input, options);
+      });
+      await first.click(`${section} .profile-output-refresh`);
+      await first.waitForFunction(selector => document.querySelector(`${selector} .profile-output-text`)?.textContent.includes('second line'), {}, section);
+      assert.deepEqual(await first.evaluate(selector => {
+        const el = document.querySelector(selector), pre = el.querySelector('pre');
+        return { asked: window.__outputAsked, markup: pre.querySelector('img') === null && !window.__pwned, shown: !pre.hidden, status: el.querySelector('.profile-output-status').textContent, wraps: pre.scrollWidth <= pre.clientWidth + 1, download: !el.querySelector('.profile-output-download').disabled };
+      }, section), { asked: [`/api/rooms/${roomID}/agents/${realAgentID}/output?lines=200`], markup: true, shown: true, status: 'Earlier output is not shown.', wraps: true, download: true }, 'the output is shown as text, and the route is asked with the line count');
+      // The download is the text, under the agent's name.
+      const saved = await first.evaluate(async selector => {
+        const taken = [];
+        const create = URL.createObjectURL, click = HTMLAnchorElement.prototype.click;
+        URL.createObjectURL = blob => { taken.push(blob); return 'blob:output-test'; };
+        let name = '';
+        HTMLAnchorElement.prototype.click = function () { name = this.download; };
+        document.querySelector(selector + ' .profile-output-download').click();
+        URL.createObjectURL = create; HTMLAnchorElement.prototype.click = click;
+        return { name, text: taken.length ? await taken[0].text() : '' };
+      }, section);
+      assert.ok(saved.name.endsWith('-output.txt') && saved.text.includes('second line') && saved.text.includes('<img src=x'), `the download: ${JSON.stringify(saved)}`);
+      // On a phone the section fits the panel.
+      await first.setViewport({ width: 390, height: 780 });
+      assert.ok(await first.evaluate(selector => { const box = document.querySelector(selector).getBoundingClientRect(); return box.width > 0 && box.right <= innerWidth + 1; }, section), 'the Output section overflows a phone');
+      await first.setViewport({ width: 1100, height: 720 });
+    }
     await domClick(first, '#agent-profile-close');
     // Room settings lists who is in the room, read-only: the people with their project role, the spawned agent with its role
     // emoji and label, and each singleton role with its holder. Server text stays inert.

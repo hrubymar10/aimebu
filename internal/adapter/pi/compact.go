@@ -74,7 +74,11 @@ func (a *Adapter) Compact(ctx context.Context, spec adapter.TurnSpec) (adapter.C
 			<-done
 		}
 	}()
-	go io.Copy(io.Discard, stderr)
+	if capture := adapter.JoinWriters(spec.StderrSink); capture != nil {
+		go io.Copy(capture, stderr)
+	} else {
+		go io.Copy(io.Discard, stderr)
+	}
 	if _, err := io.WriteString(stdin, `{"type":"compact"}`+"\n"); err != nil {
 		return adapter.Compaction{}, err
 	}

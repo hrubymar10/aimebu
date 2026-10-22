@@ -66,6 +66,10 @@ marked and the file is an orphan the next sweep collects.
 the counts of messages and rooms are unchanged and that the cleanup's source
 contains no statement that deletes either.
 
+Agents' captured stderr (`supervisor/agent-logs/`) is not part of this routine:
+the supervisor that wrote it removes files older than 14 days, and the oldest
+ones when all of them pass 256 MiB (see [the supervisor](supervisor.md#agent-output)). On the host machine it counts under **Agent runtime** in Health; a remote machine's does not.
+
 Aimebu's agent runtime state (`supervisor/`: adapter homes, sessions, its
 journal file), the v1 backup `.old-v1-bkp`, schema-migration copies under
 `server/backups/`, `switcher/` and `usages/` are reported in Health and left

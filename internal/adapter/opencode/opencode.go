@@ -157,7 +157,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		return nil, err
 	}
 	t := &turn{id: spec.TurnID, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted,
-		cmd: cmd, events: make(chan adapter.Event, 64), done: make(chan struct{})}
+		cmd: cmd, events: make(chan adapter.Event, 64), done: make(chan struct{}), stderrCapture: spec.StderrSink}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -257,6 +257,8 @@ type turn struct {
 	exit                adapter.ExitInfo
 	err                 error
 	next                int
+	// stderrCapture receives the harness's stderr as it is written (the per-agent output log); see adapter.TurnSpec.StderrSink.
+	stderrCapture io.Writer
 }
 
 // LastOutput is when the harness last wrote any stdout line, parsed or not,
@@ -367,8 +369,12 @@ func (t *turn) run(stdout, stderr io.Reader) {
 	defer close(t.events)
 	defer close(t.done)
 	var tail adapter.StderrTail
+	output := io.Writer(&tail)
+	if capture := adapter.JoinWriters(t.stderrCapture); capture != nil {
+		output = io.MultiWriter(&tail, capture)
+	}
 	stderrDone := make(chan struct{})
-	go func() { _, _ = io.Copy(&tail, stderr); close(stderrDone) }()
+	go func() { _, _ = io.Copy(output, stderr); close(stderrDone) }()
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	var candidate []byte

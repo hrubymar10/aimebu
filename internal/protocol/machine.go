@@ -39,6 +39,8 @@ const (
 	PathResult           = "path_result"
 	WorktreeOp           = "worktree_op"
 	WorktreeResult       = "worktree_result"
+	AgentLogRead         = "agent_log_read"
+	AgentLogResult       = "agent_log_result"
 )
 
 // Frame is the versioned machine socket envelope. Agent frames carry both
@@ -55,6 +57,7 @@ type Frame struct {
 	SupportsLaunchers    bool                 `json:"supports_launchers,omitempty"`
 	SupportsDetect       bool                 `json:"supports_detect,omitempty"`
 	SupportsDetectDir    bool                 `json:"supports_detect_dir,omitempty"`
+	SupportsAgentLogs    bool                 `json:"supports_agent_logs,omitempty"`
 	Capabilities         []CapabilityReport   `json:"capabilities,omitempty"`
 	Harnesses            []HarnessRow         `json:"harnesses,omitempty"`
 	HarnessSettings      []HarnessSetting     `json:"harness_settings,omitempty"`
@@ -86,6 +89,8 @@ type Frame struct {
 	BaseRef              string               `json:"base_ref,omitempty"`
 	WorktreeAction       string               `json:"worktree_action,omitempty"`
 	WorktreeForce        bool                 `json:"worktree_force,omitempty"`
+	LogLines             int                  `json:"log_lines,omitempty"`
+	LogMaxBytes          int                  `json:"log_max_bytes,omitempty"`
 	AttachmentBearer     string               `json:"attachment_bearer,omitempty"`
 	TurnID               string               `json:"turn_id,omitempty"`
 	Mode                 adapter.Mode         `json:"mode,omitempty"`
