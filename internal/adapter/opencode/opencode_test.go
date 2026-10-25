@@ -14,6 +14,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/adapter/adaptertest"
+	"github.com/hrubymar10/aimebu/internal/answer"
 )
 
 const testSession = "ses_eb9ff7679ffeTWs01Hgh3UTIS0"
@@ -558,5 +559,34 @@ func TestAnUnpricedStepLeavesTheCostUnknown(t *testing.T) {
 	}
 	if usage == nil || usage.TokensIn == nil || *usage.TokensIn != 4 || usage.CostEstimate != nil {
 		t.Fatalf("usage=%+v, want tokens and no cost", usage)
+	}
+}
+
+// A model that reasons in its reply text (GLM through an OpenAI-compatible provider) streams <think>…</think> ahead of the JSON in the same
+// text part. The adapter hands the text over as it came; the server's answer parser is what drops the reasoning.
+func TestReasoningPrefixedAnswerPassesTheParser(t *testing.T) {
+	root := t.TempDir()
+	path, _ := script(t, root, "cat "+fixture(t, "think.jsonl")+"\n")
+	a := &Adapter{Command: path, RuntimeRoot: filepath.Join(root, "runtime")}
+	turn, err := a.Start(context.Background(), spec(t, t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, exit, err := drain(t, turn)
+	if err != nil || !exit.TerminalEvent {
+		t.Fatalf("exit=%+v err=%v", exit, err)
+	}
+	var final []byte
+	for _, event := range events {
+		if event.Kind == adapter.EventFinalAnswer {
+			final = event.Answer
+		}
+	}
+	if !strings.HasPrefix(string(final), "<think>") {
+		t.Fatalf("final answer lost the stream's text: %q", final)
+	}
+	parsed, err := answer.Parse(final, false)
+	if err != nil || parsed.Messages == nil || len(parsed.Messages) != 0 {
+		t.Fatalf("parsed=%+v err=%v", parsed, err)
 	}
 }

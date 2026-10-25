@@ -1085,6 +1085,12 @@ CC/Codex, prompt-only on pi):
   fence for JSON validation on every adapter path; the wire and receipt retain
   the exact original text. Diagnostic `report_json` stores the validated JSON
   without the fence. Prose outside the fence or a second fence remains invalid.
+  A model that reasons in its reply text puts the reasoning ahead of the JSON as
+  an element such as `<think>…</think>`. The server also removes any number of
+  leading complete `<name>…</name>` elements (no attributes, any name, since the
+  JSON never starts with `<`) before the fence handling, with a receipt warning
+  that says how many; an element that never closes, one with attributes, and
+  text before it stay invalid, and the wire and receipt keep the original text.
   Malformed raw output remains available for a held receipt or correction
   request. The authorized delivery-failure Inbox shows the redacted parse
   error and bounded candidate excerpt; the room notice shows only the fixed

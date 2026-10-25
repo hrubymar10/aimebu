@@ -188,3 +188,41 @@ func TestParseRejectsMalformedOrUnboundedCandidate(t *testing.T) {
 		t.Fatalf("diagnostic room output accepted: %v", err)
 	}
 }
+
+func TestParseStripsLeadingReasoningBlocks(t *testing.T) {
+	raw, err := os.ReadFile("testdata/opencode_glm_think_prefixed.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(raw, false)
+	if err != nil || parsed.Messages == nil || len(parsed.Messages) != 0 || len(parsed.Warnings) != 1 {
+		t.Fatalf("think-prefixed candidate=%+v err=%v", parsed, err)
+	}
+	const body = `{"messages":[{"room":"room-1","body":"done <not reasoning>"}]}`
+	for name, text := range map[string]string{
+		"any element name":     "<reasoning>step one</reasoning>" + body,
+		"hyphenated name":      "<scratch-pad>x</scratch-pad>\n" + body,
+		"several blocks":       " <think>a</think>\n<analysis>b</analysis>\n" + body,
+		"newlines in block":    "<think>\nfirst\nsecond\n</think>\n\n" + body,
+		"before a JSON fence":  "<think>x</think>\n```json\n" + body + "\n```",
+		"markup inside answer": "<think>x</think>" + body,
+	} {
+		parsed, err := Parse([]byte(text), false)
+		if err != nil || len(parsed.Messages) != 1 || parsed.Messages[0].Body != "done <not reasoning>" {
+			t.Fatalf("%s: parsed=%+v err=%v", name, parsed, err)
+		}
+	}
+	for name, text := range map[string]string{
+		"never closed":          "<think>no end" + body,
+		"attributes":            `<think level="high">x</think>` + body,
+		"prose before":          "Answer: <think>x</think>" + body,
+		"text after the answer": "<think>x</think>" + body + "<think>y</think>",
+		"closing tag only":      "</think>" + body,
+		"reasoning only":        "<think>x</think>",
+		"unrelated markup":      "<b>bold</i>" + body,
+	} {
+		if _, err := Parse([]byte(text), false); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%s: accepted: %v", name, err)
+		}
+	}
+}

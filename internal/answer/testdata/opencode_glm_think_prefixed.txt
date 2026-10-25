@@ -1,0 +1,1 @@
+<think>The note says to remember a nonce and return a valid empty messages response. The nonce is carried by the conversation history itself, so I only need to output the JSON. Empty messages is valid.</think>{"messages":[]}

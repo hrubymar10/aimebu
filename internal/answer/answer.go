@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,11 +68,15 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 	if !utf8.Valid(raw) {
 		return candidate, fmt.Errorf("%w: invalid UTF-8", ErrInvalid)
 	}
+	raw, reasoning := stripLeadingReasoning(raw)
 	raw, unwrapped := unwrapJSONFence(raw)
 	normalized, warnings := tolerateMessageMetadata(raw)
 	normalized = numbersAsMessageRefs(normalized)
 	if unwrapped {
 		warnings = append(warnings, "surrounding Markdown JSON fence removed")
+	}
+	if reasoning > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d leading reasoning block(s) removed", reasoning))
 	}
 	decoder := json.NewDecoder(bytes.NewReader(normalized))
 	decoder.DisallowUnknownFields()
@@ -199,6 +204,37 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 	}
 	return candidate, nil
 }
+
+// A model that reasons in its reply text (GLM and Qwen over an OpenAI-compatible provider, for one) puts the reasoning ahead of the
+// answer as an element such as <think>…</think>. The answer is a JSON object, so it never starts with "<": whatever precedes it that is a
+// complete <name>…</name> element is not part of it, whatever the name. Only leading elements go; text elsewhere, an element that never
+// closes, and an element with attributes stay invalid, so the rest of the answer is still strictly decoded.
+func stripLeadingReasoning(raw []byte) ([]byte, int) {
+	removed := 0
+	for {
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) < 3 || trimmed[0] != '<' {
+			return raw, removed
+		}
+		end := bytes.IndexByte(trimmed, '>')
+		if end < 2 {
+			return raw, removed
+		}
+		name := trimmed[1:end]
+		if !reasoningTag.Match(name) {
+			return raw, removed
+		}
+		closing := []byte("</" + string(name) + ">")
+		at := bytes.Index(trimmed[end+1:], closing)
+		if at < 0 {
+			return raw, removed
+		}
+		raw = trimmed[end+1+at+len(closing):]
+		removed++
+	}
+}
+
+var reasoningTag = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
 // Accept one complete Markdown fence around the JSON document. Prose outside
 // the fence, another fence, and arbitrary language tags remain invalid JSON.
