@@ -25,7 +25,7 @@ const Switch = ({ label, checked, onChange }) => html`
 `;
 
 // Drafts survive other cards' refreshes; a save clears its draft only if nothing was typed meanwhile.
-export function HarnessCard({ machineID, harness, formOpen, modelsOpen, onFormOpen, onModelsOpen, draft, onDraft, modelFailure, onModelFailure, onReload, onRefresh, onModelsSaved, onSnapshot, onDirty }) {
+export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen, draft, onDraft, roles, defaults, onRoleChanged, modelFailure, onModelFailure, onReload, onRefresh, onModelsSaved, onStale, onSnapshot, onDirty }) {
   const alive = useAlive();
   const edits = draft?.form ?? null;
   const setEdits = update => onDraft('form', update);
@@ -54,7 +54,7 @@ export function HarnessCard({ machineID, harness, formOpen, modelsOpen, onFormOp
   const [pendingEnabled, setPendingEnabled] = useState(null);
   const enabled = pendingEnabled ?? !!harness.enabled;
   const status = harnessStatus(harness);
-  const formID = `launcher-form-${harness.id}`, modelsID = `harness-models-${harness.id}`;
+  const formID = `launcher-form-${harness.id}`;
 
   const save = async event => {
     event.preventDefault();
@@ -109,7 +109,7 @@ export function HarnessCard({ machineID, harness, formOpen, modelsOpen, onFormOp
   };
 
   return html`
-    <article class="machine-harness settings-group" data-tool=${harness.tool} data-variant=${harness.variant}>
+    <article class="machine-harness settings-group" id=${`harness-card-${harness.id}`} data-harness-id=${harness.id} data-tool=${harness.tool} data-variant=${harness.variant} role="tabpanel" aria-labelledby=${`harness-tab-${harness.id}`} hidden=${!selected}>
       <div class="settings-row machine-harness-summary">
         <div class="settings-row-info">
           <div class="machine-harness-title">
@@ -131,13 +131,6 @@ export function HarnessCard({ machineID, harness, formOpen, modelsOpen, onFormOp
             aria-label=${`Enable ${harness.label || harness.tool}`}
             onChange=${event => toggle(event.currentTarget.checked)}
           />Enabled</label>
-          <button
-            type="button"
-            class="btn machine-harness-models-toggle"
-            aria-expanded=${String(modelsOpen)}
-            aria-controls=${modelsID}
-            onClick=${() => onModelsOpen(harness.id, !modelsOpen)}
-          >Models (${(harness.models || []).length})</button>
           <${IconButton}
             name=${formOpen ? 'close' : 'edit'}
             label=${`${formOpen ? 'Close settings for' : 'Edit'} ${harnessLabel(harness)}`}
@@ -189,10 +182,13 @@ export function HarnessCard({ machineID, harness, formOpen, modelsOpen, onFormOp
         harness=${harness}
         draft=${draft?.models ?? null}
         setDraft=${update => onDraft('models', update)}
-        hidden=${!modelsOpen}
+        roles=${roles}
+        defaults=${defaults}
+        onRoleChanged=${onRoleChanged}
         failure=${modelFailure}
         onFailure=${onModelFailure}
         onSaved=${onModelsSaved}
+        onStale=${onStale}
         onSnapshot=${onSnapshot}
         onDirty=${onDirty}
       />

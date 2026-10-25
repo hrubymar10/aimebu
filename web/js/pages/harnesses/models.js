@@ -3,15 +3,18 @@ import { request } from '../../api.js';
 import { IconButton } from '../../components/icon-button.js';
 import { useAlive } from '../../hooks/use-alive.js';
 import { useDirty } from '../../hooks/use-dirty.js';
+import { positionOf, canAddDefault } from '../../role-defaults-logic.js';
 import { DetectionDetails } from './detection-details.js';
+import { RoleSwitch } from './role-switch.js';
 import { addModel, addFoundModels, removeModel, setDefaultModel, updateModel, modelsError, detectionFailure } from './model.js';
 
 const modelsURL = (machineID, harnessID) => `/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harnessID)}/models`;
 
-export function ModelsPanel({ machineID, harness, draft, setDraft, hidden, failure, onFailure, onSaved, onSnapshot, onDirty }) {
+// `draft` is { models, rev } while the list has unsaved edits: `rev` is the revision of the stored list the draft was started from, which the save sends back so a list changed meanwhile is refused.
+export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaults, onRoleChanged, failure, onFailure, onSaved, onStale, onSnapshot, onDirty }) {
   const alive = useAlive();
   const revision = useRef(0);
-  const models = draft || harness.models || [];
+  const models = draft?.models || harness.models || [];
   const dirty = draft !== null;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -25,7 +28,7 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, hidden, failu
   const slugInput = useRef(null), dirInput = useRef(null);
   const edit = change => {
     revision.current++;
-    setDraft(current => change(current || harness.models || []));
+    setDraft(current => ({ models: change(current?.models || harness.models || []), rev: current?.rev ?? harness.models_rev ?? '' }));
     setStatus('');
   };
   useDirty(onDirty, `models:${harness.id}`, dirty);
@@ -105,17 +108,40 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, hidden, failu
     setSaving(true);
     const started = revision.current, sent = models;
     try {
-      await request(modelsURL(machineID, harness.id), { method: 'PUT', body: { models: sent } });
+      const saved = await request(modelsURL(machineID, harness.id), { method: 'PUT', body: { models: sent, expected_rev: draft?.rev ?? harness.models_rev ?? '' } });
       if (!alive()) return;
+      // What is stored now has this revision: edits made while the save was in flight, and the next save, start from it, not from the
+      // revision the draft began with (which the server has just moved on from).
+      const rev = saved?.models_rev;
+      if (rev !== undefined) setDraft(current => current && { ...current, rev });
       const refreshed = await onSaved(harness.id);
       if (!alive()) return;
-      if (!refreshed) onSnapshot(harness.id, { models: sent });
+      if (!refreshed) onSnapshot(harness.id, rev === undefined ? { models: sent } : { models: sent, models_rev: rev });
       if (revision.current === started) setDraft(null);
     } catch (failure) {
-      if (alive()) setError(failure.message || 'Could not save the models');
+      if (!alive()) return;
+      if (failure.status === 409) onStale(harness);
+      else setError(failure.message || 'Could not save the models');
     } finally {
       if (alive()) setSaving(false);
     }
+  };
+
+  // The role defaults of one model, as labelled switches. They save on their own (a role's defaults are the role's, not the harness's),
+  // so a model that is not saved yet cannot be ticked.
+  const toggleRole = async (role, model, on) => {
+    setError('');
+    const live = defaults.roles.find(item => item.id === role.id) || role;
+    try {
+      await defaults.setModel(live, harness.id, model.slug, on);
+    } catch (problem) {
+      if (alive()) setError(problem.message || 'Could not save the role');
+    }
+    onRoleChanged();
+  };
+  const roleState = (role, model) => {
+    const at = positionOf(role, harness.id, model.slug), stored = (harness.models || []).some(item => item.slug === model.slug), full = at < 0 && !canAddDefault(role);
+    return { on: at >= 0, position: at + 1, total: (role.default_agents || []).length, disabled: !stored || full, reason: stored ? (full ? `${role.label} has the most defaults it can hold` : '') : 'Save the models first' };
   };
 
   const onDirKey = event => {
@@ -126,49 +152,58 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, hidden, failu
   };
 
   return html`
-    <div class="harness-models" id=${`harness-models-${harness.id}`} hidden=${hidden}>
+    <div class="harness-models" id=${`harness-models-${harness.id}`}>
       <h4>Models of ${harness.label || harness.name}</h4>
       <div class="harness-model-rows">
         ${!models.length && html`<p class="settings-intro">No models yet: this harness cannot start an agent until one is added.</p>`}
         ${models.map(model => html`
-          <div class="harness-model-row" data-slug=${model.slug} key=${model.slug}>
-            <label class=${`harness-model-default${model.default ? ' is-default' : ''}`} title=${model.default ? 'Default model' : 'Make default'}>
+          <div class="harness-model-row harness-detail-row" data-slug=${model.slug} key=${model.slug}>
+            <div class="harness-detail-top">
+              <label class=${`harness-model-default${model.default ? ' is-default' : ''}`} title=${model.default ? 'Default model' : 'Make default'}>
+                <input
+                  type="radio"
+                  name=${`default-${harness.id}`}
+                  checked=${!!model.default}
+                  aria-label=${model.default ? `${model.label || model.slug} is the default model` : `Make ${model.label || model.slug} the default`}
+                  onChange=${() => edit(list => setDefaultModel(list, model.slug))}
+                />
+                <svg class="harness-model-star" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/star.svg#star" /></svg>
+                <span class="harness-model-default-text">${model.default ? 'Default' : ''}</span>
+              </label>
+              <code class="harness-model-slug">${model.slug}</code>
+              <${IconButton} name="trash" label=${`Remove ${model.slug}`} danger className="harness-model-remove" onClick=${() => edit(list => removeModel(list, model.slug))} />
+            </div>
+            <div class="harness-detail-fields">
               <input
-                type="radio"
-                name=${`default-${harness.id}`}
-                checked=${!!model.default}
-                aria-label=${model.default ? `${model.label || model.slug} is the default model` : `Make ${model.label || model.slug} the default`}
-                onChange=${() => edit(list => setDefaultModel(list, model.slug))}
+                type="text"
+                name="label"
+                maxLength="80"
+                value=${model.label}
+                aria-label=${`Label of ${model.slug}`}
+                onInput=${event => {
+                  const label = event.currentTarget.value;
+                  edit(list => updateModel(list, model.slug, { label }));
+                }}
               />
-              <svg class="harness-model-star" viewBox="0 0 24 24" aria-hidden="true"><use href="/icons/star.svg#star" /></svg>
-              <span class="harness-model-default-text">${model.default ? 'Default' : ''}</span>
-            </label>
-            <code class="harness-model-slug">${model.slug}</code>
-            <input
-              type="text"
-              name="label"
-              maxLength="80"
-              value=${model.label}
-              aria-label=${`Label of ${model.slug}`}
-              onInput=${event => {
-                const label = event.currentTarget.value;
-                edit(list => updateModel(list, model.slug, { label }));
-              }}
-            />
-            <input
-              type="text"
-              name="note"
-              maxLength="280"
-              placeholder="Note (optional)"
-              title=${model.note || ''}
-              value=${model.note || ''}
-              aria-label=${`Note of ${model.slug}`}
-              onInput=${event => {
-                const note = event.currentTarget.value;
-                edit(list => updateModel(list, model.slug, { note }));
-              }}
-            />
-            <${IconButton} name="trash" label=${`Remove ${model.slug}`} danger className="harness-model-remove" onClick=${() => edit(list => removeModel(list, model.slug))} />
+              <input
+                type="text"
+                name="note"
+                maxLength="280"
+                placeholder="Note (optional)"
+                title=${model.note || ''}
+                value=${model.note || ''}
+                aria-label=${`Note of ${model.slug}`}
+                onInput=${event => {
+                  const note = event.currentTarget.value;
+                  edit(list => updateModel(list, model.slug, { note }));
+                }}
+              />
+            </div>
+            <div class="harness-detail-roles" role="group" aria-label=${`Default for roles: ${model.label || model.slug}`}>
+              ${roles.map(role => html`
+                <${RoleSwitch} key=${role.id} role=${role} modelLabel=${model.label || model.slug} state=${roleState(role, model)} onToggle=${on => toggleRole(role, model, on)} />
+              `)}
+            </div>
           </div>
         `)}
       </div>

@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, signal, batch } from '../.
 import { request } from '../../api.js';
 import { useAlive } from '../../hooks/use-alive.js';
 import { launcherReady } from '../../harness-offer.js';
-import { harnessFromLauncher, createBody, initialModels, detectNotes, detectionFailure, machineSummary } from './model.js';
+import { RoleDefaults, ROLE_DEFAULTS_CHANGED } from '../../role-defaults.js';
+import { harnessFromLauncher, createBody, initialModels, detectNotes, detectionFailure, machineSummary, chosenHarness, staleModelsMessage, defaultLabel } from './model.js';
 
 const launchersURL = machineID => `/api/machines/${encodeURIComponent(machineID)}/launchers`;
 const toggled = (set, id, open) => {
@@ -23,16 +24,25 @@ const createState = () => ({
   activity: signal(null),
   detecting: signal(false),
   openForms: signal(new Set()),
-  openModels: signal(new Set()),
+  // The harness whose detail is shown beside the list.
+  selected: signal(''),
+  // The global roles with their default agents, and why they could not be read or saved.
+  roles: signal([]),
+  roleError: signal(''),
+  // Harnesses of the other machines that a role default names: launcher id -> { machine, label, models }.
+  others: signal(new Map()),
   modelFailures: signal(new Map()),
   // Unsaved edits by harness id ({ form, models }), dropped with the list they belong to.
   drafts: signal(new Map()),
 });
 
 // Answers for another machine, an earlier opening or an unmounted page are dropped (generation and view tokens).
-export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {} }) {
+export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}, isHidden = () => false }) {
   const alive = useAlive();
   const state = useMemo(createState, []);
+  const defaults = useMemo(() => new RoleDefaults(), []);
+  // The unknown launcher ids the other machines were last read for, so the same ones are not asked for twice.
+  const otherTried = useRef('');
   const generation = useRef(0);
   const view = useRef(0);
   const current = token => alive() && token === view.current;
@@ -65,9 +75,11 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
       const list = (response?.launchers || []).map(harnessFromLauncher);
       batch(() => {
         state.rows.value = list;
+        state.selected.value = chosenHarness(list, state.selected.peek());
         state.activity.value = response?.activity || [];
       });
       if (list.some(row => launcherReady(row.enabled, row.models))) onReady();
+      loadOtherHarnesses();
       return true;
     } catch (problem) {
       if (ticket === generation.current && alive()) setError(problem.message || 'Could not load harnesses');
@@ -80,12 +92,15 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
     const ticket = ++generation.current;
     batch(() => {
       setError('');
+      state.roleError.value = '';
       state.summary.value = 'Loading machines…';
+      state.others.value = new Map();
+      otherTried.current = '';
       clearList();
     });
     closePanel();
     try {
-      const answer = await request('/api/machines');
+      const [answer] = await Promise.all([request('/api/machines'), loadRoles()]);
       if (ticket !== generation.current || !alive()) return;
       const list = Array.isArray(answer) ? answer : answer?.machines || [];
       const previous = state.machineID.peek();
@@ -115,6 +130,7 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
   const chooseMachine = id => {
     view.current++;
     state.machineID.value = id;
+    otherTried.current = '';
     closePanel();
     load(id);
   };
@@ -186,7 +202,7 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
     state.rows.value = state.rows.peek()?.map(item => item.id === id ? { ...item, ...changes } : item);
   };
   const setFormOpen = (id, open) => { state.openForms.value = toggled(state.openForms.peek(), id, open); };
-  const setModelsOpen = (id, open) => { state.openModels.value = toggled(state.openModels.peek(), id, open); };
+  const selectHarness = id => { state.selected.value = id; };
   // `update` is a value or a function of the current one, so two edits before the next render both count.
   const setDraft = (id, kind, update) => {
     const next = new Map(state.drafts.peek());
@@ -196,8 +212,70 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
     state.drafts.value = next;
   };
 
+  const dropDraft = id => {
+    const next = new Map(state.drafts.peek());
+    next.delete(id);
+    state.drafts.value = next;
+  };
+  // The list changed since a draft was started (another tab, another person): show what is stored now, and say so.
+  const staleModels = async harness => {
+    const id = state.machineID.peek();
+    dropDraft(harness.id);
+    await load(id);
+    if (alive() && state.machineID.peek() === id) setError(staleModelsMessage(harness));
+  };
+
+  // The roles are the store's list, read and saved through the same /api/roles as Settings -> Roles; the signal holds a copy to draw from.
+  const syncRoles = () => { state.roles.value = [...defaults.roles]; };
+  async function loadRoles() {
+    try {
+      await defaults.load();
+    } catch (problem) {
+      defaults.roles = [];
+      if (alive()) state.roleError.value = problem.message || 'Could not load the roles';
+    }
+    if (alive()) syncRoles();
+  }
+  // A role default names its harness and model by ids. On the machine shown they are read from the harnesses already loaded; defaults on
+  // other machines need those machines' harnesses once, and only when some role has such a default. They are not asked for again for the
+  // same unknown ids: a redraw repeats nothing, a harness that appears later (or a machine change) is looked for once more.
+  async function loadOtherHarnesses() {
+    const known = id => state.rows.peek()?.some(row => row.id === id) || state.others.peek().has(id);
+    const missing = [...new Set(state.roles.peek().flatMap(role => (role.default_agents || []).map(item => item.launcher_id)))].filter(id => !known(id)).sort();
+    const key = missing.join(',');
+    if (!missing.length || key === otherTried.current) return;
+    otherTried.current = key;
+    const machineID = state.machineID.peek();
+    const found = new Map();
+    await Promise.all(state.machines.peek().filter(machine => machine.id !== machineID).map(async machine => {
+      try {
+        const response = await request(launchersURL(machine.id));
+        for (const row of response?.launchers || []) found.set(row.config.id, { machine: machine.name || machine.id, label: row.config.label || row.config.name, models: row.models || [] });
+      } catch { /* those entries are then named by their ids */ }
+    }));
+    if (alive() && state.machineID.peek() === machineID) state.others.value = new Map([...state.others.peek(), ...found]);
+  }
+  const roleChanged = () => {
+    syncRoles();
+    loadOtherHarnesses();
+  };
+  const labelOfDefault = item => {
+    const row = state.rows.value?.find(entry => entry.id === item.launcher_id);
+    const machine = state.machines.value.find(entry => entry.id === state.machineID.value);
+    return defaultLabel(item, row && { harness: row, machine: machine?.name || machine?.id }, state.others.value.get(item.launcher_id));
+  };
+  // Role defaults saved from Settings -> Roles show here without reopening the page; ours, and any while the page is hidden, are skipped.
+  useEffect(() => {
+    const listener = event => {
+      if (event.detail?.source === defaults || isHidden()) return;
+      loadRoles().then(() => alive() && loadOtherHarnesses());
+    };
+    document.addEventListener(ROLE_DEFAULTS_CHANGED, listener);
+    return () => document.removeEventListener(ROLE_DEFAULTS_CHANGED, listener);
+  }, []);
+
   return {
-    state, alive, load, chooseMachine, detect, addDetected, addByHand,
-    setModelFailure, patchRow, setFormOpen, setModelsOpen, setDraft,
+    state, alive, load, chooseMachine, detect, addDetected, addByHand, defaults, roleChanged, labelOfDefault,
+    setModelFailure, patchRow, setFormOpen, selectHarness, setDraft, staleModels,
   };
 }

@@ -6,13 +6,15 @@ import { AddHarnessForm } from './add-harness-form.js';
 import { DetectPanel } from './detect-panel.js';
 import { useHarnesses } from './use-harnesses.js';
 import { DetectionDetails } from './detection-details.js';
+import { MasterList } from './master-list.js';
+import { RolePanel } from './role-panel.js';
 
-export function HarnessesPage({ openToken, wanted, onDirty = () => {}, onView = () => {}, onReady = () => {} }) {
+export function HarnessesPage({ openToken, wanted, onDirty = () => {}, onView = () => {}, onReady = () => {}, isHidden = () => false }) {
   const [panel, setPanel] = useState(null);
   const panelRef = useRef(null);
-  const data = useHarnesses({ openToken, wanted, closePanel: () => setPanel(null), onReady });
+  const data = useHarnesses({ openToken, wanted, closePanel: () => setPanel(null), onReady, isHidden });
   const { state, load } = data;
-  const machineID = state.machineID.value, rows = state.rows.value, openForms = state.openForms.value, openModels = state.openModels.value;
+  const machineID = state.machineID.value, rows = state.rows.value, openForms = state.openForms.value, selected = state.selected.value, roles = state.roles.value;
   useEffect(() => { if (panel) panelRef.current?.querySelector('input,select,button')?.focus(); }, [panel]);
   useLayoutEffect(() => { onView(machineID); }, [machineID]);
 
@@ -22,23 +24,31 @@ export function HarnessesPage({ openToken, wanted, onDirty = () => {}, onView = 
   };
 
   const cardProps = harness => ({
-    machineID, harness, key: harness.id,
-    formOpen: openForms.has(harness.id), modelsOpen: openModels.has(harness.id),
+    machineID, harness, key: harness.id, selected: harness.id === selected,
+    formOpen: openForms.has(harness.id),
     onFormOpen: data.setFormOpen,
-    onModelsOpen: data.setModelsOpen,
+    roles, defaults: data.defaults, onRoleChanged: data.roleChanged, onStale: data.staleModels,
     draft: state.drafts.value.get(harness.id),
     onDraft: (kind, update) => data.setDraft(harness.id, kind, update),
     modelFailure: state.modelFailures.value.get(harness.id) || '',
     onModelFailure: data.setModelFailure,
     onReload: () => load(machineID),
     onRefresh: () => load(machineID, { keepError: true }),
-    onModelsSaved: id => {
-      data.setModelsOpen(id, true);
-      return load(machineID);
-    },
+    onModelsSaved: () => load(machineID),
     onSnapshot: data.patchRow,
     onDirty,
   });
+
+  // A role save that fails shows why; either way the views redraw from what the store holds.
+  const runRole = async action => {
+    state.roleError.value = '';
+    try {
+      await action();
+    } catch (problem) {
+      if (data.alive()) state.roleError.value = problem.message || 'Could not save the role';
+    }
+    data.roleChanged();
+  };
 
   return html`
     <${Fragment}>
@@ -80,10 +90,19 @@ export function HarnessesPage({ openToken, wanted, onDirty = () => {}, onView = 
           />
         `}
       </div>
-      <div id="harnesses-list">
+      <div class="harness-list" id="harnesses-list">
         ${rows && !rows.length && html`<p class="settings-intro">No harnesses on this machine yet. Add one, or auto-detect what is installed.</p>`}
-        ${rows?.map(harness => html`<${HarnessCard} ...${cardProps(harness)} />`)}
+        ${rows?.length > 0 && html`
+          <div class="harness-split">
+            <${MasterList} rows=${rows} selected=${selected} onSelect=${data.selectHarness} />
+            <div class="harness-detail">${rows.map(harness => html`<${HarnessCard} ...${cardProps(harness)} />`)}</div>
+          </div>
+        `}
       </div>
+      <div class="harness-roles-host" id="harness-roles-host">
+        ${rows && html`<${RolePanel} roles=${roles} labelOf=${data.labelOfDefault} store=${data.defaults} run=${runRole} />`}
+      </div>
+      <p class="error" role="alert">${state.roleError.value}</p>
       <h4 class="machine-activity-heading">Activity</h4>
       <div id="machine-activity"><${Activity} activity=${state.activity.value} /></div>
     <//>

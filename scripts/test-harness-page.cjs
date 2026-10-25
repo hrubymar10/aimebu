@@ -48,7 +48,7 @@ async function main() {
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`${origin}/fixture.html`);
-    await page.evaluate(installFetch, { 'GET /api/machines': machines, 'GET /api/machines/mch_a/launchers': { launchers: launchers.mch_a, activity: [] }, 'GET /api/machines/mch_b/launchers': { launchers: launchers.mch_b, activity: [] }, ...auto });
+    await page.evaluate(installFetch, { 'GET /api/machines': machines, 'GET /api/roles': [], 'GET /api/machines/mch_a/launchers': { launchers: launchers.mch_a, activity: [] }, 'GET /api/machines/mch_b/launchers': { launchers: launchers.mch_b, activity: [] }, ...auto });
     await page.evaluate(async variant => {
       const dialog = document.querySelector('#settings-dialog');
       if (variant) {
@@ -138,14 +138,13 @@ async function main() {
       assert.equal(await page.evaluate(index => window.__requests[index].body.command, again), '/opt/new', 'the next save sends the saved value, not the old one');
       await answer(page, again, 200, {});
       await answer(page, await pending(page, 'GET', '/api/machines/mch_a/launchers'), 200, { launchers: launchers.mch_a, activity: [] });
-      await page.$eval(`${card('a2')} .machine-harness-models-toggle`, el => el.click());
       await type(page, `${card('a2')} .harness-model-add [name=slug]`, 'model-one');
       await page.$eval(`${card('a2')} .harness-model-add button[type=submit]`, el => el.click());
       await page.waitForSelector(`${card('a2')} .harness-model-row[data-slug="model-one"]`);
       await page.$eval(`${card('a2')} .harness-models .btn-primary`, el => el.click());
       await answer(page, await pending(page, 'PUT', '/api/machines/mch_a/launchers/a2/models'), 200, {});
       await answer(page, await pending(page, 'GET', '/api/machines/mch_a/launchers'), 500, { message: 'read failed' });
-      await page.waitForFunction(sel => document.querySelector(`${sel} .machine-harness-models-toggle`).textContent === 'Models (1)', {}, card('a2'));
+      await page.waitForFunction(sel => document.querySelector('#harness-tab-a2 .harness-master-count').textContent === '1', {});
       await settle(page);
       assert.ok(await page.$(`${card('a2')} .harness-model-row[data-slug="model-one"]`), 'a failed re-read keeps the saved model list');
       assert.deepEqual(await page.evaluate(() => [...window.__page.unsaved]), [], 'what was saved is not reported as unsaved (no draft left)');
@@ -190,7 +189,6 @@ async function main() {
       const detectPath = '/api/machines/mch_a/launchers/a1/models/detect';
       const detects = () => page.evaluate(path => window.__requests.filter(request => request.path === path).length, detectPath);
       const panel = `${card('a1')} .harness-models`;
-      await page.$eval(`${card('a1')} .machine-harness-models-toggle`, el => el.click());
       await page.$eval(`${panel} .harness-model-detect`, el => el.click());
       const first = await pending(page, 'POST', detectPath);
       await page.$eval(panel, el => {
@@ -311,8 +309,6 @@ async function main() {
       modelled.models = [{ slug: 'one', label: 'One', note: 'full note', default: true }, { slug: 'two', label: 'Two', note: '', default: false }];
       const page = await mount({ 'GET /api/machines/mch_a/launchers': { launchers: [modelled, launchers.mch_a[1]], activity: [] } });
       assert.deepEqual(await page.$eval(card('a1'), el => [el.querySelector('.machine-harness-edit').title, !!el.querySelector('.machine-harness-edit .icon-mask-edit'), el.querySelector('.machine-harness-remove').getAttribute('aria-label'), !!el.querySelector('.machine-harness-remove .icon-mask-trash')]), ['Edit Codex', true, 'Remove Codex', true], 'card actions are labelled icons');
-      await page.$eval(`${card('a1')} .machine-harness-models-toggle`, el => el.click());
-      await page.waitForFunction(selector => !document.querySelector(`${selector} .harness-models`).hidden, {}, card('a1'));
       assert.deepEqual(await page.$$eval(`${card('a1')} .harness-model-row`, rows => rows.map(row => [row.querySelector('.harness-model-star use').getAttribute('href'), row.querySelector('.harness-model-default-text').textContent, row.querySelector('.harness-model-default').title, row.querySelector('.harness-model-remove').getAttribute('aria-label'), !!row.querySelector('.icon-mask-trash')])), [['/icons/star.svg#star', 'Default', 'Default model', 'Remove one', true], ['/icons/star.svg#star', '', 'Make default', 'Remove two', true]], 'model rows: star default and trash');
       assert.equal(await page.$eval(`${card('a1')} .harness-model-row [name=note]`, el => el.title), 'full note', 'the full note is a tooltip');
       assert.deepEqual(await page.$eval(`${card('a1')} .harness-model-detect`, el => [el.title, !!el.querySelector('.icon-mask-refresh'), el.textContent.trim()]), ['Auto-detect models', true, ''], 'model detection is an icon');
@@ -344,9 +340,9 @@ async function main() {
     const drafts = [
       { name: 'an Edit form', setup: async page => { await page.$eval(`${card('a1')} .machine-harness-edit`, el => el.click()); await type(page, `${card('a1')} [name=label]`, 'draft'); }, kept: page => page.$eval(`${card('a1')} [name=label]`, el => el.value === 'draft') },
       { name: 'the Add harness form', setup: async page => { await page.$eval('#harness-add', el => el.click()); await page.waitForSelector('#harness-add-form'); await type(page, '#harness-add-form [name=command]', '/opt/unsaved-tool'); }, kept: page => page.$eval('#harness-add-form [name=command]', el => el.value === '/opt/unsaved-tool') },
-      { name: 'a model id not added yet', setup: async page => { await page.$eval(`${card('a1')} .machine-harness-models-toggle`, el => el.click()); await type(page, `${card('a1')} .harness-model-add [name=slug]`, 'typed-model'); }, kept: page => page.$eval(`${card('a1')} .harness-model-add [name=slug]`, el => el.value === 'typed-model') },
+      { name: 'a model id not added yet', setup: async page => { await type(page, `${card('a1')} .harness-model-add [name=slug]`, 'typed-model'); }, kept: page => page.$eval(`${card('a1')} .harness-model-add [name=slug]`, el => el.value === 'typed-model') },
       { name: 'ticked harnesses from auto-detect', setup: async page => { await page.$eval('#harness-detect', el => el.click()); await page.waitForSelector('#harness-detect-panel input[type=checkbox]'); await page.$eval('#harness-detect-panel input[type=checkbox]', el => el.click()); }, kept: page => page.$eval('#harness-detect-panel input[type=checkbox]', el => el.checked) },
-      { name: 'ticked models from auto-detect', setup: async page => { await page.$eval(`${card('a1')} .machine-harness-models-toggle`, el => el.click()); await page.$eval(`${card('a1')} .harness-models .harness-model-detect`, el => el.click()); await page.waitForSelector(`${card('a1')} .harness-model-candidates input[type=checkbox]`); await page.$eval(`${card('a1')} .harness-model-candidates input[type=checkbox]`, el => el.click()); }, kept: page => page.$eval(`${card('a1')} .harness-model-candidates input[type=checkbox]`, el => el.checked) },
+      { name: 'ticked models from auto-detect', setup: async page => { await page.$eval(`${card('a1')} .harness-models .harness-model-detect`, el => el.click()); await page.waitForSelector(`${card('a1')} .harness-model-candidates input[type=checkbox]`); await page.$eval(`${card('a1')} .harness-model-candidates input[type=checkbox]`, el => el.click()); }, kept: page => page.$eval(`${card('a1')} .harness-model-candidates input[type=checkbox]`, el => el.checked) },
     ];
     for (const draft of drafts) {
       const page = await mount(detectAuto, { variant: 'b' });
@@ -370,6 +366,144 @@ async function main() {
       await page.waitForFunction(() => !document.querySelector('#settings-harnesses').dataset.implementation);
       await page.waitForSelector('#settings-harnesses > h3');
       assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#settings-harnesses, #settings-harnesses-tab').length, !!document.querySelector('#harness-add-form, #harness-detect-panel, .harness-model-candidates'), !!document.querySelector('#settings-harnesses .room-member-badge')]), [2, false, false], `Switch builds the legacy page, without the badge, and drops ${draft.name}`);
+      await page.close();
+    }
+    // The list beside the detail: the first harness is chosen and shown alone; a click or the arrow keys move the choice, and a reload keeps it.
+    {
+      const page = await mount();
+      const shown = () => page.$$eval('#harnesses-list .machine-harness', cards => cards.map(el => !el.hidden));
+      assert.deepEqual(await page.$$eval('.harness-master [role=tab]', tabs => tabs.map(tab => [tab.dataset.harnessId, tab.getAttribute('aria-selected'), tab.tabIndex, tab.getAttribute('aria-controls')])), [['a1', 'true', 0, 'harness-card-a1'], ['a2', 'false', -1, 'harness-card-a2']], 'the list names the harnesses, the first is chosen');
+      assert.deepEqual(await shown(), [true, false], 'only the chosen harness is shown');
+      assert.equal(await page.$('.machine-harness-models-toggle'), null, 'the models are always shown: no Models toggle');
+      await page.$eval('#harness-tab-a2', el => el.click());
+      assert.deepEqual(await shown(), [false, true], 'choosing a harness shows its detail');
+      await page.$eval('#harness-tab-a2', el => el.focus());
+      await page.keyboard.press('ArrowDown');
+      assert.deepEqual([await shown(), await page.evaluate(() => document.activeElement.id)], [[true, false], 'harness-tab-a1'], 'the arrow keys wrap round and focus the chosen tab');
+      await page.$eval('#harness-tab-a2', el => el.click());
+      await page.evaluate(() => window.__page.open());
+      await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/machines/mch_a/launchers').length >= 2);
+      await settle(page);
+      assert.deepEqual(await shown(), [false, true], 'a reload keeps the chosen harness');
+      await page.close();
+    }
+    // A save of the models names the revision the draft started from; one refused as stale drops the draft, reads again and says so.
+    {
+      const modelled = { ...launcher('mch_a', 'a1'), models: [{ slug: 'one', label: 'One', note: '', default: true }], models_rev: 'r1' };
+      const page = await mount({ 'GET /api/machines/mch_a/launchers': { launchers: [modelled, launchers.mch_a[1]], activity: [] } });
+      await type(page, `${card('a1')} .harness-model-row [name=label]`, 'Mine');
+      await hold(page, 'GET /api/machines/mch_a/launchers');
+      await page.$eval(`${card('a1')} .harness-models .btn-primary`, el => el.click());
+      const put = await pending(page, 'PUT', '/api/machines/mch_a/launchers/a1/models');
+      assert.equal(await page.evaluate(index => window.__requests[index].body.expected_rev, put), 'r1', 'the save names the revision of the list it started from');
+      await answer(page, put, 409, { error: 'models_changed', message: 'The models changed' });
+      const reread = await pending(page, 'GET', '/api/machines/mch_a/launchers');
+      await answer(page, reread, 200, { launchers: [{ ...modelled, models: [{ slug: 'one', label: 'Theirs', note: '', default: true }], models_rev: 'r2' }, launchers.mch_a[1]], activity: [] });
+      await page.waitForFunction(selector => document.querySelector(`${selector} .harness-model-row [name=label]`)?.value === 'Theirs', {}, card('a1'));
+      assert.match(await page.$eval('#settings-harnesses > .error', el => el.textContent), /Someone changed the models of a1 in the meantime/, 'the page says the save was refused');
+      assert.equal(await page.$eval(`${card('a1')} .harness-models .btn-primary`, el => el.disabled), true, 'the refused draft is gone');
+      assert.deepEqual(await page.evaluate(() => [...window.__page.unsaved]), [], 'nothing is left unsaved');
+      await page.close();
+    }
+    // The revision moves on with every save: an edit made while a save is in flight, and the save after it, start from the revision the
+    // first save answered with, and so does the next edit when the re-read after a save failed; neither is refused as stale.
+    {
+      const modelled = { ...launcher('mch_a', 'a1'), models: [{ slug: 'one', label: 'One', note: '', default: true }], models_rev: 'r1' };
+      const listing = rows => ({ launchers: [rows, launchers.mch_a[1]], activity: [] });
+      const stored = (label, rev) => ({ ...modelled, models: [{ slug: 'one', label, note: '', default: true }], models_rev: rev });
+      const saveButton = `${card('a1')} .harness-models .btn-primary`, label = `${card('a1')} .harness-model-row [name=label]`;
+      const sentRev = (page, index) => page.evaluate(index => window.__requests[index].body.expected_rev, index);
+      {
+        const page = await mount({ 'GET /api/machines/mch_a/launchers': listing(modelled) });
+        await type(page, label, 'First');
+        await hold(page, 'GET /api/machines/mch_a/launchers');
+        await page.$eval(saveButton, el => el.click());
+        const first = await pending(page, 'PUT', '/api/machines/mch_a/launchers/a1/models');
+        assert.equal(await sentRev(page, first), 'r1');
+        await type(page, label, 'Second');
+        await answer(page, first, 200, { models: [{ slug: 'one', label: 'First', note: '', default: true }], models_rev: 'r2' });
+        await answer(page, await pending(page, 'GET', '/api/machines/mch_a/launchers'), 200, listing(stored('First', 'r2')));
+        await page.waitForFunction(selector => !document.querySelector(selector).disabled, {}, saveButton);
+        assert.equal(await page.$eval(label, el => el.value), 'Second', 'an edit made during the save is kept');
+        await page.$eval(saveButton, el => el.click());
+        const second = await pending(page, 'PUT', '/api/machines/mch_a/launchers/a1/models');
+        assert.equal(await sentRev(page, second), 'r2', 'the next save names the revision the first one answered with');
+        await answer(page, second, 200, { models: [{ slug: 'one', label: 'Second', note: '', default: true }], models_rev: 'r3' });
+        await answer(page, await pending(page, 'GET', '/api/machines/mch_a/launchers'), 200, listing(stored('Second', 'r3')));
+        await settle(page);
+        assert.equal(await page.$('#settings-harnesses > .error:not(:empty)'), null, 'no stale-save message');
+        await page.close();
+      }
+      {
+        const page = await mount({ 'GET /api/machines/mch_a/launchers': listing(modelled) });
+        await type(page, label, 'First');
+        await hold(page, 'GET /api/machines/mch_a/launchers');
+        await page.$eval(saveButton, el => el.click());
+        await answer(page, await pending(page, 'PUT', '/api/machines/mch_a/launchers/a1/models'), 200, { models: [{ slug: 'one', label: 'First', note: '', default: true }], models_rev: 'r2' });
+        await answer(page, await pending(page, 'GET', '/api/machines/mch_a/launchers'), 500, { message: 'read failed' });
+        await page.waitForFunction(() => document.querySelector('#settings-harnesses > .error').textContent === 'read failed');
+        await settle(page);
+        await type(page, label, 'Again');
+        await page.$eval(saveButton, el => el.click());
+        const next = await pending(page, 'PUT', '/api/machines/mch_a/launchers/a1/models');
+        assert.equal(await sentRev(page, next), 'r2', 'after a failed re-read the next edit starts from the saved revision, not a stale one');
+        await answer(page, next, 200, { models: [{ slug: 'one', label: 'Again', note: '', default: true }], models_rev: 'r3' });
+        await page.close();
+      }
+    }
+    // Role defaults: a switch per role on every model, saved on its own; the role panel names its entries, including those of another machine,
+    // which are read once; and a save made elsewhere shows here while the page is open, not while it is hidden.
+    {
+      const modelled = { ...launcher('mch_a', 'a1'), models: [{ slug: 'one', label: 'One', note: '', default: true }], models_rev: 'r1' };
+      const role = { id: 'rol_w', rev: 3, role_key: 'worker', label: 'Worker', emoji: '', body: '', extends: '', cardinality: 'multi', cap_is_lead: false, cap_can_spawn: false, cap_singleton_writer: false, default_agents: [{ launcher_id: 'b1', model: 'far' }], pick_mode: 'in_turn' };
+      const page = await mount({
+        'GET /api/machines/mch_a/launchers': { launchers: [modelled, launchers.mch_a[1]], activity: [] },
+        'GET /api/machines/mch_b/launchers': { launchers: [{ ...launcher('mch_b', 'b1'), models: [{ slug: 'far', label: 'Far', note: '', default: true }] }], activity: [] },
+        'GET /api/roles': [role],
+      });
+      const entries = () => page.$$eval('#harness-roles-host .harness-role-entry', items => items.map(item => item.querySelector('.harness-role-entry-label').textContent));
+      await page.waitForFunction(() => document.querySelector('#harness-roles-host .harness-role-entry-label')?.textContent === 'B · b1 · Far');
+      assert.deepEqual(await entries(), ['B · b1 · Far'], "a default on another machine is named from that machine's harness");
+      const reads = path => page.evaluate(path => window.__requests.filter(request => request.method === 'GET' && request.path === path).length, path);
+      // A redraw of the list (here, after the Enabled switch saves) reads the other machine no more: it asks again only for an id not seen yet.
+      await page.$eval(`${card('a1')} [name=enabled]`, el => el.click());
+      await answer(page, await pending(page, 'PUT', '/api/machines/mch_a/launchers/a1'), 200, { config: modelled.config });
+      await page.waitForFunction(() => window.__requests.filter(request => request.method === 'GET' && request.path === '/api/machines/mch_a/launchers').length >= 2);
+      await settle(page);
+      assert.equal(await reads('/api/machines/mch_b/launchers'), 1, 'the other machine is read once, not again on a redraw');
+      // The switch on a model saves the role on its own, naming the harness and model.
+      const box = `${card('a1')} .harness-detail-row[data-slug="one"] input[aria-label="Worker default: One"]`;
+      assert.equal(await page.$eval(box, el => el.checked), false);
+      await page.$eval(box, el => el.click());
+      const put = await pending(page, 'PUT', '/api/roles/rol_w');
+      assert.deepEqual(await page.evaluate(index => ({ rev: window.__requests[index].body.rev, agents: window.__requests[index].body.default_agents }), put), { rev: 3, agents: [{ launcher_id: 'b1', model: 'far' }, { launcher_id: 'a1', model: 'one' }] }, 'the save sends the role as it is with the model added');
+      await answer(page, put, 200, { ...role, rev: 4, default_agents: [{ launcher_id: 'b1', model: 'far' }, { launcher_id: 'a1', model: 'one' }] });
+      await page.waitForFunction(() => document.querySelectorAll('#harness-roles-host .harness-role-entry').length === 2);
+      assert.deepEqual(await entries(), ['B · b1 · Far', 'A · a1 · One'], 'the role panel shows the new default named from this machine');
+      assert.match(await page.$eval(`${card('a1')} .harness-detail-row[data-slug="one"] .harness-role-switch.is-on .harness-role-switch-position`, el => el.textContent), /#2 of 2/, 'a switched-on role shows its place');
+      // A failed save says why, in the models panel for a switch and under the role panel for its own controls, and the views show what is stored.
+      const stored = { ...role, rev: 4, default_agents: [{ launcher_id: 'b1', model: 'far' }, { launcher_id: 'a1', model: 'one' }] };
+      await hold(page, 'GET /api/roles');
+      await page.$eval(box, el => el.click());
+      await answer(page, await pending(page, 'PUT', '/api/roles/rol_w'), 409, { error: 'conflict', message: 'The role changed elsewhere' });
+      await answer(page, await pending(page, 'GET', '/api/roles'), 200, [stored]);
+      await page.waitForFunction(selector => document.querySelector(`${selector} .harness-models .error`)?.textContent === 'The role changed elsewhere', {}, card('a1'));
+      assert.equal(await page.$eval(box, el => el.checked), true, 'a refused switch-off leaves the switch on, as stored');
+      await page.$eval('#harness-roles-host .harness-role-entry button[aria-label^="Remove"]', el => el.click());
+      await answer(page, await pending(page, 'PUT', '/api/roles/rol_w'), 409, { error: 'conflict', message: 'The role changed again' });
+      await answer(page, await pending(page, 'GET', '/api/roles'), 200, [stored]);
+      await page.waitForFunction(() => document.querySelector('#harness-roles-host + .error')?.textContent === 'The role changed again');
+      await page.evaluate(stored => { window.__auto['GET /api/roles'] = [stored]; }, stored);
+      // Settings -> Roles saves a role: the page reads the roles again while it is shown, and does nothing while it is hidden.
+      const roleReads = () => reads('/api/roles');
+      const before = await roleReads();
+      await page.evaluate(() => document.dispatchEvent(new CustomEvent('role-defaults-change', { detail: { source: {} } })));
+      await page.waitForFunction(count => window.__requests.filter(request => request.method === 'GET' && request.path === '/api/roles').length > count, {}, before);
+      await settle(page);
+      const after = await roleReads();
+      await page.evaluate(() => { window.__page.section.hidden = true; document.dispatchEvent(new CustomEvent('role-defaults-change', { detail: { source: {} } })); });
+      await settle(page);
+      assert.equal(await roleReads(), after, 'a role save elsewhere while the page is hidden reads nothing');
       await page.close();
     }
     // A cancelled Add harness form no longer counts as unsaved.

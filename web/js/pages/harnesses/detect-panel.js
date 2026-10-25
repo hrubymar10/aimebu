@@ -37,7 +37,7 @@ export function DetectPanel({ candidates, onClose, onAdd, onFailed, onDirty }) {
     <form class="machine-harness-form harness-detect-panel" id="harness-detect-panel" onSubmit=${submit}>
       <strong>${candidates.length ? 'Found on this machine — tick the ones to add' : 'Nothing found on this machine'}</strong>
       ${!candidates.length && html`
-        <p class="machine-harness-help">No Claude Code, Codex, Pi or OpenCode executable was found. Add one by hand with its path.</p>
+        <p class="machine-harness-help">No Claude Code, Codex, Pi, OpenCode or Mistral Vibe executable was found. Add one by hand with its path.</p>
       `}
       ${candidates.map((candidate, index) => html`
         <label class="machine-harness-enabled harness-detect-row" data-command=${candidate.command} key=${`${candidate.command}:${index}`}>

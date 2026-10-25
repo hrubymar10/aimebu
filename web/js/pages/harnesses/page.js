@@ -31,7 +31,7 @@ export class PreactHarnessSettings {
   }
 
   draw(wanted) {
-    render(html`<${HarnessesPage} openToken=${this.openToken} wanted=${wanted} onDirty=${this.onDirty} onView=${this.onView} onReady=${this.ready} />`, this.section);
+    render(html`<${HarnessesPage} openToken=${this.openToken} wanted=${wanted} onDirty=${this.onDirty} onView=${this.onView} onReady=${this.ready} isHidden=${() => this.section.hidden} />`, this.section);
   }
 
   viewSnapshot() { return { machineID: this.machineID }; }
