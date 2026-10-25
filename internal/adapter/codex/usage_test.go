@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -59,7 +60,7 @@ func TestUsageSeparatesCachedInputFromInput(t *testing.T) {
 		in, cache, out any
 	}{
 		// What codex 0.162.1 printed for a turn whose model reported 100 input tokens, 80 of them cached, and 7 output tokens.
-		"reported":     {`{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":7,"reasoning_output_tokens":2}}`, int64(20), int64(80), int64(7)},
+		"reported":     {`{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":5,"output_tokens":7,"reasoning_output_tokens":2}}`, int64(15), int64(80), int64(7)},
 		"not cached":   {`{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":7}}`, int64(100), int64(0), int64(7)},
 		"not told":     {`{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":7}}`, int64(100), nil, int64(7)},
 		"all cached":   {`{"type":"turn.completed","usage":{"input_tokens":80,"cached_input_tokens":80,"output_tokens":1}}`, int64(0), int64(80), int64(1)},
@@ -70,6 +71,18 @@ func TestUsageSeparatesCachedInputFromInput(t *testing.T) {
 			usage := usageOf(t, test.line)
 			if got := [3]any{pick(usage.TokensIn), pick(usage.TokensCacheRead), pick(usage.TokensOut)}; got != [3]any{test.in, test.cache, test.out} {
 				t.Errorf("in/cache/out = %v, want %v", got, [3]any{test.in, test.cache, test.out})
+			}
+			if name == "reported" && (usage.TokensCacheWrite == nil || *usage.TokensCacheWrite != 5) {
+				t.Errorf("cache write = %v, want 5", usage.TokensCacheWrite)
+			}
+			if name == "inconsistent" && usage.CostEstimate != nil {
+				t.Errorf("inconsistent token shares were priced: %+v", usage)
+			}
+			if name == "reported" {
+				want := (15*0.1 + 80*0.01 + 5*0.125 + 7*0.5) / 1_000_000
+				if usage.CostEstimate == nil || math.Abs(*usage.CostEstimate-want) > 1e-12 || usage.CostSource != "estimated" {
+					t.Errorf("price estimate = %+v, want %g", usage, want)
+				}
 			}
 		})
 	}

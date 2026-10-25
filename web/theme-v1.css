@@ -1128,7 +1128,12 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .message-role { padding: 0; border: 0; background: transparent; font-size: 13.3px; line-height: 1; }
 .message-bubble { position: relative; min-width: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
 .answer-controls { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
-.answer-controls > button { border-radius: 18px; padding: 5px 12px; }
+.answer-controls > button, .answer-choice > .btn { border-radius: 18px; padding: 5px 12px; }
+.answer-choice { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; }
+.answer-edit { display: grid; gap: 6px; width: 100%; }
+.answer-edit[hidden] { display: none; }
+.answer-edit textarea { width: 100%; min-width: 0; resize: vertical; }
+.answer-edit-actions { display: flex; justify-content: flex-end; align-items: center; gap: 7px; }
 .answer-other { display: flex; gap: 7px; width: 100%; }
 .answer-other textarea { flex: 1; min-width: 0; resize: vertical; }
 .answer-error { width: 100%; color: var(--red); margin: 3px 0; }

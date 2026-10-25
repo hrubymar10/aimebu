@@ -17,20 +17,21 @@ import (
 // separately for cost and turns. DailyCostCap and DailyTurnCap are the caps in force (the project's own, none, or the inherited default,
 // then raised for today by a "continue"); CostMode/TurnMode say which, and Inherited* is the global default, for "Inherit (global: X)".
 type UsageLimit struct {
-	CostMode         string   `json:"cost_mode"`
-	TurnMode         string   `json:"turn_mode"`
-	InheritedCostCap *float64 `json:"inherited_cost_cap"`
-	InheritedTurnCap *int64   `json:"inherited_turn_cap"`
-	DailyCostCap     *float64 `json:"daily_cost_cap"`
-	DailyTurnCap     *int64   `json:"daily_turn_cap"`
-	DailyCost        float64  `json:"daily_cost"`
-	DailyTurns       int64    `json:"daily_turns"`
-	CostCoverage     string   `json:"cost_coverage"`
-	DayStart         string   `json:"day_start"`
-	TZ               string   `json:"tz"`
-	Desired          string   `json:"desired"`
-	EffectiveState   string   `json:"effective_state"`
-	Rev              int64    `json:"rev"`
+	CostMode               string   `json:"cost_mode"`
+	TurnMode               string   `json:"turn_mode"`
+	InheritedCostCap       *float64 `json:"inherited_cost_cap"`
+	InheritedTurnCap       *int64   `json:"inherited_turn_cap"`
+	DailyCostCap           *float64 `json:"daily_cost_cap"`
+	DailyTurnCap           *int64   `json:"daily_turn_cap"`
+	DailyCost              float64  `json:"daily_cost"`
+	DailyTurns             int64    `json:"daily_turns"`
+	CostCoverage           string   `json:"cost_coverage"`
+	TurnsWithEstimatedCost int64    `json:"turns_with_estimated_cost"`
+	DayStart               string   `json:"day_start"`
+	TZ                     string   `json:"tz"`
+	Desired                string   `json:"desired"`
+	EffectiveState         string   `json:"effective_state"`
+	Rev                    int64    `json:"rev"`
 }
 
 func localUsageDay(now time.Time) (start, end time.Time, tz string) {
@@ -115,13 +116,16 @@ func (tx *Tx) usageLimit(kind, id string, now time.Time) (UsageLimit, error) {
 	}
 	var knownTurns int64
 	if err = tx.tx.QueryRowContext(tx.ctx, usageLimitTurnsSQL(turnWhere), id, startUTC, endUTC).
-		Scan(&out.DailyTurns, &knownTurns); err != nil {
+		Scan(&out.DailyTurns, &knownTurns, &out.TurnsWithEstimatedCost); err != nil {
 		return UsageLimit{}, err
 	}
 	if out.DailyTurns > 0 {
 		out.CostCoverage = "partial"
 		if knownTurns == out.DailyTurns {
 			out.CostCoverage = "known"
+			if out.TurnsWithEstimatedCost > 0 {
+				out.CostCoverage = "estimated"
+			}
 		} else if knownTurns == 0 {
 			out.CostCoverage = "unknown"
 		}
@@ -412,7 +416,8 @@ func (tx *Tx) reconcileUsageLimit(kind, id, actor string) error {
 // scope is a room or a project; where and turnWhere name its column. They are functions so a test can ask SQLite how it runs them.
 func usageLimitTurnsSQL(turnWhere string) string {
 	return `SELECT COUNT(*),COALESCE(SUM(CASE WHEN EXISTS(
-		SELECT 1 FROM usage_record u WHERE u.turn_id=t.id AND u.cost_est IS NOT NULL) THEN 1 ELSE 0 END),0)
+		SELECT 1 FROM usage_record u WHERE u.turn_id=t.id AND u.cost_est IS NOT NULL) THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(CASE WHEN EXISTS(SELECT 1 FROM usage_record u WHERE u.turn_id=t.id AND u.cost_est IS NOT NULL AND u.source='estimated') THEN 1 ELSE 0 END),0)
 		FROM turn t JOIN room r ON r.id=t.room_id WHERE ` + turnWhere + ` AND t.started_at>=? AND t.started_at<?`
 }
 

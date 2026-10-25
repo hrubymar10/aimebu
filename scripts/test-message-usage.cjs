@@ -32,6 +32,7 @@ const full = { model: 'claude-haiku-4-5', tokens_in: 12, tokens_out: 3, tokens_c
 assert.deepEqual(usageRows(full), [['Model', 'claude-haiku-4-5'], ['Input', '12'], ['Output', '3'], ['Cache read', '90'], ['Cache written', '4'], ['Cost (estimate)', '$0.0040']]);
 assert.deepEqual(usageRows({ tokens_in: 5 }), [['Model', DASH], ['Input', '5'], ['Output', DASH], ['Cache read', DASH], ['Cache written', DASH], ['Cost (estimate)', DASH]]);
 assert.deepEqual(usageRows(undefined).map(row => row[1]), [DASH, DASH, DASH, DASH, DASH, DASH]);
+assert.deepEqual(usageRows({ cost: 0.003, cost_source: 'estimated' }).at(-1), ['Cost (price estimate)', '$0.0030']);
 
 // Notes: a one-message turn says so; a several-message turn says "n of N" and that the figures are the turn's, not added per message.
 assert.deepEqual(usageNotes(full), ['These are the figures of the turn that wrote this message.']);
@@ -45,6 +46,8 @@ assert.match(partial[1], /floor/);
 
 // The tooltip: one line, only what is known.
 assert.equal(usageTooltip(full), 'Usage: 12 in · 3 out · $0.0040');
+assert.match(usageTooltip({ cost: 0.003, cost_source: 'estimated' }), /estimated/);
+assert.match(usageNotes({ cost_source: 'estimated' }).at(-1), /dated model price list/);
 assert.equal(usageTooltip({ count: 3, tokens_in: 12 }), 'Usage: 12 in (turn of 3 messages)');
 assert.equal(usageTooltip({ partial: true, tokens_in: 7 }), 'Usage: 7 in (partial)');
 assert.equal(usageTooltip({}), 'Usage');
@@ -59,7 +62,9 @@ assert.match(notes[1], /ended before they reported/);
 assert.deepEqual(plain(context.api.totalsNotes({ turns: 0 })), ['Nothing was spent in this range.']);
 assert.deepEqual(plain(context.api.totalsNotes({ turns: 2, turns_with_cost: 0, cost_coverage: 'unknown' })), ['No turn in this range reported a cost.']);
 assert.deepEqual(plain(context.api.totalsNotes({ turns: 2, turns_with_cost: 2, cost_coverage: 'known' })), []);
+assert.deepEqual(plain(context.api.totalsNotes({ turns: 2, turns_with_cost: 2, turns_with_estimated_cost: 1, cost_coverage: 'estimated' })), ['1 turn uses the dated model price list; that cost is estimated.']);
 assert.deepEqual(plain(context.api.totalsRows({})).map(row => row[1]), ['0', DASH, DASH, DASH, DASH, DASH]);
 assert.equal(context.api.groupLine({ turns: 1, tokens_in: 10, tokens_out: 2, cost: 0.5 }), '1 turn \u00b7 10 in / 2 out \u00b7 $0.50');
 assert.equal(context.api.groupLine({ turns: 2 }), `2 turns \u00b7 ${DASH}`);
+assert.match(context.api.groupLine({ turns: 1, cost: 0.01, cost_estimated: true }), /estimated$/);
 console.log('message usage test passed');

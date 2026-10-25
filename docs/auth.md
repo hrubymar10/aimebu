@@ -176,6 +176,7 @@ says; taking the flag away ends it at once.
 | password-reset link, deactivate | any account but the owner can be deactivated | ordinary accounts only | no | no |
 | appoint or remove admins | yes | no | no | no |
 | macros, message expiry, sounds, global memory, global roles/prompts, cleanup and disk report, settings export, harnesses (their launchers, models and auto-detect), the machine list (read-only) | yes | yes | no | no |
+| stop all agents on a machine (`POST /api/machines/{id}/agents/stop`, Settings → Machines): the agents they could stop one by one | yes | yes | no | no |
 | machines (pairing, approval, revoking), account switcher and provider usages and credentials, quota switcher and limit guard, v1 import, settings preview/apply | yes | no | no | no |
 
 Links follow their issuer: a password-reset link is rechecked when it is used (the issuer must still be allowed to act on that account, so

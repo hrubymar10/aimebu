@@ -1,4 +1,4 @@
-import { setGlyph } from './icon-button.js';
+import { iconButton, setGlyph } from './icon-button.js';
 import { renderMarkdown } from './markdown.js';
 
 export function answerControls(item, submit) {
@@ -14,11 +14,23 @@ export function answerControls(item, submit) {
     open.onclick = () => openQuestions(item, submit, refreshCount);
     wrap.append(open);
   }
+  // A proposed answer is a button that sends it as it stands. Its pencil, or a Shift-click on the answer, opens it in an editor first, so the
+  // person can change it before sending; the edited text goes out the same way (a reply that resolves the item).
+  let editor = null, lastChoice = null;
+  // The editor sits right under the answers, ahead of the free-text "Other" form when there is one.
+  const edit = (value, origin) => {
+    if (!editor) { editor = answerEditor(wrap, submit); lastChoice.after(editor.form); }
+    editor.open(value, origin);
+  };
   for (const value of item.proposed_answers || (item.open_questions?.length ? [] : item.options || [])) {
+    const choice = document.createElement('span'); choice.className = 'answer-choice';
     const button = document.createElement('button');
-    button.type = 'button'; button.className = 'btn'; button.textContent = value;
-    button.onclick = () => send(wrap, submit, value);
-    wrap.append(button);
+    button.type = 'button'; button.className = 'btn'; button.textContent = value; button.title = 'Send this answer (Shift-click to edit it first)';
+    button.onclick = event => { if (event.shiftKey) edit(value, button); else send(wrap, submit, value); };
+    const pencil = iconButton('edit', `Edit \u201c${value}\u201d before sending`, { className: 'answer-edit-open' });
+    pencil.onclick = () => edit(value, button);
+    choice.append(button, pencil);
+    wrap.append(choice); lastChoice = choice;
   }
   if (item.free_text && (!item.open_questions?.length || item.proposed_answers?.length)) {
     const form = document.createElement('form');
@@ -33,6 +45,30 @@ export function answerControls(item, submit) {
     wrap.append(form);
   }
   return wrap;
+}
+
+// The editor under the answers: the chosen answer in a text box to change, sent with its button or Ctrl/Cmd+Enter, closed with the X or Esc
+// (focus goes back to the answer it came from). Nothing is stored: closing it drops the text.
+function answerEditor(wrap, submit) {
+  const form = document.createElement('form'); form.className = 'answer-edit'; form.hidden = true;
+  const input = document.createElement('textarea'); input.rows = 3; input.required = true; input.setAttribute('aria-label', 'Edit the answer before sending');
+  const actions = document.createElement('div'); actions.className = 'answer-edit-actions';
+  const cancel = iconButton('close', 'Close the editor without sending', { className: 'answer-edit-close' });
+  const sendButton = document.createElement('button'); sendButton.type = 'submit'; sendButton.className = 'btn btn-primary'; sendButton.textContent = 'Send answer';
+  actions.append(cancel, sendButton); form.append(input, actions);
+  let origin = null;
+  const close = () => { form.hidden = true; input.value = ''; (origin?.isConnected ? origin : null)?.focus(); origin = null; };
+  cancel.onclick = close;
+  form.onsubmit = event => { event.preventDefault(); send(wrap, submit, input.value.trim()); };
+  input.onkeydown = event => {
+    if (event.isComposing) return;
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
+    else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); form.requestSubmit(); }
+  };
+  return { form, open(value, from) {
+    origin = from;
+    form.hidden = false; input.value = value; input.focus(); input.setSelectionRange(input.value.length, input.value.length);
+  } };
 }
 
 // What a question or proposed answers on a message look like once nothing is open for them: the same buttons and question count, all

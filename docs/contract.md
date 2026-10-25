@@ -330,7 +330,10 @@ Inbox, usage, events, settings
   total that went down is an unknown cost, never zero). `partial` marks what a
   turn spent before it ended without a report (killed, crashed): Claude gives
   its input and cache tokens only, opencode its steps' totals; output tokens
-  and cost stay unknown. `model` is the one the harness named, else the agent's.
+  and cost stay unknown. Codex uses the dated model price list when its model
+  and token counts permit; those rows have `source=estimated`, while a cost
+  reported by a harness has `source=measured`. `model` is the one the harness
+  named, else the agent's.
   Indexed by
   (agent_id, created_at), (room_id, created_at), (project_id, created_at) and (turn_id) (migration 75),
   with turn(room_id, started_at) and room(project_id), so the limit checks, the
@@ -828,7 +831,9 @@ it never silently reruns a turn with uncertain effects.
 - M→S `activity{…, turn_id, source_event_id, kind, summary}`,
   `usage{…, source_event_id, tokens_in?, tokens_out?, tokens_cache_read?,
   tokens_cache_write?, context_used?, context_window?, cost_est?,
-  cost_cumulative?, model?, partial?}`, `compaction{…, pre_tokens, post_tokens}`
+  cost_source?, cost_cumulative?, model?, partial?}`, `compaction{…,
+  pre_tokens, post_tokens}`. `cost_source=estimated` marks a price-list cost;
+  an omitted source means the harness reported it.
 - M→S `answer{v, agent_id, generation, turn_id, answer_rev, digest,
   candidate}`. `candidate` is the raw final-answer string, including malformed
   output or an empty string. The digest covers its exact UTF-8 bytes. The

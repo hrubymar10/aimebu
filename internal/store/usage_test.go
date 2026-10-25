@@ -62,6 +62,36 @@ func TestUsageReadAndCompactionNoticeDedup(t *testing.T) {
 	}
 }
 
+func TestEstimatedCostIsNotReportedAsKnown(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	f := seedExecution(t, s)
+	ctx := context.Background()
+	if _, err := s.db.Exec(`UPDATE turn SET started_at=? WHERE id=?`, timestamp(), f.turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	frame := usageFrame(map[string]any{"tokens_in": 20, "tokens_out": 7, "cost_estimate": 0.00012, "cost_source": "estimated"})
+	if err := s.RecordTurnEvent(ctx, f.turn.ID, f.agent.ID, "estimated-1", "usage", "", frame); err != nil {
+		t.Fatal(err)
+	}
+	var source string
+	if err := s.db.QueryRow(`SELECT source FROM usage_record WHERE source_event_id='estimated-1'`).Scan(&source); err != nil || source != "estimated" {
+		t.Fatalf("source=%q err=%v", source, err)
+	}
+	agent, err := s.AgentUsage(ctx, f.agent.ID)
+	if err != nil || agent == nil || !agent.CostEstimated {
+		t.Fatalf("agent usage=%+v err=%v", agent, err)
+	}
+	totals, err := s.UsageTotalsFor(ctx, "project", f.project.ID, "all")
+	if err != nil || totals.CostCoverage != "estimated" || totals.TurnsWithEstimatedCost != 1 || len(totals.ByModel) != 1 || !totals.ByModel[0].CostEstimated {
+		t.Fatalf("totals=%+v err=%v", totals, err)
+	}
+	limit, err := s.UsageLimit(ctx, f.project.ID)
+	if err != nil || limit.CostCoverage != "estimated" || limit.TurnsWithEstimatedCost != 1 {
+		t.Fatalf("limit=%+v err=%v", limit, err)
+	}
+}
+
 // The newest record of the agent's generation is the one with the latest timestamp, and the later insert when two share a timestamp.
 func TestAgentUsageReadsTheNewestRecordOfTheGeneration(t *testing.T) {
 	t.Parallel()

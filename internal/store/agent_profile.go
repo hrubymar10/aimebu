@@ -34,8 +34,9 @@ type AgentProfile struct {
 	Start       *LegacyStartInfo `json:"start,omitempty"`
 	ResumedFrom string           `json:"resumed_from,omitempty"`
 	// Turns and cost over the last 24 hours.
-	TurnsToday int      `json:"turns_today"`
-	CostToday  *float64 `json:"cost_today,omitempty"`
+	TurnsToday         int      `json:"turns_today"`
+	CostToday          *float64 `json:"cost_today,omitempty"`
+	CostTodayEstimated bool     `json:"cost_today_estimated,omitempty"`
 }
 
 // AgentProfile reads the profile of an agent that is a member of roomID, or that was one and has spoken in it (a departed sender's
@@ -116,7 +117,7 @@ func (s *Store) AgentProfile(ctx context.Context, roomID, agentID string) (Agent
 	}
 	since := time.Now().UTC().Add(-24 * time.Hour).Format(timestampLayout)
 	var cost sql.NullFloat64
-	if err := s.db.QueryRowContext(ctx, agentTodaySQL, agentID, since).Scan(&p.TurnsToday, &cost); err != nil {
+	if err := s.db.QueryRowContext(ctx, agentTodaySQL, agentID, since).Scan(&p.TurnsToday, &cost, &p.CostTodayEstimated); err != nil {
 		return AgentProfile{}, err
 	}
 	if cost.Valid {
@@ -126,7 +127,7 @@ func (s *Store) AgentProfile(ctx context.Context, roomID, agentID string) (Agent
 }
 
 // agentTodaySQL counts the agent's turns that reported usage, and their cost, since a time.
-const agentTodaySQL = `SELECT COUNT(DISTINCT turn_id),SUM(cost_est) FROM usage_record WHERE agent_id=? AND created_at>=?`
+const agentTodaySQL = `SELECT COUNT(DISTINCT turn_id),SUM(cost_est),COALESCE(MAX(source='estimated' AND cost_est IS NOT NULL),0) FROM usage_record WHERE agent_id=? AND created_at>=?`
 
 // resumeCommand is the command a person types to continue the agent's native session by hand. It is only
 // given for tools whose resume syntax is known, and only when the session id is known.

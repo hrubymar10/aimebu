@@ -32,7 +32,7 @@ func TestUsageForMessagesCarriesTheTurnFiguresOnEachMessage(t *testing.T) {
 		}
 	}
 	record("u1", map[string]any{"tokens_in": 10, "tokens_out": 5, "tokens_cache_read": 100, "cost_estimate": 0.01})
-	record("u2", map[string]any{"tokens_in": 4, "tokens_out": 1, "cost_estimate": 0.005})
+	record("u2", map[string]any{"tokens_in": 4, "tokens_out": 1, "cost_estimate": 0.005, "cost_source": "estimated"})
 	got, err := s.UsageForMessages(ctx, messages)
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func TestUsageForMessagesCarriesTheTurnFiguresOnEachMessage(t *testing.T) {
 			t.Fatalf("message %d: %+v", i+1, usage)
 		}
 		if usage.TokensIn == nil || *usage.TokensIn != 14 || usage.TokensOut == nil || *usage.TokensOut != 6 || usage.CacheRead == nil || *usage.CacheRead != 100 ||
-			usage.Cost == nil || math.Abs(*usage.Cost-0.015) > 1e-12 || usage.Model != "test" || usage.Partial {
+			usage.Cost == nil || math.Abs(*usage.Cost-0.015) > 1e-12 || usage.CostSource != "estimated" || usage.Model != "test" || usage.Partial {
 			t.Fatalf("the turn's figures on message %d: %+v", i+1, usage)
 		}
 		if usage.CacheWrite != nil {
@@ -72,7 +72,7 @@ func TestUsageForMessagesReadsByKeyNotByScan(t *testing.T) {
 	for _, query := range []string{
 		`SELECT id,turn_id FROM outbox WHERE id IN (?,?)`,
 		`SELECT turn_id,id FROM outbox WHERE state='committed' AND turn_id IN (?,?) ORDER BY turn_id,answer_rev,idx`,
-		`SELECT turn_id,SUM(tokens_in),SUM(tokens_out),SUM(tokens_cache_read),SUM(tokens_cache_write),SUM(cost_est),MAX(partial),COALESCE(MAX(model),'') FROM usage_record WHERE turn_id IN (?,?) GROUP BY turn_id`,
+		`SELECT turn_id,SUM(tokens_in),SUM(tokens_out),SUM(tokens_cache_read),SUM(tokens_cache_write),SUM(cost_est),MAX(partial),COALESCE(MAX(model),''),MAX(CASE WHEN cost_est IS NOT NULL AND source='estimated' THEN 1 ELSE 0 END) FROM usage_record WHERE turn_id IN (?,?) GROUP BY turn_id`,
 	} {
 		rows, err := s.db.Query(`EXPLAIN QUERY PLAN `+query, "a", "b")
 		if err != nil {

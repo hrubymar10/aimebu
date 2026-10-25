@@ -23,7 +23,7 @@ export function usageRows(usage) {
     ['Output', formatTokens(usage?.tokens_out)],
     ['Cache read', formatTokens(usage?.tokens_cache_read)],
     ['Cache written', formatTokens(usage?.tokens_cache_write)],
-    ['Cost (estimate)', formatCost(usage?.cost)],
+    [usage?.cost_source === 'estimated' ? 'Cost (price estimate)' : 'Cost (estimate)', formatCost(usage?.cost)],
   ];
   return rows;
 }
@@ -36,6 +36,7 @@ export function usageNotes(usage) {
     ? `These are the figures of the whole turn, which wrote ${count} messages; this is ${index} of ${count}. They are not added up per message.`
     : 'These are the figures of the turn that wrote this message.');
   if (usage?.partial) notes.push('The turn ended before it reported its totals, so these figures are a floor.');
+  if (usage?.cost_source === 'estimated') notes.push('Cost uses the dated model price list, not a price reported by the harness.');
   return notes;
 }
 
@@ -44,7 +45,7 @@ export function usageTooltip(usage) {
   const parts = [];
   if (Number.isFinite(usage?.tokens_in)) parts.push(`${formatTokens(usage.tokens_in)} in`);
   if (Number.isFinite(usage?.tokens_out)) parts.push(`${formatTokens(usage.tokens_out)} out`);
-  if (Number.isFinite(usage?.cost)) parts.push(formatCost(usage.cost));
+  if (Number.isFinite(usage?.cost)) parts.push(formatCost(usage.cost) + (usage?.cost_source === 'estimated' ? ' estimated' : ''));
   const count = Number(usage?.count) || 1;
   const turn = count > 1 ? ` (turn of ${count} messages)` : '';
   return `Usage${parts.length ? `: ${parts.join(' · ')}` : ''}${usage?.partial ? ' (partial)' : ''}${turn}`;
@@ -67,8 +68,9 @@ export function totalsNotes(totals) {
   const notes = [];
   const turns = Number(totals?.turns) || 0, priced = Number(totals?.turns_with_cost) || 0;
   if (!turns) notes.push('Nothing was spent in this range.');
-  else if (totals?.cost_coverage === 'partial') notes.push(`The cost is known for ${priced} of ${turns} turns; the harness of the others does not report one, so the total is a floor.`);
+  else if (totals?.cost_coverage === 'partial') notes.push(`The cost is ${Number(totals?.turns_with_estimated_cost) > 0 ? 'available' : 'known'} for ${priced} of ${turns} turns; the others have no cost, so the total is a floor.`);
   else if (totals?.cost_coverage === 'unknown') notes.push('No turn in this range reported a cost.');
+  if (Number(totals?.turns_with_estimated_cost) > 0) notes.push(`${totals.turns_with_estimated_cost} ${Number(totals.turns_with_estimated_cost) === 1 ? 'turn uses' : 'turns use'} the dated model price list; that cost is estimated.`);
   if (totals?.partial) notes.push('Some turns ended before they reported their totals, so those figures are a floor.');
   return notes;
 }
@@ -77,6 +79,6 @@ export function totalsNotes(totals) {
 export function groupLine(group) {
   const parts = [`${Number(group?.turns) || 0} ${Number(group?.turns) === 1 ? 'turn' : 'turns'}`];
   if (Number.isFinite(group?.tokens_in) || Number.isFinite(group?.tokens_out)) parts.push(`${formatTokens(group?.tokens_in)} in / ${formatTokens(group?.tokens_out)} out`);
-  parts.push(formatCost(group?.cost));
+  parts.push(formatCost(group?.cost) + (group?.cost_estimated ? ' estimated' : ''));
   return parts.join(' \u00b7 ');
 }

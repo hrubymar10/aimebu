@@ -1224,6 +1224,69 @@ async function main() {
       emptyOther: '1/2 answered', allAnswered: '2/2 answered',
       review: { subtitle: 'Review 2/2 answers', sendShown: true, items: 2 },
     });
+    // A proposed answer can be edited before it is sent: the pencil, or Shift-click on the answer, opens it in an editor under the answers;
+    // a plain click still sends it as it stands.
+    const editedAnswer = await first.evaluate(async () => {
+      const { answerControls } = await import('/js/answer-controls.js');
+      const sent = []; let fail = false;
+      const wrap = answerControls({ proposed_answers: ['Proceed', 'Hold'] }, async value => { sent.push(value); if (fail) throw new Error('nope'); });
+      document.body.append(wrap);
+      const choices = [...wrap.querySelectorAll('.answer-choice')];
+      const names = choices.map(choice => [choice.querySelector('.btn').textContent, choice.querySelector('.answer-edit-open').title, choice.querySelector('.answer-edit-open').getAttribute('aria-label'), !!choice.querySelector('.answer-edit-open .icon-mask-edit')]);
+      const form = () => wrap.querySelector('.answer-edit'), box = () => wrap.querySelector('.answer-edit textarea');
+      const closedAtStart = !form();
+      // The pencil of "Hold" opens the editor with that text, focused, caret at the end.
+      choices[1].querySelector('.answer-edit-open').click();
+      const opened = { hidden: form().hidden, text: box().value, focused: document.activeElement === box(), caret: [box().selectionStart, box().selectionEnd], sent: sent.length };
+      // Ctrl+Enter sends the edited text; the answer is not sent as it was.
+      box().value = 'Hold, but only after the migration';
+      box().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const afterSend = { sent: [...sent], disabled: [...wrap.querySelectorAll('button,textarea')].every(control => control.disabled) };
+      wrap.remove();
+      // Shift-click on an answer opens it instead of sending; Esc closes the editor, drops the text and returns to that answer.
+      const second = answerControls({ proposed_answers: ['Proceed', 'Hold'] }, async value => { sent.push(value); });
+      document.body.append(second);
+      const proceed = second.querySelectorAll('.answer-choice .btn')[0];
+      proceed.dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true, cancelable: true }));
+      const shift = { sentSoFar: sent.length, open: !second.querySelector('.answer-edit').hidden, text: second.querySelector('.answer-edit textarea').value };
+      second.querySelector('.answer-edit textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      const escaped = { hidden: second.querySelector('.answer-edit').hidden, text: second.querySelector('.answer-edit textarea').value, focus: document.activeElement === proceed };
+      // The X button closes it too, and a plain click sends the answer as it stands.
+      second.querySelectorAll('.answer-edit-open')[0].click(); second.querySelector('.answer-edit-close').click();
+      const closedByX = second.querySelector('.answer-edit').hidden;
+      proceed.click(); await new Promise(resolve => setTimeout(resolve, 0));
+      const plain = [...sent];
+      second.remove();
+      // With free text on, the editor sits right under the answers and the Other form comes after it.
+      const withOther = answerControls({ proposed_answers: ['Proceed', 'Hold'], free_text: true }, async () => {});
+      document.body.append(withOther);
+      withOther.querySelector('.answer-edit-open').click();
+      const order = [...withOther.children].map(node => node.className.split(' ')[0]);
+      withOther.remove();
+      // A refused send keeps the edited text and the editor, shows the error and lets the person try again.
+      fail = true;
+      const third = answerControls({ proposed_answers: ['Proceed'] }, async value => { sent.push(value); throw new Error('The room is closed'); });
+      document.body.append(third);
+      third.querySelector('.answer-edit-open').click();
+      third.querySelector('.answer-edit textarea').value = 'Proceed, carefully';
+      third.querySelector('.answer-edit').requestSubmit(); await new Promise(resolve => setTimeout(resolve, 0));
+      const refused = { error: third.querySelector('.answer-error')?.textContent, text: third.querySelector('.answer-edit textarea').value, enabled: [...third.querySelectorAll('button,textarea')].every(control => !control.disabled), open: !third.querySelector('.answer-edit').hidden };
+      third.remove();
+      return { names, closedAtStart, opened, afterSend, shift, escaped, closedByX, plain, order, refused };
+    });
+    assert.deepEqual(editedAnswer, {
+      names: [['Proceed', 'Edit \u201cProceed\u201d before sending', 'Edit \u201cProceed\u201d before sending', true], ['Hold', 'Edit \u201cHold\u201d before sending', 'Edit \u201cHold\u201d before sending', true]],
+      closedAtStart: true,
+      opened: { hidden: false, text: 'Hold', focused: true, caret: [4, 4], sent: 0 },
+      afterSend: { sent: ['Hold, but only after the migration'], disabled: true },
+      shift: { sentSoFar: 1, open: true, text: 'Proceed' },
+      escaped: { hidden: true, text: '', focus: true },
+      closedByX: true,
+      plain: ['Hold, but only after the migration', 'Proceed'],
+      order: ['answer-choice', 'answer-choice', 'answer-edit', 'answer-other'],
+      refused: { error: 'The room is closed', text: 'Proceed, carefully', enabled: true, open: true },
+    }, 'a proposed answer is edited in an editor before it is sent');
     // Open Questions on a phone: full screen, heading inside the border, 40px targets, the action bar
     // stays on screen with long content, and tapping the Other box chooses Other.
     await first.setViewport({ width: 390, height: 780 });
@@ -1962,6 +2025,19 @@ async function main() {
     assert.deepEqual(await first.evaluate(id => ({ count: document.querySelectorAll('.room-count').length, tip: document.querySelector(`[data-room-id="${id}"] .room-name`).title }), homeID), { count: 0, tip: await first.$eval(`[data-room-id="${homeID}"] .room-name`, el => el.title) }, 'the grey member count is gone from the room rows');
     assert.match(await first.$eval(`[data-room-id="${homeID}"] .room-name`, el => el.title), / · \d+ members?$/, 'the member count is in the name tooltip');
     assert.equal(await first.$$eval('.room-preview', nodes => nodes.length), 1, 'only the active room shows a preview');
+    // The person can have every room show its last message: a labelled switch in Settings, kept on the account, off by default.
+    await domClick(first, '#settings-toggle');
+    await first.waitForSelector('#sidebar-preview', { visible: true });
+    assert.equal(await first.$eval('#sidebar-preview', el => [el.checked, el.labels[0]?.textContent, el.getAttribute('aria-describedby')].join('|')), 'false|Show the last message under every room|sidebar-preview-desc', 'the preview switch is off by default and labelled');
+    await domClick(first, '#sidebar-preview');
+    await first.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.sidebar_preview === '1');
+    await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-preview`)?.textContent === 'Unread preview', {}, homeID);
+    assert.ok(await first.$$eval('.room-preview', nodes => nodes.length) > 1, 'every room shows its preview when asked');
+    await domClick(first, '#sidebar-preview');
+    await first.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.sidebar_preview === '0');
+    await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] > .room-preview`), {}, homeID);
+    await first.evaluate(() => document.querySelector('#settings-dialog').close());
+    assert.equal(await first.$$eval('.room-preview', nodes => nodes.length), 1, 'back to the open room only');
     assert.equal(await first.$eval(`[data-room-id="${homeID}"]`, (el, id) => { const badge = el.querySelector(':scope > .room-row .unread-count'); return badge && !badge.hidden ? badge.textContent : ''; }, homeID), '', 'a same-account post raised unread');
     assert.equal((await first.evaluate(async id => (await (await fetch(`/api/rooms/${id}`)).json()).unread_count, homeID)), 0, 'server unread_count counted a same-account post');
     await domClick(first, `[data-room-id="${homeID}"] .room-name`);
@@ -3318,6 +3394,15 @@ async function main() {
     await settingsPage.click('#settings-project-tab');
     await settingsPage.click('#settings-notifications-tab');
     assert.equal(await settingsPage.$eval('#notification-muted', el => el.checked), true, 'mute choice did not persist');
+    // Message text in desktop notifications: off by default, a labelled switch, kept on the server for the account.
+    assert.equal(await settingsPage.$eval('#notification-text', el => [el.checked, el.labels[0]?.textContent, el.getAttribute('aria-describedby')].join('|')), 'false|Show message text in notifications|notification-text-desc', 'message text in notifications is off by default and labelled');
+    await domClick(settingsPage, '#notification-text');
+    await settingsPage.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.notification_text === '1');
+    await settingsPage.click('#settings-project-tab');
+    await settingsPage.click('#settings-notifications-tab');
+    assert.equal(await settingsPage.$eval('#notification-text', el => el.checked), true, 'the text choice did not persist');
+    await domClick(settingsPage, '#notification-text');
+    await settingsPage.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.notification_text === '0');
     const rowAudit = [];
     for (const tab of await settingsPage.$$eval('#settings-dialog nav button', els => els.filter(el => !el.hidden).map(el => el.id))) {
       if (tab === 'settings-import-tab') continue;
@@ -3339,7 +3424,7 @@ async function main() {
     }
     for (const audit of rowAudit) { assert.deepEqual(audit.unrowed, [], `${audit.id}: settings fields outside a settings row`); assert.deepEqual(audit.noDesc, [], `${audit.id}: settings rows without a description`); assert.deepEqual(audit.noLabel, [], `${audit.id}: settings rows whose label does not point at their control`); assert.equal(audit.grouped, true, `${audit.id}: rows must sit in a settings group`); }
     for (const id of ['settings-general', 'settings-usages', 'settings-project', 'settings-notifications', 'settings-roles', 'settings-macros']) assert.equal(rowAudit.some(item => item.id === id && item.rows > 0), true, `${id} was not audited or has no settings rows`);
-    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the two chat switches, the message-expiry window, and the settings backup, all as rows');
+    assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, and the settings backup, all as rows');
     // One spacing system on every settings page, at desktop and phone width: each section label, card and action row ends before
     // the next one starts with a gap between them (no overlap, no touching), text inside a card keeps its padding from the card
     // edge, and row actions such as move, remove and delete are icon buttons with a tooltip and an accessible name.
@@ -5941,6 +6026,20 @@ async function main() {
     await openSettings(first); await domClick(first, '#settings-machines-tab');
     await first.waitForSelector('#machines-list .machine-card');
     assert.ok(await first.$eval('#machines-list .machine-card strong', el => el.textContent.includes('Host')));
+    // Stop all agents on a machine: an icon with its name as tooltip and label, and a confirmation first. Cancelling stops nothing (the
+    // stopping itself is checked against the server in Go, since stopping here would take down the agents the rest of this run uses).
+    {
+      const stopButton = '#machines-list .machine-card:first-child .machine-stop-all';
+      assert.deepEqual(await first.$eval(stopButton, el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-stop'), el.textContent]), ['Stop all agents on this machine', 'Stop all agents on this machine', true, ''], 'the machine stop is an icon with a name');
+      const answerBefore = first.__dialogAnswer; let asked = '';
+      first.__dialogAnswer = text => { asked = text; return { accept: false }; };
+      try {
+        await domClick(first, stopButton);
+        await first.waitForFunction(() => !document.querySelector('#app-dialog')?.open);
+      } finally { first.__dialogAnswer = answerBefore; }
+      assert.match(asked, /^Stop all agents on this machine \| Stop every agent on .+\?/, 'the stop asks first');
+      assert.equal(await first.$eval('#machines-note', el => el.textContent), '', 'cancelling says nothing and stops nothing');
+    }
     await domClick(first, '#machine-add');
     await first.locator('#machine-pair-form [name=name]').fill('Remote UI smoke');
     await domClick(first, '#machine-pair-form button[type=submit]');
@@ -6904,8 +7003,10 @@ async function main() {
       await nobodyPage.evaluate(() => document.querySelector('#settings-machines-tab').click());
       await nobodyPage.waitForFunction(() => document.querySelector('#machines-list .machine-card') && !document.querySelector('#machines-error').textContent);
       assert.deepEqual(await nobodyPage.evaluate(() => ({ pair: [document.querySelector('#machine-add').disabled, document.querySelector('#machine-add').title],
-        cardButtons: [...document.querySelectorAll('#machines-list .machine-card-actions button')].every(button => button.disabled && /^Only the owner can /.test(button.title)) })),
-        { pair: [true, 'Only the owner can pair machines'], cardButtons: true }, 'an admin sees the machines with pairing, approving and revoking off');
+        cardButtons: [...document.querySelectorAll('#machines-list .machine-card-actions button:not(.machine-stop-all)')].every(button => button.disabled && /^Only the owner can /.test(button.title)),
+        // Stopping is the exception: an admin may stop the agents they may manage, as on an agent's own card.
+        stopAll: [...document.querySelectorAll('#machines-list .machine-stop-all')].length > 0 && [...document.querySelectorAll('#machines-list .machine-stop-all')].every(button => !button.disabled) })),
+        { pair: [true, 'Only the owner can pair machines'], cardButtons: true, stopAll: true }, 'an admin sees the machines with pairing, approving and revoking off, and Stop all still on');
       await nobodyContext.close();
       await domClick(first, '#settings-close');
     }

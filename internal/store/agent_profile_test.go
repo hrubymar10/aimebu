@@ -1,6 +1,27 @@
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/goccy/go-json"
+)
+
+func TestAgentProfileLabelsEstimatedDailyCost(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	f := seedExecution(t, s)
+	if err := s.AddMember(t.Context(), f.room.ID, "agent", f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	frame, _ := json.Marshal(map[string]any{"type": "usage", "usage": map[string]any{"tokens_in": 100, "tokens_out": 50, "cost_estimate": 0.02, "cost_source": "estimated"}})
+	if err := s.RecordTurnEvent(t.Context(), f.turn.ID, f.agent.ID, "estimated-cost", "usage", "", frame); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := s.AgentProfile(t.Context(), f.room.ID, f.agent.ID)
+	if err != nil || profile.CostToday == nil || *profile.CostToday != 0.02 || !profile.CostTodayEstimated {
+		t.Fatalf("estimated profile: %+v %v", profile, err)
+	}
+}
 
 func TestResumeCommandKnownToolsAndQuoting(t *testing.T) {
 	t.Parallel()

@@ -285,7 +285,8 @@ the agent waits for a recovery or approval decision, red when stopped or lost;
 a sender with no live agent record shows as departed, and one that exists only in imported v1 history is red too, with the tooltip
 "Imported from v1 (no live agent)"). A message that needs a
 human shows a 🔔. A chart icon beside an agent message's `#42` opens a popover with what the turn behind it spent
-(tokens, estimated cost, model, and its place among the turn's messages, such as "2 of 3"); these are the turn's figures, not
+(tokens, cost labelled when it uses the dated [model price list](docs/pricing.md),
+model, and its place among the turn's messages, such as "2 of 3"); these are the turn's figures, not
 per-message ones, and an unreported figure shows as a dash, never zero. The `#42` number is the message's own number, one sequence across every room (as in v1, where an imported message keeps its v1 number); it copies itself, a `#42` in text links to that message (opening its room when it is elsewhere), and an agent may name a message by it. Hovering or focusing a
 message shows its actions as one compact toolbar that overlays and reserves no space and covers no text: at the right end of the sender line
 for someone else's message, beside the bubble (to its left) for your own. The one exception is a chat column under 420px, where nothing fits
@@ -315,7 +316,8 @@ last-seen tooltip; secondary actions appear on hover, focus, or touch. Agent
 cards offer a tool/model switch that keeps
 the agent identity and room, finishes any running turn, and starts a new
 generation with recent room context. A memory gauge shows reported context
-use against the reported window, with input/output tokens and reported cost
+use against the reported window, with input/output tokens and recorded cost
+(labelled when it includes a price-list estimate)
 in its tooltip;
 Claude Code uses its last main-thread assistant message for the context
 estimate, and the gauge label caps at 100%;
@@ -491,7 +493,7 @@ They may add two to four `proposed_answers` for quick buttons or up to ten
 `open_questions`, each with two to eight options and an optional description.
 The inbox and room show the same pending request. Buttons always offer a free
 text answer; each open question adds Other text. Sending resolves one inbox
-item and posts a structural reply addressed to the requesting agent. A request you had open that is now settled leaves a quiet, disabled "Answered" under the message for the rest of the session (as in v1) instead of silently losing its buttons; after a reload the message shows no controls.
+item and posts a structural reply addressed to the requesting agent. A proposed answer can be changed before it is sent: the pencil beside it, or a Shift-click on the answer, opens it in an editor under the answers (Ctrl or Cmd+Enter or Send answer sends the edited text, the X or Esc closes it and drops the text); a plain click still sends it as it stands. A request you had open that is now settled leaves a quiet, disabled "Answered" under the message for the rest of the session (as in v1) instead of silently losing its buttons; after a reload the message shows no controls.
 The Open Questions dialog shows one question at a time with a numbered
 stepper (answered questions are marked), an "N/M answered" counter and a
 review step; Send is enabled only once every question is answered, and an
@@ -503,7 +505,7 @@ Other. The button shows the same
 count. An explicit `ask` cannot be combined with these fields; `proposed_answers` and
 `open_questions` cannot be combined with each other.
 
-The open-item count appears on the Inbox button and in the tab title. New items play a short chime after a tab interaction. So do chat messages that address you (a mention, a reply, a group you are in), unless the room is quiet for you (Room settings → Notifications).
+The open-item count appears on the Inbox button and in the tab title. Settings → Notifications → "Show message text in notifications" (off by default, kept on your account) puts the start of a chat message in the desktop notification instead of only saying that one arrived; the text is read through the room's own message list, so only what you may read is shown. New items play a short chime after a tab interaction. So do chat messages that address you (a mention, a reply, a group you are in), unless the room is quiet for you (Room settings → Notifications).
 The Inbox lists open items with message requests highlighted beside their replies. Delivery-failed notices show readable draft text when
 available and can be dismissed after review; failures of archived rooms can be dismissed all at once ("Dismiss all
 resolved"). Usage alerts show the provider, account name, window, remaining percentage and reset time inline and can be dismissed by an admin. The Inbox never shows raw JSON: a payload that is JSON is summarised in plain words, and the raw record is behind a
@@ -626,7 +628,7 @@ two-turn canaries are
 The owner can add a remote machine in Settings → Machines. Add machine
 shows a short-lived, single-use pairing command to copy and run on that
 host. The same page lists pending, approved, and revoked machines; the owner
-approves a paired machine there or revokes an existing one. The supervisor
+approves a paired machine there or revokes an existing one. Each approved machine also has a stop icon that stops every agent running on it (after a confirmation); owner and admins use it, within the agents they may manage. The supervisor
 sends executable detection and versions for its configured harnesses.
 Settings → Harnesses (owner only) has a machine picker and that machine's harnesses.
 A switch in its header chooses one of three layouts over the same data, kept as a personal
@@ -743,12 +745,13 @@ restoration. The controls show persisted per-agent Pause/Stop failures, which
 can be retried with a new request key after the blocking condition clears.
 A failed Resume can be retried after the affected agent exits.
 The same settings views let owners set a daily cost cap and turn cap for each
-room or project. They show today's measured usage, cost-reporting coverage,
+room or project. They show today's usage, cost coverage (including estimates),
 the server's local day, and whether dispatch is active or paused. A blank
 field removes that cap. At the cap, dispatch pauses and an inbox decision
 lets the owner continue with a raised cap or leave the scope paused.
 Room settings and Project settings also have a Usage section (`GET /api/rooms/{room}/usage` and
 `GET /api/projects/{project}/usage`) that sums what the turns spent today, over seven days or
-for all time, by agent and by model, with a note on how many turns reported a cost. A Claude
+for all time, by agent and by model, with counts of turns with a cost and turns
+priced from the [model price list](docs/pricing.md). A Claude
 turn is priced as the difference from its session's running total, so a resumed session is not
 counted again from the start.

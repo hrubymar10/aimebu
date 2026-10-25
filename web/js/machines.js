@@ -7,6 +7,7 @@ export class MachinesSettings {
     this.section = document.querySelector('#settings-machines');
     this.list = document.querySelector('#machines-list');
     this.error = document.querySelector('#machines-error');
+    this.note = document.querySelector('#machines-note');
     this.dialog = document.querySelector('#machine-pair-dialog');
     this.form = document.querySelector('#machine-pair-form');
     this.result = document.querySelector('#machine-pair-result');
@@ -42,12 +43,28 @@ export class MachinesSettings {
       const actions = document.createElement('div'); actions.className = 'machine-card-actions';
       if (!machine.approved && !machine.revoked_at) actions.append(this.action('Approve', () => this.change(machine, 'approve'), 'check'));
       if (!machine.is_host && !machine.revoked_at) actions.append(this.action('Revoke', () => this.change(machine, 'revoke'), 'key-off'));
-      if (!rights.owner) for (const button of actions.children) { button.disabled = true; button.title = `Only the owner can ${button.getAttribute('aria-label').toLowerCase()} machines`; }
+      // Stopping is not the owner's alone: the server stops only the agents the person may manage, as a single stop does.
+      const stopAll = machine.approved && !machine.revoked_at ? this.action('Stop all agents on this machine', () => this.stopAgents(machine), 'stop') : null;
+      if (stopAll) { stopAll.classList.add('machine-stop-all'); actions.append(stopAll); }
+      if (!rights.owner) for (const button of [...actions.children].filter(button => button !== stopAll)) { button.disabled = true; button.title = `Only the owner can ${button.getAttribute('aria-label').toLowerCase()} machines`; }
       card.append(title, status, detail, actions); this.list.append(card);
     }
     if (!machines.length) { const empty = document.createElement('p'); empty.className = 'settings-intro'; empty.textContent = 'No machines yet.'; this.list.append(empty); }
   }
   action(label, callback, glyph) { const button = document.createElement('button'); button.type = 'button'; button.className = glyph ? 'icon-btn' : 'btn'; if (glyph) setGlyph(button, glyph, label); else { button.textContent = label; button.setAttribute('aria-label', label); } button.onclick = callback; return button; }
+  // Stops every agent that runs on the machine, after the person confirms; says how many stopped and why any did not.
+  async stopAgents(machine) {
+    if (!await confirmDialog(`Stop every agent on ${machine.name}? Their current work will be stopped. Each agent can be started again from its card.`, { title: 'Stop all agents on this machine', confirm: 'Stop agents', danger: true })) return;
+    this.error.textContent = ''; this.note.textContent = '';
+    try {
+      const result = await request(`/api/machines/${encodeURIComponent(machine.id)}/agents/stop`, { method: 'POST' });
+      const parts = [`Stopped ${result.stopped.length} agent${result.stopped.length === 1 ? '' : 's'}`];
+      if (result.already_stopped) parts.push(`${result.already_stopped} already stopped`);
+      if (result.forbidden) parts.push(`${result.forbidden} left running (not yours to stop)`);
+      if (result.failed?.length) parts.push(`${result.failed.length} could not be stopped: ${result.failed.map(item => item.error).join('; ')}`);
+      this.note.textContent = `${parts.join(', ')}.`;
+    } catch (error) { this.error.textContent = error.message; }
+  }
   async change(machine, action) {
     if (action === 'revoke' && !await confirmDialog(`Revoke ${machine.name}? Its supervisor will disconnect and cannot reconnect with this key.`, { title: 'Revoke machine', confirm: 'Revoke', danger: true })) return;
     this.error.textContent = '';

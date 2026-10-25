@@ -56,7 +56,7 @@ export class UsageLimit {
     const day = new Date(state.day_start).toLocaleDateString();
     const costLimit = state.daily_cost_cap == null ? 'no cap' : `${money(state.daily_cost_cap)} cap`;
     const turnLimit = state.daily_turn_cap == null ? 'no cap' : `${state.daily_turn_cap} cap`;
-    const coverage = state.cost_coverage === 'known' ? 'reported' : state.cost_coverage === 'partial' ? 'partly reported' : 'unreported';
+    const coverage = state.cost_coverage === 'known' ? 'reported' : state.cost_coverage === 'estimated' ? 'estimated' : state.cost_coverage === 'partial' ? (state.turns_with_estimated_cost ? 'partly estimated' : 'partly reported') : 'unreported';
     this.summary.textContent = `${day} (${state.tz}), all rooms: ${state.daily_turns} turns / ${turnLimit}; ${money(state.daily_cost)} ${coverage} cost / ${costLimit}. Dispatch: ${state.effective_state}.`;
   }
   async save() {

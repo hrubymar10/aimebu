@@ -70,6 +70,23 @@ func CodexCachedInput(event CodexEvent) *int64 {
 	return value.Usage.CachedInputTokens
 }
 
+// CodexCacheWrite is the share of input_tokens written to the prompt cache,
+// when the CLI reports it.
+func CodexCacheWrite(event CodexEvent) *int64 {
+	if event.Type != "turn.completed" {
+		return nil
+	}
+	var value struct {
+		Usage struct {
+			CacheWrite *int64 `json:"cache_write_input_tokens"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal(event.Raw, &value) != nil {
+		return nil
+	}
+	return value.Usage.CacheWrite
+}
+
 func CodexUsage(event CodexEvent) (input, output *int64) {
 	if event.Type != "turn.completed" {
 		return nil, nil

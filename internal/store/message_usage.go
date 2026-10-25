@@ -18,6 +18,7 @@ type MessageUsage struct {
 	CacheRead  *int64   `json:"tokens_cache_read,omitempty"`
 	CacheWrite *int64   `json:"tokens_cache_write,omitempty"`
 	Cost       *float64 `json:"cost,omitempty"`
+	CostSource string   `json:"cost_source,omitempty"`
 	Model      string   `json:"model,omitempty"`
 	// Partial is true when part of the turn's spend was not seen (it ended without a report), so the figures are a floor.
 	Partial bool `json:"partial,omitempty"`
@@ -91,7 +92,7 @@ func (s *Store) UsageForMessages(ctx context.Context, messages []Message) (map[s
 		return nil, err
 	}
 	totals := map[string]MessageUsage{}
-	rows, err = s.db.QueryContext(ctx, `SELECT turn_id,SUM(tokens_in),SUM(tokens_out),SUM(tokens_cache_read),SUM(tokens_cache_write),SUM(cost_est),MAX(partial),COALESCE(MAX(model),'')
+	rows, err = s.db.QueryContext(ctx, `SELECT turn_id,SUM(tokens_in),SUM(tokens_out),SUM(tokens_cache_read),SUM(tokens_cache_write),SUM(cost_est),MAX(partial),COALESCE(MAX(model),''),MAX(CASE WHEN cost_est IS NOT NULL AND source='estimated' THEN 1 ELSE 0 END)
 		FROM usage_record WHERE turn_id IN (`+marks(len(turnIDs))+`) GROUP BY turn_id`, turnIDs...)
 	if err != nil {
 		return nil, err
@@ -100,8 +101,8 @@ func (s *Store) UsageForMessages(ctx context.Context, messages []Message) (map[s
 		var turnID, model string
 		var in, outTokens, read, write sql.NullInt64
 		var cost sql.NullFloat64
-		var partial int
-		if err := rows.Scan(&turnID, &in, &outTokens, &read, &write, &cost, &partial, &model); err != nil {
+		var partial, estimated int
+		if err := rows.Scan(&turnID, &in, &outTokens, &read, &write, &cost, &partial, &model, &estimated); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -120,6 +121,11 @@ func (s *Store) UsageForMessages(ctx context.Context, messages []Message) (map[s
 		}
 		if cost.Valid {
 			usage.Cost = &cost.Float64
+			if estimated == 1 {
+				usage.CostSource = "estimated"
+			} else {
+				usage.CostSource = "reported"
+			}
 		}
 		totals[turnID] = usage
 	}

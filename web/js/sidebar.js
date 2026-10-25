@@ -28,6 +28,10 @@ const collapsedKey = 'aimebu2.rooms.collapsed';
 // The sort and the manual project order are the person's own preferences (they follow them across devices); the browser keeps a
 // cache under these keys, filled from the server at sign-in (see preferences.js).
 const sortKey = () => `aimebu2.ui.sidebar_sort.${currentUser}`, orderKey = () => `aimebu2.ui.sidebar_project_order.${currentUser}`;
+// Whether every room row shows its last message ('1'), or only the room that is open does (the default).
+const previewKey = () => `aimebu2.ui.sidebar_preview.${currentUser}`;
+export const SIDEBAR_PREVIEW_EVENT = 'aimebu:sidebar-preview';
+function loadPreviewAll() { try { return localStorage.getItem(previewKey()) === '1'; } catch { return false; } }
 function loadSort() { try { const value = localStorage.getItem(sortKey()); return SORTS.some(([key]) => key === value) ? value : DEFAULT_SORT; } catch { return DEFAULT_SORT; } }
 function loadManual() { try { const list = JSON.parse(localStorage.getItem(orderKey()) || '[]'); return Array.isArray(list) ? list.filter(id => typeof id === 'string') : []; } catch { return []; } }
 function loadCollapsed() { try { const list = JSON.parse(localStorage.getItem(collapsedKey) || '[]'); return new Set(Array.isArray(list) ? list.filter(id => typeof id === 'string') : []); } catch { return new Set(); } }
@@ -44,6 +48,8 @@ export class Sidebar {
     for (const cache of [this.projects, this.rooms, this.roomNodes, this.archiveNodes, this.hiddenNodes, this.archivedOpen, this.archiveSearchNodes, this.archiveHitNodes, this.archiveFilter, this.archiveTimers, this.archiveRequests, this.health]) cache.clear();
     this.active = ''; this.loadedUser = null; this.filter = ''; this.createBox = null; this.directNode = null; this.container.replaceChildren();
   }
+  // Settings announces a change of the preview choice; the rows are drawn again from the rooms already loaded.
+  watchPreview() { document.addEventListener(SIDEBAR_PREVIEW_EVENT, () => this.render()); }
   async roomRequest(path, options = {}) {
     const controller = new AbortController();
     this.roomRequests.add(controller);
@@ -384,9 +390,9 @@ export class Sidebar {
       if (!status) { status = document.createElement('span'); status.className = 'room-state'; row.insertBefore(status, add); }
       status.textContent = 'Closing…';
     } else status?.remove();
-    // The last message is previewed only under the room that is open.
+    // The last message is previewed under the room that is open, and under every room when the person turned that on.
     let preview = group.querySelector(':scope > .room-preview');
-    if (room.id === this.active) {
+    if (room.id === this.active || loadPreviewAll()) {
       if (!preview) { preview = document.createElement('div'); preview.className = 'room-preview'; group.insertBefore(preview, row.nextSibling); }
       preview.textContent = previewText(room.last_message_body) || 'No messages yet';
     } else preview?.remove();

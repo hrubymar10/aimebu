@@ -10,7 +10,7 @@ const vm = require('node:vm');
 const read = name => fs.readFileSync(path.join(__dirname, '..', 'web', 'js', name), 'utf8');
 const source = read('room-notify.js').replace(/^export /gm, '') + '\n' +
   read('inbox-notifications.js').replace(/^import .*$/gm, '').replace(/^export /gm, '') +
-  '\nglobalThis.api = { InboxNotifications };';
+  '\nglobalThis.api = { InboxNotifications, notificationSnippet };';
 
 function setup({ muted = false, permission = 'granted', hidden = true } = {}) {
   const log = { plays: 0, notes: [] };
@@ -43,7 +43,7 @@ function setup({ muted = false, permission = 'granted', hidden = true } = {}) {
   const opened = [];
   const notifier = new context.api.InboxNotifications(item => opened.push(['item', item.id]), (room, id) => opened.push(['room', room.id, id]));
   const projects = new Map([['p1', { name: 'Project' }]]);
-  return { notifier, log, opened, projects, advance: ms => { clock += ms; } };
+  return { notifier, api: context.api, log, opened, projects, advance: ms => { clock += ms; }, setHidden: value => { context.document.hidden = value; } };
 }
 
 const room = (extra = {}) => ({ id: 'r1', project_id: 'p1', title: 'general', notify: 'default', ...extra });
@@ -142,6 +142,58 @@ for (const [notify, message, plays] of [['default', mention, 1], ['default', pla
   t.notifier.message({ ...mention, author_kind: 'user', author_id: 'me' }, room({ notify: 'all' }), t.projects, 'me', false);
   assert.equal(attention.length, 3, 'a quiet room, an unaddressed message and their own message are not attention');
 }
+
+{ // The snippet is one line and short: whitespace flattened, cut with an ellipsis, nothing for nothing.
+  const { notificationSnippet } = setup().api;
+  assert.equal(notificationSnippet('  a\n\n b\t c '), 'a b c');
+  assert.equal(notificationSnippet(''), '');
+  assert.equal(notificationSnippet(undefined), '');
+  assert.equal(notificationSnippet('x'.repeat(140)), 'x'.repeat(140), 'exactly the limit stays whole');
+  assert.equal(notificationSnippet('x'.repeat(141)), 'x'.repeat(139) + '…');
+}
+{ // The text of a message in the desktop note is the person's choice, off by default; a failed read falls back to the plain note.
+  const off = setup(); assert.equal(off.notifier.showText, false);
+  let asked = 0; off.notifier.snippetOf = async () => { asked++; return 'secret'; };
+  off.notifier.message(mention, room(), off.projects, 'me', false);
+  assert.deepEqual([off.log.notes[0].body, asked], ['Project · A message for you', 0], 'off: no text, and the message is not even fetched');
+}
+(async () => {
+  const on = setup(); on.notifier.showText = true;
+  assert.equal(on.notifier.showText, true);
+  on.notifier.snippetOf = async (roomID, messageID) => { on.asked = [roomID, messageID]; return 'Can you review the branch?'; };
+  on.notifier.message(mention, room(), on.projects, 'me', false);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(on.asked, ['r1', 'm1']);
+  assert.equal(on.log.notes[0].body, 'Project · Can you review the branch?', 'on: the text rides in the note');
+  const failed = setup(); failed.notifier.showText = true; failed.notifier.snippetOf = async () => '';
+  failed.notifier.message(plain, room({ notify: 'all' }), failed.projects, 'me', false);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(failed.log.notes[0].body, 'Project · New message', 'an empty or failed read shows the plain note');
+  // A reply that is not a list (an error body) gives nothing, and the person coming back to the tab or switching the text off while the text
+  // is on its way shows no note, or the plain one.
+  assert.equal(await setup().notifier.snippetOf('r1', 'm1', async () => ({ messages: [{ id: 'm1', body: 'x' }] })), '', 'only the list the server really sends counts');
+  const gone = setup(); gone.notifier.showText = true; let release;
+  gone.notifier.snippetOf = () => new Promise(resolve => { release = resolve; });
+  gone.notifier.message(mention, room(), gone.projects, 'me', false);
+  gone.setHidden(false);
+  release('late text'); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(gone.log.notes.length, 0, 'the tab came back while the text was on its way: no note');
+  const off = setup(); off.notifier.showText = true; let letgo;
+  off.notifier.snippetOf = () => new Promise(resolve => { letgo = resolve; });
+  off.notifier.message(mention, room(), off.projects, 'me', false);
+  off.notifier.showText = false; letgo('secret text'); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(off.log.notes[0].body, 'Project · A message for you', 'switched off meanwhile: the plain note');
+  const visible = setup({ hidden: false }); visible.notifier.showText = true; let fetched = 0; visible.notifier.snippetOf = async () => { fetched++; return 'x'; };
+  visible.notifier.message(mention, room(), visible.projects, 'me', false);
+  assert.equal(fetched, 0, 'a visible tab shows no note, so nothing is fetched');
+  // snippetOf reads the room's own list, picks the message by id and cuts it.
+  const reader = setup(); let url = '';
+  const text = await reader.notifier.snippetOf('r 1', 'm9', async path => { url = path; return [{ id: 'm8', body: 'other' }, { id: 'm9', body: '  long  '.repeat(60) }]; });
+  assert.equal(url, '/api/rooms/r%201/messages?around=m9&limit=3');
+  assert.ok(text.length <= 140 && text.endsWith('…') && !/\s{2}/.test(text), text);
+  assert.equal(await reader.notifier.snippetOf('r1', 'm1', async () => { throw new Error('403'); }), '', 'no access: nothing');
+  assert.equal(await reader.notifier.snippetOf('r1', 'm1', async () => [{ id: 'zzz', body: 'x' }]), '', 'not in the answer: nothing');
+})().catch(error => { console.error(error); process.exit(1); });
 
 (async () => { // Asking for the permission (the Settings button) tells whoever offers notifications, so the bar can re-read the answer; nothing when it
   // was asked before or notifications are unavailable.

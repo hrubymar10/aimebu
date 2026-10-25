@@ -230,7 +230,7 @@ export class AgentsPanel {
     const status = agent.desired === 'stopped' ? 'Stopped' : agent.desired === 'not_accepting' ? 'Paused' : agent.observed === 'in_turn' ? 'Working' : agent.observed === 'lost' ? 'Lost' : agent.observed === 'stopped' ? 'Stopped' : 'Online';
     const seen = agent.last_activity_at || agent.machine_last_seen;
     const variant = agent.variant && agent.variant !== agent.tool ? `${agent.tool}/${agent.variant}` : agent.tool;
-    const today = profile.turns_today || profile.cost_today ? `${profile.turns_today || 0} turn${profile.turns_today === 1 ? '' : 's'}${profile.cost_today ? ` · $${profile.cost_today.toFixed(profile.cost_today < 0.01 ? 4 : 2)}` : ''}` : '';
+    const today = profile.turns_today || profile.cost_today ? `${profile.turns_today || 0} turn${profile.turns_today === 1 ? '' : 's'}${profile.cost_today ? ` · $${profile.cost_today.toFixed(profile.cost_today < 0.01 ? 4 : 2)}${profile.cost_today_estimated ? ' estimated' : ''}` : ''}` : '';
     const rows = [
       this.fact('Status', status), this.fact('Presence', agent.activity || (agent.observed === 'in_turn' ? 'Working on a turn' : agent.observed === 'lost' ? 'Unconfirmed; recovery needed' : 'Idle')),
       this.fact('Last seen', seen ? relativeTime(seen) : ''), this.fact('Runtime', `${agent.model || 'unknown'} · ${variant || 'unknown'}`),
@@ -466,7 +466,7 @@ export class AgentsPanel {
     value.textContent = known ? `${Math.round(Math.min(100, used / window * 100))}%` : '—';
     const number = amount => Number.isFinite(amount) && amount >= 0 ? new Intl.NumberFormat().format(amount) : '—';
     const cost = Number.isFinite(usage?.cost_so_far) && usage.cost_so_far >= 0 ? `$${usage.cost_so_far.toFixed(usage.cost_so_far > 0 && usage.cost_so_far < 0.01 ? 4 : 2)}` : '—';
-    context.title = `Context ${usedKnown ? number(used) : '—'} / ${windowKnown ? number(window) : '—'} tokens · Input ${number(usage?.tokens_in)} · Output ${number(usage?.tokens_out)} · Cost so far ${cost}`;
+    context.title = `Context ${usedKnown ? number(used) : '—'} / ${windowKnown ? number(window) : '—'} tokens · Input ${number(usage?.tokens_in)} · Output ${number(usage?.tokens_out)} · Cost so far ${cost}${usage?.cost_estimated ? ' (includes estimates)' : ''}`;
     context.setAttribute('aria-label', `Memory: ${context.title}`);
   }
   updateLiveChip(node) {

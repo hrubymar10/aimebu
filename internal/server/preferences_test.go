@@ -143,3 +143,39 @@ func TestHarnessLayoutIsAPerAccountPreference(t *testing.T) {
 		t.Fatalf("the layout leaked to another person: %v", got)
 	}
 }
+
+// Whether desktop notifications show the start of a message is a personal preference kept on the server, never seen by another person.
+func TestNotificationTextIsAPerAccountPreference(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	cookie, csrf := registerSecondUser(t, f, "second")
+	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"notification_text": "1"}}, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("store: %d", resp.StatusCode)
+	}
+	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["notification_text"] != "1" {
+		t.Fatalf("stored, read back %v", got)
+	}
+	other := f.requestAs(t, cookie, csrf, "GET", "/api/me/preferences", nil)
+	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["notification_text"] != "" {
+		t.Fatalf("the choice leaked to another person: %v", got)
+	}
+}
+
+// Whether the room list previews the last message under every room is a personal preference kept on the server, never seen by another person.
+func TestSidebarPreviewIsAPerAccountPreference(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	cookie, csrf := registerSecondUser(t, f, "second")
+	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"sidebar_preview": "1"}}, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("store: %d", resp.StatusCode)
+	}
+	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["sidebar_preview"] != "1" {
+		t.Fatalf("stored, read back %v", got)
+	}
+	other := f.requestAs(t, cookie, csrf, "GET", "/api/me/preferences", nil)
+	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["sidebar_preview"] != "" {
+		t.Fatalf("the choice leaked to another person: %v", got)
+	}
+}

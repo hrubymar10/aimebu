@@ -60,8 +60,10 @@ reason; the script does not retry it.
 
 The room caps bound each variant, and the script also reads the room's measured
 cost after each step and refuses to start another variant once `--budget`
-(default $6) is reached. Codex reports no cost, so its `cost_coverage` is
-`unknown` and only the turn cap bounds it; the report says so.
+(default $6) is reached. Codex's cost uses the dated
+[model price list](pricing.md) when its model and token counts are available,
+so `cost_coverage` is `estimated`; an unlisted model has unknown cost and only
+the turn cap bounds it. The report carries that coverage.
 
 ## The kill step runs on the supervisor's host
 

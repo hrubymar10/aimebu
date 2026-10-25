@@ -103,6 +103,7 @@ const chat = new Chat(async room => {
 });
 const receipts = new ReadReceipts(chat);
 const sidebar = new Sidebar(document.querySelector('#projects'), (room, messageID) => selectRoom(room, messageID));
+sidebar.watchPreview();
 // Pin and hide are set from the room settings; the room lists keep the per-user state.
 chat.roomView = id => sidebar.rooms.get(id);
 chat.setRoomPreference = (room, field, value) => sidebar.setPreference(room, field, value);

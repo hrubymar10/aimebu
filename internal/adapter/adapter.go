@@ -72,6 +72,9 @@ type Usage struct {
 	ContextUsed   *int64   `json:"context_used,omitempty"`
 	ContextWindow *int64   `json:"context_window,omitempty"`
 	CostEstimate  *float64 `json:"cost_estimate,omitempty"`
+	// CostSource is "estimated" when the price list, rather than the harness,
+	// supplied CostEstimate. An empty value means a harness-reported cost.
+	CostSource string `json:"cost_source,omitempty"`
 	// TokensCacheRead and TokensCacheWrite are the tokens served from and written to the prompt cache, where the harness reports them.
 	TokensCacheRead  *int64 `json:"tokens_cache_read,omitempty"`
 	TokensCacheWrite *int64 `json:"tokens_cache_write,omitempty"`

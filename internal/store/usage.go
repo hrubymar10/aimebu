@@ -16,6 +16,7 @@ type AgentUsage struct {
 	ContextUsed   *int64   `json:"context_used,omitempty"`
 	ContextWindow *int64   `json:"context_window,omitempty"`
 	CostSoFar     *float64 `json:"cost_so_far,omitempty"`
+	CostEstimated bool     `json:"cost_estimated,omitempty"`
 }
 
 // latestUsageSQL reads the newest record (by timestamp, the later insert on a tie) of the agent's current process generation. A partial record
@@ -57,6 +58,9 @@ func (s *Store) AgentUsage(ctx context.Context, agentID string) (*AgentUsage, er
 	}
 	if cost.Valid {
 		usage.CostSoFar = &cost.Float64
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM usage_record WHERE agent_id=? AND cost_est IS NOT NULL AND source='estimated')`, agentID).Scan(&usage.CostEstimated); err != nil {
+			return nil, err
+		}
 	}
 	if err == sql.ErrNoRows && !cost.Valid {
 		return nil, nil
@@ -74,6 +78,7 @@ func (tx *Tx) recordUsageOrCompaction(turnID, agentID, projectID, roomID, source
 			ContextUsed      *int64   `json:"context_used"`
 			ContextWindow    *int64   `json:"context_window"`
 			CostEstimate     *float64 `json:"cost_estimate"`
+			CostSource       string   `json:"cost_source"`
 			CostCumulative   bool     `json:"cost_cumulative"`
 			Model            string   `json:"model"`
 			Partial          bool     `json:"partial"`
@@ -112,9 +117,13 @@ func (tx *Tx) recordUsageOrCompaction(turnID, agentID, projectID, roomID, source
 		if u.Partial {
 			partial = 1
 		}
+		source := "measured"
+		if cost != nil && u.CostSource == "estimated" {
+			source = "estimated"
+		}
 		_, err = tx.Exec(`INSERT INTO usage_record(id,source_event_id,turn_id,agent_id,room_id,project_id,tokens_in,tokens_out,tokens_cache_read,tokens_cache_write,context_used,context_window,cost_est,cost_total,model,partial,source,created_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'measured',?)`, id, sourceID, turnID, agentID, roomID, projectID,
-			u.TokensIn, u.TokensOut, u.TokensCacheRead, u.TokensCacheWrite, u.ContextUsed, u.ContextWindow, cost, total, model, partial, timestamp())
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, sourceID, turnID, agentID, roomID, projectID,
+			u.TokensIn, u.TokensOut, u.TokensCacheRead, u.TokensCacheWrite, u.ContextUsed, u.ContextWindow, cost, total, model, partial, source, timestamp())
 		if err != nil {
 			return err
 		}

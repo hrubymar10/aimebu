@@ -175,11 +175,14 @@ with the journaled thread handle. It passes turn input on stdin, keeps the
 exact final candidate bytes, and parses thread, activity, usage, and
 completion events through `internal/harness`. `turn.completed.usage` counts
 the cached share inside `input_tokens` (`cached_input_tokens` is part of it), so
-the adapter reports Input as `input_tokens - cached_input_tokens` (never below
-zero) and Cache read as `cached_input_tokens`, the way the other adapters report
-them apart. When Codex omits the cached figure, Input is `input_tokens` and
-Cache read stays unknown. Codex 0.162.1 also prints `cache_write_input_tokens`
-and `reasoning_output_tokens`; neither is read.
+the adapter reports Input as `input_tokens` less the reported cache-read and
+cache-write shares (never below zero), with those shares shown separately.
+When Codex omits either cache figure, that share stays unknown and is treated
+as zero in the estimate. Codex 0.162.1 also prints
+`reasoning_output_tokens`; output already includes it. For listed models,
+the adapter estimates a dollar cost from the dated
+[model price list](pricing.md) and marks its source `estimated`. An unlisted
+model, missing input/output, or inconsistent token shares leave cost unknown.
 
 Its private per-agent `CODEX_HOME` holds the structured-output schema and a
 translated MCP config. Only the private config contains the agent key; the

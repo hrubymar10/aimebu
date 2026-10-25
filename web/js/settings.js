@@ -71,6 +71,7 @@ export class SettingsPanel {
     this.agentsTitle.parentElement.append(this.generalTab, this.usagesTab, this.projectTab, this.notificationsTab, this.rolesTab, this.usersSettings.tab,
       this.promptSettings.tab, this.macroSettings.tab, this.agentsTitle, this.machinesTab, this.harnessSettings.tab);
     this.muteToggle = document.querySelector('#notification-muted');
+    this.textToggle = document.querySelector('#notification-text');
     this.permissionButton = document.querySelector('#notification-permission');
     this.permissionStatus = document.querySelector('#notification-status');
     this.sounds = new NotificationSounds(this.notificationsSection, notifications);
@@ -78,6 +79,13 @@ export class SettingsPanel {
     this.project.onRenamed = (id, name) => { const option = [...this.projectSelect.options].find(item => item.value === id); if (option) option.textContent = name; };
     this.usagesTab.onclick = () => this.selectSection('usages');
     this.generalTab.onclick = () => this.selectSection('general');
+    this.previewToggle = document.querySelector('#sidebar-preview');
+    this.previewToggle.onchange = () => {
+      const value = this.previewToggle.checked ? '1' : '0';
+      try { if (this.userID) localStorage.setItem(`aimebu2.ui.sidebar_preview.${this.userID}`, value); } catch {}
+      savePreference('sidebar_preview', value);
+      document.dispatchEvent(new CustomEvent('aimebu:sidebar-preview'));
+    };
     this.themeSelect.onchange = () => {
       const theme = this.themeSelect.value;
       if (theme === 'dark') delete document.documentElement.dataset.theme;
@@ -92,6 +100,7 @@ export class SettingsPanel {
     this.rolesTab.onclick = () => this.selectSection('roles');
     this.machinesTab.onclick = () => this.selectSection('machines');
     this.muteToggle.onchange = () => { this.notifications.muted = this.muteToggle.checked; };
+    this.textToggle.onchange = () => { this.notifications.showText = this.textToggle.checked; };
     this.permissionButton.onclick = async () => {
       try { await this.notifications.requestPermission(); }
       catch (error) { this.permissionStatus.textContent = error.message; return; }
@@ -130,6 +139,7 @@ export class SettingsPanel {
     } catch {}
     if (![...this.themeSelect.options].some(option => option.value === theme)) theme = 'dark';
     this.themeSelect.value = theme;
+    try { this.previewToggle.checked = localStorage.getItem(`aimebu2.ui.sidebar_preview.${userID}`) === '1'; } catch {}
     if (theme === 'dark') delete document.documentElement.dataset.theme;
     else document.documentElement.dataset.theme = theme;
   }
@@ -270,6 +280,7 @@ export class SettingsPanel {
   }
   renderNotifications() {
     this.muteToggle.checked = this.notifications.muted;
+    this.textToggle.checked = this.notifications.showText;
     this.permissionStatus.textContent = this.notifications.status;
     this.permissionButton.disabled = !this.notifications.available || Notification.permission !== 'default';
     this.permissionButton.textContent = this.notifications.available && Notification.permission === 'granted' ? 'Enabled' : 'Enable browser notifications';

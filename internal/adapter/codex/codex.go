@@ -25,6 +25,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/adapter/prompt"
 	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/internal/harness"
+	"github.com/hrubymar10/aimebu/internal/pricing"
 )
 
 type Adapter struct {
@@ -182,7 +183,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	t := &turn{id: spec.TurnID, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, cmd: cmd, events: make(chan adapter.Event, 128), done: make(chan struct{}), stderrCapture: adapter.JoinWriters(a.stderrCapture, spec.StderrSink), stdoutCapture: a.stdoutCapture}
+	t := &turn{id: spec.TurnID, model: spec.Agent.Model, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, cmd: cmd, events: make(chan adapter.Event, 128), done: make(chan struct{}), stderrCapture: adapter.JoinWriters(a.stderrCapture, spec.StderrSink), stdoutCapture: a.stdoutCapture}
 	go func() { _, _ = stdin.Write(input); _ = stdin.Close() }()
 	go func() {
 		select {
@@ -365,19 +366,19 @@ func writePrivate(path string, data []byte) error {
 }
 
 type turn struct {
-	lastOutput          atomic.Int64 // unix nanos of the last stdout line
-	id, expectedSession string
-	started             bool
-	cmd                 *exec.Cmd
-	events              chan adapter.Event
-	done                chan struct{}
-	mu                  sync.Mutex
-	cancel              bool
-	exit                adapter.ExitInfo
-	err                 error
-	next                int
-	stderrCapture       io.Writer
-	stdoutCapture       io.Writer
+	lastOutput                 atomic.Int64 // unix nanos of the last stdout line
+	id, model, expectedSession string
+	started                    bool
+	cmd                        *exec.Cmd
+	events                     chan adapter.Event
+	done                       chan struct{}
+	mu                         sync.Mutex
+	cancel                     bool
+	exit                       adapter.ExitInfo
+	err                        error
+	next                       int
+	stderrCapture              io.Writer
+	stdoutCapture              io.Writer
 }
 
 // LastOutput is when the harness last wrote any stdout line, parsed or not.
@@ -500,14 +501,39 @@ func (t *turn) run(stdout, stderr io.Reader) {
 			completed = true
 			input, output := harness.CodexUsage(event)
 			cached := harness.CodexCachedInput(event)
+			written := harness.CodexCacheWrite(event)
+			consistent := input != nil && *input >= 0
+			if consistent {
+				shares := int64(0)
+				if cached != nil {
+					shares += *cached
+				}
+				if written != nil {
+					shares += *written
+				}
+				consistent = shares >= 0 && shares <= *input
+			}
 			// Codex reports input_tokens as the whole input, cached part included (cached_input_tokens is a share of it, as in the
-			// Responses API it passes through). Every other adapter reports input and cache reads apart, and the usage views show both
-			// lines, so the cached share is taken out of input here; otherwise a reader would count it twice.
-			if input != nil && cached != nil {
-				fresh := max(*input-*cached, 0)
+			// Responses API it passes through). Cache writes are another share. Split the three categories so a cost estimate and
+			// usage view do not count either cache share as ordinary input as well.
+			if input != nil && (cached != nil || written != nil) {
+				fresh := *input
+				if cached != nil {
+					fresh -= *cached
+				}
+				if written != nil {
+					fresh -= *written
+				}
+				fresh = max(fresh, 0)
 				input = &fresh
 			}
-			t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: &adapter.Usage{TokensIn: input, TokensOut: output, TokensCacheRead: cached}})
+			usage := &adapter.Usage{TokensIn: input, TokensOut: output, TokensCacheRead: cached, TokensCacheWrite: written}
+			if consistent {
+				if cost := pricing.Estimate(t.model, input, output, cached, written); cost != nil {
+					usage.CostEstimate, usage.CostSource = cost, "estimated"
+				}
+			}
+			t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: usage})
 		case "turn.failed", "error":
 			failed = true
 			errorEvent = adapter.SanitizeStderr(string(event.Raw))
