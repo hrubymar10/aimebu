@@ -635,7 +635,10 @@ it to fetch delivered attachments. Pi Docker currently has no toolbox. Their
 two-turn canaries are
 `AIMEBU2_LIVE_CC_DOCKER=1 go test ./internal/adapter/claude` and
 `AIMEBU2_LIVE_CODEX_DOCKER=1 go test ./internal/adapter/codex` and
-`AIMEBU2_LIVE_PI_DOCKER=1 go test ./internal/adapter/pi`.
+`AIMEBU2_LIVE_PI_DOCKER=1 go test ./internal/adapter/pi`; OpenCode and Vibe have
+`AIMEBU2_LIVE_OPENCODE_DOCKER=1 go test ./internal/adapter/opencode` and
+`AIMEBU2_LIVE_VIBE_DOCKER=1 go test ./internal/adapter/vibe`, and the Claude Code
+fork canary is `AIMEBU2_LIVE_CLAUDE_FORK=1 go test ./internal/adapter/claude`.
 
 The owner can add a remote machine in Settings → Machines. Add machine
 shows a short-lived, single-use pairing command to copy and run on that

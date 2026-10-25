@@ -475,3 +475,21 @@ func TestSpawnResumeModeRefusals(t *testing.T) {
 	}
 	_ = fake
 }
+
+// A containerized launcher keeps its own Claude sessions, so a session the machine has is neither continued nor copied through it: the
+// fork needs the native launcher too.
+func TestSpawnResumeThroughADockerLauncherNeedsNative(t *testing.T) {
+	t.Setenv("AIMEBU2_BIND", "0.0.0.0") // a loopback bind refuses Docker before anything else is looked at
+	f := newFixture(t)
+	f.seed()
+	f.connectSupervisor(t, true, candidate(sessionA, f.project.Folder, "x"))
+	f.srv.machineMu.Lock()
+	machine := f.srv.machines[f.machineID]
+	machine.capabilities = append(machine.capabilities, protocol.CapabilityReport{Tool: "claude", Environment: adapter.Environment{Variant: "docker"}})
+	f.srv.machineMu.Unlock()
+	for _, mode := range []string{"fork", "continue"} {
+		if status, body := f.spawnSession(t, "docker-"+mode, map[string]any{"resume_session": sessionA, "resume_mode": mode, "variant": "docker"}); status != 409 || body["error"] != "needs_native" {
+			t.Fatalf("%s through claude-docker: %d %v", mode, status, body)
+		}
+	}
+}

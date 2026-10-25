@@ -86,7 +86,8 @@ starts at the copy. A machine whose supervisor predates session scans answers 40
 `resume_mode`, `confirm_session_closed` and `new_room`; see [the API](api.md). The server looks
 the session up itself on the chosen machine and never trusts a folder from the
 client. The tool must be `claude` on a **native** launcher: a container keeps its
-own Claude home and cannot see the session (409 `needs_native`).
+own Claude home and cannot see the session (409 `needs_native`, for a fork as well as a
+continue: `claude-docker` forwards no `CLAUDE_CONFIG_DIR`, so a container never sees another home).
 
 The agent runs in the folder the session was made in, resolved on the machine,
 so it cannot use a worktree. If that folder no longer exists the start is refused

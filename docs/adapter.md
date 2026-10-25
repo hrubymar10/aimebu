@@ -334,9 +334,21 @@ adapter passes `--auto` itself, after `run`, for normal turns.
 A launcher that predates the feature would start the harness with none of this. The checkout preflight
 and every turn therefore run the launcher with `HARNESS_DOCKER_PRINT_FEATURES=1 … --version`: a launcher
 that has the feature prints `forward_env` and exits before it touches Docker, and one that does not
-prints a version. The latter is refused with a message to update harness-docker. The Docker variant
-claims no capabilities until the opt-in live canary (`AIMEBU2_LIVE_OPENCODE_DOCKER=1`, not yet written)
-has verified read-only turns, cancel and cost inside a container.
+prints a version. The latter is refused with a message to update harness-docker. The opt-in live canary
+(`AIMEBU2_LIVE_OPENCODE_DOCKER=1 go test ./internal/adapter/opencode`) runs two real turns through the
+launcher (a nonce, then a `-s` resume that must give it back) and checks the session id and the usage of
+each. The provider key comes from the environment (`OLLAMA_API_KEY` for the default model
+`ollama-cloud/gemma4:31b`; `AIMEBU2_LIVE_OPENCODE_MODEL` names another `provider/model` whose key is among
+the forwarded variables), never from the person's home. The Docker variant still claims no capabilities:
+read-only turns, cancel and cost inside a container are not verified by it.
+
+An agent turn does not see the person's own OpenCode configuration (the config folder is private and project
+config is off), so a provider defined only there, such as a custom OpenAI-compatible endpoint, is unavailable to
+it: only the built-in providers whose key variables are in the forwarded list can be used.
+
+A model that reasons in its reply text (GLM over an OpenAI-compatible provider) streams `<think>…</think>`
+ahead of the JSON in the same text part. The adapter passes the text through unchanged; the server's answer
+parser removes leading reasoning elements (see the contract).
 
 ## Mistral Vibe native adapter
 
@@ -428,8 +440,12 @@ when Vibe reports a missing key, the exit evidence says the key reaches the cont
 `MISTRAL_API_KEY` on the host avoids the question. `PYTHONUNBUFFERED=1` is forwarded as natively, so the
 streamed entries arrive as they are written. The MCP endpoint is the same
 `/api/agent/mcp` as for the other Docker harnesses, with `localhost` mapped to `host.docker.internal`.
-The Docker variant claims no capabilities until a live canary has run
-(`AIMEBU2_LIVE_VIBE_DOCKER=1`, not yet written).
+The opt-in live canary (`AIMEBU2_LIVE_VIBE_DOCKER=1 go test ./internal/adapter/vibe`) runs two real turns
+through the launcher (a nonce, then a `--resume` that must give it back) and checks the session id and the
+usage of each. It reads `MISTRAL_API_KEY` from the environment only (the test home is a temporary one, so
+`~/.vibe/.env` is not consulted) and takes the model alias from `AIMEBU2_LIVE_VIBE_MODEL` (default
+`mistral-medium-3.5`). The Docker variant still claims no capabilities: read-only turns, cancel and cost inside
+a container are not verified by it.
 
 ## Docker variants
 
@@ -466,3 +482,15 @@ do not claim confirmed cancellation until container-session teardown can be
 verified. Set `AIMEBU2_LIVE_CC_DOCKER=1` or
 `AIMEBU2_LIVE_CODEX_DOCKER=1` to run the respective two-turn Docker canary;
 the canary checkout is created below this repository's ignored `tmp/`.
+
+`claude-docker` does not forward `CLAUDE_CONFIG_DIR` (it is not among the variables the Claude Docker turn lists in
+`HARNESS_DOCKER_FORWARD_ENV`, and `docker exec` carries nothing else of the supervisor's environment): a Claude Docker turn
+always uses the container's own Claude home, never a per-run or temporary one. That is why an existing Claude Code session
+cannot be continued or copied through it. The server refuses `resume_session` on a containerized launcher for both
+`resume_mode`s (409 `needs_native`), and the fork canary below runs native.
+
+`AIMEBU2_LIVE_CLAUDE_FORK=1 go test ./internal/adapter/claude` runs the fork canary: a real first turn on a throwaway
+session, then a second that resumes it with `--fork-session`. The copy must report a session id of its own and recall what
+the first turn was told, and the original transcript must be byte for byte unchanged. Claude Code runs with the test's
+temporary `CLAUDE_CONFIG_DIR`; its login is `ANTHROPIC_API_KEY`, or a copy of the file named by
+`AIMEBU2_LIVE_CLAUDE_CREDENTIALS` (refused when it holds a refresh token, so that a copy cannot rotate the real login).
