@@ -433,6 +433,92 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 @media (max-width: 700px) {
   .harness-model-row, .harness-model-add { grid-template-columns: minmax(0, 1fr); }
 }
+/* Settings → Harnesses layouts: A a table with a role matrix, B cards with model tiles, C a list beside one harness. */
+.harness-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.harness-head h3 { margin: 0; }
+.harness-layout-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+button.harness-layout-option { min-width: 38px; padding: 5px 12px; border: 0; border-radius: 0; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 12px; font-weight: 600; cursor: pointer; }
+button.harness-layout-option + .harness-layout-option { border-left: 1px solid var(--border); }
+button.harness-layout-option.is-selected, .harness-layout-option[aria-checked="true"] { background: var(--accent); color: var(--button-text); }
+button.harness-layout-option:focus-visible { outline-offset: -2px; }
+.harness-matrix-wrap { overflow-x: auto; max-width: 100%; }
+.harness-matrix { width: 100%; border-collapse: collapse; font-size: 12px; }
+.harness-matrix th { padding: 4px 6px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 11px; font-weight: 600; text-align: left; white-space: nowrap; }
+.harness-matrix th.harness-role-head { text-align: center; font-size: 15px; cursor: help; }
+.harness-matrix td { padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.harness-matrix tr:last-child td { border-bottom: 0; }
+.harness-matrix .harness-model-row { display: table-row; }
+.harness-matrix { min-width: 560px; }
+.harness-matrix td input[type=text] { min-width: 110px; }
+.harness-matrix-model { min-width: 150px; }
+.harness-matrix-model .harness-model-slug { display: block; margin-bottom: 3px; white-space: nowrap; }
+.harness-matrix .harness-model-default-text { display: none; }
+.harness-matrix .harness-model-default { min-width: 0; }
+.harness-models .settings-desc:empty, .harness-detect-models:empty { display: none; }
+.harness-matrix td:first-child { width: 1%; white-space: nowrap; }
+@media (min-width: 701px) {
+  #settings-dialog[data-section="harnesses"] { width: min(1120px, 96vw); }
+}
+.harness-tile .harness-model-default-text { display: none; }
+#settings-dialog .harness-layout-c .machine-harness-summary { flex-direction: column; align-items: stretch; gap: 8px; }
+#settings-dialog .harness-layout-c .machine-harness-summary .settings-control { justify-content: flex-start; }
+.harness-role-cell { text-align: center; }
+.harness-role-cell input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.harness-layout-b { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 12px; align-items: start; }
+.harness-layout-b .machine-harness { margin: 0; }
+.harness-layout-b .harness-model-rows { display: flex; flex-wrap: wrap; gap: 8px; }
+.harness-tile { flex: 1 1 230px; display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); align-content: start; }
+.harness-tile.harness-model-row { grid-template-columns: minmax(0, 1fr); }
+.harness-tile-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.harness-tile-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.harness-tile .harness-model-default { min-width: 0; }
+.harness-tile-roles { display: flex; flex-wrap: wrap; gap: 4px; }
+.harness-tile-fields { display: grid; gap: 6px; }
+.harness-tile-fields[hidden] { display: none; }
+button.harness-role-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text-muted); font-size: 13px; line-height: 1.4; cursor: pointer; }
+button.harness-role-chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-dim); color: var(--text-primary); }
+button.harness-role-chip:disabled { opacity: .45; cursor: not-allowed; }
+.harness-role-chip-position { font-size: 10px; font-weight: 700; color: var(--accent); }
+.harness-add-details > summary { width: fit-content; cursor: pointer; font-size: 12px; color: var(--text-secondary); }
+.harness-add-details[open] > summary { margin-bottom: 8px; }
+.harness-split { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.harness-master { display: grid; gap: 4px; position: sticky; top: 0; }
+button.harness-master-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 13px; text-align: left; }
+button.harness-master-item[aria-selected="true"] { border-color: var(--accent); background: var(--accent-dim); color: var(--text-primary); }
+.harness-master-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.harness-master-count { color: var(--text-muted); font-size: 11px; }
+.harness-master-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--text-muted); }
+.harness-master-dot.is-available { background: var(--green-text); }
+.harness-layout-c .machine-harness { margin: 0; }
+.harness-detail-row { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
+.harness-detail-row.harness-model-row { grid-template-columns: minmax(0, 1fr); }
+.harness-detail-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.harness-detail-top .harness-model-slug { flex: 1 1 auto; }
+.harness-detail-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 8px; }
+.harness-detail-roles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; }
+.harness-role-switch { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+.harness-role-switch.is-on { background: var(--accent-dim); }
+.harness-role-switch input { margin: 0; accent-color: var(--accent); }
+.harness-role-switch-position { margin-left: auto; color: var(--accent); font-size: 10px; font-weight: 700; }
+.harness-roles { display: grid; gap: 8px; margin-top: 22px; }
+.harness-roles h4, .harness-roles p { margin: 0; }
+.harness-role-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 10px; }
+.harness-role-card { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); align-content: start; }
+.harness-role-head-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.harness-role-head-line select { margin-left: auto; padding: 3px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font-size: 12px; }
+.harness-role-key { color: var(--text-muted); font-size: 11px; }
+.harness-role-order { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; counter-reset: harness-default; }
+.harness-role-entry { display: flex; align-items: center; gap: 4px; counter-increment: harness-default; font-size: 12px; }
+.harness-role-entry::before { content: counter(harness-default) "."; min-width: 18px; color: var(--text-muted); font-size: 11px; }
+.harness-role-entry-label { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .harness-split { grid-template-columns: minmax(0, 1fr); }
+  .harness-master { display: flex; overflow-x: auto; position: static; padding-bottom: 4px; }
+  button.harness-master-item { flex: 0 0 auto; width: auto; }
+  .harness-detail-fields { grid-template-columns: minmax(0, 1fr); }
+  .harness-layout-b { grid-template-columns: minmax(0, 1fr); }
+  .harness-matrix-wrap { margin: 0 -8px; padding: 0 8px; }
+}
 .machine-activity-heading { margin: 24px 0 8px; font-size: 13px; }
 .machine-activity-item { padding: 9px 0; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 11px; }
 .machine-activity-item strong { color: var(--text-primary); margin-right: 8px; }
@@ -2409,3 +2495,6 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .profile-output-text { margin: 0; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 11px/1.4 var(--font-mono); background: var(--bg-primary); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; }
 .profile-output-status { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .profile-output-status:empty { display: none; }
+/* Settings → Harnesses: the default-model radio is a 16px control, not the full-width field the generic settings rule makes of an input. */
+:is(#settings-dialog, #onboarding-harnesses) .settings-content .harness-model-default input[type="radio"] { flex: none; box-sizing: content-box; width: 16px; min-width: 0; height: 16px; min-height: 0; margin: 0; padding: 0; }
+:is(#settings-dialog, #onboarding-harnesses) .settings-content .harness-role-head-line select { width: auto; min-width: 110px; }

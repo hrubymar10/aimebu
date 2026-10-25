@@ -291,3 +291,77 @@ func TestPausedAgentCanReactivateWithOfflineEnabledLauncher(t *testing.T) {
 		t.Fatalf("disabled launcher reactivate=%d", response.StatusCode)
 	}
 }
+
+// The harness listing carries models_rev for each harness, and a models edit that names the revision it was based on is refused with
+// 409 stale_models when the list has changed since (two tabs, two people), leaving the list as the other editor left it. Without a
+// revision the old behaviour stays: the list is replaced.
+func TestHarnessModelsEditOverAStaleRevisionIsRefused(t *testing.T) {
+	f := newFixture(t)
+	codex := f.harness(t, "codex", "native")
+	url := "/api/machines/" + f.machineID + "/launchers/" + codex.ID + "/models"
+	listed := func() (models []store.HarnessModel, rev string) {
+		t.Helper()
+		resp := f.request(http.MethodGet, "/api/machines/"+f.machineID+"/launchers", nil, false)
+		defer resp.Body.Close()
+		var body struct {
+			Launchers []struct {
+				Config    store.Launcher       `json:"config"`
+				Models    []store.HarnessModel `json:"models"`
+				ModelsRev string               `json:"models_rev"`
+			} `json:"launchers"`
+		}
+		if resp.StatusCode != 200 || json.NewDecoder(resp.Body).Decode(&body) != nil {
+			t.Fatalf("listing: %d", resp.StatusCode)
+		}
+		for _, row := range body.Launchers {
+			if row.Config.ID == codex.ID {
+				return row.Models, row.ModelsRev
+			}
+		}
+		t.Fatal("harness missing from the listing")
+		return nil, ""
+	}
+	put := func(list []store.HarnessModel, rev string) (int, string, string) {
+		t.Helper()
+		body := map[string]any{"models": list}
+		if rev != "" {
+			body["expected_rev"] = rev
+		}
+		resp := f.request(http.MethodPut, url, body, true)
+		defer resp.Body.Close()
+		var answer struct {
+			Code      string `json:"error"`
+			ModelsRev string `json:"models_rev"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&answer)
+		return resp.StatusCode, answer.Code, answer.ModelsRev
+	}
+	models, rev := listed()
+	if rev == "" || rev != store.HarnessModelsRev(models) {
+		t.Fatalf("listing revision %q for %+v", rev, models)
+	}
+	// Two editors read the same list. The first saves; its answer carries the new revision, which the listing agrees with.
+	mine := []store.HarnessModel{{Slug: "gpt-host", Label: "Host", Default: true}, {Slug: "gpt-mine", Label: "Mine"}}
+	status, _, newRev := put(mine, rev)
+	if status != 200 || newRev != store.HarnessModelsRev(mine) {
+		t.Fatalf("first edit: %d %q", status, newRev)
+	}
+	if _, now := listed(); now != newRev {
+		t.Fatalf("the listing says %q, the edit answered %q", now, newRev)
+	}
+	// The second still holds the old revision: refused, and the list is the first editor's.
+	status, code, _ := put([]store.HarnessModel{{Slug: "gpt-theirs", Label: "Theirs", Default: true}}, rev)
+	if status != 409 || code != "stale_models" {
+		t.Fatalf("stale edit: %d %q", status, code)
+	}
+	if kept, _ := listed(); len(kept) != 2 || kept[1].Slug != "gpt-mine" {
+		t.Fatalf("a refused edit must change nothing: %+v", kept)
+	}
+	// After reloading (the new revision) the same edit goes through; one with no revision replaces as before.
+	if status, _, _ := put([]store.HarnessModel{{Slug: "gpt-theirs", Label: "Theirs", Default: true}}, newRev); status != 200 {
+		t.Fatalf("edit on the current revision: %d", status)
+	}
+	if status, _, _ := put([]store.HarnessModel{{Slug: "gpt-any", Label: "Any", Default: true}}, ""); status != 200 {
+		t.Fatalf("edit without a revision: %d", status)
+	}
+}

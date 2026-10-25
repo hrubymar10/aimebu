@@ -14,6 +14,7 @@ export const PREFERENCE_KEYS = {
   composer_formatting: () => 'aimebu2.composer.formatting',
   sidebar_sort: user => `aimebu2.ui.sidebar_sort.${user}`,
   sidebar_project_order: user => `aimebu2.ui.sidebar_project_order.${user}`,
+  harness_layout: user => `aimebu2.ui.harness_layout.${user}`,
 };
 // How long a value may be on the server (a word or a number, except the manual project order, which is a list of ids).
 export const PREFERENCE_LIMITS = { sidebar_project_order: 4096 };

@@ -137,6 +137,7 @@ func (s *Server) machineLaunchers(w http.ResponseWriter, r *http.Request) {
 		if row["models"] == nil {
 			row["models"] = []store.HarnessModel{}
 		}
+		row["models_rev"] = store.HarnessModelsRev(models[definition.ID])
 		if report, ok := observed[definition.ID]; ok {
 			row["available"] = report.Available
 			row["version"] = report.Version
@@ -338,15 +339,17 @@ func (s *Server) newHarnessName(ctx context.Context, machineID string, item stor
 	return name, nil
 }
 
-// machineHarnessModels replaces a harness's whole model list (owner only). The list is validated against the harness's family and has
-// exactly one default; a refused list changes nothing.
+// machineHarnessModels replaces a harness's whole model list (owner or admin). The list is validated against the harness's family and has
+// exactly one default; a refused list changes nothing. With expected_rev (the models_rev of the list the edit was based on) an edit over a
+// list that has changed since is refused with 409 stale_models; without it the list is replaced unconditionally.
 func (s *Server) machineHarnessModels(w http.ResponseWriter, r *http.Request) {
 	if !s.adminMachine(w, r) {
 		return
 	}
 	machineID, launcherID := r.PathValue("id"), r.PathValue("launcher")
 	var body struct {
-		Models []store.HarnessModel `json:"models"`
+		Models      []store.HarnessModel `json:"models"`
+		ExpectedRev string               `json:"expected_rev"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -354,8 +357,10 @@ func (s *Server) machineHarnessModels(w http.ResponseWriter, r *http.Request) {
 	if body.Models == nil {
 		body.Models = []store.HarnessModel{}
 	}
-	if err := s.Store.ReplaceHarnessModels(r.Context(), userID(r), machineID, launcherID, body.Models); err != nil {
+	if err := s.Store.ReplaceHarnessModelsIfRev(r.Context(), userID(r), machineID, launcherID, body.Models, body.ExpectedRev); err != nil {
 		switch {
+		case errors.Is(err, store.ErrStaleHarnessModels):
+			apiError(w, 409, "stale_models", "someone changed this harness's models in the meantime; reload the list and make the change again")
 		case errors.Is(err, store.ErrInvalidHarnessModels):
 			apiError(w, 400, "invalid_models", strings.TrimPrefix(err.Error(), store.ErrInvalidHarnessModels.Error()+": "))
 		case errors.Is(err, sql.ErrNoRows):
@@ -370,7 +375,7 @@ func (s *Server) machineHarnessModels(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"models": models})
+	writeJSON(w, 200, map[string]any{"models": models, "models_rev": store.HarnessModelsRev(models)})
 }
 
 // checkSpawnModel resolves the model an agent will start with: the harness it runs on (the launcher chosen, or the machine's launcher

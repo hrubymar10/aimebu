@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -32,6 +34,20 @@ type HarnessModel struct {
 	Label   string `json:"label"`
 	Note    string `json:"note"`
 	Default bool   `json:"default"`
+}
+
+// ErrStaleHarnessModels is a replace that was based on a list which has changed since.
+var ErrStaleHarnessModels = errors.New("stale_harness_models")
+
+// HarnessModelsRev names one version of a harness's list: a short digest of every model's id, label, note and default flag in order. A
+// client that read a list keeps its revision and sends it back with its edit, so an edit based on a list someone else has changed in the
+// meantime is refused instead of overwriting that change.
+func HarnessModelsRev(models []HarnessModel) string {
+	digest := sha256.New()
+	for _, model := range models {
+		fmt.Fprintf(digest, "%d:%s|%d:%s|%d:%s|%t\n", len(model.Slug), model.Slug, len(model.Label), model.Label, len(model.Note), model.Note, model.Default)
+	}
+	return hex.EncodeToString(digest.Sum(nil))[:16]
 }
 
 // ValidateHarnessModels checks a harness's complete list. An empty list is allowed: the harness then offers nothing to spawn until a
@@ -120,10 +136,25 @@ func (s *Store) MachineHarnessModels(ctx context.Context, machineID string) (map
 // ReplaceHarnessModels replaces a harness's whole list atomically and records the change in the machine's launcher activity. The list is
 // validated against the harness's family; sql.ErrNoRows when the harness is not on that machine.
 func (s *Store) ReplaceHarnessModels(ctx context.Context, actor, machineID, launcherID string, models []HarnessModel) error {
+	return s.ReplaceHarnessModelsIfRev(ctx, actor, machineID, launcherID, models, "")
+}
+
+// ReplaceHarnessModelsIfRev is ReplaceHarnessModels for an edit based on the list with revision expectedRev (see HarnessModelsRev): when the
+// stored list is no longer that one it changes nothing and answers ErrStaleHarnessModels. An empty expectedRev replaces unconditionally.
+func (s *Store) ReplaceHarnessModelsIfRev(ctx context.Context, actor, machineID, launcherID string, models []HarnessModel, expectedRev string) error {
 	return s.Tx(ctx, func(tx *Tx) error {
 		var family string
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT tool FROM machine_launcher WHERE id=? AND machine_id=?`, launcherID, machineID).Scan(&family); err != nil {
 			return err
+		}
+		if expectedRev != "" {
+			current, err := tx.harnessModelList(launcherID)
+			if err != nil {
+				return err
+			}
+			if HarnessModelsRev(current) != expectedRev {
+				return ErrStaleHarnessModels
+			}
 		}
 		if err := ValidateHarnessModels(family, models); err != nil {
 			return fmt.Errorf("%w: %s", ErrInvalidHarnessModels, err.Error())
@@ -152,6 +183,23 @@ func (s *Store) ReplaceHarnessModels(ctx context.Context, actor, machineID, laun
 			id, machineID, launcherID, actor, "models", before, jsonList(after), timestamp())
 		return err
 	})
+}
+
+func (tx *Tx) harnessModelList(launcherID string) ([]HarnessModel, error) {
+	rows, err := tx.tx.QueryContext(tx.ctx, `SELECT slug,label,note,is_default FROM harness_model WHERE launcher_id=? ORDER BY position`, launcherID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	models := []HarnessModel{}
+	for rows.Next() {
+		var model HarnessModel
+		if err := rows.Scan(&model.Slug, &model.Label, &model.Note, &model.Default); err != nil {
+			return nil, err
+		}
+		models = append(models, model)
+	}
+	return models, rows.Err()
 }
 
 func (tx *Tx) harnessModelSlugs(launcherID string) (string, error) {

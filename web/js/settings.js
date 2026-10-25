@@ -234,6 +234,7 @@ export class SettingsPanel {
     target.append(element('span', '', `Code: ${flow.user_code} · ${flow.status || 'Waiting for GitHub'}`), link);
   }
   selectSection(section) {
+    this.dialog.dataset.section = section; // the Harnesses page is wide: its layouts need the room (see theme-v1.css)
     queueMicrotask(() => { const selected = this.dialog.querySelector('nav .settings-selected'); if (selected) this.dialog.querySelector('#settings-title').textContent = selected.textContent.trim(); });
 	this.usersSettings.section.hidden = section !== 'users';
 	this.usersSettings.tab.classList.toggle('settings-selected', section === 'users');

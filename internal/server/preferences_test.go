@@ -125,3 +125,21 @@ func TestNotificationBannerDismissalIsAPerAccountPreference(t *testing.T) {
 		t.Fatalf("the dismissal leaked to another person: %v", got)
 	}
 }
+
+// The layout of Settings → Harnesses (A, B or C) is a personal preference kept on the server, never seen by another person.
+func TestHarnessLayoutIsAPerAccountPreference(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	cookie, csrf := registerSecondUser(t, f, "second")
+	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"harness_layout": "c"}}, true)
+	if resp.StatusCode != 200 {
+		t.Fatalf("store: %d", resp.StatusCode)
+	}
+	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["harness_layout"] != "c" {
+		t.Fatalf("stored, read back %v", got)
+	}
+	other := f.requestAs(t, cookie, csrf, "GET", "/api/me/preferences", nil)
+	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["harness_layout"] != "" {
+		t.Fatalf("the layout leaked to another person: %v", got)
+	}
+}

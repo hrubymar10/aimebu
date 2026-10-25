@@ -2,6 +2,7 @@ import { request } from './api.js';
 import { confirmDialog } from './dialogs.js';
 import { setGlyph } from './icon-button.js';
 import { SpawnDefaultsEditor } from './spawn-defaults-editor.js';
+import { ROLE_DEFAULTS_CHANGED } from './role-defaults.js';
 
 const $ = selector => document.querySelector(selector);
 const option = (value, label) => { const node = document.createElement('option'); node.value = value; node.textContent = label; return node; };
@@ -34,7 +35,11 @@ export class RoleSettings {
     this.roleForm.before(toolbar, this.roleCards);
     $('#role-delete').onclick = () => this.deleteRole();
     $('#role-reset').onclick = () => this.resetRole();
+    // Default agents are edited here and on the Harnesses page, two views of the same role: a save made there reloads the list here (an
+    // editor that is open is left alone; the list is read again whenever Settings opens this page).
+    document.addEventListener(ROLE_DEFAULTS_CHANGED, event => { if (event.detail?.source !== this && !this.roleEditorOpen) this.loadRoles(); });
   }
+  changed() { document.dispatchEvent(new CustomEvent(ROLE_DEFAULTS_CHANGED, { detail: { source: this } })); }
   async open() {
     try { await Promise.all([this.loadRoles(), this.defaults.loadOptions()]); } catch (error) { this.error(error.message); }
   }
@@ -161,6 +166,7 @@ export class RoleSettings {
       const saved = await request(data.id ? '/api/roles/' + data.id : '/api/roles',
         { method: data.id ? 'PUT' : 'POST', body: data });
       await this.loadRoles(saved.id);
+      this.changed();
     } catch (error) { this.error(error.message); }
   }
   async resetRole() {
@@ -170,6 +176,7 @@ export class RoleSettings {
     try {
       await request('/api/roles/' + role.id + '/reset', { method: 'POST', body: { rev: role.rev } });
       await this.loadRoles(role.id);
+      this.changed();
     } catch (error) { this.error(error.message); }
   }
   async deleteRole() {
@@ -178,6 +185,7 @@ export class RoleSettings {
     try {
       await request('/api/roles/' + role.id + '?rev=' + role.rev, { method: 'DELETE' });
       await this.loadRoles();
+      this.changed();
     } catch (error) { this.error(error.message); }
   }
 }

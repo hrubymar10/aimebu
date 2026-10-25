@@ -59,6 +59,9 @@ async function main() {
     assert.equal(audit.status, 0, `accessibility audit failed:\n${audit.stdout}${audit.stderr}`);
     const phone = spawnSync(process.execPath, [path.join(__dirname, 'phone-audit.cjs')], { env: isolatedEnv, encoding: 'utf8' });
     assert.equal(phone.status, 0, `phone layout audit failed:\n${phone.stdout}${phone.stderr}`);
+    // Settings → Harnesses in its three layouts, role defaults and the sync with Settings → Roles, on a scratch server of its own.
+    const layouts = spawnSync(process.execPath, [path.join(__dirname, 'harness-layouts.cjs')], { env: { ...isolatedEnv, LAYOUTS_BINARY: binary }, encoding: 'utf8' });
+    assert.equal(layouts.status, 0, `harness layouts smoke failed:\n${layouts.stdout}${layouts.stderr}`);
   }
   const port = await freePort(); const origin = `http://127.0.0.1:${port}`;
   const child = spawn(binary, ['server'], { env: { ...isolatedEnv, AIMEBU2_USAGES: '0', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }, stdio: ['ignore', 'pipe', 'pipe'] });

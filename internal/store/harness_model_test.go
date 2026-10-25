@@ -368,3 +368,48 @@ func TestMigrationKeepsTheNativeHarnessForAnEditedList(t *testing.T) {
 		t.Fatalf("the edited list lives on the native harness: %q %v", slug, err)
 	}
 }
+
+// An edit sends the revision of the list it was based on; one over a list that changed in the meantime is refused and changes nothing,
+// while an edit without a revision still replaces the list.
+func TestReplaceHarnessModelsIfRevRefusesAStaleList(t *testing.T) {
+	t.Parallel()
+	s, _, _, agent, _ := wakeFixture(t)
+	ctx := t.Context()
+	harness, err := s.SaveLauncher(ctx, "owner", Launcher{MachineID: agent.MachineID, Tool: "codex", Name: "native", Label: "Codex", Command: "codex", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty := HarnessModelsRev(nil)
+	first := []HarnessModel{{Slug: "gpt-a", Label: "A", Default: true}}
+	if err := s.ReplaceHarnessModelsIfRev(ctx, "owner", agent.MachineID, harness.ID, first, empty); err != nil {
+		t.Fatalf("an edit over the list it read: %v", err)
+	}
+	rev := HarnessModelsRev(first)
+	if rev == empty || rev != HarnessModelsRev([]HarnessModel{{Slug: "gpt-a", Label: "A", Default: true}}) {
+		t.Fatalf("the revision must follow the content: %q %q", rev, empty)
+	}
+	for name, other := range map[string][]HarnessModel{"label": {{Slug: "gpt-a", Label: "B", Default: true}}, "note": {{Slug: "gpt-a", Label: "A", Note: "n", Default: true}}, "order": {{Slug: "gpt-b", Label: "A"}, {Slug: "gpt-a", Label: "A", Default: true}}} {
+		if HarnessModelsRev(other) == rev {
+			t.Errorf("a change of %s must change the revision", name)
+		}
+	}
+	// Someone else edits the list: the first editor's revision is now stale.
+	if err := s.ReplaceHarnessModelsIfRev(ctx, "owner", agent.MachineID, harness.ID, []HarnessModel{{Slug: "gpt-a", Label: "A", Default: true}, {Slug: "gpt-c", Label: "C"}}, rev); err != nil {
+		t.Fatalf("the other editor: %v", err)
+	}
+	err = s.ReplaceHarnessModelsIfRev(ctx, "owner", agent.MachineID, harness.ID, []HarnessModel{{Slug: "gpt-z", Label: "Z", Default: true}}, rev)
+	if !errors.Is(err, ErrStaleHarnessModels) {
+		t.Fatalf("a stale edit: %v", err)
+	}
+	if kept, _ := s.HarnessModels(ctx, harness.ID); len(kept) != 2 || kept[1].Slug != "gpt-c" {
+		t.Fatalf("a refused edit must change nothing: %+v", kept)
+	}
+	// An invalid list on a current revision is still the usual 400, and without a revision the list is replaced.
+	current := HarnessModelsRev([]HarnessModel{{Slug: "gpt-a", Label: "A", Default: true}, {Slug: "gpt-c", Label: "C"}})
+	if err := s.ReplaceHarnessModelsIfRev(ctx, "owner", agent.MachineID, harness.ID, []HarnessModel{{Slug: "bad id", Label: "x", Default: true}}, current); !errors.Is(err, ErrInvalidHarnessModels) {
+		t.Fatalf("invalid on a current revision: %v", err)
+	}
+	if err := s.ReplaceHarnessModels(ctx, "owner", agent.MachineID, harness.ID, []HarnessModel{{Slug: "gpt-z", Label: "Z", Default: true}}); err != nil {
+		t.Fatalf("no revision: %v", err)
+	}
+}

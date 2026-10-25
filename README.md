@@ -629,6 +629,15 @@ host. The same page lists pending, approved, and revoked machines; the owner
 approves a paired machine there or revokes an existing one. The supervisor
 sends executable detection and versions for its configured harnesses.
 Settings → Harnesses (owner only) has a machine picker and that machine's harnesses.
+A switch in its header chooses one of three layouts over the same data, kept as a personal
+preference (`harness_layout`): A, a table (a row per harness, its models behind Models, and a
+matrix with a tick per role on every model), B, cards (every model a tile with a chip per role, the
+label and note behind the tile's edit icon), and C, a list of harnesses beside the chosen one (each
+model with a labelled switch per role). Ticking a role on a model makes it one of that role's default
+agents; it saves at once, as the role's own change, and a model not yet saved cannot be ticked.
+Role defaults, below the harnesses, shows each role's ordered defaults (move up or down, remove) and
+its pick mode. Settings → Roles edits the same lists; a save in either place shows in the other.
+Unsaved model edits stay while the layout changes (until Save models, a machine change, or closing Settings). Save models sends the revision of the list the edit started from, so a list someone else saved in the meantime is not overwritten: the save is refused (409), the stored list is shown and the page says so.
 Add harness takes a family, an executable name or path and a label; Auto-detect harnesses lists what
 the supervisor found on PATH and in the usual user-level install directories
 (`~/.local/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, `~/.npm-global/bin`, `~/.bun/bin`,
