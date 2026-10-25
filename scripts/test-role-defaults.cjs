@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'role-defaults-logic.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { MAX_ROLE_DEFAULTS, PICK_MODES, positionOf, rolesFor, withModel, movedByKey, canAddDefault, roleBody };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { MAX_ROLE_DEFAULTS, PICK_MODES, positionOf, rolesFor, withModel, movedByKey, canAddDefault, roleBody, roleMark };', context);
 const api = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -17,6 +17,7 @@ const a = { launcher_id: 'l1', model: 'opus' }, b = { launcher_id: 'l1', model: 
 const role = { id: 'r1', rev: 4, role_key: 'worker', label: 'Worker', emoji: '🛠️', body: 'text', extends: '', cardinality: 'multi', cap_is_lead: false, cap_can_spawn: true, cap_singleton_writer: false, default_agents: [a, b], pick_mode: 'randomly' };
 
 assert.equal(api.MAX_ROLE_DEFAULTS, 32);
+assert.deepEqual([{ emoji: '🛠️', label: 'Worker', role_key: 'worker' }, { label: 'Worker', role_key: 'worker' }, { role_key: 'ux-reviewer' }].map(api.roleMark), ['🛠️', 'Wo', 'ux'], 'a role is marked by its emoji, else the first two letters of its label or key');
 assert.deepEqual(plain(api.PICK_MODES), [['in_turn', 'In turn'], ['randomly', 'Randomly']]);
 
 // positionOf matches the launcher and the model together: the same model id on another launcher is another entry.

@@ -2,7 +2,7 @@
 
 // The server refuses a list longer than this, so a longer detected list is cut to it rather than failing the save.
 export const MODELS_MAX = 64;
-export const FAMILIES = [['claude', 'Claude Code'], ['codex', 'Codex'], ['pi', 'Pi'], ['opencode', 'OpenCode']];
+export const FAMILIES = [['claude', 'Claude Code'], ['codex', 'Codex'], ['pi', 'Pi'], ['opencode', 'OpenCode'], ['vibe', 'Mistral Vibe']];
 export const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/;
 export const familyName = family => FAMILIES.find(([key]) => key === family)?.[1] || family;
 
@@ -18,14 +18,14 @@ export function pairs(value, separator) {
 }
 
 export const harnessFromLauncher = row => ({ ...row.config, variant: row.config.name, launcher_path: row.resolved_command, version: row.version,
-  available: row.available, unavailable_reason: row.unavailable_reason, active_agents: row.active_agents || 0, models: row.models || [] });
+  available: row.available, unavailable_reason: row.unavailable_reason, active_agents: row.active_agents || 0, models: row.models || [], models_rev: row.models_rev || '' });
 
 export const harnessStatus = harness => !harness.enabled ? 'Disabled' : harness.available ? 'Available' : 'Unavailable';
 export const harnessTitle = harness => harness.label || `${familyName(harness.tool)} · ${harness.variant}`;
 export const harnessLabel = harness => harness.label || `${familyName(harness.tool)}${harness.containerized ? ' (Docker)' : ''}`;
 
 export function persistedDefinition(harness) {
-  const { variant, launcher_path, version, available, unavailable_reason, active_agents, models, ...definition } = harness;
+  const { variant, launcher_path, version, available, unavailable_reason, active_agents, models, models_rev, ...definition } = harness;
   return definition;
 }
 
@@ -115,3 +115,25 @@ export function detectNotes(filled) {
 
 export const machineSummary = machine => machine?.approved === false ? 'Approval pending' :
   machine?.last_seen ? `Last seen ${new Date(machine.last_seen).toLocaleString()}` : 'Never connected';
+
+// The status word of a harness and the title of its tab in the list beside the detail.
+export const tabTitle = harness => `${harness.label || harness.name}: ${harnessStatus(harness)}, ${(harness.models || []).length} models`;
+
+export const staleModelsMessage = harness => `Someone changed the models of ${harness.label || harness.name} in the meantime. The list was reloaded; make your changes again.`;
+
+// The tab to select after a list is (re)loaded: the chosen one while it is still there, else the first.
+export const chosenHarness = (rows, selected) => rows.some(row => row.id === selected) ? selected : rows[0]?.id || '';
+
+// The tab a key moves to from `index` among `count` tabs, or -1 when the key is not a navigation key.
+export function tabKeyTarget(key, index, count) {
+  const to = { ArrowDown: (index + 1) % count, ArrowUp: (index + count - 1) % count, Home: 0, End: count - 1 }[key];
+  return to === undefined ? -1 : to;
+}
+
+// A label for a role default: the machine's name, the harness label and the model label, or the ids when the harness is not known.
+export function defaultLabel(item, here, other) {
+  const harness = here?.harness || other, owner = here ? here.machine : other?.machine;
+  if (!harness) return `${item.launcher_id} · ${item.model}`;
+  const model = (harness.models || []).find(entry => entry.slug === item.model);
+  return [owner, harness.label || harness.name, model?.label || item.model].filter(Boolean).join(' · ');
+}

@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 
 assert.ok(!/^import /m.test(source), 'model.js stays import-free so it can run here');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { MODELS_MAX, familyName, harnessLabel, addFoundModels, detectionFailure, lines, pairs, harnessFromLauncher, harnessStatus, harnessTitle, persistedDefinition, formFromHarness, launcherBody, enabledBody, createBody, addModel, removeModel, setDefaultModel, updateModel, modelsError, initialModels, detectNotes, machineSummary };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { MODELS_MAX, familyName, harnessLabel, addFoundModels, detectionFailure, lines, pairs, harnessFromLauncher, harnessStatus, harnessTitle, persistedDefinition, formFromHarness, launcherBody, enabledBody, createBody, addModel, removeModel, setDefaultModel, updateModel, modelsError, initialModels, detectNotes, machineSummary, FAMILIES, tabTitle, staleModelsMessage, chosenHarness, tabKeyTarget, defaultLabel };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -79,4 +79,29 @@ assert.deepEqual(plain(m.detectionFailure({ code: 'detect_failed', message: "Cou
 assert.deepEqual(plain(m.detectionFailure({ code: 'detect_failed', message: 'timed out' }, true)), { summary: 'timed out', detail: '' });
 assert.deepEqual(plain(m.detectionFailure({ code: 'detect_failed', message: 'exit status 1' }, false)), { summary: 'Model detection failed. Check the harness or try another folder.', detail: 'exit status 1' });
 assert.deepEqual(plain(m.detectionFailure({}, false)), { summary: "Couldn't detect the models.", detail: '' });
+
+// Mistral Vibe is a family like the others, and a read keeps the revision of the stored models so a save can name it.
+assert.deepEqual(plain(m.FAMILIES).map(([key]) => key), ['claude', 'codex', 'pi', 'opencode', 'vibe']);
+assert.equal(m.familyName('vibe'), 'Mistral Vibe');
+assert.equal(m.harnessFromLauncher({ ...row, models_rev: 'r7' }).models_rev, 'r7');
+assert.equal(m.harnessFromLauncher(row).models_rev, '', 'a row without a revision reads as an empty one');
+assert.ok(!('models_rev' in plain(m.persistedDefinition(m.harnessFromLauncher({ ...row, models_rev: 'r7' })))), 'the revision is never sent back with the harness definition');
+
+// The tab of a harness in the list beside the detail.
+assert.equal(m.tabTitle({ ...harness, label: 'Docker Codex' }), 'Docker Codex: Available, 1 models');
+assert.equal(m.tabTitle({ ...harness, enabled: false, models: [] }), 'harness-docker: Disabled, 0 models');
+assert.equal(m.chosenHarness([{ id: 'a' }, { id: 'b' }], 'b'), 'b', 'the chosen harness stays chosen');
+assert.equal(m.chosenHarness([{ id: 'a' }, { id: 'b' }], 'gone'), 'a', 'a harness that is gone falls back to the first');
+assert.equal(m.chosenHarness([], 'a'), '', 'no harness, nothing chosen');
+assert.deepEqual([['ArrowDown', 0], ['ArrowDown', 2], ['ArrowUp', 0], ['ArrowUp', 2], ['Home', 1], ['End', 1], ['x', 1]].map(([key, at]) => m.tabKeyTarget(key, at, 3)), [1, 0, 2, 1, 0, 2, -1], 'the arrow keys wrap; Home and End jump; other keys do nothing');
+
+// A role default is named by its machine, harness and model, or by its ids while the harness is unknown.
+const item = { launcher_id: 'mln_x', model: 'm' };
+assert.equal(m.defaultLabel(item, null, undefined), 'mln_x · m');
+assert.equal(m.defaultLabel(item, { harness: { label: 'Codex', models: [{ slug: 'm', label: 'Model M' }] }, machine: 'Host' }, undefined), 'Host · Codex · Model M');
+assert.equal(m.defaultLabel(item, { harness: { name: 'native', models: [] }, machine: 'Host' }, undefined), 'Host · native · m', 'a model that is not listed shows its id');
+assert.equal(m.defaultLabel(item, null, { machine: 'Other', label: 'Pi', models: [{ slug: 'm', label: 'Local' }] }), 'Other · Pi · Local', 'another machine\'s harness is named by its own machine');
+assert.equal(m.staleModelsMessage({ label: 'Claude Code', name: 'native' }), 'Someone changed the models of Claude Code in the meantime. The list was reloaded; make your changes again.');
+assert.equal(m.staleModelsMessage({ name: 'native' }), 'Someone changed the models of native in the meantime. The list was reloaded; make your changes again.');
+
 console.log('harness model tests passed');

@@ -37,3 +37,6 @@ export function roleBody(role, patch = {}) {
     cardinality: role.cardinality, cap_is_lead: !!role.cap_is_lead, cap_can_spawn: !!role.cap_can_spawn, cap_singleton_writer: !!role.cap_singleton_writer,
     default_agents: (role.default_agents || []).map(item => ({ launcher_id: item.launcher_id, model: item.model })), pick_mode: role.pick_mode || 'in_turn', ...patch };
 }
+
+// The short mark of a role: its emoji, or the first two letters of its label (or key).
+export const roleMark = role => role.emoji || (role.label || role.role_key).slice(0, 2);

@@ -1,5 +1,5 @@
 import { iconButton } from './icon-button.js';
-import { PICK_MODES, canAddDefault } from './role-defaults-logic.js';
+import { PICK_MODES, canAddDefault, roleMark } from './role-defaults-logic.js';
 
 const node = (tag, className = '', value = '') => {
   const element = document.createElement(tag);
@@ -7,8 +7,6 @@ const node = (tag, className = '', value = '') => {
   if (value) element.textContent = value;
   return element;
 };
-
-export const roleMark = role => role.emoji || (role.label || role.role_key).slice(0, 2);
 
 // One role's "default for this model": a labelled switch row. `update({ on, position, total, disabled, reason })` redraws it from the
 // current defaults.
