@@ -609,6 +609,15 @@ func (f *fixture) dialMachine(t *testing.T, agents []protocol.HelloAgent) *webso
 }
 
 func (f *fixture) dialMachineWithJournal(t *testing.T, journalID string, agents []protocol.HelloAgent) *websocket.Conn {
+	return f.dialMachineWithStopReplay(t, journalID, agents, true)
+}
+
+func (f *fixture) dialMachineWithStopReplay(t *testing.T, journalID string, agents []protocol.HelloAgent, supported bool) *websocket.Conn {
+	conn, _ := f.dialMachineWithStopReplayAck(t, journalID, agents, supported)
+	return conn
+}
+
+func (f *fixture) dialMachineWithStopReplayAck(t *testing.T, journalID string, agents []protocol.HelloAgent, supported bool) (*websocket.Conn, protocol.Frame) {
 	t.Helper()
 	header := http.Header{}
 	header.Set("X-Machine-ID", f.machineID)
@@ -619,7 +628,7 @@ func (f *fixture) dialMachineWithJournal(t *testing.T, journalID string, agents 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	raw, _ := json.Marshal(protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: f.machineID, JournalID: journalID, Agents: agents})
+	raw, _ := json.Marshal(protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: f.machineID, JournalID: journalID, SupportsStopReplay: supported, Agents: agents})
 	if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +640,7 @@ func (f *fixture) dialMachineWithJournal(t *testing.T, journalID string, agents 
 	if err := json.Unmarshal(raw, &ack); err != nil || ack.Type != protocol.HelloAck {
 		t.Fatalf("hello_ack=%+v %v", ack, err)
 	}
-	return conn
+	return conn, ack
 }
 
 func TestHelloReconcilesLostAcceptedAckWithoutRequeue(t *testing.T) {

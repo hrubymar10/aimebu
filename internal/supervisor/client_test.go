@@ -100,6 +100,142 @@ type stubbornTurn struct {
 	done   chan struct{}
 }
 
+type reconnectStopTurn struct{ cancelled chan struct{} }
+
+func (t *reconnectStopTurn) Events() <-chan adapter.Event { return nil }
+func (t *reconnectStopTurn) Cancel() error {
+	select {
+	case t.cancelled <- struct{}{}:
+	default:
+	}
+	return nil
+}
+func (t *reconnectStopTurn) Wait() (adapter.ExitInfo, error) { return adapter.ExitInfo{}, nil }
+
+func TestReplayedStopAfterDesiredSnapshotRunsControlCancellation(t *testing.T) {
+	client := &Client{desired: map[string]protocol.DesiredAgent{}, active: map[string]string{}, running: map[string]adapter.Turn{}}
+	turn := &reconnectStopTurn{cancelled: make(chan struct{}, 1)}
+	client.desired["agent"] = protocol.DesiredAgent{AgentID: "agent", Generation: 2, Desired: "stopped", DesiredRev: 3}
+	client.active["agent"] = "turn"
+	client.running["agent"] = turn
+	if !client.handleControl(protocol.Frame{AgentID: "agent", Generation: 2, DesiredState: "stopped", DesiredRev: 3}) {
+		t.Fatal("stop ack was not deferred while the process runs")
+	}
+	select {
+	case <-turn.cancelled:
+	default:
+		t.Fatal("stop control at the snapshot revision did not cancel the turn")
+	}
+	// The control path also schedules the same force-kill fallback used for a
+	// live stop. Mark the turn inactive so the delayed callback has no work.
+	client.mu.Lock()
+	delete(client.active, "agent")
+	client.mu.Unlock()
+}
+
+func TestStopControlAckWaitsForProcessExit(t *testing.T) {
+	journal, err := OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	if _, err := journal.RecordStart(t.Context(), StartRecord{TurnID: "turn-stop", AgentID: "agent", Mode: "normal", SpecJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	frames := make(chan protocol.Frame, 4)
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		hello, err := readFrame(r.Context(), conn)
+		if err != nil || !hello.SupportsStopReplay {
+			return
+		}
+		for _, frame := range []protocol.Frame{
+			{V: protocol.Version, Type: protocol.HelloAck, Desired: []protocol.DesiredAgent{{AgentID: "agent", Generation: 2, Desired: "stopped", DesiredRev: 3}}},
+			{V: protocol.Version, Type: protocol.Control, AgentID: "agent", Generation: 2, DesiredState: "stopped", DesiredRev: 3},
+		} {
+			raw, _ := json.Marshal(frame)
+			if err := conn.Write(r.Context(), websocket.MessageText, raw); err != nil {
+				return
+			}
+		}
+		for {
+			frame, err := readFrame(r.Context(), conn)
+			if err != nil {
+				return
+			}
+			frames <- frame
+		}
+	}))
+	defer peer.Close()
+	client := NewClient("machine", "key", peer.URL, journal, adapter.NewFake())
+	turn := &stubbornTurn{events: make(chan adapter.Event), done: make(chan struct{})}
+	client.active["agent"] = "turn-stop"
+	client.running["agent"] = turn
+	client.turns.Add(1)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go client.runTurn(ctx, protocol.Delivery{AgentID: "agent", Generation: 2, TurnID: "turn-stop", Agent: adapter.AgentSpec{Tool: "fake"}}, turn)
+	ready := make(chan struct{}, 1)
+	client.OnReady = func() { ready <- struct{}{} }
+	finished := make(chan error, 1)
+	go func() { finished <- client.RunOnce(ctx) }()
+	select {
+	case <-ready:
+	case <-time.After(3 * time.Second):
+		t.Fatal("supervisor did not connect")
+	}
+	select {
+	case frame := <-frames:
+		t.Fatalf("frame sent before process exit: %+v", frame)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(turn.events)
+	close(turn.done)
+	select {
+	case frame := <-frames:
+		if frame.Type != protocol.Ack || frame.Level != "control" || frame.Ref != "3" {
+			t.Fatalf("first frame after process exit: %+v", frame)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("stop ack did not follow process exit")
+	}
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("supervisor did not stop")
+	}
+}
+
+func TestFailedExitJournalClearsDeferredStopAck(t *testing.T) {
+	journal, err := OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := journal.RecordStart(t.Context(), StartRecord{TurnID: "turn-bad-journal", AgentID: "agent", Mode: "normal", SpecJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient("machine", "key", "http://127.0.0.1:1", journal, adapter.NewFake())
+	client.OnError = func(error) {}
+	client.active["agent"] = "turn-bad-journal"
+	client.pendingStopAck = map[string]protocol.Frame{"agent": {Type: protocol.Ack, Level: "control", Ref: "3"}}
+	turn := &stubbornTurn{events: make(chan adapter.Event), done: make(chan struct{})}
+	close(turn.events)
+	close(turn.done)
+	if err := journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	client.turns.Add(1)
+	client.runTurn(t.Context(), protocol.Delivery{AgentID: "agent", TurnID: "turn-bad-journal", Agent: adapter.AgentSpec{Tool: "fake"}}, turn)
+	if len(client.pendingStopAck) != 0 {
+		t.Fatal("failed exit journal kept the deferred stop ack")
+	}
+}
+
 func (t *stubbornTurn) Events() <-chan adapter.Event { return t.events }
 func (t *stubbornTurn) Cancel() error                { return nil }
 func (t *stubbornTurn) Wait() (adapter.ExitInfo, error) {

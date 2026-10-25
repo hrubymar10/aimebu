@@ -99,7 +99,7 @@ func (s *Server) sendRoomControls(ctx context.Context, controls []store.AgentCar
 		machine.boundMu.Lock()
 		machine.bound[control.ID] = control.Generation
 		machine.boundMu.Unlock()
-		_ = machine.send(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: control.ID,
+		_ = machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: control.ID,
 			Generation: control.Generation, DesiredRev: control.DesiredRev, DesiredState: control.Desired})
 		if control.Desired != "stopped" {
 			if pending, ok, err := s.Store.PendingSpawnByID(ctx, control.ID); err == nil && ok {

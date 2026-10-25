@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -32,6 +33,10 @@ type machineConn struct {
 	stopOnce             sync.Once
 	bound                map[string]int
 	boundMu              sync.RWMutex
+	controlMu            sync.Mutex
+	controlSent          map[string]int64
+	controlReplayed      map[string]int64
+	replayDone           chan struct{} // closed once the stops pending at connection have been queued
 	capabilities         []protocol.CapabilityReport
 	supportsPathProbe    bool
 	supportsWorktree     bool
@@ -40,6 +45,7 @@ type machineConn struct {
 	supportsDetectDir    bool
 	supportsAgentLogs    bool
 	supportsAgentLogSize bool
+	supportsStopReplay   bool
 	harnessMu            sync.Mutex
 	harnessSetMu         sync.Mutex
 	harnesses            []protocol.HarnessRow
@@ -72,6 +78,90 @@ func (c *machineConn) send(frame protocol.Frame) error {
 		c.stop()
 		return ErrSlowMachine
 	}
+}
+
+// sendControl queues a desired revision only once on this connection. A
+// reconnect gets a fresh connection and may replay any unapplied stop.
+func (c *machineConn) sendControl(frame protocol.Frame) error {
+	return c.sendControlWith(frame, c.send)
+}
+
+func (c *machineConn) sendControlWith(frame protocol.Frame, enqueue func(protocol.Frame) error) error {
+	c.controlMu.Lock()
+	defer c.controlMu.Unlock()
+	if c.controlSent[frame.AgentID] >= frame.DesiredRev && frame.DesiredRev > 0 {
+		return nil
+	}
+	if err := enqueue(frame); err != nil {
+		return err
+	}
+	if c.controlSent == nil {
+		c.controlSent = make(map[string]int64)
+	}
+	c.controlSent[frame.AgentID] = frame.DesiredRev
+	return nil
+}
+
+// A reconnect can have more pending controls than the ordinary bounded send
+// queue. Wait for the writer to drain it while the read loop handles acks.
+func (c *machineConn) sendReplayControl(ctx context.Context, frame protocol.Frame) error {
+	select {
+	case <-c.done:
+		return ErrMachineUnavailable
+	default:
+	}
+	// Reserve the revision before waiting for queue space so a concurrent live
+	// control does not enqueue a duplicate. Release the lock while waiting:
+	// the read loop needs it to accept acks and drain the peer's write side.
+	c.controlMu.Lock()
+	if c.controlSent[frame.AgentID] >= frame.DesiredRev && frame.DesiredRev > 0 {
+		c.controlMu.Unlock()
+		return nil
+	}
+	if c.controlSent == nil {
+		c.controlSent = make(map[string]int64)
+	}
+	c.controlSent[frame.AgentID] = frame.DesiredRev
+	if c.controlReplayed == nil {
+		c.controlReplayed = make(map[string]int64)
+	}
+	c.controlReplayed[frame.AgentID] = frame.DesiredRev
+	c.controlMu.Unlock()
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if len(c.sendQueue) < cap(c.sendQueue)/2 {
+			select {
+			case c.sendQueue <- frame:
+				return nil
+			default:
+			}
+		}
+		select {
+		case <-c.done:
+			return ErrMachineUnavailable
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			c.stop()
+			return ErrSlowMachine
+		case <-ticker.C:
+		}
+	}
+}
+
+func (c *machineConn) sentControlRevision(agentID string, rev int64) bool {
+	c.controlMu.Lock()
+	defer c.controlMu.Unlock()
+	return rev > 0 && c.controlSent[agentID] >= rev
+}
+
+func (c *machineConn) replayedControlRevision(agentID string, rev int64) bool {
+	c.controlMu.Lock()
+	defer c.controlMu.Unlock()
+	return c.controlReplayed[agentID] >= rev
 }
 
 func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
@@ -201,7 +291,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
 	c.lastSeen.Store(time.Now().UnixNano())
 	s.machineMu.Lock()
 	old := s.machines[machineID]
@@ -226,6 +316,16 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 		}
 		desired = append(desired, protocol.DesiredAgent{AgentID: agent.ID, Generation: agent.Generation, Desired: agent.Desired, DesiredRev: agent.DesiredRev})
 	}
+	if !c.supportsStopReplay {
+		for i := range desired {
+			if desired[i].Desired == "stopped" && desired[i].DesiredRev > 0 {
+				// An older supervisor ignores controls at the snapshot revision.
+				// It still sees the stopped state, then applies the current
+				// revision from the replay and starts its kill fallback.
+				desired[i].DesiredRev--
+			}
+		}
+	}
 	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, LauncherDefinitions: definitions}); err != nil {
 		return
 	}
@@ -235,6 +335,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	s.maintenanceMu.RUnlock()
 	handshakeLocked = false
 	go s.machinePinger(ctx, c)
+	go s.replayPendingStops(ctx, c)
 	for {
 		frame, err := readMachineFrame(ctx, conn)
 		if err != nil {
@@ -366,6 +467,23 @@ func (s *Server) machineWriter(ctx context.Context, c *machineConn) {
 	}
 }
 
+func (s *Server) replayPendingStops(ctx context.Context, c *machineConn) {
+	if c.replayDone != nil {
+		defer close(c.replayDone)
+	}
+	stops, err := s.Store.PendingStopControlsForMachine(ctx, c.id)
+	if err != nil {
+		c.stop()
+		return
+	}
+	for _, agent := range stops {
+		if err := c.sendReplayControl(ctx, protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: agent.ID,
+			Generation: agent.Generation, DesiredRev: agent.DesiredRev, DesiredState: "stopped"}); err != nil {
+			return
+		}
+	}
+}
+
 func (s *Server) machinePinger(ctx context.Context, c *machineConn) {
 	interval := s.MachinePingInterval
 	if interval <= 0 {
@@ -454,6 +572,28 @@ func (s *Server) handleAgentFrame(ctx context.Context, c *machineConn, frame pro
 		return nil
 	case protocol.Ack:
 		if frame.Level == "control" {
+			rev, err := strconv.ParseInt(frame.Ref, 10, 64)
+			if err != nil || !c.sentControlRevision(frame.AgentID, rev) {
+				return nil
+			}
+			if !c.supportsStopReplay {
+				// A legacy supervisor acks as soon as it sees a control. A
+				// replay can be acknowledged while the process is still live,
+				// and observed=stopped may predate an offline delivery.
+				if c.replayedControlRevision(frame.AgentID, rev) {
+					return nil
+				}
+				card, err := s.Store.AgentCardByID(ctx, frame.AgentID)
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil // an agent that is gone has nothing left to confirm
+				}
+				if err != nil {
+					return err
+				}
+				if card.Observed != "stopped" {
+					return nil
+				}
+			}
 			return s.Store.AckAgentControl(ctx, frame.AgentID, frame.Generation, frame.Ref)
 		}
 		return s.Store.AckTurn(ctx, frame.TurnID, frame.AgentID, frame.Generation, frame.Level)

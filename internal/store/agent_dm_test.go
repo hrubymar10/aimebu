@@ -493,6 +493,7 @@ func TestDeletingAProjectTakesItsAgentsOutOfTheirChats(t *testing.T) {
 	if _, err := f.s.db.Exec(`UPDATE agent SET desired='stopped',observed='stopped' WHERE project_id=?`, f.p2.ID); err != nil {
 		t.Fatal(err)
 	}
+	ackProjectStops(t, f.s, f.p2.ID)
 	if err := f.s.DeleteProject(ctx, f.p2.ID, f.p2.Name, f.owner); err != nil {
 		t.Fatalf("delete: %v", err)
 	}

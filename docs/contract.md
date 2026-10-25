@@ -888,7 +888,21 @@ it never silently reruns a turn with uncertain effects.
   message?}`
 - S→M `control{v, agent_id, generation, desired_state, desired_rev}` — acked
   by `ack{level:"control", ref:"<desired_rev>"}` so the server knows the
-  newest rev is applied
+  newest rev is applied. A stop ack waits until any running process exits.
+  A supervisor advertises `supports_stop_replay=true` in `hello` when it can
+  apply a stop control at the same revision as the desired snapshot. On
+  reconnect, after `hello_ack`, the server sends
+  one stop control for each agent with `desired=stopped` whose stop is not
+  confirmed by `agent_control_applied` at that revision, or whose observed
+  state is not stopped. The snapshot alone does not confirm application or
+  start the control frame's kill fallback. A stopped agent on a machine that
+  can reconnect keeps its project from deletion until the stop is applied.
+  Older supervisors receive the stop replay too, with the stopped revision
+  one behind in the snapshot so their equal-revision filter accepts the
+  control and starts its kill fallback. An older supervisor's replay ack is
+  not proof of application. Its ordinary live-control ack counts only after
+  the agent is observed stopped; a missed offline stop remains blocked until
+  revocation or a newer supervisor confirms it.
 - S→M `deliver{v, agent_id, generation, turn_id, mode, parent_turn_id?,
   notes[{note_id, room_id, from, message_id, body, reply_to?, thread_root?,
   attachments[{id,name?,mime,size,sha256}]}], attachment_bearer?,

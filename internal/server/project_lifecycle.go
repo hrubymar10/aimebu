@@ -139,6 +139,11 @@ func (s *Server) projectLifecycleError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrProjectNotArchived):
 		apiError(w, 409, "project_not_archived", "archive the project before deleting it")
 	case errors.Is(err, store.ErrProjectBusy):
+		var pending *store.StopPendingError
+		if errors.As(err, &pending) {
+			apiError(w, 409, "project_busy", "a stop is waiting to be delivered to machine "+pending.MachineID+"; bring it online or revoke it before deleting the project")
+			return
+		}
 		apiError(w, 409, "project_busy", "an agent may still be running or a worktree is still live: stop the agents (abandon a waiting recovery item in the Inbox), bring the machine of an agent that has not reported stopping online or revoke it, and remove the worktrees first")
 	case errors.Is(err, store.ErrProjectNameMismatch):
 		apiError(w, 400, "invalid_request", "name must be the project's name")

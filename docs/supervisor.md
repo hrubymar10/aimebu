@@ -156,7 +156,16 @@ the desired revision. Stop
 cancels a running turn and confirms the stop only after its process exit;
 the supervisor attempts a force kill after 30 seconds when an adapter
 supports it. A disconnected supervisor receives current desired states in
-the next `hello_ack`.
+the next `hello_ack`. The server also resends an unconfirmed stop as a
+`control` frame, so the machine acknowledges that revision and starts the
+force-kill fallback for a process still running after reconnect. The
+supervisor advertises stop-replay support in `hello` and acknowledges a stop
+only after any running process exits. A project
+cannot be deleted while such a stop is unconfirmed on a machine that can
+reconnect.
+Older supervisors receive the replay to start their kill fallback, but replay
+acks do not confirm the stop for project deletion. Their ordinary live-control
+acks count only when the agent is observed stopped.
 A lost turn retains its writer reservation until recovery establishes
 quiescence.
 

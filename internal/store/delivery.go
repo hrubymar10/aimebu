@@ -50,6 +50,35 @@ func (s *Store) AgentsForMachine(ctx context.Context, machineID string) ([]Agent
 	return agents, rows.Err()
 }
 
+// PendingStopControlsForMachine includes stops that have not been applied by
+// the machine, even when the server already considers the agent quiescent.
+// A disconnected supervisor can still have a process running in that case.
+func (s *Store) PendingStopControlsForMachine(ctx context.Context, machineID string) ([]AgentRuntime, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id,a.project_id,a.machine_id,a.generation,a.desired,a.desired_rev,a.observed,a.recovery_block,a.revoked_at
+		FROM agent a WHERE a.machine_id=? AND a.revoked_at IS NULL AND a.desired='stopped'
+		AND (a.observed!='stopped' OR NOT EXISTS (
+			SELECT 1 FROM event e WHERE e.agent_id=a.id AND e.kind='agent_control_applied'
+			AND CAST(json_extract(e.payload_json,'$.desired_rev') AS INTEGER)=a.desired_rev))
+		ORDER BY a.id`, machineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	controls := []AgentRuntime{}
+	for rows.Next() {
+		var agent AgentRuntime
+		var revoked sql.NullString
+		if err := rows.Scan(&agent.ID, &agent.ProjectID, &agent.MachineID, &agent.Generation, &agent.Desired, &agent.DesiredRev, &agent.Observed, &agent.RecoveryBlock, &revoked); err != nil {
+			return nil, err
+		}
+		controls = append(controls, agent)
+	}
+	return controls, rows.Err()
+}
+
 func (s *Store) TouchMachine(ctx context.Context, id string) error {
 	return s.Tx(ctx, func(tx *Tx) error {
 		_, err := tx.Exec(`UPDATE machine SET last_seen=? WHERE id=? AND revoked_at IS NULL`, timestamp(), id)

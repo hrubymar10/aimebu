@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -112,6 +113,38 @@ func seedProject(t *testing.T, s *Store, tag string) seededProject {
 	return seededProject{Project: project, Task: task, Agent: agent, File: file}
 }
 
+func ackProjectStops(t *testing.T, s *Store, projectID string) {
+	t.Helper()
+	rows, err := s.db.Query(`SELECT id,generation,desired_rev FROM agent WHERE project_id=? AND desired='stopped'`, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type stop struct {
+		id         string
+		generation int
+		rev        int64
+	}
+	var stops []stop
+	for rows.Next() {
+		var current stop
+		if err := rows.Scan(&current.id, &current.generation, &current.rev); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		stops = append(stops, current)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
+	for _, current := range stops {
+		if err := s.AckAgentControl(context.Background(), current.id, current.generation, fmt.Sprint(current.rev)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // tableCounts is how many rows every table holds.
 func tableCounts(t *testing.T, s *Store) map[string]int {
 	t.Helper()
@@ -172,6 +205,7 @@ func TestDeleteProjectLeavesWhatAStoreWithoutItHolds(t *testing.T) {
 	if err := both.DeleteProject(ctx, doomed.Project.ID, "wrong", "usr_proj"); !errors.Is(err, ErrProjectNameMismatch) {
 		t.Fatalf("the wrong name must refuse, got %v", err)
 	}
+	ackProjectStops(t, both, doomed.Project.ID)
 	if err := both.DeleteProject(ctx, doomed.Project.ID, doomed.Project.Name, "usr_proj"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -310,6 +344,7 @@ func TestDeleteProjectRefusesARunningAgentAndALiveWorktree(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE room_worktree SET state='removed'`); err != nil {
 		t.Fatal(err)
 	}
+	ackProjectStops(t, s, p.Project.ID)
 	if err := s.DeleteProject(ctx, p.Project.ID, p.Project.Name, "usr_proj"); err != nil {
 		t.Fatalf("once nothing is live: %v", err)
 	}
@@ -437,8 +472,14 @@ func TestAbandonInAnArchivedProjectEndsWithTheAgentStoppedAndUnblocksDelete(t *t
 	if err := s.db.QueryRow(`SELECT desired,observed FROM agent WHERE id=?`, p.Agent.ID).Scan(&desired, &observed); err != nil || desired != "stopped" || observed != "stopped" {
 		t.Fatalf("abandon must end with the agent stopped, got desired=%q observed=%q %v", desired, observed, err)
 	}
+	if err := s.DeleteProject(ctx, p.Project.ID, p.Project.Name, "usr_proj"); !errors.Is(err, ErrProjectBusy) {
+		t.Fatalf("the machine has not applied the stop: %v", err)
+	}
+	if err := s.AckAgentControl(ctx, p.Agent.ID, decision.StoppedAgent.Generation, fmt.Sprint(decision.StoppedAgent.DesiredRev)); err != nil {
+		t.Fatalf("ack stop: %v", err)
+	}
 	if err := s.DeleteProject(ctx, p.Project.ID, p.Project.Name, "usr_proj"); err != nil {
-		t.Fatalf("with the agent stopped the project can be deleted: %v", err)
+		t.Fatalf("with the stop applied the project can be deleted: %v", err)
 	}
 }
 

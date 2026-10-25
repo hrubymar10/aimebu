@@ -57,6 +57,7 @@ type Client struct {
 	desired        map[string]protocol.DesiredAgent
 	active         map[string]string
 	running        map[string]adapter.Turn
+	pendingStopAck map[string]protocol.Frame
 	currentConn    *websocket.Conn
 	stopping       bool
 	turns          sync.WaitGroup
@@ -199,7 +200,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -506,8 +507,10 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				}
 			}
 		case protocol.Control:
-			c.handleControl(frame)
-			if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Ack, AgentID: frame.AgentID, Generation: frame.Generation, Level: "control", Ref: fmt.Sprint(frame.DesiredRev)}); err != nil {
+			if c.handleControl(frame) {
+				continue
+			}
+			if err := c.send(ctx, conn, controlAck(frame)); err != nil {
 				return err
 			}
 		case protocol.Ping:
@@ -1097,13 +1100,28 @@ events:
 	}
 	if err := c.Journal.RecordExitInfo(ctx, delivery.TurnID, exit); err != nil {
 		c.report(err)
+		release()
+		c.sendDeferredStopAck(ctx, delivery.AgentID)
 		return
 	}
 	// The process is durably finished before the server sees this frame. Free
 	// local admission now so an immediate follow-up delivery is not rejected.
 	release()
+	c.sendDeferredStopAck(ctx, delivery.AgentID)
 	if err := c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.Process, AgentID: delivery.AgentID, Generation: delivery.Generation, TurnID: delivery.TurnID, Exit: &exit}); err != nil {
 		c.report(err)
+	}
+}
+
+func (c *Client) sendDeferredStopAck(ctx context.Context, agentID string) {
+	c.mu.Lock()
+	ack, pending := c.pendingStopAck[agentID]
+	delete(c.pendingStopAck, agentID)
+	c.mu.Unlock()
+	if pending {
+		if err := c.sendCurrent(ctx, ack); err != nil {
+			c.report(fmt.Errorf("agent %s stop ack after process exit: %w", agentID, err))
+		}
 	}
 }
 
@@ -1139,16 +1157,31 @@ func (c *Client) StopAcceptingAndDrain(ctx context.Context) error {
 	}
 }
 
-func (c *Client) handleControl(frame protocol.Frame) {
+func controlAck(frame protocol.Frame) protocol.Frame {
+	return protocol.Frame{V: protocol.Version, Type: protocol.Ack, AgentID: frame.AgentID, Generation: frame.Generation, Level: "control", Ref: fmt.Sprint(frame.DesiredRev)}
+}
+
+// handleControl returns true when the stop ack must wait for process exit.
+func (c *Client) handleControl(frame protocol.Frame) bool {
 	c.mu.Lock()
 	old := c.desired[frame.AgentID]
-	if frame.DesiredRev <= old.DesiredRev && frame.Generation <= old.Generation {
+	if frame.Generation < old.Generation || (frame.Generation == old.Generation &&
+		(frame.DesiredRev < old.DesiredRev || (frame.DesiredRev == old.DesiredRev && frame.DesiredState != old.Desired))) {
 		c.mu.Unlock()
-		return
+		return false
 	}
 	c.desired[frame.AgentID] = protocol.DesiredAgent{AgentID: frame.AgentID, Generation: frame.Generation, Desired: frame.DesiredState, DesiredRev: frame.DesiredRev}
 	turn := c.running[frame.AgentID]
 	turnID := c.active[frame.AgentID]
+	deferAck := frame.DesiredState == "stopped" && turn != nil
+	if deferAck {
+		if c.pendingStopAck == nil {
+			c.pendingStopAck = make(map[string]protocol.Frame)
+		}
+		c.pendingStopAck[frame.AgentID] = controlAck(frame)
+	} else {
+		delete(c.pendingStopAck, frame.AgentID)
+	}
 	c.mu.Unlock()
 	if frame.DesiredState == "stopped" && turn != nil {
 		_ = turn.Cancel()
@@ -1165,6 +1198,7 @@ func (c *Client) handleControl(frame protocol.Frame) {
 			}
 		})
 	}
+	return deferAck
 }
 
 func (c *Client) report(err error) {

@@ -194,7 +194,7 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 					machine.boundMu.Lock()
 					machine.bound[agentID] = card.Generation
 					machine.boundMu.Unlock()
-					_ = machine.send(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: agentID, Generation: card.Generation,
+					_ = machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: agentID, Generation: card.Generation,
 						DesiredRev: card.DesiredRev, DesiredState: card.Desired})
 					if pending, ready, spawnErr := s.Store.PendingSpawnByID(r.Context(), agentID); spawnErr == nil && ready {
 						_ = s.sendPendingSpawn(r.Context(), machine, pending)

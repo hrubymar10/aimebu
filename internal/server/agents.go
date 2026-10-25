@@ -975,7 +975,7 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 		machine.boundMu.Lock()
 		machine.bound[id] = updated.Generation
 		machine.boundMu.Unlock()
-		_ = machine.send(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: id, Generation: updated.Generation, DesiredRev: updated.DesiredRev, DesiredState: updated.Desired})
+		_ = machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: id, Generation: updated.Generation, DesiredRev: updated.DesiredRev, DesiredState: updated.Desired})
 		if updated.Desired == "active" {
 			if pending, ok, err := s.Store.PendingSpawnByID(r.Context(), id); err == nil && ok {
 				_ = s.sendPendingSpawn(r.Context(), machine, pending)
@@ -1165,7 +1165,7 @@ func (s *Server) agentSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if machine, err := s.machineForID(first.MachineID); err == nil {
-		_ = machine.send(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: id, Generation: first.Generation, DesiredRev: first.DesiredRev, DesiredState: first.Desired})
+		_ = machine.sendControl(protocol.Frame{V: protocol.Version, Type: protocol.Control, AgentID: id, Generation: first.Generation, DesiredRev: first.DesiredRev, DesiredState: first.Desired})
 	}
 	writeJSON(w, 202, first)
 }

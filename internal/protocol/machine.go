@@ -61,6 +61,7 @@ type Frame struct {
 	SupportsDetectDir    bool                 `json:"supports_detect_dir,omitempty"`
 	SupportsAgentLogs    bool                 `json:"supports_agent_logs,omitempty"`
 	SupportsAgentLogSize bool                 `json:"supports_agent_log_size,omitempty"`
+	SupportsStopReplay   bool                 `json:"supports_stop_replay,omitempty"`
 	Capabilities         []CapabilityReport   `json:"capabilities,omitempty"`
 	Harnesses            []HarnessRow         `json:"harnesses,omitempty"`
 	HarnessSettings      []HarnessSetting     `json:"harness_settings,omitempty"`

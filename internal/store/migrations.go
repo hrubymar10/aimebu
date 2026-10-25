@@ -1443,6 +1443,11 @@ INSERT INTO provider_limit_new(agent_id,turn_id,detected_at,reset_at,tool)
 SELECT agent_id,turn_id,detected_at,reset_at,tool FROM provider_limit;
 DROP TABLE provider_limit;
 ALTER TABLE provider_limit_new RENAME TO provider_limit;
+`}, {84, `
+-- Reconnect and project deletion look up the current applied stop revision for
+-- each agent. Keep that lookup bounded as the event journal grows.
+CREATE INDEX event_control_applied_agent_rev ON event(agent_id, CAST(json_extract(payload_json,'$.desired_rev') AS INTEGER))
+  WHERE kind='agent_control_applied';
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

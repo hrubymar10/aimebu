@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -279,6 +280,13 @@ func TestProjectArchiveReopenAndDelete(t *testing.T) {
 	if _, err := os.Stat(doomedPath); err != nil {
 		t.Fatalf("the upload is gone before the delete: %v", err)
 	}
+	stoppedCard, err := f.db.AgentCardByID(t.Context(), card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.AckAgentControl(t.Context(), card.ID, stoppedCard.Generation, fmt.Sprint(stoppedCard.DesiredRev)); err != nil {
+		t.Fatal(err)
+	}
 	resp = f.request("DELETE", "/api/projects/"+doomed.ID, map[string]string{"name": doomed.Name}, true)
 	resp.Body.Close()
 	if resp.StatusCode != 204 {
@@ -429,6 +437,13 @@ func TestAdminWhoIsNotAMemberManagesAProjectsLifecycle(t *testing.T) {
 		t.Fatalf("delete with an agent not confirmed stopped: %d %q", status, problem)
 	}
 	if _, err := f.exec(`UPDATE agent SET observed='stopped'`); err != nil {
+		t.Fatal(err)
+	}
+	current, err = f.db.AgentCardByID(t.Context(), agent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.AckAgentControl(t.Context(), agent.ID, current.Generation, fmt.Sprint(current.DesiredRev)); err != nil {
 		t.Fatal(err)
 	}
 	if got := call("DELETE", project, map[string]string{"name": f.project.Name}); got != 204 {

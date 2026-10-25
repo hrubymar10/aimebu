@@ -22,6 +22,14 @@ var (
 	ErrProjectNameMismatch = errors.New("project_name_mismatch")
 )
 
+// StopPendingError identifies the machine that must apply an agent's stop
+// before its project can be removed. Revoking that machine remains an escape
+// hatch when it will never reconnect.
+type StopPendingError struct{ MachineID string }
+
+func (e *StopPendingError) Error() string { return "stop pending on machine " + e.MachineID }
+func (e *StopPendingError) Unwrap() error { return ErrProjectBusy }
+
 // What a project deletion has to clear besides the rows the foreign keys reach. TestProjectDeleteCoversEveryTableThatNamesAProject reads
 // the schema and fails when a table that names a project is in none of these lists, so a table added later cannot be forgotten.
 var (
@@ -233,9 +241,22 @@ func (s *Store) DeleteProject(ctx context.Context, id, name, actor string) error
 		if name != projectName {
 			return ErrProjectNameMismatch
 		}
+		var pendingMachine string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.machine_id FROM agent a JOIN machine m ON m.id=a.machine_id
+			WHERE a.project_id=? AND a.revoked_at IS NULL AND m.revoked_at IS NULL AND a.desired='stopped'
+			AND NOT EXISTS (SELECT 1 FROM event e WHERE e.agent_id=a.id AND e.kind='agent_control_applied'
+				AND CAST(json_extract(e.payload_json,'$.desired_rev') AS INTEGER)=a.desired_rev)
+			ORDER BY a.id LIMIT 1`, id).Scan(&pendingMachine)
+		if err == nil {
+			return &StopPendingError{MachineID: pendingMachine}
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		var busy int
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT (SELECT COUNT(*) FROM agent a LEFT JOIN machine m ON m.id=a.machine_id
-				WHERE a.project_id=? AND a.revoked_at IS NULL AND (m.revoked_at IS NULL) AND (a.desired<>'stopped' OR a.observed<>'stopped'))
+				WHERE a.project_id=? AND a.revoked_at IS NULL AND (m.revoked_at IS NULL) AND
+				(a.desired<>'stopped' OR a.observed<>'stopped'))
 			+ (SELECT COUNT(*) FROM room_worktree w JOIN room r ON r.id=w.room_id WHERE r.project_id=? AND w.state<>'removed')
 			+ (SELECT COUNT(*) FROM room_worktree_instance i JOIN room r ON r.id=i.room_id WHERE r.project_id=? AND i.state IN ('ready','preserved'))`, id, id, id).Scan(&busy); err != nil {
 			return err
