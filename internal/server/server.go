@@ -96,6 +96,7 @@ type Server struct {
 	threadCountsQuery    func(context.Context, string, []store.Message) (map[string]int, error)
 	Allow                []netip.Prefix
 	TrustedProxies       []netip.Prefix // AIMEBU2_TRUSTED_PROXIES; see clientIP
+	doctorKey            string         // set by EnableDoctorKey; empty keeps GET /api/doctor closed
 	machineMu            sync.Mutex
 	machines             map[string]*machineConn
 	spawnMu              sync.Mutex
@@ -294,6 +295,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/events", s.Auth.RequireUser(http.HandlerFunc(s.events)))
 	mux.Handle("GET /api/events/cursor", s.Auth.RequireUser(http.HandlerFunc(s.eventCursor)))
 	mux.HandleFunc("GET /api/machine", s.machineSocket)
+	mux.HandleFunc("GET /api/doctor", s.doctorLive)
 	mux.Handle("GET /api/inbox", s.Auth.RequireUser(http.HandlerFunc(s.inbox)))
 	mux.Handle("GET /api/agent/rooms", s.requireAgentTool(http.HandlerFunc(s.agentToolRooms)))
 	mux.Handle("GET /api/agent/agents", s.requireAgentTool(http.HandlerFunc(s.agentToolAgents)))

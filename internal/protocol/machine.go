@@ -188,6 +188,11 @@ type LauncherRow struct {
 	Version           string `json:"version"`
 	Available         bool   `json:"available"`
 	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	// Features is what a Docker launcher says it can do (its HARNESS_DOCKER_PRINT_FEATURES answer), asked once when the launcher is
+	// inspected and only for a tool that depends on one. FeatureProblem says why that answer cannot be used: the probe failed, or the
+	// launcher is too old for the tool. It does not make the launcher unavailable; the turn's own preflight still refuses it.
+	Features       []string `json:"features,omitempty"`
+	FeatureProblem string   `json:"feature_problem,omitempty"`
 }
 
 type HarnessRow struct {

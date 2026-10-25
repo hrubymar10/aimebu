@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -96,12 +97,34 @@ func inspectLauncher(def protocol.LauncherDefinition, checkout string) (protocol
 			row.UnavailableReason = "launcher version check failed"
 		}
 	}
+	if def.Containerized && adapter.DockerNeedsForwardEnv(def.Tool) {
+		probeLauncherFeatures(&row, def, path, checkout)
+	}
 	if !def.Enabled {
 		row.UnavailableReason = "disabled by owner"
 	} else if row.UnavailableReason == "" {
 		row.Available = true
 	}
 	return row, nil
+}
+
+// probeLauncherFeatures asks a Docker launcher for its features (the probe exits before it touches Docker, so it needs no checkout) and
+// records them, or why they cannot be used, on the row. Doctor and Settings read them from there instead of probing again.
+func probeLauncherFeatures(row *protocol.LauncherRow, def protocol.LauncherDefinition, path, checkout string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	features, err := adapter.DockerFeatures(ctx, path, def.Args, checkout, launcherEnvironment(def.EnvRefs, def.Tool))
+	if err != nil {
+		row.FeatureProblem = "the launcher's feature probe failed: " + err.Error()
+		return
+	}
+	for feature := range features {
+		row.Features = append(row.Features, feature)
+	}
+	sort.Strings(row.Features)
+	if !features[adapter.FeatureForwardEnv] {
+		row.FeatureProblem = "launcher too old: it does not forward environment variables, which " + def.Tool + " needs (update harness-docker)"
+	}
 }
 
 func launcherEnvironment(refs map[string]string, tool string) []string {

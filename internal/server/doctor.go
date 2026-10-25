@@ -1,0 +1,142 @@
+package server
+
+import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/hrubymar10/aimebu/internal/protocol"
+)
+
+// DoctorKeyFile is the file under server/ that holds the key `aimebu doctor --live` authenticates with. The server writes it at start with
+// mode 0600 and removes it at shutdown; reading it needs the same file permissions that guard the database, so owning the config
+// directory is the credential. GET /api/doctor accepts the key only from a loopback connection that carries no forwarding header.
+const DoctorKeyFile = "doctor.key"
+
+// EnableDoctorKey creates a fresh random key in <root>/server/doctor.key and arms GET /api/doctor with it. The returned function removes
+// the file; call it at shutdown. A new key at every start means a key left behind by a crash opens nothing.
+func (s *Server) EnableDoctorKey(root string) (func(), error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return nil, err
+	}
+	key := hex.EncodeToString(raw[:])
+	dir := filepath.Join(root, "server")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, DoctorKeyFile)
+	tmp, err := os.CreateTemp(dir, ".doctor-key-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if _, err := tmp.WriteString(key + "\n"); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return nil, err
+	}
+	s.doctorKey = key
+	return func() { _ = os.Remove(path) }, nil
+}
+
+// doctorCapabilities lists the hello's capability flags with what a supervisor without each one loses.
+var doctorCapabilities = []struct {
+	flag     string
+	degrades string
+	get      func(*machineConn) bool
+}{
+	{"supports_path_probe", "folder checks for a project on this machine are refused: a remote folder cannot be verified", func(c *machineConn) bool { return c.supportsPathProbe }},
+	{"supports_worktree", "room worktrees cannot be created or removed on this machine", func(c *machineConn) bool { return c.supportsWorktree }},
+	{"supports_launchers", "harness launchers are unavailable: the Harnesses page reports that the supervisor needs updating", func(c *machineConn) bool { return c.supportsLaunchers }},
+	{"supports_detect", "Settings → Harnesses cannot auto-detect harnesses or models on this machine", func(c *machineConn) bool { return c.supportsDetect }},
+	{"supports_detect_dir", "auto-detect cannot run in a chosen folder", func(c *machineConn) bool { return c.supportsDetectDir }},
+	{"supports_session_scan", "Claude Code sessions on this machine cannot be listed for import", func(c *machineConn) bool { return c.supportsSessionScan }},
+	{"supports_session_fork", "a Claude Code session cannot be continued as a copy (fork); only continued in place", func(c *machineConn) bool { return c.supportsSessionFork }},
+	{"supports_agent_logs", "an agent's captured stderr cannot be read from the web UI", func(c *machineConn) bool { return c.supportsAgentLogs }},
+	{"supports_agent_log_size", "the size of the agent logs on this machine is not shown", func(c *machineConn) bool { return c.supportsAgentLogSize }},
+	{"supports_stop_replay", "a stop sent while the machine was offline is applied by a fallback that can kill a live process early", func(c *machineConn) bool { return c.supportsStopReplay }},
+}
+
+func (s *Server) doctorAuthorized(r *http.Request) bool {
+	if s.doctorKey == "" || viaProxy(r) {
+		return false
+	}
+	peer, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil || !peer.Addr().Unmap().IsLoopback() {
+		return false
+	}
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && subtle.ConstantTimeCompare([]byte(token), []byte(s.doctorKey)) == 1
+}
+
+// doctorLive answers GET /api/doctor: per machine, which capability flags its connected supervisor announced and what its launchers last
+// reported. It is read-only and says nothing a secret could hide in (no keys, no environment, no launcher arguments).
+func (s *Server) doctorLive(w http.ResponseWriter, r *http.Request) {
+	if !s.doctorAuthorized(r) {
+		apiError(w, 403, "forbidden", "a loopback request with the doctor key is required")
+		return
+	}
+	machines, err := s.Store.Machines(r.Context())
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	answer := protocol.DoctorLive{Machines: []protocol.DoctorMachine{}}
+	for _, machine := range machines {
+		if machine.RevokedAt.Valid {
+			continue
+		}
+		item := protocol.DoctorMachine{ID: machine.ID, Name: machine.Name, Approved: machine.Approved, Launchers: []protocol.DoctorLauncher{}}
+		observed := map[string]protocol.LauncherRow{}
+		if conn, err := s.machineForID(machine.ID); err == nil {
+			select {
+			case <-conn.done:
+			default:
+				item.Connected = true
+				for _, capability := range doctorCapabilities {
+					item.Supports = append(item.Supports, protocol.DoctorSupport{Flag: capability.flag, Supported: capability.get(conn), Degrades: capability.degrades})
+				}
+				conn.harnessMu.Lock()
+				for _, row := range conn.launchers {
+					observed[row.ID] = row
+				}
+				conn.harnessMu.Unlock()
+			}
+		}
+		definitions, err := s.Store.MachineLaunchers(r.Context(), machine.ID)
+		if err != nil {
+			fail(w, fmt.Errorf("launchers of %s: %w", machine.ID, err))
+			return
+		}
+		for _, definition := range definitions {
+			launcher := protocol.DoctorLauncher{ID: definition.ID, Tool: definition.Tool, Name: definition.Name, Label: definition.Label, Enabled: definition.Enabled, Containerized: definition.Containerized}
+			if row, ok := observed[definition.ID]; ok {
+				launcher.Reported = true
+				launcher.Available = row.Available
+				launcher.UnavailableReason = row.UnavailableReason
+				launcher.Version = row.Version
+				launcher.Features = row.Features
+				launcher.FeatureProblem = row.FeatureProblem
+			}
+			item.Launchers = append(item.Launchers, launcher)
+		}
+		answer.Machines = append(answer.Machines, item)
+	}
+	writeJSON(w, 200, answer)
+}

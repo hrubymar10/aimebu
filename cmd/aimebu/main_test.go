@@ -108,7 +108,7 @@ func TestCommandRouting(t *testing.T) {
 		{"missing command", nil, 2, "", "usage: aimebu <server|supervisor|agent-tools|switcher|prune|doctor|sessions|usages|fe|version|help>\n"},
 		{"sessions bad flag", []string{"sessions", "--bogus"}, 2, "", "usage: aimebu sessions\n"},
 		{"sessions empty", []string{"sessions"}, 0, "No agent sessions found.\n", ""},
-		{"doctor bad flag", []string{"doctor", "--bogus"}, 2, "", "usage: aimebu doctor [--json] [--strict] [--machine]\n"},
+		{"doctor bad flag", []string{"doctor", "--bogus"}, 2, "", "usage: aimebu doctor [--json] [--strict] [--live | --machine]\n"},
 		{"agent tools needs env", []string{"agent-tools"}, 1, "", "agent-tools requires AIMEBU2_URL and AIMEBU2_AGENT_KEY\n"},
 		{"unknown command", []string{"bogus"}, 2, "", "unknown command \"bogus\"\n"},
 	}

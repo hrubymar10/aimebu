@@ -21,7 +21,7 @@ import (
 	"github.com/hrubymar10/aimebu/internal/switcher"
 )
 
-const doctorUsage = "usage: aimebu doctor [--json] [--strict] [--machine]"
+const doctorUsage = "usage: aimebu doctor [--json] [--strict] [--live | --machine]"
 
 // doctorCommand implements `aimebu doctor [--json] [--strict] [--machine]`:
 // read-only health checks for a server installation, or with --machine for a
@@ -35,7 +35,7 @@ const doctorUsage = "usage: aimebu doctor [--json] [--strict] [--machine]"
 // DSN, which enables WAL), the TLS files are only parsed, and the server is
 // probed with a single unauthenticated GET.
 func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	jsonOutput, strict, machineMode := false, false, false
+	jsonOutput, strict, machineMode, liveMode := false, false, false, false
 	for _, arg := range args {
 		switch arg {
 		case "--json":
@@ -44,10 +44,16 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 			strict = true
 		case "--machine":
 			machineMode = true
+		case "--live":
+			liveMode = true
 		default:
 			fmt.Fprintln(stderr, doctorUsage)
 			return 2
 		}
+	}
+	if machineMode && liveMode {
+		fmt.Fprintln(stderr, doctorUsage)
+		return 2
 	}
 
 	config, err := resolveServerConfig()
@@ -87,6 +93,9 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		result.Checks = append(result.Checks, doctorServerChecks(config.root, now, serverCheck.Status != statusFail, databaseUsable)...)
 	}
 	result.Checks = scopeAll(result.Checks, scopeServer)
+	if liveMode && serverCheck.Status != statusFail {
+		result.Checks = append(result.Checks, doctorLiveChecks(ctx, config)...)
+	}
 	return finishDoctor(result, strict, jsonOutput, stdout, stderr)
 }
 

@@ -23,9 +23,11 @@ server) or `machine` (a supervisor host).
 - **default** — the server installation: this host's config root and database,
   plus a probe of the server (the checks below).
 - **`--machine`** — a host that runs only the supervisor, with no server or
-  database of its own. It runs the config
+  database of its own (`--live` does not combine with it). It runs the config
   dir check and the [machine checks](#machine-checks) and skips every
   server-owned one.
+- **`--live`** — the default checks plus what only the running server knows
+  (the [live checks](#live-checks)).
 
 ## Checks
 
@@ -164,8 +166,52 @@ its lock is only tested, not taken.
   start. Fails when the server is unreachable or rejects the key (revoked, or
   paired with another server); warns while approval is pending.
 
+## Live checks
+
+`aimebu doctor --live` adds findings with the scope `live`, read from the
+running server's memory through `GET /api/doctor`: the capability flags each
+connected supervisor announced in its hello, and what each machine's launchers
+last reported. None of it is in the database, so the offline checks cannot see
+it.
+
+The endpoint needs no login. At start the server writes a fresh random key to
+`server/doctor.key` (mode 0600, replaced at every start, removed at shutdown)
+and accepts it as `Authorization: Bearer <key>` only from a loopback connection
+that carries no forwarding header (`X-Forwarded-For`, `Forwarded`, `Via` and
+the like), so a reverse proxy on the same host cannot relay it. Anything else
+gets 403. Doctor reads the file only when it is a regular file, owned by the
+running user, with no group or other permission bits; being able to read the
+config directory is the credential. The answer holds no secrets: no keys,
+environment or launcher arguments.
+
+- **doctor key** — whether the key file exists and is usable. Missing means the
+  server is not running from this build or could not write it; `--live` then
+  reports it as a warning and nothing more.
+- **live server** — warns when the server does not answer the key (403/404:
+  another install or an older build is on that port, or the file is stale).
+- **machine \<name\>** — a connected machine whose supervisor lacks a
+  capability flag warns, naming each flag and what degrades without it (for
+  example `supports_session_fork`: a Claude Code session can only be continued
+  in place, not as a copy; `supports_worktree`: room worktrees cannot be created
+  on that machine; `supports_stop_replay`: a stop sent while the machine was
+  offline is applied by a fallback that can kill a live process early). A
+  machine that is not connected right now is ok here; the offline `machines`
+  check judges how long it has been gone.
+- **connected machines** — warns when no approved machine is connected.
+- **launcher \<label\> on \<machine\>** — for each *enabled* launcher of a
+  connected machine: not yet reported by the supervisor, unavailable (with the
+  supervisor's reason, such as "command not found on this machine"), or a Docker
+  launcher whose feature probe failed or that is too old for its tool all warn.
+  The supervisor asks a Docker launcher for its features
+  (`HARNESS_DOCKER_PRINT_FEATURES=1 <launcher> --version`) once when it inspects
+  the launcher, only for tools whose Docker turns depend on one (opencode and
+  vibe need `forward_env`), and reports them with the launcher. The row stays
+  available: the turn's own preflight still refuses a too-old launcher with its
+  own message.
+
 ## Configuration
 
+`--live` talks to `AIMEBU2_BIND`:`AIMEBU2_PORT` over plain HTTP.
 Doctor reads the same environment as `aimebu server`: `AIMEBU2_CONFIG_DIR`
 (default `~/.aimebu2`), `AIMEBU2_BIND`, `AIMEBU2_PORT`, `AIMEBU2_ALLOW`,
 `AIMEBU2_TRUSTED_PROXIES`, `AIMEBU2_PUBLIC_URL`,

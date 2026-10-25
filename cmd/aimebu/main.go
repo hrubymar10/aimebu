@@ -202,7 +202,7 @@ Server:
   agent-tools                         Managed agent toolbox over stdio (needs AIMEBU2_URL, AIMEBU2_AGENT_KEY)
 
 Utilities:
-  doctor [flags]                      Run read-only health checks (--json --strict --machine)
+  doctor [flags]                      Run read-only health checks (--json --strict --live --machine)
   sessions                            List agent sessions known to the journal and server
   usages [provider] [--json|--plain]  Print the usage snapshots the server last cached
   switcher <command>                  Manage Claude Code / Codex credential profiles (works with the server stopped)
@@ -548,6 +548,12 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	service.Setup = ownerSetup
 	service.ImportV1Root = config.root
 	service.DataRoot = config.root
+	// `aimebu doctor --live` reads this key from the config directory; the server works without it, only --live is then unavailable.
+	if removeDoctorKey, err := service.EnableDoctorKey(config.root); err != nil {
+		fmt.Fprintln(stderr, "doctor key:", err)
+	} else {
+		defer removeDoctorKey()
+	}
 	service.Auth.PublicURL = publicURL
 	if tlsConfig != nil {
 		service.TLSPort = tlsConfig.port

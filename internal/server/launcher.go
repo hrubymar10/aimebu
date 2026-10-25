@@ -143,6 +143,12 @@ func (s *Server) machineLaunchers(w http.ResponseWriter, r *http.Request) {
 			row["version"] = report.Version
 			row["resolved_command"] = report.ResolvedCommand
 			row["unavailable_reason"] = report.UnavailableReason
+			if report.Features != nil {
+				row["features"] = report.Features
+			}
+			if report.FeatureProblem != "" {
+				row["feature_problem"] = report.FeatureProblem
+			}
 		}
 		rows = append(rows, row)
 	}
