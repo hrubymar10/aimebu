@@ -359,7 +359,7 @@ Inbox, usage, events, settings
 - **Message references from agents** are project-wide on purpose: an agent may
   read, by number, any message of any room of its own project (rooms it is not
   in and archived ones included; a private chat only as a member), for
-  `referenced_messages` and `message_get`. Another project's messages never.
+  `referenced_messages`, `message_get`, and paginated `room_history`. Another project's messages never. `list_agents` lists only agents in the caller's project. Only an active lead may use `set_role`; it cannot assign the lead role or change a lead, requires the target to be idle or stopped and the current desired revision, and preserves singleton writer ownership and role cardinality.
 - **message_no_counter**(id=1, value) — the message-number allocator
   (migration 71); `message.no` is unique where it is positive.
 - **room_view_preference**(user_id, room_id, hidden 0|1, notify[default|all|

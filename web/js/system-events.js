@@ -7,7 +7,7 @@ import { settingsRow, settingsGroup } from './settings-row.js';
 function node(tag, className = '', text = '') { const item = document.createElement(tag); if (className) item.className = className; if (text) item.textContent = text; return item; }
 
 const labels = {
-  agent_created: 'Agent created', agent_stopped: 'Agent stopped', agent_revoked: 'Agent revoked', agent_key_rotated: 'Agent key rotated',
+  agent_created: 'Agent created', agent_stopped: 'Agent stopped', agent_revoked: 'Agent revoked', agent_key_rotated: 'Agent key rotated', agent_role_changed: 'Agent role changed',
   agent_spawn_requested: 'Agent spawn requested', agent_spawn_confirmed: 'Agent spawned', agent_spawn_failed: 'Agent spawn failed',
   agent_control_requested: 'Agent control requested', agent_control_applied: 'Agent control applied',
   agent_switch_requested: 'Agent switch requested', agent_switch_starting: 'Agent switch starting', agent_switch_completed: 'Agent switched', agent_switch_failed: 'Agent switch failed',

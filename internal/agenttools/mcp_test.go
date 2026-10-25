@@ -46,6 +46,17 @@ func TestAttachmentGetBoundsInlineContent(t *testing.T) {
 	}
 }
 
+func TestMCPRejectsOversizedToolResponse(t *testing.T) {
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 1<<20+100))
+	}))
+	defer httpServer.Close()
+	response, _ := (Server{URL: httpServer.URL, Key: "aak_test"}).Process(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_rooms","arguments":{}}}`))
+	if !bytes.Contains(response, []byte(`"isError":true`)) || !bytes.Contains(response, []byte("tool response exceeds 1 MB")) {
+		t.Fatalf("oversized response was accepted: %s", response)
+	}
+}
+
 func TestMCPListsNarrowToolsAndSendsAgentKey(t *testing.T) {
 	requests := 0
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,10 +86,10 @@ func TestMCPListsNarrowToolsAndSendsAgentKey(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Result.Tools) != 17 {
+	if len(listed.Result.Tools) != 20 {
 		t.Fatalf("tools=%+v", listed.Result.Tools)
 	}
-	for i, name := range []string{"list_rooms", "list_macros", "list_schedules", "create_schedule", "usage_left", "create_room", "close_room", "memory_add", "memory_list", "memory_update", "memory_remove", "memory_recall", "attachment_get", "spawn_agent", "stop_agent", "message_get", "react"} {
+	for i, name := range []string{"list_rooms", "list_agents", "room_history", "list_macros", "list_schedules", "create_schedule", "usage_left", "create_room", "close_room", "memory_add", "memory_list", "memory_update", "memory_remove", "memory_recall", "attachment_get", "spawn_agent", "stop_agent", "set_role", "message_get", "react"} {
 		if listed.Result.Tools[i].Name != name {
 			t.Fatalf("tool %d = %q", i, listed.Result.Tools[i].Name)
 		}

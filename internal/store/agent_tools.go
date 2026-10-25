@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 type AgentToolIdentity struct {
@@ -16,6 +19,203 @@ type AgentToolIdentity struct {
 	Provider  string
 	IsLead    bool
 	Desired   string
+}
+
+type ProjectAgent struct {
+	ID         string `json:"id"`
+	Slug       string `json:"slug"`
+	RoleKey    string `json:"role_key"`
+	Desired    string `json:"desired"`
+	DesiredRev int64  `json:"desired_rev"`
+	Observed   string `json:"observed"`
+	RoomID     string `json:"room_id"`
+}
+
+func (s *Store) ProjectAgentsForTool(ctx context.Context, projectID string) ([]ProjectAgent, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id,a.slug,r.role_key,a.desired,a.desired_rev,a.observed,COALESCE(a.home_room_id,'')
+		FROM agent a JOIN role r ON r.id=a.role_id WHERE a.project_id=? AND a.revoked_at IS NULL ORDER BY a.created_at,a.id`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProjectAgent{}
+	for rows.Next() {
+		var a ProjectAgent
+		if err := rows.Scan(&a.ID, &a.Slug, &a.RoleKey, &a.Desired, &a.DesiredRev, &a.Observed, &a.RoomID); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+type AgentHistoryPage struct {
+	Messages   []AgentMessage `json:"messages"`
+	NextBefore int64          `json:"next_before,omitempty"`
+	HasMore    bool           `json:"has_more"`
+}
+
+// AgentRoomHistory uses the same project and private-chat boundary as message_get.
+// The bounded excerpt/page keeps every returned cursor safe for the MCP client.
+func (s *Store) AgentRoomHistory(ctx context.Context, agentID, projectID, roomID string, beforeNo int64, limit int) (AgentHistoryPage, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return AgentHistoryPage{}, err
+	}
+	var allowed bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM room r WHERE r.id=? AND r.project_id=?
+		AND (r.kind<>'dm' OR EXISTS(SELECT 1 FROM room_member m WHERE m.room_id=r.id AND m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL)))`, roomID, projectID, agentID).Scan(&allowed); err != nil {
+		return AgentHistoryPage{}, err
+	}
+	if !allowed {
+		return AgentHistoryPage{}, ErrForbidden
+	}
+	if beforeNo == 0 {
+		beforeNo = 1<<63 - 1
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT m.no,r.title,COALESCE(u.login,a.slug,m.author_id),
+		CASE WHEN length(m.body)>2000 THEN substr(m.body,1,2000)||'…' ELSE m.body END,m.created_at
+		FROM message m JOIN room r ON r.id=m.room_id
+		LEFT JOIN user u ON m.author_kind='user' AND u.id=m.author_id
+		LEFT JOIN agent a ON m.author_kind='agent' AND a.id=m.author_id
+		WHERE m.room_id=? AND m.no>0 AND m.no<? AND r.project_id=? AND
+		(r.kind<>'dm' OR EXISTS(SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL))
+		ORDER BY m.no DESC LIMIT ?`, roomID, beforeNo, projectID, agentID, limit+1)
+	if err != nil {
+		return AgentHistoryPage{}, err
+	}
+	defer rows.Close()
+	all := make([]AgentMessage, 0, limit+1)
+	for rows.Next() {
+		m := AgentMessage{Available: true, RoomID: roomID}
+		if err := rows.Scan(&m.No, &m.Room, &m.From, &m.Body, &m.CreatedAt); err != nil {
+			return AgentHistoryPage{}, err
+		}
+		all = append(all, m)
+	}
+	if err := rows.Err(); err != nil {
+		return AgentHistoryPage{}, err
+	}
+	page := AgentHistoryPage{Messages: make([]AgentMessage, 0, limit)}
+	size := 32 // JSON wrapper and cursor
+	for _, m := range all {
+		if len(page.Messages) == limit {
+			break
+		}
+		encoded, err := json.Marshal(m)
+		if err != nil {
+			return AgentHistoryPage{}, err
+		}
+		if size+len(encoded)+1 > 240<<10 {
+			break
+		}
+		page.Messages = append(page.Messages, m)
+		size += len(encoded) + 1
+	}
+	page.HasMore = len(all) > len(page.Messages)
+	if len(page.Messages) > 0 {
+		page.NextBefore = page.Messages[len(page.Messages)-1].No
+	}
+	slices.Reverse(page.Messages)
+	return page, nil
+}
+
+// SetAgentRoleAsTool changes the role used for the target's next turn. A live
+// turn keeps its original instructions, so role changes wait for an idle agent.
+func (tx *Tx) SetAgentRoleAsTool(agentID, actorID, roleKey string, rev int64) (AgentCard, error) {
+	var projectID, observed, desired, checkoutID, oldRoleID, oldRoleKey string
+	var oldRev int64
+	var oldLead, oldWriter bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.project_id,a.observed,a.desired,a.desired_rev,a.checkout_id,a.role_id,r.role_key,r.cap_is_lead,r.cap_singleton_writer
+		FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=? AND a.revoked_at IS NULL`, agentID).
+		Scan(&projectID, &observed, &desired, &oldRev, &checkoutID, &oldRoleID, &oldRoleKey, &oldLead, &oldWriter); err != nil {
+		return AgentCard{}, err
+	}
+	if err := tx.authorizeSpawnActor(projectID, "agent", actorID, false); err != nil {
+		return AgentCard{}, err
+	}
+	if oldLead {
+		return AgentCard{}, ErrForbidden
+	}
+	if rev != oldRev {
+		return AgentCard{}, ErrStaleRev
+	}
+	if observed != "idle" && observed != "stopped" {
+		return AgentCard{}, ErrInvalidTransition
+	}
+	var newRoleID, cardinality string
+	var newLead, newWriter bool
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id,cardinality,cap_is_lead,cap_singleton_writer FROM role WHERE role_key=? AND deleted_at IS NULL`, roleKey).
+		Scan(&newRoleID, &cardinality, &newLead, &newWriter); err != nil {
+		return AgentCard{}, err
+	}
+	if newLead {
+		return AgentCard{}, ErrForbidden
+	}
+	if newRoleID == oldRoleID {
+		return tx.agentCardByID(agentID)
+	}
+	actor, err := tx.agentDisplay(actorID)
+	if err != nil {
+		return AgentCard{}, err
+	}
+	target, err := tx.agentDisplay(agentID)
+	if err != nil {
+		return AgentCard{}, err
+	}
+	var roomID string
+	err = tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM event WHERE agent_id=? AND kind='agent_spawn_requested' ORDER BY seq LIMIT 1`, agentID).Scan(&roomID)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM room_member WHERE member_kind='agent' AND member_id=? AND left_at IS NULL ORDER BY joined_at LIMIT 1`, agentID).Scan(&roomID)
+	}
+	if err != nil {
+		return AgentCard{}, err
+	}
+	if cardinality == "singleton" && desired != "stopped" {
+		var occupied int
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM agent WHERE project_id=? AND role_id=? AND id<>? AND revoked_at IS NULL AND (desired!='stopped' OR observed!='stopped')`, projectID, newRoleID, agentID).Scan(&occupied); err != nil {
+			return AgentCard{}, err
+		}
+		if occupied > 0 {
+			return AgentCard{}, ErrRoleOccupied
+		}
+	}
+	if oldWriter != newWriter && desired != "stopped" {
+		var state string
+		var owner sql.NullString
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT writer_state,writer_agent_id FROM checkout WHERE id=?`, checkoutID).Scan(&state, &owner); err != nil {
+			return AgentCard{}, err
+		}
+		if newWriter {
+			if state != "none" {
+				return AgentCard{}, ErrWriterOccupied
+			}
+			if _, err := tx.Exec(`UPDATE checkout SET writer_state='reserved',writer_agent_id=? WHERE id=?`, agentID, checkoutID); err != nil {
+				return AgentCard{}, err
+			}
+		} else {
+			if owner.String != agentID {
+				return AgentCard{}, ErrInvalidTransition
+			}
+			if _, err := tx.Exec(`UPDATE checkout SET writer_state='none',writer_agent_id=NULL WHERE id=?`, checkoutID); err != nil {
+				return AgentCard{}, err
+			}
+		}
+	}
+	if _, err := tx.Exec(`UPDATE agent SET role_id=?,desired_rev=desired_rev+1 WHERE id=?`, newRoleID, agentID); err != nil {
+		return AgentCard{}, err
+	}
+	if _, err := tx.AppendEvent(Event{Kind: "agent_role_changed", ProjectID: projectID, RoomID: roomID, AgentID: agentID,
+		PayloadJSON: payloadJSON(map[string]string{"actor_id": actorID, "old_role": oldRoleKey, "role": roleKey})}); err != nil {
+		return AgentCard{}, err
+	}
+	if _, err := tx.InsertMessage(Message{RoomID: roomID, AuthorKind: "system", AuthorID: "system",
+		Body: fmt.Sprintf("%s changed %s's role to %s", actor, target, roleKey)}); err != nil {
+		return AgentCard{}, err
+	}
+	return tx.agentCardByID(agentID)
 }
 
 func (s *Store) AgentToolIdentityByKeyHash(ctx context.Context, hash string) (AgentToolIdentity, error) {

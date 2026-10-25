@@ -41,6 +41,8 @@ var empty = map[string]any{"type": "object", "properties": map[string]any{}}
 var agentIDPattern = regexp.MustCompile(`^agt_[A-Za-z0-9_-]+$`)
 var catalog = []tool{
 	{"list_rooms", "List rooms where you are an active member, including archived rooms, without message previews.", empty},
+	{"list_agents", "List agents in your project, including their roles and current state.", empty},
+	{"room_history", "Read a page of messages in a project room. Private chats require current membership. Use before_no to page backward.", map[string]any{"type": "object", "properties": map[string]any{"room_id": map[string]string{"type": "string"}, "before_no": map[string]string{"type": "integer"}, "limit": map[string]string{"type": "integer"}}, "required": []string{"room_id"}}},
 	{"list_macros", "Read the shared composer macro key-to-text map. Macros are expanded only when a human selects one in the web composer.", empty},
 	{"list_schedules", "List schedules in a joined task room or the project home room, including their next run and last result.", map[string]any{"type": "object", "properties": map[string]any{"room_id": map[string]string{"type": "string"}}, "required": []string{"room_id"}}},
 	{"create_schedule", "Active lead only. Schedule a note to a room agent or the current lead. Kinds: once (at RFC3339), interval (at least 300 seconds), daily (HH:MM), weekly (HH:MM and weekday 0=Sunday). Timezone is an IANA zone. Use a stable request_key.", map[string]any{"type": "object", "properties": map[string]any{
@@ -93,6 +95,7 @@ var catalog = []tool{
 		"agent_id": map[string]string{"type": "string"}, "rev": map[string]string{"type": "integer"},
 		"request_key": map[string]string{"type": "string", "description": "Stable idempotency key for this stop request"},
 	}, "required": []string{"agent_id", "rev", "request_key"}}},
+	{"set_role", "Active lead only. Assign a non-lead role to an agent in your project using its current desired_rev. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{"agent_id": map[string]string{"type": "string"}, "role_key": map[string]string{"type": "string"}, "rev": map[string]string{"type": "integer"}, "request_key": map[string]string{"type": "string"}}, "required": []string{"agent_id", "role_key", "rev", "request_key"}}},
 	{"message_get", "Read a message by its number (the #N people write), from any room of your own project. A number from another project, or one that does not exist, is reported as not available.", map[string]any{"type": "object", "properties": map[string]any{
 		"no": map[string]string{"type": "integer", "description": "The message number, without the #"},
 	}, "required": []string{"no"}}},
@@ -204,6 +207,28 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 	switch name {
 	case "list_rooms":
 		path = "/api/agent/rooms"
+	case "list_agents":
+		path = "/api/agent/agents"
+	case "room_history":
+		roomID := getString("room_id")
+		if !strings.HasPrefix(roomID, "room_") || len(roomID) > 100 {
+			return toolResult("invalid room_id", true)
+		}
+		values := url.Values{}
+		for _, field := range []string{"before_no", "limit"} {
+			if len(args[field]) == 0 {
+				continue
+			}
+			var number int64
+			if json.Unmarshal(args[field], &number) != nil || number < 1 {
+				return toolResult(field+" must be a positive integer", true)
+			}
+			values.Set(field, fmt.Sprint(number))
+		}
+		path = "/api/agent/rooms/" + roomID + "/history"
+		if len(values) > 0 {
+			path += "?" + values.Encode()
+		}
 	case "list_macros":
 		path = "/api/agent/macros"
 	case "list_schedules":
@@ -351,6 +376,18 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 			return toolResult("rev must be an integer", true)
 		}
 		body = map[string]any{"rev": revision}
+	case "set_role":
+		agentID := getString("agent_id")
+		if !agentIDPattern.MatchString(agentID) || getString("role_key") == "" {
+			return toolResult("valid agent_id and role_key required", true)
+		}
+		var revision int64
+		if json.Unmarshal(args["rev"], &revision) != nil || revision < 0 {
+			return toolResult("rev must be a nonnegative integer", true)
+		}
+		method, path = http.MethodPost, "/api/agent/agents/"+agentID+"/role"
+		requestKey = getString("request_key")
+		body = map[string]any{"role_key": getString("role_key"), "rev": revision}
 	case "react":
 		messageID := getString("message_id")
 		emoji := getString("emoji")
@@ -396,7 +433,7 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		return toolResult(err.Error(), true)
 	}
 	defer resp.Body.Close()
-	limit := int64(1 << 20)
+	limit := int64(1<<20 + 1)
 	if name == "attachment_get" {
 		limit = 10<<20 + 1
 	}
@@ -421,6 +458,9 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 			return toolResult(string(data), false)
 		}
 		return toolResult(fmt.Sprintf("Attachment: %s, %d bytes. Inline content omitted; download the file through an authenticated room client if you need its bytes.", contentType, len(data)), false)
+	}
+	if len(data) > 1<<20 {
+		return toolResult("tool response exceeds 1 MB", true)
 	}
 	return toolResult(string(data), false)
 }

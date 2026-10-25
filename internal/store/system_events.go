@@ -16,7 +16,7 @@ import (
 // dispatch records, inbox_item_*) is left out; the chat and the Inbox already
 // show those.
 var systemEventKinds = []string{
-	"agent_created", "agent_stopped", "agent_revoked", "agent_key_rotated",
+	"agent_created", "agent_stopped", "agent_revoked", "agent_key_rotated", "agent_role_changed",
 	"agent_spawn_requested", "agent_spawn_confirmed", "agent_spawn_failed",
 	"agent_control_requested", "agent_control_applied",
 	"agent_switch_requested", "agent_switch_starting", "agent_switch_completed", "agent_switch_failed",

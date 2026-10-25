@@ -51,6 +51,99 @@ func (s *Server) agentToolRooms(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"rooms": rooms})
 }
 
+func (s *Server) agentToolAgents(w http.ResponseWriter, r *http.Request) {
+	caller := agentToolCaller(r)
+	agents, err := s.Store.ProjectAgentsForTool(r.Context(), caller.ProjectID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
+}
+
+func (s *Server) agentToolRoomHistory(w http.ResponseWriter, r *http.Request) {
+	caller := agentToolCaller(r)
+	before, limit := int64(0), 50
+	if raw := r.URL.Query().Get("before_no"); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || value < 1 {
+			apiError(w, 400, "invalid_request", "before_no must be a positive integer")
+			return
+		}
+		before = value
+	}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 100 {
+			apiError(w, 400, "invalid_request", "limit must be between 1 and 100")
+			return
+		}
+		limit = value
+	}
+	page, err := s.Store.AgentRoomHistory(r.Context(), caller.ID, caller.ProjectID, r.PathValue("room"), before, limit)
+	if err == store.ErrForbidden {
+		apiError(w, 403, "forbidden", "room is not available")
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, page)
+}
+
+func (s *Server) agentToolSetRole(w http.ResponseWriter, r *http.Request) {
+	caller := agentToolCaller(r)
+	if !caller.IsLead || caller.Desired != "active" {
+		apiError(w, 403, "forbidden", "active lead role required")
+		return
+	}
+	var req struct {
+		RoleKey string `json:"role_key"`
+		Rev     int64  `json:"rev"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.RoleKey == "" || req.Rev < 0 {
+		apiError(w, 400, "invalid_request", "role_key and nonnegative rev required")
+		return
+	}
+	key := r.Header.Get("Idempotency-Key")
+	if key == "" || len(key) > 200 {
+		apiError(w, 400, "invalid_request", "Idempotency-Key required (at most 200 characters)")
+		return
+	}
+	id := r.PathValue("id")
+	requestBytes, _ := json.Marshal(struct {
+		AgentID string `json:"agent_id"`
+		RoleKey string `json:"role_key"`
+		Rev     int64  `json:"rev"`
+	}{id, req.RoleKey, req.Rev})
+	digestBytes := sha256.Sum256(requestBytes)
+	result, reused, err := s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: "agent", ActorID: caller.ID, Kind: "control", Key: key, Digest: hex.EncodeToString(digestBytes[:])}, func(tx *store.Tx) (string, error) {
+		card, err := tx.SetAgentRoleAsTool(id, caller.ID, req.RoleKey, req.Rev)
+		if err != nil {
+			return "", err
+		}
+		encoded, err := json.Marshal(card)
+		return string(encoded), err
+	})
+	if err != nil {
+		spawnError(w, err)
+		return
+	}
+	var card store.AgentCard
+	if err := json.Unmarshal([]byte(result), &card); err != nil {
+		fail(w, err)
+		return
+	}
+	if !reused {
+		s.sendRoomControls(r.Context(), []store.AgentCard{card})
+	}
+	writeJSON(w, 200, card)
+}
+
 func (s *Server) agentToolUsageLeft(w http.ResponseWriter, r *http.Request) {
 	caller := agentToolCaller(r)
 	headroom, err := s.Store.ProjectToolHeadroom(r.Context(), caller.ProjectID)

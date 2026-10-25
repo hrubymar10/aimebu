@@ -336,6 +336,13 @@ func TestAgentToolRoomsAreKeyAuthenticatedAndProjectScoped(t *testing.T) {
 	if !seenArchived {
 		t.Fatal("joined archived room missing")
 	}
+	for _, roomID := range []string{privateDM.ID, otherRoom.ID} {
+		history := f.toolRequest(t, "/api/agent/rooms/"+roomID+"/history", key)
+		if history.StatusCode != http.StatusForbidden {
+			t.Fatalf("inaccessible history room=%s status=%d", roomID, history.StatusCode)
+		}
+		history.Body.Close()
+	}
 	resp = f.toolPost(t, "/api/agent/agents", key, "cross-project", map[string]string{
 		"room_id": otherRoom.ID, "role_key": "reviewer", "tool": "fake", "variant": "test", "model": "test",
 	})
@@ -370,6 +377,251 @@ func TestWorkerToolCannotSpawnOrStop(t *testing.T) {
 		t.Fatalf("worker stop status=%d", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+func TestAgentInventoryHistoryAndRoleAssignment(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	lead, leadKey := f.createToolAgentNamed(t, "role_lead_default", "leadtools")
+	worker, workerKey := f.createToolAgentNamed(t, "role_worker_default", "workertools")
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE checkout SET writer_state='reserved',writer_agent_id=? WHERE id='chk_tools'`, worker.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.toolRequest(t, "/api/agent/agents", workerKey)
+	var inventory struct {
+		Agents []store.ProjectAgent `json:"agents"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&inventory); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || len(inventory.Agents) != 2 {
+		t.Fatalf("inventory: status=%d agents=%+v", resp.StatusCode, inventory.Agents)
+	}
+	first, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: f.room.ID, AuthorKind: "system", AuthorID: "system", Body: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: f.room.ID, AuthorKind: "system", AuthorID: "system", Body: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := fmt.Sprintf("/api/agent/rooms/%s/history?limit=1", f.room.ID)
+	resp = f.toolRequest(t, path, workerKey)
+	var history struct {
+		Messages []store.AgentMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&history); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || len(history.Messages) != 1 || history.Messages[0].No != second.No {
+		t.Fatalf("latest history: status=%d messages=%+v", resp.StatusCode, history.Messages)
+	}
+	resp = f.toolRequest(t, fmt.Sprintf("%s&before_no=%d", path, second.No), workerKey)
+	if err := json.NewDecoder(resp.Body).Decode(&history); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || len(history.Messages) != 1 || history.Messages[0].No != first.No {
+		t.Fatalf("older history: status=%d messages=%+v", resp.StatusCode, history.Messages)
+	}
+	resp = f.toolPost(t, "/api/agent/agents/"+worker.ID+"/role", workerKey, "worker-role", map[string]any{"role_key": "reviewer", "rev": 0})
+	if resp.StatusCode != 403 {
+		t.Fatalf("worker set role status=%d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp = f.toolPost(t, "/api/agent/agents/"+lead.ID+"/role", leadKey, "lead-role", map[string]any{"role_key": "reviewer", "rev": 0})
+	if resp.StatusCode != 403 {
+		t.Fatalf("lead reassignment status=%d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp = f.toolPost(t, "/api/agent/agents/"+worker.ID+"/role", leadKey, "assign-reviewer", map[string]any{"role_key": "reviewer", "rev": 0})
+	var changed store.AgentCard
+	if err := json.NewDecoder(resp.Body).Decode(&changed); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 || changed.RoleKey != "reviewer" || changed.DesiredRev != 1 {
+		t.Fatalf("role assignment status=%d card=%+v", resp.StatusCode, changed)
+	}
+	owner, err := f.db.UserByLogin(t.Context(), "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := f.db.EventsAfter(t.Context(), owner.ID, 0, 1<<62)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roleEvent := false
+	for _, event := range events {
+		roleEvent = roleEvent || event.Kind == "agent_role_changed" && event.AgentID == worker.ID && event.RoomID == f.room.ID &&
+			strings.Contains(event.PayloadJSON, `"old_role":"worker"`) && strings.Contains(event.PayloadJSON, `"role":"reviewer"`)
+	}
+	if !roleEvent {
+		t.Fatal("role change did not emit a visible event")
+	}
+	messages, err := f.db.ListMessagesAfter(t.Context(), f.room.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roleMessage := false
+	for _, message := range messages {
+		roleMessage = roleMessage || message.AuthorKind == "system" && strings.Contains(message.Body, "changed") && strings.Contains(message.Body, "reviewer")
+	}
+	if !roleMessage {
+		t.Fatal("role change did not leave a room message")
+	}
+	resp = f.toolPost(t, "/api/agent/agents/"+worker.ID+"/role", leadKey, "assign-reviewer", map[string]any{"role_key": "reviewer", "rev": 0})
+	if resp.StatusCode != 200 {
+		t.Fatalf("role replay status=%d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp = f.toolPost(t, "/api/agent/agents/"+worker.ID+"/role", leadKey, "stale-role", map[string]any{"role_key": "worker", "rev": 0})
+	if resp.StatusCode != 409 {
+		t.Fatalf("stale role status=%d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
+
+func TestAgentHistoryPageKeepsCursorWithinResponseBudget(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	_, key := f.createToolAgent(t, "role_worker_default")
+	for i := 0; i < 100; i++ {
+		if _, err := f.db.InsertMessage(t.Context(), store.Message{RoomID: f.room.ID,
+			AuthorKind: "system", AuthorID: "system", Body: fmt.Sprintf("%03d ", i) + strings.Repeat("界", 20000)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := fmt.Sprintf("/api/agent/rooms/%s/history?limit=100", f.room.ID)
+	resp := f.toolRequest(t, path, key)
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var page store.AgentHistoryPage
+	if err := json.Unmarshal(data, &page); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 || len(data) > 256<<10 || len(page.Messages) == 0 || !page.HasMore || page.NextBefore != page.Messages[0].No {
+		t.Fatalf("history page status=%d bytes=%d count=%d cursor=%d more=%v", resp.StatusCode, len(data), len(page.Messages), page.NextBefore, page.HasMore)
+	}
+	for _, message := range page.Messages {
+		if len(message.Body) > 6010 {
+			t.Fatalf("message excerpt too large: %d bytes", len(message.Body))
+		}
+	}
+	older := f.toolRequest(t, fmt.Sprintf("%s&before_no=%d", path, page.NextBefore), key)
+	defer older.Body.Close()
+	var next store.AgentHistoryPage
+	if err := json.NewDecoder(older.Body).Decode(&next); err != nil {
+		t.Fatal(err)
+	}
+	if older.StatusCode != 200 || len(next.Messages) == 0 || next.Messages[len(next.Messages)-1].No >= page.NextBefore {
+		t.Fatalf("older page status=%d messages=%+v", older.StatusCode, next.Messages)
+	}
+}
+
+func TestAgentRoleSafetyBranches(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	lead, _ := f.createToolAgentNamed(t, "role_lead_default", "rolelead")
+	worker, _ := f.createToolAgentNamed(t, "role_worker_default", "roleworker")
+	other, _ := f.createToolAgentNamed(t, "role_reviewer_default", "roleother")
+	change := func(id, role string, rev int64) (store.AgentCard, error) {
+		var card store.AgentCard
+		err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+			var err error
+			card, err = tx.SetAgentRoleAsTool(id, lead.ID, role, rev)
+			return err
+		})
+		return card, err
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE checkout SET writer_state='reserved',writer_agent_id=? WHERE id='chk_tools'`, worker.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	card, err := change(worker.ID, "reviewer", 0)
+	if err != nil || card.DesiredRev != 1 {
+		t.Fatalf("release writer: card=%+v err=%v", card, err)
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE checkout SET writer_state='reserved',writer_agent_id=? WHERE id='chk_tools'`, other.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := change(worker.ID, "worker", 1); !errors.Is(err, store.ErrWriterOccupied) {
+		t.Fatalf("occupied writer: %v", err)
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE checkout SET writer_state='none',writer_agent_id=NULL WHERE id='chk_tools'`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	card, err = change(worker.ID, "worker", 1)
+	if err != nil || card.DesiredRev != 2 {
+		t.Fatalf("acquire writer: card=%+v err=%v", card, err)
+	}
+	card, err = change(worker.ID, "worker", 2)
+	if err != nil || card.DesiredRev != 2 {
+		t.Fatalf("same role should be a no-op: card=%+v err=%v", card, err)
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`INSERT INTO role(id,key,label,body,role_key,cardinality) VALUES ('role_tool_sole','tool-sole','Tool sole','','tool-sole','singleton')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := change(other.ID, "tool-sole", 0); err != nil {
+		t.Fatalf("occupy singleton: %v", err)
+	}
+	if _, err := change(worker.ID, "tool-sole", 2); !errors.Is(err, store.ErrRoleOccupied) {
+		t.Fatalf("occupied singleton: %v", err)
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE agent SET observed='in_turn' WHERE id=?`, worker.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := change(worker.ID, "reviewer", 2); !errors.Is(err, store.ErrInvalidTransition) {
+		t.Fatalf("busy target: %v", err)
+	}
+	foreign, err := f.db.CreateProject(t.Context(), store.Project{Name: "foreign", Folder: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foreignAgent store.Agent
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		if _, err := tx.Exec(`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES ('chk_foreign_tool',?,?,'/tmp/foreign-tool')`, foreign.ID, f.machineID); err != nil {
+			return err
+		}
+		var err error
+		foreignAgent, err = tx.CreateAgent(store.Agent{Slug: "foreignworker", ProjectID: foreign.ID, RoleID: "role_reviewer_default",
+			Tool: "fake", Variant: "test", Model: "test", Provider: "fake", MachineID: f.machineID,
+			CheckoutID: "chk_foreign_tool", KeyHash: "foreign-placeholder", CreatedBy: "test"})
+		if err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := change(foreignAgent.ID, "worker", 0); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("cross-project lead: %v", err)
+	}
 }
 
 func TestLeadWithoutSpawnCapabilityCanStop(t *testing.T) {

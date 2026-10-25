@@ -712,12 +712,16 @@ can spawn agents and control their desired state. The CLI fake replies
 with a short echo of the latest human message for local demos. See
 [the supervisor guide](docs/supervisor.md).
 The supervisor also creates a private per-agent config for `aimebu
-agent-tools`, a stdio MCP server with `list_rooms`,
-`create_room`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `usage_left`, `spawn_agent`, `stop_agent`,
+agent-tools`, a stdio MCP server with `list_rooms`, `list_agents`,
+`room_history`, `create_room`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `usage_left`, `spawn_agent`, `stop_agent`, `set_role`,
 `memory_add`, `memory_list`, `memory_update`, `memory_remove`, `memory_recall`,
 `attachment_get`, `message_get` and `react`. Its HTTP routes use the agent's key and scope
 reads and mutations to that agent's project; only an active lead can manage
 rooms or agents.
+`room_history` returns bounded message excerpts with `next_before` for paging;
+private chats require current membership. `set_role` changes an idle or
+stopped agent in the same project, updates its revision, and records the change
+in the room and system events.
 `spawn_agent` takes `role_key` and uses the next available role default when
 the tool and model are omitted. An explicit machine limits defaults to that
 machine; a matching default supplies the machine when none was named. A lead
