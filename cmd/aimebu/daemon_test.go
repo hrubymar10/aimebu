@@ -22,6 +22,10 @@ import (
 // binary, so the detached server in these tests is a real server process.
 const daemonHelperEnv = "AIMEBU2_TEST_RUN_AS_AIMEBU"
 
+// daemonWatchEnv names the pid of the test process that started the detached server: the server exits when that process is gone, so a test
+// run that is killed leaves nothing behind (see TestMain).
+const daemonWatchEnv = "AIMEBU2_TEST_WATCH_PID"
+
 var (
 	aimebuCopyOnce sync.Once
 	aimebuCopyPath string
@@ -89,9 +93,22 @@ func daemonFixture(t *testing.T) (root string, port int) {
 	port = listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
 	t.Setenv("AIMEBU2_PORT", strconv.Itoa(port))
-	// Whatever a failing test leaves running is killed.
+	// Whatever a test leaves running is killed by pid, whether it passed, failed or never got a pid file written: every server `start`
+	// launches is recorded as it is spawned, and the pid file is looked at too. If the test binary itself dies (a timeout, a signal), no
+	// cleanup runs, so the detached server also watches the test process and exits when it is gone.
+	var spawnedMu sync.Mutex
+	var spawned []int
+	previousSpawned := daemonSpawned
+	daemonSpawned = func(pid int) { spawnedMu.Lock(); spawned = append(spawned, pid); spawnedMu.Unlock() }
+	t.Setenv(daemonWatchEnv, strconv.Itoa(os.Getpid()))
 	t.Cleanup(func() {
+		daemonSpawned = previousSpawned
+		spawnedMu.Lock()
+		defer spawnedMu.Unlock()
 		if pid := readPID(root); pid != 0 {
+			spawned = append(spawned, pid)
+		}
+		for _, pid := range spawned {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 	})
@@ -612,5 +629,113 @@ func TestServerDaemonAsksAboutAStartingServerByItsLock(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(v1, "server", ".writer.lock")); !os.IsNotExist(err) {
 		t.Fatalf("a status question made a lock file in a v1 root: %v", err)
+	}
+}
+
+// fdFlags reads a descriptor's flags; leakFD clears close-on-exec on one, which is what a descriptor handed down by flock or a shell looks
+// like to this process.
+func fdFlags(t *testing.T, fd uintptr) uintptr {
+	t.Helper()
+	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFD, 0)
+	if errno != 0 {
+		t.Fatal(errno)
+	}
+	return flags
+}
+
+func leakFD(t *testing.T) *os.File {
+	t.Helper()
+	file, err := os.CreateTemp(t.TempDir(), "inherited-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { file.Close() })
+	if _, _, errno := syscall.Syscall(syscall.SYS_FCNTL, file.Fd(), syscall.F_SETFD, 0); errno != 0 {
+		t.Fatal(errno)
+	}
+	if fdFlags(t, file.Fd())&syscall.FD_CLOEXEC != 0 {
+		t.Fatal("could not make a descriptor that is inherited")
+	}
+	return file
+}
+
+func TestMarkInheritedFDsCloseOnExec(t *testing.T) {
+	leaked := leakFD(t)
+	ordinary, err := os.CreateTemp(t.TempDir(), "ordinary-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ordinary.Close()
+	markInheritedFDsCloseOnExec()
+	if fdFlags(t, leaked.Fd())&syscall.FD_CLOEXEC == 0 {
+		t.Error("an inherited descriptor would still be passed to a child")
+	}
+	if fdFlags(t, ordinary.Fd())&syscall.FD_CLOEXEC == 0 {
+		t.Error("a descriptor Go opened lost close-on-exec")
+	}
+	// This process still has it: the flag changes what a child gets, not what the process may do.
+	if _, err := leaked.WriteString("still usable"); err != nil {
+		t.Errorf("the descriptor stopped working in the process that had it: %v", err)
+	}
+}
+
+// A descriptor the caller hands down (flock gives its lock to the command it runs) is not in the detached server, which outlives the caller:
+// the server of a test that was started under the gate lock once held that lock after the test was gone.
+func TestDaemonStartDoesNotPassOnAnInheritedDescriptor(t *testing.T) {
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("needs /proc to look at the server's descriptors")
+	}
+	root, _ := daemonFixture(t)
+	leaked := leakFD(t)
+	target, err := os.Readlink(filepath.Join("/proc/self/fd", strconv.Itoa(int(leaked.Fd()))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := runServerAction("start"); code != 0 {
+		t.Fatalf("start: %d %q %q", code, out, errOut)
+	}
+	pid := readPID(root)
+	if pid == 0 {
+		t.Fatal("no pid")
+	}
+	entries, err := os.ReadDir(filepath.Join("/proc", strconv.Itoa(pid), "fd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if link, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "fd", entry.Name())); err == nil && link == target {
+			t.Errorf("the detached server holds descriptor %s (%s), inherited from its caller", entry.Name(), link)
+		}
+	}
+	if code, _, errOut := runServerAction("stop"); code != 0 {
+		t.Fatalf("stop: %d %q", code, errOut)
+	}
+}
+
+// A detached test server exits by itself when the test process that started it is gone, so a killed test run leaves no server behind.
+func TestTestServerExitsWhenItsTestProcessIsGone(t *testing.T) {
+	daemonFixture(t)
+	watched := exec.Command("sleep", "3")
+	if err := watched.Start(); err != nil {
+		t.Fatal(err)
+	}
+	go watched.Wait()
+	server := exec.Command(aimebuCopy(t), "server")
+	server.Env = append(os.Environ(), daemonHelperEnv+"=1", daemonWatchEnv+"="+strconv.Itoa(watched.Process.Pid))
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Process.Kill() })
+	exited := make(chan error, 1)
+	go func() { exited <- server.Wait() }()
+	select {
+	case err := <-exited:
+		t.Fatalf("the server left while its test process was still there: %v", err)
+	case <-time.After(1500 * time.Millisecond):
+	}
+	select {
+	case <-exited:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the server did not leave after its test process was gone")
 	}
 }

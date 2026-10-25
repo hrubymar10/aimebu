@@ -1,10 +1,14 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/hrubymar10/aimebu/internal/testenv"
 )
@@ -19,6 +23,18 @@ func TestMain(m *testing.M) {
 	// `server start` runs this test binary as the detached server (see daemon_test.go): it already has the parent test's isolated
 	// environment, so it runs the command line it was given and nothing else.
 	if os.Getenv(daemonHelperEnv) == "1" {
+		// The test that started this server may die without cleaning up (a timeout kills the whole test binary); a server left behind keeps
+		// whatever it inherited and its port, so it goes when its test process does.
+		if watched, err := strconv.Atoi(os.Getenv(daemonWatchEnv)); err == nil && watched > 0 {
+			go func() {
+				for {
+					time.Sleep(500 * time.Millisecond)
+					if err := syscall.Kill(watched, 0); errors.Is(err, syscall.ESRCH) {
+						os.Exit(1)
+					}
+				}
+			}()
+		}
 		main()
 		return
 	}

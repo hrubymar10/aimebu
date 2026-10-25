@@ -347,11 +347,17 @@ func daemonStart(config serverConfig, stdout, stderr io.Writer) int {
 	command := exec.Command(executable, "server")
 	command.Stdin, command.Stdout, command.Stderr = null, null, null
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// The server keeps nothing of its caller: a descriptor this process inherited (a lock held by flock, a pipe of a script) must not be
+	// carried into a process that lives on after the caller is gone and would hold it for ever.
+	markInheritedFDsCloseOnExec()
 	if err := command.Start(); err != nil {
 		fmt.Fprintf(stderr, "could not start the server: %v\n", err)
 		return 1
 	}
 	pid := command.Process.Pid
+	if daemonSpawned != nil {
+		daemonSpawned(pid)
+	}
 	exited := make(chan error, 1)
 	go func() { exited <- command.Wait() }()
 
@@ -388,6 +394,28 @@ func daemonStart(config serverConfig, stdout, stderr io.Writer) int {
 	// server that is only slow, and stop will find it if it is one).
 	fmt.Fprintf(stderr, "the server (pid %d) did not come up within %s: it does not hold the lock and answer on http://%s yet. Check %s; `aimebu server status` shows whether it gets there\n", pid, daemonStartLimit, address, serverLogPath(config.root))
 	return 1
+}
+
+// daemonSpawned is told the pid of each detached server `start` launches; only tests set it, so that they can kill by pid whatever they
+// started, even when its pid file was never written or is gone.
+var daemonSpawned func(pid int)
+
+// markInheritedFDsCloseOnExec sets close-on-exec on every descriptor above stderr. Go opens its own with it, but a descriptor inherited from
+// whoever ran this process (flock hands its lock to the command it runs, a shell may leave pipes) is passed on to every child by exec, and a
+// detached server that outlives the caller would then hold it for ever. Setting the flag here changes nothing for this process, which keeps
+// using what it was given until it exits.
+func markInheritedFDsCloseOnExec() {
+	if entries, err := os.ReadDir("/dev/fd"); err == nil {
+		for _, entry := range entries {
+			if fd, err := strconv.Atoi(entry.Name()); err == nil && fd > 2 {
+				syscall.CloseOnExec(fd)
+			}
+		}
+		return
+	}
+	for fd := 3; fd < 1024; fd++ {
+		syscall.CloseOnExec(fd)
+	}
 }
 
 // tailOfFile returns the last n lines of a file, or a note that there is nothing to show.

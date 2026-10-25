@@ -162,7 +162,7 @@ is an aimebu server (otherwise nothing is signalled and the message says what to
 process killed (use the service manager's own stop for a managed server, or it restarts it). `start` succeeds only when its server holds
 the lock and answers as an aimebu server (another service on the port is not mistaken for it); after 30 seconds without that it fails
 (exit status 1). It tells you when the server dies at startup (with the end of its log), and prints the one-time setup link when no owner
-exists yet. Two starts at once run one server. `status` and `stop` leave a config directory that still holds v1's files alone. `start`
+exists yet. Two starts at once run one server. The detached server does not inherit the caller's file descriptors (`start` marks every one above stderr close-on-exec before it launches it), so a lock held by the command that ran `start` (such as `flock`) or a pipe of the calling script is not kept alive by the server after that command ends. `status` and `stop` leave a config directory that still holds v1's files alone. `start`
 also
 refuses a config directory that still holds v1's files: the first start moves them, with notices, so run `aimebu server`
 in the foreground for that one (see [the cutover runbook](docs/cutover-runbook.md)). Stop waits up to a minute for a clean
