@@ -212,15 +212,11 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
     state.drafts.value = next;
   };
 
-  const dropDraft = id => {
-    const next = new Map(state.drafts.peek());
-    next.delete(id);
-    state.drafts.value = next;
-  };
-  // The list changed since a draft was started (another tab, another person): show what is stored now, and say so.
+  // The list changed since a draft was started (another tab, another person): drop that draft, not the harness's Edit form, show what is
+  // stored now, and say so.
   const staleModels = async harness => {
     const id = state.machineID.peek();
-    dropDraft(harness.id);
+    setDraft(harness.id, 'models', null);
     await load(id);
     if (alive() && state.machineID.peek() === id) setError(staleModelsMessage(harness));
   };

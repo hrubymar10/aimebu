@@ -392,6 +392,8 @@ async function main() {
       const modelled = { ...launcher('mch_a', 'a1'), models: [{ slug: 'one', label: 'One', note: '', default: true }], models_rev: 'r1' };
       const page = await mount({ 'GET /api/machines/mch_a/launchers': { launchers: [modelled, launchers.mch_a[1]], activity: [] } });
       await type(page, `${card('a1')} .harness-model-row [name=label]`, 'Mine');
+      await page.$eval(`${card('a1')} .machine-harness-edit`, el => el.click());
+      await type(page, `${card('a1')} [name=command]`, '/opt/unsaved');
       await hold(page, 'GET /api/machines/mch_a/launchers');
       await page.$eval(`${card('a1')} .harness-models .btn-primary`, el => el.click());
       const put = await pending(page, 'PUT', '/api/machines/mch_a/launchers/a1/models');
@@ -402,7 +404,8 @@ async function main() {
       await page.waitForFunction(selector => document.querySelector(`${selector} .harness-model-row [name=label]`)?.value === 'Theirs', {}, card('a1'));
       assert.match(await page.$eval('#settings-harnesses > .error', el => el.textContent), /Someone changed the models of a1 in the meantime/, 'the page says the save was refused');
       assert.equal(await page.$eval(`${card('a1')} .harness-models .btn-primary`, el => el.disabled), true, 'the refused draft is gone');
-      assert.deepEqual(await page.evaluate(() => [...window.__page.unsaved]), [], 'nothing is left unsaved');
+      assert.equal(await page.$eval(`${card('a1')} [name=command]`, el => el.value), '/opt/unsaved', 'only the refused models draft is dropped: the Edit form keeps what was typed');
+      assert.deepEqual(await page.evaluate(() => [...window.__page.unsaved]), ['form:a1'], 'the Edit form is still unsaved, the models are not');
       await page.close();
     }
     // The revision moves on with every save: an edit made while a save is in flight, and the save after it, start from the revision the

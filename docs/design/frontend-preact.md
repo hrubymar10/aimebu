@@ -185,7 +185,7 @@ pages alike:
     builds the legacy page; a cancelled Add harness form no longer counts as unsaved;
   - removing a harness: the in-app confirm, the DELETE, and the list read again without it;
   - the list beside the detail: the first harness chosen, one card shown, click and arrow keys move the choice, a reload keeps it;
-  - a models save sends the revision its draft started from, and one refused as stale drops the draft, reads again and says so;
+  - a models save sends the revision its draft started from, and one refused as stale drops the models draft (not the Edit form's), reads again and says so;
     a save moves the draft on to the revision it answered with, so an edit made during the save, and the next edit after a
     failed re-read, are not refused as stale;
   - role defaults: a switch per role on every model saves the role on its own, the role panel names its entries (those of
