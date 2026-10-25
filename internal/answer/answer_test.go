@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseCanonicalCandidate(t *testing.T) {
@@ -224,5 +225,19 @@ func TestParseStripsLeadingReasoningBlocks(t *testing.T) {
 		if _, err := Parse([]byte(text), false); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("%s: accepted: %v", name, err)
 		}
+	}
+}
+
+// Many tiny blocks and a long run of trailing spaces, still under the size limit: the stripping must not rescan the tail once per block.
+func TestStripLeadingReasoningIsLinear(t *testing.T) {
+	const body = `{"messages":[{"room":"room-1","body":"done"}]}`
+	raw := []byte(strings.Repeat("<a></a>", 120_000) + body + strings.Repeat(" ", 1_000_000))
+	if len(raw) >= MaxAnswerBytes {
+		t.Fatalf("the input is %d bytes, over the answer limit", len(raw))
+	}
+	started := time.Now()
+	parsed, err := Parse(raw, false)
+	if elapsed := time.Since(started); err != nil || len(parsed.Messages) != 1 || elapsed > 2*time.Second {
+		t.Fatalf("parsed=%d messages err=%v after %s", len(parsed.Messages), err, elapsed)
 	}
 }

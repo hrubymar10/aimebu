@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/goccy/go-json"
@@ -212,7 +213,8 @@ func Parse(raw []byte, diagnostic bool) (Candidate, error) {
 func stripLeadingReasoning(raw []byte) ([]byte, int) {
 	removed := 0
 	for {
-		trimmed := bytes.TrimSpace(raw)
+		// Only the left side is trimmed: trimming the whole remainder each time would rescan a long trailing run of spaces once per block.
+		trimmed := bytes.TrimLeftFunc(raw, unicode.IsSpace)
 		if len(trimmed) < 3 || trimmed[0] != '<' {
 			return raw, removed
 		}
