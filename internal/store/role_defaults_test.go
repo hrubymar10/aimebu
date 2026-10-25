@@ -62,7 +62,7 @@ func TestRoleFollowupMigrationPreservesEditsAndRevision(t *testing.T) {
 	prior := func(body string) string { return strings.Replace(body, roleSafety, priorRoleSafety, 1) }
 	oldReviewer := prior(strings.Replace(reviewerRoleBody, reviewerStart, priorReviewerStart, 1))
 	oldBodies := map[string]string{
-		"role_lead_default":     prior(leadRoleBody),
+		"role_lead_default":     prior(priorLeadRoleBody),
 		"role_worker_default":   prior(strings.Replace(workerRoleBody, workerStart, priorWorkerStart, 1)),
 		"role_reviewer_default": oldReviewer,
 	}
@@ -201,15 +201,15 @@ func TestRoleDefaultsMigrationPreservesEdits(t *testing.T) {
 func TestTeamlessLeadMigrationRewritesOnlyTheUneditedDefault(t *testing.T) {
 	t.Parallel()
 	s, _ := testStore(t, Options{})
-	if strings.Contains(leadRoleBody, "list_teams") {
+	if strings.Contains(priorLeadRoleBody, "list_teams") || strings.Contains(leadRoleBody, "list_teams") {
 		t.Fatal("the default lead body still sends the lead through saved teams")
 	}
-	prior := strings.Replace(leadRoleBody, leadSpawnParagraph, priorLeadSpawnParagraph, 1)
+	prior := strings.Replace(priorLeadRoleBody, leadSpawnParagraph, priorLeadSpawnParagraph, 1)
 	for name, test := range map[string]struct {
 		body string
 		rev  int
 		want string
-	}{"unedited": {prior, 0, leadRoleBody}, "edited body": {prior + " edit", 0, prior + " edit"}, "bumped rev": {prior, 1, prior}} {
+	}{"unedited": {prior, 0, priorLeadRoleBody}, "edited body": {prior + " edit", 0, prior + " edit"}, "bumped rev": {prior, 1, prior}} {
 		if _, err := s.db.Exec(`UPDATE role SET body=?,rev=? WHERE id='role_lead_default'`, test.body, test.rev); err != nil {
 			t.Fatal(err)
 		}
@@ -220,5 +220,58 @@ func TestTeamlessLeadMigrationRewritesOnlyTheUneditedDefault(t *testing.T) {
 		if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_lead_default'`).Scan(&got); err != nil || got != test.want {
 			t.Errorf("%s: body=%q err=%v", name, got, err)
 		}
+	}
+}
+
+func TestLeadDefaultForbidsImplementing(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		"Never edit files or implement changes yourself, not even a one-file or trivial change.",
+		"Every change goes through a task room (create_room) and spawn_agent.",
+		"Your own tool use is for reading, checking and verifying.",
+		"If no worker can be spawned",
+		"do not do the work yourself",
+		"ask the human how to proceed",
+	} {
+		if !strings.Contains(leadRoleBody, want) {
+			t.Errorf("the lead body lacks %q", want)
+		}
+	}
+	// The shared safety paragraph tells the others to read the docs before editing; the lead edits nothing, so it must not be told to.
+	if strings.Contains(leadRoleBody, "before editing") {
+		t.Error("the lead body still tells the lead to read the docs before editing")
+	}
+	for _, body := range []string{workerRoleBody, reviewerRoleBody} {
+		if !strings.Contains(body, "before editing") {
+			t.Error("the worker and reviewer bodies must keep the read-before-editing sentence")
+		}
+	}
+}
+
+func TestLeadNoImplementMigrationRewritesOnlyTheUneditedDefault(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		body string
+		rev  int
+		want string
+	}{
+		"unedited":    {priorLeadRoleBody, 0, leadRoleBody},
+		"edited body": {priorLeadRoleBody + " edit", 0, priorLeadRoleBody + " edit"},
+		"bumped rev":  {priorLeadRoleBody, 1, priorLeadRoleBody},
+		"already new": {leadRoleBody, 0, leadRoleBody},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := testStore(t, Options{})
+			if _, err := s.db.Exec(`UPDATE role SET body=?,rev=? WHERE id='role_lead_default'`, test.body, test.rev); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(roleLeadNoImplementMigration()); err != nil {
+				t.Fatal(err)
+			}
+			var got string
+			if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_lead_default'`).Scan(&got); err != nil || got != test.want {
+				t.Errorf("body=%q err=%v", got, err)
+			}
+		})
 	}
 }

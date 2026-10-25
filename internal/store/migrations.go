@@ -1394,7 +1394,9 @@ ALTER TABLE usage_record ADD COLUMN cost_total REAL;
 -- Claude's cost_est, as stored before this migration, is the session's running total, which is exactly what cost_total remembers: a session that
 -- spans the upgrade continues from its last total instead of counting the whole session again on its next turn.
 UPDATE usage_record SET cost_total=cost_est WHERE cost_total IS NULL AND cost_est IS NOT NULL AND agent_id IN (SELECT id FROM agent WHERE tool='claude');
-`}}
+`}, {79, `
+-- The lead no longer implements anything itself: an unedited built-in lead body gains the ban and the rule for when no worker can be spawned.
+` + roleLeadNoImplementMigration()}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.

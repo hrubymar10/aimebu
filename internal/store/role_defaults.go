@@ -7,7 +7,10 @@ import (
 	"strings"
 )
 
-const roleSafety = `Read the project's AGENTS.md and relevant docs before editing. Work only in your assigned checkout or worktree; never modify another agent's worktree. Isolate tests from real credentials and follow the project's test gate and commit rules. Report the exact command, result, branch, commit SHA, and parent SHA; never invent a test result or source. Do not add dependencies without approval. Keep code and docs in the same commit when behavior or instructions change. Do not defer in-scope work just because it is difficult; state a concrete blocker or implement its mitigation.`
+// roleSafety is the shared safety paragraph; the lead's variant (leadSafety) differs only in its first sentence, because the lead edits nothing.
+const roleSafety = `Read the project's AGENTS.md and relevant docs before editing. ` + roleSafetyRest
+const leadSafety = `Read the project's AGENTS.md and relevant docs before framing or delegating work. ` + roleSafetyRest
+const roleSafetyRest = `Work only in your assigned checkout or worktree; never modify another agent's worktree. Isolate tests from real credentials and follow the project's test gate and commit rules. Report the exact command, result, branch, commit SHA, and parent SHA; never invent a test result or source. Do not add dependencies without approval. Keep code and docs in the same commit when behavior or instructions change. Do not defer in-scope work just because it is difficult; state a concrete blocker or implement its mitigation.`
 
 // Kept solely to match migration 32's exact stored text during upgrades.
 const priorRoleSafety = `Read the project instructions and relevant docs before editing. Work only in your assigned checkout or worktree; never modify another agent's worktree. Run tests with isolated temporary HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, and AIMEBU2_CONFIG_DIR, preserving the Go cache paths. Hold the shared flock gate for the full test command so concurrent gates cannot interfere. Report the exact command, result, branch, commit SHA, and parent SHA; never invent a test result or source. Use a shell heredoc for a substantive commit message, with a conventional subject and a body explaining why. Check added lines and the commit message against the project's prohibited substring list before committing. Do not add dependencies without approval. Keep code and docs in the same commit when behavior or instructions change. Do not defer in-scope work just because it is difficult; state a concrete blocker or implement its mitigation.`
@@ -24,13 +27,25 @@ const leadSpawnParagraph = `In that room, decide which agents the task needs. Wh
 // Kept solely to match the stored lead body in migration 62, which removes the saved-team step.
 const priorLeadSpawnParagraph = `In that room, call list_teams and ask the human which saved team to use with a structured ask: {"kind":"question","text":"Which saved team should take this task?","options":["actual team names"],"free_text":false}. If no team exists, ask the human to save one. After the answer, call spawn_agent for the chosen team and assign bounded work in the task room. `
 
-const leadRoleBody = `You are the project lead. Coordinate the task; delegate implementation and independent review.
+// priorLeadRoleBody is the lead body shipped through migration 78. Migrations 32, 35 and 62 and the migration that follows 78 match and
+// write it, so a later edit of leadRoleBody cannot make an earlier step stop recognising a stored body.
+const priorLeadRoleBody = `You are the project lead. Coordinate the task; delegate implementation and independent review.
 
 On a new request, first frame the problem: observed symptoms, evidence, scope, unknowns, and a proposed verification path. Then write your own independent plan before asking others to plan. Create a task room with create_room and a worktree when code changes need isolation. ` + leadSpawnParagraph + `Continue the same turn after creating a room; always send a message with the next step or blocker.
 
 Collect independent plans before consolidating one approach. Ask the human for a blocking decision or approval with ask only when needed, and wait for the answer before implementation. Keep task ownership, branch bases, and acceptance checks explicit. Follow worker handoffs, request independent reviews, consolidate findings, and direct fixes. Verify branch and parent SHAs, actual test output, and docs before calling the work complete. Never claim a gate passed on a worker's assertion alone when evidence is missing. Publish a concise outcome in the home room. Close the task room with close_room and its current lifecycle_rev only after work and human questions are resolved.
 
 ` + roleSafety + `
+
+` + roleCommunication
+
+const leadRoleBody = `You are the project lead. Coordinate the task; delegate implementation and independent review. Never edit files or implement changes yourself, not even a one-file or trivial change. Every change goes through a task room (create_room) and spawn_agent. Your own tool use is for reading, checking and verifying.
+
+On a new request, first frame the problem: observed symptoms, evidence, scope, unknowns, and a proposed verification path. Then write your own independent plan before asking others to plan. Create a task room with create_room and a worktree when code changes need isolation. ` + leadSpawnParagraph + `Continue the same turn after creating a room; always send a message with the next step or blocker. If no worker can be spawned (spawn_agent fails, or no suitable harness or model is available), do not do the work yourself: say in a message what is blocked and ask the human how to proceed.
+
+Collect independent plans before consolidating one approach. Ask the human for a blocking decision or approval with ask only when needed, and wait for the answer before implementation. Keep task ownership, branch bases, and acceptance checks explicit. Follow worker handoffs, request independent reviews, consolidate findings, and direct fixes. Verify branch and parent SHAs, actual test output, and docs before calling the work complete. Never claim a gate passed on a worker's assertion alone when evidence is missing. Publish a concise outcome in the home room. Close the task room with close_room and its current lifecycle_rev only after work and human questions are resolved.
+
+` + leadSafety + `
 
 ` + roleCommunication
 
@@ -67,7 +82,7 @@ func roleDefaultsMigration() string {
 	oldReviewer := `Review assigned work and report findings with evidence. Put the substantive decisions, evidence, and next actions in the message body. visual_plan and appendix_pages only add display structure; agents receive them as bounded text.`
 	var sql strings.Builder
 	for _, item := range []struct{ id, old, body string }{
-		{"role_lead_default", oldLead, leadRoleBody},
+		{"role_lead_default", oldLead, priorLeadRoleBody},
 		{"role_worker_default", oldWorker, workerRoleBody},
 		{"role_reviewer_default", oldReviewer, reviewerRoleBody},
 	} {
@@ -85,11 +100,11 @@ func roleDefaultsMigration() string {
 func roleFollowupMigration() string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
 	prior := func(body string) string { return strings.Replace(body, roleSafety, priorRoleSafety, 1) }
-	oldLead := prior(leadRoleBody)
+	oldLead := prior(priorLeadRoleBody)
 	oldWorker := prior(strings.Replace(workerRoleBody, workerStart, priorWorkerStart, 1))
 	oldReviewer := prior(strings.Replace(reviewerRoleBody, reviewerStart, priorReviewerStart, 1))
 	items := []struct{ id, old, body string }{
-		{"role_lead_default", oldLead, leadRoleBody},
+		{"role_lead_default", oldLead, priorLeadRoleBody},
 		{"role_worker_default", oldWorker, workerRoleBody},
 		{"role_reviewer_default", oldReviewer, reviewerRoleBody},
 	}
@@ -163,6 +178,13 @@ func ensureRoleExtendsColumn(ctx context.Context, tx *sql.Tx) error {
 // still sends the lead through saved teams. Edited roles stay with their owners.
 func roleTeamlessLeadMigration() string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
-	prior := strings.Replace(leadRoleBody, leadSpawnParagraph, priorLeadSpawnParagraph, 1)
-	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_lead_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=0 AND body=%s;\n", quote(leadRoleBody), quote(prior))
+	prior := strings.Replace(priorLeadRoleBody, leadSpawnParagraph, priorLeadSpawnParagraph, 1)
+	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_lead_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=0 AND body=%s;\n", quote(priorLeadRoleBody), quote(prior))
+}
+
+// roleLeadNoImplementMigration moves an unedited built-in lead body to the one that forbids the lead from implementing. A body the
+// owner edited (a changed body or a bumped revision) is theirs and stays.
+func roleLeadNoImplementMigration() string {
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+	return fmt.Sprintf("UPDATE role SET body=%s WHERE id='role_lead_default' AND project_id IS NULL AND deleted_at IS NULL AND rev=0 AND body=%s;\n", quote(leadRoleBody), quote(priorLeadRoleBody))
 }
