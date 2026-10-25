@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,7 +64,7 @@ func TestRoleFollowupMigrationPreservesEditsAndRevision(t *testing.T) {
 	prior := func(body string) string { return strings.Replace(body, roleSafety, priorRoleSafety, 1) }
 	oldReviewer := prior(strings.Replace(reviewerRoleBody, reviewerStart, priorReviewerStart, 1))
 	oldBodies := map[string]string{
-		"role_lead_default":     prior(priorLeadRoleBody),
+		"role_lead_default":     strings.Replace(priorLeadRoleBody, frozenRoleSafety, priorRoleSafety, 1),
 		"role_worker_default":   prior(strings.Replace(workerRoleBody, workerStart, priorWorkerStart, 1)),
 		"role_reviewer_default": oldReviewer,
 	}
@@ -204,7 +206,7 @@ func TestTeamlessLeadMigrationRewritesOnlyTheUneditedDefault(t *testing.T) {
 	if strings.Contains(priorLeadRoleBody, "list_teams") || strings.Contains(leadRoleBody, "list_teams") {
 		t.Fatal("the default lead body still sends the lead through saved teams")
 	}
-	prior := strings.Replace(priorLeadRoleBody, leadSpawnParagraph, priorLeadSpawnParagraph, 1)
+	prior := strings.Replace(priorLeadRoleBody, frozenLeadSpawnParagraph, priorLeadSpawnParagraph, 1)
 	for name, test := range map[string]struct {
 		body string
 		rev  int
@@ -271,6 +273,56 @@ func TestLeadNoImplementMigrationRewritesOnlyTheUneditedDefault(t *testing.T) {
 			var got string
 			if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_lead_default'`).Scan(&got); err != nil || got != test.want {
 				t.Errorf("body=%q err=%v", got, err)
+			}
+		})
+	}
+}
+
+// goldenLeadBodySHA256 is the SHA-256 of the lead body as it shipped through migration 78 (the output migration 62 left, until migration 79
+// moved it on). It is recorded once, from the body those migrations built, so an edit to priorLeadRoleBody, or to anything it was once built
+// from, cannot go unnoticed.
+const goldenLeadBodySHA256 = "32f1e33a3ed607db94b3c1df2ca751fc138e78351ff8a0db1e2b47e75f5e4d7b"
+
+func TestFrozenLeadBody(t *testing.T) {
+	t.Parallel()
+	sum := sha256.Sum256([]byte(priorLeadRoleBody))
+	if got := hex.EncodeToString(sum[:]); got != goldenLeadBodySHA256 {
+		t.Fatalf("priorLeadRoleBody changed (sha256 %s, golden %s): it is what migrations 32, 35, 62 and 79 look for on an old database and must stay as it shipped", got, goldenLeadBodySHA256)
+	}
+	for name, piece := range map[string]string{"frozenRoleSafety": frozenRoleSafety, "frozenLeadSpawnParagraph": frozenLeadSpawnParagraph} {
+		if strings.Count(priorLeadRoleBody, piece) != 1 {
+			t.Errorf("%s is not found exactly once in priorLeadRoleBody", name)
+		}
+	}
+}
+
+// The steps that matched and wrote the lead body still find the frozen literal: the body each of them expects to find (built from the frozen
+// pieces) is rewritten to it, and migration 79 then moves it on.
+func TestFrozenLeadBodyIsWhatTheEarlierMigrationsWrite(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]struct {
+		before, migration string
+	}{
+		"migration 35": {strings.Replace(priorLeadRoleBody, frozenRoleSafety, priorRoleSafety, 1), roleFollowupMigration()},
+		"migration 62": {strings.Replace(priorLeadRoleBody, frozenLeadSpawnParagraph, priorLeadSpawnParagraph, 1), roleTeamlessLeadMigration()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := testStore(t, Options{})
+			if _, err := s.db.Exec(`UPDATE role SET body=?,rev=0 WHERE id='role_lead_default'`, test.before); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.Exec(test.migration); err != nil {
+				t.Fatal(err)
+			}
+			var got string
+			if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_lead_default'`).Scan(&got); err != nil || got != priorLeadRoleBody {
+				t.Errorf("body=%q err=%v", got, err)
+			}
+			if _, err := s.db.Exec(roleLeadNoImplementMigration()); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.db.QueryRow(`SELECT body FROM role WHERE id='role_lead_default'`).Scan(&got); err != nil || got != leadRoleBody {
+				t.Errorf("after migration 79: body=%q err=%v", got, err)
 			}
 		})
 	}
