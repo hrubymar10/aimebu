@@ -12,6 +12,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const { chromiumPath } = require('./chromium-path.cjs');
 let puppeteer;
 try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr/local/lib/node_modules/puppeteer-core'); }
 
@@ -64,7 +65,7 @@ function ico(images) {
 }
 
 (async () => {
-  const browser = await puppeteer.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
+  const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   try {
     fs.writeFileSync(path.join(icons, 'apple-touch-icon.png'), await downscale(browser, 'light.png', 180, '#ffffff'));
     for (const size of [192, 512]) fs.writeFileSync(path.join(icons, `icon-${size}.png`), await downscale(browser, 'light.png', size));

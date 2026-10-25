@@ -532,7 +532,8 @@ a project viewer does not get the session id, resume command or working director
 the × button or Escape returns to the members. Settings opens on General. Agent rows show the latest turn activity from the live event
 stream. Open `/?mock_agents=1` to preview cards and controls
 without spawning. Run `make test-ui` against an isolated scratch server; it
-requires `/usr/bin/chromium` and globally available `puppeteer-core`.
+requires Chromium or Chrome (set `CHROMIUM_PATH` if needed) and globally
+available `puppeteer-core`.
 Agent cards open a private chat with the signed-in user, and a person's card in the
 members panel opens one with that person (project members, including people with viewer
 access); the Direct messages section only lists the chats. Each pair has one room per

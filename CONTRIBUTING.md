@@ -13,13 +13,14 @@ stops working, fix this file in the same commit as the change that broke it.
   removing or updating any other.
 - **Node.js**: a current release. The web tests are plain `node` scripts with
   no `npm install` step and no `package.json` (verified on Node 24).
-- **Chromium and `puppeteer-core`**, only for `make test-ui` and the audit
-  scripts. Install `puppeteer-core` globally (`npm install -g puppeteer-core`);
+- **Chromium and `puppeteer-core`**, for `make test-ui`, the audit scripts,
+  and icon builds. Install `puppeteer-core` globally
+  (`npm install -g puppeteer-core`);
   the scripts find it on the normal module path or in
-  `/usr/local/lib/node_modules`. They launch Chromium from the fixed path
-  `/usr/bin/chromium` (headless, `--no-sandbox`), so on a machine where it
-  lives elsewhere, put a Chromium (or a symlink to one) at that path or edit
-  the scripts; they read no environment variable for it.
+  `/usr/local/lib/node_modules`. The browser scripts use Chromium or Chrome
+  from `/Applications` on macOS and common `/usr/bin` paths on Linux. Set
+  `CHROMIUM_PATH` to the executable when it lives elsewhere. They run headless
+  with `--no-sandbox`.
 - `git`, and `make`.
 
 ## Run it locally with an isolated environment

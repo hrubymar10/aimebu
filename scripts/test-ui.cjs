@@ -6,10 +6,14 @@ const net = require('node:net');
 const { spawn, spawnSync } = require('node:child_process');
 const { QuotaMock } = require('./quota-mock.cjs');
 const { LimitGuardMock } = require('./limit-guard-mock.cjs');
+const { chromiumPath } = require('./chromium-path.cjs');
 let puppeteer;
 try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr/local/lib/node_modules/puppeteer-core'); }
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aimebu-ui-'));
+const tempRoot = fs.realpathSync(os.tmpdir());
+process.env.TMPDIR = tempRoot;
+const tmp = fs.mkdtempSync(path.join(tempRoot, 'aimebu-ui-'));
+assert.equal(fs.realpathSync(tmp), tmp, 'the UI smoke root is canonical');
 const gitRoot = path.join(tmp, 'project-repo');
 fs.mkdirSync(gitRoot);
 for (const args of [['init', '-q'], ['config', 'user.name', 'UI Test'], ['config', 'user.email', 'ui@example.invalid']]) {
@@ -21,7 +25,7 @@ for (const args of [['add', 'README.md'], ['commit', '-qm', 'base']]) {
 }
 const testHome = path.join(tmp, 'home');
 fs.mkdirSync(testHome, { recursive: true });
-const isolatedEnv = { ...process.env, HOME: testHome, CODEX_HOME: path.join(testHome, '.codex'), CLAUDE_CONFIG_DIR: path.join(testHome, '.claude'), AIMEBU2_CONFIG_DIR: tmp };
+const isolatedEnv = { ...process.env, HOME: testHome, CODEX_HOME: path.join(testHome, '.codex'), CLAUDE_CONFIG_DIR: path.join(testHome, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'v1'), AIMEBU2_CONFIG_DIR: tmp };
 const binary = path.join(tmp, 'aimebu');
 const build = spawnSync('go', ['build', '-o', binary, './cmd/aimebu'], { stdio: 'inherit' });
 if (build.status !== 0) process.exit(build.status || 1);
@@ -64,7 +68,7 @@ async function main() {
     for (let i = 0; i < 300; i++) { try { const response = await fetch(origin); if (response.ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); if (i === 299) throw new Error(`server did not start: ${logs}`); }
     supervisor = spawn(binary, ['supervisor'], { env: { ...isolatedEnv, AIMEBU2_URL: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
     let supervisorLogs = ''; supervisor.stderr.on('data', data => supervisorLogs += data);
-    browser = await puppeteer.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
+    browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
     // A page wait that dies with "frame got detached" and no step in its trace means Chromium itself went away; say so.
     browser.process()?.once('exit', (code, signal) => { if (!browserClosing) console.error(`Chromium exited before the smoke finished (code ${code}, signal ${signal}); a pending wait fails as "frame got detached"`); });
     // The smoke exercises threads, copy and links through the compact toolbar (style C); style A, the product default, has
@@ -2866,7 +2870,7 @@ async function main() {
       // First-run owner setup: a server with no owner and no owner environment prints a one-time link; /setup shows the welcome, then
       // the Create owner form, signs the new owner in without a second welcome, and is gone afterwards.
       {
-        const setupTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aimebu-ui-setup-'));
+        const setupTmp = fs.mkdtempSync(path.join(tempRoot, 'aimebu-ui-setup-'));
         const setupPort = await freePort(), setupOrigin = `http://127.0.0.1:${setupPort}`;
         const setupEnv = { ...isolatedEnv, AIMEBU2_CONFIG_DIR: setupTmp, AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_USAGES: '0', AIMEBU2_PORT: String(setupPort) };
         delete setupEnv.AIMEBU2_OWNER_LOGIN; delete setupEnv.AIMEBU2_OWNER_PASSWORD;
@@ -3048,7 +3052,7 @@ async function main() {
       // End to end against a second server with usage polling on (the main smoke server disables it):
       // a change made from one browser reaches an open Settings -> Usages panel in another with no
       // reload, and a second forced refresh inside the cooldown tells the owner to wait.
-      const liveTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aimebu-ui-usages-'));
+      const liveTmp = fs.mkdtempSync(path.join(tempRoot, 'aimebu-ui-usages-'));
       const livePort = await freePort(), liveOrigin = `http://127.0.0.1:${livePort}`;
       const liveEnv = { ...isolatedEnv, AIMEBU2_CONFIG_DIR: liveTmp, AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(livePort), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' };
       delete liveEnv.AIMEBU2_USAGES;
