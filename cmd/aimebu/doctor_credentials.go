@@ -61,16 +61,16 @@ func checkCredentialTargets(root string) []doctorCheck {
 func checkTokenRootConflicts(root string) []doctorCheck {
 	m, err := switcher.NewReadOnly(filepath.Join(root, "switcher"))
 	if err != nil {
-		return []doctorCheck{{"credential refresher ownership", statusFail, err.Error()}}
+		return []doctorCheck{{"credential refresher ownership", statusFail, err.Error(), "", ""}}
 	}
 	conflicts, err := m.TokenCopyConflicts()
 	if err != nil {
-		return []doctorCheck{{"credential refresher ownership", statusFail, "cannot check other token-copy roots: " + err.Error()}}
+		return []doctorCheck{{"credential refresher ownership", statusFail, "cannot check other token-copy roots: " + err.Error(), "", ""}}
 	}
 	var checks []doctorCheck
 	for _, tool := range switcher.Tools() {
 		if other := conflicts[tool]; other != "" {
-			checks = append(checks, doctorCheck{"credential refresher " + tool, statusFail, "another token-copy root uses the same live credentials: " + other})
+			checks = append(checks, doctorCheck{"credential refresher " + tool, statusFail, "another token-copy root uses the same live credentials: " + other, "", ""})
 		}
 	}
 	return checks
@@ -83,7 +83,7 @@ func checkV1CredentialTargetsCarryOver(root string) []doctorCheck {
 	}
 	target := filepath.Join(root, "server", credentialTargetsFile)
 	if _, err := os.Lstat(target); os.IsNotExist(err) {
-		return []doctorCheck{{"v1 credential targets", statusWarn, "the v1 backup has external credential targets, but the v2 server registry is missing"}}
+		return []doctorCheck{{"v1 credential targets", statusWarn, "the v1 backup has external credential targets, but the v2 server registry is missing", "", ""}}
 	}
 	return nil
 }
@@ -103,7 +103,7 @@ func claudeAccountFileChecks(rootDir, home string) []doctorCheck {
 	for _, src := range sources {
 		msg += fmt.Sprintf(" %s (%s)", src.Path, src.Email)
 	}
-	return []doctorCheck{{"claude account files", statusWarn, msg}}
+	return []doctorCheck{{"claude account files", statusWarn, msg, "", ""}}
 }
 
 func credentialTargetChecks(rootDir string, now time.Time) []doctorCheck {
@@ -114,14 +114,14 @@ func credentialTargetChecks(rootDir string, now time.Time) []doctorCheck {
 	}
 	var checks []doctorCheck
 	if _, err := lookPath(harnessDockerCtrl); err != nil {
-		checks = append(checks, doctorCheck{"credential refresher", statusWarn, harnessDockerCtrl + " is not on PATH (as seen by this command; the server needs it on its own PATH): the refresher can't refresh, so token-only credentials will expire"})
+		checks = append(checks, doctorCheck{"credential refresher", statusWarn, harnessDockerCtrl + " is not on PATH (as seen by this command; the server needs it on its own PATH): the refresher can't refresh, so token-only credentials will expire", "", ""})
 	}
 	if !dockerReachable() {
-		checks = append(checks, doctorCheck{"credential refresher", statusWarn, "docker is not on PATH or its daemon does not answer (`docker info` fails as seen by this command; the server needs it too): the refresher runs its CLI in a container, so token-only credentials will expire"})
+		checks = append(checks, doctorCheck{"credential refresher", statusWarn, "docker is not on PATH or its daemon does not answer (`docker info` fails as seen by this command; the server needs it too): the refresher runs its CLI in a container, so token-only credentials will expire", "", ""})
 	}
 	m, err := switcher.NewReadOnly(switcherRoot)
 	if err != nil {
-		return append(checks, doctorCheck{"credential targets", statusWarn, err.Error()})
+		return append(checks, doctorCheck{"credential targets", statusWarn, err.Error(), "", ""})
 	}
 	var rows []usages.TargetStatus
 	for _, row := range usages.CredentialReport(switcherRoot, now, m.LiveCredPath) {
@@ -130,7 +130,7 @@ func credentialTargetChecks(rootDir string, now time.Time) []doctorCheck {
 		}
 	}
 	if len(rows) == 0 {
-		return append(checks, doctorCheck{"credential targets", statusWarn, "token-only install, but no credentials were found"})
+		return append(checks, doctorCheck{"credential targets", statusWarn, "token-only install, but no credentials were found", "", ""})
 	}
 	healthy := 0
 	var soonest *time.Time
@@ -148,15 +148,15 @@ func credentialTargetChecks(rootDir string, now time.Time) []doctorCheck {
 		}
 		switch {
 		case row.State == usages.AccountReauthRequired:
-			checks = append(checks, doctorCheck{name, statusFail, "the provider rejected the refresh token; log in again"})
+			checks = append(checks, doctorCheck{name, statusFail, "the provider rejected the refresh token; log in again", "", ""})
 		case row.State == usages.AccountNeedsReloginSoon:
-			checks = append(checks, doctorCheck{name, statusFail, "a refresh may have been spent without a result and is not retried; log in again before it expires (" + left + ")"})
+			checks = append(checks, doctorCheck{name, statusFail, "a refresh may have been spent without a result and is not retried; log in again before it expires (" + left + ")", "", ""})
 		case row.Level == usages.TargetLevelExpired:
-			checks = append(checks, doctorCheck{name, statusFail, "access token expired (" + left + "); requests fail until the server rewrites it"})
+			checks = append(checks, doctorCheck{name, statusFail, "access token expired (" + left + "); requests fail until the server rewrites it", "", ""})
 		case row.State == usages.AccountRefreshFailed:
-			checks = append(checks, doctorCheck{name, statusWarn, "refreshing keeps failing: " + row.Detail})
+			checks = append(checks, doctorCheck{name, statusWarn, "refreshing keeps failing: " + row.Detail, "", ""})
 		case row.Level == usages.TargetLevelExpiring:
-			checks = append(checks, doctorCheck{name, statusWarn, fmt.Sprintf("expires in under %d minutes (%s)", int(usages.TargetAlertWindow/time.Minute), left)})
+			checks = append(checks, doctorCheck{name, statusWarn, fmt.Sprintf("expires in under %d minutes (%s)", int(usages.TargetAlertWindow/time.Minute), left), "", ""})
 		default:
 			healthy++
 		}
@@ -166,7 +166,7 @@ func credentialTargetChecks(rootDir string, now time.Time) []doctorCheck {
 		if soonest != nil {
 			msg += "; next live expiry " + soonest.Local().Format("2006-01-02 15:04")
 		}
-		checks = append(checks, doctorCheck{"credential targets", statusOK, msg})
+		checks = append(checks, doctorCheck{"credential targets", statusOK, msg, "", ""})
 	}
 	return checks
 }

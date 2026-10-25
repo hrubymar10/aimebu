@@ -360,8 +360,13 @@ func TestDoctorCommand(t *testing.T) {
 				if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil {
 					t.Fatalf("invalid JSON output: %v\n%s", err, output)
 				}
-				if len(decoded.Checks) != 5 || decoded.ExitCode != tt.wantExit {
-					t.Fatalf("decoded result = %+v, want 5 checks and exit %d", decoded, tt.wantExit)
+				if len(decoded.Checks) < 5 || decoded.ExitCode != tt.wantExit || decoded.Version == "" || decoded.GeneratedAt == "" {
+					t.Fatalf("decoded result = %+v, want at least 5 checks, a version, a timestamp and exit %d", decoded, tt.wantExit)
+				}
+				for _, check := range decoded.Checks {
+					if check.Scope != scopeServer {
+						t.Fatalf("check %q has scope %q, want %q", check.Name, check.Scope, scopeServer)
+					}
 				}
 			} else {
 				for _, name := range []string{"config dir", "sqlite database", "server", "tls", "bind/allow"} {

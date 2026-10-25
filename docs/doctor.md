@@ -1,12 +1,22 @@
 # Doctor
 
 `aimebu doctor` runs read-only health checks on the server installation and
-prints a table; `aimebu doctor --json` prints the same results as JSON. The
-exit code is 0 when no check fails, 1 when at least one fails. Warnings never
-fail the run. Doctor is safe to run while the server is running: it never
+prints a table; `aimebu doctor --json` prints the same results as JSON. A
+warning or failure carries a one-line hint on fixing it (printed under the row,
+and as `hint` in JSON). The exit code is 0 when no check fails, 1 when at least
+one fails, 2 on a usage error. Warnings do not fail the run unless
+`--strict` is given, which makes them exit 1 too (for scripts that gate on a
+clean report). Doctor is safe to run while the server is running: it never
 writes — the database is opened with a read-only DSN (no journal mode
 change), the TLS files are only parsed, and the server is probed with a single
-unauthenticated `GET /api/me`.
+unauthenticated `GET /api/me`. The one thing SQLite itself does on a read-only
+open of a WAL-mode database is create its empty `-wal`/`-shm` sidecar files
+when the server is stopped; the database file is never touched.
+
+The JSON is `{"version", "generated_at", "checks": [{"name", "status",
+"description", "hint", "scope"}], "exit_code"}`. `scope` says where a fact was
+read: `server` (this host's config root and database), `live` (the running
+server) or `machine` (a supervisor host).
 
 ## Checks
 
@@ -20,6 +30,35 @@ unauthenticated `GET /api/me`.
   It also fails when the v2 database holds v1's `schema_meta` table, which
   means a v1 server was started on the folder after v2 moved v1's files into
   `.old-v1-bkp` (see [migrating from v1](migrating-from-v1.md)).
+- **disk space** — free space on the filesystem holding the config root, with
+  the database and WAL sizes. Warns under 2 GiB, fails under 200 MiB: SQLite
+  writes start failing on a full disk.
+- **backups** — the server writes a verified copy to `server/backups/` before
+  every schema migration. No backups yet is ok (nothing has migrated). Doctor
+  counts them, shows the age of the newest, and runs `PRAGMA quick_check` on it
+  through a read-only open; the check is skipped (warn, "not verified") for a
+  file over 512 MiB or one that takes over 10 seconds. A corrupt newest backup
+  fails; leftover `.partial` files from an interrupted backup, or a backups
+  directory readable by others, warn.
+- **foreign keys** — `PRAGMA foreign_key_check`; fails when rows point at rows
+  that no longer exist, naming the child→parent relations.
+- **machines** — approved, awaiting-approval and revoked counts. While the
+  server answers, an approved machine not seen for 10 minutes (or never
+  connected) warns. With the server down liveness is not judged. **revoked
+  machines** warns when a revoked machine still owns live agents. No machines is
+  ok.
+- **pending stops** — stop controls no machine has applied yet. They make
+  deleting a project return 409 until the machine applies them. Warns for a
+  revoked machine, or an approved one that is not connected while the server is
+  up; a connected machine with a few in flight is ok.
+- **launchers** — warns for an enabled launcher with no models, or a model list
+  with no default. No launchers yet is ok.
+- **provider limits** — warns while agents are held by a provider usage limit
+  that has not reset (with the latest reset time per tool).
+
+  All of the above read the database, so they run only when the sqlite check
+  passed its integrity check; an empty or new install answers ok or warn, never
+  fail.
 - **server** — ok when `GET /api/me` answers 401 at the configured
   `AIMEBU2_BIND`:`AIMEBU2_PORT`; any other HTTP answer warns; a refused
   connection or timeout fails. The plain-HTTP listener stays up when TLS is

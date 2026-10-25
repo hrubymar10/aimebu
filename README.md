@@ -93,9 +93,10 @@ and conventions).
 
 The `aimebu doctor` command runs read-only health checks on the installation:
 the config directory, the SQLite database (integrity and schema version),
-server reachability, the TLS certificate, and the bind/allowlist settings.
-Each check reports ok, warn, or fail; the exit code is 0 unless at least one
-check fails. When the account switcher is set up, doctor also checks its
+server reachability, the TLS certificate, the bind/allowlist settings, free
+disk space, backups, machines, pending stops, launchers and provider limits.
+Each check reports ok, warn, or fail with a hint on fixing it; the exit code is
+0 unless at least one check fails (`--strict` also fails on warnings). When the account switcher is set up, doctor also checks its
 state and active profiles. Use `aimebu doctor --json` for machine-readable
 output. Doctor also warns if v1 external credential targets were not carried
 over and fails if two token refreshers claim the same live credential file.
