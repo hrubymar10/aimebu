@@ -1,12 +1,11 @@
 import { launcherReady } from './harness-offer.js';
-import { request, currentUser } from './api.js';
+import { request } from './api.js';
 import { settingsRow, settingsGroup } from './settings-row.js';
 import { confirmDialog } from './dialogs.js';
 import { iconButton, setGlyph } from './icon-button.js';
-import { PREFERENCE_KEYS, savePreference } from './preferences.js';
 import { RoleDefaults, ROLE_DEFAULTS_CHANGED } from './role-defaults.js';
 import { positionOf, canAddDefault } from './role-defaults-logic.js';
-import { layoutSwitch, normalizeLayout, roleToggle, matrixHead, rolePanel } from './harness-views.js';
+import { roleToggle, rolePanel } from './harness-views.js';
 
 const node = (tag, className, value = '') => {
   const element = document.createElement(tag);
@@ -82,13 +81,11 @@ export class HarnessSettings {
     if (!embedded) dialog.querySelector('nav').append(this.tab);
     this.section = node('section', 'settings-content'); this.section.id = `${prefix}settings-harnesses`; this.section.hidden = !embedded;
     const head = node('div', 'harness-head'); head.append(node('h3', '', 'Harnesses'));
-    // The layout switch is for the Settings page only; the first-run copy keeps the table.
-    if (!embedded) { this.switch = layoutSwitch(this.layoutChoice(), layout => this.setLayout(layout)); head.append(this.switch.element); }
     this.roleDefaults = embedded ? null : new RoleDefaults();
     this.roleViews = new Set();
     this.otherTried = ''; // the unknown launcher ids the other machines were last read for, so the same ones are not asked for twice
     this.otherHarnesses = new Map(); // launcher id -> its machine's name, label and models, for role defaults on other machines
-    this.drafts = new Map(); // harness id -> { models, dirty }: unsaved model edits, kept while the layout or the page redraws
+    this.drafts = new Map(); // harness id -> { models, dirty }: unsaved model edits, kept while the page redraws
     this.selectedHarness = '';
     this.section.append(head, node('p', 'settings-intro', 'A harness is a coding tool installed on a machine, with the models it can start agents with. Nothing is listed until you add it. Pick a machine, add its harnesses (or auto-detect them), then give each harness its models: exactly one is the default, which an agent falls back to when its own model is removed.'));
     this.select = document.createElement('select'); this.select.id = `${prefix}harness-machine`;
@@ -111,8 +108,7 @@ export class HarnessSettings {
     (embedded ? host : dialog).append(this.section);
     this.sequence = 0;
     this.openLaunchers = new Set();
-    this.openModels = new Set();
-    // Why the last model detection of a harness failed (by harness id), so its Models panel opens on the reason and the folder retry.
+    // Why the last model detection of a harness failed (by harness id), so its models panel shows the reason and the folder retry.
     this.modelFailures = new Map();
     this.wanted = ''; // a machine to open on, set by whoever sent the person here
     this.addButton.onclick = () => this.showPanel(this.addForm());
@@ -122,20 +118,6 @@ export class HarnessSettings {
       if (!this.roleDefaults || event.detail?.source === this.roleDefaults || this.section.hidden) return;
       this.loadRoles().then(() => { this.refreshRoleViews(); return this.loadOtherHarnesses(this.sequence); });
     });
-  }
-
-  // The layout this person chose (A, B or C), kept as a user preference; the first-run copy always shows A.
-  layoutChoice() {
-    if (this.embedded) return 'a';
-    let stored = null;
-    try { stored = localStorage.getItem(PREFERENCE_KEYS.harness_layout(currentUser)); } catch { /* private browsing: the default */ }
-    return normalizeLayout(stored);
-  }
-  setLayout(layout) {
-    layout = normalizeLayout(layout);
-    try { localStorage.setItem(PREFERENCE_KEYS.harness_layout(currentUser), layout); } catch { /* the server copy still applies */ }
-    savePreference('harness_layout', layout);
-    if (this.rows) this.renderRows(this.select.value);
   }
 
   // The global roles with their default agents.
@@ -198,7 +180,6 @@ export class HarnessSettings {
     this.roleError.textContent = '';
     this.activity.replaceChildren();
     this.showPanel(null);
-    this.switch?.show(this.layoutChoice());
     this.drafts.clear(); this.otherHarnesses.clear(); this.otherTried = '';
     try {
       const [machines] = await Promise.all([request('/api/machines'), this.loadRoles()]);
@@ -255,19 +236,16 @@ export class HarnessSettings {
     }
   }
 
-  // Lays the machine's harnesses out in the chosen layout: A a column of table-style rows, B a grid of cards, C a list beside one detail.
+  // Lays the machine's harnesses out as a list beside the detail of the chosen one.
   renderRows(machineID) {
-    const kind = this.layoutChoice();
-    this.roleViews.clear(); this.syncMaster = null; // only layout C has a list to keep in step
-    this.list.className = `harness-list harness-layout-${kind}`; this.list.dataset.layout = kind;
-    const cards = this.rows.map(harness => this.harnessCard(machineID, harness, kind));
-    if (kind === 'c' && cards.length) this.list.replaceChildren(this.splitView(cards));
-    else this.list.replaceChildren(...cards);
+    this.roleViews.clear(); this.syncMaster = null;
+    const cards = this.rows.map(harness => this.harnessCard(machineID, harness));
+    this.list.replaceChildren(...(cards.length ? [this.splitView(cards)] : []));
     this.renderRolePanel();
     this.loadOtherHarnesses(this.sequence);
   }
 
-  // Layout C: a vertical tab list of the harnesses, and the card of the chosen one beside it.
+  // A vertical tab list of the harnesses, and the card of the chosen one beside it.
   splitView(cards) {
     const wrap = node('div', 'harness-split'), master = node('div', 'harness-master'), detail = node('div', 'harness-detail');
     master.setAttribute('role', 'tablist'); master.setAttribute('aria-orientation', 'vertical'); master.setAttribute('aria-label', 'Harnesses');
@@ -319,10 +297,10 @@ export class HarnessSettings {
     this.noteReady(); // the Enabled switch lands here: turning a harness on can make one ready
   }
 
-  // A harness is one summary row: its label and status, a one-line summary, the Enabled switch, Models and Edit. Everything that rarely
-  // changes (executable, arguments, environment, container and path settings) sits behind Edit; the models sit behind Models.
-  harnessCard(machineID, harness, kind = 'a') {
-    const card = node('article', `machine-harness settings-group harness-card-${kind}`); card.id = `${this.prefix}harness-card-${harness.id}`; card.dataset.harnessId = harness.id;
+  // A harness is one summary row: its label and status, a one-line summary, the Enabled switch and Edit. Everything that rarely
+  // changes (executable, arguments, environment, container and path settings) sits behind Edit; its models are listed below it.
+  harnessCard(machineID, harness) {
+    const card = node('article', `machine-harness settings-group`); card.id = `${this.prefix}harness-card-${harness.id}`; card.dataset.harnessId = harness.id;
     const harnessLabel = harness.label || `${familyName(harness.tool)}${harness.containerized ? ' (Docker)' : ''}`;
     card.dataset.tool = harness.tool;
     card.dataset.variant = harness.variant;
@@ -342,9 +320,7 @@ export class HarnessSettings {
     enabled.setAttribute('aria-label', `Enable ${harness.label || harness.tool}`);
     enabledLabel.append(enabled, document.createTextNode('Enabled'));
     const edit = iconButton('edit', `Edit ${harnessLabel}`, { className: 'machine-harness-edit' }); edit.setAttribute('aria-expanded', 'false');
-    const modelsButton = node('button', 'btn machine-harness-models-toggle', `Models (${(harness.models || []).length})`); modelsButton.type = 'button'; modelsButton.setAttribute('aria-expanded', 'false');
-    // Layouts B and C show a harness's models all the time; only the table (A) tucks them behind Models.
-    if (kind === 'a') control.append(enabledLabel, modelsButton, edit); else control.append(enabledLabel, edit);
+    control.append(enabledLabel, edit);
     row.append(info, control);
     const summary = { title, version: info.querySelector('.machine-harness-meta'), path: info.querySelector('.machine-harness-path'), info };
 
@@ -427,12 +403,7 @@ export class HarnessSettings {
         enabled.checked = !enabled.checked; error.textContent = problem.message || 'Could not save harness settings'; if (form.hidden) setOpen(true);
       } finally { enabled.disabled = false; }
     };
-    const modelsPanel = this.modelsPanel(machineID, harness, kind);
-    modelsPanel.hidden = kind === 'a'; modelsButton.setAttribute('aria-controls', modelsPanel.id);
-    const setModelsOpen = open => { modelsPanel.hidden = !open; modelsButton.setAttribute('aria-expanded', String(open)); if (open) this.openModels.add(harness.id); else this.openModels.delete(harness.id); };
-    modelsButton.onclick = () => setModelsOpen(modelsPanel.hidden);
-    if (kind === 'a' && this.openModels.has(harness.id)) setModelsOpen(true);
-    card.append(row, form, modelsPanel);
+    card.append(row, form, this.modelsPanel(machineID, harness));
     return card;
   }
 
@@ -522,7 +493,7 @@ export class HarnessSettings {
         const created = [];
         for (const candidate of chosen) created.push(await this.createHarness(machineID, { tool: candidate.family, label: candidate.label, command: candidate.command, containerized: candidate.containerized }));
         // A harness with no models cannot start an agent, so ask each new one what it offers and keep that list. It is best effort: a
-        // harness that cannot answer is left empty with its reason shown, and its Models panel opens on that reason with a folder to
+        // harness that cannot answer is left empty with its reason shown, and its models panel shows that reason with a folder to
         // retry in, besides Auto-detect and the by-hand form.
         const filled = await Promise.all(created.map(item => this.fillModels(machineID, item?.config?.id || item?.id, !!item?.config?.containerized)));
         const empty = filled.filter(done => !done.saved).length;
@@ -531,7 +502,7 @@ export class HarnessSettings {
         const notes = [];
         const reason = filled.find(done => !done.saved && done.reason)?.reason;
         const detail = filled.find(done => !done.saved && done.detail)?.detail;
-        if (empty) notes.push(`${empty === 1 ? 'A harness has' : `${empty} harnesses have`} no models yet.${reason ? ` ${reason}` : ''} Open Models to retry Auto-detect, in a folder you choose if the harness needs one, or add a model by hand.`);
+        if (empty) notes.push(`${empty === 1 ? 'A harness has' : `${empty} harnesses have`} no models yet.${reason ? ` ${reason}` : ''} Retry Auto-detect in its models, in a folder you choose if the harness needs one, or add a model by hand.`);
         if (cut) notes.push(`A harness offered more models than a list can hold, so only the first ${cut.kept} were added.`);
         this.error.textContent = notes.join(' ');
         showDetectionDetails(this.errorDetails, detail);
@@ -542,9 +513,9 @@ export class HarnessSettings {
 
   // The models of one harness: an editable list (label, note, which one is the default), added to by hand or from auto-detect, saved as a
   // whole. Slugs are exact model ids, never aliases.
-  modelsPanel(machineID, harness, kind = 'a') {
+  modelsPanel(machineID, harness) {
     const panel = node('div', 'harness-models'); panel.id = `${this.prefix}harness-models-${harness.id}`;
-    // Unsaved edits survive a redraw (switching layout, saving the harness's settings): a draft with edits lives on the page, keyed by harness,
+    // Unsaved edits survive a redraw (saving the harness's settings): a draft with edits lives on the page, keyed by harness,
     // together with the revision of the list it was started from. A harness nobody edited keeps nothing, so every reload shows its stored list.
     const entry = this.drafts.get(harness.id) || { models: (harness.models || []).map(model => ({ ...model })), dirty: false, rev: harness.models_rev || '' };
     const draft = entry.models;
@@ -553,13 +524,13 @@ export class HarnessSettings {
     const status = node('p', 'settings-desc'); status.setAttribute('role', 'status');
     const save = button('Save models', 'btn btn-primary'); save.disabled = !entry.dirty;
     const mark = () => { entry.dirty = true; this.drafts.set(harness.id, entry); save.disabled = false; status.textContent = ''; };
-    // The role defaults of one model, as the layout draws them. They save on their own (a role's defaults are the role's, not the harness's),
+    // The role defaults of one model, as labelled switches. They save on their own (a role's defaults are the role's, not the harness's),
     // so a model that is not saved yet cannot be ticked.
-    const panelViews = new Set(); const openTiles = (this.openTiles ||= new Map()).get(harness.id) || new Set(); this.openTiles.set(harness.id, openTiles);
+    const panelViews = new Set();
     this.roleViews.add(() => panelViews.forEach(update => update()));
     const roleControls = model => this.roles().map(role => {
       const live = () => this.roles().find(item => item.id === role.id) || role;
-      const control = roleToggle(kind, role, model.label || model.slug, async on => {
+      const control = roleToggle(role, model.label || model.slug, async on => {
         error.textContent = '';
         try { await this.roleDefaults.setModel(live(), harness.id, model.slug, on); } catch (problem) { error.textContent = problem.message || 'Could not save the role'; }
         this.refreshRoleViews();
@@ -575,8 +546,6 @@ export class HarnessSettings {
     const draw = () => {
       rows.replaceChildren(); panelViews.clear();
       if (!draft.length) rows.append(node('p', 'settings-intro', 'No models yet: this harness cannot start an agent until one is added.'));
-      const table = kind === 'a' && draft.length ? node('table', 'harness-matrix') : null, body = table ? node('tbody') : null;
-      if (table) { table.append(matrixHead(this.roles()), body); }
       draft.forEach((model, index) => {
         const def = document.createElement('input'); def.type = 'radio'; def.name = `default-${harness.id}`; def.checked = !!model.default;
         def.setAttribute('aria-label', model.default ? `${model.label || model.slug} is the default model` : `Make ${model.label || model.slug} the default`);
@@ -594,40 +563,16 @@ export class HarnessSettings {
         note.oninput = () => { model.note = note.value; note.title = note.value; mark(); };
         const remove = iconButton('trash', `Remove ${model.slug}`, { danger: true, className: 'harness-model-remove' });
         remove.onclick = () => { draft.splice(index, 1); if (model.default && draft.length) draft[0].default = true; mark(); draw(); };
-        let row;
-        if (kind === 'a') {
-          // A table row: default, id, label, note, one tick per role, remove.
-          row = node('tr', 'harness-model-row');
-          const cell = (...children) => { const td = node('td'); td.append(...children); return td; };
-          label.oninput = () => { model.label = label.value; mark(); };
-          const identity = cell(slug, label); identity.className = 'harness-matrix-model';
-          row.append(cell(defLabel), identity, cell(note), ...roleControls(model), cell(remove));
-          body.append(row);
-        } else if (kind === 'b') {
-          // A tile: star, name and id on top, one chip per role below, the label and note behind the edit icon.
-          row = node('div', 'harness-model-row harness-tile');
-          const name = node('strong', 'harness-tile-name', model.label || model.slug);
-          const edit = iconButton('edit', `Edit ${model.slug}`, { className: 'harness-tile-edit' }); edit.setAttribute('aria-expanded', String(openTiles.has(model.slug)));
-          const fields = node('div', 'harness-tile-fields'); fields.hidden = !openTiles.has(model.slug); fields.append(label, note);
-          fields.id = `${this.prefix}harness-tile-${harness.id}-${index}`; edit.setAttribute('aria-controls', fields.id);
-          edit.onclick = () => { const open = fields.hidden; fields.hidden = !open; edit.setAttribute('aria-expanded', String(open)); if (open) { openTiles.add(model.slug); label.focus(); } else openTiles.delete(model.slug); };
-          label.oninput = () => { model.label = label.value; name.textContent = label.value || model.slug; mark(); };
-          const top = node('div', 'harness-tile-top'); top.append(defLabel, name, edit, remove);
-          const chips = node('div', 'harness-tile-roles'); chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', `Default for roles: ${model.label || model.slug}`); chips.append(...roleControls(model));
-          row.append(top, slug, chips, fields);
-        } else {
-          // A detail row: the controls on top, the roles below as labelled switches.
-          row = node('div', 'harness-model-row harness-detail-row');
-          label.oninput = () => { model.label = label.value; mark(); };
-          const top = node('div', 'harness-detail-top'); top.append(defLabel, slug, remove);
-          const fields = node('div', 'harness-detail-fields'); fields.append(label, note);
-          const switches = node('div', 'harness-detail-roles'); switches.setAttribute('role', 'group'); switches.setAttribute('aria-label', `Default for roles: ${model.label || model.slug}`); switches.append(...roleControls(model));
-          row.append(top, fields, switches);
-        }
+        // A model row: the controls on top, the roles below as labelled switches.
+        const row = node('div', 'harness-model-row harness-detail-row');
+        label.oninput = () => { model.label = label.value; mark(); };
+        const top = node('div', 'harness-detail-top'); top.append(defLabel, slug, remove);
+        const fields = node('div', 'harness-detail-fields'); fields.append(label, note);
+        const switches = node('div', 'harness-detail-roles'); switches.setAttribute('role', 'group'); switches.setAttribute('aria-label', `Default for roles: ${model.label || model.slug}`); switches.append(...roleControls(model));
+        row.append(top, fields, switches);
         row.dataset.slug = model.slug;
-        if (kind !== 'a') rows.append(row);
+        rows.append(row);
       });
-      if (table) { const wrap = node('div', 'harness-matrix-wrap'); wrap.append(table); rows.append(wrap); }
     };
     const addModel = (slug, label = '', note = '') => {
       slug = slug.trim();
@@ -701,12 +646,12 @@ export class HarnessSettings {
       save.disabled = true;
       try {
         await request(`/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harness.id)}/models`, { method: 'PUT', body: { models: draft, expected_rev: entry.rev } });
-        this.openModels.add(harness.id); this.drafts.delete(harness.id);
+        this.drafts.delete(harness.id);
         await this.loadHarnesses();
       } catch (problem) {
         if (problem.status === 409) {
           // The list changed since this draft was started (another tab, another person): show what is stored now, and say so.
-          this.drafts.delete(harness.id); this.openModels.add(harness.id);
+          this.drafts.delete(harness.id);
           await this.loadHarnesses();
           this.error.textContent = `Someone changed the models of ${harness.label || harness.name} in the meantime. The list was reloaded; make your changes again.`;
           return;
@@ -715,10 +660,7 @@ export class HarnessSettings {
       }
     };
     const actions = node('div', 'machine-harness-actions'); actions.append(detect, save);
-    // In the card layout (B) the by-hand form sits behind a disclosure, so the tiles stay the page.
-    let addBlock = form;
-    if (kind === 'b') { addBlock = node('details', 'harness-add-details'); addBlock.append(node('summary', '', 'Add a model by hand'), form); }
-    panel.append(node('h4', '', `Models of ${harness.label || harness.name}`), rows, addBlock, actions, error, retryRow, details, detectBox, status);
+    panel.append(node('h4', '', `Models of ${harness.label || harness.name}`), rows, form, actions, error, retryRow, details, detectBox, status);
     return panel;
   }
 

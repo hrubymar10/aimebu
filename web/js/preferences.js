@@ -14,7 +14,6 @@ export const PREFERENCE_KEYS = {
   composer_formatting: () => 'aimebu2.composer.formatting',
   sidebar_sort: user => `aimebu2.ui.sidebar_sort.${user}`,
   sidebar_project_order: user => `aimebu2.ui.sidebar_project_order.${user}`,
-  harness_layout: user => `aimebu2.ui.harness_layout.${user}`,
   notification_text: user => `aimebu2:notification-text:${user}`,
   sidebar_preview: user => `aimebu2.ui.sidebar_preview.${user}`,
 };

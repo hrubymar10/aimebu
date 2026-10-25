@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -126,21 +127,50 @@ func TestNotificationBannerDismissalIsAPerAccountPreference(t *testing.T) {
 	}
 }
 
-// The layout of Settings → Harnesses (A, B or C) is a personal preference kept on the server, never seen by another person.
-func TestHarnessLayoutIsAPerAccountPreference(t *testing.T) {
+// The harness layout choice is gone, but a value stored while it existed stays in the database: reading must keep working. An older
+// page may still send the name; it is accepted and dropped without losing the valid preferences sent with it.
+func TestRetiredHarnessLayoutPreference(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	cookie, csrf := registerSecondUser(t, f, "second")
-	resp := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"harness_layout": "c"}}, true)
+	me := f.request("GET", "/api/me", nil, false)
+	var user struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(me.Body).Decode(&user); err != nil {
+		t.Fatal(err)
+	}
+	me.Body.Close()
+	if err := f.db.SetUserPreferences(context.Background(), user.ID, map[string]string{"harness_layout": "b", "theme": "dark"}); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.request("GET", "/api/me/preferences", nil, false)
 	if resp.StatusCode != 200 {
-		t.Fatalf("store: %d", resp.StatusCode)
+		t.Fatalf("get with a stored retired value: %d", resp.StatusCode)
 	}
-	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["harness_layout"] != "c" {
-		t.Fatalf("stored, read back %v", got)
+	if got := prefsOf(t, resp.Body, json.NewDecoder(resp.Body).Decode); got["theme"] != "dark" || got["harness_layout"] != "b" {
+		t.Fatalf("read back %v", got)
 	}
-	other := f.requestAs(t, cookie, csrf, "GET", "/api/me/preferences", nil)
-	if got := prefsOf(t, other.Body, json.NewDecoder(other.Body).Decode); got["harness_layout"] != "" {
-		t.Fatalf("the layout leaked to another person: %v", got)
+	// Sent with a valid name: 200, the valid one is stored, the retired one is dropped (the stored "b" is not replaced).
+	put := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"harness_layout": "c", "theme": "light"}}, true)
+	if put.StatusCode != 200 {
+		t.Fatalf("a retired name next to a valid one: %d", put.StatusCode)
+	}
+	if got := prefsOf(t, put.Body, json.NewDecoder(put.Body).Decode); got["theme"] != "light" || got["harness_layout"] != "b" {
+		t.Fatalf("after put %v", got)
+	}
+	// Sent alone: still 200, nothing changes.
+	alone := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"harness_layout": "a"}}, true)
+	if alone.StatusCode != 200 {
+		t.Fatalf("a retired name alone: %d", alone.StatusCode)
+	}
+	if got := prefsOf(t, alone.Body, json.NewDecoder(alone.Body).Decode); got["theme"] != "light" || got["harness_layout"] != "b" {
+		t.Fatalf("after put alone %v", got)
+	}
+	// An unknown name is still refused.
+	bad := f.request("PUT", "/api/me/preferences", map[string]any{"preferences": map[string]string{"nonsense": "x"}}, true)
+	defer bad.Body.Close()
+	if bad.StatusCode != 400 {
+		t.Fatalf("an unknown name: %d", bad.StatusCode)
 	}
 }
 

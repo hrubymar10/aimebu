@@ -9,8 +9,13 @@ import (
 // (panel widths, collapsed rooms) stays in the browser.
 var userPrefNames = map[string]bool{"theme": true, "inbox_muted": true, "inbox_sound": true, "inbox_volume": true,
 	"system_events": true, "debug_inspector": true, "markdown_mode": true, "composer_formatting": true, "sidebar_sort": true, "sidebar_project_order": true,
-	"harness_setup_skipped": true, "notification_banner_dismissed": true, "harness_layout": true,
+	"harness_setup_skipped": true, "notification_banner_dismissed": true,
 	"notification_text": true, "sidebar_preview": true}
+
+// retiredPreferences are names an older page may still send (a cached tab, the bulk upload of a sign-in). They are accepted and
+// dropped, so one stale name never makes the server refuse the other preferences sent with it. A value stored under one earlier is
+// left alone and still read back.
+var retiredPreferences = map[string]bool{"harness_layout": true}
 
 // userPrefMax is how long a value may be; most are a word or a number, the manual project order is a list of ids.
 const userPrefMaxDefault = 256
@@ -35,12 +40,23 @@ func (s *Server) preferencesGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // PUT /api/me/preferences {"preferences": {name: value}}: stores the given preferences and returns all of them. Unknown names and
-// values over their limit (256 bytes; 4096 for the manual project order) are refused as a whole.
+// values over their limit (256 bytes; 4096 for the manual project order) are refused as a whole; retired names are dropped.
 func (s *Server) preferencesPut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Preferences map[string]string `json:"preferences"`
 	}
 	if !readJSON(w, r, &req) {
+		return
+	}
+	retired := false
+	for name := range req.Preferences {
+		if retiredPreferences[name] {
+			delete(req.Preferences, name)
+			retired = true
+		}
+	}
+	if retired && len(req.Preferences) == 0 {
+		s.preferencesGet(w, r)
 		return
 	}
 	if len(req.Preferences) == 0 || len(req.Preferences) > len(userPrefNames) {

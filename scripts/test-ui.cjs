@@ -59,9 +59,9 @@ async function main() {
     assert.equal(audit.status, 0, `accessibility audit failed:\n${audit.stdout}${audit.stderr}`);
     const phone = spawnSync(process.execPath, [path.join(__dirname, 'phone-audit.cjs')], { env: isolatedEnv, encoding: 'utf8' });
     assert.equal(phone.status, 0, `phone layout audit failed:\n${phone.stdout}${phone.stderr}`);
-    // Settings → Harnesses in its three layouts, role defaults and the sync with Settings → Roles, on a scratch server of its own.
-    const layouts = spawnSync(process.execPath, [path.join(__dirname, 'harness-layouts.cjs')], { env: { ...isolatedEnv, LAYOUTS_BINARY: binary }, encoding: 'utf8' });
-    assert.equal(layouts.status, 0, `harness layouts smoke failed:\n${layouts.stdout}${layouts.stderr}`);
+    // Settings → Harnesses: model editing, role defaults, the sync with Settings → Roles, the stale-save refusal and the phone width, on a scratch server of its own.
+    const harnesses = spawnSync(process.execPath, [path.join(__dirname, 'harness-settings.cjs')], { env: { ...isolatedEnv, HARNESS_BINARY: binary }, encoding: 'utf8' });
+    assert.equal(harnesses.status, 0, `harness settings smoke failed:\n${harnesses.stdout}${harnesses.stderr}`);
   }
   const port = await freePort(); const origin = `http://127.0.0.1:${port}`;
   const child = spawn(binary, ['server'], { env: { ...isolatedEnv, AIMEBU2_USAGES: '0', AIMEBU2_EMBEDDED_SUPERVISOR: '0', AIMEBU2_PORT: String(port), AIMEBU2_OWNER_LOGIN: 'owner', AIMEBU2_OWNER_PASSWORD: 'test-password-123' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -709,7 +709,6 @@ async function main() {
       await domClick(first, '#settings-harnesses-tab');
       await first.waitForFunction(() => document.querySelector('#harnesses-list .machine-harness'));
       assert.equal(await first.$eval('#harnesses-list .machine-harness .settings-label', el => el.textContent), 'Codex', 'the label is derived from the family');
-      await domClick(first, '#harnesses-list .machine-harness .machine-harness-models-toggle');
       await first.waitForFunction(() => !document.querySelector('#harnesses-list .harness-models').hidden);
       assert.ok((await first.$eval('#harnesses-list .harness-models', el => el.textContent)).includes('No models yet'), 'a new harness has no models');
       await first.locator('#harnesses-list .harness-model-add [name=slug]').fill('gpt-ui-test');
@@ -3785,11 +3784,11 @@ async function main() {
       // 66 were offered, a list holds 64: the first 64 are saved, the first is the only default, and the page says it cut the list.
       assert.deepEqual(await settingsPage.evaluate(() => ({ count: window.__autoModels.length, first: window.__autoModels[0].slug, last: window.__autoModels.at(-1).slug, defaults: window.__autoModels.filter(model => model.default).map(model => model.slug) })), { count: 64, first: 'pi-0', last: 'pi-63', defaults: ['pi-0'] }, 'detected models are capped at 64 with the first as the default');
       await settingsPage.waitForFunction(() => document.querySelector('#settings-harnesses > .error')?.textContent.includes('only the first 64'));
-      // The Docker one could not list its models: the page says why, and its Models panel opens on that reason with a folder to retry in.
+      // The Docker one could not list its models: the page says why, and its models show that reason with a folder to retry in.
       assert.ok((await settingsPage.$eval('#settings-harnesses > .error', el => el.textContent)).includes('A harness has no models yet. Detection blocked — please mount /home/test/.aimebu2/detect to your harness Docker'), 'the auto-fill failure gives only the private folder as the mount action');
       assert.deepEqual(await settingsPage.$eval('#settings-harnesses > .harness-detect-details', el => [el.open, el.hidden, el.querySelector('p').textContent.includes('not visible')]), [false, false, true], 'the auto-fill stderr stays behind collapsed Details');
-      await domClick(settingsPage, '[aria-controls="harness-models-mln_auto_docker"]');
-      await settingsPage.waitForFunction(() => !document.querySelector('#harness-models-mln_auto_docker').hidden && !document.querySelector('#harness-models-mln_auto_docker .harness-detect-retry').hidden);
+      await domClick(settingsPage, '#harness-tab-mln_auto_docker');
+      await settingsPage.waitForFunction(() => !document.querySelector('#harness-card-mln_auto_docker').hidden && !document.querySelector('#harness-models-mln_auto_docker').hidden && !document.querySelector('#harness-models-mln_auto_docker .harness-detect-retry').hidden);
       assert.equal(await settingsPage.$eval('#harness-models-mln_auto_docker .error', el => el.textContent), 'Detection blocked — please mount /home/test/.aimebu2/detect to your harness Docker, or pick a mounted folder below.', 'the Models panel opens on a concise private-folder mount instruction');
       assert.deepEqual(await settingsPage.$eval('#harness-models-mln_auto_docker .harness-detect-details', el => [el.open, el.hidden, el.querySelector('p').textContent.includes('not visible')]), [false, false, true], 'the original stderr is available only in collapsed Details');
       assert.ok((await settingsPage.$eval('#harness-models-mln_auto_docker .harness-detect-dir', el => el.textContent)).includes('or pick a folder that is mounted in the container'), 'the retry field explains the mounted-folder option');
@@ -3819,6 +3818,8 @@ async function main() {
       await domClick(settingsPage, '#settings-usages-tab');
       await settingsPage.click('#settings-harnesses-tab');
       await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-harness').length === 2);
+      // Only the chosen harness shows its detail: choose the Docker one.
+      await settingsPage.evaluate(() => document.querySelector(`.harness-master [data-harness-id="${document.querySelector('.machine-harness[data-variant="harness-docker"]').dataset.harnessId}"]`).click());
       // A launcher is a summary row: name, status, summary line and the Enabled switch. The executable, arguments and the rest sit behind Edit.
       assert.deepEqual(await settingsPage.$eval('.machine-harness[data-variant="harness-docker"]', card => { const form = card.querySelector('form'), edit = card.querySelector('.machine-harness-edit'); return { row: !!card.querySelector(':scope > .settings-row .settings-label'), formHidden: form.hidden || getComputedStyle(form).display === 'none', edit: [edit.title, edit.getAttribute('aria-label'), !!edit.querySelector('.icon-mask-edit'), edit.getAttribute('aria-expanded'), edit.getAttribute('aria-controls') === form.id], switchInRow: !!card.querySelector(':scope > .settings-row [name=enabled]'), commandVisible: !!card.querySelector('[name=command]')?.offsetParent }; }), { row: true, formHidden: true, edit: ['Edit Codex (Docker)', 'Edit Codex (Docker)', true, 'false', true], switchInRow: true, commandVisible: false }, 'the launcher edit action is a labelled pencil icon');
       await domClick(settingsPage, '.machine-harness[data-variant="harness-docker"] .machine-harness-edit');

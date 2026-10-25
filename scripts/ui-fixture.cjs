@@ -88,13 +88,13 @@ const FIXTURE = async () => {
       if (copy) { const button = make('button', 'icon-btn profile-copy', '', row); make('span', 'icon-mask icon-mask-copy', '', button).setAttribute('aria-hidden', 'true'); button.title = 'Copy resume'; button.setAttribute('aria-label', 'Copy resume'); }
     }
   }
-  // Settings -> Harnesses, from the real renderer: a summary row each, one with its Edit form and one with its models open.
+  // Settings -> Harnesses, from the real renderer: the list beside one harness, once on a harness with its Edit form open and once on a disabled one.
   {
     const { HarnessSettings } = await import('/js/harness-settings.js');
     const { RoleDefaults } = await import('/js/role-defaults.js');
-    const { layoutSwitch, rolePanel } = await import('/js/harness-views.js');
-    const settings = Object.create(HarnessSettings.prototype); settings.openLaunchers = new Set(['mln_docker']); settings.openModels = new Set(['mln_native']);
-    // The state the constructor sets up (the fixture skips it): the roles with their defaults, the open tiles and the role views.
+    const { rolePanel } = await import('/js/harness-views.js');
+    const settings = Object.create(HarnessSettings.prototype); settings.openLaunchers = new Set(['mln_docker']);
+    // The state the constructor sets up (the fixture skips it): the roles with their defaults and the role views.
     settings.prefix = ''; settings.roleViews = new Set(); settings.otherHarnesses = new Map(); settings.drafts = new Map(); settings.selectedHarness = ''; settings.sequence = 0; settings.modelFailures = new Map();
     settings.roleDefaults = new RoleDefaults(async () => { throw new Error('the fixture has no server'); });
     settings.roleDefaults.roles = [
@@ -106,14 +106,11 @@ const FIXTURE = async () => {
     const base = { tool: 'codex', label: 'Codex', models: [{ slug: 'gpt-6-sol', label: 'GPT-6 Sol', note: 'The frontier model', default: true }, { slug: 'gpt-6-luna', label: 'GPT-6 Luna', note: '', default: false }], enabled: true, available: true, preset: true, version: '1.2.3', active_agents: 2, args: ['--flag'], env_refs: { TOKEN: 'HOME' }, containerized: false, path_maps: [], visible_roots: [], supports_toolbox: true };
     const native = { ...base, id: 'mln_native', variant: 'native', name: 'native', command: 'codex', launcher_path: '/usr/bin/codex' };
     const docker = { ...base, id: 'mln_docker', variant: 'harness-docker', name: 'harness-docker', preset: false, enabled: false, available: false, unavailable_reason: 'docker is not installed', command: 'docker', launcher_path: '/usr/bin/docker' };
-    list.append(settings.harnessCard('mch_fixture', native), settings.harnessCard('mch_fixture', docker));
-    // The other two layouts: cards with model tiles (B), and the list beside one harness (C), each over its own copy of the data.
-    const tiles = { ...base, id: 'mln_tiles', variant: 'tiles', name: 'tiles', command: 'codex', launcher_path: '/usr/bin/codex' };
-    const split = { ...base, id: 'mln_split', variant: 'split', name: 'split', command: 'codex', launcher_path: '/usr/bin/codex' };
-    settings.rows = [split, { ...split, id: 'mln_split_two', variant: 'split-two', name: 'split-two', label: 'Codex two', models: [] }];
-    list.append(settings.harnessCard('mch_fixture', tiles, 'b'), settings.splitView(settings.rows.map(row => settings.harnessCard('mch_fixture', row, 'c'))));
-    settings.rows = [native, docker]; settings.rolesHost = document.createElement('div');
-    list.append(layoutSwitch('a', () => {}).element, rolePanel({ roles: settings.roleDefaults.roles, labelOf: item => `${item.launcher_id} · ${item.model}`, store: settings.roleDefaults, report: () => {}, refresh: () => {} }));
+    settings.rows = [native, docker];
+    settings.selectedHarness = 'mln_native'; list.append(settings.splitView(settings.rows.map(row => settings.harnessCard('mch_fixture', row))));
+    settings.selectedHarness = 'mln_docker'; list.append(settings.splitView(settings.rows.map(row => settings.harnessCard('mch_fixture', row))));
+    settings.rolesHost = document.createElement('div');
+    list.append(rolePanel({ roles: settings.roleDefaults.roles, labelOf: item => `${item.launcher_id} · ${item.model}`, store: settings.roleDefaults, report: () => {}, refresh: () => {} }));
   }
   const sidebar = document.querySelector('.sidebar');
   // The real room list over fake data (two projects, a direct message, a closed and a hidden room), in the layout
