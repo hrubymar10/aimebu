@@ -24,6 +24,8 @@ const CHEVRONS = { down: '6 9 12 15 18 9', right: '9 18 15 12 9 6' };
 function setChevron(button, direction) {
   button.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="${CHEVRONS[direction]}"></polyline></svg>`;
 }
+// The reserved project the chats between agents hang off. It is not a project anyone can open, so events that name it refresh the list of chats.
+const AGENT_CHAT_PROJECT = 'prj_agentdm';
 const collapsedKey = 'aimebu2.rooms.collapsed';
 // The sort and the manual project order are the person's own preferences (they follow them across devices); the browser keeps a
 // cache under these keys, filled from the server at sign-in (see preferences.js).
@@ -37,7 +39,7 @@ function loadManual() { try { const list = JSON.parse(localStorage.getItem(order
 function loadCollapsed() { try { const list = JSON.parse(localStorage.getItem(collapsedKey) || '[]'); return new Set(Array.isArray(list) ? list.filter(id => typeof id === 'string') : []); } catch { return new Set(); } }
 
 export class Sidebar {
-  constructor(container, onSelect) { this.container = container; this.onSelect = onSelect; this.projects = new Map(); this.rooms = new Map(); this.roomNodes = new Map(); this.collapsedRooms = loadCollapsed(); this.archiveNodes = new Map(); this.hiddenNodes = new Map(); this.archivedOpen = new Map(); this.archiveSearchNodes = new Map(); this.archiveHitNodes = new Map(); this.archiveFilter = new Map(); this.archiveTimers = new Map(); this.archiveRequests = new Map(); this.roomRequests = new Set(); this.generation = 0; this.reads = new ReadMarker((roomID, seq) => request(`/api/rooms/${roomID}/read`, { method: 'POST', body: seq > 0 ? { seq } : {} })); this.health = new Map(); this.active = ''; this.loadedUser = null; this.filter = ''; this.createBox = null; this.sort = DEFAULT_SORT; this.manual = []; this.sortButton = null; this.sortMenu = null; this.dragging = null; this.collapseButton = null; this.collapsible = new Set(); }
+  constructor(container, onSelect) { this.container = container; this.onSelect = onSelect; this.projects = new Map(); this.rooms = new Map(); this.roomNodes = new Map(); this.collapsedRooms = loadCollapsed(); this.archiveNodes = new Map(); this.hiddenNodes = new Map(); this.archivedOpen = new Map(); this.archiveSearchNodes = new Map(); this.archiveHitNodes = new Map(); this.archiveFilter = new Map(); this.archiveTimers = new Map(); this.archiveRequests = new Map(); this.roomRequests = new Set(); this.listSeqs = new Map(); this.generation = 0; this.reads = new ReadMarker((roomID, seq) => request(`/api/rooms/${roomID}/read`, { method: 'POST', body: seq > 0 ? { seq } : {} })); this.health = new Map(); this.active = ''; this.loadedUser = null; this.filter = ''; this.createBox = null; this.sort = DEFAULT_SORT; this.manual = []; this.sortButton = null; this.sortMenu = null; this.dragging = null; this.collapseButton = null; this.collapsible = new Set(); }
   reset() {
     this.reads.reset();
     this.generation++;
@@ -45,7 +47,7 @@ export class Sidebar {
     for (const requestID of this.archiveRequests.values()) requestID.abort();
     for (const requestID of this.roomRequests) requestID.abort();
     this.roomRequests.clear();
-    for (const cache of [this.projects, this.rooms, this.roomNodes, this.archiveNodes, this.hiddenNodes, this.archivedOpen, this.archiveSearchNodes, this.archiveHitNodes, this.archiveFilter, this.archiveTimers, this.archiveRequests, this.health]) cache.clear();
+    for (const cache of [this.projects, this.rooms, this.roomNodes, this.archiveNodes, this.hiddenNodes, this.archivedOpen, this.archiveSearchNodes, this.archiveHitNodes, this.archiveFilter, this.archiveTimers, this.archiveRequests, this.health, this.listSeqs]) cache.clear();
     this.active = ''; this.loadedUser = null; this.filter = ''; this.createBox = null; this.directNode = null; this.container.replaceChildren();
   }
   // Settings announces a change of the preview choice; the rows are drawn again from the rooms already loaded.
@@ -80,34 +82,70 @@ export class Sidebar {
   async load() {
     const generation = this.generation;
     const resync = this.loadedUser === currentUser;
-    let projects;
+    let projects, chats = null;
     const projectRooms = [];
     try {
+      // The chats between agents belong to no project, so they come from their own list (a failure there leaves the project rooms usable).
+      const chatsRequest = this.roomRequest('/api/agent-dms').catch(() => null);
       projects = await this.roomRequest('/api/projects');
       if (generation !== this.generation) return [];
       // One request per project, all at once: waiting for each in turn made the first screen take the sum of them.
+      const tickets = projects.map(project => this.listTicket(project.id));
       const lists = await Promise.all(projects.map(project => this.roomRequest(`/api/projects/${project.id}/rooms`)));
       if (generation !== this.generation) return [];
-      projects.forEach((project, index) => projectRooms.push([project, lists[index]]));
+      projects.forEach((project, index) => projectRooms.push([project, lists[index], tickets[index]]));
+      chats = await chatsRequest;
+      if (generation !== this.generation) return [];
     } catch (error) {
       if (generation !== this.generation) return [];
       throw error;
     }
-    for (const [project, rooms] of projectRooms) {
+    const listed = new Set(projects.map(project => project.id));
+    for (const [project, rooms, ticket] of projectRooms) {
       this.projects.set(project.id, project);
+      if (!this.listCurrent(project.id, ticket)) continue;
+      this.dropUnlisted(project.id, rooms);
       for (const room of rooms) this.rooms.set(room.id, room);
     }
+    // A project that is no longer listed (deleted, or the person was removed from it) leaves with its rooms.
+    for (const id of new Set([...this.projects.keys(), ...[...this.rooms.values()].map(room => room.project_id)])) {
+      if (!listed.has(id) && !this.isAgentChatProject(id)) this.forgetProject(id);
+    }
+    this.applyAgentChats(chats);
     this.loadedUser = currentUser;
     this.sort = loadSort(); this.manual = loadManual();
     this.render(); this.syncSortMenu();
     return projects;
   }
-  async addProject(project) { const generation = this.generation; let rooms; try { rooms = await this.roomRequest(`/api/projects/${project.id}/rooms`); } catch (error) { if (generation !== this.generation) return []; throw error; } if (generation !== this.generation) return []; this.projects.set(project.id, project); for (const room of rooms) this.rooms.set(room.id, room); this.render(); return rooms; }
-  async refreshProject(id) { const generation = this.generation; let rooms; try { rooms = await this.roomRequest(`/api/projects/${id}/rooms`); } catch (error) { if (generation !== this.generation) return; throw error; } if (generation !== this.generation) return; for (const room of rooms) { this.rooms.set(room.id, room); if (room.id === this.active && !this.holdRead?.(room.id)) this.markSeen(room); } this.render(); }
+  async addProject(project) { const generation = this.generation, ticket = this.listTicket(project.id); let rooms; try { rooms = await this.roomRequest(`/api/projects/${project.id}/rooms`); } catch (error) { if (generation !== this.generation) return []; throw error; } if (generation !== this.generation) return []; this.projects.set(project.id, project); if (this.listCurrent(project.id, ticket)) { this.dropUnlisted(project.id, rooms); for (const room of rooms) this.rooms.set(room.id, room); } this.render(); return rooms; }
+  // The chats between agents are filed under a reserved project that is no project: its rooms come from their own list.
+  isAgentChatProject(id) { return !!id && (id === AGENT_CHAT_PROJECT || id === this.agentChatProject); }
+  // Reads of one project's room list can finish out of order within a session. A read that started before a newer one was applied is
+  // dropped, so a room created in between is not removed by the older, shorter list.
+  listTicket(projectID) { const state = this.listSeqs.get(projectID) || { issued: 0, applied: 0 }; state.issued++; this.listSeqs.set(projectID, state); return state.issued; }
+  listCurrent(projectID, ticket) { const state = this.listSeqs.get(projectID); if (!state || ticket < state.applied) return false; state.applied = ticket; return true; }
+  // A project's list names the rooms it has: a cached room of the project that the list no longer names was removed (or taken away),
+  // so it leaves the cache and, with the next render, the page.
+  dropUnlisted(projectID, rooms) {
+    const listed = new Set(rooms.map(room => room.id));
+    for (const [id, room] of [...this.rooms]) if (room.project_id === projectID && !listed.has(id)) this.rooms.delete(id);
+  }
+  // The chats between agents the person has joined, and the ones they could join. A room that is no longer listed (left, or taken away) leaves.
+  applyAgentChats(data) {
+    if (!data?.project_id) return;
+    this.agentChatProject = data.project_id;
+    const listed = new Set((data.rooms || []).map(room => room.id));
+    for (const [id, room] of [...this.rooms]) if (room.project_id === data.project_id && !listed.has(id)) this.rooms.delete(id);
+    for (const room of data.rooms || []) { this.rooms.set(room.id, room); if (room.id === this.active && !this.holdRead?.(room.id)) this.markSeen(room); }
+    this.joinable = data.joinable || [];
+  }
+  async refreshAgentChats() { const generation = this.generation; let data; try { data = await this.roomRequest('/api/agent-dms'); } catch (error) { if (generation !== this.generation) return; throw error; } if (generation !== this.generation) return; this.applyAgentChats(data); this.render(); }
+  async refreshProject(id) { if (this.isAgentChatProject(id)) return this.refreshAgentChats(); const generation = this.generation, ticket = this.listTicket(id); let rooms; try { rooms = await this.roomRequest(`/api/projects/${id}/rooms`); } catch (error) { if (generation !== this.generation) return; throw error; } if (generation !== this.generation || !this.listCurrent(id, ticket)) return; this.dropUnlisted(id, rooms); for (const room of rooms) { this.rooms.set(room.id, room); if (room.id === this.active && !this.holdRead?.(room.id)) this.markSeen(room); } this.render(); }
   // A room removed on the server is dropped here by name: a project refresh only adds and updates.
   forgetRoom(id) { if (this.rooms.delete(id)) this.render(); }
   // A project that was deleted: it and every one of its rooms leave the list.
   forgetProject(id) {
+    this.listSeqs.delete(id); // a read of its rooms still in flight is then dropped when it lands
     for (const [roomID, room] of [...this.rooms]) if (room.project_id === id) this.rooms.delete(roomID);
     this.projects.delete(id);
     this.archivedProjectNodes?.get(id)?.remove(); this.archivedProjectNodes?.delete(id);
@@ -180,10 +218,49 @@ export class Sidebar {
       const heading = document.createElement('h3'); heading.textContent = 'Direct messages';
       directSection.append(heading);
     }
-    reconcileChildren(directSection, [directSection.querySelector('h3'), ...direct.map(room => this.roomNode(room, { chip: many, nest: false }))]);
+    reconcileChildren(directSection, [directSection.querySelector('h3'), ...direct.map(room => this.roomNode(room, { chip: many, nest: false })), ...[this.agentChatOffers()].filter(Boolean)]);
     wanted.push(directSection);
     reconcileChildren(this.container, wanted);
     this.syncCollapseAll();
+  }
+  // Chats between agents the person could join: only a title and a count, never the text, until they join.
+  agentChatOffers() {
+    const text = this.filter.trim().toLocaleLowerCase();
+    const offers = (this.joinable || []).filter(offer => !text || (offer.title || '').toLocaleLowerCase().includes(text));
+    if (!offers.length) { this.offersNode?.remove(); return null; }
+    let section = this.offersNode;
+    if (!section) {
+      section = this.offersNode = document.createElement('details'); section.className = 'agent-chat-offers';
+      section.ontoggle = () => { this.offersOpen = section.open; };
+      section.append(document.createElement('summary'));
+    }
+    section.open = text ? true : !!this.offersOpen;
+    section.querySelector('summary').textContent = `Agent chats you can join (${offers.length})`;
+    const rows = offers.map(offer => {
+      let row = section.querySelector(`[data-offer-id="${CSS.escape(offer.id)}"]`);
+      if (!row) {
+        row = document.createElement('div'); row.className = 'room-row agent-chat-offer'; row.dataset.offerId = offer.id;
+        const name = document.createElement('span'); name.className = 'room-name'; row.append(name);
+        const join = document.createElement('button'); join.type = 'button'; join.className = 'row-btn agent-chat-join'; row.append(join);
+        join.onclick = async () => {
+          join.disabled = true;
+          const generation = this.generation;
+          try {
+            await this.roomRequest(`/api/rooms/${offer.id}/join`, { method: 'POST' });
+            await this.refreshAgentChats();
+            const room = this.rooms.get(offer.id);
+            if (room && generation === this.generation) this.onSelect(room);
+          } catch (error) { if (generation === this.generation) void noticeDialog(error.message, { title: 'Could not join the chat' }); }
+          join.disabled = false;
+        };
+      }
+      row.querySelector('.room-name').textContent = `⇄ ${offer.title}`;
+      row.querySelector('.room-name').title = `${offer.title} · ${offer.message_count} ${offer.message_count === 1 ? 'message' : 'messages'}`;
+      setGlyph(row.querySelector('.agent-chat-join'), 'person-plus', `Join ${offer.title}`);
+      return row;
+    });
+    reconcileChildren(section, [section.querySelector('summary'), ...rows]);
+    return section;
   }
   // "Archived projects (N)": a project that was archived is read-only; its rooms stay readable here, one fold per project.
   archivedProjectsNode(archivedProjects, filtering) {
@@ -388,7 +465,7 @@ export class Sidebar {
       };
       row.append(add);
     }
-    select.textContent = `${room.kind === 'home' ? '⌂' : room.kind === 'dm' ? '@' : '#'} ${room.title}`;
+    select.textContent = `${room.kind === 'home' ? '⌂' : room.agent_chat ? '⇄' : room.kind === 'dm' ? '@' : '#'} ${room.title}`;
     this.projectControls(row, room, opts);
     let chip = row.querySelector('.room-project');
     const projectName = this.projects.get(room.project_id)?.name || '';

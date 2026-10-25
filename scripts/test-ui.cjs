@@ -5590,6 +5590,67 @@ async function main() {
       assert.equal(await value(), 'draft in progress', 'Down past the newest did not restore the draft');
       await first.$eval('#composer textarea', el => { el.value = ''; el.dispatchEvent(new Event('input')); });
     }
+    // A private chat between two agents of different projects belongs to no project: the person is offered it (title only), joins it, reads
+    // it, writes in it (the agent of this project answers under its own project), and leaves it.
+    {
+      const chatSeed = spawnSync(seedBinary, [path.join(tmp, 'server', 'aimebu.sqlite'), actualProjectID, roomID, id, 'agentchat', realAgentID]);
+      if (chatSeed.status !== 0) throw new Error(`agent chat seed failed: ${chatSeed.stderr}`);
+      await first.waitForFunction(() => document.querySelector('.agent-chat-offers .agent-chat-join'), {}, {});
+      assert.equal(await first.$eval('.agent-chat-offers summary', el => el.textContent), 'Agent chats you can join (1)');
+      const joinedChats = () => first.$$eval('.direct-rooms .room-group .room-name', els => els.filter(el => el.textContent.startsWith('⇄')).length);
+      assert.equal(await joinedChats(), 0, 'a chat that was not joined is already listed');
+      await domClick(first, '.agent-chat-offers summary');
+      await domClick(first, '.agent-chat-offers .agent-chat-join');
+      await first.waitForFunction(() => document.querySelector('#room-icon')?.textContent === '⇄' && !document.querySelector('.agent-chat-offers'), {}, {});
+      assert.ok((await first.$eval('#room-title', el => el.textContent)).includes('⇄'), 'the chat is titled with both agents');
+      await first.waitForFunction(() => [...document.querySelectorAll('.message-body')].some(el => el.textContent.includes('The two agents agreed on the API shape.')), {}, {});
+      assert.equal(await first.$eval('#composer textarea', el => el.disabled), false, 'the instance owner may write in the chat');
+      await first.locator('#composer textarea').fill('Please summarise for the record');
+      await first.click('#composer button[type=submit]');
+      await first.waitForFunction(() => [...document.querySelectorAll('.message-body')].some(el => el.textContent.includes('I heard: Please summarise for the record')), {}, {});
+      await domClick(first, '#room-info');
+      assert.deepEqual(await first.$eval('#room-leave', el => [el.hidden, el.title]), [false, 'Leave chat'], 'a joined chat can be left');
+      assert.equal(await first.$eval('#room-remove', el => el.hidden), true, 'a chat between agents is never removed from here');
+      assert.equal(await first.$eval('.room-memory-setting', el => el.hidden), true, 'what is said in a chat between agents never feeds memory, so there is no memory setting');
+      assert.equal(await first.$eval('#room-info-error', el => el.textContent), '', 'the settings of a chat between agents showed an error');
+      await domClick(first, '#room-leave');
+      await first.waitForFunction(() => ![...document.querySelectorAll('.direct-rooms .room-group .room-name')].some(el => el.textContent.startsWith('⇄')) && document.querySelector('.agent-chat-offers'), {}, {});
+      assert.equal(await joinedChats(), 0, 'a chat that was left is still listed');
+      // A chat that goes away while it is being opened: its list and its messages both fail. Only that chat leaves, never the reserved project it
+      // is filed under or the real project beside it, and the person lands on a home room.
+      await domClick(first, '.agent-chat-offers summary');
+      await domClick(first, '.agent-chat-offers .agent-chat-join');
+      await first.waitForFunction(() => document.querySelector('#room-icon')?.textContent === '⇄' && !document.querySelector('.agent-chat-offers'), {}, {});
+      const chatID = await first.evaluate(() => location.hash.slice(1));
+      await first.evaluate(id => {
+        const real = window.fetch; window.__fetchBeforeFault = real;
+        const fail = status => Promise.resolve(new Response(JSON.stringify({ error: 'fault', message: 'faked by the smoke' }), { status, headers: { 'Content-Type': 'application/json' } }));
+        window.fetch = (input, options) => {
+          const url = new URL(typeof input === 'string' ? input : input.url, location.origin), method = String(options?.method || input?.method || 'GET').toUpperCase();
+          if (method === 'GET' && url.pathname === `/api/rooms/${id}/messages`) return fail(404);
+          if (method === 'GET' && url.pathname === '/api/agent-dms') return fail(403);
+          return real(input, options);
+        };
+      }, chatID);
+      try {
+        await domClick(first, `[data-room-id="${chatID}"] .room-name`);
+        await first.waitForFunction(() => !document.querySelector('#app-toast').hidden && document.querySelector('#app-toast').textContent.endsWith(' no longer exists.'), { timeout: 10000 });
+        await first.waitForFunction(id => location.hash.slice(1) !== id && !document.querySelector('#app-view').classList.contains('no-room'), { timeout: 10000 }, chatID);
+        assert.ok(await first.$(`[data-room-id="${roomID}"] .room-name`), 'the project beside the vanished chat is still listed');
+      } finally { await first.evaluate(() => { window.fetch = window.__fetchBeforeFault; }); }
+      // The server still has the chat and this person in it: read the lists again and leave it, so the rest of the smoke starts from the same place.
+      await first.reload(); await appReady(first);
+      await domClick(first, `[data-room-id="${chatID}"] .room-name`);
+      await first.waitForFunction(() => document.querySelector('#room-icon')?.textContent === '⇄', {}, {});
+      await domClick(first, '#room-info');
+      await domClick(first, '#room-leave');
+      await first.waitForFunction(() => ![...document.querySelectorAll('.direct-rooms .room-group .room-name')].some(el => el.textContent.startsWith('⇄')) && document.querySelector('.agent-chat-offers'), {}, {});
+      assert.equal(await joinedChats(), 0, 'the chat is left again after the fault');
+      await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+      await first.waitForFunction(id => document.querySelector('.room-row.active')?.parentElement.dataset.roomId === id, {}, roomID);
+      // The room's agents load after the room is shown; until they have, senders read as their bare ids.
+      await first.waitForFunction((id, name) => document.querySelector(`[data-agent-id="${id}"]`) && document.querySelector('.message:last-child .message-author')?.textContent === name, {}, realAgentID, realAgentName);
+    }
     assert.equal(await first.$eval('.message:last-child .message-author', el => el.textContent), realAgentName, 'agent author shows raw ID');
     assert.deepEqual(await first.$eval('.message:last-child .message-role', el => [el.textContent, el.title.toLowerCase()]), ['🛠️', 'worker']);
     assert.deepEqual(await first.$eval('.message:last-child .msg-sender-presence', el => [el.querySelector('img').title.endsWith('· fake'), el.querySelector('.msg-sender-dot').className]), [true, 'msg-sender-dot dot-active'], 'agent message lacks identity icon/dot');
@@ -6402,6 +6463,122 @@ async function main() {
       await first.waitForFunction(id => location.hash.slice(1) !== id && document.querySelector('#room-title').textContent !== 'Remove smoke', {}, removeID);
       await domClick(first, `[data-room-id="${returnTo}"] .room-name`);
       await first.waitForFunction(id => location.hash.slice(1) === id, {}, returnTo);
+    }
+    // A room removed on the server while this page still lists it (an event the page missed): opening it says so and goes to the project's home
+    // room, and the next read of the project's rooms drops it from the list. The room list is held at its old content while the room goes.
+    {
+      const returnTo = await first.evaluate(() => location.hash.slice(1));
+      const api = (method, path, body) => first.evaluate(async (method, path, body) => {
+        const csrf = (await (await fetch('/api/me')).json()).csrf_token;
+        const response = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: body ? JSON.stringify(body) : undefined });
+        return { status: response.status, body: response.status === 204 ? null : await response.json().catch(() => null) };
+      }, method, path, body);
+      const goneID = (await api('POST', `/api/projects/${actualProjectID}/rooms`, { title: 'Gone smoke' })).body.id;
+      const goneRow = `[data-room-id="${goneID}"] .room-name`;
+      await first.waitForSelector(goneRow);
+      const home = (await api('GET', `/api/projects/${actualProjectID}/rooms`)).body.find(room => room.kind === 'home').id;
+      const stale = await first.evaluate(async id => (await fetch(`/api/projects/${id}/rooms`)).text(), actualProjectID);
+      let serveStale = true;
+      const holdList = request => {
+        if (request.isInterceptResolutionHandled()) return;
+        if (serveStale && request.method() === 'GET' && new URL(request.url()).pathname === `/api/projects/${actualProjectID}/rooms`) request.respond({ status: 200, contentType: 'application/json', body: stale });
+        else request.continue();
+      };
+      await first.setRequestInterception(true); first.on('request', holdList);
+      try {
+        const closed = await api('POST', `/api/rooms/${goneID}/close`, { lifecycle_rev: (await api('GET', `/api/rooms/${goneID}`)).body.lifecycle_rev || 0 });
+        assert.ok(closed.status < 300, 'the room is closed before it can be removed');
+        await first.waitForFunction(async id => (await (await fetch(`/api/rooms/${id}`)).json()).lifecycle === 'closed', {}, goneID);
+        assert.equal((await api('DELETE', `/api/rooms/${goneID}`)).status, 204, 'the room is removed on the server');
+        assert.equal((await api('GET', `/api/rooms/${goneID}`)).status, 404, 'the removed room is gone from the server');
+        await first.waitForSelector(goneRow); // the held list still names it, so the page lists it
+        await new Promise(resolve => setTimeout(resolve, 500));
+        assert.ok(await first.$(goneRow), 'the removed room is still listed while the list is held');
+        await domClick(first, goneRow);
+        await first.waitForFunction(() => !document.querySelector('#app-toast').hidden && document.querySelector('#app-toast').textContent === 'Gone smoke no longer exists.', { timeout: 10000 });
+        await first.waitForFunction(id => location.hash.slice(1) === id && document.querySelector('#room-title').textContent !== 'Gone smoke', {}, home);
+      } finally { serveStale = false; first.off('request', holdList); await first.setRequestInterception(false); }
+      // The list is read again (the room being opened reads its project's rooms): the removed room leaves the list and the page.
+      await domClick(first, `[data-room-id="${returnTo}"] .room-name`);
+      await first.waitForFunction(id => location.hash.slice(1) === id, {}, returnTo);
+      await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"]`), {}, goneID);
+    }
+    // Room lists that finish out of order: a read of a project's rooms that started before a newer one was applied must not remove a room the
+    // newer one already shows (a room created in between), whichever answers last.
+    assert.deepEqual(await first.evaluate(async () => {
+      const { Sidebar } = await import('/js/sidebar.js');
+      const sidebar = new Sidebar(document.createElement('div'), () => {});
+      sidebar.projects.set('p-order', { id: 'p-order', name: 'Order' });
+      const room = id => ({ id, project_id: 'p-order', parent_id: '', depth: 0, kind: 'task', title: id, lifecycle: 'open', unread_count: 0, member_count: 0 });
+      const answers = [];
+      sidebar.roomRequest = () => new Promise(resolve => answers.push(resolve));
+      const older = sidebar.refreshProject('p-order'), newer = sidebar.refreshProject('p-order');
+      answers[1]([room('one'), room('two')]); await newer;
+      answers[0]([room('one')]); await older;
+      return [...sidebar.rooms.keys()].sort();
+    }), ['one', 'two'], 'an older room list does not remove a room a newer one shows');
+    // A project that goes away, or a room that is taken away, while its room is being opened or while the page reconnects: the person gets a way
+    // out, not an empty chat. The server's answers are faked on a page of its own; nothing on the server changes except one scratch room.
+    {
+      const api = (method, path, body) => first.evaluate(async (method, path, body) => {
+        const csrf = (await (await fetch('/api/me')).json()).csrf_token;
+        const response = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: body ? JSON.stringify(body) : undefined });
+        return { status: response.status, body: response.status === 204 ? null : await response.json().catch(() => null) };
+      }, method, path, body);
+      const scratchID = (await api('POST', `/api/projects/${actualProjectID}/rooms`, { title: 'Access smoke' })).body.id;
+      const homeID = (await api('GET', `/api/projects/${actualProjectID}/rooms`)).body.find(room => room.kind === 'home').id;
+      const context = await browser.createBrowserContext(), page = await context.newPage();
+      try {
+        await page.setViewport({ width: 1100, height: 800 });
+        await page.evaluateOnNewDocument(() => {
+          const Native = window.WebSocket; window.__sockets = [];
+          window.WebSocket = new Proxy(Native, { construct(target, args) { const socket = new target(...args); window.__sockets.push(socket); return socket; } });
+        });
+        await login(page); await appReady(page);
+        const faults = { messages: new Map(), rooms: 'live', roomCalls: 0, noProjects: false };
+        const answer = (request, status) => request.respond({ status, contentType: 'application/json', body: JSON.stringify({ error: 'fault', message: 'faked by the smoke' }) });
+        await page.setRequestInterception(true);
+        page.on('request', request => {
+          if (request.isInterceptResolutionHandled()) return;
+          const url = new URL(request.url()), read = request.method() === 'GET';
+          const messages = url.pathname.match(/^\/api\/rooms\/([^/]+)\/messages$/);
+          if (read && messages && faults.messages.has(messages[1])) { answer(request, faults.messages.get(messages[1])); return; }
+          if (read && url.pathname === `/api/projects/${actualProjectID}/rooms` && faults.rooms === 'gone-after-first' && ++faults.roomCalls > 1) { answer(request, 403); return; }
+          if (read && url.pathname === '/api/projects' && faults.noProjects) { request.respond({ status: 200, contentType: 'application/json', body: '[]' }); return; }
+          request.continue();
+        });
+        const row = `[data-room-id="${scratchID}"] .room-name`;
+        await page.waitForSelector(row);
+        const toastIs = text => page.waitForFunction(text => !document.querySelector('#app-toast').hidden && document.querySelector('#app-toast').textContent === text, { timeout: 10000 }, text);
+        // 403 on a room's messages (access lost in another tab): the notice, then the project's home room.
+        faults.messages.set(scratchID, 403);
+        await domClick(page, row);
+        await toastIs('Access smoke no longer exists.');
+        await page.waitForFunction(id => location.hash.slice(1) === id, {}, homeID);
+        faults.messages.delete(scratchID);
+        // The project is deleted between the list read and the messages request: the list now answers 403, and the project leaves.
+        faults.messages.set(scratchID, 404); faults.rooms = 'gone-after-first'; faults.roomCalls = 0;
+        await page.waitForSelector(row);
+        await domClick(page, row);
+        await page.waitForFunction(() => document.querySelector('#app-view').classList.contains('no-room') && location.hash === '', { timeout: 10000 });
+        assert.equal(await page.$(row), null, 'the room of the vanished project leaves the list');
+        assert.equal(await page.$(`[data-room-id="${homeID}"]`), null, 'the vanished project leaves the list');
+        // A reconnect finds the last project gone: the open room is closed, not left on screen.
+        faults.messages.clear(); faults.rooms = 'live';
+        await page.reload(); await appReady(page);
+        await page.waitForSelector(row);
+        await domClick(page, row);
+        await page.waitForFunction(id => location.hash.slice(1) === id && !document.querySelector('#app-view').classList.contains('no-room') && !document.querySelector('#composer textarea').disabled, {}, scratchID);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // the selection has finished: a reconnect then finds the room open
+        faults.noProjects = true;
+        await page.evaluate(() => window.__sockets.filter(socket => socket.url.includes('/api/events')).at(-1).onmessage({ data: JSON.stringify({ type: 'snapshot_required' }) }));
+        await page.waitForFunction(() => document.querySelector('#app-view').classList.contains('no-room') && location.hash === '', { timeout: 10000 });
+        assert.equal(await page.$(row), null, 'nothing is left to show once the last project is gone');
+      } finally { await context.close(); }
+      const closed = await api('POST', `/api/rooms/${scratchID}/close`, { lifecycle_rev: (await api('GET', `/api/rooms/${scratchID}`)).body.lifecycle_rev || 0 });
+      assert.ok(closed.status < 300, 'the scratch room is closed');
+      await first.waitForFunction(async id => (await (await fetch(`/api/rooms/${id}`)).json()).lifecycle === 'closed', {}, scratchID);
+      assert.equal((await api('DELETE', `/api/rooms/${scratchID}`)).status, 204, 'the scratch room is removed');
     }
     // Composer formatting: the rich-text editor with its toolbar in the frame, and the Aa switch to a plain textarea. A room of its own
     // keeps the rest of the smoke undisturbed.

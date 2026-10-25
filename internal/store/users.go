@@ -133,7 +133,7 @@ func (s *Store) AllProjects(ctx context.Context, actorID string) ([]Project, err
 	if !admin {
 		return nil, ErrForbidden
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,folder FROM project ORDER BY created_at,id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,folder FROM project WHERE system=0 ORDER BY created_at,id`)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func (s *Store) CreateUserInvite(ctx context.Context, actorID, kind, projectID, 
 				return err
 			}
 			var found string
-			if err := tx.tx.QueryRowContext(ctx, `SELECT id FROM project WHERE id=?`, projectID).Scan(&found); err != nil {
+			if err := tx.tx.QueryRowContext(ctx, `SELECT id FROM project WHERE id=? AND system=0`, projectID).Scan(&found); err != nil {
 				return err
 			}
 		} else if kind == "reset" {

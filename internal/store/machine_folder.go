@@ -81,7 +81,7 @@ func (s *Store) FirstMachineFolder(ctx context.Context, machineID string) (strin
 	var folder string
 	err := s.db.QueryRowContext(ctx, `SELECT CASE WHEN m.is_host=1 THEN p.folder ELSE f.folder END
 		FROM machine m JOIN project p LEFT JOIN project_machine_folder f ON f.machine_id=m.id AND f.project_id=p.id
-		WHERE m.id=? AND m.revoked_at IS NULL AND
+		WHERE m.id=? AND m.revoked_at IS NULL AND p.system=0 AND
 			CASE WHEN m.is_host=1 THEN p.folder ELSE f.folder END IS NOT NULL AND
 			CASE WHEN m.is_host=1 THEN p.folder ELSE f.folder END != ''
 		ORDER BY p.id LIMIT 1`, machineID).Scan(&folder)

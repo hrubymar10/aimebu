@@ -59,6 +59,11 @@ func (s *Store) ArchivedScope(ctx context.Context, userID, kind, id string) (boo
 	if err := s.checkTxReentry(ctx); err != nil {
 		return false, err
 	}
+	if kind == "room" || kind == "message" {
+		if archived, ok, err := s.agentChatArchived(ctx, userID, kind, id); err != nil || ok {
+			return archived, err
+		}
+	}
 	var query string
 	switch kind {
 	case "project":
@@ -104,7 +109,7 @@ func (s *Store) ArchiveProject(ctx context.Context, id, actor string) ([]AgentCa
 	err := s.Tx(ctx, func(tx *Tx) error {
 		controls, failures = nil, nil
 		var archived sql.NullString
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT archived_at FROM project WHERE id=?`, id).Scan(&archived); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT archived_at FROM project WHERE id=? AND system=0`, id).Scan(&archived); err != nil {
 			return err
 		}
 		if archived.Valid {
@@ -183,7 +188,7 @@ func (s *Store) ReopenProject(ctx context.Context, id, actor string) error {
 	return s.Tx(ctx, func(tx *Tx) error {
 		var archived sql.NullString
 		var control string
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT archived_at,control_desired FROM project WHERE id=?`, id).Scan(&archived, &control); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT archived_at,control_desired FROM project WHERE id=? AND system=0`, id).Scan(&archived, &control); err != nil {
 			return err
 		}
 		if !archived.Valid {
@@ -219,7 +224,7 @@ func (s *Store) DeleteProject(ctx context.Context, id, name, actor string) error
 		files, members = nil, nil
 		var projectName string
 		var archived sql.NullString
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT name,archived_at FROM project WHERE id=?`, id).Scan(&projectName, &archived); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT name,archived_at FROM project WHERE id=? AND system=0`, id).Scan(&projectName, &archived); err != nil {
 			return err
 		}
 		if !archived.Valid {
@@ -270,6 +275,10 @@ func (s *Store) DeleteProject(ctx context.Context, id, name, actor string) error
 		err = memberRows.Err()
 		memberRows.Close()
 		if err != nil {
+			return err
+		}
+		// Chats between agents belong to no project and outlive it: the project's agents leave them before the cascade removes the agents.
+		if err := tx.detachAgentsFromChats(id, projectName); err != nil {
 			return err
 		}
 		for _, table := range projectLooseTables {

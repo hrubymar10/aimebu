@@ -388,7 +388,9 @@ have their own Git worktree. Room settings (one control size throughout; Kind an
 inspector is on) offers
 Archive/Reopen for non-home rooms and, for an archived task room, a destructive
 Remove room (project owner only; the room and its messages are deleted for good,
-see `DELETE /api/rooms/{room}`), and shows room information (Room settings also
+see `DELETE /api/rooms/{room}`; a room removed elsewhere leaves every other open page's list, and
+opening one a page still lists shows "<room> no longer exists." and goes to the project's home room, the
+same as when the person lost access to it), and shows room information (Room settings also
 lists the room's members read-only: people with their project role, agents with
 their role emoji and label, and each singleton role with the agent holding it
 or "vacant"), message-number
@@ -712,11 +714,13 @@ with a short echo of the latest human message for local demos. See
 [the supervisor guide](docs/supervisor.md).
 The supervisor also creates a private per-agent config for `aimebu
 agent-tools`, a stdio MCP server with `list_rooms`, `list_agents`,
-`room_history`, `create_room`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `usage_left`, `spawn_agent`, `stop_agent`, `set_role`,
+`room_history`, `create_room`, `dm_agent`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `usage_left`, `spawn_agent`, `stop_agent`, `set_role`,
 `memory_add`, `memory_list`, `memory_update`, `memory_remove`, `memory_recall`,
 `attachment_get`, `message_get` and `react`. Its HTTP routes use the agent's key and scope
 reads and mutations to that agent's project; only an active lead can manage
-rooms or agents.
+rooms or agents, and only an active lead can start a private chat with an agent
+of another project (`dm_agent`; the server checks that the people behind the
+turn may reach that project, see [the API](docs/api.md)).
 `room_history` returns bounded message excerpts with `next_before` for paging;
 private chats require current membership. `set_role` changes an idle or
 stopped agent in the same project, updates its revision, and records the change

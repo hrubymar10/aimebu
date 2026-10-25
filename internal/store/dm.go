@@ -177,11 +177,15 @@ func (s *Store) UserRoomAccess(ctx context.Context, userID, roomID string) error
 		return err
 	}
 	var allowed int
+	// A chat between agents has no project to belong to: its people are the ones who joined it and still have a footing in one of its agents' projects.
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM room r
-		JOIN membership p ON p.project_id=r.project_id AND p.user_id=?
-		WHERE r.id=? AND (r.kind!='dm' OR EXISTS (
-			SELECT 1 FROM room_member m WHERE m.room_id=r.id AND m.member_kind='user'
-			AND m.member_id=? AND m.left_at IS NULL))`, userID, roomID, userID).Scan(&allowed)
+		WHERE r.id=? AND (r.project_id!=`+agentDMProjectSQL+` AND EXISTS (SELECT 1 FROM membership p WHERE p.project_id=r.project_id AND p.user_id=?)
+			AND (r.kind!='dm' OR EXISTS (
+				SELECT 1 FROM room_member m WHERE m.room_id=r.id AND m.member_kind='user'
+				AND m.member_id=? AND m.left_at IS NULL))
+		OR r.project_id=`+agentDMProjectSQL+` AND EXISTS (
+				SELECT 1 FROM room_member m WHERE m.room_id=r.id AND m.member_kind='user'
+				AND m.member_id=? AND m.left_at IS NULL) AND `+agentDMEligibleSQL+`)`, roomID, userID, userID, userID, userID).Scan(&allowed)
 	if err != nil {
 		return err
 	}

@@ -120,6 +120,9 @@ and reconnects the event stream from its last seen `seq`.
 | PUT/DELETE | `/api/global-memory/{scope}/{id}` | PUT: `{scope_key,body,rev}`; DELETE: `?scope_key=…&rev=…` | revised or deleted global record |
 | PUT | `/api/global-memory/{scope}/{id}/activation` | `{scope_key,rev,active:boolean}` | the owner or an admin activates or deactivates a global record for agent context and recall |
 | POST | `/api/agents/{id}/dm` | — | the existing or new private room for this user and agent in the agent's project |
+| GET | `/api/agent-dms` | — | `{project_id,rooms,joinable}`: the private chats between agents the caller has joined (with `agent_chat:true` and `can_write`, listed under the reserved system `project_id`), and the ones they could join (`{id,title,last_activity_at,message_count,lifecycle}`, never message text). A chat shows only to someone who is the instance owner or belongs to the project of an agent still in it |
+| POST | `/api/rooms/{room}/join` | — | joins a chat between agents the caller has a footing in (an agent's project member at any role, or the instance owner) and posts a system line saying so; idempotent; 404 for anything else. Returns the room |
+| POST | `/api/rooms/{room}/leave` | — | leaves a chat between agents (system line); allowed in an archived chat |
 | PATCH | `/api/rooms/{room}` | `{title}` | renames the room and returns it; the title is trimmed and must be 1 to 80 characters on one line, no control characters (400 `invalid_title`). A task room is renamed by the project's owners and operators (403 for a viewer); the home room's title is the project's name, so renaming it renames the project through the same path as `PATCH /api/projects/{project}` and takes the same rights (the owner or an admin), and the home room's title is set to the new name whatever it was; a private chat cannot be renamed (409 `invalid_kind`). A task room that already has the title is left alone and records nothing; a home room is left alone only when the room and the project both already carry it (a home room whose title drifted from the project's name is brought back in step, or the project renamed to the title, whichever the title is). Emits `room_renamed` (`{room_id,title,previous_title,actor_id}`), and `project_updated` too for the home room |
 | GET | `/api/rooms/{room}` | — | room with the same live counts and preview as the project room list, plus the caller's `hidden` preference |
 | GET | `/api/rooms/{room}/mention-users` | — | `{logins}`: the human logins a `@login` mention addresses in this room, as server addressing reads them: its user room members plus, outside DMs, every active member of the project; same room access as the room itself |
@@ -625,11 +628,23 @@ Agent toolbox requests require a current, unrevoked, not-stopped agent key.
 Claude/Codex Docker and native Pi use `POST /api/agent/mcp` with the same
 bearer key for streamable HTTP MCP. Pi Docker has no private credential
 channel and runs without this toolbox. JSON-RPC `initialize`, `ping`,
-`tools/list`, and `tools/call` map to the same ten narrow tools as the stdio
+`tools/list`, and `tools/call` map to the same narrow tools as the stdio
 transport;
 notifications return HTTP 202.
 The key alone identifies the caller. Room and agent control mutations require
 an active lead role; `spawn_agent` also requires the role's spawn capability.
+`POST /api/agent/dms` (`{target_agent_id,body}`, `Idempotency-Key` required; the
+`dm_agent` tool, active lead only) sends a private message to any agent in any
+project and returns `{room_id,message_id,no,created}`. Who may is decided by the
+server in the same transaction, never the model: every person whose message
+caused the lead's current turn (and the turns it continues) must be an owner or
+operator of the target's project, or the instance owner; when no person caused
+it (an agent or a schedule woke the lead) an owner of the lead's own project
+must be. A viewer never counts. Unknown or out-of-reach targets answer 403
+alike; 409 `agent_unavailable` (revoked, stopped or not accepting), 409
+`project_archived`, 429 `dm_turn_cap` (30 agent turns per chat per hour) and
+429 `dm_fanout_cap` (10 new chats per lead per hour); see
+[architecture](architecture.md#chats-between-agents).
 `create_room` records the agent in `created_by`, joins the lead atomically (a project's lead is in every open room of its project: a new room, made by anyone, gets the lead, and a lead spawned later joins the existing rooms; private chats are not included), and
 posts one system notice in the parent room. `close_room` uses the same
 `lifecycle_rev`, child-room check, cascade option, grace period and control

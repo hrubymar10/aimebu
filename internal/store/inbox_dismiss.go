@@ -10,22 +10,24 @@ import (
 // human has reviewed it. It never changes the held answer or the room.
 func (s *Store) DismissDeliveryFailure(ctx context.Context, itemID, userID string, rev int) error {
 	return s.Tx(ctx, func(tx *Tx) error {
-		var projectID, roomID, agentID, kind, state, role, roomKind string
+		var projectID, roomID, agentID, kind, state, role, roomKind, roomProject string
 		var currentRev int
 		var dmMember bool
 		err := tx.tx.QueryRowContext(tx.ctx, `SELECT i.project_id,i.room_id,COALESCE(i.agent_id,''),i.kind,i.state,i.rev,
-			COALESCE(m.role,''),r.kind,EXISTS(SELECT 1 FROM room_member rm WHERE rm.room_id=i.room_id
+			COALESCE(m.role,''),r.kind,r.project_id,EXISTS(SELECT 1 FROM room_member rm WHERE rm.room_id=i.room_id
 			AND rm.member_kind='user' AND rm.member_id=? AND rm.left_at IS NULL)
 			FROM inbox_item i JOIN room r ON r.id=i.room_id
 			LEFT JOIN membership m ON m.project_id=i.project_id AND m.user_id=? WHERE i.id=?`, userID, userID, itemID).
-			Scan(&projectID, &roomID, &agentID, &kind, &state, &currentRev, &role, &roomKind, &dmMember)
+			Scan(&projectID, &roomID, &agentID, &kind, &state, &currentRev, &role, &roomKind, &roomProject, &dmMember)
 		if errors.Is(err, sql.ErrNoRows) {
 			return sql.ErrNoRows
 		}
 		if err != nil {
 			return err
 		}
-		if kind != "delivery_failed" || role == "" || roomKind == "dm" && !dmMember || roomKind != "dm" && role != "owner" && role != "operator" {
+		// A private chat with a person answers to that person at any role; a chat between agents also asks for the role in the agent's project.
+		privateChat := roomKind == "dm" && roomProject != AgentDMProjectID
+		if kind != "delivery_failed" || role == "" || roomKind == "dm" && !dmMember || !privateChat && role != "owner" && role != "operator" {
 			return ErrForbidden
 		}
 		if currentRev != rev {

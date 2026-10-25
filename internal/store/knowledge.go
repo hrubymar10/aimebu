@@ -256,7 +256,7 @@ func (tx *Tx) knowledgeSnapshot(projectID, roomID string) (map[string]any, error
 	}
 	taskItems := []KnowledgeRecord{}
 	var task bool
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind='task' AND memory_enabled IS NOT 0 FROM room WHERE id=? AND project_id=?`, roomID, projectID).Scan(&task); err != nil {
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind='task' AND memory_enabled IS NOT 0 FROM room WHERE id=? AND project_id IN (?,`+agentDMProjectSQL+`)`, roomID, projectID).Scan(&task); err != nil {
 		return nil, err
 	}
 	if task {

@@ -75,7 +75,7 @@ func (s *Store) UpdateProject(ctx context.Context, id string, name, folder *stri
 // the old name.
 func (tx *Tx) updateProject(id string, name, folder *string, actorID string, renameHome bool) (Project, error) {
 	var project Project
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id, name, folder, COALESCE(repo_url,'') FROM project WHERE id=?`, id).Scan(&project.ID, &project.Name, &project.Folder, &project.RepoURL); err != nil {
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id, name, folder, COALESCE(repo_url,'') FROM project WHERE id=? AND system=0`, id).Scan(&project.ID, &project.Name, &project.Folder, &project.RepoURL); err != nil {
 		return project, err
 	}
 	oldName := project.Name
@@ -131,6 +131,11 @@ type Room struct {
 	UnreadCount     int           `json:"unread_count"`
 	AttentionCount  int           `json:"attention_count"`
 	Worktree        *RoomWorktree `json:"worktree,omitempty"`
+	// AgentChat marks a private chat between two agents, which belongs to no project (ProjectID is the reserved one). CanWrite, set when
+	// a person's room list is read, says whether that person may post in it: they need a role to write in an agent's project, and the
+	// chat must not be archived.
+	AgentChat bool  `json:"agent_chat,omitempty"`
+	CanWrite  *bool `json:"can_write,omitempty"`
 }
 
 // MarshalJSON gives a room that no list has described yet (just created, or answered by a tool) the default notification level, so the
@@ -140,6 +145,7 @@ func (r Room) MarshalJSON() ([]byte, error) {
 	if r.Notify == "" {
 		r.Notify = "default"
 	}
+	r.AgentChat = IsAgentDM(r)
 	return json.Marshal(plain(r))
 }
 

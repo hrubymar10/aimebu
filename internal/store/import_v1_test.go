@@ -429,7 +429,7 @@ func TestV1ImportDryRunRerunAndHistory(t *testing.T) {
 		t.Fatalf("dry run: %+v %v", dry, err)
 	}
 	var count int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM project").Scan(&count); err != nil || count != 0 {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM project WHERE system=0").Scan(&count); err != nil || count != 0 {
 		t.Fatalf("dry run wrote project: %d %v", count, err)
 	}
 	first, err := s.ImportV1(ctx, source, mapping, false)
@@ -837,7 +837,7 @@ func TestV1ImportRejectsSystemMemberOrReactionInPreflight(t *testing.T) {
 				t.Fatalf("preflight error = %v, want %q", err, tc.want)
 			}
 			var count int
-			if err := s.db.QueryRow("SELECT COUNT(*) FROM project").Scan(&count); err != nil || count != 0 {
+			if err := s.db.QueryRow("SELECT COUNT(*) FROM project WHERE system=0").Scan(&count); err != nil || count != 0 {
 				t.Fatalf("preflight wrote project: %d %v", count, err)
 			}
 		})
@@ -904,7 +904,7 @@ func TestV1ImportMissingBlobDoesNotWriteDestination(t *testing.T) {
 		t.Fatal("missing attachment bytes should fail preflight")
 	}
 	var count int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM project").Scan(&count); err != nil || count != 0 {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM project WHERE system=0").Scan(&count); err != nil || count != 0 {
 		t.Fatalf("failed preflight wrote project: %d %v", count, err)
 	}
 }

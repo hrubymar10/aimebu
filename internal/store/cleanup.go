@@ -317,7 +317,7 @@ func (s *Store) ReadyWorktrees(ctx context.Context) ([]RoomWorktreeInstance, err
 
 // ProjectNames maps project IDs to their names.
 func (s *Store) ProjectNames(ctx context.Context) (map[string]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name FROM project`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name FROM project WHERE system=0`)
 	if err != nil {
 		return nil, err
 	}

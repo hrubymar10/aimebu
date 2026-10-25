@@ -105,7 +105,7 @@ func (tx *Tx) RecordTurn(turn Turn) (Turn, error) {
 		`SELECT project_id FROM room WHERE id=?`, turn.RoomID).Scan(&roomProject); err != nil {
 		return Turn{}, err
 	}
-	if projectID != roomProject || sessionAgent != turn.AgentID || sessionGeneration != turn.Generation {
+	if !roomServesAgent(roomProject, projectID) || sessionAgent != turn.AgentID || sessionGeneration != turn.Generation {
 		return Turn{}, fmt.Errorf("%w: turn room or session differs from agent", ErrScopeMismatch)
 	}
 	var err error
@@ -172,7 +172,7 @@ func (tx *Tx) InsertNote(note Note) (Note, error) {
 		`SELECT project_id FROM agent WHERE id=?`, note.AgentID).Scan(&agentProject); err != nil {
 		return Note{}, err
 	}
-	if messageRoom != note.RoomID || roomProject != agentProject {
+	if messageRoom != note.RoomID || !roomServesAgent(roomProject, agentProject) {
 		return Note{}, fmt.Errorf("%w: note message or agent differs from room", ErrScopeMismatch)
 	}
 	var err error

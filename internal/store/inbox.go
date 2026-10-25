@@ -56,8 +56,8 @@ type inboxAsk struct {
 const inboxFromSQL = `FROM inbox_item i JOIN room r ON r.id=i.room_id JOIN membership member ON member.project_id=i.project_id
         AND member.user_id=?`
 const inboxWhereSQL = `WHERE i.state='open' AND i.kind IN ('question','approval','recovery','delivery_failed','usage_info','usage_limit')
-		AND (member.role IN ('owner','operator') OR (r.kind='dm' AND i.kind NOT IN ('usage_info','usage_limit')))
-		AND (i.kind!='approval' OR member.role='owner' OR r.kind='dm')
+		AND (member.role IN ('owner','operator') OR (r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + ` AND i.kind NOT IN ('usage_info','usage_limit')))
+		AND (i.kind!='approval' OR member.role='owner' OR r.kind='dm' AND r.project_id!=` + agentDMProjectSQL + `)
 		AND (member.role='owner' OR NOT EXISTS (SELECT 1 FROM boundary_pending b WHERE b.inbox_id=i.id))
 		AND (r.kind!='dm' OR EXISTS (SELECT 1 FROM room_member own WHERE own.room_id=r.id
 			AND own.member_kind='user' AND own.member_id=? AND own.left_at IS NULL)
@@ -82,7 +82,7 @@ func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, 
 				WHERE child.parent_turn_id=i.turn_id AND child.mode='correction' ORDER BY r.answer_rev DESC LIMIT 1),''),
 			'') ELSE '' END,i.kind,
 		COALESCE(i.options_json,''),COALESCE(msg.body,''),i.state,i.rev,i.created_at,
-		member.role,r.kind,
+		member.role,CASE WHEN r.project_id=`+agentDMProjectSQL+` THEN 'agent_chat' ELSE r.kind END,
 		EXISTS(SELECT 1 FROM boundary_pending b WHERE b.inbox_id=i.id),
 		COALESCE((SELECT b.machine_id FROM boundary_pending b WHERE b.inbox_id=i.id),''),
 		COALESCE((SELECT b.canonical_path FROM boundary_pending b WHERE b.inbox_id=i.id),''),

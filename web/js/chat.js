@@ -464,7 +464,7 @@ export class Chat {
     const count = room.member_count || 0;
     const archivedProject = !!this.projectArchived?.(room.project_id);
     const status = archivedProject ? 'Project archived' : room.lifecycle === 'closing' ? 'Closing…' : room.lifecycle === 'closed' ? 'Archived' : '';
-    this.roomIcon.textContent = room.kind === 'home' ? '⌂' : room.kind === 'dm' ? '@' : '#';
+    this.roomIcon.textContent = room.kind === 'home' ? '⌂' : room.agent_chat ? '⇄' : room.kind === 'dm' ? '@' : '#';
     this.roomIcon.classList.toggle('dm', room.kind === 'dm'); this.roomIcon.hidden = false;
     this.members.querySelector('.room-members-count').textContent = String(count);
     this.members.querySelector('.room-header-status')?.remove();
@@ -482,8 +482,10 @@ export class Chat {
     const open = (!room.lifecycle || room.lifecycle === 'open') && !archivedProject;
     // A viewer can read an ordinary room but not write in it or run agents there (a private chat between two members is the exception),
     // so those controls are off with the reason, rather than live and answering 403.
-    const viewer = this.projectRole?.(room.project_id) === 'viewer';
-    const writable = open && (!viewer || room.kind === 'dm');
+    // A chat between agents has no project of its own: the server says whether this person may write in it (a role in one of the agents' projects).
+    const agentChat = !!room.agent_chat;
+    const viewer = agentChat ? room.can_write === false : this.projectRole?.(room.project_id) === 'viewer';
+    const writable = open && (!viewer || (room.kind === 'dm' && !agentChat));
     this.draft.disabled = !writable; this.emojiButton.disabled = !writable;
     this.form.querySelector('button[type=submit]').disabled = !writable || this.pendingUploads > 0;
     this.attachmentInput.disabled = !writable;
@@ -494,8 +496,8 @@ export class Chat {
     this.spawnTitle ||= spawn.title;
     spawn.title = viewer ? 'Viewers cannot spawn agents' : this.spawnTitle;
     const note = this.viewerNote ||= (() => { const node = document.createElement('p'); node.className = 'composer-note'; node.id = 'composer-viewer-note'; node.setAttribute('role', 'note'); this.form.before(node); return node; })();
-    note.hidden = !(open && viewer && room.kind !== 'dm');
-    note.textContent = 'You can read this room as a viewer. Only owners and operators of the project can write here or run agents.';
+    note.hidden = !(open && viewer && (room.kind !== 'dm' || agentChat));
+    note.textContent = agentChat ? 'You can read this chat. Writing here takes the owner or operator role in one of the agents\' projects.' : 'You can read this room as a viewer. Only owners and operators of the project can write here or run agents.';
     // An archived project is read-only for everyone; the composer says why and where to undo it.
     const archivedNote = this.archivedNote ||= (() => { const node = document.createElement('p'); node.className = 'composer-note'; node.id = 'composer-archived-note'; node.setAttribute('role', 'note'); this.form.before(node); return node; })();
     archivedNote.hidden = !archivedProject;
@@ -530,7 +532,9 @@ export class Chat {
     // The home room's settings carry the project's own (Settings → Project shows the same form).
     if (!this.projectSection.hidden) this.projectSettings.mount(this.projectSection, this.room.project_id);
     this.loadWorktree();
-    this.loadRoomMemory();
+    // What is said in a chat between agents never feeds memory or recall, so there is no setting to show.
+    this.memorySection.hidden = !!this.room.agent_chat;
+    if (!this.room.agent_chat) this.loadRoomMemory();
     if (!controls.hidden) this.scopeControl.load(this.room.id);
     this.schedules.load(this.room);
     this.memberList.load(this.room.id);
@@ -571,6 +575,11 @@ export class Chat {
     // Removing is for archived task rooms only: never a home room or a private chat, and not while the room is open.
     remove.hidden = room.kind === 'home' || room.kind === 'dm' || this.projectRole?.(room.project_id) !== 'owner';
     remove.disabled = room.lifecycle !== 'closed';
+    // Someone who joined a chat between agents can leave it again; there is nothing else to do to it from here.
+    const leave = document.querySelector('#room-leave');
+    leave.hidden = !room.agent_chat;
+    setGlyph(leave, 'left', 'Leave chat');
+    leave.onclick = () => this.leaveChat();
     setGlyph(remove, 'trash', 'Remove room');
     remove.title = remove.disabled ? 'Archive the room before removing it' : 'Remove this room and its messages for good';
   }
@@ -713,6 +722,20 @@ export class Chat {
       if (!this.current(session, room.id)) return;
       this.infoDialog.close();
     } catch (error) { if (this.current(session, room.id)) { this.error.textContent = error.message; if (this.infoDialog.open) errorNode.textContent = error.message; action.disabled = false; } }
+  }
+  async leaveChat() {
+    const room = this.room;
+    if (!room?.agent_chat) return;
+    const session = this.sessionGeneration;
+    const button = document.querySelector('#room-leave'), errorNode = document.querySelector('#room-info-error');
+    button.disabled = true; errorNode.textContent = '';
+    try {
+      await request(`/api/rooms/${room.id}/leave`, { method: 'POST' });
+      if (!this.current(session, room.id)) return;
+      this.infoDialog.close();
+      await this.onChatLeft?.(room);
+    } catch (error) { if (this.current(session, room.id)) errorNode.textContent = error.message || 'Could not leave the chat'; }
+    button.disabled = false;
   }
   async removeRoom() {
     const room = this.room;

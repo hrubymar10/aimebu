@@ -217,7 +217,7 @@ func TestArchiveStopsAgentsAndReopenKeepsThemStopped(t *testing.T) {
 	s, _ := testStore(t, Options{})
 	seedWorld(t, s)
 	p := seedProject(t, s, "one")
-	if _, err := s.db.Exec(`UPDATE project SET control_desired='active'`); err != nil {
+	if _, err := s.db.Exec(`UPDATE project SET control_desired='active' WHERE system=0`); err != nil {
 		t.Fatal(err)
 	}
 	controls, _, err := s.ArchiveProject(ctx, p.Project.ID, "usr_proj")
@@ -288,7 +288,7 @@ func TestDeleteProjectRefusesARunningAgentAndALiveWorktree(t *testing.T) {
 	s, _ := testStore(t, Options{})
 	seedWorld(t, s)
 	p := seedProject(t, s, "busy")
-	if _, err := s.db.Exec(`UPDATE project SET archived_at='t'`); err != nil {
+	if _, err := s.db.Exec(`UPDATE project SET archived_at='t' WHERE system=0`); err != nil {
 		t.Fatal(err)
 	}
 	// The agent was never stopped (an archive does it; this one was marked by hand).
@@ -449,7 +449,7 @@ func TestReopenRespectsAUsageLimitPause(t *testing.T) {
 	s, _ := testStore(t, Options{})
 	seedWorld(t, s)
 	p := seedProject(t, s, "limit")
-	if _, err := s.db.Exec(`UPDATE project SET control_desired='active'`); err != nil {
+	if _, err := s.db.Exec(`UPDATE project SET control_desired='active' WHERE system=0`); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.ArchiveProject(ctx, p.Project.ID, "usr_proj"); err != nil {

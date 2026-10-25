@@ -99,7 +99,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		var lifecycle, roomGate, projectGate string
 		var parentID sql.NullString
 		err = tx.tx.QueryRowContext(tx.ctx, `SELECT t.id,t.session_id,t.generation,t.room_id,t.parent_turn_id,t.attempt,t.mode,t.exec,
-			r.lifecycle,r.gate,p.gate FROM turn t JOIN room r ON r.id=t.room_id JOIN project p ON p.id=r.project_id
+			r.lifecycle,r.gate,p.gate FROM turn t JOIN room r ON r.id=t.room_id JOIN agent ag ON ag.id=t.agent_id JOIN project p ON p.id=ag.project_id
 			WHERE t.agent_id=? AND t.exec='pending' AND NOT EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested') AND (t.mode IN ('correction','diagnostic')
 			OR (t.mode='normal' AND t.parent_turn_id IS NOT NULL AND EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='recovery_decision')))
 			ORDER BY t.id LIMIT 1`, agentID).
@@ -255,10 +255,10 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			return err
 		}
 		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT n.room_id,MIN(n.created_at) FROM note n
-			JOIN room rm ON rm.id=n.room_id JOIN project p ON p.id=rm.project_id
+			JOIN room rm ON rm.id=n.room_id JOIN project p ON p.id=?
 			JOIN room_member mb ON mb.room_id=rm.id AND mb.member_kind='agent' AND mb.member_id=n.agent_id AND mb.left_at IS NULL
 			WHERE n.agent_id=? AND n.state='queued' AND rm.lifecycle='open' AND rm.gate='open' AND p.gate='open'
-			AND rm.project_id=? GROUP BY n.room_id ORDER BY MIN(n.created_at),n.room_id`, agentID, projectID)
+			AND rm.project_id IN (?,?) GROUP BY n.room_id ORDER BY MIN(n.created_at),n.room_id`, projectID, agentID, projectID, AgentDMProjectID)
 		if err != nil {
 			return err
 		}

@@ -566,7 +566,7 @@ func TestMigrationFromZeroAndReopen(t *testing.T) {
 	if err := reopened.db.QueryRow(`SELECT COUNT(*) FROM schema_version`).Scan(&count); err != nil || count != len(migrations) {
 		t.Fatalf("reopen version rows = %d, %v", count, err)
 	}
-	if err := reopened.db.QueryRow(`SELECT COUNT(*) FROM project`).Scan(&count); err != nil || count != 1 {
+	if err := reopened.db.QueryRow(`SELECT COUNT(*) FROM project WHERE system=0`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("reopen project rows = %d, %v", count, err)
 	}
 }
@@ -854,7 +854,8 @@ func TestTransactionRollbackIncludesEventAndSequence(t *testing.T) {
 	}
 	for _, table := range []string{"project", "settings_project", "event"} {
 		var count int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil || count != 0 {
+		// The reserved project for chats between agents is part of the schema, not of any transaction under test.
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM ` + table + map[string]string{"project": ` WHERE system=0`, "settings_project": ` WHERE project_id!='` + AgentDMProjectID + `'`}[table]).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("%s has %d rows after rollback: %v", table, count, err)
 		}
 	}

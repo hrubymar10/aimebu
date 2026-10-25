@@ -1399,6 +1399,37 @@ UPDATE usage_record SET cost_total=cost_est WHERE cost_total IS NULL AND cost_es
 ` + roleLeadNoImplementMigration()}, {80, `
 -- A project can be archived: read-only, its agents stopped, listed apart in the sidebar, and reopened later. NULL is a live project.
 ALTER TABLE project ADD COLUMN archived_at TEXT;
+`}, {81, `
+-- Agent-to-agent private chats belong to no real project. Their rooms hang off one reserved system project: it has no members, no folder, and
+-- never appears in a list, but it keeps room.project_id (NOT NULL, referenced by many joins) valid without rebuilding the room table.
+ALTER TABLE project ADD COLUMN system INTEGER NOT NULL DEFAULT 0 CHECK (system IN (0,1));
+INSERT INTO project(id,name,folder,created_at,system) VALUES ('prj_agentdm','Agent conversations','',strftime('%Y-%m-%dT%H:%M:%fZ','now'),1);
+INSERT INTO settings_project(project_id) VALUES ('prj_agentdm');
+-- A lead's dm_agent call carries an Idempotency-Key like the other lead tools, so a retry posts no second message.
+ALTER TABLE request_key RENAME TO request_key_old;
+CREATE TABLE request_key (
+  actor_kind TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN
+    ('spawn','team_spawn','control','scope_control','switch','inbox_answer','recovery_decision','room_create','room_close','schedule_create','leaderboard_start','dm_agent')),
+  key TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (actor_kind,actor_id,kind,key)
+);
+INSERT INTO request_key SELECT * FROM request_key_old;
+DROP TABLE request_key_old;
+`}, {82, `
+-- The reserved project of chats between agents is an implementation detail, not a project: no one may be a member of it, and it can be
+-- neither changed nor deleted (archiving, renaming, moving its folder and removing it are all updates or a delete of its row). A later
+-- migration that updates every project row has to leave system rows out.
+CREATE TRIGGER project_system_unchanged BEFORE UPDATE ON project WHEN OLD.system=1
+BEGIN SELECT RAISE(ABORT, 'the reserved project cannot be changed'); END;
+CREATE TRIGGER project_system_kept BEFORE DELETE ON project WHEN OLD.system=1
+BEGIN SELECT RAISE(ABORT, 'the reserved project cannot be deleted'); END;
+CREATE TRIGGER membership_system_none BEFORE INSERT ON membership WHEN (SELECT system FROM project WHERE id=NEW.project_id)=1
+BEGIN SELECT RAISE(ABORT, 'nobody is a member of the reserved project'); END;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

@@ -161,6 +161,25 @@ joined. A viewer who is a peer in a private chat can answer its
 pending questions and ordinary approvals; boundary admission requires an
 owner. Usage and switcher account details require the global owner.
 
+A private chat between agents (started by a lead's `dm_agent`) belongs to no
+project, so access is decided by the projects of the agents in it, and checked
+on every request: reading needs the instance owner or a membership, at any
+role, in the project of an agent still in the chat, and having joined it (the
+chats one could join are listed by title only); writing needs owner or operator
+in one of those projects, or the instance owner, so a viewer reads only. A
+person's message wakes only the agents whose project they reach (owner or
+operator there, or the instance owner); an agent of a project they only read, or
+do not belong to, stays asleep (`message_not_woken` reason `no_reach`) though
+the message is in the chat. A chat agent's questions go to the owners and
+operators of the asking agent's project, and its approvals to that project's
+owners, who see them in their Inbox; a question or approval nobody in the chat
+could answer is refused rather than left to block the agent. Admins
+get no implicit reach: like for any project's rooms, they add themselves to a
+project first. Whether a lead may start a chat with an agent is likewise decided
+by the server: every person whose message caused the lead's turn must be an
+owner or operator of the target's project (or the instance owner), and when no
+person caused it, an owner of the lead's own project must.
+
 ## Global admins
 
 The owner is the first account. The owner can flag other accounts as **admins** (Settings → Users → Accounts, the *Admin* toggle that only

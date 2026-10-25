@@ -111,10 +111,11 @@ func (s *Store) AdmitTurn(ctx context.Context, input Admission) error {
 			}
 		}
 		var roomProject, lifecycle, roomGate, projectGate string
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.project_id,r.lifecycle,r.gate,p.gate FROM room r JOIN project p ON p.id=r.project_id WHERE r.id=?`, roomID).Scan(&roomProject, &lifecycle, &roomGate, &projectGate); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.project_id,r.lifecycle,r.gate,p.gate FROM room r JOIN project p ON p.id=? WHERE r.id=?`, projectID, roomID).Scan(&roomProject, &lifecycle, &roomGate, &projectGate); err != nil {
 			return err
 		}
-		if roomProject != projectID {
+		// The pause that counts is the agent's own project's, not the room's: in an agent-to-agent chat they differ.
+		if !roomServesAgent(roomProject, projectID) {
 			return ErrScopeMismatch
 		}
 		if lifecycle != "open" || roomGate != "open" || projectGate != "open" {

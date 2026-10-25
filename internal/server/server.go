@@ -300,6 +300,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/agent/macros", s.requireAgentTool(http.HandlerFunc(s.agentToolMacros)))
 	mux.Handle("GET /api/agent/rooms/{room}/schedules", s.requireAgentTool(http.HandlerFunc(s.agentToolSchedules)))
 	mux.Handle("POST /api/agent/rooms/{room}/schedules", s.requireAgentTool(http.HandlerFunc(s.agentToolSchedules)))
+	mux.Handle("POST /api/agent/dms", s.requireAgentTool(http.HandlerFunc(s.agentToolDM)))
+	mux.Handle("GET /api/agent-dms", s.Auth.RequireUser(http.HandlerFunc(s.agentDMs)))
+	mux.Handle("POST /api/rooms/{room}/join", s.Auth.RequireUser(http.HandlerFunc(s.joinAgentDM)))
+	mux.Handle("POST /api/rooms/{room}/leave", s.Auth.RequireUser(http.HandlerFunc(s.leaveAgentDM)))
 	mux.Handle("POST /api/agent/rooms", s.requireAgentTool(http.HandlerFunc(s.agentToolCreateRoom)))
 	mux.Handle("POST /api/agent/rooms/{room}/close", s.requireAgentTool(http.HandlerFunc(s.agentToolCloseRoom)))
 	mux.Handle("POST /api/agent/mcp", s.requireAgentTool(http.HandlerFunc(s.agentToolMCP)))
@@ -359,7 +363,7 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(web.index))
 	})
-	return allowMiddleware(s.maintenanceMiddleware(s.archivedGuard(mux)), s.Allow)
+	return allowMiddleware(s.maintenanceMiddleware(s.systemProjectGuard(s.archivedGuard(mux))), s.Allow)
 }
 
 func (s *Server) maintenanceMiddleware(next http.Handler) http.Handler {

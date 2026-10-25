@@ -15,6 +15,9 @@ var mentionPattern = regexp.MustCompile(`(?i)@([a-z][a-z0-9_-]*(?:@[a-z0-9_.-]+)
 type roomRecipient struct {
 	id, slug, kind, role string
 	lead, revoked        bool
+	// project is the agent's own project (an ID and a name). In a chat between agents the room has no project, so a
+	// project-qualified mention is read against this.
+	projectID, projectName string
 	// auto marks a lead that is in the room only because leads are put into every project room: it is addressable, and woken when addressed,
 	// but an unaddressed human message does not wake it.
 	auto bool
@@ -29,8 +32,8 @@ func (tx *Tx) roomRecipients(roomID string) ([]roomRecipient, error) {
 }
 
 func roomRecipientsFrom(query func(context.Context, string, ...any) (*sql.Rows, error), ctx context.Context, roomID string) ([]roomRecipient, error) {
-	rows, err := query(ctx, `SELECT a.id,a.slug,r.role_key,r.cap_is_lead,a.revoked_at IS NOT NULL,m.auto=1
-		FROM room_member m JOIN agent a ON a.id=m.member_id JOIN role r ON r.id=a.role_id
+	rows, err := query(ctx, `SELECT a.id,a.slug,r.role_key,r.cap_is_lead,a.revoked_at IS NOT NULL,m.auto=1,a.project_id,p.name
+		FROM room_member m JOIN agent a ON a.id=m.member_id JOIN role r ON r.id=a.role_id JOIN project p ON p.id=a.project_id
 		WHERE m.room_id=? AND m.member_kind='agent' AND m.left_at IS NULL
 		ORDER BY a.id`, roomID)
 	if err != nil {
@@ -40,7 +43,7 @@ func roomRecipientsFrom(query func(context.Context, string, ...any) (*sql.Rows, 
 	for rows.Next() {
 		var item roomRecipient
 		item.kind = "agent"
-		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.lead, &item.revoked, &item.auto); err != nil {
+		if err := rows.Scan(&item.id, &item.slug, &item.role, &item.lead, &item.revoked, &item.auto, &item.projectID, &item.projectName); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -110,6 +113,20 @@ func (tx *Tx) resolveMessageTargets(message Message) ([]string, map[string]strin
 	for _, member := range members {
 		byID[member.id] = member
 	}
+	// What one agent says in a chat between agents wakes only the other agent: mentions, group tags, replies and handoffs are not read, so
+	// the answer to whoever started it goes back to them and nowhere else, and people watching the chat are not addressed.
+	if projectID == AgentDMProjectID && message.AuthorKind == "agent" && message.OnlyTargets == nil {
+		peers := map[string]string{}
+		ids := []string{}
+		for _, member := range members {
+			if member.kind == "agent" && member.id != message.AuthorID {
+				peers[member.id] = "agent_dm"
+				ids = append(ids, member.id)
+			}
+		}
+		sort.Strings(ids)
+		return ids, peers, nil, nil
+	}
 	targets := resolveMentionTargets(message.Body, message.AuthorID, members, projectID, projectName)
 	add := func(member roomRecipient, reason string) {
 		if member.id == message.AuthorID {
@@ -163,7 +180,8 @@ func (tx *Tx) resolveMessageTargets(message Message) ([]string, map[string]strin
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind FROM room WHERE id=?`, message.RoomID).Scan(&kind); err != nil {
 			return nil, nil, nil, err
 		}
-		if kind == "dm" {
+		// A chat between agents addresses nobody by being private: people in it are reached by name, like in a room.
+		if kind == "dm" && projectID != AgentDMProjectID {
 			for _, member := range members {
 				if member.kind == "user" {
 					add(member, "dm")
@@ -297,10 +315,19 @@ func resolveMentions(body, authorID string, members []roomRecipient, projectID, 
 			}
 			if strings.Contains(token, "@") {
 				parts := strings.SplitN(token, "@", 2)
-				if parts[1] == strings.ToLower(projectName) || parts[1] == strings.ToLower(projectID) {
+				// The project part names the room's project or, in a chat between agents (whose room has none), the agent's own.
+				inProject := func(member roomRecipient) bool {
+					return parts[1] == strings.ToLower(projectName) || parts[1] == strings.ToLower(projectID) ||
+						projectID == AgentDMProjectID && (parts[1] == strings.ToLower(member.projectName) || parts[1] == strings.ToLower(member.projectID))
+				}
+				matchesProject := parts[1] == strings.ToLower(projectName) || parts[1] == strings.ToLower(projectID)
+				for _, member := range members {
+					matchesProject = matchesProject || member.kind == "agent" && strings.ToLower(member.slug) == parts[0] && inProject(member)
+				}
+				if matchesProject {
 					var reached []roomRecipient
 					for _, member := range append(append([]roomRecipient(nil), bySlug[parts[0]]...), revokedBySlug[parts[0]]...) {
-						if member.kind == "agent" {
+						if member.kind == "agent" && inProject(member) {
 							add(member, "mention")
 							if tracing {
 								reached = append(reached, member)
@@ -459,6 +486,30 @@ func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, proj
 	if err != nil {
 		return err
 	}
+	// An agent's message in a chat between agents wakes the other one only while the chat is under its hourly turn limit; a person's always does.
+	agentChatFull, capped := false, false
+	if projectID == AgentDMProjectID && message.AuthorKind == "agent" {
+		turns, err := tx.agentChatTurns(message.RoomID)
+		if err != nil {
+			return err
+		}
+		agentChatFull = turns >= AgentDMTurnsPerHour
+	}
+	// A person's message in a chat between agents wakes only the agents whose project that person reaches (owner or operator there, or the
+	// instance owner): being allowed to write because of one agent's project must not let them put the other project's agent to work.
+	reaches := map[string]bool{}
+	if projectID == AgentDMProjectID && message.AuthorKind == "user" {
+		for _, member := range members {
+			if member.kind != "agent" {
+				continue
+			}
+			ok, err := userReaches(tx.ctx, tx.tx, message.AuthorID, member.projectID)
+			if err != nil {
+				return err
+			}
+			reaches[member.id] = ok
+		}
+	}
 	for _, member := range members {
 		if member.kind != "agent" {
 			continue
@@ -476,12 +527,18 @@ func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, proj
 			skip = "self"
 		case member.revoked:
 			skip = "revoked"
+		case projectID == AgentDMProjectID && message.AuthorKind == "user" && !reaches[member.id]:
+			skip = "no_reach"
 		case message.AuthorKind == "system" && message.OnlyTargets == nil:
 			skip = "system_chatter"
 		case reason == "":
 			skip = "not_addressed"
 		case reason == "human_message" && member.auto:
 			skip = "auto_member" // the lead reads this room but was not put in it; an unaddressed message is the worker's
+		}
+		if skip == "" && reason == "agent_dm" && agentChatFull {
+			skip = "dm_turn_cap"
+			capped = true
 		}
 		if skip != "" {
 			if _, err := tx.AppendEvent(Event{Kind: "message_not_woken", ProjectID: projectID, RoomID: message.RoomID,
@@ -493,6 +550,9 @@ func (tx *Tx) queueMessageWakes(message Message, targets map[string]string, proj
 		if _, err := tx.InsertNote(Note{AgentID: member.id, MessageID: message.ID, RoomID: message.RoomID, WakeReason: reason}); err != nil {
 			return err
 		}
+	}
+	if capped {
+		return tx.announceAgentChatCap(message.RoomID)
 	}
 	return nil
 }

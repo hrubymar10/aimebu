@@ -1191,7 +1191,17 @@ func (s *Server) agentProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A viewer reads the room but does not operate agents: no session handle, resume command or host path.
-	role, err := s.Store.UserProjectRole(r.Context(), userID(r), room.ProjectID)
+	// A chat between agents has no project: the person's role is the one in the agent's own project, and no role there is a viewer's.
+	roleProject := room.ProjectID
+	if store.IsAgentDM(room) {
+		if _, agentProject, perr := s.Store.AgentPlacement(r.Context(), r.PathValue("agent")); perr == nil {
+			roleProject = agentProject
+		}
+	}
+	role, err := s.Store.UserProjectRole(r.Context(), userID(r), roleProject)
+	if err != nil && store.IsAgentDM(room) {
+		role, err = "viewer", nil
+	}
 	if err != nil {
 		userError(w, err)
 		return

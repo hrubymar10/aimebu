@@ -9,6 +9,17 @@ import (
 )
 
 func (s *Server) roomWriteAccess(w http.ResponseWriter, r *http.Request, room store.Room) bool {
+	if store.IsAgentDM(room) {
+		allowed, err := s.Store.AgentDMWriteAllowed(r.Context(), userID(r), room.ID)
+		if err != nil {
+			fail(w, err)
+			return false
+		}
+		if !allowed {
+			apiError(w, 403, "forbidden", "owner or operator of one of the agents' projects required")
+		}
+		return allowed
+	}
 	if room.Kind == "dm" && strings.HasPrefix(room.DMKey, "users:") {
 		allowed, err := s.Store.PeopleDMWriteAllowed(r.Context(), room.ProjectID, room.ID)
 		if err != nil {

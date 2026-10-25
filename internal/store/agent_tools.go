@@ -65,7 +65,7 @@ func (s *Store) AgentRoomHistory(ctx context.Context, agentID, projectID, roomID
 		return AgentHistoryPage{}, err
 	}
 	var allowed bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM room r WHERE r.id=? AND r.project_id=?
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM room r WHERE r.id=? AND r.project_id IN (?,`+agentDMProjectSQL+`)
 		AND (r.kind<>'dm' OR EXISTS(SELECT 1 FROM room_member m WHERE m.room_id=r.id AND m.member_kind='agent' AND m.member_id=? AND m.left_at IS NULL)))`, roomID, projectID, agentID).Scan(&allowed); err != nil {
 		return AgentHistoryPage{}, err
 	}
@@ -80,7 +80,7 @@ func (s *Store) AgentRoomHistory(ctx context.Context, agentID, projectID, roomID
 		FROM message m JOIN room r ON r.id=m.room_id
 		LEFT JOIN user u ON m.author_kind='user' AND u.id=m.author_id
 		LEFT JOIN agent a ON m.author_kind='agent' AND a.id=m.author_id
-		WHERE m.room_id=? AND m.no>0 AND m.no<? AND r.project_id=? AND
+		WHERE m.room_id=? AND m.no>0 AND m.no<? AND r.project_id IN (?,`+agentDMProjectSQL+`) AND
 		(r.kind<>'dm' OR EXISTS(SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL))
 		ORDER BY m.no DESC LIMIT ?`, roomID, beforeNo, projectID, agentID, limit+1)
 	if err != nil {
@@ -241,7 +241,7 @@ func (s *Store) RoomsForAgent(ctx context.Context, agentID, projectID string) ([
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id)
 		FROM room r JOIN room_member own ON own.room_id=r.id AND own.member_kind='agent'
 			AND own.member_id=? AND own.left_at IS NULL
-		WHERE r.project_id=? ORDER BY r.depth,r.created_at,r.id`, agentID, projectID)
+		WHERE r.project_id IN (?,`+agentDMProjectSQL+`) ORDER BY r.depth,r.created_at,r.id`, agentID, projectID)
 	if err != nil {
 		return nil, err
 	}

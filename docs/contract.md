@@ -37,8 +37,12 @@ isolation. Migrations may reshape tables later.
 Projects, rooms, people
 - **project**(id, name, folder, repo_url?, gate[open|
   paused], gate_rev, control_desired[active|paused|stopped], created_at,
-  archived_at?) — `archived_at` (migration 80) is NULL for a live project; see
-  §3.5b.
+  archived_at?, system 0|1) — `archived_at` (migration 80) is NULL for a live
+  project; see §3.5b. `system` (migration 81) is 1 only for the one reserved
+  project (`prj_agentdm`) that chats between agents hang off: it has no members,
+  folder or agents, is never listed, and migration 82 makes triggers refuse
+  changing or deleting its row and adding a member to it. Every query that
+  enumerates projects filters `system=0`.
 - **room**(id, project_id, parent_id?, depth, kind[home|task|lobby|dm],
   dm_key? UNIQUE, lifecycle[open|closing|closed], gate[open|paused],
   gate_rev, control_desired[active|paused|stopped], lifecycle_rev, title,
@@ -48,7 +52,11 @@ Projects, rooms, people
   one home room and a `general` task room beneath it (also a project the v1
   import creates; an import into an existing project fills its open `general`
   rather than adding a second one, and uses a closed `general` only for v1
-  rooms that are all imported archived)
+  rooms that are all imported archived). A chat between two agents is a `dm`
+  room under the reserved project, keyed `agents:<id>:<id>` (one per pair); it
+  is the only room whose agents belong to different projects, and the agent's
+  own project, not the room's, decides its dispatch gate, caps, billing and
+  memory
 - **scope_control_agent**(scope_kind[room|project], scope_id, agent_id,
   restore_desired, hold_desired, bulk_desired, bulk_rev) — records each
   scope's pause or stop hold, a shared pre-scope desired state, and the last
@@ -301,12 +309,12 @@ Execution
   UNIQUE (turn_id, answer_rev); the server's durable answer acknowledgement
 - **request_key**(actor_kind, actor_id, kind[spawn|team_spawn|control|
   scope_control|switch|inbox_answer|recovery_decision|room_create|room_close|
-  schedule_create|leaderboard_start], key,
+  schedule_create|leaderboard_start|dm_agent], key,
   request_digest, result_json, created_at) —
   UNIQUE (actor_kind, actor_id, kind, key); same key + same digest → original
   result; same key + different digest → `conflict`. The `kind` column has a
-  CHECK constraint (migration 52 rebuild) listing exactly the values above, so a
-  new kind needs a migration. `team_spawn` and `leaderboard_start` are
+  CHECK constraint (migration 52 rebuild, extended with `dm_agent` by migration
+  81) listing exactly the values above, so a new kind needs a migration. `team_spawn` and `leaderboard_start` are
   retired: no code writes them (the leaderboard rows were deleted by migration
   56), they stay only in the constraint. The kinds written today are spawn,
   switch, scope_control, control (agent lead tool), room_create, room_close,
@@ -361,7 +369,8 @@ Inbox, usage, events, settings
 - **Message references from agents** are project-wide on purpose: an agent may
   read, by number, any message of any room of its own project (rooms it is not
   in and archived ones included; a private chat only as a member), for
-  `referenced_messages`, `message_get`, and paginated `room_history`. Another project's messages never. `list_agents` lists only agents in the caller's project. Only an active lead may use `set_role`; it cannot assign the lead role or change a lead, requires the target to be idle or stopped and the current desired revision, and preserves singleton writer ownership and role cardinality.
+  `referenced_messages`, `message_get`, and paginated `room_history`. Another project's messages never,
+  except a chat between agents the agent is a member of (it belongs to no project, so its text is readable by its two agents and its people only). `list_agents` lists only agents in the caller's project. Only an active lead may use `set_role`; it cannot assign the lead role or change a lead, requires the target to be idle or stopped and the current desired revision, and preserves singleton writer ownership and role cardinality.
 - **message_no_counter**(id=1, value) — the message-number allocator
   (migration 71); `message.no` is unique where it is positive.
 - **room_view_preference**(user_id, room_id, hidden 0|1, notify[default|all|
@@ -1064,6 +1073,16 @@ Computed in the message-insert transaction; every decision → note or
   overwritten by the `reply` reason.
   An AI reply to a human still targets that human;
 - inbox answer → the requester;
+- in a chat between agents (`room.project_id` is the reserved project, `kind=dm`,
+  `dm_key` `agents:<id>:<id>`): an agent's message → only the other agent of the
+  pair, reason `agent_dm` (mentions, group tags, replies and handoffs are not
+  read, and people are not addressed); at most 30 agent turns per chat in the
+  last hour, after which an agent's message wakes nobody
+  (`message_not_woken` reason `dm_turn_cap`, one system notice an hour); a
+  person's message → the agents it names, or both when it names none, but only
+  agents whose project that person reaches (owner or operator there, or the
+  instance owner): the others get `message_not_woken` reason `no_reach`, and the
+  message stays visible;
 - never: own messages, duplicates, routine system chatter, agents that are
   revoked or have left the room. Role/control changes ride in the next
   `deliver` context.

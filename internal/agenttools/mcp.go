@@ -55,6 +55,11 @@ var catalog = []tool{
 		"base_ref":    map[string]string{"type": "string", "description": "Committed base branch or ref; defaults to current HEAD"},
 		"request_key": map[string]string{"type": "string"},
 	}, "required": []string{"title", "request_key"}}},
+	{"dm_agent", "Active lead only. Send a private message to any agent, in this project or another, starting a chat with it the first time; the chat is shared by the two of you and its people, and kept apart from every project room. The target is woken under its own project and answers in the chat; its answer wakes you in the chat, where you may also report into your own project's rooms. The server decides whether you may message that agent from the people behind this turn, never the model. There is a limit on turns per chat and on new chats per hour. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+		"target_agent_id": map[string]string{"type": "string", "description": "Full agent ID of the agent to message"},
+		"body":            map[string]string{"type": "string"},
+		"request_key":     map[string]string{"type": "string"},
+	}, "required": []string{"target_agent_id", "body", "request_key"}}},
 	{"close_room", "Active lead only. Archive a task room you belong to using its lifecycle_rev; closure includes the normal grace period. Close children first or set cascade. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"room_id": map[string]string{"type": "string"}, "lifecycle_rev": map[string]string{"type": "integer"},
 		"cascade": map[string]string{"type": "boolean"}, "request_key": map[string]string{"type": "string"},
@@ -262,6 +267,13 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 		}
 		body = map[string]any{"title": title, "parent_id": getString("parent_id"),
 			"worktree": map[string]any{"enabled": getBool("worktree"), "base_ref": getString("base_ref")}}
+	case "dm_agent":
+		method, path = http.MethodPost, "/api/agent/dms"
+		requestKey = getString("request_key")
+		if strings.TrimSpace(getString("target_agent_id")) == "" || strings.TrimSpace(getString("body")) == "" {
+			return toolResult("target_agent_id and body are required", true)
+		}
+		body = map[string]any{"target_agent_id": strings.TrimSpace(getString("target_agent_id")), "body": getString("body")}
 	case "close_room":
 		roomID := getString("room_id")
 		if !strings.HasPrefix(roomID, "room_") {

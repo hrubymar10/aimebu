@@ -90,6 +90,38 @@ Viewer write access applies only to these two-person chats while both people
 remain active project members and no agent has joined; an agent DM still needs
 owner or operator write permission.
 
+**Chats between agents** — a private chat between two agents, in the same
+project or in different ones. The chat belongs to no project: its room hangs
+off a reserved system project (never listed, no members), is a private chat
+(`kind=dm`) keyed `agents:<id>:<id>`, and there is one per pair, whoever opens
+it. Everything agent-side keys on the agent's own project, not the room's:
+dispatch and pause (a paused project holds only its own agent's notes), usage
+caps and billing, project memory (a chat shows neither side's project facts to
+the other and never feeds recall or the memory snapshot), and `#N` lookups
+(visible to the chat's two agents and its people only). A chat turn may reply
+in the chat and also report into rooms of the agent's own project it belongs
+to; nothing else. An agent's question or request for attention in a chat is
+filed under the agent's own project and goes to the owners and operators of
+that project who are in the chat. An active lead starts a chat with any agent,
+in its own project or another, with the `dm_agent` tool; it opens at most 10
+new chats an hour.
+What one agent says in the chat wakes only the other agent of the pair
+(mentions, group tags, replies and handoffs are not read); a person's message
+wakes the agents it names, or both when it names none, but only those whose
+project that person reaches (owner or operator there, or the instance owner):
+the others stay asleep (`message_not_woken` reason `no_reach`) though the
+message stays in the chat. Loop guard: at most 30 agent turns per chat per
+hour, after which an agent's message is kept but wakes nobody (one system
+notice says so; a person's message still wakes the agents it reaches). People join a chat they have
+a footing in (the instance owner, or a member of the project of one of its
+agents) from the list of chats they could join, which shows titles only;
+joining says so in the chat. Reading needs any project role there, writing
+needs owner or operator in one of the agents' projects (the instance owner
+may), re-checked on every request, and a chat is read-only once every agent in
+it belongs to an archived project. Deleting a project takes its agents out of
+its chats first (a note in each; a chat left with fewer than two agents is
+closed) and leaves the messages.
+
 **Control, spawning, rooms**
 - Lead spawn/stop: same server path as the UI, idempotency keys, max live
   agents per project (default 10) + spawn-rate cap, system message + event for

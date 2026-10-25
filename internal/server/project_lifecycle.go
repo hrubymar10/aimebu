@@ -11,7 +11,7 @@ import (
 
 // An archived project is read-only: every change a person makes to it, its rooms, its agents and its Inbox is refused with 409
 // project_archived, whatever the route. These are the few changes that stay possible (reopening and deleting it, reading a room, a
-// person's own notification preference, stopping or pausing an agent, resolving a recovery or a failed delivery, and taking a worktree
+// person's own notification preference, leaving a chat between agents, stopping or pausing an agent, resolving a recovery or a failed delivery, and taking a worktree
 // away so that the project can be deleted). Starting an agent is refused inside the store; a recovery decision there can only abandon,
 // and ends with the agent stopped.
 func archivedAllows(method, path string) bool {
@@ -28,7 +28,7 @@ func archivedAllows(method, path string) bool {
 		// What resolves a problem that was already there (a recovery decision, a failed delivery) is how a stuck agent is freed so the
 		// project can be deleted; the closed gate keeps anything from running meanwhile.
 		return true
-	case len(parts) == 4 && parts[1] == "rooms" && ((parts[3] == "read" && method == http.MethodPost) || (parts[3] == "preferences" && method == http.MethodPatch) || (parts[3] == "worktree" && method == http.MethodDelete)):
+	case len(parts) == 4 && parts[1] == "rooms" && ((parts[3] == "read" && method == http.MethodPost) || (parts[3] == "leave" && method == http.MethodPost) || (parts[3] == "preferences" && method == http.MethodPatch) || (parts[3] == "worktree" && method == http.MethodDelete)):
 		return true
 	}
 	return false
@@ -147,4 +147,17 @@ func (s *Server) projectLifecycleError(w http.ResponseWriter, err error) {
 	default:
 		fail(w, err)
 	}
+}
+
+// systemProjectGuard answers every route that names the reserved project of chats between agents as for a project that does not exist, so no
+// route can archive, rename, delete, read or give people access to it. (The store refuses the same things on its own.)
+func (s *Server) systemProjectGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) >= 3 && parts[0] == "api" && parts[1] == "projects" && parts[2] == store.AgentDMProjectID {
+			apiError(w, http.StatusNotFound, "not_found", "no such project")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

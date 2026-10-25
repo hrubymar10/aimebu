@@ -213,8 +213,9 @@ func (tx *Tx) askInbox(turn answerTurn, message Message, ask *answer.Ask) error 
 }
 
 func (tx *Tx) insertAnswerInbox(turn answerTurn, message Message, kind string, payload any) error {
+	// The item belongs to the asking agent's project, whatever room it asked in: a chat between agents has no members of its own to see it.
 	var projectID string
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM room WHERE id=?`, message.RoomID).Scan(&projectID); err != nil {
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, turn.agentID).Scan(&projectID); err != nil {
 		return err
 	}
 	id, err := newID("inb")

@@ -49,7 +49,7 @@ func (s *Store) PruneRuntime(ctx context.Context) error {
 				return fmt.Errorf("prune runtime: %s: %w", statement.query, err)
 			}
 		}
-		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT id FROM project`)
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT id FROM project WHERE system=0`)
 		if err != nil {
 			return err
 		}

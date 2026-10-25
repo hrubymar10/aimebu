@@ -86,10 +86,10 @@ func TestMCPListsNarrowToolsAndSendsAgentKey(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Result.Tools) != 20 {
+	if len(listed.Result.Tools) != 21 {
 		t.Fatalf("tools=%+v", listed.Result.Tools)
 	}
-	for i, name := range []string{"list_rooms", "list_agents", "room_history", "list_macros", "list_schedules", "create_schedule", "usage_left", "create_room", "close_room", "memory_add", "memory_list", "memory_update", "memory_remove", "memory_recall", "attachment_get", "spawn_agent", "stop_agent", "set_role", "message_get", "react"} {
+	for i, name := range []string{"list_rooms", "list_agents", "room_history", "list_macros", "list_schedules", "create_schedule", "usage_left", "create_room", "dm_agent", "close_room", "memory_add", "memory_list", "memory_update", "memory_remove", "memory_recall", "attachment_get", "spawn_agent", "stop_agent", "set_role", "message_get", "react"} {
 		if listed.Result.Tools[i].Name != name {
 			t.Fatalf("tool %d = %q", i, listed.Result.Tools[i].Name)
 		}
@@ -223,13 +223,17 @@ func TestRoomToolsForwardToNarrowRoutes(t *testing.T) {
 	for _, input := range []string{
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_room","arguments":{"title":"Task","parent_id":"room_parent","request_key":"create-key"}}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"close_room","arguments":{"room_id":"room_child","lifecycle_rev":2,"cascade":true,"request_key":"close-key"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"dm_agent","arguments":{"target_agent_id":"agt_other","body":"a question","request_key":"dm-key"}}}`,
 	} {
 		response, _ := s.Process(context.Background(), []byte(input))
 		if strings.Contains(string(response), `"isError":true`) {
 			t.Fatalf("tool failed: %s", response)
 		}
 	}
-	if len(calls) != 2 ||
+	if len(calls) != 3 || calls[2].Method != "POST" || calls[2].Path != "/api/agent/dms" || calls[2].Key != "dm-key" || calls[2].Body["target_agent_id"] != "agt_other" || calls[2].Body["body"] != "a question" {
+		t.Fatalf("dm_agent call=%+v", calls)
+	}
+	if len(calls) != 3 ||
 		calls[0].Method != "POST" || calls[0].Path != "/api/agent/rooms" || calls[0].Key != "create-key" || calls[0].Body["title"] != "Task" ||
 		calls[1].Method != "POST" || calls[1].Path != "/api/agent/rooms/room_child/close" || calls[1].Key != "close-key" || calls[1].Body["lifecycle_rev"] != float64(2) || calls[1].Body["cascade"] != true {
 		t.Fatalf("forwarded calls=%+v", calls)

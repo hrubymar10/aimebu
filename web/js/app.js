@@ -123,6 +123,11 @@ setProjectNames(projectID => sidebar.projects.get(projectID)?.name || '');
 sidebar.holdRead = id => chat.room?.id === id && (chat.contextMode || chat.catchingUp);
 sidebar.shownSeq = id => chat.room?.id === id ? chat.newestShownSeq() : 0;
 chat.onLatest = room => { if (sidebar.active === room.id) sidebar.markSeen(sidebar.rooms.get(room.id)); };
+// A room that was open here is closed: no chat, no knowledge, no room in the address.
+function closeOpenRoom() {
+  chat.reset(); knowledge.setRoom(null);
+  history.replaceState(null, '', `${location.pathname}${location.search}`);
+}
 // A removed room is gone for everyone: refresh its project and, if it was open here, go to the project's home room.
 async function roomRemoved(projectID, roomID) {
   const generation = sessionGeneration;
@@ -133,13 +138,32 @@ async function roomRemoved(projectID, roomID) {
   if (home) await selectRoom(home);
 }
 chat.onRoomRemoved = room => roomRemoved(room.project_id, room.id);
+// A room the person opened that the server no longer has: a short notice, then the same way out as a removal seen live.
+async function roomGone(room) {
+  showToast(`${room.title || 'That room'} no longer exists.`);
+  // A chat between agents is filed under a reserved project that is not a project: only that chat goes, never the project.
+  if (sidebar.isAgentChatProject(room.project_id)) { await chat.onChatLeft(room); return; }
+  try { await roomRemoved(room.project_id, room.id); } catch (error) {
+    if ([403, 404].includes(error?.status)) await projectRemoved(room.project_id); else throw error;
+  }
+}
+// Leaving a chat between agents: it drops out of the list, and if it was open the person goes to a project's home room.
+chat.onChatLeft = async room => {
+  const generation = sessionGeneration;
+  sidebar.forgetRoom(room.id);
+  try { await sidebar.refreshAgentChats(); } catch { /* the list is read again with the next event; the chat is already gone from here */ }
+  if (generation !== sessionGeneration || chat.room?.id !== room.id) return;
+  const home = [...sidebar.rooms.values()].find(item => item.kind === 'home');
+  if (home) await selectRoom(home); else { chat.reset(); refreshEmptyState(); }
+};
 // A deleted project: its rooms leave the list, and a room of it that was open gives way to the empty state.
 async function projectRemoved(projectID) {
+  if (sidebar.isAgentChatProject(projectID)) return; // the reserved project of the chats between agents is never removed
   const generation = sessionGeneration;
   const wasOpen = chat.room?.project_id === projectID;
   sidebar.forgetProject(projectID);
   if (generation !== sessionGeneration) return;
-  if (wasOpen) { chat.reset(); knowledge.setRoom(null); history.replaceState(null, '', `${location.pathname}${location.search}`); }
+  if (wasOpen) closeOpenRoom();
   refreshEmptyState();
 }
 // A "#N" link to a message of another room: open that room on the message (the server told which room holds it).
@@ -339,7 +363,15 @@ async function openRoom(room, messageID) {
   const current = () => generation === sessionGeneration && selection === roomSelectionGeneration;
   inbox.hide();
   setRoomsOpen(false);
-  await sidebar.refreshProject(room.project_id);
+  try { await sidebar.refreshProject(room.project_id); } catch (error) {
+    // The project itself is gone (or no longer reachable): it leaves the list, as when its removal arrives live. A chat between agents
+    // belongs to no project, so a failed read of their list proves nothing about it: the room opens from what is already known.
+    if (!sidebar.isAgentChatProject(room.project_id)) {
+      if (![403, 404].includes(error?.status) || !current()) throw error;
+      await projectRemoved(room.project_id);
+      return false;
+    }
+  }
   if (!current()) return false;
   room = sidebar.rooms.get(room.id) || room;
   sidebar.setActive(room.id);
@@ -349,7 +381,13 @@ async function openRoom(room, messageID) {
   agents.setRoomFacts(room);
   history.replaceState(null, '', `${location.pathname}${location.search}#${encodeURIComponent(room.id)}`);
   try { localStorage.setItem('aimebu2.lastRoom', room.id); } catch { /* private mode: nothing to remember */ }
-  await chat.open(room);
+  try { await chat.open(room); } catch (error) {
+    // The room was removed (or taken away) after the list was read, in another tab or by another person: say so and go to the project's home
+    // room. A 403 is the same: the person no longer reaches it.
+    if (![403, 404].includes(error?.status) || !current()) throw error;
+    await roomGone(room);
+    return false;
+  }
   if (!current() || chat.room?.id !== room.id) return false;
   knowledge.setRoom(room);
   await agents.setRoom(room);
@@ -372,9 +410,16 @@ async function snapshot(generation = sessionGeneration) {
   if (generation !== sessionGeneration) return null;
   if (selection === roomSelectionGeneration && selectionsInFlight === 0) {
     const remembered = (() => { try { return localStorage.getItem('aimebu2.lastRoom') || ''; } catch { return ''; } })();
-    const selected = sidebar.rooms.get(chat.room?.id || decodeURIComponent(location.hash.slice(1))) || sidebar.rooms.get(remembered);
+    // A room that is open here but gone from the lists gives way to its project's home room.
+    const open = chat.room;
+    const home = open && !sidebar.rooms.has(open.id) ? [...sidebar.rooms.values()].find(room => room.project_id === open.project_id && room.kind === 'home') : null;
+    const selected = home || sidebar.rooms.get(chat.room?.id || decodeURIComponent(location.hash.slice(1))) || sidebar.rooms.get(remembered);
     if (selected) await selectRoom(selected);
-    else { const first = [...sidebar.rooms.values()][0]; if (first) await selectRoom(first); }
+    else {
+      const first = [...sidebar.rooms.values()][0];
+      if (first) await selectRoom(first);
+      else if (chat.room && !sidebar.rooms.has(chat.room.id)) closeOpenRoom(); // the last project is gone: nothing is left to show
+    }
   }
   if (generation !== sessionGeneration) return null;
   refreshEmptyState();

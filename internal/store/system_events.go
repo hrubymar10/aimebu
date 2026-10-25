@@ -57,7 +57,7 @@ func (s *Store) RecentSystemEvents(ctx context.Context, userID string, limit int
 	for _, kind := range systemEventKinds {
 		args = append(args, kind)
 	}
-	args = append(args, userID, userID, userID, limit)
+	args = append(args, userID, userID, userID, userID, userID, userID, limit)
 	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at
 		FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id
 		WHERE e.kind IN (`+marks+`) AND `+eventVisible+`

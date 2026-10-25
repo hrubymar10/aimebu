@@ -54,14 +54,17 @@ func (s *Store) AnswerInbox(ctx context.Context, itemID, userID, key, body strin
 			}
 			return "", err
 		}
-		var roomKind string
+		var roomKind, roomProject string
 		var privateAllowed int
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.kind,EXISTS
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT r.kind,r.project_id,EXISTS
 			(SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='user'
-			AND own.member_id=? AND own.left_at IS NULL) FROM room r WHERE r.id=?`, userID, roomID).Scan(&roomKind, &privateAllowed); err != nil {
+			AND own.member_id=? AND own.left_at IS NULL) FROM room r WHERE r.id=?`, userID, roomID).Scan(&roomKind, &roomProject, &privateAllowed); err != nil {
 			return "", err
 		}
-		if kind == "approval" && roomKind != "dm" && role != "owner" || roomKind == "dm" && privateAllowed == 0 || roomKind != "dm" && role != "owner" && role != "operator" {
+		// A private chat with a person answers to that person at any role. A chat between agents is a member-only room whose questions
+		// follow the roles of the asking agent's project, as in any room: owners and operators answer, owners approve.
+		privateChat := roomKind == "dm" && roomProject != AgentDMProjectID
+		if kind == "approval" && !privateChat && role != "owner" || roomKind == "dm" && privateAllowed == 0 || !privateChat && role != "owner" && role != "operator" {
 			return "", ErrForbidden
 		}
 		var lifecycle string

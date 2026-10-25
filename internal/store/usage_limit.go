@@ -112,7 +112,7 @@ func (tx *Tx) usageLimit(kind, id string, now time.Time) (UsageLimit, error) {
 	}
 	where, turnWhere := "room_id=?", "t.room_id=?"
 	if kind == "project" {
-		where, turnWhere = "project_id=?", "r.project_id=?"
+		where, turnWhere = "project_id=?", "(SELECT a.project_id FROM agent a WHERE a.id=t.agent_id)=?"
 	}
 	var knownTurns int64
 	if err = tx.tx.QueryRowContext(tx.ctx, usageLimitTurnsSQL(turnWhere), id, startUTC, endUTC).
@@ -259,7 +259,7 @@ func (s *Store) SetUsageLimitDefault(ctx context.Context, actor string, cost *fl
 		}
 		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT p.id, COALESCE(u.cost_mode,'inherit'), COALESCE(u.turn_mode,'inherit') FROM project p
 			LEFT JOIN usage_limit u ON u.scope_kind='project' AND u.scope_id=p.id
-			WHERE u.scope_id IS NULL OR u.cost_mode='inherit' OR u.turn_mode='inherit' ORDER BY p.id`)
+			WHERE p.system=0 AND (u.scope_id IS NULL OR u.cost_mode='inherit' OR u.turn_mode='inherit') ORDER BY p.id`)
 		if err != nil {
 			return err
 		}

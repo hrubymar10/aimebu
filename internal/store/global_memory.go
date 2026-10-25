@@ -155,7 +155,7 @@ func (s *Store) ManageGlobalKnowledgeWithSource(ctx context.Context, scope, key,
 		}
 		// Every project's stream can refresh the global knowledge viewer. The
 		// event contains no record body or profile key.
-		rows, err := tx.tx.QueryContext(ctx, "SELECT id FROM project")
+		rows, err := tx.tx.QueryContext(ctx, "SELECT id FROM project WHERE system=0")
 		if err != nil {
 			return err
 		}
@@ -266,7 +266,7 @@ func (s *Store) SetGlobalKnowledgeActive(ctx context.Context, scope, key, actorI
 			return err
 		}
 		item.Active, item.Rev, item.AuthorKind, item.AuthorID, item.UpdatedAt = active, rev+1, "user", actorID, now
-		rows, err := tx.tx.QueryContext(ctx, "SELECT id FROM project")
+		rows, err := tx.tx.QueryContext(ctx, "SELECT id FROM project WHERE system=0")
 		if err != nil {
 			return err
 		}

@@ -191,16 +191,19 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput) (reason, detail
 		return "invalid_answer", input.ParseError, nil
 	}
 	seenAttachments := make(map[string]bool)
-	var turnRoomKind string
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind FROM room WHERE id=?`, turn.roomID).Scan(&turnRoomKind); err != nil {
+	var turnRoomKind, turnRoomProject string
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT kind,project_id FROM room WHERE id=?`, turn.roomID).Scan(&turnRoomKind, &turnRoomProject); err != nil {
 		return "", "", err
 	}
+	// A chat between two agents belongs to no project, so its turn may also report into the agent's own project (a lead woken by the
+	// peer's reply has to tell its people). A chat with a person stays closed to everything else.
+	agentChat := turnRoomKind == "dm" && turnRoomProject == AgentDMProjectID
 	for i, item := range input.Parsed.Messages {
-		if turnRoomKind == "dm" && item.Room != turn.roomID {
+		if turnRoomKind == "dm" && item.Room != turn.roomID && !agentChat {
 			return "not_member", "private chat replies must stay in that chat", nil
 		}
-		var projectID, lifecycle string
-		err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,lifecycle FROM room WHERE id=?`, item.Room).Scan(&projectID, &lifecycle)
+		var projectID, lifecycle, itemKind string
+		err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,lifecycle,kind FROM room WHERE id=?`, item.Room).Scan(&projectID, &lifecycle, &itemKind)
 		if errors.Is(err, sql.ErrNoRows) {
 			return "invalid_answer", fmt.Sprintf("message %d targets an unknown room", i), nil
 		}
@@ -211,8 +214,11 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput) (reason, detail
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM agent WHERE id=?`, turn.agentID).Scan(&agentProject); err != nil {
 			return "", "", err
 		}
-		if projectID != agentProject {
+		if projectID != agentProject && !(agentChat && item.Room == turn.roomID) {
 			return "not_member", "room is outside the agent project", nil
+		}
+		if agentChat && item.Room != turn.roomID && itemKind == "dm" {
+			return "not_member", "a chat between agents cannot report into another private chat", nil
 		}
 		if lifecycle != "open" {
 			return "room_closed", "room is closing or closed", nil
@@ -228,11 +234,23 @@ func (tx *Tx) validateAnswer(turn answerTurn, input AnswerInput) (reason, detail
 			var recipients int
 			query := `SELECT COUNT(*) FROM membership WHERE project_id=? AND role IN ('owner','operator')`
 			arg := projectID
-			if turnRoomKind == "dm" {
-				query = `SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='user' AND left_at IS NULL`
-				arg = turn.roomID
+			var err error
+			switch {
+			case agentChat && item.Room == turn.roomID:
+				// The Inbox shows an agent's question to the owners and operators of the agent's own project and an approval to its owners, so only
+				// someone in the chat who is one of them can answer it.
+				roles := `'owner','operator'`
+				if item.Ask != nil && item.Ask.Kind == "approval" {
+					roles = `'owner'`
+				}
+				err = tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM room_member rm JOIN membership mb ON mb.project_id=? AND mb.user_id=rm.member_id
+					WHERE rm.room_id=? AND rm.member_kind='user' AND rm.left_at IS NULL AND mb.role IN (`+roles+`)`, agentProject, turn.roomID).Scan(&recipients)
+			case turnRoomKind == "dm" && item.Room == turn.roomID:
+				err = tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM room_member WHERE room_id=? AND member_kind='user' AND left_at IS NULL`, turn.roomID).Scan(&recipients)
+			default:
+				err = tx.tx.QueryRowContext(tx.ctx, query, arg).Scan(&recipients)
 			}
-			if err := tx.tx.QueryRowContext(tx.ctx, query, arg).Scan(&recipients); err != nil {
+			if err != nil {
 				return "", "", err
 			}
 			if recipients == 0 {

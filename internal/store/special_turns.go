@@ -95,7 +95,7 @@ func (tx *Tx) abandonSpecialTurn(id, reason string) error {
 func (s *Store) ExpireBlockedSpecialTurns(ctx context.Context) (int, error) {
 	count := 0
 	err := s.Tx(ctx, func(tx *Tx) error {
-		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT t.id,r.lifecycle,r.gate,p.gate,COALESCE((SELECT e.created_at FROM event e WHERE e.turn_id=t.id AND e.kind='turn_recorded' ORDER BY e.seq LIMIT 1),'') FROM turn t JOIN room r ON r.id=t.room_id JOIN project p ON p.id=r.project_id WHERE t.exec='pending' AND t.mode IN ('correction','diagnostic') AND NOT EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested')`)
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT t.id,r.lifecycle,r.gate,p.gate,COALESCE((SELECT e.created_at FROM event e WHERE e.turn_id=t.id AND e.kind='turn_recorded' ORDER BY e.seq LIMIT 1),'') FROM turn t JOIN room r ON r.id=t.room_id JOIN agent ag ON ag.id=t.agent_id JOIN project p ON p.id=ag.project_id WHERE t.exec='pending' AND t.mode IN ('correction','diagnostic') AND NOT EXISTS(SELECT 1 FROM event e WHERE e.turn_id=t.id AND e.kind='turn_dispatch_requested')`)
 		if err != nil {
 			return err
 		}

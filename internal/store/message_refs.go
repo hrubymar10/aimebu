@@ -72,7 +72,7 @@ func agentMessageByNo(ctx context.Context, q singleRowQuerier, agentID, projectI
 	var roomID, title, kind, authorKind, authorID, body, createdAt string
 	err := q.QueryRowContext(ctx, `SELECT r.id,r.title,r.kind,m.author_kind,m.author_id,m.body,m.created_at
 		FROM message m JOIN room r ON r.id=m.room_id
-		WHERE m.no=? AND m.no>0 AND r.project_id=? AND (r.kind<>'dm' OR EXISTS (SELECT 1 FROM room_member own
+		WHERE m.no=? AND m.no>0 AND r.project_id IN (?,`+agentDMProjectSQL+`) AND (r.kind<>'dm' OR EXISTS (SELECT 1 FROM room_member own
 			WHERE own.room_id=r.id AND own.member_kind='agent' AND own.member_id=? AND own.left_at IS NULL))`, no, projectID, agentID).
 		Scan(&roomID, &title, &kind, &authorKind, &authorID, &body, &createdAt)
 	if err == sql.ErrNoRows {

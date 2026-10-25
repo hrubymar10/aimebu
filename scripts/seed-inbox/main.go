@@ -15,10 +15,10 @@ import (
 
 func main() {
 	if len(os.Args) != 5 && len(os.Args) != 6 && len(os.Args) != 7 {
-		fmt.Fprintln(os.Stderr, "usage: seed-inbox DB PROJECT ROOM MESSAGE [recovery|budget AGENT]")
+		fmt.Fprintln(os.Stderr, "usage: seed-inbox DB PROJECT ROOM MESSAGE [recovery|budget AGENT|agentchat AGENT]")
 		os.Exit(2)
 	}
-	if (len(os.Args) == 6 && os.Args[5] != "recovery" && os.Args[5] != "legacy") || (len(os.Args) == 7 && os.Args[5] != "budget") {
+	if (len(os.Args) == 6 && os.Args[5] != "recovery" && os.Args[5] != "legacy") || (len(os.Args) == 7 && os.Args[5] != "budget" && os.Args[5] != "agentchat") {
 		fmt.Fprintln(os.Stderr, "unknown seed mode")
 		os.Exit(2)
 	}
@@ -32,8 +32,36 @@ func main() {
 		panic(err)
 	}
 	defer db.Close()
+	agentChat := len(os.Args) == 7 && os.Args[5] == "agentchat"
+	var machine string
+	if agentChat {
+		if machine, _, err = db.AgentPlacement(ctx, os.Args[6]); err != nil {
+			panic(err)
+		}
+	}
 	seed := func() error {
 		return db.Tx(ctx, func(tx *store.Tx) error {
+			if agentChat {
+				// A second project with one agent, and a private chat between that agent and the given one (which belongs to the smoke project).
+				// The one message is the system's, so no agent is woken: the browser smoke is about what people see and may do.
+				other, err := tx.CreateProject(store.Project{Name: "Other project", Folder: "/tmp/aimebu-smoke-other"})
+				if err != nil {
+					return err
+				}
+				if _, err := tx.Exec(`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES ('chk_smoke_chat',?,?,'/tmp/aimebu-smoke-other')`, other.ID, machine); err != nil {
+					return err
+				}
+				peer, err := tx.CreateAgent(store.Agent{Slug: "peer", ProjectID: other.ID, RoleID: "role_worker_default", Tool: "fake", Variant: "test", Model: "test", Provider: "fake", MachineID: machine, CheckoutID: "chk_smoke_chat", KeyHash: "placeholder", CreatedBy: "seed"})
+				if err != nil {
+					return err
+				}
+				chat, _, err := tx.OpenAgentDM(os.Args[6], peer.ID, os.Args[6])
+				if err != nil {
+					return err
+				}
+				_, err = tx.InsertMessage(store.Message{RoomID: chat.ID, AuthorKind: "system", AuthorID: "system", Body: "The two agents agreed on the API shape."})
+				return err
+			}
 			if len(os.Args) == 7 {
 				updated, err := tx.Exec(`UPDATE agent SET desired='not_accepting',desired_rev=desired_rev+1 WHERE id=?`, os.Args[6])
 				if err != nil {
