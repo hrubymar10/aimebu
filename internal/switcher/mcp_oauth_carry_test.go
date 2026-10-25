@@ -513,3 +513,34 @@ func TestEmptyLiveLoginAcceptsMCPLoginsButNotJunk(t *testing.T) {
 		}
 	}
 }
+
+// A /login that lands after the eligibility check but before the storage lock is taken must be
+// captured and backed up like any other live login, not skipped because the file looked logged out.
+func TestLinkSwitchCapturesALoginThatLandedBeforeTheStorageLock(t *testing.T) {
+	m, live := linkPair(t, futureClaude("a"), claudeDoc(t, "b", nil))
+	placeholder := `{"claudeAiOauth":{"accessToken":"","refreshToken":""}}`
+	must(t, os.Remove(m.profileCredPath(ToolClaude, "a"))) // the link would dangle over the placeholder
+	must(t, os.WriteFile(live, []byte(placeholder), 0o600))
+	arrived := futureClaude("arrived")
+	m.beforeStorageLock = func() { must(t, os.WriteFile(live, []byte(arrived), 0o600)) }
+
+	if _, switched, err := m.Switch(ToolClaude, "b"); err != nil || !switched {
+		t.Fatalf("Switch = %v %v", switched, err)
+	}
+	if got := readFile(t, m.profileCredPath(ToolClaude, "a")); got != arrived {
+		t.Fatalf("the login that arrived was not captured into the outgoing profile: %s", got)
+	}
+	var backedUp bool
+	entries, _ := os.ReadDir(filepath.Join(m.backupsRoot(), ToolClaude))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "a-") && readFile(t, filepath.Join(m.backupsRoot(), ToolClaude, e.Name())) == arrived {
+			backedUp = true
+		}
+	}
+	if !backedUp {
+		t.Fatalf("the login that arrived was not backed up: %v", entries)
+	}
+	if got := readFile(t, live); !strings.Contains(got, "refresh-b") || strings.Contains(got, "arrived") {
+		t.Fatalf("live = %s", got)
+	}
+}

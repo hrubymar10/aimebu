@@ -128,7 +128,10 @@ the end of the swap, so an MCP refresh cannot land between the read and the
 write; a switch that cannot take it within 3 seconds is refused with nothing
 changed. A Claude process that rewrites a stale copy after the lock is released
 is the same limitation as for the account login: switch with the sessions
-stopped.
+stopped. A profile's own stored MCP logins come back with it, and a switch
+carries them forward like any other: logging out of an MCP server while
+another account is active does not remove it from a profile that still holds
+it (there are no tombstones).
 
 The UI lists host agents on the selected tool before a switch. If any has an
 active turn, the API returns 409 with those agents; wait for the turn to finish

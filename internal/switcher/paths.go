@@ -81,6 +81,9 @@ type Manager struct {
 	// beforeSwitchLock is a test seam: it runs in Switch after the unlocked
 	// marker check and before the switcher lock is taken.
 	beforeSwitchLock func()
+	// beforeStorageLock is a test seam: it runs in a link-model Claude Switch after the eligibility
+	// checks and before Claude's storage-write lock is taken, the window in which a login can land.
+	beforeStorageLock func()
 }
 
 // DefaultRoot resolves the switcher root from AIMEBU2_CONFIG_DIR (or the default

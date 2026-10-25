@@ -253,6 +253,9 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard) (activ
 	// the CLI writes them into it under this same lock: without it a login or refresh landing
 	// between the read and the replacement would be lost.
 	if tool == ToolClaude {
+		if m.beforeStorageLock != nil {
+			m.beforeStorageLock()
+		}
 		release, lockErr := m.lockClaudeStorage(livePath)
 		if lockErr != nil {
 			return "", false, lockErr
@@ -264,10 +267,26 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard) (activ
 				}
 			}()
 		}
+		// The eligibility read above predates the lock: a /login or a logout may have landed since.
+		// Judge the file again now that nothing can write it, so a login that arrived in between is
+		// captured and backed up like any other instead of being skipped as "absent".
+		if el, err = m.eligibilityFor(tool); err != nil {
+			return "", false, err
+		}
+		if el.TargetCopy {
+			return "", false, fmt.Errorf("%w: %s", ErrTargetCopy, tool)
+		}
+		if !el.Eligible && !el.Absent {
+			return "", false, &NotEligibleError{Tool: tool, Reason: el.Reason}
+		}
+		liveAbsent = el.Absent
 	}
 	// What the live file holds before the switch (nil when absent). A logged-out placeholder
 	// counts as absent for capture but may still carry MCP logins, so it is read regardless.
-	preLive, _ := os.ReadFile(livePath)
+	preLive, readErr := os.ReadFile(livePath)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return "", false, fmt.Errorf("%w: cannot read live credentials: %s", ErrInvalidCredentials, readErr)
+	}
 
 	// 2. Validate the live credentials before writing anything. A corrupt live
 	// file must abort here — storing those bytes into the outgoing profile would
