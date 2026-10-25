@@ -499,7 +499,15 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		case "turn.completed":
 			completed = true
 			input, output := harness.CodexUsage(event)
-			t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: &adapter.Usage{TokensIn: input, TokensOut: output, TokensCacheRead: harness.CodexCachedInput(event)}})
+			cached := harness.CodexCachedInput(event)
+			// Codex reports input_tokens as the whole input, cached part included (cached_input_tokens is a share of it, as in the
+			// Responses API it passes through). Every other adapter reports input and cache reads apart, and the usage views show both
+			// lines, so the cached share is taken out of input here; otherwise a reader would count it twice.
+			if input != nil && cached != nil {
+				fresh := max(*input-*cached, 0)
+				input = &fresh
+			}
+			t.emit(adapter.Event{Kind: adapter.EventUsage, Usage: &adapter.Usage{TokensIn: input, TokensOut: output, TokensCacheRead: cached}})
 		case "turn.failed", "error":
 			failed = true
 			errorEvent = adapter.SanitizeStderr(string(event.Raw))

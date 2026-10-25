@@ -173,7 +173,13 @@ Set `AIMEBU2_LIVE_CC=1` to opt into the separately gated live canary.
 The native Codex adapter uses `codex exec --json` and `codex exec resume`
 with the journaled thread handle. It passes turn input on stdin, keeps the
 exact final candidate bytes, and parses thread, activity, usage, and
-completion events through `internal/harness`.
+completion events through `internal/harness`. `turn.completed.usage` counts
+the cached share inside `input_tokens` (`cached_input_tokens` is part of it), so
+the adapter reports Input as `input_tokens - cached_input_tokens` (never below
+zero) and Cache read as `cached_input_tokens`, the way the other adapters report
+them apart. When Codex omits the cached figure, Input is `input_tokens` and
+Cache read stays unknown. Codex 0.162.1 also prints `cache_write_input_tokens`
+and `reasoning_output_tokens`; neither is read.
 
 Its private per-agent `CODEX_HOME` holds the structured-output schema and a
 translated MCP config. Only the private config contains the agent key; the
