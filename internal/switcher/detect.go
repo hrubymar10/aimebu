@@ -104,6 +104,15 @@ func emptyLiveLogin(path, tool string) bool {
 	for key, value := range root {
 		switch tool {
 		case ToolClaude:
+			if key == "mcpOAuth" {
+				// MCP server logins are not the account's: they stay in the file across a logout and
+				// across a switch to an empty profile. Anything but an object (or null) is not Claude's.
+				var logins map[string]json.RawMessage
+				if err := json.Unmarshal(value, &logins); err != nil {
+					return false
+				}
+				continue
+			}
 			if key != "claudeAiOauth" && key != "claude_ai_oauth" {
 				return false
 			}

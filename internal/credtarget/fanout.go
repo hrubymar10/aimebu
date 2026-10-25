@@ -61,8 +61,9 @@ func (f *FanOut) FanOutActive(tool string, full []byte) error {
 
 // ClearActive removes the credential file of every live target of tool: used
 // when the active profile becomes an empty one, so no target keeps the outgoing
-// account's token. A target that is already gone counts as cleared; errors are
-// joined and never stop the others.
+// account's token. A Claude target keeps its MCP OAuth logins (they are not the
+// account's); it is removed only when it holds nothing else. A target that is
+// already gone counts as cleared; errors are joined and never stop the others.
 //
 // A target that still holds a refresh token is a /login nobody imported yet:
 // removing it would destroy the only copy. If any target holds one, nothing is
@@ -84,13 +85,26 @@ func (f *FanOut) ClearActive(tool string) error {
 			return fmt.Errorf("%s: cannot check for an unimported login: %w", t.ID, err)
 		}
 	}
+	clearer, _ := f.Writer.(targetClearer)
 	var errs []error
 	for _, t := range targets {
-		if err := os.Remove(t.Path); err != nil && !os.IsNotExist(err) {
+		var err error
+		if clearer != nil {
+			err = clearer.ClearTarget(t)
+		} else if rmErr := os.Remove(t.Path); rmErr != nil && !os.IsNotExist(rmErr) {
+			err = rmErr
+		}
+		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", t.ID, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// targetClearer is a writer that removes the account login from a target while keeping what is not
+// the login (Claude's MCP OAuth logins); *Writer does. Without it ClearActive removes the file.
+type targetClearer interface {
+	ClearTarget(t Target) error
 }
 
 // LoginReplacer is implemented by writers that can overwrite a target that still

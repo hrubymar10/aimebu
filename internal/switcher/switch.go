@@ -7,7 +7,12 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
+	"github.com/goccy/go-json"
+
+	"github.com/hrubymar10/aimebu/internal/credtarget"
 	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
@@ -22,7 +27,12 @@ import (
 //  3. Capture: copy live → profiles/<tool>/<active>/.
 //  4. Backup: copy live → backups/<tool>/<active>-<unix>.json.
 //  5. Restore: copy profiles/<tool>/<name>/ → live path, or delete live file
-//     for an empty profile (forces a fresh login).
+//     for an empty profile (forces a fresh login). For Claude the MCP OAuth
+//     logins of the outgoing live file are merged into the incoming credential
+//     (the live side wins a conflict, the incoming copy is backed up first), and
+//     an empty profile keeps them: the live file is reduced to its mcpOAuth
+//     section instead of being deleted. Claude's storage-write lock is held from
+//     the first read of the live file to the end of the swap.
 //  6. Update state.json.
 //  7. On failure in 5–6: restore from the step-4 backup bytes, return original error.
 //     Never leave the live location half-written.
@@ -238,6 +248,27 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard) (activ
 		return "", false, err
 	}
 
+	// Claude: hold its storage-write lock from the first read of the live file to the end of
+	// the swap. The MCP logins carried to the incoming profile are read from the live file, and
+	// the CLI writes them into it under this same lock: without it a login or refresh landing
+	// between the read and the replacement would be lost.
+	if tool == ToolClaude {
+		release, lockErr := m.lockClaudeStorage(livePath)
+		if lockErr != nil {
+			return "", false, lockErr
+		}
+		if release != nil {
+			defer func() {
+				if release() {
+					log.Printf("switcher: %s: the storage-write lock lost its heartbeat during the switch; the swap itself completed", tool)
+				}
+			}()
+		}
+	}
+	// What the live file holds before the switch (nil when absent). A logged-out placeholder
+	// counts as absent for capture but may still carry MCP logins, so it is read regardless.
+	preLive, _ := os.ReadFile(livePath)
+
 	// 2. Validate the live credentials before writing anything. A corrupt live
 	// file must abort here — storing those bytes into the outgoing profile would
 	// overwrite the known-good stored copy with garbage. SKIPPED when the live
@@ -332,27 +363,31 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard) (activ
 		if err := m.removeStoredLink(tool, name); err != nil {
 			return "", false, err
 		}
-		// Empty target: state first, then delete live.
+		// Empty target: state first, then clear live (the account login goes, MCP logins stay).
 		state.Active[tool] = name
 		if stateErr := m.saveState(state); stateErr != nil {
 			return "", false, fmt.Errorf("update state: %w", stateErr)
 		}
-		if removeErr := os.Remove(livePath); removeErr != nil && !os.IsNotExist(removeErr) {
+		if removeErr := clearLiveLogin(tool, livePath, preLive); removeErr != nil {
 			// State is updated but live file persists. Rollback both.
 			//
-			// Unreachable when liveAbsent: os.Remove on an already-absent file
-			// returns os.ErrNotExist, so the !os.IsNotExist guard above skips
-			// this block entirely — the atomicWrite(livePath, liveData) below
-			// never runs with liveData==nil. The guard is load-bearing for that;
-			// don't weaken it. (An atomicWrite of nil bytes to a live
-			// credentials path is the scariest line in this file, so this note
-			// exists to save the next reader from re-deriving the unreachability.)
+			// With liveAbsent this is reachable only when the placeholder carried MCP logins
+			// and rewriting it failed; os.Remove on an absent file reports success. The
+			// rollback bytes are then the placeholder as it was (preLive), and nothing is
+			// written when there are none: an atomicWrite of nil bytes to a live credentials
+			// path is the scariest line in this file, so keep the guard below.
 			state.Active[tool] = activeProfile
 			_ = m.saveState(state)
-			liveDir, _ := m.liveCredDir(tool)
-			_ = os.MkdirAll(liveDir, 0o700)
-			if rbErr := atomicWrite(livePath, liveData, 0o600); rbErr != nil {
-				return "", false, fmt.Errorf("remove live failed (%s) and rollback also failed (%s)", removeErr, rbErr)
+			rollback := liveData
+			if liveAbsent {
+				rollback = preLive
+			}
+			if rollback != nil {
+				liveDir, _ := m.liveCredDir(tool)
+				_ = os.MkdirAll(liveDir, 0o700)
+				if rbErr := atomicWrite(livePath, rollback, 0o600); rbErr != nil {
+					return "", false, fmt.Errorf("remove live failed (%s) and rollback also failed (%s)", removeErr, rbErr)
+				}
 			}
 			return "", false, fmt.Errorf("remove live credentials for empty profile: %w", removeErr)
 		}
@@ -362,7 +397,7 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard) (activ
 	}
 
 	// Non-empty target: restore credentials first (step 5), then update state (step 6).
-	restoreErr := m.restoreProfile(tool, name, livePath)
+	restoreErr := m.restoreProfile(tool, name, livePath, preLive)
 	if restoreErr != nil {
 		// For liveAbsent the live file was absent before the switch and restore
 		// failed before writing (atomicWrite is temp+rename, so no partial), so
@@ -383,9 +418,13 @@ func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard) (activ
 		// Restore succeeded so live now holds the target's creds; state save
 		// failed, so roll back to the pre-switch live state. For non-absent that's
 		// the captured liveData; for liveAbsent the pre-state was no live file at
-		// all, so remove it rather than writing nil bytes.
+		// all, so remove it rather than writing nil bytes (a placeholder that was there goes back as it was).
 		if liveAbsent {
-			_ = os.Remove(livePath)
+			if preLive != nil {
+				_ = atomicWrite(livePath, preLive, 0o600)
+			} else {
+				_ = os.Remove(livePath)
+			}
 		} else {
 			liveDir, _ := m.liveCredDir(tool)
 			_ = os.MkdirAll(liveDir, 0o700)
@@ -436,9 +475,10 @@ func (m *Manager) markIncomingStale(tool, name, liveEmail string) {
 }
 
 // restoreProfile validates the target profile's credentials and writes them to
-// livePath. Only called for non-empty profiles — empty-profile delete is handled
+// livePath, with the MCP logins of the outgoing live file (live) merged in for Claude.
+// Only called for non-empty profiles — empty-profile clearing is handled
 // directly in Switch so state.json can be written first.
-func (m *Manager) restoreProfile(tool, name, livePath string) error {
+func (m *Manager) restoreProfile(tool, name, livePath string, live []byte) error {
 	targetCredPath := m.profileCredPath(tool, name)
 	targetData, err := os.ReadFile(targetCredPath)
 	if err != nil {
@@ -448,6 +488,11 @@ func (m *Manager) restoreProfile(tool, name, livePath string) error {
 	// Validate the target credentials before overwriting live.
 	if valErr := validateStoredCred(tool, targetCredPath); valErr != nil {
 		return fmt.Errorf("%w: target profile: %s", ErrInvalidCredentials, valErr)
+	}
+	if tool == ToolClaude {
+		if targetData, err = m.carryMCPLogins(tool, name, targetData, live); err != nil {
+			return err
+		}
 	}
 
 	liveDir, err := m.liveCredDir(tool)
@@ -614,4 +659,69 @@ func (m *Manager) backupActiveLiveAs(tool, name string) {
 	if err := m.writeUniqueBackup(tool, name, data); err != nil {
 		log.Printf("switcher: %s/%s: back up live credentials: %v", tool, name, err)
 	}
+}
+
+// carryMCPLogins merges the MCP OAuth logins of the outgoing live file into the credential of
+// the profile being activated, so a login made to an MCP server while one account was active is
+// still there after the switch. The active (live) side wins a server both hold with different
+// content; the incoming bytes are backed up first in that case, and only server keys and the
+// profile name reach the log. A live file whose MCP section cannot be read is not carried (logged,
+// the switch proceeds: the live file is captured and backed up as always).
+func (m *Manager) carryMCPLogins(tool, name string, incoming, live []byte) ([]byte, error) {
+	res, err := credtarget.MergeClaudeMCPOAuth(incoming, live)
+	if err != nil {
+		log.Printf("switcher: %s/%s: MCP logins not carried over: %v", tool, name, err)
+		return incoming, nil
+	}
+	if bytes.Equal(res.Merged, incoming) {
+		return incoming, nil
+	}
+	if !json.Valid(res.Merged) {
+		log.Printf("switcher: %s/%s: MCP logins not carried over: merged credentials are not valid JSON", tool, name)
+		return incoming, nil
+	}
+	if res.LosesIncoming() {
+		if err := m.writeUniqueBackup(tool, name, incoming); err != nil {
+			return nil, fmt.Errorf("back up %s/%s before merging MCP logins: %w", tool, name, err)
+		}
+		if len(res.Conflicts) > 0 {
+			log.Printf("switcher: %s/%s: the active MCP login replaced the profile's for server(s) %s; the profile's copy is in its backups", tool, name, strings.Join(res.Conflicts, ", "))
+		} else {
+			log.Printf("switcher: %s/%s: the profile's MCP login section was unreadable and was replaced by the active one; the profile's copy is in its backups", tool, name)
+		}
+	}
+	return res.Merged, nil
+}
+
+// clearLiveLogin makes the live credential file hold no account login: Claude keeps its MCP
+// OAuth logins (preLive, the file as read under the storage lock) and the file is removed only
+// when there are none, as it always was; every other tool's file is removed.
+func clearLiveLogin(tool, livePath string, preLive []byte) error {
+	if tool == ToolClaude {
+		if only, ok := credtarget.ClaudeMCPOnly(preLive); ok {
+			return atomicWrite(livePath, only, 0o600)
+		}
+	}
+	if err := os.Remove(livePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// storageLockTimeout bounds the wait for Claude's storage-write lock; a var so tests need not wait it out.
+var storageLockTimeout = 3 * time.Second
+
+// lockClaudeStorage takes Claude's <configdir>/.storage-write.lock for the live credential file
+// and returns its release (reporting a lost heartbeat). It returns a nil release when the config
+// directory does not exist: no CLI can be writing there, and the lock is a directory inside it.
+func (m *Manager) lockClaudeStorage(livePath string) (release func() bool, err error) {
+	dir := filepath.Dir(livePath)
+	if _, statErr := os.Stat(dir); statErr != nil {
+		return nil, nil
+	}
+	rel, lockErr := (&credtarget.Writer{LockTimeout: storageLockTimeout}).LockStorage(dir)
+	if lockErr != nil {
+		return nil, fmt.Errorf("switch refused: Claude is writing its credentials, try again in a minute: %w", lockErr)
+	}
+	return rel, nil
 }

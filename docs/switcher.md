@@ -106,6 +106,30 @@ complete credentials remain valid to capture because the refresh token may
 still work. A switch with no active profile is refused until you import the
 current login.
 
+**MCP logins follow the user, not the profile.** Claude keeps the OAuth logins of
+the user's MCP servers in the `mcpOAuth` object of `.credentials.json`, next to
+the account login. A switch carries the *live* `mcpOAuth` to the profile being
+activated: on the link model the incoming credential is merged with it before the
+live file is replaced (the union of both maps; the account login of the incoming
+profile is untouched, so no refresh token of the outgoing account crosses over).
+Where the same server key holds different content on both sides the **active (live)
+entry wins** and the profile's own copy is written to its 0600 backups first; the
+log names only the profile and the server keys, never a value. Freshness is not
+guessed from expiry. A live `mcpOAuth` that cannot be read as an object is not
+carried (logged; the live file is backed up as always), and a profile whose own
+section is unreadable gets the live one in its place, backed up first. On a
+migrated install the fan-out already rewrites only the token fields of the live
+file, so the live `mcpOAuth` stays where it is. Switching to an **empty** profile
+removes the account login but keeps `mcpOAuth`: the live file is reduced to that
+section (deleted only when there is none), which reads as logged out, not corrupt,
+and rides along to the next account. On the link model Claude's
+`<configdir>/.storage-write.lock` is held from the first read of the live file to
+the end of the swap, so an MCP refresh cannot land between the read and the
+write; a switch that cannot take it within 3 seconds is refused with nothing
+changed. A Claude process that rewrites a stale copy after the lock is released
+is the same limitation as for the account login: switch with the sessions
+stopped.
+
 The UI lists host agents on the selected tool before a switch. If any has an
 active turn, the API returns 409 with those agents; wait for the turn to finish
 or stop it before retrying. A standalone CLI switch should be made while the
