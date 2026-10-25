@@ -559,3 +559,7 @@ func parseCodexModels(out []byte) ([]protocol.ModelCandidate, error) {
 	}
 	return models, nil
 }
+
+// DetectHarnesses is detectHarnesses for callers outside the supervisor, such as `aimebu doctor --machine`: the harness executables found on
+// this machine, each reported once, nothing saved.
+func DetectHarnesses(ctx context.Context) []protocol.HarnessCandidate { return detectHarnesses(ctx) }

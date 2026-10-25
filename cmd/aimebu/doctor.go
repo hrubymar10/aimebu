@@ -21,8 +21,11 @@ import (
 	"github.com/hrubymar10/aimebu/internal/switcher"
 )
 
-// doctorCommand implements `aimebu doctor [--json] [--strict]`: read-only
-// health checks for a server installation. Each check reports ok, warn, or
+const doctorUsage = "usage: aimebu doctor [--json] [--strict] [--machine]"
+
+// doctorCommand implements `aimebu doctor [--json] [--strict] [--machine]`:
+// read-only health checks for a server installation, or with --machine for a
+// host that runs only the supervisor. Each check reports ok, warn, or
 // fail with a one-line explanation and, when something is wrong, a hint on
 // fixing it. The exit code is 1 when any check fails; warnings alone exit 0,
 // unless --strict turns them into failures for scripts.
@@ -32,15 +35,17 @@ import (
 // DSN, which enables WAL), the TLS files are only parsed, and the server is
 // probed with a single unauthenticated GET.
 func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	jsonOutput, strict := false, false
+	jsonOutput, strict, machineMode := false, false, false
 	for _, arg := range args {
 		switch arg {
 		case "--json":
 			jsonOutput = true
 		case "--strict":
 			strict = true
+		case "--machine":
+			machineMode = true
 		default:
-			fmt.Fprintln(stderr, "usage: aimebu doctor [--json] [--strict]")
+			fmt.Fprintln(stderr, doctorUsage)
 			return 2
 		}
 	}
@@ -53,6 +58,13 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 
 	now := time.Now()
 	configCheck := checkConfigDir(config.root)
+	if machineMode {
+		result := doctorResult{Version: resolveVersion(), GeneratedAt: now.UTC().Format(time.RFC3339), Checks: scopeAll([]doctorCheck{configCheck}, scopeMachine)}
+		if configCheck.Status != statusFail {
+			result.Checks = append(result.Checks, checkMachineMode(ctx, config)...)
+		}
+		return finishDoctor(result, strict, jsonOutput, stdout, stderr)
+	}
 	dbCheck := checkSQLiteDB(filepath.Join(config.root, "server", "aimebu.sqlite"))
 	serverCheck := checkServerHealth(ctx, config.bind, config.port)
 	result := doctorResult{Version: resolveVersion(), GeneratedAt: now.UTC().Format(time.RFC3339), Checks: scopeAll([]doctorCheck{
@@ -75,13 +87,18 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		result.Checks = append(result.Checks, doctorServerChecks(config.root, now, serverCheck.Status != statusFail, databaseUsable)...)
 	}
 	result.Checks = scopeAll(result.Checks, scopeServer)
+	return finishDoctor(result, strict, jsonOutput, stdout, stderr)
+}
+
+// finishDoctor sets the exit code (any failure, or any warning under --strict)
+// and prints the report.
+func finishDoctor(result doctorResult, strict, jsonOutput bool, stdout, stderr io.Writer) int {
 	for _, check := range result.Checks {
 		if check.Status == statusFail || (strict && check.Status == statusWarn) {
 			result.ExitCode = 1
 			break
 		}
 	}
-
 	if jsonOutput {
 		printDoctorJSON(stdout, stderr, result)
 	} else {

@@ -18,6 +18,15 @@ The JSON is `{"version", "generated_at", "checks": [{"name", "status",
 read: `server` (this host's config root and database), `live` (the running
 server) or `machine` (a supervisor host).
 
+## Modes
+
+- **default** — the server installation: this host's config root and database,
+  plus a probe of the server (the checks below).
+- **`--machine`** — a host that runs only the supervisor, with no server or
+  database of its own. It runs the config
+  dir check and the [machine checks](#machine-checks) and skips every
+  server-owned one.
+
 ## Checks
 
 - **config dir** — ok when it exists and is not world-writable; warn when
@@ -119,6 +128,41 @@ server) or `machine` (a supervisor host).
   event. When the other refresher exits the next check takes the tool over. If
   token auto-refresh is off, Settings still shows that tool as `off`; the alert
   signals the ownership conflict.
+
+## Machine checks
+
+`aimebu doctor --machine` reads what lives on the supervisor's host. Findings
+carry the scope `machine`. It never writes: the journal is opened read-only and
+its lock is only tested, not taken.
+
+- **machine credential** — the pairing credential, `supervisor/machine.key` (or
+  `server/host-machine.key` on the server's own host). Fails when the file is
+  not mode 0600 (the supervisor refuses it too) or does not parse; warns when
+  there is none (this host is not paired). The key itself is never printed.
+- **supervisor journal** — `supervisor/journal.sqlite`: size, WAL size, whether
+  a supervisor holds its lock right now (with its pid), and a read-only
+  `quick_check` bounded like the backup one (512 MiB, 10 seconds). A damaged
+  journal fails.
+- **agent tools config** — the per-agent toolbox configs in
+  `supervisor/agent-tools/` hold an agent key, so the folder must be 0700 and
+  each file 0600; looser modes warn.
+- **agent logs** — the size of the captured agent output in
+  `supervisor/agent-logs/` against the daily sweep's 256 MiB cap; warns at 80%.
+- **harnesses** — the native `claude`, `codex`, `pi`, `opencode` and `vibe`
+  executables the supervisor finds (the same search as Settings → Harnesses
+  auto-detect), with versions. None warns.
+- **docker** — the Docker CLI and daemon (`docker info`). A missing daemon only
+  warns when a `*-docker` launcher is installed.
+- **launcher \<name\>-docker** — for each Docker launcher found,
+  `HARNESS_DOCKER_PRINT_FEATURES=1 <launcher> --version`, which exits before it
+  touches Docker. The features are listed; a launcher without `forward_env`
+  warns "too old" for opencode and vibe, whose Docker turns need it (update
+  harness-docker).
+- **paired server** — asks the paired server (`AIMEBU2_URL`, else the URL in
+  the credential) whether it knows this machine and has approved it, with the
+  machine's own key as the bearer token, exactly as the supervisor does at
+  start. Fails when the server is unreachable or rejects the key (revoked, or
+  paired with another server); warns while approval is pending.
 
 ## Configuration
 

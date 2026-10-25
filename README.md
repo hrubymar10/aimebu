@@ -96,7 +96,8 @@ the config directory, the SQLite database (integrity and schema version),
 server reachability, the TLS certificate, the bind/allowlist settings, free
 disk space, backups, machines, pending stops, launchers and provider limits.
 Each check reports ok, warn, or fail with a hint on fixing it; the exit code is
-0 unless at least one check fails (`--strict` also fails on warnings). When the account switcher is set up, doctor also checks its
+0 unless at least one check fails (`--strict` also fails on warnings).
+`--machine` checks a host that runs only the supervisor. When the account switcher is set up, doctor also checks its
 state and active profiles. Use `aimebu doctor --json` for machine-readable
 output. Doctor also warns if v1 external credential targets were not carried
 over and fails if two token refreshers claim the same live credential file.
