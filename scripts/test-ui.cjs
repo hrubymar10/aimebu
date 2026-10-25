@@ -4358,8 +4358,30 @@ async function main() {
       }
     }
     // An entry with no Inbox item behind it opens the agent: its room, then its profile.
+    // Withhold the agent list after the click, then deliver its next update. The profile
+    // must open from that update instead of disappearing when the first list is empty.
+    await agentPage.evaluate(() => {
+      const panel = window.__mockAgentsPanel;
+      window.__healthOriginalList = panel.source.list.bind(panel.source);
+      window.__healthOriginalWait = panel.waitForCard.bind(panel);
+      window.__healthListMode = 'missing'; window.__healthWaits = 0; window.__healthLists = 0;
+      panel.source.list = function (roomID) {
+        window.__healthLists++;
+        return window.__healthListMode === 'missing' ? Promise.resolve([]) : window.__healthOriginalList(roomID);
+      };
+      panel.waitForCard = function (...args) {
+        window.__healthWaits++;
+        return window.__healthOriginalWait(...args);
+      };
+    });
     await domClick(agentPage, '#health-toggle');
-    await agentPage.click('#health-popover .health-item[data-code="stuck"]');
+    await domClick(agentPage, '#health-popover .health-item[data-code="stuck"]');
+    await agentPage.waitForFunction(() => window.__healthWaits === 1, { timeout: 4000 }).catch(async () => {
+      const state = await agentPage.evaluate(() => ({ waits: window.__healthWaits, lists: window.__healthLists, hash: location.hash, healthOpen: !document.querySelector('#health-popover').hidden, cards: document.querySelectorAll('#agents-list .agent-card').length, toast: document.querySelector('#app-toast').textContent }));
+      throw new Error(`health navigation did not wait for a card: ${JSON.stringify(state)}`);
+    });
+    assert.equal(await agentPage.$eval('#agents-panel', el => el.classList.contains('profile-open')), false, 'profile waits for the next agent update');
+    await agentPage.evaluate(() => { window.__healthListMode = 'normal'; window.__mockAgentsPanel.source.notify(); });
     await agentPage.waitForFunction(() => document.querySelector('#agents-panel').classList.contains('profile-open') && document.querySelector('#agents-panel header h2').textContent === 'Agent profile');
     assert.equal(await agentPage.$eval('#health-popover', el => el.hidden), true, 'choosing a health entry closes the list');
     // The button that closes the open profile is an X, not the chevron that opens it.
@@ -4367,6 +4389,20 @@ async function main() {
       { glyph: 'icon-mask-close', title: 'Close agent profile', label: 'Close agent profile' }, 'the open profile is closed by an X');
     await agentPage.keyboard.press('Escape');
     await agentPage.waitForFunction(() => !document.querySelector('#agents-panel').classList.contains('profile-open'));
+    await agentPage.evaluate(() => { window.__healthListMode = 'missing'; window.__healthWaits = 0; });
+    await domClick(agentPage, '#health-toggle');
+    await domClick(agentPage, '#health-popover .health-item[data-code="stuck"]');
+    await agentPage.waitForFunction(() => window.__healthWaits === 1);
+    await agentPage.waitForFunction(() => !document.querySelector('#app-toast').hidden, { timeout: 5000 });
+    assert.equal(await agentPage.$eval('#app-toast', el => el.textContent), 'That agent is no longer available in this room.', 'a removed agent gives a visible reason');
+    await agentPage.evaluate(() => {
+      const panel = window.__mockAgentsPanel;
+      panel.source.list = window.__healthOriginalList;
+      panel.waitForCard = window.__healthOriginalWait;
+      panel.source.notify();
+      delete window.__healthOriginalList; delete window.__healthOriginalWait; delete window.__healthListMode; delete window.__healthWaits; delete window.__healthLists;
+    });
+    await agentPage.waitForSelector('[data-agent-id="agt_mock_worker"]');
     assert.deepEqual(await agentPage.$$eval('.agent-card .agent-expand', buttons => [...new Set(buttons.map(button => `${button.querySelector('.icon-mask')?.className.replace('icon-mask ', '')}|${button.title}`))]), ['icon-mask-chevron-right|Open agent profile'], 'a closed profile is opened by the chevron');
     await agentPage.evaluate(() => document.activeElement?.blur()); // closing returns focus to the row; the member-row steps below start from rest
     const staleRead = await agentPage.evaluate(async () => {

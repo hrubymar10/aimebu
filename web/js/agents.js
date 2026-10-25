@@ -24,7 +24,7 @@ const TABLET = matchMedia('(min-width: 701px) and (max-width: 900px) and (pointe
 export class AgentsPanel {
   constructor(source, onRecovery, onChange, onPrivate, onPrivateHuman) {
     this.source = source; this.onRecovery = onRecovery; this.onChange = onChange; this.onPrivate = onPrivate; this.onPrivateHuman = onPrivateHuman;
-    this.panel = document.querySelector('#agents-panel'); this.list = document.querySelector('#agents-list'); this.humans = document.querySelector('#agents-humans'); this.humanNodes = new Map(); this.error = document.querySelector('#agents-error'); this.nodes = new Map();
+    this.panel = document.querySelector('#agents-panel'); this.list = document.querySelector('#agents-list'); this.humans = document.querySelector('#agents-humans'); this.humanNodes = new Map(); this.error = document.querySelector('#agents-error'); this.nodes = new Map(); this.cardListeners = new Set();
     this.dialog = document.querySelector('#spawn-dialog'); this.form = document.querySelector('#spawn-form');
     const worktreeLabel = document.createElement('label'); worktreeLabel.className = 'spawn-worktree-option';
     worktreeLabel.innerHTML = '<input type="checkbox" name="worktree"><span>Use a Git worktree for this task room</span><small class="spawn-worktree-note" hidden></small>';
@@ -87,6 +87,18 @@ export class AgentsPanel {
     this.setRoomFacts(room); this.setMobileOpen(false);
     await this.refresh();
   }
+  waitForCard(id, roomID, timeout = 2000) {
+    if (this.room?.id === roomID && this.cards.has(id)) return Promise.resolve(true);
+    return new Promise(resolve => {
+      let timer;
+      const finish = found => { clearTimeout(timer); this.cardListeners.delete(check); resolve(found); };
+      const check = () => { if (this.room?.id === roomID && this.cards.has(id)) finish(true); };
+      this.cardListeners.add(check);
+      timer = setTimeout(() => finish(false), timeout);
+      check();
+    });
+  }
+  notifyCards() { for (const listener of this.cardListeners) listener(); }
   reset() { this.refreshGeneration = (this.refreshGeneration || 0) + 1; this.room = null; this.cardsRoomID = null; this.profileID = null; this.panel.classList.remove('profile-open'); this.panelTitle.textContent = 'Room members'; this.profileClose.hidden = true; this.cards.clear(); this.nodes.clear(); this.list.replaceChildren(); this.humans.replaceChildren(); this.humanNodes.clear(); this.setMobileOpen(false); this.dialog.close(); this.switchDialog.close(); document.querySelector('#spawn-open').disabled = true; }
   setRoomFacts(room) {
     // Room facts change before the chat and agent list finish loading. Use the
@@ -97,6 +109,7 @@ export class AgentsPanel {
       this.switchDialog.close(); this.switchAgentID = null;
       this.profileID = null; this.panel.classList.remove('profile-open'); this.panelTitle.textContent = 'Room members'; this.profileClose.hidden = true;
       this.cards.clear(); this.nodes.clear(); this.list.replaceChildren(); this.humans.replaceChildren(); this.humanNodes.clear();
+      this.notifyCards();
       this.onChange?.([]);
     }
     this.room = room;
@@ -127,6 +140,7 @@ export class AgentsPanel {
     const agents = await this.source.list(roomID);
     if (generation !== this.refreshGeneration || this.room?.id !== roomID) return;
     this.cards = new Map(agents.map(agent => [agent.id, agent]));
+    this.notifyCards();
     this.syncSpawnControl();
     const active = new Set(agents.map(agent => agent.id));
     for (const [id, node] of this.nodes) if (!active.has(id)) { node.remove(); this.nodes.delete(id); }

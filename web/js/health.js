@@ -93,8 +93,9 @@ export class Health {
       button.onclick = async () => {
         this.setOpen(false);
         if (await this.onItem?.(row, flag)) return;
-        const room = row.room_ids.map(id => this.sidebar.rooms.get(id)).find(Boolean);
-        if (room) this.onRoom(room, row.id);
+        const room = row.room_ids.map(id => this.sidebar.rooms.get(id)).find(Boolean)
+          || (row.room_ids.includes(this.agents.room?.id) ? this.agents.room : null);
+        this.onRoom(room, row.id);
       };
       return button;
     }));

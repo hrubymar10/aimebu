@@ -60,7 +60,9 @@ The inbox offers a one-time higher cap or a pause until the next local day.
 Health flags identify stuck turns, provider quota, disconnected supervisors,
 held answers, and recovery waiting on agent cards, rooms, and the top bar. The agent card pills use plain words
 ("Not responding", "Reply not delivered", "Needs your decision"), and the Health list gives each problem a sentence and a
-one-line explanation; choosing one opens its Inbox item, or else the agent's room and profile.
+one-line explanation; choosing one opens its Inbox item, or else the agent's
+room and profile. If the room or agent disappears while navigating, a brief
+notice explains why the profile could not open.
 
 ## Install
 

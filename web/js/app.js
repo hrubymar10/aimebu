@@ -46,6 +46,12 @@ const startupText = document.createElement('span');
 const startupRetry = document.createElement('button'); startupRetry.type = 'button'; startupRetry.className = 'btn btn-primary'; startupRetry.textContent = 'Retry'; startupRetry.hidden = true;
 startupRetry.onclick = () => location.reload();
 startupStatus.append(startupText, startupRetry); appView.append(startupStatus);
+const appToast = document.createElement('p'); appToast.id = 'app-toast'; appToast.setAttribute('role', 'status'); appToast.hidden = true; appView.append(appToast);
+let toastTimer;
+function showToast(message) {
+  clearTimeout(toastTimer); appToast.textContent = message; appToast.hidden = false;
+  toastTimer = setTimeout(() => { appToast.hidden = true; }, 5000);
+}
 function setStartupState(state) {
   const busy = state === 'loading';
   for (const child of appView.children) if (child !== appView.querySelector('.workspace-bar') && child !== startupStatus) child.inert = busy;
@@ -183,11 +189,18 @@ const agents = new AgentsPanel(createAgentSource(), agent => {
     await selectRoom(sidebar.rooms.get(room.id) || room);
   } catch (error) { if (generation === sessionGeneration) agents.error.textContent = error.message || 'Could not open private chat'; }
 });
+if (new URLSearchParams(location.search).has('mock_agents')) window.__mockAgentsPanel = agents;
 const health = new Health(sidebar, agents, async (room, agentID) => {
   // Without an Inbox item behind it, a health entry opens the agent: its room, then its profile.
+  if (!room) { showToast('That agent’s room is no longer available.'); return; }
   const generation = sessionGeneration;
   if (!await selectRoom(room) || generation !== sessionGeneration) return;
-  if (agentID && agents.cards.has(agentID)) agents.openProfile(agentID);
+  const selection = roomSelectionGeneration;
+  if (!agentID) return;
+  const found = await agents.waitForCard(agentID, room.id);
+  if (generation !== sessionGeneration || selection !== roomSelectionGeneration) return;
+  if (found) agents.openProfile(agentID);
+  else showToast('That agent is no longer available in this room.');
 }, async (row, flag) => {
   const kind = { recovery_waiting: 'recovery', held_answer: 'delivery_failed' }[flag.code];
   const item = kind && inbox.items?.find(entry => (flag.code === 'recovery_waiting' && entry.id === agents.cards.get(row.id)?.recovery_inbox_id) || (entry.agent_id === row.id && entry.kind === kind));
