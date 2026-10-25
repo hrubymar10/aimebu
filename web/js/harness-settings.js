@@ -80,14 +80,13 @@ export class HarnessSettings {
     this.tab = button('Harnesses', 'row-btn'); this.tab.id = 'settings-harnesses-tab';
     if (!embedded) dialog.querySelector('nav').append(this.tab);
     this.section = node('section', 'settings-content'); this.section.id = `${prefix}settings-harnesses`; this.section.hidden = !embedded;
-    const head = node('div', 'harness-head'); head.append(node('h3', '', 'Harnesses'));
     this.roleDefaults = embedded ? null : new RoleDefaults();
     this.roleViews = new Set();
     this.otherTried = ''; // the unknown launcher ids the other machines were last read for, so the same ones are not asked for twice
     this.otherHarnesses = new Map(); // launcher id -> its machine's name, label and models, for role defaults on other machines
     this.drafts = new Map(); // harness id -> { models, dirty }: unsaved model edits, kept while the page redraws
     this.selectedHarness = '';
-    this.section.append(head, node('p', 'settings-intro', 'A harness is a coding tool installed on a machine, with the models it can start agents with. Nothing is listed until you add it. Pick a machine, add its harnesses (or auto-detect them), then give each harness its models: exactly one is the default, which an agent falls back to when its own model is removed.'));
+    this.section.append(node('h3', '', 'Harnesses'), node('p', 'settings-intro', 'A harness is a coding tool installed on a machine, with the models it can start agents with. Nothing is listed until you add it. Pick a machine, add its harnesses (or auto-detect them), then give each harness its models: exactly one is the default, which an agent falls back to when its own model is removed.'));
     this.select = document.createElement('select'); this.select.id = `${prefix}harness-machine`;
     this.select.onchange = () => { this.drafts.clear(); this.otherTried = ''; this.loadHarnesses(); };
     this.section.append(settingsGroup([settingsRow({ label: 'Machine', desc: 'The supervisor whose harnesses and recent changes are shown below.', control: this.select })], 'Harness machine'));

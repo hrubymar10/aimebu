@@ -437,8 +437,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .harness-model-row, .harness-model-add { grid-template-columns: minmax(0, 1fr); }
 }
 /* Settings → Harnesses: a list of harnesses beside the chosen one. */
-.harness-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.harness-head h3 { margin: 0; }
 .harness-models .settings-desc:empty, .harness-detect-models:empty { display: none; }
 @media (min-width: 701px) {
   #settings-dialog[data-section="harnesses"] { width: min(1120px, 96vw); }
