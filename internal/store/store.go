@@ -158,6 +158,9 @@ func sqliteDSN(path string) string {
 	query.Add("_pragma", "busy_timeout(5000)")
 	query.Add("_pragma", "foreign_keys(ON)")
 	query.Add("_pragma", "journal_mode(WAL)")
+	// With WAL, NORMAL still cannot corrupt the database; it syncs the log at checkpoints instead of on every commit, so a power loss or
+	// operating-system crash (not an aimebu crash) can lose the last few commits. That is the trade for much cheaper writes.
+	query.Add("_pragma", "synchronous(NORMAL)")
 	separator := "?"
 	if strings.Contains(path, "?") {
 		separator = "&"

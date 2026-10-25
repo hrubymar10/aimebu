@@ -9,8 +9,11 @@
 2. Relational SQLite store + transactional append-only event/outbox table.
    Not event-sourced. Store startup retries temporary SQLite BUSY/LOCKED
    contention during connection setup or migrations for up to 15 seconds;
-   other migration errors fail immediately. The supervisor journal has its
-   own WAL database and process lock.
+   other migration errors fail immediately. The server database runs WAL with
+   `synchronous=NORMAL`: a crash of aimebu loses nothing, but a power loss or
+   operating-system crash can lose the last few commits (never corrupt the
+   database), in return for much cheaper writes. The supervisor journal has
+   its own WAL database and process lock, and keeps `synchronous=FULL`.
 3. Native resume first where the spike validates it; fresh + history as the
    explicit fallback (also for swap/recovery); UI says which happened.
 4. Common reply schema, server-side validation; native schema modes are

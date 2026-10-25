@@ -514,7 +514,7 @@ func TestMessageThreadRootPersists(t *testing.T) {
 func TestMigrationFromZeroAndReopen(t *testing.T) {
 	t.Parallel()
 	s, path := testStore(t, Options{})
-	var version, foreignKeys, busyTimeout int
+	var version, foreignKeys, busyTimeout, synchronous int
 	var journal string
 	for _, check := range []struct {
 		query string
@@ -524,13 +524,14 @@ func TestMigrationFromZeroAndReopen(t *testing.T) {
 		{`PRAGMA foreign_keys`, &foreignKeys},
 		{`PRAGMA busy_timeout`, &busyTimeout},
 		{`PRAGMA journal_mode`, &journal},
+		{`PRAGMA synchronous`, &synchronous},
 	} {
 		if err := s.db.QueryRow(check.query).Scan(check.dest); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if version != migrations[len(migrations)-1].version || foreignKeys != 1 || busyTimeout != 5000 || journal != "wal" {
-		t.Fatalf("migration/pragmas = %d, %d, %d, %s", version, foreignKeys, busyTimeout, journal)
+	if version != migrations[len(migrations)-1].version || foreignKeys != 1 || busyTimeout != 5000 || journal != "wal" || synchronous != 1 {
+		t.Fatalf("migration/pragmas = %d, %d, %d, %s, synchronous %d", version, foreignKeys, busyTimeout, journal, synchronous)
 	}
 	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table'`)
 	if err != nil {
@@ -601,8 +602,13 @@ func TestDSNPragmasOnEveryConnection(t *testing.T) {
 		if err := conn.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&journal); err != nil {
 			t.Fatal(err)
 		}
-		if foreignKeys != 1 || busyTimeout != 5000 || journal != "wal" {
-			t.Fatalf("connection pragmas = %d, %d, %q", foreignKeys, busyTimeout, journal)
+		var synchronous int
+		if err := conn.QueryRowContext(ctx, `PRAGMA synchronous`).Scan(&synchronous); err != nil {
+			t.Fatal(err)
+		}
+		// 1 is NORMAL (0 is OFF, 2 is FULL).
+		if foreignKeys != 1 || busyTimeout != 5000 || journal != "wal" || synchronous != 1 {
+			t.Fatalf("connection pragmas = %d, %d, %q, synchronous %d", foreignKeys, busyTimeout, journal, synchronous)
 		}
 	}
 }
