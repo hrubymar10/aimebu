@@ -113,22 +113,26 @@ type TargetRefresher struct {
 	state    *refreshStateStore
 
 	// Overridable (tests and wiring).
-	executors    map[string]refreshExecutor
-	available    func() bool
-	reachable    func(context.Context) bool
-	enabled      func() bool
-	toolOn       func(tool string) bool // per-tool gate on top of enabled; nil = no tool (fails closed)
-	pendingLogin func(tool string) bool // live full credential: never spend its active stored token
-	alert        func(kind, detail string)
-	reconcile    func(context.Context) error
-	last         *refreshLastStore
-	pending      map[string][]byte                   // rotated credentials awaiting their commit, by tool/spent-hash
-	migratedAt   func(tool string) (time.Time, bool) // when tool was migrated; default reads the marker
-	afterLock    func()                              // test seam: runs right after the account lock is taken
-	lead         map[string]time.Duration
-	runTimeout   time.Duration
-	interval     time.Duration
-	started      atomic.Bool // set by the first Run; a second Run is a no-op
+	executors     map[string]refreshExecutor
+	available     func() bool
+	reachable     func(context.Context) bool
+	enabled       func() bool
+	toolOn        func(tool string) bool // per-tool gate on top of enabled; nil = no tool (fails closed)
+	pendingLogin  func(tool string) bool // live full credential: never spend its active stored token
+	alert         func(kind, detail string)
+	reconcile     func(context.Context) error
+	last          *refreshLastStore
+	warmLast      *warmupLastStore
+	warmMinute    time.Time
+	warmCheckedAt time.Time
+	warmSmartAt   time.Time
+	pending       map[string][]byte                   // rotated credentials awaiting their commit, by tool/spent-hash
+	migratedAt    func(tool string) (time.Time, bool) // when tool was migrated; default reads the marker
+	afterLock     func()                              // test seam: runs right after the account lock is taken
+	lead          map[string]time.Duration
+	runTimeout    time.Duration
+	interval      time.Duration
+	started       atomic.Bool // set by the first Run; a second Run is a no-op
 }
 
 // targetAccount is the in-memory, non-terminal attempt state of one account.
@@ -188,6 +192,14 @@ type TargetRefresherConfig struct {
 	ModelFlag func(tool string) string
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// WarmupSettings and UsageProfile are read-only views of the persisted
+	// setting and usage snapshot. Missing callbacks leave warmup disabled.
+	WarmupSettings func() (mode, schedule string, enabled bool, err error)
+	WarmupLocation *time.Location // nil uses the host's local time zone
+	UsageProfile   func(provider, name string) (Profile, bool)
+	// WarmupPinned reports a profile used by a credential target. Such profiles
+	// are never warmed because the target may have an active CLI session.
+	WarmupPinned func(tool, name string) bool
 }
 
 // NewTargetRefresher builds the refresher over cfg. It is OFF until SetEnabled.
@@ -439,6 +451,7 @@ func (r *TargetRefresher) Run(ctx context.Context) {
 			}
 		}
 		_ = r.RefreshDue(ctx)
+		_ = r.WarmupDue(ctx)
 	}
 	bootstrap()
 	ticker := time.NewTicker(r.interval)
@@ -459,6 +472,7 @@ func (r *TargetRefresher) Run(ctx context.Context) {
 				continue
 			}
 			_ = r.RefreshDue(ctx)
+			_ = r.WarmupDue(ctx)
 		}
 	}
 }
@@ -787,9 +801,11 @@ func (r *TargetRefresher) pendingHolders(tool, hash string, rotated []byte) ([]h
 		return nil, err
 	}
 	want := accessTokenOf(tool, rotated)
+	wantRefresh, _ := refreshToken(rotated, tool)
 	var out []holder
 	for _, h := range hs {
-		if want != "" && accessTokenOf(tool, h.data) == want {
+		storedRefresh, _ := refreshToken(h.data, tool)
+		if want != "" && accessTokenOf(tool, h.data) == want && storedRefresh == wantRefresh {
 			continue
 		}
 		out = append(out, h)

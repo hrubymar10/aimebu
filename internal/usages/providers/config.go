@@ -76,6 +76,26 @@ func (s *Store) LoadConfig() (Config, error) {
 	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return DefaultConfig(), fmt.Errorf("%w: config must be an object", ErrInvalidConfig)
 	}
+	// A malformed warmup field should not make unrelated settings uneditable.
+	// Repair only these two fields; keep structural errors elsewhere visible.
+	var repair map[string]json.RawMessage
+	badWarmup := false
+	if json.Unmarshal(data, &repair) == nil {
+		for _, key := range []string{"warmup_mode", "warmup_schedule"} {
+			if raw, ok := repair[key]; ok {
+				var value string
+				if json.Unmarshal(raw, &value) != nil || string(raw) == "null" {
+					badWarmup = true
+					if key == "warmup_mode" {
+						repair[key] = json.RawMessage(`"off"`)
+					} else {
+						repair[key] = json.RawMessage(`""`)
+					}
+				}
+			}
+		}
+		data, _ = json.Marshal(repair)
+	}
 	err = json.Unmarshal(data, &cfg)
 	if err != nil {
 		return DefaultConfig(), fmt.Errorf("%w: %v", ErrInvalidConfig, err)
@@ -107,6 +127,9 @@ func (s *Store) LoadConfig() (Config, error) {
 		cfg.AlertWarningRemaining, cfg.AlertCriticalRemaining = 20, 10
 	}
 	cfg.ProviderOrder = normalizeProviderOrder(cfg.ProviderOrder)
+	if badWarmup || ValidateWarmup(cfg.WarmupMode, cfg.WarmupSchedule) != nil {
+		cfg.WarmupMode, cfg.WarmupSchedule = "off", ""
+	}
 	return cfg, nil
 }
 
@@ -141,6 +164,9 @@ func (s *Store) UpdateConfig(update func(*Config) error) (Config, error) {
 	if err := validateAlertThresholds(cfg); err != nil {
 		return Config{}, err
 	}
+	if err := ValidateWarmup(cfg.WarmupMode, cfg.WarmupSchedule); err != nil {
+		return Config{}, err
+	}
 	cfg.ProviderOrder = normalizeProviderOrder(cfg.ProviderOrder)
 	path := filepath.Join(s.Root, "config.json")
 	raw := map[string]json.RawMessage{}
@@ -168,6 +194,11 @@ func (s *Store) UpdateConfig(update func(*Config) error) (Config, error) {
 	}
 	for key, value := range changed {
 		raw[key] = value
+	}
+	// The empty schedule is omitted by JSON, so remove a stale invalid value
+	// from the original file before writing the merged config.
+	if cfg.WarmupSchedule == "" {
+		delete(raw, "warmup_schedule")
 	}
 	// An omitempty field that became false is absent from `changed`, so the stale
 	// true already in the file would survive the merge.

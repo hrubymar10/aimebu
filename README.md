@@ -212,7 +212,9 @@ private `usages/config.json` under the v2 config root. Usage polling never
 refreshes harness tokens or writes their credential files; expired tokens
 retain a stale snapshot until the harness renews them (on an install migrated
 with `aimebu switcher migrate-copies` the server's token refresher renews them
-instead; see [account switching](docs/switcher.md#token-refresher)). The optional account
+instead; see [account switching](docs/switcher.md#token-refresher)). Optional
+scheduled idle-profile warmup opens five-hour usage windows through a short CLI
+request ([warmup settings](docs/usages.md#scheduled-idle-account-warmup-account-maintenance)). The optional account
 switcher can capture and swap Codex and Claude file-based logins on the host
 machine. The server can also switch accounts for you when a profile runs out of
 quota ([automatic account switching](docs/quota-switcher.md), off by default), and a

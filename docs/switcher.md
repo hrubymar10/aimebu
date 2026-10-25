@@ -287,6 +287,9 @@ and the rescue file, never by spending again. `refresh-state.json` holds the
 journal and the parked accounts, `refresh-last.json` the last rotation per
 profile: a profile is not refreshed again within 30 minutes of its last rotation,
 and the lead is capped below the token's life, so an oversized lead cannot loop.
+`warmup-last.json` records recent idle-account warmup attempts (no credentials)
+so a restart keeps their one-hour rate limit; the same journal protects a
+warmup if its short CLI request rotates a grant.
 A profile switched away from within two minutes, a Codex profile within 10 minutes
 of its migration, and a profile whose store file is still a link are left alone.
 

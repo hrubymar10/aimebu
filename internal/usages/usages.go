@@ -85,6 +85,9 @@ type Response struct {
 		ClaudeAutoRefresh         bool                                 `json:"claude_auto_refresh"`
 		TokenAutoRefreshAvailable bool                                 `json:"token_auto_refresh_available"`
 		TokenAutoRefreshState     map[string]TokenAutoRefreshToolState `json:"token_auto_refresh_state"`
+		WarmupMode                string                               `json:"warmup_mode"`
+		WarmupSchedule            string                               `json:"warmup_schedule"`
+		WarmupAvailable           bool                                 `json:"warmup_available"`
 	} `json:"settings"`
 	SwitcherEnabled bool `json:"switcher_enabled"`
 	// CredentialAlerts are the credentials of the token-copy model that need a
@@ -231,6 +234,8 @@ func (r *Reader) Snapshot() Response {
 		out.Settings.ClaudeAutoRefresh = cfg.TokenAutoRefresh
 		out.Settings.AlertWarningRemaining = cfg.AlertWarningRemaining
 		out.Settings.AlertCriticalRemaining = cfg.AlertCriticalRemaining
+		out.Settings.WarmupMode = cfg.WarmupMode
+		out.Settings.WarmupSchedule = cfg.WarmupSchedule
 	} else {
 		for i := range out.Providers {
 			if !out.Providers[i].Enabled {
@@ -245,6 +250,13 @@ func (r *Reader) Snapshot() Response {
 	if setting != nil {
 		out.Settings.TokenAutoRefreshAvailable = setting.Available()
 		out.Settings.TokenAutoRefreshState = setting.States(out.Settings.TokenAutoRefresh)
+		if out.Settings.TokenAutoRefreshAvailable && out.Settings.TokenAutoRefresh {
+			for _, state := range out.Settings.TokenAutoRefreshState {
+				if state.Status == "migrated" {
+					out.Settings.WarmupAvailable = true
+				}
+			}
+		}
 	}
 	return out
 }

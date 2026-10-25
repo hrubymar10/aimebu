@@ -102,8 +102,10 @@ func (s *Server) usageSettings(w http.ResponseWriter, r *http.Request) {
 		AlertCriticalRemaining *int      `json:"alert_critical_remaining"`
 		// TokenAutoRefresh is the "Auto-refresh tokens" setting; ClaudeAutoRefresh is
 		// its legacy name, accepted for older clients. The new key wins.
-		TokenAutoRefresh  *bool `json:"token_auto_refresh"`
-		ClaudeAutoRefresh *bool `json:"claude_auto_refresh"`
+		TokenAutoRefresh  *bool   `json:"token_auto_refresh"`
+		ClaudeAutoRefresh *bool   `json:"claude_auto_refresh"`
+		WarmupMode        *string `json:"warmup_mode"`
+		WarmupSchedule    *string `json:"warmup_schedule"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -135,6 +137,12 @@ func (s *Server) usageSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.AlertCriticalRemaining != nil {
 			cfg.AlertCriticalRemaining = *body.AlertCriticalRemaining
+		}
+		if body.WarmupMode != nil {
+			cfg.WarmupMode = *body.WarmupMode
+		}
+		if body.WarmupSchedule != nil {
+			cfg.WarmupSchedule = *body.WarmupSchedule
 		}
 		return nil
 	})

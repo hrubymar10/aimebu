@@ -192,6 +192,33 @@ func TestUsageAlertThresholdSettings(t *testing.T) {
 	}
 }
 
+func TestWarmupSettingsValidateAndPublish(t *testing.T) {
+	f := newFixture(t)
+	var err error
+	f.srv.Usages, err = usages.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := f.request(http.MethodPost, "/api/usages/settings", map[string]string{"warmup_mode": "scheduled", "warmup_schedule": "30 9 * * 1"}, true)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("save warmup: %d", resp.StatusCode)
+	}
+	view := f.srv.Usages.Snapshot()
+	if view.Settings.WarmupMode != "scheduled" || view.Settings.WarmupSchedule != "30 9 * * 1" {
+		t.Fatalf("published warmup: %+v", view.Settings)
+	}
+	resp = f.request(http.MethodPost, "/api/usages/settings", map[string]string{"warmup_schedule": "*/5 * * * *"}, true)
+	resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Fatalf("invalid schedule accepted: %d", resp.StatusCode)
+	}
+	config, err := f.srv.Usages.ExtraStore().LoadConfig()
+	if err != nil || config.WarmupSchedule != "30 9 * * 1" {
+		t.Fatalf("invalid schedule saved: %+v %v", config, err)
+	}
+}
+
 func TestUsagesUpdatePushedToOwnerSocket(t *testing.T) {
 	f := newFixture(t)
 	var err error

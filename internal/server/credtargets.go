@@ -115,6 +115,30 @@ func (s *Server) StartTokenCopies(ctx context.Context, configure ...func(*usages
 		FanOut:    fan,
 		LivePath:  mgr.LiveCredPath,
 		ModelFlag: s.usageModelFlag,
+		WarmupSettings: func() (string, string, bool, error) {
+			if s.Usages == nil {
+				return "off", "", false, nil
+			}
+			cfg, err := s.Usages.ExtraStore().LoadConfig()
+			return cfg.WarmupMode, cfg.WarmupSchedule, cfg.TokenAutoRefresh, err
+		},
+		UsageProfile: func(provider, name string) (usages.Profile, bool) {
+			if s.Usages == nil {
+				return usages.Profile{}, false
+			}
+			return s.Usages.StoredProfile(provider, name)
+		},
+		WarmupPinned: func(tool, name string) bool {
+			if err := fan.Registry.Load(); err != nil {
+				return true
+			}
+			for _, target := range fan.Registry.Targets() {
+				if target.Tool == tool && target.Profile == name {
+					return true
+				}
+			}
+			return false
+		},
 	})
 	tr.SetEnabled(mgr.TokenCopies)
 	tr.SetToolEnabled(ownsTool)

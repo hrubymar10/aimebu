@@ -1093,3 +1093,12 @@ verification).
 `forbidden`, `depth_exceeded`, `already_resolved`, `already_withdrawn`,
 `agent_not_active`, `machine_unapproved`, `invalid_transition`,
 `readonly_unavailable`. Each documented as retryable or not.
+
+## 10. Idle-profile warmup
+
+`warmup_mode` and `warmup_schedule` are owner settings. The token-copy
+refresher scans persisted usage snapshots for inactive, unpinned, unlinked
+profiles with no active session window. It uses the same account lock,
+spend-once journal, and rotated-credential commit as refresh, but never
+forces an access token to expire. One-hour attempt times persist separately
+from credentials.

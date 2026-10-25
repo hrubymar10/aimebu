@@ -380,7 +380,25 @@ export class SettingsPanel {
       line.dataset.tool = tool;
       info.append(line);
     }
-    return settingsGroup([row], 'Account maintenance');
+    const mode = element('select'); mode.id = 'usage-warmup-mode';
+    for (const [value, label] of [['off', 'Off'], ['force', 'Warm every idle account'], ['scheduled', 'Scheduled'], ['smart', 'Spread across five hours']]) {
+      const option = element('option', '', label); option.value = value; mode.append(option);
+    }
+    mode.value = settings?.warmup_mode || 'off';
+    mode.disabled = !settings?.warmup_available && mode.value === 'off';
+    mode.onchange = () => this.mutateUsage(() => this.source.settings({ warmup_mode: mode.value, warmup_schedule: mode.value === 'scheduled' ? (settings?.warmup_schedule || '0 9 * * *') : (settings?.warmup_schedule || '') }));
+    const warmupRow = settingsRow({ label: 'Warm idle Claude and Codex accounts', desc: 'Start a five-hour session window with a short request for eligible inactive profiles. Active logins and profiles used by another credential target are skipped.', control: mode, id: 'usage-warmup-mode-row', className: mode.disabled ? 'usages-provider-row-disabled' : '' });
+    const rows = [row, warmupRow];
+    if (mode.value === 'scheduled') {
+      const schedule = element('textarea'); schedule.id = 'usage-warmup-schedule'; schedule.rows = 3;
+      schedule.value = settings?.warmup_schedule || '';
+      schedule.placeholder = '30 9 * * 1';
+      const save = element('button', 'settings-button', 'Save schedule'); save.type = 'button';
+      save.onclick = () => this.mutateUsage(() => this.source.settings({ warmup_schedule: schedule.value }));
+      const control = element('div', 'usage-warmup-schedule-control'); control.append(schedule, save);
+      rows.push(settingsRow({ label: 'Warmup schedule', desc: 'One five-field cron line per row, in the server’s local time. Each field accepts * or one number.', control, id: 'usage-warmup-schedule-row' }));
+    }
+    return settingsGroup(rows, 'Account maintenance');
   }
   async saveTokenAutoRefresh(value) {
     this.error.textContent = '';

@@ -441,8 +441,10 @@ Owner-only Settings routes use CSRF-protected POST requests:
 `/api/usages/settings` changes refresh interval, percent display, provider order,
 `alert_warning_remaining` and `alert_critical_remaining` (20 and 10 by default;
 1–99, critical below warning), or the
-`token_auto_refresh` setting (legacy alias `claude_auto_refresh`; see
-[usages](usages.md#auto-refresh-tokens-account-maintenance));
+`token_auto_refresh` setting (legacy alias `claude_auto_refresh`), `warmup_mode`
+(`off`, `force`, `scheduled`, `smart`) and multiline `warmup_schedule`; see
+[usages](usages.md#auto-refresh-tokens-account-maintenance) and
+[warmup](usages.md#scheduled-idle-account-warmup-account-maintenance);
 `/api/usages/refresh` fetches current snapshots;
 `/api/usages/mistral/config` saves or clears a Cookie header;
 `/api/usages/ollama/config` sets auth mode, API key, or Cookie header;

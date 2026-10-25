@@ -110,7 +110,7 @@ not lost; a literal `null` is also refused. Fix the field in the file first.
 
 ## Auto-refresh tokens (Account maintenance)
 
-Settings → Usages → Account maintenance has one toggle, **Auto-refresh tokens**
+Settings → Usages → Account maintenance has an **Auto-refresh tokens** toggle
 (`token_auto_refresh` in `usages/config.json`, `POST /api/usages/settings`). It is
 the normal way to move an install to the token-copy model of
 [switcher.md](switcher.md): on, aimebu becomes the only thing that refreshes the
@@ -148,6 +148,49 @@ the real CLI in a throwaway container.
   new key on every save for one release so a downgrade keeps the toggle.
 - While a full login waits in a tool's live file (a `/login`, or an interrupted
   turn-off), the refresher does not spend the active profile's stored token.
+
+## Scheduled idle-account warmup (Account maintenance)
+
+Settings → Usages → Account maintenance also offers **Warm idle Claude and Codex
+accounts** (`warmup_mode` and `warmup_schedule` in `usages/config.json`). Warmup
+runs only while Auto-refresh tokens is on and at least one tool has completed its
+token-copy migration. `off` is the default. `force` warms every eligible
+profile on a poller scan; `scheduled` warms on a matching local-server-time
+minute; `smart` starts at most one account per scan and spaces starts by five
+hours divided by the count of eligible accounts. The selected mode is preserved
+if the executor or migration becomes unavailable, but does no work then.
+
+An eligible account is an inactive stored Claude or Codex profile with complete
+credentials and a persisted `ok` usage snapshot whose session window is absent
+or has no future reset. A current weekly window at 100% excludes it. Active
+profiles, profiles pinned to an external credential target, linked credential
+files (including a link to another tool's live file), and profiles sharing a
+refresh token with any of those are excluded. Idle profiles sharing a token
+count as one account and make at most one request. A profile just switched away
+keeps the two-minute grace, and Codex stays quiet for ten minutes after token
+copy migration. The executor makes one short CLI
+request without expiring or blanking the copied access token. Each account is
+attempted at most once per hour, including failures; the last attempt lives in
+`switcher/warmup-last.json` (0600, no credentials). A scheduled matching minute
+fires once even when multiple cron lines match. If a busy poll misses the
+minute, the next scan catches it up within five minutes. Invalid warmup fields
+in an existing config are reset to `off` and an empty schedule on load; the
+repaired values are persisted on the next save so other modes remain usable.
+
+The schedule is one five-field cron entry per line: minute (0–59), hour (0–23),
+day (1–31), month (1–12), weekday (0–7, Sunday is 0 or 7). A field accepts
+`*` or one integer; lists, ranges, and steps are rejected. When both day
+fields are restricted, either matching day fires. The schedule editor shows
+only for Scheduled mode and saving validates every line.
+
+A CLI can still rotate its OAuth grant on use. Warmup runs under the same
+per-account maintenance lock and spend-once journal as token refresh; a rotated
+credential is rescued and copied back to every matching stored profile under
+the switcher lock, then fanned out to token-only targets. A started request
+with an unknown failed outcome is held from being tried again with that grant.
+An unsent request raises a refresh-failed alert without changing the account's
+terminal state. A started CLI keeps the one-hour attempt interval; a CLI that
+never started records no attempt.
 
 ## Automatic account switching (Settings)
 
