@@ -116,8 +116,8 @@ and shows state, tool, launcher, room, latest turn, and a native resume hint
 when available. The command only reads these files; a missing database simply
 contributes no rows. Codex hints include its private `CODEX_HOME`, Pi
 hints include the checkout's session directory, OpenCode hints name its
-private session database, and Vibe hints name its private home and session directory. Remote Pi sessions and Codex
-sessions on remote or containerized launchers have runtime paths that cannot
+private session database, and Vibe hints name its private home and session directory. Remote Pi sessions and Codex,
+OpenCode and Vibe sessions on remote or containerized launchers have runtime paths that cannot
 be determined locally, so no command is guessed for them. Set
 `AIMEBU2_CONFIG_DIR` to inspect another v2 data root; unrelated server bind
 settings do not affect this command.
@@ -599,8 +599,8 @@ keeps CLI discovery separate from bounded model choices.
 | Claude Code | Yes | Yes | Native and Docker |
 | Codex | Yes | Yes | Native and Docker |
 | Pi | Yes | Yes | Native only; Docker uses a turn-scoped URL for attachments |
-| OpenCode | Yes | No | Native |
-| Mistral Vibe | Yes | No | Native |
+| OpenCode | Yes | Yes | Native and Docker (the launcher must forward environment variables) |
+| Mistral Vibe | Yes | Yes | Native and Docker (the launcher must forward environment variables) |
 
 Other harnesses are not supported by v2:
 
@@ -609,6 +609,10 @@ Other harnesses are not supported by v2:
 | Cursor | Not supported |
 | Cline | Not supported |
 | Aider | Not supported |
+
+OpenCode and Mistral Vibe in Docker are configured through environment variables alone, so their launcher must be a harness-docker
+that forwards the variables the adapter names (`HARNESS_DOCKER_FORWARD_ENV`; see the harness-docker lifecycle guide): an older
+launcher is refused with a message saying to update it, before a turn runs.
 
 Launchers must be available on the selected machine and enabled by the owner.
 The scripted fake adapter is for local demos and tests.

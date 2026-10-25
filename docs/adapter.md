@@ -296,11 +296,42 @@ config with autoupdate and sharing disabled, project config and Claude Code
 compatibility files ignored, and the title-generation call turned off. Only a
 bounded list of provider API-key variables passes through.
 
-There is no Docker variant. The owner lists the models of an OpenCode harness in
+The owner lists the models of an OpenCode harness in
 Settings → Harnesses (Auto-detect models runs `opencode models`); ids must be
 `provider/model`.
 The adapter's capabilities are pinned to the verified release, 1.19.0 on
 Linux.
+
+### OpenCode in Docker
+
+The Docker variant runs the same turn through the `opencode-docker` launcher. OpenCode is configured
+by environment variables alone (the inline config document with the toolbox and its bearer key, the
+private session database, the config folder), and the launcher starts the harness with
+`docker exec`, which does not carry the supervisor's environment into the container. Putting those
+values in the arguments would show the bearer key in every local user's process list. The adapter
+therefore lists the variables in `HARNESS_DOCKER_FORWARD_ENV` and puts their values in the launcher's own
+environment: the launcher passes them to the harness by name (`docker exec -e NAME`), so they never
+appear in argv. The list is the config document (`OPENCODE_CONFIG_CONTENT`), `OPENCODE_DB`,
+`XDG_CONFIG_HOME`, the three `OPENCODE_DISABLE_*` switches the native adapter sets, and the provider
+API-key variables that are set on the host. Everything else of the supervisor's environment stays
+behind, and an owner's environment reference to any of these names (a provider key that is set on the
+host included, so it cannot be swapped for another variable's value), or to the launcher's flag and
+forwarding variables, is ignored: such references configure the launcher, not the agent.
+
+The agent's private state lives in `<checkout>/.aimebu/opencode/<agent hash>/` (its config folder
+and `opencode.db`), seen from the container under the launcher's path mapping; OpenCode's own data
+folder, with its `auth.json`, is the one the launcher's container mounts. The MCP endpoint is
+the same `/api/agent/mcp` as for the other Docker harnesses (see below), with `localhost` mapped to
+`host.docker.internal`. `OPENCODE_LAUNCH_FLAGS=` (empty) is set because the launcher's built-in
+`--auto` comes before the subcommand and would start the interactive interface instead of `run`; the
+adapter passes `--auto` itself, after `run`, for normal turns.
+
+A launcher that predates the feature would start the harness with none of this. The checkout preflight
+and every turn therefore run the launcher with `HARNESS_DOCKER_PRINT_FEATURES=1 … --version`: a launcher
+that has the feature prints `forward_env` and exits before it touches Docker, and one that does not
+prints a version. The latter is refused with a message to update harness-docker. The Docker variant
+claims no capabilities until the opt-in live canary (`AIMEBU2_LIVE_OPENCODE_DOCKER=1`, not yet written)
+has verified read-only turns, cancel and cost inside a container.
 
 ## Mistral Vibe native adapter
 
@@ -360,7 +391,7 @@ prints a warning about it on stderr). The variables the adapter sets itself (`VI
 `VIBE_ACTIVE_MODEL`, `VIBE_SESSION_LOGGING__SAVE_DIR`, `VIBE_MCP_SERVERS` and the bearer's variable)
 come last and an owner's environment reference to one of them is ignored.
 
-There is no Docker variant. The owner lists the models of a Vibe harness in Settings → Harnesses; as Vibe
+The owner lists the models of a Vibe harness in Settings → Harnesses; as Vibe
 has no command that lists them, Auto-detect models reads the `[[models]]` of the machine's Vibe config
 (by alias) and adds Vibe's built-in default, `mistral-medium-3.5`. The adapter's capabilities are
 pinned to the verified release, 2.25.0 on Linux, and claim cost and cancel confirmation only: no-action
@@ -368,9 +399,36 @@ mode is not claimed until a live canary has shown that a read-only turn loads no
 servers. `AIMEBU2_LIVE_VIBE=1` is reserved for that opt-in canary, which has not been written or run.
 The stream entries in the tests are shaped from the Vibe 2.25.0 sources, not recorded from a run.
 
+### Mistral Vibe in Docker
+
+The Docker variant runs the same turn through the `vibe-docker` launcher, on the same channel as
+OpenCode in Docker (see above): the container does not inherit the supervisor's environment, so the
+adapter lists the variables it sets (`VIBE_HOME`, `VIBE_ACTIVE_MODEL`, `VIBE_SESSION_LOGGING__SAVE_DIR`,
+`VIBE_MCP_SERVERS` with the variable that carries the bearer key, and the provider key variables
+that are set on the host: `MISTRAL_API_KEY` and the ones the copied provider tables name) in
+`HARNESS_DOCKER_FORWARD_ENV` and puts their values in the launcher's own environment. A harness-docker
+that has the matching feature passes them by name, so no value is ever in argv, and a launcher that
+does not is refused before the turn runs. The launcher's own flags are cleared
+(`VIBE_LAUNCH_FLAGS=`): its built-in `--yolo` would also apply to a read-only turn, so the adapter
+passes its flags itself, as natively.
+
+The agent's private home (with the `config.toml` seeded from the person's models and providers, read
+on the host, and their `.env` linked in) and its session folder are `<checkout>/.aimebu/vibe/<agent hash>/home`
+and `.../sessions`, seen from the container under the launcher's path mapping; the stats of a
+finished turn are read from the host side of the same folder. The `.env` link points at the person's
+own Vibe home, so it resolves in the container only if the harness container mounts that folder at the same
+path (harness-docker mirrors `VIBE_HOME`, `~/.vibe` by default). The adapter cannot see a container's mounts:
+when Vibe reports a missing key, the exit evidence says the key reaches the container from the host environment
+(forwarded by name) or from that `.env` under the condition above, and naming the host folder. Setting
+`MISTRAL_API_KEY` on the host avoids the question. `PYTHONUNBUFFERED=1` is forwarded as natively, so the
+streamed entries arrive as they are written. The MCP endpoint is the same
+`/api/agent/mcp` as for the other Docker harnesses, with `localhost` mapped to `host.docker.internal`.
+The Docker variant claims no capabilities until a live canary has run
+(`AIMEBU2_LIVE_VIBE_DOCKER=1`, not yet written).
+
 ## Docker variants
 
-The `docker` variants use `claude-docker` and `codex-docker` from the
+The `docker` variants use `claude-docker`, `codex-docker`, `pi-docker`, `opencode-docker` and `vibe-docker` from the
 supervisor's `PATH`. The launchers receive the same turn arguments and stdin
 as the native CLIs. A configured path map translates Codex's `-C` checkout
 and output schema paths to their container-visible locations; Pi translates

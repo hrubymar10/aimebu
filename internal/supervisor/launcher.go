@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 )
 
@@ -26,12 +27,6 @@ func validateLauncher(def protocol.LauncherDefinition) error {
 	}
 	if strings.ContainsRune(def.Command, filepath.Separator) && !filepath.IsAbs(def.Command) {
 		return errors.New("command path must be absolute")
-	}
-	if def.Containerized && def.Tool == "opencode" {
-		return errors.New("OpenCode has no container variant")
-	}
-	if def.Containerized && def.Tool == "vibe" {
-		return errors.New("Vibe has no container variant")
 	}
 	if def.Containerized && def.Tool == "pi" && def.Toolbox {
 		return errors.New("Pi container launchers cannot provide the toolbox with the current adapter")
@@ -177,6 +172,12 @@ func preflightLauncher(ctx context.Context, def protocol.LauncherDefinition, row
 	// A child may keep the output pipe open after the version command exits.
 	// Bound that wait, including after cancellation of the command.
 	cmd.WaitDelay = time.Second
+	if def.Containerized && adapter.DockerNeedsForwardEnv(def.Tool) {
+		// A launcher that cannot forward the environment would start the harness without its isolated configuration and toolbox: say so now.
+		if err := adapter.RequireDockerFeature(ctx, def.Tool, row.ResolvedCommand, def.Args, checkout, launcherEnvironment(def.EnvRefs, def.Tool), adapter.FeatureForwardEnv); err != nil {
+			return "", err
+		}
+	}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		if errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil {
 			return visible, nil // The version command exited successfully.

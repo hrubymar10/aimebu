@@ -329,7 +329,7 @@ func TestSpawnCatalogSeparatesCLIVersionFromModels(t *testing.T) {
 	if !catalog.SupervisorUpdateNeeded {
 		t.Fatal("a connected supervisor without launcher support is told to update")
 	}
-	if len(catalog.Tools) != 8 || catalog.Tools[0].Tool != "claude" || catalog.Tools[0].Variant != "docker" || catalog.Tools[0].Available || catalog.Tools[0].CLIVersion != "" {
+	if len(catalog.Tools) != 10 || catalog.Tools[0].Tool != "claude" || catalog.Tools[0].Variant != "docker" || catalog.Tools[0].Available || catalog.Tools[0].CLIVersion != "" {
 		t.Fatalf("catalog %+v", catalog.Tools)
 	}
 	if got := catalog.Tools[0].Models[0].ID; got != "haiku" {

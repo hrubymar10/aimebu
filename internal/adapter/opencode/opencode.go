@@ -5,6 +5,15 @@
 // `-s`. The prompt goes in on standard input and the answer comes back as
 // JSONL (`--format json`); a turn is terminal only when a step finishes with
 // reason "stop" after text was produced and no error was reported.
+//
+// The Docker variant runs the same turn through the harness-docker launcher.
+// OpenCode takes its configuration from the environment alone, and the
+// launcher starts the harness in a container that does not inherit the
+// supervisor's environment, so the variables that isolate the agent (its
+// config document with the toolbox's bearer key, its state paths) are listed
+// in HARNESS_DOCKER_FORWARD_ENV: the launcher then passes them by name, and
+// the values never appear in an argument list. A launcher that cannot do that
+// is refused before the turn runs.
 package opencode
 
 import (
@@ -38,13 +47,23 @@ const SupportedVersion = "1.19.0"
 
 type Adapter struct {
 	Command     string
+	Variant     string // "native" (the default) or "docker"
 	RuntimeRoot string
 	version     string
 }
 
 func New(runtimeRoot string) *Adapter { return &Adapter{Command: "opencode", RuntimeRoot: runtimeRoot} }
 
-func (a *Adapter) CatalogIdentity() (string, string) { return "opencode", "native" }
+func NewDocker() *Adapter { return &Adapter{Command: "opencode-docker", Variant: "docker"} }
+
+func (a *Adapter) variant() string {
+	if a.Variant == "" {
+		return "native"
+	}
+	return a.Variant
+}
+
+func (a *Adapter) CatalogIdentity() (string, string) { return "opencode", a.variant() }
 
 func (a *Adapter) Catalog() []adapter.CatalogEntry {
 	version := a.version
@@ -53,6 +72,9 @@ func (a *Adapter) Catalog() []adapter.CatalogEntry {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, a.Command, "--version")
 		cmd.Env = versionEnv()
+		if a.variant() == "docker" {
+			cmd.Env = append(adapter.DockerBaseEnv(), "OPENCODE_LAUNCH_FLAGS=")
+		}
 		out, err := cmdprobe.Output(cmd) // bounded by the deadline, not by helpers the launcher leaves behind
 		if err != nil {
 			return nil
@@ -62,19 +84,25 @@ func (a *Adapter) Catalog() []adapter.CatalogEntry {
 	if version == "" {
 		return nil
 	}
+	if a.variant() == "docker" {
+		return []adapter.CatalogEntry{{Tool: "opencode", Version: version, Environment: adapter.Environment{Variant: "docker", OS: "linux", Container: true}}}
+	}
 	return []adapter.CatalogEntry{{Tool: "opencode", Version: version, Environment: adapter.Environment{Variant: "native", OS: runtime.GOOS}}}
 }
 
+// Capabilities claims nothing for the Docker variant: what the native adapter was verified for (read-only turns, cancel, cost) is not
+// carried to a container until the opt-in live canary, AIMEBU2_LIVE_OPENCODE_DOCKER=1, has shown it.
 func (a *Adapter) Capabilities(version string, environment adapter.Environment) adapter.Capabilities {
-	if version != SupportedVersion || environment.Variant != "native" || environment.OS != "linux" {
+	if version != SupportedVersion || environment.Variant != "native" || environment.OS != "linux" || a.variant() != "native" {
 		return adapter.Capabilities{}
 	}
 	return adapter.Capabilities{NoActionMode: true, Cost: true, CancelConfirmed: true}
 }
 
 func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Turn, error) {
-	if spec.Agent.Variant == "docker" {
-		return nil, errors.New("OpenCode has no Docker variant")
+	docker := a.variant() == "docker"
+	if (spec.Agent.Variant == "docker") != docker {
+		return nil, fmt.Errorf("this adapter runs OpenCode in the %s variant, not %q", a.variant(), spec.Agent.Variant)
 	}
 	if spec.TurnID == "" || spec.Agent.ID == "" || spec.CheckoutPath == "" || spec.Agent.Model == "" {
 		return nil, errors.New("turn ID, agent ID, checkout path, and model required")
@@ -85,17 +113,38 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if spec.NativeSessionStarted && spec.NativeSessionHandle == "" {
 		return nil, errors.New("resumed turn requires native session handle")
 	}
-	if a.RuntimeRoot == "" {
-		return nil, errors.New("OpenCode runtime root required")
-	}
 	sum := sha256.Sum256([]byte(spec.Agent.ID))
-	runtimeDir := filepath.Join(a.RuntimeRoot, hex.EncodeToString(sum[:]))
+	// The agent's private state (its config folder and session database) lives under the supervisor's runtime root natively, and below the
+	// mirrored checkout for a container, which sees the checkout and nothing of the supervisor's root.
+	var runtimeDir string
+	if docker {
+		if err := adapter.DockerCheckout(spec.CheckoutPath); err != nil {
+			return nil, err
+		}
+		runtimeDir = filepath.Join(spec.CheckoutPath, ".aimebu", "opencode", hex.EncodeToString(sum[:]))
+	} else {
+		if a.RuntimeRoot == "" {
+			return nil, errors.New("OpenCode runtime root required")
+		}
+		runtimeDir = filepath.Join(a.RuntimeRoot, hex.EncodeToString(sum[:]))
+	}
 	configHome := filepath.Join(runtimeDir, "config")
 	if err := os.MkdirAll(configHome, 0700); err != nil {
 		return nil, err
 	}
 	if err := os.Chmod(runtimeDir, 0700); err != nil {
 		return nil, err
+	}
+	// What the harness sees: a container may see the checkout under another path; a native process sees everything where it is.
+	visibleRuntime, visibleCheckout := runtimeDir, spec.CheckoutPath
+	if docker {
+		var err error
+		if visibleRuntime, err = adapter.VisiblePath(spec, runtimeDir); err != nil {
+			return nil, err
+		}
+		if visibleCheckout, err = adapter.VisiblePath(spec, spec.CheckoutPath); err != nil {
+			return nil, err
+		}
 	}
 	normal := spec.Mode == adapter.ModeNormal
 	config := map[string]any{
@@ -107,6 +156,9 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	}
 	if normal {
 		endpoint, authorization, err := adapter.NativeMCP(spec.AgentToolsConfigPath, spec.Agent.ID)
+		if docker {
+			endpoint, authorization, err = adapter.DockerMCPAt(spec.AgentToolsConfigPath, spec.Agent.ID, spec.AgentServerURL)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -127,7 +179,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	}
 	// --pure keeps OpenCode from installing or loading external plugins, which
 	// otherwise blocks a cold start on the network.
-	args := []string{"run", "--pure", "--format", "json", "-m", spec.Agent.Model, "--dir", spec.CheckoutPath}
+	args := []string{"run", "--pure", "--format", "json", "-m", spec.Agent.Model, "--dir", visibleCheckout}
 	if spec.NativeSessionStarted {
 		args = append(args, "-s", spec.NativeSessionHandle)
 	}
@@ -143,7 +195,19 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	// The prompt arrives on stdin, which must reach EOF: OpenCode appends piped
 	// stdin to the message and otherwise waits for it forever.
 	cmd.Stdin = bytes.NewReader(input)
-	cmd.Env = adapter.LauncherEnv(childEnv(configHome, filepath.Join(runtimeDir, "opencode.db"), string(configJSON)), spec.LauncherEnvRefs)
+	if docker {
+		env, forwarded := dockerEnv(filepath.Join(visibleRuntime, "config"), filepath.Join(visibleRuntime, "opencode.db"), string(configJSON))
+		// An older launcher would run the harness without any of this: refuse it here, before the turn starts, not after a spawn that looked fine.
+		probe, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := adapter.RequireDockerFeature(probe, "OpenCode", command, spec.LauncherArgs, spec.CheckoutPath, env, adapter.FeatureForwardEnv)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+		cmd.Env = adapter.LauncherEnv(env, launcherRefs(spec.LauncherEnvRefs, forwarded))
+	} else {
+		cmd.Env = adapter.LauncherEnv(childEnv(configHome, filepath.Join(runtimeDir, "opencode.db"), string(configJSON)), spec.LauncherEnvRefs)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -232,6 +296,53 @@ func childEnv(configHome, dbPath, configJSON string) []string {
 		"OPENCODE_DISABLE_PROJECT_CONFIG=1",
 		"OPENCODE_DISABLE_CLAUDE_CODE=1",
 	)
+}
+
+// dockerProtected are the variables a Docker turn sets itself. An owner's environment reference to one of them is ignored: it would
+// replace the agent's config document or state paths, switch the launcher's flags back on, or change what the launcher forwards.
+var dockerProtected = map[string]bool{"OPENCODE_DB": true, "OPENCODE_CONFIG_CONTENT": true, "XDG_CONFIG_HOME": true,
+	"OPENCODE_DISABLE_AUTOUPDATE": true, "OPENCODE_DISABLE_PROJECT_CONFIG": true, "OPENCODE_DISABLE_CLAUDE_CODE": true,
+	"OPENCODE_LAUNCH_FLAGS": true, "HARNESS_DOCKER_FORWARD_ENV": true, "HARNESS_DOCKER_PRINT_FEATURES": true}
+
+// launcherRefs drops an owner's references to the variables the adapter sets, and to the ones it forwards: a reference to a provider key
+// that is set on the host would otherwise swap that key's value for another variable's.
+func launcherRefs(refs map[string]string, forwarded []string) map[string]string {
+	named := make(map[string]bool, len(forwarded))
+	for _, name := range forwarded {
+		named[name] = true
+	}
+	kept := make(map[string]string, len(refs))
+	for target, source := range refs {
+		if !dockerProtected[target] && !named[target] {
+			kept[target] = source
+		}
+	}
+	return kept
+}
+
+// dockerEnv is the environment of the launcher for a Docker turn. The agent's configuration (the same document and private state paths a
+// native turn gets, the paths seen from inside the container) and the provider keys that are set are listed in HARNESS_DOCKER_FORWARD_ENV,
+// which makes the launcher pass them to the harness by name: their values are in this process's environment, never in an argument list.
+// OPENCODE_LAUNCH_FLAGS is cleared because the launcher's built-in --auto comes before the subcommand and would start the interface
+// instead of `run`; the adapter passes its own flags after `run`.
+func dockerEnv(configHome, dbPath, configJSON string) (env, forwarded []string) {
+	env = adapter.DockerBaseEnv()
+	set := func(name, value string) {
+		env = append(env, name+"="+value)
+		forwarded = append(forwarded, name)
+	}
+	set("XDG_CONFIG_HOME", configHome)
+	set("OPENCODE_DB", dbPath)
+	set("OPENCODE_CONFIG_CONTENT", configJSON)
+	set("OPENCODE_DISABLE_AUTOUPDATE", "1")
+	set("OPENCODE_DISABLE_PROJECT_CONFIG", "1")
+	set("OPENCODE_DISABLE_CLAUDE_CODE", "1")
+	for _, key := range providerKeys {
+		if value := os.Getenv(key); value != "" {
+			set(key, value)
+		}
+	}
+	return append(env, "HARNESS_DOCKER_FORWARD_ENV="+strings.Join(forwarded, ","), "OPENCODE_LAUNCH_FLAGS="), forwarded
 }
 
 func passThrough(allowed map[string]bool) []string {

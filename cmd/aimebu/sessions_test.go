@@ -109,8 +109,14 @@ func TestResumeHintsIncludeSessionLocations(t *testing.T) {
 	if got := resumeHint(sessionRow{ID: "agent", Tool: "opencode", Variant: "native", Remote: true}, "ses_abc", root); got != "" {
 		t.Fatalf("remote OpenCode path guessed: %q", got)
 	}
+	if got := resumeHint(sessionRow{ID: "agent", Tool: "opencode", Variant: "docker"}, "ses_abc", root); got != "" {
+		t.Fatalf("Docker OpenCode path guessed: %q", got)
+	}
 	if got := resumeHint(sessionRow{ID: "agent", Tool: "vibe", Variant: "native", Remote: true}, "0c3e1f4a-8b2d", root); got != "" {
 		t.Fatalf("remote Vibe path guessed: %q", got)
+	}
+	if got := resumeHint(sessionRow{ID: "agent", Tool: "vibe", Variant: "docker"}, "0c3e1f4a-8b2d", root); got != "" {
+		t.Fatalf("Docker Vibe path guessed: %q", got)
 	}
 	if got := resumeHint(sessionRow{ID: "agent", Tool: "codex", Variant: "native", Remote: true}, "thread", root); got != "" {
 		t.Fatalf("remote Codex path guessed: %q", got)

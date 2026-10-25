@@ -528,3 +528,14 @@ func TestDetectHarnessesFindsVibe(t *testing.T) {
 	}
 	t.Fatal("the vibe executable on PATH was not found")
 }
+
+// The listing command is run with the launcher's built-in flags cleared: a Docker launcher would otherwise put them (OpenCode's --auto)
+// before `models`.
+func TestDetectModelsClearsTheLaunchersBuiltInFlags(t *testing.T) {
+	t.Setenv("OPENCODE_LAUNCH_FLAGS", "--auto")
+	launcher := writeScript(t, t.TempDir(), "opencode-docker", `if [ "${OPENCODE_LAUNCH_FLAGS+x}" = x ] && [ -z "$OPENCODE_LAUNCH_FLAGS" ] && [ "$1" = models ]; then printf 'opencode/a\n'; else echo "flags: [$OPENCODE_LAUNCH_FLAGS] first: $1" >&2; exit 3; fi`)
+	got, err := detectModels(t.Context(), "opencode", launcher, nil, "")
+	if err != nil || len(got) != 1 || got[0].Slug != "opencode/a" {
+		t.Fatalf("models: %+v %v", got, err)
+	}
+}

@@ -366,8 +366,8 @@ func TestHarnessModelsEditOverAStaleRevisionIsRefused(t *testing.T) {
 	}
 }
 
-// Mistral Vibe is a harness an owner can add: it is validated by the machine's supervisor like the others, gets its own default label, is
-// listed as a native harness, and is refused as a container (there is no container variant of it).
+// Mistral Vibe is a harness an owner can add: it is validated by the machine's supervisor like the others, gets its own default label (with
+// "(Docker)" for a containerized one), and is listed natively and in Docker.
 func TestOwnerAddsAMistralVibeHarness(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -409,21 +409,26 @@ func TestOwnerAddsAMistralVibeHarness(t *testing.T) {
 	}
 	body["containerized"] = true
 	resp = f.request(http.MethodPost, base, body, true)
-	var refused struct {
-		Message string `json:"message"`
+	var docker struct {
+		Config store.Launcher `json:"config"`
 	}
-	_ = json.NewDecoder(resp.Body).Decode(&refused)
+	if resp.StatusCode != 200 {
+		t.Fatalf("a containerized vibe harness: %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&docker); err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
-	if resp.StatusCode != 400 || !strings.Contains(refused.Message, "no container variant") {
-		t.Fatalf("a containerized vibe harness: %d %q", resp.StatusCode, refused.Message)
+	if docker.Config.Label != "Mistral Vibe (Docker)" || !docker.Config.Containerized {
+		t.Fatalf("created: %+v", docker.Config)
 	}
 	body["tool"], body["containerized"] = "cursor", false
 	if resp = f.request(http.MethodPost, base, body, true); resp.StatusCode != 400 {
 		t.Fatalf("an unknown tool: %d", resp.StatusCode)
 	}
 	resp.Body.Close()
-	if !listedHarness("vibe", "native") || listedHarness("vibe", "docker") {
-		t.Fatal("vibe is a native harness only")
+	if !listedHarness("vibe", "native") || !listedHarness("vibe", "docker") || listedHarness("vibe", "podman") {
+		t.Fatal("vibe is listed natively and in Docker")
 	}
 	resp = f.request(http.MethodGet, "/api/spawn-catalog", nil, false)
 	var catalog struct {
@@ -441,5 +446,75 @@ func TestOwnerAddsAMistralVibeHarness(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("the spawn catalog lists Mistral Vibe: %+v", catalog.Tools)
+	}
+}
+
+// OpenCode can run in a container: the owner can add a containerized OpenCode harness (it was refused before), it gets the Docker label,
+// and the spawn catalog lists the Docker adapter next to the native one.
+func TestOwnerAddsADockerOpenCodeHarness(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	base := "/api/machines/" + f.machineID + "/launchers"
+	journal, err := supervisor.OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, adapter.NewFake())
+	ready := make(chan struct{}, 1)
+	client.OnReady = func() { ready <- struct{}{} }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go client.RunOnce(ctx)
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervisor did not connect")
+	}
+	path := filepath.Join(t.TempDir(), "opencode-docker")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 1.19.4\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{"tool": "opencode", "command": path, "enabled": true, "containerized": true, "args": []string{}, "env_refs": map[string]string{},
+		"path_maps": []any{}, "visible_roots": []string{}, "supports_toolbox": true}
+	resp := f.request(http.MethodPost, base, body, true)
+	var created struct {
+		Config store.Launcher `json:"config"`
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("add a Docker OpenCode harness: %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if created.Config.Tool != "opencode" || !created.Config.Containerized || created.Config.Label != "OpenCode (Docker)" {
+		t.Fatalf("created: %+v", created.Config)
+	}
+	if !listedHarness("opencode", "docker") || !listedHarness("opencode", "native") {
+		t.Fatal("OpenCode is listed natively and in Docker")
+	}
+	resp = f.request(http.MethodGet, "/api/spawn-catalog", nil, false)
+	var catalog struct {
+		Tools []spawnCatalogTool `json:"tools"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&catalog); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	docker, native := false, false
+	for _, tool := range catalog.Tools {
+		if tool.Tool == "opencode" && tool.Variant == "docker" && tool.Label == "OpenCode (Docker)" {
+			docker = true
+		}
+		if tool.Tool == "opencode" && tool.Variant == "native" {
+			native = true
+		}
+	}
+	if !docker || !native {
+		t.Fatalf("the spawn catalog lists OpenCode and OpenCode (Docker): %+v", catalog.Tools)
+	}
+	if !dockerNeedsReachableBind("opencode", "docker") || dockerNeedsReachableBind("opencode", "native") {
+		t.Fatal("a Docker OpenCode reaches the server from its container, so it needs a reachable bind")
 	}
 }

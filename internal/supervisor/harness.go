@@ -17,8 +17,8 @@ var harnessNames = []struct{ tool, variant, command string }{
 	{"claude", "native", "claude"}, {"claude", "docker", "claude-docker"},
 	{"codex", "native", "codex"}, {"codex", "docker", "codex-docker"},
 	{"pi", "native", "pi"}, {"pi", "docker", "pi-docker"},
-	{"opencode", "native", "opencode"},
-	{"vibe", "native", "vibe"},
+	{"opencode", "native", "opencode"}, {"opencode", "docker", "opencode-docker"},
+	{"vibe", "native", "vibe"}, {"vibe", "docker", "vibe-docker"},
 }
 
 func harnessKey(tool, variant string) string { return tool + "\x00" + variant }

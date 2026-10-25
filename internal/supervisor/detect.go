@@ -31,8 +31,8 @@ var detectNames = []struct {
 	{"claude", "claude", false}, {"claude", "claude-docker", true},
 	{"codex", "codex", false}, {"codex", "codex-docker", true},
 	{"pi", "pi", false}, {"pi", "pi-docker", true},
-	{"opencode", "opencode", false},
-	{"vibe", "vibe", false},
+	{"opencode", "opencode", false}, {"opencode", "opencode-docker", true},
+	{"vibe", "vibe", false}, {"vibe", "vibe-docker", true},
 }
 
 const (
@@ -317,6 +317,8 @@ func detectModels(ctx context.Context, family, command string, launcherArgs []st
 	defer cancel()
 	cmd := exec.CommandContext(run, command, args...)
 	cmd.Dir = dir
+	// A Docker launcher puts its built-in flags (OpenCode's --auto, for one) before the arguments; the listing command must see none of them.
+	cmd.Env = append(os.Environ(), strings.ToUpper(family)+"_LAUNCH_FLAGS=")
 	var out bytes.Buffer
 	stderr := &tailWriter{keep: detectStderrKeep}
 	cmd.Stdout = &limitWriter{buf: &out, left: detectOutputLimit}

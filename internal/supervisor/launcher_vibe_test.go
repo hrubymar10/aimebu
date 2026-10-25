@@ -1,22 +1,21 @@
 package supervisor
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/hrubymar10/aimebu/internal/protocol"
 )
 
-// Mistral Vibe is a launcher tool, but only a native one: there is no container variant of it yet.
-func TestLauncherToolVibeIsNativeOnly(t *testing.T) {
+// Mistral Vibe is a launcher tool, native or containerized.
+func TestLauncherToolVibeIsNativeOrContainerized(t *testing.T) {
 	native := protocol.LauncherDefinition{ID: "mln_1", Name: "native", Tool: "vibe", Command: "vibe", Toolbox: true}
 	if err := validateLauncher(native); err != nil {
 		t.Fatalf("a native vibe launcher: %v", err)
 	}
 	docker := native
-	docker.Containerized = true
-	if err := validateLauncher(docker); err == nil || !strings.Contains(err.Error(), "no container variant") {
-		t.Fatalf("a containerized vibe launcher must be refused: %v", err)
+	docker.Containerized, docker.Command = true, "vibe-docker"
+	if err := validateLauncher(docker); err != nil {
+		t.Fatalf("a containerized vibe launcher: %v", err)
 	}
 	unknown := native
 	unknown.Tool = "vibes"
@@ -26,7 +25,7 @@ func TestLauncherToolVibeIsNativeOnly(t *testing.T) {
 	if command, ok := knownHarness("vibe", "native"); !ok || command != "vibe" {
 		t.Fatalf("known harness: %q %v", command, ok)
 	}
-	if _, ok := knownHarness("vibe", "docker"); ok {
-		t.Fatal("vibe has no docker harness")
+	if command, ok := knownHarness("vibe", "docker"); !ok || command != "vibe-docker" {
+		t.Fatalf("known harness: %q %v", command, ok)
 	}
 }

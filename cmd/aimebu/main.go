@@ -265,7 +265,7 @@ func supervisorCommand(ctx context.Context, stderr io.Writer) int {
 	fake := adapter.NewFake()
 	fake.SetEchoDefault(true)
 	client := supervisor.NewClient(credential.MachineID, credential.Key, serverURL, journal,
-		adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode")), vibe.New(filepath.Join(config.root, "supervisor", "vibe"))))
+		adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode")), opencode.NewDocker(), vibe.New(filepath.Join(config.root, "supervisor", "vibe")), vibe.NewDocker()))
 	client.OnError = func(err error) { fmt.Fprintln(stderr, err) }
 	client.TurnLimits = turnLimits
 	client.ConfigDir = config.root
@@ -636,7 +636,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 		fake.SetEchoDefault(true)
 		client := supervisor.NewClient(credential.MachineID, credential.Key,
 			"http://"+net.JoinHostPort(embeddedAddress, strconv.Itoa(config.port)), opened,
-			adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode")), vibe.New(filepath.Join(config.root, "supervisor", "vibe"))))
+			adapter.NewMulti(fake, claude.New(), claude.NewDocker(), codex.New(filepath.Join(config.root, "supervisor", "codex")), codex.NewDocker(), pi.New(filepath.Join(config.root, "supervisor", "pi")), pi.NewDocker(), opencode.New(filepath.Join(config.root, "supervisor", "opencode")), opencode.NewDocker(), vibe.New(filepath.Join(config.root, "supervisor", "vibe")), vibe.NewDocker()))
 		client.OnError = func(err error) { fmt.Fprintln(stderr, "supervisor:", err) }
 		client.TurnLimits = turnLimits
 		client.ConfigDir = config.root

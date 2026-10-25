@@ -197,14 +197,14 @@ func resumeHint(row sessionRow, handle, root string) string {
 		}
 		return "pi --session-dir " + shellSessionArg(filepath.Join(row.Checkout, ".aimebu", "pi-sessions", agentHash)) + " --session-id " + shellSessionArg(handle)
 	case "opencode":
-		if row.Remote {
-			return ""
+		if row.Remote || row.Variant == "docker" || row.Containerized {
+			return "" // a Docker agent's session database is in its checkout, under the container's paths: no command is guessed
 		}
 		runtimeRoot := filepath.Join(root, "supervisor", "opencode")
 		return "OPENCODE_DB=" + shellSessionArg(filepath.Join(runtimeRoot, agentHash, "opencode.db")) + " opencode --session " + shellSessionArg(handle)
 	case "vibe":
-		if row.Remote {
-			return ""
+		if row.Remote || row.Variant == "docker" || row.Containerized {
+			return "" // a Docker agent's sessions are in its checkout, under the container's paths: no command is guessed
 		}
 		runtimeDir := filepath.Join(root, "supervisor", "vibe", agentHash)
 		return "VIBE_HOME=" + shellSessionArg(filepath.Join(runtimeDir, "home")) + " VIBE_SESSION_LOGGING__SAVE_DIR=" + shellSessionArg(filepath.Join(runtimeDir, "sessions")) + " vibe --resume " + shellSessionArg(handle)

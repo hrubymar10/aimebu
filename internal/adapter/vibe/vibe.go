@@ -8,6 +8,11 @@
 //
 // Everything Vibe is configured with comes from the environment and a private VIBE_HOME per agent, so the person's own config (their MCP
 // servers, hooks, skills, agents) never reaches an agent turn; see seedHome.
+//
+// The Docker variant runs the same turn through the harness-docker launcher. The container does not inherit the supervisor's environment,
+// so the variables above (and the bearer key of the toolbox) are listed in HARNESS_DOCKER_FORWARD_ENV and their values put in the launcher's
+// own environment: the launcher passes them by name, and no value appears in an argument list. A launcher that cannot do that is refused
+// before the turn runs. The private home and the session folder then live below the mirrored checkout.
 package vibe
 
 import (
@@ -45,6 +50,7 @@ const stopEventTag = "<vibe_stop_event>"
 
 type Adapter struct {
 	Command     string
+	Variant     string // "native" (the default) or "docker"
 	RuntimeRoot string
 	// UserHome is the person's own Vibe home, where their config.toml and .env live; empty means $VIBE_HOME, then ~/.vibe.
 	UserHome string
@@ -53,7 +59,16 @@ type Adapter struct {
 
 func New(runtimeRoot string) *Adapter { return &Adapter{Command: "vibe", RuntimeRoot: runtimeRoot} }
 
-func (a *Adapter) CatalogIdentity() (string, string) { return "vibe", "native" }
+func NewDocker() *Adapter { return &Adapter{Command: "vibe-docker", Variant: "docker"} }
+
+func (a *Adapter) variant() string {
+	if a.Variant == "" {
+		return "native"
+	}
+	return a.Variant
+}
+
+func (a *Adapter) CatalogIdentity() (string, string) { return "vibe", a.variant() }
 
 func (a *Adapter) Catalog() []adapter.CatalogEntry {
 	version := a.version
@@ -62,6 +77,9 @@ func (a *Adapter) Catalog() []adapter.CatalogEntry {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, a.Command, "--version")
 		cmd.Env = versionEnv()
+		if a.variant() == "docker" {
+			cmd.Env = append(adapter.DockerBaseEnv(), "VIBE_LAUNCH_FLAGS=")
+		}
 		out, err := cmdprobe.Output(cmd) // bounded by the deadline, not by helpers the launcher leaves behind
 		if err != nil {
 			return nil
@@ -73,13 +91,16 @@ func (a *Adapter) Catalog() []adapter.CatalogEntry {
 		}
 		version = fields[len(fields)-1]
 	}
+	if a.variant() == "docker" {
+		return []adapter.CatalogEntry{{Tool: "vibe", Version: version, Environment: adapter.Environment{Variant: "docker", OS: "linux", Container: true}}}
+	}
 	return []adapter.CatalogEntry{{Tool: "vibe", Version: version, Environment: adapter.Environment{Variant: "native", OS: runtime.GOOS}}}
 }
 
 // Capabilities claims no no-action mode: restricting a turn to the read tools is only trusted after the opt-in live canary has shown that
-// Vibe's MCP servers are not loaded with it.
+// Vibe's MCP servers are not loaded with it. The Docker variant claims nothing until its own live canary has run.
 func (a *Adapter) Capabilities(version string, environment adapter.Environment) adapter.Capabilities {
-	if version != SupportedVersion || environment.Variant != "native" || environment.OS != "linux" {
+	if version != SupportedVersion || environment.Variant != "native" || environment.OS != "linux" || a.variant() != "native" {
 		return adapter.Capabilities{}
 	}
 	return adapter.Capabilities{Cost: true, CancelConfirmed: true}
@@ -88,8 +109,9 @@ func (a *Adapter) Capabilities(version string, environment adapter.Environment) 
 var modelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$`)
 
 func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Turn, error) {
-	if spec.Agent.Variant == "docker" {
-		return nil, errors.New("Vibe has no Docker variant")
+	docker := a.variant() == "docker"
+	if (spec.Agent.Variant == "docker") != docker {
+		return nil, fmt.Errorf("this adapter runs Vibe in the %s variant, not %q", a.variant(), spec.Agent.Variant)
 	}
 	if spec.TurnID == "" || spec.Agent.ID == "" || spec.CheckoutPath == "" || spec.Agent.Model == "" {
 		return nil, errors.New("turn ID, agent ID, checkout path, and model required")
@@ -100,11 +122,21 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if spec.NativeSessionStarted && spec.NativeSessionHandle == "" {
 		return nil, errors.New("resumed turn requires native session handle")
 	}
-	if a.RuntimeRoot == "" {
-		return nil, errors.New("Vibe runtime root required")
-	}
 	sum := sha256.Sum256([]byte(spec.Agent.ID))
-	runtimeDir := filepath.Join(a.RuntimeRoot, hex.EncodeToString(sum[:]))
+	// The agent's private home and session folder live under the supervisor's runtime root natively, and below the mirrored checkout for a
+	// container, which sees the checkout and nothing of the supervisor's root.
+	var runtimeDir string
+	if docker {
+		if err := adapter.DockerCheckout(spec.CheckoutPath); err != nil {
+			return nil, err
+		}
+		runtimeDir = filepath.Join(spec.CheckoutPath, ".aimebu", "vibe", hex.EncodeToString(sum[:]))
+	} else {
+		if a.RuntimeRoot == "" {
+			return nil, errors.New("Vibe runtime root required")
+		}
+		runtimeDir = filepath.Join(a.RuntimeRoot, hex.EncodeToString(sum[:]))
+	}
 	home, saveDir := filepath.Join(runtimeDir, "home"), filepath.Join(runtimeDir, "sessions")
 	for _, dir := range []string{home, saveDir} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -119,15 +151,31 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		return nil, err
 	}
 	normal := spec.Mode == adapter.ModeNormal
+	// What the harness sees: a container may see the checkout under another path; a native process sees everything where it is.
+	visibleHome, visibleSave, visibleCheckout := home, saveDir, spec.CheckoutPath
+	if docker {
+		if visibleHome, err = adapter.VisiblePath(spec, home); err != nil {
+			return nil, err
+		}
+		if visibleSave, err = adapter.VisiblePath(spec, saveDir); err != nil {
+			return nil, err
+		}
+		if visibleCheckout, err = adapter.VisiblePath(spec, spec.CheckoutPath); err != nil {
+			return nil, err
+		}
+	}
 	// What isolates an agent is set last and cannot be named by an owner's environment references: a launcher that forwarded VIBE_HOME or
 	// VIBE_MCP_SERVERS would otherwise point Vibe at the person's own config or hand a read-only turn a toolbox.
-	protected := []string{"VIBE_HOME=" + home, "VIBE_ACTIVE_MODEL=" + spec.Agent.Model, "VIBE_SESSION_LOGGING__SAVE_DIR=" + saveDir}
-	args := []string{"-p", "--output", "streaming", "--workdir", spec.CheckoutPath}
+	protected := []string{"VIBE_HOME=" + visibleHome, "VIBE_ACTIVE_MODEL=" + spec.Agent.Model, "VIBE_SESSION_LOGGING__SAVE_DIR=" + visibleSave}
+	args := []string{"-p", "--output", "streaming", "--workdir", visibleCheckout}
 	if spec.NativeSessionStarted {
 		args = append(args, "--resume", spec.NativeSessionHandle)
 	}
 	if normal {
 		endpoint, authorization, err := adapter.NativeMCP(spec.AgentToolsConfigPath, spec.Agent.ID)
+		if docker {
+			endpoint, authorization, err = adapter.DockerMCPAt(spec.AgentToolsConfigPath, spec.Agent.ID, spec.AgentServerURL)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -161,7 +209,36 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	cmd.Dir = spec.CheckoutPath
 	// With no TEXT argument `vibe -p` reads the prompt from stdin, which must reach EOF.
 	cmd.Stdin = bytes.NewReader(input)
-	cmd.Env = append(adapter.LauncherEnv(childEnv(providerEnv), launcherRefs(spec.LauncherEnvRefs)), protected...)
+	if docker {
+		// The launcher passes the listed variables to the harness by name; the provider keys that are set on the host go with them. The
+		// launcher's own flags are cleared: its built-in --yolo would also apply to a read-only turn, so the adapter passes its flags itself.
+		env := adapter.DockerBaseEnv()
+		forwarded := make([]string, 0, len(protected)+len(providerEnv)+2)
+		for _, item := range protected {
+			name, _, _ := strings.Cut(item, "=")
+			forwarded = append(forwarded, name)
+		}
+		// Python buffers a pipe: without this the streamed entries would come in one lump at the end, as natively.
+		protected = append(protected, "PYTHONUNBUFFERED=1")
+		forwarded = append(forwarded, "PYTHONUNBUFFERED")
+		for _, key := range append([]string{"MISTRAL_API_KEY"}, providerEnv...) {
+			if value := os.Getenv(key); value != "" {
+				env = append(env, key+"="+value)
+				forwarded = append(forwarded, key)
+			}
+		}
+		protected = append(protected, "HARNESS_DOCKER_FORWARD_ENV="+strings.Join(forwarded, ","), "VIBE_LAUNCH_FLAGS=")
+		// An older launcher would run the harness without any of this: refuse it here, before the turn starts.
+		probe, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := adapter.RequireDockerFeature(probe, "Vibe", command, spec.LauncherArgs, spec.CheckoutPath, env, adapter.FeatureForwardEnv)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+		cmd.Env = append(adapter.LauncherEnv(env, launcherRefs(spec.LauncherEnvRefs, forwarded)), protected...)
+	} else {
+		cmd.Env = append(adapter.LauncherEnv(childEnv(providerEnv), launcherRefs(spec.LauncherEnvRefs, nil)), protected...)
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -175,7 +252,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		return nil, err
 	}
 	t := &turn{id: spec.TurnID, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, saveDir: saveDir, before: before,
-		cmd: cmd, events: make(chan adapter.Event, 64), done: make(chan struct{}), stderrCapture: spec.StderrSink}
+		docker: docker, userHome: a.userHome(), cmd: cmd, events: make(chan adapter.Event, 64), done: make(chan struct{}), stderrCapture: spec.StderrSink}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -188,12 +265,19 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 }
 
 // protectedEnv names the variables the adapter sets itself; an owner's environment reference to one of them is ignored.
-var protectedEnv = map[string]bool{"VIBE_HOME": true, "VIBE_ACTIVE_MODEL": true, "VIBE_SESSION_LOGGING__SAVE_DIR": true, "VIBE_MCP_SERVERS": true, "AIMEBU2_AGENT_KEY": true}
+var protectedEnv = map[string]bool{"VIBE_HOME": true, "VIBE_ACTIVE_MODEL": true, "VIBE_SESSION_LOGGING__SAVE_DIR": true, "VIBE_MCP_SERVERS": true, "AIMEBU2_AGENT_KEY": true,
+	"VIBE_LAUNCH_FLAGS": true, "HARNESS_DOCKER_FORWARD_ENV": true, "HARNESS_DOCKER_PRINT_FEATURES": true}
 
-func launcherRefs(refs map[string]string) map[string]string {
+// launcherRefs drops an owner's references to the variables the adapter sets and, for a container, to the ones it forwards: a reference to
+// a provider key that is set on the host would otherwise swap that key's value for another variable's.
+func launcherRefs(refs map[string]string, forwarded []string) map[string]string {
+	named := make(map[string]bool, len(forwarded))
+	for _, name := range forwarded {
+		named[name] = true
+	}
 	kept := make(map[string]string, len(refs))
 	for target, source := range refs {
-		if !protectedEnv[target] {
+		if !protectedEnv[target] && !named[target] {
 			kept[target] = source
 		}
 	}
@@ -333,6 +417,8 @@ type turn struct {
 	started             bool
 	saveDir             string
 	before              *sessionStats // the resumed session's totals before this turn, to price the turn alone
+	docker              bool
+	userHome            string // the person's own Vibe home, named when a container cannot see the key in it
 	cmd                 *exec.Cmd
 	events              chan adapter.Event
 	done                chan struct{}
@@ -509,7 +595,7 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		case stopText != "":
 			exit.ErrorEvent = adapter.SanitizeStderr("Vibe stopped the turn: " + stopText)
 		case lastErrorLine(exit.StderrTail) != "":
-			exit.ErrorEvent = adapter.SanitizeStderr("Vibe error: " + lastErrorLine(exit.StderrTail))
+			exit.ErrorEvent = adapter.SanitizeStderr("Vibe error: " + lastErrorLine(exit.StderrTail) + t.keyHint(lastErrorLine(exit.StderrTail)))
 		case lastNotice != "":
 			exit.ErrorEvent = adapter.SanitizeStderr("Vibe error: " + lastNotice)
 		}
@@ -519,6 +605,21 @@ func (t *turn) run(stdout, stderr io.Reader) {
 	t.exit, t.err = exit, scanError
 	t.mu.Unlock()
 	t.emit(adapter.Event{Kind: adapter.EventProcessExit, Exit: &exit})
+}
+
+// keyHint says how a key can reach a container when Vibe reports it missing. The key comes from the host environment (forwarded by name),
+// or from the .env of the person's Vibe home, which the agent's home links to: that link resolves in the container only if the container
+// has that folder mounted at the same path, which the adapter cannot see from here.
+func (t *turn) keyHint(line string) string {
+	if !t.docker || !strings.HasPrefix(line, "Missing ") || !strings.Contains(line, "_API_KEY") {
+		return ""
+	}
+	home := t.userHome
+	if home == "" {
+		home = "the Vibe home"
+	}
+	return " (in Docker the key reaches the container from the host environment, where it is forwarded by name, or from " + home +
+		"/.env, which works only if the harness container mounts that folder at the same path)"
 }
 
 // lastErrorLine is the last line Vibe printed that starts with "Error:", which is how it reports an API or configuration failure.

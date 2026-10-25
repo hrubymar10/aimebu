@@ -83,7 +83,9 @@ var boundedAdapters = []struct {
 	{"codex", "native", "Codex", "openai"},
 	{"pi", "native", "Pi", "ollama-cloud"},
 	{"opencode", "native", "OpenCode", "opencode"},
+	{"opencode", "docker", "OpenCode (Docker)", "opencode"},
 	{"vibe", "native", "Mistral Vibe", "mistral"},
+	{"vibe", "docker", "Mistral Vibe (Docker)", "mistral"},
 }
 
 // spawnCatalog reports bounded server-approved model choices alongside live
@@ -231,7 +233,7 @@ const dockerBindUnavailableMessage = "AIMEBU2_BIND is loopback-only; Docker need
 var errDockerBindUnavailable = errors.New(dockerBindUnavailableMessage)
 
 func dockerNeedsReachableBind(tool, variant string) bool {
-	return variant == "docker" && (tool == "claude" || tool == "codex" || tool == "pi")
+	return variant == "docker" && (tool == "claude" || tool == "codex" || tool == "pi" || tool == "opencode" || tool == "vibe")
 }
 
 func dockerBindIsLoopback() bool {

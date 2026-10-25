@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,7 +20,7 @@ import (
 // DockerPreflight checks the requested checkout through the actual launcher.
 // A bad mount fails the spawn instead of creating an uncertain first turn.
 func DockerPreflight(tool, checkout string, launcherPath ...string) error {
-	if tool != "claude" && tool != "codex" && tool != "pi" {
+	if tool != "claude" && tool != "codex" && tool != "pi" && tool != "opencode" && tool != "vibe" {
 		return fmt.Errorf("unsupported Docker tool %q", tool)
 	}
 	if err := DockerCheckout(checkout); err != nil {
@@ -30,6 +31,11 @@ func DockerPreflight(tool, checkout string, launcherPath ...string) error {
 	launcher := tool + "-docker"
 	if len(launcherPath) > 0 && launcherPath[0] != "" {
 		launcher = launcherPath[0]
+	}
+	if DockerNeedsForwardEnv(tool) {
+		if err := RequireDockerFeature(ctx, tool, launcher, nil, checkout, os.Environ(), FeatureForwardEnv); err != nil {
+			return err
+		}
 	}
 	cmd := exec.CommandContext(ctx, launcher, "--version")
 	cmd.Dir = checkout
@@ -42,6 +48,73 @@ func DockerPreflight(tool, checkout string, launcherPath ...string) error {
 		return fmt.Errorf("Docker launcher preflight: %s: %w", SanitizeStderr(string(out)), err)
 	}
 	return nil
+}
+
+// DockerBaseEnv is what a Docker launcher itself needs on the host: its search path, the user's home, the proxy and certificate settings, and
+// the Docker client's own variables. Nothing of it reaches the harness: what the harness is to get is listed in HARNESS_DOCKER_FORWARD_ENV.
+func DockerBaseEnv() []string {
+	allowed := map[string]bool{"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "LANG": true, "LC_ALL": true, "LC_CTYPE": true,
+		"TERM": true, "TMPDIR": true, "HTTPS_PROXY": true, "HTTP_PROXY": true, "NO_PROXY": true, "SSL_CERT_FILE": true, "SSL_CERT_DIR": true,
+		"DOCKER_HOST": true, "DOCKER_CONTEXT": true, "DOCKER_TLS_VERIFY": true, "DOCKER_CERT_PATH": true}
+	out := []string{}
+	for _, item := range os.Environ() {
+		if key, _, ok := strings.Cut(item, "="); ok && allowed[key] {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// FeatureForwardEnv is the Docker launcher feature that hands the variables named in HARNESS_DOCKER_FORWARD_ENV to the harness.
+const FeatureForwardEnv = "forward_env"
+
+// DockerNeedsForwardEnv says whether a tool's Docker turns configure the harness through forwarded environment variables, which an older
+// launcher would silently drop: the turn would then run without its isolated configuration or its toolbox.
+func DockerNeedsForwardEnv(tool string) bool { return tool == "opencode" || tool == "vibe" }
+
+// DockerFeatures asks a Docker launcher which features it has. With HARNESS_DOCKER_PRINT_FEATURES=1 a launcher that knows the probe prints
+// them, one per line, and exits before it touches Docker. One that predates it runs the harness with the arguments instead, which is why
+// the probe always carries --version: its answer is then a version string, which names no feature.
+func DockerFeatures(ctx context.Context, command string, args []string, dir string, env []string) (map[string]bool, error) {
+	probe := exec.CommandContext(ctx, command, append(append([]string(nil), args...), "--version")...)
+	probe.Dir = dir
+	probe.Env = append(append([]string(nil), env...), "HARNESS_DOCKER_PRINT_FEATURES=1")
+	out, err := cmdprobe.CombinedOutput(probe)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("Docker launcher feature probe: %w", ctx.Err())
+		}
+		return nil, fmt.Errorf("Docker launcher feature probe: %s: %w", SanitizeStderr(string(out)), err)
+	}
+	features := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && featureName.MatchString(line) {
+			features[line] = true
+		}
+	}
+	return features, nil
+}
+
+var featureName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
+// RequireDockerFeature refuses a launcher that lacks a feature the tool depends on, with the way out in the message.
+func RequireDockerFeature(ctx context.Context, tool, command string, args []string, dir string, env []string, feature string) error {
+	features, err := DockerFeatures(ctx, command, args, dir, env)
+	if err != nil {
+		return err
+	}
+	if !features[feature] {
+		return fmt.Errorf("the Docker launcher %s is too old for %s: it does not %s (update harness-docker, then retry)", command, tool, featureDescription(feature))
+	}
+	return nil
+}
+
+func featureDescription(feature string) string {
+	if feature == FeatureForwardEnv {
+		return "forward environment variables to the harness (HARNESS_DOCKER_FORWARD_ENV)"
+	}
+	return "support " + feature
 }
 
 // DockerCheckout keeps generated turn files below the mirrored checkout.

@@ -24,7 +24,7 @@ const { spawnSync } = require('node:child_process');
 
 const TOOLS = ['claude', 'codex', 'pi', 'opencode'];
 const FORMS = ['native', 'docker'];
-// OpenCode has no container variant.
+// The gate drives OpenCode native only; its container variant is not covered yet.
 const CHEAP_MODEL = { claude: 'haiku', codex: 'gpt-6-luna', pi: 'ollama-cloud/gemma4:31b', opencode: 'ollama-cloud/gemma4:31b' };
 const STEPS = ['room', 'spawn', 'task', 'pause', 'resume', 'kill', 'recovery', 'stop', 'archive'];
 

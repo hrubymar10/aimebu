@@ -3,7 +3,7 @@
 The cutover gate asks one question of every supported tool and container form:
 does the core task, control, and recovery path work on the real server? It runs
 `claude`, `codex`, and `pi`, each as `native` and `docker`, plus `opencode` as
-`native` only (it has no container variant), through the normal HTTP API as the
+`native` only (its Docker variant is not covered by this gate yet), through the normal HTTP API as the
 instance owner.
 
 ```bash

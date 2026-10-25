@@ -145,5 +145,5 @@ func listedHarness(tool, variant string) bool {
 	if variant != "native" && variant != "docker" {
 		return false
 	}
-	return tool == "claude" || tool == "codex" || tool == "pi" || (tool == "opencode" || tool == "vibe") && variant == "native"
+	return tool == "claude" || tool == "codex" || tool == "pi" || tool == "opencode" || tool == "vibe"
 }
