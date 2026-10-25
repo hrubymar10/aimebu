@@ -5,6 +5,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hrubymar10/aimebu/internal/usages"
 )
 
 func guardedFixture(t *testing.T) (m *Manager, livePath, credA string) {
@@ -18,6 +21,28 @@ func guardedFixture(t *testing.T) (m *Manager, livePath, credA string) {
 	must(t, os.MkdirAll(m.profileDir(ToolClaude, "b"), 0o700))
 	must(t, os.WriteFile(m.profileCredPath(ToolClaude, "b"), []byte(futureClaude("tok-b")), 0o600))
 	return m, livePath, credA
+}
+
+func TestSwitchWaitsForMaintenanceOnTheOutgoingProfile(t *testing.T) {
+	m, livePath, credA := guardedFixture(t)
+	release, ok, err := usages.AcquireMaintenance(m.root, ToolClaude, "a", m.profileCredPath(ToolClaude, "a"))
+	if err != nil || !ok {
+		t.Fatalf("hold active account: ok=%v err=%v", ok, err)
+	}
+	defer release()
+	previous := MaintenanceWait
+	MaintenanceWait = 200 * time.Millisecond
+	defer func() { MaintenanceWait = previous }()
+	if _, switched, err := m.SwitchGuarded(ToolClaude, "b", SwitchGuard{ExpectedActive: "a"}); !errors.Is(err, ErrMaintenanceBusy) || switched {
+		t.Fatalf("active maintenance must hold the switch: switched=%v err=%v", switched, err)
+	}
+	if got := readFile(t, livePath); got != credA {
+		t.Fatalf("the live credentials changed during maintenance: %q", got)
+	}
+	release()
+	if active, switched, err := m.SwitchGuarded(ToolClaude, "b", SwitchGuard{ExpectedActive: "a"}); err != nil || !switched || active != "b" {
+		t.Fatalf("switch after maintenance: active=%q switched=%v err=%v", active, switched, err)
+	}
 }
 
 // A guarded switch refuses when the active profile is not the one the caller decided from, and
@@ -48,6 +73,46 @@ func TestAGuardedSwitchRunsWhenTheActiveProfileIsTheExpectedOne(t *testing.T) {
 	// The same call again: b is active now, so a switch "from a" is refused instead of repeated.
 	if _, _, err := m.SwitchGuarded(ToolClaude, "a", SwitchGuard{ExpectedActive: "a"}); !errors.Is(err, ErrActiveChanged) {
 		t.Fatalf("a stale decision must be refused, got %v", err)
+	}
+}
+
+func TestManualSwitchTreatsTargetActivatedDuringWaitAsNoOp(t *testing.T) {
+	m, home := newTestManager(t)
+	must(t, m.SetEnabled(true))
+	writeLive(t, home, ToolClaude, futureClaude("tok-a"))
+	must(t, m.Import(ToolClaude, "a"))
+	must(t, m.Add(ToolClaude, "b"))
+	m.beforeSwitchLock = func() {
+		m.beforeSwitchLock = nil
+		state, err := m.loadState()
+		must(t, err)
+		state.Active[ToolClaude] = "b"
+		must(t, m.saveState(state))
+		writeLive(t, home, ToolClaude, futureClaude("tok-b"))
+	}
+	if active, switched, err := m.Switch(ToolClaude, "b"); err != nil || switched || active != "b" {
+		t.Fatalf("manual switch after target became active: active=%q switched=%v err=%v", active, switched, err)
+	}
+}
+
+func TestManualSwitchRetriesWhenAnotherProfileActivatesDuringWait(t *testing.T) {
+	m, home := newTestManager(t)
+	must(t, m.SetEnabled(true))
+	writeLive(t, home, ToolClaude, futureClaude("tok-a"))
+	must(t, m.Import(ToolClaude, "a"))
+	must(t, m.Add(ToolClaude, "b"))
+	must(t, m.Add(ToolClaude, "c"))
+	must(t, os.WriteFile(m.profileCredPath(ToolClaude, "b"), []byte(futureClaude("tok-b")), 0o600))
+	m.beforeSwitchLock = func() {
+		m.beforeSwitchLock = nil
+		state, err := m.loadState()
+		must(t, err)
+		state.Active[ToolClaude] = "c"
+		must(t, m.saveState(state))
+		writeLive(t, home, ToolClaude, futureClaude("tok-c"))
+	}
+	if active, switched, err := m.Switch(ToolClaude, "b"); err != nil || !switched || active != "b" {
+		t.Fatalf("manual switch did not retry: active=%q switched=%v err=%v", active, switched, err)
 	}
 }
 

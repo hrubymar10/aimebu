@@ -15,6 +15,7 @@ type memStore struct {
 	config    map[string]string
 	state     map[string]string
 	decisions map[string][]string // newest first
+	events    *fakeEvents
 }
 
 func newMemStore() *memStore {
@@ -51,6 +52,15 @@ func (m *memStore) AppendQuotaDecision(_ context.Context, tool, _ string, doc st
 	m.decisions[tool] = append([]string{doc}, m.decisions[tool]...)
 	if len(m.decisions[tool]) > 50 {
 		m.decisions[tool] = m.decisions[tool][:50]
+	}
+	return nil
+}
+func (m *memStore) AppendQuotaHoldDecision(ctx context.Context, tool, at, doc string, payload map[string]string) error {
+	if err := m.AppendQuotaDecision(ctx, tool, at, doc); err != nil {
+		return err
+	}
+	if m.events != nil {
+		m.events.Event("quota_hold", payload)
 	}
 	return nil
 }
@@ -136,6 +146,7 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{t: t, store: newMemStore(), act: &fakeActuator{}, ev: &fakeEvents{}, now: t0}
+	h.store.events = h.ev
 	h.src = &fakeSource{obs: map[string]Observation{}, names: map[string][]string{ToolClaude: {"a", "b", "c"}, ToolCodex: {"a", "b"}}}
 	h.r = NewRunner(h.store, h.src, h.act, h.ev)
 	h.r.SetClock(func() time.Time { return h.now })
@@ -177,6 +188,30 @@ func (h *harness) lastReason() (string, string) {
 		h.t.Fatal("no decision recorded")
 	}
 	return v.LastDecision.Action, v.LastDecision.Reason
+}
+
+func TestHoldSystemEventOnlyWhenReasonChangesAcrossRestart(t *testing.T) {
+	h := newHarness(t)
+	bad := ob("b", 1, 1)
+	bad.Status = "refreshing"
+	h.observe("b", ob("a", 1, 1), bad)
+	h.tick(0)
+	h.tick(time.Minute)
+	if got := h.ev.kinds(); len(got) != 1 || got[0] != "quota_hold" || h.ev.events[0]["reason"] != ReasonActiveNotOK {
+		t.Fatalf("unchanged hold events = %v", h.ev.events)
+	}
+	h.r = NewRunner(h.store, h.src, h.act, h.ev)
+	h.r.SetClock(func() time.Time { return h.now })
+	h.tick(time.Minute)
+	if got := h.ev.kinds(); len(got) != 1 {
+		t.Fatalf("restart repeated a hold event: %v", got)
+	}
+	h.src.set(ToolClaude, Observation{Ready: false, SwitcherEnabled: true})
+	h.tick(time.Minute)
+	h.tick(time.Minute)
+	if got := h.ev.kinds(); len(got) != 2 || got[1] != "quota_hold" || h.ev.events[1]["reason"] != ReasonNoSnapshot {
+		t.Fatalf("changed hold events = %v", h.ev.events)
+	}
 }
 
 // tests ─────────────────────────────────────────────────────────────────────
@@ -315,8 +350,8 @@ func TestAHeldSwitchBacksOffThenRetriesAndSucceeds(t *testing.T) {
 	if action, _ := h.lastReason(); action != ActionSwitch {
 		t.Fatalf("the retry should have switched, last = %s", action)
 	}
-	if got := h.ev.kinds(); len(got) != 1 || got[0] != "quota_switch" {
-		t.Fatalf("a hold announces nothing; events = %v", got)
+	if got := h.ev.kinds(); len(got) != 2 || got[0] != "quota_hold" || got[1] != "quota_switch" {
+		t.Fatalf("a repeated hold announces only once; events = %v", got)
 	}
 }
 
@@ -436,7 +471,7 @@ func TestTheBreakerRefusesTheFifthSwitchInAnHourAndTheOwnerRearmsIt(t *testing.T
 	if !v.State.Tripped || v.State.TrippedAt == nil {
 		t.Fatalf("the breaker did not trip: %+v", v.State)
 	}
-	if got := h.ev.kinds(); got[len(got)-1] != "quota_switcher_tripped" {
+	if got := h.ev.kinds(); len(got) < 2 || got[len(got)-2] != "quota_switcher_tripped" || got[len(got)-1] != "quota_hold" {
 		t.Fatalf("events = %v", got)
 	}
 	if _, reason := h.lastReason(); reason != ReasonBreaker {
@@ -596,7 +631,8 @@ func TestAfterTheResetLatchesTheRunnerSwitchesByTheNewOrder(t *testing.T) {
 }
 
 // The runner hands the profile it decided from to the actuator, and a hold for a changed active
-// profile counts as nothing: no event, no dwell, no breaker, and the next pass decides again.
+// profile does not count as a switch: the hold is announced, but no dwell or
+// breaker moves, and the next pass decides again.
 func TestTheActuatorGetsTheDecidedFromProfileAndAChangedActiveIsOnlyAHold(t *testing.T) {
 	h := newHarness(t) // active b, a is wanted
 	h.act.hold = ReasonActiveChanged
@@ -604,8 +640,8 @@ func TestTheActuatorGetsTheDecidedFromProfileAndAChangedActiveIsOnlyAHold(t *tes
 	if len(h.act.froms) != 1 || h.act.froms[0] != "b" {
 		t.Fatalf("the actuator must be told the decision was made from b: %v", h.act.froms)
 	}
-	if kinds := h.ev.kinds(); len(kinds) != 0 {
-		t.Fatalf("a changed active profile raises no event: %v", kinds)
+	if kinds := h.ev.kinds(); len(kinds) != 1 || kinds[0] != "quota_hold" {
+		t.Fatalf("a changed active profile announces one hold: %v", kinds)
 	}
 	if st := h.view().State; st.LastSwitchAt != nil {
 		t.Fatalf("a held switch moved the dwell or the breaker: %+v", st)

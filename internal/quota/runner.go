@@ -18,6 +18,7 @@ type Persistence interface {
 	QuotaState(ctx context.Context, tool string) (string, bool, error)
 	SaveQuotaState(ctx context.Context, tool, document string) error
 	AppendQuotaDecision(ctx context.Context, tool, at, document string) error
+	AppendQuotaHoldDecision(ctx context.Context, tool, at, document string, payload map[string]string) error
 	QuotaDecisions(ctx context.Context, tool string, limit int) ([]string, error)
 }
 
@@ -213,12 +214,34 @@ func (r *Runner) saveState(ctx context.Context, tool string, p persisted) error 
 }
 
 func (r *Runner) record(ctx context.Context, d Decision) {
+	previous, known := r.last[d.Tool]
+	if !known {
+		// The last hold survives a server restart in the decision journal. Read it
+		// before appending so a restart does not announce the same hold again.
+		if docs, err := r.store.QuotaDecisions(ctx, d.Tool, 1); err == nil && len(docs) > 0 {
+			if json.Unmarshal([]byte(docs[0]), &previous) == nil {
+				known = true
+			}
+		}
+	}
 	if d.Profiles == nil {
 		d.Profiles = map[string]ProfileView{}
 	}
 	raw, err := json.Marshal(d)
 	if err == nil {
-		err = r.store.AppendQuotaDecision(ctx, d.Tool, d.At.UTC().Format(time.RFC3339Nano), string(raw))
+		at := d.At.UTC().Format(time.RFC3339Nano)
+		if d.Action == ActionHold && (!known || previous.Action != ActionHold || previous.Reason != d.Reason) {
+			payload := map[string]string{"tool": d.Tool, "reason": d.Reason}
+			if d.From != nil {
+				payload["from"] = *d.From
+			}
+			if d.To != nil {
+				payload["to"] = *d.To
+			}
+			err = r.store.AppendQuotaHoldDecision(ctx, d.Tool, at, string(raw), payload)
+		} else {
+			err = r.store.AppendQuotaDecision(ctx, d.Tool, at, string(raw))
+		}
 	}
 	if err != nil {
 		log.Printf("quota: record %s decision: %v", d.Tool, err)

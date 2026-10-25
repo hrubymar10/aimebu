@@ -22,7 +22,7 @@ func switcherError(w http.ResponseWriter, err error) {
 	if errors.Is(err, switcher.ErrProfileNotFound) {
 		status = http.StatusNotFound
 	}
-	if errors.Is(err, switcher.ErrProfileExists) || errors.Is(err, switcher.ErrNoActiveProfile) || errors.Is(err, switcher.ErrActiveProfile) || errors.Is(err, switcher.ErrDisabled) || errors.Is(err, switcher.ErrNotEligible) || errors.Is(err, switcher.ErrTargetCopy) || errors.Is(err, switcher.ErrMaintenanceBusy) || errors.Is(err, switcher.ErrLoginPending) || errors.Is(err, switcher.ErrIncomingRefresh) || errors.Is(err, switcher.ErrLinkedProfile) || errors.Is(err, switcher.ErrMigrationRaced) || errors.Is(err, switcher.ErrCodexRunning) || errors.Is(err, switcher.ErrInvalidCredentials) {
+	if errors.Is(err, switcher.ErrProfileExists) || errors.Is(err, switcher.ErrNoActiveProfile) || errors.Is(err, switcher.ErrActiveProfile) || errors.Is(err, switcher.ErrActiveChanged) || errors.Is(err, switcher.ErrDisabled) || errors.Is(err, switcher.ErrNotEligible) || errors.Is(err, switcher.ErrTargetCopy) || errors.Is(err, switcher.ErrMaintenanceBusy) || errors.Is(err, switcher.ErrLoginPending) || errors.Is(err, switcher.ErrIncomingRefresh) || errors.Is(err, switcher.ErrLinkedProfile) || errors.Is(err, switcher.ErrMigrationRaced) || errors.Is(err, switcher.ErrCodexRunning) || errors.Is(err, switcher.ErrInvalidCredentials) {
 		status = http.StatusConflict
 	}
 	apiError(w, status, "switcher_error", err.Error())

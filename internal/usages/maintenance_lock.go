@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
@@ -135,6 +136,75 @@ func HoldMaintenance(root, tool, name, credPath string, timeout time.Duration) (
 			release() // the token rotated while we waited; lock the new identity
 			continue
 		}
+		if !time.Now().Before(deadline) {
+			return nil, ErrMaintenanceBusy
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// MaintenanceProfile identifies a stored account whose refresh must be idle
+// throughout a switch. Two profile names may contain the same refresh token;
+// the corresponding account lock is acquired only once.
+type MaintenanceProfile struct {
+	Name, CredPath string
+}
+
+// HoldMaintenanceProfiles holds every distinct account lock in identity order.
+// All locks precede the switcher flock, matching the refresh worker's order.
+// Recheck identities after acquisition because a token may rotate while waiting.
+func HoldMaintenanceProfiles(root, tool string, profiles []MaintenanceProfile, timeout time.Duration) (func(), error) {
+	return holdMaintenanceProfiles(root, tool, profiles, timeout, tryMaintenanceLock)
+}
+
+func holdMaintenanceProfiles(root, tool string, profiles []MaintenanceProfile, timeout time.Duration, tryLock func(string, string) (func(), error)) (func(), error) {
+	if root == "" {
+		return func() {}, nil
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		ids := make([]string, 0, len(profiles))
+		seen := map[string]bool{}
+		for _, p := range profiles {
+			id := maintenanceIdentity(tool, p.Name, p.CredPath)
+			if !seen[id] {
+				ids = append(ids, id)
+				seen[id] = true
+			}
+		}
+		sort.Strings(ids)
+		releases := make([]func(), 0, len(ids))
+		releaseAll := func() {
+			for i := len(releases) - 1; i >= 0; i-- {
+				releases[i]()
+			}
+		}
+		busy := false
+		for _, id := range ids {
+			release, err := tryLock(root, id)
+			if err != nil {
+				releaseAll()
+				return nil, fmt.Errorf("account lock unavailable: %w", err)
+			}
+			if release == nil {
+				busy = true
+				break
+			}
+			releases = append(releases, release)
+		}
+		if !busy {
+			stable := true
+			for _, p := range profiles {
+				if !seen[maintenanceIdentity(tool, p.Name, p.CredPath)] {
+					stable = false
+					break
+				}
+			}
+			if stable {
+				return releaseAll, nil
+			}
+		}
+		releaseAll()
 		if !time.Now().Before(deadline) {
 			return nil, ErrMaintenanceBusy
 		}

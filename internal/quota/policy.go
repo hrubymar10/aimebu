@@ -270,6 +270,10 @@ func Decide(in Input) Result {
 		return finish(ActionStay, ReasonActiveIsBest)
 	}
 	d.To = strp(want)
+	// A migrated switch refreshes the incoming account itself before the swap,
+	// with maintenance locks on both accounts for the full operation. The
+	// near-expiry hold is for link-model credentials that the server cannot
+	// refresh safely on demand.
 	if !in.Migrated && (nearRefresh(obs[in.Active], now) || nearRefresh(obs[want], now)) {
 		return finish(ActionHold, ReasonNearRefresh)
 	}

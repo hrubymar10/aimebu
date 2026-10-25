@@ -35,7 +35,7 @@ var systemEventKinds = []string{
 	"machine_created", "machine_approved", "machine_revoked", "machine_key_rotated", "machine_pairing_created",
 	"user_created", "user_deactivated", "user_admin_changed", "user_invite_created", "user_invite_redeemed",
 	"credential_alert",
-	"quota_switch", "quota_switch_failed", "quota_reset_seen", "quota_switcher_tripped",
+	"quota_switch", "quota_hold", "quota_switch_failed", "quota_reset_seen", "quota_switcher_tripped",
 	"limit_guard_soft", "limit_guard_hard", "limit_guard_clear",
 }
 

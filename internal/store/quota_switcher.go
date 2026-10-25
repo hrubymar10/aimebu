@@ -43,13 +43,32 @@ func (s *Store) AppendQuotaDecision(ctx context.Context, tool, at, document stri
 		return err
 	}
 	return s.Tx(ctx, func(tx *Tx) error {
-		if _, err := tx.Exec(`INSERT INTO quota_switcher_decision(tool,at,decision_json) VALUES (?,?,?)`, tool, at, document); err != nil {
+		return appendQuotaDecision(tx, tool, at, document)
+	})
+}
+
+// AppendQuotaHoldDecision makes the decision and its operator-facing event one
+// durable transition. A failed event append rolls the decision back as well.
+func (s *Store) AppendQuotaHoldDecision(ctx context.Context, tool, at, document string, payload map[string]string) error {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return err
+	}
+	return s.Tx(ctx, func(tx *Tx) error {
+		if err := appendQuotaDecision(tx, tool, at, document); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`DELETE FROM quota_switcher_decision WHERE tool=? AND id NOT IN
-			(SELECT id FROM quota_switcher_decision WHERE tool=? ORDER BY id DESC LIMIT ?)`, tool, tool, QuotaDecisionKeep)
+		_, err := tx.AppendEvent(Event{Kind: "quota_hold", PayloadJSON: payloadJSON(payload)})
 		return err
 	})
+}
+
+func appendQuotaDecision(tx *Tx, tool, at, document string) error {
+	if _, err := tx.Exec(`INSERT INTO quota_switcher_decision(tool,at,decision_json) VALUES (?,?,?)`, tool, at, document); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`DELETE FROM quota_switcher_decision WHERE tool=? AND id NOT IN
+		(SELECT id FROM quota_switcher_decision WHERE tool=? ORDER BY id DESC LIMIT ?)`, tool, tool, QuotaDecisionKeep)
+	return err
 }
 
 // QuotaDecisions returns tool's recorded decision documents, newest first.
@@ -93,9 +112,9 @@ func (s *Store) quotaPut(ctx context.Context, query, tool, document string) erro
 	return err
 }
 
-// RecordQuotaEvent records an operator-facing quota event (an automatic switch, a
-// reset seen, the breaker tripping) as a project-less system event, which only the
-// owner sees. The payload carries tool names and fixed reason sentences, never
+// RecordQuotaEvent records an operator-facing quota event (an automatic switch,
+// a hold change, a reset seen, the breaker tripping) as a project-less system
+// event, which only the owner sees. The payload carries fixed reasons, never
 // credential material.
 func (s *Store) RecordQuotaEvent(ctx context.Context, kind string, payload map[string]string) error {
 	return s.Tx(ctx, func(tx *Tx) error {

@@ -42,8 +42,9 @@ A profile is usable when all of these hold:
 7. It is the active profile: stay.
 8. On a tool that is **not** on the token-copy model, the active or target stored
    token expires within 15 minutes (or its expiry is unknown): hold. A migrated
-   tool does not need this: the switch refreshes the incoming profile under the
-   account lock.
+   tool instead refreshes the incoming profile under its account lock. Both the
+   outgoing and incoming account locks are held through the switch, so an
+   in-progress token refresh or warm-up on either side cannot race the swap.
 9. The last automatic switch of the tool was less than the minimum dwell ago
    (5 minutes by default): hold. This applies even when the active profile is
    exhausted; the dwell is the guard against two profiles flapping.
@@ -55,13 +56,22 @@ A profile is usable when all of these hold:
     a profile you want left alone.
 
 Every outcome is recorded as a decision with a fixed reason sentence; only changes
-are recorded, not every evaluation. The newest 50 per tool are kept.
+are recorded, not every evaluation. The newest 50 per tool are kept. Each change
+to a hold reason also appears as one `quota_hold` System event, including across
+server restarts; repeated evaluations of the same hold stay quiet. The decision
+and its System event commit together, so one cannot be stored without the other.
 
 ## What happens around the switch
 
 - **Running turns wait.** If an agent of the tool is in a turn, the switch is held
   (`agents running`) and retried; it never interrupts. This is the same check the
   web switch makes.
+- **Account maintenance waits.** Refresh or warm-up of either the active or the
+  target account holds the switch. The switch acquires distinct account locks in
+  a fixed order before the switcher lock; if the active profile changed while
+  waiting, the automatic switcher refuses the stale decision and evaluates
+  again. A manual switch retries against the newly active profile; if its
+  target is active already, it returns a no-op.
 - Other refusals from the switcher are retryable holds with a fixed reason
   (`account busy`, `incoming refresh failed`, `login pending`); a real failure is
   an `error` decision (its text goes to the server log only). A held or failed

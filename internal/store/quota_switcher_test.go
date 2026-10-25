@@ -70,6 +70,32 @@ func TestQuotaDecisionsKeepTheNewestFiftyPerTool(t *testing.T) {
 	}
 }
 
+func TestQuotaHoldDecisionAndEventCommitTogether(t *testing.T) {
+	s, _ := testStore(t, Options{})
+	ctx := context.Background()
+	if err := s.AppendQuotaHoldDecision(ctx, "claude", "2026-10-17T12:00:00Z", `{"reason":"warming up"}`, map[string]string{"tool": "claude", "reason": "warming up"}); err != nil {
+		t.Fatal(err)
+	}
+	decisions, err := s.QuotaDecisions(ctx, "claude", 10)
+	if err != nil || len(decisions) != 1 {
+		t.Fatalf("hold decision missing: %v %v", decisions, err)
+	}
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM event WHERE kind='quota_hold'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("hold event count=%d err=%v", count, err)
+	}
+	if _, err := s.db.Exec(`CREATE TRIGGER reject_quota_hold BEFORE INSERT ON event WHEN NEW.kind='quota_hold' BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendQuotaHoldDecision(ctx, "claude", "2026-10-17T12:01:00Z", `{"reason":"account busy"}`, map[string]string{"tool": "claude", "reason": "account busy"}); err == nil {
+		t.Fatal("event failure should abort the transaction")
+	}
+	decisions, err = s.QuotaDecisions(ctx, "claude", 10)
+	if err != nil || len(decisions) != 1 || decisions[0] != `{"reason":"warming up"}` {
+		t.Fatalf("failed event left a decision behind: %v %v", decisions, err)
+	}
+}
+
 func TestQuotaEventsAreOwnerOnlySystemEvents(t *testing.T) {
 	t.Parallel()
 	s, _, owner := recoveryFixture(t, false)

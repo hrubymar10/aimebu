@@ -229,6 +229,7 @@ func TestSwitcherRenameRoute(t *testing.T) {
 // migration is the caller's mistake (400).
 func TestSwitcherErrorMapsTokenCopyRefusalsToConflict(t *testing.T) {
 	for name, err := range map[string]error{
+		"active changed":     switcher.ErrActiveChanged,
 		"maintenance busy":   switcher.ErrMaintenanceBusy,
 		"login pending":      switcher.ErrLoginPending,
 		"incoming refresh":   switcher.ErrIncomingRefresh,

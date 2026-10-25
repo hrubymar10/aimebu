@@ -65,6 +65,16 @@ type SwitchGuard struct {
 
 // SwitchGuarded is Switch with its guard conditions checked under the lock.
 func (m *Manager) SwitchGuarded(tool, name string, guard SwitchGuard) (active string, switched bool, err error) {
+	for attempts := 0; attempts < 5; attempts++ {
+		active, switched, err = m.switchGuardedOnce(tool, name, guard)
+		if guard.ExpectedActive != "" || !errors.Is(err, ErrActiveChanged) {
+			return active, switched, err
+		}
+	}
+	return active, false, fmt.Errorf("%w: active profile kept changing", ErrMaintenanceBusy)
+}
+
+func (m *Manager) switchGuardedOnce(tool, name string, guard SwitchGuard) (active string, switched bool, err error) {
 	if err := validateTool(tool); err != nil {
 		return "", false, err
 	}
@@ -74,16 +84,26 @@ func (m *Manager) SwitchGuarded(tool, name string, guard SwitchGuard) (active st
 	if err := validateProfileName(name); err != nil {
 		return "", false, err
 	}
+	observedActive, err := m.Active(tool)
+	if err != nil {
+		return "", false, err
+	}
+	if observedActive != "" {
+		if err := validateProfileName(observedActive); err != nil {
+			return "", false, fmt.Errorf("corrupt state: active profile name invalid: %w", err)
+		}
+	}
 
-	// Hold the target account's maintenance lock for the whole switch. A
-	// background token refresh of that account must not be mid-rotation when the
-	// profile goes live (the live file would end up with a refresh token the run
-	// has already spent), and none may start between this check and the swap.
-	// Lock order is always account first, switcher lock second, the same as a
-	// run, whose commit takes the switcher lock while holding its account lock;
-	// so the two cannot deadlock. The release runs after the switcher lock is
-	// dropped (defers unwind in reverse).
-	releaseAccount, holdErr := usages.HoldMaintenance(m.root, tool, name, m.profileCredPath(tool, name), MaintenanceWait)
+	// Hold both sides' account locks through the swap: an outgoing refresh must
+	// not rotate while its credentials are captured. Account identities are
+	// acquired in sorted order before the switcher lock, so two switches and a
+	// refresh cannot form a lock cycle. The active pointer is checked again under
+	// the switcher lock before writing, since it may change during the wait.
+	accounts := []usages.MaintenanceProfile{{Name: name, CredPath: m.profileCredPath(tool, name)}}
+	if observedActive != "" && observedActive != name {
+		accounts = append(accounts, usages.MaintenanceProfile{Name: observedActive, CredPath: m.profileCredPath(tool, observedActive)})
+	}
+	releaseAccount, holdErr := usages.HoldMaintenanceProfiles(m.root, tool, accounts, MaintenanceWait)
 	if errors.Is(holdErr, usages.ErrMaintenanceBusy) {
 		return "", false, fmt.Errorf("%w: %v; try again in a minute", ErrMaintenanceBusy, holdErr)
 	}
@@ -183,11 +203,14 @@ func (m *Manager) SwitchGuarded(tool, name string, guard SwitchGuard) (active st
 	// already-active profile would otherwise delete the live file. This also
 	// covers the UI re-entry window where a second Switch click targets the
 	// profile that is already active.
-	if guard.ExpectedActive != "" && activeProfile != guard.ExpectedActive {
-		return activeProfile, false, fmt.Errorf("%w: expected %s, %s is active", ErrActiveChanged, guard.ExpectedActive, activeProfile)
-	}
 	if name == activeProfile {
 		return name, false, nil
+	}
+	if activeProfile != observedActive {
+		return activeProfile, false, fmt.Errorf("%w: expected %s, %s is active", ErrActiveChanged, observedActive, activeProfile)
+	}
+	if guard.ExpectedActive != "" && activeProfile != guard.ExpectedActive {
+		return activeProfile, false, fmt.Errorf("%w: expected %s, %s is active", ErrActiveChanged, guard.ExpectedActive, activeProfile)
 	}
 	if guard.Hold != nil {
 		defer guard.Hold()()

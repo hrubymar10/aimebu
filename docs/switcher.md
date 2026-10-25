@@ -199,7 +199,13 @@ access token until it expires and re-read the file when it is rewritten.
   the incoming profile if it is due (a failed refresh refuses the switch with
   409), rewrites the live targets from the profile, and moves the active
   pointer. While a login is waiting in the live file it refuses (retry in a
-  minute; see Login import below).
+  minute; see Login import below). A switch holds maintenance locks for both
+  the outgoing and incoming accounts until it finishes. It takes distinct
+  account locks in a fixed order before the switcher lock, so a background
+  refresh or warm-up on either account must finish before the switch proceeds.
+  If another switch changes the active profile during that wait, a manual
+  switch retries with the new active profile; an automatic switch refuses its
+  stale decision and evaluates again.
 - The **server** keeps targets current. Every live-target write takes the
   switcher lock and re-reads the active profile under it, so a switch landing
   meanwhile is never overwritten. `server/credential-targets.json` lists extra

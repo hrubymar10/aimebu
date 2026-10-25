@@ -68,6 +68,7 @@ assert.equal(view.details, 'claude · a → b · the active profile is over its 
 assert.equal(describe(quota('quota_reset_seen', { tool: 'claude', profile: 'a', reason: 'the watched weekly window reset' })).details, 'claude · a · the watched weekly window reset');
 assert.equal(describe(quota('quota_switcher_tripped', { tool: 'codex', reason: 'too many automatic switch attempts this hour' })).text, 'Automatic switching tripped');
 assert.equal(describe(quota('quota_switch_failed', { tool: 'claude', from: 'a', to: 'b', reason: 'switch failed' })).text, 'Automatic account switch failed');
+assert.equal(describe(quota('quota_hold', { tool: 'claude', reason: 'active snapshot not ok' })).text, 'Automatic account switch held');
 assert.equal(describe(quota('quota_switch', { tool: '<b>x</b>' })).details, '<b>x</b>', 'markup stays text');
 assert.equal(describe({ kind: 'agent_stopped', payload_json: JSON.stringify({ tool: 'claude', from: 'a', to: 'b' }) }).details, '', 'quota keys must not leak into other events');
 
