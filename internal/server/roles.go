@@ -134,7 +134,7 @@ func (s *Server) role(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, saved)
 }
 
-// roleReset puts a built-in global role back to what shipped (instance owner only).
+// roleReset puts a built-in global role back to what shipped (instance owner or an admin).
 func (s *Server) roleReset(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Rev int64 `json:"rev"`

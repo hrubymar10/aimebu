@@ -169,7 +169,8 @@ The quota switcher adds a database migration (three tables for its configuration
 state and decision history; nothing existing is altered). A binary that predates it
 refuses the newer schema (`database version N is newer than supported version M`),
 so going back to an older build means restoring the pre-migration backup of
-`aimebu.sqlite` with the server stopped (the deploy takes it as
-`aimebu-pre-mNN-*.sqlite`). The quota switcher's own settings and history are lost
+`aimebu.sqlite` with the server stopped (startup writes it to
+`server/backups/aimebu-pre-migrate-<from>-to-<to>-<UTC>.sqlite` before it
+migrates; see the [migration guide](migrating-from-v1.md)). The quota switcher's own settings and history are lost
 with that restore, since they were written after the backup. Nothing outside the
 database changes: the switcher's profiles and credentials are untouched either way.

@@ -86,8 +86,10 @@ shortcut link, `http://127.0.0.1:9997/setup?token=…` ([owner setup](auth.md#fi
 Open the address, enter the token (or open the link), choose the new v2 owner login and password, and you land in the
 import wizard. (Headless? Set `AIMEBU2_OWNER_LOGIN` and
 `AIMEBU2_OWNER_PASSWORD` before starting and sign in at
-<http://127.0.0.1:9997/> instead.) During startup, v2 moves the v1 files (`server/` and
-`agents/`) into `~/.aimebu/.old-v1-bkp/`. Keep that folder: it is your
+<http://127.0.0.1:9997/> instead.) During startup, v2 moves everything at the root of
+`~/.aimebu/` (`server/`, `agents/` and any other entries) into
+`~/.aimebu/.old-v1-bkp/`, except `switcher/` and `usages/` (which stay in place)
+and v2's own markers and lock. Keep that folder: it is your
 pre-migration copy. Do not start v1 on the original folder afterwards: it
 would see no history and build an empty database next to v2's (`aimebu doctor`
 fails on that mix). v2 checks the owner variables (if you set them), the turn-limit environment,

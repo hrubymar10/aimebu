@@ -93,7 +93,7 @@ it logs a warning and retains the verified new copy.
 
 Every removal is written to the **cleanup log** (`GET /api/cleanup/log`: what,
 why, how many bytes, who or what asked: a user or `schedule`). A dry run writes
-nothing. Everything above is owner-only.
+nothing. Everything above needs the owner or an admin.
 
 ## Disk usage in Health
 

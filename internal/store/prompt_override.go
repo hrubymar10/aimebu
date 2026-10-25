@@ -98,7 +98,7 @@ func (s *Store) ListPrompts(ctx context.Context, projectID string) ([]PromptSlot
 }
 
 // SetPromptOverride saves one override. rev is 0 to create (it must not exist yet) or the current revision to change it. Global
-// overrides are the instance owner's; a project's are its owner's or operators'.
+// overrides are the instance owner's or an admin's; a project's are its owner's or operators'.
 func (s *Store) SetPromptOverride(ctx context.Context, actorID, projectID, key, value string, rev int64) error {
 	value = strings.TrimSpace(value)
 	if !prompt.ValidSlot(key) || value == "" || utf8.RuneCountInString(value) > prompt.MaxOverrideLen {
@@ -197,7 +197,7 @@ func (s *Store) InlinePlanAppendix(ctx context.Context) (string, error) {
 	return value, nil
 }
 
-// SetInlinePlanAppendix saves the global setting (instance owner only).
+// SetInlinePlanAppendix saves the global setting (instance owner or an admin).
 func (s *Store) SetInlinePlanAppendix(ctx context.Context, actorID, value string) error {
 	if value != InlinePlanAlways && value != InlinePlanOptional {
 		return ErrPromptOverride

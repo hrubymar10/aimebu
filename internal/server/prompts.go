@@ -105,7 +105,7 @@ func (s *Server) promptOverride(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-// PUT /api/inline-plans {value: "always"|"optional"} (instance owner only).
+// PUT /api/inline-plans {value: "always"|"optional"} (instance owner or an admin).
 func (s *Server) inlinePlans(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Value string `json:"value"`

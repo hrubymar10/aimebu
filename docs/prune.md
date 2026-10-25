@@ -23,8 +23,8 @@ session and turn history, and usage records stay: v2 uses usage history for
 daily limits and cost reports. This deliberately differs from v1, which
 removed agent and session rows in plain prune. It removes
 `supervisor/journal.sqlite` and its SQLite sidecars,
-`supervisor/agent-tools/`, and the private `supervisor/codex/` and
-`supervisor/pi/` runtime directories. Projects, rooms, messages, reactions,
+`supervisor/agent-tools/`, and the private `supervisor/codex/`,
+`supervisor/pi/` and `supervisor/opencode/` runtime directories. Projects, rooms, messages, reactions,
 attachments, memory, users, machines, settings (the quota switcher's configuration and
 state included), and machine credentials stay.
 Historical messages and reactions retain their agent authors.

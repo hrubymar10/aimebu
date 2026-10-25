@@ -234,7 +234,7 @@ func (s *Store) GlobalKnowledgeAccess(ctx context.Context, userID string) (strin
 	return projectID, nil
 }
 
-// SetGlobalKnowledgeActive lets the installation owner keep a record out of
+// SetGlobalKnowledgeActive lets the installation owner or an admin keep a record out of
 // every agent's cross-project context and recall without deleting it.
 func (s *Store) SetGlobalKnowledgeActive(ctx context.Context, scope, key, actorID, id string, rev int64, active bool) (KnowledgeRecord, error) {
 	if _, err := globalKnowledgeCap(scope); err != nil {

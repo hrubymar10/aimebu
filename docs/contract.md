@@ -1,6 +1,6 @@
-# Slice-1 implementation contract (revision 19)
+# Implementation contract (revision 19)
 
-This contract defines the slice-1 data model, state machines, and wire protocol.
+This contract defines the data model, state machines, and wire protocol.
 It implements the architecture decisions and validated adapter behavior.
 Implementation must cover lost acknowledgements after process start, stale
 delivery after stop/reactivation, journal loss versus intact-journal absence,
@@ -32,7 +32,7 @@ isolation. Migrations may reshape tables later.
 - Supervisor-local stable output identity: `(turn_id, answer_rev, idx)`;
   mapped to `out_` ids at commit. `answer_rev` increments per correction.
 
-## 2. Tables (slice 1)
+## 2. Tables
 
 Projects, rooms, people
 - **project**(id, name, folder, repo_url?, gate[open|
@@ -107,7 +107,9 @@ Content
   author_id, body, reply_to?, thread_root?, targets_json, ask_json?,
   needs_attention, proposed_answers_json?, open_questions_json?,
   source_out_id? UNIQUE, created_at, visual_plan_json?,
-  appendix_pages_json?, author_harness, author_model) — historical v1
+  appendix_pages_json?, author_harness, author_model, no) — `no` is the
+  message number (the "#N" people read and write), assigned by a trigger from
+  `message_no_counter` (migration 71); historical v1
   messages use these native columns. They never create inbox items or
   delivery notes.
 - **attachment**(id, project_id, room_id?, message_id?, sha256, mime, size,
@@ -126,13 +128,13 @@ Content
 - **global_memory**(id, scope[user_profile|agent_shared_notes], scope_key,
   body, rev, author_kind[user|agent], author_id, source_message_id?,
   active[0|1], created_at, updated_at) — profiles key by v2 user ID and shared notes use the fixed
-  `global` key. Only the installation owner can curate global records as a
+  `global` key. Only the installation owner or an admin can curate global records as a
   human, even while project memory is disabled. An agent in any
   memory-enabled project can create or edit profiles for any user and shared
   notes; active records are visible to all project members and enter agent
   context and recall in every memory-enabled project. This deliberately
   carries v1's trusted-workspace cross-project knowledge semantics. Imported
-  records are ordinary and active on arrival. `active=0` is only the owner's
+  records are ordinary and active on arrival. `active=0` is only the owner's or an admin's
   explicit "Deactivate" on a record. The per-scope caps are 2048 bytes for one profile and
   4096 bytes for shared notes; each body is at most 2000 Unicode characters.
   Agents can list, revise, and remove active global records with revision
@@ -155,9 +157,11 @@ Roles, agents
   parent's resolved body, a blank line, then the role's own (trimmed); no cycles, at
   most five ancestors, and a role other roles extend cannot be deleted. A built-in
   global role (id `*_default`) can be reset to its shipped definition by the host
-  owner.
+  owner or an admin.
   Capability and cardinality changes are rejected while live agents use the
-  row; `cap_*` changes require the host owner.
+  row; `cap_*` changes require the host owner or an admin (roles are
+  global, and for a global scope the capability flag is not consulted: any
+  global role edit already needs the owner or an admin).
   `spawn_defaults_json` stores at most 32 ordered `{launcher_id,model}` pairs
   listed by detected harness models when saved. Empty means manual choice. A
   removed model or unavailable launcher is skipped at spawn.
@@ -176,7 +180,7 @@ Roles, agents
   owner-edited replacement for one shared prose sentence of an adapter's turn
   prompt (keys are the slots of `internal/adapter/prompt`: `identity`,
   `retry_notice`, `inbox_ask`, `mentions`, `human_reply`, `tail`), global
-  (`project_id` NULL, host owner) or for one project (its owner or operators);
+  (`project_id` NULL, host owner or an admin) or for one project (its owner or operators);
   unique per (scope, key); value 1–2000 characters. Resolution at dispatch:
   project row, else global row, else the shipped text, carried in the turn
   context as `prompt_overrides` (only the slots that have one). The output
@@ -189,11 +193,10 @@ Roles, agents
   machine_id, checkout_id, home_room_id?, key_hash, revoked_at?,
   desired[active|not_accepting|stopped], desired_rev,
   observed[idle|in_turn|interrupting|stopped|lost], generation,
-  created_by, created_at) — **one role per agent** (no per-room roles in
-  slice 1 — stated plainly: one agent cannot hold different roles in
-  different rooms; `@role` resolves to room members whose agent role
-  matches); `home_room_id` is set on the first non-DM agent join and limits
-  room bulk control to that agent's current home membership; `generation`
+  created_by, created_at) — **one role per agent**: one agent cannot hold
+  different roles in different rooms; `@role` resolves to room members whose
+  agent role matches; `home_room_id` is set on the first non-DM agent join and
+  limits room bulk control to that agent's current home membership; `generation`
   is a **session** counter
 - **session**(id, agent_id, generation, native_session_id?,
   start_mode[native_resume|fresh_with_history], started_at, ended_at?)
@@ -294,18 +297,28 @@ Execution
   stale_generation|correction_unavailable], dedupe_key UNIQUE)
 - **receipt**(id, turn_id, answer_rev, digest, result_json, created_at) —
   UNIQUE (turn_id, answer_rev); the server's durable answer acknowledgement
-- **request_key**(actor_kind, actor_id, kind[spawn|control|scope_control|switch|
-  inbox_answer|recovery_decision|room_create|room_close], key,
+- **request_key**(actor_kind, actor_id, kind[spawn|team_spawn|control|
+  scope_control|switch|inbox_answer|recovery_decision|room_create|room_close|
+  schedule_create|leaderboard_start], key,
   request_digest, result_json, created_at) —
   UNIQUE (actor_kind, actor_id, kind, key); same key + same digest → original
-  result; same key + different digest → `conflict`
+  result; same key + different digest → `conflict`. The `kind` column has a
+  CHECK constraint (migration 52 rebuild) listing exactly the values above, so a
+  new kind needs a migration. `team_spawn` and `leaderboard_start` are
+  retired: no code writes them (the leaderboard rows were deleted by migration
+  56), they stay only in the constraint. The kinds written today are spawn,
+  switch, scope_control, control (agent lead tool), room_create, room_close,
+  schedule_create, inbox_answer and recovery_decision.
 
 Inbox, usage, events, settings
 - **inbox_item**(id, project_id, room_id, message_id?, turn_id?,
   agent_id?, requester_kind, requester_id,
-  kind[question|approval|recovery|delivery_failed], options_json?,
-  state[open|resolved|withdrawn], rev, answer_message_id?, resolved_by?,
-  resolved_at?, created_at) — `assignee` returns in slice 4
+  kind[question|approval|recovery|delivery_failed|usage_info|usage_limit],
+  options_json?, state[open|resolved|withdrawn], rev, answer_message_id?,
+  resolved_by?, resolved_at?, created_at) — `assignee` returns in slice 4.
+  `usage_alert` is not a stored kind: the inbox listing appends it as a
+  virtual row for each open provider usage alert (built in
+  `internal/server/inbox.go`, shown to admins), with no table row behind it.
 - **usage_record**(id, source_event_id UNIQUE, turn_id, agent_id, room_id,
   project_id, tokens_in?, tokens_out?, tokens_cache_read?, tokens_cache_write?,
   context_used?, context_window?, cost_est?, cost_total?, model?, partial,
@@ -346,6 +359,24 @@ Inbox, usage, events, settings
   `referenced_messages` and `message_get`. Another project's messages never.
 - **message_no_counter**(id=1, value) — the message-number allocator
   (migration 71); `message.no` is unique where it is positive.
+- **room_view_preference**(user_id, room_id, hidden 0|1, notify[default|all|
+  mentions|none], muted_until?) — a person's per-room view and notification
+  setting (primary key user_id + room_id); `notify` and `muted_until` (an
+  instant in the future) arrive in migration 73; `pinned` was dropped.
+- **room_read_cursor**(user_id, room_id, last_read_seq) — how far a person has
+  read a room (migration 43).
+- **user_preference**(user_id, key, value, updated_at) — a person's interface
+  preferences (theme, notification sound, sidebar project order), following
+  them across devices (migration 57).
+- **macro**(key, body) and **macro_default_seen**(key) — the editable quick
+  commands and the shipped defaults already offered (migrations 37 and 40).
+- **sound**(id, name, ext[mp3|wav], size, created_by, created_at) — uploaded
+  notification sounds, bytes under the server config root (migration 44).
+- **quota_switcher_config**(tool[claude|codex], config_json, updated_at),
+  **quota_switcher_state**(tool, state_json, updated_at) and
+  **quota_switcher_decision**(id, tool, at, decision_json) — the automatic
+  provider account switcher's per-tool settings, current state and decision
+  log (migration 48).
 
 Project memory starts disabled and saved records remain readable to humans
 when disabled. Owners/operators and current project agents can write project
@@ -404,8 +435,8 @@ A marker is synced after commit. If a crash leaves committed ledger rows but
 no marker, the pending wizard can resume its saved mapping. Once the marker
 and durable choice say done, import is closed. The backup remains on disk.
 
-Slice 3+ (not in the slice-1 migration): spawn_code,
-admission inbox kind, membership grants, usage caps.
+The planned `spawn_code` table is not implemented. Boundary admission uses an
+`approval` inbox item; membership grants and usage caps are described above.
 
 ## 3. State machines (who writes: S = server, M = supervisor report)
 
@@ -649,7 +680,7 @@ harness writes to stderr (not stdout) is kept on the machine that ran it, beside
 the journal, for debugging (retention 14 d): see "Agent output" in
 `docs/supervisor.md`.
 
-## 3c. Provider accounts (slice 1)
+## 3c. Provider accounts
 
 - The host switcher stores named Claude Code and Codex file profiles under
   `~/.aimebu2/switcher/`, separate from the v1 switcher state. Account scope
@@ -918,7 +949,8 @@ CC/Codex, prompt-only on pi):
      `queued` (redeliver); a missing ack alone proves nothing;
    - journaled answer → reconcile by digest via receipt;
    - outcome `cancelled|failed` (no possible effect) → final;
-   - idempotency contract → retry (**slice 1: no operation has one**);
+   - operation-level idempotency contract → retry (no current adapter provides
+     one; HTTP `request_key` replay does not make a harness turn safe to repeat);
    - else `unknown` / `partial_failed`.
 3. `unknown`/`partial_failed` → agent `recovery_block=true` (dispatch
    blocker separate from `desired`) → if capability

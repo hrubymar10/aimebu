@@ -216,8 +216,15 @@ its notes.
 
 Claude's failed `result` event and Codex's failed turn event also contribute
 bounded, redacted error evidence to the process exit. The server recognizes
-provider quota only from the respective tool's `limit reached` or
-`usage limit` wording. It records a known failed turn, requeues its notes,
+provider quota only from the tool's own wording, and only for Claude, Codex, Pi
+and OpenCode: Codex needs `usage limit` in stderr or the error evidence; Claude
+needs `limit reached` there, but not `rate limit reached`; Pi and OpenCode count
+only the provider error event they reported (their stderr is ignored) and need
+`usage limit`, `usage_limit`, or a `weekly`, `hourly`, `monthly` or `daily`
+limit, never text that mentions a `rate limit`. A bare HTTP 429 or a generic
+rate limit is ordinary recovery, not a quota. A reset time is read from an
+ISO timestamp after `reset`, `retry` or `try again`, or from `resets in` or
+`retry in` N minutes or hours (up to 24 hours). It records a known failed turn, requeues its notes,
 raises an informational inbox item, and gates later turns until the reported
 reset time. Notes from a turn with activity beyond startup or usage carry a
 `retry_notice` to check the state before repeating actions. An unknown reset
@@ -369,7 +376,7 @@ never keeps running after the supervisor stopped tracking it.
 
 The standalone and embedded supervisors route turns by tool: the fake
 adapter provides a short echo for local demos, while installed Claude Code,
-Codex, and Pi CLIs use their native adapters. An unavailable CLI does not
+Codex, Pi, and OpenCode CLIs use their native adapters. An unavailable CLI does not
 appear in the supervisor's catalog.
 
 ## Agent output

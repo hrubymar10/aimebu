@@ -58,8 +58,6 @@ gate (paused) at room and project level, inherited by spawned/moved agents.
   Abandon). "No action event observed" is evidence, not a safe condition.
 - Routine crashes with a known outcome raise no inbox item.
 - Docs promise deduped delivery, not exactly-once actions.
-- Slice-1 gate test: fake side effect, tool event delayed until after it,
-  crash → must end in `recovery_needed`, no duplicate execution.
 
 **Wake rules** — human message wakes every AI member of the room unless
 addressed elsewhere (a lead that is in the room only because leads are put into
@@ -115,19 +113,6 @@ pages move one at a time, each behind a UI experiment whose option A is the
 legacy page and stays the default until the owner switches it. One rendering
 owner per DOM subtree: a container is either Preact's or hand-written code's,
 never both; pure logic stays in import-free modules.
-
-**Tasks (order)** — T-contract (tables, states, ack vocabulary, versioned
-envelope) → T1 skeleton → T2 core → T3 auth ∥ T4 API/events ∥ T13 usages/
-switcher boundary review → T5a adapter interface + fake adapter → T6a delivery
-log → T7 structured protocol → T8 wake rules → T9a spawn + writer reservation
-→ T6b recovery on the fake adapter (+ gate test) → T5b CC / T5c Codex → T9b
-lead toolbox → T10a shell+login / T10b sidebar / T10c chat / T10d agents panel
-→ T11 inbox → T12 room lifecycle → T14 usage attribution → T5d containers →
-T15 acceptance. Acceptance fixtures + fault injection grow from T5a. Plus:
-membership/addressing, roles CRUD, machine identity + supervisor
-bootstrap, attachments, reactions, DMs, renderer port, per-agent logs,
-reconnect cursors + snapshot, auth/revocation tests, T-docs,
-T-cutover-checklist.
 
 **Product decisions**
 - Harness output parser: integrate it as an aimebu package and use it for

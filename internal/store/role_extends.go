@@ -191,7 +191,7 @@ func (tx *Tx) roleExtendedBy(role RoleDefinition) (bool, error) {
 }
 
 // ResetRole puts a built-in global role back to what shipped: its name, emoji, instructions, parent, cardinality and capabilities.
-// Only the instance owner may, as for any change to a global role's capabilities, and not while live agents hold the role with
+// Only the instance owner or an admin may, as for any change to a global role's capabilities, and not while live agents hold the role with
 // capabilities or cardinality that differ from the shipped ones. The revision moves on, so a stale editor is told.
 func (s *Store) ResetRole(ctx context.Context, actorID, id string, rev int64) (RoleDefinition, error) {
 	var result RoleDefinition

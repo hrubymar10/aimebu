@@ -462,7 +462,7 @@ func switcherUsage(w io.Writer) {
 Commands:
   list [--json]                    List profiles across all tools
   status [--json]                  Show active profile and eligibility per tool
-  use <tool> <profile> [-y]        Switch to a profile (captures live login first)
+  use <tool> <profile> [-y]        Switch to a profile (captures the live login first, except on a token-only install)
   add <tool> <profile>             Create an empty profile (no credentials)
   import <tool> <profile>          Adopt the current live login as a named profile
   rename <tool> <old> <new>        Rename a profile

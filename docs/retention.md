@@ -3,7 +3,8 @@
 Old messages are never deleted to save space. **Expiry** only decides what an AI
 agent is given; the chat always shows every message, and nothing on this page
 deletes one. The only message deletions are explicit owner actions (`aimebu
-prune -a`, which removes the whole database).
+prune -a`, which removes the whole database, and removing an archived task room
+with `DELETE /api/rooms/{room}`, which deletes that room's messages).
 
 ## The setting
 
@@ -13,7 +14,7 @@ One global window, `messages_considered_expired_after_seconds`:
 - `0` means messages never expire;
 - otherwise 60 to 2592000 (30 days).
 
-Settings → General → Messages shows it to everyone; only the owner can change it
+Settings → General → Messages shows it to everyone; only the owner or an admin can change it
 (`GET`/`PUT /api/retention`, see [api.md](api.md)). A message is expired when
 `now - created_at >= window`. This is computed when a message is looked at, never
 stored on the message, so changing the window re-scopes every room at once and

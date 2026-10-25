@@ -152,7 +152,9 @@ limit, are skipped with reasons. An import never stops on a link: if a conflict
 choice changes a parent so a link would loop or run too deep, that role is
 flattened and listed in the report's `flattened_roles`. Already imported roles are marked and their conflict selectors
 are hidden after a saved choice. v1 fleets are not imported: v2 has no saved teams, so a fleet's rows are listed under **Not
-carried over** and stay in the v1 backup on disk. The command `aimebu import-v1 --from <dir> --map <file> [--dry-run]` prints
+carried over** and stay in the v1 backup on disk. The command `aimebu import-v1 --from <dir> --map <file> [--to <v2-config-dir>] [--dry-run]`
+(`--to` defaults to `AIMEBU2_CONFIG_DIR`, else `~/.aimebu2`; it needs the v2 server
+stopped and an existing v2 database) prints
 its report as JSON and exits 3 with a warning when the map left rooms with no project, which are not imported.
 The preview lists command options
 that v2 does not carry over, including fixed room, terminal wrapping, and

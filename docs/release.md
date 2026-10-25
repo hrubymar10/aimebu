@@ -1,7 +1,7 @@
 # Releasing aimebu 2.0.0 (draft plan)
 
 Status: draft of the 2.0.0 release plan. Everything below was checked against the tree at
-`7fce1db` unless marked **open**. Nothing here adds a dependency or changes code.
+`207a2667` unless marked **open**. Nothing here adds a dependency or changes code.
 
 ## 1. Versioning
 
@@ -75,7 +75,7 @@ Notes:
 - `github.com/air-verse/air` is a `tool` directive for `make dev` only. It is
   not linked into the binary.
 - A single `aimebu` binary is the whole product: server, `supervisor`,
-  `agent-tools`, `switcher`, `doctor`, `prune`, `sessions`, `usages`. There is no
+  `agent-tools`, `switcher`, `doctor`, `prune`, `sessions`, `usages`, `fe`. There is no
   separate supervisor artifact to ship.
 - Runtime prerequisites are not bundled and must be in the release notes: the
   harness CLIs (Claude Code, Codex, Pi, OpenCode) the owner wants, and for token
@@ -100,7 +100,7 @@ Build tooling options (none is added by this plan):
   release notes.
 
 Recommendation: none needed for 2.0.0 if prebuilt binaries are not published.
-If they are, the script in `scripts/release.sh`.
+If they are, a script in `scripts/release.sh` (not written yet).
 
 ## 3. Distribution
 
@@ -114,30 +114,26 @@ that builds the binary on the user's machine on first use and re-uses the
 cached build afterwards. There is nothing prebuilt to sign, and the macOS
 quarantine problem does not arise for a locally built binary.
 
-**v2 does not have `bin/aimebu` yet** (`git ls-tree v2` has no `bin/`; v1 `master`
-has it, and v2's `.gitignore` already ignores the `/aimebu-*` cache name it
-writes). The v2 README has no Install section either. Both are blockers (B4,
-section 6). The v1 wrapper carries over almost unchanged:
+**v2 has `bin/aimebu`** and a README Install section. The wrapper (tested by
+`cmd/aimebu/binwrapper_test.go`):
 
-- Builds `./cmd/aimebu` (same path in v2) into `<repo>/aimebu-<os>-<arch>` on
-  first run, then `exec`s it.
+- Builds `./cmd/aimebu` into `<repo>/aimebu-<os>-<arch>` on first run, then
+  `exec`s it (`/aimebu-*` is in `.gitignore`).
 - `AIMEBU_FORCE_BUILD=1` rebuilds into a per-run temp binary that is removed on
   exit, and forwards INT/TERM; any other value leaves the cache alone. The
   name does not clash with the dev `AIMEBU2_*` variables and fits the final
   `AIMEBU_*` names (decision B1), so it can stay.
-- It must change in one place: v1 passes `-X main.version=$(git describe ...)`,
-  but v2's `version` is a full string (`aimebu v2 (development)`) that
-  `resolveVersion` compares with its default, so the wrapper must pass
-  `-X "main.version=aimebu $(git describe --tags --always --dirty)"`. Otherwise
-  `aimebu version` prints a bare tag or hash.
+- It passes `-X 'main.version=aimebu $(git describe --tags --always --dirty)'`
+  when git metadata exists, since v2's `version` is a full string
+  (`aimebu v2 (development)`) that `resolveVersion` compares with its default;
+  without git metadata it keeps the default so the VCS suffix still appears.
 - It needs a Go toolchain at least as new as `go.mod` (`go 1.26.1`); with the
-  default `GOTOOLCHAIN=auto` an older Go downloads the right one. State this in
-  the README.
-- v1 resolves its location with `dirname "$0"`, which breaks when `bin/aimebu`
-  is symlinked onto PATH. v1 documents adding the `bin/` directory to PATH
-  instead; keep that, or resolve the link.
+  default `GOTOOLCHAIN=auto` an older Go downloads the right one. The README
+  states this.
+- It resolves symlinks to its own location, so `bin/aimebu` can be symlinked
+  onto PATH or its `bin/` directory added to PATH.
 
-README Install section for 2.0.0: Manual (clone, add `bin/` to PATH, `aimebu
+README Install section: Manual (clone, add `bin/` to PATH, `aimebu
 version`) first, with the Go toolchain requirement.
 
 ### Running as a service
@@ -302,27 +298,23 @@ Structure for `RELEASE_NOTES.md` or the GitHub release body:
 5. Known issues: whatever is still open at tag time from section 6.
 6. Checksums.
 
-There is no changelog in the repo. The `v2` branch carries v1's history plus 15
+There is no changelog in the repo. The `v2` branch carries v1's history plus
 per-subsystem `feat(v2)` commits on top of the v1 removal, so commit messages
 are too coarse to generate notes from. Write them by hand from the README and
 docs.
 
 ## 6. What still blocks 2.0.0
 
-Checked against the open project-board items labelled `v2` on 2026-10-20 (all in
-Backlog unless noted).
+Release blockers that can be checked in the tree:
 
-Release blockers (proposal):
-
-| Ticket | Why it blocks |
-| --- | --- |
-| v1 to v2 cutover plan for real data (high) | The real switch has not happened; the runbook is not written, approved or rehearsed. |
-| Findings from the owner's first-run test (high) | The ticket's own done-when is "all findings fixed or consciously deferred". |
-| Release 2.0.0 | This plan, plus the script, notes and tag. |
-| Contributor onboarding for v2 (high) | A docs deliverable the ticket calls for before more people join; confirm whether it gates 2.0.0 or only the repo going wider. |
-| v2 dev setup on the new repo (high) | CI on the private repo and the pre-push hook. CI exists (`.github/workflows/test.yml`, `make test-full`); confirm it is actually enabled and green on `aimebu_v2`. |
-| Flaky tests under load (medium) | The release gate is `make test-full`; three tests fail intermittently under load. |
-| Switching away from an empty or logged-out active login (medium) | A user-facing credential dead end observed in v1; `docs/switcher.md` already describes switching to an empty profile, so verify whether v2 is already fixed and close the ticket. |
+- **The cutover runbook** ([cutover runbook](cutover-runbook.md)) exists but
+  must be rehearsed on a copy of real v1 data (checklist step 3).
+- **CI.** `.github/workflows/test.yml` exists; confirm it is enabled and green
+  on the private `aimebu_v2` repo before tagging.
+- **This plan:** the release script (not written yet), the notes (section 5)
+  and the tag.
+- **Findings from the first-run test** on real data: fixed or consciously
+  deferred before the tag.
 
 Blockers that are decided but not done (all in the plan only; no code changed
 by this document):
@@ -342,33 +334,23 @@ by this document):
   rebase `v2` into `hrubymar10/aimebu`, and check the published history.
 - **B3 The README says "development"** in several places and the version string
   is `aimebu v2 (development)`; both must read as a release at tag time.
-- **B4 `bin/aimebu` and the README Install section** (section 3): v2 has neither.
-  Port the v1 wrapper with the version-flag change, add an Install section, and
-  add a test (a throwaway-clone smoke: first run builds, second run reuses the
-  cache, `AIMEBU_FORCE_BUILD=1` leaves no temp file).
+- **B4 `bin/aimebu` and the README Install section** (section 3): done; the
+  wrapper, the README Install section and the wrapper smoke tests exist.
 
 **macOS signing.** Decided: not a goal. The primary install builds locally, so
 there is nothing to sign; the quarantine workaround is documented only for
 optional prebuilt binaries.
 
-Not blockers (label `v2`, can ship after 2.0.0, or already labelled `v2.1`):
+Not blockers (can ship after 2.0.0):
 
-- Where v1's `general` room goes in import (low, but it touches the
-  import wizard users hit on day one; the owner may promote it).
-- README inbox sound wording, the Firefox check of the settings pages and the
-  trash icon (all low polish; the README wording is a one-line docs fix worth
-  doing before the tag).
-- Frontend rewrite to Preact, autopilots, per-room notification settings,
-  native mobile app, `aimebu update --check`, slash commands, usage-budget
-  alerts, SVG attachments.
-- Automatic worktree cleanup (explicitly "after 2.0.0", label `v2.1`) and the
-  error-tracking decision (`v2.1`).
+- README wording that still says "development" is covered by B3; other docs
+  polish can follow the tag.
+- Larger features and rewrites, and automatic worktree cleanup.
 
 ## 7. Release checklist
 
 1. Blockers in section 6 closed or consciously deferred, including B1 (defaults
-   switched to `~/.aimebu`, `AIMEBU_*`, 9997), B2 (public repo plan) and B4
-   (`bin/aimebu` plus README Install).
+   switched to `~/.aimebu`, `AIMEBU_*`, 9997) and B2 (public repo plan).
 2. On `v2`, clean tree: `make test-full` green (`fmt-check`, `vet`, `test-race`,
    `test-web`); `make test-ui` green.
 3. The cutover runbook rehearsed on a copy of real v1 data.

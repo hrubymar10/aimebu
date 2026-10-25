@@ -4,14 +4,15 @@ The v2 account switcher stores named Claude Code and Codex credential profiles
 under `<AIMEBU2_CONFIG_DIR>/switcher/` (default `~/.aimebu2/switcher/`). It
 starts disabled in a fresh root and keeps the existing enabled flag at
 cutover. It uses credential files only; it never accesses the macOS
-Keychain. Development v2 keeps its profiles under its separate root. When
-v1's `~/.aimebu/switcher/.lock` already exists, v2 also takes that flock
-before its own because both versions swap the same live credential files. It
-does not create the v1 lock or change v1 profiles and state. At cutover, point
-`AIMEBU2_CONFIG_DIR` at `~/.aimebu`:
-v2 then uses the existing v1 switcher tree in place. Both versions use the
+Keychain. Development v2 keeps its profiles under its separate root. Both versions swap
+the same live credential files, so when v1's `~/.aimebu/switcher/.lock` exists
+and is a different file from v2's own lock, v2 takes the v1 lock first and then
+its own `switcher/.lock`. It never creates the v1 lock and never changes v1
+profiles or state. At cutover, point `AIMEBU2_CONFIG_DIR` at `~/.aimebu`: v2
+then uses the existing v1 switcher tree in place, and both versions share the
 same version-1 `state.json`, profile layout, active symlinks, backups, and
-single `switcher/.lock` flock. An unsupported state version fails loudly;
+single `switcher/.lock` flock (the same file, so only one lock is taken). An
+unsupported state version fails loudly;
 there is no automatic profile conversion or merge between roots.
 
 For a fresh root, enable the switcher in Settings → Usages, then **Import
@@ -66,8 +67,8 @@ tool, profile name, removal time and the SHA-256 hash of its refresh token,
 never the token. The last 50 are kept, the file is mode 0600 and
 byte-compatible with v1, which shares this tree: a v1 maintenance run that
 rotated the removed account's token checks `removed.json` under the switcher
-lock and discards the rotation instead of resurrecting the account. v2 itself
-never rotates tokens. A profile whose credentials are missing, unreadable or
+lock and discards the rotation instead of resurrecting the account. v2 rotates
+tokens only through the token-only refresher described below. A profile whose credentials are missing, unreadable or
 have no refresh token is still removed; no tombstone can be written for it and
 the reason is logged. A corrupt `removed.json` is logged and rewritten by the
 next removal. Removal also deletes the profile's backups and rescue files.
@@ -77,7 +78,8 @@ the active one (a switch, or an import that moves the active pointer; rename
 carries the entry, removal drops it). It is the v1 file, byte for byte: v1
 background token maintenance leaves a profile alone for eight hours after that
 time, because sessions started while it was active may still be refreshing the
-token they hold. v2 never refreshes tokens; it keeps the file current so a
+token they hold. v2 refreshes tokens only on a token-only (migrated) install,
+where it applies its own two-minute grace instead; it keeps the file current so a
 v1 server sharing the tree sees switches made here. It is separate from
 `state.json` and advisory: unreadable or missing means no grace. A file that
 exists but cannot be parsed also holds other profiles' records, so a writer

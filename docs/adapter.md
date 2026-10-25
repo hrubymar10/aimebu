@@ -89,9 +89,10 @@ capability.
 ## Claude Code native adapter
 
 The native Claude Code adapter starts one `claude -p --output-format
-stream-json` process for each wake. When a delivery contains a native session
-handle, it passes that exact value with `--resume`; it never uses ambiguous
-continue-last-session flags. The input prompt is one JSON object containing
+stream-json` process for each wake. When a delivery carries a native session
+handle and the started flag, it passes that exact value with `--resume`; a
+handle without the started flag (the first turn) goes out as `--session-id`. It
+never uses ambiguous continue-last-session flags. The input prompt is one JSON object containing
 the turn ID, notes, context, and allowed tools.
 The Claude schema spells out `ask:{kind,text,options,free_text}` for inbox
 questions. Its prompt tells a lead to continue after `create_room` and target
@@ -122,7 +123,7 @@ limit and any reported reset time even when stderr is empty.
 Claude, Codex, Pi, and OpenCode prompts tell the agent to honor `retry_notice` on a
 requeued note (an attempt interrupted by a provider limit or a lost session)
 by checking the state before repeating actions.
-The three prompts are built by `internal/adapter/prompt` from sentences they
+The four native prompts (Claude Code, Codex, Pi, OpenCode) are built by `internal/adapter/prompt` from sentences they
 share plus each adapter's own deltas (where the turn JSON comes from, the role
 line, how to fetch attachments, the output contract, the acknowledgement rule,
 and the closing line); each adapter's golden tests pin the exact bytes, so a
@@ -145,7 +146,9 @@ Its parser retains the result event's `result` string byte-for-byte as the
 final candidate. Assistant, tool-progress, system, user, and rate-limit
 records become activity; usage and context/cost fields are forwarded when
 reported. Claude context use adds input, cache-read, and cache-creation tokens
-from a reported result; its model costs are summed, and a context window is
+from a reported result; its model costs are summed and flagged `cost_cumulative` (a resumed session's
+result reports the whole session's spend, so the store subtracts the session's
+previous total to get the turn's own cost), and a context window is
 used only when all reported models agree. `system/compact_boundary` becomes a
 compaction event. Fields Claude does not emit remain unknown. Cancellation
 kills the per-wake process and
@@ -211,8 +214,9 @@ Pi retries retryable provider failures itself (three retries, 2, 4 and 8
 seconds apart) and can exit 0 when they run out, with no settled run. The
 adapter treats that as a non-terminal exit and keeps the last provider error
 Pi reported in the exit evidence, so recovery shows the real cause rather than
-a clean exit code. Wording that names a usage cap routes into the provider-limit
-gate.
+a clean exit code. Only that provider error counts, and only wording such as
+`usage limit`, `usage_limit` or a weekly, hourly, monthly or daily limit (never a
+plain `rate limit`) routes into the provider-limit gate.
 
 Normal native turns allow the built-in action tools and aimebu MCP tools over
 HTTP. Their MCP config is a private 0600 file under the supervisor's Pi
@@ -259,8 +263,9 @@ call is reported once and is activity, so a long silent tool call can trip the
 idle deadline: raise `AIMEBU2_TURN_IDLE` for such work. Provider failures are
 retried by OpenCode for about 70 seconds without events and then end with one
 `error` event; it goes into the exit evidence as `OpenCode error: APIError
-(HTTP 429): …`, and wording that names a usage, weekly, hourly, daily or
-monthly cap routes into the provider-limit gate.
+(HTTP 429): …`, and wording such as `usage limit`, `usage_limit` or a
+weekly, hourly, daily or monthly limit (never a plain `rate limit`) routes into
+the provider-limit gate.
 
 Normal turns run with `--auto` (permissions not explicitly denied are
 approved, like the Claude and Codex bypass modes) and get the aimebu MCP

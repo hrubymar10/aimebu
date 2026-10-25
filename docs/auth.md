@@ -150,10 +150,10 @@ session for a project grant. Successful redemption returns the stored login
 for the follow-up sign-in. Signed-in redemption requires the session's CSRF
 token. If automatic sign-in fails after redemption, the invitation form retries
 sign-in without redeeming the spent token again. `GET /api/users` lists accounts
-for the global owner;
+for the global owner and the admins;
 `GET /api/users?project_id=...` lists a project owner's members.
 `PUT` or `DELETE /api/projects/{project}/members/{user}` changes or removes
-a membership. `POST /api/users/{user}/deactivate` is global-owner only.
+a membership. `POST /api/users/{user}/deactivate` is for the global owner, or an admin acting on an ordinary account (see below).
 Viewers can read their project but cannot send in ordinary rooms, manage rooms,
 or control agents. They can send, react, and attach files in a two-person
 private chat while both people remain active project members and no agent has

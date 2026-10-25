@@ -143,7 +143,7 @@ variant through task, pause, kill, and recovery on a real server; see
 [the variant gate](docs/variant-gate.md).
 
 See [the architecture](docs/architecture.md) for component decisions and
-[the contract](docs/contract.md) for the slice-1 data and protocol contract.
+[the contract](docs/contract.md) for the data and protocol contract.
 
 `aimebu fe` opens the web UI of the configured server in the browser (`AIMEBU2_PUBLIC_URL` when set, otherwise the
 address from `AIMEBU2_BIND` and `AIMEBU2_PORT`); over SSH or with no display it only prints the address.
@@ -273,7 +273,10 @@ pages in room notes. Put the substance of a plan or handoff in its message body.
 The composer accepts up to four files per message (10 MB each) through paste,
 drop, or the file picker. Files
 upload immediately, and sending waits until they finish. Images open in a
-mobile-friendly viewer; other files download. Room access protects every file,
+mobile-friendly viewer; other files download. An SVG that passes a strict
+safety check (no script, no external references) counts as an image and is
+shown only through an `<img>` thumbnail, never as page markup; agents get its
+source text; one that fails stays a download. Room access protects every file,
 including private chats. Agents fetch delivered files on demand through a
 scoped MCP tool or, for Pi Docker, a turn-scoped HTTP endpoint.
 Agent messages show the agent's room name and role emoji, a harness icon whose
@@ -281,7 +284,9 @@ tooltip names the model, and a liveness dot (green working or idle, amber when
 the agent waits for a recovery or approval decision, red when stopped or lost;
 a sender with no live agent record shows as departed, and one that exists only in imported v1 history is red too, with the tooltip
 "Imported from v1 (no live agent)"). A message that needs a
-human shows a 🔔. The `#42` number is the message's own number, one sequence across every room (as in v1, where an imported message keeps its v1 number); it copies itself, a `#42` in text links to that message (opening its room when it is elsewhere), and an agent may name a message by it. Hovering or focusing a
+human shows a 🔔. A chart icon beside an agent message's `#42` opens a popover with what the turn behind it spent
+(tokens, estimated cost, model, and its place among the turn's messages, such as "2 of 3"); these are the turn's figures, not
+per-message ones, and an unreported figure shows as a dash, never zero. The `#42` number is the message's own number, one sequence across every room (as in v1, where an imported message keeps its v1 number); it copies itself, a `#42` in text links to that message (opening its room when it is elsewhere), and an agent may name a message by it. Hovering or focusing a
 message shows its actions as one compact toolbar that overlays and reserves no space and covers no text: at the right end of the sender line
 for someone else's message, beside the bubble (to its left) for your own. The one exception is a chat column under 420px, where nothing fits
 beside either: the sender line then leaves 22px below it and the toolbar sits in that room over the bubble's top edge. On a touch screen a tap on a message shows it under the message: react (+, which opens a row of 👍 🆗 ✅ 👀 🙏 🎉), find another reaction (opens the emoji picker), reply (↩), reply in a thread, copy text and copy link. A message with
@@ -733,3 +738,8 @@ room or project. They show today's measured usage, cost-reporting coverage,
 the server's local day, and whether dispatch is active or paused. A blank
 field removes that cap. At the cap, dispatch pauses and an inbox decision
 lets the owner continue with a raised cap or leave the scope paused.
+Room settings and Project settings also have a Usage section (`GET /api/rooms/{room}/usage` and
+`GET /api/projects/{project}/usage`) that sums what the turns spent today, over seven days or
+for all time, by agent and by model, with a note on how many turns reported a cost. A Claude
+turn is priced as the difference from its session's running total, so a resumed session is not
+counted again from the start.

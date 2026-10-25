@@ -85,9 +85,9 @@ node scripts/variant-gate-selftest.cjs
 ```
 
 builds aimebu, starts an isolated scratch server with fake `claude`, `codex`,
-and `pi` programs on `PATH`, adds the native harnesses (each with its cheap model) as an owner would, and
+`pi`, and `opencode` programs on `PATH`, adds the native harnesses (each with its cheap model) as an owner would, and
 runs the gate's native variants against it, including a real `SIGKILL` and
-recovery. It asserts all three pass and that a variant with no launcher is
+recovery. It asserts all four pass and that a variant with no launcher is
 skipped with a reason. HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, and the aimebu
 config are redirected into a temp directory, so no real credential is touched.
 Set `VG_SELFTEST_KEEP=1` to keep that directory.
