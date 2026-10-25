@@ -94,7 +94,8 @@ Rules:
 A page's shared state is signals the page owns: created once per page (for Harnesses in `pages/harnesses/use-harnesses.js`)
 and read with `.value` by the components that render it, so a change re-renders only what reads it. Shared means what more
 than one component reads or what outlives a component: for Harnesses the machines, the selected machine, the rows and
-activity, which cards have Edit or Models open, the drafts, and the model detection failures. Writes go through the
+activity, the chosen harness, which cards have Edit open, the drafts, the roles with their default agents, the harnesses of
+other machines that a role default names, and the model detection failures. Writes go through the
 page's actions, never from render. A flag only one component uses (a button's busy state, a form's error, an input the
 component submits itself) stays `useState`. `.peek()` reads a signal without subscribing, in actions and guards.
 
@@ -159,6 +160,9 @@ pages alike:
 - `make test-ui` runs a migrated page's checks in both options: the Harnesses checks run on A (no pill), the page is opened
   again with `?ui=preact-harnesses:b`, the same checks run on B, and the pill switches back to A in place. It also checks
   that exactly one implementation is built and that the tab keeps its place in the nav.
+- `scripts/harness-settings.cjs` (run by `make test-ui`, and on its own with `HARNESS_VARIANT=a|b` to run one page) drives a scratch
+  server and checks the list beside the detail, role defaults per model and the role panel, the sync with Settings → Roles,
+  the stale-save refusal and the phone width, first on the legacy page and then on the Preact page (`?ui=preact-harnesses:b`).
 - `make test-ui` also runs `scripts/test-harness-page.cjs`: the Preact page in real Chromium (the existing Puppeteer tooling,
   `web/` served as is with the page's import map, no Go server), with every request held until the test answers it, so the
   order of answers is chosen. It checks:
@@ -179,7 +183,14 @@ pages alike:
   - the A/B switch asks before throwing unfinished input away (an Edit form, the Add harness form, a model id typed but not
     added, ticked auto-detect results for harnesses or models); for each, Cancel keeps the page and the input, and Switch
     builds the legacy page; a cancelled Add harness form no longer counts as unsaved;
-  - removing a harness: the in-app confirm, the DELETE, and the list read again without it.
+  - removing a harness: the in-app confirm, the DELETE, and the list read again without it;
+  - the list beside the detail: the first harness chosen, one card shown, click and arrow keys move the choice, a reload keeps it;
+  - a models save sends the revision its draft started from, and one refused as stale drops the draft, reads again and says so;
+    a save moves the draft on to the revision it answered with, so an edit made during the save, and the next edit after a
+    failed re-read, are not refused as stale;
+  - role defaults: a switch per role on every model saves the role on its own, the role panel names its entries (those of
+    another machine are read once), a refused save says why and the views show what is stored, and a role save made in
+    Settings → Roles is read here while the page is shown and ignored while it is hidden.
   - the shell's `onReady` hears of a harness that can start an agent, through the switch and across a swap (the first-run
     harness offer relies on it).
 - `make test-ui` is not part of `make test-full`, and CI runs only `make test-full`; whether `make test-ui` runs in CI is
@@ -213,13 +224,17 @@ Turning an experiment's default to B, and later removing the legacy module and t
 - Scope: vendor Preact and htm; the import map; `ui.js`; the first shared components (`IconButton`, `SettingsRow`,
   `SettingsGroup`) and `useAlive`; asset versioning for `../` imports and the import map; Settings → Harnesses rebuilt in
   Preact with the legacy page's full feature set (add, enable, edit, remove, models by hand and from auto-detect, default
-  model, auto-fill of a new harness's models, folder retry).
+  model, auto-fill of a new harness's models, folder retry). It has since been brought level with the legacy page: the list of
+  harnesses beside the chosen one's detail (the only layout; the models are always shown), role defaults per model with the
+  role panel and the sync with Settings → Roles (the same `role-defaults.js` store and `role-defaults-logic.js` rules as the
+  legacy page), the models save that names the revision it started from and is refused when the list changed meanwhile, and
+  Mistral Vibe.
 - Files: `web/vendor/preact/`, `web/index.html`, `web/js/ui.js`, `web/js/components/`, `web/js/hooks/` (`use-alive.js`, `use-dirty.js`),
   `web/js/pages/harnesses/` (`page.js` the shell adapter, `harnesses-page.js`, `use-harnesses.js` the page's data and
-  late-answer guards, `card.js`, `models.js`, `add-harness-form.js`, `detect-panel.js`, `detection-details.js`, `activity.js`, `model.js`, `switch.js`), `web/js/settings.js` (uses the
+  late-answer guards, `card.js`, `models.js`, `add-harness-form.js`, `detect-panel.js`, `detection-details.js`, `activity.js`, `model.js`, `switch.js`, and for layout C and role defaults `master-list.js`, `role-panel.js`, `role-switch.js`), `web/js/settings.js` (uses the
   switch), `web/js/ui-variant.js` (`ACTIVE`), `web/theme-v1.css` (a two-option pill was 33 px wide between 521 and 700 px,
   under the 40 px tap target; it is 40 px now), `internal/server/static_assets.go`, `.air.toml`, tests and docs.
-- Experiment: `preact-harnesses`. Legacy `web/js/harness-settings.js` is unchanged.
+- Experiment: `preact-harnesses`. The legacy `web/js/harness-settings.js` is the reference for behaviour; B follows it.
 - Acceptance: `make test-full` and `make test-ui` pass; the Harnesses checks pass on A and on B.
 
 ### Step 2: the other Settings sections
