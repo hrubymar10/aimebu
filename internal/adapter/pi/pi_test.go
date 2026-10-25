@@ -96,7 +96,7 @@ esac
 			adapter.TurnSpec{TurnID: "turn-" + string(scenario), Agent: adapter.AgentSpec{ID: "agt_test", Model: "ollama-cloud/gemma4:31b"},
 				CheckoutPath: checkout, AgentToolsConfigPath: config, NativeSessionHandle: testSession, Mode: adapter.ModeNormal,
 				NotesJSON: json.RawMessage(`[]`)}, effected
-	})
+	}, adaptertest.ChildProcess())
 }
 
 func TestNativeMCPAndDockerIsolation(t *testing.T) {

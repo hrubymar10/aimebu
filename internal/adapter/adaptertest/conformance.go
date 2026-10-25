@@ -5,6 +5,7 @@ package adaptertest
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,7 +26,27 @@ const (
 // effect channel is only used by ScenarioCrashAfterEffect.
 type Fixture func(t *testing.T, scenario Scenario) (adapter.Adapter, adapter.TurnSpec, <-chan struct{})
 
-func Run(t *testing.T, fixture Fixture) {
+// Option adds checks that only make sense for some adapters.
+type Option func(*config)
+
+type config struct{ process bool }
+
+// ChildProcess marks an adapter that runs a harness as a child process and tracks its reap with adapter.Reaper: Run then also cancels in
+// the gap between the process being reaped and the turn reporting its exit.
+func ChildProcess() Option { return func(c *config) { c.process = true } }
+
+func Run(t *testing.T, fixture Fixture, options ...Option) {
+	var settings config
+	for _, option := range options {
+		option(&settings)
+	}
+	runScenarios(t, fixture)
+	if settings.process {
+		t.Run("cancel_between_reap_and_exit", func(t *testing.T) { cancelInTheReapWindow(t, fixture) })
+	}
+}
+
+func runScenarios(t *testing.T, fixture Fixture) {
 	for _, scenario := range []Scenario{ScenarioEvents, ScenarioNoTerminal, ScenarioCancel, ScenarioCrashAfterEffect} {
 		t.Run(string(scenario), func(t *testing.T) {
 			implementation, spec, effected := fixture(t, scenario)
@@ -69,6 +90,14 @@ func Run(t *testing.T, fixture Fixture) {
 				t.Fatalf("Wait not repeatable: %+v / %+v, %v", exit, again, err)
 			}
 			assertUniqueAndExit(t, events, exit)
+			// The process is gone and reaped: cancelling a finished turn is a no-op, however the group answers a signal (Linux says ESRCH,
+			// macOS may say EPERM). The supervisor cancels on its own deadlines and may do so as a turn ends.
+			if err := turn.Cancel(); err != nil {
+				t.Fatalf("cancel after exit: %v", err)
+			}
+			if again, err := turn.Wait(); err != nil || again != exit {
+				t.Fatalf("a cancel after exit changed the result: %+v / %+v, %v", exit, again, err)
+			}
 			switch scenario {
 			case ScenarioEvents:
 				if len(behavior) < 4 || len(behavior) > 5 {
@@ -157,5 +186,46 @@ func assertUniqueAndExit(t *testing.T, events []adapter.Event, exit adapter.Exit
 	}
 	if got := events[len(events)-1].Exit; got == nil || *got != exit {
 		t.Fatalf("exit event=%+v Wait=%+v", got, exit)
+	}
+}
+
+// cancelInTheReapWindow holds a finished turn right after its process is reaped, before it reports the exit, and cancels it there. The
+// process is gone: nothing may be signalled (its group id could already be someone else's) and no cancel intent is recorded, so the turn
+// ends as the successful one it was.
+func cancelInTheReapWindow(t *testing.T, fixture Fixture) {
+	implementation, spec, _ := fixture(t, ScenarioEvents)
+	reached, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	restore := adapter.HoldAfterReap(func() {
+		once.Do(func() { close(reached) })
+		<-release
+	})
+	defer restore()
+	var releaseOnce sync.Once
+	letGo := func() { releaseOnce.Do(func() { close(release) }) }
+	defer letGo()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	turn, err := implementation.Start(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-reached:
+	case <-ctx.Done():
+		t.Fatal("the process was not reaped")
+	}
+	if err := turn.Cancel(); err != nil {
+		t.Fatalf("cancel between reap and exit: %v", err)
+	}
+	letGo()
+	events := collect(t, ctx, turn)
+	exit, err := turn.Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertUniqueAndExit(t, events, exit)
+	if exit.CancelIntent || !exit.TerminalEvent || exit.ExitCode != 0 {
+		t.Fatalf("a cancel after the process ended must not change how the turn ended: %+v", exit)
 	}
 }

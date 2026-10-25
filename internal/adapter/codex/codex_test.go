@@ -152,7 +152,7 @@ esac
 		implementation.AuthPath = ""
 		spec := adapter.TurnSpec{TurnID: "turn-" + string(scenario), Agent: adapter.AgentSpec{ID: "agt_test", Model: "gpt-6-luna"}, Mode: adapter.ModeNormal, CheckoutPath: root, NotesJSON: json.RawMessage(`[]`)}
 		return implementation, spec, effected
-	})
+	}, adaptertest.ChildProcess())
 }
 
 func TestResumeRawCandidateAndPrivateConfig(t *testing.T) {

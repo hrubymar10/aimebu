@@ -73,8 +73,15 @@ the dispatcher during tests. It preserves malformed final-answer bytes.
 The CLI enables the fake's default echo for local demos. Test scripts take
 priority over the echo.
 
-`adapter/adaptertest.Run` checks event order and unique IDs, cancellation,
-zero exit without terminal evidence, and crash after an unreported effect.
+`adapter/adaptertest.Run` checks event order and unique IDs, cancellation
+(including a repeated cancel, a cancel after the process has exited, and a cancel
+in the gap between the process being reaped and the exit being reported, which
+must all be no-ops that record no cancel intent), zero exit without terminal evidence, and crash after an
+unreported effect. Every adapter signals its process group through
+`adapter.SignalGroup` and records the reap with `adapter.Reaper`: a reaped process
+is never signalled, and a group that is already gone (Linux answers `ESRCH`, macOS
+may answer `EPERM`) is success once the process has been reaped, while a
+permission error on a live process is still returned.
 The native adapter fixtures run the same scenarios. Each adapter lists
 its detected tool versions and environments through `Catalog`; the
 supervisor derives its `hello` capability reports from that list. `Registry`

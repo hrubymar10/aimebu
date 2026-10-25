@@ -227,6 +227,7 @@ type turn struct {
 	done            chan struct{}
 	mu              sync.Mutex
 	cancel          bool
+	reap            adapter.Reaper // set as soon as the process has been waited for, before the exit is reported
 	exit            adapter.ExitInfo
 	err             error
 	next            int
@@ -239,14 +240,21 @@ type turn struct {
 func (t *turn) LastOutput() time.Time { return time.Unix(0, t.lastOutput.Load()) }
 
 func (t *turn) Events() <-chan adapter.Event { return t.events }
+
+// Cancel ends the turn's process group. A turn whose process is already reaped, or whose group is already gone, has nothing left to cancel,
+// so cancelling again, or after the exit, is a no-op (see adapter.SignalGroup).
 func (t *turn) Cancel() error {
 	t.mu.Lock()
+	if t.reap.Reaped() { // nothing left to cancel, and no intent to record for a process that ended by itself
+		t.mu.Unlock()
+		return nil
+	}
 	t.cancel = true
 	t.mu.Unlock()
 	if t.cmd.Process == nil {
 		return nil
 	}
-	return syscall.Kill(-t.cmd.Process.Pid, syscall.SIGKILL)
+	return adapter.SignalGroup(t.cmd.Process.Pid, syscall.SIGKILL, t.reap.Reaped)
 }
 func (t *turn) Wait() (adapter.ExitInfo, error) {
 	<-t.done
@@ -421,6 +429,7 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 	}
 	<-stderrDone
 	err := t.cmd.Wait()
+	t.reap.MarkReaped()
 	exit := adapter.ExitInfo{TerminalEvent: terminal}
 	if err != nil {
 		if status, ok := err.(*exec.ExitError); ok {

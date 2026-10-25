@@ -164,7 +164,7 @@ esac
 			close(effected)
 		}
 		return &Adapter{Command: path, AllowNative: true}, adapter.TurnSpec{TurnID: "turn-" + string(scenario), Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: checkout, AgentToolsConfigPath: toolsConfig, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}, effected
-	})
+	}, adaptertest.ChildProcess())
 }
 
 func TestResultUsageIncludesCacheTokens(t *testing.T) {

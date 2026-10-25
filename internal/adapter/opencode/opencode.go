@@ -255,7 +255,7 @@ type turn struct {
 	mu                  sync.Mutex
 	cancel              bool
 	cancelSignaled      bool
-	reaped              bool
+	reap                adapter.Reaper // set as soon as the process has been waited for, before the exit is reported
 	exit                adapter.ExitInfo
 	err                 error
 	next                int
@@ -276,38 +276,24 @@ func (t *turn) Cancel() error {
 	default:
 	}
 	t.mu.Lock()
+	if t.reap.Reaped() { // nothing left to cancel, and no intent to record for a process that ended by itself
+		t.mu.Unlock()
+		return nil
+	}
 	t.cancel = true
-	if t.cancelSignaled || t.reaped {
+	if t.cancelSignaled || t.cmd.Process == nil {
 		t.mu.Unlock()
 		return nil
 	}
-	if t.cmd.Process == nil {
-		t.mu.Unlock()
-		return nil
-	}
-	err := syscall.Kill(-t.cmd.Process.Pid, syscall.SIGTERM)
-	if err == nil || errors.Is(err, syscall.ESRCH) {
+	err := adapter.SignalGroup(t.cmd.Process.Pid, syscall.SIGTERM, t.reap.Reaped)
+	if err == nil {
 		t.cancelSignaled = true
 	}
 	t.mu.Unlock()
-	if err != nil && !errors.Is(err, syscall.ESRCH) {
-		if errors.Is(err, syscall.EPERM) {
-			t.mu.Lock()
-			reaped := t.reaped
-			t.mu.Unlock()
-			if reaped {
-				return nil
-			}
-		}
+	if err != nil {
 		return err
 	}
-	go func() {
-		select {
-		case <-t.done:
-		case <-time.After(5 * time.Second):
-			_ = syscall.Kill(-t.cmd.Process.Pid, syscall.SIGKILL)
-		}
-	}()
+	go adapter.KillAfter(t.cmd.Process.Pid, 5*time.Second, t.done, t.reap.Reaped)
 	return nil
 }
 
@@ -470,6 +456,7 @@ func (t *turn) run(stdout, stderr io.Reader) {
 	}
 	<-stderrDone
 	waitErr := t.cmd.Wait()
+	t.reap.MarkReaped()
 	exit := adapter.ExitInfo{TerminalEvent: terminal}
 	if waitErr != nil {
 		if status, ok := waitErr.(*exec.ExitError); ok {
@@ -485,7 +472,6 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		}
 	}
 	t.mu.Lock()
-	t.reaped = true
 	exit.CancelIntent = t.cancel
 	t.exit, t.err = exit, scanError
 	t.mu.Unlock()
