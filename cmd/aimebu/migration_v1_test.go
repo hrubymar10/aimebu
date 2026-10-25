@@ -170,6 +170,7 @@ func TestBackupV1LayoutPreservesWALSource(t *testing.T) {
 }
 
 func TestPortCollisionLeavesV1RootUntouched(t *testing.T) {
+	t.Setenv("AIMEBU2_DEV_SKIP_V1_PROBE", "")
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "server"), 0700); err != nil {
 		t.Fatal(err)
@@ -226,6 +227,7 @@ func TestPortCollisionLeavesV1RootUntouched(t *testing.T) {
 }
 
 func TestV1CutoverDetectsWildcardListener(t *testing.T) {
+	t.Setenv("AIMEBU2_DEV_SKIP_V1_PROBE", "")
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "server"), 0700); err != nil {
 		t.Fatal(err)

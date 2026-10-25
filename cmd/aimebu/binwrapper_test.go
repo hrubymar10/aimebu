@@ -209,8 +209,8 @@ func TestBinWrapperKeepsTheDefaultVersionWithoutGitMetadata(t *testing.T) {
 }
 
 func tmpDirOf(env []string) string {
-	for _, item := range env {
-		if value, ok := strings.CutPrefix(item, "TMPDIR="); ok {
+	for i := len(env) - 1; i >= 0; i-- {
+		if value, ok := strings.CutPrefix(env[i], "TMPDIR="); ok {
 			return value
 		}
 	}

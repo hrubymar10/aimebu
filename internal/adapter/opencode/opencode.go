@@ -254,6 +254,8 @@ type turn struct {
 	done                chan struct{}
 	mu                  sync.Mutex
 	cancel              bool
+	cancelSignaled      bool
+	reaped              bool
 	exit                adapter.ExitInfo
 	err                 error
 	next                int
@@ -275,12 +277,28 @@ func (t *turn) Cancel() error {
 	}
 	t.mu.Lock()
 	t.cancel = true
-	t.mu.Unlock()
+	if t.cancelSignaled || t.reaped {
+		t.mu.Unlock()
+		return nil
+	}
 	if t.cmd.Process == nil {
+		t.mu.Unlock()
 		return nil
 	}
 	err := syscall.Kill(-t.cmd.Process.Pid, syscall.SIGTERM)
+	if err == nil || errors.Is(err, syscall.ESRCH) {
+		t.cancelSignaled = true
+	}
+	t.mu.Unlock()
 	if err != nil && !errors.Is(err, syscall.ESRCH) {
+		if errors.Is(err, syscall.EPERM) {
+			t.mu.Lock()
+			reaped := t.reaped
+			t.mu.Unlock()
+			if reaped {
+				return nil
+			}
+		}
 		return err
 	}
 	go func() {
@@ -467,6 +485,7 @@ func (t *turn) run(stdout, stderr io.Reader) {
 		}
 	}
 	t.mu.Lock()
+	t.reaped = true
 	exit.CancelIntent = t.cancel
 	t.exit, t.err = exit, scanError
 	t.mu.Unlock()

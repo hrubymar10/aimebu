@@ -25,16 +25,28 @@ var Variables = []string{"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "AIMEBU_CONF
 // (the install wrapper's) must not start from an empty build cache. It panics when the result is not isolated.
 func Isolate() (root string, cleanup func()) {
 	pinGoCacheEnv()
-	root, err := os.MkdirTemp("", "aimebu-v2-test-home-")
+	temp, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		panic(fmt.Errorf("resolve temporary directory: %w", err))
+	}
+	if err := os.Setenv("TMPDIR", temp); err != nil {
+		panic(err)
+	}
+	root, err = os.MkdirTemp("", "aimebu-v2-test-home-")
 	if err != nil {
 		panic(err)
 	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		panic(fmt.Errorf("resolve test home: %w", err))
+	}
 	for name, value := range map[string]string{
-		"HOME":               root,
-		"CODEX_HOME":         filepath.Join(root, ".codex"),
-		"CLAUDE_CONFIG_DIR":  filepath.Join(root, ".claude"),
-		"AIMEBU_CONFIG_DIR":  filepath.Join(root, ".aimebu"),
-		"AIMEBU2_CONFIG_DIR": filepath.Join(root, ".aimebu2"),
+		"HOME":                      root,
+		"CODEX_HOME":                filepath.Join(root, ".codex"),
+		"CLAUDE_CONFIG_DIR":         filepath.Join(root, ".claude"),
+		"AIMEBU_CONFIG_DIR":         filepath.Join(root, ".aimebu"),
+		"AIMEBU2_CONFIG_DIR":        filepath.Join(root, ".aimebu2"),
+		"AIMEBU2_DEV_SKIP_V1_PROBE": "1",
 	} {
 		if err := os.Setenv(name, value); err != nil {
 			panic(err)

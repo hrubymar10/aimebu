@@ -17,6 +17,9 @@ func TestTheEnvironmentIsolateSetsUpPassesCheck(t *testing.T) {
 	if err := Check(); err != nil {
 		t.Fatal(err)
 	}
+	if got := os.Getenv("AIMEBU2_DEV_SKIP_V1_PROBE"); got != "1" {
+		t.Errorf("test v1 listener probe setting = %q, want 1", got)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
@@ -25,6 +28,29 @@ func TestTheEnvironmentIsolateSetsUpPassesCheck(t *testing.T) {
 		if name != "HOME" && !strings.HasPrefix(os.Getenv(name), home) {
 			t.Errorf("%s = %q, want it under HOME %q", name, os.Getenv(name), home)
 		}
+	}
+}
+
+func TestIsolateCanonicalizesSymlinkedTemporaryDirectory(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range append(append([]string{}, Variables...), "TMPDIR") {
+		t.Setenv(name, os.Getenv(name))
+	}
+	t.Setenv("TMPDIR", link)
+	root, cleanup := Isolate()
+	defer cleanup()
+	if got := os.TempDir(); got != real {
+		t.Errorf("temporary directory = %q, want %q", got, real)
+	}
+	if got := filepath.Dir(root); got != real {
+		t.Errorf("test home parent = %q, want %q", got, real)
+	}
+	if got := os.Getenv("HOME"); got != root {
+		t.Errorf("HOME = %q, want %q", got, root)
 	}
 }
 

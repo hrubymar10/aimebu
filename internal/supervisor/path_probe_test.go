@@ -12,6 +12,10 @@ func TestCanonicalDirectoryResolvesAliasAndRejectsMissingPath(t *testing.T) {
 	if err := os.Mkdir(real, 0700); err != nil {
 		t.Fatal(err)
 	}
+	real, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
 	alias := filepath.Join(root, "alias")
 	if err := os.Symlink(real, alias); err != nil {
 		t.Fatal(err)
