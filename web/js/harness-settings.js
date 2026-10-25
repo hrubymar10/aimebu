@@ -40,7 +40,7 @@ const extraField = (form, label, value = '') => {
   wrapper.append(input); form.append(wrapper); return input;
 };
 
-const FAMILIES = [['claude', 'Claude Code'], ['codex', 'Codex'], ['pi', 'Pi'], ['opencode', 'OpenCode']];
+const FAMILIES = [['claude', 'Claude Code'], ['codex', 'Codex'], ['pi', 'Pi'], ['opencode', 'OpenCode'], ['vibe', 'Mistral Vibe']];
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/;
 const familyName = family => FAMILIES.find(([key]) => key === family)?.[1] || family;
 const button = (label, className = 'btn', type = 'button') => { const item = node('button', className, label); item.type = type; return item; };
@@ -64,7 +64,7 @@ const detectionDetails = () => {
   return details;
 };
 
-// Settings → Harnesses: a machine's harnesses (the coding tools installed on it: Claude Code, Codex, Pi, OpenCode) and, under each, the
+// Settings → Harnesses: a machine's harnesses (the coding tools installed on it: Claude Code, Codex, Pi, OpenCode, Mistral Vibe) and, under each, the
 // models it can start agents with. Nothing is there until the owner adds it, by hand or by ticking what auto-detect found. Only the owner
 // reads or edits it (launchers run code on the host).
 //
@@ -471,7 +471,7 @@ export class HarnessSettings {
   detectPanel(machineID, candidates) {
     const panel = node('form', 'machine-harness-form harness-detect-panel'); panel.id = `${this.prefix}harness-detect-panel`;
     panel.append(node('strong', '', candidates.length ? 'Found on this machine — tick the ones to add' : 'Nothing found on this machine'));
-    if (!candidates.length) panel.append(node('p', 'machine-harness-help', 'No Claude Code, Codex, Pi or OpenCode executable was found. Add one by hand with its path.'));
+    if (!candidates.length) panel.append(node('p', 'machine-harness-help', 'No Claude Code, Codex, Pi, OpenCode or Mistral Vibe executable was found. Add one by hand with its path.'));
     const boxes = [];
     for (const candidate of candidates) {
       const row = node('label', 'machine-harness-enabled harness-detect-row'); row.dataset.command = candidate.command;

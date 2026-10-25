@@ -1,0 +1,50 @@
+{
+  "session_id": "0c3e1f4a-8b2d-4a6e-9f10-5d7c2b1a9e33",
+  "parent_session_id": null,
+  "start_time": "2026-10-24T12:00:00+00:00",
+  "end_time": "2026-10-24T12:00:09+00:00",
+  "git_commit": null,
+  "git_branch": null,
+  "environment": {
+    "working_directory": "/work/checkout"
+  },
+  "username": "agent",
+  "child_sessions": [],
+  "loops": [],
+  "title": null,
+  "title_source": null,
+  "experiments": null,
+  "stats": {
+    "steps": 2,
+    "session_prompt_tokens": 4945,
+    "session_completion_tokens": 121,
+    "session_cached_tokens": 2176,
+    "tool_calls_agreed": 1,
+    "tool_calls_rejected": 0,
+    "tool_calls_hook_denied": 0,
+    "tool_calls_failed": 0,
+    "tool_calls_succeeded": 1,
+    "context_tokens": 5066,
+    "last_turn_prompt_tokens": 2540,
+    "last_turn_completion_tokens": 60,
+    "last_turn_cached_tokens": 2176,
+    "last_turn_duration": 3.1,
+    "tokens_per_second": 19.3,
+    "input_price_per_million": 1.5,
+    "output_price_per_million": 7.5,
+    "cached_input_price_per_million": 0.15,
+    "session_total_llm_tokens": 5066,
+    "last_turn_total_tokens": 2600,
+    "session_cost": 0.0053874
+  },
+  "total_messages": 4,
+  "last_message_fingerprint": "abc",
+  "tools_available": [
+    "bash",
+    "read_file",
+    "grep"
+  ],
+  "config": {
+    "active_model": "mistral-medium-3.5"
+  }
+}

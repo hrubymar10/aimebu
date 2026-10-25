@@ -21,7 +21,7 @@ const (
 var harnessModelSlugPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$`)
 
 // HarnessModelFamilies are the harness families whose models the owner edits. The fake test adapter has no harness.
-var HarnessModelFamilies = []string{"claude", "codex", "pi", "opencode"}
+var HarnessModelFamilies = []string{"claude", "codex", "pi", "opencode", "vibe"}
 
 // ErrInvalidHarnessModels wraps the reason a model list was refused.
 var ErrInvalidHarnessModels = errors.New("invalid_harness_models")

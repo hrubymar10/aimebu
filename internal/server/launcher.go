@@ -208,7 +208,7 @@ func (s *Server) machineLauncher(w http.ResponseWriter, r *http.Request) {
 		}
 		item.ID = "mln_" + hex.EncodeToString(nonce[:])
 		item.Preset = false
-		if item.Tool == "claude" || item.Tool == "codex" || item.Tool == "pi" || item.Tool == "opencode" {
+		if item.Tool == "claude" || item.Tool == "codex" || item.Tool == "pi" || item.Tool == "opencode" || item.Tool == "vibe" {
 			if item.Label == "" {
 				item.Label = defaultHarnessLabel(item.Tool, item.Containerized)
 			}
@@ -222,8 +222,8 @@ func (s *Server) machineLauncher(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if item.Tool != "claude" && item.Tool != "codex" && item.Tool != "pi" && item.Tool != "opencode" {
-		apiError(w, 400, "invalid_launcher", "tool must be claude, codex, pi, or opencode")
+	if item.Tool != "claude" && item.Tool != "codex" && item.Tool != "pi" && item.Tool != "opencode" && item.Tool != "vibe" {
+		apiError(w, 400, "invalid_launcher", "tool must be claude, codex, pi, opencode, or vibe")
 		return
 	}
 	if used, err := s.Store.LauncherInUse(r.Context(), item.ID); err != nil {
@@ -294,7 +294,7 @@ func (s *Server) launcherMutationError(w http.ResponseWriter, err error) {
 }
 
 func defaultHarnessLabel(tool string, containerized bool) string {
-	label := map[string]string{"claude": "Claude Code", "codex": "Codex", "pi": "Pi", "opencode": "OpenCode"}[tool]
+	label := map[string]string{"claude": "Claude Code", "codex": "Codex", "pi": "Pi", "opencode": "OpenCode", "vibe": "Mistral Vibe"}[tool]
 	if containerized {
 		label += " (Docker)"
 	}

@@ -69,7 +69,7 @@ questions on its own machine, each a `detect` frame (see the contract): which
 harness executables are installed (PATH plus `~/.local/bin`, `/usr/local/bin`,
 `/opt/homebrew/bin`, `~/.npm-global/bin`, `~/.bun/bin`, `~/.opencode/bin` and the
 global npm prefix, once per real file, with `--version`; the test helpers set `AIMEBU2_TEST_RESTRICT_PATH=1`, which limits the search to `PATH` so a test never finds the developer's own CLIs), and which models a Pi,
-OpenCode or Codex harness lists, native or containerized (run with the harness's
+OpenCode, Codex or Vibe harness lists, native or containerized (run with the harness's
 own arguments first, a 20-second limit and an 8 MiB output limit). That command
 runs in a fresh private `detect/run-*` subfolder of the supervisor's aimebu
 config directory, removed after the command, unless the request names another
@@ -216,10 +216,10 @@ its notes.
 
 Claude's failed `result` event and Codex's failed turn event also contribute
 bounded, redacted error evidence to the process exit. The server recognizes
-provider quota only from the tool's own wording, and only for Claude, Codex, Pi
-and OpenCode: Codex needs `usage limit` in stderr or the error evidence; Claude
-needs `limit reached` there, but not `rate limit reached`; Pi and OpenCode count
-only the provider error event they reported (their stderr is ignored) and need
+provider quota only from the tool's own wording, and only for Claude, Codex, Pi,
+OpenCode and Vibe: Codex needs `usage limit` in stderr or the error evidence; Claude
+needs `limit reached` there, but not `rate limit reached`; Pi, OpenCode and Vibe count
+only the provider error they reported (their stderr is ignored; Vibe's is its last `Error:` line) and need
 `usage limit`, `usage_limit`, or a `weekly`, `hourly`, `monthly` or `daily`
 limit, never text that mentions a `rate limit`. A bare HTTP 429 or a generic
 rate limit is ordinary recovery, not a quota. A reset time is read from an
@@ -236,9 +236,9 @@ A resumed Codex turn that fails with `failed to record rollout items` and
 case either. The server clears the session's native handle, marks the turn
 failed, requeues its notes (with the same `retry_notice` caution when the turn
 showed activity), and records a `native_session_reset` event; the next
-delivery starts a fresh Codex thread. A resumed OpenCode turn that prints
+delivery starts a fresh Codex thread. A resumed OpenCode or Vibe turn that prints
 `Error: Session not found` on stderr is handled the same way (the event's
-reason is `opencode_session_missing`). It does not apply to a turn that opened
+reason is `opencode_session_missing` or `vibe_session_missing`). It does not apply to a turn that opened
 its own thread and then lost it, so a fresh start that fails the same way falls
 through to ordinary recovery instead of looping.
 The server stores reported usage for the agent card and posts a room system
@@ -376,7 +376,7 @@ never keeps running after the supervisor stopped tracking it.
 
 The standalone and embedded supervisors route turns by tool: the fake
 adapter provides a short echo for local demos, while installed Claude Code,
-Codex, Pi, and OpenCode CLIs use their native adapters. An unavailable CLI does not
+Codex, Pi, OpenCode, and Mistral Vibe CLIs use their native adapters. An unavailable CLI does not
 appear in the supervisor's catalog.
 
 ## Agent output
@@ -390,7 +390,7 @@ captured.
 
 - **Capture.** The supervisor gives each turn a process-only sink
   (`adapter.TurnSpec.StderrSink`, never journaled) and every adapter (Claude
-  Code, Codex, Pi and OpenCode, native and Docker) tees the harness's stderr
+  Code, Codex, Pi, OpenCode and Vibe, native and Docker) tees the harness's stderr
   into it beside the 4 KiB tail it already keeps as exit evidence. A log that
   cannot be opened is reported and the turn runs without one.
 - **Format.** One line per line of output, each prefixed with its UTC time,

@@ -373,10 +373,10 @@ The server reads the session itself: the client never supplies a session id.
   A containerized launcher keeps its own sessions and cannot
   continue one (`needs_native`); another machine is not checked, and a failing
   first turn surfaces like any failed turn.
-- **codex, pi and opencode** sessions cannot be continued: v2 runs each with a
+- **codex, pi, opencode and vibe** sessions cannot be continued: v2 runs each with a
   private home or data directory per agent, so a session v1 made is not visible
   to it. The dialog says so, and the agent starts **fresh with the same name**
-  (still linked to the v1 agent). Harnesses v2 has no adapter for (vibe, cursor,
+  (still linked to the v1 agent). Harnesses v2 has no adapter for (cursor,
   aider) are the same.
 - If v1 saw the agent in the last ten minutes it may still be using the session
   (`v1_may_be_active`); two processes on one transcript corrupt it, so the

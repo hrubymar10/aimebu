@@ -149,7 +149,7 @@ only be started from a room where it wrote, and only once. See
 Only Claude Code can continue a v1 harness session, and only through a
 **native** launcher. It resumes in the v1 working folder, which must still
 exist; an outside-project folder requires the ordinary boundary approval.
-The host checks for a transcript before starting. Codex, Pi, OpenCode, and
+The host checks for a transcript before starting. Codex, Pi, OpenCode, Vibe, and
 unsupported v1 harnesses start fresh under the same name because their v2
 session homes or adapters cannot see the old session. A v1 session seen in
 the last ten minutes needs explicit confirmation that v1 is stopped (a profile

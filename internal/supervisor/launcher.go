@@ -18,7 +18,7 @@ import (
 var launcherEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func validateLauncher(def protocol.LauncherDefinition) error {
-	if def.ID == "" || def.Name == "" || (def.Tool != "claude" && def.Tool != "codex" && def.Tool != "pi" && def.Tool != "opencode") {
+	if def.ID == "" || def.Name == "" || (def.Tool != "claude" && def.Tool != "codex" && def.Tool != "pi" && def.Tool != "opencode" && def.Tool != "vibe") {
 		return errors.New("launcher ID, name, and supported tool required")
 	}
 	if def.Command == "" || strings.ContainsAny(def.Command, "\x00\n\r") || strings.TrimSpace(def.Command) != def.Command || strings.Contains(def.Command, " ") {
@@ -29,6 +29,9 @@ func validateLauncher(def protocol.LauncherDefinition) error {
 	}
 	if def.Containerized && def.Tool == "opencode" {
 		return errors.New("OpenCode has no container variant")
+	}
+	if def.Containerized && def.Tool == "vibe" {
+		return errors.New("Vibe has no container variant")
 	}
 	if def.Containerized && def.Tool == "pi" && def.Toolbox {
 		return errors.New("Pi container launchers cannot provide the toolbox with the current adapter")

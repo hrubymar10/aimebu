@@ -78,7 +78,7 @@ Notes:
   `agent-tools`, `switcher`, `doctor`, `prune`, `sessions`, `usages`, `fe`. There is no
   separate supervisor artifact to ship.
 - Runtime prerequisites are not bundled and must be in the release notes: the
-  harness CLIs (Claude Code, Codex, Pi, OpenCode) the owner wants, and for token
+  harness CLIs (Claude Code, Codex, Pi, OpenCode, Mistral Vibe) the owner wants, and for token
   auto-refresh `harness-docker-ctrl` plus a reachable `docker` daemon (see
   `docs/migrating-from-v1.md`, section 0).
 - Signing: macOS binaries stay **unsigned**, as in v1; signing and

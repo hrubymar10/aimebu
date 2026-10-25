@@ -75,6 +75,7 @@ var boundedAdapters = []struct {
 	{"codex", "native", "Codex", "openai"},
 	{"pi", "native", "Pi", "ollama-cloud"},
 	{"opencode", "native", "OpenCode", "opencode"},
+	{"vibe", "native", "Mistral Vibe", "mistral"},
 }
 
 // spawnCatalog reports bounded server-approved model choices alongside live

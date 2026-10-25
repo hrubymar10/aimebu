@@ -22,11 +22,12 @@ var resetDelay = regexp.MustCompile(`(?i)\b(?:resets?|retry|try again)\s+in\s+(\
 // wording appears in its process evidence. A generic HTTP 429 or a user
 // message mentioning a limit cannot bypass ordinary recovery.
 func providerLimitEvidence(tool, stderr, errorEvent string, now time.Time) (string, bool) {
-	if tool != "codex" && tool != "claude" && tool != "pi" && tool != "opencode" {
+	if tool != "codex" && tool != "claude" && tool != "pi" && tool != "opencode" && tool != "vibe" {
 		return "", false
 	}
 	evidence := stderr + "\n" + errorEvent
-	if tool == "pi" || tool == "opencode" {
+	providerWording := tool == "pi" || tool == "opencode" || tool == "vibe"
+	if providerWording {
 		// Only the provider error the harness reported counts: its stderr is
 		// launcher noise, and a plain rate limit is transient, not a cap that
 		// gates the agent until a reset.
@@ -35,7 +36,7 @@ func providerLimitEvidence(tool, stderr, errorEvent string, now time.Time) (stri
 	lower := strings.ToLower(evidence)
 	if tool == "codex" && !strings.Contains(lower, "usage limit") ||
 		tool == "claude" && (!strings.Contains(lower, "limit reached") || strings.Contains(lower, "rate limit reached")) ||
-		(tool == "pi" || tool == "opencode") && !providerCapWording(lower) {
+		providerWording && !providerCapWording(lower) {
 		return "", false
 	}
 	for _, match := range resetTimestamp.FindAllStringSubmatch(evidence, -1) {
@@ -62,7 +63,7 @@ func providerLimitEvidence(tool, stderr, errorEvent string, now time.Time) (stri
 	return "", true
 }
 
-// providerCapWording recognises the wording providers behind Pi and OpenCode
+// providerCapWording recognises the wording providers behind Pi, OpenCode and Vibe
 // use for a plan or quota cap, the same kind the harness itself refuses to
 // retry. A bare "rate limit" or HTTP 429 is deliberately not enough.
 func providerCapWording(lower string) bool {

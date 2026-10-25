@@ -40,7 +40,7 @@ func TestMain(m *testing.M) {
 	}
 	root, cleanup := testenv.Isolate()
 	packageTestRoot = root
-	// The tests that start a server run its supervisor's harness discovery: without this they ran the real claude, codex, opencode and pi
+	// The tests that start a server run its supervisor's harness discovery: without this they ran the real claude, codex, opencode, pi and vibe
 	// of whoever ran them, their docker launchers and docker itself. A test that needs a tool puts its own fake on PATH.
 	testenv.RestrictPATH(root)
 	// Docker is never contacted by a test unless it replaces this itself: the check runs `docker info`, which on a machine with Docker

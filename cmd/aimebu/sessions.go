@@ -202,6 +202,12 @@ func resumeHint(row sessionRow, handle, root string) string {
 		}
 		runtimeRoot := filepath.Join(root, "supervisor", "opencode")
 		return "OPENCODE_DB=" + shellSessionArg(filepath.Join(runtimeRoot, agentHash, "opencode.db")) + " opencode --session " + shellSessionArg(handle)
+	case "vibe":
+		if row.Remote {
+			return ""
+		}
+		runtimeDir := filepath.Join(root, "supervisor", "vibe", agentHash)
+		return "VIBE_HOME=" + shellSessionArg(filepath.Join(runtimeDir, "home")) + " VIBE_SESSION_LOGGING__SAVE_DIR=" + shellSessionArg(filepath.Join(runtimeDir, "sessions")) + " vibe --resume " + shellSessionArg(handle)
 	default:
 		return "session " + handle
 	}

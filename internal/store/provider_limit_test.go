@@ -133,6 +133,10 @@ func TestProviderLimitRequiresProviderSpecificProcessEvidence(t *testing.T) {
 		{"opencode", "", "OpenCode error: APIError (HTTP 429): rate limit reached, slow down", false},
 		{"opencode", "", "OpenCode error: UnknownError: Unexpected server error", false},
 		{"opencode", "usage limit reached", "", false},
+		{"vibe", "", "Vibe error: API error from mistral (HTTP 429): you have reached your weekly usage limit; try again in 3 hours", true},
+		{"vibe", "", "Vibe error: API error from mistral (HTTP 429): rate limit reached, slow down", false},
+		{"vibe", "", "Vibe stopped the turn: <vibe_stop_event>Turn limit of 2 reached</vibe_stop_event>", false},
+		{"vibe", "usage limit reached", "", false},
 	} {
 		_, limited := providerLimitEvidence(test.tool, test.stderr, test.event, now)
 		if limited != test.limited {
@@ -221,7 +225,7 @@ func TestMigrationFortySixKeepsExistingProviderLimits(t *testing.T) {
 		ON CONFLICT(agent_id) DO UPDATE SET tool=excluded.tool`, f.agent.ID, f.turn.ID, timestamp()); err != nil {
 		t.Fatalf("opencode must be an accepted limit tool: %v", err)
 	}
-	if _, err := s.db.Exec(`UPDATE provider_limit SET tool='vibe' WHERE agent_id=?`, f.agent.ID); err == nil {
+	if _, err := s.db.Exec(`UPDATE provider_limit SET tool='fake' WHERE agent_id=?`, f.agent.ID); err == nil {
 		t.Fatal("an unknown tool must still be rejected")
 	}
 }
@@ -263,6 +267,44 @@ func TestMigrationFortySixRebuildKeepsRowsAndWidensTool(t *testing.T) {
 		t.Fatalf("existing limit lost: tool=%q reset=%q err=%v", tool, reset, err)
 	}
 	for _, name := range []string{"pi", "opencode", "claude"} {
+		if _, err := db.Exec(`INSERT INTO provider_limit(agent_id,turn_id,detected_at,tool) VALUES (?, 'turn', 'now', ?)`, "agt_"+name, name); err != nil {
+			t.Fatalf("tool %s after migration: %v", name, err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO provider_limit(agent_id,turn_id,detected_at,tool) VALUES ('agt_bad','turn','now','fake')`); err == nil {
+		t.Fatal("an unknown tool must still be rejected")
+	}
+}
+
+// Migration 83 lets a usage-limit hold be recorded for a Vibe agent, and keeps the holds that exist.
+func TestMigrationEightyThreeAddsVibeToTheProviderLimitTools(t *testing.T) {
+	t.Parallel()
+	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "from-82.sqlite")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1) // one connection, so the pragma below holds for every statement
+	if err := migrateUpTo(context.Background(), db, 82); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil { // the rows name an agent and a turn that do not exist
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO provider_limit(agent_id,turn_id,detected_at,reset_at,tool) VALUES ('agt_old','turn_old','2026-10-16T00:00:00Z','2026-10-17T00:00:00Z','opencode')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO provider_limit(agent_id,turn_id,detected_at,tool) VALUES ('agt_vibe','turn_vibe','2026-10-16T00:00:00Z','vibe')`); err == nil {
+		t.Fatal("before migration 83 a Vibe limit should be rejected")
+	}
+	if err := migrateUpTo(context.Background(), db, 0); err != nil {
+		t.Fatal(err)
+	}
+	var tool, reset string
+	if err := db.QueryRow(`SELECT tool,reset_at FROM provider_limit WHERE agent_id='agt_old'`).Scan(&tool, &reset); err != nil || tool != "opencode" || reset != "2026-10-17T00:00:00Z" {
+		t.Fatalf("existing limit lost: tool=%q reset=%q err=%v", tool, reset, err)
+	}
+	for _, name := range []string{"vibe", "pi", "claude"} {
 		if _, err := db.Exec(`INSERT INTO provider_limit(agent_id,turn_id,detected_at,tool) VALUES (?, 'turn', 'now', ?)`, "agt_"+name, name); err != nil {
 			t.Fatalf("tool %s after migration: %v", name, err)
 		}

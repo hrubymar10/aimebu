@@ -19,6 +19,7 @@ import (
 
 	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/internal/protocol"
+	"github.com/hrubymar10/aimebu/internal/vibeconfig"
 )
 
 // The harnesses the adapters know, by family, with the executable names they are installed under. The Docker wrappers have their own names
@@ -31,6 +32,7 @@ var detectNames = []struct {
 	{"codex", "codex", false}, {"codex", "codex-docker", true},
 	{"pi", "pi", false}, {"pi", "pi-docker", true},
 	{"opencode", "opencode", false},
+	{"vibe", "vibe", false},
 }
 
 const (
@@ -294,6 +296,10 @@ func detectModels(ctx context.Context, family, command string, launcherArgs []st
 			return nil, errors.New("a harness argument contains NUL")
 		}
 	}
+	if family == "vibe" {
+		// Vibe has no command that lists its models: the ones its config defines are what it offers.
+		return detectVibeModels()
+	}
 	var listArgs []string
 	var parse func([]byte) ([]protocol.ModelCandidate, error)
 	switch family {
@@ -438,6 +444,61 @@ func parsePiModels(out []byte) ([]protocol.ModelCandidate, error) {
 		return nil, noModelsError("pi")
 	}
 	return models, nil
+}
+
+// vibeDefaultModel is the model Vibe 2.25.0 runs when its config names none, offered even when the config defines no models of its own.
+var vibeDefaultModel = vibeconfig.Model{Alias: "mistral-medium-3.5", DisplayName: "Mistral Medium 3.5", Provider: "mistral"}
+
+// detectVibeModels lists the models of the person's Vibe config (config.toml in $VIBE_HOME, ~/.vibe by default) by alias, which is what an
+// agent is started with, and Vibe's built-in default. Only the config's models and providers tables are read, never its .env.
+func detectVibeModels() ([]protocol.ModelCandidate, error) {
+	home := os.Getenv("VIBE_HOME")
+	if home == "" {
+		user, err := os.UserHomeDir()
+		if err != nil {
+			return nil, errors.New("the Vibe home directory is not known")
+		}
+		home = filepath.Join(user, ".vibe")
+	}
+	blocks, err := vibeconfig.Read(filepath.Join(home, "config.toml"))
+	if err != nil {
+		return nil, fmt.Errorf("the Vibe config could not be read: %w", err)
+	}
+	listed := vibeconfig.Models(blocks)
+	seen := map[string]bool{}
+	for _, model := range listed {
+		seen[model.Alias] = true
+	}
+	if !seen[vibeDefaultModel.Alias] {
+		listed = append(listed, vibeDefaultModel)
+	}
+	models := []protocol.ModelCandidate{}
+	for _, model := range listed {
+		candidate := protocol.ModelCandidate{Slug: model.Alias, Label: model.DisplayName}
+		if candidate.Label == "" {
+			candidate.Label = model.Alias
+		}
+		var note []string
+		if model.Provider != "" {
+			note = append(note, "provider "+model.Provider)
+		}
+		if model.Name != "" && model.Name != model.Alias {
+			note = append(note, "model "+model.Name)
+		}
+		if model.InputPrice != "" || model.OutputPrice != "" {
+			note = append(note, fmt.Sprintf("$%s in / $%s out per million tokens", orZero(model.InputPrice), orZero(model.OutputPrice)))
+		}
+		candidate.Note = strings.Join(note, ", ")
+		models = append(models, candidate)
+	}
+	return models, nil
+}
+
+func orZero(price string) string {
+	if price == "" {
+		return "0"
+	}
+	return price
 }
 
 // parseOpencodeModels reads `opencode models`: one provider/model per line.

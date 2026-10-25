@@ -165,7 +165,7 @@ func pruneRoot(ctx context.Context, root string, all bool) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	for _, name := range []string{"journal.sqlite", "journal.sqlite-wal", "journal.sqlite-shm", "agent-tools", "codex", "pi", "opencode"} {
+	for _, name := range []string{"journal.sqlite", "journal.sqlite-wal", "journal.sqlite-shm", "agent-tools", "codex", "pi", "opencode", "vibe"} {
 		if err := os.RemoveAll(filepath.Join(supervisorDir, name)); err != nil {
 			return err
 		}

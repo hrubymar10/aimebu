@@ -475,3 +475,56 @@ func TestTailWriterKeepsTheEndOfStderr(t *testing.T) {
 		t.Errorf("cut to the end: %q", got)
 	}
 }
+
+// Vibe has no command that lists models: the config's models are offered by alias with Vibe's built-in default, whatever the executable
+// would print, and only the models and providers tables are read (never the .env beside it).
+func TestDetectModelsOfVibeReadsTheConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("VIBE_HOME", home)
+	vibe := writeScript(t, t.TempDir(), "vibe", `echo must-not-be-run >&2; exit 9`)
+	config := "[[providers]]\nname = \"acme\"\n\n[[models]]\nname = \"acme-large\"\nalias = \"large\"\ndisplay_name = \"Acme Large\"\nprovider = \"acme\"\ninput_price = 2\noutput_price = 6\n\n" +
+		"[[models]]\nname = \"mistral-medium-3.5\"\nalias = \"mistral-medium-3.5\"\n\n[[mcp_servers]]\nname = \"grafana\"\n"
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".env"), []byte("MISTRAL_API_KEY=never-read\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	got, err := detectModels(t.Context(), "vibe", vibe, nil, "")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("models: %+v %v", got, err)
+	}
+	if got[0].Slug != "large" || got[0].Label != "Acme Large" || !strings.Contains(got[0].Note, "provider acme") || !strings.Contains(got[0].Note, "$2 in / $6 out") {
+		t.Errorf("the config's model: %+v", got[0])
+	}
+	if got[1].Slug != "mistral-medium-3.5" {
+		t.Errorf("the built-in default is listed once, not again when the config names it: %+v", got)
+	}
+
+	// No config at all: Vibe's default is still offered.
+	empty := t.TempDir()
+	t.Setenv("VIBE_HOME", empty)
+	if got, err := detectModels(t.Context(), "vibe", vibe, nil, ""); err != nil || len(got) != 1 || got[0].Slug != "mistral-medium-3.5" || got[0].Label != "Mistral Medium 3.5" {
+		t.Fatalf("no config: %+v %v", got, err)
+	}
+	// The executable still has to be usable.
+	if _, err := detectModels(t.Context(), "vibe", filepath.Join(empty, "missing"), nil, ""); err == nil {
+		t.Fatal("a harness that is not there lists nothing")
+	}
+}
+
+func TestDetectHarnessesFindsVibe(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", dir)
+	vibe := writeScript(t, dir, "vibe", `echo "vibe 2.25.0"`)
+	for _, candidate := range detectHarnesses(t.Context()) {
+		if candidate.Command == vibe {
+			if candidate.Family != "vibe" || candidate.Containerized || candidate.Version != "vibe 2.25.0" {
+				t.Fatalf("vibe: %+v", candidate)
+			}
+			return
+		}
+	}
+	t.Fatal("the vibe executable on PATH was not found")
+}

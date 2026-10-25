@@ -98,6 +98,7 @@ func TestResumeHintsIncludeSessionLocations(t *testing.T) {
 	}{
 		{sessionRow{ID: "agent", Tool: "codex", Variant: "native"}, "thread", "CODEX_HOME='" + filepath.Join(root, "supervisor", "codex", hash) + "' codex exec resume 'thread'"},
 		{sessionRow{ID: "agent", Tool: "opencode", Variant: "native"}, "ses_abc", "OPENCODE_DB='" + filepath.Join(root, "supervisor", "opencode", hash, "opencode.db") + "' opencode --session 'ses_abc'"},
+		{sessionRow{ID: "agent", Tool: "vibe", Variant: "native"}, "0c3e1f4a-8b2d", "VIBE_HOME='" + filepath.Join(root, "supervisor", "vibe", hash, "home") + "' VIBE_SESSION_LOGGING__SAVE_DIR='" + filepath.Join(root, "supervisor", "vibe", hash, "sessions") + "' vibe --resume '0c3e1f4a-8b2d'"},
 		{sessionRow{ID: "agent", Tool: "pi", Checkout: "/tmp/project"}, "thread", "pi --session-dir '" + filepath.Join("/tmp/project", ".aimebu", "pi-sessions", hash) + "' --session-id 'thread'"},
 	} {
 		got := resumeHint(test.row, test.handle, root)
@@ -107,6 +108,9 @@ func TestResumeHintsIncludeSessionLocations(t *testing.T) {
 	}
 	if got := resumeHint(sessionRow{ID: "agent", Tool: "opencode", Variant: "native", Remote: true}, "ses_abc", root); got != "" {
 		t.Fatalf("remote OpenCode path guessed: %q", got)
+	}
+	if got := resumeHint(sessionRow{ID: "agent", Tool: "vibe", Variant: "native", Remote: true}, "0c3e1f4a-8b2d", root); got != "" {
+		t.Fatalf("remote Vibe path guessed: %q", got)
 	}
 	if got := resumeHint(sessionRow{ID: "agent", Tool: "codex", Variant: "native", Remote: true}, "thread", root); got != "" {
 		t.Fatalf("remote Codex path guessed: %q", got)

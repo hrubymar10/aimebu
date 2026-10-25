@@ -48,7 +48,7 @@ func TestMachineHarnessSettingsValidateOnSupervisorAndAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if len(first.Harnesses) != 7 {
+	if len(first.Harnesses) != 8 {
 		t.Fatalf("harness rows=%d", len(first.Harnesses))
 	}
 	resp = f.request(http.MethodPut, url+"/codex/native", map[string]any{"enabled": true, "override_path": "relative/path"}, true)

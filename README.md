@@ -33,7 +33,7 @@ on disk with a room notice and require explicit removal in Room settings.
 Pending or failed opt-ins can be canceled while the room is open, and failed
 creation can be retried. Removal waits while any active agent uses the
 worktree checkout, including when forced.
-A machine runs harnesses: the Claude Code, Codex, Pi and OpenCode installs the owner sets up
+A machine runs harnesses: the Claude Code, Codex, Pi, OpenCode and Mistral Vibe installs the owner sets up
 under Settings → Harnesses (a harness is stored as a named launcher). A new machine has none:
 nothing is seeded, and nothing is added until the owner adds it by hand or ticks what
 Auto-detect found. Spawn and switch use the selected harness's stable ID. Upgraded machines keep the launchers that were enabled or in use. Migration 69 deletes unused
@@ -115,8 +115,8 @@ recent turns from the local supervisor journal. It merges matching agent IDs
 and shows state, tool, launcher, room, latest turn, and a native resume hint
 when available. The command only reads these files; a missing database simply
 contributes no rows. Codex hints include its private `CODEX_HOME`, Pi
-hints include the checkout's session directory, and OpenCode hints name its
-private session database. Remote Pi sessions and Codex
+hints include the checkout's session directory, OpenCode hints name its
+private session database, and Vibe hints name its private home and session directory. Remote Pi sessions and Codex
 sessions on remote or containerized launchers have runtime paths that cannot
 be determined locally, so no command is guessed for them. Set
 `AIMEBU2_CONFIG_DIR` to inspect another v2 data root; unrelated server bind
@@ -584,12 +584,14 @@ profiles and shared notes arrive as ordinary active records.
 ### Supported harnesses
 
 `internal/adapter` defines the process-per-wake adapter interface, a scripted
-fake for recovery and protocol tests, and native Claude Code, Codex, Pi, and
-OpenCode adapters. Claude Code probes the installed CLI, starts a stream-JSON print
+fake for recovery and protocol tests, and native Claude Code, Codex, Pi,
+OpenCode, and Mistral Vibe adapters. Claude Code probes the installed CLI, starts a stream-JSON print
 process per wake, and resumes only with an explicit native session handle.
 The Codex adapter resumes its JSONL thread on later turns. Pi uses a
 server-issued session ID and parses JSON lifecycle events. OpenCode allocates
-its own session ID on the first turn (like Codex) and resumes it with `-s`. The spawn catalog
+its own session ID on the first turn (like Codex) and resumes it with `-s`. Mistral Vibe runs `vibe -p`
+with a private `VIBE_HOME` per agent, reports its session ID after a clean exit and resumes it with
+`--resume`; its usage is read from the session's stats once it has exited. The spawn catalog
 keeps CLI discovery separate from bounded model choices.
 
 | Harness | Native launcher | Docker launcher | Managed agent toolbox |
@@ -598,12 +600,12 @@ keeps CLI discovery separate from bounded model choices.
 | Codex | Yes | Yes | Native and Docker |
 | Pi | Yes | Yes | Native only; Docker uses a turn-scoped URL for attachments |
 | OpenCode | Yes | No | Native |
+| Mistral Vibe | Yes | No | Native |
 
 Other harnesses are not supported by v2:
 
 | Harness | Status |
 | --- | --- |
-| Mistral Vibe | Not supported (no adapter) |
 | Cursor | Not supported |
 | Cline | Not supported |
 | Aider | Not supported |
@@ -656,7 +658,8 @@ an alias), label, a note with the full text on hover, and one default. Each row 
 and star; only the selected row has a filled star and says "Default". Trash icons remove harnesses or models, a refresh
 icon starts model detection, and a select-all icon ticks available detected candidates. Auto-detect models asks Pi (`pi --offline
 --list-models`), OpenCode (`opencode models`) and Codex (`codex debug models --bundled`, the models
-it lists) on the machine itself, native or containerized alike: the harness's own arguments come
+it lists) on the machine itself, native or containerized alike (for Mistral Vibe, which has no listing
+command, it reads the `[[models]]` of the machine's Vibe config by alias and adds Vibe's built-in default): the harness's own arguments come
 first, and the command runs in a fresh private `detect/run-*` subfolder of that machine's aimebu config
 directory (`AIMEBU2_CONFIG_DIR`, by default `~/.aimebu2`). The supervisor removes the run folder after
 detection, even when the command fails; a failed removal is logged without hiding a successful model list.

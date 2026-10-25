@@ -339,8 +339,12 @@ Inbox, usage, events, settings
   the session's previous total (a session's first report is its own cost; a
   total that went down is an unknown cost, never zero). `partial` marks what a
   turn spent before it ended without a report (killed, crashed): Claude gives
-  its input and cache tokens only, opencode its steps' totals; output tokens
-  and cost stay unknown. Codex uses the dated model price list when its model
+  its input and cache tokens only (its output tokens and cost stay unknown),
+  opencode its steps' totals, and vibe the session's totals less what they were
+  before the turn, with Vibe's own cumulative cost as for Claude (a resumed
+  session whose earlier totals cannot be read reports no tokens, only the
+  cumulative cost; a killed turn that left the totals unchanged reports nothing).
+  Codex uses the dated model price list when its model
   and token counts permit; those rows have `source=estimated`, while a cost
   reported by a harness has `source=measured`. `model` is the one the harness
   named, else the agent's.
@@ -732,7 +736,9 @@ Records (all keyed by turn_id + generation):
   `turn.failed` JSON event, or for Pi the last provider error it reported
   (`Pi provider error: …`, from `auto_retry_start`, a failed `auto_retry_end`,
   or an assistant message with `stopReason` `error`), or for OpenCode the
-  `error` event it reported (`OpenCode error: APIError (HTTP 429): …`), subject
+  `error` event it reported (`OpenCode error: APIError (HTTP 429): …`), or for Vibe
+  the last `Error: …` line it printed on stderr (`Vibe error: …`) or the text of a
+  `<vibe_stop_event>` message that ended the turn (`Vibe stopped the turn: …`), subject
   to the same limit and redaction. Pi's "creating a new session with that id" notice is dropped
   from `stderr_tail` because every fresh turn prints it. The server
   shows the exit code and available diagnostics in recovery evidence and the
@@ -816,10 +822,11 @@ it never silently reruns a turn with uncertain effects.
 - S→M `detect{v,req_id,detect:{kind:"harnesses"|"models",family?,command?,args?,dir?}}`;
   M→S `detect_result{v,req_id,harness_candidates?[{family,command,containerized,
   version?}],model_candidates?[{slug,label,note?}],code?,message?}` (hello
-  carries `supports_detect`). `harnesses` lists the Claude, Codex, Pi and OpenCode
+  carries `supports_detect`). `harnesses` lists the Claude, Codex, Pi, OpenCode and Vibe
   executables on PATH and the usual user-level install directories, once per real
   file; `models` runs the family's own listing command (`pi --offline
-  --list-models`, `opencode models`, `codex debug models --bundled`) on the
+  --list-models`, `opencode models`, `codex debug models --bundled`; Vibe has none, so
+  the supervisor reads the `[[models]]` of its Vibe config instead) on the
   absolute `command` with a 20 s limit and an 8 MiB output limit, for native and
   containerized launchers alike. `args` are the launcher's own arguments, placed
   before the listing ones. The default working directory is a fresh private

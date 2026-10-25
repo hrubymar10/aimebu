@@ -24,6 +24,9 @@ func TestCodexThreadMissingEvidenceNeedsBothPhrases(t *testing.T) {
 		{"opencode", "", "OpenCode error: Session not found", false},
 		{"opencode", "Error: Something else not found", "", false},
 		{"codex", "Error: Session not found", "", false},
+		{"vibe", "Error: Session not found: 0c3e1f4a-8b2d-4a6e-9f10-5d7c2b1a9e33", "", true},
+		{"vibe", "", "Vibe error: Session not found", false},
+		{"vibe", "Error: Something else not found", "", false},
 	} {
 		if got := nativeSessionMissingEvidence(tc.tool, tc.stderr, tc.event); got != tc.want {
 			t.Errorf("%s %q %q = %t", tc.tool, tc.stderr, tc.event, got)

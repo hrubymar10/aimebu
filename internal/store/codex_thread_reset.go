@@ -10,13 +10,13 @@ var codexThreadNotFound = regexp.MustCompile(`thread [0-9A-Za-z-]+ not found`)
 // nativeSessionMissingEvidence reports a harness's own wording for a resumed
 // session it can no longer find. Codex needs both phrases of v1's
 // agentCodexThreadNotFoundRE so an unrelated "not found" cannot trigger a
-// reset; OpenCode prints its one line on stderr.
+// reset; OpenCode and Vibe print their one line on stderr.
 func nativeSessionMissingEvidence(tool, stderr, errorEvent string) bool {
 	evidence := stderr + "\n" + errorEvent
 	switch tool {
 	case "codex":
 		return strings.Contains(evidence, "failed to record rollout items") && codexThreadNotFound.MatchString(evidence)
-	case "opencode":
+	case "opencode", "vibe":
 		return strings.Contains(stderr, "Error: Session not found")
 	}
 	return false

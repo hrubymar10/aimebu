@@ -27,8 +27,8 @@ type LegacyStart struct {
 }
 
 // ResumableTool maps a v1 harness name to the v2 tool that can continue its session, or "" when none can. Only Claude Code can: it keeps
-// its transcripts in the user's own claude home, which v1 and v2 share. v2 runs codex, pi and opencode with a private home or data
-// directory per agent (CODEX_HOME, PI_CODING_AGENT_DIR, an opencode database), so a session v1 made is not visible to them.
+// its transcripts in the user's own claude home, which v1 and v2 share. v2 runs codex, pi, opencode and vibe with a private home or data
+// directory per agent (CODEX_HOME, PI_CODING_AGENT_DIR, an opencode database, VIBE_HOME), so a session v1 made is not visible to them.
 func ResumableTool(harness string) string {
 	switch strings.ToLower(strings.TrimSpace(harness)) {
 	case "claude-code", "claude":
@@ -48,6 +48,8 @@ func ToolForHarness(harness string) string {
 		return "pi"
 	case "opencode":
 		return "opencode"
+	case "vibe":
+		return "vibe"
 	}
 	return ""
 }

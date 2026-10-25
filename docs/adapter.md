@@ -127,10 +127,10 @@ a name in code formatting does not wake the new agent.
 On a failed Claude `result`, the adapter keeps a bounded, redacted copy of
 the event in process-exit evidence. This lets the server identify a provider
 limit and any reported reset time even when stderr is empty.
-Claude, Codex, Pi, and OpenCode prompts tell the agent to honor `retry_notice` on a
+Claude, Codex, Pi, OpenCode, and Vibe prompts tell the agent to honor `retry_notice` on a
 requeued note (an attempt interrupted by a provider limit or a lost session)
 by checking the state before repeating actions.
-The four native prompts (Claude Code, Codex, Pi, OpenCode) are built by `internal/adapter/prompt` from sentences they
+The five native prompts (Claude Code, Codex, Pi, OpenCode, Vibe) are built by `internal/adapter/prompt` from sentences they
 share plus each adapter's own deltas (where the turn JSON comes from, the role
 line, how to fetch attachments, the output contract, the acknowledgement rule,
 and the closing line); each adapter's golden tests pin the exact bytes, so a
@@ -161,7 +161,7 @@ compaction event. Fields Claude does not emit remain unknown. Cancellation
 kills the per-wake process and
 records cancel intent independently of its exit code. A stdout line longer
 than the parser's 8 MiB limit stops parsing; the adapter then kills the
-process group, as the Codex, Pi, and OpenCode adapters do, and reports a
+process group, as the Codex, Pi, OpenCode, and Vibe adapters do, and reports a
 non-terminal exit instead of waiting on a child blocked on its unread pipe.
 
 The catalog probes `claude --version` at supervisor startup and advertises it
@@ -203,13 +203,13 @@ opt-in two-turn native resume canary.
 
 A v2 turn continues an existing harness session when the agent's session row
 has a native session id and `native_session_started_at`: `claude --resume <id>`,
-`codex exec resume <id>`, `opencode run -s <id>`; Pi passes `--session-id <id>` on
+`codex exec resume <id>`, `opencode run -s <id>`, `vibe -p --resume <id>`; Pi passes `--session-id <id>` on
 every turn. Only Claude Code runs in the user's own home, so only it can
 continue a session that v1 made (see [Start as v2 agent](import-v1.md#start-as-v2-agent));
-codex, pi and opencode run with a private home or data directory per agent, which
+codex, pi, opencode and vibe run with a private home or data directory per agent, which
 a v1 session is not in.
 
-Both standalone and embedded supervisors route `fake`, `claude`, `codex`, `pi`, and `opencode`
+Both standalone and embedded supervisors route `fake`, `claude`, `codex`, `pi`, `opencode`, and `vibe`
 turns through `adapter.Multi` when their CLIs are available.
 
 ## Pi native and Docker adapters
@@ -301,6 +301,72 @@ Settings → Harnesses (Auto-detect models runs `opencode models`); ids must be
 `provider/model`.
 The adapter's capabilities are pinned to the verified release, 1.19.0 on
 Linux.
+
+## Mistral Vibe native adapter
+
+Vibe starts one `vibe -p --output streaming --trust --workdir <checkout>` process per wake. With no
+`TEXT` argument `-p` reads the prompt from stdin, which must reach EOF. Vibe allocates its own session
+ID (a UUID) on the first turn; later turns pass `--resume <id>`, and an unknown ID makes it print
+`Error: Session not found: <id>` on stderr, which resets the session the way a missing Codex thread
+does. The model is `VIBE_ACTIVE_MODEL=<alias>`: there is no `--model` flag, and the alias is one the
+agent's config knows (see below), because Vibe silently falls back to its default model for an alias it
+cannot find.
+
+The stream is one JSON entry per line, each a finished entry of the session's history (`message`,
+`reasoning`, `effect`, ...; camelCase keys `sessionId`, `generationStatus`, `source`). A resumed
+session replays its earlier history first, so only what follows the entry that carries this turn's own
+prompt (`type` `message`, `role` `user`, `source` `turn_start`) counts. The answer is the last
+assistant message after it; narration before a tool call is ignored. A turn is terminal only when the
+process exited 0, that prompt was seen, an answer followed, no `<vibe_stop_event>` message ended the
+turn, and the session ID stayed the same. A stop event (a turn, price or token limit) is evidence
+(`Vibe stopped the turn: …`), never an answer, and aimebu sets none of those limits. An `effect` is
+reported once it has finished, so a long silent tool call can trip the idle deadline: raise
+`AIMEBU2_TURN_IDLE` for such work. API and configuration failures come on stderr as `Error: …` with exit
+status 1; the last such line goes into the exit evidence as `Vibe error: …`, and wording such as
+`usage limit` or a weekly, hourly, daily or monthly limit (never a plain `rate limit`) routes into the
+provider-limit gate.
+
+A session exists only after Vibe exits cleanly, and a cancelled or killed turn persists nothing. The
+native session handle is therefore reported after a clean exit, never from the first entry, so a first
+turn that is cancelled leaves nothing to resume. Cancel signals the process group (SIGTERM, then
+SIGKILL after five seconds).
+
+Vibe streams no usage. After the process has exited, the adapter reads the session's `meta.json`
+(`<save dir>/session_<time>_<first 8 of the id>/meta.json`, its `stats`): the session totals are
+cumulative across resumes, and cached tokens are counted inside the prompt tokens, so a turn's own
+usage is the totals now less what they were before it, with the cached tokens split out of the input.
+The cost is Vibe's own `session_cost`, cumulative (the store takes the difference), and unknown for a
+model with no price. A turn that left the totals unchanged (killed before Vibe saved) reports nothing;
+one that ended without an answer reports what it spent as partial. A resumed session whose totals
+before the turn cannot be read has nothing to subtract from, so its tokens stay unknown (logged) and
+only the cumulative cost is reported.
+
+Isolation: every agent runs with its own `VIBE_HOME` and session directory
+(`VIBE_SESSION_LOGGING__SAVE_DIR`) under the supervisor's `vibe` runtime root. Before every turn the
+adapter writes that home's `config.toml` with the person's `[[models]]` and `[[providers]]` tables
+copied from their own config (`$VIBE_HOME` or `~/.vibe`; nothing else of it, so their MCP servers,
+hooks, skills and agents never reach an agent) under settings that turn off telemetry, update
+checks, auto-update, notifications and connectors, and links the person's `.env` into it (it is never
+opened by aimebu). Only a bounded environment passes: `MISTRAL_API_KEY` and the key variables the copied
+providers name. Normal turns run with `--trust --yolo` and get the aimebu toolbox through `VIBE_MCP_SERVERS`,
+whose `api_key_env` names a variable that carries the agent's private bearer: the bearer is in neither
+argv nor a file. `--trust` (this invocation only; nothing is saved to `trusted_folders.toml`) makes Vibe
+load the checkout's own configuration, a `.vibe` or `.agents` folder and `AGENTS.md`, the way the other
+harnesses read theirs; Vibe has no switch that keeps `AGENTS.md` but ignores the rest, and the agent
+already runs with every tool approved. Correction and diagnostic turns drop `--yolo`, `--trust` and the
+toolbox and pass `--enabled-tools read_file --enabled-tools grep`, which with `-p` disables every other
+tool; the untrusted checkout's hooks, MCP servers, skills and agents are never loaded into them (Vibe
+prints a warning about it on stderr). The variables the adapter sets itself (`VIBE_HOME`,
+`VIBE_ACTIVE_MODEL`, `VIBE_SESSION_LOGGING__SAVE_DIR`, `VIBE_MCP_SERVERS` and the bearer's variable)
+come last and an owner's environment reference to one of them is ignored.
+
+There is no Docker variant. The owner lists the models of a Vibe harness in Settings → Harnesses; as Vibe
+has no command that lists them, Auto-detect models reads the `[[models]]` of the machine's Vibe config
+(by alias) and adds Vibe's built-in default, `mistral-medium-3.5`. The adapter's capabilities are
+pinned to the verified release, 2.25.0 on Linux, and claim cost and cancel confirmation only: no-action
+mode is not claimed until a live canary has shown that a read-only turn loads none of the person's MCP
+servers. `AIMEBU2_LIVE_VIBE=1` is reserved for that opt-in canary, which has not been written or run.
+The stream entries in the tests are shaped from the Vibe 2.25.0 sources, not recorded from a run.
 
 ## Docker variants
 

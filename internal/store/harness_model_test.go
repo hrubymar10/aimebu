@@ -40,6 +40,10 @@ func TestValidateHarnessModels(t *testing.T) {
 	if err := ValidateHarnessModels("opencode", []HarnessModel{{Slug: "ollama-cloud/gemma4:31b", Label: "Gemma", Default: true}}); err != nil {
 		t.Errorf("provider/model: %v", err)
 	}
+	// A Vibe model is the alias of its config: one word, no provider prefix needed.
+	if err := ValidateHarnessModels("vibe", []HarnessModel{{Slug: "mistral-medium-3.5", Label: "Mistral Medium 3.5", Default: true}}); err != nil {
+		t.Errorf("a vibe alias: %v", err)
+	}
 }
 
 func manyModels(n int) []HarnessModel {

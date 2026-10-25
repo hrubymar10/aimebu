@@ -1430,6 +1430,19 @@ CREATE TRIGGER project_system_kept BEFORE DELETE ON project WHEN OLD.system=1
 BEGIN SELECT RAISE(ABORT, 'the reserved project cannot be deleted'); END;
 CREATE TRIGGER membership_system_none BEFORE INSERT ON membership WHEN (SELECT system FROM project WHERE id=NEW.project_id)=1
 BEGIN SELECT RAISE(ABORT, 'nobody is a member of the reserved project'); END;
+`}, {83, `
+-- A usage-limit hold can be recorded for a Mistral Vibe agent: the tool check lists it.
+CREATE TABLE provider_limit_new (
+  agent_id TEXT PRIMARY KEY REFERENCES agent(id),
+  turn_id TEXT NOT NULL REFERENCES turn(id),
+  detected_at TEXT NOT NULL,
+  reset_at TEXT,
+  tool TEXT NOT NULL CHECK (tool IN ('claude','codex','pi','opencode','vibe'))
+);
+INSERT INTO provider_limit_new(agent_id,turn_id,detected_at,reset_at,tool)
+SELECT agent_id,turn_id,detected_at,reset_at,tool FROM provider_limit;
+DROP TABLE provider_limit;
+ALTER TABLE provider_limit_new RENAME TO provider_limit;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

@@ -365,3 +365,81 @@ func TestHarnessModelsEditOverAStaleRevisionIsRefused(t *testing.T) {
 		t.Fatalf("edit without a revision: %d", status)
 	}
 }
+
+// Mistral Vibe is a harness an owner can add: it is validated by the machine's supervisor like the others, gets its own default label, is
+// listed as a native harness, and is refused as a container (there is no container variant of it).
+func TestOwnerAddsAMistralVibeHarness(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	base := "/api/machines/" + f.machineID + "/launchers"
+	journal, err := supervisor.OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, adapter.NewFake())
+	ready := make(chan struct{}, 1)
+	client.OnReady = func() { ready <- struct{}{} }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go client.RunOnce(ctx)
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervisor did not connect")
+	}
+	path := filepath.Join(t.TempDir(), "vibe")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 'vibe 2.25.0'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{"tool": "vibe", "command": path, "enabled": true, "args": []string{}, "env_refs": map[string]string{}, "path_maps": []any{}, "visible_roots": []string{}, "supports_toolbox": true}
+	resp := f.request(http.MethodPost, base, body, true)
+	var created struct {
+		Config store.Launcher `json:"config"`
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("add a vibe harness: %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if created.Config.Tool != "vibe" || created.Config.Label != "Mistral Vibe" || created.Config.Name == "" {
+		t.Fatalf("created: %+v", created.Config)
+	}
+	body["containerized"] = true
+	resp = f.request(http.MethodPost, base, body, true)
+	var refused struct {
+		Message string `json:"message"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&refused)
+	resp.Body.Close()
+	if resp.StatusCode != 400 || !strings.Contains(refused.Message, "no container variant") {
+		t.Fatalf("a containerized vibe harness: %d %q", resp.StatusCode, refused.Message)
+	}
+	body["tool"], body["containerized"] = "cursor", false
+	if resp = f.request(http.MethodPost, base, body, true); resp.StatusCode != 400 {
+		t.Fatalf("an unknown tool: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	if !listedHarness("vibe", "native") || listedHarness("vibe", "docker") {
+		t.Fatal("vibe is a native harness only")
+	}
+	resp = f.request(http.MethodGet, "/api/spawn-catalog", nil, false)
+	var catalog struct {
+		Tools []spawnCatalogTool `json:"tools"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&catalog); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	found := false
+	for _, tool := range catalog.Tools {
+		if tool.Tool == "vibe" && tool.Variant == "native" {
+			found = tool.Label == "Mistral Vibe"
+		}
+	}
+	if !found {
+		t.Fatalf("the spawn catalog lists Mistral Vibe: %+v", catalog.Tools)
+	}
+}

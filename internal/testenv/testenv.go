@@ -1,7 +1,7 @@
 // Package testenv keeps the tests of this module off the machine they run on. It is imported by _test.go files only.
 //
 // Several commands read and write the person's real credentials and state through defaults that start at their home directory: ~/.claude
-// and ~/.codex (logins), ~/.aimebu and ~/.aimebu2 (the servers' data, the account switcher and its lock). A test that reaches such a
+// and ~/.codex (logins), ~/.vibe (Vibe's config and key), ~/.aimebu and ~/.aimebu2 (the servers' data, the account switcher and its lock). A test that reaches such a
 // default without pointing it somewhere else reads those credentials, can overwrite them, and takes the same locks as the running v1
 // server, so it can wait for it for as long as the server works, with no deadline and no output. Every package that has tests calls Main
 // from its TestMain (a test in this package fails when one does not), and Main refuses to run when the environment it just set up is not
@@ -18,7 +18,7 @@ import (
 )
 
 // Variables names every environment variable a command takes a home or a data directory from.
-var Variables = []string{"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "AIMEBU_CONFIG_DIR", "AIMEBU2_CONFIG_DIR"}
+var Variables = []string{"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "VIBE_HOME", "AIMEBU_CONFIG_DIR", "AIMEBU2_CONFIG_DIR"}
 
 // Isolate points HOME and the tool and server data directories at a new temporary root, so every default that starts at the home directory
 // lands there, and returns the root and the function that removes it. Go's own caches stay where they were: a test that runs the go tool
@@ -44,6 +44,7 @@ func Isolate() (root string, cleanup func()) {
 		"HOME":                      root,
 		"CODEX_HOME":                filepath.Join(root, ".codex"),
 		"CLAUDE_CONFIG_DIR":         filepath.Join(root, ".claude"),
+		"VIBE_HOME":                 filepath.Join(root, ".vibe"),
 		"AIMEBU_CONFIG_DIR":         filepath.Join(root, ".aimebu"),
 		"AIMEBU2_CONFIG_DIR":        filepath.Join(root, ".aimebu2"),
 		"AIMEBU2_DEV_SKIP_V1_PROBE": "1",
@@ -147,7 +148,7 @@ var BasicTools = []string{"sh", "bash", "env", "sleep", "uname", "tr", "mktemp",
 
 // RestrictPATH makes the tools a test may run the only ones on PATH: a directory of links to the named tools (the BasicTools when none are
 // named; a tool that is not installed is left out), so the tests stop running the harness CLIs of whoever runs them. Before this, the
-// tests that start a server ran its supervisor's discovery against the real PATH: the person's own claude, codex, opencode and pi, their
+// tests that start a server ran its supervisor's discovery against the real PATH: the person's own claude, codex, opencode, pi and vibe, their
 // docker launchers, and docker, as real processes with the person's configuration, on every run. A test that wants a tool on PATH puts
 // its own fake there, as it already does.
 func RestrictPATH(root string, tools ...string) {

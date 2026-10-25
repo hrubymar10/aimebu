@@ -143,10 +143,10 @@ func TestStartFromLegacyRefusesBadNamesAndALinkAlreadyTaken(t *testing.T) {
 }
 
 // A harness that cannot resume still gets its name and its link, with a fresh session.
-// codex, pi and opencode run with a private home per agent in v2, so their v1 sessions cannot be continued; the dialog says so in words.
+// codex, pi, opencode and vibe run with a private home per agent in v2, so their v1 sessions cannot be continued; the dialog says so in words.
 func TestOnlyClaudeSessionsCanBeContinuedAndTheOthersSayWhy(t *testing.T) {
 	t.Parallel()
-	for harness, wantReason := range map[string]string{"codex": "v2 keeps codex sessions per agent", "pi": "v2 keeps pi sessions per agent", "opencode": "v2 keeps opencode sessions per agent", "vibe": "no v2 adapter"} {
+	for harness, wantReason := range map[string]string{"codex": "v2 keeps codex sessions per agent", "pi": "v2 keeps pi sessions per agent", "opencode": "v2 keeps opencode sessions per agent", "vibe": "v2 keeps vibe sessions per agent"} {
 		info := LegacyStart{Harness: harness, SessionID: "abc-12345678", CWD: "/work"}
 		info.Tool = ResumableTool(harness)
 		view := info.StartInfo(time.Now(), "/work")
@@ -169,7 +169,7 @@ func TestStartFromLegacyWithoutAResumableSessionStartsFreshUnderTheSameName(t *t
 		t.Fatalf("vibe cannot resume: %+v", info)
 	}
 	view := info.StartInfo(time.Now(), "/tmp/wake")
-	if view.Resumable || !strings.Contains(view.Reason, "cannot resume") {
+	if view.Resumable || !strings.Contains(view.Reason, "cannot be continued") {
 		t.Fatalf("start info: %+v", view)
 	}
 	card, err := startFromLegacy(t, s, room, SpawnInput{Path: "/tmp/wake", Slug: "vib", ResumeLegacyID: "vib@old"})
