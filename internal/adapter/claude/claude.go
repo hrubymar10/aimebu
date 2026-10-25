@@ -138,8 +138,15 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if a.MaxBudgetUSD != "" {
 		args = append(args, "--max-budget-usd", a.MaxBudgetUSD)
 	}
+	if spec.ForkSession && !spec.NativeSessionStarted {
+		return nil, fmt.Errorf("a forked turn must resume an existing session")
+	}
 	if spec.NativeSessionStarted {
 		args = append(args, "--resume", spec.NativeSessionHandle)
+		if spec.ForkSession {
+			// The session is worked on as a copy: Claude saves it under a new id (reported by confirmSession) and leaves the original as it is.
+			args = append(args, "--fork-session")
+		}
 	} else if spec.NativeSessionHandle != "" {
 		args = append(args, "--session-id", spec.NativeSessionHandle)
 	}
@@ -196,7 +203,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		return nil, err
 	}
 	go func() { _, _ = stdin.Write(input); _ = stdin.Close() }()
-	t := &turn{id: spec.TurnID, cmd: cmd, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, events: make(chan adapter.Event, 32), done: make(chan struct{}), stderrCapture: adapter.JoinWriters(a.stderrCapture, spec.StderrSink)}
+	t := &turn{id: spec.TurnID, cmd: cmd, expectedSession: spec.NativeSessionHandle, started: spec.NativeSessionStarted, forkOf: forkOf(spec), events: make(chan adapter.Event, 32), done: make(chan struct{}), stderrCapture: adapter.JoinWriters(a.stderrCapture, spec.StderrSink)}
 	go t.run(stdout, stderr)
 	return t, nil
 }
@@ -222,6 +229,7 @@ type turn struct {
 	id              string
 	cmd             *exec.Cmd
 	expectedSession string
+	forkOf          string // the session this turn forks: the first session id that differs from it is the copy's, reported once
 	started         bool
 	events          chan adapter.Event
 	done            chan struct{}
@@ -477,7 +485,29 @@ func partialUsage(steps map[string]claudeStep) *adapter.Usage {
 	return usage
 }
 
+// forkOf is the original session of a forked turn, empty for any other.
+func forkOf(spec adapter.TurnSpec) string {
+	if spec.ForkSession {
+		return spec.NativeSessionHandle
+	}
+	return ""
+}
+
 func (t *turn) confirmSession(raw json.RawMessage) {
+	if t.forkOf != "" {
+		var event struct {
+			Type      string `json:"type"`
+			Subtype   string `json:"subtype"`
+			SessionID string `json:"session_id"`
+		}
+		if json.Unmarshal(raw, &event) != nil || event.SessionID == "" || event.SessionID == t.forkOf ||
+			!(event.Type == "system" && event.Subtype == "init" || event.Type == "result") {
+			return
+		}
+		t.forkOf = ""
+		t.emit(adapter.Event{Kind: adapter.EventNativeSessionStarted, NativeSessionHandle: event.SessionID})
+		return
+	}
 	if t.started || t.expectedSession == "" {
 		return
 	}

@@ -273,6 +273,14 @@ func (s *Server) resumableSession(w http.ResponseWriter, r *http.Request, conn *
 		apiError(w, 404, "session_not_found", "the Claude Code session "+req.ResumeSession+" was not found on "+machine.Name)
 		return nil, false
 	}
+	if req.ResumeMode == resumeFork {
+		// A copy leaves the original as it is, so a live process holding it open and an agent continuing it are no obstacle.
+		if !conn.supportsSessionFork {
+			apiError(w, 409, "supervisor_update_needed", "this machine's supervisor predates working on a copy of a session; update it, or continue the session instead")
+			return nil, false
+		}
+		return &session, true
+	}
 	agents, err := s.Store.ClaudeSessionAgents(r.Context(), machine.ID, []string{session.ID})
 	if err != nil {
 		fail(w, err)

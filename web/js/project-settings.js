@@ -5,6 +5,8 @@ import { UsageLimit } from './usage-limit.js';
 import { SpawnDefaultsEditor } from './spawn-defaults-editor.js';
 import { iconButton } from './icon-button.js';
 import { confirmDialog, formDialog } from './dialogs.js';
+import { createAgentSource } from './agent-source.js';
+import { ClaudeSessionImport } from './claude-session-import.js';
 
 // The project's own settings (name and folder, its agents, daily limits, the home room's lead-only rule, recovery and worktrees). One implementation, two places: the
 // Project section of the home room's settings and Settings → Project. Both dialogs are modal, so the one form body moves into whichever
@@ -26,6 +28,7 @@ export class ProjectSettings {
     this.roleDefaultsSection.innerHTML = '<h3>Default agents per role</h3><p class="settings-intro">Inherit the global list or set an ordered list for this project.</p>';
     this.roleDefaultsRows = document.createElement('div'); this.roleDefaultsSection.append(this.roleDefaultsRows);
     this.body.querySelector('#project-usage-limit').after(this.roleDefaultsSection);
+    this.buildSessionImport();
     this.buildLifecycle();
     this.projectID = '';
     this.mounts = [];
@@ -33,6 +36,31 @@ export class ProjectSettings {
     this.autoResume.onchange = () => this.saveProject();
     this.worktrees.onchange = () => this.saveWorktrees();
     this.homeLeadOnly.onchange = () => this.saveToggle(this.homeLeadOnly, 'home_lead_only', this.homeLeadOnly.checked);
+  }
+  // Importing the Claude Code sessions a machine already has: one agent and one room per session, each on a copy of its session.
+  buildSessionImport() {
+    const section = this.sessionImport = document.createElement('div'); section.className = 'settings-section'; section.id = 'project-session-import';
+    const heading = document.createElement('h3'); heading.textContent = 'Claude Code sessions';
+    const group = document.createElement('div'); group.className = 'settings-group'; group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Claude Code sessions');
+    const holder = document.createElement('div'); holder.className = 'settings-row';
+    const info = document.createElement('div'); info.className = 'settings-row-info';
+    const name = document.createElement('label'); name.className = 'settings-label'; name.htmlFor = 'project-session-import-open'; name.textContent = 'Import sessions';
+    const desc = document.createElement('span'); desc.className = 'settings-desc'; desc.id = 'project-session-import-desc';
+    desc.textContent = 'Turn the Claude Code sessions a machine has for this project\'s folder into agents: one room and one agent per session, each working on a copy and idle until it gets a message. The project\'s agent and spawn-rate limits apply.';
+    info.append(name, desc);
+    const control = document.createElement('div'); control.className = 'settings-control';
+    this.sessionImportButton = iconButton('play', 'Import Claude Code sessions'); this.sessionImportButton.id = 'project-session-import-open';
+    this.sessionImportButton.setAttribute('aria-describedby', desc.id);
+    this.sessionImportButton.onclick = () => this.openSessionImport();
+    control.append(this.sessionImportButton); holder.append(info, control); group.append(holder); section.append(heading, group);
+    this.body.querySelector('#project-settings-error').before(section);
+  }
+  openSessionImport() {
+    const project = this.currentProject();
+    const home = (this.projectContext().rooms || []).find(room => room.project_id === this.projectID && room.kind === 'home');
+    if (!project || !home) { this.error.textContent = 'This project has no home room to import into.'; return; }
+    this.importer ||= new ClaudeSessionImport(createAgentSource());
+    void this.importer.open({ projectID: this.projectID, homeRoomID: home.id });
   }
   // Archive, reopen and delete: the project's owner or an admin. An archived project is read-only and its agents are stopped; only an
   // archived one can be deleted, after its name is typed. Each row shows only what applies to the project's state.
@@ -67,6 +95,9 @@ export class ProjectSettings {
     this.deleteRow.holder.hidden = !project || !archived;
     for (const { button } of [this.archiveRow, this.reopenRow, this.deleteRow]) { button.disabled = !allowed; }
     this.lifecycle.hidden = !project;
+    // Starting agents is for the project's owners and operators; an archived project is read-only.
+    this.sessionImport.hidden = !project || archived;
+    this.sessionImportButton.disabled = !project || archived;
     this.lifecycleNote.textContent = !project ? '' : !allowed ? 'Only the project owner or an admin can archive, reopen or delete a project.' : archived ? `Archived ${new Date(project.archived_at).toLocaleString()}. It is read-only.` : '';
   }
   async lifecycleCall(button, path, options) {

@@ -22,10 +22,11 @@ export function sessionFacts(session) {
   return facts;
 }
 
-// The flags a session carries, as [text, kind]; kind "stop" means it cannot be started from here.
+// The flags a session carries, as [text, kind]. An agent that continues a session only rules out continuing it a second time: a copy of it can
+// still be worked on, so it warns and does not stop.
 export function sessionFlags(session) {
   const flags = [];
-  if (session.agent) flags.push([`continued by ${session.agent.slug}`, 'stop']);
+  if (session.agent) flags.push([`continued by ${session.agent.slug}`, 'warn']);
   if (session.active) flags.push(['open in a terminal', 'warn']);
   if (session.outside_folder) flags.push(['outside the project folder', 'note']);
   if (session.entrypoint === 'sdk-cli') flags.push(['started by an agent', 'note']);
@@ -104,8 +105,7 @@ export class ClaudeSessionPicker {
     const sessionFlagList = sessionFlags(session);
     for (const [text, kind] of sessionFlagList) flags.append(node('span', `cc-session-flag cc-session-flag-${kind}`, text));
     const pick = node('button', 'icon-btn cc-session-pick'); pick.type = 'button';
-    setGlyph(pick, 'play', session.agent ? `Already continued by ${session.agent.slug}` : 'Continue this session');
-    pick.disabled = !!session.agent;
+    setGlyph(pick, 'play', session.agent ? `Continued by ${session.agent.slug}: work on a copy of this session` : 'Continue this session or work on a copy');
     pick.onclick = () => { this.dialog.close(); this.onPick?.({ ...session, machine_id: this.machineID, launcher_id: this.launcherID }); };
     row.append(main, flags, pick);
     return row;

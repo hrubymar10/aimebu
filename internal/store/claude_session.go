@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,7 +16,12 @@ type ResumeSession struct {
 	ID    string
 	CWD   string
 	Title string
+	// Fork starts the agent on a copy of the session (the first turn runs with --fork-session) and leaves the original as it is.
+	Fork bool
 }
+
+// forkPendingSQL is the SQL that says a session row is a fork whose first turn has not yet reported the copy's id: it still names the original.
+const forkPendingSQL = `(se.fork_of IS NOT NULL AND se.native_session_id=se.fork_of)`
 
 // SessionAgent is the agent that continues a session.
 type SessionAgent struct {
@@ -24,7 +30,8 @@ type SessionAgent struct {
 }
 
 // ClaudeSessionAgents says, for each of the given session ids on a machine, which live agent continues it: one started from it
-// (imported_session) or one whose own Claude session it is (an agent's session id is created by the server and Claude saves it).
+// (imported_session, a continued session; a copy leaves its original free) or one whose own Claude session it is (an agent's session id is
+// created by the server and Claude saves it; a fork that has not yet named its copy still names the original and does not count).
 func (s *Store) ClaudeSessionAgents(ctx context.Context, machineID string, ids []string) (map[string]SessionAgent, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
@@ -43,9 +50,9 @@ func (s *Store) ClaudeSessionAgents(ctx context.Context, machineID string, ids [
 		args = append(args, id)
 	}
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT i.session_id,a.id,a.slug FROM imported_session i JOIN agent a ON a.id=i.agent_id
-		WHERE i.machine_id=? AND i.session_id IN (%s) AND a.revoked_at IS NULL
+		WHERE i.machine_id=? AND i.mode='continue' AND i.session_id IN (%s) AND a.revoked_at IS NULL
 		UNION SELECT se.native_session_id,a.id,a.slug FROM session se JOIN agent a ON a.id=se.agent_id
-		WHERE a.machine_id=? AND a.tool='claude' AND a.revoked_at IS NULL AND se.native_session_id IN (%s)`, marks, marks), args...)
+		WHERE a.machine_id=? AND a.tool='claude' AND a.revoked_at IS NULL AND se.native_session_id IN (%s) AND NOT `+forkPendingSQL, marks, marks), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -61,26 +68,56 @@ func (s *Store) ClaudeSessionAgents(ctx context.Context, machineID string, ids [
 	return out, rows.Err()
 }
 
-// attachClaudeSession records that the agent continues the session, refusing a session a live agent already holds. A row left by an agent
-// that was revoked since is replaced: that agent no longer touches the transcript.
+// ImportedSession is the Claude Code session an agent was started from: the original's id, how it was taken over ("continue" or "fork"),
+// and for a copy the id Claude gave it once the agent's first turn reported it.
+type ImportedSession struct {
+	SessionID       string
+	Mode            string
+	ForkedSessionID string
+	CWD             string
+	Title           string
+}
+
+// AgentImportedSession is the session an agent was started from; ok is false for an agent that was not started from one.
+func (s *Store) AgentImportedSession(ctx context.Context, agentID string) (ImportedSession, bool, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return ImportedSession{}, false, err
+	}
+	var item ImportedSession
+	err := s.db.QueryRowContext(ctx, `SELECT session_id,mode,COALESCE(forked_session_id,''),cwd,title FROM imported_session WHERE agent_id=?`, agentID).
+		Scan(&item.SessionID, &item.Mode, &item.ForkedSessionID, &item.CWD, &item.Title)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ImportedSession{}, false, nil
+	}
+	return item, err == nil, err
+}
+
+// attachClaudeSession records that the agent continues the session (or works on a copy of it), refusing a continued session a live agent
+// already holds. A row left by an agent that was revoked since is replaced: that agent no longer touches the transcript. A copy does not
+// hold its original, so any number of agents can fork one session.
 func (tx *Tx) attachClaudeSession(in SpawnInput, agentID string) error {
 	session := in.ResumeSession
-	var held int
-	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT
-		(SELECT COUNT(*) FROM imported_session i JOIN agent a ON a.id=i.agent_id WHERE i.machine_id=? AND i.session_id=? AND a.revoked_at IS NULL)
-		+ (SELECT COUNT(*) FROM session se JOIN agent a ON a.id=se.agent_id WHERE a.machine_id=? AND a.tool='claude' AND a.revoked_at IS NULL
-			AND se.native_session_id=? AND a.id<>?)`, in.MachineID, session.ID, in.MachineID, session.ID, agentID).Scan(&held); err != nil {
-		return err
+	if !session.Fork {
+		var held int
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT
+			(SELECT COUNT(*) FROM imported_session i JOIN agent a ON a.id=i.agent_id WHERE i.machine_id=? AND i.mode='continue' AND i.session_id=? AND a.revoked_at IS NULL)
+			+ (SELECT COUNT(*) FROM session se JOIN agent a ON a.id=se.agent_id WHERE a.machine_id=? AND a.tool='claude' AND a.revoked_at IS NULL
+				AND se.native_session_id=? AND a.id<>? AND NOT `+forkPendingSQL+`)`, in.MachineID, session.ID, in.MachineID, session.ID, agentID).Scan(&held); err != nil {
+			return err
+		}
+		if held > 0 {
+			return ErrSessionAttached
+		}
+		if _, err := tx.Exec(`DELETE FROM imported_session WHERE machine_id=? AND session_id=? AND mode='continue'`, in.MachineID, session.ID); err != nil {
+			return err
+		}
 	}
-	if held > 0 {
-		return ErrSessionAttached
+	mode := "continue"
+	if session.Fork {
+		mode = "fork"
 	}
-	if _, err := tx.Exec(`DELETE FROM imported_session WHERE machine_id=? AND session_id=?`, in.MachineID, session.ID); err != nil {
-		return err
-	}
-	actor := in.ActorID
-	_, err := tx.Exec(`INSERT INTO imported_session(machine_id,session_id,agent_id,cwd,title,imported_by,imported_at) VALUES (?,?,?,?,?,?,?)`,
-		in.MachineID, session.ID, agentID, session.CWD, session.Title, actor, timestamp())
+	_, err := tx.Exec(`INSERT INTO imported_session(agent_id,machine_id,session_id,mode,cwd,title,imported_by,imported_at) VALUES (?,?,?,?,?,?,?,?)`,
+		agentID, in.MachineID, session.ID, mode, session.CWD, session.Title, in.ActorID, timestamp())
 	return err
 }
 
@@ -95,4 +132,67 @@ func (tx *Tx) roomForSession(anchorRoomID, title, actorID string) (Room, error) 
 		return Room{}, err
 	}
 	return tx.CreateRoom(Room{ProjectID: projectID, ParentID: homeID, Kind: "task", Title: title, CreatedBy: actorID})
+}
+
+// AgentForkPending says the agent's next turn forks a Claude Code session: it was started as a copy and its first turn has not yet named the
+// copy, so the session row still names the original. Sending that turn to a supervisor that ignores the fork flag would resume, and so
+// append to, the original.
+func (s *Store) AgentForkPending(ctx context.Context, agentID string) (bool, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return false, err
+	}
+	var pending sql.NullBool
+	err := s.db.QueryRowContext(ctx, `SELECT fork_of IS NOT NULL AND native_session_id=fork_of FROM session WHERE agent_id=? ORDER BY generation DESC LIMIT 1`, agentID).Scan(&pending)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return pending.Valid && pending.Bool, err
+}
+
+// NoteForkHeld tells the room(s) where the agent has queued notes why it is not starting: its machine's supervisor cannot work on a copy of a
+// session, and nothing was sent to it. An agent with nothing queued (a recovery turn) is told in the first room it joined.
+func (s *Store) NoteForkHeld(ctx context.Context, agentID string) error {
+	return s.Tx(ctx, func(tx *Tx) error {
+		var slug, machine string
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.slug,mc.name FROM agent a JOIN machine mc ON mc.id=a.machine_id WHERE a.id=?`, agentID).Scan(&slug, &machine); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			return err
+		}
+		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT room_id FROM note WHERE agent_id=? AND state='queued' GROUP BY room_id ORDER BY MIN(rowid)`, agentID)
+		if err != nil {
+			return err
+		}
+		var rooms []string
+		for rows.Next() {
+			var room string
+			if err := rows.Scan(&room); err != nil {
+				rows.Close()
+				return err
+			}
+			rooms = append(rooms, room)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if len(rooms) == 0 {
+			var room string
+			err := tx.tx.QueryRowContext(tx.ctx, `SELECT room_id FROM room_member WHERE member_id=? AND member_kind='agent' AND left_at IS NULL ORDER BY joined_at LIMIT 1`, agentID).Scan(&room)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			rooms = []string{room}
+		}
+		for _, room := range rooms {
+			if _, err := tx.InsertMessage(Message{RoomID: room, AuthorKind: "system", AuthorID: "system",
+				Body: fmt.Sprintf("%s is held: it works on a copy of a Claude Code session, and the supervisor on %s predates that (it would write into the original). Update the supervisor; nothing was sent to it.", slug, machine)}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

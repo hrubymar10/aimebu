@@ -281,6 +281,71 @@ func TestNewSessionReportsServerIssuedHandle(t *testing.T) {
 	}
 }
 
+// A forked turn resumes the original with --fork-session; Claude saves the copy under a new id, which the turn reports once and which is
+// what the later turns resume. The original's id (a stray line carrying it) is never reported as the copy.
+func TestForkedTurnReportsTheCopyOfTheSession(t *testing.T) {
+	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	if runtime.GOOS == "windows" {
+		t.Skip("script fixture")
+	}
+	root := t.TempDir()
+	argsPath := filepath.Join(root, "args")
+	path := filepath.Join(root, "claude")
+	const original, copyID = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + original + "\"}' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + copyID + "\"}' '{\"type\":\"result\",\"session_id\":\"" + copyID + "\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "tools.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	spec := adapter.TurnSpec{TurnID: "fork", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, AgentToolsConfigPath: config,
+		NativeSessionHandle: original, NativeSessionStarted: true, ForkSession: true, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}
+	turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var handles []string
+	for event := range turn.Events() {
+		if event.Kind == adapter.EventNativeSessionStarted {
+			handles = append(handles, event.NativeSessionHandle)
+		}
+	}
+	if _, err := turn.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if len(handles) != 1 || handles[0] != copyID {
+		t.Fatalf("reported sessions %v", handles)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil || !contains(string(args), "--resume\n"+original+"\n--fork-session") {
+		t.Fatalf("args %q err %v", args, err)
+	}
+	// Only a first turn forks; a plain resume never reports a session and never passes the flag.
+	spec.ForkSession, spec.NativeSessionHandle, spec.TurnID = false, copyID, "after"
+	turn, err = (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for event := range turn.Events() {
+		if event.Kind == adapter.EventNativeSessionStarted {
+			t.Fatal("an ordinary resumed turn reported a session")
+		}
+	}
+	if _, err := turn.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if args, err := os.ReadFile(argsPath); err != nil || contains(string(args), "--fork-session") {
+		t.Fatalf("args %q err %v", args, err)
+	}
+	// A fork without a session to fork is a mistake of the caller.
+	spec.ForkSession, spec.NativeSessionStarted = true, false
+	if _, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), spec); err == nil {
+		t.Fatal("a fork of no session was started")
+	}
+}
+
 func TestFailedFirstSessionDoesNotReportStarted(t *testing.T) {
 	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
 	if runtime.GOOS == "windows" {

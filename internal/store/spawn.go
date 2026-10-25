@@ -293,6 +293,12 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 		if err = tx.attachClaudeSession(in, agent.ID); err != nil {
 			return AgentCard{}, err
 		}
+		if in.ResumeSession.Fork {
+			// The session row names the original until the first turn reports the copy's id (RecordNativeSessionStarted).
+			if _, err = tx.Exec(`UPDATE session SET fork_of=? WHERE id=?`, in.ResumeSession.ID, sessionID); err != nil {
+				return AgentCard{}, err
+			}
+		}
 	}
 	if in.ResumeLegacyID != "" {
 		// A legacy agent is started once: its name is then the v2 agent's for good (names are unique in a project), and that agent is
@@ -321,6 +327,9 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	}
 	if in.ResumeSession != nil {
 		notice = fmt.Sprintf("%s joined as %s, continuing the Claude Code session %s in %s", slug, in.RoleKey, describeSession(in.ResumeSession), in.Path)
+		if in.ResumeSession.Fork {
+			notice = fmt.Sprintf("%s joined as %s, working on a copy of the Claude Code session %s in %s", slug, in.RoleKey, describeSession(in.ResumeSession), in.Path)
+		}
 	}
 	if actorKind == "agent" {
 		actor, err := tx.agentDisplay(in.ActorID)

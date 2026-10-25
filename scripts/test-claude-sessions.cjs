@@ -23,10 +23,10 @@ assert.deepEqual(Array.from(sessionFacts({ id: 'aaaaaaaa-1111', git_branch: 'mai
   ['main', 'used ago(2026-10-24T10:00:00Z)', '2 KB', 'aaaaaaaa']);
 assert.deepEqual(Array.from(sessionFacts({ id: 'bbbbbbbb-2222', size: 10 })), ['10 B', 'bbbbbbbb']);
 
-// The flags: an agent that continues it stops it being picked; the rest only warn or note.
+// The flags: an agent that continues it only rules out a second continuation (a copy is still possible), so every flag warns or notes.
 const flag = session => Array.from(sessionFlags(session), item => Array.from(item));
 assert.deepEqual(flag({ id: 'x' }), []);
-assert.deepEqual(flag({ agent: { slug: 'olive' } }), [['continued by olive', 'stop']]);
+assert.deepEqual(flag({ agent: { slug: 'olive' } }), [['continued by olive', 'warn']]);
 assert.deepEqual(flag({ active: true, outside_folder: true, entrypoint: 'sdk-cli' }),
   [['open in a terminal', 'warn'], ['outside the project folder', 'note'], ['started by an agent', 'note']]);
 assert.deepEqual(flag({ entrypoint: 'cli' }), []);

@@ -58,6 +58,7 @@ type Frame struct {
 	SupervisorVersion    string               `json:"supervisor_version,omitempty"`
 	SupportsPathProbe    bool                 `json:"supports_path_probe,omitempty"`
 	SupportsSessionScan  bool                 `json:"supports_session_scan,omitempty"`
+	SupportsSessionFork  bool                 `json:"supports_session_fork,omitempty"`
 	SupportsWorktree     bool                 `json:"supports_worktree,omitempty"`
 	SupportsLaunchers    bool                 `json:"supports_launchers,omitempty"`
 	SupportsDetect       bool                 `json:"supports_detect,omitempty"`
@@ -108,20 +109,23 @@ type Frame struct {
 	Agent                *adapter.AgentSpec   `json:"agent,omitempty"`
 	NativeSessionHandle  string               `json:"native_session,omitempty"`
 	NativeSessionStarted bool                 `json:"native_session_started,omitempty"`
-	Level                string               `json:"level,omitempty"`
-	Ref                  string               `json:"ref,omitempty"`
-	SourceEventID        string               `json:"source_event_id,omitempty"`
-	Kind                 string               `json:"kind,omitempty"`
-	Summary              string               `json:"summary,omitempty"`
-	Usage                *adapter.Usage       `json:"usage,omitempty"`
-	Compaction           *adapter.Compaction  `json:"compaction,omitempty"`
-	AnswerRev            int                  `json:"answer_rev,omitempty"`
-	Digest               string               `json:"digest,omitempty"`
-	Candidate            string               `json:"candidate,omitempty"`
-	AnswerTooLarge       bool                 `json:"answer_too_large,omitempty"`
-	Exit                 *adapter.ExitInfo    `json:"exit,omitempty"`
-	Result               string               `json:"result,omitempty"`
-	Details              json.RawMessage      `json:"details,omitempty"`
+	// ForkSession says this turn resumes NativeSessionHandle as a copy: the harness saves it under a new id, which the turn reports as its
+	// native session.
+	ForkSession    bool                `json:"fork_session,omitempty"`
+	Level          string              `json:"level,omitempty"`
+	Ref            string              `json:"ref,omitempty"`
+	SourceEventID  string              `json:"source_event_id,omitempty"`
+	Kind           string              `json:"kind,omitempty"`
+	Summary        string              `json:"summary,omitempty"`
+	Usage          *adapter.Usage      `json:"usage,omitempty"`
+	Compaction     *adapter.Compaction `json:"compaction,omitempty"`
+	AnswerRev      int                 `json:"answer_rev,omitempty"`
+	Digest         string              `json:"digest,omitempty"`
+	Candidate      string              `json:"candidate,omitempty"`
+	AnswerTooLarge bool                `json:"answer_too_large,omitempty"`
+	Exit           *adapter.ExitInfo   `json:"exit,omitempty"`
+	Result         string              `json:"result,omitempty"`
+	Details        json.RawMessage     `json:"details,omitempty"`
 	// ScanFolders (spellings of one folder: every Claude Code session that worked in it or below) or ScanSessionID (that one session,
 	// wherever it worked) asks a machine for its Claude Code sessions; the answer lists them in Sessions.
 	ScanFolders   []string           `json:"scan_folders,omitempty"`
@@ -205,14 +209,14 @@ type CapabilityReport struct {
 
 func DeliverFrame(d Delivery) Frame {
 	agent := d.Agent
-	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, CheckoutPath: d.CheckoutPath, AttachmentBearer: d.AttachmentBearer}
+	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, AttachmentBearer: d.AttachmentBearer}
 }
 func (f Frame) Delivery() Delivery {
 	agent := adapter.AgentSpec{}
 	if f.Agent != nil {
 		agent = *f.Agent
 	}
-	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, CheckoutPath: f.CheckoutPath, AttachmentBearer: f.AttachmentBearer}
+	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, AttachmentBearer: f.AttachmentBearer}
 }
 
 type HelloAgent struct {
@@ -250,6 +254,7 @@ type Delivery struct {
 	Agent                adapter.AgentSpec `json:"agent"`
 	NativeSessionHandle  string            `json:"native_session,omitempty"`
 	NativeSessionStarted bool              `json:"native_session_started,omitempty"`
+	ForkSession          bool              `json:"fork_session,omitempty"`
 	CheckoutPath         string            `json:"checkout_path,omitempty"`
 	AttachmentBearer     string            `json:"attachment_bearer,omitempty"`
 }

@@ -37,7 +37,7 @@ func (f *fixture) connectSupervisorOn(t *testing.T, machineID string, scans bool
 	t.Helper()
 	fake := &fakeSupervisor{sessions: sessions}
 	machine := &machineConn{id: machineID, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{},
-		supportsSessionScan: scans, supportsPathProbe: true,
+		supportsSessionScan: scans, supportsSessionFork: true, supportsPathProbe: true,
 		capabilities: []protocol.CapabilityReport{{Tool: "claude", Environment: adapter.Environment{Variant: "native"}}, {Tool: "codex", Environment: adapter.Environment{Variant: "native"}}}}
 	f.srv.machineMu.Lock()
 	f.srv.machines[machineID] = machine
@@ -99,6 +99,9 @@ const (
 func (f *fixture) spawnSession(t *testing.T, key string, body map[string]any) (int, map[string]any) {
 	t.Helper()
 	request := map[string]any{"role_key": "worker", "tool": "claude", "variant": "native", "model": "haiku", "machine_id": f.machineID}
+	if _, ok := body["resume_session"]; ok {
+		request["resume_mode"] = "continue" // these tests are about continuing; the fork ones say so
+	}
 	for k, v := range body {
 		request[k] = v
 	}
@@ -398,4 +401,77 @@ func TestClaudeSessionLookupNeedsAFolderMappedOnTheMachine(t *testing.T) {
 	if len(fake.scans) != 0 {
 		t.Fatalf("the machine was asked anyway: %+v", fake.scans)
 	}
+}
+
+// Whoever does not say how a session is taken over gets a copy: the original stays as it is, and nothing already using it stands in the way.
+func TestSpawnWorksOnACopyOfASessionByDefault(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	active := candidate(sessionA, f.project.Folder, "Fix the login bug")
+	active.Active = true
+	f.connectSupervisor(t, true, active)
+	status, card := f.spawnSession(t, "fork-1", map[string]any{"resume_session": sessionA, "resume_mode": "", "new_room": true})
+	if status != 201 {
+		t.Fatalf("a copy of a session a terminal has open needs no confirmation: %d %v", status, card)
+	}
+	roomID, agentID := card["room_id"].(string), card["id"].(string)
+	imported, ok, err := f.db.AgentImportedSession(t.Context(), agentID)
+	if err != nil || !ok || imported.Mode != "fork" || imported.SessionID != sessionA || imported.ForkedSessionID != "" {
+		t.Fatalf("imported=%+v ok=%v err=%v", imported, ok, err)
+	}
+	profile, err := f.db.AgentProfile(t.Context(), roomID, agentID)
+	if err != nil || profile.NativeSessionID != "" {
+		t.Fatalf("a copy not yet named has no session of its own: %+v err=%v", profile, err)
+	}
+	messages, err := f.db.ListMessagesAfter(t.Context(), roomID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	said := false
+	for _, m := range messages {
+		said = said || strings.Contains(m.Body, `working on a copy of the Claude Code session "Fix the login bug" (aaaaaaaa)`)
+	}
+	if !said {
+		t.Fatalf("the room was not told it is a copy: %+v", messages)
+	}
+	// The original is still free: the list does not name the copy's agent, and a second copy is made beside the first (as a reviewer, because
+	// the folder's one writer is taken).
+	_, body := f.listSessions(t, "")
+	for _, item := range body["sessions"].([]any) {
+		if item.(map[string]any)["agent"] != nil {
+			t.Fatalf("the original is held by its copy: %v", item)
+		}
+	}
+	if status, body := f.spawnSession(t, "fork-2", map[string]any{"resume_session": sessionA, "resume_mode": "fork", "role_key": "reviewer", "new_room": true}); status != 201 {
+		t.Fatalf("a second copy: %d %v", status, body)
+	}
+	// Asking for the default and leaving it out are one request.
+	if status, again := f.spawnSession(t, "fork-1", map[string]any{"resume_session": sessionA, "resume_mode": "fork", "new_room": true}); status != 200 && status != 201 || again["id"] != agentID {
+		t.Fatalf("the same request with the default spelled out: %d %v", status, again)
+	}
+}
+
+func TestSpawnResumeModeRefusals(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	fake := f.connectSupervisor(t, true, candidate(sessionA, f.project.Folder, "x"))
+	if status, body := f.spawnSession(t, "bad-mode", map[string]any{"resume_session": sessionA, "resume_mode": "mirror"}); status != 400 || body["error"] != "invalid_request" {
+		t.Fatalf("an unknown mode: %d %v", status, body)
+	}
+	if status, body := f.spawnSession(t, "mode-alone", map[string]any{"resume_mode": "fork"}); status != 400 || body["error"] != "invalid_request" {
+		t.Fatalf("a mode without a session: %d %v", status, body)
+	}
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID].supportsSessionFork = false
+	f.srv.machineMu.Unlock()
+	if status, body := f.spawnSession(t, "old-fork", map[string]any{"resume_session": sessionA, "resume_mode": "fork"}); status != 409 || body["error"] != "supervisor_update_needed" {
+		t.Fatalf("a supervisor that cannot fork: %d %v", status, body)
+	}
+	// It can still continue, which does not need the flag.
+	if status, body := f.spawnSession(t, "old-continue", map[string]any{"resume_session": sessionA, "resume_mode": "continue"}); status != 201 {
+		t.Fatalf("continuing through a supervisor that cannot fork: %d %v", status, body)
+	}
+	_ = fake
 }

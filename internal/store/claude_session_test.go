@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -165,5 +167,174 @@ func TestSpawnContinuesASessionInARoomOfItsOwn(t *testing.T) {
 	var rooms int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM room WHERE project_id=? AND title='Retry room'`, project.ID).Scan(&rooms); err != nil || rooms != 0 {
 		t.Fatalf("a failed spawn left %d rooms (err=%v)", rooms, err)
+	}
+}
+
+func forking(id, title string) SpawnInput {
+	in := continuing(id, title)
+	in.ResumeSession.Fork = true
+	return in
+}
+
+// A copy does not hold its original: any number of agents can work on copies of one session, the original can still be continued once, and
+// until a copy's first turn names it the agent's own session id (still the original's) is not counted as a holder.
+func TestForkedSessionsLeaveTheOriginalFree(t *testing.T) {
+	t.Parallel()
+	s, _, task, _ := ccSpawnFixture(t)
+	ctx := context.Background()
+	var forks []AgentCard
+	for i := 0; i < 2; i++ {
+		in := forking(ccSessionA, "Fix the login bug")
+		in.RoomID = task.ID
+		card, err := ccSpawn(s, in)
+		if err != nil {
+			t.Fatalf("fork %d: %v", i, err)
+		}
+		forks = append(forks, card)
+		var native, forkOf, mode string
+		if err := s.db.QueryRow(`SELECT se.native_session_id,se.fork_of,i.mode FROM session se JOIN imported_session i ON i.agent_id=se.agent_id WHERE se.agent_id=?`, card.ID).
+			Scan(&native, &forkOf, &mode); err != nil || native != ccSessionA || forkOf != ccSessionA || mode != "fork" {
+			t.Fatalf("fork session=%q fork_of=%q mode=%q err=%v", native, forkOf, mode, err)
+		}
+		sessionID := mustSession(t, s, card.ID)
+		err = s.Tx(ctx, func(tx *Tx) error {
+			handle, started, forking, err := sessionNativeFork(tx, sessionID)
+			if handle != ccSessionA || !started || !forking {
+				t.Fatalf("the first turn of a copy resumes the original and forks it: %q %v %v", handle, started, forking)
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if held, err := s.ClaudeSessionAgents(ctx, "mch_wake", []string{ccSessionA}); err != nil || len(held) != 0 {
+		t.Fatalf("a copy holds its original: %+v err=%v", held, err)
+	}
+	in := continuing(ccSessionA, "Original")
+	in.RoomID = task.ID
+	continued, err := ccSpawn(s, in)
+	if err != nil {
+		t.Fatalf("continuing the original beside its copies: %v", err)
+	}
+	if held, err := s.ClaudeSessionAgents(ctx, "mch_wake", []string{ccSessionA}); err != nil || held[ccSessionA].AgentID != continued.ID {
+		t.Fatalf("held=%+v err=%v", held, err)
+	}
+	again := continuing(ccSessionA, "Original")
+	again.RoomID = task.ID
+	if _, err := ccSpawn(s, again); !errors.Is(err, ErrSessionAttached) {
+		t.Fatalf("a second agent continuing the original: %v", err)
+	}
+	profile, err := s.AgentProfile(ctx, task.ID, forks[0].ID)
+	if err != nil || profile.NativeSessionID != "" || profile.ResumeCommand != "" {
+		t.Fatalf("a copy that is not named yet has no session of its own to resume: %+v err=%v", profile, err)
+	}
+}
+
+func mustSession(t *testing.T, s *Store, agentID string) string {
+	t.Helper()
+	var id string
+	if err := s.db.QueryRow(`SELECT id FROM session WHERE agent_id=? ORDER BY generation DESC LIMIT 1`, agentID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// The first turn of a copy reports the copy's id: once, replayable, and it ends the pending state (the next turn resumes the copy).
+func TestForkedSessionNamesItsCopyOnce(t *testing.T) {
+	t.Parallel()
+	s, _ := testStore(t, Options{})
+	f := seedExecution(t, s)
+	ctx := context.Background()
+	for _, statement := range []string{
+		`UPDATE agent SET tool='claude' WHERE id='` + f.agent.ID + `'`,
+		`UPDATE session SET native_session_id='` + ccSessionA + `',native_session_started_at='now',fork_of='` + ccSessionA + `' WHERE id='` + f.turn.SessionID + `'`,
+		`INSERT INTO imported_session(agent_id,machine_id,session_id,mode,cwd,imported_by,imported_at) VALUES ('` + f.agent.ID + `','mch_test','` + ccSessionA + `','fork','/x','u','now')`,
+	} {
+		if _, err := s.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const copyID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	// Reporting the original again changes nothing.
+	if err := s.RecordNativeSessionStarted(ctx, f.turn.ID, f.agent.ID, 0, "source-0", ccSessionA); err != nil {
+		t.Fatalf("the original: %v", err)
+	}
+	if err := s.RecordNativeSessionStarted(ctx, f.turn.ID, f.agent.ID, 0, "source-1", copyID); err != nil {
+		t.Fatalf("the copy: %v", err)
+	}
+	if err := s.RecordNativeSessionStarted(ctx, f.turn.ID, f.agent.ID, 0, "source-1", copyID); err != nil {
+		t.Fatalf("journal replay: %v", err)
+	}
+	if err := s.RecordNativeSessionStarted(ctx, f.turn.ID, f.agent.ID, 0, "source-2", "dddddddd-dddd-4ddd-8ddd-dddddddddddd"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a second copy id: %v", err)
+	}
+	var native, original, forked string
+	if err := s.db.QueryRow(`SELECT se.native_session_id,i.session_id,COALESCE(i.forked_session_id,'') FROM session se JOIN imported_session i ON i.agent_id=se.agent_id WHERE se.id=?`, f.turn.SessionID).
+		Scan(&native, &original, &forked); err != nil || native != copyID || original != ccSessionA || forked != copyID {
+		t.Fatalf("session=%q original=%q copy=%q err=%v", native, original, forked, err)
+	}
+	err := s.Tx(ctx, func(tx *Tx) error {
+		handle, started, forking, err := sessionNativeFork(tx, f.turn.SessionID)
+		if handle != copyID || !started || forking {
+			t.Fatalf("after the copy is named the session is an ordinary one: %q %v %v", handle, started, forking)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The copy is now the agent's own Claude session, so it is held like any other; the original is free.
+	if held, err := s.ClaudeSessionAgents(ctx, "mch_test", []string{ccSessionA, copyID}); err != nil || len(held) != 1 || held[copyID].AgentID != f.agent.ID {
+		t.Fatalf("held=%+v err=%v", held, err)
+	}
+}
+
+// Migration 86 rekeys imported_session by agent (copies of one session are many) and keeps what exists as continued sessions, still held.
+func TestMigrationEightySixKeepsImportedSessionsAsContinued(t *testing.T) {
+	t.Parallel()
+	db, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "from-85.sqlite")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if err := migrateUpTo(context.Background(), db, 85); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil { // the rows name an agent that does not exist
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO imported_session(machine_id,session_id,agent_id,cwd,title,imported_by,imported_at) VALUES ('mch','` + ccSessionA + `','agt_one','/p','Fix it','usr','2026-10-24T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateUpTo(context.Background(), db, 0); err != nil {
+		t.Fatal(err)
+	}
+	var mode, cwd, title string
+	var forked sql.NullString
+	if err := db.QueryRow(`SELECT mode,cwd,title,forked_session_id FROM imported_session WHERE agent_id='agt_one' AND session_id=?`, ccSessionA).Scan(&mode, &cwd, &title, &forked); err != nil ||
+		mode != "continue" || cwd != "/p" || title != "Fix it" || forked.Valid {
+		t.Fatalf("row: %q %q %q %v err=%v", mode, cwd, title, forked, err)
+	}
+	// Two copies of one original are fine; a second continued row for it is not.
+	insert := func(agent, mode string) error {
+		_, err := db.Exec(`INSERT INTO imported_session(agent_id,machine_id,session_id,mode,cwd,imported_by,imported_at) VALUES (?,'mch',?,?,'/p','usr','now')`, agent, ccSessionB, mode)
+		return err
+	}
+	if err := insert("agt_a", "fork"); err != nil {
+		t.Fatal(err)
+	}
+	if err := insert("agt_b", "fork"); err != nil {
+		t.Fatalf("a second copy: %v", err)
+	}
+	if err := insert("agt_c", "continue"); err != nil {
+		t.Fatalf("a first continued row: %v", err)
+	}
+	if err := insert("agt_d", "continue"); err == nil {
+		t.Fatal("a second agent continuing one session was accepted")
+	}
+	if err := insert("agt_e", "mirror"); err == nil {
+		t.Fatal("an unknown mode was accepted")
 	}
 }

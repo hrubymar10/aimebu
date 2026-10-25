@@ -27,12 +27,14 @@ func (s *Store) RecordNativeSessionStarted(ctx context.Context, turnID, agentID 
 		if turnGeneration != generation {
 			return ErrStaleGeneration
 		}
-		var existing sql.NullString
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT native_session_id FROM session WHERE id=? AND agent_id=? AND generation=?`,
-			sessionID, agentID, generation).Scan(&existing); err != nil {
+		var existing, forkOf sql.NullString
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT native_session_id,fork_of FROM session WHERE id=? AND agent_id=? AND generation=?`,
+			sessionID, agentID, generation).Scan(&existing, &forkOf); err != nil {
 			return err
 		}
-		if existing.Valid && existing.String != handle {
+		// A session forked from another names the original until its first turn reports the copy's id: that one report changes the handle.
+		forking := forkOf.Valid && existing.Valid && existing.String == forkOf.String && handle != forkOf.String
+		if existing.Valid && existing.String != handle && !forking {
 			return ErrConflict
 		}
 		payload := payloadJSON(map[string]string{"source_event_id": sourceID, "native_session_handle": handle})
@@ -52,6 +54,11 @@ func (s *Store) RecordNativeSessionStarted(ctx context.Context, turnID, agentID 
 			handle, timestamp(), sessionID); err != nil {
 			return err
 		}
+		if forking {
+			if _, err := tx.Exec(`UPDATE imported_session SET forked_session_id=? WHERE agent_id=?`, handle, agentID); err != nil {
+				return err
+			}
+		}
 		_, err = tx.AppendEvent(Event{Kind: "native_session_started", ProjectID: projectID, RoomID: roomID,
 			AgentID: agentID, TurnID: turnID, PayloadJSON: payload})
 		return err
@@ -59,8 +66,14 @@ func (s *Store) RecordNativeSessionStarted(ctx context.Context, turnID, agentID 
 }
 
 func sessionNativeState(tx *Tx, sessionID string) (string, bool, error) {
-	var handle, started sql.NullString
-	err := tx.tx.QueryRowContext(tx.ctx, `SELECT native_session_id,native_session_started_at FROM session WHERE id=?`, sessionID).
-		Scan(&handle, &started)
-	return handle.String, started.Valid, err
+	handle, started, _, err := sessionNativeFork(tx, sessionID)
+	return handle, started, err
+}
+
+// sessionNativeFork is sessionNativeState and whether the session is a fork whose copy has not been named yet: the next turn forks the
+// session it names (the original) and reports the copy's id.
+func sessionNativeFork(tx *Tx, sessionID string) (handle string, started, forking bool, err error) {
+	var h, s, f sql.NullString
+	err = tx.tx.QueryRowContext(tx.ctx, `SELECT native_session_id,native_session_started_at,fork_of FROM session WHERE id=?`, sessionID).Scan(&h, &s, &f)
+	return h.String, s.Valid, f.Valid && h.Valid && h.String == f.String, err
 }

@@ -228,14 +228,14 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if err != nil {
 				return err
 			}
-			handle, started, err := sessionNativeState(tx, special.SessionID)
+			handle, started, forking, err := sessionNativeFork(tx, special.SessionID)
 			if err != nil {
 				return err
 			}
 			delivery = protocol.Delivery{AgentID: agentID, Generation: generation, DesiredRev: desiredRev, TurnID: special.ID,
 				Mode: adapter.Mode(special.Mode), ParentTurnID: special.ParentTurnID, Notes: specialNotes,
 				Agent: adapter.AgentSpec{ID: agentID, Tool: tool, Variant: variant, LauncherID: launcherID, Model: model, Provider: provider}, Context: contextJSON, AllowedTools: allowedTools,
-				NativeSessionHandle: handle, NativeSessionStarted: started, CheckoutPath: checkoutPath}
+				NativeSessionHandle: handle, NativeSessionStarted: started, ForkSession: forking, CheckoutPath: checkoutPath}
 			ready = true
 			return nil
 		}
@@ -461,13 +461,13 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if err != nil {
 			return err
 		}
-		handle, started, err := sessionNativeState(tx, sessionID)
+		handle, started, forking, err := sessionNativeFork(tx, sessionID)
 		if err != nil {
 			return err
 		}
 		delivery = protocol.Delivery{AgentID: agentID, Generation: generation, DesiredRev: desiredRev, TurnID: turn.ID, Mode: adapter.ModeNormal, Notes: notes,
 			Agent: adapter.AgentSpec{ID: agentID, Tool: tool, Variant: variant, LauncherID: launcherID, Model: model, Provider: provider}, Context: contextJSON,
-			NativeSessionHandle: handle, NativeSessionStarted: started, CheckoutPath: checkoutPath}
+			NativeSessionHandle: handle, NativeSessionStarted: started, ForkSession: forking, CheckoutPath: checkoutPath}
 		ready = true
 		return nil
 	})

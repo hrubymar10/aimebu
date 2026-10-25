@@ -29,10 +29,13 @@ type AgentSpec struct {
 // NotesJSON and ContextJSON are wire-shaped JSON; the adapter must not decide
 // room access or validate the final answer's target rooms.
 type TurnSpec struct {
-	TurnID                string
-	Agent                 AgentSpec
-	NativeSessionHandle   string
-	NativeSessionStarted  bool
+	TurnID               string
+	Agent                AgentSpec
+	NativeSessionHandle  string
+	NativeSessionStarted bool
+	// ForkSession resumes NativeSessionHandle as a copy (Claude's --fork-session): the harness saves it under a new id, which the turn
+	// reports in its native_session_started event.
+	ForkSession           bool
 	CheckoutPath          string
 	Mode                  Mode
 	NotesJSON             json.RawMessage

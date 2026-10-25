@@ -202,7 +202,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -731,7 +731,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		return errors.New("invalid delivery")
 	}
 	spec := adapter.TurnSpec{TurnID: delivery.TurnID, Agent: delivery.Agent, NativeSessionHandle: delivery.NativeSessionHandle,
-		NativeSessionStarted: delivery.NativeSessionStarted, CheckoutPath: delivery.CheckoutPath,
+		NativeSessionStarted: delivery.NativeSessionStarted, ForkSession: delivery.ForkSession, CheckoutPath: delivery.CheckoutPath,
 		Mode: delivery.Mode, ContextJSON: delivery.Context, AllowedTools: delivery.AllowedTools}
 	containerized := delivery.Agent.Variant == "docker"
 	if delivery.Agent.LauncherID != "" {

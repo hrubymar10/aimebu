@@ -81,14 +81,24 @@ Projects, rooms, people
   — what v1 recorded for an imported sender, kept for its read-only profile and
   for "Start as v2 agent"; `started_agent_id` links the one v2 agent started
   from it, and `agent.resumed_from_legacy_id` links back.
-- **imported_session**(machine_id, session_id, agent_id UNIQUE → agent, cwd,
-  title, imported_by, imported_at; PRIMARY KEY (machine_id, session_id)) —
-  migration 85. A Claude Code session an agent was started from (`resume_session`
-  on spawn, see [claude-sessions](claude-sessions.md)): the machine it lives on,
-  its id, and the one agent that continues it. A session is attached to at most
-  one live agent (this row, or an agent's own `session.native_session_id` on that
-  machine), checked in the spawn transaction and enforced by the primary key; a
-  row left by a revoked agent is replaced. The row goes with its agent.
+- **imported_session**(agent_id PRIMARY KEY → agent, machine_id, session_id,
+  mode[continue|fork], forked_session_id?, cwd, title, imported_by, imported_at)
+  — migration 85, rekeyed by migration 86. A Claude Code session an agent was
+  started from (`resume_session` on spawn, see [claude-sessions](claude-sessions.md)):
+  the machine it lives on, the original's id, how it was taken over, and for a
+  copy the id Claude gave it (`forked_session_id`, set when the first turn reports
+  it). A *continued* session is attached to at most one live agent (this row with
+  `mode='continue'`, enforced by the partial unique index
+  `imported_session_continued(machine_id, session_id)`, or an agent's own
+  `session.native_session_id` on that machine), checked in the spawn transaction; a
+  row left by a revoked agent is replaced. Copies do not hold their original: any
+  number of `fork` rows may name one session. The row goes with its agent.
+- **session.fork_of?** — migration 86. For a session started as a copy of a Claude
+  Code session: the original's id. While `native_session_id = fork_of` the copy
+  has not been named yet (the "pending" fork: the next delivery carries
+  `fork_session`); `RecordNativeSessionStarted` then accepts exactly one different
+  handle, the copy's, and records it in `imported_session.forked_session_id`.
+  Any other handle change is still `conflict`.
 - **room_member**(room_id, member_kind[user|agent], member_id, joined_at,
   left_at?) — UNIQUE active (room_id, member_kind, member_id)
 - **room.memory_enabled?** — `NULL` inherits the project setting; `0`
@@ -798,7 +808,7 @@ it never silently reruns a turn with uncertain effects.
 
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
-  supports_path_probe?, supports_session_scan?, supports_worktree?, supports_launchers?, supports_detect?,
+  supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_worktree?, supports_launchers?, supports_detect?,
   supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?,
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
@@ -855,6 +865,16 @@ it never silently reruns a turn with uncertain effects.
   The server sends this frame only to supervisors that advertised
   `supports_path_probe`. Older supervisors fail admission without receiving
   the unknown frame; the server does not fall back to lexical comparison.
+- S→M `deliver` carries `fork_session` for the first turn of a copy of a Claude Code
+  session: `native_session` is the original and `native_session_started` is true; the
+  Claude adapter resumes it with `--fork-session`, and the turn's first `system`/`init`
+  `session_id` that differs from the original is reported once as
+  `native_session_started` (the copy's id). The server sends `fork_session` only to
+  supervisors whose hello has `supports_session_fork`, checked on every delivery
+  (a machine can reconnect with an older supervisor between spawn and the first
+  turn): the dispatcher holds such an agent before preparing a turn and posts one
+  system note in the room where its note is queued, and `Dispatch` refuses the delivery with
+  `supervisor_update_needed`.
 - S→M `session_scan{v,req_id,launcher_id?,scan_folders?[1..4] | scan_session_id?}`; M→S
   `session_scan_result{v,req_id,sessions?[{id,cwd,dir?,title?,git_branch?,version?,
   entrypoint?,modified_at,size,active?}],unreadable?,scan_truncated?,code?,message?}`.

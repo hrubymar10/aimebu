@@ -19,6 +19,7 @@ type Dispatcher struct {
 	lastRoom               map[string]string
 	inFlight               map[string]specialFlight
 	failures               map[string]dispatchFailure
+	forkHeld               map[string]*machineConn // agents whose copy-of-a-session turn waits for a supervisor that can fork, and the connection told so
 	lastProviderLimitSweep time.Time
 	cleanupMu              sync.Mutex
 	cleanupRunning         bool
@@ -49,7 +50,7 @@ func dispatchBackoff(failures int) time.Duration {
 }
 
 func NewDispatcher(server *Server) *Dispatcher {
-	return &Dispatcher{Server: server, lastRoom: make(map[string]string), inFlight: make(map[string]specialFlight), failures: make(map[string]dispatchFailure)}
+	return &Dispatcher{Server: server, lastRoom: make(map[string]string), inFlight: make(map[string]specialFlight), failures: make(map[string]dispatchFailure), forkHeld: make(map[string]*machineConn)}
 }
 
 func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
@@ -142,9 +143,32 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 		if err != nil {
 			return count, err
 		}
-		if _, err := d.Server.machineForID(agent.MachineID); err != nil {
+		machine, err := d.Server.machineForID(agent.MachineID)
+		if err != nil {
 			continue
 		}
+		// A turn that forks a Claude Code session waits for a supervisor that can: asked before the turn is prepared, so the wait does not
+		// churn turns, and said once in the agent's room.
+		if !machine.supportsSessionFork {
+			// A failure here is this agent's, not the pass's: it is logged, the agent waits (fails closed, nothing is sent), and the
+			// other agents go on.
+			pending, err := d.Server.Store.AgentForkPending(ctx, id)
+			if err != nil {
+				log.Printf("dispatch: is %s a copy of a session still unnamed: %v", id, err)
+				continue
+			}
+			if pending {
+				if d.forkHeld[id] != machine {
+					if err := d.Server.Store.NoteForkHeld(ctx, id); err != nil {
+						log.Printf("dispatch: saying why %s is held: %v", id, err)
+						continue
+					}
+					d.forkHeld[id] = machine
+				}
+				continue
+			}
+		}
+		delete(d.forkHeld, id)
 		delivery, ready, err := d.Server.Store.PrepareDispatch(ctx, id, d.lastRoom[id])
 		if err != nil {
 			return count, err

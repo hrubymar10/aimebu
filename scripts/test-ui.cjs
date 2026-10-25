@@ -2765,7 +2765,7 @@ async function main() {
       await first.waitForFunction(() => document.querySelector('#cc-sessions-dialog').open && document.querySelectorAll('#cc-sessions-list .cc-session').length === 3 && !document.querySelector('#spawn-dialog').open);
       assert.deepEqual(await first.$$eval('#cc-sessions-list .cc-session', rows => rows.map(row => [row.dataset.sessionId, row.querySelector('.cc-session-title').textContent, [...row.querySelectorAll('.cc-session-flag')].map(flag => flag.textContent)]).sort()),
         [[idOne, 'Fix the login bug', []], [idActive, 'Open in a terminal', ['open in a terminal']], [idAgent, 'Made by an agent', ['started by an agent']]], 'the picker lists the folder\'s sessions with their flags');
-      assert.ok(await first.$$eval('#cc-sessions-list .cc-session-pick', buttons => buttons.every(button => button.title === 'Continue this session' && button.getAttribute('aria-label') === 'Continue this session' && !button.textContent.trim())), 'each session has an icon button with a tooltip');
+      assert.ok(await first.$$eval('#cc-sessions-list .cc-session-pick', buttons => buttons.every(button => button.title === 'Continue this session or work on a copy' && button.getAttribute('aria-label') === 'Continue this session or work on a copy' && !button.textContent.trim())), 'each session has an icon button with a tooltip');
       assert.equal(await first.$eval('#cc-sessions-status', el => el.textContent), '3 sessions');
       // By id it is found wherever it worked, and says it is outside the project folder; an unknown id says so.
       await first.$eval('#cc-session-id', (el, id) => { el.value = id; }, idFar);
@@ -2787,8 +2787,9 @@ async function main() {
         title: document.querySelector('#spawn-form h2').textContent, text: document.querySelector('#spawn-resume-text').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
         name: document.querySelector('.spawn-name').hidden, startIn: !document.querySelector('#spawn-start-in').hidden, room: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent,
         sessions: document.querySelector('#spawn-sessions').hidden, worktree: document.querySelector('.spawn-worktree-option').hidden,
+        mode: document.querySelector('#spawn-resume-mode').hidden ? 'hidden' : document.querySelector('#spawn-form [name=resume_mode]:checked').value,
       })), { title: 'Continue a Claude Code session', text: `This continues the Claude Code session "Fix the login bug" (11111111), working in ${gitRoot}. It carries on from where the session stopped, in the same transcript.`,
-        confirm: true, name: false, startIn: true, room: 'A new room for this session', sessions: true, worktree: true }, 'the Spawn dialog opens for the picked session');
+        confirm: true, name: false, startIn: true, room: 'A new room for this session', sessions: true, worktree: true, mode: 'continue' }, 'the Spawn dialog opens for the picked session, continuing by default');
       await domClick(first, '#spawn-cancel');
       await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
       // A session a live process has open asks for a confirmation before it can be continued.
@@ -2800,9 +2801,110 @@ async function main() {
       await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
       assert.deepEqual(await first.evaluate(() => ({ confirm: document.querySelector('#spawn-resume-confirm-label').hidden, label: document.querySelector('#spawn-resume-confirm-label').textContent.trim(), notes: document.querySelector('#spawn-resume-notes').textContent })),
         { confirm: false, label: 'I closed this session in my terminal', notes: 'A Claude process has this session open. Close it first: two processes on one session corrupt it.' });
+      // Working on a copy needs no such confirmation (the original is not touched) and says what it does; going back restores the warning.
+      await first.evaluate(() => { const radio = document.querySelector('#spawn-form [name=resume_mode][value=fork]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); });
+      assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
+        text: document.querySelector('#spawn-resume-text').textContent.slice(0, 60), notes: document.querySelector('#spawn-resume-notes').textContent.includes('Close it first') })),
+        { title: 'Work on a copy of a Claude Code session', confirm: true, text: 'This works on a copy of the Claude Code session "Open in a t', notes: false });
+      await first.evaluate(() => { const radio = document.querySelector('#spawn-form [name=resume_mode][value=continue]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); });
+      assert.equal(await first.$eval('#spawn-resume-confirm-label', el => el.hidden), false, 'continuing asks again for the confirmation');
       await domClick(first, '#spawn-cancel');
       await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
       assert.equal(await first.$eval('#spawn-form h2', el => el.textContent), 'Spawn', 'closing the dialog restores the ordinary one');
+      // Bulk import (Settings → Project): the dialog is driven here with a scripted source, so no agent is really started. Roles are preset
+      // (the first session of a folder works, the rest review), what is ticked is started in order as copies in rooms of their own, and a
+      // spawn limit stops the rest and says so.
+      const imported = await first.evaluate(async projectID => {
+        const { ClaudeSessionImport } = await import('/js/claude-session-import.js');
+        const calls = [];
+        const sessions = [
+          { id: 'aaaaaaaa-0000-4000-8000-000000000001', title: 'First of /p', cwd: '/p', modified_at: '2026-10-24T10:00:00Z', size: 100 },
+          { id: 'aaaaaaaa-0000-4000-8000-000000000002', title: 'Second of /p', cwd: '/p', modified_at: '2026-10-24T09:00:00Z', size: 100, agent: { slug: 'olive' } },
+          { id: 'aaaaaaaa-0000-4000-8000-000000000003', title: 'Outside', cwd: '/q', modified_at: '2026-10-24T08:00:00Z', size: 100, outside_folder: true },
+        ];
+        const source = {
+          roles: async () => [{ role_key: 'worker', label: 'Worker' }, { role_key: 'reviewer', label: 'Reviewer' }, { role_key: 'lead', label: 'Lead', cap_is_lead: true }],
+          catalog: async () => ({ tools: [{ tool: 'claude', variant: 'docker', launcher_id: 'l_docker', containerized: true, available: true, label: 'Claude Code (Docker)', models: [{ id: 'haiku' }] },
+            { tool: 'claude', variant: 'native', launcher_id: 'l_native', containerized: false, available: true, label: 'Claude Code', models: [{ id: 'opus', label: 'Opus' }, { id: 'haiku', label: 'Haiku', default: true }] }] }),
+          claudeSessions: async (project, options) => { calls.push(['list', project, options.launcherID]); return { sessions, unreadable: 2, truncated: false }; },
+          spawn: async (room, params) => {
+            calls.push(['spawn', room, params.role, params.resume_session.slice(-1), params.resume_mode, params.new_room, params.launcher_id, params.model]);
+            if (params.resume_session.endsWith('3')) throw Object.assign(new Error('agent or spawn rate limit reached'), { code: 'spawn_limit' });
+            return { slug: 'copy-' + params.resume_session.slice(-1) };
+          },
+        };
+        const dialog = new ClaudeSessionImport(source);
+        await dialog.open({ projectID, homeRoomID: 'home_room' });
+        const waitFor = async test => { for (let i = 0; i < 100 && !test(); i++) await new Promise(resolve => setTimeout(resolve, 20)); };
+        await waitFor(() => document.querySelectorAll('#cc-import-list .cc-import-row').length === 3);
+        const shown = {
+          harnesses: [...document.querySelectorAll('#cc-import-harness option')].map(option => option.textContent),
+          models: [...document.querySelectorAll('#cc-import-model option')].map(option => [option.value, option.selected]),
+          roles: [...document.querySelectorAll('#cc-import-list select')].map(select => select.value),
+          roleOptions: [...document.querySelector('#cc-import-list select').options].map(option => option.value),
+          status: document.querySelector('#cc-import-status').textContent,
+          runDisabled: document.querySelector('#cc-import-run').disabled,
+          flags: [...document.querySelectorAll('#cc-import-list .cc-import-row')].map(row => [...row.querySelectorAll('.cc-session-flag')].map(flag => flag.textContent)),
+        };
+        document.querySelector('#cc-import-all').click();
+        shown.afterAll = { ticked: document.querySelectorAll('#cc-import-list input:checked').length, runDisabled: document.querySelector('#cc-import-run').disabled };
+        document.querySelector('#cc-import-list select').value = 'reviewer';
+        document.querySelector('#cc-import-run').click();
+        await waitFor(() => /started/.test(document.querySelector('#cc-import-status').textContent));
+        shown.states = [...document.querySelectorAll('#cc-import-list .cc-import-state')].map(state => state.textContent);
+        shown.final = document.querySelector('#cc-import-status').textContent;
+        shown.afterRun = { ticked: document.querySelectorAll('#cc-import-list input:checked').length, locked: [...document.querySelectorAll('#cc-import-list input')].map(box => box.disabled) };
+        shown.calls = calls;
+        document.querySelector('#cc-import-close').click();
+        return shown;
+      }, actualProjectID);
+      assert.deepEqual({ harnesses: imported.harnesses, models: imported.models, roles: imported.roles, roleOptions: imported.roleOptions, status: imported.status, runDisabled: imported.runDisabled, flags: imported.flags }, {
+        harnesses: ['Claude Code'], models: [['opus', false], ['haiku', true]], roles: ['worker', 'reviewer', 'worker'], roleOptions: ['worker', 'reviewer'],
+        status: '3 sessions (2 sessions could not be read)', runDisabled: true, flags: [[], ['continued by olive'], ['outside the project folder', 'needs approval']] }, 'the import dialog lists the sessions with preset roles and only a native harness');
+      assert.deepEqual(imported.afterAll, { ticked: 3, runDisabled: false });
+      assert.deepEqual(imported.calls, [['list', actualProjectID, 'l_native'],
+        ['spawn', 'home_room', 'reviewer', '1', 'fork', true, 'l_native', 'haiku'], ['spawn', 'home_room', 'reviewer', '2', 'fork', true, 'l_native', 'haiku'], ['spawn', 'home_room', 'worker', '3', 'fork', true, 'l_native', 'haiku']],
+        'each ticked session is started in order as a copy in a room of its own, through the native harness');
+      assert.deepEqual(imported.states, ['Started as copy-1', 'Started as copy-2', 'Not started: limit reached']);
+      assert.equal(imported.final, '2 of 3 sessions started; the project\'s agent or spawn-rate limit was reached, import the rest later.');
+      assert.deepEqual(imported.afterRun, { ticked: 1, locked: [true, true, false] }, 'started sessions are locked, the unstarted one stays ticked for another try');
+      // While an import runs its dialog cannot be closed (a reopened one could mix projects): Close is disabled and Escape is refused, both
+      // until the import is done.
+      const guarded = await first.evaluate(async projectID => {
+        const { ClaudeSessionImport } = await import('/js/claude-session-import.js');
+        let release; const gate = new Promise(resolve => { release = resolve; });
+        const rooms = [];
+        const source = {
+          roles: async () => [{ role_key: 'worker', label: 'Worker' }],
+          catalog: async () => ({ tools: [{ tool: 'claude', variant: 'native', launcher_id: 'l_native', containerized: false, available: true, label: 'Claude Code', models: [{ id: 'haiku', default: true }] }] }),
+          claudeSessions: async () => ({ sessions: [{ id: 'bbbbbbbb-0000-4000-8000-000000000001', title: 'Only one', cwd: '/p', modified_at: '2026-10-24T10:00:00Z', size: 1 }] }),
+          spawn: async room => { rooms.push(room); await gate; return { slug: 'copy-1' }; },
+        };
+        const dialog = new ClaudeSessionImport(source);
+        await dialog.open({ projectID, homeRoomID: 'room_one' });
+        const waitFor = async test => { for (let i = 0; i < 100 && !test(); i++) await new Promise(resolve => setTimeout(resolve, 20)); };
+        await waitFor(() => document.querySelectorAll('#cc-import-list .cc-import-row').length === 1);
+        document.querySelector('#cc-import-all').click();
+        document.querySelector('#cc-import-run').click();
+        await waitFor(() => rooms.length === 1);
+        dialog.homeRoomID = 'room_two'; // a reopen for another project changes what the dialog holds; the running import must not follow
+        const cancel = new Event('cancel', { cancelable: true });
+        document.querySelector('#cc-import-dialog').dispatchEvent(cancel);
+        const during = { closeDisabled: document.querySelector('#cc-import-close').disabled, escapeRefused: cancel.defaultPrevented, open: document.querySelector('#cc-import-dialog').open,
+          rolesLocked: [...document.querySelectorAll('#cc-import-list select')].every(select => select.disabled) };
+        // Opening it again for another project is refused, and a close from outside (it is a modal dialog, so the browser can also close it) is undone.
+        await dialog.open({ projectID: 'another_project', homeRoomID: 'room_other' });
+        during.rows = document.querySelectorAll('#cc-import-list .cc-import-row').length;
+        document.querySelector('#cc-import-dialog').close();
+        await new Promise(resolve => setTimeout(resolve, 50));
+        during.reopened = document.querySelector('#cc-import-dialog').open;
+        release();
+        await waitFor(() => /started/.test(document.querySelector('#cc-import-status').textContent));
+        const after = { closeDisabled: document.querySelector('#cc-import-close').disabled, escapeRefused: (() => { const again = new Event('cancel', { cancelable: true }); document.querySelector('#cc-import-dialog').dispatchEvent(again); return again.defaultPrevented; })() };
+        document.querySelector('#cc-import-close').click();
+        return { during, after, rooms };
+      }, actualProjectID);
+      assert.deepEqual(guarded, { during: { closeDisabled: true, escapeRefused: true, open: true, rolesLocked: true, rows: 1, reopened: true }, after: { closeDisabled: false, escapeRefused: false }, rooms: ['room_one'] }, 'a running import keeps its dialog open and its room');
     }
     assert.equal(await first.title(), '(2) aimebu');
     assert.ok(await first.evaluate(() => window.__soundPlays > 0), 'new inbox items did not play the chime');

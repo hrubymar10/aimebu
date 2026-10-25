@@ -1461,6 +1461,29 @@ CREATE TABLE imported_session (
   imported_at TEXT NOT NULL,
   PRIMARY KEY (machine_id, session_id)
 );
+`}, {86, `
+-- A Claude Code session can also be worked on as a copy: the agent's first turn forks it (--fork-session), Claude saves the copy under a new
+-- id, and the original stays as it was. session.fork_of is the original's id while the first turn has not yet reported the copy's id (the
+-- session still names the original then); imported_session keeps the original's id and, once known, the copy's. Copies of one original can be
+-- many, so an original is held by at most one agent only for a continued session (a partial unique index), and the table is keyed by agent.
+ALTER TABLE session ADD COLUMN fork_of TEXT;
+CREATE TABLE imported_session_new (
+  agent_id TEXT PRIMARY KEY REFERENCES agent(id),
+  machine_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'continue' CHECK (mode IN ('continue','fork')),
+  forked_session_id TEXT,
+  cwd TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  imported_by TEXT NOT NULL,
+  imported_at TEXT NOT NULL
+);
+INSERT INTO imported_session_new(agent_id,machine_id,session_id,mode,cwd,title,imported_by,imported_at)
+SELECT agent_id,machine_id,session_id,'continue',cwd,title,imported_by,imported_at FROM imported_session;
+DROP TABLE imported_session;
+ALTER TABLE imported_session_new RENAME TO imported_session;
+CREATE UNIQUE INDEX imported_session_continued ON imported_session(machine_id,session_id) WHERE mode='continue';
+CREATE INDEX imported_session_original ON imported_session(machine_id,session_id);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

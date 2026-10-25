@@ -1260,3 +1260,200 @@ func TestReconnectReplaysUsageAndCompactionOnce(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// specTap is the fake adapter that also remembers the spec of each turn it was asked to start.
+type specTap struct {
+	*adapter.Fake
+	specs chan adapter.TurnSpec
+}
+
+func (s *specTap) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Turn, error) {
+	s.specs <- spec
+	return s.Fake.Start(ctx, spec)
+}
+
+// A turn that forks a session is told so on the wire: the supervisor's adapter gets the original as the handle to resume plus the fork
+// flag, and the copy's id the turn reports replaces the original in the session.
+func TestMachineCarriesAForkedTurnAndItsCopyId(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	agent, turn, _, delivery := f.execution(t)
+	const original, copyID = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+	if err := f.db.Tx(context.Background(), func(tx *store.Tx) error {
+		for _, statement := range []string{
+			`UPDATE session SET native_session_id='` + original + `',native_session_started_at='2026-10-13T00:00:00.000000000Z',fork_of='` + original + `' WHERE id='ses_t6'`,
+			`INSERT INTO imported_session(agent_id,machine_id,session_id,mode,cwd,imported_by,imported_at) VALUES ('` + agent.ID + `','` + f.machineID + `','` + original + `','fork','/p','owner','now')`,
+		} {
+			if _, err := tx.Exec(statement); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	delivery.NativeSessionHandle, delivery.NativeSessionStarted, delivery.ForkSession = original, true, true
+	journal, err := supervisor.OpenJournal(context.Background(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	tap := &specTap{Fake: adapter.NewFake(), specs: make(chan adapter.TurnSpec, 1)}
+	tap.Script(turn.ID, adapter.Step{Kind: adapter.StepEmit, Event: adapter.Event{Kind: adapter.EventNativeSessionStarted, NativeSessionHandle: copyID}},
+		adapter.Step{Kind: adapter.StepEmit, Event: adapter.Event{Kind: adapter.EventFinalAnswer, Answer: json.RawMessage(`{"messages":[]}`)}},
+		adapter.Step{Kind: adapter.StepExit, Exit: adapter.ExitInfo{ExitCode: 0, TerminalEvent: true}})
+	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, tap)
+	ready := make(chan struct{}, 1)
+	client.OnReady = func() { ready <- struct{}{} }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = client.RunOnce(ctx) }()
+	select {
+	case <-ready:
+	case <-time.After(machineWaitGuard):
+		t.Fatal("supervisor did not connect")
+	}
+	if err := f.srv.Dispatch(ctx, delivery); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case spec := <-tap.specs:
+		if spec.NativeSessionHandle != original || !spec.NativeSessionStarted || !spec.ForkSession {
+			t.Fatalf("the adapter was not told to fork: %+v", spec)
+		}
+	case <-time.After(machineWaitGuard):
+		t.Fatal("no turn started")
+	}
+	deadline := time.Now().Add(machineWaitGuard)
+	for {
+		imported, ok, err := f.db.AgentImportedSession(context.Background(), agent.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok && imported.ForkedSessionID == copyID {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the copy's id was not recorded: %+v", imported)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	profile, err := f.db.AgentProfile(context.Background(), f.room.ID, agent.ID)
+	if err != nil || profile.NativeSessionID != copyID {
+		t.Fatalf("the session is the copy now: %+v err=%v", profile, err)
+	}
+}
+
+// A turn that forks a session is never sent to a supervisor that does not advertise it, however the machine got there: spawn checked once,
+// but the machine can reconnect with an older supervisor before the first turn, and one that ignores the flag would resume (and append
+// to) the original. The dispatcher holds such an agent without preparing turns and says so once; Dispatch refuses it as well.
+func TestForkedTurnWaitsForASupervisorThatCanFork(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	ctx := context.Background()
+	const original = "11111111-1111-4111-8111-111111111111"
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO role(id,key,label,body,role_key) VALUES ('role_fork','worker','Worker','worker','worker')`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES ('chk_fork',?,?,?)`, f.project.ID, f.machineID, "/tmp/fork")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := f.db.CreateAgent(ctx, store.Agent{Slug: "copy", ProjectID: f.project.ID, RoleID: "role_fork", Tool: "fake", Variant: "test", Model: "test", Provider: "test", MachineID: f.machineID, CheckoutID: "chk_fork", KeyHash: "key", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.AddMember(ctx, f.room.ID, "agent", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The agent is in two rooms and is asked in the second: the hold is said where the note is queued, not in the room it joined first.
+	second, err := f.db.CreateRoom(ctx, store.Room{ProjectID: f.project.ID, ParentID: f.room.ID, Kind: "task", Title: "second", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.AddMember(ctx, second.ID, "agent", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
+		_, err := tx.Exec(`INSERT INTO session(id,agent_id,generation,start_mode,started_at,native_session_id,native_session_started_at,fork_of) VALUES ('ses_fork',?,0,'native_resume','2026-10-13T00:00:00.000000000Z',?,'2026-10-13T00:00:00.000000000Z',?)`, agent.ID, original, original)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	journal, err := supervisor.OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	tap := &specTap{Fake: adapter.NewFake(), specs: make(chan adapter.TurnSpec, 4)}
+	tap.ScriptDefault(adapter.Step{Kind: adapter.StepEmit, Event: adapter.Event{Kind: adapter.EventFinalAnswer, Answer: json.RawMessage(`{"messages":[]}`)}}, adapter.Step{Kind: adapter.StepExit, Exit: adapter.ExitInfo{TerminalEvent: true}})
+	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, tap)
+	ready := make(chan struct{}, 1)
+	client.OnReady = func() { ready <- struct{}{} }
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() { _ = client.RunOnce(runCtx) }()
+	select {
+	case <-ready:
+	case <-time.After(machineWaitGuard):
+		t.Fatal("supervisor did not connect")
+	}
+	// The machine comes back with a supervisor that cannot fork.
+	f.srv.machineMu.Lock()
+	conn := f.srv.machines[f.machineID]
+	conn.supportsSessionFork = false
+	f.srv.machineMu.Unlock()
+	if err := f.srv.Dispatch(ctx, protocol.Delivery{AgentID: agent.ID, Generation: 0, TurnID: "turn_never", Mode: adapter.ModeNormal, NativeSessionHandle: original, NativeSessionStarted: true, ForkSession: true}); !errors.Is(err, ErrSupervisorUpdateNeeded) {
+		t.Fatalf("a forking delivery to a supervisor that cannot fork: %v", err)
+	}
+	response := f.request("POST", "/api/rooms/"+second.ID+"/messages", map[string]string{"body": "@copy please work"}, true)
+	if response.StatusCode != 201 {
+		t.Fatalf("post status=%d", response.StatusCode)
+	}
+	response.Body.Close()
+	dispatcher := NewDispatcher(f.srv)
+	for i := 0; i < 3; i++ {
+		if count, err := dispatcher.Pass(ctx); err != nil || count != 0 {
+			t.Fatalf("pass %d dispatched %d: %v", i, count, err)
+		}
+	}
+	select {
+	case spec := <-tap.specs:
+		t.Fatalf("the supervisor that cannot fork was given a turn: %+v", spec)
+	case <-time.After(300 * time.Millisecond):
+	}
+	held := func(room string) int {
+		messages, err := f.db.ListMessagesAfter(ctx, room, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		notes := 0
+		for _, message := range messages {
+			if message.AuthorKind == "system" && strings.Contains(message.Body, "copy is held") && strings.Contains(message.Body, "predates") {
+				notes++
+			}
+		}
+		return notes
+	}
+	if inSecond, inFirst := held(second.ID), held(f.room.ID); inSecond != 1 || inFirst != 0 {
+		t.Fatalf("the hold was said %d times where the note is queued and %d in the first room, want once and never", inSecond, inFirst)
+	}
+	// With a supervisor that can fork again the turn goes out, forking the original.
+	f.srv.machineMu.Lock()
+	conn.supportsSessionFork = true
+	f.srv.machineMu.Unlock()
+	if count, err := dispatcher.Pass(ctx); err != nil || count != 1 {
+		t.Fatalf("dispatch after the supervisor can fork: %d %v", count, err)
+	}
+	select {
+	case spec := <-tap.specs:
+		if spec.NativeSessionHandle != original || !spec.NativeSessionStarted || !spec.ForkSession {
+			t.Fatalf("the turn does not fork the original: %+v", spec)
+		}
+	case <-time.After(machineWaitGuard):
+		t.Fatal("no turn started")
+	}
+}

@@ -67,6 +67,7 @@ export class AgentsPanel {
     this.nameInput.oninput = () => { this.nameRequestID = (this.nameRequestID || 0) + 1; this.nameError.textContent = ''; };
     this.form.elements.start_room.onchange = () => { this.syncWorktreeOption(); this.updateSpawnSubmit(); };
     this.form.onsubmit = event => { event.preventDefault(); this.spawn(); };
+    document.querySelector('#spawn-resume-mode').onchange = () => this.renderResume(true);
     document.querySelector('#switch-cancel').onclick = () => this.switchDialog.close();
     this.switchForm.elements.tool.onchange = () => this.renderSwitchModels();
     this.switchForm.elements.model.onchange = () => this.renderSwitchModels(false);
@@ -607,7 +608,7 @@ export class AgentsPanel {
     this.dialog.close();
     void this.sessionPicker.open({ projectID, machineID, machineName, launcherID, onPick: session => {
       void this.openSpawn({ resume: { kind: 'claude_session', session_id: session.id, tool: 'claude', resumable: true, cwd: session.cwd, title: session.title || '',
-        outside_folder: !!session.outside_folder, active: !!session.active, machine_id: session.machine_id || machineID, launcher_id: session.launcher_id || '' } });
+        outside_folder: !!session.outside_folder, active: !!session.active, held_by: session.agent?.slug || '', machine_id: session.machine_id || machineID, launcher_id: session.launcher_id || '' } });
     } });
   }
   // The rooms a v1 agent can be started in: the project's open task rooms. Its history may be only in the home room (which keeps its own
@@ -785,24 +786,38 @@ export class AgentsPanel {
     if (match) this.form.elements.model.value = match.value;
   }
   // The banner of the start-from-v1 dialog: what is being started, where it will work, and what to confirm.
-  renderResume() {
+  // keep: a change of the continue/copy choice re-renders the banner and keeps what was ticked; opening the dialog starts from "continue".
+  renderResume(keep = false) {
     const resume = this.pendingResume;
     const box = document.querySelector('#spawn-resume'), text = document.querySelector('#spawn-resume-text'), notes = document.querySelector('#spawn-resume-notes');
     const confirm = document.querySelector('#spawn-resume-confirm'), confirmLabel = document.querySelector('#spawn-resume-confirm-label');
     box.hidden = !resume;
     this.syncWorktreeOption();
     const continuing = resume?.kind === 'claude_session';
-    this.form.querySelector('h2').textContent = continuing ? 'Continue a Claude Code session' : resume ? `Start ${resume.slug} as a v2 agent` : 'Spawn';
-    confirm.checked = false; confirmLabel.hidden = continuing ? !resume.active : !resume?.v1_active; notes.textContent = '';
+    const modeBox = document.querySelector('#spawn-resume-mode');
+    // A session an agent already continues can only be copied.
+    const held = continuing && !!resume.held_by;
+    if (continuing && !keep) this.form.elements.resume_mode.value = held ? 'fork' : 'continue';
+    modeBox.hidden = !continuing;
+    modeBox.querySelector('input[value=continue]').disabled = held;
+    const forking = continuing && this.form.elements.resume_mode.value === 'fork';
+    this.form.querySelector('h2').textContent = continuing ? (forking ? 'Work on a copy of a Claude Code session' : 'Continue a Claude Code session') : resume ? `Start ${resume.slug} as a v2 agent` : 'Spawn';
+    // Closing the session matters only when it is continued; a copy leaves the original as it is.
+    if (!keep) confirm.checked = false;
+    confirmLabel.hidden = continuing ? !resume.active || forking : !resume?.v1_active; notes.textContent = '';
     // The one box means "nothing else has this session open"; its words are for what the person is continuing.
     confirmLabel.replaceChildren(confirm, document.createTextNode(continuing ? ' I closed this session in my terminal' : ' v1 is not running this session any more'));
     if (!resume) return;
     if (continuing) {
-      text.textContent = `This continues the Claude Code session ${resume.title ? `"${resume.title}" ` : ''}(${resume.session_id.slice(0, 8)}), working in ${resume.cwd}. It carries on from where the session stopped, in the same transcript.`;
+      const named = `${resume.title ? `"${resume.title}" ` : ''}(${resume.session_id.slice(0, 8)})`;
+      text.textContent = forking
+        ? `This works on a copy of the Claude Code session ${named}, in ${resume.cwd}. The agent starts from everything said so far, and what it does goes to the copy: the original stays exactly as it is.`
+        : `This continues the Claude Code session ${named}, working in ${resume.cwd}. It carries on from where the session stopped, in the same transcript.`;
       const lines = [];
       if (!this.spawnRoom()) lines.push('This project has no open task room to start it in.');
       if (resume.outside_folder) lines.push(`It works in ${resume.cwd}, outside the project folder, so the owner must approve it in the Inbox before it starts.`);
-      if (resume.active) lines.push('A Claude process has this session open. Close it first: two processes on one session corrupt it.');
+      if (held) lines.push(`${resume.held_by} already continues this session, so it can only be copied.`);
+      if (resume.active && !forking) lines.push('A Claude process has this session open. Close it first: two processes on one session corrupt it.');
       notes.textContent = lines.join(' ');
       return;
     }
@@ -874,9 +889,10 @@ export class AgentsPanel {
     const name = resume && !continuing ? '' : this.nameInput.value.trim();
     if (name && !/^[a-z][a-z0-9_-]{1,19}[a-z0-9]$/.test(name)) { this.nameError.textContent = 'A name is 3 to 21 characters: lowercase letters, digits, - and _, starting with a letter and ending with a letter or digit.'; this.nameInput.focus(); return; }
     if (resume?.resumable && selected.tool !== resume.tool) { this.error.textContent = `To continue this session the tool must be ${resume.tool}.`; return; }
-    if (continuing && resume.active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that you closed this session.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
+    const forkMode = continuing && this.form.elements.resume_mode.value === 'fork';
+    if (continuing && !forkMode && resume.active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that you closed this session.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
     if (!continuing && resume?.v1_active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that v1 is not running this session any more.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
-    try { const card = await this.source.spawn(target.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(name ? { name } : {}), ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume && !continuing ? { resume_legacy: resume.legacy_id, confirm_v1_idle: document.querySelector('#spawn-resume-confirm').checked } : {}), ...(continuing ? { resume_session: resume.session_id, confirm_session_closed: document.querySelector('#spawn-resume-confirm').checked, new_room: this.form.elements.start_room.value === NEW_ROOM } : {}) });
+    try { const card = await this.source.spawn(target.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(name ? { name } : {}), ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume && !continuing ? { resume_legacy: resume.legacy_id, confirm_v1_idle: document.querySelector('#spawn-resume-confirm').checked } : {}), ...(continuing ? { resume_session: resume.session_id, resume_mode: forkMode ? 'fork' : 'continue', confirm_session_closed: !forkMode && document.querySelector('#spawn-resume-confirm').checked, new_room: this.form.elements.start_room.value === NEW_ROOM } : {}) });
       this.dialog.close(); this.form.reset();
       // A session continued in a room of its own: that room is where the person goes.
       if (continuing && card?.room_id && card.room_id !== this.room.id && card.room_id !== target.id) await this.showRoomByID?.(this.room.project_id, card.room_id);

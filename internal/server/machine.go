@@ -40,6 +40,7 @@ type machineConn struct {
 	capabilities         []protocol.CapabilityReport
 	supportsPathProbe    bool
 	supportsSessionScan  bool
+	supportsSessionFork  bool
 	supportsWorktree     bool
 	supportsLaunchers    bool
 	supportsDetect       bool
@@ -292,7 +293,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
 	c.lastSeen.Store(time.Now().UnixNano())
 	s.machineMu.Lock()
 	old := s.machines[machineID]
@@ -681,6 +682,10 @@ func answerReceiptFrame(receipt store.AnswerReceipt) protocol.Frame {
 		Digest: receipt.Digest, Result: receipt.Result, Details: details}
 }
 
+// ErrSupervisorUpdateNeeded is a delivery the machine's supervisor cannot be trusted with: it works on a copy of a Claude Code session, and
+// the supervisor does not advertise supports_session_fork.
+var ErrSupervisorUpdateNeeded = errors.New("supervisor_update_needed")
+
 // Dispatch is the T6a test hook. T8 will select queued notes and build these
 // deliveries; this boundary applies admission checks before enqueueing.
 func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error {
@@ -696,6 +701,11 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 		_ = c.conn.Close(websocket.StatusPolicyViolation, "machine credential revoked")
 		c.stop()
 		return err
+	}
+	// Checked on every delivery, not once at spawn: the machine may have reconnected with an older supervisor since. One that does not know
+	// the flag would run `claude --resume <original>` without --fork-session, writing into the original transcript for good.
+	if delivery.ForkSession && !c.supportsSessionFork {
+		return ErrSupervisorUpdateNeeded
 	}
 	c.boundMu.RLock()
 	generation, ok := c.bound[delivery.AgentID]

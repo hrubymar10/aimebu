@@ -98,8 +98,13 @@ capability.
 The native Claude Code adapter starts one `claude -p --output-format
 stream-json` process for each wake. When a delivery carries a native session
 handle and the started flag, it passes that exact value with `--resume`; a
-handle without the started flag (the first turn) goes out as `--session-id`. It
-never uses ambiguous continue-last-session flags. The input prompt is one JSON object containing
+handle without the started flag (the first turn) goes out as `--session-id`. A turn
+with the fork flag (the first turn of an agent working on a copy of an existing
+Claude Code session, see [claude-sessions](claude-sessions.md#working-on-a-copy-fork))
+resumes the original with `--resume <id> --fork-session`, and reports the first
+session id that differs from the original as the turn's `native_session_started`
+(the copy's id); later turns resume that id. It never uses ambiguous
+continue-last-session flags. The input prompt is one JSON object containing
 the turn ID, notes, context, and allowed tools.
 The Claude schema spells out `ask:{kind,text,options,free_text}` for inbox
 questions. Its prompt tells a lead to continue after `create_room` and target

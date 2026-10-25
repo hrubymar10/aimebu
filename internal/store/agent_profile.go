@@ -53,13 +53,17 @@ func (s *Store) AgentProfile(ctx context.Context, roomID, agentID string) (Agent
 	if err != nil {
 		return AgentProfile{}, err
 	}
-	var native sql.NullString
-	err = s.db.QueryRowContext(ctx, `SELECT native_session_id,start_mode,started_at FROM session WHERE agent_id=? ORDER BY generation DESC LIMIT 1`, agentID).
-		Scan(&native, &p.StartMode, &p.SessionStartedAt)
+	var native, forkOf sql.NullString
+	err = s.db.QueryRowContext(ctx, `SELECT native_session_id,start_mode,started_at,fork_of FROM session WHERE agent_id=? ORDER BY generation DESC LIMIT 1`, agentID).
+		Scan(&native, &p.StartMode, &p.SessionStartedAt, &forkOf)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return AgentProfile{}, err
 	}
 	p.NativeSessionID = native.String
+	if forkOf.Valid && native.String == forkOf.String {
+		// A copy that its first turn has not named yet: the session id still names the original, which is not this agent's session.
+		p.NativeSessionID = ""
+	}
 	if err := s.db.QueryRowContext(ctx, `SELECT canonical_path FROM checkout WHERE id=?`, checkoutID).Scan(&p.Cwd); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return AgentProfile{}, err
 	}

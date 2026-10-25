@@ -252,7 +252,7 @@ agents.projectRooms = projectID => [...sidebar.rooms.values()].filter(room => ro
 agents.showRoom = room => selectRoom(room);
 // A room the server made (a continued Claude Code session's): refresh the project's list so it is there, then open it.
 agents.showRoomByID = async (projectID, roomID) => { await sidebar.refreshProject(projectID); const room = sidebar.rooms.get(roomID); if (room) await selectRoom(room); };
-const settings = new SettingsPanel(createUsagesSource(), () => ({ projects: [...sidebar.projects.values()], selectedProjectID: chat.room?.project_id }), notifications);
+const settings = new SettingsPanel(createUsagesSource(), () => ({ projects: [...sidebar.projects.values()], rooms: [...sidebar.rooms.values()], selectedProjectID: chat.room?.project_id }), notifications);
 inbox.openUsages = () => settings.open('usages');
 chat.projectSettings = settings.project; // the home room's settings show the same project form
 // Archiving or reopening a project in Settings: take its new state from the server now, as the event that follows would.

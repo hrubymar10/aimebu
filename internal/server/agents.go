@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -47,7 +48,15 @@ type spawnRequest struct {
 	ResumeSession        string `json:"resume_session,omitempty"`
 	ConfirmSessionClosed bool   `json:"confirm_session_closed,omitempty"`
 	NewRoom              bool   `json:"new_room,omitempty"`
+	// ResumeMode is how a Claude Code session is taken over: "continue" appends to the original, "fork" works on a copy (the first turn runs
+	// with --fork-session) and leaves the original as it is. Whoever does not say gets "fork": the safe choice for a caller that cannot ask.
+	ResumeMode string `json:"resume_mode,omitempty"`
 }
+
+const (
+	resumeContinue = "continue"
+	resumeFork     = "fork"
+)
 
 type spawnCatalogModel struct {
 	ID      string `json:"id"`
@@ -537,9 +546,18 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		case req.Worktree:
 			apiError(w, 400, "invalid_request", "a continued session runs where it was made, so it cannot use a worktree")
 			return
+		case req.ResumeMode != "" && req.ResumeMode != resumeContinue && req.ResumeMode != resumeFork:
+			apiError(w, 400, "invalid_request", "resume_mode is continue or fork")
+			return
 		}
-	} else if req.NewRoom || req.ConfirmSessionClosed {
-		apiError(w, 400, "invalid_request", "new_room and confirm_session_closed belong to resume_session")
+		if req.ResumeMode == "" {
+			// Also what the idempotency digest below sees, so leaving it out and asking for fork are one request. Logged, because the
+			// default is a copy where an earlier build continued: a caller that meant to continue says so.
+			log.Printf("spawn: resume_mode not given for Claude Code session %s by %s %s, defaulting to fork", req.ResumeSession, actorKind, actorID)
+			req.ResumeMode = resumeFork
+		}
+	} else if req.NewRoom || req.ConfirmSessionClosed || req.ResumeMode != "" {
+		apiError(w, 400, "invalid_request", "new_room, confirm_session_closed and resume_mode belong to resume_session")
 		return
 	}
 	key := r.Header.Get("Idempotency-Key")
@@ -741,7 +759,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		input.Slug = req.Name
 		if session != nil {
 			input.ResumeHandle = session.ID
-			input.ResumeSession = &store.ResumeSession{ID: session.ID, CWD: path, Title: session.Title}
+			input.ResumeSession = &store.ResumeSession{ID: session.ID, CWD: path, Title: session.Title, Fork: req.ResumeMode == resumeFork}
 			if req.NewRoom {
 				input.NewRoomTitle = sessionRoomTitle(*session)
 			}
