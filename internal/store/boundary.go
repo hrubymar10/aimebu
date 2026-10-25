@@ -329,7 +329,7 @@ func (s *Store) DecideBoundary(ctx context.Context, itemID, userID, key, choice 
 				if _, err := tx.Exec(`UPDATE boundary_pending SET state='resolved' WHERE inbox_id=?`, itemID); err != nil {
 					return "", err
 				}
-				if _, err := tx.setAgentDesired(agentID, "user", userID, "active", desiredRev); err != nil {
+				if _, err := tx.setAgentDesired(agentID, "user", userID, "active", desiredRev, true); err != nil {
 					return "", err
 				}
 			}

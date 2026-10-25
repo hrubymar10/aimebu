@@ -128,6 +128,11 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,lifecycle,depth FROM room WHERE id=?`, in.RoomID).Scan(&projectID, &lifecycle, &depth); err != nil {
 		return AgentCard{}, err
 	}
+	// The route's guard looks before this transaction starts; an archive that commits in between is caught here, so no agent starts in an
+	// archived project.
+	if err := tx.refuseArchived(projectID); err != nil {
+		return AgentCard{}, err
+	}
 	if lifecycle != "open" || depth > tx.maxDepth {
 		return AgentCard{}, ErrInvalidTransition
 	}
@@ -512,14 +517,20 @@ func (s *Store) AgentCardByID(ctx context.Context, id string) (AgentCard, error)
 }
 
 func (tx *Tx) SetAgentDesired(id, actorID, desired string, rev int64) (AgentCard, error) {
-	return tx.setAgentDesired(id, "user", actorID, desired, rev)
+	return tx.setAgentDesired(id, "user", actorID, desired, rev, true)
+}
+
+// setAgentDesiredTrusted is SetAgentDesired for a caller that has already decided the actor may do this to every agent of the project
+// (archiving a project is the owner's or an admin's, who need not be an operator member): the per-agent membership check is skipped.
+func (tx *Tx) setAgentDesiredTrusted(id, actorID, desired string, rev int64) (AgentCard, error) {
+	return tx.setAgentDesired(id, "user", actorID, desired, rev, false)
 }
 
 func (tx *Tx) SetAgentDesiredByAgent(id, actorID, desired string, rev int64) (AgentCard, error) {
-	return tx.setAgentDesired(id, "agent", actorID, desired, rev)
+	return tx.setAgentDesired(id, "agent", actorID, desired, rev, true)
 }
 
-func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64) (AgentCard, error) {
+func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64, authorize bool) (AgentCard, error) {
 	var projectID, current, observed, checkoutID, tool, roleKey, roleCardinality string
 	var roleDeleted bool
 	var oldRev int64
@@ -528,11 +539,19 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64)
 		FROM agent a JOIN role r ON r.id=a.role_id WHERE a.id=?`, id).Scan(&projectID, &current, &oldRev, &observed, &generation, &checkoutID, &tool, &roleKey, &roleCardinality, &roleDeleted); err != nil {
 		return AgentCard{}, err
 	}
-	if err := tx.authorizeSpawnActor(projectID, actorKind, actorID, false); err != nil {
-		return AgentCard{}, err
+	if authorize {
+		if err := tx.authorizeSpawnActor(projectID, actorKind, actorID, false); err != nil {
+			return AgentCard{}, err
+		}
 	}
 	if rev != oldRev {
 		return AgentCard{}, ErrStaleRev
+	}
+	if desired == "active" {
+		// Stopping and pausing an agent of an archived project stay possible (they are how it is freed); starting one is not.
+		if err := tx.refuseArchived(projectID); err != nil {
+			return AgentCard{}, err
+		}
 	}
 	if desired != "stopped" {
 		var pending bool

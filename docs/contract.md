@@ -36,7 +36,9 @@ isolation. Migrations may reshape tables later.
 
 Projects, rooms, people
 - **project**(id, name, folder, repo_url?, gate[open|
-  paused], gate_rev, control_desired[active|paused|stopped], created_at)
+  paused], gate_rev, control_desired[active|paused|stopped], created_at,
+  archived_at?) — `archived_at` (migration 80) is NULL for a live project; see
+  §3.5b.
 - **room**(id, project_id, parent_id?, depth, kind[home|task|lobby|dm],
   dm_key? UNIQUE, lifecycle[open|closing|closed], gate[open|paused],
   gate_rev, control_desired[active|paused|stopped], lifecycle_rev, title,
@@ -596,6 +598,66 @@ lifecycle `open → closing → closed → open`; gate `open ⇄ paused`.
   to the next valid instant, and a fall overlap runs once at its first
   occurrence.
 
+### 3.5b project — live → archived → deleted
+- Archive (owner or admin, who need not be a member): `archived_at` is set, the
+  project gate closes (`gate=paused`, `gate_rev` +1) so nothing dispatches,
+  every agent that is not stopped goes `desired=stopped` (the actor's
+  membership is not required per agent: the owner or an admin decides for the
+  project), its schedules are switched off, and its open question, approval,
+  `usage_info` and `usage_limit` inbox items are withdrawn (recovery and
+  delivery-failure items stay, to be resolved). Rooms and messages are
+  untouched. Each agent is stopped in a savepoint of its own: one that cannot
+  be stopped (its execution is unknown until a recovery decision, `lost`) does
+  not keep the project live; it is listed in the answer's `stop_failed` and
+  stays as it is until its recovery item is decided (below). Archiving an archived project changes nothing. Event
+  `project_archived`.
+- Read-only: while `archived_at` is set the server refuses, with `409
+  project_archived`, every change a person makes through a project, room,
+  agent, inbox or message route (`POST|PUT|PATCH|DELETE`), except reopening,
+  deleting, archiving again, marking a room read, a person's own room
+  notification preference, resolving a recovery decision or a failed delivery
+  (`POST /api/inbox/{item}/decision|dismiss`), stopping or pausing one agent
+  (`POST /api/agents/{id}/control`, whose `active` is refused inside the store),
+  and removing a room worktree (so the project can be deleted). In an archived
+  project a recovery decision can only be Abandon (any other choice, which would
+  start work, is `409 project_archived`), and it ends with the agent stopped
+  and its machine told, which counts as the stop confirmation delete needs.
+  Reading is unaffected. Whoever may write to the project at all (a member, the
+  instance owner, an admin) is refused with `409 project_archived`, admins
+  included; anyone else gets what the route answers for an object they cannot
+  see. A start through `POST /api/agents/{id}/control` is refused before the
+  launcher, Docker and remote-folder checks. The transactions that start work
+  check it too, so an archive that commits between a route's check and its
+  transaction still wins: spawning into an archived project, or restarting one
+  of its agents, fails with `project_archived`. Agents are stopped and the gate
+  is closed, so no turn runs either.
+- Reopen: `archived_at` is cleared and the gate returns to what the project's
+  own control and daily limits say (`open` only when `control_desired=active`
+  and no usage limit has paused it today, else `paused`). Agents stay stopped
+  and schedules stay off. Event `project_reopened`.
+- Delete (owner or admin; only an archived project; the body must carry the
+  project's exact name, else 400): refused with 409 `project_busy` unless every
+  agent that is not revoked is confirmed stopped (`desired` and `observed` both
+  `stopped`) or sits on a revoked machine, which can never come back (an agent
+  on an approved machine that is merely offline may still be running its turn,
+  and would run on, unknown to the server, when the machine returns: bring the
+  machine online or revoke it), and while a room worktree is not `removed` (an
+  instance still `ready` or `preserved`). It
+  deletes the project's rows in every table that depends on it (rooms
+  including the home room, messages, reactions, attachments and their files,
+  agents and their turns, usage, memory, schedules, task notes, inbox items,
+  worktree records, members, machine permissions and folders, role spawn
+  defaults, its events), and the rows that name the project with no foreign
+  key (cleanup log, usage limits, scope control). Rows that point at the
+  project through an optional column (project-scoped prompt overrides, roles
+  and invites, whose empty project means "global", and events, whose empty
+  project means the owner's) are deleted, never turned into global ones. A
+  schema test fails when a table that names a project is in neither group.
+  Files in the project folder, worktrees on disk and output logs kept on
+  machines are not touched. The one event `project_removed` has no project
+  (its project is gone) and names `user_ids`, the members it concerned, who are
+  the people it is visible to (plus the instance owner).
+
 ### 3.6 writer reservation (checkout)
 `none → reserved` (S, on spawn/assign of a `cap_singleton_writer` agent) →
 `releasing` (S, on stop/close/reassign/role-change/move request) → `none`
@@ -977,6 +1039,11 @@ CC/Codex, prompt-only on pi):
    it with another linked continuation carrying the same recovery context if
    the agent remains active. If Stop arrived first, its notes are aborted and
    the stop is confirmed.
+7. In an archived project (§3.5b) the only recovery decision is Abandon: it
+   ends with the agent `desired=stopped`, its machine told to stop it, and the
+   notes of the lost turn aborted. That counts as the stop confirmation a
+   project delete needs; Resume, Retry, Continue and Override are refused with
+   `409 project_archived`, since they would start work again.
 
 ## 6. Wake eligibility (note creation)
 

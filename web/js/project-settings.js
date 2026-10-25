@@ -3,6 +3,8 @@ import { request, rights } from './api.js';
 import { ScopeControl } from './scope-control.js';
 import { UsageLimit } from './usage-limit.js';
 import { SpawnDefaultsEditor } from './spawn-defaults-editor.js';
+import { iconButton } from './icon-button.js';
+import { confirmDialog, formDialog } from './dialogs.js';
 
 // The project's own settings (name and folder, its agents, daily limits, the home room's lead-only rule, recovery and worktrees). One implementation, two places: the
 // Project section of the home room's settings and Settings → Project. Both dialogs are modal, so the one form body moves into whichever
@@ -24,12 +26,78 @@ export class ProjectSettings {
     this.roleDefaultsSection.innerHTML = '<h3>Default agents per role</h3><p class="settings-intro">Inherit the global list or set an ordered list for this project.</p>';
     this.roleDefaultsRows = document.createElement('div'); this.roleDefaultsSection.append(this.roleDefaultsRows);
     this.body.querySelector('#project-usage-limit').after(this.roleDefaultsSection);
+    this.buildLifecycle();
     this.projectID = '';
     this.mounts = [];
     this.details.onsubmit = event => { event.preventDefault(); this.saveDetails(); };
     this.autoResume.onchange = () => this.saveProject();
     this.worktrees.onchange = () => this.saveWorktrees();
     this.homeLeadOnly.onchange = () => this.saveToggle(this.homeLeadOnly, 'home_lead_only', this.homeLeadOnly.checked);
+  }
+  // Archive, reopen and delete: the project's owner or an admin. An archived project is read-only and its agents are stopped; only an
+  // archived one can be deleted, after its name is typed. Each row shows only what applies to the project's state.
+  buildLifecycle() {
+    const section = this.lifecycle = document.createElement('div'); section.className = 'settings-section'; section.id = 'project-lifecycle';
+    const group = document.createElement('div'); group.className = 'settings-group'; group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Archive and delete');
+    const heading = document.createElement('h3'); heading.textContent = 'Archive';
+    const row = (id, title, description, label, glyph, danger, action) => {
+      const holder = document.createElement('div'); holder.className = 'settings-row'; holder.id = `${id}-row`;
+      const info = document.createElement('div'); info.className = 'settings-row-info';
+      const name = document.createElement('label'); name.className = 'settings-label'; name.htmlFor = id; name.textContent = title;
+      const desc = document.createElement('span'); desc.className = 'settings-desc'; desc.id = `${id}-desc`; desc.textContent = description;
+      info.append(name, desc);
+      const control = document.createElement('div'); control.className = 'settings-control';
+      const button = iconButton(glyph, label, { danger }); button.id = id; button.setAttribute('aria-describedby', desc.id); button.onclick = action;
+      control.append(button); holder.append(info, control);
+      return { holder, button };
+    };
+    this.archiveRow = row('project-archive', 'Archive project', 'Make the project and all its rooms read-only, stop its agents and switch its schedules off. It moves to Archived projects in the room list, and can be reopened.', 'Archive project', 'archive', false, () => this.archive());
+    this.reopenRow = row('project-reopen', 'Reopen project', 'Let the project accept changes again. Its agents stay stopped and its schedules stay off until you start them.', 'Reopen project', 'reopen', false, () => this.reopen());
+    this.deleteRow = row('project-delete', 'Delete project', 'Delete this archived project for good, with every room, message, attachment, agent, memory and setting in it. Files in the project folder and worktrees on disk are not touched.', 'Delete project', 'trash', true, () => this.remove());
+    this.lifecycleNote = document.createElement('p'); this.lifecycleNote.className = 'settings-desc'; this.lifecycleNote.setAttribute('role', 'status');
+    group.append(this.archiveRow.holder, this.reopenRow.holder, this.deleteRow.holder);
+    section.append(heading, group, this.lifecycleNote);
+    this.body.querySelector('#project-settings-error').before(section);
+  }
+  // Shows the rows that apply to this project's state, for the people who may use them.
+  showLifecycle(project, allowed) {
+    const archived = !!project?.archived_at;
+    this.archiveRow.holder.hidden = !project || archived;
+    this.reopenRow.holder.hidden = !project || !archived;
+    this.deleteRow.holder.hidden = !project || !archived;
+    for (const { button } of [this.archiveRow, this.reopenRow, this.deleteRow]) { button.disabled = !allowed; }
+    this.lifecycle.hidden = !project;
+    this.lifecycleNote.textContent = !project ? '' : !allowed ? 'Only the project owner or an admin can archive, reopen or delete a project.' : archived ? `Archived ${new Date(project.archived_at).toLocaleString()}. It is read-only.` : '';
+  }
+  async lifecycleCall(button, path, options) {
+    const id = this.projectID; this.error.textContent = ''; button.disabled = true;
+    try { return { data: await request(`/api/projects/${encodeURIComponent(id)}${path}`, options) }; }
+    catch (error) { if (this.projectID === id) this.error.textContent = error.message; return null; }
+    finally { button.disabled = false; }
+  }
+  currentProject() { return this.projectContext().projects.find(item => item.id === this.projectID); }
+  async archive() {
+    const project = this.currentProject(); if (!project) return;
+    if (!await confirmDialog(`Archive “${project.name}”? Every agent in it will be stopped, its schedules switched off and its rooms made read-only. You can reopen it later.`, { title: 'Archive project', confirm: 'Archive project', danger: true })) return;
+    const done = await this.lifecycleCall(this.archiveRow.button, '/archive', { method: 'POST' });
+    if (!done) return;
+    await this.onLifecycle?.(project.id);
+    // An agent whose execution is unknown cannot be stopped until its recovery is decided in the Inbox; say so beside the result.
+    const failed = done.data?.stop_failed || [];
+    if (failed.length && this.projectID === project.id) this.lifecycleNote.textContent = `Archived. ${failed.length} agent${failed.length === 1 ? '' : 's'} could not be stopped: ${failed.map(item => item.error).join('; ')}. Choose Abandon on its recovery item in the Inbox: that stops it. The project cannot be deleted before every agent has stopped.`;
+  }
+  async reopen() {
+    const project = this.currentProject(); if (!project) return;
+    if (await this.lifecycleCall(this.reopenRow.button, '/reopen', { method: 'POST' })) await this.onLifecycle?.(project.id);
+  }
+  async remove() {
+    const project = this.currentProject(); if (!project) return;
+    const answer = await formDialog({ title: 'Delete project', danger: true, confirm: 'Delete project',
+      message: `This permanently deletes “${project.name}”: every room, message, reaction, attachment, agent, usage record, memory, schedule, task note, Inbox item and member. It cannot be undone. Files in the project folder and worktrees on disk are not touched.`,
+      fields: [{ name: 'name', label: `Type “${project.name}” to confirm`, required: true, requiredMessage: 'Type the project name to confirm.', validate: value => value === project.name ? '' : 'That is not the project name.' }] });
+    if (!answer) return;
+    const done = await this.lifecycleCall(this.deleteRow.button, '', { method: 'DELETE', body: { name: answer.name } });
+    if (done) await this.onRemoved?.(project.id);
   }
   // Show the settings of a project inside parent. A later mount wins; release hands the body back to the mount before it.
   mount(parent, projectID) {
@@ -57,7 +125,8 @@ export class ProjectSettings {
     form.elements.name.value = project?.name || ''; form.elements.folder.value = project?.folder || '';
     this.detailsLoaded = { name: form.elements.name.value, folder: form.elements.folder.value };
     form.elements.name.disabled = !canName; form.elements.folder.disabled = !canFolder;
-    form.querySelector('#project-details-save').disabled = !canName && !canFolder;
+    form.querySelector('#project-details-save').disabled = !canName && !canFolder || !!project?.archived_at;
+    this.showLifecycle(project, canName);
     form.querySelector('#project-details-status').textContent = !project || canFolder ? '' : canName ? 'Only an admin can change the folder.' : 'Only the project owner can change these.';
   }
   async saveDetails() {

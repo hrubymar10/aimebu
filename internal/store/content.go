@@ -18,6 +18,8 @@ type Project struct {
 	RepoURL string `json:"repo_url"`
 	// Role is the caller's role in the project (owner, operator, viewer); it is only filled for a user's own project list.
 	Role string `json:"role,omitempty"`
+	// ArchivedAt is when the project was archived (read-only, agents stopped); empty for a live project.
+	ArchivedAt string `json:"archived_at,omitempty"`
 }
 
 func (s *Store) CreateProject(ctx context.Context, project Project) (Project, error) {

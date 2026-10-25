@@ -15,7 +15,7 @@ const labels = {
   room_created: 'Room created', room_renamed: 'Room renamed', room_closing: 'Room closing', room_closed: 'Room closed', room_reopened: 'Room reopened', room_removed: 'Room removed', room_close_blocked: 'Room close blocked',
   room_member_joined: 'Joined the room', room_member_left: 'Left the room',
   room_worktree_requested: 'Worktree requested', room_worktree_updated: 'Worktree updated', room_worktree_cancelled: 'Worktree cancelled',
-  project_created: 'Project created', project_updated: 'Project changed', project_member_joined: 'Joined the project', project_member_changed: 'Project member changed', project_settings_updated: 'Project settings updated',
+  project_created: 'Project created', project_updated: 'Project changed', project_archived: 'Project archived', project_reopened: 'Project reopened', project_removed: 'Project removed', project_member_joined: 'Joined the project', project_member_changed: 'Project member changed', project_settings_updated: 'Project settings updated',
   provider_limit_detected: 'Provider usage limit reached', provider_limit_cleared: 'Provider usage limit cleared', native_session_reset: 'Started a fresh session',
   turn_lost: 'Turn lost', turn_never_started: 'Turn never started', turn_process_exit: 'Turn process exited', special_turn_abandoned: 'Special turn abandoned',
   diagnostic_requested: 'Diagnostic requested', answer_held: 'Answer held',

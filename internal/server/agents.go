@@ -854,6 +854,8 @@ func (s *Server) enqueuePendingSpawns(ctx context.Context, machine *machineConn)
 
 func spawnError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, store.ErrProjectArchived):
+		apiError(w, 409, "project_archived", "this project is archived and read-only; reopen it to change anything")
 	case errors.Is(err, store.ErrInvalidScope):
 		apiError(w, 409, "invalid_scope", "bulk controls are unavailable in private chats")
 	case errors.Is(err, store.ErrForbidden):
@@ -899,6 +901,12 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	if req.Desired == "active" {
+		// Starting is the one control an archived project refuses: say so before the launcher, Docker and remote-folder checks, which
+		// would answer about things that cannot matter. (Stopping and pausing pass, to free an agent.) The store refuses it as well.
+		if archived, err := s.Store.ArchivedScope(r.Context(), userID(r), "agent", id); err == nil && archived {
+			apiError(w, 409, "project_archived", "this project is archived and read-only; reopen it to change anything")
+			return
+		}
 		card, err := s.Store.AgentCardByID(r.Context(), id)
 		if err != nil {
 			fail(w, err)

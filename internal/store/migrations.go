@@ -1396,7 +1396,10 @@ ALTER TABLE usage_record ADD COLUMN cost_total REAL;
 UPDATE usage_record SET cost_total=cost_est WHERE cost_total IS NULL AND cost_est IS NOT NULL AND agent_id IN (SELECT id FROM agent WHERE tool='claude');
 `}, {79, `
 -- The lead no longer implements anything itself: an unedited built-in lead body gains the ban and the rule for when no worker can be spawned.
-` + roleLeadNoImplementMigration()}}
+` + roleLeadNoImplementMigration()}, {80, `
+-- A project can be archived: read-only, its agents stopped, listed apart in the sidebar, and reopened later. NULL is a live project.
+ALTER TABLE project ADD COLUMN archived_at TEXT;
+`}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
 // Go omitted trailing zeros there, which made TEXT ordering unreliable.

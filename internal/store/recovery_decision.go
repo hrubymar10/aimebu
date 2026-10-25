@@ -16,10 +16,14 @@ type RecoveryDecision struct {
 	Choice string `json:"choice"`
 	TurnID string `json:"turn_id,omitempty"`
 	Rev    int    `json:"rev"`
+	// StoppedAgent is the agent an Abandon in an archived project stopped, for the caller to tell its machine. It is not part of the answer
+	// and is not kept with a replayed decision, which has already told it.
+	StoppedAgent *AgentCard `json:"-"`
 }
 
 func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice string, rev int) (RecoveryDecision, bool, error) {
 	digest := sha256.Sum256([]byte(itemID + "\x00" + choice + "\x00" + strconv.Itoa(rev)))
+	var stoppedAgent *AgentCard
 	result, reused, err := s.WithRequestKey(ctx, RequestKey{ActorKind: "user", ActorID: userID, Kind: "recovery_decision",
 		Key: key, Digest: hex.EncodeToString(digest[:])}, func(tx *Tx) (string, error) {
 		var projectID, roomID, agentID, kind, state, createdAt, options string
@@ -44,6 +48,14 @@ func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice 
 		}
 		if currentRev != rev {
 			return "", ErrStaleInboxRev
+		}
+		// In an archived project the only decision is Abandon, and it ends with the agent stopped: anything else would start work again.
+		archivedProject := false
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT archived_at IS NOT NULL FROM project WHERE id=?`, projectID).Scan(&archivedProject); err != nil {
+			return "", err
+		}
+		if archivedProject && choice != "abandon" {
+			return "", ErrProjectArchived
 		}
 		if state == "resolved" {
 			return "", ErrAlreadyResolved
@@ -145,6 +157,21 @@ func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice 
 				}
 			}
 		}
+		if archivedProject {
+			// The agent was left running by the archive because its execution was unknown; now that it is decided, it is stopped.
+			var desired string
+			var desiredRev int64
+			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT desired,desired_rev FROM agent WHERE id=?`, agentID).Scan(&desired, &desiredRev); err != nil {
+				return "", err
+			}
+			if desired != "stopped" {
+				card, err := tx.setAgentDesiredTrusted(agentID, userID, "stopped", desiredRev)
+				if err != nil {
+					return "", err
+				}
+				decision.StoppedAgent = &card
+			}
+		}
 		if _, err := tx.Exec(`UPDATE inbox_item SET state='resolved',rev=rev+1,resolved_by=?,resolved_at=? WHERE id=? AND state='open' AND rev=?`, userID, timestamp(), itemID, rev); err != nil {
 			return "", err
 		}
@@ -157,6 +184,7 @@ func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice 
 				return "", err
 			}
 		}
+		stoppedAgent = decision.StoppedAgent
 		data, err := json.Marshal(decision)
 		return string(data), err
 	})
@@ -166,6 +194,9 @@ func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice 
 	var decision RecoveryDecision
 	if err := json.Unmarshal([]byte(result), &decision); err != nil {
 		return RecoveryDecision{}, false, err
+	}
+	if !reused {
+		decision.StoppedAgent = stoppedAgent
 	}
 	return decision, reused, nil
 }

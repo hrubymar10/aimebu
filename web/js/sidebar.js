@@ -106,6 +106,14 @@ export class Sidebar {
   async refreshProject(id) { const generation = this.generation; let rooms; try { rooms = await this.roomRequest(`/api/projects/${id}/rooms`); } catch (error) { if (generation !== this.generation) return; throw error; } if (generation !== this.generation) return; for (const room of rooms) { this.rooms.set(room.id, room); if (room.id === this.active && !this.holdRead?.(room.id)) this.markSeen(room); } this.render(); }
   // A room removed on the server is dropped here by name: a project refresh only adds and updates.
   forgetRoom(id) { if (this.rooms.delete(id)) this.render(); }
+  // A project that was deleted: it and every one of its rooms leave the list.
+  forgetProject(id) {
+    for (const [roomID, room] of [...this.rooms]) if (room.project_id === id) this.rooms.delete(roomID);
+    this.projects.delete(id);
+    this.archivedProjectNodes?.get(id)?.remove(); this.archivedProjectNodes?.delete(id);
+    this.dropArchiveNodes(id);
+    this.render();
+  }
   // Selecting does not mark read by itself: the chat marks the room once it has rendered the latest page (Chat.open).
   setActive(id) { this.active = id; this.render(); }
   async setPreference(room, field, value) {
@@ -136,8 +144,10 @@ export class Sidebar {
   }
   render() {
     this.scheduleMuteEnd();
-    const projects = [...this.projects.values()], many = projects.length > 1;
-    const all = [...this.rooms.values()], filtering = !!this.filter.trim();
+    // An archived project leaves the trees: it has its own folded section after them, so the live list is only what can be worked in.
+    const archivedProjects = [...this.projects.values()].filter(project => project.archived_at);
+    const projects = [...this.projects.values()].filter(project => !project.archived_at), many = projects.length > 1;
+    const all = [...this.rooms.values()].filter(room => !this.projects.get(room.project_id)?.archived_at), filtering = !!this.filter.trim();
     const live = all.filter(room => !room.hidden && room.lifecycle !== 'closed' && this.matches(room));
     const direct = live.filter(room => room.kind === 'dm').sort((a, b) => this.activityOrder(a, b));
     const ordinary = live.filter(room => room.kind !== 'dm');
@@ -161,6 +171,8 @@ export class Sidebar {
     }
     // A filter that matches nothing says so, instead of leaving an empty list.
     if (filtering && !live.length) { const none = this.noMatchNode ||= Object.assign(document.createElement('p'), { className: 'rooms-empty' }); none.textContent = `No rooms match “${this.filter.trim()}”.`; wanted.push(none); }
+    const archivedSection = this.archivedProjectsNode(archivedProjects, filtering);
+    if (archivedSection) wanted.push(archivedSection);
     // One direct-messages section for every project, always last.
     let directSection = this.directNode;
     if (!directSection) {
@@ -172,6 +184,41 @@ export class Sidebar {
     wanted.push(directSection);
     reconcileChildren(this.container, wanted);
     this.syncCollapseAll();
+  }
+  // "Archived projects (N)": a project that was archived is read-only; its rooms stay readable here, one fold per project.
+  archivedProjectsNode(archivedProjects, filtering) {
+    const text = this.filter.trim().toLocaleLowerCase();
+    const shown = [];
+    for (const project of archivedProjects) {
+      const rooms = [...this.rooms.values()].filter(room => room.project_id === project.id && !room.hidden && (!text || this.matches(room)))
+        .sort((a, b) => (a.kind === 'home' ? 0 : 1) - (b.kind === 'home' ? 0 : 1) || (a.title || '').localeCompare(b.title || ''));
+      if (!filtering || rooms.length) shown.push([project, rooms]);
+    }
+    if (!shown.length) { this.archivedSectionNode?.remove(); return null; }
+    let section = this.archivedSectionNode;
+    if (!section) {
+      section = this.archivedSectionNode = document.createElement('details'); section.className = 'archived-projects';
+      section.ontoggle = () => { this.archivedProjectsOpen = section.open; };
+      section.append(document.createElement('summary'));
+    }
+    section.open = filtering ? true : !!this.archivedProjectsOpen;
+    section.querySelector('summary').textContent = `Archived projects (${shown.length})`;
+    this.archivedProjectNodes ||= new Map();
+    const folds = shown.map(([project, rooms]) => {
+      let fold = this.archivedProjectNodes.get(project.id);
+      if (!fold) {
+        fold = document.createElement('details'); fold.className = 'archived-project'; fold.dataset.projectId = project.id;
+        fold.ontoggle = () => { (this.archivedProjectFolds ||= new Map()).set(project.id, fold.open); };
+        fold.append(document.createElement('summary'));
+        this.archivedProjectNodes.set(project.id, fold);
+      }
+      fold.open = filtering ? true : !!this.archivedProjectFolds?.get(project.id);
+      fold.querySelector('summary').textContent = project.name;
+      reconcileChildren(fold, [fold.querySelector('summary'), ...rooms.map(room => this.roomNode(room, { chip: false, nest: false }))]);
+      return fold;
+    });
+    reconcileChildren(section, [section.querySelector('summary'), ...folds]);
+    return section;
   }
   // The "Archived (N)" and "Hidden (N)" rows that close a project's room tree.
   projectTail(project, all) {
@@ -365,10 +412,12 @@ export class Sidebar {
       muted.setAttribute('aria-label', muted.title);
     }
     const add = row.querySelector('.add-room');
-    add.disabled = !!room.lifecycle && room.lifecycle !== 'open';
-    add.hidden = room.kind === 'dm' || room.lifecycle === 'closed';
+    // Nothing can be created in, or reopened in, an archived project: it is read-only until the project itself is reopened.
+    const archivedProject = !!this.projects.get(room.project_id)?.archived_at;
+    add.disabled = (!!room.lifecycle && room.lifecycle !== 'open') || archivedProject;
+    add.hidden = room.kind === 'dm' || room.lifecycle === 'closed' || archivedProject;
     let reopen = row.querySelector('.reopen-room');
-    if (room.lifecycle === 'closed') {
+    if (room.lifecycle === 'closed' && !archivedProject) {
       if (!reopen) {
         reopen = document.createElement('button'); reopen.type = 'button'; reopen.className = 'row-btn reopen-room'; setGlyph(reopen, 'reopen'); row.append(reopen);
       }

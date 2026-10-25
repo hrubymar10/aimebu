@@ -741,6 +741,12 @@ Resume, Retry, or Abandon, and loop-budget pauses can Continue or Abandon.
 Project settings can opt into automatic continuation after a clean verified
 read-only diagnostic; the default is off because a model report can miss an
 unobserved effect.
+A project can be archived and deleted from Settings → Project (its owner or an admin; icons with a confirmation).
+Archiving makes the project and all its rooms read-only (changes are refused with `project_archived`), stops its agents,
+switches its schedules off and moves it to "Archived projects" in the room list, where its rooms stay readable; reopening
+lifts that and leaves the agents stopped. Only an archived project can be deleted, by typing its name: that removes every
+room, message, attachment, agent, memory and setting in it (a running agent or live worktree refuses), while the files in the
+project folder and any worktrees on disk are left alone.
 Room settings and Project settings also show bulk agent controls. Pause holds
 dispatch and sets active agents to not accepting; Stop requests an ordinary
 stop for current agents homed in the room or project agents. Non-home room

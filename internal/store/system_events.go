@@ -24,7 +24,7 @@ var systemEventKinds = []string{
 	"room_created", "room_renamed", "room_closing", "room_closed", "room_reopened", "room_close_blocked",
 	"room_member_joined", "room_member_left",
 	"room_worktree_requested", "room_worktree_updated", "room_worktree_cancelled",
-	"project_created", "project_updated", "project_member_joined", "project_member_changed", "project_settings_updated",
+	"project_created", "project_updated", "project_archived", "project_reopened", "project_removed", "project_member_joined", "project_member_changed", "project_settings_updated",
 	"provider_limit_detected", "provider_limit_cleared", "native_session_reset",
 	"turn_lost", "turn_never_started", "turn_process_exit", "special_turn_abandoned",
 	"diagnostic_requested", "answer_held",
@@ -57,7 +57,7 @@ func (s *Store) RecentSystemEvents(ctx context.Context, userID string, limit int
 	for _, kind := range systemEventKinds {
 		args = append(args, kind)
 	}
-	args = append(args, userID, userID, limit)
+	args = append(args, userID, userID, userID, limit)
 	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at
 		FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id
 		WHERE e.kind IN (`+marks+`) AND `+eventVisible+`

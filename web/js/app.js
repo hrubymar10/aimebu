@@ -110,6 +110,7 @@ chat.setRoomPreference = (room, field, value) => sidebar.setPreference(room, fie
 sidebar.bindSort(document.querySelector('#rooms-sort'));
 sidebar.bindCollapseAll(document.querySelector('#rooms-fold'));
 chat.projectRole = projectID => sidebar.projects.get(projectID)?.role;
+chat.projectArchived = projectID => !!sidebar.projects.get(projectID)?.archived_at;
 setProjectNames(projectID => sidebar.projects.get(projectID)?.name || '');
 // A history window hides the room's newest messages, so refreshes while it is shown do not mark the open room read; returning to
 // the latest view does. (Entering a room through a jump still marks it read on selection, before the jump.)
@@ -126,6 +127,15 @@ async function roomRemoved(projectID, roomID) {
   if (home) await selectRoom(home);
 }
 chat.onRoomRemoved = room => roomRemoved(room.project_id, room.id);
+// A deleted project: its rooms leave the list, and a room of it that was open gives way to the empty state.
+async function projectRemoved(projectID) {
+  const generation = sessionGeneration;
+  const wasOpen = chat.room?.project_id === projectID;
+  sidebar.forgetProject(projectID);
+  if (generation !== sessionGeneration) return;
+  if (wasOpen) { chat.reset(); knowledge.setRoom(null); history.replaceState(null, '', `${location.pathname}${location.search}`); }
+  refreshEmptyState();
+}
 // A "#N" link to a message of another room: open that room on the message (the server told which room holds it).
 chat.onOpenMessage = async found => {
   const room = sidebar.rooms.get(found.room_id);
@@ -206,6 +216,18 @@ agents.showRoom = room => selectRoom(room);
 const settings = new SettingsPanel(createUsagesSource(), () => ({ projects: [...sidebar.projects.values()], selectedProjectID: chat.room?.project_id }), notifications);
 inbox.openUsages = () => settings.open('usages');
 chat.projectSettings = settings.project; // the home room's settings show the same project form
+// Archiving or reopening a project in Settings: take its new state from the server now, as the event that follows would.
+settings.project.onLifecycle = async projectID => {
+  const generation = sessionGeneration;
+  const projects = await request('/api/projects'); if (generation !== sessionGeneration) return;
+  const project = projects.find(item => item.id === projectID);
+  if (!project) return;
+  await sidebar.addProject(project); if (generation !== sessionGeneration) return;
+  const open = chat.room && sidebar.rooms.get(chat.room.id);
+  if (open && open.project_id === projectID) chat.setRoomFacts(open);
+  settings.project.load(projectID);
+};
+settings.project.onRemoved = async projectID => { await projectRemoved(projectID); settings.projectRemoved(projectID); };
 settings.onRights = () => applyRights();
 document.addEventListener('aimebu:open-settings', event => settings.open(event.detail?.section || 'general', event.detail));
 const importWizard = new ImportV1Wizard(() => {
@@ -393,9 +415,10 @@ async function signedIn(session) {
       if (!active()) return;
       if (event.kind === 'snapshot_required') { await resync(generation); return; }
       let payload = {}; try { payload = JSON.parse(event.payload_json); } catch {}
-      if (event.kind === 'project_created' || event.kind === 'project_updated') { const projects = await request('/api/projects'); if (!active()) return; const project = projects.find(p => p.id === event.project_id); if (project) { await sidebar.addProject(project); if (!active()) return; refreshEmptyState(); const open = chat.room && sidebar.rooms.get(chat.room.id); if (open && open.project_id === event.project_id && event.kind === 'project_updated') { chat.title.textContent = open.title; chat.setRoomFacts(open); } } }
+      if (event.kind === 'project_created' || event.kind === 'project_updated' || event.kind === 'project_archived' || event.kind === 'project_reopened') { const projects = await request('/api/projects'); if (!active()) return; const project = projects.find(p => p.id === event.project_id); if (project) { await sidebar.addProject(project); if (!active()) return; refreshEmptyState(); const open = chat.room && sidebar.rooms.get(chat.room.id); if (open && open.project_id === event.project_id && event.kind !== 'project_created') { chat.title.textContent = open.title; chat.setRoomFacts(open); } } }
       else if ((event.kind === 'room_preference_changed' || event.kind === 'room_read_changed') && payload.user_id === currentUser) await sidebar.refreshProject(event.project_id);
       else if (event.kind === 'room_removed') await roomRemoved(event.project_id, payload.room_id);
+      else if (event.kind === 'project_removed') await projectRemoved(payload.project_id);
       else if (event.kind === 'room_created' || ['room_renamed', 'room_closing', 'room_closed', 'room_reopened', 'room_close_blocked'].includes(event.kind)) {
         await sidebar.refreshProject(event.project_id);
         if (!active()) return;

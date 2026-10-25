@@ -24,7 +24,7 @@ func (s *Store) ProjectsForUser(ctx context.Context, userID string) ([]Project, 
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,p.folder,COALESCE(p.repo_url,''),m.role
+	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,p.folder,COALESCE(p.repo_url,''),m.role,COALESCE(p.archived_at,'')
 		FROM project p JOIN membership m ON m.project_id=p.id WHERE m.user_id=? ORDER BY p.created_at,p.id`, userID)
 	if err != nil {
 		return nil, err
@@ -33,7 +33,7 @@ func (s *Store) ProjectsForUser(ctx context.Context, userID string) ([]Project, 
 	projects := []Project{}
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.Folder, &p.RepoURL, &p.Role); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Folder, &p.RepoURL, &p.Role, &p.ArchivedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -59,7 +59,7 @@ func (s *Store) ProjectByID(ctx context.Context, projectID string) (Project, err
 		return Project{}, err
 	}
 	var project Project
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, folder, COALESCE(repo_url,'') FROM project WHERE id=?`, projectID).Scan(&project.ID, &project.Name, &project.Folder, &project.RepoURL)
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, folder, COALESCE(repo_url,''), COALESCE(archived_at,'') FROM project WHERE id=?`, projectID).Scan(&project.ID, &project.Name, &project.Folder, &project.RepoURL, &project.ArchivedAt)
 	return project, err
 }
 
@@ -343,20 +343,22 @@ func (s *Store) EventBounds(ctx context.Context) (min, max int64, err error) {
 }
 
 // eventVisible is the one rule for who may see an event, shared by the live
-// stream and the system-events history. It takes two user-ID arguments after
-// the membership join's own: the private-chat membership check, then the
-// owner check. A project event is visible to project members, with private
+// stream and the system-events history. It takes three user-ID arguments after
+// the membership join's own: the private-chat membership check, the owner
+// check, then the removed-project check (a removed project has no members left
+// to join on, so its removal event names the people it is for). A project event is visible to project members, with private
 // chats limited to their members (owners and operators also see recovery
 // inbox changes). An event with no project (user, machine, session, and agent
 // key changes) is visible only to the instance owner, the first user, except
 // the per-login session and password-rehash bookkeeping, which nobody streams.
-const eventVisible = `((m.user_id IS NOT NULL AND (r.kind IS NULL OR r.kind!='dm' OR EXISTS (SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='user' AND own.member_id=? AND own.left_at IS NULL) OR (m.role IN ('owner','operator') AND e.kind IN ('inbox_item_created','inbox_item_updated','inbox_item_resolved') AND EXISTS (SELECT 1 FROM inbox_item i WHERE i.id=json_extract(e.payload_json,'$.inbox_item_id') AND i.kind='recovery')))) OR (COALESCE(e.project_id,'')='' AND e.kind NOT IN ('auth_session_created','auth_session_revoked','user_password_rehashed') AND ?=(SELECT id FROM user ORDER BY created_at,id LIMIT 1)))`
+const eventVisible = `((m.user_id IS NOT NULL AND (r.kind IS NULL OR r.kind!='dm' OR EXISTS (SELECT 1 FROM room_member own WHERE own.room_id=r.id AND own.member_kind='user' AND own.member_id=? AND own.left_at IS NULL) OR (m.role IN ('owner','operator') AND e.kind IN ('inbox_item_created','inbox_item_updated','inbox_item_resolved') AND EXISTS (SELECT 1 FROM inbox_item i WHERE i.id=json_extract(e.payload_json,'$.inbox_item_id') AND i.kind='recovery')))) OR (COALESCE(e.project_id,'')='' AND e.kind NOT IN ('auth_session_created','auth_session_revoked','user_password_rehashed') AND ?=(SELECT id FROM user ORDER BY created_at,id LIMIT 1))
+	OR (e.kind='project_removed' AND e.project_id IS NULL AND EXISTS (SELECT 1 FROM json_each(e.payload_json,'$.user_ids') WHERE value=?)))`
 
 func (s *Store) EventsAfter(ctx context.Context, userID string, after, through int64) ([]Event, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq`, userID, after, through, userID, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq`, userID, after, through, userID, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -379,7 +381,7 @@ func (s *Store) EventsBatchAfter(ctx context.Context, userID string, after, thro
 	if limit < 1 || limit > 5000 {
 		return nil, errors.New("invalid event batch limit")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq LIMIT ?`, userID, after, through, userID, userID, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq LIMIT ?`, userID, after, through, userID, userID, userID, limit)
 	if err != nil {
 		return nil, err
 	}

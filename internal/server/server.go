@@ -214,6 +214,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/health", s.Auth.RequireUser(http.HandlerFunc(s.health)))
 	mux.Handle("POST /api/projects", s.Auth.RequireUser(http.HandlerFunc(s.projects)))
 	mux.Handle("PATCH /api/projects/{project}", s.Auth.RequireUser(http.HandlerFunc(s.projectUpdate)))
+	mux.Handle("POST /api/projects/{project}/archive", s.Auth.RequireUser(http.HandlerFunc(s.archiveProject)))
+	mux.Handle("POST /api/projects/{project}/reopen", s.Auth.RequireUser(http.HandlerFunc(s.reopenProject)))
+	mux.Handle("DELETE /api/projects/{project}", s.Auth.RequireUser(http.HandlerFunc(s.deleteProject)))
 	mux.Handle("GET /api/projects/{project}/settings", s.Auth.RequireUser(http.HandlerFunc(s.projectRecoverySettings)))
 	mux.Handle("PUT /api/projects/{project}/settings", s.Auth.RequireUser(http.HandlerFunc(s.projectRecoverySettings)))
 	mux.Handle("GET /api/projects/{project}/memory", s.Auth.RequireUser(http.HandlerFunc(s.projectMemory)))
@@ -356,7 +359,7 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(web.index))
 	})
-	return allowMiddleware(s.maintenanceMiddleware(mux), s.Allow)
+	return allowMiddleware(s.maintenanceMiddleware(s.archivedGuard(mux)), s.Allow)
 }
 
 func (s *Server) maintenanceMiddleware(next http.Handler) http.Handler {
@@ -438,6 +441,9 @@ func projectView(p store.Project) map[string]any {
 	view := map[string]any{"id": p.ID, "name": p.Name, "folder": p.Folder, "repo_url": repo}
 	if p.Role != "" {
 		view["role"] = p.Role
+	}
+	if p.ArchivedAt != "" {
+		view["archived_at"] = p.ArchivedAt
 	}
 	return view
 }

@@ -6781,6 +6781,63 @@ async function main() {
         { project: true, notes: 'Task notes', wide: false, toggle: 'Task notes' }, 'a task room has no Project section');
       await domClick(first, '#room-info-close');
     }
+    // Archiving and deleting a project (Settings → Project): a scratch project is archived, read-only and listed apart, reopened, archived
+    // again and deleted by typing its name. Each action is an icon with a name; the rest of the run never sees the project.
+    {
+      const name = 'Archive smoke';
+      const folder = fs.mkdtempSync(path.join(tmp, 'archive-smoke-'));
+      const scratch = await first.evaluate(async (name, folder) => {
+        const { csrf_token } = await (await fetch('/api/me')).json();
+        const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token };
+        const project = await (await fetch('/api/projects', { method: 'POST', headers, body: JSON.stringify({ name, folder }) })).json();
+        const rooms = await (await fetch(`/api/projects/${project.id}/rooms`)).json();
+        return { id: project.id, home: rooms.find(room => room.kind === 'home').id, task: rooms.find(room => room.kind === 'task').id };
+      }, name, folder);
+      await first.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"]`), {}, scratch.home);
+      const answerBefore = first.__dialogAnswer;
+      const asked = [];
+      first.__dialogAnswer = text => { asked.push(text); return text.startsWith('Delete project') ? { accept: true, values: { name } } : { accept: true }; };
+      try {
+        await openSettings(first); await domClick(first, '#settings-project-tab');
+        await first.waitForSelector('#project-settings-select', { visible: true });
+        await first.select('#project-settings-select', scratch.id);
+        await first.waitForFunction(() => !document.querySelector('#project-archive-row').hidden);
+        assert.deepEqual(await first.evaluate(() => ['project-archive', 'project-reopen', 'project-delete'].map(id => { const button = document.getElementById(id); return [button.getAttribute('aria-label'), button.title, !!button.querySelector('.icon-mask'), button.textContent, button.closest('.settings-row').hidden]; })),
+          [['Archive project', 'Archive project', true, '', false], ['Reopen project', 'Reopen project', true, '', true], ['Delete project', 'Delete project', true, '', true]], 'a live project offers Archive only, as icons with names');
+        await domClick(first, '#project-archive');
+        await first.waitForFunction(id => !!document.querySelector(`.archived-projects .archived-project[data-project-id="${id}"]`), {}, scratch.id);
+        assert.match(asked.at(-1), /^Archive project \| Archive “Archive smoke”\?/, 'archiving asks first');
+        assert.equal(await first.$eval('.archived-projects > summary', el => el.textContent), 'Archived projects (1)');
+        assert.equal(await first.evaluate(id => !!document.querySelector(`#projects > [data-room-id="${id}"]`), scratch.home), false, 'an archived project has left the live list');
+        await first.waitForFunction(() => document.querySelector('#project-archive-row').hidden && !document.querySelector('#project-reopen-row').hidden && !document.querySelector('#project-delete-row').hidden);
+        // Its rooms open read-only: the composer is off and says why; nothing can be created in it.
+        await domClick(first, '#settings-close');
+        await first.evaluate(() => document.querySelector('.archived-projects').open = true);
+        await first.evaluate(() => document.querySelector('.archived-project').open = true);
+        await domClick(first, `.archived-projects [data-room-id="${scratch.task}"] .room-name`);
+        await first.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, scratch.task);
+        await first.waitForFunction(() => document.querySelector('#composer-archived-note') && !document.querySelector('#composer-archived-note').hidden);
+        assert.deepEqual(await first.evaluate(() => [document.querySelector('#composer textarea').disabled, document.querySelector('#composer button[type=submit]').disabled, document.querySelector('#composer-archived-note').textContent.includes('archived and read-only'), document.querySelector('.room-header-status')?.textContent]), [true, true, true, 'Project archived'], 'an archived project\'s room is read-only');
+        assert.equal(await first.$$eval('.archived-projects .add-room:not([hidden])', buttons => buttons.length), 0, 'no room can be added to an archived project');
+        const refused = await first.evaluate(async id => { const { csrf_token } = await (await fetch('/api/me')).json(); const response = await fetch(`/api/rooms/${id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ body: 'late' }) }); return [response.status, (await response.json()).error]; }, scratch.task);
+        assert.deepEqual(refused, [409, 'project_archived']);
+        // Reopening puts it back in the list; archiving again and deleting needs the typed name, and takes it out of every list.
+        await openSettings(first); await domClick(first, '#settings-project-tab');
+        await first.select('#project-settings-select', scratch.id);
+        await first.waitForFunction(() => !document.querySelector('#project-reopen-row').hidden);
+        await domClick(first, '#project-reopen');
+        await first.waitForFunction((id, project) => !document.querySelector(`.archived-projects .archived-project[data-project-id="${project}"]`) && !!document.querySelector(`#projects > [data-room-id="${id}"]`), {}, scratch.home, scratch.id);
+        await first.waitForFunction(() => !document.querySelector('#project-archive-row').hidden);
+        await domClick(first, '#project-archive');
+        await first.waitForFunction(() => !document.querySelector('#project-delete-row').hidden);
+        await domClick(first, '#project-delete');
+        await first.waitForFunction((room, project) => !document.querySelector(`[data-room-id="${room}"]`) && !document.querySelector(`.archived-project[data-project-id="${project}"]`), {}, scratch.home, scratch.id);
+        assert.match(asked.at(-1), /^Delete project \| This permanently deletes “Archive smoke”.*not touched\. \| Type “Archive smoke” to confirm/, 'deleting asks for the typed name and says what stays');
+        assert.equal(await first.evaluate(async id => (await fetch(`/api/projects/${id}/rooms`)).status, scratch.id) >= 400, true, 'the deleted project is gone on the server');
+        assert.equal(await first.evaluate(id => [...document.querySelector('#project-settings-select').options].some(option => option.value === id), scratch.id), false, 'the deleted project left the chooser');
+        await domClick(first, '#settings-close');
+      } finally { first.__dialogAnswer = answerBefore; }
+    }
     // Hide is set from the room settings, not from the rows; nothing has a pin.
     await domClick(first, `[data-room-id="${roomID}"] .room-name`);
     await first.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, roomID);

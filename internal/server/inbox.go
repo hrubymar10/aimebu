@@ -171,6 +171,8 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 			apiError(w, 409, "invalid_transition", "choice is invalid for this recovery item")
 		case errors.Is(err, store.ErrWriterOccupied):
 			apiError(w, 409, "writer_occupied", "another agent holds the checkout writer role")
+		case errors.Is(err, store.ErrProjectArchived):
+			apiError(w, 409, "project_archived", "this project is archived: only Abandon is possible, and it ends with the agent stopped; reopen the project to continue")
 		default:
 			fail(w, err)
 		}
@@ -179,6 +181,10 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 	status := 201
 	if reused {
 		status = 200
+	}
+	// An Abandon in an archived project stops the agent; its machine is told as an archive tells it.
+	if decision.StoppedAgent != nil && !reused {
+		s.sendRoomControls(r.Context(), []store.AgentCard{*decision.StoppedAgent})
 	}
 	if boundary && !reused {
 		agentID, lookupErr := s.Store.BoundaryAgentID(r.Context(), r.PathValue("item"))

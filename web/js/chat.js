@@ -462,7 +462,8 @@ export class Chat {
     this.refreshMentions();
     this.loadMentionLogins(room);
     const count = room.member_count || 0;
-    const status = room.lifecycle === 'closing' ? 'Closing…' : room.lifecycle === 'closed' ? 'Archived' : '';
+    const archivedProject = !!this.projectArchived?.(room.project_id);
+    const status = archivedProject ? 'Project archived' : room.lifecycle === 'closing' ? 'Closing…' : room.lifecycle === 'closed' ? 'Archived' : '';
     this.roomIcon.textContent = room.kind === 'home' ? '⌂' : room.kind === 'dm' ? '@' : '#';
     this.roomIcon.classList.toggle('dm', room.kind === 'dm'); this.roomIcon.hidden = false;
     this.members.querySelector('.room-members-count').textContent = String(count);
@@ -478,7 +479,7 @@ export class Chat {
     else if (this.error.textContent.startsWith('Room closing blocked:')) this.error.textContent = '';
     if (room.lifecycle !== 'closing') this.closeBlocked?.delete(room.id);
     if (this.infoDialog.open) this.renderRoomActions();
-    const open = !room.lifecycle || room.lifecycle === 'open';
+    const open = (!room.lifecycle || room.lifecycle === 'open') && !archivedProject;
     // A viewer can read an ordinary room but not write in it or run agents there (a private chat between two members is the exception),
     // so those controls are off with the reason, rather than live and answering 403.
     const viewer = this.projectRole?.(room.project_id) === 'viewer';
@@ -495,6 +496,10 @@ export class Chat {
     const note = this.viewerNote ||= (() => { const node = document.createElement('p'); node.className = 'composer-note'; node.id = 'composer-viewer-note'; node.setAttribute('role', 'note'); this.form.before(node); return node; })();
     note.hidden = !(open && viewer && room.kind !== 'dm');
     note.textContent = 'You can read this room as a viewer. Only owners and operators of the project can write here or run agents.';
+    // An archived project is read-only for everyone; the composer says why and where to undo it.
+    const archivedNote = this.archivedNote ||= (() => { const node = document.createElement('p'); node.className = 'composer-note'; node.id = 'composer-archived-note'; node.setAttribute('role', 'note'); this.form.before(node); return node; })();
+    archivedNote.hidden = !archivedProject;
+    archivedNote.textContent = 'This project is archived and read-only. The owner or an admin can reopen it in Settings → Project.';
   }
   showRoomInfo() {
     if (!this.room) return;

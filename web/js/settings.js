@@ -76,6 +76,11 @@ export class SettingsPanel {
     this.permissionStatus = document.querySelector('#notification-status');
     this.sounds = new NotificationSounds(this.notificationsSection, notifications);
     this.projectSelect = document.querySelector('#project-settings-select');
+    // A deleted project leaves the chooser; the form shows the next one, or says there is none.
+    this.projectRemoved = id => {
+      [...this.projectSelect.options].find(item => item.value === id)?.remove();
+      if (this.projectSelect.value) this.project.mount(this.projectSection, this.projectSelect.value); else this.project.load('');
+    };
     this.project.onRenamed = (id, name) => { const option = [...this.projectSelect.options].find(item => item.value === id); if (option) option.textContent = name; };
     this.usagesTab.onclick = () => this.selectSection('usages');
     this.generalTab.onclick = () => this.selectSection('general');
