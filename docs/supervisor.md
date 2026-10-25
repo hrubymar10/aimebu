@@ -171,8 +171,12 @@ only after any running process exits. A project
 cannot be deleted while such a stop is unconfirmed on a machine that can
 reconnect.
 Older supervisors receive the replay to start their kill fallback, but replay
-acks do not confirm the stop for project deletion. Their ordinary live-control
-acks count only when the agent is observed stopped.
+acks do not confirm the stop for project deletion. An older supervisor acks a
+control when it sees it and sends no later ack, so its live-control ack counts
+only if the agent is already observed stopped (one with no running turn is).
+The ack of a stop that interrupts a running turn is dropped and that stop stays
+pending, so deleting the project is refused (409) until the supervisor is
+upgraded or the machine is revoked.
 A lost turn retains its writer reservation until recovery establishes
 quiescence.
 

@@ -939,9 +939,14 @@ it never silently reruns a turn with uncertain effects.
   Older supervisors receive the stop replay too, with the stopped revision
   one behind in the snapshot so their equal-revision filter accepts the
   control and starts its kill fallback. An older supervisor's replay ack is
-  not proof of application. Its ordinary live-control ack counts only after
-  the agent is observed stopped; a missed offline stop remains blocked until
-  revocation or a newer supervisor confirms it.
+  not proof of application. An older supervisor acks a control when it sees it,
+  not when the process has exited, and sends no later ack, so its ordinary
+  live-control ack counts only if the agent is already observed stopped at that
+  moment (an agent with no running turn is). The ack for a stop that interrupts
+  a running turn arrives while the agent is still interrupting and is dropped:
+  that stop stays pending, and deleting the project stays refused (409) until
+  the supervisor is upgraded or the machine is revoked. The same holds for a
+  stop missed while the machine was offline.
 - S→M `deliver{v, agent_id, generation, turn_id, mode, parent_turn_id?,
   notes[{note_id, room_id, from, message_id, body, reply_to?, thread_root?,
   attachments[{id,name?,mime,size,sha256}]}], attachment_bearer?,
