@@ -24,7 +24,7 @@ const doctorLiveMaxBody = 1 << 20
 // `aimebu doctor --live` asks the running server for what only it knows: the
 // capability flags each connected supervisor announced and what its launchers
 // last reported. It authenticates with the key the server wrote to
-// server/doctor.key (mode 0600, loopback only), so being able to read that file
+// server/doctor.key (mode 0600, accepted only from this host), so being able to read that file
 // is the credential.
 
 // readDoctorKey reads the key file, refusing one that is not private to this
@@ -56,7 +56,7 @@ func readDoctorKey(root string) (string, doctorCheck, bool) {
 	if key == "" {
 		return "", doctorCheck{Name: name, Status: statusWarn, Description: path + " is empty", Hint: "Restart the server to write a fresh key."}, false
 	}
-	return key, doctorCheck{Name: name, Status: statusOK, Description: path + " is private (0600) and used only for loopback requests"}, true
+	return key, doctorCheck{Name: name, Status: statusOK, Description: path + " is private (0600)"}, true
 }
 
 // doctorLiveChecks runs the --live checks against the server at bind:port.
@@ -89,9 +89,12 @@ func fetchDoctorLive(ctx context.Context, config serverConfig, key string) (prot
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
-	case http.StatusForbidden, http.StatusNotFound:
-		return protocol.DoctorLive{}, &doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("the server at %s answered HTTP %d to the doctor key", requestURL, resp.StatusCode),
-			Hint: "The server on this port is another install or an older build (a key file from a stopped server is rejected). Restart the server from this build."}
+	case http.StatusForbidden:
+		return protocol.DoctorLive{}, &doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("the server at %s refused the doctor key", requestURL),
+			Hint: "The key file belongs to another start of the server (it is replaced at every start; is another server on this port, or this config directory a copy?), or the request did not reach the server from this host directly."}
+	case http.StatusNotFound:
+		return protocol.DoctorLive{}, &doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("the server at %s has no /api/doctor", requestURL),
+			Hint: "The server on this port is an older build. Restart it from this build."}
 	default:
 		return protocol.DoctorLive{}, &doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("GET %s: HTTP %d", requestURL, resp.StatusCode)}
 	}

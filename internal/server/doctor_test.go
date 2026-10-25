@@ -1,7 +1,11 @@
 package server
 
 import (
+	"context"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,6 +134,118 @@ func TestDoctorLiveRejectsANonLoopbackPeer(t *testing.T) {
 		if !f.srv.doctorAuthorized(req) {
 			t.Errorf("%s was refused", remote)
 		}
+	}
+}
+
+func TestSameHostPeer(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		peer, local string
+		want        bool
+	}{
+		{"loopback v4", "127.0.0.1", "10.8.0.1", true},
+		{"loopback v6", "::1", "10.8.0.1", true},
+		{"v4-mapped loopback", "::ffff:127.0.0.1", "10.8.0.1", true},
+		{"the server's own VPN address", "10.8.0.1", "10.8.0.1", true},
+		{"the server's own v6 address", "fd00::1", "fd00::1", true},
+		{"mapped form of the own address", "::ffff:10.8.0.1", "10.8.0.1", true},
+		{"another host on the same network", "10.8.0.2", "10.8.0.1", false},
+		{"a remote host and a loopback-accepted connection", "203.0.113.9", "127.0.0.1", false},
+		{"no local address known", "10.8.0.1", "", false},
+	} {
+		peer := netip.MustParseAddr(tt.peer)
+		var local netip.Addr
+		if tt.local != "" {
+			local = netip.MustParseAddr(tt.local)
+		}
+		if got := sameHostPeer(peer, local); got != tt.want {
+			t.Errorf("%s: sameHostPeer(%s, %s) = %v, want %v", tt.name, tt.peer, tt.local, got, tt.want)
+		}
+	}
+}
+
+func TestDoctorAuthorizedUsesTheConnectionsLocalAddress(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.srv.EnableDoctorKey(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	request := func(remote, local string) *http.Request {
+		req, _ := http.NewRequest(http.MethodGet, "/api/doctor", nil)
+		req.RemoteAddr = remote
+		req.Header.Set("Authorization", "Bearer "+f.srv.doctorKey)
+		if local != "" {
+			req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey, net.Addr(&net.TCPAddr{IP: net.ParseIP(local), Port: 9997})))
+		}
+		return req
+	}
+	// AIMEBU2_BIND set to a VPN address: the CLI dials it, so peer and local address are the same.
+	if !f.srv.doctorAuthorized(request("10.8.0.1:51000", "10.8.0.1")) {
+		t.Error("a peer that connected from the server's own bind address was refused")
+	}
+	if f.srv.doctorAuthorized(request("10.8.0.2:51000", "10.8.0.1")) {
+		t.Error("another host on the VPN was accepted")
+	}
+	if f.srv.doctorAuthorized(request("10.8.0.1:51000", "")) {
+		t.Error("with no local address known only loopback may pass")
+	}
+	req := request("10.8.0.1:51000", "10.8.0.1")
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+	if f.srv.doctorAuthorized(req) {
+		t.Error("a relayed request passed because its peer was the server's own address")
+	}
+}
+
+// ownNonLoopbackAddress returns an address of this machine that is not loopback, or "" when it has none (a container without a network).
+func ownNonLoopbackAddress() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() && !ipnet.IP.IsLinkLocalUnicast() {
+			return ipnet.IP.String()
+		}
+	}
+	return ""
+}
+
+// The real thing: a server listening on a non-loopback address of this machine, called through that address, as `doctor --live` does
+// with AIMEBU2_BIND set to a VPN address.
+func TestDoctorLiveOverANonLoopbackBind(t *testing.T) {
+	address := ownNonLoopbackAddress()
+	if address == "" {
+		t.Skip("this machine has no non-loopback IPv4 address")
+	}
+	f := newFixture(t)
+	if _, err := f.srv.EnableDoctorKey(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	// Binding to such an address needs AIMEBU2_ALLOW to let it in, as the setup docs say; the allowlist is a separate gate from the key.
+	f.srv.Allow = append(f.srv.Allow, netip.MustParsePrefix(address+"/32"))
+	listener, err := net.Listen("tcp", net.JoinHostPort(address, "0"))
+	if err != nil {
+		t.Skipf("cannot listen on %s: %v", address, err)
+	}
+	server := httptest.NewUnstartedServer(f.srv.Handler())
+	server.Listener.Close()
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+	get := func(key string) int {
+		req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/doctor", nil)
+		req.Header.Set("Authorization", "Bearer "+key)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if status := get(f.srv.doctorKey); status != 200 {
+		t.Fatalf("right key through %s: %d", server.URL, status)
+	}
+	if status := get(strings.Repeat("0", 64)); status != 403 {
+		t.Fatalf("wrong key through %s: %d", server.URL, status)
 	}
 }
 

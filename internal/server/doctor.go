@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -16,7 +17,7 @@ import (
 
 // DoctorKeyFile is the file under server/ that holds the key `aimebu doctor --live` authenticates with. The server writes it at start with
 // mode 0600 and removes it at shutdown; reading it needs the same file permissions that guard the database, so owning the config
-// directory is the credential. GET /api/doctor accepts the key only from a loopback connection that carries no forwarding header.
+// directory is the credential. GET /api/doctor accepts the key only from a same-host connection that carries no forwarding header.
 const DoctorKeyFile = "doctor.key"
 
 // EnableDoctorKey creates a fresh random key in <root>/server/doctor.key and arms GET /api/doctor with it. The returned function removes
@@ -73,12 +74,30 @@ var doctorCapabilities = []struct {
 	{"supports_stop_replay", "a stop sent while the machine was offline is applied by a fallback that can kill a live process early", func(c *machineConn) bool { return c.supportsStopReplay }},
 }
 
+// sameHostPeer says whether a connection comes from the machine the server runs on: from a loopback address, or from the very address it
+// was accepted on. The second case is what `aimebu doctor --live` looks like when AIMEBU2_BIND is a VPN or LAN address, because the CLI
+// dials that address and the kernel then uses it as the source too. A remote host cannot fake it: a TCP connection needs the handshake's
+// reply, which goes to the source address, so a peer address equal to the server's own local address is always this host.
+func sameHostPeer(peer, local netip.Addr) bool {
+	peer = peer.WithZone("").Unmap()
+	return peer.IsLoopback() || (local.IsValid() && peer == local.WithZone("").Unmap())
+}
+
 func (s *Server) doctorAuthorized(r *http.Request) bool {
 	if s.doctorKey == "" || viaProxy(r) {
 		return false
 	}
 	peer, err := netip.ParseAddrPort(r.RemoteAddr)
-	if err != nil || !peer.Addr().Unmap().IsLoopback() {
+	if err != nil {
+		return false
+	}
+	var local netip.Addr
+	if addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		if parsed, err := netip.ParseAddrPort(addr.String()); err == nil {
+			local = parsed.Addr()
+		}
+	}
+	if !sameHostPeer(peer.Addr(), local) {
 		return false
 	}
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -89,7 +108,7 @@ func (s *Server) doctorAuthorized(r *http.Request) bool {
 // reported. It is read-only and says nothing a secret could hide in (no keys, no environment, no launcher arguments).
 func (s *Server) doctorLive(w http.ResponseWriter, r *http.Request) {
 	if !s.doctorAuthorized(r) {
-		apiError(w, 403, "forbidden", "a loopback request with the doctor key is required")
+		apiError(w, 403, "forbidden", "a same-host request with the doctor key is required")
 		return
 	}
 	machines, err := s.Store.Machines(r.Context())

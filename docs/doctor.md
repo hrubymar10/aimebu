@@ -58,10 +58,13 @@ server) or `machine` (a supervisor host).
   connected) warns. With the server down liveness is not judged. **revoked
   machines** warns when a revoked machine still owns live agents. No machines is
   ok.
-- **pending stops** — stop controls no machine has applied yet. They make
-  deleting a project return 409 until the machine applies them. Warns for a
-  revoked machine, or an approved one that is not connected while the server is
-  up; a connected machine with a few in flight is ok.
+- **pending stops** — stop controls no machine has applied yet, with exactly
+  the condition project deletion uses: an agent that is not revoked, on a
+  machine that is not revoked, wanted stopped, whose stop the machine has not
+  confirmed. They make deleting a project return 409 until the machine applies
+  them. Warns for an approved machine that is not connected while the server is
+  up; a connected machine with a few in flight is ok. A revoked machine's stops
+  do not block deletion and are not listed.
 - **launchers** — warns for an enabled launcher with no models, or a model list
   with no default. No launchers yet is ok.
 - **provider limits** — warns while agents are held by a provider usage limit
@@ -176,10 +179,13 @@ it.
 
 The endpoint needs no login. At start the server writes a fresh random key to
 `server/doctor.key` (mode 0600, replaced at every start, removed at shutdown)
-and accepts it as `Authorization: Bearer <key>` only from a loopback connection
+and accepts it as `Authorization: Bearer <key>` only from a same-host connection
 that carries no forwarding header (`X-Forwarded-For`, `Forwarded`, `Via` and
-the like), so a reverse proxy on the same host cannot relay it. Anything else
-gets 403. Doctor reads the file only when it is a regular file, owned by the
+the like), so a reverse proxy on the same host cannot relay it. Same-host means
+the peer address is loopback, or is the very address the connection was
+accepted on: with `AIMEBU2_BIND` set to a VPN or LAN address the CLI dials that
+address and the kernel uses it as the source too, and a remote host cannot fake
+it (the handshake's reply goes to the source address). Anything else gets 403. Doctor reads the file only when it is a regular file, owned by the
 running user, with no group or other permission bits; being able to read the
 config directory is the credential. The answer holds no secrets: no keys,
 environment or launcher arguments.
@@ -187,8 +193,10 @@ environment or launcher arguments.
 - **doctor key** — whether the key file exists and is usable. Missing means the
   server is not running from this build or could not write it; `--live` then
   reports it as a warning and nothing more.
-- **live server** — warns when the server does not answer the key (403/404:
-  another install or an older build is on that port, or the file is stale).
+- **live server** — warns when the server does not take the key: 403 means the
+  key file belongs to another start of the server (it is replaced at every
+  start) or the request did not reach it from this host directly; 404 means an
+  older build without `/api/doctor`.
 - **machine \<name\>** — a connected machine whose supervisor lacks a
   capability flag warns, naming each flag and what degrades without it (for
   example `supports_session_fork`: a Claude Code session can only be continued
@@ -204,7 +212,8 @@ environment or launcher arguments.
   launcher whose feature probe failed or that is too old for its tool all warn.
   The supervisor asks a Docker launcher for its features
   (`HARNESS_DOCKER_PRINT_FEATURES=1 <launcher> --version`) once when it inspects
-  the launcher, only for tools whose Docker turns depend on one (opencode and
+  the launcher in a project folder of the machine (like the launcher's own
+  `--version` check, never in an arbitrary directory), only for tools whose Docker turns depend on one (opencode and
   vibe need `forward_env`), and reports them with the launcher. The row stays
   available: the turn's own preflight still refuses a too-old launcher with its
   own message.

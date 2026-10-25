@@ -321,11 +321,23 @@ func TestCheckPendingStops(t *testing.T) {
 			t.Fatalf("%+v", got)
 		}
 	})
-	t.Run("revoked machine holds a stop", func(t *testing.T) {
+	t.Run("a revoked machine's stop does not block project deletion, so it is not listed", func(t *testing.T) {
 		f := newDoctorFixture(t)
 		f.machine("m-gone", true, true, doctorNow.Add(-time.Minute))
 		f.agent("a1", "m-gone", "stopped", "idle", 3)
-		if got := only(t, f.run(true), "pending stops"); got.Status != statusWarn || !strings.Contains(got.Description, "revoked") {
+		if got := only(t, f.run(true), "pending stops"); got.Status != statusOK || got.Description != "none waiting" {
+			t.Fatalf("%+v", got)
+		}
+	})
+	t.Run("the condition is the one project deletion uses", func(t *testing.T) {
+		f := newDoctorFixture(t)
+		f.machine("m-stale", true, false, doctorNow.Add(-2*time.Hour))
+		f.agent("not-stopped", "m-stale", "active", "idle", 0)    // wants to run: not a pending stop
+		f.agent("revoked-agent", "m-stale", "stopped", "idle", 1) // revoked agents do not block either
+		f.exec(`UPDATE agent SET revoked_at=? WHERE id='revoked-agent'`, stamp(doctorNow))
+		f.agent("stopped-unconfirmed", "m-stale", "stopped", "stopped", 2) // confirmed by state, not by an applied event: still pending, as in DeleteProject
+		got := only(t, f.run(true), "pending stops")
+		if got.Status != statusWarn || !strings.Contains(got.Description, "1 stop(s)") {
 			t.Fatalf("%+v", got)
 		}
 	})

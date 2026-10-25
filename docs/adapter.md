@@ -335,7 +335,7 @@ A launcher that predates the feature would start the harness with none of this. 
 and every turn therefore run the launcher with `HARNESS_DOCKER_PRINT_FEATURES=1 … --version`: a launcher
 that has the feature prints `forward_env` and exits before it touches Docker, and one that does not
 prints a version. The latter is refused with a message to update harness-docker. The supervisor also runs the probe once
-when it inspects such a launcher and reports the answer with the launcher row (`features`, and `feature_problem` when the
+when it inspects such a launcher in a project folder of the machine and reports the answer with the launcher row (`features`, and `feature_problem` when the
 probe failed or the launcher is too old), which `GET /api/machines/{id}/launchers` passes on and `aimebu doctor --live`
 reads; the row stays available, the turn's preflight is what refuses. The opt-in live canary
 (`AIMEBU2_LIVE_OPENCODE_DOCKER=1 go test ./internal/adapter/opencode`) runs two real turns through the

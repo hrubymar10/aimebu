@@ -97,7 +97,9 @@ func inspectLauncher(def protocol.LauncherDefinition, checkout string) (protocol
 			row.UnavailableReason = "launcher version check failed"
 		}
 	}
-	if def.Containerized && adapter.DockerNeedsForwardEnv(def.Tool) {
+	// Like the --version probe above, only with a checkout to run in: an old launcher that ignores the probe runs the harness with these
+	// arguments, which must not happen in an arbitrary directory, and the hello loop must not wait on every launcher.
+	if def.Containerized && checkout != "" && adapter.DockerNeedsForwardEnv(def.Tool) {
 		probeLauncherFeatures(&row, def, path, checkout)
 	}
 	if !def.Enabled {
@@ -108,8 +110,7 @@ func inspectLauncher(def protocol.LauncherDefinition, checkout string) (protocol
 	return row, nil
 }
 
-// probeLauncherFeatures asks a Docker launcher for its features (the probe exits before it touches Docker, so it needs no checkout) and
-// records them, or why they cannot be used, on the row. Doctor and Settings read them from there instead of probing again.
+// probeLauncherFeatures asks a Docker launcher for its features (the probe exits before it touches Docker) and records them, or why they cannot be used, on the row. Doctor and Settings read them from there instead of probing again.
 func probeLauncherFeatures(row *protocol.LauncherRow, def protocol.LauncherDefinition, path, checkout string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

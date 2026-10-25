@@ -413,10 +413,11 @@ func checkMachines(db *sql.DB, now time.Time, serverUp bool) []doctorCheck {
 	return checks
 }
 
-// checkPendingStops reports stop controls no machine has applied yet. They are
-// what makes deleting a project return 409 until the machine reconnects, so a
-// stale or revoked machine holding some is worth a warning; a connected
-// machine with a few in flight is normal.
+// checkPendingStops reports stop controls no machine has applied yet, with exactly the condition project deletion applies
+// (store.DeleteProject): an agent that is not revoked, on a machine that is not revoked, wanted stopped, whose stop the machine has not
+// confirmed. Such a stop makes deleting its project return 409 until the machine applies it, so one held by a machine the server cannot
+// reach is worth a warning; a connected machine with a few in flight is normal. A revoked machine's stops do not block deletion and are
+// not listed.
 func checkPendingStops(db *sql.DB, now time.Time, serverUp bool) []doctorCheck {
 	const name = "pending stops"
 	if !tableExists(db, "agent") || !tableExists(db, "machine") || !tableExists(db, "event") {
@@ -429,12 +430,11 @@ func checkPendingStops(db *sql.DB, now time.Time, serverUp bool) []doctorCheck {
 	var held []pending
 	err := sqliteutil.Retry(func() error {
 		held = held[:0]
-		rows, err := db.Query(`SELECT m.id,m.name,m.approved,m.revoked_at IS NOT NULL,m.last_seen,COUNT(*)
+		rows, err := db.Query(`SELECT m.id,m.name,m.last_seen,COUNT(*)
 			FROM agent a JOIN machine m ON m.id=a.machine_id
-			WHERE a.revoked_at IS NULL AND a.desired='stopped'
-			AND (a.observed!='stopped' OR NOT EXISTS (
-				SELECT 1 FROM event e WHERE e.agent_id=a.id AND e.kind='agent_control_applied'
-				AND CAST(json_extract(e.payload_json,'$.desired_rev') AS INTEGER)=a.desired_rev))
+			WHERE a.revoked_at IS NULL AND m.revoked_at IS NULL AND a.desired='stopped'
+			AND NOT EXISTS (SELECT 1 FROM event e WHERE e.agent_id=a.id AND e.kind='agent_control_applied'
+				AND CAST(json_extract(e.payload_json,'$.desired_rev') AS INTEGER)=a.desired_rev)
 			GROUP BY m.id ORDER BY m.name,m.id`)
 		if err != nil {
 			return err
@@ -443,7 +443,7 @@ func checkPendingStops(db *sql.DB, now time.Time, serverUp bool) []doctorCheck {
 		for rows.Next() {
 			var item pending
 			var seen sql.NullString
-			if err := rows.Scan(&item.machine.id, &item.machine.name, &item.machine.approved, &item.machine.revoked, &seen, &item.count); err != nil {
+			if err := rows.Scan(&item.machine.id, &item.machine.name, &seen, &item.count); err != nil {
 				return err
 			}
 			item.machine.lastSeen, item.machine.seen = parseStoredTime(seen)
@@ -461,18 +461,13 @@ func checkPendingStops(db *sql.DB, now time.Time, serverUp bool) []doctorCheck {
 	var inFlight []string
 	for _, item := range held {
 		label := fmt.Sprintf("%d for %s", item.count, machineLabel(item.machine))
-		switch {
-		case item.machine.revoked:
+		if serverUp && (!item.machine.seen || now.Sub(item.machine.lastSeen) > machineStaleAfter) {
 			checks = append(checks, doctorCheck{Name: name, Status: statusWarn,
-				Description: fmt.Sprintf("%d stop(s) waiting for revoked machine %s: deleting its projects returns 409", item.count, machineLabel(item.machine)),
-				Hint:        "A revoked machine never reconnects. Re-pair it, or remove the agents from the project before deleting it."})
-		case serverUp && (!item.machine.seen || now.Sub(item.machine.lastSeen) > machineStaleAfter):
-			checks = append(checks, doctorCheck{Name: name, Status: statusWarn,
-				Description: fmt.Sprintf("%d stop(s) waiting for machine %s, which is not connected: deleting its projects returns 409", item.count, machineLabel(item.machine)),
+				Description: fmt.Sprintf("%d stop(s) waiting for machine %s, which is not connected: deleting a project with such an agent returns 409", item.count, machineLabel(item.machine)),
 				Hint:        "Reconnect the machine (aimebu supervisor), or revoke it in Settings → Machines."})
-		default:
-			inFlight = append(inFlight, label)
+			continue
 		}
+		inFlight = append(inFlight, label)
 	}
 	if len(inFlight) > 0 {
 		checks = append(checks, doctorCheck{Name: name, Status: statusOK, Description: "in flight: " + strings.Join(inFlight, ", ")})
