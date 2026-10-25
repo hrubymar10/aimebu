@@ -24,30 +24,31 @@ var ErrMachineUnavailable = errors.New("machine unavailable")
 var ErrSlowMachine = errors.New("slow machine")
 
 type machineConn struct {
-	id                string
-	keyHash           string
-	conn              *websocket.Conn
-	sendQueue         chan protocol.Frame
-	done              chan struct{}
-	stopOnce          sync.Once
-	bound             map[string]int
-	boundMu           sync.RWMutex
-	capabilities      []protocol.CapabilityReport
-	supportsPathProbe bool
-	supportsWorktree  bool
-	supportsLaunchers bool
-	supportsDetect    bool
-	supportsDetectDir bool
-	supportsAgentLogs bool
-	harnessMu         sync.Mutex
-	harnessSetMu      sync.Mutex
-	harnesses         []protocol.HarnessRow
-	launchers         []protocol.LauncherRow
-	harnessPending    map[string]chan protocol.Frame
-	launcherPending   map[string]chan protocol.Frame
-	pathPending       map[string]chan protocol.Frame
-	journaled         map[string]turnBinding
-	lastSeen          atomic.Int64
+	id                   string
+	keyHash              string
+	conn                 *websocket.Conn
+	sendQueue            chan protocol.Frame
+	done                 chan struct{}
+	stopOnce             sync.Once
+	bound                map[string]int
+	boundMu              sync.RWMutex
+	capabilities         []protocol.CapabilityReport
+	supportsPathProbe    bool
+	supportsWorktree     bool
+	supportsLaunchers    bool
+	supportsDetect       bool
+	supportsDetectDir    bool
+	supportsAgentLogs    bool
+	supportsAgentLogSize bool
+	harnessMu            sync.Mutex
+	harnessSetMu         sync.Mutex
+	harnesses            []protocol.HarnessRow
+	launchers            []protocol.LauncherRow
+	harnessPending       map[string]chan protocol.Frame
+	launcherPending      map[string]chan protocol.Frame
+	pathPending          map[string]chan protocol.Frame
+	journaled            map[string]turnBinding
+	lastSeen             atomic.Int64
 }
 
 type turnBinding struct {
@@ -200,7 +201,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
 	c.lastSeen.Store(time.Now().UnixNano())
 	s.machineMu.Lock()
 	old := s.machines[machineID]
@@ -306,7 +307,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		if frame.Type == protocol.PathResult || frame.Type == protocol.WorktreeResult || frame.Type == protocol.AgentLogResult {
+		if frame.Type == protocol.PathResult || frame.Type == protocol.WorktreeResult || frame.Type == protocol.AgentLogResult || frame.Type == protocol.AgentLogUsageResult {
 			c.harnessMu.Lock()
 			waiter := c.pathPending[frame.ReqID]
 			c.harnessMu.Unlock()

@@ -52,7 +52,16 @@ func TestAgentOutputIsCapturedAndServedOverTheMachineSocket(t *testing.T) {
 	if !hello.SupportsAgentLogs {
 		t.Fatal("the supervisor does not say it keeps agent output")
 	}
+	if !hello.SupportsAgentLogSize {
+		t.Fatal("the supervisor does not say it reports the size of its agent output")
+	}
 	// Nothing captured yet.
+	peer.out <- protocol.Frame{V: protocol.Version, Type: protocol.AgentLogUsage, ReqID: "u0"}
+	if empty := peer.next(t, protocol.AgentLogUsageResult); empty.ReqID != "u0" || empty.Code != "" {
+		t.Fatalf("size before any turn: %+v", empty)
+	} else if err := json.Unmarshal(empty.Details, new(agentlog.Size)); err != nil {
+		t.Fatal(err)
+	}
 	peer.out <- protocol.Frame{V: protocol.Version, Type: protocol.AgentLogRead, ReqID: "r0", AgentID: agentID}
 	if empty := peer.next(t, protocol.AgentLogResult); empty.ReqID != "r0" || empty.Code != "no_log" {
 		t.Fatalf("before any turn: %+v", empty)
@@ -86,6 +95,11 @@ func TestAgentOutputIsCapturedAndServedOverTheMachineSocket(t *testing.T) {
 	}
 	if strings.Contains(page.Text, "aak_secret_value") {
 		t.Errorf("a secret reached the output log:\n%s", page.Text)
+	}
+	peer.out <- protocol.Frame{V: protocol.Version, Type: protocol.AgentLogUsage, ReqID: "u1"}
+	var size agentlog.Size
+	if result := peer.next(t, protocol.AgentLogUsageResult); result.Code != "" || json.Unmarshal(result.Details, &size) != nil || size.Bytes <= 0 || size.Agents != 1 {
+		t.Errorf("size after a turn: %+v %+v", result, size)
 	}
 	// Another agent has none, and an id that is a path names nothing.
 	for _, id := range []string{"agt_other", "../../etc/passwd"} {

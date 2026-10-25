@@ -68,7 +68,7 @@ contains no statement that deletes either.
 
 Agents' captured stderr (`supervisor/agent-logs/`) is not part of this routine:
 the supervisor that wrote it removes files older than 14 days, and the oldest
-ones when all of them pass 256 MiB (see [the supervisor](supervisor.md#agent-output)). On the host machine it counts under **Agent runtime** in Health; a remote machine's does not.
+ones when all of them pass 256 MiB (see [the supervisor](supervisor.md#agent-output)). On the host machine it counts under **Agent runtime** in Health; a remote machine's counts under **Remote agent logs**, asked of that machine (see below).
 
 Aimebu's agent runtime state (`supervisor/`: adapter homes, sessions, its
 journal file), the v1 backup `.old-v1-bkp`, schema-migration copies under
@@ -99,12 +99,18 @@ nothing. Everything above is owner-only.
 
 `GET /api/disk` feeds the top of the Health panel: a total, the breakdown by
 project (attachments and worktrees), by kind (database, attachments,
-worktrees, agent runtime, sounds, v1 backup, migration backups, account switcher, usage cache),
-each worktree with its size and state, free space on the data disk with a
+worktrees, agent runtime, remote agent logs, sounds, v1 backup, migration backups, account switcher, usage cache),
+each worktree with its size and state, each remote machine's agent output logs, free space on the data disk with a
 warning under 10 GB or 10%, and the last cleanup. Worktree sizes come from the
 machine that holds them (`worktree_op` action `inspect`; a remote supervisor
-needs the matching version). The report is cached for two minutes and rebuilt
-after a cleanup. Attachments already removed do not count.
+needs the matching version). The host's own agent output logs are part of
+"Agent runtime"; a remote machine keeps its logs in its own `supervisor/agent-logs`,
+so the server asks it for the size (`agent_log_usage`, only when its hello
+advertised `supports_agent_log_size`) and adds the answers up as "Remote agent
+logs". `machines` lists them one row per approved remote machine; one that is
+offline or too old to answer gets an `error` on its row and counts as zero. The
+report is cached for two minutes and rebuilt after a cleanup. Attachments
+already removed do not count.
 
 Storage: migrations add `settings_project.worktree_mode`, `room.checkout_mode`,
 the `cleanup_log` table and `attachment.removed_at` / `removed_after_days`; the

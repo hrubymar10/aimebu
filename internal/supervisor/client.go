@@ -199,7 +199,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -390,6 +390,17 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				c.report(fmt.Errorf("agent %s output log: %w", frame.AgentID, err))
 			} else {
 				result.Details, _ = json.Marshal(page)
+			}
+			if err := c.send(ctx, conn, result); err != nil {
+				return err
+			}
+		case protocol.AgentLogUsage:
+			result := protocol.Frame{V: protocol.Version, Type: protocol.AgentLogUsageResult, ReqID: frame.ReqID}
+			if c.AgentLogs == nil {
+				result.Code, result.Message = "no_log", "this machine keeps no agent output"
+			} else {
+				bytes, agents := c.AgentLogs.Usage()
+				result.Details, _ = json.Marshal(agentlog.Size{Bytes: bytes, Agents: agents})
 			}
 			if err := c.send(ctx, conn, result); err != nil {
 				return err

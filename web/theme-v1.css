@@ -2279,7 +2279,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .health-disk-bar { height: 6px; border-radius: 3px; background: var(--bg-tertiary); position: relative; overflow: hidden; }
 .health-disk-bar::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--share, 0); background: var(--accent); border-radius: 3px; }
 .health-disk-size { color: var(--text-secondary); font-variant-numeric: tabular-nums; text-align: right; }
-.health-disk-kinds li, .health-disk-worktrees li { display: flex; justify-content: space-between; gap: 8px; }
+.health-disk-kinds li, .health-disk-worktrees li, .health-disk-machines li { display: flex; justify-content: space-between; gap: 8px; }
 .health-disk-state { flex: 1; color: var(--text-secondary); }
 .health-disk-details summary { cursor: pointer; color: var(--text-secondary); }
 .health-disk-details h4 { margin: 10px 0 4px; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; }

@@ -21,6 +21,8 @@ const (
 	outputReadsPerMinute = 30
 	// outputWait is how long the machine has to answer.
 	outputWait = 15 * time.Second
+	// sizeWait bounds the Health size question, which sits in a report that waits for every machine: a silent one adds at most this long.
+	sizeWait = 5 * time.Second
 )
 
 // agentOutputView is what the route returns: a bounded tail of what the agent's harness wrote to stderr, kept on the machine that ran it.
@@ -171,5 +173,51 @@ func (s *Server) machineAgentLog(ctx context.Context, machineID, agentID string,
 		return agentlog.Page{}, ctx.Err()
 	case <-timer.C:
 		return agentlog.Page{}, errors.New("the machine did not answer")
+	}
+}
+
+// machineAgentLogSize asks a machine how much its agent output logs hold, for the Health disk report. Only the size crosses the wire.
+func (s *Server) machineAgentLogSize(ctx context.Context, machineID string) (agentlog.Size, error) {
+	conn, err := s.machineForID(machineID)
+	if err != nil {
+		return agentlog.Size{}, err
+	}
+	if !conn.supportsAgentLogSize {
+		return agentlog.Size{}, errAgentLogsUnsupported
+	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return agentlog.Size{}, err
+	}
+	id := hex.EncodeToString(nonce[:])
+	channel := make(chan protocol.Frame, 1)
+	conn.harnessMu.Lock()
+	if conn.pathPending == nil {
+		conn.pathPending = make(map[string]chan protocol.Frame)
+	}
+	conn.pathPending[id] = channel
+	conn.harnessMu.Unlock()
+	defer func() { conn.harnessMu.Lock(); delete(conn.pathPending, id); conn.harnessMu.Unlock() }()
+	if err := conn.send(protocol.Frame{V: protocol.Version, Type: protocol.AgentLogUsage, ReqID: id}); err != nil {
+		return agentlog.Size{}, err
+	}
+	timer := time.NewTimer(sizeWait)
+	defer timer.Stop()
+	select {
+	case frame := <-channel:
+		if frame.Code != "" {
+			return agentlog.Size{}, errors.New(frame.Message)
+		}
+		var size agentlog.Size
+		if err := json.Unmarshal(frame.Details, &size); err != nil {
+			return size, err
+		}
+		return size, nil
+	case <-conn.done:
+		return agentlog.Size{}, ErrMachineUnavailable
+	case <-ctx.Done():
+		return agentlog.Size{}, ctx.Err()
+	case <-timer.C:
+		return agentlog.Size{}, errors.New("the machine did not answer")
 	}
 }

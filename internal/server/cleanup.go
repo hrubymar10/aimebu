@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -345,12 +346,22 @@ type diskWorktree struct {
 	Error        string `json:"error,omitempty"`
 }
 
+// diskMachine is one remote machine's agent output logs. Its harnesses' stderr stays on that machine, so only it can say how much there is.
+type diskMachine struct {
+	MachineID string `json:"machine_id"`
+	Name      string `json:"name"`
+	LogBytes  int64  `json:"agent_log_bytes"`
+	LogAgents int    `json:"agent_log_agents,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
 type diskReport struct {
 	GeneratedAt string                `json:"generated_at"`
 	TotalBytes  int64                 `json:"total_bytes"`
 	Categories  []diskCategory        `json:"categories"`
 	Projects    []diskProject         `json:"projects"`
 	Worktrees   []diskWorktree        `json:"worktrees"`
+	Machines    []diskMachine         `json:"machines,omitempty"`
 	FreeBytes   int64                 `json:"free_bytes"`
 	VolumeBytes int64                 `json:"volume_bytes"`
 	LowDisk     bool                  `json:"low_disk"`
@@ -390,6 +401,41 @@ func (s *Server) diskUsage(ctx context.Context) (*diskReport, error) {
 	return report, nil
 }
 
+// remoteAgentLogs asks every approved remote machine, in parallel, how much agent output it keeps. A machine that is offline, too old
+// to answer or slow only gets an error on its own row; it never fails the report.
+func (s *Server) remoteAgentLogs(ctx context.Context) ([]diskMachine, error) {
+	machines, err := s.Store.Machines(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []diskMachine
+	for _, m := range machines {
+		if !m.IsHost && m.Approved && !m.RevokedAt.Valid {
+			out = append(out, diskMachine{MachineID: m.ID, Name: m.Name})
+		}
+	}
+	var wg sync.WaitGroup
+	for i := range out {
+		wg.Add(1)
+		go func(row *diskMachine) {
+			defer wg.Done()
+			size, err := s.machineAgentLogSize(ctx, row.MachineID)
+			switch {
+			case err == nil:
+				row.LogBytes, row.LogAgents = size.Bytes, size.Agents
+			case errors.Is(err, ErrMachineUnavailable):
+				row.Error = "machine is offline"
+			case errors.Is(err, errAgentLogsUnsupported):
+				row.Error = "supervisor needs an update to report agent output"
+			default:
+				row.Error = err.Error()
+			}
+		}(&out[i])
+	}
+	wg.Wait()
+	return out, nil
+}
+
 func (s *Server) buildDiskReport(ctx context.Context) (*diskReport, error) {
 	now := time.Now()
 	settings, err := s.Store.CleanupSettings(ctx)
@@ -409,9 +455,28 @@ func (s *Server) buildDiskReport(ctx context.Context) (*diskReport, error) {
 	migrationBackupBytes := dirSize(ctx, filepath.Join(root, "server", "backups"))
 	switcherBytes := dirSize(ctx, filepath.Join(root, "switcher"))
 	usagesBytes := dirSize(ctx, filepath.Join(root, "usages"))
+	// The machines are asked at the same time as the worktrees, so a slow one costs the longer of the two waits, not their sum.
+	type machinesAnswer struct {
+		rows []diskMachine
+		err  error
+	}
+	answered := make(chan machinesAnswer, 1)
+	go func() {
+		rows, err := s.remoteAgentLogs(ctx)
+		answered <- machinesAnswer{rows, err}
+	}()
 	facts, err := s.inspectWorktrees(ctx)
+	machines := <-answered
 	if err != nil {
 		return nil, err
+	}
+	if machines.err != nil {
+		return nil, machines.err
+	}
+	report.Machines = machines.rows
+	var remoteLogBytes int64
+	for _, m := range report.Machines {
+		remoteLogBytes += m.LogBytes
 	}
 	if _, skipped, err := s.orphanBlobs(ctx, now); err == nil && skipped != "" {
 		report.Warnings = append(report.Warnings, skipped)
@@ -463,7 +528,7 @@ func (s *Server) buildDiskReport(ctx context.Context) (*diskReport, error) {
 	sort.Slice(report.Projects, func(i, j int) bool { return report.Projects[i].Bytes > report.Projects[j].Bytes })
 	for _, c := range []diskCategory{
 		{"database", "Database", footprint.Bytes}, {"attachments", "Attachments", attachmentBytes}, {"worktrees", "Worktrees", worktreeBytes},
-		{"supervisor", "Agent runtime", supervisorBytes}, {"sounds", "Sounds", soundBytes}, {"v1_backup", "v1 backup", backupBytes},
+		{"supervisor", "Agent runtime", supervisorBytes}, {"remote_agent_logs", "Remote agent logs", remoteLogBytes}, {"sounds", "Sounds", soundBytes}, {"v1_backup", "v1 backup", backupBytes},
 		{"migration_backups", "Migration backups", migrationBackupBytes},
 		{"switcher", "Account switcher", switcherBytes}, {"usages", "Usage cache", usagesBytes},
 	} {

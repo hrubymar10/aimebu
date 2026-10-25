@@ -412,5 +412,9 @@ captured.
   a remote machine that is offline, or a supervisor without
   `supports_agent_logs`, simply has nothing to show (the web says which). An
   agent that moved to another machine keeps its earlier output on the first.
+- **Size.** The server asks each remote machine only for the total size of its
+  logs (`agent_log_usage`, advertised as `supports_agent_log_size`) to show in
+  Health under "Remote agent logs"; the host's logs are counted with the rest of
+  `supervisor/`.
 - **Prune.** `aimebu prune` leaves the logs; `aimebu prune -a` removes them with
   the rest of `supervisor/` (see [pruning](prune.md)).

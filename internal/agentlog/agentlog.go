@@ -411,6 +411,12 @@ func enough(parts []string, lines, maxBytes int) bool {
 	return count > lines || total > maxBytes
 }
 
+// Size is what a machine reports about its output logs for the Health disk report: the bytes they hold and how many agents have any.
+type Size struct {
+	Bytes  int64 `json:"bytes"`
+	Agents int   `json:"agents"`
+}
+
 // Usage is what the store holds: its bytes and how many agents have output.
 func (s *Store) Usage() (bytes int64, agents int) {
 	entries, err := os.ReadDir(s.dir)

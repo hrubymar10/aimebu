@@ -4228,6 +4228,43 @@ async function main() {
       }), ['shot.png: attachment removed after 90 days', false], 'a removed attachment shows a note instead of the image');
       await agentPage.keyboard.press('Escape');
     }
+    // Agent logs kept on other machines: one online and one offline machine, on a desktop and a phone. The report is stubbed, because the
+    // scratch server has no remote machine; the real DiskUsage renders it inside the real health popover.
+    {
+      await agentPage.evaluate(() => {
+        window.__realFetch = window.fetch;
+        const report = { generated_at: new Date().toISOString(), total_bytes: 7340032, categories: [{ key: 'remote_agent_logs', label: 'Remote agent logs', bytes: 5242880 }], projects: [], worktrees: [],
+          machines: [{ machine_id: 'mch_laptop', name: 'a-deliberately-long-laptop-name-that-should-be-cut-instead-of-pushing-the-panel-sideways', agent_log_bytes: 5242880, agent_log_agents: 2 }, { machine_id: 'mch_box', name: 'old-box', agent_log_bytes: 0, error: 'machine is offline' }],
+          free_bytes: 50 * 2 ** 30, volume_bytes: 500 * 2 ** 30, low_disk: false, settings: { enabled: false, hour: 3, attachment_days: 90 } };
+        window.fetch = async (path, options) => String(path) === '/api/disk' ? new Response(JSON.stringify(report), { status: 200, headers: { 'Content-Type': 'application/json' } }) : window.__realFetch(path, options);
+      });
+      try {
+        for (const [width, height] of [[1100, 720], [390, 800]]) {
+          await agentPage.setViewport({ width, height });
+          // On a phone the toggle moves into the menu, so the popover stays open across the resize.
+          if (width > 700) await domClick(agentPage, '#health-toggle');
+          await agentPage.waitForSelector('#health-disk ul.health-disk-machines li[data-machine="mch_box"]');
+          await agentPage.$eval('#health-disk details', details => { details.open = true; });
+          const machines = await agentPage.$eval('#health-disk .health-disk-machines', list => {
+            const popover = document.querySelector('#health-popover'), box = popover.getBoundingClientRect();
+            return {
+              label: list.getAttribute('aria-label'), heading: list.previousElementSibling?.textContent,
+              rows: [...list.children].map(row => ({ id: row.dataset.machine, cells: [...row.children].map(cell => cell.textContent) })),
+              fits: popover.scrollWidth <= popover.clientWidth + 1 && [...list.querySelectorAll('li, li span')].every(item => item.getBoundingClientRect().right <= box.right + 1),
+              pageFits: document.documentElement.scrollWidth <= window.innerWidth,
+            };
+          });
+          assert.equal(machines.label, 'Agent logs on other machines', `${width}px: the list has no accessible name`);
+          assert.equal(machines.heading, 'Agent logs on other machines', `${width}px: the list has no heading`);
+          assert.deepEqual(machines.rows.map(row => [row.id, row.cells[1], row.cells[2]]), [['mch_laptop', '2 agents', '5.00 MB'], ['mch_box', 'machine is offline', '0 B']], `${width}px: machine rows`);
+          assert.ok(machines.fits && machines.pageFits, `${width}px: the machine list runs off the panel: ${JSON.stringify(machines)}`);
+        }
+        await agentPage.keyboard.press('Escape');
+      } finally {
+        await agentPage.setViewport({ width: 1100, height: 720 });
+        await agentPage.evaluate(() => { window.fetch = window.__realFetch; delete window.__realFetch; });
+      }
+    }
     // An entry with no Inbox item behind it opens the agent: its room, then its profile.
     await domClick(agentPage, '#health-toggle');
     await agentPage.click('#health-popover .health-item[data-code="stuck"]');

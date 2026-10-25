@@ -680,7 +680,7 @@ it never silently reruns a turn with uncertain effects.
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
   supports_path_probe?, supports_worktree?, supports_launchers?, supports_detect?,
-  supports_detect_dir?, supports_agent_logs?,
+  supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?,
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
   digest?}]}]}`
@@ -753,6 +753,13 @@ it never silently reruns a turn with uncertain effects.
   and `log_max_bytes` bytes (never more than 256 KiB), cut at a line start;
   `code` is `no_log` when nothing was captured for the agent and `log_failed`
   when it could not be read. The frame names an agent id, never a path.
+- S→M `agent_log_usage{v,req_id}`; M→S `agent_log_usage_result{v,req_id,
+  details?,code?,message?}`. The server asks a remote machine how much
+  agent output it keeps, for the Health disk report, only when the hello
+  advertised `supports_agent_log_size`. `details` is `{bytes, agents}`: the
+  bytes in the machine's `supervisor/agent-logs` and how many agents have
+  output there; `code` is `no_log` when the machine keeps none. Only the size
+  crosses the wire.
 - M⇄S `ping/pong` every 15 s → `machine.last_seen`; offline after 60 s.
 - S→M `spawn{v, req_id, agent_id, generation, desired_rev,
   agent:{id, tool, variant, launcher_id?, model, provider}, agent_key,

@@ -57,6 +57,16 @@ export class DiskUsage {
     const kinds = node('ul', 'health-disk-kinds');
     for (const category of report.categories || []) { const row = node('li'); row.append(node('span', '', category.label), node('span', 'health-disk-size', formatBytes(category.bytes))); kinds.append(row); }
     details.append(kinds);
+    if (report.machines?.length) {
+      details.append(node('h4', '', 'Agent logs on other machines'));
+      const machines = node('ul', 'health-disk-machines'); machines.setAttribute('aria-label', 'Agent logs on other machines');
+      for (const machine of report.machines) {
+        const row = node('li'); row.dataset.machine = machine.machine_id;
+        row.append(node('span', '', machine.name || machine.machine_id), node('span', 'health-disk-state', machine.error || `${machine.agent_log_agents || 0} agent${machine.agent_log_agents === 1 ? '' : 's'}`), node('span', 'health-disk-size', formatBytes(machine.agent_log_bytes)));
+        machines.append(row);
+      }
+      details.append(machines);
+    }
     if (report.worktrees?.length) {
       details.append(node('h4', '', 'Worktrees'));
       const trees = node('ul', 'health-disk-worktrees');
