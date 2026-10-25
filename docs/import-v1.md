@@ -356,7 +356,7 @@ dialog states what will happen; submitting sends `resume_legacy` with the v1
 agent id on `POST /api/rooms/{room}/agents` for the room picked in Start in.
 The server reads the session itself: the client never supplies a session id.
 
-- **Claude Code** sessions are **continued**: the new agent's session is
+- **Claude Code** sessions are **continued** (the same mechanism continues any Claude Code session a machine has, see [Continuing a Claude Code session](claude-sessions.md)): the new agent's session is
   created already started with v1's session id, so its first turn runs
   `claude --resume <id>`. Claude looks a session up under the working folder it
   was made in, so the agent works in **v1's working folder**, even outside the

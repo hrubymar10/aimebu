@@ -2469,3 +2469,23 @@ dialog:focus, dialog:focus-visible { outline: none; }
 /* Settings → Harnesses: the default-model radio is a 16px control, not the full-width field the generic settings rule makes of an input. */
 :is(#settings-dialog, #onboarding-harnesses) .settings-content .harness-model-default input[type="radio"] { flex: none; box-sizing: content-box; width: 16px; min-width: 0; height: 16px; min-height: 0; margin: 0; padding: 0; }
 :is(#settings-dialog, #onboarding-harnesses) .settings-content .harness-role-head-line select { width: auto; min-width: 110px; }
+
+/* The picker of Claude Code sessions to continue (opened from the Spawn dialog). */
+.spawn-sessions { float: right; }
+.cc-sessions { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; }
+.cc-sessions-intro { margin: 0 0 12px; color: var(--text-muted); font-size: 12.5px; }
+.cc-sessions-find { display: flex; gap: 6px; margin: 0 0 8px; }
+.cc-sessions-find input { flex: 1 1 auto; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font: inherit; font-family: ui-monospace, monospace; font-size: 12px; }
+.cc-sessions-status { margin: 0 0 6px; color: var(--text-muted); font-size: 12px; min-height: 1.4em; }
+.cc-sessions-list { display: flex; flex-direction: column; gap: 4px; }
+.cc-session { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); }
+.cc-session-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cc-session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
+.cc-session-facts, .cc-session-cwd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 11.5px; }
+.cc-session-cwd { font-family: ui-monospace, monospace; }
+.cc-session-flags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 40%; }
+.cc-session-flag { padding: 1px 7px; border: 1px solid var(--border); border-radius: 9px; color: var(--text-muted); font-size: 10.5px; white-space: nowrap; }
+.cc-session-flag-warn { color: var(--warning, #d29922); border-color: currentColor; }
+.cc-session-flag-stop { color: var(--text-muted); }
+.cc-sessions-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+@media (max-width: 700px) { .cc-session { flex-wrap: wrap; } .cc-session-flags { max-width: none; justify-content: flex-start; } }

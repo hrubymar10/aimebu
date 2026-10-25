@@ -2728,12 +2728,81 @@ async function main() {
           return { selected: select.selectedIndex, disabled: [...select.options].map(option => option.disabled) };
         };
         const catalog = [{ tool: 'claude', containerized: true, available: true }, { tool: 'codex', containerized: false, available: true }, { tool: 'claude', containerized: false, available: true }];
-        return [pick({ tool: 'claude', resumable: true }, catalog), pick({ tool: 'codex', resumable: false }, catalog), pick({ tool: 'claude', resumable: true }, catalog.slice(0, 2))];
-      }), [{ selected: 2, disabled: [true, true, false] }, { selected: 1, disabled: [false, false, false] }, { selected: -1, disabled: [true, true] }], 'the start dialog picks the native claude entry, just the v1 tool for a fresh start, and nothing when no native entry fits');
+        return [pick({ tool: 'claude', resumable: true }, catalog), pick({ tool: 'codex', resumable: false }, catalog), pick({ tool: 'claude', resumable: true }, catalog.slice(0, 2)),
+          // Two native launchers (other Claude homes): the one a session was listed from is picked, the first when it is no longer offered.
+          pick({ tool: 'claude', resumable: true, launcher_id: 'lch_b' }, [...catalog, { tool: 'claude', containerized: false, available: true, launcher_id: 'lch_b' }].map((tool, index) => index === 2 ? { ...tool, launcher_id: 'lch_a' } : tool)),
+          pick({ tool: 'claude', resumable: true, launcher_id: 'lch_gone' }, [...catalog, { tool: 'claude', containerized: false, available: true, launcher_id: 'lch_b' }].map((tool, index) => index === 2 ? { ...tool, launcher_id: 'lch_a' } : tool))];
+      }), [{ selected: 2, disabled: [true, true, false] }, { selected: 1, disabled: [false, false, false] }, { selected: -1, disabled: [true, true] },
+        { selected: 3, disabled: [true, true, false, false] }, { selected: 2, disabled: [true, true, false, false] }], 'the start dialog picks the native claude entry (the launcher the session was listed from), just the v1 tool for a fresh start, and nothing when no native entry fits');
       await domClick(first, '#spawn-cancel');
       await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
       assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, banner: document.querySelector('#spawn-resume').hidden })), { title: 'Spawn', banner: true }, 'closing the start dialog restores the ordinary one');
       assert.equal(await first.$eval('#spawn-start-in', el => el.hidden), true, 'the ordinary spawn dialog has no Start in picker');
+    }
+    // Continue a Claude Code session: the Spawn dialog's session button opens a picker of what the machine's supervisor finds in its Claude
+    // home (a fixture one here, never the real ~/.claude), by folder or by id; a pick reopens the Spawn dialog for that session.
+    {
+      const claudeHome = path.join(testHome, '.claude');
+      const folderName = folder => folder.replace(/[^a-zA-Z0-9]/g, '-');
+      const elsewhere = path.join(tmp, 'elsewhere'); fs.mkdirSync(elsewhere, { recursive: true });
+      const ccSession = (cwd, id, { title, entrypoint = 'cli', branch = 'main' }) => {
+        const dir = path.join(claudeHome, 'projects', folderName(cwd)); fs.mkdirSync(dir, { recursive: true });
+        const lines = [{ type: 'user', cwd, sessionId: id, gitBranch: branch, version: '2.1.309', entrypoint, message: { role: 'user', content: 'start' } },
+          { type: 'assistant', cwd, sessionId: id, message: { role: 'assistant', content: 'ok' } }, { type: 'ai-title', aiTitle: title, sessionId: id }];
+        fs.writeFileSync(path.join(dir, `${id}.jsonl`), lines.map(line => JSON.stringify(line)).join('\n') + '\n');
+      };
+      const [idOne, idActive, idAgent, idFar] = ['11111111-aaaa-4aaa-8aaa-000000000001', '11111111-aaaa-4aaa-8aaa-000000000002', '11111111-aaaa-4aaa-8aaa-000000000003', '11111111-aaaa-4aaa-8aaa-000000000004'];
+      ccSession(gitRoot, idOne, { title: 'Fix the login bug' });
+      ccSession(gitRoot, idActive, { title: 'Open in a terminal' });
+      ccSession(gitRoot, idAgent, { title: 'Made by an agent', entrypoint: 'sdk-cli' });
+      ccSession(elsewhere, idFar, { title: 'Worked elsewhere' });
+      fs.mkdirSync(path.join(claudeHome, 'sessions'), { recursive: true });
+      fs.writeFileSync(path.join(claudeHome, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: idActive, cwd: gitRoot, kind: 'interactive', status: 'idle' }));
+      await domClick(first, '#spawn-open');
+      await first.waitForFunction(() => document.querySelector('#spawn-dialog').open && !document.querySelector('#spawn-sessions').hidden);
+      assert.equal(await first.$eval('#spawn-sessions', el => [el.title, el.getAttribute('aria-label'), el.textContent.trim()]).then(list => list.join('|')), 'Continue a Claude Code session|Continue a Claude Code session|', 'the session button is an icon with a tooltip');
+      await domClick(first, '#spawn-sessions');
+      await first.waitForFunction(() => document.querySelector('#cc-sessions-dialog').open && document.querySelectorAll('#cc-sessions-list .cc-session').length === 3 && !document.querySelector('#spawn-dialog').open);
+      assert.deepEqual(await first.$$eval('#cc-sessions-list .cc-session', rows => rows.map(row => [row.dataset.sessionId, row.querySelector('.cc-session-title').textContent, [...row.querySelectorAll('.cc-session-flag')].map(flag => flag.textContent)]).sort()),
+        [[idOne, 'Fix the login bug', []], [idActive, 'Open in a terminal', ['open in a terminal']], [idAgent, 'Made by an agent', ['started by an agent']]], 'the picker lists the folder\'s sessions with their flags');
+      assert.ok(await first.$$eval('#cc-sessions-list .cc-session-pick', buttons => buttons.every(button => button.title === 'Continue this session' && button.getAttribute('aria-label') === 'Continue this session' && !button.textContent.trim())), 'each session has an icon button with a tooltip');
+      assert.equal(await first.$eval('#cc-sessions-status', el => el.textContent), '3 sessions');
+      // By id it is found wherever it worked, and says it is outside the project folder; an unknown id says so.
+      await first.$eval('#cc-session-id', (el, id) => { el.value = id; }, idFar);
+      await first.evaluate(() => document.querySelector('#cc-sessions-find').requestSubmit());
+      await first.waitForFunction(() => document.querySelectorAll('#cc-sessions-list .cc-session').length === 1 && document.querySelector('#cc-sessions-list .cc-session-cwd'));
+      assert.deepEqual(await first.$eval('#cc-sessions-list .cc-session', row => [row.dataset.sessionId, [...row.querySelectorAll('.cc-session-flag')].map(flag => flag.textContent), row.querySelector('.cc-session-cwd').textContent]), [idFar, ['outside the project folder'], elsewhere]);
+      await first.$eval('#cc-session-id', el => { el.value = '22222222-bbbb-4bbb-8bbb-999999999999'; });
+      await first.evaluate(() => document.querySelector('#cc-sessions-find').requestSubmit());
+      await first.waitForFunction(() => document.querySelector('#cc-sessions-error').textContent.includes('no Claude Code session with that id'));
+      // Picking one reopens the Spawn dialog for it: a room of its own by default, the name kept, nothing to confirm while nothing has it open.
+      await domClick(first, '#cc-sessions-close');
+      await domClick(first, '#spawn-open');
+      await first.waitForFunction(() => document.querySelector('#spawn-dialog').open);
+      await domClick(first, '#spawn-sessions');
+      await first.waitForFunction(() => document.querySelectorAll('#cc-sessions-list .cc-session').length === 3);
+      await domClick(first, `#cc-sessions-list .cc-session[data-session-id="${idOne}"] .cc-session-pick`);
+      await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
+      assert.deepEqual(await first.evaluate(() => ({
+        title: document.querySelector('#spawn-form h2').textContent, text: document.querySelector('#spawn-resume-text').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
+        name: document.querySelector('.spawn-name').hidden, startIn: !document.querySelector('#spawn-start-in').hidden, room: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent,
+        sessions: document.querySelector('#spawn-sessions').hidden, worktree: document.querySelector('.spawn-worktree-option').hidden,
+      })), { title: 'Continue a Claude Code session', text: `This continues the Claude Code session "Fix the login bug" (11111111), working in ${gitRoot}. It carries on from where the session stopped, in the same transcript.`,
+        confirm: true, name: false, startIn: true, room: 'A new room for this session', sessions: true, worktree: true }, 'the Spawn dialog opens for the picked session');
+      await domClick(first, '#spawn-cancel');
+      await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
+      // A session a live process has open asks for a confirmation before it can be continued.
+      await domClick(first, '#spawn-open');
+      await first.waitForFunction(() => document.querySelector('#spawn-dialog').open);
+      await domClick(first, '#spawn-sessions');
+      await first.waitForFunction(() => document.querySelectorAll('#cc-sessions-list .cc-session').length === 3);
+      await domClick(first, `#cc-sessions-list .cc-session[data-session-id="${idActive}"] .cc-session-pick`);
+      await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
+      assert.deepEqual(await first.evaluate(() => ({ confirm: document.querySelector('#spawn-resume-confirm-label').hidden, label: document.querySelector('#spawn-resume-confirm-label').textContent.trim(), notes: document.querySelector('#spawn-resume-notes').textContent })),
+        { confirm: false, label: 'I closed this session in my terminal', notes: 'A Claude process has this session open. Close it first: two processes on one session corrupt it.' });
+      await domClick(first, '#spawn-cancel');
+      await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
+      assert.equal(await first.$eval('#spawn-form h2', el => el.textContent), 'Spawn', 'closing the dialog restores the ordinary one');
     }
     assert.equal(await first.title(), '(2) aimebu');
     assert.ok(await first.evaluate(() => window.__soundPlays > 0), 'new inbox items did not play the chime');

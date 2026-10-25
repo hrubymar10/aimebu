@@ -27,22 +27,28 @@ const (
 // (claude keeps transcripts per folder, opencode per project), so the agent works where v1 did, even outside the project folder; one
 // that is gone is refused. On the host it is resolved here; on another machine that machine resolves it.
 func (s *Server) legacyResumeCWD(ctx context.Context, machine store.Machine, cwd string) (string, error) {
+	return s.resumeCWD(ctx, machine, cwd, "the folder v1 worked in")
+}
+
+// resumeCWD resolves the folder a continued session must run in on the machine: it has to exist there. subject names the folder in an
+// error ("the folder v1 worked in", "the folder the session worked in").
+func (s *Server) resumeCWD(ctx context.Context, machine store.Machine, cwd, subject string) (string, error) {
 	if !filepath.IsAbs(cwd) {
-		return "", fmt.Errorf("v1 did not record a usable working folder")
+		return "", fmt.Errorf("no usable working folder was recorded for it")
 	}
 	if machine.IsHost {
 		real, err := filepath.EvalSymlinks(cwd)
 		if err != nil {
-			return "", fmt.Errorf("the folder v1 worked in (%s) does not exist on %s", cwd, machine.Name)
+			return "", fmt.Errorf("%s (%s) does not exist on %s", subject, cwd, machine.Name)
 		}
 		if info, err := os.Stat(real); err != nil || !info.IsDir() {
-			return "", fmt.Errorf("the folder v1 worked in (%s) is not a folder on %s", cwd, machine.Name)
+			return "", fmt.Errorf("%s (%s) is not a folder on %s", subject, cwd, machine.Name)
 		}
 		return filepath.Clean(real), nil
 	}
 	canonical, err := s.probeMachinePath(ctx, machine.ID, cwd)
 	if err != nil {
-		return "", fmt.Errorf("the folder v1 worked in (%s) could not be checked on %s: %w", cwd, machine.Name, err)
+		return "", fmt.Errorf("%s (%s) could not be checked on %s: %w", subject, cwd, machine.Name, err)
 	}
 	return canonical, nil
 }

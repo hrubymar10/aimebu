@@ -41,7 +41,9 @@ type Client struct {
 	harnessProbeDir   string
 	// ConfigDir is the machine's aimebu config root; model detection uses a private detect/run-* folder unless the request names a folder.
 	ConfigDir string
-	Journal   *Journal
+	// ClaudeConfigDir is where Claude Code keeps its sessions for a session scan; empty means CLAUDE_CONFIG_DIR, else ~/.claude (tests set it).
+	ClaudeConfigDir string
+	Journal         *Journal
 	// AgentLogs holds what each agent's harness wrote to stderr, on this machine (supervisor/agent-logs/ beside the journal). The server
 	// reads a bounded tail of it for an owner or admin; nothing else leaves the machine.
 	AgentLogs      *agentlog.Store
@@ -200,7 +202,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -406,6 +408,17 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			if err := c.send(ctx, conn, result); err != nil {
 				return err
 			}
+		case protocol.SessionScan:
+			// A scan reads files, never the whole of them; it still runs off the read loop, like a path probe.
+			go func(scan protocol.Frame) {
+				result := c.sessionScanResult(scan)
+				if probeCtx.Err() != nil {
+					return
+				}
+				if err := c.send(probeCtx, conn, result); err != nil && probeCtx.Err() == nil {
+					c.report(err)
+				}
+			}(frame)
 		case protocol.PathProbe:
 			// Launcher version checks can take up to a minute. Keep reading
 			// machine frames while the probe runs; send serializes writes.

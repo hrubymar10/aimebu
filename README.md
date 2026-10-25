@@ -542,7 +542,7 @@ project, who spawned it, the last 24 hours' turns and cost, memory; the state sh
 buttons: Message, Pause, Stop (the red one), Switch… and Reactivate, each with a tooltip saying what it does and, when
 unavailable, why (also written under the buttons);
 a project viewer does not get the session id, resume command or working directory; a project owner or an admin also gets an **Output** section with the end of what the agent's harness printed to stderr, read from its machine on demand and kept there for 14 days, see [the supervisor](docs/supervisor.md#agent-output));
-the × button or Escape returns to the members. Settings opens on General. Agent rows show the latest turn activity from the live event
+the × button or Escape returns to the members. The Spawn dialog's **Continue a Claude Code session** button lists the Claude Code sessions a machine already has for the project's folder (or one by id) and starts an agent that continues the chosen one with `claude --resume`, in a room of its own by default; no history is copied, see [continuing a Claude Code session](docs/claude-sessions.md). Settings opens on General. Agent rows show the latest turn activity from the live event
 stream. Open `/?mock_agents=1` to preview cards and controls
 without spawning. Run `make test-ui` against an isolated scratch server; it
 requires Chromium or Chrome (set `CHROMIUM_PATH` if needed) and globally

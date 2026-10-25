@@ -93,6 +93,10 @@ type SpawnInput struct {
 	// ResumeLegacyID is the imported v1 agent this one is started from; ResumeHandle is that agent's harness session to continue, empty
 	// for a harness that cannot resume (the agent then starts fresh with the same name).
 	ResumeLegacyID, ResumeHandle string
+	// ResumeSession is the Claude Code session this agent continues (ResumeHandle carries its id); NewRoomTitle, when set, starts the agent
+	// in a new task room of that title under the project's home room instead of in RoomID.
+	ResumeSession *ResumeSession
+	NewRoomTitle  string
 }
 
 // ErrHomeLeadOnly is a spawn of a role without the lead capability into a home room whose project keeps it for the lead.
@@ -123,6 +127,14 @@ func (s *Store) SpawnRequestResult(ctx context.Context, actorKind, actorID, key,
 }
 
 func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
+	if in.NewRoomTitle != "" {
+		actor := in.ActorID
+		room, err := tx.roomForSession(in.RoomID, in.NewRoomTitle, actor)
+		if err != nil {
+			return AgentCard{}, err
+		}
+		in.RoomID = room.ID
+	}
 	var projectID, lifecycle string
 	var depth int
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id,lifecycle,depth FROM room WHERE id=?`, in.RoomID).Scan(&projectID, &lifecycle, &depth); err != nil {
@@ -277,6 +289,11 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	} else if _, err = tx.Exec(`INSERT INTO session(id,agent_id,generation,start_mode,started_at,native_session_id) VALUES (?,?,0,'fresh_with_history',?,?)`, sessionID, agent.ID, timestamp(), nullableString(nativeSessionID)); err != nil {
 		return AgentCard{}, err
 	}
+	if in.ResumeSession != nil {
+		if err = tx.attachClaudeSession(in, agent.ID); err != nil {
+			return AgentCard{}, err
+		}
+	}
 	if in.ResumeLegacyID != "" {
 		// A legacy agent is started once: its name is then the v2 agent's for good (names are unique in a project), and that agent is
 		// restarted with the ordinary controls.
@@ -302,6 +319,9 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 			notice = fmt.Sprintf("%s joined as %s, started fresh from v1 agent %s (its harness cannot resume a session)", slug, in.RoleKey, in.ResumeLegacyID)
 		}
 	}
+	if in.ResumeSession != nil {
+		notice = fmt.Sprintf("%s joined as %s, continuing the Claude Code session %s in %s", slug, in.RoleKey, describeSession(in.ResumeSession), in.Path)
+	}
 	if actorKind == "agent" {
 		actor, err := tx.agentDisplay(in.ActorID)
 		if err != nil {
@@ -312,7 +332,11 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if !allowed {
 		notice = fmt.Sprintf("%s is awaiting owner approval to start as %s", slug, in.RoleKey)
 		if in.ResumeHandle != "" {
-			notice += fmt.Sprintf("; it continues a v1 session and works in %s, outside the project folder", in.Path)
+			kind := "a v1 session"
+			if in.ResumeSession != nil {
+				kind = "a Claude Code session"
+			}
+			notice += fmt.Sprintf("; it continues %s and works in %s, outside the project folder", kind, in.Path)
 		}
 	}
 	if in.SpawnNote != "" {
@@ -968,4 +992,16 @@ func (s *Store) AckAgentControl(ctx context.Context, id string, generation int, 
 		_, err := tx.AppendEvent(Event{Kind: "agent_control_applied", ProjectID: projectID, AgentID: id, PayloadJSON: payloadJSON(map[string]string{"desired_rev": ref})})
 		return err
 	})
+}
+
+// describeSession is how a continued session is named in the room: its title in quotes when it has one, and the start of its id.
+func describeSession(session *ResumeSession) string {
+	short := session.ID
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	if session.Title == "" {
+		return short
+	}
+	return fmt.Sprintf("%q (%s)", session.Title, short)
 }

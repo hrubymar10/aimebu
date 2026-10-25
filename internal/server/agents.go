@@ -18,6 +18,7 @@ import (
 
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/ccsessions"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
@@ -39,6 +40,13 @@ type spawnRequest struct {
 	// ConfirmV1Idle acknowledges the warning that v1 may still be using that session.
 	ResumeLegacy  string `json:"resume_legacy,omitempty"`
 	ConfirmV1Idle bool   `json:"confirm_v1_idle,omitempty"`
+	// ResumeSession starts the agent from a Claude Code session the machine already has: its first turn is `claude --resume <id>` in the
+	// folder the session was made in. The server finds the session itself; ConfirmSessionClosed acknowledges the warning that a live
+	// process may still have it open. NewRoom starts the agent in a room of its own, titled after the session, instead of the room named
+	// in the request.
+	ResumeSession        string `json:"resume_session,omitempty"`
+	ConfirmSessionClosed bool   `json:"confirm_session_closed,omitempty"`
+	NewRoom              bool   `json:"new_room,omitempty"`
 }
 
 type spawnCatalogModel struct {
@@ -513,6 +521,25 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			return
 		}
 	}
+	if req.ResumeSession != "" {
+		switch {
+		case actorKind != "user":
+			apiError(w, 403, "forbidden", "only a person continues a Claude Code session")
+			return
+		case req.ResumeLegacy != "":
+			apiError(w, 400, "invalid_request", "continue either a v1 agent or a Claude Code session, not both")
+			return
+		case !ccsessions.ValidID(req.ResumeSession):
+			apiError(w, 400, "invalid_request", "resume_session is not a Claude Code session id")
+			return
+		case req.Worktree:
+			apiError(w, 400, "invalid_request", "a continued session runs where it was made, so it cannot use a worktree")
+			return
+		}
+	} else if req.NewRoom || req.ConfirmSessionClosed {
+		apiError(w, 400, "invalid_request", "new_room and confirm_session_closed belong to resume_session")
+		return
+	}
 	key := r.Header.Get("Idempotency-Key")
 	if key == "" || len(key) > 200 {
 		apiError(w, 400, "invalid_request", "Idempotency-Key required (at most 200 characters)")
@@ -649,13 +676,30 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			return
 		}
 	}
-	if resuming && containerized {
-		apiError(w, 409, "needs_native", "a containerized launcher keeps its own Claude sessions, so a v1 session can only be continued with the native claude launcher")
+	if (resuming || req.ResumeSession != "") && containerized {
+		apiError(w, 409, "needs_native", "a containerized launcher keeps its own Claude sessions, so an existing session can only be continued with the native claude launcher")
 		return
+	}
+	var session *protocol.SessionCandidate
+	if req.ResumeSession != "" {
+		var ok bool
+		if session, ok = s.resumableSession(w, r, machine, machineInfo, launcherID, &req); !ok {
+			return
+		}
 	}
 	var path string
 	var worktreeItem *store.RoomWorktree
-	if resuming {
+	if session != nil {
+		// A continued session runs where it was made, not in the room's checkout.
+		if path, err = s.resumeCWD(r.Context(), machineInfo, session.CWD, "the folder the session worked in"); err != nil {
+			apiError(w, 409, "session_folder_missing", err.Error())
+			return
+		}
+		if !sessionFoundFrom(*session, path) {
+			apiError(w, 409, "session_folder_alias", "Claude saved this session under "+session.CWD+", a spelling of "+path+" that Claude does not treat as the same folder, so it would not find the session from there; open "+session.CWD+" in Claude once and continue it from the terminal, or start a new agent")
+			return
+		}
+	} else if resuming {
 		// A resumed session runs where it was made (see legacyResumeCWD), not in the room's checkout.
 		if path, err = s.legacyResumeCWD(r.Context(), machineInfo, legacy.CWD); err != nil {
 			apiError(w, 409, "v1_folder_missing", err.Error())
@@ -693,6 +737,13 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	result, reused, err := s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "spawn", Key: key, Digest: digest}, func(tx *store.Tx) (string, error) {
 		input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: path, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, KeyHash: hex.EncodeToString(keyHashBytes[:])}
 		input.Slug = req.Name
+		if session != nil {
+			input.ResumeHandle = session.ID
+			input.ResumeSession = &store.ResumeSession{ID: session.ID, CWD: path, Title: session.Title}
+			if req.NewRoom {
+				input.NewRoomTitle = sessionRoomTitle(*session)
+			}
+		}
 		if defaultUsed {
 			input.SpawnNote = "spawned per role default: " + req.Tool + "/" + req.Variant + "/" + req.Model
 		} else if defaultAvailable && actorKind == "agent" {
@@ -871,6 +922,8 @@ func spawnError(w http.ResponseWriter, err error) {
 		apiError(w, 429, "spawn_limit", "agent or spawn rate limit reached")
 	case errors.Is(err, store.ErrSlugTaken):
 		apiError(w, 409, "name_in_use", "this project already has an agent, person or role with that name")
+	case errors.Is(err, store.ErrSessionAttached):
+		apiError(w, 409, "already_started", "an agent already continues this Claude Code session; use that agent")
 	case errors.Is(err, store.ErrLegacyStarted):
 		apiError(w, 409, "already_started", "this v1 agent was already started as a v2 agent; restart that agent instead")
 	case errors.Is(err, store.ErrRoleSpawnCursorChanged):

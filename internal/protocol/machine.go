@@ -43,6 +43,8 @@ const (
 	AgentLogResult       = "agent_log_result"
 	AgentLogUsage        = "agent_log_usage"
 	AgentLogUsageResult  = "agent_log_usage_result"
+	SessionScan          = "session_scan"
+	SessionScanResult    = "session_scan_result"
 )
 
 // Frame is the versioned machine socket envelope. Agent frames carry both
@@ -55,6 +57,7 @@ type Frame struct {
 	JournalID            string               `json:"journal_id,omitempty"`
 	SupervisorVersion    string               `json:"supervisor_version,omitempty"`
 	SupportsPathProbe    bool                 `json:"supports_path_probe,omitempty"`
+	SupportsSessionScan  bool                 `json:"supports_session_scan,omitempty"`
 	SupportsWorktree     bool                 `json:"supports_worktree,omitempty"`
 	SupportsLaunchers    bool                 `json:"supports_launchers,omitempty"`
 	SupportsDetect       bool                 `json:"supports_detect,omitempty"`
@@ -119,8 +122,31 @@ type Frame struct {
 	Exit                 *adapter.ExitInfo    `json:"exit,omitempty"`
 	Result               string               `json:"result,omitempty"`
 	Details              json.RawMessage      `json:"details,omitempty"`
-	Code                 string               `json:"code,omitempty"`
-	Message              string               `json:"message,omitempty"`
+	// ScanFolders (spellings of one folder: every Claude Code session that worked in it or below) or ScanSessionID (that one session,
+	// wherever it worked) asks a machine for its Claude Code sessions; the answer lists them in Sessions.
+	ScanFolders   []string           `json:"scan_folders,omitempty"`
+	ScanSessionID string             `json:"scan_session_id,omitempty"`
+	Sessions      []SessionCandidate `json:"sessions,omitempty"`
+	// Unreadable counts transcripts of the scanned folders that could not be read far enough to say whose they are; ScanTruncated says the
+	// scan stopped at its limits and Sessions are the newest. A scan names the launcher whose Claude home it reads in LauncherID.
+	Unreadable    int    `json:"unreadable,omitempty"`
+	ScanTruncated bool   `json:"scan_truncated,omitempty"`
+	Code          string `json:"code,omitempty"`
+	Message       string `json:"message,omitempty"`
+}
+
+// SessionCandidate is one Claude Code session a machine has: what it knows without reading the whole transcript.
+type SessionCandidate struct {
+	ID         string `json:"id"`
+	CWD        string `json:"cwd"`
+	Dir        string `json:"dir,omitempty"`
+	Title      string `json:"title,omitempty"`
+	GitBranch  string `json:"git_branch,omitempty"`
+	Version    string `json:"version,omitempty"`
+	Entrypoint string `json:"entrypoint,omitempty"`
+	ModifiedAt string `json:"modified_at"`
+	Size       int64  `json:"size"`
+	Active     bool   `json:"active,omitempty"`
 }
 
 type HarnessSetting struct {

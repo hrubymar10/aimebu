@@ -81,6 +81,14 @@ Projects, rooms, people
   — what v1 recorded for an imported sender, kept for its read-only profile and
   for "Start as v2 agent"; `started_agent_id` links the one v2 agent started
   from it, and `agent.resumed_from_legacy_id` links back.
+- **imported_session**(machine_id, session_id, agent_id UNIQUE → agent, cwd,
+  title, imported_by, imported_at; PRIMARY KEY (machine_id, session_id)) —
+  migration 85. A Claude Code session an agent was started from (`resume_session`
+  on spawn, see [claude-sessions](claude-sessions.md)): the machine it lives on,
+  its id, and the one agent that continues it. A session is attached to at most
+  one live agent (this row, or an agent's own `session.native_session_id` on that
+  machine), checked in the spawn transaction and enforced by the primary key; a
+  row left by a revoked agent is replaced. The row goes with its agent.
 - **room_member**(room_id, member_kind[user|agent], member_id, joined_at,
   left_at?) — UNIQUE active (room_id, member_kind, member_id)
 - **room.memory_enabled?** — `NULL` inherits the project setting; `0`
@@ -790,7 +798,7 @@ it never silently reruns a turn with uncertain effects.
 
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
-  supports_path_probe?, supports_worktree?, supports_launchers?, supports_detect?,
+  supports_path_probe?, supports_session_scan?, supports_worktree?, supports_launchers?, supports_detect?,
   supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?,
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
@@ -847,6 +855,37 @@ it never silently reruns a turn with uncertain effects.
   The server sends this frame only to supervisors that advertised
   `supports_path_probe`. Older supervisors fail admission without receiving
   the unknown frame; the server does not fall back to lexical comparison.
+- S→M `session_scan{v,req_id,launcher_id?,scan_folders?[1..4] | scan_session_id?}`; M→S
+  `session_scan_result{v,req_id,sessions?[{id,cwd,dir?,title?,git_branch?,version?,
+  entrypoint?,modified_at,size,active?}],unreadable?,scan_truncated?,code?,message?}`.
+  The supervisor lists the Claude Code sessions of its own machine, from the
+  configuration folder of the launcher named by `launcher_id` (that launcher's
+  `env_refs` apply: its `CLAUDE_CONFIG_DIR`, else its `HOME`, else the
+  supervisor's own; `code:"launcher_unavailable"` for an unknown launcher; empty
+  means the supervisor's own environment): either
+  every session whose recorded working folder is one of `scan_folders` (spellings
+  of one folder: as configured and resolved) or below it
+  (newest first, at most 200 sessions; the folder is decided first, from each
+  transcript's own `cwd`, and the limits count what is left: at most 5000
+  transcripts are opened and at most 200 long-named directories that do not
+  start like the folder's are looked into, because Claude hashes long paths;
+  `scan_truncated` says a limit was reached (also when long-named
+  directories were left unopened because the 200 probes ran out); `unreadable` counts transcripts
+  of the folder's directories whose first line carrying a working folder is
+  beyond the first 1 MiB, so they could not be assigned), or the one
+  session `scan_session_id` wherever it worked (`code:"session_not_found"`
+  when no transcript carries the id, `session_unreadable` when it exists but
+  has no readable working folder; `invalid_request` when both or neither
+  are named). Each transcript is read only at its two ends (the first and the
+  last 64 KiB): the working folder, branch, Claude version and entrypoint come
+  from the start (`dir` is the project directory the transcript sits in, which
+  Claude derives from that folder), the title from the last `ai-title` or `last-prompt` line
+  (else the first prompt), cut to 120 characters on one line; no transcript
+  text beyond that title leaves the machine. Subagent and sidechain
+  transcripts and sessions with nothing said in them are left out. `active`
+  says a live process registered the session in `<config>/sessions/<pid>.json`;
+  it is advisory. The server sends this frame only to supervisors that
+  advertised `supports_session_scan`.
 - S→M `worktree_op{v,req_id,checkout_path,room_id,base_ref,
   worktree_action,worktree_force}`; M→S `worktree_result{v,req_id,
   details?,code?,message?}`. The supervisor runs bounded Git operations in

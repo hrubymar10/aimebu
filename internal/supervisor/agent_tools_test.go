@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/goccy/go-json"
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/ccsessions"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 )
 
@@ -408,5 +409,148 @@ func TestAgentToolsConfigIsPrivateAndOnlyPathInJournal(t *testing.T) {
 	}
 	if strings.Contains(string(updated), key) || !strings.Contains(string(updated), newKey) {
 		t.Fatal("credential refresh did not atomically replace the config")
+	}
+}
+
+// A session scan answers from the machine's own Claude state without blocking machine frames, and the hello advertises it.
+func TestSessionScanListsAndFindsSessionsOfTheMachineClaudeHome(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	claude := t.TempDir() // a fixture Claude configuration folder; the real one is never read
+	project := filepath.Join(t.TempDir(), "proj")
+	const id, other = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	write := func(cwd, sid string) {
+		dir := filepath.Join(claude, "projects", ccsessions.FolderName(cwd))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		line, _ := json.Marshal(map[string]any{"type": "user", "cwd": cwd, "sessionId": sid, "gitBranch": "dev", "message": map[string]any{"content": "Plan the release"}})
+		if err := os.WriteFile(filepath.Join(dir, sid+".jsonl"), append(line, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(project, id)
+	write("/somewhere/else", other)
+	type seen struct{ hello, folder, byID, missing, both protocol.Frame }
+	results := make(chan seen, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		var out seen
+		if out.hello, err = readFrame(ctx, conn); err != nil {
+			return
+		}
+		for _, frame := range []protocol.Frame{
+			{V: protocol.Version, Type: protocol.HelloAck},
+			{V: protocol.Version, Type: protocol.SessionScan, ReqID: "folder", ScanFolders: []string{project}},
+			{V: protocol.Version, Type: protocol.SessionScan, ReqID: "byid", ScanSessionID: other},
+			{V: protocol.Version, Type: protocol.SessionScan, ReqID: "missing", ScanSessionID: "cccccccc-cccc-4ccc-8ccc-cccccccccccc"},
+			{V: protocol.Version, Type: protocol.SessionScan, ReqID: "both", ScanSessionID: id, ScanFolders: []string{project}},
+		} {
+			data, _ := json.Marshal(frame)
+			if err := conn.Write(ctx, websocket.MessageText, data); err != nil {
+				return
+			}
+		}
+		byID := map[string]protocol.Frame{}
+		for len(byID) < 4 {
+			frame, err := readFrame(ctx, conn)
+			if err != nil {
+				return
+			}
+			if frame.Type == protocol.SessionScanResult {
+				byID[frame.ReqID] = frame
+			}
+		}
+		out.folder, out.byID, out.missing, out.both = byID["folder"], byID["byid"], byID["missing"], byID["both"]
+		results <- out
+	}))
+	defer server.Close()
+	j, err := OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	c := NewClient("machine", "key", server.URL, j, adapter.NewFake())
+	c.ClaudeConfigDir = claude
+	c.OnError = func(error) {}
+	done := make(chan error, 1)
+	go func() { done <- c.RunOnce(ctx) }()
+	select {
+	case got := <-results:
+		if !got.hello.SupportsSessionScan {
+			t.Fatal("the hello does not advertise session scans")
+		}
+		if got.folder.Code != "" || len(got.folder.Sessions) != 1 || got.folder.Sessions[0].ID != id || got.folder.Sessions[0].CWD != project ||
+			got.folder.Sessions[0].Title != "Plan the release" || got.folder.Sessions[0].GitBranch != "dev" || got.folder.Sessions[0].ModifiedAt == "" {
+			t.Fatalf("folder scan: %+v", got.folder)
+		}
+		if got.byID.Code != "" || len(got.byID.Sessions) != 1 || got.byID.Sessions[0].ID != other || got.byID.Sessions[0].CWD != "/somewhere/else" {
+			t.Fatalf("scan by id: %+v", got.byID)
+		}
+		if got.missing.Code != "session_not_found" || len(got.missing.Sessions) != 0 {
+			t.Fatalf("a missing id: %+v", got.missing)
+		}
+		if got.both.Code != "invalid_request" {
+			t.Fatalf("a folder and an id together: %+v", got.both)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	cancel()
+	<-done
+}
+
+// A scan reads the Claude home of the launcher named, which may point its own CLAUDE_CONFIG_DIR elsewhere, not the supervisor's.
+func TestSessionScanReadsTheClaudeHomeOfTheNamedLauncher(t *testing.T) {
+	supervisorHome, launcherHome := t.TempDir(), t.TempDir() // fixture folders; the real ~/.claude is never read
+	t.Setenv("CLAUDE_CONFIG_DIR", supervisorHome)
+	t.Setenv("WORK_CLAUDE_HOME", launcherHome)
+	project := filepath.Join(t.TempDir(), "proj")
+	const own, work = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	write := func(home, sid string) {
+		dir := filepath.Join(home, "projects", ccsessions.FolderName(project))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		line, _ := json.Marshal(map[string]any{"type": "user", "cwd": project, "sessionId": sid, "message": map[string]any{"content": "hi"}})
+		if err := os.WriteFile(filepath.Join(dir, sid+".jsonl"), append(line, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(supervisorHome, own)
+	write(launcherHome, work)
+	c := &Client{Launchers: []protocol.LauncherRow{
+		{LauncherDefinition: protocol.LauncherDefinition{ID: "lch_work", EnvRefs: map[string]string{"CLAUDE_CONFIG_DIR": "WORK_CLAUDE_HOME"}}},
+		{LauncherDefinition: protocol.LauncherDefinition{ID: "lch_plain"}},
+	}}
+	ids := func(frame protocol.Frame) []string {
+		var out []string
+		for _, session := range frame.Sessions {
+			out = append(out, session.ID)
+		}
+		return out
+	}
+	scan := func(launcher string) protocol.Frame {
+		return c.sessionScanResult(protocol.Frame{ReqID: "r", LauncherID: launcher, ScanFolders: []string{project}})
+	}
+	if got := ids(scan("lch_work")); len(got) != 1 || got[0] != work {
+		t.Fatalf("the launcher's own home: %v", got)
+	}
+	if got := ids(scan("lch_plain")); len(got) != 1 || got[0] != own {
+		t.Fatalf("a launcher with no references reads the supervisor's home: %v", got)
+	}
+	if got := ids(scan("")); len(got) != 1 || got[0] != own {
+		t.Fatalf("no launcher: %v", got)
+	}
+	if frame := scan("lch_missing"); frame.Code != "launcher_unavailable" {
+		t.Fatalf("an unknown launcher: %+v", frame)
+	}
+	byID := c.sessionScanResult(protocol.Frame{ReqID: "r", LauncherID: "lch_work", ScanSessionID: own})
+	if byID.Code != "session_not_found" {
+		t.Fatalf("a session of the other home is not found through this launcher: %+v", byID)
 	}
 }

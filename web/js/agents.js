@@ -4,6 +4,7 @@ import { request, currentUser, rights } from './api.js';
 import { harnessIcon, agentLabel } from './sender-identity.js';
 import { setGlyph } from './icon-button.js';
 import { relativeTime, stateAge } from './time.js';
+import { ClaudeSessionPicker } from './claude-sessions.js';
 
 // Compact icon buttons for a member row (the label is the title and the accessible name; no text of their own).
 const ICONS = {
@@ -17,6 +18,9 @@ function iconButton(className, label, icon) {
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', ICONS[icon]); path.setAttribute('fill', 'currentColor'); svg.append(path); button.append(svg);
   return button;
 }
+
+// The Spawn dialog's "Start in" value that asks for a room of its own, for a continued Claude Code session.
+const NEW_ROOM = '__new__';
 
 // A touch screen wider than a phone and up to 900px (an iPad upright): one side panel at a time.
 const TABLET = matchMedia('(min-width: 701px) and (max-width: 900px) and (pointer: coarse)');
@@ -45,6 +49,10 @@ export class AgentsPanel {
     document.querySelector('#edge-agents-expand').onclick = () => this.setDesktopOpen(true);
     document.querySelector('#agents-scrim').onclick = () => this.setMobileOpen(false);
     document.querySelector('#spawn-open').onclick = () => this.openSpawn();
+    // Continuing a Claude Code session the machine already has: pick it, then the Spawn dialog opens for it.
+    this.sessionPicker = new ClaudeSessionPicker(source);
+    this.sessionsButton = setGlyph(document.querySelector('#spawn-sessions'), 'reopen', 'Continue a Claude Code session');
+    this.sessionsButton.onclick = () => this.openSessionPicker();
     this.profileClose = document.querySelector('#agent-profile-close'); this.profileClose.onclick = () => this.closeProfile();
     this.panelTitle = this.panel.querySelector('header h2');
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && this.profileID && !document.querySelector('dialog[open]')) { event.preventDefault(); this.closeProfile(); } });
@@ -584,7 +592,23 @@ export class AgentsPanel {
   // The room the dialog starts the agent in: the open room, or for a start from v1 history the one picked in "Start in".
   spawnRoom() {
     if (!this.pendingResume) return this.room;
+    // A new room for a continued session is made by the server; the request still names the room the dialog was opened from.
+    if (this.pendingResume.kind === 'claude_session' && this.form.elements.start_room.value === NEW_ROOM) return this.room;
     return this.startRooms?.get(this.form.elements.start_room.value) || null;
+  }
+  // The session picker: closes the Spawn dialog (the machine and project are taken from it) and opens the picker; a pick reopens the Spawn dialog.
+  openSessionPicker() {
+    const projectID = this.room?.project_id, machine = this.spawnMachine.machine;
+    if (!projectID) return;
+    const machineID = this.spawnMachine.id, machineName = machine?.name || '';
+    // The sessions are those of the launcher that will continue them (its own Claude home); another tool's launcher means the default one.
+    const chosen = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)];
+    const launcherID = chosen?.tool === 'claude' ? chosen.launcher_id || '' : '';
+    this.dialog.close();
+    void this.sessionPicker.open({ projectID, machineID, machineName, launcherID, onPick: session => {
+      void this.openSpawn({ resume: { kind: 'claude_session', session_id: session.id, tool: 'claude', resumable: true, cwd: session.cwd, title: session.title || '',
+        outside_folder: !!session.outside_folder, active: !!session.active, machine_id: session.machine_id || machineID, launcher_id: session.launcher_id || '' } });
+    } });
   }
   // The rooms a v1 agent can be started in: the project's open task rooms. Its history may be only in the home room (which keeps its own
   // lead-only rule) or in a room since archived, so the start is not tied to the room the profile was opened in.
@@ -594,13 +618,18 @@ export class AgentsPanel {
     select.replaceChildren(); this.startRooms = new Map();
     if (!this.pendingResume || !this.room) return;
     const rooms = (this.projectRooms?.(this.room.project_id) || []).filter(room => room.kind === 'task' && room.lifecycle === 'open');
+    // A continued Claude Code session gets a room of its own unless the person picks an existing one.
+    if (this.pendingResume.kind === 'claude_session') {
+      const option = document.createElement('option'); option.value = NEW_ROOM; option.textContent = 'A new room for this session'; select.append(option);
+      select.value = NEW_ROOM;
+    }
     for (const room of rooms) {
       this.startRooms.set(room.id, room);
       const option = document.createElement('option'); option.value = room.id; option.textContent = room.title; select.append(option);
     }
     // general is the project's shared task room; otherwise the open room if it is one, else the first.
     const preferred = rooms.filter(room => room.title === 'general').sort((a, b) => a.depth - b.depth)[0] || rooms.find(room => room.id === this.room.id) || rooms[0];
-    if (preferred) select.value = preferred.id;
+    if (preferred && this.pendingResume.kind !== 'claude_session') select.value = preferred.id;
   }
   // A refused or cancelled spawn leaves the form as it was; each opening of the dialog starts without a worktree.
   resetWorktreeChoice() {
@@ -621,10 +650,12 @@ export class AgentsPanel {
     this.renderResume();
     this.dialog.showModal();
     // A v1 agent keeps its own name, so the dialog has no name field then; otherwise it starts with a free one.
-    this.form.querySelector('.spawn-name').hidden = !!resume;
+    const continuing = resume?.kind === 'claude_session';
+    this.form.querySelector('.spawn-name').hidden = !!resume && !continuing;
+    this.sessionsButton.hidden = !!resume || this.room?.kind === 'dm';
     this.nameRequestID = (this.nameRequestID || 0) + 1;
     this.nameInput.value = ''; this.nameError.textContent = '';
-    if (!resume) this.fillSpawnName();
+    if (!resume || continuing) this.fillSpawnName();
     this.renderSpawnModels();
     const toolSelect = this.form.elements.tool;
     const modelSelect = this.form.elements.model;
@@ -644,7 +675,7 @@ export class AgentsPanel {
       // A start from v1 history goes to a task room, so the home room's lead-only rule does not apply to it.
       const home = room.kind === 'home' && !resume, hint = document.querySelector('#spawn-home-hint');
       hint.hidden = true;
-      const [allRoles, leadOnly] = await Promise.all([this.source.roles(), home ? Promise.resolve(this.source.homeLeadOnly?.(room.project_id)).catch(() => true) : false, this.spawnMachine.load(room.project_id)]);
+      const [allRoles, leadOnly] = await Promise.all([this.source.roles(), home ? Promise.resolve(this.source.homeLeadOnly?.(room.project_id)).catch(() => true) : false, this.spawnMachine.load(room.project_id, resume?.machine_id || '')]);
       if (!current() || this.room?.id !== roomID) return;
       // With Home room: lead only (the default) the home room offers the lead roles alone; the server refuses the others.
       const roles = leadOnly ? allRoles.filter(role => role.cap_is_lead) : allRoles;
@@ -737,7 +768,9 @@ export class AgentsPanel {
     const resume = this.pendingResume;
     if (!resume?.tool) return;
     const fits = tool => tool.tool === resume.tool && tool.available && !(resume.resumable && tool.containerized);
-    const index = this.catalog.findIndex(fits);
+    // A continued session was listed from one launcher's Claude home: that launcher is picked when it is still offered, else the first fit.
+    const preferred = resume.launcher_id ? this.catalog.findIndex(tool => fits(tool) && tool.launcher_id === resume.launcher_id) : -1;
+    const index = preferred >= 0 ? preferred : this.catalog.findIndex(fits);
     if (index >= 0) toolSelect.selectedIndex = index;
     if (resume.resumable) for (const option of toolSelect.options) option.disabled = option.disabled || !fits(this.catalog[Number(option.value)]);
     // Nothing fits: no entry is selected, so the dialog cannot submit a start that the server would refuse.
@@ -758,9 +791,21 @@ export class AgentsPanel {
     const confirm = document.querySelector('#spawn-resume-confirm'), confirmLabel = document.querySelector('#spawn-resume-confirm-label');
     box.hidden = !resume;
     this.syncWorktreeOption();
-    this.form.querySelector('h2').textContent = resume ? `Start ${resume.slug} as a v2 agent` : 'Spawn';
-    confirm.checked = false; confirmLabel.hidden = !resume?.v1_active; notes.textContent = '';
+    const continuing = resume?.kind === 'claude_session';
+    this.form.querySelector('h2').textContent = continuing ? 'Continue a Claude Code session' : resume ? `Start ${resume.slug} as a v2 agent` : 'Spawn';
+    confirm.checked = false; confirmLabel.hidden = continuing ? !resume.active : !resume?.v1_active; notes.textContent = '';
+    // The one box means "nothing else has this session open"; its words are for what the person is continuing.
+    confirmLabel.replaceChildren(confirm, document.createTextNode(continuing ? ' I closed this session in my terminal' : ' v1 is not running this session any more'));
     if (!resume) return;
+    if (continuing) {
+      text.textContent = `This continues the Claude Code session ${resume.title ? `"${resume.title}" ` : ''}(${resume.session_id.slice(0, 8)}), working in ${resume.cwd}. It carries on from where the session stopped, in the same transcript.`;
+      const lines = [];
+      if (!this.spawnRoom()) lines.push('This project has no open task room to start it in.');
+      if (resume.outside_folder) lines.push(`It works in ${resume.cwd}, outside the project folder, so the owner must approve it in the Inbox before it starts.`);
+      if (resume.active) lines.push('A Claude process has this session open. Close it first: two processes on one session corrupt it.');
+      notes.textContent = lines.join(' ');
+      return;
+    }
     text.textContent = resume.resumable
       ? `This continues the v1 session of ${resume.legacy_id}, working in ${resume.cwd}.`
       : `${resume.reason || 'This agent starts fresh with the same name.'}`;
@@ -825,12 +870,17 @@ export class AgentsPanel {
     this.error.textContent = '';
     const role = this.form.elements.role.value, selected = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)], model = this.form.elements.model.value;
     if (!role || !selected?.available || !model) return;
-    const resume = this.pendingResume;
-    const name = resume ? '' : this.nameInput.value.trim();
+    const resume = this.pendingResume, continuing = resume?.kind === 'claude_session';
+    const name = resume && !continuing ? '' : this.nameInput.value.trim();
     if (name && !/^[a-z][a-z0-9_-]{1,19}[a-z0-9]$/.test(name)) { this.nameError.textContent = 'A name is 3 to 21 characters: lowercase letters, digits, - and _, starting with a letter and ending with a letter or digit.'; this.nameInput.focus(); return; }
     if (resume?.resumable && selected.tool !== resume.tool) { this.error.textContent = `To continue this session the tool must be ${resume.tool}.`; return; }
-    if (resume?.v1_active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that v1 is not running this session any more.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
-    try { await this.source.spawn(target.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(name ? { name } : {}), ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume ? { resume_legacy: resume.legacy_id, confirm_v1_idle: document.querySelector('#spawn-resume-confirm').checked } : {}) }); this.dialog.close(); this.form.reset(); if (target.id !== this.room.id) await this.showRoom?.(target); else await this.refresh(); }
+    if (continuing && resume.active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that you closed this session.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
+    if (!continuing && resume?.v1_active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that v1 is not running this session any more.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
+    try { const card = await this.source.spawn(target.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(name ? { name } : {}), ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume && !continuing ? { resume_legacy: resume.legacy_id, confirm_v1_idle: document.querySelector('#spawn-resume-confirm').checked } : {}), ...(continuing ? { resume_session: resume.session_id, confirm_session_closed: document.querySelector('#spawn-resume-confirm').checked, new_room: this.form.elements.start_room.value === NEW_ROOM } : {}) });
+      this.dialog.close(); this.form.reset();
+      // A session continued in a room of its own: that room is where the person goes.
+      if (continuing && card?.room_id && card.room_id !== this.room.id && card.room_id !== target.id) await this.showRoomByID?.(this.room.project_id, card.room_id);
+      else if (target.id !== this.room.id) await this.showRoom?.(target); else await this.refresh(); }
     catch (error) {
       // A refused name is answered under its field and the dialog stays open, with everything else as it was, so another name can be tried.
       if (error.code === 'name_in_use' || error.code === 'invalid_name') { this.nameError.textContent = error.message; this.nameInput.focus(); return; }

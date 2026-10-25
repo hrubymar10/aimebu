@@ -129,6 +129,13 @@ server's allowlist must admit its source IP. A stale spawn is rejected before
 this write; a write failure sends a failed
 `spawn_result` for that agent while the machine connection stays open.
 
+A machine's Claude Code sessions are listed by the supervisor on request
+(`session_scan`, advertised by `supports_session_scan`): it reads the
+configuration folder of the launcher that would continue the session (the
+launcher's own `CLAUDE_CONFIG_DIR`/`HOME` references apply), only the first and last 64 KiB
+of each transcript, and never writes. See [continuing a Claude Code
+session](claude-sessions.md).
+
 Before a remote spawn, switch, or reactivation reaches the store, the server
 checks the supervisor's `supports_path_probe` hello flag, then sends a
 `path_probe` machine frame. The supervisor resolves symlinks and

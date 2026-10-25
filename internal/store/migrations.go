@@ -1448,6 +1448,19 @@ ALTER TABLE provider_limit_new RENAME TO provider_limit;
 -- each agent. Keep that lookup bounded as the event journal grows.
 CREATE INDEX event_control_applied_agent_rev ON event(agent_id, CAST(json_extract(payload_json,'$.desired_rev') AS INTEGER))
   WHERE kind='agent_control_applied';
+`}, {85, `
+-- A Claude Code session continued as an agent: the machine it lives on, its id, and the one agent that continues it. Two agents on one
+-- session would append to one transcript at once, so a session is attached to at most one agent; the row goes with the agent.
+CREATE TABLE imported_session (
+  machine_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL UNIQUE REFERENCES agent(id),
+  cwd TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  imported_by TEXT NOT NULL,
+  imported_at TEXT NOT NULL,
+  PRIMARY KEY (machine_id, session_id)
+);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
