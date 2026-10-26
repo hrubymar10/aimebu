@@ -93,7 +93,9 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		result.Checks = append(result.Checks, doctorServerChecks(config.root, now, serverCheck.Status != statusFail, databaseUsable)...)
 	}
 	result.Checks = scopeAll(result.Checks, scopeServer)
-	if liveMode && serverCheck.Status != statusFail {
+	// The key goes only to a server that answered the way an aimebu server does (the 401 that makes the server check ok), never to
+	// whatever else happens to listen on the port.
+	if liveMode && serverCheck.Status == statusOK {
 		result.Checks = append(result.Checks, doctorLiveChecks(ctx, config)...)
 	}
 	return finishDoctor(result, strict, jsonOutput, stdout, stderr)
@@ -220,6 +222,16 @@ func checkSQLiteDB(path string) doctorCheck {
 	}
 }
 
+// doctorHTTPClient is the client doctor uses to talk to the server it was pointed at (the health probe and --live). It never goes through
+// a proxy named in the environment (HTTP_PROXY would otherwise receive the request, and with --live its bearer key, for a server address that
+// is not loopback, such as a VPN bind), and it does not follow redirects, which could carry the key to another host.
+func doctorHTTPClient(timeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	return &http.Client{Timeout: timeout, Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
 // checkServerHealth probes the configured HTTP address. The server keeps its
 // plain-HTTP listener even when TLS is enabled, so an HTTP GET is the right
 // probe either way. An unauthenticated GET /api/me answers 401; any other
@@ -229,7 +241,7 @@ func checkServerHealth(ctx context.Context, bind string, port int) doctorCheck {
 	const name = "server"
 	address := net.JoinHostPort(bind, strconv.Itoa(port))
 	requestURL := "http://" + address + "/api/me"
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := doctorHTTPClient(3 * time.Second)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return doctorCheck{name, statusFail, fmt.Sprintf("GET %s: %v", requestURL, err), "", ""}

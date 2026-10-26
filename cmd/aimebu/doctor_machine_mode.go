@@ -251,19 +251,28 @@ func checkDockerForLaunchers(candidates []protocol.HarnessCandidate) []doctorChe
 	return []doctorCheck{{Name: name, Status: statusOK, Description: "not available (no *-docker launcher is installed, so none is needed)"}}
 }
 
-// checkDockerLauncherFeatures runs each Docker launcher's feature probe
-// (HARNESS_DOCKER_PRINT_FEATURES=1 <launcher> --version). The probe exits
-// before it touches Docker. A launcher that lacks a feature its tool needs is
-// "too old": the supervisor refuses to start turns on it.
+// checkDockerLauncherFeatures runs the feature probe (HARNESS_DOCKER_PRINT_FEATURES=1 <launcher> --version) of each Docker launcher whose
+// tool depends on a feature. A launcher that knows the probe exits before it touches Docker; one that predates it ignores the variable and
+// starts a container running `<harness> --version`. That is why only the tools whose Docker turns need a feature are probed (the supervisor
+// refuses an old launcher for them anyway), and why the probe runs from a fresh, empty temporary directory rather than the caller's: an old
+// launcher then mounts nothing of the caller's. A launcher without the feature is "too old": the supervisor refuses it for that tool.
 func checkDockerLauncherFeatures(ctx context.Context, candidates []protocol.HarnessCandidate) []doctorCheck {
 	var checks []doctorCheck
+	var dir string
 	for _, candidate := range candidates {
-		if !candidate.Containerized {
+		if !candidate.Containerized || !adapter.DockerNeedsForwardEnv(candidate.Family) {
 			continue
 		}
 		name := "launcher " + filepath.Base(candidate.Command)
+		if dir == "" {
+			var err error
+			if dir, err = os.MkdirTemp("", "aimebu-doctor-probe-"); err != nil {
+				return append(checks, doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("cannot make an empty folder to probe in: %v", err)})
+			}
+			defer os.RemoveAll(dir)
+		}
 		probe, cancel := context.WithTimeout(ctx, machineProbeTimeout)
-		features, err := doctorDockerFeatures(probe, candidate.Command, nil, "", os.Environ())
+		features, err := doctorDockerFeatures(probe, candidate.Command, nil, dir, os.Environ())
 		cancel()
 		if err != nil {
 			checks = append(checks, doctorCheck{Name: name, Status: statusWarn, Description: err.Error(),
@@ -279,7 +288,7 @@ func checkDockerLauncherFeatures(ctx context.Context, candidates []protocol.Harn
 		if list == "" {
 			list = "no features reported"
 		}
-		if adapter.DockerNeedsForwardEnv(candidate.Family) && !features[adapter.FeatureForwardEnv] {
+		if !features[adapter.FeatureForwardEnv] {
 			checks = append(checks, doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("%s: too old for %s (needs %s); turns on it are refused", list, candidate.Family, adapter.FeatureForwardEnv),
 				Hint: "Update harness-docker, then run aimebu doctor --machine again."})
 			continue

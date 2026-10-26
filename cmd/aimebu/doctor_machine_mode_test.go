@@ -201,18 +201,25 @@ func TestCheckDockerLauncherFeatures(t *testing.T) {
 	candidates := []protocol.HarnessCandidate{
 		{Family: "opencode", Command: "/bin/opencode-docker", Containerized: true},
 		{Family: "vibe", Command: "/bin/vibe-docker", Containerized: true},
-		{Family: "claude", Command: "/bin/claude-docker", Containerized: true},
-		{Family: "pi", Command: "/bin/pi-docker", Containerized: true},
-		{Family: "codex", Command: "/bin/codex"}, // native: not probed
+		{Family: "opencode", Command: "/bin/broken-opencode-docker", Containerized: true},
+		{Family: "claude", Command: "/bin/claude-docker", Containerized: true}, // needs no feature: never run
+		{Family: "pi", Command: "/bin/pi-docker", Containerized: true},         // same
+		{Family: "codex", Command: "/bin/codex"},                               // native: never run
 	}
-	doctorDockerFeatures = func(_ context.Context, command string, _ []string, _ string, _ []string) (map[string]bool, error) {
+	var probed []string
+	var dirs []string
+	doctorDockerFeatures = func(_ context.Context, command string, _ []string, dir string, _ []string) (map[string]bool, error) {
+		probed = append(probed, filepath.Base(command))
+		dirs = append(dirs, dir)
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 0 {
+			t.Errorf("the probe must start in an empty folder that exists: %v %v", entries, err)
+		}
 		switch filepath.Base(command) {
 		case "opencode-docker":
 			return map[string]bool{adapter.FeatureForwardEnv: true}, nil
 		case "vibe-docker":
 			return map[string]bool{}, nil // a version string only: too old
-		case "claude-docker":
-			return map[string]bool{}, nil // claude does not need forward_env
 		}
 		return nil, fmt.Errorf("probe failed")
 	}
@@ -220,8 +227,11 @@ func TestCheckDockerLauncherFeatures(t *testing.T) {
 	for _, check := range checkDockerLauncherFeatures(context.Background(), candidates) {
 		byName[check.Name] = check
 	}
-	if len(byName) != 4 {
-		t.Fatalf("want four launcher checks, got %+v", byName)
+	if strings.Join(probed, ",") != "opencode-docker,vibe-docker,broken-opencode-docker" {
+		t.Fatalf("probed %v: only Docker launchers of tools that need a feature may be run", probed)
+	}
+	if len(byName) != 3 {
+		t.Fatalf("want three launcher checks, got %+v", byName)
 	}
 	if c := byName["launcher opencode-docker"]; c.Status != statusOK || c.Description != "forward_env" {
 		t.Fatalf("opencode: %+v", c)
@@ -229,11 +239,14 @@ func TestCheckDockerLauncherFeatures(t *testing.T) {
 	if c := byName["launcher vibe-docker"]; c.Status != statusWarn || !strings.Contains(c.Description, "too old") || !strings.Contains(c.Hint, "Update harness-docker") {
 		t.Fatalf("vibe: %+v", c)
 	}
-	if c := byName["launcher claude-docker"]; c.Status != statusOK || c.Description != "no features reported" {
-		t.Fatalf("claude: %+v", c)
+	if c := byName["launcher broken-opencode-docker"]; c.Status != statusWarn || !strings.Contains(c.Description, "probe failed") {
+		t.Fatalf("broken: %+v", c)
 	}
-	if c := byName["launcher pi-docker"]; c.Status != statusWarn || !strings.Contains(c.Description, "probe failed") {
-		t.Fatalf("pi: %+v", c)
+	if dirs[0] == "" || dirs[0] != dirs[1] {
+		t.Fatalf("one empty folder serves the probes: %v", dirs)
+	}
+	if _, err := os.Stat(dirs[0]); !os.IsNotExist(err) {
+		t.Fatalf("the probe folder was not removed: %v", err)
 	}
 }
 

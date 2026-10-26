@@ -158,11 +158,16 @@ its lock is only tested, not taken.
   auto-detect), with versions. None warns.
 - **docker** — the Docker CLI and daemon (`docker info`). A missing daemon only
   warns when a `*-docker` launcher is installed.
-- **launcher \<name\>-docker** — for each Docker launcher found,
-  `HARNESS_DOCKER_PRINT_FEATURES=1 <launcher> --version`, which exits before it
-  touches Docker. The features are listed; a launcher without `forward_env`
-  warns "too old" for opencode and vibe, whose Docker turns need it (update
-  harness-docker).
+- **launcher \<name\>-docker** — for each Docker launcher found whose tool
+  depends on a launcher feature (opencode and vibe need `forward_env`),
+  `HARNESS_DOCKER_PRINT_FEATURES=1 <launcher> --version`, which a current
+  launcher answers before it touches Docker. A launcher that predates the probe
+  ignores it and would start a container running `<harness> --version`, so only
+  those tools are probed (the supervisor refuses an old launcher for them
+  anyway), from a fresh empty temporary folder rather than the caller's
+  directory, with a 10-second limit. The features are listed; a launcher
+  without `forward_env` warns "too old" (update harness-docker). Docker
+  launchers of other tools are not run.
 - **paired server** — asks the paired server (`AIMEBU2_URL`, else the URL in
   the credential) whether it knows this machine and has approved it, with the
   machine's own key as the bearer token, exactly as the supervisor does at
@@ -220,7 +225,11 @@ environment or launcher arguments.
 
 ## Configuration
 
-`--live` talks to `AIMEBU2_BIND`:`AIMEBU2_PORT` over plain HTTP.
+`--live` talks to `AIMEBU2_BIND`:`AIMEBU2_PORT` over plain HTTP, never through
+a proxy from the environment and without following redirects, and sends the key
+only after the server check got the 401 an aimebu server answers (any other
+answer from that port, such as another program's 200, ends the live checks
+before the key leaves the process).
 Doctor reads the same environment as `aimebu server`: `AIMEBU2_CONFIG_DIR`
 (default `~/.aimebu2`), `AIMEBU2_BIND`, `AIMEBU2_PORT`, `AIMEBU2_ALLOW`,
 `AIMEBU2_TRUSTED_PROXIES`, `AIMEBU2_PUBLIC_URL`,

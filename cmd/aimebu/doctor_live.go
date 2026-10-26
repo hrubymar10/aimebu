@@ -82,7 +82,7 @@ func fetchDoctorLive(ctx context.Context, config serverConfig, key string) (prot
 		return protocol.DoctorLive{}, &doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("GET %s: %v", requestURL, err)}
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	resp, err := doctorHTTPClient(5 * time.Second).Do(req)
 	if err != nil {
 		return protocol.DoctorLive{}, &doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("GET %s: %v", requestURL, err), Hint: "Live checks need the server to answer on its HTTP port."}
 	}

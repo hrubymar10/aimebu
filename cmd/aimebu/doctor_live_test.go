@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goccy/go-json"
 
@@ -212,5 +213,72 @@ func TestDoctorLiveCommand(t *testing.T) {
 	// --live and --machine do not combine.
 	if code, _, out := run("--live", "--machine"); code != 2 || !strings.Contains(out, "usage") {
 		t.Fatalf("combined flags: %d %s", code, out)
+	}
+}
+
+func TestDoctorHTTPClientNeverUsesAProxyOrFollowsRedirects(t *testing.T) {
+	client := doctorHTTPClient(time.Second)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.Proxy != nil {
+		t.Fatalf("doctor must not use a proxy from the environment: %+v", client.Transport)
+	}
+	if client.CheckRedirect == nil || client.CheckRedirect(nil, nil) != http.ErrUseLastResponse {
+		t.Fatal("doctor must not follow redirects (the bearer key would go along)")
+	}
+	// A redirect to another listener is not followed, and the key does not reach it.
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("redirect followed with %q", r.Header.Get("Authorization"))
+	}))
+	defer other.Close()
+	origin := httptest.NewServer(http.RedirectHandler(other.URL, http.StatusFound))
+	defer origin.Close()
+	req, _ := http.NewRequest(http.MethodGet, origin.URL, nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+// Whatever else listens on the server's port never sees the doctor key: it is sent only after the server check got the 401 an aimebu
+// server answers.
+func TestDoctorLiveSendsNoKeyToAServerThatDoesNotAnswerLikeAimebu(t *testing.T) {
+	root := t.TempDir()
+	keyPath := filepath.Join(root, "server", "doctor.key")
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, []byte(strings.Repeat("ef", 32)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	createFixtureDatabase(t, filepath.Join(root, "server", "aimebu.sqlite"))
+	var paths []string
+	var sawKey bool
+	stranger := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		sawKey = sawKey || r.Header.Get("Authorization") != ""
+		w.WriteHeader(http.StatusOK) // not the 401 of an aimebu server
+	}))
+	defer stranger.Close()
+	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	t.Setenv("AIMEBU2_BIND", "127.0.0.1")
+	t.Setenv("AIMEBU2_PORT", strconv.Itoa(testServerPort(t, stranger.URL)))
+	t.Setenv("AIMEBU2_ALLOW", "")
+	t.Setenv("AIMEBU2_TLS_CERT", "")
+	t.Setenv("AIMEBU2_TLS_KEY", "")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(t.TempDir(), ".claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), ".codex"))
+	var stdout, stderr bytes.Buffer
+	doctorCommand(context.Background(), []string{"--live", "--json"}, &stdout, &stderr)
+	if sawKey || len(paths) != 1 || paths[0] != "/api/me" {
+		t.Fatalf("the stranger saw %v, key seen: %v", paths, sawKey)
+	}
+	if strings.Contains(stdout.String(), "doctor key") {
+		t.Fatalf("live checks ran against a server that is not aimebu:\n%s", stdout.String())
 	}
 }
