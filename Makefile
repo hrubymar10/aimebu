@@ -38,14 +38,30 @@ test-full: fmt-check vet test-race test-web ## Full local and CI gate
 
 WEB_TESTS := claude-sessions claude-session-import system-events limit-guard sidebar-order preferences expiry room-unread room-notify inbox-notifications harness-offer notification-banner humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown markdown import-tree quick-commands message-usage role-defaults harness-model preact-vendor
 
-test-web: ## Run the browser-free web unit tests (vm over the module source)
-	@set -e; total=$(words $(WEB_TESTS)); n=0; \
-	for name in $(WEB_TESTS); do \
-		n=$$((n+1)); started=$$(date +%s); \
-		printf '[web %d/%d] start  %s\n' $$n $$total $$name; \
-		node scripts/test-$$name.cjs; \
-		printf '[web %d/%d] ok     %s (%ds)\n' $$n $$total $$name $$(( $$(date +%s) - started )); \
-	done
+# The web tests are plain node scripts, with no npm dependencies. By default they run in Docker, from a digest-pinned image, so that every
+# machine runs the same toolchain: the repository is mounted read-only at /src, copied to a tmpfs, and run from there with no network
+# (scripts/test-web-in-container.sh). WEB_TEST_RUNNER=local runs them with the node on PATH instead; there is no automatic fallback either way.
+# The pin must pass scripts/check-node-ca.cjs (no compromised CA roots (2026-10) in node's bundled or the system store): `make test-web` runs it first.
+WEB_TEST_NODE_IMAGE ?= node:24.22.1-alpine3.24@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
+WEB_TEST_RUNNER ?= docker
+
+test-web: ## Run the browser-free web unit tests (vm over the module source), in Docker (WEB_TEST_RUNNER=local for local node)
+	@set -e; \
+	case "$(WEB_TEST_RUNNER)" in \
+	local) \
+		command -v node >/dev/null 2>&1 || { echo "make test-web: WEB_TEST_RUNNER=local, but node is not on PATH: install node, or drop WEB_TEST_RUNNER to run in Docker" >&2; exit 1; }; \
+		echo "make test-web: running with local node $$(node --version)"; \
+		sh scripts/test-web.sh $(WEB_TESTS) ;; \
+	docker) \
+		command -v docker >/dev/null 2>&1 || { echo "make test-web: docker is not on PATH: install Docker, or run with local node: make test-web WEB_TEST_RUNNER=local" >&2; exit 1; }; \
+		docker info >/dev/null 2>&1 || { echo "make test-web: the Docker daemon is not reachable: start Docker, or run with local node: make test-web WEB_TEST_RUNNER=local" >&2; exit 1; }; \
+		echo "make test-web: running in Docker ($(WEB_TEST_NODE_IMAGE))"; \
+		docker run --rm --network none --read-only --tmpfs /tmp --tmpfs /work:rw,size=512m,mode=1777 --cap-drop ALL --security-opt no-new-privileges \
+			-u "$$(id -u):$$(id -g)" -e HOME=/tmp -e TMPDIR=/tmp \
+			--mount "type=bind,src=$(CURDIR),dst=/src,readonly" -w /work \
+			$(WEB_TEST_NODE_IMAGE) sh /src/scripts/test-web-in-container.sh $(WEB_TESTS) ;; \
+	*) echo "make test-web: WEB_TEST_RUNNER must be docker or local, not '$(WEB_TEST_RUNNER)'" >&2; exit 1 ;; \
+	esac
 
 test-ui: ## Run Chromium smoke against a scratch server, then the Preact page tests
 	node scripts/test-ui.cjs

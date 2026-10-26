@@ -87,7 +87,9 @@ value, including `0`, uses the cache). The binary reports the output of
 This branch is the v2 rewrite. The server, embedded and standalone
 supervisors, web UI, and managed adapters are implemented.
 Run `make test-full` for the same formatting, vet, and race-test checks used
-in CI. New contributors should start with [CONTRIBUTING.md](CONTRIBUTING.md)
+in CI; its web unit tests run in a pinned Docker image, so it needs Docker (or
+`WEB_TEST_RUNNER=local` and a local `node`, see
+[CONTRIBUTING.md](CONTRIBUTING.md#the-web-tests-in-docker)). New contributors should start with [CONTRIBUTING.md](CONTRIBUTING.md)
 (prerequisites, an isolated `make dev`, the test commands, the web UI layout
 and conventions).
 

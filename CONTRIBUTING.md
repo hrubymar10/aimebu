@@ -11,8 +11,11 @@ stops working, fix this file in the same commit as the change that broke it.
 - **Go**: the version in `go.mod` (`go 1.26.1` or newer). Dependencies are the
   standard library plus the three approved in `AGENTS.md`; ask before adding,
   removing or updating any other.
-- **Node.js**: a current release. The web tests are plain `node` scripts with
-  no `npm install` step and no `package.json` (verified on Node 24).
+- **Docker**, for `make test-web` and so `make test-full`: the web unit tests run in a pinned `node`
+  image (see "The web tests in Docker" below), so a machine needs no node of its own for them.
+  `WEB_TEST_RUNNER=local` runs them with a local **Node.js** instead (a current release; the tests are
+  plain `node` scripts with no `npm install` step and no `package.json`, verified on Node 24). The
+  browser scripts (`make test-ui`, the audits) always use the local node.
 - **Chromium and `puppeteer-core`**, for `make test-ui`, the audit scripts,
   and icon builds. Install `puppeteer-core` globally
   (`npm install -g puppeteer-core`);
@@ -79,7 +82,7 @@ For UI work without agents, the web app has mock switches such as
 | Command | What it runs | Use it |
 | --- | --- | --- |
 | `make test` | `go test ./...`, with progress output | while iterating on Go code |
-| `make test-web` | the browser-free web unit tests (`scripts/test-*.cjs`, run in Node's `vm` over the module source) | while iterating on `web/js`; fast, no browser |
+| `make test-web` | the browser-free web unit tests (`scripts/test-*.cjs`, run in Node's `vm` over the module source), in Docker (`WEB_TEST_RUNNER=local` for the local node) | while iterating on `web/js`; fast, no browser |
 | `make test-ui` | builds the server, starts a scratch one and drives Chromium through the UI; then `scripts/test-harness-page.cjs`, the Preact Harnesses page in Chromium with held, reordered and failing responses | after any visible UI change; needs Chromium and `puppeteer-core` |
 | `make test-race` | `go test -race ./...`, with progress output | after touching concurrency, the store, WebSocket or supervisor code |
 | `make test-full` | `fmt-check`, `vet`, `test-race`, `test-web` | before every commit; it is also what CI runs |
@@ -153,6 +156,28 @@ adapter, supervisor, server, and command packages also call
 machine-wide harness install directories during discovery. Put a fake
 executable on the test's
 `PATH` when a case needs a harness; never run a real login or launcher.
+
+### The web tests in Docker
+
+`make test-web` runs the scripts in Docker by default, so every machine uses the same toolchain, and
+says so on its first line. It is one container for all the scripts, from the digest-pinned image
+`WEB_TEST_NODE_IMAGE` (`node:24.22.1-alpine3.24@sha256:06d7adf3…`; override the variable to change it;
+the first run pulls it, the only time it needs the network). The repository is mounted read-only at
+`/src` and copied (without `.git` and `tmp/`) to a tmpfs at `/work`, where the scripts
+run, so nothing can be written back to the checkout. The container has no network, a read-only root
+file system, no capabilities, and your user id. The scripts have no npm dependencies and only read
+the repository (a script that needs a scratch file uses `os.tmpdir()`). The repository must be in a
+folder Docker may share: Docker Desktop and OrbStack share paths under `$HOME`, not `/tmp`.
+
+Before the scripts, the container runs `scripts/check-node-ca.cjs`, which fails when node's bundled store or
+the image's system store holds one of the compromised CA roots (2026-10) it names by SHA-256 fingerprint:
+a new pin of `WEB_TEST_NODE_IMAGE` must pass it.
+
+`WEB_TEST_RUNNER=local` runs `scripts/test-web.sh` with the `node` on `PATH` instead. There is no
+automatic fallback in either direction: with Docker missing or not running, `make test-web` (and
+`make test-full`) stops with a message naming `WEB_TEST_RUNNER=local`; with `local` and no node, it
+says to install node or drop the variable. `test-ui` and the audits are not affected: they need
+Chromium and the local node.
 
 ## The `web/` layout
 
