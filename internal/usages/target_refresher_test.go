@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/testenv"
 )
 
 // All credentials here are fake and live under t.TempDir(); TestMain points
@@ -858,16 +859,14 @@ func TestTokenRefresherDisabledDoesNothing(t *testing.T) {
 }
 
 func TestTokenRefresherNeverTouchesTheRealCredentialFiles(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(home, "/tmp/") {
-		t.Fatalf("test HOME is not isolated: %s", home)
+	// testenv.Check resolves symlinks on both sides (the temporary directory is /private/var/folders/... on macOS), so this holds wherever the
+	// temporary root is; the two variables must also be set, not merely absent.
+	if err := testenv.Check(); err != nil {
+		t.Fatalf("test environment is not isolated: %v", err)
 	}
 	for _, key := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME"} {
-		if v := os.Getenv(key); !strings.HasPrefix(v, "/tmp/") {
-			t.Fatalf("%s is not isolated: %q", key, v)
+		if os.Getenv(key) == "" {
+			t.Fatalf("%s is not set: the refresher would use the real default", key)
 		}
 	}
 }
