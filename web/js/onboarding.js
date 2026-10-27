@@ -3,7 +3,7 @@
 // no room is selected.
 import { request, rights } from './api.js';
 import { prefillFolderOnFocus } from './workspace-folder.js';
-import { HarnessSettings } from './harness-settings.js';
+import { HarnessSettings } from './pages/harnesses/page.js';
 import { confirmDialog } from './dialogs.js';
 
 export const PRINCIPLES = [

@@ -25,6 +25,24 @@ const server = http.createServer((req, res) => {
     req.on('end', () => { const answer = guardMock.handle(req.method, url.pathname, raw ? JSON.parse(raw) : undefined); res.writeHead(answer.status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(answer.body)); });
     return;
   }
+  if (req.method === 'GET' && url.pathname === '/api/machines') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ machines: [{ id: 'mch_fixture', name: 'Fixture host', approved: true, last_seen: new Date().toISOString() }] })); return; }
+  if (req.method === 'GET' && url.pathname === '/api/machines/mch_fixture/launchers') {
+    const base = { tool: 'codex', label: 'Codex', enabled: true, preset: true, args: ['--flag'], env_refs: { TOKEN: 'HOME' }, containerized: false, path_maps: [], visible_roots: [], supports_toolbox: true, machine_id: 'mch_fixture', agent_server_url: '' };
+    const models = [{ slug: 'gpt-6-sol', label: 'GPT-6 Sol', note: 'The frontier model', default: true }, { slug: 'gpt-6-luna', label: 'GPT-6 Luna', note: '', default: false }];
+    const rows = [
+      { config: { ...base, id: 'mln_native', name: 'native', command: 'codex' }, resolved_command: '/usr/bin/codex', version: '1.2.3', available: true, active_agents: 2, models, models_rev: 'r1' },
+      { config: { ...base, id: 'mln_docker', name: 'harness-docker', command: 'docker', preset: false, enabled: false }, resolved_command: '/usr/bin/docker', version: '1.2.3', available: false, unavailable_reason: 'docker is not installed', active_agents: 2, models, models_rev: 'r1' },
+    ];
+    res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ machine_id: 'mch_fixture', launchers: rows, activity: [] })); return;
+  }
+  if (req.method === 'GET' && url.pathname === '/api/roles') {
+    const roles = [
+      { id: 'role_lead_default', role_key: 'lead', label: 'Lead', emoji: '👑', default_agents: [], pick_mode: 'in_turn', rev: 0, cardinality: 'singleton' },
+      { id: 'role_worker_default', role_key: 'worker', label: 'Worker', emoji: '🛠️', default_agents: [{ launcher_id: 'mln_native', model: 'gpt-6-sol' }, { launcher_id: 'mln_native', model: 'gpt-6-luna' }], pick_mode: 'randomly', rev: 2, cardinality: 'multi' },
+      { id: 'role_reviewer_default', role_key: 'reviewer', label: 'Reviewer', emoji: '🔎', default_agents: [{ launcher_id: 'mln_native', model: 'gpt-6-sol' }], pick_mode: 'in_turn', rev: 1, cardinality: 'multi' },
+    ];
+    res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(roles)); return;
+  }
   if (url.pathname.startsWith('/api/')) { res.writeHead(401, { 'Content-Type': 'application/json' }); res.end('{"error":"unauthorized"}'); return; }
   let file = path.join(root, url.pathname === '/' ? 'index.html' : url.pathname);
   if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
@@ -87,29 +105,15 @@ const FIXTURE = async () => {
       if (copy) { const button = make('button', 'icon-btn profile-copy', '', row); make('span', 'icon-mask icon-mask-copy', '', button).setAttribute('aria-hidden', 'true'); button.title = 'Copy resume'; button.setAttribute('aria-label', 'Copy resume'); }
     }
   }
-  // Settings -> Harnesses, from the real renderer: the list beside one harness, once on a harness with its Edit form open and once on a disabled one.
+  // Settings -> Harnesses, from the real page over the fixture server's answers: the list beside one harness, with the Edit form open on a disabled one.
   {
-    const { HarnessSettings } = await import('/js/harness-settings.js');
-    const { RoleDefaults } = await import('/js/role-defaults.js');
-    const { rolePanel } = await import('/js/harness-views.js');
-    const settings = Object.create(HarnessSettings.prototype); settings.openLaunchers = new Set(['mln_docker']);
-    // The state the constructor sets up (the fixture skips it): the roles with their defaults and the role views.
-    settings.prefix = ''; settings.roleViews = new Set(); settings.otherHarnesses = new Map(); settings.drafts = new Map(); settings.selectedHarness = ''; settings.sequence = 0; settings.modelFailures = new Map();
-    settings.roleDefaults = new RoleDefaults(async () => { throw new Error('the fixture has no server'); });
-    settings.roleDefaults.roles = [
-      { id: 'role_lead_default', role_key: 'lead', label: 'Lead', emoji: '👑', default_agents: [], pick_mode: 'in_turn', rev: 0, cardinality: 'singleton' },
-      { id: 'role_worker_default', role_key: 'worker', label: 'Worker', emoji: '🛠️', default_agents: [{ launcher_id: 'mln_native', model: 'gpt-6-sol' }, { launcher_id: 'mln_native', model: 'gpt-6-luna' }], pick_mode: 'randomly', rev: 2, cardinality: 'multi' },
-      { id: 'role_reviewer_default', role_key: 'reviewer', label: 'Reviewer', emoji: '🔎', default_agents: [{ launcher_id: 'mln_native', model: 'gpt-6-sol' }], pick_mode: 'in_turn', rev: 1, cardinality: 'multi' },
-    ];
-    const list = document.querySelector('#harnesses-list');
-    const base = { tool: 'codex', label: 'Codex', models: [{ slug: 'gpt-6-sol', label: 'GPT-6 Sol', note: 'The frontier model', default: true }, { slug: 'gpt-6-luna', label: 'GPT-6 Luna', note: '', default: false }], enabled: true, available: true, preset: true, version: '1.2.3', active_agents: 2, args: ['--flag'], env_refs: { TOKEN: 'HOME' }, containerized: false, path_maps: [], visible_roots: [], supports_toolbox: true };
-    const native = { ...base, id: 'mln_native', variant: 'native', name: 'native', command: 'codex', launcher_path: '/usr/bin/codex' };
-    const docker = { ...base, id: 'mln_docker', variant: 'harness-docker', name: 'harness-docker', preset: false, enabled: false, available: false, unavailable_reason: 'docker is not installed', command: 'docker', launcher_path: '/usr/bin/docker' };
-    settings.rows = [native, docker];
-    settings.selectedHarness = 'mln_native'; list.append(settings.splitView(settings.rows.map(row => settings.harnessCard('mch_fixture', row))));
-    settings.selectedHarness = 'mln_docker'; list.append(settings.splitView(settings.rows.map(row => settings.harnessCard('mch_fixture', row))));
-    settings.rolesHost = document.createElement('div');
-    list.append(rolePanel({ roles: settings.roleDefaults.roles, labelOf: item => `${item.launcher_id} · ${item.model}`, store: settings.roleDefaults, report: () => {}, refresh: () => {} }));
+    const { HarnessSettings } = await import('/js/pages/harnesses/page.js');
+    document.querySelector('#settings-harnesses')?.remove(); document.querySelector('#settings-harnesses-tab')?.remove();
+    const settings = new HarnessSettings(document.querySelector('#settings-dialog'));
+    await settings.open();
+    settings.section.querySelector('.harness-master-item:last-child')?.click();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    document.querySelector('#harnesses-list .machine-harness:not([hidden]) .machine-harness-edit')?.click();
   }
   const sidebar = document.querySelector('.sidebar');
   // The real room list over fake data (two projects, a direct message, a closed and a hidden room), in the layout

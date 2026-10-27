@@ -1,8 +1,7 @@
-// Settings → Harnesses (a list of harnesses beside the chosen one), for both pages of the preact-harnesses experiment (the legacy page, A, and
-// the Preact page, B, opened with ?ui=preact-harnesses:b), each against a scratch server: the smoke for model editing, the per-model
+// Settings → Harnesses (a list of harnesses beside the chosen one) against a scratch server: the smoke for model editing, the per-model
 // role defaults, the role order and pick mode, the sync with Settings → Roles, the stale-save refusal and the phone width; and, with
 // SHOTS_DIR set, a screenshot on a desktop and a phone viewport. `make test-ui` runs the smoke; this file runs on its own too:
-//   SHOTS_DIR=/some/dir node scripts/harness-settings.cjs      (HARNESS_VARIANT=a or b runs one page only)
+//   SHOTS_DIR=/some/dir node scripts/harness-settings.cjs
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -16,7 +15,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 const shots = process.env.SHOTS_DIR || '';
 const freePort = () => new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); });
 
-async function main(variant) {
+async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aimebu-harnesses-'));
   const home = path.join(tmp, 'home'); fs.mkdirSync(home, { recursive: true });
   const env = { ...process.env, HOME: home, CODEX_HOME: path.join(home, '.codex'), CLAUDE_CONFIG_DIR: path.join(home, '.claude'), AIMEBU_CONFIG_DIR: path.join(tmp, 'v1'), AIMEBU2_CONFIG_DIR: tmp, TMPDIR: tmp };
@@ -88,7 +87,7 @@ async function main(variant) {
     assert.equal(await putRole('worker', [{ launcher_id: seed.codex.id, model: 'gpt-6-sol' }, { launcher_id: seed.claude.id, model: 'sonnet' }]), 200);
     assert.equal(await putRole('reviewer', [{ launcher_id: seed.claude.id, model: 'opus' }], 'randomly'), 200);
     // B is opened once through its address; the browser keeps the choice for the reloads below.
-    await page.goto(variant === 'b' ? `${origin}/?ui=preact-harnesses:b` : origin);
+    await page.goto(origin);
     await page.waitForSelector('#app-view:not([hidden]):not([aria-busy]), #welcome-view', { timeout: 90000 });
     if (await page.$('#welcome-view')) { await page.$eval('#welcome-view', view => view.click()); await page.waitForSelector('#welcome-continue:not([hidden])'); await page.click('#welcome-continue'); }
     await page.waitForSelector('#app-view:not([hidden]):not([aria-busy])', { timeout: 90000 });
@@ -108,12 +107,12 @@ async function main(variant) {
       if (!shots) return;
       fs.mkdirSync(shots, { recursive: true });
       await page.setViewport(viewport); await new Promise(resolve => setTimeout(resolve, 300));
-      await page.screenshot({ path: path.join(shots, `${name}-${variant}.png`) });
+      await page.screenshot({ path: path.join(shots, `${name}.png`) });
     };
     const DESKTOP = { width: 1280, height: 1500 }, PHONE = { width: 390, height: 2400, deviceScaleFactor: 2 }; // no isMobile: puppeteer reloads the page when it changes
 
     await openHarnesses();
-    assert.equal(await page.$eval('#settings-harnesses', section => section.dataset.implementation || 'legacy'), variant === 'b' ? 'preact' : 'legacy', `the ${variant === 'b' ? 'Preact' : 'legacy'} page is the one tested`);
+    assert.equal(await page.$$eval('#settings-harnesses, #settings-harnesses-tab', nodes => nodes.length), 2, 'exactly one Harnesses page is built');
     assert.equal(await page.$('.harness-layout-switch'), null, 'there is one layout, so no switch');
 
     // The list beside the chosen harness: the first is selected and shown alone; the arrow keys and a click move through them.
@@ -265,11 +264,8 @@ async function main(variant) {
     assert.equal(await otherTab(seed.codex.id, { 'gpt-6-mini': 'Mini changed' }), 200, 'the other tab saves the Codex models');
     // Saving Claude's settings redraws the list from the server: Claude keeps its edit, Codex (never edited here) shows the other tab's.
     await page.$eval(`${claudeCard} .machine-harness-edit`, button => button.click());
-    // The legacy page redraws from the server and replaces the card, so a card without this mark is the new one; the Preact page patches the
-    // card in place, so there the other tab's label showing on Codex is what says the list was read again.
-    await page.$eval(claudeCard, card => { card.dataset.old = '1'; });
+    // The page patches the card in place, so the other tab's label showing on Codex is what says the list was read again.
     await page.$eval(`${claudeCard} .machine-harness-form button[type=submit]`, button => button.click());
-    if (variant === 'a') await page.waitForFunction(selector => document.querySelector(selector) && !document.querySelector(selector).dataset.old, { timeout: 20000 }, claudeCard);
     await page.waitForFunction(selector => document.querySelector(selector + ' .harness-model-row[data-slug="gpt-6-mini"] [name=label]')?.value === 'Mini changed', { timeout: 20000 }, codexCard);
     assert.equal(await page.$eval(`${claudeCard} .harness-model-row[data-slug="haiku"] [name=label]`, input => input.value), 'Haiku mine', 'a draft with edits is kept across the redraw');
     // The other tab then saves Claude's models: the draft is based on a list that is gone.
@@ -278,8 +274,8 @@ async function main(variant) {
     await page.waitForFunction(selector => document.querySelector(selector + ' .harness-model-row[data-slug="haiku"] [name=label]')?.value === 'Haiku theirs', { timeout: 20000 }, claudeCard);
     assert.match(await page.$eval('#settings-harnesses > .error', error => error.textContent), /Someone changed the models of Claude Code in the meantime/, 'the page says the save was refused');
     assert.equal(await page.$eval(`${claudeCard} .harness-models .btn-primary`, button => button.disabled), true, 'the refused draft is gone');
-    // The first-run onboarding embeds the legacy page (on either variant of Settings); its Harnesses step has the role defaults too.
-    if (variant === 'a') {
+    // The first-run onboarding embeds the page; its Harnesses step has the role defaults too.
+    {
       await page.keyboard.press('Escape');
       const onboarding = await page.evaluate(async () => {
         const { Onboarding } = await import('/js/onboarding.js');
@@ -295,12 +291,12 @@ async function main(variant) {
       assert.deepEqual(onboarding, { panel: true, worker: true, switches: true }, 'the onboarding Harnesses step shows the role defaults panel and the per-model role switches');
     }
     assert.deepEqual(pageErrors, [], 'no script errors at the end');
-    console.log(`harness settings ok (${variant})`);
+    console.log('harness settings ok');
   } catch (error) {
-    if (shots) { try { fs.mkdirSync(shots, { recursive: true }); await page?.screenshot({ path: path.join(shots, `failure-${variant}.png`) }); } catch { /* best effort */ } }
+    if (shots) { try { fs.mkdirSync(shots, { recursive: true }); await page?.screenshot({ path: path.join(shots, 'failure.png') }); } catch { /* best effort */ } }
     console.error(`role saves: ${JSON.stringify(roleSaves)}`);
     console.error(`server log tail:\n${logs.slice(-600)}`);
     throw error;
   } finally { await cleanup(); }
 }
-(async () => { for (const variant of process.env.HARNESS_VARIANT ? [process.env.HARNESS_VARIANT] : ['a', 'b']) await main(variant); })().catch(error => { console.error(error); process.exit(1); });
+main().catch(error => { console.error(error); process.exit(1); });

@@ -1,7 +1,7 @@
 # Frontend: moving `web/` to Preact
 
-Status: plan approved by the owner on 2026-10-21 (AMB-70); step 1 (the runtime and the Settings → Harnesses prototype) is a
-prototype under review. Each later step is its own change, with its own approval. Authors: the AMB-70 task room (three independent plans,
+Status: plan approved by the owner on 2026-10-21 (AMB-70). Since 2026-10-27 pages replace their legacy module directly (section 5):
+Settings → Harnesses, including its onboarding step, is the first one moved. Each later step is its own change, with its own approval. Authors: the AMB-70 task room (three independent plans,
 consolidated). Related: AMB-69 (contributor onboarding), which builds on the `web/` layout described here and in
 [../../CONTRIBUTING.md](../../CONTRIBUTING.md).
 
@@ -70,7 +70,7 @@ web/js/components/             shared pieces, the same markup as the hand-writte
                                IconButton (icon-button.js), SettingsRow and SettingsGroup (settings-row.js)
 web/js/hooks/                  shared hooks: useAlive (is the component still mounted after an await), useDirty (report
                                unsaved input to the page)
-web/js/pages/<page>/           one page: its components, model.js (pure logic) and switch.js (legacy or Preact)
+web/js/pages/<page>/           one page: its components, model.js (pure logic) and page.js (the shell's adapter)
 web/js/*-source.js, *-format.js, other plain modules
                                data and pure logic, import-free, tested in Node's vm
 ```
@@ -99,57 +99,37 @@ other machines that a role default names, and the model detection failures. Writ
 page's actions, never from render. A flag only one component uses (a button's busy state, a form's error, an input the
 component submits itself) stays `useState`. `.peek()` reads a signal without subscribing, in actions and guards.
 
-## 5. Old and new side by side
+## 5. Replacing a page
 
-The legacy UI keeps working until every page has moved. Each migrated page is a UI experiment (`web/js/ui-variant.js`):
+A page is replaced in one change: the Preact page is built, its legacy module is deleted and its `test-ui` checks move to the
+new page, with none weakened. There is no experiment, chooser or fallback for it; the pill in `web/js/ui-variant.js` stays for
+questions that really are A/B, and `ACTIVE` is empty while none runs.
 
-- `defineExperiment('<key>', '<name>', ['Legacy', 'Preact'], { hidden: true })` in the page's `switch.js`, and the key in
-  `ACTIVE`.
-- **Option A is the legacy page and the default.** A hidden experiment runs only for a browser that opted in: its pill
-  shows once `?ui=<key>:<a|b>` is in the address, or when the browser has a saved choice from such a visit. Until then the
-  pill stays hidden and `activeVariant()` answers `'a'`. `?ui=<key>:b` opens the Preact page and shows the pill, which then
-  switches between the two.
-- The Preact page's heading carries a small "Preact" badge, so a reviewer can see which option is showing. It is the one
-  intended difference in markup between A and B, and goes when the page becomes the default.
-- The page's `switch.js` builds exactly one implementation. When the pill changes, it builds the other one, puts its tab and
-  section where the first one's were (with the shell's click handler, visibility and selection), unmounts the first one and,
-  if the section is showing, opens the new one. The two are never mounted together. Unfinished input goes with the old page
-  (an Edit form or model list not saved, the Add harness form, a model id not added, ticked auto-detect results), so the
-  switch asks first (the in-app confirm) when there is any; the Preact page knows exactly through `useDirty`, and for the
-  legacy page anything typed since it was last opened counts. Cancel sets the pill back (`chooseVariant` in `ui-variant.js`).
-- A page's legacy module is removed only in a separate, approved change, after its Preact page has been the default for a
-  while with no regressions. Its experiment is then taken out of `ACTIVE`.
-
-- A swap carries the view across: the page being dropped gives its selected machine to the new one.
-
-**Option A is not a full rollback.** Choosing A changes which page renders, nothing else: the Preact runtime, the import
-map, `ui.js`, the asset versioning and the page's `switch.js` load for everyone, because `settings.js` imports the switch,
-which imports both pages. If the runtime failed to load (a broken vendored file or import map), the module graph would fail
-and the whole app would not start, legacy pages included. Follow-up, before step 2: load B with a dynamic `import()` only
-when B is chosen, fall back to the legacy page (with a notice) when that load fails, and extend the server's asset
-versioning to `import()` specifiers, which today it versions only in `from` imports.
-
-Hidden is the working assumption until the owner decides who sees the pill. Showing it to every signed-in user instead is
-dropping `{ hidden: true }` from the page's `defineExperiment` call; the `hidden` option in `ui-variant.js` is the only code
-that exists for it.
+- The settings shell keeps its hand-written part: the nav, section switching and which tab is shown. A page's `page.js`
+  adapter has the interface the shell and the onboarding already used (`tab`, `section`, `open()`, `wanted`, `onReady`,
+  `hasUnsavedChanges()`) and renders the page inside `section` through `mountPreactPage` (`pages/mount-page.js`: the error
+  boundary, the open token, the callbacks of an unmounted tree ignored).
+- The same page can be embedded elsewhere: the onboarding's Harnesses step is `new HarnessSettings(null, { embedded: true, host })`.
+  Its element ids carry the `onboarding-` prefix (`IdPrefix` context), so they never repeat Settings' own, and the detect panel
+  has no Add or Close button there: the step's Continue adds what is ticked (`tickedCount()`, `addTicked()`).
+- The Preact runtime, the import map and `ui.js` load for everyone; if one failed to load the whole app would not start.
 
 ### Page lifecycle contract
 
-Every migrated page follows the same lifecycle, so the settings shell (and later the app shell) can treat legacy and Preact
-pages alike:
+Every migrated page follows the same lifecycle, so the settings shell (and later the app shell) can treat them alike:
 
 - **Mount** (the constructor): builds the `tab` and the `section`, appends them, and renders an empty page. No request.
 - **Open** (`open()`, each time the shell shows the section): reloads from the top (machines, then the selected machine's
-  list), closes any open panel and opens on `wanted` when one is set. Card drafts are dropped, as on the legacy page.
+  list), closes any open panel and opens on `wanted` when one is set. Card drafts are dropped.
 - **Hide** (the shell sets `section.hidden`): nothing is unmounted or cancelled. Drafts stay, requests in flight finish and
   their answers are drawn into the hidden page; nothing reloads until the next open.
-- **Destroy** (`destroy()`, only when the A/B switch drops the page): unmounts the component tree. Answers that arrive later
+- **Clear** (`clear()`, the embedded copy when its step is left) and **destroy** (`destroy()`): unmount the component tree. Answers that arrive later
   are dropped (`useAlive`, generations); requests already sent are not aborted, so a write in flight still reaches the server.
 - **Drafts** belong to the component that edits them: a card owns its Edit form, a models panel its model list and new-model
   entry, the page its Add harness and auto-detect panels. They report unsaved input through `useDirty`; the adapter only
   aggregates the keys for `hasUnsavedChanges()`.
 - **Writes in flight on close**: closing Settings is a hide, so a write and its re-read complete and the card's write lock is
-  held until they do. A swap asks first when there is unsaved input; it does not wait for writes in flight.
+  held until they do.
 
 ## 6. Tests
 
@@ -157,12 +137,11 @@ pages alike:
   an import-free module and the test loads that, without weakening an assertion.
 - New in step 1: `scripts/test-harness-model.cjs` (the Harnesses page's rules in a vm) and `scripts/test-preact-vendor.cjs`
   (vendored files against `SHA256SUMS`, the import map, the single import point).
-- `make test-ui` runs a migrated page's checks in both options: the Harnesses checks run on A (no pill), the page is opened
-  again with `?ui=preact-harnesses:b`, the same checks run on B, and the pill switches back to A in place. It also checks
-  that exactly one implementation is built and that the tab keeps its place in the nav.
-- `scripts/harness-settings.cjs` (run by `make test-ui`, and on its own with `HARNESS_VARIANT=a|b` to run one page) drives a scratch
-  server and checks the list beside the detail, role defaults per model and the role panel, the sync with Settings → Roles,
-  the stale-save refusal and the phone width, first on the legacy page and then on the Preact page (`?ui=preact-harnesses:b`).
+- `make test-ui` runs the Settings → Harnesses checks over a mock of the machine's harnesses, and checks that exactly one
+  Harnesses page is built, that the tab keeps its place in the nav and that the onboarding step builds its own beside it.
+- `scripts/harness-settings.cjs` (run by `make test-ui`, and on its own) drives a scratch server and checks the list beside
+  the detail, role defaults per model and the role panel, the sync with Settings → Roles, the stale-save refusal, the
+  onboarding step's role defaults and the phone width.
 - `make test-ui` also runs `scripts/test-harness-page.cjs`: the Preact page in real Chromium (the existing Puppeteer tooling,
   `web/` served as is with the page's import map, no Go server), with every request held until the test answers it, so the
   order of answers is chosen. It checks:
@@ -175,14 +154,14 @@ pages alike:
     Save is, and every write control is disabled meanwhile;
   - model detection runs once at a time: the button, Retry and repeated Enter during a detection start nothing more, so
     answers cannot arrive out of order, and a retry's answer replaces the earlier failure;
-  - an A/B swap keeps the selected machine, B to A and A to B, on a machine other than the first;
+  - a page opened with `wanted` shows that machine, and the page reports the machine it shows (`viewSnapshot`), on a machine other than the first;
   - text typed while a save is under way stays, and still counts as unsaved;
   - the same input node, the focus and the selection survive another card's refresh, and the node survives its own card's
     save;
   - after unmount, a pending answer draws nothing, throws nothing and starts no request;
-  - the A/B switch asks before throwing unfinished input away (an Edit form, the Add harness form, a model id typed but not
-    added, ticked auto-detect results for harnesses or models); for each, Cancel keeps the page and the input, and Switch
-    builds the legacy page; a cancelled Add harness form no longer counts as unsaved;
+  - unfinished input (an Edit form, the Add harness form, a model id typed but not added, ticked auto-detect results for
+    harnesses or models) counts as unsaved while it is there and is gone with the page; a cancelled Add harness form no longer
+    counts as unsaved;
   - removing a harness: the in-app confirm, the DELETE, and the list read again without it;
   - the list beside the detail: the first harness chosen, one card shown, click and arrow keys move the choice, a reload keeps it;
   - a models save sends the revision its draft started from, and one refused as stale drops the models draft (not the Edit form's), reads again and says so;
@@ -191,8 +170,7 @@ pages alike:
   - role defaults: a switch per role on every model saves the role on its own, the role panel names its entries (those of
     another machine are read once), a refused save says why and the views show what is stored, and a role save made in
     Settings → Roles is read here while the page is shown and ignored while it is hidden.
-  - the shell's `onReady` hears of a harness that can start an agent, through the switch and across a swap (the first-run
-    harness offer relies on it).
+  - the shell's `onReady` hears of a harness that can start an agent (the first-run harness offer relies on it).
 - `make test-ui` is not part of `make test-full`, and CI runs only `make test-full`; whether `make test-ui` runs in CI is
   to be agreed.
 
@@ -216,10 +194,10 @@ Preact pages are not clearly simpler, stop there and keep the islands that exist
 
 ## 8. Migration plan
 
-Each step is its own ticket and change, with the gates in section 6, and adds an experiment with A = legacy as the default.
-Turning an experiment's default to B, and later removing the legacy module and the experiment, are separate approved changes.
+Each step is its own ticket and change, with the gates in section 6. Since 2026-10-27 a step replaces its legacy modules in the
+same change (section 5); the experiment, default-flip and removal steps described below were not used.
 
-### Step 1: runtime and Settings → Harnesses (AMB-70, prototype under review)
+### Step 1: runtime and Settings → Harnesses (AMB-70, done)
 
 - Scope: vendor Preact and htm; the import map; `ui.js`; the first shared components (`IconButton`, `SettingsRow`,
   `SettingsGroup`) and `useAlive`; asset versioning for `../` imports and the import map; Settings → Harnesses rebuilt in
@@ -231,11 +209,12 @@ Turning an experiment's default to B, and later removing the legacy module and t
   Mistral Vibe.
 - Files: `web/vendor/preact/`, `web/index.html`, `web/js/ui.js`, `web/js/components/`, `web/js/hooks/` (`use-alive.js`, `use-dirty.js`),
   `web/js/pages/harnesses/` (`page.js` the shell adapter, `harnesses-page.js`, `use-harnesses.js` the page's data and
-  late-answer guards, `card.js`, `models.js`, `add-harness-form.js`, `detect-panel.js`, `detection-details.js`, `activity.js`, `model.js`, `switch.js`, and for layout C and role defaults `master-list.js`, `role-panel.js`, `role-switch.js`), `web/js/settings.js` (uses the
-  switch), `web/js/ui-variant.js` (`ACTIVE`), `web/theme-v1.css` (a two-option pill was 33 px wide between 521 and 700 px,
+  late-answer guards, `card.js`, `models.js`, `add-harness-form.js`, `detect-panel.js`, `detection-details.js`, `activity.js`, `model.js`, `id-prefix.js`, and for layout C and role defaults `master-list.js`, `role-panel.js`, `role-switch.js`), `web/js/settings.js` (uses the
+  adapter), `web/js/ui-variant.js` (`ACTIVE`), `web/theme-v1.css` (a two-option pill was 33 px wide between 521 and 700 px,
   under the 40 px tap target; it is 40 px now), `internal/server/static_assets.go`, `.air.toml`, tests and docs.
-- Experiment: `preact-harnesses`. The legacy `web/js/harness-settings.js` is the reference for behaviour; B follows it.
-- Acceptance: `make test-full` and `make test-ui` pass; the Harnesses checks pass on A and on B.
+- It first ran as the `preact-harnesses` experiment; the legacy `web/js/harness-settings.js`, the switch and the experiment are removed,
+  and the onboarding step embeds the page.
+- Acceptance: `make test-full` and `make test-ui` pass.
 
 ### Step 2: the other Settings sections
 

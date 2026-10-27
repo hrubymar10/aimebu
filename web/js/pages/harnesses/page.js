@@ -1,49 +1,68 @@
-import { html, render } from '../../ui.js';
+import { html } from '../../ui.js';
+import { mountPreactPage } from '../mount-page.js';
 import { HarnessesPage } from './harnesses-page.js';
 
-// The settings shell's interface, the same as HarnessSettings; Preact renders only inside `section`.
-export class PreactHarnessSettings {
-  constructor(dialog) {
-    this.tab = document.createElement('button');
-    this.tab.type = 'button';
-    this.tab.className = 'row-btn';
-    this.tab.textContent = 'Harnesses';
-    this.tab.id = 'settings-harnesses-tab';
-    dialog.querySelector('nav').append(this.tab);
+// What the settings shell and the onboarding hold: a tab and a section, with Preact rendering only inside the section. Embedded (the
+// onboarding step) there is no tab, the section shows at once inside `host`, and its ids carry a prefix so they never repeat Settings'.
+export class HarnessSettings {
+  constructor(dialog, { embedded = false, host = null } = {}) {
+    const prefix = embedded ? 'onboarding-' : '';
+    if (!embedded) {
+      this.tab = document.createElement('button');
+      this.tab.type = 'button';
+      this.tab.className = 'row-btn';
+      this.tab.textContent = 'Harnesses';
+      this.tab.id = 'settings-harnesses-tab';
+      dialog.querySelector('nav').append(this.tab);
+    }
     this.section = document.createElement('section');
     this.section.className = 'settings-content';
-    this.section.id = 'settings-harnesses';
-    this.section.hidden = true;
-    this.section.dataset.implementation = 'preact';
-    dialog.append(this.section);
+    this.section.id = `${prefix}settings-harnesses`;
+    this.section.hidden = !embedded;
+    (embedded ? host : dialog).append(this.section);
     this.wanted = '';
-    this.openToken = 0;
-    this.unsaved = new Set();
-    this.machineID = '';
-    this.onView = machineID => { this.machineID = machineID; };
     this.onReady = null;
-    this.ready = () => this.onReady?.();
-    this.onDirty = (key, unsaved) => {
-      if (unsaved) this.unsaved.add(key);
-      else this.unsaved.delete(key);
-    };
-    this.draw('');
+    this.onTick = null;
+    this.controls = { current: null };
+    this.waiting = [];
+    this.clearing = false;
+    const Page = ({ onView, ...props }) => html`<${HarnessesPage} ...${props}
+      controls=${this.controls}
+      onView=${machineID => onView({ wanted: machineID })}
+      onReady=${() => this.onReady?.()}
+      onTick=${count => { if (!this.clearing) this.onTick?.(count); }}
+      onOpened=${() => this.settle()}
+      isHidden=${() => this.section.hidden} />`;
+    this.page = mountPreactPage(this.section, Page, { idPrefix: prefix, embedded });
   }
 
-  draw(wanted) {
-    render(html`<${HarnessesPage} openToken=${this.openToken} wanted=${wanted} onDirty=${this.onDirty} onView=${this.onView} onReady=${this.ready} isHidden=${() => this.section.hidden} />`, this.section);
+  settle() {
+    for (const resolve of this.waiting.splice(0)) resolve();
   }
 
-  viewSnapshot() { return { machineID: this.machineID }; }
-
-  hasUnsavedChanges() { return this.unsaved.size > 0; }
-
+  // Resolves when the machines and the first machine's harnesses have been read.
   open() {
-    this.openToken++;
-    const wanted = this.wanted;
-    this.wanted = '';
-    this.draw(wanted);
+    return new Promise(resolve => {
+      this.waiting.push(resolve);
+      this.page.update({ wanted: this.wanted });
+      this.wanted = '';
+      this.page.open();
+    });
   }
 
-  destroy() { render(null, this.section); }
+  // Forgets what was shown (the embedded copy, when its step is left), so no element of it is left in the page.
+  clear() {
+    this.clearing = true;
+    this.page.clear();
+    this.clearing = false;
+    this.settle();
+  }
+
+  // How many detected harnesses are ticked in the open detect panel, and adding them (whether it went through).
+  tickedCount() { return this.controls.current?.count() ?? 0; }
+  async addTicked() { return this.controls.current ? this.controls.current.add() : false; }
+
+  viewSnapshot() { return this.page.viewSnapshot(); }
+  hasUnsavedChanges() { return this.page.hasUnsavedChanges(); }
+  destroy() { this.page.destroy(); }
 }

@@ -2,9 +2,11 @@ import { html, useState } from '../../ui.js';
 import { useAlive } from '../../hooks/use-alive.js';
 import { useDirty } from '../../hooks/use-dirty.js';
 import { FAMILIES } from './model.js';
+import { useIdPrefix } from './id-prefix.js';
 
 export function AddHarnessForm({ onCancel, onCreate, onDirty }) {
   const alive = useAlive();
+  const prefix = useIdPrefix();
   const [fields, setFields] = useState({ tool: FAMILIES[0][0], label: '', command: '', containerized: false });
   useDirty(onDirty, 'add-harness', fields.tool !== FAMILIES[0][0] || !!fields.label || !!fields.command || fields.containerized);
   const [error, setError] = useState('');
@@ -24,7 +26,7 @@ export function AddHarnessForm({ onCancel, onCreate, onDirty }) {
     }
   };
   return html`
-    <form class="machine-harness-form harness-add-form" id="harness-add-form" onSubmit=${submit}>
+    <form class="machine-harness-form harness-add-form" id=${`${prefix}harness-add-form`} onSubmit=${submit}>
       <label class="machine-harness-path-label">Family<select
         name="family"
         value=${fields.tool}

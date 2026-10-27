@@ -43,25 +43,20 @@ async function main() {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = await puppeteer.launch({ executablePath: '/usr/bin/chromium', headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
-  const mount = async (auto = {}, { variant = '' } = {}) => {
+  const mount = async (auto = {}, { wanted = '' } = {}) => {
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`${origin}/fixture.html`);
     await page.evaluate(installFetch, { 'GET /api/machines': machines, 'GET /api/roles': [], 'GET /api/machines/mch_a/launchers': { launchers: launchers.mch_a, activity: [] }, 'GET /api/machines/mch_b/launchers': { launchers: launchers.mch_b, activity: [] }, ...auto });
-    await page.evaluate(async variant => {
+    await page.evaluate(async wanted => {
       const dialog = document.querySelector('#settings-dialog');
-      if (variant) {
-        document.documentElement.setAttribute('data-ui-preact-harnesses', variant);
-        const { HarnessSettingsSwitch } = await import('/js/pages/harnesses/switch.js');
-        window.__page = new HarnessSettingsSwitch(dialog);
-      } else {
-        const { PreactHarnessSettings } = await import('/js/pages/harnesses/page.js');
-        window.__page = new PreactHarnessSettings(dialog);
-      }
+      const { HarnessSettings } = await import('/js/pages/harnesses/page.js');
+      window.__page = new HarnessSettings(dialog);
+      window.__page.wanted = wanted;
       window.__page.section.hidden = false; window.__page.open();
-    }, variant);
-    await page.waitForFunction(() => document.querySelectorAll('#harnesses-list .machine-harness').length === 2);
+    }, wanted);
+    await page.waitForFunction(() => document.querySelectorAll('#harnesses-list .machine-harness').length >= 1);
     return page;
   };
   const pending = async (page, method, requestPath) => {
@@ -147,7 +142,7 @@ async function main() {
       await page.waitForFunction(sel => document.querySelector('#harness-tab-a2 .harness-master-count').textContent === '1', {});
       await settle(page);
       assert.ok(await page.$(`${card('a2')} .harness-model-row[data-slug="model-one"]`), 'a failed re-read keeps the saved model list');
-      assert.deepEqual(await page.evaluate(() => [...window.__page.unsaved]), [], 'what was saved is not reported as unsaved (no draft left)');
+      assert.deepEqual(await page.evaluate(() => [...window.__page.page.unsaved]), [], 'what was saved is not reported as unsaved (no draft left)');
       assert.equal(await page.evaluate(() => window.__page.hasUnsavedChanges()), false, 'what was saved is not reported as unsaved');
       await page.close();
     }
@@ -279,28 +274,19 @@ async function main() {
       await page.$eval(`${card('a1')} .machine-harness-edit`, el => el.click());
       await type(page, `${card('a1')} [name=label]`, 'draft');
       await settle(page);
-      assert.deepEqual(await page.evaluate(() => [...window.__page.unsaved]), ['form:a1']);
+      assert.deepEqual(await page.evaluate(() => [...window.__page.page.unsaved]), ['form:a1']);
       await chooseMachine(page, 'mch_b');
       await page.waitForSelector(card('b1'));
-      assert.deepEqual(await page.evaluate(() => [...window.__page.unsaved]), [], 'an unmounted card reports nothing unsaved');
+      assert.deepEqual(await page.evaluate(() => [...window.__page.page.unsaved]), [], 'an unmounted card reports nothing unsaved');
       await page.close();
     }
-    // The shell's onReady hears of a harness that can start an agent (enabled, with a model), through the switch and across a swap.
+    // The shell's onReady hears of a harness that can start an agent (enabled, with a model).
     {
       const ready = launcher('mch_a', 'a1', {});
       ready.models = [{ slug: 'm', label: 'M', note: '', default: true }];
-      const page = await mount({ 'GET /api/machines/mch_a/launchers': { launchers: [ready, launchers.mch_a[1]], activity: [] } }, { variant: 'b' });
+      const page = await mount({ 'GET /api/machines/mch_a/launchers': { launchers: [ready, launchers.mch_a[1]], activity: [] } });
       await page.evaluate(() => { window.__ready = 0; window.__page.onReady = () => { window.__ready++; }; window.__page.open(); });
       await page.waitForFunction(() => window.__ready > 0);
-      await settle(page);
-      const before = await page.evaluate(() => window.__ready);
-      await page.evaluate(() => {
-        document.documentElement.setAttribute('data-ui-preact-harnesses', 'a');
-        document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { variant: 'a', experiment: 'preact-harnesses' } }));
-      });
-      await page.waitForFunction(() => !document.querySelector('#settings-harnesses').dataset.implementation);
-      await page.waitForFunction(count => window.__ready > count, {}, before);
-      assert.equal(await page.evaluate(() => typeof window.__page.onReady), 'function', 'the legacy page got the same onReady');
       await page.close();
     }
     // Icon actions and the default star carry the legacy classes, tooltips and labels.
@@ -314,25 +300,18 @@ async function main() {
       assert.deepEqual(await page.$eval(`${card('a1')} .harness-model-detect`, el => [el.title, !!el.querySelector('.icon-mask-refresh'), el.textContent.trim()]), ['Auto-detect models', true, ''], 'model detection is an icon');
       await page.close();
     }
-    // A swap keeps the selected machine: B on machine B switches to A on machine B, and back to B on machine B.
+    // The page hands its chosen machine to the next one: a fresh page asked to open on machine B shows B's harnesses.
     {
-      const page = await mount({}, { variant: 'b' });
+      const page = await mount();
       await chooseMachine(page, 'mch_b');
       await page.waitForSelector(card('b1'));
-      const flip = variant => page.evaluate(variant => {
-        document.documentElement.setAttribute('data-ui-preact-harnesses', variant);
-        document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { variant, experiment: 'preact-harnesses' } }));
-      }, variant);
-      const shown = () => page.evaluate(() => [document.querySelector('#settings-harnesses').dataset.implementation || 'legacy', document.querySelector('#harness-machine').value, [...document.querySelectorAll('#harnesses-list .machine-harness')].map(el => el.dataset.variant)]);
-      await flip('a');
-      await page.waitForFunction(() => !document.querySelector('#settings-harnesses').dataset.implementation && document.querySelector('#harnesses-list .machine-harness'));
-      assert.deepEqual(await shown(), ['legacy', 'mch_b', ['b1']], 'B -> A keeps machine B');
-      await flip('b');
-      await page.waitForFunction(() => document.querySelector('#settings-harnesses').dataset.implementation === 'preact' && document.querySelector('#harnesses-list .machine-harness'));
-      assert.deepEqual(await shown(), ['preact', 'mch_b', ['b1']], 'A -> B keeps machine B');
+      assert.deepEqual(await page.evaluate(() => window.__page.viewSnapshot()), { wanted: 'mch_b' }, 'the page reports its machine');
       await page.close();
+      const next = await mount({}, { wanted: 'mch_b' });
+      assert.deepEqual(await next.evaluate(() => [document.querySelector('#harness-machine').value, [...document.querySelectorAll('#harnesses-list .machine-harness')].map(el => el.dataset.variant)]), ['mch_b', ['b1']], 'wanted opens on that machine');
+      await next.close();
     }
-    // The A/B switch asks before it drops any unfinished input; Cancel keeps it, Switch builds the legacy page.
+    // Unfinished input counts as unsaved while it is there, and is gone with the page.
     const detectAuto = {
       'POST /api/machines/mch_a/launchers/detect': { candidates: [{ family: 'pi', label: 'Pi', command: '/usr/bin/pi', containerized: false }] },
       'POST /api/machines/mch_a/launchers/a1/models/detect': { source: 'harness', candidates: [{ slug: 'found-model', label: 'Found', note: '' }] },
@@ -345,27 +324,15 @@ async function main() {
       { name: 'ticked models from auto-detect', setup: async page => { await page.$eval(`${card('a1')} .harness-models .harness-model-detect`, el => el.click()); await page.waitForSelector(`${card('a1')} .harness-model-candidates input[type=checkbox]`); await page.$eval(`${card('a1')} .harness-model-candidates input[type=checkbox]`, el => el.click()); }, kept: page => page.$eval(`${card('a1')} .harness-model-candidates input[type=checkbox]`, el => el.checked) },
     ];
     for (const draft of drafts) {
-      const page = await mount(detectAuto, { variant: 'b' });
-      assert.equal(await page.$eval('#settings-harnesses', el => el.dataset.implementation), 'preact');
-      assert.equal(await page.$eval('#settings-harnesses > h3 .room-member-badge', el => el.textContent), 'Preact', 'the Preact page shows its badge');
-      assert.equal(await page.evaluate(() => window.__page.unsaved()), false, `nothing is unsaved before ${draft.name}`);
+      const page = await mount(detectAuto);
+      assert.equal(await page.$eval('#settings-harnesses > h3', el => el.textContent), 'Harnesses', 'the page has no experiment badge');
+      assert.equal(await page.evaluate(() => window.__page.hasUnsavedChanges()), false, `nothing is unsaved before ${draft.name}`);
       await draft.setup(page);
       await settle(page);
-      assert.equal(await page.evaluate(() => window.__page.unsaved()), true, `${draft.name} counts as unsaved`);
-      const flip = () => page.evaluate(() => { document.documentElement.setAttribute('data-ui-preact-harnesses', 'a'); document.dispatchEvent(new CustomEvent('ui-variant-change', { detail: { variant: 'a', experiment: 'preact-harnesses' } })); });
-      await flip();
-      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
-      assert.ok((await page.$eval('#app-dialog', el => el.textContent)).includes('not saved yet'), `switching with ${draft.name} asks first`);
-      await page.$eval('#app-dialog .app-dialog-cancel', el => el.click());
-      await settle(page);
-      assert.equal(await page.$eval('#settings-harnesses', el => el.dataset.implementation), 'preact', `Cancel keeps the Preact page (${draft.name})`);
-      assert.equal(await draft.kept(page), true, `Cancel keeps ${draft.name}`);
-      await flip();
-      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
-      await page.$eval('#app-dialog .app-dialog-ok', el => el.click());
-      await page.waitForFunction(() => !document.querySelector('#settings-harnesses').dataset.implementation);
-      await page.waitForSelector('#settings-harnesses > h3');
-      assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#settings-harnesses, #settings-harnesses-tab').length, !!document.querySelector('#harness-add-form, #harness-detect-panel, .harness-model-candidates'), !!document.querySelector('#settings-harnesses .room-member-badge')]), [2, false, false], `Switch builds the legacy page, without the badge, and drops ${draft.name}`);
+      assert.equal(await page.evaluate(() => window.__page.hasUnsavedChanges()), true, `${draft.name} counts as unsaved`);
+      assert.equal(await draft.kept(page), true, `${draft.name} is kept`);
+      await page.evaluate(() => window.__page.destroy());
+      assert.deepEqual(await page.evaluate(() => [window.__page.hasUnsavedChanges(), !!document.querySelector('#harness-add-form, #harness-detect-panel, .harness-model-candidates')]), [false, false], `destroying the page drops ${draft.name}`);
       await page.close();
     }
     // The list beside the detail: the first harness is chosen and shown alone; a click or the arrow keys move the choice, and a reload keeps it.
@@ -405,7 +372,7 @@ async function main() {
       assert.match(await page.$eval('#settings-harnesses > .error', el => el.textContent), /Someone changed the models of a1 in the meantime/, 'the page says the save was refused');
       assert.equal(await page.$eval(`${card('a1')} .harness-models .btn-primary`, el => el.disabled), true, 'the refused draft is gone');
       assert.equal(await page.$eval(`${card('a1')} [name=command]`, el => el.value), '/opt/unsaved', 'only the refused models draft is dropped: the Edit form keeps what was typed');
-      assert.deepEqual(await page.evaluate(() => [...window.__page.unsaved]), ['form:a1'], 'the Edit form is still unsaved, the models are not');
+      assert.deepEqual(await page.evaluate(() => [...window.__page.page.unsaved]), ['form:a1'], 'the Edit form is still unsaved, the models are not');
       await page.close();
     }
     // The revision moves on with every save: an edit made while a save is in flight, and the save after it, start from the revision the
@@ -509,16 +476,62 @@ async function main() {
       assert.equal(await roleReads(), after, 'a role save elsewhere while the page is hidden reads nothing');
       await page.close();
     }
+    // The onboarding step embeds the page: prefixed ids, no Add or Close on the detect panel, the tick count and adding what is ticked
+    // through the page's own methods, onReady, and nothing left behind after destroy.
+    {
+      const ready = launcher('mch_a', 'a1', {});
+      ready.models = [{ slug: 'm', label: 'M', note: '', default: true }];
+      const created = launcher('mch_a', 'a3', { tool: 'pi' });
+      const page = await browser.newPage();
+      page.on('pageerror', error => errors.push(error.message));
+      await page.goto(`${origin}/fixture.html`);
+      await page.evaluate(installFetch, {
+        'GET /api/machines': machines, 'GET /api/roles': [],
+        'GET /api/machines/mch_a/launchers': { launchers: [ready], activity: [] },
+        'POST /api/machines/mch_a/launchers/detect': { candidates: [{ family: 'pi', label: 'Pi', command: '/usr/bin/pi', containerized: false }] },
+        'POST /api/machines/mch_a/launchers': { config: created.config },
+        'POST /api/machines/mch_a/launchers/a3/models/detect': { candidates: [{ slug: 'found', label: 'Found', note: '' }] },
+        'PUT /api/machines/mch_a/launchers/a3/models': {},
+      });
+      await page.evaluate(async () => {
+        const host = document.createElement('div'); host.id = 'host'; document.body.append(host);
+        const { HarnessSettings } = await import('/js/pages/harnesses/page.js');
+        window.__ticks = []; window.__ready = 0;
+        window.__page = new HarnessSettings(null, { embedded: true, host });
+        window.__page.onTick = count => window.__ticks.push(count);
+        window.__page.onReady = () => { window.__ready++; };
+        await window.__page.open();
+      });
+      assert.equal(await page.evaluate(() => window.__ready > 0), true, 'the embedded page tells onReady about a harness that can start an agent');
+      assert.deepEqual(await page.evaluate(() => [!!document.querySelector('#host #onboarding-settings-harnesses'), !!document.querySelector('#onboarding-harness-add, #onboarding-harness-detect, #onboarding-harnesses-list, #onboarding-harness-machine'), !!document.querySelector('#harness-add, #harness-detect, #harnesses-list, #harness-machine, #settings-harnesses'), document.querySelector('#settings-harnesses-tab')]), [true, true, false, null], 'the ids carry the prefix and there is no tab');
+      await page.$eval('#onboarding-harness-detect', el => el.click());
+      await page.waitForSelector('#onboarding-harness-detect-panel input[type=checkbox]');
+      assert.deepEqual(await page.$eval('#onboarding-harness-detect-panel', panel => [panel.querySelector('strong').textContent, !!panel.querySelector('button')]), ['Found on this machine — tick the ones to add, then press Continue', false], 'no Add or Close button in the onboarding');
+      assert.equal(await page.evaluate(() => window.__page.tickedCount()), 0);
+      assert.equal(await page.evaluate(() => window.__page.addTicked()), false, 'nothing ticked adds nothing');
+      assert.equal(await page.$eval('#onboarding-harness-detect-panel .error', el => el.textContent), 'Tick at least one harness to add.');
+      await page.$eval('#onboarding-harness-detect-panel input[type=checkbox]', el => el.click());
+      await settle(page);
+      assert.deepEqual(await page.evaluate(() => [window.__page.tickedCount(), window.__ticks.at(-1)]), [1, 1], 'ticking reports the count');
+      assert.equal(await page.evaluate(() => window.__page.addTicked()), true, 'adding what is ticked goes through');
+      assert.deepEqual(await page.evaluate(() => [window.__page.tickedCount(), window.__ticks.at(-1), !!document.querySelector('#onboarding-harness-detect-panel'), window.__requests.filter(request => request.method === 'POST' && request.path.endsWith('/launchers')).length]), [0, 0, false, 1], 'the panel is gone, nothing is ticked and the harness was created once');
+      await page.evaluate(() => window.__page.destroy());
+      const before = await page.evaluate(() => window.__requests.length);
+      await page.evaluate(() => document.dispatchEvent(new CustomEvent('role-defaults-change', { detail: {} })));
+      await settle(page);
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#host').children[0]?.childElementCount ?? 0, window.__requests.length]), [0, before], 'a destroyed page leaves no content and no listener that asks for anything');
+      await page.close();
+    }
     // A cancelled Add harness form no longer counts as unsaved.
     {
-      const page = await mount({}, { variant: 'b' });
+      const page = await mount({});
       await page.$eval('#harness-add', el => el.click()); await page.waitForSelector('#harness-add-form');
       await type(page, '#harness-add-form [name=command]', '/opt/cancelled');
       await settle(page);
-      assert.equal(await page.evaluate(() => window.__page.unsaved()), true);
+      assert.equal(await page.evaluate(() => window.__page.hasUnsavedChanges()), true);
       await page.$eval('#harness-add-form .machine-harness-actions .btn:not(.btn-primary)', el => el.click());
       await settle(page);
-      assert.equal(await page.evaluate(() => window.__page.unsaved()), false, 'a cancelled Add harness form is not unsaved');
+      assert.equal(await page.evaluate(() => window.__page.hasUnsavedChanges()), false, 'a cancelled Add harness form is not unsaved');
       await page.close();
     }
     assert.deepEqual(errors, [], 'no page errors');

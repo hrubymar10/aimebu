@@ -2220,11 +2220,11 @@ async function main() {
       });
       assert.equal(html, 'thanks 🙏 and :nope_not_real: at 10:30:15 <code>:pray:</code> <a href="#">:pray:</a>', 'shortcodes in message text become emoji outside code and links');
     }
-    // The one running experiment (preact-harnesses) is hidden: without ?ui= naming it the pill stays hidden and the legacy page shows.
+    // No experiment is running: the pill stays hidden.
     // The message width is final: text keeps to about 80 characters, and code, tables and plans use the whole bubble.
     {
-      assert.deepEqual(await first.$$eval('.workspace-bar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), [true], 'a hidden experiment shows no pill unless asked for');
-      assert.equal(await first.evaluate(() => document.documentElement.getAttribute('data-ui-preact-harnesses')), null, 'and its option is A');
+      assert.deepEqual(await first.$$eval('.workspace-bar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), [true], 'with no experiment running the pill is hidden');
+      assert.equal(await first.evaluate(() => [...document.documentElement.getAttributeNames()].some(name => name.startsWith('data-ui-'))), false, 'and no experiment option is set');
       const widths = await first.evaluate(async () => {
         const { renderMarkdown } = await import('/js/markdown.js');
         const host = document.createElement('div'); host.className = 'message-body'; host.style.width = '1200px';
@@ -3385,6 +3385,14 @@ async function main() {
           assert.deepEqual(await setupPage.evaluate(async () => { const project = (await (await fetch('/api/projects')).json())[0]; const rooms = await (await fetch(`/api/projects/${project.id}/rooms`)).json(); return [rooms.find(room => room.kind === 'home').id === decodeURIComponent(location.hash.slice(1))]; }), [true], 'the home room is the selected room');
           assert.equal(await setupPage.$eval('#app-view', view => view.classList.contains('no-room')), false, 'the empty state is gone once the home room opens');
           assert.deepEqual(await setupPage.evaluate(async () => (await (await fetch('/api/projects')).json()).map(project => project.name)), ['demo']);
+          // The embedded Harnesses page draws its list after the step shows, and Skip moves down when it does (it did in the page it replaced
+          // too): a click waits until the list is drawn and the button has stopped.
+          const stepSettled = page => page.waitForFunction(() => new Promise(resolve => {
+            const skip = document.querySelector('#onboarding-harnesses-skip'), list = document.querySelector('#onboarding-harnesses-list');
+            if (!list?.children.length) { resolve(false); return; }
+            const top = () => skip.getBoundingClientRect().y, before = top();
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve(top() === before)));
+          }));
           assert.deepEqual(await setupPage.evaluate(() => ({ continueDisabled: document.querySelector('#onboarding-harnesses-continue').disabled, status: document.querySelector('#onboarding-harness-status').textContent, embedded: !!document.querySelector('#onboarding-harnesses-host #onboarding-settings-harnesses'), repeatedIds: [...document.querySelectorAll('[id]')].map(node => node.id).filter((id, at, all) => all.indexOf(id) !== at) })),
             { continueDisabled: true, status: 'No harness with a model yet. Tick a detected harness, or add one by hand and give it a model.', embedded: true, repeatedIds: [] }, 'the Harnesses step embeds the Settings component, cannot continue without a harness and says what is missing');
           // The disabled Continue stays legible (a dashed outline, full-strength text), and Skip is the secondary button on its left.
@@ -3410,13 +3418,13 @@ async function main() {
           await setupPage.setViewport(viewportBefore);
           assert.deepEqual(stepGeometry, { boxSize: [18, 18], gap: 8, centered: true, scrolls: true, actionsInView: true, sticky: 'sticky' }, 'the detect rows are inline and Skip/Continue stay in view of a short window');
           // Skip asks first: Cancel stays on the step, OK leaves it.
-          await setupPage.click('#onboarding-harnesses-skip');
+          await stepSettled(setupPage); await setupPage.click('#onboarding-harnesses-skip');
           await setupPage.waitForSelector('#app-dialog[open]');
           assert.match(await setupPage.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Settings → Harnesses/);
           await setupPage.click('#app-dialog .app-dialog-cancel');
           await setupPage.waitForFunction(() => !document.querySelector('#app-dialog').open);
           assert.equal(await setupPage.$eval('#onboarding-view [data-step="harnesses"]', step => step.hidden), false, 'cancelling the skip stays on the harness step');
-          await setupPage.click('#onboarding-harnesses-skip');
+          await stepSettled(setupPage); await setupPage.click('#onboarding-harnesses-skip');
           await setupPage.waitForSelector('#app-dialog[open]');
           await setupPage.click('#app-dialog .app-dialog-ok');
           await setupPage.waitForSelector('#onboarding-view [data-step="how"]:not([hidden])');
@@ -3505,8 +3513,8 @@ async function main() {
           'Continue adds once, and a harness added without a model keeps its message and a disabled Continue');
           // The Harnesses list tells the app the same, but only for a harness that can start an agent: enabled, with a model.
           assert.deepEqual(await setupPage.evaluate(async () => {
-            const { HarnessSettings } = await import('/js/harness-settings.js');
-            const answers = rows => { const list = Object.create(HarnessSettings.prototype); let calls = 0; list.rows = rows; list.onReady = () => { calls++; }; list.noteReady(); return calls; };
+            const { anyReady } = await import('/js/pages/harnesses/use-harnesses.js');
+            const answers = rows => anyReady(rows) ? 1 : 0;
             return [answers([{ enabled: true, models: [{ slug: 'm' }] }]), answers([{ enabled: false, models: [{ slug: 'm' }] }]), answers([{ enabled: true, models: [] }]), answers([])];
           }), [1, 0, 0, 0], 'a harness that is enabled and has a model is ready; a disabled one, or one with no model, is not');
           await setupPage.click('#onboarding-done');
@@ -3557,7 +3565,7 @@ async function main() {
             const { context, page } = await freshSignIn();
             try {
               await page.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])', { timeout: APP_READY_TIMEOUT });
-              await page.click('#onboarding-harnesses-skip');
+              await stepSettled(page); await page.click('#onboarding-harnesses-skip');
               await page.waitForSelector('#app-dialog[open]'); await page.click('#app-dialog .app-dialog-ok');
               await page.waitForFunction(() => document.querySelector('#onboarding-view').hidden);
               assert.equal(await page.$eval('#onboarding-view [data-step="how"]', step => step.hidden), true, 'skipping an offer made on its own just closes it, there is no spawn to offer');
@@ -4172,12 +4180,10 @@ async function main() {
     await settingsPage.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     assert.equal(await settingsPage.$eval('#project-auto-resume', el => el.checked), true, 'saved project toggle was lost');
     await settingsTab(settingsPage, '#settings-usages-tab');
-    // Settings -> Harnesses runs in both implementations of the preact-harnesses experiment: the legacy page (A, the default) and
-    // the Preact page (B). The same checks, over the same mock, hold for both. The experiment is hidden, so B is opened with
-    // ?ui=preact-harnesses:b, which shows the pill; the pill then switches back to A in place.
-    const harnessChecks = async variant => {
-      assert.equal(await settingsPage.$eval('#settings-harnesses > h3', el => el.textContent.trim()), variant === 'b' ? 'Harnesses Preact' : 'Harnesses', 'only the Preact page shows its badge');
-      assert.deepEqual(await settingsPage.evaluate(() => [document.documentElement.getAttribute('data-ui-preact-harnesses') || 'a', document.querySelector('#settings-harnesses').dataset.implementation || 'legacy', document.querySelectorAll('#settings-harnesses').length, document.querySelectorAll('#settings-harnesses-tab').length]), [variant, variant === 'b' ? 'preact' : 'legacy', 1, 1], `exactly one Harnesses page is built, the ${variant === 'b' ? 'Preact' : 'legacy'} one`);
+    // Settings -> Harnesses over a mock of the machine's harnesses.
+    const harnessChecks = async () => {
+      assert.equal(await settingsPage.$eval('#settings-harnesses > h3', el => el.textContent.trim()), 'Harnesses', 'the page has no experiment badge');
+      assert.deepEqual(await settingsPage.evaluate(() => [document.querySelectorAll('#settings-harnesses').length, document.querySelectorAll('#settings-harnesses-tab').length]), [1, 1], 'exactly one Harnesses page is built');
       await settingsPage.evaluate(() => {
         window.__harnessFetch = window.fetch;
         window.__harnessWrites = []; window.__autoModels = undefined; window.__dockerDetect = undefined; delete window.__dockerFailure;
@@ -4298,15 +4304,9 @@ async function main() {
       await domClick(settingsPage, '#settings-toggle');
       await settingsPage.waitForFunction(() => document.querySelector('#settings-dialog').open);
     };
-    await harnessChecks('a');
-    await settingsPage.goto(`${origin}/?mock_usages=1&mock_project_settings=1&ui=preact-harnesses:b`);
-    await appReady(settingsPage);
-    assert.deepEqual(await settingsPage.$eval('#ui-variant-toggle', el => [el.hidden, el.dataset.active, document.documentElement.getAttribute('data-ui-preact-harnesses')]), [false, 'b', 'b'], '?ui=preact-harnesses:b shows the pill on B');
-    await reopenSettings();
-    await harnessChecks('b');
-    // The pill switches back in place (Settings is closed meanwhile: its modal makes the top bar inert).
+    await harnessChecks();
     await domClick(settingsPage, '#settings-close');
-    // Onboarding builds its own legacy Harnesses component: Settings on B changes nothing there, and the swap below leaves it alone.
+    // Onboarding embeds the same page with its own ids: Settings' copy stays alone in the page, and opening it leaves the step's alone.
     assert.deepEqual(await settingsPage.evaluate(async () => {
       const { Onboarding } = await import('/js/onboarding.js');
       document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
@@ -4314,14 +4314,15 @@ async function main() {
       await step.showHarnesses('first');
       const section = window.__onboardingSection = document.querySelector('#onboarding-harnesses-host #onboarding-settings-harnesses');
       const ids = [...document.querySelectorAll('[id]')].map(node => node.id);
-      const shown = { own: section === step.harnesses.section, legacy: !section.dataset.implementation, settings: document.querySelector('#settings-harnesses').dataset.implementation, enabled: !document.querySelector('#onboarding-harnesses-continue').disabled, repeatedIds: ids.filter((id, at) => ids.indexOf(id) !== at) };
+      const shown = { own: section === step.harnesses.section, settings: document.querySelectorAll('#settings-harnesses').length, enabled: !document.querySelector('#onboarding-harnesses-continue').disabled, repeatedIds: ids.filter((id, at) => ids.indexOf(id) !== at) };
       step.stopWatching(); step.root.hidden = true;
       return shown;
-    }), { own: true, legacy: true, settings: 'preact', enabled: true, repeatedIds: [] }, 'onboarding keeps its legacy Harnesses step while Settings is on B');
-    await domClick(settingsPage, '#ui-variant-toggle');
-    assert.deepEqual(await settingsPage.evaluate(() => [document.documentElement.getAttribute('data-ui-preact-harnesses'), new URL(location.href).searchParams.getAll('ui'), document.querySelector('#settings-harnesses').dataset.implementation || 'legacy', document.querySelectorAll('#settings-harnesses, #settings-harnesses-tab').length, document.querySelector('#settings-dialog nav').lastElementChild.id]), ['a', ['preact-harnesses:a'], 'legacy', 2, 'settings-harnesses-tab'], 'the pill switches the Harnesses page in place and the tab keeps its place');
-    assert.deepEqual(await settingsPage.evaluate(() => [window.__onboardingSection.isConnected, window.__onboarding.harnesses.section === window.__onboardingSection, document.querySelectorAll('#onboarding-settings-harnesses').length]), [true, true, 1], 'the A/B swap does not replace or remove onboarding\'s Harnesses component');
+    }), { own: true, settings: 1, enabled: true, repeatedIds: [] }, 'onboarding builds its own Harnesses step beside the one in Settings');
+    await reopenSettings();
+    assert.deepEqual(await settingsPage.evaluate(() => [window.__onboardingSection.isConnected, window.__onboarding.harnesses.section === window.__onboardingSection, document.querySelectorAll('#onboarding-settings-harnesses').length, document.querySelectorAll('#settings-harnesses').length]), [true, true, 1, 1], 'opening Settings does not replace or remove onboarding\'s Harnesses component');
+    await domClick(settingsPage, '#settings-close');
     await settingsPage.evaluate(() => window.__onboarding.close());
+
     await reopenSettings();
     await settingsPage.setViewport({ width: 390, height: 780 });
     assert.equal(await settingsPage.$eval('#settings-dialog', el => Math.abs(el.getBoundingClientRect().height - innerHeight) < 1), true);

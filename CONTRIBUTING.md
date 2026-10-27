@@ -213,13 +213,13 @@ the import map, so each module has exactly one URL.
   (`IconButton`, `SettingsRow`, `SettingsGroup`: the same markup as
   `icon-button.js` and `settings-row.js`), `web/js/hooks/` shared hooks, and
   `web/js/pages/<page>/` one page each: its components, a `model.js` with the
-  page's pure logic (import-free, tested in `vm`), and a `switch.js` that
-  picks the legacy page or the Preact one from the page's UI experiment.
+  page's pure logic (import-free, tested in `vm`), and a `page.js` adapter that
+  gives the settings shell its tab and section.
   Markup is written with `html` tagged templates:
   ``html`<button class="btn" onClick=${save}>Save</button>` ``. A container
   belongs to Preact or to hand-written code, never both. A Preact page keeps
-  the legacy page's ids, classes and text, so `test-ui` runs the same checks
-  against both.
+  the ids, classes and text the page it replaced had, so `test-ui` and the
+  stylesheet keep working.
 - `web/style.css`: the original base stylesheet; it is small and mostly legacy.
   `web/theme-v1.css`: the stylesheet that matters, which carries the colour
   variables (themes switch through `data-theme` on `<html>`) and nearly all of
@@ -267,11 +267,9 @@ uses one of the shared classes (`.btn`, `.icon-btn`, `.row-btn`).
 - **Plain words for users.** Say "Not responding", not an internal state name,
   and never show raw JSON.
 - **Experiments.** A/B questions run behind the top-bar pill in
-  `ui-variant.js`; its header comment explains how to define one. A page
-  moved to Preact is one, defined with `{ hidden: true }`: option A is the
-  legacy page and the default, and the pill shows only in a browser that
-  opted in with `?ui=` once; `?ui=<experiment>:b` opens the Preact page (for
-  Harnesses, `?ui=preact-harnesses:b`).
+  `ui-variant.js`; its header comment explains how to define one. None runs
+  now, and a page moved to Preact is not one: it replaces its legacy module in
+  the same change.
 
 ## Commits
 

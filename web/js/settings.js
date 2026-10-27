@@ -8,7 +8,7 @@ import { createProjectSettingsSource } from './project-settings-source.js';
 import { RoleSettings } from './role-settings.js';
 import { ProjectSettings } from './project-settings.js';
 import { MachinesSettings } from './machines.js';
-import { HarnessSettingsSwitch } from './pages/harnesses/switch.js';
+import { HarnessSettings } from './pages/harnesses/page.js';
 import { MacroSettings } from './macro-settings.js';
 import { UsersSettings } from './users.js';
 import { PromptSettings } from './prompt-settings.js';
@@ -61,7 +61,7 @@ export class SettingsPanel {
     this.machinesSection = document.querySelector('#settings-machines');
     this.macroSettings = new MacroSettings(this.dialog);
     this.macroSettings.tab.onclick = () => this.selectSection('macros');
-    this.harnessSettings = new HarnessSettingsSwitch(this.dialog);
+    this.harnessSettings = new HarnessSettings(this.dialog);
     this.harnessSettings.tab.onclick = () => this.selectSection('harnesses');
     // Two nav groups: the account and instance settings under SETTINGS, then what runs the agents (Machines, Harnesses) under AGENTS.
     // The tabs the other modules add are appended at the end of the nav, so the order is set here once they all exist.

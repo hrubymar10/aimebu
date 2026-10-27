@@ -5,6 +5,8 @@ import { launcherReady } from '../../harness-offer.js';
 import { RoleDefaults, ROLE_DEFAULTS_CHANGED } from '../../role-defaults.js';
 import { harnessFromLauncher, createBody, initialModels, detectNotes, detectionFailure, machineSummary, chosenHarness, staleModelsMessage, defaultLabel } from './model.js';
 
+export const anyReady = rows => rows.some(row => launcherReady(row.enabled, row.models));
+
 const launchersURL = machineID => `/api/machines/${encodeURIComponent(machineID)}/launchers`;
 const toggled = (set, id, open) => {
   const next = new Set(set);
@@ -37,7 +39,7 @@ const createState = () => ({
 });
 
 // Answers for another machine, an earlier opening or an unmounted page are dropped (generation and view tokens).
-export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}, isHidden = () => false }) {
+export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}, onOpened = () => {}, isHidden = () => false }) {
   const alive = useAlive();
   const state = useMemo(createState, []);
   const defaults = useMemo(() => new RoleDefaults(), []);
@@ -78,7 +80,7 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
         state.selected.value = chosenHarness(list, state.selected.peek());
         state.activity.value = response?.activity || [];
       });
-      if (list.some(row => launcherReady(row.enabled, row.models))) onReady();
+      if (anyReady(list)) onReady();
       loadOtherHarnesses();
       return true;
     } catch (problem) {
@@ -125,7 +127,8 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
       }
     }
   };
-  useEffect(() => { if (openToken) open(wanted); }, [openToken]);
+  // A layout effect, so the reads start in the render that opens the page, not a frame later: the onboarding step's layout moves when they answer.
+  useLayoutEffect(() => { if (openToken) open(wanted).then(onOpened); }, [openToken]);
 
   const chooseMachine = id => {
     view.current++;
@@ -261,7 +264,8 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
     return defaultLabel(item, row && { harness: row, machine: machine?.name || machine?.id }, state.others.value.get(item.launcher_id));
   };
   // Role defaults saved from Settings -> Roles show here without reopening the page; ours, and any while the page is hidden, are skipped.
-  useEffect(() => {
+  // A layout effect, so a destroyed page stops listening at once: a plain effect's cleanup may wait for the next paint.
+  useLayoutEffect(() => {
     const listener = event => {
       if (event.detail?.source === defaults || isHidden()) return;
       loadRoles().then(() => alive() && loadOtherHarnesses());

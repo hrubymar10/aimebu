@@ -6,6 +6,7 @@ import { useDirty } from '../../hooks/use-dirty.js';
 import { positionOf, canAddDefault } from '../../role-defaults-logic.js';
 import { DetectionDetails } from './detection-details.js';
 import { RoleSwitch } from './role-switch.js';
+import { useIdPrefix } from './id-prefix.js';
 import { addModel, addFoundModels, removeModel, setDefaultModel, updateModel, modelsError, detectionFailure } from './model.js';
 
 const modelsURL = (machineID, harnessID) => `/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harnessID)}/models`;
@@ -13,6 +14,7 @@ const modelsURL = (machineID, harnessID) => `/api/machines/${encodeURIComponent(
 // `draft` is { models, rev } while the list has unsaved edits: `rev` is the revision of the stored list the draft was started from, which the save sends back so a list changed meanwhile is refused.
 export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaults, onRoleChanged, failure, onFailure, onSaved, onStale, onSnapshot, onDirty }) {
   const alive = useAlive();
+  const prefix = useIdPrefix();
   const revision = useRef(0);
   const models = draft?.models || harness.models || [];
   const dirty = draft !== null;
@@ -152,7 +154,7 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
   };
 
   return html`
-    <div class="harness-models" id=${`harness-models-${harness.id}`}>
+    <div class="harness-models" id=${`${prefix}harness-models-${harness.id}`}>
       <h4>Models of ${harness.label || harness.name}</h4>
       <div class="harness-model-rows">
         ${!models.length && html`<p class="settings-intro">No models yet: this harness cannot start an agent until one is added.</p>`}

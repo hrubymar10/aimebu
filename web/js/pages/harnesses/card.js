@@ -5,6 +5,7 @@ import { useAlive } from '../../hooks/use-alive.js';
 import { useDirty } from '../../hooks/use-dirty.js';
 import { IconButton } from '../../components/icon-button.js';
 import { ModelsPanel } from './models.js';
+import { useIdPrefix } from './id-prefix.js';
 import { versionLabel } from '../../harness-version.js';
 import { familyName, harnessStatus, harnessTitle, harnessLabel, formFromHarness, launcherBody, enabledBody } from './model.js';
 
@@ -55,7 +56,8 @@ export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen
   const [pendingEnabled, setPendingEnabled] = useState(null);
   const enabled = pendingEnabled ?? !!harness.enabled;
   const status = harnessStatus(harness);
-  const formID = `launcher-form-${harness.id}`;
+  const prefix = useIdPrefix();
+  const formID = `${prefix}launcher-form-${harness.id}`;
 
   const save = async event => {
     event.preventDefault();
@@ -110,7 +112,7 @@ export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen
   };
 
   return html`
-    <article class="machine-harness settings-group" id=${`harness-card-${harness.id}`} data-harness-id=${harness.id} data-tool=${harness.tool} data-variant=${harness.variant} role="tabpanel" aria-labelledby=${`harness-tab-${harness.id}`} hidden=${!selected}>
+    <article class="machine-harness settings-group" id=${`${prefix}harness-card-${harness.id}`} data-harness-id=${harness.id} data-tool=${harness.tool} data-variant=${harness.variant} role="tabpanel" aria-labelledby=${`${prefix}harness-tab-${harness.id}`} hidden=${!selected}>
       <div class="settings-row machine-harness-summary">
         <div class="settings-row-info">
           <div class="machine-harness-title">

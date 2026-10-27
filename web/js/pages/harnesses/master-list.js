@@ -1,9 +1,11 @@
 import { html, useRef } from '../../ui.js';
+import { useIdPrefix } from './id-prefix.js';
 import { harnessStatus, harnessTitle, tabTitle, tabKeyTarget } from './model.js';
 
 // A vertical tab list of the machine's harnesses; the card of the selected one is shown beside it.
 export function MasterList({ rows, selected, onSelect }) {
   const list = useRef(null);
+  const prefix = useIdPrefix();
   const keys = (event, index) => {
     const to = tabKeyTarget(event.key, index, rows.length);
     if (to < 0) return;
@@ -20,9 +22,9 @@ export function MasterList({ rows, selected, onSelect }) {
           class="row-btn harness-master-item"
           role="tab"
           key=${harness.id}
-          id=${`harness-tab-${harness.id}`}
+          id=${`${prefix}harness-tab-${harness.id}`}
           data-harness-id=${harness.id}
-          aria-controls=${`harness-card-${harness.id}`}
+          aria-controls=${`${prefix}harness-card-${harness.id}`}
           aria-selected=${String(harness.id === selected)}
           tabIndex=${harness.id === selected ? 0 : -1}
           title=${tabTitle(harness)}
