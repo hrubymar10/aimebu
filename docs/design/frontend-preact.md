@@ -166,6 +166,12 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
   owner and admins as they may use it, an export, two files chosen in a row drawing only the second's plan, Apply sending the
   ticked sections once and a stale preview dropped) and `scripts/test-general-model.cjs` (the theme list and storage keys, in
   `make test-web`).
+- `make test-ui` also runs `scripts/test-notifications-page.cjs` (Settings → Notifications with requests held: the blocks in order
+  with named and described rows; the switches, sound, slider and Preview writing the inbox's store and reading it back; a chosen
+  sound that is gone falling back to the chime; the permission button for default, granted, denied, refused and unavailable;
+  reads of the sound list answered out of order and a failed read; upload and delete one at a time, each followed by a read,
+  with the uploaded sound chosen; a non-admin without the upload row; an answer after destroy) and
+  `scripts/test-notifications-model.cjs` (the pure rules, in `make test-web`).
 - `make test-ui` also runs `scripts/test-harness-page.cjs`: the Preact page in real Chromium (the existing Puppeteer tooling,
   `web/` served as is with the page's import map, no Go server), with every request held until the test answers it, so the
   order of answers is chosen. It checks:
@@ -242,7 +248,7 @@ same change (section 5); the experiment, default-flip and removal steps describe
 
 ### Step 2: the other Settings sections
 
-Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`), Roles (`web/js/pages/roles/`; its default-agents picker is the shared `components/spawn-defaults.js`, which Project will use too, and `spawn-defaults-editor.js` goes with that step), General (`web/js/pages/general/`: appearance, the chat switches, message expiry and the settings backup; the chat switches read `chat-preferences.js`, which the system-events feed shares, and the expiry window is the shared `retention.js` store).
+Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`), Roles (`web/js/pages/roles/`; its default-agents picker is the shared `components/spawn-defaults.js`, which Project will use too, and `spawn-defaults-editor.js` goes with that step), General (`web/js/pages/general/`: appearance, the chat switches, message expiry and the settings backup; the chat switches read `chat-preferences.js`, which the system-events feed shares, and the expiry window is the shared `retention.js` store), Notifications (`web/js/pages/notifications/`; the page reads and writes the inbox's `InboxNotifications` store, which the sound upload and permission button go through).
 
 - Scope: the small sections first (prompts, macros, roles, retention, limit guard, quota), then users, machines and project;
   then the settings shell's nav and section switching.

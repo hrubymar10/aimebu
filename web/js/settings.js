@@ -1,6 +1,6 @@
 import { request, rights, refreshRights } from './api.js';
 import { GeneralSettings } from './pages/general/page.js';
-import { NotificationSounds } from './notification-sounds.js';
+import { NotificationSettings } from './pages/notifications/page.js';
 import { element, creditsText, usageWindowRow } from './usage-format.js';
 import { settingsRow, settingsGroup } from './settings-row.js';
 import { iconButton } from './icon-button.js';
@@ -67,23 +67,12 @@ export class SettingsPanel {
     this.agentsTitle = this.dialog.querySelector('#settings-agents-title');
     this.agentsTitle.parentElement.append(this.generalTab, this.usagesTab, this.notificationsTab, this.rolesTab, this.usersSettings.tab,
       this.promptSettings.tab, this.macroSettings.tab, this.agentsTitle, this.machinesTab, this.harnessSettings.tab);
-    this.muteToggle = document.querySelector('#notification-muted');
-    this.textToggle = document.querySelector('#notification-text');
-    this.permissionButton = document.querySelector('#notification-permission');
-    this.permissionStatus = document.querySelector('#notification-status');
-    this.sounds = new NotificationSounds(this.notificationsSection, notifications);
+    this.notificationSettings = new NotificationSettings(this.notificationsSection, notifications);
     this.usagesTab.onclick = () => this.selectSection('usages');
     this.generalTab.onclick = () => this.selectSection('general');
     this.notificationsTab.onclick = () => this.selectSection('notifications');
     this.rolesTab.onclick = () => this.selectSection('roles');
     this.machinesTab.onclick = () => this.selectSection('machines');
-    this.muteToggle.onchange = () => { this.notifications.muted = this.muteToggle.checked; };
-    this.textToggle.onchange = () => { this.notifications.showText = this.textToggle.checked; };
-    this.permissionButton.onclick = async () => {
-      try { await this.notifications.requestPermission(); }
-      catch (error) { this.permissionStatus.textContent = error.message; return; }
-      this.renderNotifications();
-    };
     document.querySelector('#settings-toggle').onclick = () => this.open();
     document.querySelector('#settings-close').onclick = () => this.dialog.close();
     // v1's global shortcuts: Cmd/Ctrl+, opens Settings, and Cmd/Ctrl+W closes it while it is open.
@@ -236,19 +225,12 @@ export class SettingsPanel {
     }
     if (section === 'general') this.general.open();
     if (section === 'users') this.usersSettings.open();
-    if (notifications) { this.renderNotifications(); this.sounds.open(); }
+    if (notifications) this.notificationSettings.open();
     if (section === 'roles') this.roleSettings.open();
     if (section === 'machines') this.machinesSettings.load();
     if (section === 'harnesses') this.harnessSettings.open();
     if (section === 'macros') this.macroSettings.open();
     if (section === 'prompts') this.promptSettings.open();
-  }
-  renderNotifications() {
-    this.muteToggle.checked = this.notifications.muted;
-    this.textToggle.checked = this.notifications.showText;
-    this.permissionStatus.textContent = this.notifications.status;
-    this.permissionButton.disabled = !this.notifications.available || Notification.permission !== 'default';
-    this.permissionButton.textContent = this.notifications.available && Notification.permission === 'granted' ? 'Enabled' : 'Enable browser notifications';
   }
   providerCard() {
     const card = element('article', 'usage-provider');
