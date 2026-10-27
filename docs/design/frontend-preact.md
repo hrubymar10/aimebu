@@ -152,6 +152,12 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
   nothing and reads the map again; an import preview and apply; copy-all answers out of order; a non-admin sees the list
   only; form and import drafts count as unsaved) and `scripts/test-macros-model.cjs` (the page's pure rules, in `make test-web`;
   the key and size rules stay in `macro-import.js`, tested by `test-macro-import.cjs`).
+- `make test-ui` also runs `scripts/test-roles-page.cjs` (Settings → Roles with every request held: cards, chips and the hidden
+  select; New role and Edit open the editor on the right field; reads answered out of order; one write at a time; a refused
+  save keeps the editor and its text; closing with edits asks first and Escape closes only the editor; delete and reset ask
+  and send the stored revision; the Harnesses page's role-defaults event is read while no editor is open and ignored while one
+  is; a write answered after destroy draws, reads and announces nothing; the default-agents picker's add, order, pick order,
+  remove and unavailable choice) and `scripts/test-roles-model.cjs` (the pure rules, in `make test-web`).
 - `make test-ui` also runs `scripts/test-harness-page.cjs`: the Preact page in real Chromium (the existing Puppeteer tooling,
   `web/` served as is with the page's import map, no Go server), with every request held until the test answers it, so the
   order of answers is chosen. It checks:
@@ -228,7 +234,7 @@ same change (section 5); the experiment, default-flip and removal steps describe
 
 ### Step 2: the other Settings sections
 
-Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`).
+Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`), Roles (`web/js/pages/roles/`; its default-agents picker is the shared `components/spawn-defaults.js`, which Project will use too, and `spawn-defaults-editor.js` goes with that step).
 
 - Scope: the small sections first (prompts, macros, roles, retention, limit guard, quota), then users, machines and project;
   then the settings shell's nav and section switching.

@@ -115,6 +115,17 @@ const FIXTURE = async () => {
     await new Promise(resolve => setTimeout(resolve, 100));
     document.querySelector('#harnesses-list .machine-harness:not([hidden]) .machine-harness-edit')?.click();
   }
+  // Settings -> Roles from the real page over the fixture server's roles, with the editor open on the Worker role.
+  {
+    const { RoleSettings } = await import('/js/pages/roles/page.js');
+    const { render } = await import('/js/ui.js');
+    render(null, document.querySelector('#settings-roles')); // the app's own copy, already mounted there
+    const roles = new RoleSettings(document.querySelector('#settings-roles'));
+    roles.open();
+    await new Promise(resolve => setTimeout(resolve, 300));
+    document.querySelector('#roles-cards [data-role-key="worker"] .role-card-edit')?.click();
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
   const sidebar = document.querySelector('.sidebar');
   // The real room list over fake data (two projects, a direct message, a closed and a hidden room), in the layout
   // so the audits see the box, the rows, the chips and the folds.

@@ -5,7 +5,7 @@ import { element, creditsText, usageWindowRow } from './usage-format.js';
 import { settingsRow, settingsGroup } from './settings-row.js';
 import { iconButton } from './icon-button.js';
 import { createProjectSettingsSource } from './project-settings-source.js';
-import { RoleSettings } from './role-settings.js';
+import { RoleSettings } from './pages/roles/page.js';
 import { ProjectSettings } from './project-settings.js';
 import { MachinesSettings } from './machines.js';
 import { HarnessSettings } from './pages/harnesses/page.js';
