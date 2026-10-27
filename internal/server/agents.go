@@ -663,6 +663,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	}
 	launcherID := ""
 	containerized := launcherKeepsOwnSessions(nil, req.Variant)
+	var resolvedLauncher *store.Launcher
 	if machine.supportsLaunchers && req.Tool != "fake" {
 		launcher, err := s.resolveLauncher(r.Context(), machine.id, req.Tool, req.Variant, req.LauncherID)
 		if err != nil {
@@ -673,6 +674,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		req.Variant = launcherAlias(launcher.Name)
 		// What matters is whether the launcher runs in a container (its own home), not what it is called.
 		containerized = launcherKeepsOwnSessions(&launcher, req.Variant)
+		resolvedLauncher = &launcher
 	}
 	{
 		model, ok, err := s.checkSpawnModel(r.Context(), machine.id, req.Tool, req.Variant, launcherID, req.Model)
@@ -696,8 +698,10 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			return
 		}
 	}
-	if (resuming || req.ResumeSession != "") && containerized {
-		apiError(w, 409, "needs_native", "a containerized launcher keeps its own Claude sessions, so an existing session can only be continued with the native claude launcher")
+	// A Docker launcher that works in the host's Claude home sees the sessions made there, so they can be continued through it.
+	sharedHome := containerized && req.Tool == "claude" && sharesClaudeHome(machine, resolvedLauncher)
+	if (resuming || req.ResumeSession != "") && containerized && !sharedHome {
+		apiError(w, 409, "needs_native", sessionsMessage(req.Tool, resolvedLauncher))
 		return
 	}
 	var session *protocol.SessionCandidate
@@ -735,7 +739,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			apiError(w, 409, "v1_folder_missing", err.Error())
 			return
 		}
-		if machineInfo.IsHost && !containerized {
+		if machineInfo.IsHost && (!containerized || sharedHome) {
 			if checkHarnessSession(req.Tool, legacy.SessionID, path) == sessionMissing {
 				apiError(w, 409, "session_not_found", "the v1 session "+legacy.SessionID+" was not found on this machine, so it cannot be continued")
 				return

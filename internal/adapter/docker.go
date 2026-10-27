@@ -68,6 +68,11 @@ func DockerBaseEnv() []string {
 // FeatureForwardEnv is the Docker launcher feature that hands the variables named in HARNESS_DOCKER_FORWARD_ENV to the harness.
 const FeatureForwardEnv = "forward_env"
 
+// FeatureClaudeHomeShared is the Docker launcher feature that says the container works in the host's Claude configuration directory, mounted
+// at the same path, with the working folders mirrored as well: a Claude Code session made on either side is found, under the same folder name,
+// from the other. Only the Claude launcher reports it, and a launcher that predates it does not: that means "unknown", never "shared".
+const FeatureClaudeHomeShared = "claude_home_shared"
+
 // DockerNeedsForwardEnv says whether a tool's Docker turns configure the harness through forwarded environment variables, which an older
 // launcher would silently drop: the turn would then run without its isolated configuration or its toolbox.
 func DockerNeedsForwardEnv(tool string) bool { return tool == "opencode" || tool == "vibe" }

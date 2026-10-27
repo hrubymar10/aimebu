@@ -56,7 +56,7 @@ sessions of the project's folder on a machine (the host by default) in the Claud
 home of that launcher (default: the machine's native `claude` launcher, or the
 supervisor's own home when the machine has none yet; 409 `launcher_unavailable`
 for a named launcher that is unknown, disabled or not claude, 409 `needs_native`
-for a containerized one); `?session_id=` finds one
+for a containerized one that does not share the host's Claude home, see below); `?session_id=` finds one
 session wherever it worked, on a machine where the project has a folder (409
 `machine_folder_missing` otherwise). Only the project's owners and operators may ask: a
 title is what somebody typed to Claude. Each session carries its `id`, `title`,
@@ -85,9 +85,20 @@ starts at the copy. A machine whose supervisor predates session scans answers 40
 `POST /api/rooms/{room}/agents` takes `resume_session` (a Claude Code session id),
 `resume_mode`, `confirm_session_closed` and `new_room`; see [the API](api.md). The server looks
 the session up itself on the chosen machine and never trusts a folder from the
-client. The tool must be `claude` on a **native** launcher: a container keeps its
-own Claude home and cannot see the session (409 `needs_native`, for a fork as well as a
-continue: `claude-docker` forwards no `CLAUDE_CONFIG_DIR`, so a container never sees another home).
+client. The tool must be `claude`, on a **native** launcher or on a Docker launcher
+that **shares the host's Claude home**. `claude-docker` does: harness-docker mounts the
+host's Claude configuration directory (`CLAUDE_CONFIG_DIR`, default `~/.claude`) and the
+working folders at the same absolute paths and runs Claude with `CLAUDE_CONFIG_DIR` set to
+it, so a session made on either side is in the same projects directory, under the same
+folder name. It says so itself: with `HARNESS_DOCKER_PRINT_FEATURES=1` it prints the
+feature `claude_home_shared`, which the supervisor reads once when it inspects the launcher
+(with a project folder to run in; it appears in the launcher row's `features`). Without
+that feature, including a launcher that predates it, the answer is unknown and means no:
+409 `needs_native` for a fork as well as a continue, with a message that says why (update
+harness-docker, or use the native launcher). The narrower limit still holds: the launcher
+must not remap `CLAUDE_CONFIG_DIR` through `env_refs` (`claude-docker` does not honour a
+different one, so the scan would read a home the container does not use), else 409
+`needs_native` says so. The session list and the picker use the same rule.
 
 The agent runs in the folder the session was made in, resolved on the machine,
 so it cannot use a worktree. If that folder no longer exists the start is refused

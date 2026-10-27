@@ -99,7 +99,7 @@ func inspectLauncher(def protocol.LauncherDefinition, checkout string) (protocol
 	}
 	// Like the --version probe above, only with a checkout to run in: an old launcher that ignores the probe runs the harness with these
 	// arguments, which must not happen in an arbitrary directory, and the hello loop must not wait on every launcher.
-	if def.Containerized && checkout != "" && adapter.DockerNeedsForwardEnv(def.Tool) {
+	if def.Containerized && checkout != "" && (adapter.DockerNeedsForwardEnv(def.Tool) || def.Tool == "claude") {
 		probeLauncherFeatures(&row, def, path, checkout)
 	}
 	if !def.Enabled {
@@ -116,6 +116,9 @@ func probeLauncherFeatures(row *protocol.LauncherRow, def protocol.LauncherDefin
 	defer cancel()
 	features, err := adapter.DockerFeatures(ctx, path, def.Args, checkout, launcherEnvironment(def.EnvRefs, def.Tool))
 	if err != nil {
+		if !adapter.DockerNeedsForwardEnv(def.Tool) {
+			return // the tool needs no feature: an answer that cannot be read only means none is known
+		}
 		row.FeatureProblem = "the launcher's feature probe failed: " + err.Error()
 		return
 	}
@@ -123,7 +126,8 @@ func probeLauncherFeatures(row *protocol.LauncherRow, def protocol.LauncherDefin
 		row.Features = append(row.Features, feature)
 	}
 	sort.Strings(row.Features)
-	if !features[adapter.FeatureForwardEnv] {
+	// Claude needs no forwarded variable: it asks for the features only to know whether its sessions are shared with the host.
+	if adapter.DockerNeedsForwardEnv(def.Tool) && !features[adapter.FeatureForwardEnv] {
 		row.FeatureProblem = "launcher too old: it does not forward environment variables, which " + def.Tool + " needs (update harness-docker)"
 	}
 }

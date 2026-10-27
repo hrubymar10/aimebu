@@ -16,8 +16,8 @@ import (
 
 // TestLiveForkCanary runs a real first turn on a throwaway session, then a second that resumes it with --fork-session. The copy must get a
 // session id of its own, know what the first turn was told, and leave the original transcript byte for byte as it was. It is opt-in
-// (AIMEBU2_LIVE_CLAUDE_FORK=1), native only (a containerized launcher keeps its own sessions, and the server refuses a fork through it,
-// see needs_native), and spends a little on the model. Claude Code runs with the test's temporary CLAUDE_CONFIG_DIR, so the person's own
+// (AIMEBU2_LIVE_CLAUDE_FORK=1), native only (it needs a temporary Claude home, which a container would not use), and spends a little on the
+// model. Claude Code runs with the test's temporary CLAUDE_CONFIG_DIR, so the person's own
 // sessions are never read or written. Its login is ANTHROPIC_API_KEY, or else a copy of the file named by AIMEBU2_LIVE_CLAUDE_CREDENTIALS
 // (a login file without a refresh token, so that the copy cannot rotate the real one); the file itself is only read.
 func TestLiveForkCanary(t *testing.T) {

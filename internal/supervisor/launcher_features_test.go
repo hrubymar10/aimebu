@@ -56,9 +56,19 @@ echo 2.0`)
 	if row, err = inspectLauncher(native, checkout); err != nil || row.FeatureProblem != "" || row.Features != nil {
 		t.Fatalf("native: %+v %v", row, err)
 	}
+	// A Docker tool that needs no feature is asked once for the one it may have, and a launcher that cannot answer is no problem.
 	claude := def
 	claude.Tool = "claude"
-	if row, err = inspectLauncher(claude, checkout); err != nil || row.FeatureProblem != "" || row.Features != nil {
-		t.Fatalf("claude-docker: %+v %v", row, err)
+	if row, err = inspectLauncher(claude, checkout); err != nil || row.FeatureProblem != "" || row.Features != nil || !row.Available {
+		t.Fatalf("a claude-docker launcher that fails the probe: %+v %v", row, err)
+	}
+	write("echo 2.0") // predates the probe: nothing is known, and nothing is said
+	if row, err = inspectLauncher(claude, checkout); err != nil || row.FeatureProblem != "" || len(row.Features) != 0 || !row.Available {
+		t.Fatalf("an old claude-docker launcher: %+v %v", row, err)
+	}
+	write(`if [ "$HARNESS_DOCKER_PRINT_FEATURES" = 1 ]; then printf 'forward_env\nclaude_home_shared\n'; exit 0; fi
+echo 2.0`)
+	if row, err = inspectLauncher(claude, checkout); err != nil || row.FeatureProblem != "" || strings.Join(row.Features, ",") != "claude_home_shared,forward_env" {
+		t.Fatalf("a claude-docker launcher that shares the Claude home: %+v %v", row, err)
 	}
 }

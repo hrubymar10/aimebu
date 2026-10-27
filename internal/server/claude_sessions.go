@@ -201,8 +201,8 @@ func (s *Server) claudeLauncher(w http.ResponseWriter, r *http.Request, conn *ma
 		apiError(w, 409, "launcher_unavailable", errLauncherUnavailable.Error())
 		return "", false
 	}
-	if launcherKeepsOwnSessions(&launcher, launcherAlias(launcher.Name)) {
-		apiError(w, 409, "needs_native", "a containerized launcher keeps its own Claude sessions, so an existing session can only be continued with the native claude launcher")
+	if launcherKeepsOwnSessions(&launcher, launcherAlias(launcher.Name)) && !sharesClaudeHome(conn, &launcher) {
+		apiError(w, 409, "needs_native", sessionsMessage("claude", &launcher))
 		return "", false
 	}
 	return launcher.ID, true

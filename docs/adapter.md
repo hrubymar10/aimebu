@@ -488,9 +488,11 @@ the canary checkout is created below this repository's ignored `tmp/`.
 
 `claude-docker` does not forward `CLAUDE_CONFIG_DIR` (it is not among the variables the Claude Docker turn lists in
 `HARNESS_DOCKER_FORWARD_ENV`, and `docker exec` carries nothing else of the supervisor's environment): a Claude Docker turn
-always uses the container's own Claude home, never a per-run or temporary one. That is why an existing Claude Code session
-cannot be continued or copied through it. The server refuses `resume_session` on a containerized launcher for both
-`resume_mode`s (409 `needs_native`), and the fork canary below runs native.
+always uses the container's Claude home, never a per-run or temporary one: the host's own `CLAUDE_CONFIG_DIR`, which harness-docker
+mounts at the same path. A launcher that says so (the `claude_home_shared` feature of its probe, recorded on the launcher row)
+can therefore continue or copy a session made on the host, and the server allows `resume_session` through it; any other
+containerized launcher is refused for both `resume_mode`s (409 `needs_native`, with the reason). The fork canary below runs
+native, because it needs a temporary Claude home that the container would not use.
 
 `AIMEBU2_LIVE_CLAUDE_FORK=1 go test ./internal/adapter/claude` runs the fork canary: a real first turn on a throwaway
 session, then a second that resumes it with `--fork-session`. The copy must report a session id of its own and recall what

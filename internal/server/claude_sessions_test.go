@@ -47,6 +47,16 @@ func (f *fixture) connectSupervisorOn(t *testing.T, machineID string, scans bool
 		for {
 			select {
 			case request := <-machine.sendQueue:
+				if request.Type == protocol.PathProbe {
+					// The folder check a launcher spawn makes through the supervisor: this one finds every folder as it is spelled.
+					machine.harnessMu.Lock()
+					waiter := machine.pathPending[request.ReqID]
+					machine.harnessMu.Unlock()
+					if waiter != nil {
+						waiter <- protocol.Frame{V: protocol.Version, Type: protocol.PathResult, ReqID: request.ReqID, CanonicalPath: request.CheckoutPath}
+					}
+					continue
+				}
 				if request.Type != protocol.SessionScan {
 					continue
 				}
@@ -475,8 +485,8 @@ func TestSpawnResumeModeRefusals(t *testing.T) {
 	_ = fake
 }
 
-// A containerized launcher keeps its own Claude sessions, so a session the machine has is neither continued nor copied through it: the
-// fork needs the native launcher too.
+// A containerized launcher that does not say its Claude home is the host's keeps its own sessions, so a session the machine has is neither
+// continued nor copied through it: the fork needs the native launcher too.
 func TestSpawnResumeThroughADockerLauncherNeedsNative(t *testing.T) {
 	t.Setenv("AIMEBU2_BIND", "0.0.0.0") // a loopback bind refuses Docker before anything else is looked at
 	f := newFixture(t)
@@ -490,6 +500,76 @@ func TestSpawnResumeThroughADockerLauncherNeedsNative(t *testing.T) {
 		if status, body := f.spawnSession(t, "docker-"+mode, map[string]any{"resume_session": sessionA, "resume_mode": mode, "variant": "docker"}); status != 409 || body["error"] != "needs_native" {
 			t.Fatalf("%s through claude-docker: %d %v", mode, status, body)
 		}
+	}
+}
+
+// dockerClaude is a fixture whose machine reports a Docker Claude launcher with the given features and environment references, and a session
+// to continue through it. Tests using it cannot run in parallel: a loopback bind refuses Docker before anything else is looked at.
+func dockerClaude(t *testing.T, features []string, refs map[string]string) (*fixture, store.Launcher) {
+	t.Helper()
+	t.Setenv("AIMEBU2_BIND", "0.0.0.0")
+	f := newFixture(t)
+	f.seed()
+	fake := f.connectSupervisor(t, true, candidate(sessionA, f.project.Folder, "Shared home"))
+	_ = fake
+	launcher := f.harness(t, "claude", "harness-docker")
+	launcher.Enabled = true
+	if refs != nil {
+		launcher.EnvRefs = refs
+	}
+	launcher, err := f.db.SaveLauncher(t.Context(), "owner", launcher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.srv.machineMu.Lock()
+	machine := f.srv.machines[f.machineID]
+	machine.supportsLaunchers = true
+	machine.launchers = []protocol.LauncherRow{{LauncherDefinition: protocol.LauncherDefinition{ID: launcher.ID, Tool: "claude", Containerized: true, Enabled: true}, Available: true, Features: features}}
+	f.srv.machineMu.Unlock()
+	return f, launcher
+}
+
+func TestSessionsAreContinuedThroughADockerLauncherThatSharesTheClaudeHome(t *testing.T) {
+	for _, mode := range []string{"continue", "fork"} {
+		t.Run(mode, func(t *testing.T) {
+			f, launcher := dockerClaude(t, []string{"forward_env", "claude_home_shared"}, nil)
+			status, card := f.spawnSession(t, "shared-"+mode, map[string]any{"resume_session": sessionA, "resume_mode": mode, "launcher_id": launcher.ID})
+			if status != 201 {
+				t.Fatalf("%s through a launcher that shares the Claude home: %d %v", mode, status, card)
+			}
+			if card["launcher_id"] != launcher.ID && card["variant"] != "harness-docker" && card["variant"] != "docker" {
+				t.Fatalf("the agent is not on the Docker launcher: %v", card)
+			}
+		})
+	}
+	// The listing reads the same home through it.
+	f, launcher := dockerClaude(t, []string{"claude_home_shared"}, nil)
+	if status, body := f.listSessions(t, "?launcher_id="+launcher.ID); status != 200 {
+		t.Fatalf("listing through a launcher that shares the home: %d %v", status, body)
+	}
+}
+
+func TestSessionsThroughADockerLauncherSayWhyTheyAreRefused(t *testing.T) {
+	for name, tc := range map[string]struct {
+		features []string
+		refs     map[string]string
+		message  string
+	}{
+		"an old launcher with no features":  {nil, nil, "claude_home_shared"},
+		"a launcher that forwards only env": {[]string{"forward_env"}, nil, "update harness-docker"},
+		"a remapped Claude home":            {[]string{"claude_home_shared"}, map[string]string{"CLAUDE_CONFIG_DIR": "ALT_CLAUDE_HOME"}, "remaps CLAUDE_CONFIG_DIR"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, launcher := dockerClaude(t, tc.features, tc.refs)
+			status, body := f.spawnSession(t, "refused", map[string]any{"resume_session": sessionA, "resume_mode": "continue", "launcher_id": launcher.ID})
+			message, _ := body["message"].(string)
+			if status != 409 || body["error"] != "needs_native" || !strings.Contains(message, tc.message) {
+				t.Fatalf("%d %v, want needs_native saying %q", status, body, tc.message)
+			}
+			if status, body := f.listSessions(t, "?launcher_id="+launcher.ID); status != 409 || body["error"] != "needs_native" {
+				t.Fatalf("listing: %d %v", status, body)
+			}
+		})
 	}
 }
 

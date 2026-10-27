@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
 
@@ -130,6 +131,40 @@ func (s *Server) legacyStartChecks(w http.ResponseWriter, r *http.Request, room 
 		}
 	}
 	return legacy, resuming, true
+}
+
+// sessionsMessage says why a Claude Code session cannot be continued through a containerized launcher, and what would make it possible. A
+// Docker launcher that works in the host's Claude home (the claude_home_shared feature) can; any other keeps its own home and cannot see a
+// session made elsewhere.
+func sessionsMessage(tool string, launcher *store.Launcher) string {
+	switch {
+	case tool != "claude":
+		return "a containerized launcher keeps its own sessions, so an existing session can only be continued with the native launcher"
+	case launcher != nil && launcher.EnvRefs["CLAUDE_CONFIG_DIR"] != "":
+		return "this Docker launcher remaps CLAUDE_CONFIG_DIR, which claude-docker does not honour: a session made on the host is not in the home the container uses; remove the reference, or continue it with the native claude launcher"
+	}
+	return "this Docker launcher does not report that its Claude home is the host's (claude_home_shared), so a session made on the host cannot be assumed visible inside it; update harness-docker, or continue the session with the native claude launcher"
+}
+
+// sharesClaudeHome says a launcher runs Claude in the host's Claude home, as its supervisor measured it: the Docker launcher printed
+// claude_home_shared, and nothing remaps CLAUDE_CONFIG_DIR for it (claude-docker does not honour that, so the scan would read another home
+// than the container uses). Unknown is no.
+func sharesClaudeHome(conn *machineConn, launcher *store.Launcher) bool {
+	if conn == nil || launcher == nil || !launcher.Containerized || launcher.Tool != "claude" || launcher.EnvRefs["CLAUDE_CONFIG_DIR"] != "" {
+		return false
+	}
+	conn.harnessMu.Lock()
+	defer conn.harnessMu.Unlock()
+	for _, row := range conn.launchers {
+		if row.ID == launcher.ID {
+			for _, feature := range row.Features {
+				if feature == adapter.FeatureClaudeHomeShared {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // launcherKeepsOwnSessions says whether an agent started with this launcher runs in a container, which has its own home and so cannot see

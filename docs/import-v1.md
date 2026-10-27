@@ -371,7 +371,8 @@ The server reads the session itself: the client never supplies a session id.
   failing first turn surfaces like any failed turn. The dialog leaves the
   machine's project folder out of it, since the agent runs in v1's folder.
   A containerized launcher keeps its own sessions and cannot
-  continue one (`needs_native`); another machine is not checked, and a failing
+  continue one (`needs_native`) unless it reports that it shares the host's Claude home
+  (`claude_home_shared`, [sessions](claude-sessions.md)); another machine is not checked, and a failing
   first turn surfaces like any failed turn.
 - **codex, pi, opencode and vibe** sessions cannot be continued: v2 runs each with a
   private home or data directory per agent, so a session v1 made is not visible
