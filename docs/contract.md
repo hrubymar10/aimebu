@@ -327,12 +327,12 @@ Execution
   UNIQUE (turn_id, answer_rev); the server's durable answer acknowledgement
 - **request_key**(actor_kind, actor_id, kind[spawn|team_spawn|control|
   scope_control|switch|inbox_answer|recovery_decision|room_create|room_close|
-  schedule_create|leaderboard_start|dm_agent], key,
+  schedule_create|leaderboard_start|dm_agent|dm_human], key,
   request_digest, result_json, created_at) —
   UNIQUE (actor_kind, actor_id, kind, key); same key + same digest → original
   result; same key + different digest → `conflict`. The `kind` column has a
   CHECK constraint (migration 52 rebuild, extended with `dm_agent` by migration
-  81) listing exactly the values above, so a new kind needs a migration. `team_spawn` and `leaderboard_start` are
+  81 and `dm_human` by migration 87) listing exactly the values above, so a new kind needs a migration. `team_spawn` and `leaderboard_start` are
   retired: no code writes them (the leaderboard rows were deleted by migration
   56), they stay only in the constraint. The kinds written today are spawn,
   switch, scope_control, control (agent lead tool), room_create, room_close,

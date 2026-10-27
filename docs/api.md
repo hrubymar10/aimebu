@@ -647,6 +647,17 @@ alike; 409 `agent_unavailable` (revoked, stopped or not accepting), 409
 `project_archived`, 429 `dm_turn_cap` (30 agent turns per chat per hour) and
 429 `dm_fanout_cap` (10 new chats per lead per hour); see
 [architecture](architecture.md#chats-between-agents).
+`POST /api/agent/human-dms` (`{target_user,body}`, `Idempotency-Key` required; the
+`dm_human` tool, **any active agent**) sends a private message to a person of the
+agent's own project (owner, operator or viewer; `target_user` is their login or
+user id) and returns `{room_id,message_id,no,created}`. It opens or finds the
+ordinary private chat between that person and the agent (the one the person opens
+from the agent's card), and the person's reply wakes the agent in it. The server
+decides in the same transaction, never the model: a person who does not exist, is
+disabled or is not in the agent's project is 403 alike, so a login cannot be probed;
+409 `project_archived`; 429 `human_dm_cap` (20 messages from one agent into one chat
+per hour) and 429 `human_dm_fanout_cap` (10 new chats per agent per hour). Agent to
+agent stays `dm_agent`, lead only.
 `create_room` records the agent in `created_by`, joins the lead atomically (a project's lead is in every open room of its project: a new room, made by anyone, gets the lead, and a lead spawned later joins the existing rooms; private chats are not included), and
 posts one system notice in the parent room. `close_room` uses the same
 `lifecycle_rev`, child-room check, cascade option, grace period and control

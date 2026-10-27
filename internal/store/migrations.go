@@ -1484,6 +1484,22 @@ DROP TABLE imported_session;
 ALTER TABLE imported_session_new RENAME TO imported_session;
 CREATE UNIQUE INDEX imported_session_continued ON imported_session(machine_id,session_id) WHERE mode='continue';
 CREATE INDEX imported_session_original ON imported_session(machine_id,session_id);
+`}, {87, `
+-- An agent's dm_human call carries an Idempotency-Key like the other tools that write, so a retry posts no second message.
+ALTER TABLE request_key RENAME TO request_key_old;
+CREATE TABLE request_key (
+  actor_kind TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN
+    ('spawn','team_spawn','control','scope_control','switch','inbox_answer','recovery_decision','room_create','room_close','schedule_create','leaderboard_start','dm_agent','dm_human')),
+  key TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (actor_kind,actor_id,kind,key)
+);
+INSERT INTO request_key SELECT * FROM request_key_old;
+DROP TABLE request_key_old;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

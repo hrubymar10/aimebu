@@ -60,6 +60,11 @@ var catalog = []tool{
 		"body":            map[string]string{"type": "string"},
 		"request_key":     map[string]string{"type": "string"},
 	}, "required": []string{"target_agent_id", "body", "request_key"}}},
+	{"dm_human", "Send a private message to a person who is a member of your own project, starting a chat with them the first time; use it when you need that person's attention or decision and no room is the right place. Any active agent may, a worker as much as a lead. Give the person's login. The chat is between the two of you: the person's reply wakes you in it, and you answer there. The server decides who you may message, never the model; there is a limit on messages per chat and on new chats per hour. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
+		"target_user": map[string]string{"type": "string", "description": "Login of the person to message"},
+		"body":        map[string]string{"type": "string"},
+		"request_key": map[string]string{"type": "string"},
+	}, "required": []string{"target_user", "body", "request_key"}}},
 	{"close_room", "Active lead only. Archive a task room you belong to using its lifecycle_rev; closure includes the normal grace period. Close children first or set cascade. Use a stable request_key when retrying.", map[string]any{"type": "object", "properties": map[string]any{
 		"room_id": map[string]string{"type": "string"}, "lifecycle_rev": map[string]string{"type": "integer"},
 		"cascade": map[string]string{"type": "boolean"}, "request_key": map[string]string{"type": "string"},
@@ -274,6 +279,13 @@ func (s Server) call(ctx context.Context, name string, raw json.RawMessage) any 
 			return toolResult("target_agent_id and body are required", true)
 		}
 		body = map[string]any{"target_agent_id": strings.TrimSpace(getString("target_agent_id")), "body": getString("body")}
+	case "dm_human":
+		method, path = http.MethodPost, "/api/agent/human-dms"
+		requestKey = getString("request_key")
+		if strings.TrimSpace(getString("target_user")) == "" || strings.TrimSpace(getString("body")) == "" {
+			return toolResult("target_user and body are required", true)
+		}
+		body = map[string]any{"target_user": strings.TrimSpace(getString("target_user")), "body": getString("body")}
 	case "close_room":
 		roomID := getString("room_id")
 		if !strings.HasPrefix(roomID, "room_") {

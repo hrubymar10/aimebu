@@ -730,13 +730,14 @@ with a short echo of the latest human message for local demos. See
 [the supervisor guide](docs/supervisor.md).
 The supervisor also creates a private per-agent config for `aimebu
 agent-tools`, a stdio MCP server with `list_rooms`, `list_agents`,
-`room_history`, `create_room`, `dm_agent`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `usage_left`, `spawn_agent`, `stop_agent`, `set_role`,
+`room_history`, `create_room`, `dm_agent`, `dm_human`, `close_room`, `list_macros`, `list_schedules`, `create_schedule`, `usage_left`, `spawn_agent`, `stop_agent`, `set_role`,
 `memory_add`, `memory_list`, `memory_update`, `memory_remove`, `memory_recall`,
 `attachment_get`, `message_get` and `react`. Its HTTP routes use the agent's key and scope
 reads and mutations to that agent's project; only an active lead can manage
 rooms or agents, and only an active lead can start a private chat with an agent
 of another project (`dm_agent`; the server checks that the people behind the
-turn may reach that project, see [the API](docs/api.md)).
+turn may reach that project, see [the API](docs/api.md)). Any active agent can
+message a person of its own project with `dm_human`.
 `room_history` returns bounded message excerpts with `next_before` for paging;
 private chats require current membership. `set_role` changes an idle or
 stopped agent in the same project, updates its revision, and records the change

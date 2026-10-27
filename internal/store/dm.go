@@ -124,53 +124,67 @@ func (s *Store) PeopleDMWriteAllowed(ctx context.Context, projectID, roomID stri
 // also serializes concurrent requests for the same pair in SQLite.
 func (s *Store) OpenDM(ctx context.Context, userID, agentID string) (Room, error) {
 	var roomID string
-	err := s.Tx(ctx, func(tx *Tx) error {
-		var projectID, slug string
-		if err := tx.tx.QueryRowContext(ctx, `SELECT project_id,slug FROM agent WHERE id=? AND revoked_at IS NULL`, agentID).Scan(&projectID, &slug); err != nil {
-			return err
-		}
-		var member int
-		if err := tx.tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM membership WHERE project_id=? AND user_id=?`, projectID, userID).Scan(&member); err != nil {
-			return err
-		}
-		if member == 0 {
-			return ErrForbidden
-		}
-		key := "user:" + userID + ":agent:" + agentID
-		err := tx.tx.QueryRowContext(ctx, `SELECT id FROM room WHERE dm_key=?`, key).Scan(&roomID)
-		if err == nil {
-			result, err := tx.Exec(`UPDATE room_view_preference SET hidden=0 WHERE room_id=? AND user_id=? AND hidden=1`, roomID, userID)
-			if err != nil {
-				return err
-			}
-			changed, err := result.RowsAffected()
-			if err != nil {
-				return err
-			}
-			if changed > 0 {
-				_, err = tx.AppendEvent(Event{Kind: "room_preference_changed", ProjectID: projectID, RoomID: roomID,
-					PayloadJSON: payloadJSON(map[string]string{"user_id": userID})})
-			}
-			return err
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		room, err := tx.CreateRoom(Room{ProjectID: projectID, Kind: "dm", DMKey: key, Title: slug, CreatedBy: userID})
-		if err != nil {
-			return err
-		}
-		roomID = room.ID
-		if err := tx.AddMember(roomID, "user", userID); err != nil {
-			return err
-		}
-		return tx.AddMember(roomID, "agent", agentID)
+	err := s.Tx(ctx, func(tx *Tx) (err error) {
+		roomID, _, err = tx.openUserAgentDM(userID, agentID, userID)
+		return err
 	})
 	if err != nil {
 		return Room{}, err
 	}
 	return s.RoomByID(ctx, roomID)
 }
+
+// openUserAgentDM finds or creates the one private room for a user and an agent, inside the caller's transaction; createdBy is who opened it
+// (the person from their own page, or the agent that wrote first). The person must be a member of the agent's project. A room the person had
+// hidden shows again.
+func (tx *Tx) openUserAgentDM(userID, agentID, createdBy string) (roomID string, created bool, err error) {
+	ctx := tx.ctx
+	var projectID, slug string
+	if err := tx.tx.QueryRowContext(ctx, `SELECT project_id,slug FROM agent WHERE id=? AND revoked_at IS NULL`, agentID).Scan(&projectID, &slug); err != nil {
+		return "", false, err
+	}
+	var member int
+	if err := tx.tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM membership WHERE project_id=? AND user_id=?`, projectID, userID).Scan(&member); err != nil {
+		return "", false, err
+	}
+	if member == 0 {
+		return "", false, ErrForbidden
+	}
+	key := userAgentDMKey(userID, agentID)
+	err = tx.tx.QueryRowContext(ctx, `SELECT id FROM room WHERE dm_key=?`, key).Scan(&roomID)
+	if err == nil {
+		result, err := tx.Exec(`UPDATE room_view_preference SET hidden=0 WHERE room_id=? AND user_id=? AND hidden=1`, roomID, userID)
+		if err != nil {
+			return "", false, err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return "", false, err
+		}
+		if changed > 0 {
+			_, err = tx.AppendEvent(Event{Kind: "room_preference_changed", ProjectID: projectID, RoomID: roomID,
+				PayloadJSON: payloadJSON(map[string]string{"user_id": userID})})
+		}
+		return roomID, false, err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", false, err
+	}
+	room, err := tx.CreateRoom(Room{ProjectID: projectID, Kind: "dm", DMKey: key, Title: slug, CreatedBy: createdBy})
+	if err != nil {
+		return "", false, err
+	}
+	if err := tx.AddMember(room.ID, "user", userID); err != nil {
+		return "", false, err
+	}
+	if err := tx.AddMember(room.ID, "agent", agentID); err != nil {
+		return "", false, err
+	}
+	return room.ID, true, nil
+}
+
+// userAgentDMKey is the stable key of the private room between a person and an agent.
+func userAgentDMKey(userID, agentID string) string { return "user:" + userID + ":agent:" + agentID }
 
 func (s *Store) UserRoomAccess(ctx context.Context, userID, roomID string) error {
 	if err := s.checkTxReentry(ctx); err != nil {

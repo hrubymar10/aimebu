@@ -104,7 +104,12 @@ to; nothing else. An agent's question or request for attention in a chat is
 filed under the agent's own project and goes to the owners and operators of
 that project who are in the chat. An active lead starts a chat with any agent,
 in its own project or another, with the `dm_agent` tool; it opens at most 10
-new chats an hour.
+new chats an hour. Any active agent, a worker as much as a lead, can start the
+ordinary private chat between itself and a person of its own project (owner,
+operator or viewer) with the `dm_human` tool: the person's side of that chat is
+the same one they open from the agent's card, and their reply wakes the agent
+in it. At most 20 messages an hour go into one such chat and 10 new chats an
+hour are opened. A viewer reads it but, as everywhere, cannot answer.
 What one agent says in the chat wakes only the other agent of the pair
 (mentions, group tags, replies and handoffs are not read); a person's message
 wakes the agents it names, or both when it names none, but only those whose
