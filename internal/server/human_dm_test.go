@@ -162,3 +162,32 @@ func TestDMHumanToolRefusesAnArchivedProjectAndAStoppedAgent(t *testing.T) {
 		t.Fatalf("an archived project: %d", resp.StatusCode)
 	}
 }
+
+// The cap on new chats with people counts those only: the chats a lead opened with other agents have their own cap and must not use it up.
+func TestDMHumanNewChatCapIgnoresChatsWithAgents(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	lead, key := f.createToolAgent(t, "role_lead_default")
+	f.member(t, "viewer", "viewer")
+	// Chats the lead opened with agents of its own project, many more than the cap allows for chats with people.
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		for i := 0; i < store.HumanDMNewChatsPerHour+3; i++ {
+			peer, err := tx.CreateAgent(store.Agent{Slug: fmt.Sprintf("peer%d", i), ProjectID: f.project.ID, RoleID: "role_worker_default", Tool: "fake", Variant: "test", Model: "test", Provider: "fake", MachineID: f.machineID, CheckoutID: "chk_tools", KeyHash: fmt.Sprintf("placeholder-%d", i), CreatedBy: "test"})
+			if err != nil {
+				return err
+			}
+			if _, _, err := tx.OpenAgentDM(lead.ID, peer.ID, lead.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.toolPost(t, "/api/agent/human-dms", key, "after-agent-chats", map[string]string{"target_user": "viewer", "body": "hello"})
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("a chat with a person after many chats with agents: %d", resp.StatusCode)
+	}
+}

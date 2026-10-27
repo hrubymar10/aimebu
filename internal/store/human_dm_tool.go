@@ -59,8 +59,9 @@ func (tx *Tx) DMHumanAsTool(callerID, target, body string) (HumanDMResult, error
 	err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE dm_key=?`, userAgentDMKey(userID, callerID)).Scan(&existing)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
+		// Only the chats with people count: a lead's chats with other agents (dm_agent) have their own cap.
 		var opened int
-		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM room WHERE kind='dm' AND created_by=? AND created_at>=?`, callerID, cutoff).Scan(&opened); err != nil {
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM room WHERE kind='dm' AND dm_key LIKE 'user:%' AND created_by=? AND created_at>=?`, callerID, cutoff).Scan(&opened); err != nil {
 			return HumanDMResult{}, err
 		}
 		if opened >= HumanDMNewChatsPerHour {

@@ -1,3 +1,5 @@
+import { tableSpec } from './markdown-table.js';
+
 // Pasting into the rich composer. Which pasted text is Markdown the editor can turn into its own formatting, and which pasted HTML
 // already carries formatting. Pure functions over strings, so they run in a vm test.
 
@@ -20,16 +22,22 @@ const BLOCK = [
 // it was written, rather than being converted in part with the rest of its structure lost.
 const UNSUPPORTED = [
   /^ {0,3}#{1,6}\s+\S/m, // a heading
-  /^\s*\|.*\|\s*$/m, // a table row
   /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/m, // a rule
   /!\[[^\]\n]*\]\([^)\n]*\)/, // an image
   /^\s*[-*+]\s+\[[ xX]\]\s/m, // a task item
 ];
 
+// A table the way the renderer reads one (a line with a pipe, then a rule line of as many cells), with the outer pipes or without them.
+function hasTable(text) {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  for (let i = 0; i + 1 < lines.length; i++) if (tableSpec(lines[i], lines[i + 1])) return true;
+  return false;
+}
+
 // looksLikeMarkdown says pasted plain text is Markdown the editor can turn into formatting. Plain prose stays plain.
 export function looksLikeMarkdown(text) {
   if (typeof text !== 'string' || !text.trim() || text.length > 200000) return false;
-  if (UNSUPPORTED.some(pattern => pattern.test(text))) return false;
+  if (UNSUPPORTED.some(pattern => pattern.test(text)) || hasTable(text)) return false;
   return INLINE.some(pattern => pattern.test(text)) || BLOCK.some(pattern => pattern.test(text));
 }
 

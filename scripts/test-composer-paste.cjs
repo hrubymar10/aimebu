@@ -5,10 +5,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'composer-paste.js'), 'utf8');
+// The two modules run as one script: the table reader the renderer uses, then the paste decisions that use it.
+const read = name => fs.readFileSync(path.join(__dirname, '..', 'web', 'js', name), 'utf8').replace(/^import .*$/gm, '').replace(/^export /gm, '');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { looksLikeMarkdown, carriesFormatting };', context);
+vm.runInContext(read('markdown-table.js') + '\n' + read('composer-paste.js') + '\nglobalThis.api = { looksLikeMarkdown, carriesFormatting };', context);
 const { looksLikeMarkdown, carriesFormatting } = context.api;
 
 // Markdown the editor has a place for is converted.
@@ -42,7 +43,15 @@ for (const text of [
   '**x**\n\n---\n\ny',
   'an image ![alt](https://example.test/x.png) and **bold**',
   '- [ ] todo\n- [x] done',
+  // A table without outer pipes, with alignment colons, with an escaped pipe or code in a cell: the renderer reads all of them as tables.
+  'name | status\n--- | ---\n**alice** | ready',
+  'name | status\n:--- | ---:\n**alice** | ready',
+  '| a | b |\n| --- | --- |\n| `x\\|y` | **z** |',
+  'intro with **bold**\n\na | b\n- | -\n1 | 2',
 ]) assert.equal(looksLikeMarkdown(text), false, `unsupported: ${JSON.stringify(text)}`);
+// A pipe alone is not a table: a line with a pipe needs a rule line of as many cells under it.
+for (const text of ['use `a | b` and **bold**', 'a | b\n**bold** here', 'a | b | c\n--- | ---\n**x**', '- one | two\n- three | four'])
+  assert.equal(looksLikeMarkdown(text), true, `not a table: ${JSON.stringify(text)}`);
 
 // A very large paste is not converted: it is not read line by line to decide.
 assert.equal(looksLikeMarkdown('**a** '.repeat(60000)), false);

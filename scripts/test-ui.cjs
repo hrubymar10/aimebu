@@ -6989,6 +6989,11 @@ async function main() {
       assert.deepEqual(await shape(), { text: '# Titlewith **bold**', strong: [], code: [], items: 0, pre: 0, quote: 0 }, 'a heading keeps the whole paste as it was written');
       await wipe();
       await first.focus('#composer .composer-editing .ProseMirror');
+      await pasteData({ 'text/plain': 'name | status\n--- | ---\n**alice** | ready' });
+      await first.waitForFunction(() => document.querySelector('#composer .composer-editing .ProseMirror').textContent.includes('alice'));
+      assert.deepEqual(await shape(), { text: 'name | status--- | ---**alice** | ready', strong: [], code: [], items: 0, pre: 0, quote: 0 }, 'a table without outer pipes keeps the whole paste as it was written');
+      await wipe();
+      await first.focus('#composer .composer-editing .ProseMirror');
       await pasteData({ 'text/html': '<meta charset="utf-8"><div style="font-family: Menlo"><span style="color: #ccc">use **bold** and </span><span>`code`</span></div>', 'text/plain': 'use **bold** and `code`' });
       await first.waitForFunction(() => document.querySelector('#composer .composer-editing .ProseMirror strong'));
       assert.deepEqual(await shape(), { text: 'use bold and code', strong: ['bold'], code: ['code'], items: 0, pre: 0, quote: 0 }, 'a code editor copy (HTML of spans) is read as Markdown');

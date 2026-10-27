@@ -2,6 +2,7 @@
 // Source text is never parsed as HTML or assigned to innerHTML. (The one parse is code-highlight.js turning highlight.js's output
 // into DOM; it keeps only text and hljs-* spans.)
 import { setGlyph } from './icon-button.js';
+import { cells, tableSpec } from './markdown-table.js';
 import { fenceLanguage, highlightCode, isDiffLanguage, looksLikeDiff, renderDiff } from './code-highlight.js';
 function text(value) { return document.createTextNode(value); }
 
@@ -88,24 +89,6 @@ function appendInline(parent, source, depth = 0, inLink = false) {
   }
 }
 
-function cells(line) {
-  let row = line.trim(); if (row.startsWith('|')) row = row.slice(1); if (row.endsWith('|')) row = row.slice(0, -1);
-  const out = []; let cell = '', ticks = 0;
-  for (let i = 0; i < row.length; i++) {
-    const char = row[i];
-    if (char === '\\' && row[i + 1] === '|') { cell += '|'; i++; continue; }
-    if (char === '`') { ticks = ticks ? 0 : 1; cell += char; continue; }
-    if (char === '|' && !ticks) { out.push(cell.trim()); cell = ''; continue; }
-    cell += char;
-  }
-  out.push(cell.trim()); return out;
-}
-function tableSpec(line, next) {
-  if (!line.includes('|')) return null;
-  const headings = cells(line), rules = cells(next || '');
-  if (headings.length !== rules.length || !rules.every(rule => /^:?-+:?$/.test(rule))) return null;
-  return { headings, aligns: rules.map(rule => rule.startsWith(':') && rule.endsWith(':') ? 'center' : rule.endsWith(':') ? 'right' : 'left') };
-}
 function fallbackCopyText(value) {
   const area = document.createElement('textarea');
   area.value = value; area.setAttribute('readonly', ''); area.style.cssText = 'position:fixed;top:-9999px;left:-9999px';
