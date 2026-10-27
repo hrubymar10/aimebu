@@ -1,5 +1,6 @@
 // Package ccsessions finds the Claude Code sessions a machine already has, so that one of them can be continued as an aimebu agent. It reads
-// only names and a bounded head and tail of each transcript, never a whole one, and it never writes. Claude keeps a session as a JSONL
+// only names and a bounded head and tail of each transcript, never a whole one, and it never writes. The one exception is Attribute, which
+// streams whole transcripts but keeps only ids (see attribute.go). Claude keeps a session as a JSONL
 // transcript under <config dir>/projects/<working folder, every non-alphanumeric turned into "-">/<session id>.jsonl, and registers each
 // running interactive process in <config dir>/sessions/<pid>.json.
 package ccsessions
@@ -50,8 +51,10 @@ type Session struct {
 	CWD string `json:"cwd"`
 	// Dir is the name of the project directory the transcript sits in. Claude derives it from the working folder it was started in, and
 	// looks a session up there, so it tells whether a session can be continued from some other spelling of that folder.
-	Dir        string    `json:"dir"`
-	Title      string    `json:"title,omitempty"`
+	Dir   string `json:"dir"`
+	Title string `json:"title,omitempty"`
+	// Model is the model of the session's last assistant message that names one, as Claude records it ("claude-opus-4-5-20251101").
+	Model      string    `json:"model,omitempty"`
 	GitBranch  string    `json:"git_branch,omitempty"`
 	Version    string    `json:"version,omitempty"`
 	Entrypoint string    `json:"entrypoint,omitempty"`
@@ -302,6 +305,7 @@ type line struct {
 	LastPrompt  string `json:"lastPrompt"`
 	Message     struct {
 		Content json.RawMessage `json:"content"`
+		Model   string          `json:"model"`
 	} `json:"message"`
 }
 
@@ -309,7 +313,7 @@ type line struct {
 type head struct {
 	cwd, gitBranch, version, entrypoint string
 	sidechain, spoke                    bool
-	firstPrompt, title, last            string
+	firstPrompt, title, last, model     string
 }
 
 func (h *head) consume(lines [][]byte) {
@@ -334,6 +338,9 @@ func (h *head) consume(lines [][]byte) {
 			}
 		case "assistant":
 			h.spoke = true
+			if l.Message.Model != "" && l.Message.Model != "<synthetic>" {
+				h.model = l.Message.Model
+			}
 		}
 	}
 }
@@ -385,7 +392,7 @@ func inspect(path string, info os.FileInfo, accept func(cwd string) bool) (Sessi
 	if !h.spoke && h.title == "" && h.last == "" {
 		return Session{}, skipped
 	}
-	session := Session{ID: id, CWD: h.cwd, Dir: filepath.Base(filepath.Dir(path)), GitBranch: h.gitBranch, Version: h.version, Entrypoint: h.entrypoint,
+	session := Session{ID: id, CWD: h.cwd, Dir: filepath.Base(filepath.Dir(path)), Model: h.model, GitBranch: h.gitBranch, Version: h.version, Entrypoint: h.entrypoint,
 		ModifiedAt: info.ModTime().UTC(), Size: info.Size()}
 	switch {
 	case h.title != "":

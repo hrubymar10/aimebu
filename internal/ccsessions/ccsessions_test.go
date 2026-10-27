@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -389,5 +390,82 @@ func TestScanSaysWhenLongDirectoriesWereNotAllLookedInto(t *testing.T) {
 	result, err := Scan(cfg, "/p")
 	if err != nil || len(result.Sessions) != 0 || !result.Truncated {
 		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+func toolUse(t *testing.T, id, name string) string {
+	t.Helper()
+	return jsonLine(t, map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "model": "claude-opus-4-5-20251101",
+		"content": []map[string]any{{"type": "text", "text": "SECRET prose the scan must never return"}, {"type": "tool_use", "id": id, "name": name, "input": map[string]any{"body": "SECRET body"}}}}})
+}
+
+func toolResult(t *testing.T, id, text string, asParts bool) string {
+	t.Helper()
+	var content any = text
+	if asParts {
+		content = []map[string]any{{"type": "text", "text": text}}
+	}
+	return jsonLine(t, map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []map[string]any{{"type": "tool_result", "tool_use_id": id, "content": content}}}})
+}
+
+// The attribution of a session reads the ids its aimebu tool results returned: who it registered as, which messages it sent. Whatever the
+// transcript says besides is never part of the answer.
+func TestAttributeReadsSendersAndMessageNumbersFromToolResults(t *testing.T) {
+	t.Parallel()
+	cfg := t.TempDir()
+	cwd := t.TempDir()
+	// yann registered, then sent two messages and a DM, with the results written both as a string and as typed parts.
+	yann := transcript(t, cfg, cwd, "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		toolUse(t, "toolu_1", "mcp__aimebu__bus_register"), toolResult(t, "toolu_1", `{"id":"yann@aimebu","name":"yann","kind":"ai"}`, true),
+		toolUse(t, "toolu_2", "mcp__aimebu__bus_say"), toolResult(t, "toolu_2", `{"id":37965,"room":"aimebu-leader"}`, false),
+		toolUse(t, "toolu_3", "mcp__aimebu-dev__bus_say"), toolResult(t, "toolu_3", `{"addressed_to":["wren"],"id":37970,"room":"aimebu"}`, true),
+		toolUse(t, "toolu_4", "mcp__aimebu__bus_dm"), toolResult(t, "toolu_4", `{"id":37972,"room":"dm:wren:yann"}`, true),
+		toolUse(t, "toolu_5", "Bash"), toolResult(t, "toolu_5", `{"id":12345}`, true), // another tool's result is not a message number
+	)
+	// hal registered in a different session of the same folder.
+	transcript(t, cfg, cwd, "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		toolUse(t, "toolu_9", "mcp__aimebu__bus_register"), toolResult(t, "toolu_9", `{"id":"hal@aimebu"}`, false),
+		toolUse(t, "toolu_10", "mcp__aimebu__bus_say"), toolResult(t, "toolu_10", `{"id":37999,"room":"aimebu"}`, false))
+	// Nothing registered: no sender.
+	transcript(t, cfg, cwd, "33333333-cccc-4ccc-8ccc-cccccccccccc")
+	age(t, yann, 0)
+
+	all, err := Attribute(cfg, []string{cwd}, time.Time{}, "", time.Time{})
+	if err != nil || len(all.Sessions) != 2 {
+		t.Fatalf("all: %+v %v", all, err)
+	}
+	only, err := Attribute(cfg, []string{cwd}, time.Time{}, "yann@aimebu", time.Time{})
+	if err != nil || len(only.Sessions) != 1 {
+		t.Fatalf("yann: %+v %v", only, err)
+	}
+	got := only.Sessions[0]
+	if got.SessionID != "11111111-aaaa-4aaa-8aaa-aaaaaaaaaaaa" || got.Sender != "yann@aimebu" || got.CWD != cwd ||
+		!reflect.DeepEqual(got.MessageNos, []int64{37965, 37970, 37972}) || got.Model != "claude-opus-4-5-20251101" {
+		t.Fatalf("attribution = %+v", got)
+	}
+	if text := fmt.Sprintf("%+v", all); strings.Contains(text, "SECRET") {
+		t.Fatalf("transcript text leaked into the attribution: %s", text)
+	}
+	// A session last written before since is not read at all.
+	old := filepath.Join(cfg, "projects", FolderName(cwd), "22222222-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jsonl")
+	age(t, old, 48*time.Hour)
+	recent, err := Attribute(cfg, []string{cwd}, time.Now().Add(-time.Hour), "", time.Time{})
+	if err != nil || len(recent.Sessions) != 1 || recent.Sessions[0].Sender != "yann@aimebu" {
+		t.Fatalf("since: %+v %v", recent, err)
+	}
+}
+
+// A transcript line far longer than any message is skipped, not parsed or kept in memory, and the lines around it still count.
+func TestAttributeSkipsAnOversizedLine(t *testing.T) {
+	t.Parallel()
+	cfg := t.TempDir()
+	cwd := t.TempDir()
+	huge := `{"type":"user","message":{"content":"` + strings.Repeat("x", MaxAttributeLine+10) + `"}}`
+	transcript(t, cfg, cwd, "44444444-dddd-4ddd-8ddd-dddddddddddd",
+		toolUse(t, "toolu_1", "mcp__aimebu__bus_register"), toolResult(t, "toolu_1", `{"id":"ivy@aimebu"}`, true), huge,
+		toolUse(t, "toolu_2", "mcp__aimebu__bus_say"), toolResult(t, "toolu_2", `{"id":5,"room":"r"}`, true))
+	got, err := Attribute(cfg, []string{cwd}, time.Time{}, "", time.Time{})
+	if err != nil || len(got.Sessions) != 1 || got.Sessions[0].Sender != "ivy@aimebu" || !reflect.DeepEqual(got.Sessions[0].MessageNos, []int64{5}) {
+		t.Fatalf("attribution around a huge line: %+v %v", got, err)
 	}
 }

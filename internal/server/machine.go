@@ -25,39 +25,40 @@ var ErrMachineUnavailable = errors.New("machine unavailable")
 var ErrSlowMachine = errors.New("slow machine")
 
 type machineConn struct {
-	id                   string
-	keyHash              string
-	conn                 *websocket.Conn
-	sendQueue            chan protocol.Frame
-	done                 chan struct{}
-	stopOnce             sync.Once
-	bound                map[string]int
-	boundMu              sync.RWMutex
-	controlMu            sync.Mutex
-	controlSent          map[string]int64
-	controlReplayed      map[string]int64
-	replayDone           chan struct{} // closed once the stops pending at connection have been queued
-	capabilities         []protocol.CapabilityReport
-	supportsPathProbe    bool
-	supportsSessionScan  bool
-	supportsSessionFork  bool
-	supportsLaunchPath   bool
-	supportsWorktree     bool
-	supportsLaunchers    bool
-	supportsDetect       bool
-	supportsDetectDir    bool
-	supportsAgentLogs    bool
-	supportsAgentLogSize bool
-	supportsStopReplay   bool
-	harnessMu            sync.Mutex
-	harnessSetMu         sync.Mutex
-	harnesses            []protocol.HarnessRow
-	launchers            []protocol.LauncherRow
-	harnessPending       map[string]chan protocol.Frame
-	launcherPending      map[string]chan protocol.Frame
-	pathPending          map[string]chan protocol.Frame
-	journaled            map[string]turnBinding
-	lastSeen             atomic.Int64
+	id                         string
+	keyHash                    string
+	conn                       *websocket.Conn
+	sendQueue                  chan protocol.Frame
+	done                       chan struct{}
+	stopOnce                   sync.Once
+	bound                      map[string]int
+	boundMu                    sync.RWMutex
+	controlMu                  sync.Mutex
+	controlSent                map[string]int64
+	controlReplayed            map[string]int64
+	replayDone                 chan struct{} // closed once the stops pending at connection have been queued
+	capabilities               []protocol.CapabilityReport
+	supportsPathProbe          bool
+	supportsSessionScan        bool
+	supportsSessionFork        bool
+	supportsSessionAttribution bool
+	supportsLaunchPath         bool
+	supportsWorktree           bool
+	supportsLaunchers          bool
+	supportsDetect             bool
+	supportsDetectDir          bool
+	supportsAgentLogs          bool
+	supportsAgentLogSize       bool
+	supportsStopReplay         bool
+	harnessMu                  sync.Mutex
+	harnessSetMu               sync.Mutex
+	harnesses                  []protocol.HarnessRow
+	launchers                  []protocol.LauncherRow
+	harnessPending             map[string]chan protocol.Frame
+	launcherPending            map[string]chan protocol.Frame
+	pathPending                map[string]chan protocol.Frame
+	journaled                  map[string]turnBinding
+	lastSeen                   atomic.Int64
 }
 
 type turnBinding struct {
@@ -294,7 +295,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsSessionAttribution: hello.SupportsSessionAttribution, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
 	c.lastSeen.Store(time.Now().UnixNano())
 	s.machineMu.Lock()
 	old := s.machines[machineID]

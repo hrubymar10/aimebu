@@ -24,6 +24,14 @@ type LegacyStart struct {
 	RoleKey    string `json:"role_key,omitempty"` // the role v1 gave it most often; the dialog checks v2 has it
 	StartedID  string `json:"started_agent_id,omitempty"`
 	StartedSlg string `json:"started_agent_slug,omitempty"`
+	// Mismatch says, in plain words, why the session v1 kept under this name was not made by the agent whose messages are in the history
+	// (another harness or model, or a time before its first message). A session that does not belong is never offered: SessionID and Tool
+	// are empty, and Harness and Model are what the messages say.
+	Mismatch string `json:"mismatch,omitempty"`
+	// Exact says the session is the one v1 itself named as the sender of the agent's latest message (its stamp, matched against the history),
+	// or that a transcript scan found it holding that message; otherwise it is the latest session v1 kept under the name, checked as far as
+	// the messages allow.
+	Exact bool `json:"exact,omitempty"`
 }
 
 // ResumableTool maps a v1 harness name to the v2 tool that can continue its session, or "" when none can. Only Claude Code can: it keeps
@@ -99,6 +107,9 @@ func (s *Store) LegacyStart(ctx context.Context, projectID, agentID string) (Leg
 		return LegacyStart{}, err
 	}
 	out.Tool = ResumableTool(out.Harness)
+	if err := s.checkLegacySession(ctx, projectID, &out); err != nil {
+		return LegacyStart{}, err
+	}
 	if started.Valid && started.String != "" {
 		// Started once: from then on the v2 agent holds the name, and is restarted with the ordinary controls.
 		var slug string
@@ -141,6 +152,149 @@ func (s *Store) LegacyStart(ctx context.Context, projectID, agentID string) (Leg
 	return out, nil
 }
 
+// legacyActivity is what v1's messages say about the agent that wrote them: the harness and model of its latest message that names them
+// (older messages carry neither), and the time span of the messages that share that harness and model.
+type legacyActivity struct {
+	harness, model, first, last string
+}
+
+// legacyActivityOf reads the activity of agentID in projectID's rooms (a private chat does not count). found is false when none of its messages
+// names a harness, in which case nothing can be said against its session.
+func (s *Store) legacyActivityOf(ctx context.Context, projectID, agentID string) (act legacyActivity, found bool, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT m.author_harness,m.author_model FROM message m JOIN room r ON r.id=m.room_id
+		WHERE m.author_kind='agent' AND m.author_id=? AND r.project_id=? AND r.kind<>'dm' AND m.author_harness<>''
+		ORDER BY m.created_at DESC, m.seq DESC LIMIT 1`, agentID, projectID).Scan(&act.harness, &act.model)
+	if errors.Is(err, sql.ErrNoRows) {
+		return act, false, nil
+	}
+	if err != nil {
+		return act, false, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT MIN(m.created_at),MAX(m.created_at) FROM message m JOIN room r ON r.id=m.room_id
+		WHERE m.author_kind='agent' AND m.author_id=? AND r.project_id=? AND r.kind<>'dm' AND m.author_harness=? AND m.author_model=?`,
+		agentID, projectID, act.harness, act.model).Scan(&act.first, &act.last)
+	return act, err == nil, err
+}
+
+// legacySessionSlack is how far a v1 session's last_seen may lie before the agent's first message, or its registration after the last, and
+// still count as the same activity: the clocks are the same machine's, but a registration is recorded before the first message and a
+// heartbeat after the last.
+const legacySessionSlack = 6 * time.Hour
+
+// canonModel is a model name reduced to what two spellings of one model share: v1 canonicalises slugs ("opus5.5"), but a hand-set name may
+// differ in case or punctuation.
+func canonModel(model string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(model) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// sessionMismatch compares a session v1 recorded under a name with what that name's messages say. v1 keeps one session per name, so a name
+// that was reused by another harness or model, or by a new instance weeks later, still holds the earlier holder's session. It answers ""
+// when the session can belong to the agent, and otherwise why it cannot.
+func sessionMismatch(harness, model, registeredAt, lastSeen string, act legacyActivity) string {
+	sessionTool, messageTool := ToolForHarness(harness), ToolForHarness(act.harness)
+	if sessionTool == "" {
+		sessionTool = strings.ToLower(strings.TrimSpace(harness))
+	}
+	if messageTool == "" {
+		messageTool = strings.ToLower(strings.TrimSpace(act.harness))
+	}
+	if sessionTool != "" && messageTool != "" && sessionTool != messageTool {
+		return "v1 kept a " + harness + " session under this name, but its messages came from " + act.harness + ", so that session is not this agent's"
+	}
+	sm, am := canonModel(model), canonModel(act.model)
+	if sm != "" && am != "" && sm != "unknown" && am != "unknown" && sm != am {
+		return "v1 kept a session of model " + model + " under this name, but its messages came from " + act.model + ", so that session is not this agent's"
+	}
+	first, errFirst := time.Parse(time.RFC3339, act.first)
+	last, errLast := time.Parse(time.RFC3339, act.last)
+	if seen, err := time.Parse(time.RFC3339, lastSeen); err == nil && errFirst == nil && seen.Before(first.Add(-legacySessionSlack)) {
+		return "v1 last saw the session it kept under this name on " + seen.UTC().Format("2006-01-02") + ", before this agent's first message (" + first.UTC().Format("2006-01-02") + "), so that session is not this agent's"
+	}
+	if registered, err := time.Parse(time.RFC3339, registeredAt); err == nil && errLast == nil && registered.After(last.Add(legacySessionSlack)) {
+		return "v1 recorded the session it kept under this name after this agent's last message, so that session is not this agent's"
+	}
+	return ""
+}
+
+// checkLegacySession drops the session of a legacy start that does not belong to the agent whose messages are in the project (see
+// sessionMismatch), and shows what the messages say instead of what the stray session says.
+func (s *Store) checkLegacySession(ctx context.Context, projectID string, out *LegacyStart) error {
+	// Exact first: a v1 message that names the session it was sent from says which session did that sender's work, whatever v1 kept as the
+	// latest session of the name.
+	var sid string
+	err := s.db.QueryRowContext(ctx, `SELECT m.author_session FROM message m JOIN room r ON r.id=m.room_id
+		WHERE m.author_kind='agent' AND m.author_id=? AND r.project_id=? AND r.kind<>'dm' AND m.author_session<>''
+		ORDER BY m.created_at DESC, m.seq DESC LIMIT 1`, out.AgentID, projectID).Scan(&sid)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if sid != "" {
+		if sid == out.SessionID {
+			out.Exact = true
+			return nil // the latest session of the name is the one that sent the latest message
+		}
+		var row struct{ harness, model, cwd, seen string }
+		err := s.db.QueryRowContext(ctx, `SELECT harness,model,cwd,last_seen FROM legacy_agent_session_history WHERE agent_id=? AND harness_session_id=?`, out.AgentID, sid).
+			Scan(&row.harness, &row.model, &row.cwd, &row.seen)
+		if err == nil {
+			out.SessionID, out.Harness, out.Model, out.CWD, out.LastSeen = sid, row.harness, row.model, row.cwd, row.seen
+			out.Tool = ResumableTool(out.Harness)
+			out.Exact = true
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		out.Mismatch = "v1 stamped this agent's latest message with session " + sid + ", which it kept no record of, so the session v1 kept under this name is not this agent's"
+		out.SessionID, out.Tool = "", ""
+		return nil
+	}
+	act, found, err := s.legacyActivityOf(ctx, projectID, out.AgentID)
+	if err != nil || !found {
+		return err
+	}
+	var registered string
+	if err := s.db.QueryRowContext(ctx, `SELECT registered_at FROM legacy_agent_session WHERE agent_id=?`, out.AgentID).Scan(&registered); err != nil {
+		return err
+	}
+	reason := sessionMismatch(out.Harness, out.Model, registered, out.LastSeen, act)
+	if reason == "" {
+		return nil
+	}
+	out.Mismatch = reason
+	out.Harness, out.Model, out.SessionID, out.Tool = act.harness, act.model, "", ""
+	return nil
+}
+
+// LegacySenderMessages describes what a v1 agent sent in a project, for matching it to a transcript: the time of its first message and the
+// numbers (the v1 message ids, which are what its bus_say returned) of its latest ones, newest first, at most limit.
+func (s *Store) LegacySenderMessages(ctx context.Context, projectID, agentID string, limit int) (first string, nos []int64, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT m.no,m.created_at FROM message m JOIN room r ON r.id=m.room_id
+		WHERE m.author_kind='agent' AND m.author_id=? AND r.project_id=? AND r.kind<>'dm' AND m.no>0 ORDER BY m.no DESC LIMIT ?`, agentID, projectID, limit)
+	if err != nil {
+		return "", nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var no int64
+		var at string
+		if err := rows.Scan(&no, &at); err != nil {
+			return "", nil, err
+		}
+		nos = append(nos, no)
+		if first == "" || at < first {
+			first = at
+		}
+	}
+	return first, nos, rows.Err()
+}
+
 // SeenRecently says whether the legacy agent's last_seen is within the window before now (an unparsable value counts as not recent).
 func (l LegacyStart) SeenRecently(now time.Time) bool {
 	seen, err := time.Parse(time.RFC3339, l.LastSeen)
@@ -177,6 +331,10 @@ type LegacyStartInfo struct {
 func (l LegacyStart) StartInfo(now time.Time, projectFolder string) LegacyStartInfo {
 	info := LegacyStartInfo{Slug: l.Slug, Tool: l.Tool, Model: l.Model, RoleKey: l.RoleKey, CWD: l.CWD, StartedAgentID: l.StartedID, StartedSlug: l.StartedSlg}
 	switch {
+	case l.Mismatch != "":
+		info.Tool = ToolForHarness(l.Harness)
+		info.CWD = ""
+		info.Reason = l.Mismatch + ": the agent starts fresh with the same name"
 	case l.Tool == "":
 		info.Tool = ToolForHarness(l.Harness)
 		if info.Tool != "" {

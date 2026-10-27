@@ -1719,3 +1719,55 @@ func TestV1ImportSkipsPresenceLinesButNotPeopleTypingThem(t *testing.T) {
 		t.Fatalf("a reply to a skipped line keeps no link: %v %v", reply, err)
 	}
 }
+
+// A v1 build that stamps messages with their session and keeps every session of a name brings both into v2, for "Start as v2 agent".
+func TestV1ImportKeepsMessageSessionsAndTheSessionHistory(t *testing.T) {
+	t.Parallel()
+	source, mapping := v1Fixture(t)
+	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{
+		`UPDATE messages SET data=json_set(data,'$.from_session','session-older') WHERE id=2`,
+		`CREATE TABLE agent_session_history(id INTEGER PRIMARY KEY AUTOINCREMENT, full_id TEXT NOT NULL, harness_session_id TEXT NOT NULL, harness TEXT, model TEXT, project TEXT, cwd TEXT, origin TEXT, registered_at TEXT, last_seen TEXT, UNIQUE(full_id, harness_session_id))`,
+		`INSERT INTO agent_session_history(full_id,harness_session_id,harness,model,project,cwd,origin,registered_at,last_seen) VALUES
+			('bot@repo','session-older','codex','gpt-6-sol','repo','/tmp/work/a','wrapper','2026-10-01T10:00:00Z','2026-10-02T10:00:00Z'),
+			('bot@repo','session-newer','codex','gpt-6-sol','repo','/tmp/work/b','wrapper','2026-10-03T10:00:00Z','2026-10-04T10:00:00Z')`,
+	} {
+		if _, err := db.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := PreviewV1Import(context.Background(), source, "owner")
+	if err != nil || preview.Counts["agent_session_history"] != 2 {
+		t.Fatalf("preview counts: %+v %v", preview.Counts, err)
+	}
+	if preview.NotCarried["agent_session_history"] != 0 || preview.NotCarried["messages.from_session"] != 0 {
+		t.Fatalf("the history and the message session are carried, not reported as lost: %+v", preview.NotCarried)
+	}
+	s, _ := testStore(t, Options{})
+	if _, err := s.db.Exec("INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_owner','owner','hash','{}',?)", timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	report, err := s.ImportV1(context.Background(), source, mapping, false)
+	if err != nil || report.Imported["agent_session_history"] != 2 {
+		t.Fatalf("import: %+v %v", report, err)
+	}
+	var session string
+	if err := s.db.QueryRow(`SELECT author_session FROM message WHERE author_id='bot@repo'`).Scan(&session); err != nil || session != "session-older" {
+		t.Fatalf("author_session = %q, %v", session, err)
+	}
+	var cwd string
+	if err := s.db.QueryRow(`SELECT cwd FROM legacy_agent_session_history WHERE agent_id='bot@repo' AND harness_session_id='session-newer'`).Scan(&cwd); err != nil || cwd != "/tmp/work/b" {
+		t.Fatalf("history row: cwd=%q %v", cwd, err)
+	}
+	// Importing again changes nothing.
+	again, err := s.ImportV1(context.Background(), source, mapping, true)
+	if err != nil || again.Imported["agent_session_history"] != 0 {
+		t.Fatalf("a repeated import: %+v %v", again, err)
+	}
+}

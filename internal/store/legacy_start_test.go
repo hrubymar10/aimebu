@@ -343,3 +343,110 @@ func TestLegacyStartQueryUsesTheAuthorIndex(t *testing.T) {
 		t.Fatalf("the lookup does not use the author index: %v", plan)
 	}
 }
+
+// v1 keeps one session per name. A name that another harness or model, or an earlier instance, used still holds that session; the
+// history's messages say who wrote them, and a session that does not fit is neither offered nor shown as the sender's.
+func TestLegacySessionThatDoesNotBelongToTheSenderIsNotOffered(t *testing.T) {
+	t.Parallel()
+	s, project, room := legacyStartFixture(t)
+	ctx := context.Background()
+	for _, statement := range []string{
+		`INSERT INTO legacy_agent_session(agent_id,harness,model,project,cwd,harness_session_id,registered_at,last_seen) VALUES
+			('hal@old','codex','gpt5','old','/tmp/wake','019fd868-aaaa-4bbb-8ccc-ddddeeeeffff','2026-08-03T10:00:00Z','2026-08-04T10:00:00Z'),
+			('mod@old','claude-code','sonnet4.6','old','/tmp/wake','0f7c6a1e-2222-4222-8333-444455556666','2026-10-01T10:00:00Z','2026-10-26T10:00:00Z'),
+			('late@old','claude-code','opus5.5','old','/tmp/wake','0f7c6a1e-3333-4222-8333-444455556666','2026-07-01T10:00:00Z','2026-07-02T10:00:00Z'),
+			('fit@old','claude-code','opus5.5','old','/tmp/wake','0f7c6a1e-4444-4222-8333-444455556666','2026-10-01T10:00:00Z','2026-10-26T10:00:00Z'),
+			('none@old','codex','gpt5','old','/tmp/wake','019fd868-bbbb-4bbb-8ccc-ddddeeeeffff','2026-08-03T10:00:00Z','2026-08-04T10:00:00Z')`,
+	} {
+		if _, err := s.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	say := func(id, harness, model, at string, seq int) {
+		t.Helper()
+		if _, err := s.db.Exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at,author_harness,author_model) VALUES (?,?,?,'agent',?,'from v1','[]',?,?,?)`,
+			"msg_"+id+at, seq, room.ID, id, at, harness, model); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// hal: today's Claude Code messages, next to an old Codex session. mod: the same harness, another model. late: the session was last seen
+	// weeks before the agent's first message. fit: everything agrees. none: messages that name no harness (older v1) prove nothing.
+	say("hal@old", "claude-code", "opus5.5", "2026-10-26T09:00:00.000000000Z", 910001)
+	say("mod@old", "claude-code", "opus5.5", "2026-10-26T09:00:00.000000000Z", 910002)
+	say("late@old", "claude-code", "opus5.5", "2026-10-26T09:00:00.000000000Z", 910003)
+	say("fit@old", "claude-code", "opus5.5", "2026-10-26T09:00:00.000000000Z", 910004)
+	say("none@old", "", "", "2026-10-26T09:00:00.000000000Z", 910005)
+
+	for _, id := range []string{"hal@old", "mod@old", "late@old"} {
+		info, err := s.LegacyStart(ctx, room.ProjectID, id)
+		if err != nil || info.Mismatch == "" || info.SessionID != "" || info.Tool != "" || info.Harness != "claude-code" || info.Model != "opus5.5" {
+			t.Fatalf("%s: %+v %v, want the stray session dropped and the messages' harness and model shown", id, info, err)
+		}
+		start := info.StartInfo(time.Now(), "/tmp/wake")
+		if start.Resumable || start.Tool != "claude" || !strings.Contains(start.Reason, "not this agent's") || start.CWD != "" {
+			t.Fatalf("%s start info: %+v", id, start)
+		}
+		profile, err := s.LegacyAgentProfile(ctx, room.ID, id)
+		if err != nil || profile.NativeSessionID != "" || profile.Cwd != "" {
+			t.Fatalf("%s profile shows the stray session: %+v %v", id, profile, err)
+		}
+	}
+	if info, _ := s.LegacyStart(ctx, room.ProjectID, "hal@old"); !strings.Contains(info.Mismatch, "codex") {
+		t.Fatalf("the reason does not name the stray harness: %q", info.Mismatch)
+	}
+	for _, id := range []string{"fit@old", "none@old"} {
+		info, err := s.LegacyStart(ctx, room.ProjectID, id)
+		if err != nil || info.Mismatch != "" || info.SessionID == "" {
+			t.Fatalf("%s: %+v %v, want its session kept", id, info, err)
+		}
+	}
+	if profile, err := s.LegacyAgentProfile(ctx, room.ID, "fit@old"); err != nil || profile.NativeSessionID == "" {
+		t.Fatalf("fit profile: %+v %v", profile, err)
+	}
+	_ = project
+}
+
+// A v1 build that stamps each message with its session says exactly which session did a sender's work, and keeps every session of a name.
+func TestLegacyStartOffersTheSessionOfTheSendersLatestMessage(t *testing.T) {
+	t.Parallel()
+	s, _, room := legacyStartFixture(t)
+	ctx := context.Background()
+	const older, latest, unknown = "0f7c6a1e-aaaa-4222-8333-444455556666", "0f7c6a1e-bbbb-4222-8333-444455556666", "0f7c6a1e-cccc-4222-8333-444455556666"
+	for _, statement := range []string{
+		// The name's latest session (what agent_sessions kept) is a newer instance's; the sender's messages came from the older one.
+		`INSERT INTO legacy_agent_session(agent_id,harness,model,project,cwd,harness_session_id,registered_at,last_seen) VALUES
+			('who@old','claude-code','opus5.5','old','/tmp/wake/newer','` + latest + `','2026-10-01T10:00:00Z','2026-10-26T10:00:00Z'),
+			('lost@old','claude-code','opus5.5','old','/tmp/wake/newer','` + latest + `','2026-10-01T10:00:00Z','2026-10-26T10:00:00Z')`,
+		`INSERT INTO legacy_agent_session_history(agent_id,harness_session_id,harness,model,project,cwd,origin,registered_at,last_seen) VALUES
+			('who@old','` + older + `','claude-code','opus4.5','old','/tmp/wake/sub','wrapper','2026-10-01T10:00:00Z','2026-10-10T10:00:00Z'),
+			('who@old','` + latest + `','claude-code','opus5.5','old','/tmp/wake/newer','wrapper','2026-10-20T10:00:00Z','2026-10-26T10:00:00Z')`,
+	} {
+		if _, err := s.db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	say := func(id, session, at string, seq int) {
+		t.Helper()
+		if _, err := s.db.Exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at,author_harness,author_model,author_session) VALUES (?,?,?,'agent',?,'from v1','[]',?,'claude-code','opus4.5',?)`,
+			"msg_"+id+session, seq, room.ID, id, at, session); err != nil {
+			t.Fatal(err)
+		}
+	}
+	say("who@old", older, "2026-10-09T09:00:00.000000000Z", 920001)
+	say("lost@old", unknown, "2026-10-09T09:00:00.000000000Z", 920002)
+
+	info, err := s.LegacyStart(ctx, room.ProjectID, "who@old")
+	if err != nil || info.SessionID != older || info.Mismatch != "" || info.CWD != "/tmp/wake/sub" || info.Model != "opus4.5" || info.Tool != "claude" {
+		t.Fatalf("who: %+v %v, want the older session with its own folder and model", info, err)
+	}
+	// A session the history has no row for cannot be continued (no folder), and the name's latest session is not offered in its place.
+	lost, err := s.LegacyStart(ctx, room.ProjectID, "lost@old")
+	if err != nil || lost.SessionID != "" || lost.Tool != "" || !strings.Contains(lost.Mismatch, unknown) {
+		t.Fatalf("lost: %+v %v", lost, err)
+	}
+	// When the latest session sent the latest message, the name's own record is used as it is.
+	say("who@old", latest, "2026-10-26T09:00:00.000000000Z", 920003)
+	if again, err := s.LegacyStart(ctx, room.ProjectID, "who@old"); err != nil || again.SessionID != latest || again.CWD != "/tmp/wake/newer" {
+		t.Fatalf("after the newer message: %+v %v", again, err)
+	}
+}

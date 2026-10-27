@@ -98,7 +98,7 @@ func (s *Server) legacyStartChecks(w http.ResponseWriter, r *http.Request, room 
 		return legacy, false, false
 	}
 	// Scoped to the project: an agent that never wrote in any of its rooms is not found, with nothing said about it.
-	legacy, err := s.Store.LegacyStart(r.Context(), room.ProjectID, req.ResumeLegacy)
+	legacy, err := s.resolveLegacyStart(r.Context(), room.ProjectID, req.ResumeLegacy)
 	if errors.Is(err, sql.ErrNoRows) {
 		apiError(w, 404, "not_found", "no such agent in this project's history")
 		return legacy, false, false

@@ -356,6 +356,28 @@ dialog states what will happen; submitting sends `resume_legacy` with the v1
 agent id on `POST /api/rooms/{room}/agents` for the room picked in Start in.
 The server reads the session itself: the client never supplies a session id.
 
+**Which session is offered.** v1 keeps one session per agent name, so a name that
+another harness or model, or a later instance, used still holds an earlier one.
+The session is chosen, in this order:
+
+1. A v1 build that records them stamps each message with the session that sent
+   it, and keeps every session of a name (`agent_session_history`). The import
+   carries both (`message.author_session`, `legacy_agent_session_history`), and
+   the session offered is the one that sent the sender's latest message, with
+   the folder and model of that session.
+2. Older messages carry no session. The host's supervisor then reads the project
+   folder's Claude Code transcripts for the results of `bus_register` (the agent
+   id) and `bus_say`/`bus_dm` (the message numbers) and offers the session that
+   sent the sender's latest message, or else the one that sent most of its
+   latest messages. Only ids come back, never text; a supervisor without
+   `supports_session_attribution` skips this. The answer is kept for ten minutes,
+   so the profile and the start read the transcripts once.
+3. Otherwise the session v1 kept under the name, unless the sender's messages
+   contradict it: another harness or model than the messages name, or a session
+   last seen long before the agent's first message. Such a session is not
+   offered and not shown as the sender's; the dialog says why, and the agent
+   starts fresh with the same name.
+
 - **Claude Code** sessions are **continued** (the same mechanism continues any Claude Code session a machine has, see [Continuing a Claude Code session](claude-sessions.md)): the new agent's session is
   created already started with v1's session id, so its first turn runs
   `claude --resume <id>`. Claude looks a session up under the working folder it

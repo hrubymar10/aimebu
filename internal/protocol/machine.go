@@ -51,65 +51,67 @@ const (
 // agent_id and generation; machine frames carry machine_id. The server binds
 // the socket from its authenticated machine key, never from frame claims.
 type Frame struct {
-	V                    int                  `json:"v"`
-	Type                 string               `json:"type"`
-	MachineID            string               `json:"machine_id,omitempty"`
-	JournalID            string               `json:"journal_id,omitempty"`
-	SupervisorVersion    string               `json:"supervisor_version,omitempty"`
-	SupportsPathProbe    bool                 `json:"supports_path_probe,omitempty"`
-	SupportsSessionScan  bool                 `json:"supports_session_scan,omitempty"`
-	SupportsSessionFork  bool                 `json:"supports_session_fork,omitempty"`
-	SupportsLaunchPath   bool                 `json:"supports_launch_path,omitempty"`
-	SupportsWorktree     bool                 `json:"supports_worktree,omitempty"`
-	SupportsLaunchers    bool                 `json:"supports_launchers,omitempty"`
-	SupportsDetect       bool                 `json:"supports_detect,omitempty"`
-	SupportsDetectDir    bool                 `json:"supports_detect_dir,omitempty"`
-	SupportsAgentLogs    bool                 `json:"supports_agent_logs,omitempty"`
-	SupportsAgentLogSize bool                 `json:"supports_agent_log_size,omitempty"`
-	SupportsStopReplay   bool                 `json:"supports_stop_replay,omitempty"`
-	Capabilities         []CapabilityReport   `json:"capabilities,omitempty"`
-	Harnesses            []HarnessRow         `json:"harnesses,omitempty"`
-	HarnessSettings      []HarnessSetting     `json:"harness_settings,omitempty"`
-	HarnessProbeDir      string               `json:"harness_probe_dir,omitempty"`
-	Harness              *HarnessRow          `json:"harness,omitempty"`
-	HarnessSetting       *HarnessSetting      `json:"harness_setting,omitempty"`
-	Launchers            []LauncherRow        `json:"launchers,omitempty"`
-	LauncherDefinitions  []LauncherDefinition `json:"launcher_definitions,omitempty"`
-	LauncherDefinition   *LauncherDefinition  `json:"launcher_definition,omitempty"`
-	Launcher             *LauncherRow         `json:"launcher,omitempty"`
-	Detect               *DetectRequest       `json:"detect,omitempty"`
-	HarnessCandidates    []HarnessCandidate   `json:"harness_candidates,omitempty"`
-	ModelCandidates      []ModelCandidate     `json:"model_candidates,omitempty"`
-	DetectDir            string               `json:"detect_dir,omitempty"`
-	Agents               []HelloAgent         `json:"agents,omitempty"`
-	Desired              []DesiredAgent       `json:"desired,omitempty"`
-	Redeliver            []Delivery           `json:"redeliver,omitempty"`
-	ResendReceipts       []ReceiptBody        `json:"resend_receipts,omitempty"`
-	AgentID              string               `json:"agent_id,omitempty"`
-	LauncherID           string               `json:"launcher_id,omitempty"`
-	ReqID                string               `json:"req_id,omitempty"`
-	Generation           int                  `json:"generation,omitempty"`
-	DesiredRev           int64                `json:"desired_rev,omitempty"`
-	DesiredState         string               `json:"desired_state,omitempty"`
-	AgentKey             string               `json:"agent_key,omitempty"`
-	CheckoutPath         string               `json:"checkout_path,omitempty"`
-	CanonicalPath        string               `json:"canonical_path,omitempty"`
-	RoomID               string               `json:"room_id,omitempty"`
-	BaseRef              string               `json:"base_ref,omitempty"`
-	WorktreeAction       string               `json:"worktree_action,omitempty"`
-	WorktreeForce        bool                 `json:"worktree_force,omitempty"`
-	LogLines             int                  `json:"log_lines,omitempty"`
-	LogMaxBytes          int                  `json:"log_max_bytes,omitempty"`
-	AttachmentBearer     string               `json:"attachment_bearer,omitempty"`
-	TurnID               string               `json:"turn_id,omitempty"`
-	Mode                 adapter.Mode         `json:"mode,omitempty"`
-	ParentTurnID         string               `json:"parent_turn_id,omitempty"`
-	Notes                []DeliveryNote       `json:"notes,omitempty"`
-	Context              json.RawMessage      `json:"context,omitempty"`
-	AllowedTools         []string             `json:"allowed_tools,omitempty"`
-	Agent                *adapter.AgentSpec   `json:"agent,omitempty"`
-	NativeSessionHandle  string               `json:"native_session,omitempty"`
-	NativeSessionStarted bool                 `json:"native_session_started,omitempty"`
+	V                   int    `json:"v"`
+	Type                string `json:"type"`
+	MachineID           string `json:"machine_id,omitempty"`
+	JournalID           string `json:"journal_id,omitempty"`
+	SupervisorVersion   string `json:"supervisor_version,omitempty"`
+	SupportsPathProbe   bool   `json:"supports_path_probe,omitempty"`
+	SupportsSessionScan bool   `json:"supports_session_scan,omitempty"`
+	SupportsSessionFork bool   `json:"supports_session_fork,omitempty"`
+	// SupportsSessionAttribution says the supervisor answers a session scan that asks for attribution (ScanAttribution).
+	SupportsSessionAttribution bool                 `json:"supports_session_attribution,omitempty"`
+	SupportsLaunchPath         bool                 `json:"supports_launch_path,omitempty"`
+	SupportsWorktree           bool                 `json:"supports_worktree,omitempty"`
+	SupportsLaunchers          bool                 `json:"supports_launchers,omitempty"`
+	SupportsDetect             bool                 `json:"supports_detect,omitempty"`
+	SupportsDetectDir          bool                 `json:"supports_detect_dir,omitempty"`
+	SupportsAgentLogs          bool                 `json:"supports_agent_logs,omitempty"`
+	SupportsAgentLogSize       bool                 `json:"supports_agent_log_size,omitempty"`
+	SupportsStopReplay         bool                 `json:"supports_stop_replay,omitempty"`
+	Capabilities               []CapabilityReport   `json:"capabilities,omitempty"`
+	Harnesses                  []HarnessRow         `json:"harnesses,omitempty"`
+	HarnessSettings            []HarnessSetting     `json:"harness_settings,omitempty"`
+	HarnessProbeDir            string               `json:"harness_probe_dir,omitempty"`
+	Harness                    *HarnessRow          `json:"harness,omitempty"`
+	HarnessSetting             *HarnessSetting      `json:"harness_setting,omitempty"`
+	Launchers                  []LauncherRow        `json:"launchers,omitempty"`
+	LauncherDefinitions        []LauncherDefinition `json:"launcher_definitions,omitempty"`
+	LauncherDefinition         *LauncherDefinition  `json:"launcher_definition,omitempty"`
+	Launcher                   *LauncherRow         `json:"launcher,omitempty"`
+	Detect                     *DetectRequest       `json:"detect,omitempty"`
+	HarnessCandidates          []HarnessCandidate   `json:"harness_candidates,omitempty"`
+	ModelCandidates            []ModelCandidate     `json:"model_candidates,omitempty"`
+	DetectDir                  string               `json:"detect_dir,omitempty"`
+	Agents                     []HelloAgent         `json:"agents,omitempty"`
+	Desired                    []DesiredAgent       `json:"desired,omitempty"`
+	Redeliver                  []Delivery           `json:"redeliver,omitempty"`
+	ResendReceipts             []ReceiptBody        `json:"resend_receipts,omitempty"`
+	AgentID                    string               `json:"agent_id,omitempty"`
+	LauncherID                 string               `json:"launcher_id,omitempty"`
+	ReqID                      string               `json:"req_id,omitempty"`
+	Generation                 int                  `json:"generation,omitempty"`
+	DesiredRev                 int64                `json:"desired_rev,omitempty"`
+	DesiredState               string               `json:"desired_state,omitempty"`
+	AgentKey                   string               `json:"agent_key,omitempty"`
+	CheckoutPath               string               `json:"checkout_path,omitempty"`
+	CanonicalPath              string               `json:"canonical_path,omitempty"`
+	RoomID                     string               `json:"room_id,omitempty"`
+	BaseRef                    string               `json:"base_ref,omitempty"`
+	WorktreeAction             string               `json:"worktree_action,omitempty"`
+	WorktreeForce              bool                 `json:"worktree_force,omitempty"`
+	LogLines                   int                  `json:"log_lines,omitempty"`
+	LogMaxBytes                int                  `json:"log_max_bytes,omitempty"`
+	AttachmentBearer           string               `json:"attachment_bearer,omitempty"`
+	TurnID                     string               `json:"turn_id,omitempty"`
+	Mode                       adapter.Mode         `json:"mode,omitempty"`
+	ParentTurnID               string               `json:"parent_turn_id,omitempty"`
+	Notes                      []DeliveryNote       `json:"notes,omitempty"`
+	Context                    json.RawMessage      `json:"context,omitempty"`
+	AllowedTools               []string             `json:"allowed_tools,omitempty"`
+	Agent                      *adapter.AgentSpec   `json:"agent,omitempty"`
+	NativeSessionHandle        string               `json:"native_session,omitempty"`
+	NativeSessionStarted       bool                 `json:"native_session_started,omitempty"`
 	// ForkSession says this turn resumes NativeSessionHandle as a copy: the harness saves it under a new id, which the turn reports as its
 	// native session.
 	ForkSession bool `json:"fork_session,omitempty"`
@@ -132,9 +134,15 @@ type Frame struct {
 	Details        json.RawMessage     `json:"details,omitempty"`
 	// ScanFolders (spellings of one folder: every Claude Code session that worked in it or below) or ScanSessionID (that one session,
 	// wherever it worked) asks a machine for its Claude Code sessions; the answer lists them in Sessions.
-	ScanFolders   []string           `json:"scan_folders,omitempty"`
-	ScanSessionID string             `json:"scan_session_id,omitempty"`
-	Sessions      []SessionCandidate `json:"sessions,omitempty"`
+	ScanFolders   []string `json:"scan_folders,omitempty"`
+	ScanSessionID string   `json:"scan_session_id,omitempty"`
+	// ScanAttribution asks, for the sessions of ScanFolders written at or after ScanSince (RFC 3339, empty for all), which agent each
+	// registered as and which message numbers it sent (only ids are returned, never text), for the sessions of ScanAgent when it is set.
+	ScanAttribution bool                 `json:"scan_attribution,omitempty"`
+	ScanAgent       string               `json:"scan_agent,omitempty"`
+	ScanSince       string               `json:"scan_since,omitempty"`
+	Attributions    []SessionAttribution `json:"attributions,omitempty"`
+	Sessions        []SessionCandidate   `json:"sessions,omitempty"`
 	// Unreadable counts transcripts of the scanned folders that could not be read far enough to say whose they are; ScanTruncated says the
 	// scan stopped at its limits and Sessions are the newest. A scan names the launcher whose Claude home it reads in LauncherID.
 	Unreadable    int    `json:"unreadable,omitempty"`
@@ -143,12 +151,23 @@ type Frame struct {
 	Message       string `json:"message,omitempty"`
 }
 
+// SessionAttribution is what a session's aimebu tool results say about whose it was.
+type SessionAttribution struct {
+	ID         string  `json:"id"`
+	CWD        string  `json:"cwd"`
+	Model      string  `json:"model,omitempty"`
+	Sender     string  `json:"sender"`
+	MessageNos []int64 `json:"message_nos,omitempty"`
+	ModifiedAt string  `json:"modified_at"`
+}
+
 // SessionCandidate is one Claude Code session a machine has: what it knows without reading the whole transcript.
 type SessionCandidate struct {
 	ID         string `json:"id"`
 	CWD        string `json:"cwd"`
 	Dir        string `json:"dir,omitempty"`
 	Title      string `json:"title,omitempty"`
+	Model      string `json:"model,omitempty"` // the model of the session's last assistant message, as Claude records it
 	GitBranch  string `json:"git_branch,omitempty"`
 	Version    string `json:"version,omitempty"`
 	Entrypoint string `json:"entrypoint,omitempty"`

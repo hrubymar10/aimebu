@@ -28,6 +28,12 @@ const sessionScanTimeout = 15 * time.Second
 // below), or the one session with the id. The supervisor reads the Claude home of the launcher that would continue the session (the one
 // its environment references select), empty meaning the supervisor's own.
 func (s *Server) scanClaudeSessions(ctx context.Context, conn *machineConn, launcherID string, folders []string, sessionID string) (protocol.Frame, error) {
+	return s.requestSessionScan(ctx, conn, protocol.Frame{LauncherID: launcherID, ScanFolders: folders, ScanSessionID: sessionID}, sessionScanTimeout)
+}
+
+// requestSessionScan sends a session_scan frame (the request fields of scan; the rest is filled in here) and waits for the supervisor's
+// answer.
+func (s *Server) requestSessionScan(ctx context.Context, conn *machineConn, scan protocol.Frame, timeout time.Duration) (protocol.Frame, error) {
 	if !conn.supportsSessionScan {
 		return protocol.Frame{}, errSessionScanUnsupported
 	}
@@ -44,10 +50,11 @@ func (s *Server) scanClaudeSessions(ctx context.Context, conn *machineConn, laun
 	conn.pathPending[id] = channel
 	conn.harnessMu.Unlock()
 	defer func() { conn.harnessMu.Lock(); delete(conn.pathPending, id); conn.harnessMu.Unlock() }()
-	if err := conn.send(protocol.Frame{V: protocol.Version, Type: protocol.SessionScan, ReqID: id, LauncherID: launcherID, ScanFolders: folders, ScanSessionID: sessionID}); err != nil {
+	scan.V, scan.Type, scan.ReqID = protocol.Version, protocol.SessionScan, id
+	if err := conn.send(scan); err != nil {
 		return protocol.Frame{}, err
 	}
-	timer := time.NewTimer(sessionScanTimeout)
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case reply := <-channel:

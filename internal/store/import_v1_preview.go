@@ -256,7 +256,7 @@ func PreviewV1Import(ctx context.Context, sourceDir, ownerLogin string) (V1Impor
 			roomPrefs++
 		}
 	}
-	out.Counts = map[string]int{"rooms": len(data.Rooms), "messages": len(data.Messages), "attachments": len(data.Attachments), "memory": len(data.Memory), "humans": len(humans), "macros": len(data.Macros), "read_cursors": readCursors, "room_prefs": roomPrefs, "sounds": len(data.Sounds), "agent_sessions": len(data.AgentSessions)}
+	out.Counts = map[string]int{"rooms": len(data.Rooms), "messages": len(data.Messages), "attachments": len(data.Attachments), "memory": len(data.Memory), "humans": len(humans), "macros": len(data.Macros), "read_cursors": readCursors, "room_prefs": roomPrefs, "sounds": len(data.Sounds), "agent_sessions": len(data.AgentSessions), "agent_session_history": len(data.AgentSessionHistory)}
 	out.Macros = data.Macros
 	for key, seen := range data.MacroSeenDefault {
 		if seen {

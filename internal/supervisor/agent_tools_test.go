@@ -554,3 +554,44 @@ func TestSessionScanReadsTheClaudeHomeOfTheNamedLauncher(t *testing.T) {
 		t.Fatalf("a session of the other home is not found through this launcher: %+v", byID)
 	}
 }
+
+// An attribution scan returns only ids (the registered agent and the message numbers it sent), for the sessions of the asked folders and
+// agent, and the hello advertises it.
+func TestSessionScanAttributionReturnsOnlyIds(t *testing.T) {
+	claude := t.TempDir() // a fixture Claude configuration folder; the real one is never read
+	project := t.TempDir()
+	dir := filepath.Join(claude, "projects", ccsessions.FolderName(project))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	line := func(v map[string]any) string { data, _ := json.Marshal(v); return string(data) }
+	transcript := strings.Join([]string{
+		line(map[string]any{"type": "user", "cwd": project, "sessionId": id, "message": map[string]any{"content": "PRIVATE prompt"}}),
+		line(map[string]any{"type": "assistant", "message": map[string]any{"model": "claude-opus-4-5", "content": []map[string]any{{"type": "tool_use", "id": "toolu_1", "name": "mcp__aimebu__bus_register", "input": map[string]any{}}}}}),
+		line(map[string]any{"type": "user", "message": map[string]any{"content": []map[string]any{{"type": "tool_result", "tool_use_id": "toolu_1", "content": `{"id":"sage@old"}`}}}}),
+		line(map[string]any{"type": "assistant", "message": map[string]any{"model": "claude-opus-4-5", "content": []map[string]any{{"type": "tool_use", "id": "toolu_2", "name": "mcp__aimebu__bus_say", "input": map[string]any{"body": "PRIVATE body"}}}}}),
+		line(map[string]any{"type": "user", "message": map[string]any{"content": []map[string]any{{"type": "tool_result", "tool_use_id": "toolu_2", "content": `{"id":37965,"room":"r"}`}}}}),
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(transcript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{ClaudeConfigDir: claude}
+	reply := c.sessionScanResult(protocol.Frame{ReqID: "r", ScanFolders: []string{project}, ScanAttribution: true, ScanAgent: "sage@old", ScanSince: "2020-01-01T00:00:00Z"})
+	if reply.Code != "" || len(reply.Attributions) != 1 || len(reply.Sessions) != 0 {
+		t.Fatalf("reply = %+v", reply)
+	}
+	got := reply.Attributions[0]
+	if got.ID != id || got.Sender != "sage@old" || got.CWD != project || len(got.MessageNos) != 1 || got.MessageNos[0] != 37965 || got.Model != "claude-opus-4-5" {
+		t.Fatalf("attribution = %+v", got)
+	}
+	if data, _ := json.Marshal(reply); strings.Contains(string(data), "PRIVATE") {
+		t.Fatalf("transcript text left the supervisor: %s", data)
+	}
+	if other := c.sessionScanResult(protocol.Frame{ReqID: "r", ScanFolders: []string{project}, ScanAttribution: true, ScanAgent: "someone@else"}); len(other.Attributions) != 0 {
+		t.Fatalf("another agent's attribution: %+v", other.Attributions)
+	}
+	if bad := c.sessionScanResult(protocol.Frame{ReqID: "r", ScanFolders: []string{project}, ScanAttribution: true, ScanSince: "yesterday"}); bad.Code != "invalid_request" {
+		t.Fatalf("a bad since: %+v", bad)
+	}
+}

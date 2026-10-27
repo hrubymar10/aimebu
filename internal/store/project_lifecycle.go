@@ -43,7 +43,7 @@ var (
 	projectScopeTables = []string{"scope_control_failure", "scope_control_agent", "usage_limit_day", "usage_limit"}
 	// projectNotLinked are columns that look like a project reference but are not one: v1's own agent session names, and a memory
 	// scope key that is a user or the word "global".
-	projectNotLinked = map[string]string{"legacy_agent_session.project": "the v1 project name, kept for the import", "global_memory.scope_key": "a user or the word global, never a project"}
+	projectNotLinked = map[string]string{"legacy_agent_session.project": "the v1 project name, kept for the import", "legacy_agent_session_history.project": "the v1 project name, kept for the import", "global_memory.scope_key": "a user or the word global, never a project"}
 )
 
 // refuseArchived is the check a transaction makes before it starts or restarts anything in a project.

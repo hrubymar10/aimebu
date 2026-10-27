@@ -204,7 +204,8 @@ environment or launcher arguments.
   older build without `/api/doctor`.
 - **machine \<name\>** — a connected machine whose supervisor lacks a
   capability flag warns, naming each flag and what degrades without it (for
-  example `supports_session_fork`: a Claude Code session can only be continued
+  example `supports_session_attribution`: an imported v1 sender's session is not
+  matched to its messages by reading transcripts; `supports_session_fork`: a Claude Code session can only be continued
   in place, not as a copy; `supports_launch_path`: a session made under a link
   to its folder cannot be continued there, its turns are held; `supports_worktree`: room worktrees cannot be created
   on that machine; `supports_stop_replay`: a stop sent while the machine was

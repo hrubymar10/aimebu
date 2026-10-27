@@ -33,6 +33,10 @@ import (
 
 type Server struct {
 	Store *store.Store
+	// legacyAttr caches which Claude Code session a v1 sender's work is in (see resolveLegacyStart), so opening a profile and then starting the
+	// agent from it reads the transcripts once.
+	legacyAttrMu sync.Mutex
+	legacyAttr   map[string]legacyAttrEntry
 	// outputReads is when each person last read an agent's output, for the limit on how often they may (see agentOutput).
 	outputMu    sync.Mutex
 	outputReads map[string][]time.Time

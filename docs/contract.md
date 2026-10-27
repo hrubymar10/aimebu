@@ -81,6 +81,12 @@ Projects, rooms, people
   — what v1 recorded for an imported sender, kept for its read-only profile and
   for "Start as v2 agent"; `started_agent_id` links the one v2 agent started
   from it, and `agent.resumed_from_legacy_id` links back.
+- **legacy_agent_session_history**(agent_id, harness_session_id, harness, model,
+  project, cwd, origin, registered_at, last_seen; PRIMARY KEY(agent_id,
+  harness_session_id)) and **message.author_session** — migration 88: every
+  session a v1 name ran in, and the session a v1 message was sent from, as a
+  v1 build that records them wrote them. They tell "Start as v2 agent" which
+  session did a sender's work; a backup that predates them has none.
 - **imported_session**(agent_id PRIMARY KEY → agent, machine_id, session_id,
   mode[continue|fork], forked_session_id?, cwd, title, imported_by, imported_at)
   — migration 85, rekeyed by migration 86. A Claude Code session an agent was
@@ -808,7 +814,7 @@ it never silently reruns a turn with uncertain effects.
 
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
-  supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_detect?,
+  supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_detect?,
   supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?,
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
@@ -883,7 +889,13 @@ it never silently reruns a turn with uncertain effects.
   with the same per-delivery check and hold as `fork_session`.
 - S→M `session_scan{v,req_id,launcher_id?,scan_folders?[1..4] | scan_session_id?}`; M→S
   `session_scan_result{v,req_id,sessions?[{id,cwd,dir?,title?,git_branch?,version?,
-  entrypoint?,modified_at,size,active?}],unreadable?,scan_truncated?,code?,message?}`.
+  entrypoint?,model?,modified_at,size,active?}],unreadable?,scan_truncated?,code?,message?}`.
+  With `scan_attribution:true` (and `scan_folders`, optional `scan_since` and `scan_agent`) the
+  answer is `attributions?[{id,cwd,model?,sender,message_nos?,modified_at}]` instead:
+  for each session of those folders written since then, the agent id its `bus_register`
+  returned and the numbers its `bus_say`/`bus_dm` returned, read from the transcripts' tool
+  results. Only those ids leave the machine, never a line of text (advertised by
+  `supports_session_attribution`).
   The supervisor lists the Claude Code sessions of its own machine, from the
   configuration folder of the launcher named by `launcher_id` (that launcher's
   `env_refs` apply: its `CLAUDE_CONFIG_DIR`, else its `HOME`, else the

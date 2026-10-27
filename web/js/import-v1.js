@@ -23,6 +23,7 @@ function section(title, summary, open = false) {
 
 // What each line of the summary table means, in the owner's words. An unknown key falls back to its raw name.
 const COUNT_LABELS = {
+  agent_session_history: ['Agent session history', 'Every harness session an agent name ran in, so "Start as v2 agent" can offer the one that did a sender\'s work.'],
   agent_sessions: ['Agent sessions', 'Where each agent ran and its harness session; shown on the profile of its name in old messages.'],
   attachments: ['Attachments', 'Files attached to messages.'],
   historical_members: ['Past members', 'People and agents who were in a room; kept as names so old messages still show who wrote them.'],

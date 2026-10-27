@@ -176,8 +176,25 @@ func (s *Store) LegacyAgentProfile(ctx context.Context, roomID, agentID string) 
 		return AgentProfile{}, err
 	}
 	p := AgentProfile{AgentID: agentID, Imported: true}
-	err := s.db.QueryRowContext(ctx, `SELECT harness_session_id,cwd,registered_at,last_seen,project FROM legacy_agent_session l
+	var harness, model string
+	err := s.db.QueryRowContext(ctx, `SELECT harness,model,harness_session_id,cwd,registered_at,last_seen,project FROM legacy_agent_session l
 		WHERE l.agent_id=? AND EXISTS (SELECT 1 FROM message WHERE room_id=? AND author_kind='agent' AND author_id=l.agent_id)`, agentID, roomID).
-		Scan(&p.NativeSessionID, &p.Cwd, &p.SpawnedAt, &p.LastSeen, &p.ProjectName)
-	return p, err
+		Scan(&harness, &model, &p.NativeSessionID, &p.Cwd, &p.SpawnedAt, &p.LastSeen, &p.ProjectName)
+	if err != nil {
+		return p, err
+	}
+	// v1 keeps one session per name: a session that another harness or model, or an earlier holder of the name, left behind is not shown as
+	// this sender's.
+	var projectID string
+	if err := s.db.QueryRowContext(ctx, `SELECT project_id FROM room WHERE id=?`, roomID).Scan(&projectID); err != nil {
+		return p, err
+	}
+	act, found, err := s.legacyActivityOf(ctx, projectID, agentID)
+	if err != nil {
+		return p, err
+	}
+	if found && sessionMismatch(harness, model, p.SpawnedAt, p.LastSeen, act) != "" {
+		p.NativeSessionID, p.Cwd = "", ""
+	}
+	return p, nil
 }

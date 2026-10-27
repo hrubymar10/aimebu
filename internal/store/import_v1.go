@@ -197,6 +197,7 @@ type v1ImportMessage struct {
 	FromKind        string                  `json:"from_kind"`
 	FromHarness     string                  `json:"from_harness"`
 	FromModel       string                  `json:"from_model"`
+	FromSession     string                  `json:"from_session"`
 	Body            string                  `json:"body"`
 	CreatedAt       string                  `json:"created_at"`
 	ReplyTo         int64                   `json:"reply_to"`
@@ -275,6 +276,7 @@ type v1ImportData struct {
 	Sounds                  []v1ImportSound
 	RoomPrefs               []v1RoomPref
 	AgentSessions           []v1AgentSession
+	AgentSessionHistory     []v1AgentSessionHistory
 	NotCarried              map[string]int
 }
 
@@ -427,6 +429,9 @@ func OpenV1ImportSource(ctx context.Context, dir string) (*v1ImportData, error) 
 	if data.AgentSessions, err = loadV1AgentSessions(ctx, db); err != nil {
 		return nil, fmt.Errorf("v1 agent sessions: %w", err)
 	}
+	if data.AgentSessionHistory, err = loadV1AgentSessionHistory(ctx, db); err != nil {
+		return nil, fmt.Errorf("v1 agent session history: %w", err)
+	}
 	if err := load("SELECT CAST(message_id AS TEXT),data FROM reactions ORDER BY message_id", func(id, raw string) error {
 		var reactions []v1ImportReaction
 		if err := json.Unmarshal([]byte(raw), &reactions); err != nil {
@@ -570,7 +575,7 @@ func OpenV1ImportSource(ctx context.Context, dir string) (*v1ImportData, error) 
 	}
 	knownMessageFields := map[string]bool{
 		"id": true, "room_id": true, "from": true, "from_kind": true, "from_harness": true,
-		"from_model": true, "body": true, "created_at": true, "reply_to": true, "targets": true,
+		"from_model": true, "from_session": true, "body": true, "created_at": true, "reply_to": true, "targets": true,
 		"needs_human_attention": true, "proposed_answers": true, "open_questions": true,
 		"visual_plan": true, "appendix_pages": true, "attachments": true, "reactions": true,
 	}
@@ -623,7 +628,7 @@ var v1ImportedTables = map[string]bool{
 	"schema_meta": true, "rooms": true, "messages": true, "agents": true, "reactions": true, "memory": true,
 	"attachments": true, "macros": true, "settings": true, "role_overrides": true, "role_custom": true,
 	"prompts": true, "sounds": true, "room_prefs": true,
-	"agent_sessions": true,
+	"agent_sessions": true, "agent_session_history": true,
 }
 
 // v1NotCarriedTables walks the source schema and counts the rows of every table the importer does
@@ -1681,9 +1686,9 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 			proposed, _ = json.Marshal(message.ProposedAnswers)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO message(id,seq,no,room_id,author_kind,author_id,body,reply_to,targets_json,created_at,
-			needs_attention,proposed_answers_json,open_questions_json,visual_plan_json,appendix_pages_json,author_harness,author_model)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, seq, message.ID, roomIDs[message.RoomID], authorKind, authorID, message.Body, reply, string(targets), createdAt,
-			message.NeedsAttention, nullable(string(proposed)), rawJSONOrNil(message.OpenQuestions), rawJSONOrNil(message.VisualPlan), rawJSONOrNil(message.AppendixPages), message.FromHarness, message.FromModel); err != nil {
+			needs_attention,proposed_answers_json,open_questions_json,visual_plan_json,appendix_pages_json,author_harness,author_model,author_session)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, seq, message.ID, roomIDs[message.RoomID], authorKind, authorID, message.Body, reply, string(targets), createdAt,
+			message.NeedsAttention, nullable(string(proposed)), rawJSONOrNil(message.OpenQuestions), rawJSONOrNil(message.VisualPlan), rawJSONOrNil(message.AppendixPages), message.FromHarness, message.FromModel, message.FromSession); err != nil {
 			return report, err
 		}
 		if err := addImportMap(ctx, tx, mapping.SourceKey, "message", key, id); err != nil {
@@ -1818,6 +1823,9 @@ func (s *Store) ImportV1(ctx context.Context, sourceDir string, mapping V1Import
 		return report, err
 	}
 	if err := importV1AgentSessions(ctx, tx, data, &report); err != nil {
+		return report, err
+	}
+	if err := importV1AgentSessionHistory(ctx, tx, data, &report); err != nil {
 		return report, err
 	}
 	if err := importV1AgentRoles(ctx, tx, data); err != nil {

@@ -133,7 +133,12 @@ A machine's Claude Code sessions are listed by the supervisor on request
 (`session_scan`, advertised by `supports_session_scan`): it reads the
 configuration folder of the launcher that would continue the session (the
 launcher's own `CLAUDE_CONFIG_DIR`/`HOME` references apply), only the first and last 64 KiB
-of each transcript, and never writes. See [continuing a Claude Code
+of each transcript, and never writes. The one exception is the attribution scan
+(`scan_attribution`, advertised by `supports_session_attribution`): to trace a v1
+message number to the session that sent it, it streams the whole transcripts of
+the asked folders (bounded in size and time, long lines skipped) and returns only
+ids, the agent id a `bus_register` result named and the message numbers the
+`bus_say`/`bus_dm` results named, never any text. See [continuing a Claude Code
 session](claude-sessions.md).
 
 Before a remote spawn, switch, or reactivation reaches the store, the server

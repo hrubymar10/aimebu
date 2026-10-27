@@ -1500,6 +1500,23 @@ CREATE TABLE request_key (
 );
 INSERT INTO request_key SELECT * FROM request_key_old;
 DROP TABLE request_key_old;
+`}, {88, `
+-- Which session wrote a v1 message, and every session a v1 agent name ran in (v1 keeps the latest per name in agent_sessions; later v1
+-- builds also keep a history and stamp each message with its sender's session). They let "Start as v2 agent" offer the session that
+-- really holds a sender's work. The history table has no row for a backup that predates it.
+ALTER TABLE message ADD COLUMN author_session TEXT NOT NULL DEFAULT '';
+CREATE TABLE legacy_agent_session_history (
+  agent_id TEXT NOT NULL,
+  harness_session_id TEXT NOT NULL,
+  harness TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  project TEXT NOT NULL DEFAULT '',
+  cwd TEXT NOT NULL DEFAULT '',
+  origin TEXT NOT NULL DEFAULT '',
+  registered_at TEXT NOT NULL DEFAULT '',
+  last_seen TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (agent_id, harness_session_id)
+);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.
