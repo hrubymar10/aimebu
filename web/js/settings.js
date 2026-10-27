@@ -8,7 +8,7 @@ import { ProjectSettings } from './project-settings.js';
 import { MachinesSettings } from './machines.js';
 import { HarnessSettings } from './pages/harnesses/page.js';
 import { MacroSettings } from './pages/macros/page.js';
-import { UsersSettings } from './users.js';
+import { UsersSettings } from './pages/users/page.js';
 import { PromptSettings } from './pages/prompts/page.js';
 import { HttpQuotaSource } from './quota-source.js';
 import { HttpLimitGuardSource } from './limit-guard-source.js';
