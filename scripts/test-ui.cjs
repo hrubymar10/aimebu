@@ -2295,9 +2295,10 @@ async function main() {
     await first.waitForSelector('.message:first-child .message-reaction-row:not([hidden])');
     await domClick(first, '.message:first-child .message-reaction-row .quick-reaction');
     await first.waitForFunction(() => document.querySelector('.reaction-pill')?.textContent === '👍 1');
-    assert.equal(await first.$eval('.reaction-pill', el => el.title), 'owner', 'reaction tooltip shows an internal user ID');
     // A reaction pill is v1's size: 22px tall, at least 22px wide, a 6px side padding, 11.5px type.
-    assert.deepEqual(await first.$eval('.reaction-pill', el => { const cs = getComputedStyle(el), box = el.getBoundingClientRect(); return [Math.round(box.height), box.width >= 22, cs.paddingLeft, cs.paddingRight, cs.fontSize]; }), [22, true, '6px', '6px', '11.5px'], 'a reaction pill has the size of v1\'s');
+    // The row can be redrawn after the 👍 shows; wait for a pill that is attached and laid out, then read it in the same step.
+    await first.waitForFunction(() => { const el = document.querySelector('.reaction-pill'); return el?.isConnected && el.getBoundingClientRect().height > 0; });
+    assert.deepEqual(await first.evaluate(() => { const el = document.querySelector('.reaction-pill'), cs = getComputedStyle(el), box = el.getBoundingClientRect(); return [el.title, Math.round(box.height), box.width >= 22, cs.paddingLeft, cs.paddingRight, cs.fontSize]; }), ['owner', 22, true, '6px', '6px', '11.5px'], 'the reaction tooltip is the member name and the pill has the size of v1\'s');
     await first.locator('.reaction-pill').click();
     await first.waitForFunction(() => !document.querySelector('.reaction-pill'));
     await first.hover('.message:first-child');
