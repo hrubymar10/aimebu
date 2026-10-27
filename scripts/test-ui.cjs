@@ -1216,7 +1216,7 @@ async function main() {
       return { sent, plainShape, requiredAll, dialogClosed: !dialog.open, countAtStart, firstView, afterFirst, jumped, closedRemoved, resumed, emptyOther, allAnswered, review };
     });
     assert.deepEqual(answerControlsResult, {
-      sent: ['@tess Proceed', 'Q1) a) Small\nQ2) other) Next week'], plainShape: { classes: ['proposed-answer-btn', 'proposed-answer-btn'], extras: 0 }, requiredAll: true, dialogClosed: true, countAtStart: '0/2',
+      sent: ['@tess Proceed', 'Q1) a) Small\nQ2) other) Next week'], plainShape: { classes: ['btn proposed-answer-btn', 'btn proposed-answer-btn'], extras: 0 }, requiredAll: true, dialogClosed: true, countAtStart: '0/2',
       firstView: { visible: 1, subtitle: 'Question 1 of 2', sendHidden: true, reviewDisabled: true },
       afterFirst: { advanced: 'Question 2 of 2', letter: 'a)', progress: '1/2 answered', triggerCount: '1/2', answeredStep: true },
       jumped: 'Question 2 of 2', closedRemoved: true,
@@ -1321,11 +1321,10 @@ async function main() {
       chat.updateAnswerControls([item]);
       const roomControls = bubble.querySelector('.answer-controls');
       const threadControls = threadNode.querySelector('.answer-controls');
-      roomControls.querySelector('textarea').value = 'Room draft';
-      threadControls.querySelector('textarea').value = 'Thread draft';
+      roomControls.dataset.mark = 'Room'; threadControls.dataset.mark = 'Thread'; // the same node, with what it holds, is kept while the item is unchanged
       chat.updateAnswerControls([{ ...item }]);
       const kept = bubble.querySelector('.answer-controls') === roomControls && threadNode.querySelector('.answer-controls') === threadControls
-        && roomControls.querySelector('textarea').value === 'Room draft' && threadControls.querySelector('textarea').value === 'Thread draft';
+        && roomControls.dataset.mark === 'Room' && threadControls.dataset.mark === 'Thread';
       chat.updateAnswerControls([{ ...item, rev: 1 }]);
       const replaced = bubble.querySelector('.answer-controls') !== roomControls && threadNode.querySelector('.answer-controls') !== threadControls;
       chat.updateAnswerControls([]);
@@ -2148,6 +2147,8 @@ async function main() {
     await domClick(first, '.message:first-child .message-reaction-row .quick-reaction');
     await first.waitForFunction(() => document.querySelector('.reaction-pill')?.textContent === '👍 1');
     assert.equal(await first.$eval('.reaction-pill', el => el.title), 'owner', 'reaction tooltip shows an internal user ID');
+    // A reaction pill is v1's size: 22px tall, at least 22px wide, a 6px side padding, 11.5px type.
+    assert.deepEqual(await first.$eval('.reaction-pill', el => { const cs = getComputedStyle(el), box = el.getBoundingClientRect(); return [Math.round(box.height), box.width >= 22, cs.paddingLeft, cs.paddingRight, cs.fontSize]; }), [22, true, '6px', '6px', '11.5px'], 'a reaction pill has the size of v1\'s');
     await first.locator('.reaction-pill').click();
     await first.waitForFunction(() => !document.querySelector('.reaction-pill'));
     await first.hover('.message:first-child');
@@ -4383,6 +4384,8 @@ async function main() {
       assert.deepEqual((await state()).slice(0, 2), [[false, '0'], [false, '0']], 'on touch the actions are hidden by default');
       await tapMessage(0);
       assert.deepEqual((await state()).slice(0, 2), [[true, '1'], [false, '0']], 'a tap on a message shows its actions');
+      // On a tablet the toolbar keeps the desktop and v1 place, at the top of the message, not under it as on a phone.
+      assert.deepEqual(await touch.evaluate(() => { const row = document.querySelector('#messages .message.actions-open'), bar = row.querySelector('.message-actions').getBoundingClientRect(), box = row.querySelector('.message-bubble').getBoundingClientRect(); return [getComputedStyle(row.querySelector('.message-actions')).position, bar.top < box.top + box.height / 2, bar.top >= box.top - 30]; }), ['absolute', true, true], 'on a tablet the message actions sit at the top of the message');
       await tapMessage(1);
       assert.deepEqual((await state()).slice(0, 2), [[false, '0'], [true, '1']], 'a tap on another message moves them');
       await touch.evaluate(() => document.querySelector('#messages .message.actions-open .message-react')?.click());
@@ -4410,7 +4413,7 @@ async function main() {
         await touch.waitForFunction(() => document.querySelectorAll('#messages .message').length > 0); await settle();
         const column = () => touch.evaluate(() => ({ chat: Math.round(document.querySelector('#messages').getBoundingClientRect().width), rooms: !document.querySelector('#app-view').classList.contains('rooms-collapsed'), members: !document.querySelector('.chat').classList.contains('agents-collapsed') }));
         const start = await column();
-        assert.ok(start.chat >= 400 && start.rooms && !start.members, `${width}: the chat column keeps its room and the members panel starts closed: ${JSON.stringify(start)}`);
+        assert.ok(start.chat >= 400 && !start.rooms && !start.members, `${width}: the chat column keeps its room, and both side panels start closed (the rooms column is collapsed by default on a narrow screen): ${JSON.stringify(start)}`);
         await touch.evaluate(() => document.querySelector('#edge-agents-expand').click()); await settle();
         const opened = await column(); assert.ok(opened.members && !opened.rooms, `${width}: opening the members panel closes the rooms: ${JSON.stringify(opened)}`);
         await touch.evaluate(() => document.querySelector('#edge-rooms-expand').click()); await settle();
@@ -5482,6 +5485,16 @@ async function main() {
     await appReady(restored);
     assert.equal(await restored.evaluate(() => document.querySelector('#app-view').classList.contains('rooms-collapsed') && document.querySelector('.chat').classList.contains('agents-collapsed')), true, 'panel collapse was not restored on a fresh page');
     await restored.close();
+    // With no stored choice a narrow window (701-900px) starts with the rooms column collapsed, without storing that; a stored choice wins.
+    {
+      const roomsCollapsedAt = async width => { const narrow = await a.newPage(); await narrow.setViewport({ width, height: 720 }); await narrow.goto(origin); await appReady(narrow); const result = await narrow.evaluate(() => [document.querySelector('#app-view').classList.contains('rooms-collapsed'), localStorage.getItem('aimebu_left_collapsed')]); await narrow.close(); return result; };
+      await first.evaluate(() => localStorage.removeItem('aimebu_left_collapsed'));
+      assert.deepEqual(await roomsCollapsedAt(800), [true, null], 'a narrow window starts with the rooms column collapsed, and the default is not stored');
+      assert.deepEqual(await roomsCollapsedAt(1100), [false, null], 'a wide window starts with it expanded');
+      await first.evaluate(() => localStorage.setItem('aimebu_left_collapsed', 'false'));
+      assert.deepEqual(await roomsCollapsedAt(800), [false, 'false'], 'a stored choice to keep it expanded wins');
+      await first.evaluate(() => localStorage.setItem('aimebu_left_collapsed', 'true'));
+    }
     await first.click('#edge-agents-expand');
     assert.deepEqual(await first.evaluate(() => [localStorage.getItem('aimebu_left_collapsed'), localStorage.getItem('aimebu_right_collapsed')]), ['true', 'false']);
     // t2-scroll-anchor: late-growing content (image + Mermaid) must keep a pinned list pinned and must not move an unpinned one.

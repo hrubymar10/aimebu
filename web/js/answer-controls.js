@@ -21,7 +21,7 @@ export function answerControls(item, submit, { mention = '', compose = null } = 
   for (const value of item.proposed_answers || (item.open_questions?.length ? [] : item.options || [])) {
     const text = mention ? `${mention} ${value}` : value;
     const button = document.createElement('button');
-    button.type = 'button'; button.className = 'proposed-answer-btn'; button.textContent = value;
+    button.type = 'button'; button.className = 'btn proposed-answer-btn'; button.textContent = value;
     button.title = compose ? 'Send this answer (Shift-click to edit it in the composer first)' : 'Send this answer';
     button.onclick = event => { if (event.shiftKey && compose) compose(text); else send(wrap, submit, text); };
     wrap.append(button);
@@ -36,7 +36,7 @@ export function answerHistory(message, answered) {
   const wrap = document.createElement('div');
   wrap.className = 'answer-history'; wrap.dataset.answered = String(answered);
   const note = answered ? 'Answered' : 'No longer pending';
-  const disabled = (button, text, className = 'proposed-answer-btn') => { button.type = 'button'; button.className = className; button.disabled = true; button.title = note; button.textContent = text; return button; };
+  const disabled = (button, text, className = 'btn proposed-answer-btn') => { button.type = 'button'; button.className = className; button.disabled = true; button.title = note; button.textContent = text; return button; };
   if (message.open_questions?.length) {
     const open = document.createElement('button'); disabled(open, 'Open Questions', 'btn');
     const count = document.createElement('span'); count.className = 'open-questions-count'; count.textContent = `${message.open_questions.length}`;

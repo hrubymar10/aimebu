@@ -642,7 +642,11 @@ function setRoomsCollapsed(collapsed, remember = !TABLET.matches) {
   if (!collapsed && TABLET.matches) document.dispatchEvent(new CustomEvent('side-panel-open', { detail: 'rooms' }));
 }
 document.addEventListener('side-panel-open', event => { if (event.detail === 'agents' && TABLET.matches) setRoomsCollapsed(true, false); });
-if (localStorage.getItem('aimebu_left_collapsed') === 'true') setRoomsCollapsed(true);
+// With no choice of its own, a narrow window (701-900px) starts with the rooms column collapsed, and that default is not stored; whoever expands
+// it keeps it expanded, and a stored choice always wins. (A phone has its rooms panel as an overlay, closed until it is opened.)
+const storedLeft = localStorage.getItem('aimebu_left_collapsed');
+if (storedLeft === 'true') setRoomsCollapsed(true);
+else if (storedLeft === null && matchMedia('(min-width: 701px) and (max-width: 900px)').matches) setRoomsCollapsed(true, false);
 document.querySelector('#edge-rooms').onclick = () => setRoomsCollapsed(true);
 document.querySelector('#edge-rooms-expand').onclick = () => setRoomsCollapsed(false);
 document.querySelector('#back').onclick = () => setRoomsOpen(!appView.classList.contains('rooms-open'));

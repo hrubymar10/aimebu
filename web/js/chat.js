@@ -454,7 +454,7 @@ export class Chat {
   // as a reply to that message, to change before sending.
   answerOptions(message) {
     if (!message || message.author_kind === 'system') return {};
-    const agent = message.author_kind === 'user' ? null : this.agents.get(message.author_id);
+    const agent = message.author_kind === 'user' ? null : this.agents?.get(message.author_id);
     const name = agent?.slug || (message.author_kind === 'user' ? message.author_name : '');
     return {
       mention: name ? `@${name}` : '',

@@ -461,8 +461,12 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .harness-split .machine-harness { margin: 0; }
 .harness-detail-row { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
 .harness-detail-row.harness-model-row { grid-template-columns: minmax(0, 1fr); }
-.harness-detail-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.harness-detail-top .harness-model-slug { flex: 1 1 auto; }
+/* One line: radio, star (and "Default"), the id, then the remove button at the end, on a phone too. */
+.harness-detail-top { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; }
+.harness-detail-top .harness-model-slug { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.harness-detail-top .harness-model-remove { flex: 0 0 auto; margin-left: auto; }
+.harness-detail-top .harness-model-default { min-width: 0; }
+@media (min-width: 701px) { .harness-detail-top .harness-model-default { min-width: 98px; } }
 .harness-detail-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 8px; }
 .harness-detail-roles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; }
 .harness-role-switch { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px; font-size: 12px; cursor: pointer; }
@@ -1185,9 +1189,9 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .message-bubble:hover { border-color: var(--border-hover); }
 .message.self .message-bubble { background: var(--bg-tertiary); border-color: var(--green-text); }
 .message-body { margin: 0; }
-.reaction-pills { display: flex; gap: 4px; margin-top: 6px; }
+.reaction-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }
 .reaction-pills:empty { display: none; }
-.reaction-pill { border-radius: 999px; background: var(--bg-tertiary); border: 1px solid var(--border); }
+.reaction-pill { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 22px; height: 22px; min-height: 0; padding: 0 6px; border-radius: 999px; background: var(--bg-tertiary); border: 1px solid var(--border); font: 11.5px var(--font-sans); line-height: 1; } /* v1's size: 22px tall, a 6px side padding */
 .quote { display: block; max-width: 100%; margin: 0 0 6px; padding: 2px 0 2px 8px; border: 0; border-left: 2px solid var(--border-hover); border-radius: 0; background: transparent; color: var(--accent); font: 12.6px var(--font-mono); overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .quote:hover { border-left-color: var(--accent); }
 .system-notice { align-self: center; min-height: 26px; padding: 4px 0; font: italic 9.8px/1.4 var(--font-sans); }
@@ -1742,10 +1746,12 @@ button.icon-btn[aria-pressed="true"] { border-color: var(--accent); color: var(-
    no free place for it next to anything, so there, and only there, the sender line gets room below it and the toolbar sits in that room,
    over the bubble's top edge, covering neither the sender line nor the text. */
 .message.self .message-actions { top: 0; right: calc(100% + 6px); }
-@media not ((hover: none) and (pointer: coarse)) { .message.self { max-width: clamp(60%, calc(100% - 200px), 75%); } }
+@media not ((hover: none) and (pointer: coarse) and (max-width: 700px)) { .message.self { max-width: clamp(60%, calc(100% - 200px), 75%); } }
+/* A touch tablet's buttons are 40px, so its toolbar is wider and an own message stops shorter. */
+@media (hover: none) and (pointer: coarse) and (min-width: 701px) { .message.self { max-width: clamp(60%, calc(100% - 290px), 75%); } }
 #messages { container-type: inline-size; }
 @container (max-width: 420px) {
-  @media not ((hover: none) and (pointer: coarse)) {
+  @media not ((hover: none) and (pointer: coarse) and (max-width: 700px)) {
     .message.self { max-width: 75%; }
     .message:not(.system-notice) > .message-meta { margin-bottom: 22px; }
     .message-actions, .message.self .message-actions { top: -20px; right: 6px; left: auto; }
@@ -1764,11 +1770,14 @@ button.icon-btn[aria-pressed="true"] { border-color: var(--accent); color: var(-
 @media (hover: none) and (pointer: coarse) {
   .message:hover .message-actions { opacity: 0; pointer-events: none; }
   .message.actions-open .message-actions, .message:has(:focus-visible) .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
-  /* Under the text, in the bubble's flow, so it covers neither the message nor its sender line; it takes room only while a message is selected. */
-  .message-actions, .message.self .message-actions { position: relative; top: auto; right: auto; left: auto; display: none; width: fit-content; margin: 8px 0 0 auto; }
-  .message.actions-open .message-actions, .message:has(:focus-visible) .message-actions, .message-actions:has([aria-expanded="true"]) { display: flex; }
   .message-actions .message-action { width: 40px; height: 40px; flex-basis: 40px; }
   .message-reaction-row .quick-reaction { width: 40px; height: 40px; }
+}
+/* On a phone the toolbar goes under the text, in the bubble's flow, so it covers neither the message nor its sender line; it takes room only
+   while a message is selected. A tablet (701px and wider) keeps the desktop and v1 place: the top right of the message, over its edge. */
+@media (hover: none) and (pointer: coarse) and (max-width: 700px) {
+  .message-actions, .message.self .message-actions { position: relative; top: auto; right: auto; left: auto; display: none; width: fit-content; margin: 8px 0 0 auto; }
+  .message.actions-open .message-actions, .message:has(:focus-visible) .message-actions, .message-actions:has([aria-expanded="true"]) { display: flex; }
 }
 
 /* The A/B/C experiment switch in the top bar (hidden unless an experiment is active). */
@@ -2407,6 +2416,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 :is(#spawn-dialog, .login, .sidebar, .schedule-form) input:is([type=checkbox], [type=radio]) { display: inline-block; width: auto; min-width: 0; margin: 0; flex: none; }
 #spawn-dialog label:has(> input:is([type=checkbox], [type=radio])) { display: flex; align-items: center; gap: 8px; font-weight: 400; }
 #spawn-dialog label[hidden] { display: none; }
+#spawn-dialog .spawn-resume label { margin: 0; }
 .sender-profile-start { display: grid; gap: 8px; margin-top: 12px; justify-items: start; }
 .sender-profile-start .sender-profile-note { margin: 0; }
 

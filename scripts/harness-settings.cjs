@@ -209,6 +209,8 @@ async function main(variant) {
       return { dialog: dialog.scrollWidth <= dialog.clientWidth + 1, split: split.scrollWidth <= split.clientWidth + 1, row: getComputedStyle(master).display, masterTop: master.getBoundingClientRect().bottom <= document.querySelector('.harness-detail').getBoundingClientRect().top + 1 };
     });
     assert.deepEqual(await fits(), { dialog: true, split: true, row: 'flex', masterTop: true }, 'the harness list sits above the detail and fits at 390 px');
+    // A model row is one line at 390 px too: the default radio, the star, the id and the remove button share it.
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#harnesses-list .machine-harness:not([hidden]) .harness-detail-top')].map(top => { const radio = top.querySelector('input[type=radio]').getBoundingClientRect(), slug = top.querySelector('.harness-model-slug').getBoundingClientRect(), trash = top.querySelector('.harness-model-remove').getBoundingClientRect(); return [Math.abs(radio.top + radio.height / 2 - (trash.top + trash.height / 2)) < 4, Math.abs(slug.top + slug.height / 2 - (trash.top + trash.height / 2)) < 4]; }).every(row => row.every(Boolean))), true, 'the model rows are one line on a phone');
     await shot('phone', PHONE);
     await page.setViewport(DESKTOP);
 
