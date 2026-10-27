@@ -5,7 +5,7 @@ import { UsagesSettings } from './pages/usages/page.js';
 import { createProjectSettingsSource } from './project-settings-source.js';
 import { RoleSettings } from './pages/roles/page.js';
 import { ProjectSettings } from './project-settings.js';
-import { MachinesSettings } from './machines.js';
+import { MachinesSettings } from './pages/machines/page.js';
 import { HarnessSettings } from './pages/harnesses/page.js';
 import { MacroSettings } from './pages/macros/page.js';
 import { UsersSettings } from './pages/users/page.js';
@@ -21,7 +21,7 @@ export class SettingsPanel {
     this.project = new ProjectSettings(this.projectSource, projectContext);
     this.projectContext = projectContext;
     this.roleSettings = new RoleSettings();
-    this.machinesSettings = new MachinesSettings();
+    this.machinesSettings = new MachinesSettings(document.querySelector('#settings-machines'), document.querySelector('#machine-pair-dialog'));
     this.notifications = notifications;
     this.dialog = document.querySelector('#settings-dialog');
     this.usersSettings = new UsersSettings(this.dialog, projectContext);
@@ -132,7 +132,7 @@ export class SettingsPanel {
     if (section === 'users') this.usersSettings.open();
     if (notifications) this.notificationSettings.open();
     if (section === 'roles') this.roleSettings.open();
-    if (section === 'machines') this.machinesSettings.load();
+    if (section === 'machines') this.machinesSettings.open();
     if (section === 'harnesses') this.harnessSettings.open();
     if (section === 'macros') this.macroSettings.open();
     if (section === 'prompts') this.promptSettings.open();

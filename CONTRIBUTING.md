@@ -198,7 +198,7 @@ the import map, so each module has exactly one URL.
   `request` helper every call uses; `events.js` is the live event stream.
   Main areas: `sidebar.js` (rooms), `chat.js` and `composer*.js` (messages and
   input), `inbox*.js` (the Inbox), `agents.js` and `room-members.js` (agent
-  cards and profile), `machines.js`, `settings*.js` and the `*-settings.js`
+  cards and profile), `settings*.js` and the `*-settings.js`
   pages (Settings), `setup.js` and `welcome.js` (first run), `preferences.js`
   (per-user preferences saved through `/api/me/preferences`).
   Shared UI pieces: `icon-button.js`, `dialogs.js`, `settings-row.js`,

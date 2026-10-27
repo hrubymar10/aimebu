@@ -6731,7 +6731,7 @@ async function main() {
       }
     });
     assert.deepEqual(overlapping, { failFirst: { title: 'Copied', error: '' }, successFirst: { title: 'Copy command', error: 'Copy failed. Select the command and copy it manually.' } }, 'the copy that settles last decides');
-    await first.evaluate(() => { document.querySelector('#machine-pair-error').textContent = ''; });
+    await first.evaluate(async () => { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => {} } }); document.querySelector('#machine-pair-copy').click(); await new Promise(resolve => setTimeout(resolve, 0)); delete navigator.clipboard; }); // a copy that works clears the error
     const token = pairCommand.match(/'(amp_[^']+)'$/)?.[1]; assert.ok(token);
     const paired = await first.evaluate(async token => {
       const response = await fetch('/api/machine-pairings/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
