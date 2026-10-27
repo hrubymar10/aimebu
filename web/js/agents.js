@@ -621,7 +621,7 @@ export class AgentsPanel {
     this.dialog.close();
     void this.sessionPicker.open({ projectID, machineID, machineName, launcherID, onPick: session => {
       void this.openSpawn({ resume: { kind: 'claude_session', session_id: session.id, tool: 'claude', resumable: true, cwd: session.cwd, title: session.title || '',
-        outside_folder: !!session.outside_folder, active: !!session.active, held_by: session.agent?.slug || '', machine_id: session.machine_id || machineID, launcher_id: session.launcher_id || '' } });
+        modified_at: session.modified_at || '', outside_folder: !!session.outside_folder, active: !!session.active, held_by: session.agent?.slug || '', machine_id: session.machine_id || machineID, launcher_id: session.launcher_id || '' } });
     } });
   }
   // The rooms a v1 agent can be started in: the project's open task rooms. Its history may be only in the home room (which keeps its own
@@ -803,6 +803,7 @@ export class AgentsPanel {
     const box = document.querySelector('#spawn-resume'), text = document.querySelector('#spawn-resume-text'), notes = document.querySelector('#spawn-resume-notes');
     const confirm = document.querySelector('#spawn-resume-confirm'), confirmLabel = document.querySelector('#spawn-resume-confirm-label');
     box.hidden = !resume;
+    document.querySelector('#spawn-resume-card').hidden = true;
     this.syncWorktreeOption();
     const continuing = resume?.kind === 'claude_session';
     // A v1 agent whose Claude Code session can be continued is offered the same choice: continue the original, or work on a copy.
@@ -823,10 +824,17 @@ export class AgentsPanel {
     confirmLabel.replaceChildren(confirm, document.createTextNode(continuing ? ' I closed this session in my terminal' : ' v1 is not running this session any more'));
     if (!resume) return;
     if (continuing) {
-      const named = `${resume.title ? `"${resume.title}" ` : ''}(${resume.session_id.slice(0, 8)})`;
+      // The session is a neutral card (its short id, its folder, when it was last used), not a box titled with whatever was typed first.
+      const card = document.querySelector('#spawn-resume-card');
+      card.hidden = false;
+      card.replaceChildren(...[['Session', resume.session_id.slice(0, 8), true], ['Folder', resume.cwd, true], ['Last active', resume.modified_at ? relativeTime(resume.modified_at) : 'unknown', false]].flatMap(([name, value, mono]) => {
+        const term = document.createElement('dt'); term.textContent = name;
+        const detail = document.createElement('dd'); if (mono) detail.className = 'mono'; detail.textContent = value;
+        return [term, detail];
+      }));
       text.textContent = forking
-        ? `This works on a copy of the Claude Code session ${named}, in ${resume.cwd}. The agent starts from everything said so far, and what it does goes to the copy: the original stays exactly as it is.`
-        : `This continues the Claude Code session ${named}, working in ${resume.cwd}. It carries on from where the session stopped, in the same transcript.`;
+        ? 'This works on a copy of the session. The agent starts from everything said so far, and what it does goes to the copy: the original stays exactly as it is.'
+        : 'This continues the session. It carries on from where it stopped, in the same transcript.';
       const lines = [];
       if (!this.spawnRoom()) lines.push('This project has no open task room to start it in.');
       if (resume.outside_folder) lines.push(`It works in ${resume.cwd}, outside the project folder, so the owner must approve it in the Inbox before it starts.`);

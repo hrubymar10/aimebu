@@ -1179,6 +1179,9 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .invite-dialog label { display: grid; gap: 4px; }
 .invite-dialog { width: min(440px, calc(100vw - 24px)); border-radius: 10px; padding: 20px; }
 .invite-dialog::backdrop { background: #0009; }
+/* Mentions as v1 draws them; a mention of the viewer is the amber highlight. */
+.mention { border-radius: 3px; font-weight: 500; }
+.mention.mention-self { color: #111827; background: #e3a008; box-shadow: inset 0 0 0 1px rgba(17, 24, 39, .22); }
 .message-bubble:hover { border-color: var(--border-hover); }
 .message.self .message-bubble { background: var(--bg-tertiary); border-color: var(--green-text); }
 .message-body { margin: 0; }
@@ -1204,13 +1207,13 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
    text so they never take the name's width; on touch they sit on their own line. Clicking the row opens its detail. */
 .agent-card { position: relative; cursor: pointer; padding: 7px 8px; }
 .agent-card .agent-title { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: nowrap; min-height: 17px; }
-.agent-card .agent-identity { flex: 1 1 auto; min-width: 12ch; display: block; overflow: hidden; }
+.agent-card .agent-identity { flex: 1 1 auto; min-width: min(12ch, 100%); display: block; overflow: hidden; }
 .agent-card .agent-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.2px; font-weight: 600; line-height: 1.5; }
 /* The harness icon (or the person icon) is always there, between the presence dot and the role emoji. */
 /* v1 drew vibe and cline in white, which vanishes on a light surface; there the glyph is turned dark. Message headers use the same two files. */
 [data-theme$="light"] :is(.agent-harness-icon, .msg-sender-icon)[src$="/vibe.svg"], [data-theme$="light"] :is(.agent-harness-icon, .msg-sender-icon)[src$="/cline.svg"], [data-theme$="light"] :is(.agent-harness-icon, .msg-sender-icon)[src$="/human.svg"] { filter: invert(1); }
 .agent-card .agent-harness-icon { flex: 0 0 auto; width: 14px; height: 14px; opacity: .75; }
-.agent-card .agent-state { flex: 0 0 auto; gap: 5px; margin: 0; padding: 0; border: 0; background: none; color: var(--state-color, var(--text-muted)); font: 500 11px/1.2 var(--font-sans); white-space: nowrap; }
+.agent-card .agent-state { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; gap: 5px; margin: 0; padding: 0; border: 0; background: none; color: var(--state-color, var(--text-muted)); font: 500 11px/1.2 var(--font-sans); white-space: nowrap; }
 .agent-card .agent-state::before { display: none; }
 .agent-card .agent-role, .agent-card .agent-role-update { display: none; }
 .agent-card.expanded .agent-title { flex-wrap: wrap; }
@@ -2297,7 +2300,6 @@ dialog:focus, dialog:focus-visible { outline: none; }
 }
 
 /* The project of an agent in the @-list, shown dim after its name; it is not part of what is inserted. */
-.mention-commands .mention-project { margin-left: 1px; color: var(--text-muted); font-weight: 400; }
 /* First-run theme step: each tile carries its own data-theme, so it paints in that theme's colours. Dark is the :root default and
    has no attribute value elsewhere, so its tile repeats the few colours the preview uses. */
 .theme-step section { width: min(100%, 720px); padding: 28px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 16px 42px var(--overlay-shadow); }
@@ -2386,11 +2388,17 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .prompt-shipped { margin-top: 6px; color: var(--text-secondary); font-size: .9em; }
 .prompt-shipped p { margin: 6px 0 0; white-space: pre-wrap; }
 .prompt-preview { max-height: 320px; overflow: auto; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); white-space: pre-wrap; font-size: .85em; }
-.spawn-resume { display: grid; gap: 6px; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--accent-border); border-radius: 6px; background: var(--accent-dim); font-size: 13px; }
+.spawn-resume { display: grid; gap: 8px; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); font-size: 13px; }
+/* The session being continued, as a plain card: label and value, the id and the folder in the mono face. */
+.spawn-resume .spawn-resume-card { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 12px; margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); font-size: 12px; }
+.spawn-resume .spawn-resume-card[hidden] { display: none; }
+.spawn-resume-card dt { color: var(--text-muted); }
+.spawn-resume-card dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--text-primary); }
+.spawn-resume-card dd.mono { font-family: var(--font-mono); }
 .spawn-resume p { margin: 0; color: var(--text-primary); }
 .spawn-resume .spawn-resume-notes { color: var(--text-secondary); }
-.spawn-resume .spawn-resume-mode { display: grid; gap: 4px; margin: 0; padding: 0; border: 0; }
-.spawn-resume .spawn-resume-mode legend { padding: 0; color: var(--text-secondary); }
+.spawn-resume .spawn-resume-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; margin: 0; padding: 0; border: 0; }
+.spawn-resume .spawn-resume-mode legend { padding: 0; margin-bottom: 2px; color: var(--text-secondary); }
 .spawn-resume .spawn-resume-mode label { display: flex; gap: 6px; align-items: center; }
 .spawn-resume .spawn-resume-mode[hidden] { display: none; }
 .spawn-resume[hidden] { display: none; }

@@ -2789,8 +2789,11 @@ async function main() {
         name: document.querySelector('.spawn-name').hidden, startIn: !document.querySelector('#spawn-start-in').hidden, room: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent,
         sessions: document.querySelector('#spawn-sessions').hidden, worktree: document.querySelector('.spawn-worktree-option').hidden,
         mode: document.querySelector('#spawn-resume-mode').hidden ? 'hidden' : document.querySelector('#spawn-form [name=resume_mode]:checked').value,
-      })), { title: 'Continue a Claude Code session', text: `This continues the Claude Code session "Fix the login bug" (11111111), working in ${gitRoot}. It carries on from where the session stopped, in the same transcript.`,
+      })), { title: 'Continue a Claude Code session', text: 'This continues the session. It carries on from where it stopped, in the same transcript.',
         confirm: true, name: false, startIn: true, room: 'A new room for this session', sessions: true, worktree: true, mode: 'continue' }, 'the Spawn dialog opens for the picked session, continuing by default');
+      // The session is a neutral card: its short id, its folder and when it was last used, in a compact box; no title from the first prompt.
+      assert.deepEqual(await first.evaluate(() => { const box = document.querySelector('#spawn-resume'), card = document.querySelector('#spawn-resume-card'), modes = [...document.querySelectorAll('#spawn-resume-mode label')].map(label => label.getBoundingClientRect().top); return { rows: [...card.querySelectorAll('dt')].map(term => [term.textContent, term.nextElementSibling.textContent.length > 0]), id: card.querySelector('dd').textContent, oneRow: new Set(modes.map(top => Math.round(top))).size === 1, titled: box.textContent.includes('Fix the login bug') }; }),
+        { rows: [['Session', true], ['Folder', true], ['Last active', true]], id: '11111111', oneRow: true, titled: false }, 'the picked session is shown as a neutral card, and the Continue and Fork choice is one compact row');
       await domClick(first, '#spawn-cancel');
       await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
       // A session a live process has open asks for a confirmation before it can be continued.
@@ -2806,7 +2809,7 @@ async function main() {
       await first.evaluate(() => { const radio = document.querySelector('#spawn-form [name=resume_mode][value=fork]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); });
       assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
         text: document.querySelector('#spawn-resume-text').textContent.slice(0, 60), notes: document.querySelector('#spawn-resume-notes').textContent.includes('Close it first') })),
-        { title: 'Work on a copy of a Claude Code session', confirm: true, text: 'This works on a copy of the Claude Code session "Open in a t', notes: false });
+        { title: 'Work on a copy of a Claude Code session', confirm: true, text: 'This works on a copy of the session. The agent starts from ev', notes: false });
       await first.evaluate(() => { const radio = document.querySelector('#spawn-form [name=resume_mode][value=continue]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); });
       assert.equal(await first.$eval('#spawn-resume-confirm-label', el => el.hidden), false, 'continuing asks again for the confirmation');
       await domClick(first, '#spawn-cancel');
@@ -4122,6 +4125,7 @@ async function main() {
     assert.deepEqual(await popupItems(), ['@everyone', '@all', '@channel', '@here', '@humans', '@ais', '@reviewer', '@worker', '@ada', '@bert', '@owner'], 'mention popup lists groups, roles, then members, project humans included');
     await agentPage.keyboard.type('a');
     assert.deepEqual(await popupItems(), ['@all', '@ais', '@ada']);
+    assert.equal(await agentPage.$$eval('.mention-commands .mention-project', nodes => nodes.length), 0, 'a member is listed by its slug alone unless another member shares it');
     await agentPage.keyboard.press('ArrowDown'); await agentPage.keyboard.press('ArrowUp'); await agentPage.keyboard.press('ArrowUp');
     assert.equal(await agentPage.$eval('.mention-commands .quick-command[aria-selected=true] strong', el => el.textContent), '@ada', 'arrow keys wrap the selection');
     await agentPage.keyboard.press('Escape');
@@ -4146,9 +4150,12 @@ async function main() {
         const { MentionIndex, highlightMentions } = await import('/js/mentions.js');
         const host = document.createElement('div'); host.innerHTML = '<p>@owner and @ada and @bert and @here</p>'; document.body.append(host);
         highlightMentions(host, new MentionIndex([{ slug: 'ada', role_key: 'worker' }], 'proj-1', ['owner', 'bert'], [], 'Owner'));
-        const out = [...host.querySelectorAll('.mention')].map(node => [node.textContent, node.classList.contains('mention-self'), node.getAttribute('role')]); host.remove(); return out;
+        const out = [...host.querySelectorAll('.mention')].map(node => [node.textContent, node.classList.contains('mention-self'), node.getAttribute('role')]);
+        const [self, other] = host.querySelectorAll('.mention'), look = node => { const cs = getComputedStyle(node); return [cs.backgroundColor, cs.fontWeight]; };
+        const styles = [look(self), look(other)]; host.remove(); return [out, styles];
       });
-      assert.deepEqual(marked, [['@owner', true, null], ['@ada', false, 'button'], ['@bert', false, null], ['@here', false, null]], 'only a mention of the viewer is marked as theirs; only an agent opens a profile');
+      assert.deepEqual(marked[0], [['@owner', true, null], ['@ada', false, 'button'], ['@bert', false, null], ['@here', false, null]], 'only a mention of the viewer is marked as theirs; only an agent opens a profile');
+      assert.deepEqual([marked[1][0], marked[1][1][1]], [['rgb(227, 160, 8)', '500'], '500'], 'a mention reads as in v1: weight 500, the viewer\'s own in amber');
       // The qualified form names the agent even when a person's login shares its slug (the plain form is then ambiguous and not a mention).
       const qualified = await agentPage.evaluate(async () => {
         const { MentionIndex, highlightMentions } = await import('/js/mentions.js');
@@ -4677,6 +4684,16 @@ async function main() {
     // One line per member: the whole name is readable, the state sits on the same line, and the buttons only show on hover.
     const rowShape = await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => { const name = card.querySelector('.agent-name'), state = card.querySelector('.agent-state'), quick = card.querySelector('.agent-quick'); return { whole: name.scrollWidth <= name.clientWidth, wide: name.clientWidth >= 12 * 6, sameLine: Math.abs(name.getBoundingClientRect().top - state.getBoundingClientRect().top) < 8, quickRest: getComputedStyle(quick).opacity }; });
     assert.deepEqual(rowShape, { whole: true, wide: true, sameLine: true, quickRest: '0' }, `member row shape: ${JSON.stringify(rowShape)}`);
+    // The state ("working 0:12") stays inside its card whatever the width of the panel.
+    assert.deepEqual(await agentPage.evaluate(() => {
+      const panel = document.querySelector('#agents-panel'), before = panel.style.width, results = [];
+      for (const width of ['150px', '190px', '']) {
+        panel.style.width = width;
+        for (const card of document.querySelectorAll('#agents-list .agent-card')) { if (!card.offsetParent) continue; const box = card.getBoundingClientRect(), state = card.querySelector('.agent-state').getBoundingClientRect(); results.push(state.right <= box.right + 0.5 && state.left >= box.left - 0.5); }
+      }
+      panel.style.width = before;
+      return [results.length > 0, results.every(Boolean)];
+    }), [true, true], 'the state of an agent card never overflows the card');
     await agentPage.hover('[data-agent-id="agt_mock_worker"] .agent-name');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-quick', el => getComputedStyle(el).opacity), '1', 'hovering a member shows its buttons');
     await domClick(agentPage, '[data-agent-id="agt_mock_worker"] .agent-name');

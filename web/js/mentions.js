@@ -125,8 +125,8 @@ export class MentionAutocomplete {
     const match = this.index && this.match();
     this.items = match ? this.index.candidates(match.prefix) : [];
     if (!this.items.length) { this.close(); return; }
-    // An agent is always shown with its project ("@ada" then a dim "@project"); only the first part is what gets inserted.
-    this.list.show(this.items.map(item => ({ key: item.insertText, preview: item.preview, render: item.project && !item.insertText.slice(1).includes('@') ? node => { node.append(item.insertText); const project = document.createElement('span'); project.className = 'mention-project'; project.textContent = `@${item.project}`; node.append(project); } : undefined })));
+    // A member is listed by its slug alone; only when another member shares it is the full form (`@slug@project`) shown, as that is what gets inserted.
+    this.list.show(this.items.map(item => ({ key: item.insertText, preview: item.preview })));
   }
   keydown(event) { this.list.keydown(event); }
   pick(index) {
