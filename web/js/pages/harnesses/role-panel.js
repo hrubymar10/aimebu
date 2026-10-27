@@ -18,12 +18,12 @@ export function RolePanel({ roles, labelOf, store, run }) {
                 <span class="harness-role-mark">${roleMark(role)}</span>
                 <strong>${role.label}</strong>
                 <code class="harness-role-key">${role.role_key}</code>
-                <select
+                <label class="harness-role-mode" hidden=${items.length < 2}>Pick order<select
                   aria-label=${`Pick order for ${role.label}`}
                   title="How the next default is picked"
                   value=${role.pick_mode || 'in_turn'}
                   onChange=${event => run(() => store.setMode(role, event.currentTarget.value))}
-                >${PICK_MODES.map(([value, label]) => html`<option value=${value} key=${value}>${label}</option>`)}</select>
+                >${PICK_MODES.map(([value, label]) => html`<option value=${value} key=${value}>${label}</option>`)}</select></label>
               </div>
               <ol class="harness-role-order">
                 ${!items.length && html`<li class="settings-desc harness-role-empty">No defaults</li>`}

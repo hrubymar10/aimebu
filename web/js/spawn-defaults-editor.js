@@ -55,7 +55,8 @@ export class SpawnDefaultsEditor {
       const option = document.createElement('option'); option.value = value; option.textContent = label; mode.append(option);
     }
     mode.value = this.mode; mode.onchange = () => { this.mode = mode.value; };
-    group.append(settingRow('Pick order', 'Choose in turn or randomly from available agents.', mode, 'mode'));
+    // The order matters only when there is more than one default to choose between.
+    if (this.items.length > 1) group.append(settingRow('Pick order', 'Choose in turn or randomly from available agents.', mode, 'mode'));
     this.items.forEach((item, index) => {
       const select = document.createElement('select'); select.setAttribute('aria-label', `Default agent ${index + 1} harness and model`);
       const selected = `${item.launcher_id}:${item.model}`;

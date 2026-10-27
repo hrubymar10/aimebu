@@ -36,7 +36,9 @@ export function rolePanel({ roles, labelOf, store, report, refresh }) {
     const mode = document.createElement('select'); mode.setAttribute('aria-label', `Pick order for ${role.label}`); mode.title = 'How the next default is picked';
     for (const [value, label] of PICK_MODES) { const option = node('option', '', label); option.value = value; mode.append(option); }
     mode.value = role.pick_mode || 'in_turn'; mode.onchange = () => run(() => store.setMode(role, mode.value));
-    title.append(mode);
+    // Labelled, and shown only when there is more than one default to choose between.
+    const pick = node('label', 'harness-role-mode'); pick.append(document.createTextNode('Pick order'), mode); pick.hidden = (role.default_agents || []).length < 2;
+    title.append(pick);
     const order = node('ol', 'harness-role-order');
     const items = role.default_agents || [];
     if (!items.length) order.append(node('li', 'settings-desc harness-role-empty', 'No defaults'));

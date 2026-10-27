@@ -98,7 +98,7 @@ const FIXTURE = async () => {
     settings.prefix = ''; settings.roleViews = new Set(); settings.otherHarnesses = new Map(); settings.drafts = new Map(); settings.selectedHarness = ''; settings.sequence = 0; settings.modelFailures = new Map();
     settings.roleDefaults = new RoleDefaults(async () => { throw new Error('the fixture has no server'); });
     settings.roleDefaults.roles = [
-      { id: 'role_lead_default', role_key: 'lead', label: 'Lead', emoji: '🧭', default_agents: [], pick_mode: 'in_turn', rev: 0, cardinality: 'singleton' },
+      { id: 'role_lead_default', role_key: 'lead', label: 'Lead', emoji: '👑', default_agents: [], pick_mode: 'in_turn', rev: 0, cardinality: 'singleton' },
       { id: 'role_worker_default', role_key: 'worker', label: 'Worker', emoji: '🛠️', default_agents: [{ launcher_id: 'mln_native', model: 'gpt-6-sol' }, { launcher_id: 'mln_native', model: 'gpt-6-luna' }], pick_mode: 'randomly', rev: 2, cardinality: 'multi' },
       { id: 'role_reviewer_default', role_key: 'reviewer', label: 'Reviewer', emoji: '🔎', default_agents: [{ launcher_id: 'mln_native', model: 'gpt-6-sol' }], pick_mode: 'in_turn', rev: 1, cardinality: 'multi' },
     ];
@@ -155,8 +155,8 @@ const FIXTURE = async () => {
   const { RoomMembers } = await import('/js/room-members.js');
   new RoomMembers(document.querySelector('#room-member-list')).render({
     humans: [{ id: 'u1', login: 'ada', role: 'owner' }, { id: 'u2', login: 'bert', role: 'viewer' }],
-    agents: [{ id: 'a1', slug: 'tessa', role_key: 'lead', role_label: 'Lead', role_emoji: '🧭', singleton: true, desired: 'active', observed: 'in_turn' }, { id: 'a2', slug: 'drew', role_key: 'worker', role_label: 'Worker', role_emoji: '🛠', desired: 'stopped', observed: 'stopped', role_deleted: true }],
-    singletons: [{ role_key: 'lead', label: 'Lead', emoji: '🧭', held_by: { agent_id: 'a1', slug: 'tessa', in_this_room: true } }, { role_key: 'scribe', label: 'Scribe', emoji: '', held_by: null }],
+    agents: [{ id: 'a1', slug: 'tessa', role_key: 'lead', role_label: 'Lead', role_emoji: '👑', singleton: true, desired: 'active', observed: 'in_turn' }, { id: 'a2', slug: 'drew', role_key: 'worker', role_label: 'Worker', role_emoji: '🛠', desired: 'stopped', observed: 'stopped', role_deleted: true }],
+    singletons: [{ role_key: 'lead', label: 'Lead', emoji: '👑', held_by: { agent_id: 'a1', slug: 'tessa', in_this_room: true } }, { role_key: 'scribe', label: 'Scribe', emoji: '', held_by: null }],
   });
   // The usages column, rendered by the real popover over the mock snapshots (open, so the audits see it).
   const { UsagesPopover } = await import('/js/usages-popover.js'), { MockUsagesSource } = await import('/js/usages-source.js');

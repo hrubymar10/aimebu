@@ -1,6 +1,6 @@
 import { request } from './api.js';
 import { confirmDialog } from './dialogs.js';
-import { setGlyph } from './icon-button.js';
+import { setGlyph, iconButton } from './icon-button.js';
 import { SpawnDefaultsEditor } from './spawn-defaults-editor.js';
 import { ROLE_DEFAULTS_CHANGED } from './role-defaults.js';
 
@@ -23,6 +23,11 @@ export class RoleSettings {
     newRole.onclick = () => this.editRole('');
     // The editor is shown only while a role is being edited or created; Cancel, Esc or the open card's button close it.
     this.roleForm.hidden = true;
+    // A heading that names the role being edited, with a ✕ on top: the form is its own block below the cards, set apart by a rule.
+    const heading = document.createElement('div'); heading.className = 'role-editor-head';
+    this.roleHeading = document.createElement('h4'); this.roleHeading.id = 'role-editor-title';
+    const close = iconButton('close', 'Close without saving', { className: 'role-editor-close' }); close.onclick = () => this.cancelRole();
+    heading.append(this.roleHeading, close); this.roleForm.prepend(heading); this.roleForm.setAttribute('aria-labelledby', 'role-editor-title');
     $('#role-cancel').onclick = () => this.cancelRole();
     this.roleForm.addEventListener('keydown', event => {
       if (event.key !== 'Escape' || event.isComposing) return;
@@ -127,6 +132,7 @@ export class RoleSettings {
     for (const key of ['role_key', 'label', 'emoji', 'body', 'cardinality']) this.roleForm.elements[key].value = role?.[key] || (key === 'cardinality' ? 'multi' : '');
     for (const key of ['cap_is_lead', 'cap_can_spawn', 'cap_singleton_writer']) this.roleForm.elements[key].checked = !!role?.[key];
     this.roleForm.elements.role_key.readOnly = !!role;
+    this.roleHeading.textContent = role ? `Editing ${role.label}` : 'New role';
     this.showExtends(role);
     this.defaults.set(role?.default_agents, role?.pick_mode);
     // The text an agent gets once the parent's is added in front (only a saved role has one to show).
@@ -165,8 +171,10 @@ export class RoleSettings {
     try {
       const saved = await request(data.id ? '/api/roles/' + data.id : '/api/roles',
         { method: data.id ? 'PUT' : 'POST', body: data });
-      await this.loadRoles(saved.id);
+      // A saved role closes its form; focus goes back to the role's card, where its Edit button is.
+      await this.loadRoles();
       this.changed();
+      [...this.roleCards.querySelectorAll('.role-card')].find(card => card.dataset.roleId === saved.id)?.querySelector('.role-card-edit')?.focus();
     } catch (error) { this.error(error.message); }
   }
   async resetRole() {

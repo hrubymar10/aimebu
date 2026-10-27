@@ -1520,6 +1520,11 @@ CREATE TABLE legacy_agent_session_history (
   last_seen TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (agent_id, harness_session_id)
 );
+`}, {89, `
+-- The lead role's emoji is a crown, not a compass. Only a role that still carries the compass it was created with changes: an emoji the owner
+-- picked (anything else, including the owner choosing the compass again before this ran) is not told apart from the shipped one, but nothing
+-- else is touched.
+UPDATE role SET emoji='👑' WHERE role_key='lead' AND emoji='🧭' AND deleted_at IS NULL;
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

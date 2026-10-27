@@ -134,6 +134,10 @@ async function main(variant) {
     assert.equal(await page.$eval(box('sonnet', 'Worker', 'Sonnet'), el => el.checked), true, 'a model a role defaults to is switched on');
     assert.equal(await page.$eval(box('opus', 'Reviewer', 'Opus'), el => el.checked), true);
     assert.equal(await page.$eval(box('haiku', 'Worker', 'Haiku'), el => el.checked), false);
+    // One default is nothing to order: the pick order is labelled and shown only from two.
+    const modeLabel = key => page.$eval(`#harness-roles-host .harness-role-card[data-role-key="${key}"] .harness-role-mode`, label => [label.hidden, label.textContent.trim().startsWith('Pick order')]);
+    assert.deepEqual(await modeLabel('reviewer'), [true, true], 'a role with one default shows no pick order');
+    assert.deepEqual(await modeLabel('worker'), [false, true], 'a role with several defaults shows its labelled pick order');
     // Switch Reviewer on for Sonnet: it saves on its own and shows in the role order panel at once.
     await page.$eval(box('sonnet', 'Reviewer', 'Sonnet'), el => el.click());
     await page.waitForFunction(() => [...document.querySelectorAll('#harness-roles-host .harness-role-card[data-role-key="reviewer"] .harness-role-entry')].length === 2);
@@ -213,9 +217,11 @@ async function main(variant) {
     await page.waitForFunction(() => document.querySelector('#roles-cards .role-card'));
     await page.$eval('#roles-cards .role-card[data-role-key="worker"] .role-card-edit', button => button.click());
     await page.waitForFunction(() => document.querySelectorAll('#role-editor .spawn-default-row').length === 3);
+    assert.equal(await page.$('#role-editor .spawn-defaults select[aria-label="Default agent selection mode"]') !== null, true, 'with several defaults the role form offers Pick order');
     await page.$eval('#role-editor .spawn-default-row:last-of-type button[aria-label^="Remove default agent"]', button => button.click());
     await page.$eval('#role-editor button[type=submit]', button => button.click());
-    await page.waitForFunction(() => document.querySelector('#roles-error').textContent === '' && document.querySelectorAll('#role-editor .spawn-default-row').length === 2);
+    // Saving closes the form.
+    await page.waitForFunction(() => document.querySelector('#roles-error').textContent === '' && document.querySelector('#role-editor').hidden);
     await domClick('#settings-harnesses-tab');
     await page.waitForFunction(() => document.querySelector('#harness-roles-host .harness-role-card[data-role-key="worker"]')?.querySelectorAll('.harness-role-entry').length === 2, { timeout: 20000 });
     assert.deepEqual((await state()).defaults.worker, ['gpt-6-sol', 'sonnet'], 'a save in Roles shows on the Harnesses page');

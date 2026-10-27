@@ -177,7 +177,7 @@ func TestRoomMembersSingletonHolders(t *testing.T) {
 	if want := []string{"Courier", "Gatekeeper", "Lead", "Planner", "Scribe"}; !reflect.DeepEqual(order, want) {
 		t.Fatalf("singleton roles = %v, want %v (%+v)", order, want, got.Singletons)
 	}
-	if h := byKey["lead"].HeldBy; h == nil || h.Slug != "tessa" || !h.InThisRoom || byKey["lead"].Emoji != "🧭" {
+	if h := byKey["lead"].HeldBy; h == nil || h.Slug != "tessa" || !h.InThisRoom || byKey["lead"].Emoji != "👑" {
 		t.Fatalf("lead = %+v", byKey["lead"])
 	}
 	if h := byKey["planner"].HeldBy; h == nil || h.Slug != "ravi" || h.InThisRoom {

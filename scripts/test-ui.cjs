@@ -6027,12 +6027,15 @@ async function main() {
     await domClick(first, '#role-editor button[type=submit]');
     await first.waitForFunction(() => [...document.querySelectorAll('#roles-list option')].some(el => el.textContent.includes('Analyst')) || !!document.querySelector('#roles-error')?.textContent);
     assert.equal(await first.$eval('#roles-error', el => el.textContent), '');
-    // Global selection mode is editable with a keyboard-operable native select.
-    await first.waitForFunction(() => document.querySelector('#roles-list').dataset.loaded === '1' && !!document.querySelector('#roles-cards [data-role-key="analyst"]'));
-    const analystCardBeforeSave = await first.$('#roles-cards [data-role-key="analyst"]');
-    await first.select('#role-editor .spawn-defaults select[aria-label="Default agent selection mode"]', 'randomly');
-    await domClick(first, '#role-editor button[type=submit]');
-    await first.waitForFunction(card => !card.isConnected && document.querySelector('#roles-list').dataset.loaded === '1', {}, analystCardBeforeSave);
+    // A saved role closes its form and gives focus back to the role's Edit button.
+    await first.waitForFunction(() => document.querySelector('#roles-list').dataset.loaded === '1' && !!document.querySelector('#roles-cards [data-role-key="analyst"]') && document.querySelector('#role-editor').hidden);
+    assert.equal(await first.evaluate(() => document.activeElement === document.querySelector('#roles-cards [data-role-key="analyst"] .role-card-edit')), true, 'saving a role closes its form and focuses its Edit button');
+    // The form names the role being edited and has a ✕ on top; with fewer than two default agents there is nothing to order, so no Pick order row.
+    await domClick(first, '#roles-cards [data-role-key="analyst"] .role-card-edit');
+    assert.deepEqual(await first.evaluate(() => ({ heading: document.querySelector('#role-editor-title').textContent, labelled: document.querySelector('#role-editor').getAttribute('aria-labelledby'), close: document.querySelector('#role-editor .role-editor-close')?.title, pick: !!document.querySelector('#role-editor .spawn-defaults select[aria-label="Default agent selection mode"]'), rule: getComputedStyle(document.querySelector('#role-editor')).borderTopWidth })), { heading: 'Editing Analyst', labelled: 'role-editor-title', close: 'Close without saving', pick: false, rule: '1px' }, 'the role form has its own heading, a top close button, a separating rule and no Pick order with no defaults');
+    await domClick(first, '#role-editor .role-editor-close');
+    await first.waitForFunction(() => document.querySelector('#role-editor').hidden);
+    assert.equal(await first.evaluate(async () => { const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': (await (await fetch('/api/me')).json()).csrf_token }; const role = (await (await fetch('/api/roles')).json()).find(item => item.role_key === 'analyst'); return (await fetch(`/api/roles/${role.id}`, { method: 'PUT', headers, body: JSON.stringify({ ...role, pick_mode: 'randomly' }) })).status; }), 200);
     assert.equal(await first.evaluate(async () => (await (await fetch('/api/roles')).json()).find(role => role.role_key === 'analyst')?.pick_mode), 'randomly');
     // Roles can extend other roles, and a built-in role can be reset: the built-in specialists extend reviewer.
     {
@@ -6085,7 +6088,9 @@ async function main() {
       assert.deepEqual(await first.$eval('#role-reset', el => [el.getAttribute('aria-label'), el.title.startsWith('Reset to default'), !!el.querySelector('.icon-mask-refresh'), el.textContent]), ['Reset to default', true, true, '']);
       // Edit it, then reset it to what shipped.
       await first.locator('#role-editor [name=body]').fill('my own words'); await saveRole();
-      // The editor shows what was typed at once; the saved role (with its new revision and effective text) is back when the effective text has it.
+      // Saving closes the form; opening the role again shows the saved text with its effective text.
+      await first.waitForFunction(() => document.querySelector('#role-editor').hidden);
+      await pick('sec-reviewer');
       await first.waitForFunction(() => document.querySelector('#role-resolved').value.includes('my own words'));
       assert.equal(await first.$eval('#roles-error', el => el.textContent), '');
       await domClick(first, '#role-reset');
@@ -6097,6 +6102,8 @@ async function main() {
         await first.locator('#role-editor [name=role_key]').fill(key); await first.locator('#role-editor [name=label]').fill(label); await first.locator('#role-editor [name=body]').fill(body);
         await first.select('#role-extends', extendsKey); await saveRole();
         await first.waitForFunction(text => [...document.querySelectorAll('#roles-list option')].some(option => option.textContent.includes(text)) || !!document.querySelector('#roles-error')?.textContent, {}, `(${key})`);
+        await first.waitForFunction(() => document.querySelector('#role-editor').hidden || !!document.querySelector('#roles-error')?.textContent);
+        await pick(key); // a saved role's form is closed: open it again
       };
       await create('qasmoke', 'QA smoke', 'qa words', 'reviewer');
       const qa = await form();
