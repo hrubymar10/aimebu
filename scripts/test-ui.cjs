@@ -3363,8 +3363,8 @@ async function main() {
           const hostHome = await setupPage.evaluate(async () => (await (await fetch('/api/me')).json()).host_home);
           assert.ok(hostHome && hostHome.startsWith('/'), 'the owner is told the host home folder');
           assert.equal(await setupPage.$eval('#onboarding-form [name=folder]', input => input.value), `${hostHome}/`, 'an empty folder field starts at the home folder');
-          await setupPage.$eval('#onboarding-form [name=folder]', input => { input.value = ''; });
-          await setupPage.type('#onboarding-form [name=folder]', path.join(tmp, 'demo-folder'));
+          // Typing a whole path over the start replaces it (it is not appended: .../home//srv/work); the keystrokes go to the focused field.
+          await setupPage.keyboard.type(path.join(tmp, 'demo-folder'));
           await setupPage.$eval('#onboarding-form [name=name]', input => input.focus());
           await setupPage.$eval('#onboarding-form [name=folder]', input => input.focus());
           assert.equal(await setupPage.$eval('#onboarding-form [name=folder]', input => input.value), path.join(tmp, 'demo-folder'), 'a typed folder is not replaced when the field is focused again');
@@ -3384,6 +3384,23 @@ async function main() {
             const next = document.querySelector('#onboarding-harnesses-continue'), skip = document.querySelector('#onboarding-harnesses-skip'), style = getComputedStyle(next);
             return { dashed: style.borderTopStyle, opacity: style.opacity, skipFirst: skip.getBoundingClientRect().right <= next.getBoundingClientRect().left, primary: next.classList.contains('btn-primary'), skipPrimary: skip.classList.contains('btn-primary') };
           }), { dashed: 'dashed', opacity: '1', skipFirst: true, primary: true, skipPrimary: false }, 'a disabled Continue is legible; Skip is secondary and on its left');
+          // A detected-harness row in this step is a box beside its text (the first-run form's block label and full-width input rules do not
+          // apply to it), and in a window shorter than the step Skip and Continue stay at its bottom edge.
+          const viewportBefore = setupPage.viewport();
+          await setupPage.setViewport({ ...viewportBefore, width: 900, height: 520 });
+          const stepGeometry = await setupPage.evaluate(() => {
+            const host = document.querySelector('#onboarding-harnesses-host'), probe = document.createElement('div');
+            probe.innerHTML = '<label class="machine-harness-enabled harness-detect-row"><input type="checkbox"><span>Claude Code · /usr/bin/claude · 2.1</span></label>'.repeat(14);
+            host.append(probe);
+            const row = probe.querySelector('label'), box = row.querySelector('input'), text = row.querySelector('span'), section = document.querySelector('#onboarding-harnesses');
+            const boxRect = box.getBoundingClientRect(), textRect = text.getBoundingClientRect(), actions = document.querySelector('#onboarding-harnesses .onboarding-actions').getBoundingClientRect(), pane = section.getBoundingClientRect();
+            const out = { boxSize: [Math.round(boxRect.width), Math.round(boxRect.height)], gap: Math.round(textRect.left - boxRect.right), centered: Math.abs((boxRect.top + boxRect.bottom) / 2 - (textRect.top + textRect.bottom) / 2) <= 2,
+              scrolls: section.scrollHeight > section.clientHeight, actionsInView: actions.bottom <= pane.bottom + 1 && actions.top >= pane.top, sticky: getComputedStyle(document.querySelector('#onboarding-harnesses .onboarding-actions')).position };
+            probe.remove();
+            return out;
+          });
+          await setupPage.setViewport(viewportBefore);
+          assert.deepEqual(stepGeometry, { boxSize: [18, 18], gap: 8, centered: true, scrolls: true, actionsInView: true, sticky: 'sticky' }, 'the detect rows are inline and Skip/Continue stay in view of a short window');
           // Skip asks first: Cancel stays on the step, OK leaves it.
           await setupPage.click('#onboarding-harnesses-skip');
           await setupPage.waitForSelector('#app-dialog[open]');
