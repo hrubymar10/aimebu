@@ -186,9 +186,30 @@ async function main() {
         { caption: 'Settings', captionFirst: true, title: 'General', selected: 'General', closeGlyph: 'icon', closeQuiet: true, navWidth: 180, fullHeight: true, selectedStyle: ['rgba(0, 0, 0, 0)', 'solid', '1px'] }, 'the Settings dialog follows v1');
       const nav = await settingsNav(page);
       if (nav.items.includes('AGENTS')) { // the owner and admins: both groups, the AGENTS caption a group gap below Macros
-        assert.deepEqual(nav.items.filter(item => item !== 'usages' && item !== 'users'), ['SETTINGS', 'general', 'project', 'notifications', 'roles', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], 'Settings nav groups');
+        assert.deepEqual(nav.items.filter(item => item !== 'usages' && item !== 'users'), ['SETTINGS', 'general', 'notifications', 'roles', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], 'Settings nav groups');
         assert.ok(nav.sameStyle && !nav.focusable && nav.gap >= nav.tabGap + 14, `the AGENTS caption looks like SETTINGS, takes no focus and opens a gap: ${JSON.stringify(nav)}`);
       }
+    }
+    // Closes the room settings if they are open (a deleted project's home room takes its settings with it).
+    const closeRoomInfo = page => page.evaluate(() => { const dialog = document.querySelector('#room-info-dialog'); if (dialog.open) dialog.querySelector('#room-info-close').click(); });
+    // The project's own settings are the home room's (Room settings → Project; there is no Settings → Project page). Selects a project's home
+    // room (archived projects open too) and opens its settings, closing Settings first if it is open.
+    async function openProjectSettings(page, projectID) {
+      if (await page.evaluate(() => document.querySelector('#settings-dialog').open)) await domClick(page, '#settings-close');
+      if (await page.evaluate(() => document.querySelector('#room-info-dialog').open)) await domClick(page, '#room-info-close');
+      const home = await page.evaluate(async id => (await (await fetch(`/api/projects/${id}/rooms`)).json()).find(room => room.kind === 'home').id, projectID);
+      await page.evaluate(() => document.querySelectorAll('.archived-projects, .archived-project').forEach(details => { details.open = true; }));
+      await domClick(page, `[data-room-id="${home}"] .room-name`);
+      await page.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, home);
+      await domClick(page, '#room-info');
+      await page.waitForSelector('#room-info-dialog[open] #room-project:not([hidden]) #project-details');
+      return home;
+    }
+    // Back to a Settings tab from a home room's settings (or open Settings on it): leaves the room settings first.
+    async function settingsTab(page, tab) {
+      if (await page.evaluate(() => document.querySelector('#room-info-dialog').open)) await domClick(page, '#room-info-close');
+      if (!await page.evaluate(() => document.querySelector('#settings-dialog').open)) await domClick(page, '#settings-toggle');
+      await domClick(page, tab);
     }
     // The owner's first sign-in on a new install shows the welcome before the app: the art, then the name, then Continue, in bands
     // from top to bottom. The rest of the smoke signs in many times; the welcome is gone for good once Continue is pressed.
@@ -1718,7 +1739,7 @@ async function main() {
     assert.equal(Math.round(settingsSize.width), 760);
     assert.equal(Math.round(settingsSize.height), 720);
     assert.equal(Math.round(settingsSize.nav), 180);
-    for (const section of ['general', 'usages', 'project', 'notifications', 'roles', 'machines']) {
+    for (const section of ['general', 'usages', 'notifications', 'roles', 'machines']) {
       await first.click(`#settings-${section}-tab`);
       assert.equal(await first.$eval(`#settings-${section}`, el => !el.hidden), true, `${section} settings section visible`);
       assert.equal(await first.$eval(`#settings-${section}`, el => el.scrollWidth <= el.clientWidth + 2), true, `${section} settings fits pane`);
@@ -2860,7 +2881,7 @@ async function main() {
       await domClick(first, '#spawn-cancel');
       await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
       assert.equal(await first.$eval('#spawn-form h2', el => el.textContent), 'Spawn', 'closing the dialog restores the ordinary one');
-      // Bulk import (Settings → Project): the dialog is driven here with a scripted source, so no agent is really started. Roles are preset
+      // Bulk import (the home room's settings → Project): the dialog is driven here with a scripted source, so no agent is really started. Roles are preset
       // (the first session of a folder works, the rest review), what is ticked is started in order as copies in rooms of their own, and a
       // spawn limit stops the rest and says so.
       const imported = await first.evaluate(async projectID => {
@@ -3251,13 +3272,24 @@ async function main() {
           assert.deepEqual(await setupPage.evaluate(() => { const form = document.querySelector('#onboarding-form'), style = getComputedStyle(form); return { border: style.borderTopWidth, padding: style.paddingTop, tabs: getComputedStyle(document.querySelector('#mobile-tabs')).display }; }),
             { border: '0px', padding: '0px', tabs: 'none' }, 'the first project form is one card, not a card in a card, with no tab bar under it');
           await setupPage.type('#onboarding-form [name=name]', 'demo'); fs.mkdirSync(path.join(tmp, 'demo-folder'), { recursive: true });
+          // Focusing the empty folder field starts it at the machine's home folder (the owner is told it at sign-in); typed text is never replaced.
+          await setupPage.focus('#onboarding-form [name=folder]');
+          const hostHome = await setupPage.evaluate(async () => (await (await fetch('/api/me')).json()).host_home);
+          assert.ok(hostHome && hostHome.startsWith('/'), 'the owner is told the host home folder');
+          assert.equal(await setupPage.$eval('#onboarding-form [name=folder]', input => input.value), `${hostHome}/`, 'an empty folder field starts at the home folder');
+          await setupPage.$eval('#onboarding-form [name=folder]', input => { input.value = ''; });
           await setupPage.type('#onboarding-form [name=folder]', path.join(tmp, 'demo-folder'));
+          await setupPage.$eval('#onboarding-form [name=name]', input => input.focus());
+          await setupPage.$eval('#onboarding-form [name=folder]', input => input.focus());
+          assert.equal(await setupPage.$eval('#onboarding-form [name=folder]', input => input.value), path.join(tmp, 'demo-folder'), 'a typed folder is not replaced when the field is focused again');
           await setupPage.click('#onboarding-form button[type=submit]');
           // This server has no machine, so no harness: after the project the first run does not go on to a spawn that cannot start. It asks
           // for a harness first, with the Settings → Harnesses component itself, and offers Continue only once a harness has a model.
           await setupPage.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])');
-          await setupPage.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'general');
-          assert.equal(await setupPage.$eval('#app-view', view => view.classList.contains('no-room')), false, 'the empty state is gone once the general room opens');
+          // The first run opens the project's home room (where the leader is), not general.
+          await setupPage.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'demo');
+          assert.deepEqual(await setupPage.evaluate(async () => { const project = (await (await fetch('/api/projects')).json())[0]; const rooms = await (await fetch(`/api/projects/${project.id}/rooms`)).json(); return [rooms.find(room => room.kind === 'home').id === decodeURIComponent(location.hash.slice(1))]; }), [true], 'the home room is the selected room');
+          assert.equal(await setupPage.$eval('#app-view', view => view.classList.contains('no-room')), false, 'the empty state is gone once the home room opens');
           assert.deepEqual(await setupPage.evaluate(async () => (await (await fetch('/api/projects')).json()).map(project => project.name)), ['demo']);
           assert.deepEqual(await setupPage.evaluate(() => ({ continueDisabled: document.querySelector('#onboarding-harnesses-continue').disabled, status: document.querySelector('#onboarding-harness-status').textContent, embedded: !!document.querySelector('#onboarding-harnesses-host #onboarding-settings-harnesses'), repeatedIds: [...document.querySelectorAll('[id]')].map(node => node.id).filter((id, at, all) => all.indexOf(id) !== at) })),
             { continueDisabled: true, status: 'No harness with a model yet. Tick a detected harness, or add one by hand and give it a model.', embedded: true, repeatedIds: [] }, 'the Harnesses step embeds the Settings component, cannot continue without a harness and says what is missing');
@@ -3664,14 +3696,14 @@ async function main() {
       await settingsPage.evaluate(() => { for (const key of Object.keys(localStorage)) if (/^aimebu2:inbox-(sound|volume):/.test(key)) localStorage.removeItem(key); });
     }
     await domClick(settingsPage, '#notification-muted');
-    await settingsPage.click('#settings-project-tab');
+    await settingsPage.click('#settings-usages-tab');
     await settingsPage.click('#settings-notifications-tab');
     assert.equal(await settingsPage.$eval('#notification-muted', el => el.checked), true, 'mute choice did not persist');
     // Message text in desktop notifications: off by default, a labelled switch, kept on the server for the account.
     assert.equal(await settingsPage.$eval('#notification-text', el => [el.checked, el.labels[0]?.textContent, el.getAttribute('aria-describedby')].join('|')), 'false|Show message text in notifications|notification-text-desc', 'message text in notifications is off by default and labelled');
     await domClick(settingsPage, '#notification-text');
     await settingsPage.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.notification_text === '1');
-    await settingsPage.click('#settings-project-tab');
+    await settingsPage.click('#settings-usages-tab');
     await settingsPage.click('#settings-notifications-tab');
     assert.equal(await settingsPage.$eval('#notification-text', el => el.checked), true, 'the text choice did not persist');
     await domClick(settingsPage, '#notification-text');
@@ -3696,7 +3728,7 @@ async function main() {
       }, section));
     }
     for (const audit of rowAudit) { assert.deepEqual(audit.unrowed, [], `${audit.id}: settings fields outside a settings row`); assert.deepEqual(audit.noDesc, [], `${audit.id}: settings rows without a description`); assert.deepEqual(audit.noLabel, [], `${audit.id}: settings rows whose label does not point at their control`); assert.equal(audit.grouped, true, `${audit.id}: rows must sit in a settings group`); }
-    for (const id of ['settings-general', 'settings-usages', 'settings-project', 'settings-notifications', 'settings-roles', 'settings-macros']) assert.equal(rowAudit.some(item => item.id === id && item.rows > 0), true, `${id} was not audited or has no settings rows`);
+    for (const id of ['settings-general', 'settings-usages', 'settings-notifications', 'settings-roles', 'settings-macros']) assert.equal(rowAudit.some(item => item.id === id && item.rows > 0), true, `${id} was not audited or has no settings rows`);
     assert.deepEqual(rowAudit.find(item => item.id === 'settings-general').rowIds, ['theme-select', 'sidebar-preview', 'pref-system-events', 'pref-debug-inspector', 'message-expiry-seconds', 'settings-backup-export', 'settings-backup-file'], 'General holds the theme, the room-preview switch, the two chat switches, the message-expiry window, and the settings backup, all as rows');
     // One spacing system on every settings page, at desktop and phone width: each section label, card and action row ends before
     // the next one starts with a gap between them (no overlap, no touching), text inside a card keeps its padding from the card
@@ -3737,7 +3769,7 @@ async function main() {
         await settingsPage.setViewport({ width, height });
         // The owner's full nav in both groups; on a phone the captions are gone but the gap before Machines stays.
         const nav = await settingsNav(settingsPage);
-        assert.deepEqual(nav.items, ['SETTINGS', 'general', 'usages', 'project', 'notifications', 'roles', 'users', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], `Settings nav order at ${width}px`);
+        assert.deepEqual(nav.items, ['SETTINGS', 'general', 'usages', 'notifications', 'roles', 'users', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], `Settings nav order at ${width}px`);
         assert.ok(!nav.focusable && nav.gap >= nav.tabGap + 14, `the AGENTS group is set apart at ${width}px: ${JSON.stringify(nav)}`);
         for (const tab of tabs) {
           await domClick(settingsPage, `#${tab}`);
@@ -3984,16 +4016,19 @@ async function main() {
     await domClick(settingsPage, '#usage-token-auto-refresh');
     await settingsPage.waitForFunction(() => !document.querySelector('#usage-token-auto-refresh').checked && [...document.querySelectorAll('.usage-token-state')].every(el => el.textContent.endsWith(': off')));
     assert.equal(await settingsPage.$('.usage-credential-alerts'), null, 'no credential alerts once the refresher is off');
-    await settingsPage.click('#settings-project-tab');
+    // The project's settings are the home room's: auto-resume is off by default, and the saved toggle is still there when they are opened again.
+    const mockProjectID = await settingsPage.evaluate(async () => (await (await fetch('/api/projects')).json())[0].id);
+    await openProjectSettings(settingsPage, mockProjectID);
     await settingsPage.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     assert.equal(await settingsPage.$eval('#project-auto-resume', el => el.checked), false, 'auto-resume must default off');
-    assert.equal(await settingsPage.$eval('.settings-risk', el => el.textContent.includes('may repeat an action')), true);
+    assert.equal(await settingsPage.$eval('#room-project .settings-risk', el => el.textContent.includes('may repeat an action')), true);
     await domClick(settingsPage, '#project-auto-resume');
     await settingsPage.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
-    await settingsPage.click('#settings-usages-tab');
-    await domClick(settingsPage, '#settings-project-tab');
+    await domClick(settingsPage, '#room-info-close');
+    await openProjectSettings(settingsPage, mockProjectID);
     await settingsPage.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     assert.equal(await settingsPage.$eval('#project-auto-resume', el => el.checked), true, 'saved project toggle was lost');
+    await settingsTab(settingsPage, '#settings-usages-tab');
     // Settings -> Harnesses runs in both implementations of the preact-harnesses experiment: the legacy page (A, the default) and
     // the Preact page (B). The same checks, over the same mock, hold for both. The experiment is hidden, so B is opened with
     // ?ui=preact-harnesses:b, which shows the pill; the pill then switches back to A in place.
@@ -5975,8 +6010,7 @@ async function main() {
     await second.waitForFunction(() => { const badge = document.querySelector('.direct-rooms .unread-count'); return !badge || badge.hidden; });
     await domClick(first, `[data-room-id="${roomID}"] .room-name`);
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
-    await openSettings(first);
-    await first.click('#settings-project-tab');
+    await openProjectSettings(first, actualProjectID);
     await first.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     assert.equal(await first.$eval('#project-auto-resume', el => el.checked), false, 'real project auto-resume default is on');
     // The owner edits the project's name and folder here: a bad folder is refused with its reason, a rename reaches the sidebar.
@@ -5996,6 +6030,7 @@ async function main() {
     await first.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
     const recoverySetting = await first.evaluate(async projectID => (await (await fetch(`/api/projects/${projectID}/settings`)).json()).auto_resume_after_clean_diagnostic, actualProjectID);
     assert.equal(recoverySetting, true, 'project auto-resume setting did not persist');
+    await settingsTab(first, '#settings-general-tab');
     // Settings -> Prompts: the six shared sentences with their shipped text, a global and a project override, a live preview, inline plans.
     {
       await domClick(first, '#settings-prompts-tab');
@@ -7243,9 +7278,7 @@ async function main() {
     await domClick(first, '#room-schedules [data-action=toggle]');
     await first.waitForFunction(() => document.querySelector('#room-schedules .schedule-row')?.textContent.includes('paused'));
     assert.deepEqual(await first.$eval('#room-schedules [data-action=toggle]', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-play'), el.textContent]), ['Resume', 'Resume', true, '']);
-    await domClick(first, '#room-info-close');
-    await openSettings(first);
-    await domClick(first, '#settings-project-tab');
+    await openProjectSettings(first, actualProjectID);
     await first.waitForFunction(() => [...document.querySelectorAll('.project-role-default h4')].some(item => item.textContent === 'analyst'));
     const analystDefaults = await first.evaluate(() => [...document.querySelectorAll('.project-role-default')].find(item => item.querySelector('h4')?.textContent === 'analyst')?.outerHTML);
     assert.ok(analystDefaults?.includes('Inherit global'), 'the project shows the global source');
@@ -7274,14 +7307,14 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#project-usage-limit .usage-limit-summary')?.textContent.includes('100 cap'));
     assert.deepEqual(await first.evaluate(async id => { const x = await (await fetch(`/api/projects/${id}/usage-limit`)).json(); return [x.turn_mode, x.daily_turn_cap, x.cost_mode, x.daily_cost_cap]; }, actualProjectID), ['custom', 100, 'none', null]);
     // The default every project inherits is set by the owner in Settings, Usages, and the project's Inherit option names it.
-    await domClick(first, '#settings-usages-tab');
+    await settingsTab(first, '#settings-usages-tab');
     await first.waitForSelector('.usage-limit-default:not([hidden]) #default-cost-cap');
     await first.locator('#default-cost-cap').fill('12.5');
     await first.locator('#default-turn-cap').fill('40');
     await domClick(first, '.usage-limit-default .btn-primary');
     await first.waitForFunction(() => document.querySelector('.usage-limit-default .settings-saved')?.textContent === 'Saved.');
     assert.deepEqual(await first.evaluate(async () => { const x = await (await fetch('/api/usage-limit-default')).json(); return [x.daily_cost_cap, x.daily_turn_cap]; }), [12.5, 40]);
-    await domClick(first, '#settings-project-tab');
+    await openProjectSettings(first, actualProjectID);
     await first.waitForFunction(() => document.querySelector('#project-cost-mode option[value=inherit]')?.textContent.includes('$12.50'));
     await first.select('#project-turn-mode', 'inherit');
     await domClick(first, '#project-usage-limit button');
@@ -7294,8 +7327,8 @@ async function main() {
       const current = await (await fetch(`/api/projects/${id}/usage-limit`)).json();
       await fetch(`/api/projects/${id}/usage-limit`, { method: 'PUT', headers, body: JSON.stringify({ cost_mode: 'none', turn_mode: 'none', daily_cost_cap: null, daily_turn_cap: null, rev: current.rev }) });
     }, actualProjectID);
-    await domClick(first, '#settings-close');
-    // Every room has the same Room settings. The home room's adds the Project section (the very form of Settings → Project), its schedules,
+    await domClick(first, '#room-info-close');
+    // Every room has the same Room settings. The home room's adds the Project section (the project's own settings form), its schedules,
     // the project's memory where a task room has task notes, and a line instead of the worktree controls.
     {
       const homeID = await first.evaluate(async id => (await (await fetch(`/api/projects/${id}/rooms`)).json()).find(room => room.kind === 'home').id, actualProjectID);
@@ -7311,7 +7344,7 @@ async function main() {
         return {
           schedules: shown('#room-schedules'), lead: document.querySelector('#room-schedules [name=target] option[value=lead]')?.textContent,
           project: shown('#room-project'), form: !!document.querySelector('#room-project #project-details') && !!document.querySelector('#room-project #project-usage-limit') && !!document.querySelector('#room-project #project-scope-control'),
-          settingsEmpty: !document.querySelector('#settings-project #project-details'), name: document.querySelector('#project-details-name').value,
+          settingsEmpty: !document.querySelector('#settings-project') && !document.querySelector('#settings-project-tab'), name: document.querySelector('#project-details-name').value,
           notes: document.querySelector('.room-notes h3')?.textContent, notesButton: document.querySelector('.room-notes button')?.textContent, notesShown: shown('.room-notes'),
           worktree: document.querySelector('.room-worktree p')?.textContent, worktreeButtons: [...document.querySelectorAll('.room-worktree button')].filter(button => !button.hidden).length,
           wide: document.querySelector('#room-info-dialog').classList.contains('room-info-home'), archive: document.querySelector('#room-lifecycle').hidden,
@@ -7333,15 +7366,8 @@ async function main() {
       assert.deepEqual(await first.evaluate(id => ({ scope: document.querySelector('#knowledge-scope').value, project: document.querySelector('#knowledge-project').value === id, title: document.querySelector('#knowledge-title').textContent }), actualProjectID),
         { scope: 'project', project: true, title: 'Project facts' }, 'the home room links to the project facts');
       await domClick(first, '#knowledge-close');
-      // Settings → Project is a shortcut to the same form: it moves there, and back while the home room settings are still open underneath.
-      await domClick(first, '#room-info');
-      await first.waitForSelector('#room-project #project-details');
-      await openSettings(first);
-      await domClick(first, '#settings-project-tab');
-      await first.waitForFunction(() => !!document.querySelector('#settings-project #project-details') && !document.querySelector('#project-auto-resume').disabled);
-      await domClick(first, '#settings-close');
-      await first.waitForFunction(() => !!document.querySelector('#room-project #project-details'));
-      await domClick(first, '#room-info-close');
+      // Settings has no Project page any more: the form is only in the home room's settings.
+      assert.equal(await first.evaluate(() => !!document.querySelector('#settings-project-tab, #settings-project, #project-settings-select')), false, 'Settings has no Project tab, section or project chooser');
       // A task room keeps its task notes and worktree controls and has no Project section.
       await domClick(first, `[data-room-id="${roomID}"] .room-name`);
       await first.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#task-notes-toggle').getAttribute('aria-label') === 'Task notes', {}, roomID);
@@ -7351,7 +7377,7 @@ async function main() {
         { project: true, notes: 'Task notes', wide: false, toggle: 'Task notes' }, 'a task room has no Project section');
       await domClick(first, '#room-info-close');
     }
-    // Archiving and deleting a project (Settings → Project): a scratch project is archived, read-only and listed apart, reopened, archived
+    // Archiving and deleting a project (the home room's settings → Project): a scratch project is archived, read-only and listed apart, reopened, archived
     // again and deleted by typing its name. Each action is an icon with a name; the rest of the run never sees the project.
     {
       const name = 'Archive smoke';
@@ -7368,9 +7394,7 @@ async function main() {
       const asked = [];
       first.__dialogAnswer = text => { asked.push(text); return text.startsWith('Delete project') ? { accept: true, values: { name } } : { accept: true }; };
       try {
-        await openSettings(first); await domClick(first, '#settings-project-tab');
-        await first.waitForSelector('#project-settings-select', { visible: true });
-        await first.select('#project-settings-select', scratch.id);
+        await openProjectSettings(first, scratch.id);
         await first.waitForFunction(() => !document.querySelector('#project-archive-row').hidden);
         assert.deepEqual(await first.evaluate(() => ['project-archive', 'project-reopen', 'project-delete'].map(id => { const button = document.getElementById(id); return [button.getAttribute('aria-label'), button.title, !!button.querySelector('.icon-mask'), button.textContent, button.closest('.settings-row').hidden]; })),
           [['Archive project', 'Archive project', true, '', false], ['Reopen project', 'Reopen project', true, '', true], ['Delete project', 'Delete project', true, '', true]], 'a live project offers Archive only, as icons with names');
@@ -7381,7 +7405,7 @@ async function main() {
         assert.equal(await first.evaluate(id => !!document.querySelector(`#projects > [data-room-id="${id}"]`), scratch.home), false, 'an archived project has left the live list');
         await first.waitForFunction(() => document.querySelector('#project-archive-row').hidden && !document.querySelector('#project-reopen-row').hidden && !document.querySelector('#project-delete-row').hidden);
         // Its rooms open read-only: the composer is off and says why; nothing can be created in it.
-        await domClick(first, '#settings-close');
+        await closeRoomInfo(first);
         await first.evaluate(() => document.querySelector('.archived-projects').open = true);
         await first.evaluate(() => document.querySelector('.archived-project').open = true);
         await domClick(first, `.archived-projects [data-room-id="${scratch.task}"] .room-name`);
@@ -7392,8 +7416,7 @@ async function main() {
         const refused = await first.evaluate(async id => { const { csrf_token } = await (await fetch('/api/me')).json(); const response = await fetch(`/api/rooms/${id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ body: 'late' }) }); return [response.status, (await response.json()).error]; }, scratch.task);
         assert.deepEqual(refused, [409, 'project_archived']);
         // Reopening puts it back in the list; archiving again and deleting needs the typed name, and takes it out of every list.
-        await openSettings(first); await domClick(first, '#settings-project-tab');
-        await first.select('#project-settings-select', scratch.id);
+        await openProjectSettings(first, scratch.id);
         await first.waitForFunction(() => !document.querySelector('#project-reopen-row').hidden);
         await domClick(first, '#project-reopen');
         await first.waitForFunction((id, project) => !document.querySelector(`.archived-projects .archived-project[data-project-id="${project}"]`) && !!document.querySelector(`#projects > [data-room-id="${id}"]`), {}, scratch.home, scratch.id);
@@ -7404,8 +7427,7 @@ async function main() {
         await first.waitForFunction((room, project) => !document.querySelector(`[data-room-id="${room}"]`) && !document.querySelector(`.archived-project[data-project-id="${project}"]`), {}, scratch.home, scratch.id);
         assert.match(asked.at(-1), /^Delete project \| This permanently deletes “Archive smoke”.*not touched\. \| Type “Archive smoke” to confirm/, 'deleting asks for the typed name and says what stays');
         assert.equal(await first.evaluate(async id => (await fetch(`/api/projects/${id}/rooms`)).status, scratch.id) >= 400, true, 'the deleted project is gone on the server');
-        assert.equal(await first.evaluate(id => [...document.querySelector('#project-settings-select').options].some(option => option.value === id), scratch.id), false, 'the deleted project left the chooser');
-        await domClick(first, '#settings-close');
+        await closeRoomInfo(first);
       } finally { first.__dialogAnswer = answerBefore; }
     }
     // Hide is set from the room settings, not from the rows; nothing has a pin.
@@ -7499,7 +7521,7 @@ async function main() {
     const viewerNav = await settingsNav(invitedPage);
     assert.deepEqual([viewerNav.agentsHidden, viewerNav.gap, viewerNav.items.filter(item => item === item.toUpperCase())], [true, null, ['SETTINGS']], `a viewer's Settings nav has no AGENTS group: ${JSON.stringify(viewerNav)}`);
     await domClick(invitedPage, '#settings-close');
-    // A viewer sees the home room's Project section with the same locks Settings → Project has.
+    // A viewer sees the home room's Project section with the same locks the owner's form has.
     {
       const viewerHome = await invitedPage.evaluate(async () => { const [project] = await (await fetch('/api/projects')).json(); return (await (await fetch(`/api/projects/${project.id}/rooms`)).json()).find(room => room.kind === 'home').id; });
       await domClick(invitedPage, `[data-room-id="${viewerHome}"] .room-name`);

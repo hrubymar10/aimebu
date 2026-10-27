@@ -386,8 +386,8 @@ the sections that apply to it. Its **Title** field (for owners and operators; a
 private chat has none) is the only place a room is renamed: the header and the
 room list follow at once, and the home room's title is the project's name, so
 editing it renames the project too (the project's owner or an admin). The home room's adds a **Project** section, the
-same form as Settings → Project (name and folder, agents in this project, daily
-limits, recovery and worktrees; Settings → Project stays as a shortcut to it),
+project's own settings (name and folder, agents in this project, daily
+limits, recovery and worktrees; there is no separate Settings → Project page),
 its Schedules, a Project memory entry where task rooms have Task notes, and one
 line saying that the home room works in the project folder while task rooms can
 have their own Git worktree. Room settings (one control size throughout; Kind and Room ID show only while the message debug
@@ -547,7 +547,7 @@ project, who spawned it, the last 24 hours' turns and cost, memory; the state sh
 buttons: Message, Pause, Stop (the red one), Switch… and Reactivate, each with a tooltip saying what it does and, when
 unavailable, why (also written under the buttons);
 a project viewer does not get the session id, resume command or working directory; a project owner or an admin also gets an **Output** section with the end of what the agent's harness printed to stderr, read from its machine on demand and kept there for 14 days, see [the supervisor](docs/supervisor.md#agent-output));
-the × button or Escape returns to the members. The Spawn dialog's **Continue a Claude Code session** button lists the Claude Code sessions a machine already has for the project's folder (or one by id) and starts an agent that continues the chosen one with `claude --resume` (or works on a copy of it with `--fork-session`, your choice), in a room of its own by default; no history is copied. Settings → Project can import many sessions at once, one room and one copy-working agent per session. See [continuing a Claude Code session](docs/claude-sessions.md). Settings opens on General. Agent rows show the latest turn activity from the live event
+the × button or Escape returns to the members. The Spawn dialog's **Continue a Claude Code session** button lists the Claude Code sessions a machine already has for the project's folder (or one by id) and starts an agent that continues the chosen one with `claude --resume` (or works on a copy of it with `--fork-session`, your choice), in a room of its own by default; no history is copied. The home room's settings → Project can import many sessions at once, one room and one copy-working agent per session. See [continuing a Claude Code session](docs/claude-sessions.md). Settings opens on General. Agent rows show the latest turn activity from the live event
 stream. Open `/?mock_agents=1` to preview cards and controls
 without spawning. Run `make test-ui` against an isolated scratch server; it
 requires Chromium or Chrome (set `CHROMIUM_PATH` if needed) and globally
@@ -760,7 +760,7 @@ Resume, Retry, or Abandon, and loop-budget pauses can Continue or Abandon.
 Project settings can opt into automatic continuation after a clean verified
 read-only diagnostic; the default is off because a model report can miss an
 unobserved effect.
-A project can be archived and deleted from Settings → Project (its owner or an admin; icons with a confirmation).
+A project can be archived and deleted from its home room's settings → Project (its owner or an admin; icons with a confirmation).
 Archiving makes the project and all its rooms read-only (changes are refused with `project_archived`), stops its agents,
 switches its schedules off and moves it to "Archived projects" in the room list, where its rooms stay readable; reopening
 lifts that and leaves the agents stopped. Only an archived project can be deleted, by typing its name: that removes every

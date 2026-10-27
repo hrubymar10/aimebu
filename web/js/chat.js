@@ -524,7 +524,7 @@ export class Chat {
     // An archived project is read-only for everyone; the composer says why and where to undo it.
     const archivedNote = this.archivedNote ||= (() => { const node = document.createElement('p'); node.className = 'composer-note'; node.id = 'composer-archived-note'; node.setAttribute('role', 'note'); this.form.before(node); return node; })();
     archivedNote.hidden = !archivedProject;
-    archivedNote.textContent = 'This project is archived and read-only. The owner or an admin can reopen it in Settings → Project.';
+    archivedNote.textContent = 'This project is archived and read-only. The owner or an admin can reopen it in the project\'s home-room settings.';
   }
   showRoomInfo() {
     if (!this.room) return;
@@ -552,7 +552,7 @@ export class Chat {
     this.renderRoomNotes();
     this.projectSection.hidden = !home || !this.projectSettings;
     this.infoDialog.showModal();
-    // The home room's settings carry the project's own (Settings → Project shows the same form).
+    // The home room's settings carry the project's own settings.
     if (!this.projectSection.hidden) this.projectSettings.mount(this.projectSection, this.room.project_id);
     this.loadWorktree();
     // What is said in a chat between agents never feeds memory or recall, so there is no setting to show.

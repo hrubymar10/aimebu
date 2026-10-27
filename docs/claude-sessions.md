@@ -179,7 +179,7 @@ whose session is the copy, and its later turns resume that id without the flag.
 
 ## Importing many sessions at once
 
-Settings → Project → **Claude Code sessions → Import sessions** lists the sessions a
+The home room's settings → Project → **Claude Code sessions → Import sessions** lists the sessions a
 machine has for the project's folder (the same list as the picker, for a chosen
 machine, native `claude` harness and model), each with a checkbox and a role. Every
 ticked session becomes **one agent in one room of its own, working on a copy**, idle

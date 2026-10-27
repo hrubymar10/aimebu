@@ -71,7 +71,7 @@ const TARGETS = [
   '#system-events-popover', '.system-events-popover', '#system-events-toggle',
   '#settings-dialog', '#settings-dialog > header', '#settings-dialog nav', '#settings-dialog nav button', '#settings-dialog nav .settings-selected', '#settings-dialog .settings-content', '#settings-dialog h3',
   '#settings-general .settings-group', '#settings-general .settings-row', '#settings-general .settings-row-info', '#settings-general .settings-label', '#settings-general .settings-desc', '#settings-general .settings-control', '#settings-general .settings-control select', '#settings-general .settings-row-toggle input', '#settings-general .settings-row-stack', '#settings-general textarea',
-  '#settings-roles .settings-row', '#role-editor .settings-row', '#role-editor textarea', '#settings-project .settings-row', '#project-scope-control', '#project-usage-limit', '#settings-notifications .settings-row',
+  '#settings-roles .settings-row', '#role-editor .settings-row', '#role-editor textarea', '#room-project .settings-row', '#project-scope-control', '#project-usage-limit', '#settings-notifications .settings-row',
   '#knowledge-dialog', '#knowledge-dialog header', '#room-info-dialog', '#room-export-dialog', '#project-dialog', '.invite-dialog', '.answer-dialog', '#spawn-dialog', '#switch-dialog', '#machine-pair-dialog', '.message-debug-dialog', '#thread-panel', '#thread-composer',
   '#login-form', '#login-view h1',
 ];

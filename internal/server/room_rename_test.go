@@ -151,7 +151,7 @@ func TestRenameNeedsOwnerOrOperatorForATaskRoom(t *testing.T) {
 	}
 }
 
-// The home room is named after its project: renaming it renames the project (the path of Settings → Project), for the project's owner, and
+// The home room is named after its project: renaming it renames the project (the path of the project settings), for the project's owner, and
 // the title and the name stay one.
 func TestRenameTheHomeRoomRenamesTheProject(t *testing.T) {
 	f := newFixture(t)
@@ -169,7 +169,7 @@ func TestRenameTheHomeRoomRenamesTheProject(t *testing.T) {
 	if err != nil || project.Name != "Mission Control" || f.roomTitle(t, home.ID) != "Mission Control" {
 		t.Fatalf("the project is %q and its home room %q, want both Mission Control (%v)", project.Name, f.roomTitle(t, home.ID), err)
 	}
-	// Both ways: renaming the project from Settings → Project names the home room too, as it always did.
+	// Both ways: renaming the project from the home room's project settings names the home room too, as it always did.
 	resp := f.requestAs(t, f.cookie, f.csrf, http.MethodPatch, "/api/projects/"+f.project.ID, map[string]string{"name": "Apollo"})
 	resp.Body.Close()
 	if resp.StatusCode != 200 || f.roomTitle(t, home.ID) != "Apollo" {

@@ -23,7 +23,7 @@ export class SettingsPanel {
   constructor(source, projectContext, notifications) {
     this.source = source;
     this.projectSource = createProjectSettingsSource();
-    // One project-settings form, shared with the Project section of the home room's settings.
+    // The project's settings form lives in the home room's settings (Room settings → Project); this panel only owns the object.
     this.project = new ProjectSettings(this.projectSource, projectContext);
     this.projectContext = projectContext;
     this.roleSettings = new RoleSettings();
@@ -52,12 +52,10 @@ export class SettingsPanel {
     this.generalSection = document.querySelector('#settings-general');
     this.themeSelect = document.querySelector('#theme-select');
     this.themeSelect.value = document.documentElement.dataset.theme || 'dark';
-    this.projectTab = document.querySelector('#settings-project-tab');
     this.notificationsTab = document.querySelector('#settings-notifications-tab');
     this.rolesTab = document.querySelector('#settings-roles-tab');
     this.machinesTab = document.querySelector('#settings-machines-tab');
     this.usagesSection = document.querySelector('#settings-usages');
-    this.projectSection = document.querySelector('#settings-project');
     this.notificationsSection = document.querySelector('#settings-notifications');
     this.rolesSection = document.querySelector('#settings-roles');
     this.machinesSection = document.querySelector('#settings-machines');
@@ -68,20 +66,13 @@ export class SettingsPanel {
     // Two nav groups: the account and instance settings under SETTINGS, then what runs the agents (Machines, Harnesses) under AGENTS.
     // The tabs the other modules add are appended at the end of the nav, so the order is set here once they all exist.
     this.agentsTitle = this.dialog.querySelector('#settings-agents-title');
-    this.agentsTitle.parentElement.append(this.generalTab, this.usagesTab, this.projectTab, this.notificationsTab, this.rolesTab, this.usersSettings.tab,
+    this.agentsTitle.parentElement.append(this.generalTab, this.usagesTab, this.notificationsTab, this.rolesTab, this.usersSettings.tab,
       this.promptSettings.tab, this.macroSettings.tab, this.agentsTitle, this.machinesTab, this.harnessSettings.tab);
     this.muteToggle = document.querySelector('#notification-muted');
     this.textToggle = document.querySelector('#notification-text');
     this.permissionButton = document.querySelector('#notification-permission');
     this.permissionStatus = document.querySelector('#notification-status');
     this.sounds = new NotificationSounds(this.notificationsSection, notifications);
-    this.projectSelect = document.querySelector('#project-settings-select');
-    // A deleted project leaves the chooser; the form shows the next one, or says there is none.
-    this.projectRemoved = id => {
-      [...this.projectSelect.options].find(item => item.value === id)?.remove();
-      if (this.projectSelect.value) this.project.mount(this.projectSection, this.projectSelect.value); else this.project.load('');
-    };
-    this.project.onRenamed = (id, name) => { const option = [...this.projectSelect.options].find(item => item.value === id); if (option) option.textContent = name; };
     this.usagesTab.onclick = () => this.selectSection('usages');
     this.generalTab.onclick = () => this.selectSection('general');
     this.previewToggle = document.querySelector('#sidebar-preview');
@@ -100,7 +91,6 @@ export class SettingsPanel {
       } catch {}
       savePreference('theme', theme);
     };
-    this.projectTab.onclick = () => this.selectSection('project');
     this.notificationsTab.onclick = () => this.selectSection('notifications');
     this.rolesTab.onclick = () => this.selectSection('roles');
     this.machinesTab.onclick = () => this.selectSection('machines');
@@ -111,9 +101,6 @@ export class SettingsPanel {
       catch (error) { this.permissionStatus.textContent = error.message; return; }
       this.renderNotifications();
     };
-    this.projectSelect.onchange = () => this.project.mount(this.projectSection, this.projectSelect.value);
-    // The shared form goes back to the home room's settings if those are still open underneath.
-    this.dialog.addEventListener('close', () => this.project.release(this.projectSection));
     document.querySelector('#settings-toggle').onclick = () => this.open();
     document.querySelector('#settings-close').onclick = () => this.dialog.close();
     // v1's global shortcuts: Cmd/Ctrl+, opens Settings, and Cmd/Ctrl+W closes it while it is open.
@@ -254,11 +241,10 @@ export class SettingsPanel {
 	this.usersSettings.section.hidden = section !== 'users';
 	this.usersSettings.tab.classList.toggle('settings-selected', section === 'users');
     this.promptSettings.tab.classList.toggle('settings-selected', section === 'prompts');
-    const project = section === 'project';
     const notifications = section === 'notifications';
     this.generalSection.hidden = section !== 'general';
     this.generalTab.classList.toggle('settings-selected', section === 'general');
-    this.usagesSection.hidden = section !== 'usages'; this.projectSection.hidden = !project; this.notificationsSection.hidden = !notifications;
+    this.usagesSection.hidden = section !== 'usages'; this.notificationsSection.hidden = !notifications;
     this.rolesSection.hidden = section !== 'roles';
     this.machinesSection.hidden = section !== 'machines';
 	this.macroSettings.section.hidden = section !== 'macros';
@@ -266,15 +252,13 @@ export class SettingsPanel {
     this.promptSettings.section.hidden = section !== 'prompts';
     this.harnessSettings.tab.classList.toggle('settings-selected', section === 'harnesses');
     this.usagesTab.classList.toggle('settings-selected', section === 'usages');
-    this.projectTab.classList.toggle('settings-selected', project);
     this.notificationsTab.classList.toggle('settings-selected', notifications);
     this.rolesTab.classList.toggle('settings-selected', section === 'roles');
     this.machinesTab.classList.toggle('settings-selected', section === 'machines');
     this.macroSettings.tab.classList.toggle('settings-selected', section === 'macros');
-    for (const [tab, selected] of [[this.generalTab, section === 'general'], [this.usagesTab, section === 'usages'], [this.projectTab, project], [this.notificationsTab, notifications], [this.rolesTab, section === 'roles'], [this.machinesTab, section === 'machines'], [this.macroSettings.tab, section === 'macros'], [this.harnessSettings.tab, section === 'harnesses'], [this.usersSettings.tab, section === 'users'], [this.promptSettings.tab, section === 'prompts']]) {
+    for (const [tab, selected] of [[this.generalTab, section === 'general'], [this.usagesTab, section === 'usages'], [this.notificationsTab, notifications], [this.rolesTab, section === 'roles'], [this.machinesTab, section === 'machines'], [this.macroSettings.tab, section === 'macros'], [this.harnessSettings.tab, section === 'harnesses'], [this.usersSettings.tab, section === 'users'], [this.promptSettings.tab, section === 'prompts']]) {
       if (selected) tab.setAttribute('aria-current', 'page'); else tab.removeAttribute('aria-current');
     }
-    if (project) this.showProjects();
     if (section === 'users') this.usersSettings.open();
     if (notifications) { this.renderNotifications(); this.sounds.open(); }
     if (section === 'roles') this.roleSettings.open();
@@ -289,22 +273,6 @@ export class SettingsPanel {
     this.permissionStatus.textContent = this.notifications.status;
     this.permissionButton.disabled = !this.notifications.available || Notification.permission !== 'default';
     this.permissionButton.textContent = this.notifications.available && Notification.permission === 'granted' ? 'Enabled' : 'Enable browser notifications';
-  }
-  async showProjects() {
-    let { projects, selectedProjectID } = this.projectContext();
-    const ticket = (this.projectLoadSeq || 0) + 1; this.projectLoadSeq = ticket;
-    this.project.autoResume.disabled = true; this.project.worktrees.disabled = true;
-    this.project.error.textContent = '';
-    if (!projects.length) {
-      try { projects = await this.projectSource.projects(); }
-      catch (error) { if (ticket === this.projectLoadSeq) this.project.error.textContent = error.message; return; }
-    }
-    if (ticket !== this.projectLoadSeq || this.projectSection.hidden) return;
-    this.projectSelect.replaceChildren(...projects.map(project => {
-      const option = document.createElement('option'); option.value = project.id; option.textContent = project.name; return option;
-    }));
-    if (projects.some(project => project.id === selectedProjectID)) this.projectSelect.value = selectedProjectID;
-    this.project.mount(this.projectSection, this.projectSelect.value);
   }
   providerCard() {
     const card = element('article', 'usage-provider');

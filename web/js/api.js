@@ -3,14 +3,15 @@ export let currentUser = '';
 // The viewer's login: what @mentions of them are written with (currentUser is the account id).
 export let currentLogin = '';
 // What the account may do instance-wide: the owner and the admins create projects and edit the global settings; everyone else does not.
-export let rights = { owner: false, admin: false };
-export function setSession(data) { csrf = data.csrf_token; currentUser = data.id || data.user_id; currentLogin = data.login || ''; rights = { owner: !!data.owner, admin: !!data.admin }; }
-export function clearSession() { csrf = ''; currentUser = ''; currentLogin = ''; rights = { owner: false, admin: false }; }
+// hostHome is the home folder on the machine projects are created on (only the owner and admins are told), where a folder field starts.
+export let rights = { owner: false, admin: false, hostHome: '' };
+export function setSession(data) { csrf = data.csrf_token; currentUser = data.id || data.user_id; currentLogin = data.login || ''; rights = { owner: !!data.owner, admin: !!data.admin, hostHome: data.host_home || '' }; }
+export function clearSession() { csrf = ''; currentUser = ''; currentLogin = ''; rights = { owner: false, admin: false, hostHome: '' }; }
 // The flags are read at sign-in; the owner can flag or unflag an admin afterwards, so a place that is about to show or hide something by
 // them (opening Settings) reads them again.
 export async function refreshRights() {
   const me = await request('/api/me');
-  rights = { owner: !!me.owner, admin: !!me.admin };
+  rights = { owner: !!me.owner, admin: !!me.admin, hostHome: me.host_home || '' };
   return rights;
 }
 export async function request(path, options = {}) {

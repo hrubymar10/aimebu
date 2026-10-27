@@ -9,7 +9,7 @@ log*; it is not part of any conversation.
 
 ## Worktrees
 
-Each project has a **worktree mode** (Settings → Project, `worktree_mode` on
+Each project has a **worktree mode** (the home room's settings → Project, `worktree_mode` on
 `PUT /api/projects/{project}/settings`):
 
 - `auto` (the default): agents in a task room work in their own checkout,

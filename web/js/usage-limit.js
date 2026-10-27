@@ -2,7 +2,7 @@ import { request } from './api.js';
 
 const money = value => `$${Number(value).toFixed(2)}`;
 
-// Settings -> Project -> Daily limits. The limits apply to the whole project, all its rooms together. For cost and for turns the
+// Home room settings -> Project -> Daily limits. The limits apply to the whole project, all its rooms together. For cost and for turns the
 // project either inherits the default (Settings -> Usages), sets its own value, or has no limit.
 export class UsageLimit {
   constructor(root) {

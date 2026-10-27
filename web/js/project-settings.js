@@ -8,9 +8,8 @@ import { confirmDialog, formDialog } from './dialogs.js';
 import { createAgentSource } from './agent-source.js';
 import { ClaudeSessionImport } from './claude-session-import.js';
 
-// The project's own settings (name and folder, its agents, daily limits, the home room's lead-only rule, recovery and worktrees). One implementation, two places: the
-// Project section of the home room's settings and Settings → Project. Both dialogs are modal, so the one form body moves into whichever
-// opened last and goes back to the other when that one closes.
+// The project's own settings (name and folder, its agents, daily limits, the home room's lead-only rule, recovery and worktrees). The form body lives in the Project
+// section of the home room's settings (there is no Settings → Project page); mount/release keep it consistent if more than one place ever shows it.
 export class ProjectSettings {
   constructor(source, projectContext) {
     this.source = source;

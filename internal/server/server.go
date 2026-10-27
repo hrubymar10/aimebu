@@ -781,6 +781,13 @@ func (s *Server) sessionView(ctx context.Context, user string, view map[string]a
 		return nil, err
 	}
 	view["owner"], view["admin"] = owner, admin
+	// Where the folder fields start: the home folder of the user the server runs as, which is the machine projects are created on. Only the
+	// owner and admins create projects, so only they are told (a stranger gets no path of the host).
+	if admin {
+		if home, err := os.UserHomeDir(); err == nil && filepath.IsAbs(home) {
+			view["host_home"] = home
+		}
+	}
 	return view, nil
 }
 

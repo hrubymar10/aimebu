@@ -70,7 +70,7 @@ func (s *Store) UpdateProject(ctx context.Context, id string, name, folder *stri
 	return project, err
 }
 
-// updateProject is the one path that changes a project's name or folder, whether it comes from Settings → Project or from the home room's
+// updateProject is the one path that changes a project's name or folder, whether it comes from the project settings or from the home room's
 // title. renameHome sets the home room's title to the new name whatever it was; otherwise the home room follows only when it still carries
 // the old name.
 func (tx *Tx) updateProject(id string, name, folder *string, actorID string, renameHome bool) (Project, error) {

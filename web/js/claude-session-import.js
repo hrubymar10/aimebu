@@ -1,4 +1,4 @@
-// Bulk import of Claude Code sessions (Settings → Project): pick any number of the sessions a machine has for the project's folder, give each
+// Bulk import of Claude Code sessions (the home room's settings → Project): pick any number of the sessions a machine has for the project's folder, give each
 // a role, and each becomes an agent of its own in a room of its own. Every agent works on a copy of its session (the originals stay as they
 // are) and starts idle, waiting for a message. The agents are started one by one through the ordinary spawn request, so the project's
 // live-agent and spawn-rate limits, the one-writer-per-folder rule and the owner's approval for folders outside the project all apply as

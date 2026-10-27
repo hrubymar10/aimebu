@@ -35,7 +35,7 @@ func NormalizeRoomTitle(raw string) (string, error) {
 }
 
 // RenameRoom changes a room's title and records room_renamed. A home room is named after its project, so renaming it renames the project
-// (the same path as Settings → Project, which also keeps the home room's title in step) and the home room alike; there is one name, not a
+// (the same path as the home room's project settings, which also keeps the home room's title in step) and the home room alike; there is one name, not a
 // room title that can drift from it. A private chat cannot be renamed. The title must already be normalized (NormalizeRoomTitle). A task
 // room that already has the title changes nothing and records nothing; a home room is unchanged only when its project has the name too,
 // so a title that drifted from the project's name is repaired by the rename.

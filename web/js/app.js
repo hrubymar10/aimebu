@@ -254,7 +254,7 @@ agents.showRoom = room => selectRoom(room);
 agents.showRoomByID = async (projectID, roomID) => { await sidebar.refreshProject(projectID); const room = sidebar.rooms.get(roomID); if (room) await selectRoom(room); };
 const settings = new SettingsPanel(createUsagesSource(), () => ({ projects: [...sidebar.projects.values()], rooms: [...sidebar.rooms.values()], selectedProjectID: chat.room?.project_id }), notifications);
 inbox.openUsages = () => settings.open('usages');
-chat.projectSettings = settings.project; // the home room's settings show the same project form
+chat.projectSettings = settings.project; // the project's settings form, shown in the home room's settings
 // Archiving or reopening a project in Settings: take its new state from the server now, as the event that follows would.
 settings.project.onLifecycle = async projectID => {
   const generation = sessionGeneration;
@@ -266,7 +266,7 @@ settings.project.onLifecycle = async projectID => {
   if (open && open.project_id === projectID) chat.setRoomFacts(open);
   settings.project.load(projectID);
 };
-settings.project.onRemoved = async projectID => { await projectRemoved(projectID); settings.projectRemoved(projectID); };
+settings.project.onRemoved = async projectID => { await projectRemoved(projectID); };
 settings.onRights = () => applyRights();
 document.addEventListener('aimebu:open-settings', event => settings.open(event.detail?.section || 'general', event.detail));
 const importWizard = new ImportV1Wizard(() => {
@@ -289,11 +289,12 @@ async function createFirstProject({ name, folder }) {
   const generation = sessionGeneration;
   const project = await request('/api/projects', { method: 'POST', body: { name, folder } });
   if (generation !== sessionGeneration) return;
-  // The server creates every project with its home room and a "general" task room beside it, where nearly all work happens.
+  // The server creates every project with its home room and a "general" task room beside it. Work starts in the home room: the leader there
+  // opens a task room for each request.
   await sidebar.addProject(project);
   if (generation !== sessionGeneration) return;
-  const general = [...sidebar.rooms.values()].find(room => room.project_id === project.id && room.title === 'general');
-  if (general) await selectRoom(general);
+  const home = [...sidebar.rooms.values()].find(room => room.project_id === project.id && room.kind === 'home');
+  if (home) await selectRoom(home);
 }
 // Whether some approved, connected machine has a harness that can start an agent now and a model to start it with; the onboarding
 // offers Spawn only then. The owner and admins read every machine, anyone else the machines of the open room's project.

@@ -1,13 +1,14 @@
 // First-run onboarding and the empty state. With no project yet, the owner is taken through "Create your first project" (a project
 // with its home room and a "general" room) and a short "How aimebu works"; the same flow opens from the empty state that shows when
 // no room is selected.
-import { request } from './api.js';
+import { request, rights } from './api.js';
+import { prefillFolderOnFocus } from './workspace-folder.js';
 import { HarnessSettings } from './harness-settings.js';
 import { confirmDialog } from './dialogs.js';
 
 export const PRINCIPLES = [
   ['A project is one repo or folder.', 'Everything you do with agents happens inside a project.'],
-  ['Every project has a home room ⌂ and a general room.', 'Almost all work happens in general.'],
+  ['Every project has a home room ⌂ and a general room.', 'The leader is spawned in the home room and coordinates from there; the work itself happens in task rooms such as general.'],
   ['Extra sub-rooms are rare.', 'Your leader proposes one and you agree to it.'],
   ['Agents are spawned into a room.', 'Use Spawn; they keep working there until you stop them.'],
   ['Agents take roles.', 'The leader plans and coordinates, workers build, reviewers check.'],
@@ -18,7 +19,7 @@ export const PRINCIPLES = [
 const HARNESS_MISSING = 'No harness with a model yet. Tick a detected harness, or add one by hand and give it a model.';
 
 export class Onboarding {
-  // create(project) makes the project (and returns its general room, already selected); spawn() opens the Spawn dialog in it;
+  // create(project) makes the project (and opens its home room); spawn() opens the Spawn dialog in it;
   // harnessReady() answers whether a harness with a model can start an agent right now (true when it cannot be told). canSetUp says
   // whether this person may add harnesses (an owner or an admin): only they get the Harnesses step, anyone else is told to ask one.
   constructor({ create, spawn, harnessReady = async () => true, canSetUp = () => true, onSkip = () => {}, onReady = () => {}, confirm = confirmDialog, send = request, root = document.querySelector('#onboarding-view'), pollMs = 2000 }) {
@@ -36,6 +37,7 @@ export class Onboarding {
     root.querySelector('.onboarding-principles').replaceChildren(...PRINCIPLES.map(([head, rest]) => {
       const item = document.createElement('li'); const strong = document.createElement('strong'); strong.textContent = head; item.append(strong, ` ${rest}`); return item;
     }));
+    prefillFolderOnFocus(this.form.elements.folder, () => rights.hostHome);
     this.form.onsubmit = event => { event.preventDefault(); void this.submit(); };
     root.querySelector('.onboarding-skip').onclick = () => this.close();
     root.querySelector('#onboarding-spawn').onclick = () => { this.close(); this.spawn(); };

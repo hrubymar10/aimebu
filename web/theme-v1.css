@@ -2469,7 +2469,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #spawn-dialog .spawn-name-row input { flex: 1 1 auto; min-width: 0; }
 #spawn-dialog .spawn-name-error { margin: 0; font-size: 12px; }
 #spawn-dialog .spawn-name-error:empty { display: none; }
-/* The home room's settings carry the Project section (the Settings → Project form), so that dialog is wider. */
+/* The home room's settings carry the Project section (the project's own form), so that dialog is wider. */
 #room-info-dialog.room-info-home { width: min(96vw, 620px); }
 #room-project { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 10px; }
 #room-project .project-settings-body > h3, #room-project .project-settings-body .settings-section > h3 { font-size: 13px; }
