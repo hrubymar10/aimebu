@@ -1,7 +1,9 @@
-import { iconButton, setGlyph } from './icon-button.js';
+import { setGlyph } from './icon-button.js';
 import { renderMarkdown } from './markdown.js';
 
-export function answerControls(item, submit) {
+// `mention` ("@author") is put in front of a proposed answer, as v1 does, so the reply reads as an answer to that person; `compose(text)` puts
+// the text in the composer, with the reply link, instead of sending it (Shift-click). Without it a Shift-click sends like any click.
+export function answerControls(item, submit, { mention = '', compose = null } = {}) {
   const wrap = document.createElement('div');
   wrap.className = 'answer-controls';
   if (item.open_questions?.length) {
@@ -14,61 +16,17 @@ export function answerControls(item, submit) {
     open.onclick = () => openQuestions(item, submit, refreshCount);
     wrap.append(open);
   }
-  // A proposed answer is a button that sends it as it stands. Its pencil, or a Shift-click on the answer, opens it in an editor first, so the
-  // person can change it before sending; the edited text goes out the same way (a reply that resolves the item).
-  let editor = null, lastChoice = null;
-  // The editor sits right under the answers, ahead of the free-text "Other" form when there is one.
-  const edit = (value, origin) => {
-    if (!editor) { editor = answerEditor(wrap, submit); lastChoice.after(editor.form); }
-    editor.open(value, origin);
-  };
+  // A proposed answer is a button: a click sends it (as "@author answer", a reply to the message); Shift-click puts it in the composer with
+  // the reply link, to change before sending. Anything else is typed in the composer as a reply.
   for (const value of item.proposed_answers || (item.open_questions?.length ? [] : item.options || [])) {
-    const choice = document.createElement('span'); choice.className = 'answer-choice';
+    const text = mention ? `${mention} ${value}` : value;
     const button = document.createElement('button');
-    button.type = 'button'; button.className = 'btn'; button.textContent = value; button.title = 'Send this answer (Shift-click to edit it first)';
-    button.onclick = event => { if (event.shiftKey) edit(value, button); else send(wrap, submit, value); };
-    const pencil = iconButton('edit', `Edit \u201c${value}\u201d before sending`, { className: 'answer-edit-open' });
-    pencil.onclick = () => edit(value, button);
-    choice.append(button, pencil);
-    wrap.append(choice); lastChoice = choice;
-  }
-  if (item.free_text && (!item.open_questions?.length || item.proposed_answers?.length)) {
-    const form = document.createElement('form');
-    form.className = 'answer-other';
-    const input = document.createElement('textarea');
-    input.required = true; input.rows = 2; input.placeholder = 'Other answer';
-    input.setAttribute('aria-label', 'Other answer');
-    const button = document.createElement('button');
-    button.type = 'submit'; button.className = 'btn btn-primary'; button.textContent = 'Send answer';
-    form.append(input, button);
-    form.onsubmit = event => { event.preventDefault(); send(wrap, submit, input.value.trim()); };
-    wrap.append(form);
+    button.type = 'button'; button.className = 'proposed-answer-btn'; button.textContent = value;
+    button.title = compose ? 'Send this answer (Shift-click to edit it in the composer first)' : 'Send this answer';
+    button.onclick = event => { if (event.shiftKey && compose) compose(text); else send(wrap, submit, text); };
+    wrap.append(button);
   }
   return wrap;
-}
-
-// The editor under the answers: the chosen answer in a text box to change, sent with its button or Ctrl/Cmd+Enter, closed with the X or Esc
-// (focus goes back to the answer it came from). Nothing is stored: closing it drops the text.
-function answerEditor(wrap, submit) {
-  const form = document.createElement('form'); form.className = 'answer-edit'; form.hidden = true;
-  const input = document.createElement('textarea'); input.rows = 3; input.required = true; input.setAttribute('aria-label', 'Edit the answer before sending');
-  const actions = document.createElement('div'); actions.className = 'answer-edit-actions';
-  const cancel = iconButton('close', 'Close the editor without sending', { className: 'answer-edit-close' });
-  const sendButton = document.createElement('button'); sendButton.type = 'submit'; sendButton.className = 'btn btn-primary'; sendButton.textContent = 'Send answer';
-  actions.append(cancel, sendButton); form.append(input, actions);
-  let origin = null;
-  const close = () => { form.hidden = true; input.value = ''; (origin?.isConnected ? origin : null)?.focus(); origin = null; };
-  cancel.onclick = close;
-  form.onsubmit = event => { event.preventDefault(); send(wrap, submit, input.value.trim()); };
-  input.onkeydown = event => {
-    if (event.isComposing) return;
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
-    else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); form.requestSubmit(); }
-  };
-  return { form, open(value, from) {
-    origin = from;
-    form.hidden = false; input.value = value; input.focus(); input.setSelectionRange(input.value.length, input.value.length);
-  } };
 }
 
 // What a question or proposed answers on a message look like once nothing is open for them: the same buttons and question count, all
@@ -78,9 +36,9 @@ export function answerHistory(message, answered) {
   const wrap = document.createElement('div');
   wrap.className = 'answer-history'; wrap.dataset.answered = String(answered);
   const note = answered ? 'Answered' : 'No longer pending';
-  const disabled = (button, text) => { button.type = 'button'; button.className = 'btn'; button.disabled = true; button.title = note; button.textContent = text; return button; };
+  const disabled = (button, text, className = 'proposed-answer-btn') => { button.type = 'button'; button.className = className; button.disabled = true; button.title = note; button.textContent = text; return button; };
   if (message.open_questions?.length) {
-    const open = document.createElement('button'); disabled(open, 'Open Questions');
+    const open = document.createElement('button'); disabled(open, 'Open Questions', 'btn');
     const count = document.createElement('span'); count.className = 'open-questions-count'; count.textContent = `${message.open_questions.length}`;
     open.append(' ', count); wrap.append(open);
   }
@@ -183,15 +141,19 @@ function openQuestions(item, submit, onChange) {
     other.value = answers[qIndex].text;
     const choose = (choice) => {
       answers[qIndex].choice = choice;
-      if (choice === 'other') other.focus();
-      changed();
+      if (choice === 'other') { other.focus(); changed(); return; }
+      // Picking an option moves on: to the next question, and from the last one to the review once every question has an answer.
+      saveAnswers(item); onChange?.();
+      if (qIndex < total - 1) go(qIndex + 1);
+      else if (answeredCount(answers) === total) go(total);
+      else render();
     };
     question.options.forEach((option, optionIndex) => {
       const label = document.createElement('label');
       const radio = document.createElement('input'); radio.type = 'radio'; radio.name = `question-${qIndex}`;
       radio.value = String(optionIndex); radio.checked = answers[qIndex].choice === String(optionIndex);
       radio.onchange = () => choose(String(optionIndex));
-      const text = document.createElement('span'); text.className = 'open-question-option'; text.textContent = `${String.fromCharCode(97 + optionIndex)}) ${option}`;
+      const text = document.createElement('span'); text.className = 'open-question-option'; const letter = document.createElement('strong'); letter.textContent = `${String.fromCharCode(97 + optionIndex)})`; text.append(letter, ` ${option}`);
       label.append(radio, text); group.append(label);
     });
     const label = document.createElement('label');

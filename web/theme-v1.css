@@ -316,7 +316,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 #composer button { min-height: 38px; }
 .attachment-slot { display: inline-grid; place-items: center; flex: 0 0 30px; align-self: end; height: 38px; color: var(--text-muted); opacity: .55; }
 #composer button[aria-label="Send"] { display: inline-grid; place-items: center; width: 39px; min-width: 39px; padding: 0; }
-.reply-chip { background: var(--accent-dim); color: var(--text-primary); }
+/* The reply chip as v1 draws it: a compact bordered bar, the quote cut with an ellipsis, the close button in line at its end. */
+.reply-chip { align-items: center; gap: 8px; margin: 0 0 6px 12px; padding: 5px 6px 5px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); color: var(--text-primary); font-size: 12px; }
+.reply-chip .icon-btn { flex: 0 0 auto; width: 22px; height: 22px; }
 /* The text of the chip is a button that jumps to the message being answered; it keeps the chip's look and shortens with an ellipsis. */
 .reply-chip-jump { flex: 1 1 auto; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; color: inherit; font: inherit; }
 .thread-panel { background: var(--bg-primary); border-color: var(--border); box-shadow: -12px 0 24px var(--overlay-shadow); }
@@ -1096,15 +1098,13 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .message-meta strong, .message.self .message-meta strong { color: var(--accent); font-size: 10.5px; }
 .message-role { padding: 0; border: 0; background: transparent; font-size: 13.3px; line-height: 1; }
 .message-bubble { position: relative; min-width: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
-.answer-controls { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
-.answer-controls > button, .answer-choice > .btn { border-radius: 18px; padding: 5px 12px; }
-.answer-choice { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; }
-.answer-edit { display: grid; gap: 6px; width: 100%; }
-.answer-edit[hidden] { display: none; }
-.answer-edit textarea { width: 100%; min-width: 0; resize: vertical; }
-.answer-edit-actions { display: flex; justify-content: flex-end; align-items: center; gap: 7px; }
-.answer-other { display: flex; gap: 7px; width: 100%; }
-.answer-other textarea { flex: 1; min-width: 0; resize: vertical; }
+.answer-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-width: 100%; }
+/* A proposed answer, as v1 draws it: a compact button that wraps long text. */
+.proposed-answer-btn { min-height: 28px; max-width: 100%; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-primary); padding: 4px 9px; font: 600 11.5px var(--font-sans); line-height: 1.2; white-space: normal; overflow-wrap: anywhere; cursor: pointer; transition: border-color .15s, background .15s; }
+.proposed-answer-btn:hover:not(:disabled), .proposed-answer-btn:focus-visible:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
+.proposed-answer-btn:disabled { cursor: default; opacity: .52; }
+.answer-controls > .open-questions-open { display: inline-flex; align-items: center; gap: 8px; min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-primary); font: 700 11.8px var(--font-sans); }
+.answer-controls > .open-questions-open:hover:not(:disabled), .answer-controls > .open-questions-open:focus-visible:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
 .answer-error { width: 100%; color: var(--red); margin: 3px 0; }
 .answer-dialog { width: min(600px, calc(100vw - 24px)); max-height: min(85vh, 760px); overflow: auto; border-radius: 12px; padding: 20px; }
 .answer-dialog::backdrop { background: #0009; }
@@ -1114,13 +1114,25 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .answer-dialog fieldset label { display: block; }
 .answer-dialog fieldset input[type=text] { max-width: 100%; }
 .answer-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.open-questions-count { margin-left: 4px; padding: 0 6px; border-radius: 9px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 11px; }
-.open-questions-subtitle { margin: -8px 0 10px; color: var(--text-muted); font-size: 12px; }
-.open-questions-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
-.open-questions-step { min-width: 30px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 15px; background: var(--bg-secondary); color: var(--text-secondary); }
-.open-questions-step.answered { border-color: var(--accent-border); color: var(--text-primary); }
-.open-questions-step.active { background: var(--accent-dim); border-color: var(--accent); color: var(--text-primary); }
-.open-questions-step:disabled { opacity: 0.5; }
+.open-questions-count { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 18px; margin-left: 4px; border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); font-size: 10.9px; }
+/* The Open Questions dialog as v1 draws it: a titled header band, small square step buttons with a dot once answered, plain options, a footer bar. */
+.open-questions-dialog { width: min(560px, calc(100vw - 32px)); padding: 0; border-radius: 10px; }
+.open-questions-dialog > form { padding: 16px 18px 0; }
+.open-questions-dialog h2 { margin: 0; font: 700 15.7px var(--font-sans); }
+.open-questions-subtitle { margin: 3px -18px 14px; padding: 0 18px 14px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 12px; }
+.open-questions-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.open-questions-step { min-width: 30px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-secondary); color: var(--text-secondary); font: 700 11.5px var(--font-sans); }
+.open-questions-step.answered::after { content: ""; display: block; width: 5px; height: 5px; margin: 1px auto 0; border-radius: 999px; background: var(--green-text); }
+.open-questions-step.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.open-questions-step:disabled { opacity: .48; }
+.open-question-option strong { font-weight: 700; }
+.open-questions-dialog .open-question-sheet { padding: 0; border: 0; }
+.open-questions-dialog .open-question-sheet > legend { margin: 0 0 12px; font: 700 14.4px var(--font-sans); overflow-wrap: anywhere; }
+.open-questions-dialog .open-question-sheet label { min-height: 32px; padding: 4px 0; font-size: 13px; }
+.open-questions-dialog .answer-description { margin: -2px 0 14px; padding-left: 10px; border-left: 2px solid var(--border); color: var(--text-secondary); font-size: 12.8px; line-height: 1.45; }
+.open-questions-dialog .open-question-sheet input[type=text] { border: 1px solid var(--border); border-radius: 5px; background: var(--bg-tertiary); padding: 6px 8px; font: 13px var(--font-sans); }
+.open-questions-dialog .open-question-sheet input[type=text]:focus { outline: none; border-color: var(--accent); }
+.open-questions-actions { position: sticky; bottom: 0; margin: 14px -18px 0; padding: 12px 18px; border-top: 1px solid var(--border); background: var(--bg-primary); }
 .open-questions-review ol { margin: 0 0 12px; padding-left: 20px; }
 .open-questions-review li { margin: 6px 0; }
 .open-questions-actions { align-items: center; }

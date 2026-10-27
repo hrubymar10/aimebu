@@ -33,8 +33,16 @@ import { expandShortcodes } from './emoji-data.js';
 const MENTION_LOGINS_TTL_MS = 30000;
 
 // One line of a message for a quote or a reply chip: whitespace collapsed, cut to 96 characters, "[attachment]" for a message that is only files.
+// The words of a message without its Markdown syntax (bold, code, links, quotes and headings), for a one-line quote of it.
+export const plainText = text => String(text || '')
+  .replace(/^\s{0,3}(?:#{1,6}|>)\s?/gm, '')
+  .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1/g, '$2')
+  .replace(/(^|[\s(])([*_])(?=\S)([^*_\n]+?)(?<=\S)\2(?=$|[\s).,;:!?])/g, '$1$3')
+  .replace(/`+([^`]*)`+/g, '$1');
+
 export function messageSnippet(message) {
-  let text = String(message?.body || '').replace(/\s+/g, ' ').trim();
+  let text = plainText(message?.body).replace(/\s+/g, ' ').trim();
   if (!text && message?.attachments?.length) text = '[attachment]';
   return text.length > 96 ? `${text.slice(0, 95).trimEnd()}…` : text;
 }
@@ -437,9 +445,24 @@ export class Chat {
     marker()?.remove(); this.answeredMessages?.delete(id);
     if (current?.dataset.inboxId === item.id && current.dataset.rev === String(item.rev)) return;
     current?.remove();
-    const controls = answerControls(item, value => this.inbox.answer(item, value));
+    const parent = id ? this.messages?.get(id) || (this.threadRoot?.id === id ? this.threadRoot : null) : null;
+    const controls = answerControls(item, value => this.inbox.answer(item, value), this.answerOptions(parent));
     controls.dataset.inboxId = item.id; controls.dataset.rev = String(item.rev);
     container.append(controls);
+  }
+  // How a proposed answer addresses the message it answers: "@author answer" is what a click sends, and Shift-click puts the same text in the composer,
+  // as a reply to that message, to change before sending.
+  answerOptions(message) {
+    if (!message || message.author_kind === 'system') return {};
+    const agent = message.author_kind === 'user' ? null : this.agents.get(message.author_id);
+    const name = agent?.slug || (message.author_kind === 'user' ? message.author_name : '');
+    return {
+      mention: name ? `@${name}` : '',
+      compose: text => {
+        this.draft.value = text; this.resizeDraft(); this.setReply(message);
+        this.draft.setSelectionRange?.(text.length, text.length);
+      },
+    };
   }
   updateAnswerControls(items) {
     this.answerItems = new Map(items.map(item => [item.message_id, item]));

@@ -1172,10 +1172,11 @@ async function main() {
     const answerControlsResult = await first.evaluate(async () => {
       const { answerControls } = await import('/js/answer-controls.js');
       const sent = [];
-      const buttons = answerControls({ proposed_answers: ['Proceed', 'Hold'], free_text: true }, async value => { sent.push(value); });
+      const buttons = answerControls({ proposed_answers: ['Proceed', 'Hold'], free_text: true }, async value => { sent.push(value); }, { mention: '@tess' });
       document.body.append(buttons);
-      buttons.querySelector('textarea').value = 'Another path';
-      buttons.querySelector('form').requestSubmit();
+      // A click sends the answer addressed to the author, as v1 does; there is no pencil and no "Other answer" box.
+      const plainShape = { classes: [...buttons.querySelectorAll('button')].map(button => button.className), extras: buttons.querySelectorAll('textarea, form, .answer-edit-open').length };
+      buttons.querySelector('.proposed-answer-btn').click();
       await new Promise(resolve => setTimeout(resolve, 0));
       const questionItem = { id: 'oq-draft', open_questions: [
         { question: 'Scope?', options: ['Small', 'Large'] },
@@ -1190,7 +1191,7 @@ async function main() {
       const visibleQuestions = () => [...dialog.querySelectorAll('.open-question-sheet')].filter(sheet => !sheet.hidden).length;
       const firstView = { visible: visibleQuestions(), subtitle: dialog.querySelector('.open-questions-subtitle').textContent, sendHidden: dialog.querySelector('.open-questions-send').hidden, reviewDisabled: dialog.querySelector('.open-questions-review-step').disabled };
       dialog.querySelector('input[name="question-0"]').click();
-      const afterFirst = { progress: dialog.querySelector('.open-questions-progress').textContent, triggerCount: trigger.querySelector('.open-questions-count').textContent, answeredStep: dialog.querySelector('.open-questions-step').classList.contains('answered') };
+      const afterFirst = { advanced: dialog.querySelector('.open-questions-subtitle').textContent, letter: dialog.querySelector('.open-question-option strong').textContent, progress: dialog.querySelector('.open-questions-progress').textContent, triggerCount: trigger.querySelector('.open-questions-count').textContent, answeredStep: dialog.querySelector('.open-questions-step').classList.contains('answered') };
       // Submitting with an unanswered question must not send; it jumps there.
       dialog.querySelector('form').requestSubmit();
       const requiredAll = sent.length === 1;
@@ -1212,80 +1213,50 @@ async function main() {
       dialog.querySelector('form').requestSubmit();
       await new Promise(resolve => setTimeout(resolve, 0));
       buttons.remove(); questions.remove();
-      return { sent, requiredAll, dialogClosed: !dialog.open, countAtStart, firstView, afterFirst, jumped, closedRemoved, resumed, emptyOther, allAnswered, review };
+      return { sent, plainShape, requiredAll, dialogClosed: !dialog.open, countAtStart, firstView, afterFirst, jumped, closedRemoved, resumed, emptyOther, allAnswered, review };
     });
     assert.deepEqual(answerControlsResult, {
-      sent: ['Another path', 'Q1) a) Small\nQ2) other) Next week'], requiredAll: true, dialogClosed: true, countAtStart: '0/2',
+      sent: ['@tess Proceed', 'Q1) a) Small\nQ2) other) Next week'], plainShape: { classes: ['proposed-answer-btn', 'proposed-answer-btn'], extras: 0 }, requiredAll: true, dialogClosed: true, countAtStart: '0/2',
       firstView: { visible: 1, subtitle: 'Question 1 of 2', sendHidden: true, reviewDisabled: true },
-      afterFirst: { progress: '1/2 answered', triggerCount: '1/2', answeredStep: true },
+      afterFirst: { advanced: 'Question 2 of 2', letter: 'a)', progress: '1/2 answered', triggerCount: '1/2', answeredStep: true },
       jumped: 'Question 2 of 2', closedRemoved: true,
       resumed: { subtitle: 'Question 2 of 2', kept: true },
       emptyOther: '1/2 answered', allAnswered: '2/2 answered',
       review: { subtitle: 'Review 2/2 answers', sendShown: true, items: 2 },
     });
-    // A proposed answer can be edited before it is sent: the pencil, or Shift-click on the answer, opens it in an editor under the answers;
-    // a plain click still sends it as it stands.
-    const editedAnswer = await first.evaluate(async () => {
+    // A proposed answer is the v1 button: a click sends "@author answer"; Shift-click puts it in the composer with the reply link (when the
+    // page can do that) and sends nothing; a refused send keeps the buttons and says why.
+    const proposedAnswers = await first.evaluate(async () => {
       const { answerControls } = await import('/js/answer-controls.js');
-      const sent = []; let fail = false;
-      const wrap = answerControls({ proposed_answers: ['Proceed', 'Hold'] }, async value => { sent.push(value); if (fail) throw new Error('nope'); });
+      const sent = [], composed = [];
+      const wrap = answerControls({ proposed_answers: ['Proceed', 'Hold'] }, async value => { sent.push(value); }, { mention: '@tess', compose: text => composed.push(text) });
       document.body.append(wrap);
-      const choices = [...wrap.querySelectorAll('.answer-choice')];
-      const names = choices.map(choice => [choice.querySelector('.btn').textContent, choice.querySelector('.answer-edit-open').title, choice.querySelector('.answer-edit-open').getAttribute('aria-label'), !!choice.querySelector('.answer-edit-open .icon-mask-edit')]);
-      const form = () => wrap.querySelector('.answer-edit'), box = () => wrap.querySelector('.answer-edit textarea');
-      const closedAtStart = !form();
-      // The pencil of "Hold" opens the editor with that text, focused, caret at the end.
-      choices[1].querySelector('.answer-edit-open').click();
-      const opened = { hidden: form().hidden, text: box().value, focused: document.activeElement === box(), caret: [box().selectionStart, box().selectionEnd], sent: sent.length };
-      // Ctrl+Enter sends the edited text; the answer is not sent as it was.
-      box().value = 'Hold, but only after the migration';
-      box().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      const afterSend = { sent: [...sent], disabled: [...wrap.querySelectorAll('button,textarea')].every(control => control.disabled) };
-      wrap.remove();
-      // Shift-click on an answer opens it instead of sending; Esc closes the editor, drops the text and returns to that answer.
-      const second = answerControls({ proposed_answers: ['Proceed', 'Hold'] }, async value => { sent.push(value); });
-      document.body.append(second);
-      const proceed = second.querySelectorAll('.answer-choice .btn')[0];
+      const [proceed, hold] = wrap.querySelectorAll('.proposed-answer-btn');
       proceed.dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true, cancelable: true }));
-      const shift = { sentSoFar: sent.length, open: !second.querySelector('.answer-edit').hidden, text: second.querySelector('.answer-edit textarea').value };
-      second.querySelector('.answer-edit textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-      const escaped = { hidden: second.querySelector('.answer-edit').hidden, text: second.querySelector('.answer-edit textarea').value, focus: document.activeElement === proceed };
-      // The X button closes it too, and a plain click sends the answer as it stands.
-      second.querySelectorAll('.answer-edit-open')[0].click(); second.querySelector('.answer-edit-close').click();
-      const closedByX = second.querySelector('.answer-edit').hidden;
-      proceed.click(); await new Promise(resolve => setTimeout(resolve, 0));
-      const plain = [...sent];
-      second.remove();
-      // With free text on, the editor sits right under the answers and the Other form comes after it.
-      const withOther = answerControls({ proposed_answers: ['Proceed', 'Hold'], free_text: true }, async () => {});
-      document.body.append(withOther);
-      withOther.querySelector('.answer-edit-open').click();
-      const order = [...withOther.children].map(node => node.className.split(' ')[0]);
-      withOther.remove();
-      // A refused send keeps the edited text and the editor, shows the error and lets the person try again.
-      fail = true;
-      const third = answerControls({ proposed_answers: ['Proceed'] }, async value => { sent.push(value); throw new Error('The room is closed'); });
-      document.body.append(third);
-      third.querySelector('.answer-edit-open').click();
-      third.querySelector('.answer-edit textarea').value = 'Proceed, carefully';
-      third.querySelector('.answer-edit').requestSubmit(); await new Promise(resolve => setTimeout(resolve, 0));
-      const refused = { error: third.querySelector('.answer-error')?.textContent, text: third.querySelector('.answer-edit textarea').value, enabled: [...third.querySelectorAll('button,textarea')].every(control => !control.disabled), open: !third.querySelector('.answer-edit').hidden };
-      third.remove();
-      return { names, closedAtStart, opened, afterSend, shift, escaped, closedByX, plain, order, refused };
+      const afterShift = { sent: [...sent], composed: [...composed] };
+      hold.click(); await new Promise(resolve => setTimeout(resolve, 0));
+      const afterClick = { sent: [...sent], composed: [...composed], disabled: [...wrap.querySelectorAll('button')].every(button => button.disabled) };
+      wrap.remove();
+      // Without a composer to hand (the inbox), Shift-click sends like any click.
+      const inbox = answerControls({ proposed_answers: ['Proceed'] }, async value => { sent.push(value); });
+      document.body.append(inbox);
+      inbox.querySelector('.proposed-answer-btn').dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true, cancelable: true })); await new Promise(resolve => setTimeout(resolve, 0));
+      const inboxSent = sent.at(-1);
+      inbox.remove();
+      const refused = answerControls({ proposed_answers: ['Proceed'] }, async () => { throw new Error('The room is closed'); });
+      document.body.append(refused);
+      refused.querySelector('.proposed-answer-btn').click(); await new Promise(resolve => setTimeout(resolve, 0));
+      const failure = { error: refused.querySelector('.answer-error')?.textContent, enabled: [...refused.querySelectorAll('button')].every(button => !button.disabled) };
+      refused.remove();
+      return { afterShift, afterClick, inboxSent, failure, title: proceed.title };
     });
-    assert.deepEqual(editedAnswer, {
-      names: [['Proceed', 'Edit \u201cProceed\u201d before sending', 'Edit \u201cProceed\u201d before sending', true], ['Hold', 'Edit \u201cHold\u201d before sending', 'Edit \u201cHold\u201d before sending', true]],
-      closedAtStart: true,
-      opened: { hidden: false, text: 'Hold', focused: true, caret: [4, 4], sent: 0 },
-      afterSend: { sent: ['Hold, but only after the migration'], disabled: true },
-      shift: { sentSoFar: 1, open: true, text: 'Proceed' },
-      escaped: { hidden: true, text: '', focus: true },
-      closedByX: true,
-      plain: ['Hold, but only after the migration', 'Proceed'],
-      order: ['answer-choice', 'answer-choice', 'answer-edit', 'answer-other'],
-      refused: { error: 'The room is closed', text: 'Proceed, carefully', enabled: true, open: true },
-    }, 'a proposed answer is edited in an editor before it is sent');
+    assert.deepEqual(proposedAnswers, {
+      afterShift: { sent: [], composed: ['@tess Proceed'] },
+      afterClick: { sent: ['@tess Hold'], composed: ['@tess Proceed'], disabled: true },
+      inboxSent: 'Proceed',
+      failure: { error: 'The room is closed', enabled: true },
+      title: 'Send this answer (Shift-click to edit it in the composer first)',
+    }, 'a proposed answer is a v1 button: click sends it to the author, Shift-click composes it');
     // Open Questions on a phone: full screen, heading inside the border, 40px targets, the action bar
     // stays on screen with long content, and tapping the Other box chooses Other.
     await first.setViewport({ width: 390, height: 780 });
@@ -2191,8 +2162,8 @@ async function main() {
     assert.equal(await first.$eval('.message:nth-child(2) .quote', el => /^↪ #\d+ (You|owner): \S/.test(el.textContent)), true, 'a reply quotes a snippet of its parent');
     assert.deepEqual(await first.evaluate(async () => {
       const { messageSnippet } = await import('/js/chat.js' + new URL(document.querySelector('script[type=module]').src).search);
-      return [messageSnippet({ body: '  a\n\n  b   c ' }), messageSnippet({ body: '', attachments: [{}] }), messageSnippet({ body: 'x'.repeat(200) }).length, messageSnippet({ body: 'word '.repeat(40) }).endsWith('…'), messageSnippet({ body: '' }), messageSnippet(undefined)];
-    }), ['a b c', '[attachment]', 96, true, '', ''], 'the snippet is one line, cut with an ellipsis');
+      return [messageSnippet({ body: '  a\n\n  b   c ' }), messageSnippet({ body: '', attachments: [{}] }), messageSnippet({ body: 'x'.repeat(200) }).length, messageSnippet({ body: 'word '.repeat(40) }).endsWith('…'), messageSnippet({ body: '' }), messageSnippet(undefined), messageSnippet({ body: '**Done** with `code`, [a link](http://x), _soft_ and snake_case_name\n> quoted' })];
+    }), ['a b c', '[attachment]', 96, true, '', '', 'Done with code, a link, soft and snake_case_name quoted'], 'the snippet is one line, cut with an ellipsis, and has no Markdown syntax');
     await first.hover('.message:first-child');
     await domClick(first, '.message:first-child .thread-action');
     await second.hover('.message:first-child');
