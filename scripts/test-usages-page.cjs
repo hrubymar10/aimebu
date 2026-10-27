@@ -13,7 +13,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
-<body><dialog id="settings-dialog" open><section id="settings-usages" class="settings-content"><h3>Usages</h3><p id="usages-error" class="error" role="alert"></p><div class="usage-switcher-controls" id="usages-switcher"></div><div id="usages-list"></div></section></dialog></body></html>`;
+<body><dialog id="settings-dialog" open><section id="settings-usages" class="settings-content"></section></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -29,12 +29,12 @@ async function main() {
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
   // `held` lists the source methods to hold: a held call waits for window.__release(name) (the oldest first).
-  const mount = async ({ held = [], owner = true, load = true } = {}) => {
+  const mount = async ({ held = [], owner = true, load = true, holdQuota = false } = {}) => {
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`${origin}/fixture.html`);
-    await page.evaluate(async (held, owner, load) => {
+    await page.evaluate(async (held, owner, load, holdQuota) => {
       const { MockUsagesSource } = await import('/js/usages-source.js');
       const { UsagesSettings } = await import('/js/pages/usages/page.js');
       const source = new MockUsagesSource();
@@ -51,9 +51,15 @@ async function main() {
       window.__release = name => { (window.__waiting[name] || []).shift()?.(); };
       if (!owner) { const switcher = source.switcher.bind(source); source.switcher = async () => ({ ...(await switcher()), owner: false }); }
       const section = document.querySelector('#settings-usages'), dialog = document.querySelector('#settings-dialog');
-      window.__usages = new UsagesSettings({ source, dialog, section, switcher: document.querySelector('#usages-switcher'), list: document.querySelector('#usages-list'), error: document.querySelector('#usages-error'), afterLoad: async () => { window.__synced++; } });
+      const absent = { load: async () => { const error = new Error('not served'); error.status = 404; window.__synced++; throw error; } };
+      window.__reads = { quota: 0, guard: 0, fetch: 0 };
+      const realFetch = window.fetch.bind(window);
+      window.fetch = (...args) => { window.__reads.fetch++; return realFetch(...args); };
+      const quotaSource = !holdQuota ? absent : { load: () => { window.__reads.quota++; return new Promise(resolve => { window.__quotaRelease = () => resolve({ tools: {} }); }); } };
+      const guardSource = { load: async () => { window.__reads.guard++; return absent.load(); } };
+      window.__usages = new UsagesSettings({ source, quotaSource, guardSource, dialog, section });
       if (load) await window.__usages.load();
-    }, held, owner, load);
+    }, held, owner, load, holdQuota);
     return page;
   };
   const calls = (page, name) => page.evaluate(name => window.__calls.filter(call => call[0] === name).length, name);
@@ -73,7 +79,7 @@ async function main() {
         settings: ['#usage-refresh-interval', '#usage-percent-display', '#usage-alert-warning', '#usage-alert-critical'].map(selector => document.querySelector(selector).value),
         synced: window.__synced })),
       { controls: ['btn', 'usage-config-controls'], toggle: 'Disable account switcher', providers: [['codex', 'Codex', 'Enabled', 2], ['claude-code', 'Claude Code', 'Enabled', 1], ['github-copilot', 'GitHub Copilot', 'Not configured', 1], ['mistral', 'Mistral', 'Not configured', 1], ['ollama-cloud', 'Ollama Cloud', 'Not configured', 1]],
-        affected: 'Switch affects: milo@mock', settings: ['120', 'left', '20', '10'], synced: 1 });
+        affected: 'Switch affects: milo@mock', settings: ['120', 'left', '20', '10'], synced: 2 });
       assert.deepEqual(await page.evaluate(() => {
         const card = document.querySelector('#usages-list [data-provider=codex] .usage-profile');
         const window = card.querySelector('.usage-window');
@@ -283,6 +289,17 @@ async function main() {
       await page.evaluate(() => window.__release('list'));
       await settle(page);
       assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#usages-list *').length, window.__synced]), [0, 0]);
+      await page.close();
+    }
+    // Destroyed while the automatic-switching read is held: releasing it starts no limit-guard read, and the default limits are not read.
+    {
+      const page = await mount({ load: false, holdQuota: true });
+      await page.evaluate(() => { window.__usages.load(); });
+      await page.waitForFunction(() => window.__reads.quota === 1);
+      await page.evaluate(() => window.__usages.destroy());
+      await page.evaluate(() => { window.__quotaRelease(); window.__reads.fetch = 0; window.__usages.syncDefault(); window.__usages.load(); });
+      await settle(page);
+      assert.deepEqual(await page.evaluate(() => [window.__reads.guard, window.__reads.quota, window.__reads.fetch, window.__calls.filter(call => call[0] === 'list').length]), [0, 1, 0, 1], 'a destroyed page sends no further reads');
       await page.close();
     }
     assert.deepEqual(errors, [], 'no page errors');

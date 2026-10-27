@@ -10,10 +10,7 @@ import { HarnessSettings } from './pages/harnesses/page.js';
 import { MacroSettings } from './pages/macros/page.js';
 import { UsersSettings } from './users.js';
 import { PromptSettings } from './pages/prompts/page.js';
-import { QuotaSettings } from './quota-settings.js';
 import { HttpQuotaSource } from './quota-source.js';
-import { LimitGuardSettings } from './limit-guard-settings.js';
-import { UsageLimitDefault } from './usage-limit-default.js';
 import { HttpLimitGuardSource } from './limit-guard-source.js';
 
 export class SettingsPanel {
@@ -31,16 +28,8 @@ export class SettingsPanel {
     this.usersSettings.tab.onclick = () => this.selectSection('users');
     this.promptSettings = new PromptSettings(this.dialog, projectContext);
     this.promptSettings.tab.onclick = () => this.selectSection('prompts');
-    // The automatic-switching blocks below are other modules', built between the two hosts of the usages page.
-    this.usages = new UsagesSettings({ source, dialog: this.dialog, section: document.querySelector('#settings-usages'), switcher: document.querySelector('#usages-switcher'),
-      list: document.querySelector('#usages-list'), error: document.querySelector('#usages-error'),
-      afterLoad: async state => { await this.quotaSettings.sync({ owner: !!state?.owner, enabled: !!state?.enabled }); await this.limitGuardSettings.sync({ owner: !!state?.owner }); } });
-    this.quotaSettings = new QuotaSettings(new HttpQuotaSource());
-    document.querySelector('#usages-switcher').after(this.quotaSettings.node);
-    this.limitGuardSettings = new LimitGuardSettings(new HttpLimitGuardSource());
-    this.quotaSettings.node.after(this.limitGuardSettings.node);
-    this.usageLimitDefault = new UsageLimitDefault();
-    this.limitGuardSettings.node.after(this.usageLimitDefault.node);
+    this.usagesSection = document.querySelector('#settings-usages');
+    this.usages = new UsagesSettings({ source, quotaSource: new HttpQuotaSource(), guardSource: new HttpLimitGuardSource(), dialog: this.dialog, section: this.usagesSection });
     this.usagesTab = document.querySelector('#settings-usages-tab');
     this.generalTab = document.querySelector('#settings-general-tab');
     this.generalSection = document.querySelector('#settings-general');
@@ -48,7 +37,6 @@ export class SettingsPanel {
     this.notificationsTab = document.querySelector('#settings-notifications-tab');
     this.rolesTab = document.querySelector('#settings-roles-tab');
     this.machinesTab = document.querySelector('#settings-machines-tab');
-    this.usagesSection = document.querySelector('#settings-usages');
     this.notificationsSection = document.querySelector('#settings-notifications');
     this.rolesSection = document.querySelector('#settings-roles');
     this.machinesSection = document.querySelector('#settings-machines');
@@ -102,7 +90,7 @@ export class SettingsPanel {
     try { await refreshRights(); this.setRights(rights); this.onRights?.(rights); } catch { /* keep what sign-in said */ }
     this.usersSettings.prepare().catch(() => this.usersSettings.settle(true));
     // The default daily limits do not depend on the switcher or the usage snapshots, so they load on their own.
-    void this.usageLimitDefault.sync();
+    void this.usages.syncDefault();
     if (!rights.owner) { if (!this.usagesSection.hidden) this.selectSection('general'); return; } // nothing of the usages is theirs to load
     try { await this.usages.load(); }
     catch (error) {

@@ -27,6 +27,7 @@ export class UsagesStore {
   }
 
   async load() {
+    if (!this.alive) return;
     const ticket = ++this.generation;
     const [usage, state] = await Promise.all([this.source.list(), this.source.switcher()]);
     if (!this.alive || ticket !== this.generation) return;

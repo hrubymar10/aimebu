@@ -4016,59 +4016,72 @@ async function main() {
       await settingsPage.click(`${claude} .quota-decisions > summary`);
       assert.deepEqual(await settingsPage.$$eval(`${claude} .quota-decision`, els => els.map(el => el.dataset.action)), ['hold', 'switch']);
       // A live push while the owner is typing replaces only the server-driven blocks: the same field element, with its value, survives.
-      // A second Settings section over the same intercepted API plays the open tab; the server's state moves between the page calls.
+      // A second automatic-switching block (the page's own component, over the same intercepted API) plays the open tab; the server's state
+      // moves between the page calls. `mountQuota` puts such a block inside the Usages section; anything outside the modal Settings dialog is
+      // inert and cannot take focus.
+      const mountQuota = source => settingsPage.evaluate(async source => {
+        const version = new URL(document.querySelector('script[type=module][src]').src).search;
+        const { QuotaStore } = await import(`/js/pages/usages/quota-store.js${version}`);
+        const { QuotaBlock } = await import(`/js/pages/usages/quota-block.js${version}`);
+        const { HttpQuotaSource } = await import(`/js/quota-source.js${version}`);
+        const { html, render } = await import(`/js/ui.js${version}`);
+        const host = document.createElement('div');
+        document.querySelector('#settings-usages').append(host);
+        const store = new QuotaStore({ source: source ? { load: async () => window.__hostileData, reenable: async tool => { window.__reenabled = (window.__reenabled || 0) + 1; window.__hostileData.tools[tool].state.tripped = false; return window.__hostileData.tools[tool]; } } : new HttpQuotaSource(), isEditing: () => !!store.node && store.node.contains(document.activeElement) && document.activeElement.matches('input, select, textarea') });
+        render(html`<${QuotaBlock} store=${store} />`, host);
+        window.__quota = { store, host, node: () => store.node, sync: async options => { await store.sync(options); await new Promise(resolve => setTimeout(resolve, 60)); }, remove: () => { render(null, host); host.remove(); delete window.__quota; } };
+      }, source);
+      await mountQuota(false);
       await settingsPage.evaluate(async () => {
-        const { QuotaSettings } = await import('/js/quota-settings.js');
-        const { HttpQuotaSource } = await import('/js/quota-source.js');
-        const quota = window.__quota = new QuotaSettings(new HttpQuotaSource());
-        document.querySelector('#settings-usages').append(quota.node); // inside the modal Settings dialog: anything outside it is inert and cannot take focus
+        const quota = window.__quota;
         await quota.sync({ owner: true, enabled: true });
-        const input = window.__typingInput = quota.node.querySelector('[aria-label="local weekly limit (%)"]');
+        const input = window.__typingInput = quota.node().querySelector('[aria-label="local weekly limit (%)"]');
         input.focus(); input.value = '9'; input.dispatchEvent(new Event('input', { bubbles: true }));
-        window.__evaluatedBefore = quota.node.querySelector('.quota-evaluated').textContent;
+        await new Promise(resolve => setTimeout(resolve, 60));
+        window.__evaluatedBefore = quota.node().querySelector('.quota-evaluated').textContent;
       });
       quotaMock.tools.claude.state.evaluated_at = new Date(Date.now() + 90000).toISOString();
       quotaMock.tools.claude.decisions.unshift(quotaMock.decision('claude', 'stay', 'local', null, 'x'));
       quotaMock.tools.claude.last_decision = quotaMock.tools.claude.decisions[0];
       quotaMock.tools.codex.config.enabled = true; quotaMock.tools.codex.saved = true; // another tab saved codex meanwhile
       const typing = await settingsPage.evaluate(async () => {
-        const quota = window.__quota, input = window.__typingInput;
+        const quota = window.__quota, node = () => quota.node(), input = window.__typingInput;
         await quota.sync({ owner: true, enabled: true });
-        const out = { same: document.activeElement === input && quota.node.contains(input), value: input.value, statusMoved: quota.node.querySelector('.quota-evaluated').textContent !== window.__evaluatedBefore, decisions: quota.node.querySelectorAll('.quota-tool[data-tool="claude"] .quota-decision').length, codexDuringEdit: quota.node.querySelector('#quota-codex-enabled').checked };
+        const out = { same: document.activeElement === input && node().contains(input), value: input.value, statusMoved: node().querySelector('.quota-evaluated').textContent !== window.__evaluatedBefore, decisions: node().querySelectorAll('.quota-tool[data-tool="claude"] .quota-decision').length, codexDuringEdit: node().querySelector('#quota-codex-enabled').checked };
         input.blur();
-        await new Promise(resolve => setTimeout(resolve, 50));
-        out.codexAfterBlur = quota.node.querySelector('#quota-codex-enabled').checked; out.draftKept = quota.node.querySelector('[aria-label="local weekly limit (%)"]').value;
+        await new Promise(resolve => setTimeout(resolve, 100));
+        out.codexAfterBlur = node().querySelector('#quota-codex-enabled').checked; out.draftKept = node().querySelector('[aria-label="local weekly limit (%)"]').value;
         // A focused field whose tool has no typed edits is rebuilt at once when the server's configuration changed.
-        quota.node.querySelector('#quota-codex-dry-run').focus();
+        node().querySelector('#quota-codex-dry-run').focus();
         return out;
       });
       quotaMock.tools.codex.config.dry_run = !quotaMock.tools.codex.config.dry_run;
       typing.cleanFocusRefreshed = await settingsPage.evaluate(async dryRun => {
         const quota = window.__quota;
         await quota.sync({ owner: true, enabled: true });
-        const refreshed = quota.node.querySelector('#quota-codex-dry-run').checked === dryRun && document.activeElement?.id === 'quota-codex-dry-run';
-        quota.node.remove(); delete window.__quota;
+        const refreshed = quota.node().querySelector('#quota-codex-dry-run').checked === dryRun && document.activeElement?.id === 'quota-codex-dry-run';
+        quota.remove();
         return refreshed;
       }, quotaMock.tools.codex.config.dry_run);
       assert.deepEqual(typing, { same: true, value: '9', statusMoved: true, decisions: 3, codexDuringEdit: false, codexAfterBlur: true, draftKept: '9', cleanFocusRefreshed: true }, 'a live push rebuilt the field being typed in, or the server copy never arrived after focus left (the field element and its value must survive the push; the rest catches up on blur)');
       // Server text is plain text, and a tripped breaker is a visible alert with a re-enable button.
-      const hostile = await settingsPage.evaluate(async () => {
-        const { QuotaSettings } = await import('/js/quota-settings.js');
+      await settingsPage.evaluate(() => {
         const decision = { at: new Date().toISOString(), tool: 'claude', action: 'hold', from: '<img src=x onerror=window.__quotaXss=1>', to: null, reason: '<b>bold</b>', dry_run: false, profiles: { '<i>p</i>': { status: '<u>ok</u>', session: 1, weekly: 2, ok_for_seconds: 3 } } };
-        let reenabled = 0;
         const tool = { config: { enabled: true, dry_run: false, profiles: [{ name: '<i>p</i>', session_max: 95, weekly_max: 95 }, { name: 'q', session_max: 95, weekly_max: 95 }], protected: [], after_reset: null, warmup_seconds: 60, min_dwell_minutes: 5 }, saved: true, state: { tripped: true, tripped_at: new Date().toISOString(), hold: '<b>hold</b>', evaluated_at: null }, last_decision: decision, decisions: [decision] };
-        const source = { load: async () => ({ profiles: { claude: ['<i>p</i>', 'q'], codex: [] }, tools: { claude: tool, codex: { ...tool, state: {}, decisions: [], last_decision: null } } }), reenable: async () => { reenabled++; tool.state.tripped = false; return tool; } };
-        const quota = new QuotaSettings(source);
-        document.querySelector('#settings-usages').append(quota.node); // inside the modal Settings dialog: anything outside it is inert and cannot take focus
+        window.__hostileData = { profiles: { claude: ['<i>p</i>', 'q'], codex: [] }, tools: { claude: tool, codex: { ...tool, state: {}, decisions: [], last_decision: null } } };
+      });
+      await mountQuota(true);
+      const hostile = await settingsPage.evaluate(async () => {
+        const quota = window.__quota;
         await quota.sync({ owner: true, enabled: true });
-        const box = quota.node.querySelector('.quota-tool[data-tool="claude"]');
-        const out = { markup: quota.node.querySelectorAll('img, b, i, u').length, xss: window.__quotaXss || 0, hold: box.querySelector('.quota-hold').textContent, last: box.querySelector('.quota-last').textContent, alert: box.querySelector('.quota-banner')?.getAttribute('role') };
+        const box = quota.node().querySelector('.quota-tool[data-tool="claude"]');
+        const out = { markup: quota.node().querySelectorAll('img, b, i, u').length, xss: window.__quotaXss || 0, hold: box.querySelector('.quota-hold').textContent, last: box.querySelector('.quota-last').textContent, alert: box.querySelector('.quota-banner')?.getAttribute('role') };
         box.querySelector('.quota-banner button').click();
-        await new Promise(resolve => setTimeout(resolve, 50));
-        out.reenabled = reenabled; out.bannerGone = !quota.node.querySelector('.quota-banner');
+        await new Promise(resolve => setTimeout(resolve, 100));
+        out.reenabled = window.__reenabled || 0; out.bannerGone = !quota.node().querySelector('.quota-banner');
         await quota.sync({ owner: false, enabled: true });
-        out.hiddenForNonOwner = quota.node.hidden && !quota.node.childElementCount;
-        quota.node.remove();
+        out.hiddenForNonOwner = quota.node().hidden && !quota.node().childElementCount;
+        quota.remove();
         return out;
       });
       assert.deepEqual(hostile, { markup: 0, xss: 0, hold: 'Current hold: <b>hold</b>', last: hostile.last, alert: 'alert', reenabled: 1, bannerGone: true, hiddenForNonOwner: true }, 'server text rendered as markup, or the breaker banner failed');

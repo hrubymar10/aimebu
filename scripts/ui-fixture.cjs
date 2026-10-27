@@ -52,8 +52,8 @@ const server = http.createServer((req, res) => {
 
 // Elements are forced visible while measured so hidden popovers and dialogs report real styles.
 const FIXTURE = async () => {
-  const [{ renderMarkdown }, { renderVisualPlan }, { settingsRow, settingsGroup }, { usageWindowRow }, { MentionIndex, highlightMentions }, { QuotaSettings }, { HttpQuotaSource }, { buildMessageActions }] = await Promise.all([
-    import('/js/markdown.js'), import('/js/visual-plan.js'), import('/js/settings-row.js'), import('/js/usage-format.js'), import('/js/mentions.js'), import('/js/quota-settings.js'), import('/js/quota-source.js'), import('/js/message-actions.js')]);
+  const [{ renderMarkdown }, { renderVisualPlan }, { settingsRow, settingsGroup }, { usageWindowRow }, { MentionIndex, highlightMentions }, { HttpQuotaSource }, { buildMessageActions }] = await Promise.all([
+    import('/js/markdown.js'), import('/js/visual-plan.js'), import('/js/settings-row.js'), import('/js/usage-format.js'), import('/js/mentions.js'), import('/js/quota-source.js'), import('/js/message-actions.js')]);
   const freeze = document.createElement('style'); freeze.textContent = '*,*::before,*::after{transition:none!important;animation:none!important}'; document.head.append(freeze);
   document.querySelector('#login-view').hidden = true;
   document.querySelector('#app-view').hidden = false;
@@ -153,16 +153,16 @@ const FIXTURE = async () => {
   const check = make('input'); check.type = 'checkbox';
   const area = make('textarea');
   section.append(settingsGroup([settingsRow({ label: 'Fixture select', desc: 'A description for the select', control: select, id: 'fx-select' }), settingsRow({ label: 'Fixture toggle', desc: 'A description for the toggle', control: check, id: 'fx-check', className: 'settings-row-toggle' }), settingsRow({ label: 'Fixture area', desc: 'A stacked row', control: area, id: 'fx-area', className: 'settings-row-stack' })]));
-  // The real automatic-switching section over the mock quota API, with its decision list opened, so the audits see every control.
-  const quota = new QuotaSettings(new HttpQuotaSource());
-  await quota.sync({ owner: true, enabled: true });
-  quota.node.querySelectorAll('details').forEach(item => { item.open = true; });
-  document.querySelector('#settings-usages').append(quota.node);
-  // The limit guard's settings over its mock API, and its rows in the Health list, both rendered by the real code.
-  const { LimitGuardSettings } = await import('/js/limit-guard-settings.js'), { HttpLimitGuardSource } = await import('/js/limit-guard-source.js'), { Health } = await import('/js/health.js');
-  const guard = new LimitGuardSettings(new HttpLimitGuardSource());
-  await guard.sync({ owner: true });
-  document.querySelector('#settings-usages').append(guard.node);
+  // The real automatic-switching and limit-guard blocks over the mock APIs, with the decision list opened, so the audits see every control.
+  const { QuotaStore } = await import('/js/pages/usages/quota-store.js'), { QuotaBlock } = await import('/js/pages/usages/quota-block.js');
+  const { GuardStore } = await import('/js/pages/usages/guard-store.js'), { GuardBlock } = await import('/js/pages/usages/guard-block.js');
+  const { HttpLimitGuardSource } = await import('/js/limit-guard-source.js'), { Health } = await import('/js/health.js'), { html, render } = await import('/js/ui.js');
+  const quotaHost = make('div', '', '', document.querySelector('#settings-usages')), guardHost = make('div', '', '', document.querySelector('#settings-usages'));
+  const quota = new QuotaStore({ source: new HttpQuotaSource(), isEditing: () => false }), guard = new GuardStore({ source: new HttpLimitGuardSource(), isEditing: () => false });
+  render(html`<${QuotaBlock} store=${quota} />`, quotaHost); render(html`<${GuardBlock} store=${guard} />`, guardHost);
+  await quota.sync({ owner: true, enabled: true }); await guard.sync({ owner: true });
+  await new Promise(resolve => setTimeout(resolve, 150));
+  quotaHost.querySelectorAll('details').forEach(item => { item.open = true; });
   const guardData = await new HttpLimitGuardSource().load(), healthLimits = Health.prototype.limitRows(guardData);
   if (healthLimits) document.querySelector('#health-popover').prepend(healthLimits);
   // The room dialog's member list with every row kind, so the audits see people, agents, badges and singleton roles.

@@ -180,6 +180,13 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
   auto-refresh polling until the server has converted the logins and the warm-up schedule; GitHub sign-in polling, its link, and
   its stop on destroy; Mistral and Ollama credentials; an answer after destroy) and `scripts/test-usages-model.cjs` (the pure
   rules, in `make test-web`).
+- `make test-ui` also runs `scripts/test-quota-page.cjs` (the Usages page's three blocks over sources with calls held: hidden until
+  the owner of an enabled switcher asks; the tools, notes and orders; a move keeping focus on its row; a refused limit sending
+  nothing and a message that typing leaves and a change clears; a save that waits behind a switch, once, then focus on its note;
+  protecting, discard and the watched profile of the after-reset order; re-arm keeping a draft; reads answered out of order, a
+  403 or 404 hiding the block and a failed read keeping it; a save answered after destroy; the limit guard's validation, save and
+  override; the default daily limits' visibility, validation, saved note and refusal) and `scripts/test-quota-model.cjs` (the pure
+  rules, in `make test-web`).
 - `make test-ui` also runs `scripts/test-harness-page.cjs`: the Preact page in real Chromium (the existing Puppeteer tooling,
   `web/` served as is with the page's import map, no Go server), with every request held until the test answers it, so the
   order of answers is chosen. It checks:
@@ -256,7 +263,7 @@ same change (section 5); the experiment, default-flip and removal steps describe
 
 ### Step 2: the other Settings sections
 
-Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`), Roles (`web/js/pages/roles/`; its default-agents picker is the shared `components/spawn-defaults.js`, which Project will use too, and `spawn-defaults-editor.js` goes with that step), General (`web/js/pages/general/`: appearance, the chat switches, message expiry and the settings backup; the chat switches read `chat-preferences.js`, which the system-events feed shares, and the expiry window is the shared `retention.js` store), Notifications (`web/js/pages/notifications/`; the page reads and writes the inbox's `InboxNotifications` store, which the sound upload and permission button go through), Usages: the provider cards and the account switcher (`web/js/pages/usages/`; `UsagesStore` is an object of signals because the shell and the event stream reach it too; the automatic-switching blocks between the page's two hosts are still the older modules).
+Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`), Roles (`web/js/pages/roles/`; its default-agents picker is the shared `components/spawn-defaults.js`, which Project will use too, and `spawn-defaults-editor.js` goes with that step), General (`web/js/pages/general/`: appearance, the chat switches, message expiry and the settings backup; the chat switches read `chat-preferences.js`, which the system-events feed shares, and the expiry window is the shared `retention.js` store), Notifications (`web/js/pages/notifications/`; the page reads and writes the inbox's `InboxNotifications` store, which the sound upload and permission button go through), Usages (`web/js/pages/usages/`: the provider cards and the account switcher, the automatic-switching block, the limits before 100% and the default daily limits as one tree in the section; the stores are objects of signals because the shell and the event stream reach them too, and the two per-tool blocks share `ToolStore`: the server's copy, the owner's drafts, and the rule that a draft that was edited, or a field being typed in, is not replaced).
 
 - Scope: the small sections first (prompts, macros, roles, retention, limit guard, quota), then users, machines and project;
   then the settings shell's nav and section switching.
