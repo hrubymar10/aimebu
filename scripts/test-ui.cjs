@@ -5538,10 +5538,23 @@ async function main() {
       assert.ok(saved.name.endsWith('-output.txt') && saved.text.includes('second line') && saved.text.includes('<img src=x'), `the download: ${JSON.stringify(saved)}`);
       // On a phone the section fits the panel.
       await first.setViewport({ width: 390, height: 780 });
-      // The resize reaches the page and the section is laid out for it a moment later: wait for that instead of measuring at once.
-      await first.waitForFunction(selector => innerWidth === 390 && (() => { const box = document.querySelector(selector).getBoundingClientRect(); return box.width > 0 && box.right <= innerWidth + 1; })(), { timeout: 5000 }, section)
-        .catch(() => {});
-      assert.ok(await first.evaluate(selector => { const box = document.querySelector(selector).getBoundingClientRect(); return box.width > 0 && box.right <= innerWidth + 1; }, section), 'the Output section overflows a phone');
+      // The resize reaches the page, and the section is laid out for the phone a few frames later (media queries, the panel's own resize
+      // handling). Measure only once the phone query holds and the section's box has not moved for two frames in a row, and say what the
+      // page looked like if it never settles, instead of asserting on whatever the first frame showed.
+      const phoneFit = selector => new Promise(resolve => {
+        // "Fits the panel": inside the agents panel it lives in (which on a phone is a drawer that may be closed, off the screen), and no
+        // wider than the screen.
+        const read = () => {
+          const el = document.querySelector(selector), box = el && el.getBoundingClientRect(), panel = el?.closest('#agents-panel, .agents-panel')?.getBoundingClientRect();
+          const inside = !!box && (!panel || (box.left >= panel.left - 1 && box.right <= panel.right + 1));
+          return { phone: matchMedia('(max-width: 700px)').matches, width: innerWidth, box: box ? [box.x, box.y, box.width, box.right].map(Math.round) : null, panel: panel ? [panel.x, panel.width, panel.right].map(Math.round) : null, fits: !!box && box.width > 0 && box.width <= innerWidth + 1 && inside };
+        };
+        let previous = null, stable = 0;
+        const step = () => { const now = read(), same = previous && now.phone && now.width === 390 && JSON.stringify(now.box) === JSON.stringify(previous.box); stable = same ? stable + 1 : 0; previous = now; if (stable >= 2) resolve(now); else requestAnimationFrame(step); };
+        requestAnimationFrame(step);
+      });
+      const settled = await Promise.race([first.evaluate(phoneFit, section), new Promise(resolve => setTimeout(() => resolve({ unsettled: true }), 10000))]);
+      assert.ok(settled.fits, `the Output section overflows a phone: ${JSON.stringify(settled.unsettled ? await first.evaluate(selector => { const box = document.querySelector(selector)?.getBoundingClientRect(); return { phone: matchMedia('(max-width: 700px)').matches, width: innerWidth, box: box && [box.x, box.y, box.width, box.right].map(Math.round), note: 'the layout never settled' }; }, section) : settled)}`);
       await first.setViewport({ width: 1100, height: 720 });
     }
     await domClick(first, '#agent-profile-close');
