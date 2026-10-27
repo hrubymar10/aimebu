@@ -398,3 +398,59 @@ func TestStartAsV2AgentInALeadOnlyHomeRoomNeedsALeadRole(t *testing.T) {
 		t.Fatalf("reviewer into a task room: %d %+v", status, body)
 	}
 }
+
+// A v1 agent's Claude Code session can also be worked on as a copy: the first turn forks it, the original stays as it is, v1 may still have
+// it open, and the agent is linked to its v1 name like any other start.
+func TestStartAsV2AgentCanWorkOnACopyOfTheV1Session(t *testing.T) {
+	f := newLegacyFixture(t)
+	status, body := f.start(t, "fork-old", map[string]any{"resume_mode": "fork"})
+	if status != 409 || body["error"] != "supervisor_update_needed" {
+		t.Fatalf("a supervisor that cannot fork: %d %+v", status, body)
+	}
+	if status, body := f.start(t, "fork-bad", map[string]any{"resume_mode": "mirror"}); status != 400 || body["error"] != "invalid_request" {
+		t.Fatalf("an unknown mode: %d %+v", status, body)
+	}
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID].supportsSessionFork = true
+	f.srv.machineMu.Unlock()
+	// v1 saw the agent a moment ago: continuing would need the confirmation, a copy does not.
+	if _, err := f.exec(`UPDATE legacy_agent_session SET last_seen=? WHERE agent_id='sage@old'`, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	if status, body := f.start(t, "continue-busy", nil); status != 409 || body["error"] != "v1_may_be_active" {
+		t.Fatalf("continuing while v1 is active: %d %+v", status, body)
+	}
+	status, created := f.start(t, "fork-ok", map[string]any{"resume_mode": "fork"})
+	if status != 201 || created["slug"] != "sage" {
+		t.Fatalf("fork start: %d %+v", status, created)
+	}
+	agentID, _ := created["id"].(string)
+	// The first turn forks the v1 session (the session still names the original until the copy's id is known).
+	if pending, err := f.db.AgentForkPending(f.t.Context(), agentID); err != nil || !pending {
+		t.Fatalf("the first turn must fork the v1 session: pending=%v %v", pending, err)
+	}
+	if live := f.profile(t, agentID); live.ResumedFrom != "sage@old" || live.StartMode != "native_resume" || live.Cwd != f.cwd {
+		t.Fatalf("v2 profile: %+v", live)
+	}
+	if again := f.profile(t, "sage@old"); again.Start == nil || again.Start.StartedAgentID != created["id"] {
+		t.Fatalf("the v1 name is not linked: %+v", again.Start)
+	}
+}
+
+// There is nothing to copy when the harness cannot continue its v1 session.
+func TestStartAsV2AgentCopyNeedsAResumableSession(t *testing.T) {
+	f := newLegacyFixture(t)
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID].supportsSessionFork = true
+	f.srv.machineMu.Unlock()
+	if _, err := f.exec(`INSERT INTO legacy_agent_session(agent_id,harness,model,project,cwd,harness_session_id,registered_at,last_seen) VALUES ('coder@old','codex','gpt','old','/tmp/anywhere','thread-abcdef123456','2026-10-01T10:00:00Z','2026-10-02T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES ('msg_coder',999998,?,'agent','coder@old','from codex','[]','2026-10-02T09:00:00.000000000Z')`, f.room.ID); err != nil {
+		t.Fatal(err)
+	}
+	status, body := f.start(t, "fork-codex", map[string]any{"resume_legacy": "coder@old", "tool": "fake", "variant": "test", "model": "test", "provider": "", "resume_mode": "fork"})
+	if status != 400 || body["error"] != "invalid_request" {
+		t.Fatalf("a copy of a session that cannot be continued: %d %+v", status, body)
+	}
+}

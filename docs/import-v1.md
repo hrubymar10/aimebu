@@ -378,7 +378,11 @@ The session is chosen, in this order:
    offered and not shown as the sender's; the dialog says why, and the agent
    starts fresh with the same name.
 
-- **Claude Code** sessions are **continued** (the same mechanism continues any Claude Code session a machine has, see [Continuing a Claude Code session](claude-sessions.md)): the new agent's session is
+- **Claude Code** sessions are **continued**, or, when the dialog's **How** choice
+  says so, worked on as **a copy** (`resume_mode: fork`: the first turn forks the
+  v1 session, the original stays as it is, and v1 still having it open is no
+  obstacle; see [Working on a copy](claude-sessions.md#working-on-a-copy-fork)).
+  Continuing is the same mechanism that continues any Claude Code session a machine has, see [Continuing a Claude Code session](claude-sessions.md): the new agent's session is
   created already started with v1's session id, so its first turn runs
   `claude --resume <id>`. Claude looks a session up under the working folder it
   was made in, so the agent works in **v1's working folder**, even outside the

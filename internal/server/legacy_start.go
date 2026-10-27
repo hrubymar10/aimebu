@@ -125,10 +125,15 @@ func (s *Server) legacyStartChecks(w http.ResponseWriter, r *http.Request, room 
 			apiError(w, 400, "invalid_request", "a continued session runs where it was made, so it cannot use a worktree")
 			return legacy, false, false
 		}
-		if legacy.SeenRecently(time.Now()) && !req.ConfirmV1Idle {
+		// A copy leaves the original as it is, so v1 still having it open is no obstacle.
+		if legacy.SeenRecently(time.Now()) && !req.ConfirmV1Idle && req.ResumeMode != resumeFork {
 			apiError(w, 409, "v1_may_be_active", "v1 saw this agent a moment ago and may still be using the session; stop it first, then confirm")
 			return legacy, false, false
 		}
+	}
+	if req.ResumeMode == resumeFork && !resuming {
+		apiError(w, 400, "invalid_request", "this agent's session cannot be continued, so there is nothing to work on a copy of")
+		return legacy, false, false
 	}
 	return legacy, resuming, true
 }

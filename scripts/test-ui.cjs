@@ -2714,6 +2714,24 @@ async function main() {
         text: document.querySelector('#spawn-resume-text').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
       })), { title: 'Start veteran as a v2 agent', worktree: true, text: 'This continues the v1 session of veteran@old, working in /definitely/not/in/the/project.', confirm: true });
       assert.equal(await first.$eval('.spawn-name', el => el.hidden), true, 'a v1 agent keeps its own name, so the start dialog has no Name field');
+      // A v1 session that can be continued offers the same choice as a session picked from the list: continue the original, or work on a copy.
+      assert.equal(await first.$eval('#spawn-resume-mode', el => el.hidden), false, 'a v1 session that can be continued offers continue or a copy');
+      assert.equal(await first.$eval('#spawn-resume-mode input[value=continue]', el => el.checked), true, 'it starts from continue, as v1 always did');
+      await first.evaluate(() => document.querySelector('#spawn-resume-mode input[value=fork]').click());
+      assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, text: document.querySelector('#spawn-resume-text').textContent.slice(0, 77) })),
+        { title: 'Start veteran on a copy of its v1 session', text: 'This works on a copy of the v1 session of veteran@old, in /definitely/not/in/the' }, 'the copy choice says what it does');
+      await first.evaluate(() => document.querySelector('#spawn-resume-mode input[value=continue]').click());
+      await first.waitForFunction(() => document.querySelector('#spawn-form h2').textContent === 'Start veteran as a v2 agent');
+      // The model the person picked stays picked when the list is rebuilt (the catalog arriving again, the tool picked again).
+      const modelPick = await first.evaluate(() => {
+        const select = document.querySelector('#spawn-form [name=model]');
+        if (select.options.length < 2) return null;
+        const last = select.options[select.options.length - 1].value;
+        select.value = last; select.dispatchEvent(new Event('change'));
+        document.querySelector('#spawn-form [name=tool]').dispatchEvent(new Event('change'));
+        return { picked: last, kept: select.value };
+      });
+      if (modelPick) assert.equal(modelPick.kept, modelPick.picked, 'a rebuilt model list keeps what the person picked');
       await first.waitForFunction(() => document.querySelector('#spawn-form [name=role]').value === 'reviewer', {}, {});
       assert.deepEqual(await first.evaluate(() => ({ shown: !document.querySelector('#spawn-start-in').hidden, value: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent })), { shown: true, value: 'general' }, 'a start from v1 history says which room it starts in, general by default');
       // Which entry the dialog picks: a continued claude session takes the native claude entry even when a Docker one sorts first (and leaves

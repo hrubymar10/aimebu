@@ -556,8 +556,14 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			log.Printf("spawn: resume_mode not given for Claude Code session %s by %s %s, defaulting to fork", req.ResumeSession, actorKind, actorID)
 			req.ResumeMode = resumeFork
 		}
+	} else if req.ResumeLegacy != "" && !req.NewRoom && !req.ConfirmSessionClosed {
+		// A v1 agent's Claude Code session can be continued (the default, as it always was) or worked on as a copy.
+		if req.ResumeMode != "" && req.ResumeMode != resumeContinue && req.ResumeMode != resumeFork {
+			apiError(w, 400, "invalid_request", "resume_mode is continue or fork")
+			return
+		}
 	} else if req.NewRoom || req.ConfirmSessionClosed || req.ResumeMode != "" {
-		apiError(w, 400, "invalid_request", "new_room, confirm_session_closed and resume_mode belong to resume_session")
+		apiError(w, 400, "invalid_request", "new_room, confirm_session_closed and resume_mode belong to resume_session or resume_legacy")
 		return
 	}
 	key := r.Header.Get("Idempotency-Key")
@@ -734,6 +740,10 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			sessionSpelling = filepath.Clean(session.CWD)
 		}
 	} else if resuming {
+		if req.ResumeMode == resumeFork && !machine.supportsSessionFork {
+			apiError(w, 409, "supervisor_update_needed", "this machine's supervisor predates working on a copy of a session; update it, or continue the session instead")
+			return
+		}
 		// A resumed session runs where it was made (see legacyResumeCWD), not in the room's checkout.
 		if path, err = s.legacyResumeCWD(r.Context(), machineInfo, legacy.CWD); err != nil {
 			apiError(w, 409, "v1_folder_missing", err.Error())
@@ -792,6 +802,10 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			input.Slug, input.ResumeLegacyID = legacy.Slug, legacy.AgentID
 			if resuming {
 				input.ResumeHandle = legacy.SessionID
+				if req.ResumeMode == resumeFork {
+					// Worked on as a copy: the first turn forks the v1 session, the original stays as it is.
+					input.ResumeSession = &store.ResumeSession{ID: legacy.SessionID, CWD: path, Title: "", Fork: true}
+				}
 			}
 		}
 		created, err := tx.SpawnAgent(input)

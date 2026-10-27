@@ -329,6 +329,9 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 		notice = fmt.Sprintf("%s joined as %s, continuing the Claude Code session %s in %s", slug, in.RoleKey, describeSession(in.ResumeSession), in.Path)
 		if in.ResumeSession.Fork {
 			notice = fmt.Sprintf("%s joined as %s, working on a copy of the Claude Code session %s in %s", slug, in.RoleKey, describeSession(in.ResumeSession), in.Path)
+			if in.ResumeLegacyID != "" {
+				notice = fmt.Sprintf("%s joined as %s, working on a copy of the v1 session of %s (%s) in %s", slug, in.RoleKey, in.ResumeLegacyID, describeSession(in.ResumeSession), in.Path)
+			}
 		}
 	}
 	if actorKind == "agent" {

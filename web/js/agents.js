@@ -5,6 +5,7 @@ import { harnessIcon, agentLabel } from './sender-identity.js';
 import { setGlyph } from './icon-button.js';
 import { relativeTime, stateAge } from './time.js';
 import { ClaudeSessionPicker } from './claude-sessions.js';
+import { chooseModel, toolKey } from './spawn-model.js';
 
 // Compact icon buttons for a member row (the label is the title and the accessible name; no text of their own).
 const ICONS = {
@@ -59,7 +60,12 @@ export class AgentsPanel {
     document.querySelector('#spawn-cancel').onclick = () => this.dialog.close();
     this.dialog.addEventListener('close', () => { this.pendingResume = null; this.renderStartRooms(); this.renderResume(); });
     this.form.elements.tool.onchange = () => { this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1; this.renderSpawnModels(); };
-    this.form.elements.model.onchange = () => { this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1; };
+    // What the person picked is kept while the list is rebuilt (the catalog arriving late, the same tool picked again): see renderSpawnModels.
+    this.form.elements.model.onchange = () => {
+      this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1;
+      const tool = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)];
+      this.pickedModel = { toolKey: toolKey(tool), model: this.form.elements.model.value };
+    };
     this.form.elements.role.onchange = () => this.prefillRoleDefault();
     this.nameInput = this.form.elements.name; this.nameError = this.form.querySelector('#spawn-name-error');
     this.nameDice = setGlyph(this.form.querySelector('#spawn-name-dice'), 'dice', 'Another name');
@@ -645,6 +651,7 @@ export class AgentsPanel {
     // below, and until they are, Start stays off. Otherwise a role picked in the last opening (the lead, in a lead-only home room) could
     // still be selected while the tool catalog arrives first and enables Start, and the agent would be started as that role.
     this.rolesReady = false;
+    this.pickedModel = null;
     this.form.elements.role.replaceChildren();
     this.pendingResume = resume;
     this.renderStartRooms();
@@ -738,6 +745,9 @@ export class AgentsPanel {
     const machineID = this.spawnMachine.id;
     const requestID = (this.catalogRequestID || 0) + 1; this.catalogRequestID = requestID;
     const toolSelect = this.form.elements.tool, modelSelect = this.form.elements.model;
+    // A reload (the machine changed, a live update) must not undo what the person picked: the tool they had is picked again when it is still
+    // offered and available.
+    const previousTool = toolSelect.selectedIndex < 0 ? '' : toolKey(this.catalog?.[Number(toolSelect.value)]);
     toolSelect.replaceChildren(); modelSelect.replaceChildren();
     this.form.querySelector('button[type=submit]').disabled = true;
     document.querySelector('#spawn-tool-reason').textContent = 'Loading available tools…';
@@ -754,10 +764,10 @@ export class AgentsPanel {
         option.textContent = `${tool.label || tool.tool}${tool.available ? '' : ` — ${help}`}`;
         option.disabled = !tool.available; toolSelect.append(option);
       });
-      toolSelect.selectedIndex = this.catalog.findIndex(tool => tool.available);
-      this.applyResumeChoice(toolSelect);
+      const kept = previousTool && this.pickedModel ? this.catalog.findIndex(tool => tool.available && toolKey(tool) === previousTool) : -1;
+      toolSelect.selectedIndex = kept >= 0 ? kept : this.catalog.findIndex(tool => tool.available);
+      if (kept < 0) this.applyResumeChoice(toolSelect);
       this.renderSpawnModels();
-      this.applyResumeModel();
     } catch (error) {
       if (this.dialog.open && requestID === this.catalogRequestID) document.querySelector('#spawn-tool-reason').textContent = `Tool catalog unavailable: ${error.message}`;
     }
@@ -778,13 +788,6 @@ export class AgentsPanel {
     if (index < 0 && resume.resumable) toolSelect.selectedIndex = -1;
     if (index < 0 && resume.resumable) document.querySelector('#spawn-resume-notes').textContent = `${resume.tool} is not available natively on the chosen machine, so the session cannot be continued here.`;
   }
-  applyResumeModel() {
-    const resume = this.pendingResume;
-    if (!resume?.model) return;
-    const options = [...this.form.elements.model.options];
-    const match = options.find(option => option.value === resume.model);
-    if (match) this.form.elements.model.value = match.value;
-  }
   // The banner of the start-from-v1 dialog: what is being started, where it will work, and what to confirm.
   // keep: a change of the continue/copy choice re-renders the banner and keeps what was ticked; opening the dialog starts from "continue".
   renderResume(keep = false) {
@@ -794,17 +797,20 @@ export class AgentsPanel {
     box.hidden = !resume;
     this.syncWorktreeOption();
     const continuing = resume?.kind === 'claude_session';
+    // A v1 agent whose Claude Code session can be continued is offered the same choice: continue the original, or work on a copy.
+    const legacySession = !!resume && !continuing && !!resume.resumable;
+    const choosing = continuing || legacySession;
     const modeBox = document.querySelector('#spawn-resume-mode');
     // A session an agent already continues can only be copied.
     const held = continuing && !!resume.held_by;
-    if (continuing && !keep) this.form.elements.resume_mode.value = held ? 'fork' : 'continue';
-    modeBox.hidden = !continuing;
+    if (choosing && !keep) this.form.elements.resume_mode.value = held ? 'fork' : 'continue';
+    modeBox.hidden = !choosing;
     modeBox.querySelector('input[value=continue]').disabled = held;
-    const forking = continuing && this.form.elements.resume_mode.value === 'fork';
-    this.form.querySelector('h2').textContent = continuing ? (forking ? 'Work on a copy of a Claude Code session' : 'Continue a Claude Code session') : resume ? `Start ${resume.slug} as a v2 agent` : 'Spawn';
+    const forking = choosing && this.form.elements.resume_mode.value === 'fork';
+    this.form.querySelector('h2').textContent = continuing ? (forking ? 'Work on a copy of a Claude Code session' : 'Continue a Claude Code session') : resume ? (forking ? `Start ${resume.slug} on a copy of its v1 session` : `Start ${resume.slug} as a v2 agent`) : 'Spawn';
     // Closing the session matters only when it is continued; a copy leaves the original as it is.
     if (!keep) confirm.checked = false;
-    confirmLabel.hidden = continuing ? !resume.active || forking : !resume?.v1_active; notes.textContent = '';
+    confirmLabel.hidden = continuing ? !resume.active || forking : !resume?.v1_active || forking; notes.textContent = '';
     // The one box means "nothing else has this session open"; its words are for what the person is continuing.
     confirmLabel.replaceChildren(confirm, document.createTextNode(continuing ? ' I closed this session in my terminal' : ' v1 is not running this session any more'));
     if (!resume) return;
@@ -822,12 +828,14 @@ export class AgentsPanel {
       return;
     }
     text.textContent = resume.resumable
-      ? `This continues the v1 session of ${resume.legacy_id}, working in ${resume.cwd}.`
+      ? (forking
+        ? `This works on a copy of the v1 session of ${resume.legacy_id}, in ${resume.cwd}. The agent starts from everything said so far, and what it does goes to the copy: the original stays exactly as it is.`
+        : `This continues the v1 session of ${resume.legacy_id}, working in ${resume.cwd}.`)
       : `${resume.reason || 'This agent starts fresh with the same name.'}`;
     const lines = [];
     if (!this.spawnRoom()) lines.push('This project has no open task room to start it in.');
     if (resume.resumable && resume.outside_folder) lines.push(`It works in ${resume.cwd}, outside the project folder, so the owner must approve it in the Inbox before it starts.`);
-    if (resume.v1_active) lines.push('v1 saw this agent a moment ago and may still be using the session. Stop it in v1 first: two processes on one session corrupt it.');
+    if (resume.v1_active && !forking) lines.push('v1 saw this agent a moment ago and may still be using the session. Stop it in v1 first: two processes on one session corrupt it.');
     notes.textContent = lines.join(' ');
   }
   updateSpawnSubmit() {
@@ -869,8 +877,11 @@ export class AgentsPanel {
       if (model.note) option.title = model.note;
       models.append(option);
     }
+    // The person's own pick for this tool, else the model the start names (a v1 agent's, a session's), else the harness's default.
+    const options = [...models.options].map(option => ({ value: option.value, label: option.textContent }));
     const preferred = (tool?.models || []).find(model => model.default);
-    if (preferred) models.value = preferred.id;
+    const chosen = chooseModel(options, { picked: this.pickedModel, toolKey: toolKey(tool), named: this.pendingResume?.model, preferred: preferred?.id });
+    if (chosen) models.value = chosen;
     version.textContent = tool?.cli_version ? `CLI version ${tool.cli_version}` : '';
     this.setHint(reason, this.spawnNeedsUpdate && !tool?.available ? 'This machine\'s supervisor predates harnesses. Update the supervisor to add harnesses.'
       : !tool ? (this.catalog?.length ? 'No tool is available on a connected machine. Check Settings → Harnesses.' : 'No harness yet. Add a harness in Settings → Harnesses.')
@@ -891,8 +902,9 @@ export class AgentsPanel {
     if (resume?.resumable && selected.tool !== resume.tool) { this.error.textContent = `To continue this session the tool must be ${resume.tool}.`; return; }
     const forkMode = continuing && this.form.elements.resume_mode.value === 'fork';
     if (continuing && !forkMode && resume.active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that you closed this session.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
-    if (!continuing && resume?.v1_active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that v1 is not running this session any more.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
-    try { const card = await this.source.spawn(target.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(name ? { name } : {}), ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume && !continuing ? { resume_legacy: resume.legacy_id, confirm_v1_idle: document.querySelector('#spawn-resume-confirm').checked } : {}), ...(continuing ? { resume_session: resume.session_id, resume_mode: forkMode ? 'fork' : 'continue', confirm_session_closed: !forkMode && document.querySelector('#spawn-resume-confirm').checked, new_room: this.form.elements.start_room.value === NEW_ROOM } : {}) });
+    const legacyFork = !continuing && !!resume?.resumable && this.form.elements.resume_mode.value === 'fork';
+    if (!continuing && !legacyFork && resume?.v1_active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that v1 is not running this session any more.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
+    try { const card = await this.source.spawn(target.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(name ? { name } : {}), ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume && !continuing ? { resume_legacy: resume.legacy_id, ...(resume.resumable ? { resume_mode: legacyFork ? 'fork' : 'continue' } : {}), confirm_v1_idle: !legacyFork && document.querySelector('#spawn-resume-confirm').checked } : {}), ...(continuing ? { resume_session: resume.session_id, resume_mode: forkMode ? 'fork' : 'continue', confirm_session_closed: !forkMode && document.querySelector('#spawn-resume-confirm').checked, new_room: this.form.elements.start_room.value === NEW_ROOM } : {}) });
       this.dialog.close(); this.form.reset();
       // A session continued in a room of its own: that room is where the person goes.
       if (continuing && card?.room_id && card.room_id !== this.room.id && card.room_id !== target.id) await this.showRoomByID?.(this.room.project_id, card.room_id);
