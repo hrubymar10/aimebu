@@ -32,6 +32,7 @@ import { copyText } from './markdown.js';
 import { ImportV1Wizard } from './import-v1.js';
 import { offerHarnessSetup, anyHarnessConfigured, HARNESS_SKIP_PREFERENCE } from './harness-offer.js';
 import { DiskUsage } from './disk-usage.js';
+import { showBuildVersion } from './build-version.js';
 import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
 
 
@@ -444,7 +445,7 @@ async function signedIn(session) {
   const startupAbort = new AbortController();
   const startupActive = () => active() && !startupExpired && !startupAbort.signal.aborted;
   startupController = startupAbort;
-  setSession(session); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; loginView.hidden = true;
+  setSession(session); void showBuildVersion(request, document.querySelector('#build-version')); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; loginView.hidden = true;
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
   if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
   setStartupState('loading'); appView.hidden = false;

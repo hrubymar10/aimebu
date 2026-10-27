@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,6 +76,7 @@ type Server struct {
 	Switcher          *switcher.Manager
 	ImportV1Root      string
 	DataRoot          string           // the config root; falls back to ImportV1Root
+	Version           string           // the build's version string, shown in the page header (GET /api/buildinfo)
 	CleanupClock      func() time.Time // tests set the clock of the daily cleanup; nil is time.Now
 	// claudeModelsFetch gets the Anthropic SDK source Claude's model list is read from; tests replace it. nil is the real fetch.
 	claudeModelsFetch func(ctx context.Context, etag string) (body []byte, newETag string, notModified bool, err error)
@@ -130,6 +132,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/invites/inspect", s.inspectUserInvite)
 	mux.Handle("POST /api/logout", s.Auth.RequireUser(http.HandlerFunc(s.logout)))
 	mux.Handle("GET /api/me", s.Auth.RequireUser(http.HandlerFunc(s.me)))
+	mux.Handle("GET /api/buildinfo", s.Auth.RequireUser(http.HandlerFunc(s.buildInfo)))
 	mux.Handle("GET /api/me/preferences", s.Auth.RequireUser(http.HandlerFunc(s.preferencesGet)))
 	mux.Handle("PUT /api/me/preferences", s.Auth.RequireUser(http.HandlerFunc(s.preferencesPut)))
 	mux.Handle("GET /api/disk", s.Auth.RequireUser(http.HandlerFunc(s.diskReport)))
@@ -767,6 +770,12 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, view)
+}
+
+// buildInfo answers GET /api/buildinfo: the version this server was built as and the Go toolchain that built it, for the header of the page
+// (as v1 shows it). A signed-in account may read it; it names no path and no secret.
+func (s *Server) buildInfo(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]string{"version": s.Version, "go_version": runtime.Version()})
 }
 
 // sessionView adds what the account may do instance-wide (owner, admin) to a sign-in answer, so the page can turn off what would only

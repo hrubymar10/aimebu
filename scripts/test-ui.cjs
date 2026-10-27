@@ -1764,7 +1764,11 @@ async function main() {
     assert.equal(await first.$eval('#theme-select', el => el.value), 'high-contrast-dark');
     await first.select('#theme-select', 'dark');
     await domClick(first, '#settings-close');
-    assert.equal(await first.$eval('#build-version', el => el.textContent), 'v2 development');
+    // The header shows what the server says it was built as (v1 does the same), not a fixed text.
+    const buildInfo = await first.evaluate(async () => (await fetch('/api/buildinfo')).json());
+    assert.match(buildInfo.version, /^aimebu v2/, 'the test server reports a version');
+    await first.waitForFunction(text => document.querySelector('#build-version').textContent === text, {}, buildInfo.version.replace(/^aimebu\s+/i, ''));
+    assert.equal(await first.$eval('#build-version', el => el.title), `${buildInfo.version.replace(/^aimebu\s+/i, '')} · ${buildInfo.go_version}`, 'the tooltip names the version and the Go toolchain');
     await first.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
     const returning = await a.newPage();
     await returning.evaluateOnNewDocument(() => {

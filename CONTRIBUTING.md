@@ -48,6 +48,8 @@ when a `.go`, `.html`, `.css`, `.js`, `.mjs` or `.json` file changes and restart
 server, so edit a file under `web/`, wait a second or two, and reload the
 browser. Ctrl-C stops it. If you start it without a terminal, stop it by its
 process ID, never with `pkill -f`: that pattern also matches your own shell.
+The build carries the checkout's `git describe` as its version, which the page header shows
+(`GET /api/buildinfo`), so you can tell which build you are looking at.
 
 Pick a free port with `AIMEBU2_PORT` so you do not collide with another
 instance. `AIMEBU2_BIND` (default `127.0.0.1`) and `AIMEBU2_ALLOW` control who

@@ -547,6 +547,7 @@ func runServer(ctx context.Context, stdout, stderr io.Writer, start *serverStart
 	service := server.New(db)
 	service.Setup = ownerSetup
 	service.ImportV1Root = config.root
+	service.Version = resolveVersion()
 	service.DataRoot = config.root
 	// `aimebu doctor --live` reads this key from the config directory; the server works without it, only --live is then unavailable.
 	if removeDoctorKey, err := service.EnableDoctorKey(config.root); err != nil {

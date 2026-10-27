@@ -3,7 +3,8 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -o ./tmp/aimebu ./cmd/aimebu"
+  # The version the page header shows: the checkout's `git describe`, as bin/aimebu builds it (plain "go build" keeps the default).
+  cmd = "go build -ldflags \"-X 'main.version=aimebu $(git describe --tags --always --dirty 2>/dev/null || echo dev)'\" -o ./tmp/aimebu ./cmd/aimebu"
   bin = "tmp/aimebu"
   full_bin = "sh scripts/dev-run.sh ./tmp/aimebu"
   include_ext = ["go", "html", "css", "js", "mjs", "json"]
