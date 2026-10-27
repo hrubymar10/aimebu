@@ -3410,24 +3410,28 @@ async function main() {
             const step = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => ready, onSkip: () => {}, confirm: async () => true, pollMs: 40 });
             await step.showHarnesses('first');
             step.harnesses.tickedCount = () => 1;
-            step.harnesses.addTicked = () => { adds++; return new Promise(resolve => { finish = () => resolve(true); }); };
+            // As the real component does, once the add is done nothing is ticked any more (its detect panel is gone).
+            step.harnesses.addTicked = () => { adds++; return new Promise(resolve => { finish = () => { step.harnesses.tickedCount = () => 0; resolve(true); }; }); };
             step.harnesses.onTick(1);
             await new Promise(resolve => setTimeout(resolve, 80));
             const button = document.querySelector('#onboarding-harnesses-continue'), status = document.querySelector('#onboarding-harness-status');
-            button.click();
+            const run = step.continueHarnesses();
             await new Promise(resolve => setTimeout(resolve, 200)); // several polls while the add is in flight
             const during = { adds, disabled: button.disabled };
             button.disabled = false; button.click(); // even a re-enabled button cannot start a second add
             const doubleClick = adds;
             finish(); // the add succeeds, but no harness has a model
-            await new Promise(resolve => setTimeout(resolve, 150));
-            step.harnesses.tickedCount = () => 0;
-            await new Promise(resolve => setTimeout(resolve, 150)); // polls after it
-            const after = { disabled: button.disabled, status: status.textContent, stayed: !document.querySelector('#onboarding-harnesses').hidden };
+            await run;
+            // The message is there as soon as the run ends, not only after a later poll; and the polls that follow keep it.
+            const atOnce = { disabled: button.disabled, status: status.textContent };
+            await new Promise(resolve => setTimeout(resolve, 200));
+            const after = { disabled: button.disabled, status: status.textContent, stayed: !document.querySelector('#onboarding-harnesses').hidden, same: status.textContent === atOnce.status };
             // Leave the page as the next steps expect it: the last step shown, the poll stopped.
             step.stopWatching(); step.harnesses.clear(); step.showStep('how');
-            return { during, doubleClick, after };
-          }), { during: { adds: 1, disabled: true }, doubleClick: 1, after: { disabled: true, status: 'The harness was added but has no model yet. Add a model by hand, or retry Auto-detect in its models, then Continue.', stayed: true } },
+            return { during, doubleClick, atOnce, after };
+          }), { during: { adds: 1, disabled: true }, doubleClick: 1,
+            atOnce: { disabled: true, status: 'The harness was added but has no model yet. Add a model by hand, or retry Auto-detect in its models, then Continue.' },
+            after: { disabled: true, status: 'The harness was added but has no model yet. Add a model by hand, or retry Auto-detect in its models, then Continue.', stayed: true, same: true } },
           'Continue adds once, and a harness added without a model keeps its message and a disabled Continue');
           // The Harnesses list tells the app the same, but only for a harness that can start an agent: enabled, with a model.
           assert.deepEqual(await setupPage.evaluate(async () => {
