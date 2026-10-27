@@ -4,7 +4,7 @@ import { NotificationSettings } from './pages/notifications/page.js';
 import { UsagesSettings } from './pages/usages/page.js';
 import { createProjectSettingsSource } from './project-settings-source.js';
 import { RoleSettings } from './pages/roles/page.js';
-import { ProjectSettings } from './project-settings.js';
+import { ProjectSettings } from './pages/project/page.js';
 import { MachinesSettings } from './pages/machines/page.js';
 import { HarnessSettings } from './pages/harnesses/page.js';
 import { MacroSettings } from './pages/macros/page.js';
