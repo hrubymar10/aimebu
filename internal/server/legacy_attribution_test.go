@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hrubymar10/aimebu/internal/protocol"
 )
@@ -12,6 +13,7 @@ import (
 type attributionSupervisor struct {
 	mu    sync.Mutex
 	scans []protocol.Frame
+	delay time.Duration // how long an answer takes
 }
 
 func (a *attributionSupervisor) scanCount() int {
@@ -36,7 +38,9 @@ func serveAttributions(t *testing.T, f legacyFixture, supports bool, attribution
 				}
 				fake.mu.Lock()
 				fake.scans = append(fake.scans, request)
+				delay := fake.delay
 				fake.mu.Unlock()
+				time.Sleep(delay)
 				reply := protocol.Frame{V: protocol.Version, Type: protocol.SessionScanResult, ReqID: request.ReqID}
 				for _, item := range attributions {
 					if request.ScanAgent == "" || request.ScanAgent == item.Sender {
@@ -129,5 +133,84 @@ func TestResolveLegacyStartWithoutAttributionKeepsTheStoresAnswer(t *testing.T) 
 	serveAttributions(t, f2, true, []protocol.SessionAttribution{{ID: "0f7c6a1e-cccc-4222-8333-444455556666", CWD: f2.cwd, Sender: "sage@old", MessageNos: []int64{5}}})
 	if got, err := f2.srv.resolveLegacyStart(context.Background(), f2.project.ID, "sage@old"); err != nil || got.SessionID != legacyHandle || got.Exact {
 		t.Fatalf("no holder: %+v %v", got, err)
+	}
+}
+
+// Without a session holding the sender's latest message, the one that sent the most of its recent messages wins, not the one holding the
+// single newest of them.
+func TestBestAttributionWithoutTheLatestMessagePrefersTheMostRecentMessages(t *testing.T) {
+	t.Parallel()
+	mine := []int64{300, 250, 200, 190, 100}
+	candidates := []protocol.SessionAttribution{
+		{ID: "one-newer", Sender: "s@p", MessageNos: []int64{250}, ModifiedAt: "2026-10-05T10:00:00Z"},
+		{ID: "three-older", Sender: "s@p", MessageNos: []int64{100, 190, 200}, ModifiedAt: "2026-10-01T10:00:00Z"},
+	}
+	if got := bestAttribution(candidates, mine); got == nil || got.ID != "three-older" {
+		t.Fatalf("best = %+v, want the session that sent the most of the recent messages", got)
+	}
+	// Equal counts: the newest message decides, then the time the session was written.
+	tied := []protocol.SessionAttribution{
+		{ID: "older", Sender: "s@p", MessageNos: []int64{190, 200}, ModifiedAt: "2026-10-05T10:00:00Z"},
+		{ID: "newer", Sender: "s@p", MessageNos: []int64{100, 250}, ModifiedAt: "2026-10-01T10:00:00Z"},
+	}
+	if got := bestAttribution(tied, mine); got == nil || got.ID != "newer" {
+		t.Fatalf("tied best = %+v", got)
+	}
+}
+
+// An answer from "no scan could run" is not remembered: once the supervisor can attribute, the next look reads the transcripts.
+func TestResolveLegacyStartDoesNotRememberAScanThatDidNotRun(t *testing.T) {
+	f := newLegacyFixture(t)
+	if _, err := f.exec(`UPDATE message SET no=37965 WHERE id='msg_legacy'`); err != nil {
+		t.Fatal(err)
+	}
+	const sender = "0f7c6a1e-aaaa-4222-8333-444455556666"
+	fake := serveAttributions(t, f, false, []protocol.SessionAttribution{{ID: sender, CWD: f.cwd, Sender: "sage@old", MessageNos: []int64{37965}}})
+	ctx := context.Background()
+	if got, err := f.srv.resolveLegacyStart(ctx, f.project.ID, "sage@old"); err != nil || got.Exact || fake.scanCount() != 0 {
+		t.Fatalf("an old supervisor: %+v %v after %d scans", got, err, fake.scanCount())
+	}
+	// The supervisor is updated: the very next look uses it.
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID].supportsSessionAttribution = true
+	f.srv.machineMu.Unlock()
+	if got, err := f.srv.resolveLegacyStart(ctx, f.project.ID, "sage@old"); err != nil || got.SessionID != sender || !got.Exact || fake.scanCount() != 1 {
+		t.Fatalf("after the update: %+v %v after %d scans", got, err, fake.scanCount())
+	}
+}
+
+// Several looks at one sender at once (the profile and the dialog) share one scan.
+func TestResolveLegacyStartSharesOneScanBetweenConcurrentLooks(t *testing.T) {
+	f := newLegacyFixture(t)
+	if _, err := f.exec(`UPDATE message SET no=37965 WHERE id='msg_legacy'`); err != nil {
+		t.Fatal(err)
+	}
+	const sender = "0f7c6a1e-aaaa-4222-8333-444455556666"
+	fake := serveAttributions(t, f, true, []protocol.SessionAttribution{{ID: sender, CWD: f.cwd, Sender: "sage@old", MessageNos: []int64{37965}}})
+	fake.mu.Lock()
+	fake.delay = 300 * time.Millisecond
+	fake.mu.Unlock()
+	var wg sync.WaitGroup
+	results := make([]string, 6)
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got, err := f.srv.resolveLegacyStart(context.Background(), f.project.ID, "sage@old")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			results[i] = got.SessionID
+		}(i)
+	}
+	wg.Wait()
+	for i, id := range results {
+		if id != sender {
+			t.Fatalf("look %d got %q, want %q", i, id, sender)
+		}
+	}
+	if fake.scanCount() != 1 {
+		t.Fatalf("%d scans for %d simultaneous looks, want one", fake.scanCount(), len(results))
 	}
 }

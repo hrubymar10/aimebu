@@ -370,8 +370,10 @@ The session is chosen, in this order:
    id) and `bus_say`/`bus_dm` (the message numbers) and offers the session that
    sent the sender's latest message, or else the one that sent most of its
    latest messages. Only ids come back, never text; a supervisor without
-   `supports_session_attribution` skips this. The answer is kept for ten minutes,
-   so the profile and the start read the transcripts once.
+   `supports_session_attribution` skips this. The answer of a scan that ran is kept for
+   ten minutes, so the profile and the start read the transcripts once (a look made
+   while one is running waits for it); "no host connection yet" and "the supervisor
+   is old" are not remembered, so the first look after an update reads them.
 3. Otherwise the session v1 kept under the name, unless the sender's messages
    contradict it: another harness or model than the messages name, or a session
    last seen long before the agent's first message. Such a session is not
