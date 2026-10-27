@@ -5272,6 +5272,9 @@ async function main() {
       assert.ok(saved.name.endsWith('-output.txt') && saved.text.includes('second line') && saved.text.includes('<img src=x'), `the download: ${JSON.stringify(saved)}`);
       // On a phone the section fits the panel.
       await first.setViewport({ width: 390, height: 780 });
+      // The resize reaches the page and the section is laid out for it a moment later: wait for that instead of measuring at once.
+      await first.waitForFunction(selector => innerWidth === 390 && (() => { const box = document.querySelector(selector).getBoundingClientRect(); return box.width > 0 && box.right <= innerWidth + 1; })(), { timeout: 5000 }, section)
+        .catch(() => {});
       assert.ok(await first.evaluate(selector => { const box = document.querySelector(selector).getBoundingClientRect(); return box.width > 0 && box.right <= innerWidth + 1; }, section), 'the Output section overflows a phone');
       await first.setViewport({ width: 1100, height: 720 });
     }
