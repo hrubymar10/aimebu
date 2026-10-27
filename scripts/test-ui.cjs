@@ -2953,7 +2953,7 @@ async function main() {
         confirm: true, name: false, startIn: true, room: 'A new room for this session', sessions: true, worktree: true, mode: 'continue' }, 'the Spawn dialog opens for the picked session, continuing by default');
       // The session is a neutral card: its short id, its folder and when it was last used, in a compact box; no title from the first prompt.
       assert.deepEqual(await first.evaluate(() => { const box = document.querySelector('#spawn-resume'), card = document.querySelector('#spawn-resume-card'), modes = [...document.querySelectorAll('#spawn-resume-mode label')].map(label => label.getBoundingClientRect().top); return { rows: [...card.querySelectorAll('dt')].map(term => [term.textContent, term.nextElementSibling.textContent.length > 0]), id: card.querySelector('dd').textContent, compact: Math.max(...modes) - Math.min(...modes) < 30, titled: box.textContent.includes('Fix the login bug') }; }),
-        { rows: [['Session', true], ['Folder', true], ['Last active', true]], id: '11111111', compact: true, titled: false }, 'the picked session is shown as a neutral card, and the Continue and Fork choice is compact (side by side, or stacked tight)');
+        { rows: [['Session', true], ['Folder', true], ['Last active', true], ['Ran on', true]], id: '11111111', compact: true, titled: false }, 'the picked session is shown as a neutral card, and the Continue and Fork choice is compact (side by side, or stacked tight)');
       await domClick(first, '#spawn-cancel');
       await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
       // A session a live process has open asks for a confirmation before it can be continued.

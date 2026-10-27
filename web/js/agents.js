@@ -832,7 +832,7 @@ export class AgentsPanel {
       // The session is a neutral card (its short id, its folder, when it was last used), not a box titled with whatever was typed first.
       const card = document.querySelector('#spawn-resume-card');
       card.hidden = false;
-      card.replaceChildren(...[['Session', resume.session_id.slice(0, 8), true], ['Folder', resume.cwd, true], ['Last active', resume.modified_at ? relativeTime(resume.modified_at) : 'unknown', false]].flatMap(([name, value, mono]) => {
+      card.replaceChildren(...[['Session', resume.session_id.slice(0, 8), true], ['Folder', resume.cwd, true], ['Last active', resume.modified_at ? relativeTime(resume.modified_at) : 'unknown', false], ...(resume.model ? [['Ran on', resume.model, true]] : [])].flatMap(([name, value, mono]) => {
         const term = document.createElement('dt'); term.textContent = name;
         const detail = document.createElement('dd'); if (mono) detail.className = 'mono'; detail.textContent = value;
         return [term, detail];
@@ -878,7 +878,7 @@ export class AgentsPanel {
     node.replaceChildren();
     if (at < 0) { node.textContent = text; return; }
     if (!this.canManageHarnesses) {
-      node.textContent = text.replace(/Add a harness in Settings → Harnesses/, 'Ask an admin to add a harness').replace(/Add one (?:in|under) Settings → Harnesses/, 'Ask an admin to add one')
+      node.textContent = text.replace(/Add a harness in Settings → Harnesses/, 'Ask an admin to add a harness').replace(/Add one (?:in|under) Settings → Harnesses/, 'Ask an admin to add one').replace(/add one (?:in|under) Settings → Harnesses/, 'ask an admin to add one')
         .replace(/; [Cc]heck Settings → Harnesses/, '; ask an admin to check the harnesses').replace(/[Cc]heck Settings → Harnesses/, 'Ask an admin to check the harnesses').replace(/enable it in Settings → Harnesses/, 'ask an admin to enable it');
       return;
     }
@@ -928,12 +928,15 @@ export class AgentsPanel {
     this.sessionsButton.disabled = !state.enabled;
     const note = document.querySelector('#spawn-sessions-note'), swap = document.querySelector('#spawn-sessions-switch');
     note.hidden = this.sessionsButton.hidden || !state.note;
-    document.querySelector('#spawn-sessions-note-text').textContent = state.note;
+    this.setHint(document.querySelector('#spawn-sessions-note-text'), state.note); // the Settings link for an admin, "ask an admin" for anyone else
     swap.hidden = state.switchTo < 0;
     if (state.switchTo >= 0) {
       const target = this.catalog[state.switchTo];
       swap.textContent = `Use ${target.label || 'the native launcher'}`;
-      swap.onclick = () => { this.form.elements.tool.value = String(state.switchTo); this.pickedToolKey = toolKey(target); this.pickedModel = null; this.renderSpawnModels(); };
+      swap.onclick = () => {
+        this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1; // a role-default prefill still in flight must not flip the tool back
+        this.form.elements.tool.value = String(state.switchTo); this.pickedToolKey = toolKey(target); this.pickedModel = null; this.renderSpawnModels();
+      };
     }
   }
   async spawn() {

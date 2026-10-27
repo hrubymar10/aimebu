@@ -81,9 +81,12 @@ host's Claude home); with none it says what is needed. The button opens a picker
 of the sessions (and a field to look one up by id), and a
 pick reopens the Spawn dialog for it, with a room of its own selected by default
 and a choice: **Continue the original session** (the default) or **Work on a copy
-(fork)**. The model the session ran on is preselected (matched by its family, such
-as Opus, when the harness's list has no entry of that exact id), and the dialog
-warns when the model chosen for the agent is another one. A session an agent already continues can only be copied, so the dialog
+(fork)**. The model the session ran on is preselected (the exact id, else an entry of the
+same family and version; an alias such as `opus` stands in when no entry has the
+version, and an entry of another version is never taken for it), the resume card
+says what it "Ran on", and the dialog warns whenever the model chosen for the
+agent is not that one, versions included (an alias is flagged as possibly another
+version). A session an agent already continues can only be copied, so the dialog
 starts at the copy. A machine whose supervisor predates session scans answers 409
 `supervisor_update_needed`.
 

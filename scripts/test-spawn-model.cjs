@@ -9,8 +9,8 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'spawn-model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning };', context);
-const { modelFamily, matchModel, chooseModel, toolKey, modelChangeWarning } = context.api;
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning };', context);
+const { modelFamily, modelVersion, matchModel, chooseModel, toolKey, modelChangeWarning } = context.api;
 const sessionEntryState = (...args) => JSON.parse(JSON.stringify(context.api.sessionEntryState(...args))); // plain objects: a vm context has its own Object
 
 const claude = [{ value: 'haiku', label: 'Haiku' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }];
@@ -43,6 +43,21 @@ assert.equal(chooseModel(claude, { picked: { toolKey: 'mln_1', model: 'gone' }, 
 assert.equal(chooseModel(claude, { toolKey: 'mln_1', named: 'unknown-model', preferred: 'sonnet' }), 'sonnet');
 assert.equal(chooseModel(claude, { toolKey: 'mln_1' }), 'haiku');
 assert.equal(chooseModel([], { toolKey: 'mln_1', named: 'opus' }), '');
+// Versions are told apart: a session recorded on one version is not silently moved to another.
+assert.equal(modelVersion('claude-opus-4-5-20251101'), '4.5');
+assert.equal(modelVersion('opus5.5'), '5.5');
+assert.equal(modelVersion('claude-3-5-sonnet-20241022'), '3.5');
+assert.equal(modelVersion('claude-sonnet-4-20250514'), '4');
+assert.equal(modelVersion('opus'), '');
+assert.equal(modelVersion('gpt-6-sol'), '');
+const versioned = [{ value: 'claude-opus-5-5', label: 'Opus 5.5' }, { value: 'claude-opus-4-5-20251101', label: 'Opus 4.5' }, { value: 'sonnet', label: 'Sonnet' }];
+assert.equal(matchModel(versioned, 'claude-opus-4-5-20251101'), 'claude-opus-4-5-20251101', 'the exact id');
+assert.equal(matchModel(versioned, 'claude-opus-4-5-20250101'), 'claude-opus-4-5-20251101', 'the same version, another date');
+assert.equal(matchModel(versioned, 'opus4.5'), 'claude-opus-4-5-20251101', 'a v1 slug names its version');
+assert.equal(matchModel([versioned[0]], 'claude-opus-4-5-20251101'), '', 'another version is never taken for it');
+assert.equal(matchModel([versioned[0], { value: 'opus', label: 'Opus' }], 'claude-opus-4-5-20251101'), 'opus', 'an alias stands in when no entry has the version');
+assert.equal(matchModel(versioned, 'opus'), 'claude-opus-5-5', 'a name with no version takes the first of its family');
+
 // The session entry says up front when the launcher cannot continue a session, and offers the one that can.
 const catalogOf = [
   { tool: 'claude', label: 'Claude Code (Docker)', containerized: true, available: true },
@@ -63,10 +78,13 @@ assert.match(onlyDocker.note, /claude_home_shared/, 'with nothing that can, it s
 const sharing = [catalogOf[0], { ...catalogOf[0], launcher_id: 'b', label: 'Shared', shares_claude_home: true }];
 assert.equal(sessionEntryState(catalogOf[0], sharing).switchTo, 1, 'a Docker launcher that shares the home is offered too');
 
-// A session continued on another model is warned about; the same family, or an unknown session model, is not.
+// A session continued on another model is warned about, versions included; the same id, or the same family and version, is not.
 const opus = { value: 'opus', label: 'Opus' }, sonnet = { value: 'sonnet', label: 'Sonnet' };
-assert.equal(modelChangeWarning('claude-opus-4-5-20251101', opus), '');
-assert.equal(modelChangeWarning('opus5.5', opus), '');
+assert.equal(modelChangeWarning('claude-opus-4-5-20251101', { value: 'claude-opus-4-5-20251101', label: 'Opus 4.5' }), '', 'the same id');
+assert.equal(modelChangeWarning('claude-opus-4-5-20251101', { value: 'claude-opus-4-5-20250101', label: 'Opus 4.5 (older build)' }), '', 'the same version');
+assert.equal(modelChangeWarning('opus5.5', { value: 'claude-opus-5-5', label: 'Opus 5.5' }), '', 'a v1 slug and the id of its version');
+assert.equal(modelChangeWarning('claude-opus-4-5-20251101', { value: 'claude-opus-5-5', label: 'Opus 5.5' }), 'This session ran on claude-opus-4-5-20251101; the agent will continue it on Opus 5.5.', 'another version of the family');
+assert.equal(modelChangeWarning('claude-opus-4-5-20251101', opus), 'This session ran on claude-opus-4-5-20251101; the agent will continue it on Opus, an alias that may be another version.', 'an alias may be another version');
 assert.equal(modelChangeWarning('claude-opus-4-5-20251101', sonnet), 'This session ran on claude-opus-4-5-20251101; the agent will continue it on Sonnet.');
 assert.equal(modelChangeWarning('', sonnet), '');
 assert.equal(modelChangeWarning('claude-opus-4-5', null), '');

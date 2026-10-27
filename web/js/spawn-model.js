@@ -7,8 +7,22 @@ const FAMILIES = ['opus', 'sonnet', 'haiku'];
 // The Claude family a model name belongs to ("opus", "sonnet", "haiku"), or ''.
 export const modelFamily = name => FAMILIES.find(family => String(name || '').toLowerCase().includes(family)) || '';
 
-// matchModel picks the entry of `models` ([{ value, label }]) that `wanted` names: the same id, the same id ignoring case, or else the first
-// entry of the same Claude family. '' when nothing fits, so the caller keeps the list's own default.
+// The version a model name carries ("4.5" for claude-opus-4-5-20251101, opus5.5 and claude-3-5-sonnet-20241022), or '' for a name with none (the
+// aliases "opus", "sonnet", "haiku", which mean whatever is current). The date at the end of an id is not a version.
+export function modelVersion(name) {
+  const text = String(name || '').toLowerCase();
+  const family = modelFamily(text);
+  if (!family) return '';
+  const after = text.slice(text.indexOf(family) + family.length).match(/^[-_ ]?(\d{1,2})(?!\d)(?:[-._](\d{1,2})(?!\d))?/);
+  if (after) return after[2] ? `${after[1]}.${after[2]}` : after[1];
+  const before = text.slice(0, text.indexOf(family)).match(/(\d{1,2})[-._](\d{1,2})[-_ ]?$/);
+  return before ? `${before[1]}.${before[2]}` : '';
+}
+
+// matchModel picks the entry of `models` ([{ value, label }]) that `wanted` names: the same id, the same id ignoring case, or else an entry of
+// the same Claude family and the same version (an entry with no version, an alias, stands for the current one and is taken when none has the
+// version). An entry of another version is never taken: a session recorded on one model is not silently moved to another. '' when nothing
+// fits, so the caller keeps the list's own default.
 export function matchModel(models, wanted) {
   if (!wanted) return '';
   const exact = models.find(model => model.value === wanted);
@@ -18,8 +32,13 @@ export function matchModel(models, wanted) {
   if (loose) return loose.value;
   const family = modelFamily(wanted);
   if (!family) return '';
-  const same = models.find(model => modelFamily(model.value) === family || modelFamily(model.label) === family);
-  return same ? same.value : '';
+  const same = models.filter(model => modelFamily(model.value) === family || modelFamily(model.label) === family);
+  const version = modelVersion(wanted);
+  if (!version) return same[0]?.value || '';
+  const versioned = same.find(model => modelVersion(model.value) === version || modelVersion(model.label) === version);
+  if (versioned) return versioned.value;
+  const alias = same.find(model => !modelVersion(model.value) && !modelVersion(model.label));
+  return alias ? alias.value : '';
 }
 
 // The model to select after the list was rebuilt: what the person picked for this tool when it is still offered, else the one named by the
@@ -45,11 +64,19 @@ export function sessionEntryState(selected, catalog) {
   return { enabled: false, note: `${label} keeps its own Claude home, so a session cannot be continued through it. Sessions need the native Claude Code harness, or a Docker launcher that shares Claude's home (harness-docker's claude_home_shared); add one under Settings → Harnesses.`, switchTo: -1 };
 }
 
-// A warning when the model chosen for the agent is not the one the session ran on, so a session is not continued on another model unnoticed.
-// `sessionModel` is what Claude recorded ("claude-opus-4-5-20251101") or a v1 slug ("opus5.5"); `chosen` is { value, label }.
+// A warning whenever the model chosen for the agent is not the one the session ran on, versions included, so a session is not continued on
+// another model unnoticed. `sessionModel` is what Claude recorded ("claude-opus-4-5-20251101") or a v1 slug ("opus5.5"); `chosen` is
+// { value, label }. The same id, or the same family and version, is no change; an alias of the same family may be another version.
 export function modelChangeWarning(sessionModel, chosen) {
   const was = modelFamily(sessionModel);
   if (!was || !chosen) return '';
-  if ((modelFamily(chosen.value) || modelFamily(chosen.label)) === was) return '';
-  return `This session ran on ${sessionModel}; the agent will continue it on ${chosen.label || chosen.value}.`;
+  if (chosen.value === sessionModel || String(chosen.value).toLowerCase() === String(sessionModel).toLowerCase()) return '';
+  const now = modelFamily(chosen.value) || modelFamily(chosen.label);
+  const named = chosen.label || chosen.value;
+  if (now === was) {
+    const version = modelVersion(sessionModel), chosenVersion = modelVersion(chosen.value) || modelVersion(chosen.label);
+    if (version && chosenVersion && version === chosenVersion) return '';
+    if (!chosenVersion) return `This session ran on ${sessionModel}; the agent will continue it on ${named}, an alias that may be another version.`;
+  }
+  return `This session ran on ${sessionModel}; the agent will continue it on ${named}.`;
 }
