@@ -1332,7 +1332,11 @@ async function main() {
           answeredByTyping: await run('@tess go on, carefully', free),
           answeredPlain: await run('go on, carefully', free),
           othersMentioned: await run('@tess @reviewer please look', free),
-          optionsOnly: await run('@tess whatever', { ...free, free_text: false }),
+          optionsOnly: await run('@tess whatever', { ...free, free_text: false, proposed_answers: ['Proceed', 'Hold'] }),
+          optionExact: await run('@tess Proceed', { ...free, free_text: false, proposed_answers: ['Proceed', 'Hold'] }),
+          optionExactBare: await run('Hold', { ...free, free_text: false, proposed_answers: ['Proceed', 'Hold'] }),
+          optionEdited: await run('@tess Proceed, but later', { ...free, free_text: false, proposed_answers: ['Proceed', 'Hold'] }),
+          optionOtherMention: await run('@tess @reviewer Proceed', { ...free, free_text: false, proposed_answers: ['Proceed', 'Hold'] }),
           attachment: await run('@tess here', free, { attachments: [{ id: 'att' }] }),
           cannotDecide: await run('@tess ok', { ...free, can_decide: false }),
           boundary: await run('@tess ok', { ...free, boundary_pending: true }),
@@ -1353,6 +1357,10 @@ async function main() {
       answeredPlain: { answered: 1, posted: 0, draft: '', shown: [] },
       othersMentioned: { answered: 0, posted: 1, draft: '', shown: [] },
       optionsOnly: { answered: 0, posted: 1, draft: '', shown: [] },
+      optionExact: { answered: 1, posted: 0, draft: '', shown: [] },
+      optionExactBare: { answered: 1, posted: 0, draft: '', shown: [] },
+      optionEdited: { answered: 0, posted: 1, draft: '', shown: [] },
+      optionOtherMention: { answered: 0, posted: 1, draft: '', shown: [] },
       attachment: { answered: 0, posted: 1, draft: '', shown: [] },
       cannotDecide: { answered: 0, posted: 1, draft: '', shown: [] },
       boundary: { answered: 0, posted: 1, draft: '', shown: [] },
@@ -1360,7 +1368,7 @@ async function main() {
       refused: { answered: 1, posted: 0, draft: '@tess ok', shown: ['Could not send the answer'] },
       pending: { answered: 1, posted: 0, draft: '@tess ok', shown: ['Could not send the answer'] },
       doubleSubmit: 1,
-    }, 'a free-text reply that mentions only the requester resolves the request; anything else is an ordinary reply; only a confirmed answer clears the draft; no double submit');
+    }, 'a reply that mentions only the requester resolves the request when it is free-text or exactly one of the options; anything else is an ordinary reply; only a confirmed answer clears the draft; no double submit');
     // A proposed answer is the v1 button: a click sends "@author answer"; Shift-click puts it in the composer with the reply link (when the
     // page can do that) and sends nothing; a refused send keeps the buttons and says why.
     const proposedAnswers = await first.evaluate(async () => {

@@ -1344,13 +1344,17 @@ export class Chat {
     } catch (error) { if (this.current(session, room)) this.threadNotice.show(error.message); }
   }
   setReply(message) { this.reply = message; this.chip.hidden = !message; this.chipText.textContent = message ? `Replying to ${this.authorName(message)}: ${messageSnippet(message)}` : ''; if (message) this.draft.focus(); }
-  // Whether a reply to `parent` with this text is the answer to `item` (see send): a free-text question or approval this person decides, answered
-  // with text that mentions at most the requester.
+  // Whether a reply to `parent` with this text is the answer to `item` (see send): a question or approval this person decides, answered with text
+  // that mentions at most the requester. A free-text ask takes any text; an options-only ask only the text of one of its options (so Shift-clicking
+  // an answer and sending it unedited acts like the button, while edited text is an ordinary reply).
   answersThroughInbox(item, parent, body) {
-    if (!['question', 'approval'].includes(item.kind) || item.boundary_pending || item.can_decide === false || !item.free_text) return false;
+    if (!['question', 'approval'].includes(item.kind) || item.boundary_pending || item.can_decide === false) return false;
     const requester = this.answerOptions(parent).mention.toLowerCase();
     const mentioned = [...String(body).matchAll(/(^|[^\w@`\\])@([a-z0-9][a-z0-9_-]*(?:@[a-z0-9_-]+)?)/gi)].map(match => `@${match[2].toLowerCase()}`);
-    return mentioned.every(name => name === requester);
+    if (!mentioned.every(name => name === requester)) return false;
+    if (item.free_text) return true;
+    const text = String(body).trim(), plain = requester && text.toLowerCase().startsWith(requester) ? text.slice(requester.length).trim() : text;
+    return [...(item.proposed_answers || []), ...(item.options || [])].includes(plain);
   }
   async send() {
     if (!this.room || this.pendingUploads || (!this.draft.value.trim() && !this.pendingAttachments.length)) return;
@@ -1362,7 +1366,8 @@ export class Chat {
       // A reply to a message with a free-text question or approval open for this person is the answer to it: it goes through the inbox, which
       // resolves the item, so the item closes and the Inbox count drops, whether the text came from Shift-clicking an answer or was typed. It
       // stays an ordinary reply when it carries attachments (an answer is text), when the item is not one this person decides, when the ask is
-      // options only (arbitrary text does not answer it), or when the text mentions anyone but the requester (so an @reviewer wake still works).
+      // options only and the text is not one of the options (arbitrary text does not answer it), or when the text mentions anyone but the requester (so
+      // an @reviewer wake still works).
       const open = reply && !attachments.length ? this.answerItems?.get(reply.id) : null;
       if (open && this.answersThroughInbox(open, reply, body)) {
         if (this.answering) return;
