@@ -11,7 +11,7 @@ import { MachinesSettings } from './machines.js';
 import { HarnessSettings } from './pages/harnesses/page.js';
 import { MacroSettings } from './macro-settings.js';
 import { UsersSettings } from './users.js';
-import { PromptSettings } from './prompt-settings.js';
+import { PromptSettings } from './pages/prompts/page.js';
 import { QuotaSettings } from './quota-settings.js';
 import { HttpQuotaSource } from './quota-source.js';
 import { LimitGuardSettings } from './limit-guard-settings.js';

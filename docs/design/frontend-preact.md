@@ -142,6 +142,11 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
 - `scripts/harness-settings.cjs` (run by `make test-ui`, and on its own) drives a scratch server and checks the list beside
   the detail, role defaults per model and the role panel, the sync with Settings → Roles, the stale-save refusal, the
   onboarding step's role defaults and the phone width.
+- `make test-ui` also runs `scripts/test-prompts-page.cjs` (Settings → Prompts in Chromium with every request held: a scope
+  answered late does not draw over the selected one, rows of a scope still loading cannot write, one write at a time, a
+  revision conflict reloads and keeps every draft, a write answered after Clear, reopening or unmount reports and reads
+  nothing, inline plans go back to the saved value when saving fails) and `scripts/test-prompts-model.cjs` (its pure rules, in
+  `make test-web`).
 - `make test-ui` also runs `scripts/test-harness-page.cjs`: the Preact page in real Chromium (the existing Puppeteer tooling,
   `web/` served as is with the page's import map, no Go server), with every request held until the test answers it, so the
   order of answers is chosen. It checks:
@@ -218,33 +223,31 @@ same change (section 5); the experiment, default-flip and removal steps describe
 
 ### Step 2: the other Settings sections
 
+Done so far: Prompts (`web/js/pages/prompts/`).
+
 - Scope: the small sections first (prompts, macros, roles, retention, limit guard, quota), then users, machines and project;
   then the settings shell's nav and section switching.
 - Files: `web/js/*-settings.js`, `users.js`, `machines.js`, `project-settings.js`, `settings.js`; new
-  `web/js/pages/settings/<section>/`; shared components as they are needed (`Dialog` around `dialogs.js`, `Notice`).
-- Before this step: replace the pill-per-page experiments with **one registry** of migrated pages (each page's A/B choice
-  in one place, one pill or one Settings panel), so a dozen migrated sections do not mean a dozen pills; and the follow-up
-  from section 5 (B loaded on demand, legacy fallback when it fails to load).
-- **Checkpoint**: migrate one small section first (Prompts), then stop and review Harnesses plus that section with the owner
-  (code size against legacy, bugs found, test churn, the build question) before the rest of the step.
-- Experiments: one registry entry per section (for example `preact-settings-prompts`).
-- Acceptance: the section's existing `test-ui` checks run on A and B; the shell's interface to each section (`tab`,
-  `section`, `open()`) is unchanged until the shell itself moves.
+  `web/js/pages/<section>/`; shared components as they are needed (`Dialog` around `dialogs.js`, `Notice`).
+- Each section replaces its legacy module in its own change (section 5), with its `test-ui` checks moved to the Preact page and
+  a held-request page test; there is no registry, experiment or A/B step. The shell's interface to each section (`tab`,
+  `section`, `open()`) is unchanged until the shell itself moves, last.
+- The checkpoint after Prompts (review with the owner before the rest) is superseded: the owner's 2026-10-27 decision is to
+  replace unit by unit, with a reviewer per commit.
+- Acceptance: the section's existing `test-ui` checks pass against the Preact page, none weakened.
 
 ### Step 3: Health, Knowledge, Inbox
 
 - Scope: the Health panel, the Knowledge (memory) viewer, the Inbox and its notifications.
 - Files: `health.js`, `knowledge.js`, `inbox.js`, `inbox-source.js` (the source stays a plain store; the page reads it
   through a hook), `inbox-notifications.js`.
-- Experiments: `preact-health`, `preact-knowledge`, `preact-inbox`.
 - Acceptance: Inbox items keep their identity and focus across live updates; answering, stale-item and read-only checks in
-  `test-ui` pass on A and B.
+  `test-ui` pass.
 
 ### Step 4: agents and members, then the spawn and switch dialogs
 
 - Scope: the agent cards and member list, the member profile, then the spawn and switch dialogs.
 - Files: `agents.js`, `room-members.js`, `agent-source.js`, `sender-profile.js`.
-- Experiments: `preact-agents`, then `preact-spawn`.
 - Acceptance: identity and stale-room guarantees kept (`agents.js:111-143`); a card updates in place under the event stream;
   the stop rule is applied after this step.
 
@@ -252,7 +255,6 @@ same change (section 5); the experiment, default-flip and removal steps describe
 
 - Scope: the room list (unread counts, ordering, collapse, selection), mobile tabs.
 - Files: `sidebar.js`, `sidebar-order.js`, `room-unread.js` (pure, stays), `mobile-tabs.js`, the wiring in `app.js`.
-- Experiment: `preact-sidebar`.
 - Acceptance: unread and ordering tests unchanged; selection and collapse survive live updates.
 
 ### Step 6: chat (last)
@@ -260,8 +262,7 @@ same change (section 5); the experiment, default-flip and removal steps describe
 - Scope: the message list and thread panel. `scroll-anchor.js` and the message window stay; each message becomes a keyed
   component; the composer (ProseMirror) stays imperative inside a ref-mounted host.
 - Files: `chat.js`, `message-actions.js`, `answer-controls.js`, `visual-plan.js`, `composer*.js` (host only).
-- Experiment: `preact-chat`.
-- Acceptance: the existing message identity, draft and scroll-under-live-update checks pass on A and B; no scroll jump with
+- Acceptance: the existing message identity, draft and scroll-under-live-update checks pass; no scroll jump with
   late images, Mermaid or attachments.
 
 ### Step 7: the shell
@@ -274,7 +275,4 @@ same change (section 5); the experiment, default-flip and removal steps describe
 
 - Build: stay on A, or move to B (esbuild as a Go `tool` directive for JSX and TypeScript)? Decide with the incoming frontend
   owner.
-- Pill visibility: should a running migration experiment show its pill to every user, or only when `?ui=` names it (the
-  current default, `{ hidden: true }`)?
 - Should the Chromium checks join a CI gate (today CI runs `make test-full` only)?
-- When does a page's default switch to B, and who signs that off?
