@@ -3,6 +3,7 @@
 // skips the token screen. The server checks the token, creates the owner and signs them in.
 import { request, setSession } from './api.js';
 import { loadPreferences, savePreference } from './preferences.js';
+import { THEMES } from './pages/general/model.js';
 import { showWelcome } from './welcome.js';
 
 const MIN_PASSWORD = 12;
@@ -77,7 +78,7 @@ export async function ownerSetup({ view, form, error, tokenView, tokenForm, them
 // The theme step: a tile per theme drawn in its own colours, applied as soon as it is picked and saved to the profile.
 export function chooseTheme(view, userID, send = request) {
   const grid = view.querySelector('.theme-grid');
-  const themes = [...document.querySelectorAll('#theme-select option')].map(option => ({ value: option.value, label: option.textContent }));
+  const themes = THEMES.map(([value, label]) => ({ value, label }));
   let current = document.documentElement.dataset.theme || 'dark';
   const tiles = new Map();
   const select = value => {

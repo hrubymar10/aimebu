@@ -36,7 +36,7 @@ fmt-check: ## Fail if Go source is unformatted
 
 test-full: fmt-check vet test-race test-web ## Full local and CI gate
 
-WEB_TESTS := claude-sessions claude-session-import system-events limit-guard sidebar-order preferences expiry room-unread room-notify inbox-notifications harness-offer notification-banner humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown composer-paste markdown import-tree quick-commands message-usage role-defaults harness-model prompts-model macros-model roles-model preact-vendor spawn-model harness-version workspace-folder build-version import-problems
+WEB_TESTS := claude-sessions claude-session-import system-events limit-guard sidebar-order preferences expiry room-unread room-notify inbox-notifications harness-offer notification-banner humanize time emoji highlight preview svg-headers macro-import settings-backup composer-markdown composer-paste markdown import-tree quick-commands message-usage role-defaults harness-model prompts-model macros-model roles-model general-model preact-vendor spawn-model harness-version workspace-folder build-version import-problems
 
 # The web tests are plain node scripts, with no npm dependencies. By default they run in Docker, from a digest-pinned image, so that every
 # machine runs the same toolchain: the repository is mounted read-only at /src, copied to a tmpfs, and run from there with no network
@@ -69,6 +69,7 @@ test-ui: ## Run Chromium smoke against a scratch server, then the Preact page te
 	node scripts/test-prompts-page.cjs
 	node scripts/test-macros-page.cjs
 	node scripts/test-roles-page.cjs
+	node scripts/test-general-page.cjs
 
 dev: ## Run the server with live reload
 	go tool air -c .air.toml

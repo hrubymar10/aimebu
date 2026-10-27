@@ -1,5 +1,5 @@
 import { request, rights, refreshRights } from './api.js';
-import { savePreference } from './preferences.js';
+import { AppearanceSettings } from './pages/general/page.js';
 import { NotificationSounds } from './notification-sounds.js';
 import { element, creditsText, usageWindowRow } from './usage-format.js';
 import { settingsRow, settingsGroup } from './settings-row.js';
@@ -50,8 +50,7 @@ export class SettingsPanel {
     this.usagesTab = document.querySelector('#settings-usages-tab');
     this.generalTab = document.querySelector('#settings-general-tab');
     this.generalSection = document.querySelector('#settings-general');
-    this.themeSelect = document.querySelector('#theme-select');
-    this.themeSelect.value = document.documentElement.dataset.theme || 'dark';
+    this.appearance = new AppearanceSettings();
     this.notificationsTab = document.querySelector('#settings-notifications-tab');
     this.rolesTab = document.querySelector('#settings-roles-tab');
     this.machinesTab = document.querySelector('#settings-machines-tab');
@@ -75,22 +74,6 @@ export class SettingsPanel {
     this.sounds = new NotificationSounds(this.notificationsSection, notifications);
     this.usagesTab.onclick = () => this.selectSection('usages');
     this.generalTab.onclick = () => this.selectSection('general');
-    this.previewToggle = document.querySelector('#sidebar-preview');
-    this.previewToggle.onchange = () => {
-      const value = this.previewToggle.checked ? '1' : '0';
-      try { if (this.userID) localStorage.setItem(`aimebu2.ui.sidebar_preview.${this.userID}`, value); } catch {}
-      savePreference('sidebar_preview', value);
-      document.dispatchEvent(new CustomEvent('aimebu:sidebar-preview'));
-    };
-    this.themeSelect.onchange = () => {
-      const theme = this.themeSelect.value;
-      if (theme === 'dark') delete document.documentElement.dataset.theme;
-      else document.documentElement.dataset.theme = theme;
-      try {
-        if (this.userID) localStorage.setItem(`aimebu2.ui.theme.${this.userID}`, theme);
-      } catch {}
-      savePreference('theme', theme);
-    };
     this.notificationsTab.onclick = () => this.selectSection('notifications');
     this.rolesTab.onclick = () => this.selectSection('roles');
     this.machinesTab.onclick = () => this.selectSection('machines');
@@ -124,16 +107,7 @@ export class SettingsPanel {
     this.userID = userID;
     this.usagesTab.hidden = false;
     document.querySelector('#usages-toggle').hidden = false;
-    let theme = 'dark';
-    try {
-      theme = localStorage.getItem(`aimebu2.ui.theme.${userID}`) || theme;
-      localStorage.setItem('aimebu2.ui.last-user', userID);
-    } catch {}
-    if (![...this.themeSelect.options].some(option => option.value === theme)) theme = 'dark';
-    this.themeSelect.value = theme;
-    try { this.previewToggle.checked = localStorage.getItem(`aimebu2.ui.sidebar_preview.${userID}`) === '1'; } catch {}
-    if (theme === 'dark') delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = theme;
+    this.appearance.setUser(userID);
   }
   // Settings opens on General; the usages column's own Settings button asks for the Usages section.
   async open(section = 'general', options = {}) {
