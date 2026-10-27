@@ -265,7 +265,7 @@ func TestDetectDefaultDirPrunesOnlyStaleRunFolders(t *testing.T) {
 func TestDetectModelsCleanupFailureKeepsSuccessfulListing(t *testing.T) {
 	harness := writeScript(t, t.TempDir(), "codex", `echo '{"models":[{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list"}]}'`)
 	called := false
-	models, err := detectModelsInRun(t.Context(), "codex", harness, nil, t.TempDir(), func(string) error {
+	models, err := detectModelsInRun(t.Context(), "codex", harness, nil, t.TempDir(), false, func(string) error {
 		called = true
 		return errors.New("cannot remove run folder")
 	})
@@ -537,5 +537,57 @@ func TestDetectModelsClearsTheLaunchersBuiltInFlags(t *testing.T) {
 	got, err := detectModels(t.Context(), "opencode", launcher, nil, "")
 	if err != nil || len(got) != 1 || got[0].Slug != "opencode/a" {
 		t.Fatalf("models: %+v %v", got, err)
+	}
+}
+
+// A model with no display name is labelled by its model and provider; a container cannot reach a provider on the machine's own loopback
+// address, which detection says so the model is not added by accident.
+func TestDetectModelsOfVibeLabelsByProviderAndFlagsLoopbackForContainers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("VIBE_HOME", home)
+	vibe := writeScript(t, t.TempDir(), "vibe", `exit 9`)
+	config := "[[providers]]\nname = \"llamacpp\"\napi_base = \"http://127.0.0.1:8080/v1\"\n\n[[providers]]\nname = \"mistral\"\napi_base = \"https://api.mistral.ai/v1\"\n\n" +
+		"[[providers]]\nname = \"lan\"\napi_base = \"http://192.168.1.20:1234/v1\"\n\n" +
+		"[[models]]\nname = \"devstral-small-latest\"\nalias = \"local\"\nprovider = \"llamacpp\"\n\n" +
+		"[[models]]\nname = \"mistral-large\"\nalias = \"large\"\nprovider = \"mistral\"\n\n[[models]]\nname = \"qwen\"\nalias = \"lan-qwen\"\nprovider = \"lan\"\n\n" +
+		"[[models]]\nname = \"shown\"\nalias = \"shown\"\ndisplay_name = \"Shown As\"\nprovider = \"llamacpp\"\n"
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bySlug := func(models []protocol.ModelCandidate) map[string]protocol.ModelCandidate {
+		out := map[string]protocol.ModelCandidate{}
+		for _, model := range models {
+			out[model.Slug] = model
+		}
+		return out
+	}
+	native, err := detectModelsFor(t.Context(), "vibe", vibe, nil, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := bySlug(native)
+	if got["local"].Label != "devstral-small-latest (llamacpp)" || got["large"].Label != "mistral-large (mistral)" || got["shown"].Label != "Shown As" {
+		t.Fatalf("labels: %+v", got)
+	}
+	for slug, model := range got {
+		if model.Unreachable != "" {
+			t.Fatalf("a native harness reaches its own loopback: %s %+v", slug, model)
+		}
+	}
+	docker, err := detectModelsFor(t.Context(), "vibe", vibe, nil, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = bySlug(docker)
+	if !strings.Contains(got["local"].Unreachable, "127.0.0.1:8080") || got["shown"].Unreachable == "" {
+		t.Fatalf("loopback providers are flagged for a container: %+v", got)
+	}
+	if got["large"].Unreachable != "" || got["lan-qwen"].Unreachable != "" {
+		t.Fatalf("a provider on the internet or the LAN is reachable from a container: %+v", got)
+	}
+	for base, want := range map[string]bool{"http://localhost:1/v1": true, "http://[::1]:1/v1": true, "http://0.0.0.0:1": true, "http://host.docker.internal:1/v1": false, "": false, "not a url": false, "https://api.x.com": false} {
+		if loopbackBase(base) != want {
+			t.Fatalf("loopbackBase(%q) != %v", base, want)
+		}
 	}
 }

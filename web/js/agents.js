@@ -6,6 +6,7 @@ import { setGlyph } from './icon-button.js';
 import { relativeTime, stateAge } from './time.js';
 import { ClaudeSessionPicker } from './claude-sessions.js';
 import { chooseModel, toolKey } from './spawn-model.js';
+import { harnessName } from './harness-version.js';
 
 // Compact icon buttons for a member row (the label is the title and the accessible name; no text of their own).
 const ICONS = {
@@ -258,7 +259,7 @@ export class AgentsPanel {
     const profile = this.profileData || {};
     const status = agent.desired === 'stopped' ? 'Stopped' : agent.desired === 'not_accepting' ? 'Paused' : agent.observed === 'in_turn' ? 'Working' : agent.observed === 'lost' ? 'Lost' : agent.observed === 'stopped' ? 'Stopped' : 'Online';
     const seen = agent.last_activity_at || agent.machine_last_seen;
-    const variant = agent.variant && agent.variant !== agent.tool ? `${agent.tool}/${agent.variant}` : agent.tool;
+    const variant = agent.variant && agent.variant !== agent.tool ? `${harnessName(agent.tool)}/${agent.variant}` : harnessName(agent.tool);
     const today = profile.turns_today || profile.cost_today ? `${profile.turns_today || 0} turn${profile.turns_today === 1 ? '' : 's'}${profile.cost_today ? ` · $${profile.cost_today.toFixed(profile.cost_today < 0.01 ? 4 : 2)}${profile.cost_today_estimated ? ' estimated' : ''}` : ''}` : '';
     const rows = [
       this.fact('Status', status), this.fact('Presence', agent.activity || (agent.observed === 'in_turn' ? 'Working on a turn' : agent.observed === 'lost' ? 'Unconfirmed; recovery needed' : 'Idle')),
@@ -395,7 +396,7 @@ export class AgentsPanel {
     node.querySelector('.agent-role').textContent = `${agent.role_emoji || ''} ${agent.role || 'Agent'}${agent.role_deleted ? ' (deleted)' : ''}`.trim();
     node.querySelector('.agent-role').title = agent.role_updated ? 'Role updated; respawn to apply the project definition.' : '';
     node.querySelector('.agent-role-update').textContent = agent.role_updated ? 'Role updated · respawn to apply' : '';
-    node.querySelector('.agent-meta').textContent = `${agent.tool || 'unknown'} · ${agent.model || 'unknown'}`;
+    node.querySelector('.agent-meta').textContent = `${harnessName(agent.tool) || 'unknown'} · ${agent.model || 'unknown'}`;
     const icon = node.querySelector('.agent-harness-icon');
     const { src, label } = harnessIcon(agent.tool || '');
     icon.src = src;
@@ -439,7 +440,7 @@ export class AgentsPanel {
       switchStatus.textContent = 'Folder or machine approval needed · Open Inbox';
       switchStatus.onclick = () => document.querySelector('#inbox-toggle')?.click();
     } else if (phase) {
-      switchStatus.textContent = `${phase}: ${handoff.tool} · ${handoff.model}${handoff.state === 'failed' && handoff.error ? ` — ${handoff.error}` : ''}`;
+      switchStatus.textContent = `${phase}: ${harnessName(handoff.tool)} · ${handoff.model}${handoff.state === 'failed' && handoff.error ? ` — ${handoff.error}` : ''}`;
       switchStatus.onclick = null;
     } else switchStatus.onclick = null;
     const grants = node.querySelector('.agent-boundary-grants');
@@ -512,7 +513,7 @@ export class AgentsPanel {
     this.switchAgentID = id;
     this.switchRoomID = this.room.id;
     this.switchDialog.showModal();
-    document.querySelector('#switch-agent-name').textContent = `${agentLabel(agent) || id} · ${agent.tool} · ${agent.model}`;
+    document.querySelector('#switch-agent-name').textContent = `${agentLabel(agent) || id} · ${harnessName(agent.tool)} · ${agent.model}`;
     const tools = this.switchForm.elements.tool, models = this.switchForm.elements.model;
     const reason = document.querySelector('#switch-tool-reason');
     tools.replaceChildren(); models.replaceChildren();

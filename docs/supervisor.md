@@ -129,6 +129,12 @@ server's allowlist must admit its source IP. A stale spawn is rejected before
 this write; a write failure sends a failed
 `spawn_result` for that agent while the machine connection stays open.
 
+A container launcher's version is asked from a project folder of the machine (the launcher only
+runs in a folder its container mounts). When it cannot be answered the launcher row carries a
+`version_problem` instead of a bare "unknown": the missing folder, what the launcher said on stderr,
+or that it did not answer in time, in which case the supervisor asks again with 20 seconds once it
+is connected and reports the row again.
+
 A machine's Claude Code sessions are listed by the supervisor on request
 (`session_scan`, advertised by `supports_session_scan`): it reads the
 configuration folder of the launcher that would continue the session (the

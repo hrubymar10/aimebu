@@ -251,6 +251,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	}
 	c.mu.Lock()
 	c.currentConn = conn
+	go c.reprobeSlowLaunchers(ctx)
 	stoppedTurns := []adapter.Turn{}
 	for _, item := range ack.Desired {
 		c.desired[item.AgentID] = item

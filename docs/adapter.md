@@ -413,7 +413,13 @@ come last and an owner's environment reference to one of them is ignored.
 
 The owner lists the models of a Vibe harness in Settings → Harnesses; as Vibe
 has no command that lists them, Auto-detect models reads the `[[models]]` of the machine's Vibe config
-(by alias) and adds Vibe's built-in default, `mistral-medium-3.5`. The adapter's capabilities are
+(by alias) and adds Vibe's built-in default, `mistral-medium-3.5`. A model with no
+`display_name` is labelled by its model and provider (`devstral-small-latest (llamacpp)`), not only by the alias.
+For a Docker launcher the detect request says so (`containerized`), and a model whose provider's
+`api_base` is the machine's own loopback address (`127.0.0.1`, `localhost`, `::1`, `0.0.0.0`) is
+listed with `unreachable`, the reason, and cannot be ticked: inside a container that address is the
+container, so an agent on it could never reach its model. Add such a model by hand if the container
+reaches the provider some other way. The adapter's capabilities are
 pinned to the verified release, 2.25.0 on Linux, and claim cost and cancel confirmation only: no-action
 mode is not claimed until a live canary has shown that a read-only turn loads none of the person's MCP
 servers. `AIMEBU2_LIVE_VIBE=1` is reserved for that opt-in canary, which has not been written or run.

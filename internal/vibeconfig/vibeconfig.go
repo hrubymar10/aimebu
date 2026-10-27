@@ -148,6 +148,17 @@ func Models(blocks []Block) []Model {
 	return out
 }
 
+// ProviderBases maps each provider's name to its api_base, for the providers that give one.
+func ProviderBases(blocks []Block) map[string]string {
+	out := map[string]string{}
+	for _, block := range blocks {
+		if block.Kind == "providers" && block.Fields["name"] != "" && block.Fields["api_base"] != "" {
+			out[block.Fields["name"]] = block.Fields["api_base"]
+		}
+	}
+	return out
+}
+
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ProviderEnv names the environment variables the providers read their key from, so only those reach an agent.

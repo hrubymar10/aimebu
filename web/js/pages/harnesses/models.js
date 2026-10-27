@@ -284,7 +284,8 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
 
 function ModelCandidates({ found, onAdd, onClose, onDirty, dirtyKey }) {
   const candidates = found.candidates || [];
-  const available = candidates.filter(candidate => !candidate.already_listed);
+  // A model its harness cannot reach (a container and a provider on the machine's loopback) is shown with why, and cannot be ticked.
+  const available = candidates.filter(candidate => !candidate.already_listed && !candidate.unreachable);
   const [picked, setPicked] = useState(() => new Set());
   useDirty(onDirty, dirtyKey, picked.size > 0);
   const toggle = slug => setPicked(current => {
@@ -321,12 +322,12 @@ function ModelCandidates({ found, onAdd, onClose, onDirty, dirtyKey }) {
           <label class="machine-harness-enabled harness-detect-row" data-slug=${candidate.slug} key=${candidate.slug}>
             <input
               type="checkbox"
-              disabled=${!!candidate.already_listed}
+              disabled=${!!candidate.already_listed || !!candidate.unreachable}
               checked=${picked.has(candidate.slug)}
               aria-label=${`Add ${candidate.slug}`}
               onChange=${() => toggle(candidate.slug)}
             />
-            <span>${`${candidate.label} · ${candidate.slug}${candidate.note ? ` · ${candidate.note}` : ''}${candidate.already_listed ? ' · already listed' : ''}`}</span>
+            <span>${`${candidate.label} · ${candidate.slug}${candidate.note ? ` · ${candidate.note}` : ''}${candidate.already_listed ? ' · already listed' : ''}${candidate.unreachable ? ` · not offered: ${candidate.unreachable}` : ''}`}</span>
           </label>
         `)}
       </div>

@@ -5,6 +5,7 @@ import { useAlive } from '../../hooks/use-alive.js';
 import { useDirty } from '../../hooks/use-dirty.js';
 import { IconButton } from '../../components/icon-button.js';
 import { ModelsPanel } from './models.js';
+import { versionLabel } from '../../harness-version.js';
 import { familyName, harnessStatus, harnessTitle, harnessLabel, formFromHarness, launcherBody, enabledBody } from './model.js';
 
 const launcherURL = (machineID, harnessID) => `/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harnessID)}`;
@@ -117,7 +118,7 @@ export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen
             <span class=${`machine-harness-status${status === 'Available' ? ' is-available' : ''}`}>${status}</span>
           </div>
           <span class="settings-desc machine-harness-meta">
-            ${`${harness.version ? `Version ${harness.version}` : 'Version unknown'} · ${familyName(harness.tool)} · ${harness.active_agents || 0} active agents`}
+            ${`${versionLabel(harness)} · ${familyName(harness.tool)} · ${harness.active_agents || 0} active agents`}
           </span>
           ${harness.unavailable_reason && html`<span class="settings-desc machine-harness-reason">${harness.unavailable_reason}</span>`}
           <span class="settings-desc machine-harness-path">${`Command: ${harness.launcher_path || harness.command}`}</span>

@@ -518,3 +518,60 @@ func TestOwnerAddsADockerOpenCodeHarness(t *testing.T) {
 		t.Fatal("a Docker OpenCode reaches the server from its container, so it needs a reachable bind")
 	}
 }
+
+// A container launcher whose version cannot be asked for says why in the launcher list, instead of a bare "unknown".
+func TestLauncherListSaysWhyAContainerVersionIsUnknown(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	base := "/api/machines/" + f.machineID + "/launchers"
+	journal, err := supervisor.OpenJournal(t.Context(), filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, adapter.NewFake())
+	ready := make(chan struct{}, 1)
+	client.OnReady = func() { ready <- struct{}{} }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go client.RunOnce(ctx)
+	select {
+	case <-ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("supervisor did not connect")
+	}
+	path := filepath.Join(t.TempDir(), "claude-docker")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 2.1.310 (Claude Code)\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{"tool": "claude", "command": path, "enabled": true, "containerized": true, "args": []string{}, "env_refs": map[string]string{},
+		"path_maps": []any{}, "visible_roots": []string{}, "supports_toolbox": true}
+	if resp := f.request(http.MethodPost, base, body, true); resp.StatusCode != 200 {
+		t.Fatalf("add a Docker harness: %d", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+	resp := f.request(http.MethodGet, base, nil, false)
+	defer resp.Body.Close()
+	var listed struct {
+		Launchers []map[string]any `json:"launchers"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&listed); err != nil || len(listed.Launchers) == 0 {
+		t.Fatalf("launcher list: %+v %v", listed, err)
+	}
+	var row map[string]any
+	for _, candidate := range listed.Launchers {
+		if config, _ := candidate["config"].(map[string]any); config["command"] == path {
+			row = candidate
+		}
+	}
+	if row == nil {
+		t.Fatalf("the added harness is not listed: %+v", listed.Launchers)
+	}
+	if row["version"] != "" && row["version"] != nil {
+		t.Fatalf("no folder to ask from, so no version: %+v", row)
+	}
+	if problem, _ := row["version_problem"].(string); !strings.Contains(problem, "no project folder") {
+		t.Fatalf("the list does not say why the version is unknown: %+v", row)
+	}
+}

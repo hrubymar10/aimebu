@@ -178,7 +178,7 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 			apiError(w, 409, "launcher_unavailable", "The harness was not found on the machine. "+detectFailedHint)
 			return
 		}
-		request := protocol.DetectRequest{Kind: "models", Family: harness.Tool, Command: resolved, Args: harness.Args, Dir: body.Dir}
+		request := protocol.DetectRequest{Kind: "models", Family: harness.Tool, Command: resolved, Args: harness.Args, Dir: body.Dir, Containerized: harness.Containerized}
 		answer, err := s.requestDetect(r.Context(), conn, request, detectModelsWait)
 		if err != nil {
 			apiError(w, 502, "detect_failed", "Couldn't detect the models: "+err.Error()+". "+detectFailedHint)

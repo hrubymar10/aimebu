@@ -216,6 +216,9 @@ type LauncherRow struct {
 	// launcher is too old for the tool. It does not make the launcher unavailable; the turn's own preflight still refuses it.
 	Features       []string `json:"features,omitempty"`
 	FeatureProblem string   `json:"feature_problem,omitempty"`
+	// VersionProblem says why Version is empty for a launcher that runs in a container: there was no folder to ask it from, it said so itself
+	// (a folder it does not mount, the container stopped), or it did not answer in time. Empty when the version is known.
+	VersionProblem string `json:"version_problem,omitempty"`
 }
 
 type HarnessRow struct {
@@ -330,6 +333,9 @@ type DetectRequest struct {
 	Command string   `json:"command,omitempty"`
 	Args    []string `json:"args,omitempty"`
 	Dir     string   `json:"dir,omitempty"`
+	// Containerized says the harness runs in a container: a model whose provider listens on the machine's own loopback is then not
+	// reachable from it, which detection reports (ModelCandidate.Unreachable).
+	Containerized bool `json:"containerized,omitempty"`
 }
 
 // HarnessCandidate is an executable found on the machine that looks like a harness. Command is the absolute path.
@@ -345,4 +351,7 @@ type ModelCandidate struct {
 	Slug  string `json:"slug"`
 	Label string `json:"label"`
 	Note  string `json:"note,omitempty"`
+	// Unreachable says why an agent could not use the model where the harness runs (its provider is at the machine's own loopback address,
+	// which inside a container is the container); empty for a model that can be reached.
+	Unreachable string `json:"unreachable,omitempty"`
 }

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,7 +83,7 @@ func (c *Client) detectResult(ctx context.Context, frame protocol.Frame) protoco
 		} else {
 			result.DetectDir = dir
 		}
-		models, err := detectModelsInRun(ctx, frame.Detect.Family, frame.Detect.Command, frame.Detect.Args, dir, remove)
+		models, err := detectModelsInRun(ctx, frame.Detect.Family, frame.Detect.Command, frame.Detect.Args, dir, frame.Detect.Containerized, remove)
 		if err != nil {
 			result.Code, result.Message = "detect_failed", fmt.Sprintf("model detection in %s: %v", dir, err)
 			return result
@@ -93,8 +95,8 @@ func (c *Client) detectResult(ctx context.Context, frame protocol.Frame) protoco
 	return result
 }
 
-func detectModelsInRun(ctx context.Context, family, command string, args []string, dir string, remove func(string) error) ([]protocol.ModelCandidate, error) {
-	models, err := detectModels(ctx, family, command, args, dir)
+func detectModelsInRun(ctx context.Context, family, command string, args []string, dir string, containerized bool, remove func(string) error) ([]protocol.ModelCandidate, error) {
+	models, err := detectModelsFor(ctx, family, command, args, dir, containerized)
 	if remove != nil {
 		if cleanupErr := remove(dir); cleanupErr != nil {
 			log.Printf("model detection: remove run folder %s: %v", dir, cleanupErr)
@@ -288,6 +290,12 @@ func pruneStaleDetectRuns(base string, now time.Time) {
 // when set, is the working directory. When the command fails, the end of what it wrote to stderr is part of the error, so the person
 // sees the harness's own reason rather than a bare exit status.
 func detectModels(ctx context.Context, family, command string, launcherArgs []string, dir string) ([]protocol.ModelCandidate, error) {
+	return detectModelsFor(ctx, family, command, launcherArgs, dir, false)
+}
+
+// detectModelsFor is detectModels for a harness that runs natively (containerized false) or in a container, which changes which models can
+// be used: see ModelCandidate.Unreachable.
+func detectModelsFor(ctx context.Context, family, command string, launcherArgs []string, dir string, containerized bool) ([]protocol.ModelCandidate, error) {
 	if err := executablePath(command); err != nil {
 		return nil, fmt.Errorf("the harness command is not usable: %w", err)
 	}
@@ -298,7 +306,7 @@ func detectModels(ctx context.Context, family, command string, launcherArgs []st
 	}
 	if family == "vibe" {
 		// Vibe has no command that lists its models: the ones its config defines are what it offers.
-		return detectVibeModels()
+		return detectVibeModels(containerized)
 	}
 	var listArgs []string
 	var parse func([]byte) ([]protocol.ModelCandidate, error)
@@ -453,7 +461,7 @@ var vibeDefaultModel = vibeconfig.Model{Alias: "mistral-medium-3.5", DisplayName
 
 // detectVibeModels lists the models of the person's Vibe config (config.toml in $VIBE_HOME, ~/.vibe by default) by alias, which is what an
 // agent is started with, and Vibe's built-in default. Only the config's models and providers tables are read, never its .env.
-func detectVibeModels() ([]protocol.ModelCandidate, error) {
+func detectVibeModels(containerized bool) ([]protocol.ModelCandidate, error) {
 	home := os.Getenv("VIBE_HOME")
 	if home == "" {
 		user, err := os.UserHomeDir()
@@ -475,10 +483,25 @@ func detectVibeModels() ([]protocol.ModelCandidate, error) {
 		listed = append(listed, vibeDefaultModel)
 	}
 	models := []protocol.ModelCandidate{}
+	providers := vibeconfig.ProviderBases(blocks)
 	for _, model := range listed {
-		candidate := protocol.ModelCandidate{Slug: model.Alias, Label: model.DisplayName}
-		if candidate.Label == "" {
-			candidate.Label = model.Alias
+		// A model with no display name is labelled by what it is, the model and its provider, and not only by the alias the config gave it:
+		// "local" says nothing about what runs where.
+		label := model.DisplayName
+		if label == "" {
+			label = model.Alias
+			if model.Name != "" && model.Name != model.Alias {
+				label = model.Name
+			}
+			if model.Provider != "" {
+				label += " (" + model.Provider + ")"
+			}
+		}
+		candidate := protocol.ModelCandidate{Slug: model.Alias, Label: label}
+		if containerized {
+			if base := providers[model.Provider]; loopbackBase(base) {
+				candidate.Unreachable = "its provider is at " + base + ", the machine's own loopback address, which a container cannot reach"
+			}
 		}
 		var note []string
 		if model.Provider != "" {
@@ -494,6 +517,20 @@ func detectVibeModels() ([]protocol.ModelCandidate, error) {
 		models = append(models, candidate)
 	}
 	return models, nil
+}
+
+// loopbackBase says whether a provider's API base URL names the machine itself.
+func loopbackBase(base string) bool {
+	u, err := url.Parse(base)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
 func orZero(price string) string {

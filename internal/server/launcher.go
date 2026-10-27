@@ -149,6 +149,9 @@ func (s *Server) machineLaunchers(w http.ResponseWriter, r *http.Request) {
 			if report.FeatureProblem != "" {
 				row["feature_problem"] = report.FeatureProblem
 			}
+			if report.VersionProblem != "" && report.Version == "" {
+				row["version_problem"] = report.VersionProblem
+			}
 		}
 		rows = append(rows, row)
 	}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hrubymar10/aimebu/internal/adapter"
+	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 )
 
@@ -83,19 +84,17 @@ func inspectLauncher(def protocol.LauncherDefinition, checkout string) (protocol
 	}
 	row.ResolvedCommand = path
 	if checkout != "" || !def.Containerized {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		args := append(append([]string{}, def.Args...), "--version")
-		cmd := exec.CommandContext(ctx, path, args...)
-		if checkout != "" {
-			cmd.Dir = checkout
+		version, problem := probeLauncherVersion(def, path, checkout, versionProbeTimeout)
+		row.Version = version
+		if problem != "" {
+			if def.Containerized {
+				row.VersionProblem = problem
+			} else {
+				row.UnavailableReason = "launcher version check failed"
+			}
 		}
-		cmd.Env = launcherEnvironment(def.EnvRefs, def.Tool)
-		if output, err := cmd.Output(); err == nil {
-			row.Version = strings.TrimSpace(string(output))
-		} else if !def.Containerized {
-			row.UnavailableReason = "launcher version check failed"
-		}
+	} else {
+		row.VersionProblem = "no project folder is set on this machine yet, and a container launcher can only be asked from a folder it mounts"
 	}
 	// Like the --version probe above, only with a checkout to run in: an old launcher that ignores the probe runs the harness with these
 	// arguments, which must not happen in an arbitrary directory, and the hello loop must not wait on every launcher.
@@ -108,6 +107,77 @@ func inspectLauncher(def protocol.LauncherDefinition, checkout string) (protocol
 		row.Available = true
 	}
 	return row, nil
+}
+
+// versionProbeTimeout is how long the launcher gets to answer --version when its row is made; versionReprobeTimeout is how long a container
+// launcher that did not answer then gets once the connection is up (starting a container can take longer than the first look waits).
+const (
+	versionProbeTimeout   = 3 * time.Second
+	versionReprobeTimeout = 20 * time.Second
+	versionTimedOut       = "did not answer --version in time"
+)
+
+// probeLauncherVersion runs the launcher with --version in dir (empty for the supervisor's own) and returns its answer, or why there is none:
+// what it printed on stderr (a Docker launcher says "Directory … is not mounted in the harness container" there), or that it timed out.
+func probeLauncherVersion(def protocol.LauncherDefinition, path, dir string, timeout time.Duration) (version, problem string) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	args := append(append([]string{}, def.Args...), "--version")
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Dir = dir
+	cmd.Env = launcherEnvironment(def.EnvRefs, def.Tool)
+	output, err := cmdprobe.Output(cmd) // bounded: a helper the launcher left behind cannot hold the answer up
+	if err == nil {
+		return strings.TrimSpace(string(output)), ""
+	}
+	if ctx.Err() != nil {
+		return "", versionTimedOut
+	}
+	var failed *exec.ExitError
+	if errors.As(err, &failed) {
+		if said := adapter.SanitizeStderr(string(failed.Stderr)); said != "" {
+			return "", said
+		}
+	}
+	if said := adapter.SanitizeStderr(string(output)); said != "" {
+		return "", said
+	}
+	return "", err.Error()
+}
+
+// reprobeSlowLaunchers asks again, with more time, the container launchers whose first --version did not answer in time, and reports the
+// rows it filled in. A container can take longer to answer than the first look waits, and the connection must not wait on every launcher.
+func (c *Client) reprobeSlowLaunchers(ctx context.Context) {
+	c.mu.Lock()
+	dir := c.harnessProbeDir
+	var slow []protocol.LauncherRow
+	for _, row := range c.Launchers {
+		if row.Containerized && row.VersionProblem == versionTimedOut && row.ResolvedCommand != "" {
+			slow = append(slow, row)
+		}
+	}
+	c.mu.Unlock()
+	if dir == "" || len(slow) == 0 {
+		return
+	}
+	changed := false
+	for _, row := range slow {
+		if ctx.Err() != nil {
+			return
+		}
+		version, problem := probeLauncherVersion(row.LauncherDefinition, row.ResolvedCommand, dir, versionReprobeTimeout)
+		c.mu.Lock()
+		for i := range c.Launchers {
+			if c.Launchers[i].ID == row.ID && c.Launchers[i].VersionProblem == versionTimedOut {
+				c.Launchers[i].Version, c.Launchers[i].VersionProblem = version, problem
+				changed = true
+			}
+		}
+		c.mu.Unlock()
+	}
+	if changed {
+		_ = c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.LauncherStatus, Launchers: c.launcherRows(), Capabilities: c.CapabilityReports})
+	}
 }
 
 // probeLauncherFeatures asks a Docker launcher for its features (the probe exits before it touches Docker) and records them, or why they cannot be used, on the row. Doctor and Settings read them from there instead of probing again.

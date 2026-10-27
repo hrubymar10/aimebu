@@ -1,4 +1,5 @@
 import { launcherReady } from './harness-offer.js';
+import { versionLabel } from './harness-version.js';
 import { request } from './api.js';
 import { settingsRow, settingsGroup } from './settings-row.js';
 import { confirmDialog } from './dialogs.js';
@@ -224,7 +225,7 @@ export class HarnessSettings {
       const response = await request(`/api/machines/${encodeURIComponent(machineID)}/launchers`);
       if (sequence !== this.sequence || this.select.value !== machineID) return;
       this.rows = (response?.launchers || []).map(row => ({ ...row.config, variant: row.config.name,
-        launcher_path: row.resolved_command, version: row.version, available: row.available,
+        launcher_path: row.resolved_command, version: row.version, version_problem: row.version_problem, available: row.available,
         unavailable_reason: row.unavailable_reason, active_agents: row.active_agents || 0, models: row.models || [], models_rev: row.models_rev || '' }));
       this.renderRows(machineID);
       this.noteReady();
@@ -284,9 +285,9 @@ export class HarnessSettings {
     if (this.select.value !== machineID) return;
     const row = (response?.launchers || []).find(item => item.config.id === harness.id);
     if (row) {
-      Object.assign(harness, row.config, { variant: row.config.name, launcher_path: row.resolved_command, version: row.version, available: row.available, unavailable_reason: row.unavailable_reason, active_agents: row.active_agents || 0 });
+      Object.assign(harness, row.config, { variant: row.config.name, launcher_path: row.resolved_command, version: row.version, version_problem: row.version_problem, available: row.available, unavailable_reason: row.unavailable_reason, active_agents: row.active_agents || 0 });
       setStatus(!harness.enabled ? 'Disabled' : harness.available ? 'Available' : 'Unavailable');
-      summary.version.textContent = `${harness.version ? `Version ${harness.version}` : 'Version unknown'} · ${harness.active_agents || 0} active agents`;
+      summary.version.textContent = `${versionLabel(harness)} · ${harness.active_agents || 0} active agents`;
       summary.path.textContent = `Command: ${harness.launcher_path || harness.command}`;
       let reason = summary.info.querySelector('.machine-harness-reason');
       if (harness.unavailable_reason) { if (!reason) { reason = node('span', 'settings-desc machine-harness-reason'); summary.version.after(reason); } reason.textContent = harness.unavailable_reason; } else reason?.remove();
@@ -309,7 +310,7 @@ export class HarnessSettings {
     const title = node('div', 'machine-harness-title');
     const statusNode = node('span', `machine-harness-status ${status === 'Available' ? 'is-available' : ''}`, status);
     title.append(node('strong', 'settings-label', harness.label || `${familyName(harness.tool)} · ${harness.variant}`), statusNode);
-    const version = harness.version ? `Version ${harness.version}` : 'Version unknown';
+    const version = versionLabel(harness);
     info.append(title, node('span', 'settings-desc machine-harness-meta', `${version} · ${familyName(harness.tool)} · ${harness.active_agents || 0} active agents`));
     if (harness.unavailable_reason) info.append(node('span', 'settings-desc machine-harness-reason', harness.unavailable_reason));
     info.append(node('span', 'settings-desc machine-harness-path', `Command: ${harness.launcher_path || harness.command}`));
@@ -373,7 +374,7 @@ export class HarnessSettings {
       error.textContent = '';
       save.disabled = true; enabled.disabled = true;
       try {
-        const { variant, launcher_path, version, available, unavailable_reason, active_agents, ...config } = harness;
+        const { variant, launcher_path, version, version_problem, available, unavailable_reason, active_agents, ...config } = harness;
         const { models, models_rev, ...definition } = config;
         await request(`/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harness.id)}`, {
           method: 'PUT', body: { ...definition, label: labelInput.value.trim(), enabled: enabled.checked, command: path.value.trim(),
@@ -395,7 +396,7 @@ export class HarnessSettings {
     enabled.onchange = async () => {
       error.textContent = ''; enabled.disabled = true;
       try {
-        const { variant, launcher_path, version, available, unavailable_reason, active_agents, models, models_rev, ...config } = harness;
+        const { variant, launcher_path, version, version_problem, available, unavailable_reason, active_agents, models, models_rev, ...config } = harness;
         await request(`/api/machines/${encodeURIComponent(machineID)}/launchers/${encodeURIComponent(harness.id)}`, { method: 'PUT', body: { ...config, enabled: enabled.checked } });
         await this.refreshCard(machineID, harness, summary, status => { statusNode.textContent = status; statusNode.classList.toggle('is-available', status === 'Available'); });
       } catch (problem) {
@@ -677,9 +678,9 @@ export class HarnessSettings {
     const boxes = [];
     for (const candidate of candidates) {
       const row = node('label', 'machine-harness-enabled harness-detect-row'); row.dataset.slug = candidate.slug;
-      const check = document.createElement('input'); check.type = 'checkbox'; check.disabled = !!candidate.already_listed;
+      const check = document.createElement('input'); check.type = 'checkbox'; check.disabled = !!candidate.already_listed || !!candidate.unreachable;
       check.setAttribute('aria-label', `Add ${candidate.slug}`);
-      row.append(check, node('span', '', `${candidate.label} · ${candidate.slug}${candidate.note ? ` · ${candidate.note}` : ''}${candidate.already_listed ? ' · already listed' : ''}`));
+      row.append(check, node('span', '', `${candidate.label} · ${candidate.slug}${candidate.note ? ` · ${candidate.note}` : ''}${candidate.already_listed ? ' · already listed' : ''}${candidate.unreachable ? ` · not offered: ${candidate.unreachable}` : ''}`));
       list.append(row); boxes.push([check, candidate]);
     }
     const available = boxes.filter(([check]) => !check.disabled);

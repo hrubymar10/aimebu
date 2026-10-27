@@ -17,7 +17,7 @@ export function pairs(value, separator) {
   return result;
 }
 
-export const harnessFromLauncher = row => ({ ...row.config, variant: row.config.name, launcher_path: row.resolved_command, version: row.version,
+export const harnessFromLauncher = row => ({ ...row.config, variant: row.config.name, launcher_path: row.resolved_command, version: row.version, version_problem: row.version_problem,
   available: row.available, unavailable_reason: row.unavailable_reason, active_agents: row.active_agents || 0, models: row.models || [], models_rev: row.models_rev || '' });
 
 export const harnessStatus = harness => !harness.enabled ? 'Disabled' : harness.available ? 'Available' : 'Unavailable';
@@ -25,7 +25,7 @@ export const harnessTitle = harness => harness.label || `${familyName(harness.to
 export const harnessLabel = harness => harness.label || `${familyName(harness.tool)}${harness.containerized ? ' (Docker)' : ''}`;
 
 export function persistedDefinition(harness) {
-  const { variant, launcher_path, version, available, unavailable_reason, active_agents, models, models_rev, ...definition } = harness;
+  const { variant, launcher_path, version, version_problem, available, unavailable_reason, active_agents, models, models_rev, ...definition } = harness;
   return definition;
 }
 
