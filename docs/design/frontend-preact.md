@@ -147,6 +147,11 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
   revision conflict reloads and keeps every draft, a write answered after Clear, reopening or unmount reports and reads
   nothing, inline plans go back to the saved value when saving fails) and `scripts/test-prompts-model.cjs` (its pure rules, in
   `make test-web`).
+- `make test-ui` also runs `scripts/test-macros-page.cjs` (Settings → Macros with every request held: every write sends the whole
+  map, so a map that failed to load locks all writes; one write at a time; a write answered after a reopen or unmount reports
+  nothing and reads the map again; an import preview and apply; copy-all answers out of order; a non-admin sees the list
+  only; form and import drafts count as unsaved) and `scripts/test-macros-model.cjs` (the page's pure rules, in `make test-web`;
+  the key and size rules stay in `macro-import.js`, tested by `test-macro-import.cjs`).
 - `make test-ui` also runs `scripts/test-harness-page.cjs`: the Preact page in real Chromium (the existing Puppeteer tooling,
   `web/` served as is with the page's import map, no Go server), with every request held until the test answers it, so the
   order of answers is chosen. It checks:
@@ -223,7 +228,7 @@ same change (section 5); the experiment, default-flip and removal steps describe
 
 ### Step 2: the other Settings sections
 
-Done so far: Prompts (`web/js/pages/prompts/`).
+Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`).
 
 - Scope: the small sections first (prompts, macros, roles, retention, limit guard, quota), then users, machines and project;
   then the settings shell's nav and section switching.

@@ -9,7 +9,7 @@ import { RoleSettings } from './role-settings.js';
 import { ProjectSettings } from './project-settings.js';
 import { MachinesSettings } from './machines.js';
 import { HarnessSettings } from './pages/harnesses/page.js';
-import { MacroSettings } from './macro-settings.js';
+import { MacroSettings } from './pages/macros/page.js';
 import { UsersSettings } from './users.js';
 import { PromptSettings } from './pages/prompts/page.js';
 import { QuotaSettings } from './quota-settings.js';

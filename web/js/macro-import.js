@@ -3,6 +3,7 @@
 export const MACRO_COUNT_MAX = 256;
 export const MACRO_BODY_MAX = 16 * 1024;
 const KEY = /^[a-z][a-z0-9_-]*$/;
+export const isMacroKey = key => KEY.test(key);
 
 // Accepts a plain {key: body} object, or an object with a "macros" member (a copy of a larger export).
 // Entries that cannot be saved are counted, not fatal, so one bad row does not lose the rest.
