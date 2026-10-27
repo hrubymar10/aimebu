@@ -1,9 +1,7 @@
-import { request, rights, refreshRights } from './api.js';
+import { rights, refreshRights } from './api.js';
 import { GeneralSettings } from './pages/general/page.js';
 import { NotificationSettings } from './pages/notifications/page.js';
-import { element, creditsText, usageWindowRow } from './usage-format.js';
-import { settingsRow, settingsGroup } from './settings-row.js';
-import { iconButton } from './icon-button.js';
+import { UsagesSettings } from './pages/usages/page.js';
 import { createProjectSettingsSource } from './project-settings-source.js';
 import { RoleSettings } from './pages/roles/page.js';
 import { ProjectSettings } from './project-settings.js';
@@ -17,7 +15,6 @@ import { HttpQuotaSource } from './quota-source.js';
 import { LimitGuardSettings } from './limit-guard-settings.js';
 import { UsageLimitDefault } from './usage-limit-default.js';
 import { HttpLimitGuardSource } from './limit-guard-source.js';
-import { confirmDialog, promptDialog } from './dialogs.js';
 
 export class SettingsPanel {
   constructor(source, projectContext, notifications) {
@@ -34,15 +31,12 @@ export class SettingsPanel {
     this.usersSettings.tab.onclick = () => this.selectSection('users');
     this.promptSettings = new PromptSettings(this.dialog, projectContext);
     this.promptSettings.tab.onclick = () => this.selectSection('prompts');
-    this.list = document.querySelector('#usages-list');
-    this.error = document.querySelector('#usages-error');
-    this.providers = new Map();
-    this.profiles = new Map();
-    this.switcherState = null;
-    this.switcherControls = element('div', 'usage-switcher-controls');
-    this.list.before(this.switcherControls);
+    // The automatic-switching blocks below are other modules', built between the two hosts of the usages page.
+    this.usages = new UsagesSettings({ source, dialog: this.dialog, section: document.querySelector('#settings-usages'), switcher: document.querySelector('#usages-switcher'),
+      list: document.querySelector('#usages-list'), error: document.querySelector('#usages-error'),
+      afterLoad: async state => { await this.quotaSettings.sync({ owner: !!state?.owner, enabled: !!state?.enabled }); await this.limitGuardSettings.sync({ owner: !!state?.owner }); } });
     this.quotaSettings = new QuotaSettings(new HttpQuotaSource());
-    this.switcherControls.after(this.quotaSettings.node);
+    document.querySelector('#usages-switcher').after(this.quotaSettings.node);
     this.limitGuardSettings = new LimitGuardSettings(new HttpLimitGuardSource());
     this.quotaSettings.node.after(this.limitGuardSettings.node);
     this.usageLimitDefault = new UsageLimitDefault();
@@ -104,13 +98,13 @@ export class SettingsPanel {
     if (!this.dialog.open) this.dialog.showModal();
     if (options.machineID) this.harnessSettings.wanted = options.machineID; // Harnesses opens on this machine
     this.selectSection(section); // the dialog shows at once; what the account may do is read again right after
-    this.error.textContent = ''; // before the wait: whatever the person does in the meantime may write here, and must not be wiped
+    this.usages.setError(''); // before the wait: whatever the person does in the meantime may write here, and must not be wiped
     try { await refreshRights(); this.setRights(rights); this.onRights?.(rights); } catch { /* keep what sign-in said */ }
     this.usersSettings.prepare().catch(() => this.usersSettings.settle(true));
     // The default daily limits do not depend on the switcher or the usage snapshots, so they load on their own.
     void this.usageLimitDefault.sync();
     if (!rights.owner) { if (!this.usagesSection.hidden) this.selectSection('general'); return; } // nothing of the usages is theirs to load
-    try { await this.loadUsages(); }
+    try { await this.usages.load(); }
     catch (error) {
       if (error.status === 403) {
         this.usagesTab.hidden = true;
@@ -118,87 +112,10 @@ export class SettingsPanel {
         // Fall back to General only while the reader is still looking at the Usages section this open() showed;
         // a tab they picked while the request was in flight must not be taken away.
         if (!this.usagesSection.hidden) this.selectSection('general');
-      } else this.error.textContent = error.message || 'Could not load usage snapshots';
+      } else this.usages.setError(error.message || 'Could not load usage snapshots');
     }
   }
-  async loadUsages() {
-    const [usage, state] = await Promise.all([this.source.list(), this.source.switcher()]);
-    this.switcherState = state;
-    this.tokenStatesPending = Object.values(usage?.settings?.token_auto_refresh_state || {}).some(item => item?.status === 'pending');
-    this.render(usage);
-    await this.quotaSettings.sync({ owner: !!state?.owner, enabled: !!state?.enabled });
-    await this.limitGuardSettings.sync({ owner: !!state?.owner });
-  }
-  // Live push from the event stream: reload the open usages panel in place.
-  // A push that cannot be applied right away (a load is running, or a field in
-  // the panel has focus and a re-render would drop what is being typed) is
-  // remembered and applied once the load finishes or focus leaves the panel.
-  async usagesChanged() {
-    if (!this.dialog.open || this.usagesSection.hidden) return;
-    if (this.usagesLoading) { this.usagesDirty = true; return; }
-    const focused = document.activeElement;
-    if (focused && this.usagesSection.contains(focused) && focused.matches('input, select, textarea')) {
-      this.usagesDirty = true;
-      if (!this.usagesFocusWatch) {
-        this.usagesFocusWatch = () => {
-          if (!this.usagesDirty) return;
-          // focusout fires before the next element takes focus; look after it settles.
-          setTimeout(() => { if (this.usagesDirty) this.usagesChanged(); }, 0);
-        };
-        this.usagesSection.addEventListener('focusout', this.usagesFocusWatch);
-      }
-      return;
-    }
-    this.usagesDirty = false;
-    this.usagesLoading = true;
-    try { await this.loadUsages(); }
-    catch {}
-    finally {
-      this.usagesLoading = false;
-      if (this.usagesDirty) this.usagesChanged();
-    }
-  }
-  async mutateSwitcher(action) {
-    this.error.textContent = '';
-    try { await action(); await this.loadUsages(); }
-    catch (error) { this.error.textContent = error.message || 'Account switch failed'; }
-  }
-  async mutateUsage(action) {
-    this.error.textContent = '';
-    try { await action(); await this.loadUsages(); }
-    catch (error) { this.error.textContent = error.message || 'Usage settings could not be saved'; }
-  }
-  async startCopilot(host) {
-    this.error.textContent = '';
-    try {
-      this.copilotFlow = await this.source.copilotStart(host);
-      await this.loadUsages();
-      this.pollCopilot();
-    } catch (error) { this.error.textContent = error.message || 'GitHub sign-in could not start'; }
-  }
-  async pollCopilot() {
-    const flow = this.copilotFlow;
-    if (!flow || Date.now() >= new Date(flow.expires_at).getTime()) return;
-    try {
-      const result = await this.source.copilotPoll(flow.flow_id);
-      if (this.copilotFlow !== flow) return;
-      flow.status = result.status;
-      if (result.status === 'success') { this.copilotFlow = null; await this.loadUsages(); return; }
-      if (result.status === 'denied' || result.status === 'expired') { await this.loadUsages(); return; }
-      this.renderCopilotFlow();
-      setTimeout(() => this.pollCopilot(), Math.max(1, result.retry_after || result.interval || flow.interval || 5) * 1000);
-    } catch (error) { this.error.textContent = error.message || 'GitHub sign-in polling failed'; }
-  }
-  renderCopilotFlow() {
-    const target = this.providers.get('github-copilot')?.querySelector('.usage-copilot-flow');
-    if (!target) return;
-    target.replaceChildren();
-    const flow = this.copilotFlow;
-    if (!flow) return;
-    const link = element('a', '', 'Open GitHub verification');
-    link.href = flow.verification_uri; link.target = '_blank'; link.rel = 'noopener noreferrer';
-    target.append(element('span', '', `Code: ${flow.user_code} · ${flow.status || 'Waiting for GitHub'}`), link);
-  }
+  usagesChanged() { return this.usages.changed(); }
   selectSection(section) {
     this.dialog.dataset.section = section; // the Harnesses page is wide: its layouts need the room (see theme-v1.css)
     queueMicrotask(() => { const selected = this.dialog.querySelector('nav .settings-selected'); if (selected) this.dialog.querySelector('#settings-title').textContent = selected.textContent.trim(); });
@@ -232,261 +149,4 @@ export class SettingsPanel {
     if (section === 'macros') this.macroSettings.open();
     if (section === 'prompts') this.promptSettings.open();
   }
-  providerCard() {
-    const card = element('article', 'usage-provider');
-    const header = element('header', 'usage-provider-header');
-    header.append(element('h4', 'usage-provider-name'), element('span', 'usage-provider-status'));
-    card.append(header, element('p', 'usage-affected'), element('div', 'usage-provider-actions'), element('div', 'usage-profiles'));
-    return card;
-  }
-  profileCard() {
-    const card = element('section', 'usage-profile');
-    const header = element('div', 'usage-profile-header');
-    header.append(element('strong', 'usage-profile-name'), element('span', 'usage-profile-plan'), element('span', 'usage-profile-active'));
-    card.append(header, element('p', 'usage-profile-email'), element('div', 'usage-windows'), element('p', 'usage-profile-credits'), element('p', 'usage-profile-status'));
-    const action = element('button', 'btn usage-switch', 'Switch');
-    action.type = 'button';
-    const remove = iconButton('trash', 'Delete profile', { danger: true, className: 'usage-remove' });
-    const rename = iconButton('edit', 'Rename profile', { className: 'usage-rename' });
-    card.append(action, rename, remove);
-    return card;
-  }
-  renderUsageControls(settings, owner) {
-    if (!owner) return;
-    const controls = element('div', 'usage-config-controls');
-    const interval = element('input'); interval.type = 'number'; interval.min = '15'; interval.value = String(settings?.refresh_interval_sec || 120);
-    const display = element('select');
-    for (const [value, label] of [['left', 'Percent left'], ['used', 'Percent used']]) {
-      const option = element('option', '', label); option.value = value; display.append(option);
-    }
-    display.value = settings?.percent_display || 'left';
-    const warning = element('input'); warning.type = 'number'; warning.min = '1'; warning.max = '99'; warning.value = String(settings?.alert_warning_remaining ?? 20);
-    const critical = element('input'); critical.type = 'number'; critical.min = '1'; critical.max = '99'; critical.value = String(settings?.alert_critical_remaining ?? 10);
-    const save = element('button', 'btn btn-primary', 'Save usage settings'); save.type = 'button';
-    save.onclick = () => this.mutateUsage(() => this.source.settings({ refresh_interval_sec: Number(interval.value), percent_display: display.value,
-      alert_warning_remaining: Number(warning.value), alert_critical_remaining: Number(critical.value) }));
-    const refresh = element('button', 'btn', 'Refresh now'); refresh.type = 'button';
-    refresh.onclick = () => this.mutateUsage(async () => {
-      try { await this.source.refresh(); }
-      catch (error) {
-        if (error.status === 429 && error.retryAfter) error.message = `Refreshed moments ago; try again in ${error.retryAfter}s`;
-        throw error;
-      }
-    });
-    const actions = element('div', 'settings-actions'); actions.append(save, refresh);
-    controls.append(settingsGroup([
-      settingsRow({ label: 'Refresh interval (seconds)', desc: 'How often the server re-reads provider limits in the background. Minimum 15 seconds.', control: interval, id: 'usage-refresh-interval' }),
-      settingsRow({ label: 'Percentages', desc: 'Show usage bars as the share still left or the share already used, here and in the usages popover.', control: display, id: 'usage-percent-display' }),
-      settingsRow({ label: 'Usage warning (% remaining)', desc: 'Send one global inbox alert per provider window and reset when this much quota remains.', control: warning, id: 'usage-alert-warning' }),
-      settingsRow({ label: 'Usage critical (% remaining)', desc: 'Send a stronger alert at this lower remaining percentage. It must be below the warning threshold.', control: critical, id: 'usage-alert-critical' }),
-    ], 'Usage refresh'), actions, this.tokenAutoRefreshGroup(settings));
-    this.switcherControls.append(controls);
-  }
-  // Credentials of the token-copy model that need a human (a rejected refresh token, one about to
-  // expire), one sentence each. Plain text only: the server never sends CLI output here.
-  renderCredentialAlerts(alerts, owner) {
-    if (!owner || !Array.isArray(alerts) || !alerts.length) return;
-    const box = element('div', 'usage-credential-alerts');
-    box.setAttribute('role', 'alert');
-    for (const alert of alerts) box.append(element('p', `usage-credential-alert usage-credential-alert-${String(alert.kind || '').replace(/[^a-z_]/g, '')}`, String(alert.message || '')));
-    this.switcherControls.append(box);
-  }
-  // "Auto-refresh tokens": the server becomes the only refresher of the Claude and Codex logins
-  // (the token-copy model). The setting migrates or un-migrates each tool on the server; the
-  // per-tool line shows how that went (migrated, off, pending, n/a, or waiting: <reason>).
-  tokenAutoRefreshGroup(settings) {
-    const on = !!settings?.token_auto_refresh;
-    const available = !!settings?.token_auto_refresh_available;
-    const toggle = element('input'); toggle.type = 'checkbox'; toggle.checked = on;
-    toggle.disabled = !available && !on; // OFF must stay possible if the executor disappears
-    toggle.onchange = () => this.saveTokenAutoRefresh(toggle.checked);
-    let desc = 'aimebu becomes the only thing that refreshes your Claude and Codex logins. While on, aimebu must stay running whenever you use Claude or Codex, also outside aimebu: if it is stopped for more than about an hour around a token\'s expiry, sessions get auth errors until it runs again. Turn this off before stopping aimebu for long or uninstalling it.';
-    if (!available) desc += ' Unavailable: harness-docker-ctrl is not installed.';
-    const row = settingsRow({ label: 'Auto-refresh tokens', desc, control: toggle, id: 'usage-token-auto-refresh', className: toggle.disabled ? 'usages-provider-row-disabled' : '' });
-    const info = row.querySelector('.settings-row-info');
-    for (const tool of ['claude', 'codex']) {
-      const state = settings?.token_auto_refresh_state?.[tool] || { status: 'off' };
-      const status = ['migrated', 'waiting', 'pending', 'n/a'].includes(state.status) ? state.status : 'off';
-      const line = element('span', 'settings-desc usage-token-state', `${tool[0].toUpperCase()}${tool.slice(1)}: ${status}${status === 'waiting' && state.reason ? `: ${state.reason}` : ''}`);
-      line.dataset.tool = tool;
-      info.append(line);
-    }
-    const mode = element('select'); mode.id = 'usage-warmup-mode';
-    for (const [value, label] of [['off', 'Off'], ['force', 'Warm every idle account'], ['scheduled', 'Scheduled'], ['smart', 'Spread across five hours']]) {
-      const option = element('option', '', label); option.value = value; mode.append(option);
-    }
-    mode.value = settings?.warmup_mode || 'off';
-    mode.disabled = !settings?.warmup_available && mode.value === 'off';
-    mode.onchange = () => this.mutateUsage(() => this.source.settings({ warmup_mode: mode.value, warmup_schedule: mode.value === 'scheduled' ? (settings?.warmup_schedule || '0 9 * * *') : (settings?.warmup_schedule || '') }));
-    const warmupRow = settingsRow({ label: 'Warm idle Claude and Codex accounts', desc: 'Start a five-hour session window with a short request for eligible inactive profiles. Active logins and profiles used by another credential target are skipped.', control: mode, id: 'usage-warmup-mode-row', className: mode.disabled ? 'usages-provider-row-disabled' : '' });
-    const rows = [row, warmupRow];
-    if (mode.value === 'scheduled') {
-      const schedule = element('textarea'); schedule.id = 'usage-warmup-schedule'; schedule.rows = 3;
-      schedule.value = settings?.warmup_schedule || '';
-      schedule.placeholder = '30 9 * * 1';
-      const save = element('button', 'settings-button', 'Save schedule'); save.type = 'button';
-      save.onclick = () => this.mutateUsage(() => this.source.settings({ warmup_schedule: schedule.value }));
-      const control = element('div', 'usage-warmup-schedule-control'); control.append(schedule, save);
-      rows.push(settingsRow({ label: 'Warmup schedule', desc: 'One five-field cron line per row, in the server’s local time. Each field accepts * or one number.', control, id: 'usage-warmup-schedule-row' }));
-    }
-    return settingsGroup(rows, 'Account maintenance');
-  }
-  async saveTokenAutoRefresh(value) {
-    this.error.textContent = '';
-    try {
-      await this.source.settings({ token_auto_refresh: value });
-      await this.loadUsages();
-      // The server answers pending and converts in the background: re-read until it settles.
-      for (let attempt = 0; attempt < 120 && this.tokenStatesPending; attempt++) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        if (!this.dialog.open) return;
-        await this.loadUsages();
-      }
-    } catch (error) {
-      this.error.textContent = error.message || `Could not ${value ? 'enable' : 'disable'} token auto-refresh`;
-      await this.loadUsages().catch(() => {});
-    }
-  }
-  renderProviderSetup(card, provider, order, providers, owner) {
-    if (!owner) return;
-    const key = provider.provider_name;
-    const actions = card.querySelector('.usage-provider-actions');
-    const configured = provider.token_configured || provider.cookie_configured || provider.api_key_configured;
-    const toggle = element('button', 'btn', provider.enabled ? 'Disable' : 'Enable'); toggle.type = 'button';
-    toggle.disabled = !provider.enabled && !configured && !['codex', 'claude-code'].includes(key);
-    toggle.onclick = () => this.mutateUsage(() => this.source.provider(key, !provider.enabled));
-    actions.append(toggle);
-    for (const [label, delta, glyph] of [['up', -1, 'arrow-up'], ['down', 1, 'arrow-down']]) {
-      const button = iconButton(glyph, `Move ${provider.label || key} ${label}`); button.disabled = order + delta < 0 || order + delta >= providers.length;
-      button.onclick = () => { const keys = providers.map(item => item.provider_name); [keys[order], keys[order + delta]] = [keys[order + delta], keys[order]]; this.mutateUsage(() => this.source.settings({ provider_order: keys })); };
-      actions.append(button);
-    }
-    if (key === 'github-copilot') {
-      const host = element('input'); host.type = 'url'; host.placeholder = 'GitHub Enterprise host (optional)'; host.value = provider.enterprise_host || '';
-      const signIn = element('button', 'btn btn-primary', 'Sign in with GitHub'); signIn.type = 'button'; signIn.onclick = () => this.startCopilot(host.value);
-      actions.append(host, signIn);
-      if (provider.token_configured) { const signOut = element('button', 'btn', 'Sign out'); signOut.type = 'button'; signOut.onclick = () => this.mutateUsage(() => this.source.copilotLogout()); actions.append(signOut); }
-      actions.append(element('div', 'usage-copilot-flow'));
-      this.renderCopilotFlow();
-    }
-    if (key === 'mistral') {
-      const cookie = element('textarea'); cookie.placeholder = 'Paste Mistral Cookie request header'; cookie.rows = 2; cookie.setAttribute('aria-label', 'Mistral Cookie header');
-      const save = element('button', 'btn btn-primary', provider.cookie_configured ? 'Update cookie' : 'Save cookie'); save.type = 'button'; save.onclick = () => this.mutateUsage(() => this.source.mistral(cookie.value));
-      actions.append(cookie, save);
-      if (provider.cookie_configured) { const clear = element('button', 'btn btn-danger', 'Clear cookie'); clear.type = 'button'; clear.onclick = () => this.mutateUsage(() => this.source.mistral('')); actions.append(clear); }
-    }
-    if (key === 'ollama-cloud') {
-      const mode = element('select'); mode.setAttribute('aria-label', 'Ollama Cloud authentication mode');
-      for (const [value, label] of [['auto', 'Auto'], ['cookie', 'Cookie'], ['api_key', 'API key']]) { const option = element('option', '', label); option.value = value; mode.append(option); }
-      mode.value = provider.auth_mode || 'auto';
-      const cookie = element('textarea'); cookie.placeholder = 'Paste Ollama Cookie request header'; cookie.rows = 2; cookie.setAttribute('aria-label', 'Ollama Cloud Cookie header');
-      const keyInput = element('input'); keyInput.type = 'password'; keyInput.placeholder = 'Ollama API key'; keyInput.setAttribute('aria-label', 'Ollama Cloud API key');
-      const save = element('button', 'btn btn-primary', 'Save credentials'); save.type = 'button';
-      save.onclick = () => { const body = { auth_mode: mode.value }; if (cookie.value.trim()) body.cookie = cookie.value; if (keyInput.value.trim()) body.api_key = keyInput.value; this.mutateUsage(() => this.source.ollama(body)); };
-      actions.append(mode, cookie, keyInput, save);
-      if (configured) { const clear = element('button', 'btn btn-danger', 'Clear credentials'); clear.type = 'button'; clear.onclick = () => this.mutateUsage(() => this.source.ollama({ auth_mode: 'auto', cookie: '', api_key: '' })); actions.append(clear); }
-    }
-  }
-  render(response) {
-    const state = this.switcherState || { enabled: false, profiles: [], eligibility: [], affected_agents: {} };
-    this.switcherControls.replaceChildren();
-    if (state.owner) {
-      const toggle = element('button', state.enabled ? 'btn' : 'btn btn-primary', state.enabled ? 'Disable account switcher' : 'Enable account switcher');
-      toggle.type = 'button';
-      toggle.onclick = () => this.mutateSwitcher(() => this.source.enable(!state.enabled));
-      this.switcherControls.append(toggle);
-    }
-    this.renderCredentialAlerts(response?.credential_alerts, state.owner);
-    this.renderUsageControls(response?.settings, state.owner);
-    const providers = [...(response?.providers || [])].sort((a, b) => (a.order_number || 0) - (b.order_number || 0));
-    const active = new Set();
-    for (const provider of providers) {
-      const key = provider.provider_name;
-      active.add(key);
-      let card = this.providers.get(key);
-      if (!card) { card = this.providerCard(); this.providers.set(key, card); }
-      card.dataset.provider = key;
-      card.querySelector('.usage-provider-name').textContent = provider.label || key;
-      card.querySelector('.usage-provider-status').textContent = !provider.available ? 'Unavailable' : provider.enabled ? 'Enabled' : 'Not configured';
-      const tool = key === 'claude-code' ? 'claude' : key;
-      const eligible = (state.eligibility || []).find(item => item.tool === tool);
-      const switchable = tool === 'claude' || tool === 'codex';
-      const hasActiveProfile = (state.profiles || []).some(item => item.tool === tool && item.active);
-      const affected = (state.affected_agents || {})[tool] || [];
-      const impact = card.querySelector('.usage-affected');
-      impact.textContent = affected.length ? `Switch affects: ${affected.map(agent => `${agent.id}${agent.running ? ' (running)' : ''}`).join(', ')}` : 'No agents use this tool';
-      impact.hidden = !switchable || !state.enabled;
-      const providerActions = card.querySelector('.usage-provider-actions');
-      providerActions.replaceChildren();
-      if (switchable && state.enabled && state.owner) {
-        for (const [label, method] of [['Add profile', 'add'], ['Import current login', 'import']]) {
-          const button = element('button', 'btn', label); button.type = 'button';
-          button.onclick = async () => {
-            const name = await promptDialog('Profile name', { title: label, label: 'Profile name', required: true, confirm: label === 'Add profile' ? 'Add' : 'Import' });
-            if (name?.trim()) this.mutateSwitcher(() => this.source[method](tool, name.trim()));
-          };
-          providerActions.append(button);
-        }
-      }
-      this.renderProviderSetup(card, provider, providers.findIndex(item => item.provider_name === key), providers, state.owner);
-      const list = card.querySelector('.usage-profiles');
-      const profileKeys = new Set();
-      for (const profile of provider.profiles || []) {
-        const id = `${key}/${profile.profile_name || 'local'}`;
-        profileKeys.add(id);
-        let node = this.profiles.get(id);
-        if (!node) { node = this.profileCard(); this.profiles.set(id, node); }
-        this.updateProfile(node, profile, response.settings?.percent_display === 'used');
-        const configured = (state.profiles || []).some(item => item.tool === tool && item.name === profile.profile_name);
-        const switchButton = node.querySelector('.usage-switch');
-        switchButton.hidden = !switchable || !state.enabled || !state.owner || !configured || profile.active;
-        switchButton.disabled = !hasActiveProfile || (!eligible?.eligible && !eligible?.absent);
-        switchButton.title = !hasActiveProfile ? 'Import the current login first' : switchButton.disabled ? (eligible?.reason || 'Tool is not eligible') : '';
-        switchButton.onclick = async () => {
-          const impactText = affected.length ? `Affected agents: ${affected.map(agent => agent.id).join(', ')}.` : 'No affected agents.';
-          if (await confirmDialog(`${impactText}${profile.has_credentials ? '' : ' This profile needs a new login.'} Switch to ${profile.profile_name}?`, { title: 'Switch account', confirm: 'Switch' })) {
-            this.mutateSwitcher(() => this.source.use(tool, profile.profile_name));
-          }
-        };
-        const renameButton = node.querySelector('.usage-rename');
-        renameButton.title = `Rename ${profile.profile_name}`; renameButton.setAttribute('aria-label', renameButton.title);
-        renameButton.hidden = !switchable || !state.enabled || !state.owner || !configured;
-        renameButton.onclick = async () => {
-          const next = (await promptDialog(`Rename ${profile.profile_name} to`, { title: 'Rename profile', label: 'New name', value: profile.profile_name, required: true, confirm: 'Rename' }))?.trim();
-          if (next && next !== profile.profile_name) this.mutateSwitcher(() => this.source.rename(tool, profile.profile_name, next));
-        };
-        const removeButton = node.querySelector('.usage-remove');
-        removeButton.title = `Delete ${profile.profile_name}`; removeButton.setAttribute('aria-label', removeButton.title);
-        removeButton.hidden = !switchable || !state.enabled || !state.owner || !configured;
-        removeButton.onclick = async () => {
-          if (await confirmDialog(`Delete ${profile.profile_name}?${profile.active ? ' This clears the live login.' : ''}`, { title: 'Delete profile', confirm: 'Delete', danger: true })) {
-            this.mutateSwitcher(() => this.source.remove(tool, profile.profile_name));
-          }
-        };
-        list.append(node);
-      }
-      for (const [id, node] of this.profiles) if (id.startsWith(`${key}/`) && !profileKeys.has(id)) { node.remove(); this.profiles.delete(id); }
-      this.list.append(card);
-    }
-    for (const [key, card] of this.providers) if (!active.has(key)) { card.remove(); this.providers.delete(key); }
-    if (!providers.length) {
-      if (!this.empty) this.empty = element('p', 'usage-empty', 'No usage providers are available yet.');
-      this.list.append(this.empty);
-    } else this.empty?.remove();
-  }
-  updateProfile(node, profile, usedDisplay) {
-    node.querySelector('.usage-profile-name').textContent = profile.profile_name || 'local';
-    const plan = node.querySelector('.usage-profile-plan'); plan.textContent = profile.plan || ''; plan.hidden = !plan.textContent;
-    const active = node.querySelector('.usage-profile-active'); active.textContent = profile.active ? 'Active' : ''; active.hidden = !profile.active;
-    const email = node.querySelector('.usage-profile-email'); email.textContent = profile.email || ''; email.hidden = !email.textContent;
-    const windows = node.querySelector('.usage-windows');
-    windows.replaceChildren(...(profile.windows || []).map(window => this.windowRow(window, usedDisplay)));
-    const credits = node.querySelector('.usage-profile-credits'); credits.textContent = profile.credits ? creditsText(profile.credits) : ''; credits.hidden = !credits.textContent;
-    const status = node.querySelector('.usage-profile-status');
-    const refreshed = profile.last_refresh_at ? `Updated ${new Date(profile.last_refresh_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
-    const detail = profile.status === 'token_expired' ? 'Stale – token expired' : profile.stale ? 'Stale snapshot' : profile.status === 'ok' ? '' : (profile.status || 'No snapshot').replaceAll('_', ' ');
-    status.textContent = detail + refreshed;
-    status.hidden = !status.textContent;
-  }
-  windowRow(window, usedDisplay) { return usageWindowRow(window, usedDisplay); }
 }

@@ -34,37 +34,41 @@ export function resetLabel(value) {
 
 const SPARK_SPAN_MS = 48 * 3600000, SVG_NS = 'http://www.w3.org/2000/svg';
 
-// usageSparkline draws a window's recent used-percentage samples as a tiny
-// inline SVG, or returns null when there are fewer than two samples. Built with
-// DOM calls only. The x axis is the last 48 hours, so a gap in the data reads
-// as a gap; the y axis follows the percent display (used or left).
-export function usageSparkline(window, usedDisplay, now = Date.now()) {
+// The geometry of a window's recent used-percentage samples, or null when there are fewer than two. The x axis is the last 48
+// hours, so a gap in the data reads as a gap; the y axis follows the percent display (used or left).
+export function sparkGeometry(window, usedDisplay, now = Date.now()) {
   const points = (window.history || []).filter(point => Number.isFinite(Number(point.t)) && Number.isFinite(Number(point.p)) && point.t * 1000 >= now - SPARK_SPAN_MS);
   if (points.length < 2) return null;
   const width = 100, height = 20, pad = 2;
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('class', 'usage-spark');
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('preserveAspectRatio', 'none');
-  svg.setAttribute('role', 'img');
   const shown = point => usedDisplay ? percent(point.p) : 100 - percent(point.p);
   const first = shown(points[0]), last = shown(points[points.length - 1]);
-  svg.setAttribute('aria-label', `${windowLabel(window.key)} over the last 48 hours: ${Math.round(first)}% to ${Math.round(last)}% ${usedDisplay ? 'used' : 'left'}`);
   const coords = points.map(point => {
     const x = Math.max(0, Math.min(width, ((point.t * 1000 - (now - SPARK_SPAN_MS)) / SPARK_SPAN_MS) * width));
     const y = height - pad - (shown(point) / 100) * (height - 2 * pad);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   });
+  return { viewBox: `0 0 ${width} ${height}`, label: `${windowLabel(window.key)} over the last 48 hours: ${Math.round(first)}% to ${Math.round(last)}% ${usedDisplay ? 'used' : 'left'}`, points: coords.join(' '), end: coords[coords.length - 1].split(',') };
+}
+
+// usageSparkline draws that geometry as a tiny inline SVG (built with DOM calls only), or returns null when there is none.
+export function usageSparkline(window, usedDisplay, now = Date.now()) {
+  const geometry = sparkGeometry(window, usedDisplay, now);
+  if (!geometry) return null;
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'usage-spark');
+  svg.setAttribute('viewBox', geometry.viewBox);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', geometry.label);
   const line = document.createElementNS(SVG_NS, 'polyline');
   line.setAttribute('class', 'usage-spark-line');
-  line.setAttribute('points', coords.join(' '));
+  line.setAttribute('points', geometry.points);
   line.setAttribute('fill', 'none');
   line.setAttribute('vector-effect', 'non-scaling-stroke');
   svg.append(line);
-  const [endX, endY] = coords[coords.length - 1].split(',');
   const dot = document.createElementNS(SVG_NS, 'circle');
   dot.setAttribute('class', 'usage-spark-dot');
-  dot.setAttribute('cx', endX); dot.setAttribute('cy', endY); dot.setAttribute('r', '1.6');
+  dot.setAttribute('cx', geometry.end[0]); dot.setAttribute('cy', geometry.end[1]); dot.setAttribute('r', '1.6');
   svg.append(dot);
   return svg;
 }

@@ -172,6 +172,14 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
   reads of the sound list answered out of order and a failed read; upload and delete one at a time, each followed by a read,
   with the uploaded sound chosen; a non-admin without the upload row; an answer after destroy) and
   `scripts/test-notifications-model.cjs` (the pure rules, in `make test-web`).
+- `make test-ui` also runs `scripts/test-usages-page.cjs` (Settings → Usages' cards and switcher, over the app's mock of the usages
+  API with calls recorded and chosen ones held: the cards, profiles and limit windows; a person who is not the switcher's owner
+  seeing no controls; switching and renaming asking first and naming who is affected, a refused action saying why; two reads
+  answered out of order drawing the later; a push from the event stream applied at once, waiting while a field has focus or a
+  read runs, and ignored while the section is hidden; the settings form and the "refreshed moments ago" message; token
+  auto-refresh polling until the server has converted the logins and the warm-up schedule; GitHub sign-in polling, its link, and
+  its stop on destroy; Mistral and Ollama credentials; an answer after destroy) and `scripts/test-usages-model.cjs` (the pure
+  rules, in `make test-web`).
 - `make test-ui` also runs `scripts/test-harness-page.cjs`: the Preact page in real Chromium (the existing Puppeteer tooling,
   `web/` served as is with the page's import map, no Go server), with every request held until the test answers it, so the
   order of answers is chosen. It checks:
@@ -248,7 +256,7 @@ same change (section 5); the experiment, default-flip and removal steps describe
 
 ### Step 2: the other Settings sections
 
-Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`), Roles (`web/js/pages/roles/`; its default-agents picker is the shared `components/spawn-defaults.js`, which Project will use too, and `spawn-defaults-editor.js` goes with that step), General (`web/js/pages/general/`: appearance, the chat switches, message expiry and the settings backup; the chat switches read `chat-preferences.js`, which the system-events feed shares, and the expiry window is the shared `retention.js` store), Notifications (`web/js/pages/notifications/`; the page reads and writes the inbox's `InboxNotifications` store, which the sound upload and permission button go through).
+Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`), Roles (`web/js/pages/roles/`; its default-agents picker is the shared `components/spawn-defaults.js`, which Project will use too, and `spawn-defaults-editor.js` goes with that step), General (`web/js/pages/general/`: appearance, the chat switches, message expiry and the settings backup; the chat switches read `chat-preferences.js`, which the system-events feed shares, and the expiry window is the shared `retention.js` store), Notifications (`web/js/pages/notifications/`; the page reads and writes the inbox's `InboxNotifications` store, which the sound upload and permission button go through), Usages: the provider cards and the account switcher (`web/js/pages/usages/`; `UsagesStore` is an object of signals because the shell and the event stream reach it too; the automatic-switching blocks between the page's two hosts are still the older modules).
 
 - Scope: the small sections first (prompts, macros, roles, retention, limit guard, quota), then users, machines and project;
   then the settings shell's nav and section switching.
