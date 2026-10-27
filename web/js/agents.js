@@ -5,7 +5,7 @@ import { harnessIcon, agentLabel } from './sender-identity.js';
 import { setGlyph } from './icon-button.js';
 import { relativeTime, stateAge } from './time.js';
 import { ClaudeSessionPicker } from './claude-sessions.js';
-import { chooseModel, toolKey } from './spawn-model.js';
+import { chooseModel, toolKey, sessionEntryState, modelChangeWarning } from './spawn-model.js';
 import { harnessName } from './harness-version.js';
 
 // Compact icon buttons for a member row (the label is the title and the accessible name; no text of their own).
@@ -53,7 +53,9 @@ export class AgentsPanel {
     document.querySelector('#spawn-open').onclick = () => this.openSpawn();
     // Continuing a Claude Code session the machine already has: pick it, then the Spawn dialog opens for it.
     this.sessionPicker = new ClaudeSessionPicker(source);
+    // A labelled button, not a bare glyph that reads as "refresh": it opens the list of Claude Code sessions this machine has.
     this.sessionsButton = setGlyph(document.querySelector('#spawn-sessions'), 'reopen', 'Continue a Claude Code session');
+    this.sessionsButton.append(document.createTextNode(' Continue a session…'));
     this.sessionsButton.onclick = () => this.openSessionPicker();
     this.profileClose = document.querySelector('#agent-profile-close'); this.profileClose.onclick = () => this.closeProfile();
     this.panelTitle = this.panel.querySelector('header h2');
@@ -72,6 +74,7 @@ export class AgentsPanel {
       this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1;
       const tool = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)];
       this.pickedModel = { toolKey: toolKey(tool), model: this.form.elements.model.value };
+      if (this.pendingResume) this.renderResume(true); // the warning about continuing a session on another model follows the choice
     };
     this.form.elements.role.onchange = () => this.prefillRoleDefault();
     this.nameInput = this.form.elements.name; this.nameError = this.form.querySelector('#spawn-name-error');
@@ -620,7 +623,7 @@ export class AgentsPanel {
     const launcherID = chosen?.tool === 'claude' ? chosen.launcher_id || '' : '';
     this.dialog.close();
     void this.sessionPicker.open({ projectID, machineID, machineName, launcherID, onPick: session => {
-      void this.openSpawn({ resume: { kind: 'claude_session', session_id: session.id, tool: 'claude', resumable: true, cwd: session.cwd, title: session.title || '',
+      void this.openSpawn({ resume: { kind: 'claude_session', session_id: session.id, tool: 'claude', resumable: true, model: session.model || '', cwd: session.cwd, title: session.title || '',
         modified_at: session.modified_at || '', outside_folder: !!session.outside_folder, active: !!session.active, held_by: session.agent?.slug || '', machine_id: session.machine_id || machineID, launcher_id: session.launcher_id || '' } });
     } });
   }
@@ -658,7 +661,7 @@ export class AgentsPanel {
     // below, and until they are, Start stays off. Otherwise a role picked in the last opening (the lead, in a lead-only home room) could
     // still be selected while the tool catalog arrives first and enables Start, and the agent would be started as that role.
     this.rolesReady = false;
-    this.pickedModel = null; this.pickedToolKey = '';
+    this.pickedModel = null; this.pickedToolKey = ''; this.resumeToolNote = '';
     this.form.elements.role.replaceChildren();
     this.pendingResume = resume;
     this.renderStartRooms();
@@ -785,6 +788,7 @@ export class AgentsPanel {
   // preselects the v1 tool; the others stay available.
   applyResumeChoice(toolSelect) {
     const resume = this.pendingResume;
+    this.resumeToolNote = '';
     if (!resume?.tool) return;
     const fits = tool => tool.tool === resume.tool && tool.available && !(resume.resumable && tool.containerized && !tool.shares_claude_home);
     // A continued session was listed from one launcher's Claude home: that launcher is picked when it is still offered, else the first fit.
@@ -794,7 +798,8 @@ export class AgentsPanel {
     if (resume.resumable) for (const option of toolSelect.options) option.disabled = option.disabled || !fits(this.catalog[Number(option.value)]);
     // Nothing fits: no entry is selected, so the dialog cannot submit a start that the server would refuse.
     if (index < 0 && resume.resumable) toolSelect.selectedIndex = -1;
-    if (index < 0 && resume.resumable) document.querySelector('#spawn-resume-notes').textContent = `${resume.tool} is not available natively on the chosen machine, so the session cannot be continued here.`;
+    // The words go into the banner's notes, which are drawn again whenever the model or the tool changes (the render after the catalog loaded shows it), so they are kept, not written once.
+    if (index < 0 && resume.resumable) { this.resumeToolNote = `${resume.tool} is not available natively on the chosen machine, so the session cannot be continued here.`; }
   }
   // The banner of the start-from-v1 dialog: what is being started, where it will work, and what to confirm.
   // keep: a change of the continue/copy choice re-renders the banner and keeps what was ticked; opening the dialog starts from "continue".
@@ -840,7 +845,8 @@ export class AgentsPanel {
       if (resume.outside_folder) lines.push(`It works in ${resume.cwd}, outside the project folder, so the owner must approve it in the Inbox before it starts.`);
       if (held) lines.push(`${resume.held_by} already continues this session, so it can only be copied.`);
       if (resume.active && !forking) lines.push('A Claude process has this session open. Close it first: two processes on one session corrupt it.');
-      notes.textContent = lines.join(' ');
+      lines.push(this.resumeToolNote, this.modelWarning(resume));
+      notes.textContent = lines.filter(Boolean).join(' ');
       return;
     }
     text.textContent = resume.resumable
@@ -852,7 +858,13 @@ export class AgentsPanel {
     if (!this.spawnRoom()) lines.push('This project has no open task room to start it in.');
     if (resume.resumable && resume.outside_folder) lines.push(`It works in ${resume.cwd}, outside the project folder, so the owner must approve it in the Inbox before it starts.`);
     if (resume.v1_active && !forking) lines.push('v1 saw this agent a moment ago and may still be using the session. Stop it in v1 first: two processes on one session corrupt it.');
-    notes.textContent = lines.join(' ');
+    if (resume.resumable) lines.push(this.resumeToolNote, this.modelWarning(resume));
+    notes.textContent = lines.filter(Boolean).join(' ');
+  }
+  // The model the session ran on against the one picked for the agent.
+  modelWarning(resume) {
+    const option = this.form.elements.model.selectedOptions[0];
+    return modelChangeWarning(resume.model, option ? { value: option.value, label: option.textContent } : null);
   }
   updateSpawnSubmit() {
     const tool = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)];
@@ -904,7 +916,25 @@ export class AgentsPanel {
       : !tool.available ? (tool.unavailable_reason?.includes('Settings → Harnesses')
         ? tool.unavailable_reason : `${tool.unavailable_reason || 'This tool is unavailable'}; check Settings → Harnesses`)
         : models.options.length ? (tool.toolbox === false ? `No agent toolbox: ${tool.toolbox_reason || 'unavailable for this launcher'}.` : '') : 'This harness has no models yet. Add one under Settings → Harnesses.');
+    this.renderSessionsEntry();
+    if (this.pendingResume) this.renderResume(true); // the model warning depends on the model now selected
     this.updateSpawnSubmit();
+  }
+  // The entry to the session list: with a launcher that cannot continue a session selected (a container with a Claude home of its own), the
+  // dialog says so before anything is picked and offers the launcher that can.
+  renderSessionsEntry() {
+    const selected = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)];
+    const state = sessionEntryState(selected, this.catalog || []);
+    this.sessionsButton.disabled = !state.enabled;
+    const note = document.querySelector('#spawn-sessions-note'), swap = document.querySelector('#spawn-sessions-switch');
+    note.hidden = this.sessionsButton.hidden || !state.note;
+    document.querySelector('#spawn-sessions-note-text').textContent = state.note;
+    swap.hidden = state.switchTo < 0;
+    if (state.switchTo >= 0) {
+      const target = this.catalog[state.switchTo];
+      swap.textContent = `Use ${target.label || 'the native launcher'}`;
+      swap.onclick = () => { this.form.elements.tool.value = String(state.switchTo); this.pickedToolKey = toolKey(target); this.pickedModel = null; this.renderSpawnModels(); };
+    }
   }
   async spawn() {
     const target = this.spawnRoom();

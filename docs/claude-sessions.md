@@ -60,7 +60,8 @@ for a containerized one that does not share the host's Claude home, see below); 
 session wherever it worked, on a machine where the project has a folder (409
 `machine_folder_missing` otherwise). Only the project's owners and operators may ask: a
 title is what somebody typed to Claude. Each session carries its `id`, `title`,
-`cwd`, `git_branch`, `version`, `entrypoint`, `modified_at`, `size`, and:
+`cwd`, `model` (the model of the session's last assistant message, as Claude
+recorded it), `git_branch`, `version`, `entrypoint`, `modified_at`, `size`, and:
 
 - `active`: a live process registered it. It is open in a terminal (or an agent
   is running it). Advisory, the registry is the only evidence there is.
@@ -72,11 +73,17 @@ title is what somebody typed to Claude. Each session carries its `id`, `title`,
   own Claude session it is). Such a session cannot be *continued* again, but it
   can still be copied (see below).
 
-In the web UI the Spawn dialog has a button, **Continue a Claude Code session**.
-It opens a picker of those sessions (and a field to look one up by id), and a
+In the web UI the Spawn dialog has a labelled button, **Continue a session…**.
+With a launcher that cannot continue a session selected (a container with a
+Claude home of its own), the dialog says so before anything is picked, and offers
+the launcher that can (the native one, or a Docker launcher that shares the
+host's Claude home); with none it says what is needed. The button opens a picker
+of the sessions (and a field to look one up by id), and a
 pick reopens the Spawn dialog for it, with a room of its own selected by default
 and a choice: **Continue the original session** (the default) or **Work on a copy
-(fork)**. A session an agent already continues can only be copied, so the dialog
+(fork)**. The model the session ran on is preselected (matched by its family, such
+as Opus, when the harness's list has no entry of that exact id), and the dialog
+warns when the model chosen for the agent is another one. A session an agent already continues can only be copied, so the dialog
 starts at the copy. A machine whose supervisor predates session scans answers 409
 `supervisor_update_needed`.
 

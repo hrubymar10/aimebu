@@ -2524,7 +2524,9 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .harness-role-mode select { margin-left: 0; }
 
 /* The picker of Claude Code sessions to continue (opened from the Spawn dialog). */
-.spawn-sessions { float: right; }
+.spawn-sessions { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+.spawn-sessions-note { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0 0 8px; color: var(--text-secondary); font-size: 12px; }
+.spawn-sessions-note[hidden] { display: none; }
 .cc-sessions { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; }
 .cc-sessions-intro { margin: 0 0 12px; color: var(--text-muted); font-size: 12.5px; }
 .cc-sessions-find { display: flex; gap: 6px; margin: 0 0 8px; }

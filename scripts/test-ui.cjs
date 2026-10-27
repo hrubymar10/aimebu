@@ -2882,14 +2882,14 @@ async function main() {
       const claudeHome = path.join(testHome, '.claude');
       const folderName = folder => folder.replace(/[^a-zA-Z0-9]/g, '-');
       const elsewhere = path.join(tmp, 'elsewhere'); fs.mkdirSync(elsewhere, { recursive: true });
-      const ccSession = (cwd, id, { title, entrypoint = 'cli', branch = 'main' }) => {
+      const ccSession = (cwd, id, { title, entrypoint = 'cli', branch = 'main', model = '' }) => {
         const dir = path.join(claudeHome, 'projects', folderName(cwd)); fs.mkdirSync(dir, { recursive: true });
         const lines = [{ type: 'user', cwd, sessionId: id, gitBranch: branch, version: '2.1.309', entrypoint, message: { role: 'user', content: 'start' } },
-          { type: 'assistant', cwd, sessionId: id, message: { role: 'assistant', content: 'ok' } }, { type: 'ai-title', aiTitle: title, sessionId: id }];
+          { type: 'assistant', cwd, sessionId: id, message: { role: 'assistant', content: 'ok', ...(model ? { model } : {}) } }, { type: 'ai-title', aiTitle: title, sessionId: id }];
         fs.writeFileSync(path.join(dir, `${id}.jsonl`), lines.map(line => JSON.stringify(line)).join('\n') + '\n');
       };
       const [idOne, idActive, idAgent, idFar] = ['11111111-aaaa-4aaa-8aaa-000000000001', '11111111-aaaa-4aaa-8aaa-000000000002', '11111111-aaaa-4aaa-8aaa-000000000003', '11111111-aaaa-4aaa-8aaa-000000000004'];
-      ccSession(gitRoot, idOne, { title: 'Fix the login bug' });
+      ccSession(gitRoot, idOne, { title: 'Fix the login bug', model: 'claude-opus-4-5-20251101' });
       ccSession(gitRoot, idActive, { title: 'Open in a terminal' });
       ccSession(gitRoot, idAgent, { title: 'Made by an agent', entrypoint: 'sdk-cli' });
       ccSession(elsewhere, idFar, { title: 'Worked elsewhere' });
@@ -2897,7 +2897,8 @@ async function main() {
       fs.writeFileSync(path.join(claudeHome, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: idActive, cwd: gitRoot, kind: 'interactive', status: 'idle' }));
       await domClick(first, '#spawn-open');
       await first.waitForFunction(() => document.querySelector('#spawn-dialog').open && !document.querySelector('#spawn-sessions').hidden);
-      assert.equal(await first.$eval('#spawn-sessions', el => [el.title, el.getAttribute('aria-label'), el.textContent.trim()]).then(list => list.join('|')), 'Continue a Claude Code session|Continue a Claude Code session|', 'the session button is an icon with a tooltip');
+      assert.equal(await first.$eval('#spawn-sessions', el => [el.title, el.getAttribute('aria-label'), el.textContent.trim()]).then(list => list.join('|')), 'Continue a Claude Code session|Continue a Claude Code session|Continue a session…', 'the session entry is a labelled button, not a bare glyph');
+      assert.deepEqual(await first.evaluate(() => { const button = document.querySelector('#spawn-sessions'), model = document.querySelector('#spawn-form [name=machine]'); return { enabled: !button.disabled, note: document.querySelector('#spawn-sessions-note').hidden, text: !!button.textContent.trim(), tall: button.getBoundingClientRect().height >= 24 && !!model }; }), { enabled: true, note: true, text: true, tall: true }, 'the session entry is usable with a launcher that can continue a session, and says nothing then');
       await domClick(first, '#spawn-sessions');
       await first.waitForFunction(() => document.querySelector('#cc-sessions-dialog').open && document.querySelectorAll('#cc-sessions-list .cc-session').length === 3 && !document.querySelector('#spawn-dialog').open);
       assert.deepEqual(await first.$$eval('#cc-sessions-list .cc-session', rows => rows.map(row => [row.dataset.sessionId, row.querySelector('.cc-session-title').textContent, [...row.querySelectorAll('.cc-session-flag')].map(flag => flag.textContent)]).sort()),
@@ -2920,6 +2921,15 @@ async function main() {
       await first.waitForFunction(() => document.querySelectorAll('#cc-sessions-list .cc-session').length === 3);
       await domClick(first, `#cc-sessions-list .cc-session[data-session-id="${idOne}"] .cc-session-pick`);
       await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
+      // The model the session ran on is what the dialog preselects (by family), and a different one is warned about. (A scratch server without a
+      // native Claude harness has no model to select: then the dialog says the session cannot be continued here, and there is nothing to compare.)
+      await first.waitForFunction(() => document.querySelector('#spawn-form [name=model]').options.length > 0 || document.querySelector('#spawn-resume-notes').textContent.includes('not available natively'));
+      const modelNote = await first.evaluate(() => ({ options: document.querySelector('#spawn-form [name=model]').options.length, selected: document.querySelector('#spawn-form [name=model]').selectedOptions[0]?.textContent || '', notes: document.querySelector('#spawn-resume-notes').textContent }));
+      if (modelNote.options) {
+        await first.waitForFunction(() => /opus/i.test(document.querySelector('#spawn-form [name=model]').selectedOptions[0]?.textContent || '') || document.querySelector('#spawn-resume-notes').textContent.includes('This session ran on'));
+        const settled = await first.evaluate(() => ({ selected: document.querySelector('#spawn-form [name=model]').selectedOptions[0]?.textContent || '', notes: document.querySelector('#spawn-resume-notes').textContent }));
+        assert.ok(/opus/i.test(settled.selected) ? !settled.notes.includes('This session ran on') : settled.notes.includes('This session ran on claude-opus-4-5-20251101; the agent will continue it on'), `the session's model is preselected or warned about: ${JSON.stringify(settled)}`);
+      }
       // The Continue/Fork radios sit inline with their words, not stacked above them as full-width blocks.
       assert.deepEqual(await first.evaluate(() => [...document.querySelectorAll('#spawn-resume-mode input')].filter(input => input.offsetParent).map(input => { const label = input.closest('label'), box = input.getBoundingClientRect(), row = label.getBoundingClientRect(); return [getComputedStyle(label).display, box.top >= row.top - 1 && box.bottom <= row.bottom + 1, box.width < 30]; })), [['flex', true, true], ['flex', true, true]], 'the Continue and Fork radios are inline with their labels');
       assert.equal(await first.evaluate(() => { const input = document.querySelector('#spawn-resume-confirm'); return `${getComputedStyle(input).display}/${getComputedStyle(input).width !== '100%'}`; }), 'inline-block/true', 'the confirmation box is not a full-width block');

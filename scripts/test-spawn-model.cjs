@@ -9,8 +9,9 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'spawn-model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, matchModel, chooseModel, toolKey };', context);
-const { modelFamily, matchModel, chooseModel, toolKey } = context.api;
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning };', context);
+const { modelFamily, matchModel, chooseModel, toolKey, modelChangeWarning } = context.api;
+const sessionEntryState = (...args) => JSON.parse(JSON.stringify(context.api.sessionEntryState(...args))); // plain objects: a vm context has its own Object
 
 const claude = [{ value: 'haiku', label: 'Haiku' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }];
 
@@ -42,4 +43,32 @@ assert.equal(chooseModel(claude, { picked: { toolKey: 'mln_1', model: 'gone' }, 
 assert.equal(chooseModel(claude, { toolKey: 'mln_1', named: 'unknown-model', preferred: 'sonnet' }), 'sonnet');
 assert.equal(chooseModel(claude, { toolKey: 'mln_1' }), 'haiku');
 assert.equal(chooseModel([], { toolKey: 'mln_1', named: 'opus' }), '');
+// The session entry says up front when the launcher cannot continue a session, and offers the one that can.
+const catalogOf = [
+  { tool: 'claude', label: 'Claude Code (Docker)', containerized: true, available: true },
+  { tool: 'codex', label: 'Codex', containerized: false, available: true },
+  { tool: 'claude', label: 'Claude Code', containerized: false, available: true },
+];
+assert.deepEqual(sessionEntryState(catalogOf[2], catalogOf), { enabled: true, note: '', switchTo: -1 }, 'the native launcher can');
+assert.deepEqual(sessionEntryState(catalogOf[1], catalogOf), { enabled: true, note: '', switchTo: -1 }, 'another tool is not judged here');
+assert.deepEqual(sessionEntryState(null, catalogOf), { enabled: true, note: '', switchTo: -1 });
+assert.deepEqual(sessionEntryState({ ...catalogOf[0], shares_claude_home: true }, catalogOf), { enabled: true, note: '', switchTo: -1 }, 'a Docker launcher that shares the home can');
+const blocked = sessionEntryState(catalogOf[0], catalogOf);
+assert.equal(blocked.enabled, false);
+assert.equal(blocked.switchTo, 2, 'the native entry is offered');
+assert.match(blocked.note, /Claude Code \(Docker\) keeps its own Claude home/);
+const onlyDocker = sessionEntryState(catalogOf[0], [catalogOf[0], { ...catalogOf[2], available: false }]);
+assert.equal(onlyDocker.switchTo, -1);
+assert.match(onlyDocker.note, /claude_home_shared/, 'with nothing that can, it says what is needed');
+const sharing = [catalogOf[0], { ...catalogOf[0], launcher_id: 'b', label: 'Shared', shares_claude_home: true }];
+assert.equal(sessionEntryState(catalogOf[0], sharing).switchTo, 1, 'a Docker launcher that shares the home is offered too');
+
+// A session continued on another model is warned about; the same family, or an unknown session model, is not.
+const opus = { value: 'opus', label: 'Opus' }, sonnet = { value: 'sonnet', label: 'Sonnet' };
+assert.equal(modelChangeWarning('claude-opus-4-5-20251101', opus), '');
+assert.equal(modelChangeWarning('opus5.5', opus), '');
+assert.equal(modelChangeWarning('claude-opus-4-5-20251101', sonnet), 'This session ran on claude-opus-4-5-20251101; the agent will continue it on Sonnet.');
+assert.equal(modelChangeWarning('', sonnet), '');
+assert.equal(modelChangeWarning('claude-opus-4-5', null), '');
+assert.match(modelChangeWarning('claude-opus-4-5', { value: 'gpt-6-sol', label: 'GPT 6 Sol' }), /continue it on GPT 6 Sol/);
 console.log('spawn model tests passed');
