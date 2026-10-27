@@ -1,5 +1,6 @@
 import { request, rights } from './api.js';
 import { prefillFolderOnFocus } from './workspace-folder.js';
+import { dmProblems, peopleProblems, problemSummary, projectProblems } from './import-problems.js';
 import { applyChoice, choiceValue, mergeGroups, newProjectAlias, parseChoice, planTree, roomChoice } from './import-tree.js';
 
 // v1's own event room is never imported, so the wizard does not list it.
@@ -98,7 +99,7 @@ export class ImportV1Wizard {
     this.progressLabel = node('p', '', 'import-progress-label');
     this.progress.append(this.progressLabel, this.progressBar);
     this.status = node('p', '', 'settings-intro');
-    this.error = node('p', '', 'error'); this.error.setAttribute('role', 'alert');
+    this.error = node('div', '', 'error'); this.error.setAttribute('role', 'alert'); // a div: it can hold the list of problems
     this.content = node('div', '', 'import-v1-content');
     this.actions = node('div', '', 'dialog-actions');
     this.skipZone = node('div', '', 'import-skip-zone');
@@ -333,27 +334,38 @@ export class ImportV1Wizard {
     if (id === 'summary') await this.check();
   }
 
-  // Next stops on the first thing that cannot be imported as it stands, with a link to it.
+  // Next stops while anything on the page cannot be imported as it stands, and lists all of it at once: a link to each field and a message
+  // beside each, so the owner fixes them together instead of finding them one Next at a time.
   async next() {
     this.error.textContent = '';
-    const problem = this[`problem_${this.stepID}`]?.();
-    if (problem) { this.showProblem(problem); return; }
+    const problems = this[`problem_${this.stepID}`]?.() || [];
+    if (problems.length) { this.showProblems(problems); return; }
     await this.go(this.steps[this.stepIndex + 1].id);
   }
 
-  showProblem(problem) {
-    const link = node('button', 'Go to the field', 'btn btn-link'); link.type = 'button';
-    link.onclick = () => this.focusProblem(problem);
-    this.error.replaceChildren(node('span', `${problem.message} `), link);
-    this.focusProblem(problem);
+  showProblems(problems) {
+    for (const old of this.content.querySelectorAll('[aria-invalid]')) old.removeAttribute('aria-invalid');
+    for (const old of this.content.querySelectorAll('.import-field-error')) old.remove();
+    const list = node('ul', '', 'import-problems');
+    problems.forEach((problem, index) => {
+      const item = node('li'); const link = node('button', 'Go to the field', 'btn btn-link'); link.type = 'button';
+      link.onclick = () => this.focusProblem(problem);
+      item.append(node('span', `${problem.message} `), link); list.append(item);
+      // The same message sits at the field, tied to it for a screen reader, and the field is marked.
+      const field = this.content.querySelector(problem.selector);
+      if (!field) return;
+      const message = node('small', problem.message, 'import-field-error'); message.id = `import-problem-${index}`;
+      if (field.matches('input, select, textarea')) { field.setAttribute('aria-invalid', 'true'); field.setAttribute('aria-describedby', message.id); (field.closest('label') || field).after(message); }
+      else field.after(message);
+    });
+    this.error.replaceChildren(node('p', problemSummary(problems.length), 'import-problems-summary'), list);
+    this.focusProblem(problems[0]);
   }
 
   focusProblem(problem) {
     const input = this.content.querySelector(problem.selector);
     if (!input) return;
-    for (const old of this.content.querySelectorAll('[aria-invalid]')) old.removeAttribute('aria-invalid');
     input.closest('details')?.setAttribute('open', '');
-    input.setAttribute('aria-invalid', 'true');
     input.scrollIntoView({ block: 'center' }); input.focus();
   }
 
@@ -447,14 +459,7 @@ export class ImportV1Wizard {
     this.save(); this.refresh();
   }
 
-  problem_projects() {
-    for (const [alias, project] of Object.entries(this.mapping.projects)) {
-      if (project.existing_id) continue;
-      if (!(project.name || '').trim()) return { message: `Project "${alias}" needs a name.`, selector: `input[data-project-name="${CSS.escape(alias)}"]` };
-      if (!(project.folder || '').startsWith('/')) return { message: `Project "${project.name || alias}" needs its workspace folder: an absolute path such as /Users/you/code/${alias}.`, selector: `input[data-project-folder="${CSS.escape(alias)}"]` };
-    }
-    return null;
-  }
+  problem_projects() { return projectProblems(this.mapping.projects); }
 
   page_people() {
     const p = this.preview;
@@ -516,18 +521,7 @@ export class ImportV1Wizard {
     return login;
   }
 
-  problem_people() {
-    const taken = new Set((this.preview.destination_users || []).map(login => login.toLowerCase())); // logins are compared case-insensitively, as the server does
-    const seen = new Set();
-    for (const [human, user] of Object.entries(this.mapping.new_users || {})) {
-      const selector = `input[data-new-login="${CSS.escape(human)}"]`;
-      if (!/^[a-z][a-z0-9_-]{2,31}$/.test(user.login || '')) return { message: `The login for ${human} must be 3 to 32 characters: a lowercase letter, then lowercase letters, digits, - or _.`, selector };
-      if (taken.has(user.login.toLowerCase())) return { message: `The login "${user.login}" is already an account here; map ${human} to it instead, or choose another login.`, selector };
-      if (seen.has(user.login.toLowerCase())) return { message: `Two people would both be "${user.login}"; give each their own login.`, selector };
-      seen.add(user.login.toLowerCase());
-    }
-    return null;
-  }
+  problem_people() { return peopleProblems(this.mapping.new_users, this.preview.destination_users); }
 
   page_rooms() {
     const p = this.preview;
@@ -635,13 +629,7 @@ export class ImportV1Wizard {
     return others.length ? others.map(person => person.name).join(' · ') : (room.title || room.id);
   }
 
-  problem_dms() {
-    for (const room of (this.preview.rooms || []).filter(item => item.dm)) {
-      const spec = this.mapping.rooms[room.id];
-      if (spec && !spec.skip && !spec.project) return { message: `Choose a project for the chat "${this.dmTitle(room)}", or turn it off.`, selector: `[data-dm-room="${CSS.escape(room.id)}"]` };
-    }
-    return null;
-  }
+  problem_dms() { return dmProblems(this.preview.rooms, this.mapping.rooms, room => this.dmTitle(room)); }
 
   page_memory() {
     const p = this.preview;

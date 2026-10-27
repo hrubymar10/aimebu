@@ -32,9 +32,13 @@ Sign in as the v2 owner. The import wizard opens automatically when a backup is
 ready on the first run. It is a stepper, one page per category with a progress
 bar ("Step 3 of 8 · Rooms") and Back / Next: Projects, People, Rooms, Direct
 messages, Memory, Macros, Roles, then a Summary. A page with nothing to show for
-this backup is left out, Next refuses the first thing that cannot be imported as
-it stands (a project with no name or no absolute folder; a chat turned on with no
-project) and links to the field, and Back keeps every choice. The draft (the
+this backup is left out. Next refuses while anything on the page cannot be imported
+as it stands (a project with no name or no absolute folder; a new account with a
+bad, taken or repeated login; a chat turned on with no project) and lists all of
+it at once: a link to each field, the same message beside each field, each field
+marked invalid and tied to its message, and the first one focused. Back keeps
+every choice. An empty Workspace folder field starts at the home folder of the
+machine the server runs on when it is focused (typed text is never replaced). The draft (the
 choices and the page) is kept in the browser for each backup, so a reload
 continues where you left off; **Start over** on the first page drops it. The
 Summary is the dry run in words: the counts (the columns that are all zero are

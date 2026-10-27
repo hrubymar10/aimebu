@@ -1087,11 +1087,45 @@ async function main() {
         await wizard.open(); wizard.stepID = 'people'; wizard.render();
         const hint = wizard.content.querySelector('.people-owner-hint');
         const out = { hint: !!hint, explainsNewAccount: hint?.textContent.includes('New accounts keep their own importable data'), logins: Object.values(wizard.mapping.new_users).map(user => user.login) };
-        wizard.mapping.new_users.ann.login = 'ann-2'; out.taken = wizard.problem_people()?.message.includes('already an account');
+        wizard.mapping.new_users.ann.login = 'ann-2'; out.taken = wizard.problem_people()[0]?.message.includes('already an account');
         return out;
       } finally { window.fetch = original; localStorage.removeItem('aimebu2.import-draft.v1-noowner'); wizard.dialog.close(); wizard.dialog.remove(); }
     });
     assert.deepEqual(noOwner, { hint: true, explainsNewAccount: true, logins: ['ann', 'ann2'], taken: true }, 'when several people have no owner name match, the page explains the choice and case-insensitive login collision');
+    // Every problem of a page is listed at once, each with a link, a message at its field and the field marked; the first is focused.
+    const allAtOnce = await first.evaluate(async () => {
+      const { ImportV1Wizard } = await import('/js/import-v1.js');
+      const original = window.fetch;
+      const json = body => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      const source = { source_key: 'v1-allatonce', rooms: [], humans: [], memory_projects: [], macros: {}, counts: { rooms: 0, messages: 0, attachments: 0, memory: 0, macros: 0 }, destination_users: ['sam'], roles: [], fleets: [],
+        suggested: { source_key: 'v1-allatonce', owner_login: 'sam', projects: { a: { name: 'a', folder: '' }, b: { name: '', folder: 'relative/path' }, c: { name: 'c', folder: '/ok/c' } }, rooms: {}, humans: {}, memory_projects: {}, enable_project_memory: {}, skip_profiles: false, skip_shared_notes: false } };
+      window.fetch = async (path, options) => String(path) === '/api/import-v1/preview' ? json(source) : String(path) === '/api/macros' ? json({}) : original(path, options);
+      const wizard = new ImportV1Wizard();
+      try {
+        localStorage.removeItem('aimebu2.import-draft.v1-allatonce');
+        await wizard.open(); wizard.stepID = 'projects'; wizard.render();
+        const before = wizard.progressLabel.textContent;
+        await wizard.next();
+        const folderA = wizard.content.querySelector('input[data-project-folder="a"]'), nameB = wizard.content.querySelector('input[data-project-name="b"]'), folderB = wizard.content.querySelector('input[data-project-folder="b"]');
+        const out = {
+          stayed: wizard.progressLabel.textContent === before,
+          summary: wizard.error.querySelector('.import-problems-summary').textContent,
+          items: [...wizard.error.querySelectorAll('.import-problems li')].map(item => item.textContent),
+          links: wizard.error.querySelectorAll('.import-problems li button').length,
+          invalid: [...wizard.content.querySelectorAll('[aria-invalid="true"]')].map(input => input.dataset.projectFolder ? `folder:${input.dataset.projectFolder}` : `name:${input.dataset.projectName}`),
+          inline: wizard.content.querySelectorAll('.import-field-error').length,
+          described: [folderA, nameB, folderB].every(input => !!document.getElementById(input.getAttribute('aria-describedby'))?.textContent),
+          focused: document.activeElement === folderA,
+          fine: !wizard.content.querySelector('input[data-project-folder="c"]').hasAttribute('aria-invalid'),
+        };
+        wizard.error.querySelectorAll('.import-problems li button')[1].click();
+        out.linkFocuses = document.activeElement === nameB;
+        return out;
+      } finally { window.fetch = original; localStorage.removeItem('aimebu2.import-draft.v1-allatonce'); wizard.dialog.close(); wizard.dialog.remove(); }
+    });
+    assert.deepEqual(allAtOnce, { stayed: true, summary: '3 things need fixing before you go on:',
+      items: ['Project "a" needs its workspace folder: an absolute path such as /Users/you/code/a. Go to the field', 'Project "b" needs a name. Go to the field', 'Project "b" needs its workspace folder: an absolute path such as /Users/you/code/b. Go to the field'].map(text => text),
+      links: 3, invalid: ['folder:a', 'name:b', 'folder:b'], inline: 3, described: true, focused: true, fine: true, linkFocuses: true }, 'the import wizard lists every problem of the page at once');
     // The server already suggests an owner counterpart when it has one and new accounts for the other people; the wizard shows exactly
     // that suggestion and does not default anyone a second time.
     const peopleSuggested = await first.evaluate(async () => {
