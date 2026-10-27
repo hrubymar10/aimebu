@@ -4,6 +4,8 @@
 // resets it) reloads the editor. The shared pickers (@ mentions, < macros, / commands, : emoji) work here through EditorBridge,
 // which gives them a textarea-like view of the editor.
 import { docToMarkdown } from './composer-markdown.js';
+import { looksLikeMarkdown, carriesFormatting } from './composer-paste.js';
+import { renderMarkdown } from './markdown.js';
 
 let loading = null;
 // The version in the URL is the start of the vendored file's SHA-256 (see web/vendor/prosemirror/README.md).
@@ -50,6 +52,15 @@ function markRule(PM, pattern, markType) {
     tr.removeStoredMark(markType);
     return tr;
   });
+}
+
+// HTML copied from a rendered message, without what is not text in it: buttons and checkboxes (a code block's "Copy" button would paste as the
+// word Copy), scripts and styles. Parsed into an inert template, so nothing in it runs or loads.
+export function cleanPastedHtml(html) {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  template.content.querySelectorAll('button, .md-copy, input, script, style').forEach(node => node.remove());
+  return template.innerHTML;
 }
 
 export class ComposerEditor {
@@ -140,6 +151,11 @@ export class ComposerEditor {
     this.view = new PM.EditorView(host, {
       state: this.state,
       attributes: { role: 'textbox', 'aria-multiline': 'true', 'aria-label': 'Message', spellcheck: 'true' },
+      // Pasting: Markdown text becomes the editor's formatting (Shift paste keeps it as it was typed), and HTML copied from a rendered
+      // message loses its controls (the code blocks' copy buttons, task checkboxes) instead of pasting their labels.
+      transformPastedHTML: html => cleanPastedHtml(html),
+      clipboardTextParser: (text, $context, plain) => (plain ? null : this.markdownSlice(text, $context)),
+      handlePaste: (view, event) => this.pasteMarkdownOverPlainHtml(view, event),
       dispatchTransaction: transaction => {
         const next = this.view.state.apply(transaction);
         this.view.updateState(next);
@@ -153,6 +169,26 @@ export class ComposerEditor {
         this.onState?.();
       },
     });
+  }
+  // The slice a Markdown text makes in this editor's schema, or null when it is not Markdown the editor can hold (plain prose, or text with a
+  // heading, table or other structure the document has no place for): that paste is left to the default.
+  markdownSlice(text, $context) {
+    if (!looksLikeMarkdown(text)) return null;
+    const fragment = renderMarkdown(text);
+    fragment.querySelectorAll?.('.md-copy, input').forEach(node => node.remove());
+    return this.PM.DOMParser.fromSchema(this.schema).parseSlice(fragment, { context: $context, preserveWhitespace: false });
+  }
+  // A code editor's copy comes as HTML made of spans and divs with the Markdown source as its plain text: the HTML would paste as unformatted
+  // text, so the plain text is converted instead. HTML that carries formatting is the editor's to read as it is.
+  pasteMarkdownOverPlainHtml(view, event) {
+    const data = event.clipboardData;
+    if (!data || view.input?.shiftKey) return false;
+    const html = data.getData('text/html'), text = data.getData('text/plain');
+    if (!html || carriesFormatting(html)) return false;
+    const slice = this.markdownSlice(text, view.state.selection.$from);
+    if (!slice) return false;
+    view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView().setMeta('paste', true).setMeta('uiEvent', 'paste'));
+    return true;
   }
   placeholderPlugin(PM, text) {
     return new PM.Plugin({

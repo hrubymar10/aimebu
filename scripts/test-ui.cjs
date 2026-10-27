@@ -6947,6 +6947,46 @@ async function main() {
       await first.waitForFunction(() => document.querySelector('#composer .composer-editing .ProseMirror').textContent.includes('good'));
       assert.deepEqual(await first.$$eval(`${editor} a`, links => links.map(link => link.getAttribute('href'))), ['https://example.test/ok'], 'only a safe pasted link stays a link');
       await wipe();
+      // Pasting Markdown, or HTML copied from a rendered message, becomes the editor's formatting; plain prose and anything the editor has no place for
+      // (a heading, a table) stays as it was written, and so does a Shift paste.
+      const pasteData = types => first.evaluate(types => {
+        const data = new DataTransfer(); for (const [type, value] of Object.entries(types)) data.setData(type, value);
+        document.querySelector('#composer .composer-editing .ProseMirror').dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }));
+      }, types);
+      const shape = () => first.evaluate(() => { const pm = document.querySelector('#composer .composer-editing .ProseMirror'); return { text: pm.textContent, strong: [...pm.querySelectorAll('strong')].map(e => e.textContent), code: [...pm.querySelectorAll('code')].map(e => e.textContent), items: pm.querySelectorAll('li').length, pre: pm.querySelectorAll('pre').length, quote: pm.querySelectorAll('blockquote').length }; });
+      await first.focus('#composer .composer-editing .ProseMirror');
+      await pasteData({ 'text/plain': 'a **bold** word and `make test`\n\n- one\n- two' });
+      await first.waitForFunction(() => document.querySelectorAll('#composer .composer-editing .ProseMirror li').length === 2);
+      assert.deepEqual(await shape(), { text: 'a bold word and make testonetwo', strong: ['bold'], code: ['make test'], items: 2, pre: 0, quote: 0 }, 'pasted Markdown text becomes formatting');
+      assert.equal(await draft(), 'a **bold** word and `make test`\n\n- one\n- two', 'and the draft is the same Markdown');
+      await wipe();
+      await first.focus('#composer .composer-editing .ProseMirror');
+      await pasteData({ 'text/plain': 'snake_case_name and 2 * 3 * 4' });
+      await first.waitForFunction(() => document.querySelector('#composer .composer-editing .ProseMirror').textContent.includes('snake_case_name'));
+      assert.deepEqual(await shape(), { text: 'snake_case_name and 2 * 3 * 4', strong: [], code: [], items: 0, pre: 0, quote: 0 }, 'plain text stays plain');
+      await wipe();
+      await first.focus('#composer .composer-editing .ProseMirror');
+      await pasteData({ 'text/plain': '# Title\n\nwith **bold**' });
+      await first.waitForFunction(() => document.querySelector('#composer .composer-editing .ProseMirror').textContent.includes('Title'));
+      assert.deepEqual(await shape(), { text: '# Titlewith **bold**', strong: [], code: [], items: 0, pre: 0, quote: 0 }, 'a heading keeps the whole paste as it was written');
+      await wipe();
+      await first.focus('#composer .composer-editing .ProseMirror');
+      await pasteData({ 'text/html': '<meta charset="utf-8"><div style="font-family: Menlo"><span style="color: #ccc">use **bold** and </span><span>`code`</span></div>', 'text/plain': 'use **bold** and `code`' });
+      await first.waitForFunction(() => document.querySelector('#composer .composer-editing .ProseMirror strong'));
+      assert.deepEqual(await shape(), { text: 'use bold and code', strong: ['bold'], code: ['code'], items: 0, pre: 0, quote: 0 }, 'a code editor copy (HTML of spans) is read as Markdown');
+      await wipe();
+      await first.focus('#composer .composer-editing .ProseMirror');
+      await pasteData({ 'text/html': '<div class="md-codeblock"><button type="button" class="row-btn md-copy" aria-label="Copy code block">Copy code block</button><pre><code>make test</code></pre></div><p>then <strong>ship</strong> <input type="checkbox" disabled> it</p>', 'text/plain': 'Copy code block\nmake test\nthen ship it' });
+      await first.waitForFunction(() => document.querySelector('#composer .composer-editing .ProseMirror pre'));
+      assert.deepEqual(await shape(), { text: 'make testthen ship it', strong: ['ship'], code: ['make test'], items: 0, pre: 1, quote: 0 }, 'HTML from a rendered message keeps its formatting and loses its controls');
+      await wipe();
+      await first.focus('#composer .composer-editing .ProseMirror');
+      await first.keyboard.down('Shift');
+      await pasteData({ 'text/plain': 'keep **this** literal' });
+      await first.keyboard.up('Shift');
+      await first.waitForFunction(() => document.querySelector('#composer .composer-editing .ProseMirror').textContent.includes('literal'));
+      assert.deepEqual(await shape(), { text: 'keep **this** literal', strong: [], code: [], items: 0, pre: 0, quote: 0 }, 'a Shift paste keeps the text as it was');
+      await wipe();
       // The shared pickers work inside the editor: "/" commands, ":" emoji (a pick, and a typed :shortcode:), "<" macros and "@" mentions.
       await first.focus(editor); await first.keyboard.type('/ar'); await first.waitForFunction(() => document.querySelector('#composer .quick-commands:not([hidden])')?.textContent.includes('/archive'));
       await wipe(); await first.waitForFunction(() => !document.querySelector('#composer .quick-commands:not([hidden])'));
