@@ -2904,6 +2904,10 @@ async function main() {
       ccSession(elsewhere, idFar, { title: 'Worked elsewhere' });
       fs.mkdirSync(path.join(claudeHome, 'sessions'), { recursive: true });
       fs.writeFileSync(path.join(claudeHome, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: idActive, cwd: gitRoot, kind: 'interactive', status: 'idle' }));
+      // Whether a native Claude is on offer comes from the machine's tool detection, which can still be running when this step starts. The
+      // dialog says a session "is not available natively" until the catalog lists one it can continue on (agents.js applyResumeChoice: native, or a container
+      // that shares the host's Claude home), so wait for the catalog the dialog will read to do so.
+      await first.waitForFunction(async () => (await (await fetch('/api/spawn-catalog')).json()).tools?.some(tool => tool.tool === 'claude' && tool.available && !(tool.containerized && !tool.shares_claude_home)), { polling: 500, timeout: 30000 }).catch(() => {});
       await domClick(first, '#spawn-open');
       await first.waitForFunction(() => document.querySelector('#spawn-dialog').open && !document.querySelector('#spawn-sessions').hidden);
       assert.equal(await first.$eval('#spawn-sessions', el => [el.title, el.getAttribute('aria-label'), el.textContent.trim()]).then(list => list.join('|')), 'Continue a Claude Code session|Continue a Claude Code session|Continue a session…', 'the session entry is a labelled button, not a bare glyph');
