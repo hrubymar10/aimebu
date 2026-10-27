@@ -80,8 +80,7 @@ the launcher that can (the native one, or a Docker launcher that shares the
 host's Claude home); with none it says what is needed. The button opens a picker
 of the sessions (and a field to look one up by id), and a
 pick reopens the Spawn dialog for it, with a room of its own selected by default
-and a choice: **Continue the original session** (the default) or **Work on a copy
-(fork)**. The model the session ran on is preselected (the exact id, else an entry of the
+and a choice: **Continue** the original session (the default) or **Work on a copy** (a fork). The model the session ran on is preselected (the exact id, else an entry of the
 same family and version; an alias such as `opus` stands in when no entry has the
 version, and an entry of another version is never taken for it), the resume card
 says what it "Ran on", and the dialog warns whenever the model chosen for the

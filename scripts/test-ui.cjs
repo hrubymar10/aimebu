@@ -2952,8 +2952,8 @@ async function main() {
       })), { title: 'Continue a Claude Code session', text: 'This continues the session. It carries on from where it stopped, in the same transcript.',
         confirm: true, name: false, startIn: true, room: 'A new room for this session', sessions: true, worktree: true, mode: 'continue' }, 'the Spawn dialog opens for the picked session, continuing by default');
       // The session is a neutral card: its short id, its folder and when it was last used, in a compact box; no title from the first prompt.
-      assert.deepEqual(await first.evaluate(() => { const box = document.querySelector('#spawn-resume'), card = document.querySelector('#spawn-resume-card'), modes = [...document.querySelectorAll('#spawn-resume-mode label')].map(label => label.getBoundingClientRect().top); return { rows: [...card.querySelectorAll('dt')].map(term => [term.textContent, term.nextElementSibling.textContent.length > 0]), id: card.querySelector('dd').textContent, compact: Math.max(...modes) - Math.min(...modes) < 30, titled: box.textContent.includes('Fix the login bug') }; }),
-        { rows: [['Session', true], ['Folder', true], ['Last active', true], ['Ran on', true]], id: '11111111', compact: true, titled: false }, 'the picked session is shown as a neutral card, and the Continue and Fork choice is compact (side by side, or stacked tight)');
+      assert.deepEqual(await first.evaluate(() => { const box = document.querySelector('#spawn-resume'), card = document.querySelector('#spawn-resume-card'), modes = [...document.querySelectorAll('#spawn-resume-mode label')].map(label => label.getBoundingClientRect().top); return { rows: [...card.querySelectorAll('dt')].map(term => [term.textContent, term.nextElementSibling.textContent.length > 0]), id: card.querySelector('dd').textContent, oneRow: Math.abs(modes[0] - modes[1]) < 2, nameRow: [Math.round(document.querySelector('#spawn-name').getBoundingClientRect().height) === Math.round(document.querySelector('#spawn-name-dice').getBoundingClientRect().height), getComputedStyle(document.querySelector('.spawn-name > label')).fontSize === getComputedStyle(document.querySelector('#spawn-dialog > form > label')).fontSize], titled: box.textContent.includes('Fix the login bug') }; }),
+        { rows: [['Session', true], ['Folder', true], ['Last active', true], ['Ran on', true]], id: '11111111', oneRow: true, nameRow: [true, true], titled: false }, 'the picked session is shown as a neutral card, the Continue and Fork choice is one row, and the Name row matches the other fields');
       await domClick(first, '#spawn-cancel');
       await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
       // A session a live process has open asks for a confirmation before it can be continued.
@@ -4648,7 +4648,7 @@ async function main() {
       await tapMessage(0);
       assert.deepEqual((await state()).slice(0, 2), [[true, '1'], [false, '0']], 'a tap on a message shows its actions');
       // On a tablet the toolbar keeps the desktop and v1 place, at the top of the message, not under it as on a phone.
-      assert.deepEqual(await touch.evaluate(() => { const row = document.querySelector('#messages .message.actions-open'), bar = row.querySelector('.message-actions').getBoundingClientRect(), box = row.querySelector('.message-bubble').getBoundingClientRect(); return [getComputedStyle(row.querySelector('.message-actions')).position, bar.top < box.top + box.height / 2, bar.top >= box.top - 30]; }), ['absolute', true, true], 'on a tablet the message actions sit at the top of the message');
+      assert.deepEqual(await touch.evaluate(() => { const row = document.querySelector('#messages .message.actions-open'), bar = row.querySelector('.message-actions').getBoundingClientRect(), box = row.querySelector('.message-bubble').getBoundingClientRect(); return [getComputedStyle(row.querySelector('.message-actions')).position, bar.top < box.top + box.height / 2, row.classList.contains('self') || bar.bottom <= box.top + 1]; }), ['absolute', true, true], 'on a tablet the message actions sit at the top of the message, above the text of someone else\'s message (an own one has them beside it)');
       await tapMessage(1);
       assert.deepEqual((await state()).slice(0, 2), [[false, '0'], [true, '1']], 'a tap on another message moves them');
       await touch.evaluate(() => document.querySelector('#messages .message.actions-open .message-react')?.click());
@@ -4672,6 +4672,7 @@ async function main() {
       // A tablet has room for one side panel next to the chat: the chat column keeps at least 400px, the members panel starts closed and
       // opening one panel closes the other; the toolbar stays one row.
       for (const [width, height] of [[744, 1133], [820, 1180]]) {
+        await touch.evaluate(() => localStorage.removeItem('aimebu_left_collapsed'));
         await touch.setViewport({ width, height, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }); await touch.reload(); await appReady(touch);
         await touch.waitForFunction(() => document.querySelectorAll('#messages .message').length > 0); await settle();
         const column = () => touch.evaluate(() => ({ chat: Math.round(document.querySelector('#messages').getBoundingClientRect().width), rooms: !document.querySelector('#app-view').classList.contains('rooms-collapsed'), members: !document.querySelector('.chat').classList.contains('agents-collapsed') }));
@@ -4681,6 +4682,10 @@ async function main() {
         const opened = await column(); assert.ok(opened.members && !opened.rooms, `${width}: opening the members panel closes the rooms: ${JSON.stringify(opened)}`);
         await touch.evaluate(() => document.querySelector('#edge-rooms-expand').click()); await settle();
         const back = await column(); assert.ok(back.rooms && !back.members, `${width}: opening the rooms closes the members panel: ${JSON.stringify(back)}`);
+        // Only the default is unstored: a person's own expand is kept (and the hidden collapse button tells the truth), so a reload keeps it open.
+        assert.deepEqual(await touch.evaluate(() => [localStorage.getItem('aimebu_left_collapsed'), document.querySelector('#edge-rooms').getAttribute('aria-expanded'), document.querySelector('#rooms-toggle').getAttribute('aria-expanded')]), ['false', 'true', 'true'], `${width}: expanding the rooms on a tablet is remembered`);
+        await touch.reload(); await appReady(touch); await touch.waitForFunction(() => document.querySelectorAll('#messages .message').length > 0); await settle();
+        assert.equal((await column()).rooms, true, `${width}: the rooms column the person expanded stays expanded after a reload`);
         await touch.evaluate(() => (document.querySelector('#composer .ProseMirror') || document.querySelector('#composer textarea')).focus()); await settle();
         const rows = await bar(); assert.deepEqual([rows.shown, rows.oneRow], [true, true], `${width}: the toolbar is one row: ${JSON.stringify(rows)}`);
         await touch.evaluate(() => document.activeElement?.blur());

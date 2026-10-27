@@ -1748,6 +1748,12 @@ button.icon-btn[aria-pressed="true"] { border-color: var(--accent); color: var(-
    over the bubble's top edge, covering neither the sender line nor the text. */
 .message.self .message-actions { top: 0; right: calc(100% + 6px); }
 @media not ((hover: none) and (pointer: coarse) and (max-width: 700px)) { .message.self { max-width: clamp(60%, calc(100% - 200px), 75%); } }
+/* A touch tablet's toolbar is 46px tall: sitting over the bubble's top edge it would cover the first line, so it sits wholly above the bubble,
+   and a selected message takes the room it needs there (an own message has its toolbar beside it and needs none). */
+@media (hover: none) and (pointer: coarse) and (min-width: 701px) {
+  .message:not(.self) .message-actions { top: -48px; }
+  .message.actions-open:not(.self):not(.system-notice) { margin-top: 34px; }
+}
 /* A touch tablet's buttons are 40px, so its toolbar is wider and an own message stops shorter. */
 @media (hover: none) and (pointer: coarse) and (min-width: 701px) { .message.self { max-width: clamp(60%, calc(100% - 290px), 75%); } }
 #messages { container-type: inline-size; }
@@ -2463,10 +2469,12 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #spawn-dialog .spawn-worktree-option input { width: auto; margin: 0; }
 #spawn-dialog .spawn-worktree-note { flex-basis: 100%; color: var(--text-muted); font-size: 12px; }
 /* The agent's name in the Spawn dialog: the field with a dice button beside it, and a refusal of the name right under it. */
-#spawn-dialog .spawn-name { display: grid; gap: 4px; margin: 0 0 12px; }
-#spawn-dialog .spawn-name > label { font-size: 12px; color: var(--text-secondary); }
-#spawn-dialog .spawn-name-row { display: flex; gap: 6px; align-items: center; }
-#spawn-dialog .spawn-name-row input { flex: 1 1 auto; min-width: 0; }
+/* The Name field reads like Machine, Role, Tool and Model: the same label, the same gap to its control, and the dice button as tall as the input. */
+#spawn-dialog .spawn-name { display: grid; gap: 4px; margin: 12px 0; }
+#spawn-dialog .spawn-name > label { margin: 0; }
+#spawn-dialog .spawn-name-row { display: flex; gap: 6px; align-items: stretch; }
+#spawn-dialog .spawn-name-row .icon-btn { flex: 0 0 auto; align-self: stretch; box-sizing: border-box; width: 40px; height: auto; min-height: 0; padding: 0; }
+#spawn-dialog .spawn-name-row input { flex: 1 1 auto; min-width: 0; margin: 0; }
 #spawn-dialog .spawn-name-error { margin: 0; font-size: 12px; }
 #spawn-dialog .spawn-name-error:empty { display: none; }
 /* The home room's settings carry the Project section (the project's own form), so that dialog is wider. */

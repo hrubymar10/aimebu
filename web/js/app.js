@@ -635,11 +635,13 @@ document.querySelector('#logout').onclick = async () => { cancelStartup(); try {
 document.querySelector('#inbox-toggle').onclick = () => { setRoomsOpen(false); agents.setMobileOpen(false); if (!inbox.view.hidden) inbox.hide(); else inbox.show(); };
 document.querySelector('#rooms-toggle').onclick = () => { inbox.hide(); if (matchMedia('(max-width: 700px)').matches) { appView.classList.add('chat-open'); setRoomsOpen(!appView.classList.contains('rooms-open')); } else { setRoomsCollapsed(!appView.classList.contains('rooms-collapsed')); } };
 // Desktop left-panel collapse persists under the v1 localStorage key.
-// On a touch tablet (701-900px) only one side panel is open at a time, and that is not remembered (see agents.js).
+// On a touch tablet (701-900px) only one side panel is open at a time; the panel one closes to make room is not remembered as a choice, but a
+// person's own expand or collapse is (see agents.js).
 const TABLET = matchMedia('(min-width: 701px) and (max-width: 900px) and (pointer: coarse)');
-function setRoomsCollapsed(collapsed, remember = !TABLET.matches) {
+function setRoomsCollapsed(collapsed, remember = true) {
   appView.classList.toggle('rooms-collapsed', collapsed);
   document.querySelector('#rooms-toggle').setAttribute('aria-expanded', String(!collapsed));
+  document.querySelector('#edge-rooms').setAttribute('aria-expanded', String(!collapsed));
   if (remember) localStorage.setItem('aimebu_left_collapsed', String(collapsed));
   if (!collapsed && TABLET.matches) document.dispatchEvent(new CustomEvent('side-panel-open', { detail: 'rooms' }));
 }
