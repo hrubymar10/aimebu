@@ -3,7 +3,8 @@ import { renderMarkdown } from './markdown.js';
 
 // `mention` ("@author") is put in front of a proposed answer, as v1 does, so the reply reads as an answer to that person; `compose(text)` puts
 // the text in the composer, with the reply link, instead of sending it (Shift-click). Without it a Shift-click sends like any click.
-export function answerControls(item, submit, { mention = '', compose = null } = {}) {
+// With `freeAnswer` (the inbox, which has no composer) a compact "Answer…" button under the chips opens a small text field for an answer of one's own.
+export function answerControls(item, submit, { mention = '', compose = null, freeAnswer = false } = {}) {
   const wrap = document.createElement('div');
   wrap.className = 'answer-controls';
   if (item.open_questions?.length) {
@@ -25,6 +26,18 @@ export function answerControls(item, submit, { mention = '', compose = null } = 
     button.title = compose ? 'Send this answer (Shift-click to edit it in the composer first)' : 'Send this answer';
     button.onclick = event => { if (event.shiftKey && compose) compose(text); else send(wrap, submit, text); };
     wrap.append(button);
+  }
+  if (freeAnswer && item.free_text) {
+    const form = document.createElement('form'); form.className = 'answer-other'; form.hidden = true;
+    const input = document.createElement('textarea'); input.required = true; input.rows = 2; input.placeholder = 'Your answer'; input.setAttribute('aria-label', 'Your answer');
+    const sendButton = document.createElement('button'); sendButton.type = 'submit'; sendButton.className = 'btn btn-primary'; sendButton.textContent = 'Send answer';
+    form.append(input, sendButton);
+    const open = document.createElement('button'); open.type = 'button'; open.className = 'btn proposed-answer-btn answer-free-open'; open.textContent = 'Answer…'; open.setAttribute('aria-expanded', 'false');
+    open.title = 'Write an answer of your own';
+    open.onclick = () => { form.hidden = !form.hidden; open.setAttribute('aria-expanded', String(!form.hidden)); if (!form.hidden) input.focus(); };
+    form.onsubmit = event => { event.preventDefault(); send(wrap, submit, input.value.trim()); };
+    input.onkeydown = event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) { event.preventDefault(); form.requestSubmit(); } };
+    wrap.append(open, form);
   }
   return wrap;
 }
@@ -139,15 +152,21 @@ function openQuestions(item, submit, onChange) {
     const other = document.createElement('input'); other.type = 'text'; other.placeholder = 'Your answer';
     other.setAttribute('aria-label', `Other answer for question ${qIndex + 1}`);
     other.value = answers[qIndex].text;
+    // Moving between the options with the arrow keys changes the choice too, but that is looking around, not answering: only a click, Enter
+    // or Space picks and moves on.
+    let arrowing = false;
     const choose = (choice) => {
       answers[qIndex].choice = choice;
       if (choice === 'other') { other.focus(); changed(); return; }
-      // Picking an option moves on: to the next question, and from the last one to the review once every question has an answer.
       saveAnswers(item); onChange?.();
+      if (arrowing) { render(); return; }
+      // Picking an option moves on: to the next question, and from the last one to the review once every question has an answer.
       if (qIndex < total - 1) go(qIndex + 1);
       else if (answeredCount(answers) === total) go(total);
       else render();
     };
+    group.addEventListener('keydown', event => { arrowing = event.key.startsWith('Arrow'); });
+    group.addEventListener('keyup', () => { arrowing = false; });
     question.options.forEach((option, optionIndex) => {
       const label = document.createElement('label');
       const radio = document.createElement('input'); radio.type = 'radio'; radio.name = `question-${qIndex}`;

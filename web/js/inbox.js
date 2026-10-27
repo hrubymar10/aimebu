@@ -267,7 +267,7 @@ export class Inbox {
     if (item.kind === 'usage_info') return card;
     if (item.can_decide === false) { card.append(document.createTextNode('Read only')); return card; }
     if (item.proposed_answers?.length || item.open_questions?.length) {
-      card.append(answerControls(item, value => this.answer(item, value)));
+      card.append(answerControls(item, value => this.answer(item, value), { freeAnswer: true }));
       return card;
     }
     const choices = document.createElement('div'); choices.className = 'inbox-choices';

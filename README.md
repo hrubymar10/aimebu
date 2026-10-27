@@ -376,11 +376,11 @@ stored record, who it addressed, the wake note and turn each agent got,
 and the related events, with previous and next to walk the room's messages and the Reply in thread, Copy
 text and Copy link actions). The HTML revalidates on refresh and its CSS and JS
 modules use a content version, so a deploy reaches a normal browser refresh.
-The sidebar header's + button opens the New project dialog. The room header
+The New project button (+) sits to the right of the Filter rooms box. The room header
 shows the room kind glyph and a member-count chip, with the full count in its
-tooltip, and
+tooltip, with the Room settings button right beside it (on a phone it is the first entry of the room's overflow menu instead), and
 the room's icon buttons (task notes (v1's brain; in task rooms, and in the home room it
-opens the project's memory instead), Room settings, go to
+opens the project's memory instead), go to
 message, raw Markdown, export). Every room has the same Room settings dialog with
 the sections that apply to it. Its **Title** field (for owners and operators; a
 private chat has none) is the only place a room is renamed: the header and the
@@ -437,7 +437,7 @@ read up to the newest message the chat has shown: if a window cannot load the
 messages that arrived while it was shown, it stays a window with them counted
 and the room stays unread until they are shown. Room settings → Notifications sets, per person and room, how the room notifies you: **Default** (the Inbox, and chat messages that address you), **All messages**, **Only mentions and replies to me** (the room's unread badge then counts only those) or **Nothing** (no sound or notification from the room, its Inbox items included; they still arrive in the Inbox), plus a mute for 1 hour, 8 hours or until tomorrow 08:00. A room that is quiet this way (Nothing, or a running mute) shows a disabled bell in the room list; the open room, in a focused tab, needs no alert. The settings are stored on the server with the rest of the person's view of the room (`PATCH /api/rooms/{room}/preferences`). Hide is a per-user button in Room settings (the rows carry none). Nothing is
 pinned. The sort button in the ROOMS header orders projects, and the rooms inside them, by name, by latest
-activity, or manually (drag a project, or use its move up and move down buttons; in the manual sort the rooms keep
+activity, or manually (drag a project by its ≡ handle, shown on hover left of its move up and move down buttons, or use those buttons; the whole row opens the project's home room; in the manual sort the rooms keep
 the order the server lists them); the choice and the manual order are personal preferences that follow the person across devices. The room list is
 one list across projects, with no section labels: each project's home
 room (`⌂ name`) is the parent row and its task rooms nest under it, one level. Every row shows `#name`, its member count and an unread badge, plus a project chip
@@ -454,7 +454,7 @@ A hidden room returns when a new message addresses that user or someone joins
 the room. These preferences are stored on the server and shared across that
 user's tabs.
 Closing rooms show their state and any stop-blocked
-reason. Both sidebars can collapse on desktop, each to nothing: a collapsed column is 0px wide and its outlined chevron button (v1's) moves into the chat header, left of the room name for Rooms and at the right end for Room members; the members header sits on the chat header's row;
+reason. With no choice of your own, the Rooms column starts collapsed in a window 701-900px wide (that default is not stored: expanding it keeps it expanded, and a choice you made always wins). Both sidebars can collapse on desktop, each to nothing: a collapsed column is 0px wide and its outlined chevron button (v1's) moves into the chat header, left of the room name for Rooms and at the right end for Room members; the members header sits on the chat header's row;
 on phones, v1's bottom bar (Rooms | Chat | Agents) opens and closes the drawers (the top-bar Rooms button and the title bar's drawer buttons are not shown there; the top-bar icons are named as in v1: Usages, Memory, System events, Settings) (on desktop the column toggles replace the Rooms button, the room list stays beside the Inbox view so any room is one click away, and the Inbox button toggles back to the chat),
 the room's controls (Notes, Room settings, Go to message, raw
 Markdown, Export) collapse into one ⋯ menu so the title keeps room, and
@@ -503,13 +503,12 @@ events and every 30 seconds.
 Agent messages can request a human answer with `needs_attention: true`.
 They may add two to four `proposed_answers` for quick buttons or up to ten
 `open_questions`, each with two to eight options and an optional description.
-The inbox and room show the same pending request. Buttons always offer a free
-text answer; each open question adds Other text. Sending resolves one inbox
-item and posts a structural reply addressed to the requesting agent. A proposed answer can be changed before it is sent: the pencil beside it, or a Shift-click on the answer, opens it in an editor under the answers (Ctrl or Cmd+Enter or Send answer sends the edited text, the X or Esc closes it and drops the text); a plain click still sends it as it stands. A request you had open that is now settled leaves a quiet, disabled "Answered" under the message for the rest of the session (as in v1) instead of silently losing its buttons; after a reload the message shows no controls.
+The inbox and room show the same pending request. A proposed answer is a compact button (as in v1): a click sends it addressed to the requesting agent (`@author answer`); Shift-click puts the same text in the composer with the reply link, to change before sending. A free answer is typed in the composer as a reply to the message (a reply to a message with a request open for you is sent as the answer, so it resolves the item and the Inbox count drops), or, in the Inbox, with its "Answer…" button under the chips. Each open question adds Other text. Sending resolves one inbox
+item and posts a structural reply addressed to the requesting agent. A request you had open that is now settled leaves a quiet, disabled "Answered" under the message for the rest of the session (as in v1) instead of silently losing its buttons; after a reload the message shows no controls.
 The Open Questions dialog shows one question at a time with a numbered
 stepper (answered questions are marked), an "N/M answered" counter and a
 review step; Send is enabled only once every question is answered, and an
-Other answer must not be empty. Answers are kept per request: closing the
+Other answer must not be empty. Picking an option moves on to the next question (and from the last to the review once everything is answered); moving between options with the arrow keys does not. Answers are kept per request: closing the
 dialog, a re-render, or a page reload (same tab) keeps them, and they are
 dropped when sent or when the questions change. On phones the dialog fills the screen with a pinned
 action bar, every control is at least 40px, and tapping the Other box chooses
@@ -656,7 +655,7 @@ The harnesses are a list with the chosen one's detail beside it (above it on a p
 and Enabled switch, then its models, each with a labelled switch per role. Ticking a role on a model makes it one of that role's default
 agents; it saves at once, as the role's own change, and a model not yet saved cannot be ticked.
 Role defaults, below the harnesses, shows each role's ordered defaults (move up or down, remove) and
-its pick mode. Settings → Roles edits the same lists; a save in either place shows in the other.
+its pick mode (the Pick order choice shows only for a role with at least two defaults, there being nothing to order otherwise; the same holds in the Roles form). Settings → Roles edits the same lists; a save in either place shows in the other. Saving a role there closes its form.
 Unsaved model edits stay while the page redraws (until Save models, a machine change, or closing Settings). Save models sends the revision of the list the edit started from, so a list someone else saved in the meantime is not overwritten: the save is refused (409), the stored list is shown and the page says so.
 Add harness takes a family, an executable name or path and a label; Auto-detect harnesses lists what
 the supervisor found on PATH and in the usual user-level install directories

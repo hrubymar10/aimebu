@@ -1582,6 +1582,7 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .room-filter { flex-wrap: nowrap; align-items: center; }
 .room-filter #project-open { flex: 0 0 auto; }
 .room-heading #room-info { flex: 0 0 auto; }
+@media (max-width: 700px), (max-width: 900px) and (pointer: coarse) { .room-heading #room-info { display: none; } } /* on a phone it is the first entry of the room menu */
 .sidebar .room-filter-input { flex: 1 1 100px; min-width: 0; margin: 0; padding: 6px 8px; font-size: 12px; }
 .room-row { padding: 4px 8px; }
 .room-row .room-name { flex: 1 1 auto; min-width: 7ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -35,7 +35,7 @@ const MENTION_LOGINS_TTL_MS = 30000;
 // One line of a message for a quote or a reply chip: whitespace collapsed, cut to 96 characters, "[attachment]" for a message that is only files.
 // The words of a message without its Markdown syntax (bold, code, links, quotes and headings), for a one-line quote of it.
 export const plainText = text => String(text || '')
-  .replace(/^\s{0,3}(?:#{1,6}|>)\s?/gm, '')
+  .replace(/^\s{0,3}(?:#{1,6}(?=\s|$)|>)\s?/gm, '')
   .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
   .replace(/(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1/g, '$2')
   .replace(/(^|[\s(])([*_])(?=\S)([^*_\n]+?)(?<=\S)\2(?=$|[\s).,;:!?])/g, '$1$3')
@@ -1351,6 +1351,15 @@ export class Chat {
     this.announcer.sendStarted();
     let sentID = null;
     try {
+      // A reply to a message that has something open for this person to decide (a proposed answer, a question) is the answer to it: it goes
+      // through the inbox, which resolves the item, so the item closes and the Inbox count drops, whether the text came from Shift-clicking an
+      // answer or was typed. With attachments there is no answer to send (the answer is text), so it stays an ordinary reply.
+      const open = reply && !attachments.length ? this.answerItems?.get(reply.id) : null;
+      if (open && ['question', 'approval'].includes(open.kind) && !open.boundary_pending && open.can_decide !== false) {
+        if (await this.inbox.answer(open, body.trim()) === false) throw new Error('Could not send the answer');
+        if (this.current(session, room)) { this.draft.value = ''; if (this.recall) this.recall.index = null; this.resizeDraft(); this.setReply(null); }
+        return;
+      }
       const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, attachments, ...(reply ? { reply_to: reply.id } : {}) } });
       sentID = message.id;
       if (this.current(session, room)) {

@@ -34,6 +34,8 @@ export class RoomMenu {
     this.phone.addEventListener('change', () => { this.close(); this.sync(); });
     // The overflow button exists only where controls overflow into it (phones) and only while it has something to open.
     new MutationObserver(() => this.sync()).observe(this.controls, { attributes: true, subtree: true, attributeFilter: ['hidden', 'disabled'] });
+    this.settings = document.querySelector('#room-info'); // beside the member count in the title; on a phone its place is this menu
+    if (this.settings) new MutationObserver(() => this.sync()).observe(this.settings, { attributes: true, attributeFilter: ['hidden', 'disabled'] });
     this.sync();
     window.addEventListener('resize', () => { if (!this.menu.hidden) this.place(); });
   }
@@ -47,7 +49,7 @@ export class RoomMenu {
 
   // One entry per header button that is currently shown, labelled with its accessible name.
   entries() {
-    return [...this.controls.querySelectorAll('button')].filter(button => !button.hidden).map(button => ({
+    return [...(this.settings ? [this.settings] : []), ...this.controls.querySelectorAll('button')].filter(button => !button.hidden).map(button => ({
       button,
       label: button.getAttribute('aria-label') || button.title || button.textContent.trim(),
     }));

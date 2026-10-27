@@ -367,8 +367,12 @@ export class Sidebar {
     if (this.sort !== 'manual') grip?.remove();
     else if (!grip) {
       grip = document.createElement('button'); grip.type = 'button'; grip.className = 'row-btn project-move project-grip'; grip.tabIndex = -1;
-      grip.onpointerdown = () => { row.draggable = true; };
-      for (const done of ['pointerup', 'pointercancel']) grip.addEventListener(done, () => { if (!this.dragging) row.draggable = false; });
+      // The row is draggable from the press on the handle until the press ends anywhere (the pointer may be released elsewhere, or the touch cancelled).
+      grip.onpointerdown = () => {
+        row.draggable = true;
+        const release = () => { for (const done of ['pointerup', 'pointercancel']) document.removeEventListener(done, release, true); if (!this.dragging) row.draggable = false; };
+        for (const done of ['pointerup', 'pointercancel']) document.addEventListener(done, release, true);
+      };
       row.insertBefore(grip, add);
     }
     if (grip) setGlyph(grip, 'menu', `Drag to move ${project.name}`);

@@ -1224,6 +1224,50 @@ async function main() {
       emptyOther: '1/2 answered', allAnswered: '2/2 answered',
       review: { subtitle: 'Review 2/2 answers', sendShown: true, items: 2 },
     });
+    // Open Questions: moving between the options with the arrow keys is looking around, not answering (it does not move on); a click does.
+    const arrowing = await first.evaluate(async () => {
+      const { answerControls } = await import('/js/answer-controls.js');
+      const host = answerControls({ id: 'oq-arrow', open_questions: [{ question: 'Scope?', options: ['Small', 'Large'] }, { question: 'When?', options: ['Now', 'Later'] }] }, async () => {});
+      document.body.append(host); host.querySelector('.open-questions-open').click();
+      const dialog = [...document.querySelectorAll('.open-questions-dialog')].pop(), where = () => dialog.querySelector('.open-questions-subtitle').textContent;
+      const sheet = dialog.querySelector('.open-question-sheet:not([hidden])'), radios = [...sheet.querySelectorAll('input[type=radio]')];
+      sheet.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })); radios[1].click(); sheet.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowDown', bubbles: true }));
+      const afterArrow = [where(), dialog.querySelector('.open-questions-progress').textContent];
+      radios[0].click();
+      const afterClick = where();
+      dialog.close(); host.remove(); sessionStorage.removeItem('aimebu2.oq.oq-arrow');
+      return { afterArrow, afterClick };
+    });
+    assert.deepEqual(arrowing, { afterArrow: ['Question 1 of 2', '1/2 answered'], afterClick: 'Question 2 of 2' }, 'the arrow keys choose without moving on; a click moves on');
+    // The inbox has no composer, so its chips come with an "Answer…" button that opens a small field for an answer of one's own, which is sent as it stands.
+    assert.deepEqual(await first.evaluate(async () => {
+      const { answerControls } = await import('/js/answer-controls.js');
+      const sent = [], host = answerControls({ proposed_answers: ['Proceed'], free_text: true }, async value => { sent.push(value); }, { freeAnswer: true });
+      document.body.append(host);
+      const open = host.querySelector('.answer-free-open'), form = host.querySelector('form');
+      const closed = [open.textContent, form.hidden, open.getAttribute('aria-expanded')];
+      open.click(); const opened = [form.hidden, open.getAttribute('aria-expanded'), document.activeElement === form.querySelector('textarea')];
+      form.querySelector('textarea').value = 'Proceed, but carefully'; form.requestSubmit(); await new Promise(resolve => setTimeout(resolve, 0));
+      const without = answerControls({ proposed_answers: ['Proceed'], free_text: true }, async () => {}); const room = !!without.querySelector('.answer-free-open, form');
+      host.remove();
+      return { closed, opened, sent, room };
+    }), { closed: ['Answer…', true, 'false'], opened: [false, 'true', true], sent: ['Proceed, but carefully'], room: false }, 'the inbox can give a free-text answer; the room view has no such box');
+    // A reply to a message with an open request for this person is sent as the answer (so the item resolves), however the text got there.
+    assert.deepEqual(await first.evaluate(async () => {
+      const { Chat } = await import('/js/chat.js');
+      const answers = [], shown = [];
+      const make = (reply, item, attachments = []) => {
+        const chat = Object.create(Chat.prototype);
+        Object.assign(chat, { room: { id: 'r' }, pendingUploads: 0, recall: null, sessionGeneration: 1, pendingAttachments: attachments, reply, error: { textContent: '' }, notice: { clear() {}, show(text) { shown.push(text); } }, announcer: { sendStarted() {}, sendFinished() {} },
+          draft: { value: '@tess Proceed, carefully', setSelectionRange() {} }, answerItems: new Map(item ? [['m1', item]] : []), current: () => true, resizeDraft() {}, setReply(message) { this.reply = message; }, inbox: { answer: async (found, text) => { answers.push([found.id, text]); return chat.__ok !== false; } } });
+        return chat;
+      };
+      const open = { id: 'inb', kind: 'question', rev: 0, can_decide: true };
+      const chat = make({ id: 'm1' }, open); await chat.send();
+      const resolved = { answers: [...answers], draft: chat.draft.value, reply: chat.reply };
+      const refusing = make({ id: 'm1' }, open); refusing.__ok = false; await refusing.send();
+      return { resolved, kept: refusing.draft.value, shown: [...shown] };
+    }), { resolved: { answers: [['inb', '@tess Proceed, carefully']], draft: '', reply: null }, kept: '@tess Proceed, carefully', shown: ['Could not send the answer'] }, 'a reply to a message with a request open for you resolves it, and a refused answer keeps the text');
     // A proposed answer is the v1 button: a click sends "@author answer"; Shift-click puts it in the composer with the reply link (when the
     // page can do that) and sends nothing; a refused send keeps the buttons and says why.
     const proposedAnswers = await first.evaluate(async () => {
@@ -2163,8 +2207,8 @@ async function main() {
     assert.equal(await first.$eval('.message:nth-child(2) .quote', el => /^↪ #\d+ (You|owner): \S/.test(el.textContent)), true, 'a reply quotes a snippet of its parent');
     assert.deepEqual(await first.evaluate(async () => {
       const { messageSnippet } = await import('/js/chat.js' + new URL(document.querySelector('script[type=module]').src).search);
-      return [messageSnippet({ body: '  a\n\n  b   c ' }), messageSnippet({ body: '', attachments: [{}] }), messageSnippet({ body: 'x'.repeat(200) }).length, messageSnippet({ body: 'word '.repeat(40) }).endsWith('…'), messageSnippet({ body: '' }), messageSnippet(undefined), messageSnippet({ body: '**Done** with `code`, [a link](http://x), _soft_ and snake_case_name\n> quoted' })];
-    }), ['a b c', '[attachment]', 96, true, '', '', 'Done with code, a link, soft and snake_case_name quoted'], 'the snippet is one line, cut with an ellipsis, and has no Markdown syntax');
+      return [messageSnippet({ body: '  a\n\n  b   c ' }), messageSnippet({ body: '', attachments: [{}] }), messageSnippet({ body: 'x'.repeat(200) }).length, messageSnippet({ body: 'word '.repeat(40) }).endsWith('…'), messageSnippet({ body: '' }), messageSnippet(undefined), messageSnippet({ body: '**Done** with `code`, [a link](http://x), _soft_ and snake_case_name\n> quoted' }), messageSnippet({ body: '#42 and #general\n## Heading' })];
+    }), ['a b c', '[attachment]', 96, true, '', '', 'Done with code, a link, soft and snake_case_name quoted', '#42 and #general Heading'], 'the snippet is one line, cut with an ellipsis, and has no Markdown syntax');
     await first.hover('.message:first-child');
     await domClick(first, '.message:first-child .thread-action');
     await second.hover('.message:first-child');
@@ -2793,8 +2837,8 @@ async function main() {
       })), { title: 'Continue a Claude Code session', text: 'This continues the session. It carries on from where it stopped, in the same transcript.',
         confirm: true, name: false, startIn: true, room: 'A new room for this session', sessions: true, worktree: true, mode: 'continue' }, 'the Spawn dialog opens for the picked session, continuing by default');
       // The session is a neutral card: its short id, its folder and when it was last used, in a compact box; no title from the first prompt.
-      assert.deepEqual(await first.evaluate(() => { const box = document.querySelector('#spawn-resume'), card = document.querySelector('#spawn-resume-card'), modes = [...document.querySelectorAll('#spawn-resume-mode label')].map(label => label.getBoundingClientRect().top); return { rows: [...card.querySelectorAll('dt')].map(term => [term.textContent, term.nextElementSibling.textContent.length > 0]), id: card.querySelector('dd').textContent, oneRow: new Set(modes.map(top => Math.round(top))).size === 1, titled: box.textContent.includes('Fix the login bug') }; }),
-        { rows: [['Session', true], ['Folder', true], ['Last active', true]], id: '11111111', oneRow: true, titled: false }, 'the picked session is shown as a neutral card, and the Continue and Fork choice is one compact row');
+      assert.deepEqual(await first.evaluate(() => { const box = document.querySelector('#spawn-resume'), card = document.querySelector('#spawn-resume-card'), modes = [...document.querySelectorAll('#spawn-resume-mode label')].map(label => label.getBoundingClientRect().top); return { rows: [...card.querySelectorAll('dt')].map(term => [term.textContent, term.nextElementSibling.textContent.length > 0]), id: card.querySelector('dd').textContent, compact: Math.max(...modes) - Math.min(...modes) < 30, titled: box.textContent.includes('Fix the login bug') }; }),
+        { rows: [['Session', true], ['Folder', true], ['Last active', true]], id: '11111111', compact: true, titled: false }, 'the picked session is shown as a neutral card, and the Continue and Fork choice is compact (side by side, or stacked tight)');
       await domClick(first, '#spawn-cancel');
       await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
       // A session a live process has open asks for a confirmation before it can be continued.
@@ -2810,7 +2854,7 @@ async function main() {
       await first.evaluate(() => { const radio = document.querySelector('#spawn-form [name=resume_mode][value=fork]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); });
       assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
         text: document.querySelector('#spawn-resume-text').textContent.slice(0, 60), notes: document.querySelector('#spawn-resume-notes').textContent.includes('Close it first') })),
-        { title: 'Work on a copy of a Claude Code session', confirm: true, text: 'This works on a copy of the session. The agent starts from ev', notes: false });
+        { title: 'Work on a copy of a Claude Code session', confirm: true, text: 'This works on a copy of the session. The agent starts from e', notes: false });
       await first.evaluate(() => { const radio = document.querySelector('#spawn-form [name=resume_mode][value=continue]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); });
       assert.equal(await first.$eval('#spawn-resume-confirm-label', el => el.hidden), false, 'continuing asks again for the confirmation');
       await domClick(first, '#spawn-cancel');
@@ -4690,7 +4734,7 @@ async function main() {
     // The state ("working 0:12") stays inside its card whatever the width of the panel.
     assert.deepEqual(await agentPage.evaluate(() => {
       const panel = document.querySelector('#agents-panel'), before = panel.style.width, results = [];
-      for (const width of ['150px', '190px', '']) {
+      for (const width of ['220px', '']) {
         panel.style.width = width;
         for (const card of document.querySelectorAll('#agents-list .agent-card')) { if (!card.offsetParent) continue; const box = card.getBoundingClientRect(), state = card.querySelector('.agent-state').getBoundingClientRect(); results.push(state.right <= box.right + 0.5 && state.left >= box.left - 0.5); }
       }
@@ -6038,6 +6082,7 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#role-editor').hidden);
     assert.equal(await first.evaluate(async () => { const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': (await (await fetch('/api/me')).json()).csrf_token }; const role = (await (await fetch('/api/roles')).json()).find(item => item.role_key === 'analyst'); return (await fetch(`/api/roles/${role.id}`, { method: 'PUT', headers, body: JSON.stringify({ ...role, pick_mode: 'randomly' }) })).status; }), 200);
     assert.equal(await first.evaluate(async () => (await (await fetch('/api/roles')).json()).find(role => role.role_key === 'analyst')?.pick_mode), 'randomly');
+    await first.evaluate(async () => { const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': (await (await fetch('/api/me')).json()).csrf_token }; const role = (await (await fetch('/api/roles')).json()).find(item => item.role_key === 'analyst'); await fetch(`/api/roles/${role.id}`, { method: 'PUT', headers, body: JSON.stringify({ ...role, pick_mode: 'in_turn' }) }); });
     // Roles can extend other roles, and a built-in role can be reset: the built-in specialists extend reviewer.
     {
       await first.waitForFunction(() => [...document.querySelectorAll('#roles-list option')].some(option => option.textContent.includes('(sec-reviewer)')));
@@ -7165,7 +7210,7 @@ async function main() {
     assert.ok(analystDefaults?.includes('Inherit global'), 'the project shows the global source');
     const analystIndex = await first.evaluate(() => [...document.querySelectorAll('.project-role-default')].findIndex(item => item.querySelector('h4')?.textContent === 'analyst'));
     await first.select(`.project-role-default:nth-child(${analystIndex + 1}) select[aria-label="analyst default source"]`, 'custom');
-    await first.select(`.project-role-default:nth-child(${analystIndex + 1}) select[aria-label="Default agent selection mode"]`, 'in_turn');
+    assert.equal(await first.$(`.project-role-default:nth-child(${analystIndex + 1}) select[aria-label="Default agent selection mode"]`), null, 'a role with no default agents has nothing to order, so no Pick order');
     await domClick(first, `.project-role-default:nth-child(${analystIndex + 1}) > button`);
     await first.waitForFunction(index => document.querySelector(`.project-role-default:nth-child(${index + 1}) [role=status]`)?.textContent === 'Saved.', {}, analystIndex);
     assert.deepEqual(await first.evaluate(async id => { const rows = await (await fetch(`/api/projects/${id}/role-spawn-defaults`)).json(); const item = rows.find(row => row.role_key === 'analyst'); return [item.inherited, item.pick_mode, item.default_agents.length]; }, actualProjectID), [false, 'in_turn', 0]);
@@ -7336,6 +7381,7 @@ async function main() {
     await first.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] > .room-row`), {}, roomID);
     const invitedContext = await browser.createBrowserContext();
     const invitedPage = await invitedContext.newPage();
+    await invitedPage.setViewport({ width: 1100, height: 720 }); // a window of 701-900px starts with the rooms column collapsed
     if (process.env.UI_THROTTLE_INVITED) { const session = await invitedPage.createCDPSession(); await session.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.UI_THROTTLE_INVITED) }); }
     await invitedPage.evaluateOnNewDocument(() => {
       const originalFetch = window.fetch.bind(window);
@@ -8817,6 +8863,10 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       assert.equal(await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip)', row => row.draggable), true, 'pressing the handle makes the row draggable');
       await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })));
       assert.equal(await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip)', row => row.draggable), false, 'and releasing it makes it a plain row again');
+      // The press ends wherever the pointer is released: the row is not left draggable when it is let go elsewhere.
+      await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+      await listPage.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })));
+      assert.equal(await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip)', row => row.draggable), false, 'a press released elsewhere makes the row a plain row again');
       // The whole project row opens its home room, not only its name.
       const [wantedHome, openedHome] = await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip):not(.active)', row => { const name = row.querySelector('.room-name').textContent; row.click(); return [name, null]; });
       await listPage.waitForFunction(name => document.querySelector('#projects .room-row.active .room-name')?.textContent === name, {}, wantedHome);
@@ -8857,7 +8907,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       // The box is a plain filter: it narrows the list, and Enter creates or opens nothing (rooms are made from a row's +).
       await listPage.reload(); await appReady(listPage);
       await listPage.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] .room-name`), {}, alpha.id);
-      assert.equal(await listPage.$$eval('.room-filter select, .room-filter button, .room-filter .error', nodes => nodes.length), 0, 'no project choice and no Create button in the filter box');
+      assert.deepEqual(await listPage.$$eval('.room-filter select, .room-filter button, .room-filter .error', nodes => nodes.map(node => node.id)), ['project-open'], 'the filter box has no project choice and no Create button: only New project, to its right');
       assert.deepEqual(await listPage.$eval('.room-filter-input', el => [el.placeholder, el.getAttribute('aria-label')]), ['Filter rooms…', 'Filter rooms']);
       await listPage.type('.room-filter-input', 'beta');
       assert.deepEqual(await listPage.$$eval('#projects > .room-group .room-name', els => els.map(el => el.textContent.toLocaleLowerCase().includes('beta'))).then(list => [...new Set(list)]), [true], 'the filter keeps only matching rooms');
