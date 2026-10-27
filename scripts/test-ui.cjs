@@ -1854,6 +1854,7 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#messages')?.dataset.empty === 'true');
     assert.equal(await first.$eval('#messages', el => getComputedStyle(el, '::before').content), '"No messages in this room yet."', 'an empty room says so');
     assert.deepEqual(await first.$eval('#composer .composer-aa', el => ({ icon: el.querySelectorAll('svg').length, text: el.textContent.trim() })), { icon: 1, text: '' }, 'the formatting switch is an icon, not the letters Aa');
+    assert.deepEqual(await first.evaluate(() => { const info = document.querySelector('#room-info'), members = document.querySelector('#room-members'); return [info.parentElement.className, info.previousElementSibling === members]; }), ['room-heading', true], 'the room settings button sits next to the member-count pill');
     await domClick(first, '#room-info');
     assert.equal(await first.$eval('#room-info-dialog', el => el.open), true);
     assert.equal(await first.$eval('#room-rename-title', el => el.value), 'Nested task', 'the room title is the field at the top of its settings');
@@ -4829,7 +4830,7 @@ async function main() {
     const cards = await iconOnlyReport(agentPage, ['.agent-expand', '.agent-act', '.profile-copy', '.agent-card .agent-quick .icon-btn', '.add-room']);
     assert.deepEqual(cards.bad, [], 'the agent card buttons are icon buttons with a tooltip and a name'); assert.ok(cards.found >= 10, `agent card icon buttons found: ${cards.found}`);
     // Rooms header: the + and ‹ sit together at the right with a 6px gap, and the filter box starts right under the header.
-    assert.deepEqual(await agentPage.evaluate(() => { const header = document.querySelector('.sidebar > header').getBoundingClientRect(), plus = document.querySelector('#project-open').getBoundingClientRect(), collapse = document.querySelector('#edge-rooms').getBoundingClientRect(), filter = document.querySelector('.sidebar .room-filter').getBoundingClientRect(); return { gap: Math.round(collapse.left - plus.right), rightPad: Math.round(header.right - collapse.right), band: Math.round(filter.top - header.bottom) <= 14 }; }), { gap: 6, rightPad: 12, band: true }, 'the rooms header groups its buttons and leaves no empty band');
+    assert.deepEqual(await agentPage.evaluate(() => { const header = document.querySelector('.sidebar > header').getBoundingClientRect(), plus = document.querySelector('#project-open').getBoundingClientRect(), fold = document.querySelector('#rooms-fold').getBoundingClientRect(), collapse = document.querySelector('#edge-rooms').getBoundingClientRect(), filter = document.querySelector('.sidebar .room-filter').getBoundingClientRect(), input = document.querySelector('.sidebar .room-filter-input').getBoundingClientRect(); return { gap: Math.round(collapse.left - fold.right), rightPad: Math.round(header.right - collapse.right), band: Math.round(filter.top - header.bottom) <= 14, newProjectRightOfFilter: plus.left >= input.right && Math.abs((plus.top + plus.bottom) / 2 - (input.top + input.bottom) / 2) < 4 && document.querySelector('#project-open').parentElement.classList.contains('room-filter') }; }), { gap: 6, rightPad: 12, band: true, newProjectRightOfFilter: true }, 'the rooms header groups its buttons and leaves no empty band, and New project sits to the right of the room filter');
     // One button system: every visible button in the app shell is a .btn, an .icon-btn or a .row-btn, and a hover lights the
     // top bar's buttons up (the border and the text go to the primary text colour).
     const strays = await agentPage.evaluate(() => [...document.querySelectorAll('#app-view button, .workspace-bar button')].filter(el => el.getClientRects().length && !el.matches('.btn, .icon-btn, .row-btn')).map(el => `${el.id || el.className || el.tagName}:${el.textContent.trim().slice(0, 16)}`));
@@ -8801,7 +8802,16 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       // Manual: the move buttons and the drag handle reorder projects; the end buttons are disabled.
       const moveState = () => listPage.$$eval('#projects > .room-group > .room-row', rows => rows.filter(row => (row.querySelector('.room-name')?.textContent || '').startsWith('⌂')).map(row => `${row.querySelector('.room-name').textContent.replace(/^⌂\s*/, '')}:${row.querySelector('.project-move-up')?.disabled}:${row.querySelector('.project-move-down')?.disabled}:${row.draggable}`));
       const order0 = await projectOrder();
-      assert.deepEqual(await moveState(), order0.map((name, index) => `${name}:${index === 0}:${index === order0.length - 1}:true`), 'the first project cannot move up, the last cannot move down, and rows can be dragged');
+      assert.deepEqual(await moveState(), order0.map((name, index) => `${name}:${index === 0}:${index === order0.length - 1}:false`), 'the first project cannot move up, the last cannot move down, and a row is dragged only by its handle');
+      assert.deepEqual(await listPage.$$eval('#projects > .room-group > .room-row .project-grip', grips => grips.map(grip => [grip.title.startsWith('Drag to move '), !!grip.querySelector('.icon-mask-menu'), getComputedStyle(grip).visibility, grip.nextElementSibling?.classList.contains('project-move-up')])), order0.map(() => [true, true, 'hidden', true]), 'each project has a hover-only ≡ handle left of the arrows');
+      await listPage.hover('#projects > .room-group > .room-row:has(.project-grip)');
+      await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+      assert.equal(await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip)', row => row.draggable), true, 'pressing the handle makes the row draggable');
+      await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })));
+      assert.equal(await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip)', row => row.draggable), false, 'and releasing it makes it a plain row again');
+      // The whole project row opens its home room, not only its name.
+      const [wantedHome, openedHome] = await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip):not(.active)', row => { const name = row.querySelector('.room-name').textContent; row.click(); return [name, null]; });
+      await listPage.waitForFunction(name => document.querySelector('#projects .room-row.active .room-name')?.textContent === name, {}, wantedHome);
       const firstHome = (await homeIDs())[0];
       await domClick(listPage, `[data-room-id="${firstHome}"] > .room-row .project-move-down`);
       await listPage.waitForFunction(first => document.querySelector('#projects > .room-group').dataset.roomId !== first, {}, firstHome);

@@ -48,7 +48,13 @@ export class Sidebar {
     for (const requestID of this.roomRequests) requestID.abort();
     this.roomRequests.clear();
     for (const cache of [this.projects, this.rooms, this.roomNodes, this.archiveNodes, this.hiddenNodes, this.archivedOpen, this.archiveSearchNodes, this.archiveHitNodes, this.archiveFilter, this.archiveTimers, this.archiveRequests, this.health, this.listSeqs]) cache.clear();
-    this.active = ''; this.loadedUser = null; this.filter = ''; this.createBox = null; this.directNode = null; this.container.replaceChildren();
+    this.dockProjectButton(); this.active = ''; this.loadedUser = null; this.filter = ''; this.createBox = null; this.directNode = null; this.container.replaceChildren();
+  }
+  // The New project button lives to the right of the room filter; when the filter goes it returns to the sidebar header, so it is never detached.
+  dockProjectButton() {
+    const button = this.projectButton ||= document.querySelector('#project-open');
+    const header = document.querySelector('.sidebar > header');
+    if (button && header && button.parentElement !== header) header.insertBefore(button, header.querySelector('#edge-rooms'));
   }
   // Settings announces a change of the preview choice; the rows are drawn again from the rooms already loaded.
   watchPreview() { document.addEventListener(SIDEBAR_PREVIEW_EVENT, () => this.render()); }
@@ -342,6 +348,8 @@ export class Sidebar {
       const form = document.createElement('form'); form.className = 'room-filter';
       const input = document.createElement('input'); input.type = 'text'; input.className = 'room-filter-input'; input.placeholder = 'Filter rooms…'; input.autocomplete = 'off'; input.setAttribute('aria-label', 'Filter rooms');
       form.append(input);
+      const create = this.projectButton ||= document.querySelector('#project-open');
+      if (create) form.append(create);
       input.oninput = () => { this.filter = input.value; this.render(); };
       form.onsubmit = event => event.preventDefault(); // Enter creates nothing
       this.createBox = form;
@@ -352,8 +360,18 @@ export class Sidebar {
   projectControls(row, room, opts) {
     const project = room.kind === 'home' ? this.projects.get(room.project_id) : null;
     const wanted = !!project && !!opts.project;
-    if (!wanted) { row.querySelector('.project-move-up')?.remove(); row.querySelector('.project-move-down')?.remove(); row.draggable = false; row.classList.remove('project-draggable'); return; }
+    if (!wanted) { row.querySelector('.project-grip')?.remove(); row.querySelector('.project-move-up')?.remove(); row.querySelector('.project-move-down')?.remove(); row.draggable = false; row.classList.remove('project-draggable'); return; }
     const add = row.querySelector('.add-room');
+    // A project is dragged by its ≡ handle, shown on hover left of the arrows; the rest of the row only opens the room.
+    let grip = row.querySelector('.project-grip');
+    if (this.sort !== 'manual') grip?.remove();
+    else if (!grip) {
+      grip = document.createElement('button'); grip.type = 'button'; grip.className = 'row-btn project-move project-grip'; grip.tabIndex = -1;
+      grip.onpointerdown = () => { row.draggable = true; };
+      for (const done of ['pointerup', 'pointercancel']) grip.addEventListener(done, () => { if (!this.dragging) row.draggable = false; });
+      row.insertBefore(grip, add);
+    }
+    if (grip) setGlyph(grip, 'menu', `Drag to move ${project.name}`);
     for (const [name, delta, glyph, label] of [['project-move-up', -1, 'arrow-up', 'Move project up'], ['project-move-down', 1, 'arrow-down', 'Move project down']]) {
       let button = row.querySelector(`.${name}`);
       if (this.sort !== 'manual') { button?.remove(); continue; }
@@ -362,13 +380,13 @@ export class Sidebar {
       button.disabled = delta < 0 ? opts.project.first : opts.project.last;
       button.onclick = () => this.moveProject(project.id, delta);
     }
-    row.draggable = this.sort === 'manual'; row.classList.toggle('project-draggable', this.sort === 'manual');
+    row.draggable = false; row.classList.toggle('project-draggable', this.sort === 'manual');
     if (!row.dataset.dragBound) {
       row.dataset.dragBound = '1';
       const same = event => { const from = this.dragging && this.projects.get(this.dragging), to = this.projects.get(room.project_id); return from && to && from.id !== to.id && this.sort === 'manual'; };
       const clear = () => document.querySelectorAll('.drop-before, .drop-after').forEach(node => node.classList.remove('drop-before', 'drop-after'));
       row.addEventListener('dragstart', event => { if (this.sort !== 'manual') { event.preventDefault(); return; } this.dragging = room.project_id; event.dataTransfer?.setData('text/plain', room.project_id); if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'; row.classList.add('dragging'); });
-      row.addEventListener('dragend', () => { this.dragging = null; row.classList.remove('dragging'); clear(); });
+      row.addEventListener('dragend', () => { this.dragging = null; row.draggable = false; row.classList.remove('dragging'); clear(); });
       row.addEventListener('dragover', event => { if (!same(event)) return; event.preventDefault(); const after = event.clientY > row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2; clear(); row.classList.add(after ? 'drop-after' : 'drop-before'); });
       row.addEventListener('dragleave', () => row.classList.remove('drop-before', 'drop-after'));
       row.addEventListener('drop', event => {
@@ -447,6 +465,8 @@ export class Sidebar {
     let select = row.querySelector('.room-name');
     if (!select) {
       select = document.createElement('button'); select.type = 'button'; select.className = 'row-btn room-name'; select.onclick = () => this.onSelect(this.rooms.get(room.id) || room); row.append(select);
+      // The whole row opens the room, not only its name; the row's own buttons keep their own actions.
+      row.onclick = event => { if (!event.target.closest('button, input, select, a')) this.onSelect(this.rooms.get(room.id) || room); };
       const add = document.createElement('button'); add.type = 'button'; add.className = 'row-btn add-room'; setGlyph(add, 'plus', `New task room under ${room.title}`);
       add.onclick = async () => {
         const answer = await formDialog({ title: `New task room under ${room.title}`, confirm: 'Create room', fields: [
