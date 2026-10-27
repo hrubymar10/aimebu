@@ -158,10 +158,14 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
   and send the stored revision; the Harnesses page's role-defaults event is read while no editor is open and ignored while one
   is; a write answered after destroy draws, reads and announces nothing; the default-agents picker's add, order, pick order,
   remove and unavailable choice) and `scripts/test-roles-model.cjs` (the pure rules, in `make test-web`).
-- `make test-ui` also runs `scripts/test-general-page.cjs` (the Appearance block: the rows built and named, a person's saved
-  theme and room-preview choice shown and applied when they are known, a theme no longer offered falling back to dark,
-  choosing writing the page, the browser's storage and the account's preferences, nothing stored under a person's name
-  before anyone is known) and `scripts/test-general-model.cjs` (the theme list and storage keys, in `make test-web`).
+- `make test-ui` also runs `scripts/test-general-page.cjs` (Settings → General with requests held: the sections in their order; a
+  person's saved theme and room-preview choice shown and applied, a retired theme falling back to dark, choosing writing the
+  page, the browser's storage and the account's preferences; the chat switches driving the bell and the debug button and read
+  again when General is shown; the expiry window read each time and left alone while typed in, a refused value sending nothing,
+  one save at a time, a failed save keeping the text, a read-only view, a save answered after destroy; the backup shown to the
+  owner and admins as they may use it, an export, two files chosen in a row drawing only the second's plan, Apply sending the
+  ticked sections once and a stale preview dropped) and `scripts/test-general-model.cjs` (the theme list and storage keys, in
+  `make test-web`).
 - `make test-ui` also runs `scripts/test-harness-page.cjs`: the Preact page in real Chromium (the existing Puppeteer tooling,
   `web/` served as is with the page's import map, no Go server), with every request held until the test answers it, so the
   order of answers is chosen. It checks:
@@ -238,7 +242,7 @@ same change (section 5); the experiment, default-flip and removal steps describe
 
 ### Step 2: the other Settings sections
 
-Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`), Roles (`web/js/pages/roles/`; its default-agents picker is the shared `components/spawn-defaults.js`, which Project will use too, and `spawn-defaults-editor.js` goes with that step), General's Appearance block (`web/js/pages/general/`: Preact owns only that block, because retention, system events and the settings backup append their own sections to General).
+Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`), Roles (`web/js/pages/roles/`; its default-agents picker is the shared `components/spawn-defaults.js`, which Project will use too, and `spawn-defaults-editor.js` goes with that step), General (`web/js/pages/general/`: appearance, the chat switches, message expiry and the settings backup; the chat switches read `chat-preferences.js`, which the system-events feed shares, and the expiry window is the shared `retention.js` store).
 
 - Scope: the small sections first (prompts, macros, roles, retention, limit guard, quota), then users, machines and project;
   then the settings shell's nav and section switching.

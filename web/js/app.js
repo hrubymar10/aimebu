@@ -18,12 +18,10 @@ import { KnowledgePanel } from './knowledge.js';
 import { Health } from './health.js';
 import { SystemEvents } from './system-events.js';
 import { retention } from './retention.js';
-import { RetentionSettings } from './retention-settings.js';
 import { showWelcome } from './welcome.js';
 import { ownerSetup } from './setup.js';
 import { Onboarding } from './onboarding.js';
 import { loadPreferences } from './preferences.js';
-import { SettingsBackup } from './settings-backup.js';
 import { RoomMenu } from './room-menu.js';
 import { MessageDebug } from './message-debug.js';
 import { initMobileTabs } from './mobile-tabs.js';
@@ -235,8 +233,6 @@ const health = new Health(sidebar, agents, async (room, agentID) => {
   return true;
 }, new DiskUsage());
 const systemEvents = new SystemEvents({ agentName: id => agents.cards.get(id)?.name, roomTitle: id => sidebar.rooms.get(id)?.title });
-new RetentionSettings();
-new SettingsBackup();
 const messageDebug = new MessageDebug();
 chat.setDebugInspector(message => messageDebug.open(message));
 // The inspector walks the room's messages (v1's previous and next) and carries the actions the message bubble leaves out in style A.

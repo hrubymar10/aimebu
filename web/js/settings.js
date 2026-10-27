@@ -1,5 +1,5 @@
 import { request, rights, refreshRights } from './api.js';
-import { AppearanceSettings } from './pages/general/page.js';
+import { GeneralSettings } from './pages/general/page.js';
 import { NotificationSounds } from './notification-sounds.js';
 import { element, creditsText, usageWindowRow } from './usage-format.js';
 import { settingsRow, settingsGroup } from './settings-row.js';
@@ -50,7 +50,7 @@ export class SettingsPanel {
     this.usagesTab = document.querySelector('#settings-usages-tab');
     this.generalTab = document.querySelector('#settings-general-tab');
     this.generalSection = document.querySelector('#settings-general');
-    this.appearance = new AppearanceSettings();
+    this.general = new GeneralSettings(this.generalSection);
     this.notificationsTab = document.querySelector('#settings-notifications-tab');
     this.rolesTab = document.querySelector('#settings-roles-tab');
     this.machinesTab = document.querySelector('#settings-machines-tab');
@@ -97,6 +97,7 @@ export class SettingsPanel {
   // edit their harnesses (pairing, approving and revoking machines stay the owner's). For anyone else those tabs are gone instead of opening onto a 403.
   setRights({ owner, admin }) {
     const settings = owner || admin;
+    this.general.setRights({ owner, admin });
     this.rolesTab.hidden = !settings; this.promptSettings.tab.hidden = !settings; this.macroSettings.tab.hidden = !settings; 
     this.machinesTab.hidden = !settings; this.harnessSettings.tab.hidden = !settings;
     this.agentsTitle.hidden = this.machinesTab.hidden && this.harnessSettings.tab.hidden; // no AGENTS caption over an empty group
@@ -107,7 +108,7 @@ export class SettingsPanel {
     this.userID = userID;
     this.usagesTab.hidden = false;
     document.querySelector('#usages-toggle').hidden = false;
-    this.appearance.setUser(userID);
+    this.general.setUser(userID);
   }
   // Settings opens on General; the usages column's own Settings button asks for the Usages section.
   async open(section = 'general', options = {}) {
@@ -233,6 +234,7 @@ export class SettingsPanel {
     for (const [tab, selected] of [[this.generalTab, section === 'general'], [this.usagesTab, section === 'usages'], [this.notificationsTab, notifications], [this.rolesTab, section === 'roles'], [this.machinesTab, section === 'machines'], [this.macroSettings.tab, section === 'macros'], [this.harnessSettings.tab, section === 'harnesses'], [this.usersSettings.tab, section === 'users'], [this.promptSettings.tab, section === 'prompts']]) {
       if (selected) tab.setAttribute('aria-current', 'page'); else tab.removeAttribute('aria-current');
     }
+    if (section === 'general') this.general.open();
     if (section === 'users') this.usersSettings.open();
     if (notifications) { this.renderNotifications(); this.sounds.open(); }
     if (section === 'roles') this.roleSettings.open();

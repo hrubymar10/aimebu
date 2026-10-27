@@ -1,18 +1,23 @@
 import { html, signal } from '../../ui.js';
 import { savePreference } from '../../preferences.js';
+import { retention } from '../../retention.js';
+import { chatPreferences } from '../../chat-preferences.js';
 import { mountPreactPage } from '../mount-page.js';
-import { Appearance } from './appearance.js';
+import { GeneralPage } from './general-page.js';
 import { knownTheme, themeAttribute, themeKey, previewKey } from './model.js';
 
-// Settings -> General holds sections of its own modules too (retention, system events, backup append to it), so Preact owns only the
-// Appearance block of it. The theme and the room-preview switch are the account's, kept in the browser per person and on the server.
-export class AppearanceSettings {
-  constructor(container = document.querySelector('#settings-appearance')) {
-    this.container = container;
+// Settings -> General: the theme and room-preview choices, the chat switches, the message-expiry window and the settings backup. The shell
+// sets who is signed in and what they may do from outside the page, so this object keeps those as signals the components read. The theme and
+// the preview switch are the account's: kept in the browser per person and on the server.
+export class GeneralSettings {
+  constructor(section = document.querySelector('#settings-general')) {
+    this.section = section;
     this.userID = '';
     this.theme = signal(document.documentElement.dataset.theme || 'dark');
     this.preview = signal(false);
-    this.page = mountPreactPage(container, () => html`<${Appearance} appearance=${this} />`);
+    this.chat = signal({ systemEvents: true, debugInspector: false });
+    this.rights = signal({ owner: false, admin: false });
+    this.page = mountPreactPage(section, () => html`<${GeneralPage} store=${this} />`);
   }
 
   apply(theme) {
@@ -20,6 +25,9 @@ export class AppearanceSettings {
     if (value === null) delete document.documentElement.dataset.theme;
     else document.documentElement.dataset.theme = value;
   }
+
+  // What the chat switches hold now, for the person this browser is signed in as.
+  readChat() { this.chat.value = { systemEvents: chatPreferences.showSystemEvents, debugInspector: chatPreferences.debugInspector }; }
 
   // Reads what this person chose in this browser and applies the theme.
   setUser(userID) {
@@ -34,6 +42,15 @@ export class AppearanceSettings {
     this.theme.value = theme;
     this.preview.value = preview;
     this.apply(theme);
+    this.readChat();
+  }
+
+  setRights({ owner, admin }) { this.rights.value = { owner: !!owner, admin: !!admin }; }
+
+  // Each time General is shown: the window may have been changed elsewhere, and so may the chat switches.
+  open() {
+    this.readChat();
+    retention.load();
   }
 
   chooseTheme(theme) {
@@ -51,5 +68,6 @@ export class AppearanceSettings {
     document.dispatchEvent(new CustomEvent('aimebu:sidebar-preview'));
   }
 
+  hasUnsavedChanges() { return this.page.hasUnsavedChanges(); }
   destroy() { this.page.destroy(); }
 }

@@ -1,8 +1,7 @@
-import { savePreference } from './preferences.js';
+import { applyChatPreferences } from './chat-preferences.js';
 import { focusPopover, returnFocus } from './popover-focus.js';
-import { request, currentUser } from './api.js';
+import { request } from './api.js';
 import { relativeTime } from './time.js';
-import { settingsRow, settingsGroup } from './settings-row.js';
 
 function node(tag, className = '', text = '') { const item = document.createElement(tag); if (className) item.className = className; if (text) item.textContent = text; return item; }
 
@@ -67,23 +66,6 @@ export function describeEvent(event, names = {}) {
   return { text: parts[0], where, details: details.join(', ') };
 }
 
-// Browser-side preferences for the chat view. Both default to the v1 defaults:
-// system events visible, debug inspector off.
-export const chatPreferences = {
-  key(name) { return `aimebu2.ui.${name}.${currentUser}`; },
-  get showSystemEvents() { try { return localStorage.getItem(this.key('show-system-events')) !== '0'; } catch { return true; } },
-  set showSystemEvents(value) { try { localStorage.setItem(this.key('show-system-events'), value ? '1' : '0'); } catch {} savePreference('system_events', value ? '1' : '0'); },
-  get debugInspectorChosen() { try { return localStorage.getItem(this.key('debug-inspector')) !== null; } catch { return true; } },
-  get debugInspector() { try { return localStorage.getItem(this.key('debug-inspector')) === '1'; } catch { return false; } },
-  set debugInspector(value) { try { localStorage.setItem(this.key('debug-inspector'), value ? '1' : '0'); } catch {} savePreference('debug_inspector', value ? '1' : '0'); },
-};
-
-export function applyChatPreferences() {
-  document.querySelector('#system-events-toggle')?.toggleAttribute('hidden', !chatPreferences.showSystemEvents);
-  if (!chatPreferences.showSystemEvents) document.querySelector('#system-events-popover')?.setAttribute('hidden', '');
-  document.documentElement.dataset.debugInspector = chatPreferences.debugInspector ? 'on' : 'off';
-}
-
 const keep = 200;
 
 // A feed of operational events (joins, spawns, recoveries, quota and machine
@@ -107,33 +89,11 @@ export class SystemEvents {
     // it would close the panel the same click just opened.
     document.addEventListener('click', event => { if (!this.popover.hidden && !this.popover.contains(event.target) && !this.toggle.contains(event.target) && !event.target.closest?.('#more-menu')) this.close(); });
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && !this.popover.hidden) { this.close(); this.toggle.focus(); } });
-    this.installSettings();
     applyChatPreferences();
   }
 
-  installSettings() {
-    const general = document.querySelector('#settings-general');
-    if (!general || general.querySelector('#chat-preferences')) return;
-    const group = node('div', 'settings-section'); group.id = 'chat-preferences';
-    group.append(node('h3', '', 'Chat'));
-    const rows = [];
-    const make = (id, text, hint, get, set) => {
-      const input = node('input'); input.type = 'checkbox'; input.id = id;
-      input.onchange = () => { set(input.checked); applyChatPreferences(); };
-      rows.push(settingsRow({ label: text, desc: hint, control: input, id, className: 'settings-row-toggle' }));
-      return () => { input.checked = get(); };
-    };
-    const syncEvents = make('pref-system-events', 'Show system events', 'Adds a bell to the top bar with a feed of joins, spawns, recoveries, quota limits, and machine changes.', () => chatPreferences.showSystemEvents, value => { chatPreferences.showSystemEvents = value; });
-    const syncDebug = make('pref-debug-inspector', 'Message debug inspector', 'Adds a debug button to each message that shows its raw record, who it addressed, and what happened to each agent it woke.', () => chatPreferences.debugInspector, value => { chatPreferences.debugInspector = value; });
-    this.syncSettings = () => { syncEvents(); syncDebug(); };
-    this.syncSettings();
-    group.append(settingsGroup(rows, 'Chat'));
-    general.append(group);
-    document.querySelector('#settings-general-tab')?.addEventListener('click', () => this.syncSettings());
-  }
-
   reset() { this.ticket++; this.events = []; this.unread = 0; this.close(); this.renderBadge(); this.renderList(); }
-  setUser() { applyChatPreferences(); this.syncSettings?.(); }
+  setUser() { applyChatPreferences(); }
 
   open() {
     this.popover.hidden = false; this.toggle.setAttribute('aria-expanded', 'true');

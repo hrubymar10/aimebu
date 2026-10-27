@@ -20,7 +20,7 @@ function slice(startMarker, endMarker) {
 const code = [
   slice('const labels = {', '// Payload fields worth showing'),
   slice('const detailKeys', 'export function describeEvent'),
-  slice('export function describeEvent', '// Browser-side preferences').replace('export function', 'function'),
+  slice('export function describeEvent', 'const keep = 200;').replace('export function', 'function'),
   'globalThis.describeEvent = describeEvent;',
 ].join('\n');
 const context = { globalThis: null };
