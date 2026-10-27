@@ -2495,6 +2495,8 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #onboarding-harnesses .btn, #onboarding-harnesses .btn-primary { width: auto; margin-top: 0; }
 #onboarding-harnesses .onboarding-actions { display: flex; gap: 10px; margin-top: 16px; }
 #onboarding-harnesses .onboarding-actions .btn { flex: 1 1 0; margin-top: 0; }
+#onboarding-harnesses .onboarding-actions button.btn-primary:disabled { background: transparent; border: 1px dashed var(--border); color: var(--text-secondary); opacity: 1; cursor: not-allowed; }
+#onboarding-harness-status { min-height: 1.4em; color: var(--text-secondary); }
 #onboarding-harness-status { margin: 12px 0 0; font-size: 12px; }
 #onboarding-harnesses .settings-content > p.settings-intro:first-of-type, #onboarding-harnesses .machine-activity-heading, #onboarding-harnesses [id$="machine-activity"] { display: none; }
 /* The glyph of a row's small buttons sits on the button's centre, so the + and the move icon share one axis with the room name (an inline

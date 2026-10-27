@@ -3260,8 +3260,22 @@ async function main() {
           assert.equal(await setupPage.$eval('#app-view', view => view.classList.contains('no-room')), false, 'the empty state is gone once the general room opens');
           assert.deepEqual(await setupPage.evaluate(async () => (await (await fetch('/api/projects')).json()).map(project => project.name)), ['demo']);
           assert.deepEqual(await setupPage.evaluate(() => ({ continueDisabled: document.querySelector('#onboarding-harnesses-continue').disabled, status: document.querySelector('#onboarding-harness-status').textContent, embedded: !!document.querySelector('#onboarding-harnesses-host #onboarding-settings-harnesses'), repeatedIds: [...document.querySelectorAll('[id]')].map(node => node.id).filter((id, at, all) => all.indexOf(id) !== at) })),
-            { continueDisabled: true, status: 'No harness with a model yet.', embedded: true, repeatedIds: [] }, 'the Harnesses step embeds the Settings component and cannot continue without a harness');
+            { continueDisabled: true, status: 'No harness with a model yet. Tick a detected harness, or add one by hand and give it a model.', embedded: true, repeatedIds: [] }, 'the Harnesses step embeds the Settings component, cannot continue without a harness and says what is missing');
+          // The disabled Continue stays legible (a dashed outline, full-strength text), and Skip is the secondary button on its left.
+          assert.deepEqual(await setupPage.evaluate(() => {
+            const next = document.querySelector('#onboarding-harnesses-continue'), skip = document.querySelector('#onboarding-harnesses-skip'), style = getComputedStyle(next);
+            return { dashed: style.borderTopStyle, opacity: style.opacity, skipFirst: skip.getBoundingClientRect().right <= next.getBoundingClientRect().left, primary: next.classList.contains('btn-primary'), skipPrimary: skip.classList.contains('btn-primary') };
+          }), { dashed: 'dashed', opacity: '1', skipFirst: true, primary: true, skipPrimary: false }, 'a disabled Continue is legible; Skip is secondary and on its left');
+          // Skip asks first: Cancel stays on the step, OK leaves it.
           await setupPage.click('#onboarding-harnesses-skip');
+          await setupPage.waitForSelector('#app-dialog[open]');
+          assert.match(await setupPage.$eval('#app-dialog .app-dialog-message', node => node.textContent), /Settings → Harnesses/);
+          await setupPage.click('#app-dialog .app-dialog-cancel');
+          await setupPage.waitForFunction(() => !document.querySelector('#app-dialog').open);
+          assert.equal(await setupPage.$eval('#onboarding-view [data-step="harnesses"]', step => step.hidden), false, 'cancelling the skip stays on the harness step');
+          await setupPage.click('#onboarding-harnesses-skip');
+          await setupPage.waitForSelector('#app-dialog[open]');
+          await setupPage.click('#app-dialog .app-dialog-ok');
           await setupPage.waitForSelector('#onboarding-view [data-step="how"]:not([hidden])');
           assert.equal(await setupPage.$$eval('.onboarding-principles li', items => items.length), 7, 'seven principles');
           await setupPage.waitForFunction(() => !document.querySelector('#onboarding-setup-harness').hidden);
@@ -3288,6 +3302,32 @@ async function main() {
             return { lateWatch, enabled, ready: readyCalls > 0, spawn: document.querySelector('#onboarding-spawn').hidden, setup: document.querySelector('#onboarding-setup-harness').hidden, note: document.querySelector('#onboarding-harness-note').hidden };
           });
           assert.deepEqual(withHarness, { lateWatch: null, enabled: true, ready: true, spawn: false, setup: true, note: true }, 'with a harness the onboarding continues to Spawn, and tells the app one is ready (a skip from earlier is then forgotten)');
+          // Skip after a harness became ready (it saves on its own while the step is open) is not a skip: nothing is recorded and Spawn is offered.
+          // Ticking a detected harness enables Continue, which adds it before going on.
+          assert.deepEqual(await setupPage.evaluate(async () => {
+            const { Onboarding } = await import('/js/onboarding.js');
+            document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
+            let ready = false, skipped = 0;
+            const late = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => ready, onSkip: () => { skipped++; }, confirm: async () => true, pollMs: 100000 });
+            await late.showHarnesses('first');
+            ready = true;
+            document.querySelector('#onboarding-harnesses-skip').click();
+            await new Promise(resolve => setTimeout(resolve, 150));
+            const afterReady = { skipped, spawn: document.querySelector('#onboarding-spawn').hidden, setup: document.querySelector('#onboarding-setup-harness').hidden };
+            document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
+            ready = false; let added = 0;
+            const ticking = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => ready, onSkip: () => { skipped++; }, confirm: async () => true, pollMs: 100000 });
+            await ticking.showHarnesses('first');
+            const before = { disabled: document.querySelector('#onboarding-harnesses-continue').disabled };
+            ticking.harnesses.tickedCount = () => 1; ticking.harnesses.addTicked = async () => { added++; ready = true; return true; };
+            ticking.harnesses.onTick(1);
+            await new Promise(resolve => setTimeout(resolve, 100));
+            const ticked = { disabled: document.querySelector('#onboarding-harnesses-continue').disabled, status: document.querySelector('#onboarding-harness-status').textContent };
+            document.querySelector('#onboarding-harnesses-continue').click();
+            await new Promise(resolve => setTimeout(resolve, 200));
+            return { afterReady, before, ticked, added, spawn: document.querySelector('#onboarding-spawn').hidden, skipped };
+          }), { afterReady: { skipped: 0, spawn: false, setup: true }, before: { disabled: true }, ticked: { disabled: false, status: 'One harness is ticked: Continue adds it and looks up the models.' }, added: 1, spawn: false, skipped: 0 },
+          'Skip after a harness is ready is no skip; a ticked harness enables Continue, which adds it first');
           // The Harnesses list tells the app the same, but only for a harness that can start an agent: enabled, with a model.
           assert.deepEqual(await setupPage.evaluate(async () => {
             const { HarnessSettings } = await import('/js/harness-settings.js');
@@ -3343,6 +3383,7 @@ async function main() {
             try {
               await page.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])', { timeout: APP_READY_TIMEOUT });
               await page.click('#onboarding-harnesses-skip');
+              await page.waitForSelector('#app-dialog[open]'); await page.click('#app-dialog .app-dialog-ok');
               await page.waitForFunction(() => document.querySelector('#onboarding-view').hidden);
               assert.equal(await page.$eval('#onboarding-view [data-step="how"]', step => step.hidden), true, 'skipping an offer made on its own just closes it, there is no spawn to offer');
               await page.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.harness_setup_skipped === '1');

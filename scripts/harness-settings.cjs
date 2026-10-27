@@ -278,6 +278,22 @@ async function main(variant) {
     await page.waitForFunction(selector => document.querySelector(selector + ' .harness-model-row[data-slug="haiku"] [name=label]')?.value === 'Haiku theirs', { timeout: 20000 }, claudeCard);
     assert.match(await page.$eval('#settings-harnesses > .error', error => error.textContent), /Someone changed the models of Claude Code in the meantime/, 'the page says the save was refused');
     assert.equal(await page.$eval(`${claudeCard} .harness-models .btn-primary`, button => button.disabled), true, 'the refused draft is gone');
+    // The first-run onboarding embeds the legacy page (on either variant of Settings); its Harnesses step has the role defaults too.
+    if (variant === 'a') {
+      await page.keyboard.press('Escape');
+      const onboarding = await page.evaluate(async () => {
+        const { Onboarding } = await import('/js/onboarding.js');
+        document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
+        const step = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => true, pollMs: 100000 });
+        await step.showHarnesses('first');
+        for (let i = 0; i < 100 && !document.querySelector('#onboarding-harness-roles-host .harness-role-card[data-role-key="worker"]'); i++) await new Promise(resolve => setTimeout(resolve, 100));
+        const worker = document.querySelector('#onboarding-harness-roles-host .harness-role-card[data-role-key="worker"]');
+        const result = { panel: !!document.querySelector('#onboarding-harness-roles-host .harness-roles'), worker: !!worker, switches: document.querySelectorAll('#onboarding-harnesses-host .harness-role-switch').length > 0 };
+        step.close();
+        return result;
+      });
+      assert.deepEqual(onboarding, { panel: true, worker: true, switches: true }, 'the onboarding Harnesses step shows the role defaults panel and the per-model role switches');
+    }
     assert.deepEqual(pageErrors, [], 'no script errors at the end');
     console.log(`harness settings ok (${variant})`);
   } catch (error) {

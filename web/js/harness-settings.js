@@ -78,10 +78,12 @@ export class HarnessSettings {
     // Called whenever the list this component shows has a harness that can start an agent (enabled, with a model): the app then forgets that the
     // person skipped setting one up.
     this.onReady = null;
+    // Embedded only: called with how many detected harnesses are ticked, so the page that hosts this can enable its own Continue.
+    this.onTick = null;
     this.tab = button('Harnesses', 'row-btn'); this.tab.id = 'settings-harnesses-tab';
     if (!embedded) dialog.querySelector('nav').append(this.tab);
     this.section = node('section', 'settings-content'); this.section.id = `${prefix}settings-harnesses`; this.section.hidden = !embedded;
-    this.roleDefaults = embedded ? null : new RoleDefaults();
+    this.roleDefaults = new RoleDefaults();
     this.roleViews = new Set();
     this.otherTried = ''; // the unknown launcher ids the other machines were last read for, so the same ones are not asked for twice
     this.otherHarnesses = new Map(); // launcher id -> its machine's name, label and models, for role defaults on other machines
@@ -470,7 +472,7 @@ export class HarnessSettings {
 
   detectPanel(machineID, candidates) {
     const panel = node('form', 'machine-harness-form harness-detect-panel'); panel.id = `${this.prefix}harness-detect-panel`;
-    panel.append(node('strong', '', candidates.length ? 'Found on this machine — tick the ones to add' : 'Nothing found on this machine'));
+    panel.append(node('strong', '', candidates.length ? (this.embedded ? 'Found on this machine — tick the ones to add, then press Continue' : 'Found on this machine — tick the ones to add') : 'Nothing found on this machine'));
     if (!candidates.length) panel.append(node('p', 'machine-harness-help', 'No Claude Code, Codex, Pi, OpenCode or Mistral Vibe executable was found. Add one by hand with its path.'));
     const boxes = [];
     for (const candidate of candidates) {
@@ -482,33 +484,51 @@ export class HarnessSettings {
     }
     const actions = node('div', 'machine-harness-actions'); const add = button('Add selected', 'btn btn-primary', 'submit'); const close = button('Close');
     const error = node('p', 'error'); error.setAttribute('role', 'alert');
-    if (candidates.length) actions.append(add); actions.append(close); panel.append(actions, error);
+    // Embedded in the onboarding there is no Add button: the page's Continue adds what is ticked (addTicked), so ticking only says how many.
+    if (candidates.length && !this.embedded) actions.append(add);
+    if (!this.embedded) actions.append(close);
+    panel.append(actions, error);
     close.onclick = () => this.showPanel(null);
-    panel.onsubmit = async event => {
-      event.preventDefault(); error.textContent = ''; showDetectionDetails(this.errorDetails, '');
-      const chosen = boxes.filter(([box]) => box.checked).map(([, candidate]) => candidate);
-      if (!chosen.length) { error.textContent = 'Tick at least one harness to add.'; return; }
-      add.disabled = true;
-      try {
-        const created = [];
-        for (const candidate of chosen) created.push(await this.createHarness(machineID, { tool: candidate.family, label: candidate.label, command: candidate.command, containerized: candidate.containerized }));
-        // A harness with no models cannot start an agent, so ask each new one what it offers and keep that list. It is best effort: a
-        // harness that cannot answer is left empty with its reason shown, and its models panel shows that reason with a folder to
-        // retry in, besides Auto-detect and the by-hand form.
-        const filled = await Promise.all(created.map(item => this.fillModels(machineID, item?.config?.id || item?.id, !!item?.config?.containerized)));
-        const empty = filled.filter(done => !done.saved).length;
-        const cut = filled.find(done => done.cut > 0);
-        this.showPanel(null); await this.loadHarnesses();
-        const notes = [];
-        const reason = filled.find(done => !done.saved && done.reason)?.reason;
-        const detail = filled.find(done => !done.saved && done.detail)?.detail;
-        if (empty) notes.push(`${empty === 1 ? 'A harness has' : `${empty} harnesses have`} no models yet.${reason ? ` ${reason}` : ''} Retry Auto-detect in its models, in a folder you choose if the harness needs one, or add a model by hand.`);
-        if (cut) notes.push(`A harness offered more models than a list can hold, so only the first ${cut.kept} were added.`);
-        this.error.textContent = notes.join(' ');
-        showDetectionDetails(this.errorDetails, detail);
-      } catch (problem) { error.textContent = problem.message || 'Could not add the harnesses'; add.disabled = false; await this.loadHarnesses(); }
-    };
+    const chosen = () => boxes.filter(([box]) => box.checked).map(([, candidate]) => candidate);
+    for (const [box] of boxes) box.onchange = () => this.onTick?.(chosen().length);
+    this.detected = { machineID, panel, chosen, error, add };
+    this.onTick?.(0);
+    panel.onsubmit = event => { event.preventDefault(); void this.addTicked(); };
     return panel;
+  }
+
+  // How many detected harnesses are ticked in the open detect panel.
+  tickedCount() { return this.detected?.panel?.isConnected ? this.detected.chosen().length : 0; }
+
+  // Adds the ticked detected harnesses, asks each what models it offers and keeps that list. Resolves to whether it went through, so
+  // the onboarding's Continue knows whether to go on. A failure is shown in the panel; the page reloads so what was created shows.
+  async addTicked() {
+    const detected = this.detected;
+    if (!detected?.panel.isConnected) return false;
+    const { machineID, error, add } = detected, chosen = detected.chosen();
+    error.textContent = ''; showDetectionDetails(this.errorDetails, '');
+    if (!chosen.length) { error.textContent = 'Tick at least one harness to add.'; return false; }
+    add.disabled = true;
+    try {
+      const created = [];
+      for (const candidate of chosen) created.push(await this.createHarness(machineID, { tool: candidate.family, label: candidate.label, command: candidate.command, containerized: candidate.containerized }));
+      // A harness with no models cannot start an agent, so ask each new one what it offers and keep that list. It is best effort: a
+      // harness that cannot answer is left empty with its reason shown, and its models panel shows that reason with a folder to
+      // retry in, besides Auto-detect and the by-hand form.
+      const filled = await Promise.all(created.map(item => this.fillModels(machineID, item?.config?.id || item?.id, !!item?.config?.containerized)));
+      const empty = filled.filter(done => !done.saved).length;
+      const cut = filled.find(done => done.cut > 0);
+      this.showPanel(null); this.detected = null; await this.loadHarnesses();
+      const notes = [];
+      const reason = filled.find(done => !done.saved && done.reason)?.reason;
+      const detail = filled.find(done => !done.saved && done.detail)?.detail;
+      if (empty) notes.push(`${empty === 1 ? 'A harness has' : `${empty} harnesses have`} no models yet.${reason ? ` ${reason}` : ''} Retry Auto-detect in its models, in a folder you choose if the harness needs one, or add a model by hand.`);
+      if (cut) notes.push(`A harness offered more models than a list can hold, so only the first ${cut.kept} were added.`);
+      this.error.textContent = notes.join(' ');
+      showDetectionDetails(this.errorDetails, detail);
+      this.onTick?.(0);
+      return true;
+    } catch (problem) { error.textContent = problem.message || 'Could not add the harnesses'; add.disabled = false; await this.loadHarnesses(); return false; }
   }
 
   // The models of one harness: an editable list (label, note, which one is the default), added to by hand or from auto-detect, saved as a

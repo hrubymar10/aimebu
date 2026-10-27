@@ -3,6 +3,7 @@
 // no room is selected.
 import { request } from './api.js';
 import { HarnessSettings } from './harness-settings.js';
+import { confirmDialog } from './dialogs.js';
 
 export const PRINCIPLES = [
   ['A project is one repo or folder.', 'Everything you do with agents happens inside a project.'],
@@ -14,16 +15,20 @@ export const PRINCIPLES = [
   ['@mentions and replies wake agents.', 'A reaction acknowledges without waking anyone.'],
 ];
 
+const HARNESS_MISSING = 'No harness with a model yet. Tick a detected harness, or add one by hand and give it a model.';
+
 export class Onboarding {
   // create(project) makes the project (and returns its general room, already selected); spawn() opens the Spawn dialog in it;
   // harnessReady() answers whether a harness with a model can start an agent right now (true when it cannot be told). canSetUp says
   // whether this person may add harnesses (an owner or an admin): only they get the Harnesses step, anyone else is told to ask one.
-  constructor({ create, spawn, harnessReady = async () => true, canSetUp = () => true, onSkip = () => {}, onReady = () => {}, send = request, root = document.querySelector('#onboarding-view'), pollMs = 2000 }) {
-    this.create = create; this.spawn = spawn; this.onSkip = onSkip; this.onReady = onReady; this.harnessReady = harnessReady; this.canSetUp = canSetUp; this.send = send; this.root = root; this.pollMs = pollMs;
+  constructor({ create, spawn, harnessReady = async () => true, canSetUp = () => true, onSkip = () => {}, onReady = () => {}, confirm = confirmDialog, send = request, root = document.querySelector('#onboarding-view'), pollMs = 2000 }) {
+    this.confirm = confirm; this.create = create; this.spawn = spawn; this.onSkip = onSkip; this.onReady = onReady; this.harnessReady = harnessReady; this.canSetUp = canSetUp; this.send = send; this.root = root; this.pollMs = pollMs;
     this.form = root.querySelector('#onboarding-form'); this.error = root.querySelector('#onboarding-error');
     this.steps = { project: root.querySelector('[data-step="project"]'), harnesses: root.querySelector('[data-step="harnesses"]'), how: root.querySelector('[data-step="how"]') };
     this.harnesses = new HarnessSettings(null, { embedded: true, host: root.querySelector('#onboarding-harnesses-host') });
     this.harnesses.onReady = () => this.onReady();
+    // Ticking a detected harness is enough to go on: Continue adds what is ticked first.
+    this.harnesses.onTick = () => void this.checkHarness(true);
     this.harnessStatus = root.querySelector('#onboarding-harness-status'); this.harnessContinue = root.querySelector('#onboarding-harnesses-continue');
     // 'first': the step after creating the first project (Spawn follows). 'harness-only': opened on its own, for an import that left no
     // harness: there is no new room to spawn into, so both buttons just close it.
@@ -35,8 +40,8 @@ export class Onboarding {
     root.querySelector('.onboarding-skip').onclick = () => this.close();
     root.querySelector('#onboarding-spawn').onclick = () => { this.close(); this.spawn(); };
     root.querySelector('#onboarding-setup-harness').onclick = () => void this.showHarnesses('first');
-    this.harnessContinue.onclick = () => void this.leaveHarnesses(true);
-    root.querySelector('#onboarding-harnesses-skip').onclick = () => void this.leaveHarnesses(false);
+    this.harnessContinue.onclick = () => void this.continueHarnesses();
+    root.querySelector('#onboarding-harnesses-skip').onclick = () => void this.skipHarnesses();
     root.querySelector('#onboarding-done').onclick = () => this.close();
     root.addEventListener('keydown', event => { if (event.key === 'Escape') this.close(); });
   }
@@ -53,7 +58,7 @@ export class Onboarding {
     this.stopWatching();
     const token = this.openToken; // leaving the step (or opening it again) changes the token, so what is still loading here is dropped
     this.mode = mode; this.root.hidden = false; this.showStep('harnesses');
-    this.harnessContinue.disabled = true; this.harnessStatus.textContent = 'No harness with a model yet.';
+    this.harnessContinue.disabled = true; this.harnessStatus.textContent = HARNESS_MISSING;
     await this.harnesses.open();
     if (token !== this.openToken) return;
     await this.checkHarness();
@@ -62,15 +67,40 @@ export class Onboarding {
   }
   // Stops the readiness poll and invalidates a showHarnesses() that is still loading.
   stopWatching() { clearInterval(this.watch); this.watch = null; this.openToken = (this.openToken || 0) + 1; }
-  async checkHarness() {
-    let ready = false; try { ready = await this.harnessReady(); } catch { ready = false; }
+  // Continue is possible with a harness ready, or with some detected harness ticked (Continue adds it). `quick` skips the server
+  // question: ticking a box only changes the count, so the answer last given still holds.
+  async checkHarness(quick = false) {
+    let ready = quick ? this.lastReady : false;
+    if (!quick) { try { ready = await this.harnessReady(); } catch { ready = false; } this.lastReady = ready; }
     if (this.steps.harnesses.hidden) return;
-    this.harnessContinue.disabled = !ready;
-    if (ready) this.onReady();
-    this.harnessStatus.textContent = ready ? 'A harness with a model is ready.' : 'No harness with a model yet.';
+    const ticked = this.harnesses.tickedCount();
+    this.harnessContinue.disabled = !ready && !ticked;
+    if (ready && !quick) this.onReady();
+    this.harnessStatus.textContent = ticked ? `${ticked === 1 ? 'One harness is' : `${ticked} harnesses are`} ticked: Continue adds ${ticked === 1 ? 'it' : 'them'} and looks up the models.`
+      : ready ? 'A harness with a model is ready.' : HARNESS_MISSING;
+  }
+  // Continue adds the ticked harnesses (with their models) first, then goes on once one can start an agent.
+  async continueHarnesses() {
+    if (this.harnessContinue.disabled) return;
+    this.harnessContinue.disabled = true;
+    try {
+      if (this.harnesses.tickedCount()) {
+        if (!await this.harnesses.addTicked()) { await this.checkHarness(); return; }
+        await this.checkHarness();
+        if (this.harnessContinue.disabled) { this.harnessStatus.textContent = 'The harness was added but has no model yet. Add a model, then Continue.'; return; }
+      }
+      await this.leaveHarnesses(true);
+    } finally { if (!this.steps.harnesses.hidden) await this.checkHarness(); }
+  }
+  async skipHarnesses() {
+    if (!await this.confirm('Skip harness setup? Agents need a harness with a model to run on. You can set one up later in Settings → Harnesses.', { title: 'Skip harness setup', confirm: 'Skip for now' })) return;
+    await this.leaveHarnesses(false);
   }
   async leaveHarnesses(ready) {
     this.stopWatching(); this.harnesses.clear();
+    // A harness may have become ready while this step was open (it saves on its own): look again before calling this a skip, so a person
+    // who set one up is neither recorded as having skipped nor told to set one up first.
+    if (!ready) { try { ready = await this.harnessReady(); } catch { ready = false; } }
     // Skipping the step is remembered by the app (on the person's account), so it is not offered again until a harness exists.
     if (!ready) { try { await this.onSkip(this.mode); } catch { /* the offer may come back on the next sign-in */ } }
     if (this.mode === 'harness-only') { this.close(); return; }
@@ -81,7 +111,8 @@ export class Onboarding {
   // cannot start.
   async offerSpawn(known) {
     const spawn = this.root.querySelector('#onboarding-spawn'), setup = this.root.querySelector('#onboarding-setup-harness'), note = this.root.querySelector('#onboarding-harness-note');
-    let ready = known; if (ready === undefined) { try { ready = await this.harnessReady(); } catch { ready = true; } }
+    // Asked again unless a caller just established it: a stale `false` must not say "set a harness up first" to someone who did.
+    let ready = known; if (!ready) { try { ready = await this.harnessReady(); } catch { ready = known ?? true; } }
     const manage = this.canSetUp();
     spawn.hidden = !ready; setup.hidden = ready || !manage; note.hidden = ready;
     note.textContent = ready ? '' : manage ? 'No harness with a model is set up yet, so there is nothing for an agent to run on. Set one up, then spawn your first agent.'
