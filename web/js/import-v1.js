@@ -345,6 +345,7 @@ export class ImportV1Wizard {
 
   showProblems(problems) {
     for (const old of this.content.querySelectorAll('[aria-invalid]')) old.removeAttribute('aria-invalid');
+    for (const old of this.content.querySelectorAll('[aria-describedby^="import-problem-"]')) old.removeAttribute('aria-describedby');
     for (const old of this.content.querySelectorAll('.import-field-error')) old.remove();
     const list = node('ul', '', 'import-problems');
     problems.forEach((problem, index) => {
@@ -614,7 +615,7 @@ export class ImportV1Wizard {
       const toggle = this.checkbox('Import this chat', !spec.skip, checked => { spec.skip = !checked; });
       toggle.querySelector('input').onchange = event => { spec.skip = !event.target.checked; this.save(); this.refresh(); };
       box.append(toggle);
-      if (!spec.skip) box.append(this.projectSelect('Project', spec.project || '', alias => { spec.project = alias; }, 'Choose a project'));
+      if (!spec.skip) { const choice = this.projectSelect('Project', spec.project || '', alias => { spec.project = alias; }, 'Choose a project'); choice.querySelector('select').dataset.dmProject = room.id; box.append(choice); }
       this.content.append(box);
     }
   }

@@ -37,7 +37,7 @@ export function dmProblems(rooms, specs, titleOf, escape = escapeSelector) {
   const problems = [];
   for (const room of (rooms || []).filter(item => item.dm)) {
     const spec = (specs || {})[room.id];
-    if (spec && !spec.skip && !spec.project) problems.push({ message: `Choose a project for the chat "${titleOf(room)}", or turn it off.`, selector: `[data-dm-room="${escape(room.id)}"]` });
+    if (spec && !spec.skip && !spec.project) problems.push({ message: `Choose a project for the chat "${titleOf(room)}", or turn it off.`, selector: `select[data-dm-project="${escape(room.id)}"]` });
   }
   return problems;
 }

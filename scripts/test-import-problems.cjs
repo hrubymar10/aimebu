@@ -36,8 +36,8 @@ assert.match(people[3].message, /The login for f must be 3 to 32 characters/);
 const rooms = [{ id: 'dm:a:b', dm: true }, { id: 'dm:c:d', dm: true }, { id: 'dm:e:f', dm: true }, { id: 'general', dm: false }, { id: 'dm:g:h', dm: true }];
 const specs = { 'dm:a:b': { project: 'p' }, 'dm:c:d': { project: '' }, 'dm:e:f': { skip: true, project: '' }, 'dm:g:h': {} };
 assert.deepEqual(plain(dmProblems(rooms, specs, room => `chat ${room.id}`)), [
-  { message: 'Choose a project for the chat "chat dm:c:d", or turn it off.', selector: '[data-dm-room="dm\\:c\\:d"]' },
-  { message: 'Choose a project for the chat "chat dm:g:h", or turn it off.', selector: '[data-dm-room="dm\\:g\\:h"]' },
+  { message: 'Choose a project for the chat "chat dm:c:d", or turn it off.', selector: 'select[data-dm-project="dm\\:c\\:d"]' },
+  { message: 'Choose a project for the chat "chat dm:g:h", or turn it off.', selector: 'select[data-dm-project="dm\\:g\\:h"]' },
 ], 'a chat with no project is reported, a skipped one and one with a project are not');
 assert.deepEqual(plain(dmProblems(undefined, undefined, () => '')), []);
 

@@ -898,7 +898,10 @@ async function main() {
         dms.after = { status: count(wizard.status.textContent), hasProject: !!label('Project'), prefilled: find('select', label('Project'))?.value };
         choose(find('select', label('Project')), ''); await settle(); press('Next'); await settle();
         dms.blocked = wizard.error.textContent.includes('Choose a project for the chat') && wizard.progressLabel.textContent.includes('Direct messages');
-        choose(find('select', label('Project')), 'a'); await settle(); press('Next'); await settle();
+        // The problem points at the Project select itself: it is the invalid, described, focused field.
+        const dmSelect = find('select', label('Project'));
+        dms.pointer = { invalid: dmSelect.getAttribute('aria-invalid'), described: !!document.getElementById(dmSelect.getAttribute('aria-describedby'))?.textContent.includes('Choose a project'), focused: document.activeElement === dmSelect };
+        choose(dmSelect, 'a'); await settle(); press('Next'); await settle();
         out.dms = dms;
         // Step 5: Memory.
         const memory = { label: wizard.progressLabel.textContent, scopes: [...wizard.content.querySelectorAll('label')].filter(item => item.firstChild?.textContent.startsWith('Project facts')).length, enableBoxes: [...wizard.content.querySelectorAll('label')].filter(item => item.textContent.includes('Enable project memory after import')).map(item => item.querySelector('input').checked) };
@@ -979,7 +982,7 @@ async function main() {
         merged: ['2 v1 rooms will be merged into the root of a: a-leader, a.'], unmerged: 0, panel: true,
         created: { alias: true, project: { name: 'Fresh Start', folder: '/tmp/fresh' }, memory: true, placed: 'general:fresh-start', panelGone: true },
       },
-      dms: { label: 'Step 4 of 8 · Direct messages', status: '0 of 1 chats', checked: false, retitle: 'nina', after: { status: '1 of 1 chats', hasProject: true, prefilled: 'a' }, blocked: true },
+      dms: { label: 'Step 4 of 8 · Direct messages', status: '0 of 1 chats', checked: false, retitle: 'nina', after: { status: '1 of 1 chats', hasProject: true, prefilled: 'a' }, blocked: true, pointer: { invalid: 'true', described: true, focused: true } },
       memory: { label: 'Step 5 of 8 · Memory', scopes: 2, enableBoxes: [true, true, true] },
       macros: { label: 'Step 6 of 8 · Macros', status: '2 of 2 macros', none: ['greet', 'other'], noneStatus: '0 of 2 macros', all: 0, one: ['other'], conflict: true },
       roles: { label: 'Step 7 of 8 · Roles', choice: 'use_v1' },
@@ -3398,6 +3401,34 @@ async function main() {
             return { afterReady, before, ticked, added, spawn: document.querySelector('#onboarding-spawn').hidden, skipped };
           }), { afterReady: { skipped: 0, spawn: false, setup: true }, before: { disabled: true }, ticked: { disabled: false, status: 'One harness is ticked: Continue adds it and looks up the models.' }, added: 1, spawn: false, skipped: 0 },
           'Skip after a harness is ready is no skip; a ticked harness enables Continue, which adds it first');
+          // Continue is one run at a time, and its status survives the poll: while harnesses are being added neither a poll nor a second
+          // click may re-enable it or add them again; a harness added without a model keeps its message and its disabled Continue.
+          assert.deepEqual(await setupPage.evaluate(async () => {
+            const { Onboarding } = await import('/js/onboarding.js');
+            document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
+            let ready = false, adds = 0, finish;
+            const step = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => ready, onSkip: () => {}, confirm: async () => true, pollMs: 40 });
+            await step.showHarnesses('first');
+            step.harnesses.tickedCount = () => 1;
+            step.harnesses.addTicked = () => { adds++; return new Promise(resolve => { finish = () => resolve(true); }); };
+            step.harnesses.onTick(1);
+            await new Promise(resolve => setTimeout(resolve, 80));
+            const button = document.querySelector('#onboarding-harnesses-continue'), status = document.querySelector('#onboarding-harness-status');
+            button.click();
+            await new Promise(resolve => setTimeout(resolve, 200)); // several polls while the add is in flight
+            const during = { adds, disabled: button.disabled };
+            button.disabled = false; button.click(); // even a re-enabled button cannot start a second add
+            const doubleClick = adds;
+            finish(); // the add succeeds, but no harness has a model
+            await new Promise(resolve => setTimeout(resolve, 150));
+            step.harnesses.tickedCount = () => 0;
+            await new Promise(resolve => setTimeout(resolve, 150)); // polls after it
+            const after = { disabled: button.disabled, status: status.textContent, stayed: !document.querySelector('#onboarding-harnesses').hidden };
+            // Leave the page as the next steps expect it: the last step shown, the poll stopped.
+            step.stopWatching(); step.harnesses.clear(); step.showStep('how');
+            return { during, doubleClick, after };
+          }), { during: { adds: 1, disabled: true }, doubleClick: 1, after: { disabled: true, status: 'The harness was added but has no model yet. Add a model by hand, or retry Auto-detect in its models, then Continue.', stayed: true } },
+          'Continue adds once, and a harness added without a model keeps its message and a disabled Continue');
           // The Harnesses list tells the app the same, but only for a harness that can start an agent: enabled, with a model.
           assert.deepEqual(await setupPage.evaluate(async () => {
             const { HarnessSettings } = await import('/js/harness-settings.js');

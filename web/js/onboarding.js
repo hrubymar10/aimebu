@@ -60,7 +60,7 @@ export class Onboarding {
     this.stopWatching();
     const token = this.openToken; // leaving the step (or opening it again) changes the token, so what is still loading here is dropped
     this.mode = mode; this.root.hidden = false; this.showStep('harnesses');
-    this.harnessContinue.disabled = true; this.harnessStatus.textContent = HARNESS_MISSING;
+    this.harnessNote = ''; this.harnessContinue.disabled = true; this.harnessStatus.textContent = HARNESS_MISSING;
     await this.harnesses.open();
     if (token !== this.openToken) return;
     await this.checkHarness();
@@ -70,36 +70,47 @@ export class Onboarding {
   // Stops the readiness poll and invalidates a showHarnesses() that is still loading.
   stopWatching() { clearInterval(this.watch); this.watch = null; this.openToken = (this.openToken || 0) + 1; }
   // Continue is possible with a harness ready, or with some detected harness ticked (Continue adds it). `quick` skips the server
-  // question: ticking a box only changes the count, so the answer last given still holds.
+  // question: ticking a box only changes the count, so the answer last given still holds. While Continue is adding harnesses
+  // (`adding`), nothing here may re-enable it or rewrite its status: the poll could otherwise let a second click add them again.
   async checkHarness(quick = false) {
+    if (this.adding) return;
     let ready = quick ? this.lastReady : false;
     if (!quick) { try { ready = await this.harnessReady(); } catch { ready = false; } this.lastReady = ready; }
-    if (this.steps.harnesses.hidden) return;
+    if (this.steps.harnesses.hidden || this.adding) return;
     const ticked = this.harnesses.tickedCount();
     this.harnessContinue.disabled = !ready && !ticked;
     if (ready && !quick) this.onReady();
-    this.harnessStatus.textContent = ticked ? `${ticked === 1 ? 'One harness is' : `${ticked} harnesses are`} ticked: Continue adds ${ticked === 1 ? 'it' : 'them'} and looks up the models.`
+    this.harnessStatus.textContent = this.harnessNote && !ready && !ticked ? this.harnessNote
+      : ticked ? `${ticked === 1 ? 'One harness is' : `${ticked} harnesses are`} ticked: Continue adds ${ticked === 1 ? 'it' : 'them'} and looks up the models.`
       : ready ? 'A harness with a model is ready.' : HARNESS_MISSING;
   }
-  // Continue adds the ticked harnesses (with their models) first, then goes on once one can start an agent.
+  // Continue adds the ticked harnesses (with their models) first, then goes on once one can start an agent. It is one run at a time.
   async continueHarnesses() {
-    if (this.harnessContinue.disabled) return;
-    this.harnessContinue.disabled = true;
+    if (this.harnessContinue.disabled || this.adding) return;
+    this.adding = true; this.harnessNote = ''; this.harnessContinue.disabled = true;
+    let proceed = false;
     try {
       if (this.harnesses.tickedCount()) {
-        if (!await this.harnesses.addTicked()) { await this.checkHarness(); return; }
-        await this.checkHarness();
-        if (this.harnessContinue.disabled) { this.harnessStatus.textContent = 'The harness was added but has no model yet. Add a model, then Continue.'; return; }
+        const added = await this.harnesses.addTicked();
+        if (!added) { this.harnessNote = ''; return; }
+        let ready = false; try { ready = await this.harnessReady(); } catch { ready = false; }
+        this.lastReady = ready;
+        if (!ready) { this.harnessNote = 'The harness was added but has no model yet. Add a model by hand, or retry Auto-detect in its models, then Continue.'; return; }
       }
-      await this.leaveHarnesses(true);
-    } finally { if (!this.steps.harnesses.hidden) await this.checkHarness(); }
+      proceed = true;
+    } finally {
+      this.adding = false;
+      // The status and the button follow what is true now, with the note kept until the person does something about it.
+      if (!proceed && !this.steps.harnesses.hidden) await this.checkHarness();
+    }
+    if (proceed) await this.leaveHarnesses(true);
   }
   async skipHarnesses() {
     if (!await this.confirm('Skip harness setup? Agents need a harness with a model to run on. You can set one up later in Settings → Harnesses.', { title: 'Skip harness setup', confirm: 'Skip for now' })) return;
     await this.leaveHarnesses(false);
   }
   async leaveHarnesses(ready) {
-    this.stopWatching(); this.harnesses.clear();
+    this.stopWatching(); this.harnesses.clear(); this.harnessNote = '';
     // A harness may have become ready while this step was open (it saves on its own): look again before calling this a skip, so a person
     // who set one up is neither recorded as having skipped nor told to set one up first.
     if (!ready) { try { ready = await this.harnessReady(); } catch { ready = false; } }
