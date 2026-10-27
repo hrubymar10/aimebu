@@ -436,6 +436,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 @media (max-width: 700px) {
   .harness-model-row, .harness-model-add { grid-template-columns: minmax(0, 1fr); }
 }
+/* An icon button in a row with a text button is as tall as it (32px), so the pair lines up; icon buttons alone stay 28px. */
+:has(> .btn) > .icon-btn:not(.edge-toggle) { width: 32px; height: 32px; }
 /* Settings → Harnesses: a list of harnesses beside the chosen one. */
 .harness-models .settings-desc:empty, .harness-detect-models:empty { display: none; }
 @media (min-width: 701px) {
@@ -2372,6 +2374,11 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .spawn-resume .spawn-resume-mode label { display: flex; gap: 6px; align-items: center; }
 .spawn-resume .spawn-resume-mode[hidden] { display: none; }
 .spawn-resume[hidden] { display: none; }
+/* Checkboxes and radios sit inline with their label. The legacy base rules (style.css) make every input of these containers a full-width block and every
+   label of the spawn dialog a block, which stacked a box above its words (Continue/Fork, "v1 is not running this session"). */
+:is(#spawn-dialog, .login, .sidebar, .schedule-form) input:is([type=checkbox], [type=radio]) { display: inline-block; width: auto; min-width: 0; margin: 0; flex: none; }
+#spawn-dialog label:has(> input:is([type=checkbox], [type=radio])) { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+#spawn-dialog label[hidden] { display: none; }
 .sender-profile-start { display: grid; gap: 8px; margin-top: 12px; justify-items: start; }
 .sender-profile-start .sender-profile-note { margin: 0; }
 

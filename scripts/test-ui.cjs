@@ -2806,6 +2806,12 @@ async function main() {
       await first.waitForFunction(() => document.querySelectorAll('#cc-sessions-list .cc-session').length === 3);
       await domClick(first, `#cc-sessions-list .cc-session[data-session-id="${idOne}"] .cc-session-pick`);
       await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
+      // The Continue/Fork radios sit inline with their words, not stacked above them as full-width blocks.
+      assert.deepEqual(await first.evaluate(() => [...document.querySelectorAll('#spawn-resume-mode input')].filter(input => input.offsetParent).map(input => { const label = input.closest('label'), box = input.getBoundingClientRect(), row = label.getBoundingClientRect(); return [getComputedStyle(label).display, box.top >= row.top - 1 && box.bottom <= row.bottom + 1, box.width < 30]; })), [['flex', true, true], ['flex', true, true]], 'the Continue and Fork radios are inline with their labels');
+      assert.equal(await first.evaluate(() => { const input = document.querySelector('#spawn-resume-confirm'); return `${getComputedStyle(input).display}/${getComputedStyle(input).width !== '100%'}`; }), 'inline-block/true', 'the confirmation box is not a full-width block');
+      assert.deepEqual(await first.evaluate(() => {
+        const heights = []; for (const row of document.querySelectorAll('.machine-actions, .dialog-actions')) { const icon = row.querySelector(':scope > .icon-btn'), text = row.querySelector(':scope > .btn'); if (icon && text && icon.offsetParent) heights.push(Math.round(icon.getBoundingClientRect().height) === Math.round(text.getBoundingClientRect().height)); } return heights.every(Boolean);
+      }), true, 'an icon button beside a text button is as tall as it');
       assert.deepEqual(await first.evaluate(() => ({
         title: document.querySelector('#spawn-form h2').textContent, text: document.querySelector('#spawn-resume-text').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
         name: document.querySelector('.spawn-name').hidden, startIn: !document.querySelector('#spawn-start-in').hidden, room: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent,
