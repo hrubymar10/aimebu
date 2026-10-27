@@ -77,7 +77,10 @@ type spawnCatalogTool struct {
 	UnavailableReason string              `json:"unavailable_reason,omitempty"`
 	Toolbox           bool                `json:"toolbox"`
 	Containerized     bool                `json:"containerized"`
-	ToolboxReason     string              `json:"toolbox_reason,omitempty"`
+	// SharesClaudeHome says this Docker Claude launcher works in the host's Claude home (its claude_home_shared feature): a session made on
+	// the host can be continued or copied through it. The dialogs offer it for a session only when it says so.
+	SharesClaudeHome bool   `json:"shares_claude_home,omitempty"`
+	ToolboxReason    string `json:"toolbox_reason,omitempty"`
 }
 
 // boundedAdapters fixes the tool, variant, and provider pairings; the model
@@ -167,6 +170,7 @@ func (s *Server) spawnCatalog(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 			}
+			item.SharesClaudeHome = sharesClaudeHome(machine, &definition)
 			if !definition.Enabled {
 				item.Available, item.UnavailableReason = false, "disabled by owner; enable it in Settings → Harnesses"
 			}
@@ -749,8 +753,22 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			apiError(w, 409, "v1_folder_missing", err.Error())
 			return
 		}
+		// v1 ran Claude in the folder as it spelled it, and Claude keyed the session by that spelling: when it is a link to the folder
+		// (path is its resolved form), the turns start there, exactly as for a session picked from the list.
+		launch := filepath.Clean(legacy.CWD)
+		if req.Tool == "claude" && launch != path && filepath.IsAbs(launch) && sameDirectory(machineInfo, launch, path) {
+			if !machine.supportsLaunchPath {
+				apiError(w, 409, "supervisor_update_needed", "v1 worked in this folder through a link ("+launch+"); the supervisor on "+machineInfo.Name+" predates starting Claude in that spelling, so update it")
+				return
+			}
+			sessionSpelling = launch
+		}
 		if machineInfo.IsHost && (!containerized || sharedHome) {
-			if checkHarnessSession(req.Tool, legacy.SessionID, path) == sessionMissing {
+			look := path
+			if sessionSpelling != "" {
+				look = sessionSpelling
+			}
+			if checkHarnessSession(req.Tool, legacy.SessionID, look) == sessionMissing {
 				apiError(w, 409, "session_not_found", "the v1 session "+legacy.SessionID+" was not found on this machine, so it cannot be continued")
 				return
 			}
@@ -781,12 +799,10 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	result, reused, err := s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "spawn", Key: key, Digest: digest}, func(tx *store.Tx) (string, error) {
 		input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: path, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, KeyHash: hex.EncodeToString(keyHashBytes[:])}
 		input.Slug = req.Name
+		input.LaunchPath = sessionSpelling // the agent's turns start here; the checkout itself stays the canonical path
 		if session != nil {
 			input.ResumeHandle = session.ID
 			input.ResumeSession = &store.ResumeSession{ID: session.ID, CWD: path, Title: session.Title, Fork: req.ResumeMode == resumeFork}
-			if sessionSpelling != "" {
-				input.ResumeSession.CWD = sessionSpelling // the agent's turns start here; the checkout itself stays the canonical path
-			}
 			if req.NewRoom {
 				input.NewRoomTitle = sessionRoomTitle(*session)
 			}

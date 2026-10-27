@@ -607,9 +607,8 @@ func TestSpawnContinuesASessionMadeUnderALink(t *testing.T) {
 				t.Fatalf("%d %v", status, card)
 			}
 			agentID := card["id"].(string)
-			imported, ok, err := f.db.AgentImportedSession(t.Context(), agentID)
-			if err != nil || !ok || imported.CWD != link {
-				t.Fatalf("the session's own spelling was not kept: %+v %v", imported, err)
+			if launch, err := f.db.AgentLaunchPath(t.Context(), agentID); err != nil || launch != link {
+				t.Fatalf("the session's own spelling was not kept: %q %v", launch, err)
 			}
 			profile, err := f.db.AgentProfile(t.Context(), f.room.ID, agentID)
 			if err != nil || profile.Cwd != canonical {

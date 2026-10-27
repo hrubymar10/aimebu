@@ -227,11 +227,15 @@ Roles, agents
   machine_id, checkout_id, home_room_id?, key_hash, revoked_at?,
   desired[active|not_accepting|stopped], desired_rev,
   observed[idle|in_turn|interrupting|stopped|lost], generation,
-  created_by, created_at) — **one role per agent**: one agent cannot hold
+  launch_path (default empty), created_by, created_at) — **one role per agent**: one agent cannot hold
   different roles in different rooms; `@role` resolves to room members whose
   agent role matches; `home_room_id` is set on the first non-DM agent join and
   limits room bulk control to that agent's current home membership; `generation`
-  is a **session** counter
+  is a **session** counter; `launch_path` (migration 87) is the spelling of the
+  checkout's folder a Claude Code session was saved under (a link to it), when it
+  differs from the canonical `checkout.canonical_path`: the harness is started
+  there (`launch_path` on the delivery), and it is ignored once the agent is not a
+  Claude agent and cleared when a switch moves it to another checkout
 - **session**(id, agent_id, generation, native_session_id?,
   start_mode[native_resume|fresh_with_history], started_at, ended_at?)
 - **agent_switch**(agent_id UNIQUE, room_id, tool, variant, launcher_id?, model,
@@ -342,7 +346,9 @@ Execution
   retired: no code writes them (the leaderboard rows were deleted by migration
   56), they stay only in the constraint. The kinds written today are spawn,
   switch, scope_control, control (agent lead tool), room_create, room_close,
-  schedule_create, inbox_answer and recovery_decision.
+  schedule_create, inbox_answer, recovery_decision, dm_agent (a lead's private
+  message to an agent) and dm_human (an agent's private message to a person of
+  its project).
 
 Inbox, usage, events, settings
 - **inbox_item**(id, project_id, room_id, message_id?, turn_id?,

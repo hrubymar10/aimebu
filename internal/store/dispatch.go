@@ -232,7 +232,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if err != nil {
 				return err
 			}
-			launchPath, err := tx.agentLaunchPath(agentID, checkoutPath)
+			launchPath, err := tx.agentLaunchPath(agentID, tool, checkoutPath)
 			if err != nil {
 				return err
 			}
@@ -469,7 +469,7 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if err != nil {
 			return err
 		}
-		launchPath, err := tx.agentLaunchPath(agentID, checkoutPath)
+		launchPath, err := tx.agentLaunchPath(agentID, tool, checkoutPath)
 		if err != nil {
 			return err
 		}

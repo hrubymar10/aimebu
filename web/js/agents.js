@@ -779,13 +779,14 @@ export class AgentsPanel {
       if (this.dialog.open && requestID === this.catalogRequestID) document.querySelector('#spawn-tool-reason').textContent = `Tool catalog unavailable: ${error.message}`;
     }
   }
-  // The v1 tool is picked when this machine offers it. A session that can be continued needs that tool natively (a container has its own
-  // home and cannot see it), so only the native entries of it stay selectable and the first of those is picked, whatever order the
-  // catalog lists them in. A fresh start only preselects the v1 tool; the others stay available.
+  // The v1 tool is picked when this machine offers it. A session that can be continued needs that tool natively, or in a Docker launcher that
+  // shares the host's Claude home (the catalog says so: shares_claude_home), since any other container has a home of its own and cannot see
+  // it. Only those entries stay selectable and the first of them is picked, whatever order the catalog lists them in. A fresh start only
+  // preselects the v1 tool; the others stay available.
   applyResumeChoice(toolSelect) {
     const resume = this.pendingResume;
     if (!resume?.tool) return;
-    const fits = tool => tool.tool === resume.tool && tool.available && !(resume.resumable && tool.containerized);
+    const fits = tool => tool.tool === resume.tool && tool.available && !(resume.resumable && tool.containerized && !tool.shares_claude_home);
     // A continued session was listed from one launcher's Claude home: that launcher is picked when it is still offered, else the first fit.
     const preferred = resume.launcher_id ? this.catalog.findIndex(tool => fits(tool) && tool.launcher_id === resume.launcher_id) : -1;
     const index = preferred >= 0 ? preferred : this.catalog.findIndex(fits);

@@ -142,6 +142,10 @@ func TestAgentSwitchMovesMachineCheckoutAfterDrain(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE checkout SET writer_agent_id=?,writer_state='reserved' WHERE id='chk_wake'`, agent.ID); err != nil {
 		t.Fatal(err)
 	}
+	// The agent continues a Claude Code session made under a link to its folder here; the spelling means nothing on another machine.
+	if _, err := s.db.Exec(`UPDATE agent SET launch_path='/link/to/wake' WHERE id=?`, agent.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Tx(ctx, func(tx *Tx) error {
 		_, err := tx.BeginAgentSwitchTo(agent.ID, "usr_remote", room.ID, "fake", "test", "test", "fake", "mch_remote", "/remote/wake", 0)
 		return err
@@ -158,6 +162,9 @@ func TestAgentSwitchMovesMachineCheckoutAfterDrain(t *testing.T) {
 	}
 	if machine != "mch_remote" || path != "/remote/wake" || key != "" {
 		t.Fatalf("moved agent: %s %s %q", machine, path, key)
+	}
+	if launch, err := s.AgentLaunchPath(ctx, agent.ID); err != nil || launch != "" {
+		t.Fatalf("the old checkout's spelling followed the agent to another machine: %q %v", launch, err)
 	}
 	var oldState, newState, newWriter string
 	if err := s.db.QueryRow(`SELECT writer_state FROM checkout WHERE id='chk_wake'`).Scan(&oldState); err != nil {

@@ -93,6 +93,9 @@ type SpawnInput struct {
 	// ResumeLegacyID is the imported v1 agent this one is started from; ResumeHandle is that agent's harness session to continue, empty
 	// for a harness that cannot resume (the agent then starts fresh with the same name).
 	ResumeLegacyID, ResumeHandle string
+	// LaunchPath, when set, is the spelling of Path the agent's harness is started in (a link a Claude Code session was saved under); see
+	// agent.launch_path. Only for a Claude agent started from a session, in the spelling that session was made under.
+	LaunchPath string
 	// ResumeSession is the Claude Code session this agent continues (ResumeHandle carries its id); NewRoomTitle, when set, starts the agent
 	// in a new task room of that title under the project's home room instead of in RoomID.
 	ResumeSession *ResumeSession
@@ -261,6 +264,11 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	agent, err := tx.CreateAgent(Agent{Slug: slug, ProjectID: projectID, RoleID: roleID, Tool: in.Tool, Variant: in.Variant, LauncherID: in.LauncherID, Model: in.Model, Provider: provider, MachineID: in.MachineID, CheckoutID: checkoutID, KeyHash: in.KeyHash, CreatedBy: in.ActorID})
 	if err != nil {
 		return AgentCard{}, err
+	}
+	if in.LaunchPath != "" {
+		if _, err = tx.Exec(`UPDATE agent SET launch_path=? WHERE id=?`, in.LaunchPath, agent.ID); err != nil {
+			return AgentCard{}, err
+		}
 	}
 	allowed, err := tx.boundaryAllowed(projectID, agent.ID, in.MachineID, in.Path)
 	if err != nil {

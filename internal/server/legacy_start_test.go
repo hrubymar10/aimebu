@@ -454,3 +454,54 @@ func TestStartAsV2AgentCopyNeedsAResumableSession(t *testing.T) {
 		t.Fatalf("a copy of a session that cannot be continued: %d %+v", status, body)
 	}
 }
+
+// v1 ran Claude in the folder as it spelled it (a link to it), and Claude keyed the session by that spelling: starting the v1 agent, whether
+// continuing or on a copy, keeps the canonical checkout and starts its turns in v1's own spelling, like a session picked from the list. A
+// supervisor that cannot do that is refused before anything is created.
+func TestStartAsV2AgentFromAFolderV1ReachedThroughALink(t *testing.T) {
+	for name, mode := range map[string]string{"continue": "continue", "copy": "fork"} {
+		t.Run(name, func(t *testing.T) {
+			f := newLegacyFixture(t)
+			link := filepath.Join(t.TempDir(), "link")
+			if err := os.Symlink(f.cwd, link); err != nil {
+				t.Fatal(err)
+			}
+			// v1 recorded the link as its working folder, and Claude saved the transcript under the link's name.
+			projects := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects")
+			entries, err := os.ReadDir(projects)
+			if err != nil || len(entries) != 1 {
+				t.Fatalf("transcript folders: %v %v", entries, err)
+			}
+			if err := os.Rename(filepath.Join(projects, entries[0].Name()), filepath.Join(projects, regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(link, "-"))); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.exec(`UPDATE legacy_agent_session SET cwd=? WHERE agent_id='sage@old'`, link); err != nil {
+				t.Fatal(err)
+			}
+			f.srv.machineMu.Lock()
+			f.srv.machines[f.machineID].supportsSessionFork = true
+			f.srv.machines[f.machineID].supportsLaunchPath = false
+			f.srv.machineMu.Unlock()
+			if status, body := f.start(t, "link-old-"+name, map[string]any{"resume_mode": mode}); status != 409 || body["error"] != "supervisor_update_needed" {
+				t.Fatalf("a supervisor that predates the spelling: %d %+v", status, body)
+			}
+			f.srv.machineMu.Lock()
+			f.srv.machines[f.machineID].supportsLaunchPath = true
+			f.srv.machineMu.Unlock()
+			status, created := f.start(t, "link-"+name, map[string]any{"resume_mode": mode})
+			if status != 201 {
+				t.Fatalf("start: %d %+v", status, created)
+			}
+			agentID, _ := created["id"].(string)
+			if launch, err := f.db.AgentLaunchPath(t.Context(), agentID); err != nil || launch != link {
+				t.Fatalf("v1's own spelling was not kept: %q %v", launch, err)
+			}
+			if live := f.profile(t, agentID); live.Cwd != f.cwd || (mode == "continue" && live.NativeSessionID != legacyHandle) {
+				t.Fatalf("the checkout is not the canonical folder: %+v", live)
+			}
+			if pending, err := f.db.AgentLaunchPathPending(t.Context(), agentID); err != nil || !pending {
+				t.Fatalf("the turn will not start in the spelling: %v %v", pending, err)
+			}
+		})
+	}
+}

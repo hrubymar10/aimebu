@@ -74,7 +74,8 @@ export class ClaudeSessionImport {
       this.status.textContent = ''; this.error.textContent = error.message || 'Could not load the machines.';
     }
   }
-  // Only a native claude harness can continue (or copy) a session; a container keeps a Claude home of its own.
+  // Only a native claude harness, or a Docker one that shares the host's Claude home, can continue (or copy) a session; any other container
+  // keeps a Claude home of its own.
   async loadCatalog() {
     const generation = ++this.generation;
     this.harness.replaceChildren(); this.model.replaceChildren(); this.list.replaceChildren(); this.updateRun();
@@ -82,9 +83,9 @@ export class ClaudeSessionImport {
     try {
       const catalog = await this.source.catalog(this.machine.value);
       if (generation !== this.generation || !this.dialog.open) return;
-      this.tools = (catalog.tools || []).filter(tool => tool.tool === 'claude' && tool.available && !tool.containerized);
+      this.tools = (catalog.tools || []).filter(tool => tool.tool === 'claude' && tool.available && (!tool.containerized || tool.shares_claude_home));
       this.tools.forEach((tool, index) => { const option = node('option', '', tool.label || 'Claude Code'); option.value = String(index); this.harness.append(option); });
-      if (!this.tools.length) { this.status.textContent = 'This machine has no native Claude Code harness available. Add one under Settings → Harnesses.'; return; }
+      if (!this.tools.length) { this.status.textContent = 'This machine has no Claude Code harness that can continue a session (a native one, or a Docker one that shares the host Claude home). Add one under Settings → Harnesses.'; return; }
       this.fillModels();
       await this.loadSessions();
     } catch (error) {

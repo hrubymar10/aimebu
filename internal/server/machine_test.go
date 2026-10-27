@@ -1494,7 +1494,7 @@ func TestLaunchSpellingTurnWaitsForASupervisorThatKnowsIt(t *testing.T) {
 	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
 		for _, statement := range []string{
 			`INSERT INTO session(id,agent_id,generation,start_mode,started_at,native_session_id,native_session_started_at) VALUES ('ses_link','` + agent.ID + `',0,'native_resume','2026-10-13T00:00:00.000000000Z','` + original + `','2026-10-13T00:00:00.000000000Z')`,
-			`INSERT INTO imported_session(agent_id,machine_id,session_id,mode,cwd,imported_by,imported_at) VALUES ('` + agent.ID + `','` + f.machineID + `','` + original + `','continue','` + link + `','owner','now')`,
+			`UPDATE agent SET tool='claude',launch_path='` + link + `' WHERE id='` + agent.ID + `'`,
 		} {
 			if _, err := tx.Exec(statement); err != nil {
 				return err
@@ -1574,5 +1574,19 @@ func TestLaunchSpellingTurnWaitsForASupervisorThatKnowsIt(t *testing.T) {
 		}
 	case <-time.After(machineWaitGuard):
 		t.Fatal("no turn started")
+	}
+	// An agent switched to another tool no longer needs the spelling: with a supervisor that cannot start Claude in it, its turns are neither
+	// held nor given one (the stored spelling is a Claude session's, and goes stale with the tool).
+	f.srv.machineMu.Lock()
+	conn.supportsLaunchPath = false
+	f.srv.machineMu.Unlock()
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE agent SET tool='codex' WHERE id=?`, agent.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := f.db.AgentLaunchPathPending(ctx, agent.ID); err != nil || pending {
+		t.Fatalf("an agent switched away from Claude is still held for a spelling: %v %v", pending, err)
 	}
 }

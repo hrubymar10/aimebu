@@ -110,8 +110,12 @@ resolved one are the **same directory**, the agent keeps the canonical checkout
 (every boundary, launcher and single-writer rule is about that), and its turns
 start Claude **in the session's own spelling** (`launch_path` on the delivery; the
 supervisor starts the harness there with `PWD` set, and uses it only when it
-resolves to exactly the checkout). It is kept for the agent's life: a copy's later
-turns resume under the same spelling. The supervisor must advertise
+resolves to exactly the checkout). It is kept on the agent (`agent.launch_path`) for its
+life: a copy's later turns resume under the same spelling. The same holds for an
+imported v1 agent started with its session: v1 ran Claude in the folder as it
+spelled it, and that spelling is used. The agent uses it only while it is a Claude
+agent (one switched to another tool is not held or given it), and a switch to another
+checkout clears it. The supervisor must advertise
 `supports_launch_path`: spawn answers 409 `supervisor_update_needed` without it, and
 a machine that reconnects with an older supervisor holds the agent's turns
 (checked on every delivery, like a copy), says so once in the room, and sends nothing.

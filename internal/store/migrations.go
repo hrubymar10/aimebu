@@ -1485,6 +1485,9 @@ ALTER TABLE imported_session_new RENAME TO imported_session;
 CREATE UNIQUE INDEX imported_session_continued ON imported_session(machine_id,session_id) WHERE mode='continue';
 CREATE INDEX imported_session_original ON imported_session(machine_id,session_id);
 `}, {87, `
+-- A Claude Code session saved under a link to its folder is continued with the harness started in that spelling (see launch_path on the
+-- delivery); the agent keeps the canonical checkout. Empty for every agent that does not need it.
+ALTER TABLE agent ADD COLUMN launch_path TEXT NOT NULL DEFAULT '';
 -- An agent's dm_human call carries an Idempotency-Key like the other tools that write, so a retry posts no second message.
 ALTER TABLE request_key RENAME TO request_key_old;
 CREATE TABLE request_key (

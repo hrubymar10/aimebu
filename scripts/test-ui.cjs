@@ -2749,9 +2749,14 @@ async function main() {
         return [pick({ tool: 'claude', resumable: true }, catalog), pick({ tool: 'codex', resumable: false }, catalog), pick({ tool: 'claude', resumable: true }, catalog.slice(0, 2)),
           // Two native launchers (other Claude homes): the one a session was listed from is picked, the first when it is no longer offered.
           pick({ tool: 'claude', resumable: true, launcher_id: 'lch_b' }, [...catalog, { tool: 'claude', containerized: false, available: true, launcher_id: 'lch_b' }].map((tool, index) => index === 2 ? { ...tool, launcher_id: 'lch_a' } : tool)),
-          pick({ tool: 'claude', resumable: true, launcher_id: 'lch_gone' }, [...catalog, { tool: 'claude', containerized: false, available: true, launcher_id: 'lch_b' }].map((tool, index) => index === 2 ? { ...tool, launcher_id: 'lch_a' } : tool))];
+          pick({ tool: 'claude', resumable: true, launcher_id: 'lch_gone' }, [...catalog, { tool: 'claude', containerized: false, available: true, launcher_id: 'lch_b' }].map((tool, index) => index === 2 ? { ...tool, launcher_id: 'lch_a' } : tool)),
+          // A Docker claude launcher that shares the host's Claude home can continue a session, and is the one picked when the session was listed from it.
+          pick({ tool: 'claude', resumable: true, launcher_id: 'lch_dock' }, [{ tool: 'claude', containerized: true, available: true, launcher_id: 'lch_dock', shares_claude_home: true }, { tool: 'codex', containerized: false, available: true }, { tool: 'claude', containerized: false, available: true, launcher_id: 'lch_a' }]),
+          // One that does not say so stays out, whatever else the entry says.
+          pick({ tool: 'claude', resumable: true, launcher_id: 'lch_dock' }, [{ tool: 'claude', containerized: true, available: true, launcher_id: 'lch_dock', shares_claude_home: false }, { tool: 'claude', containerized: false, available: true, launcher_id: 'lch_a' }])];
       }), [{ selected: 2, disabled: [true, true, false] }, { selected: 1, disabled: [false, false, false] }, { selected: -1, disabled: [true, true] },
-        { selected: 3, disabled: [true, true, false, false] }, { selected: 2, disabled: [true, true, false, false] }], 'the start dialog picks the native claude entry (the launcher the session was listed from), just the v1 tool for a fresh start, and nothing when no native entry fits');
+        { selected: 3, disabled: [true, true, false, false] }, { selected: 2, disabled: [true, true, false, false] },
+        { selected: 0, disabled: [false, true, false] }, { selected: 1, disabled: [true, false] }], 'the start dialog picks the native claude entry (or a Docker one sharing the host Claude home) the session was listed from, just the v1 tool for a fresh start, and nothing when no such entry fits');
       await domClick(first, '#spawn-cancel');
       await first.waitForFunction(() => document.querySelector('#spawn-resume').hidden);
       assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, banner: document.querySelector('#spawn-resume').hidden })), { title: 'Spawn', banner: true }, 'closing the start dialog restores the ordinary one');
@@ -2886,6 +2891,19 @@ async function main() {
       assert.deepEqual(imported.states, ['Started as copy-1', 'Started as copy-2', 'Not started: limit reached']);
       assert.equal(imported.final, '2 of 3 sessions started; the project\'s agent or spawn-rate limit was reached, import the rest later.');
       assert.deepEqual(imported.afterRun, { ticked: 1, locked: [true, true, false] }, 'started sessions are locked, the unstarted one stays ticked for another try');
+      // A Docker Claude harness that shares the host's Claude home is offered next to the native one; one that does not say so is not.
+      assert.deepEqual(await first.evaluate(async projectID => {
+        const { ClaudeSessionImport } = await import('/js/claude-session-import.js');
+        const entry = (launcher, label, containerized, shares) => ({ tool: 'claude', variant: containerized ? 'docker' : 'native', launcher_id: launcher, containerized, shares_claude_home: shares, available: true, label, models: [{ id: 'haiku', default: true }] });
+        const source = { roles: async () => [{ role_key: 'worker', label: 'Worker' }], claudeSessions: async () => ({ sessions: [] }), spawn: async () => ({}),
+          catalog: async () => ({ tools: [entry('l_native', 'Claude Code', false, false), entry('l_shared', 'Claude Code (shared home)', true, true), entry('l_own', 'Claude Code (own home)', true, false)] }) };
+        const dialog = new ClaudeSessionImport(source);
+        await dialog.open({ projectID, homeRoomID: 'home_room' });
+        for (let i = 0; i < 100 && !document.querySelectorAll('#cc-import-harness option').length; i++) await new Promise(resolve => setTimeout(resolve, 20));
+        const labels = [...document.querySelectorAll('#cc-import-harness option')].map(option => option.textContent);
+        document.querySelector('#cc-import-close').click();
+        return labels;
+      }, actualProjectID), ['Claude Code', 'Claude Code (shared home)'], 'the import offers a Docker Claude harness only when it shares the host Claude home');
       // While an import runs its dialog cannot be closed (a reopened one could mix projects): Close is disabled and Escape is refused, both
       // until the import is done.
       const guarded = await first.evaluate(async projectID => {

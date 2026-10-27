@@ -418,7 +418,8 @@ func (tx *Tx) moveSwitchCheckout(agentID, projectID, machineID, path string) err
 			return err
 		}
 	}
-	_, err = tx.Exec(`UPDATE agent SET machine_id=?,checkout_id=?,key_hash='' WHERE id=?`, machineID, targetID, agentID)
+	// A spelling of the old checkout's folder (agent.launch_path) means nothing in another checkout, which may be on another machine.
+	_, err = tx.Exec(`UPDATE agent SET machine_id=?,checkout_id=?,key_hash='',launch_path=CASE WHEN checkout_id=? THEN launch_path ELSE '' END WHERE id=?`, machineID, targetID, targetID, agentID)
 	return err
 }
 
