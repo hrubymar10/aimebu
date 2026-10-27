@@ -2718,8 +2718,8 @@ async function main() {
       assert.equal(await first.$eval('#spawn-resume-mode', el => el.hidden), false, 'a v1 session that can be continued offers continue or a copy');
       assert.equal(await first.$eval('#spawn-resume-mode input[value=continue]', el => el.checked), true, 'it starts from continue, as v1 always did');
       await first.evaluate(() => document.querySelector('#spawn-resume-mode input[value=fork]').click());
-      assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, text: document.querySelector('#spawn-resume-text').textContent.slice(0, 77) })),
-        { title: 'Start veteran on a copy of its v1 session', text: 'This works on a copy of the v1 session of veteran@old, in /definitely/not/in/the' }, 'the copy choice says what it does');
+      assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, text: document.querySelector('#spawn-resume-text').textContent.startsWith('This works on a copy of the v1 session of veteran@old, in /definitely/not/in/the/project.') })),
+        { title: 'Start veteran on a copy of its v1 session', text: true }, 'the copy choice says what it does');
       await first.evaluate(() => document.querySelector('#spawn-resume-mode input[value=continue]').click());
       await first.waitForFunction(() => document.querySelector('#spawn-form h2').textContent === 'Start veteran as a v2 agent');
       // The model the person picked stays picked when the list is rebuilt (the catalog arriving again, the tool picked again).
