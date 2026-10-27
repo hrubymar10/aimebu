@@ -1310,22 +1310,57 @@ async function main() {
       host.remove();
       return { closed, opened, sent, room };
     }), { closed: ['Answer…', true, 'false'], opened: [false, 'true', true], sent: ['Proceed, but carefully'], room: false }, 'the inbox can give a free-text answer; the room view has no such box');
-    // A reply to a message with an open request for this person is sent as the answer (so the item resolves), however the text got there.
+    // A reply to a message with a free-text request open for this person is sent as the answer (so the item resolves) when it mentions no one but
+    // the requester and has no attachment; every other reply is an ordinary one that leaves the request open.
     assert.deepEqual(await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
-      const answers = [], shown = [];
-      const make = (reply, item, attachments = []) => {
-        const chat = Object.create(Chat.prototype);
-        Object.assign(chat, { room: { id: 'r' }, pendingUploads: 0, recall: null, sessionGeneration: 1, pendingAttachments: attachments, reply, error: { textContent: '' }, notice: { clear() {}, show(text) { shown.push(text); } }, announcer: { sendStarted() {}, sendFinished() {} },
-          draft: { value: '@tess Proceed, carefully', setSelectionRange() {} }, answerItems: new Map(item ? [['m1', item]] : []), current: () => true, resizeDraft() {}, setReply(message) { this.reply = message; }, inbox: { answer: async (found, text) => { answers.push([found.id, text]); return chat.__ok !== false; } } });
-        return chat;
-      };
-      const open = { id: 'inb', kind: 'question', rev: 0, can_decide: true };
-      const chat = make({ id: 'm1' }, open); await chat.send();
-      const resolved = { answers: [...answers], draft: chat.draft.value, reply: chat.reply };
-      const refusing = make({ id: 'm1' }, open); refusing.__ok = false; await refusing.send();
-      return { resolved, kept: refusing.draft.value, shown: [...shown] };
-    }), { resolved: { answers: [['inb', '@tess Proceed, carefully']], draft: '', reply: null }, kept: '@tess Proceed, carefully', shown: ['Could not send the answer'] }, 'a reply to a message with a request open for you resolves it, and a refused answer keeps the text');
+      const base = { room: { id: 'r' }, sessionGeneration: 1, recall: null, error: { textContent: '' }, announcer: { sendStarted() {}, sendFinished() {} }, resizeDraft() {}, current: () => true, renderPending() {}, trimLive() {}, add() {}, contextMode: false };
+      const original = window.fetch, posts = [];
+      window.fetch = async (path, options = {}) => { posts.push([String(path), JSON.parse(options.body || '{}').body]); return new Response(JSON.stringify({ id: 'm9' }), { status: 200, headers: { 'Content-Type': 'application/json' } }); };
+      try {
+        const run = async (body, item, { attachments = [], answer = async () => true, reply = { id: 'm1', author_kind: 'agent', author_id: 'a1' } } = {}) => {
+          const answers = [], shown = [];
+          const chat = Object.create(Chat.prototype);
+          Object.assign(chat, base, { reply, pendingUploads: 0, pendingAttachments: attachments, notice: { clear() {}, show(text) { shown.push(text); } }, agents: new Map([['a1', { slug: 'tess' }]]),
+            draft: { value: body, setSelectionRange() {} }, answerItems: new Map(item ? [['m1', item]] : []), setReply(message) { this.reply = message; }, inbox: { answer: async (found, text) => { answers.push([found.id, text]); return answer(); } } });
+          posts.length = 0;
+          await chat.send();
+          return { answered: answers.length, posted: posts.length, draft: chat.draft.value, shown: [...shown] };
+        };
+        const free = { id: 'inb', kind: 'question', rev: 0, can_decide: true, free_text: true };
+        const out = {
+          answeredByTyping: await run('@tess go on, carefully', free),
+          answeredPlain: await run('go on, carefully', free),
+          othersMentioned: await run('@tess @reviewer please look', free),
+          optionsOnly: await run('@tess whatever', { ...free, free_text: false }),
+          attachment: await run('@tess here', free, { attachments: [{ id: 'att' }] }),
+          cannotDecide: await run('@tess ok', { ...free, can_decide: false }),
+          boundary: await run('@tess ok', { ...free, boundary_pending: true }),
+          noItem: await run('@tess ok', null),
+          refused: await run('@tess ok', free, { answer: async () => false }),
+          pending: await run('@tess ok', free, { answer: async () => undefined }),
+        };
+        // A second send while an answer is in flight does nothing.
+        let release; const gate = new Promise(resolve => { release = resolve; });
+        const chat = Object.create(Chat.prototype), calls = [];
+        Object.assign(chat, base, { reply: { id: 'm1', author_kind: 'agent', author_id: 'a1' }, pendingUploads: 0, pendingAttachments: [], notice: { clear() {}, show() {} }, agents: new Map([['a1', { slug: 'tess' }]]), draft: { value: '@tess ok', setSelectionRange() {} }, answerItems: new Map([['m1', free]]), setReply() {}, inbox: { answer: async () => { calls.push(1); await gate; return true; } } });
+        const one = chat.send(), two = chat.send(); release(); await Promise.all([one, two]);
+        out.doubleSubmit = calls.length;
+        return out;
+      } finally { window.fetch = original; }
+    }), {
+      answeredByTyping: { answered: 1, posted: 0, draft: '', shown: [] },
+      answeredPlain: { answered: 1, posted: 0, draft: '', shown: [] },
+      othersMentioned: { answered: 0, posted: 1, draft: '', shown: [] },
+      optionsOnly: { answered: 0, posted: 1, draft: '', shown: [] },
+      attachment: { answered: 0, posted: 1, draft: '', shown: [] },
+      cannotDecide: { answered: 0, posted: 1, draft: '', shown: [] },
+      boundary: { answered: 0, posted: 1, draft: '', shown: [] },
+      noItem: { answered: 0, posted: 1, draft: '', shown: [] },
+      refused: { answered: 1, posted: 0, draft: '@tess ok', shown: ['Could not send the answer'] },
+      pending: { answered: 1, posted: 0, draft: '@tess ok', shown: ['Could not send the answer'] },
+      doubleSubmit: 1,
+    }, 'a free-text reply that mentions only the requester resolves the request; anything else is an ordinary reply; only a confirmed answer clears the draft; no double submit');
     // A proposed answer is the v1 button: a click sends "@author answer"; Shift-click puts it in the composer with the reply link (when the
     // page can do that) and sends nothing; a refused send keeps the buttons and says why.
     const proposedAnswers = await first.evaluate(async () => {

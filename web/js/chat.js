@@ -1344,6 +1344,14 @@ export class Chat {
     } catch (error) { if (this.current(session, room)) this.threadNotice.show(error.message); }
   }
   setReply(message) { this.reply = message; this.chip.hidden = !message; this.chipText.textContent = message ? `Replying to ${this.authorName(message)}: ${messageSnippet(message)}` : ''; if (message) this.draft.focus(); }
+  // Whether a reply to `parent` with this text is the answer to `item` (see send): a free-text question or approval this person decides, answered
+  // with text that mentions at most the requester.
+  answersThroughInbox(item, parent, body) {
+    if (!['question', 'approval'].includes(item.kind) || item.boundary_pending || item.can_decide === false || !item.free_text) return false;
+    const requester = this.answerOptions(parent).mention.toLowerCase();
+    const mentioned = [...String(body).matchAll(/(^|[^\w@`\\])@([a-z0-9][a-z0-9_-]*(?:@[a-z0-9_-]+)?)/gi)].map(match => `@${match[2].toLowerCase()}`);
+    return mentioned.every(name => name === requester);
+  }
   async send() {
     if (!this.room || this.pendingUploads || (!this.draft.value.trim() && !this.pendingAttachments.length)) return;
     const room = this.room.id, body = this.draft.value, reply = this.reply, attachments = this.pendingAttachments.map(a => a.id), session = this.sessionGeneration;
@@ -1351,12 +1359,18 @@ export class Chat {
     this.announcer.sendStarted();
     let sentID = null;
     try {
-      // A reply to a message that has something open for this person to decide (a proposed answer, a question) is the answer to it: it goes
-      // through the inbox, which resolves the item, so the item closes and the Inbox count drops, whether the text came from Shift-clicking an
-      // answer or was typed. With attachments there is no answer to send (the answer is text), so it stays an ordinary reply.
+      // A reply to a message with a free-text question or approval open for this person is the answer to it: it goes through the inbox, which
+      // resolves the item, so the item closes and the Inbox count drops, whether the text came from Shift-clicking an answer or was typed. It
+      // stays an ordinary reply when it carries attachments (an answer is text), when the item is not one this person decides, when the ask is
+      // options only (arbitrary text does not answer it), or when the text mentions anyone but the requester (so an @reviewer wake still works).
       const open = reply && !attachments.length ? this.answerItems?.get(reply.id) : null;
-      if (open && ['question', 'approval'].includes(open.kind) && !open.boundary_pending && open.can_decide !== false) {
-        if (await this.inbox.answer(open, body.trim()) === false) throw new Error('Could not send the answer');
+      if (open && this.answersThroughInbox(open, reply, body)) {
+        if (this.answering) return;
+        this.answering = true;
+        try {
+          // Only a confirmed answer clears the draft; a card that is already pending answers undefined, and a refusal answers false.
+          if (await this.inbox.answer(open, body.trim()) !== true) throw new Error('Could not send the answer');
+        } finally { this.answering = false; }
         if (this.current(session, room)) { this.draft.value = ''; if (this.recall) this.recall.index = null; this.resizeDraft(); this.setReply(null); }
         return;
       }

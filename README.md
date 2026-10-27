@@ -503,12 +503,12 @@ events and every 30 seconds.
 Agent messages can request a human answer with `needs_attention: true`.
 They may add two to four `proposed_answers` for quick buttons or up to ten
 `open_questions`, each with two to eight options and an optional description.
-The inbox and room show the same pending request. A proposed answer is a compact button (as in v1): a click sends it addressed to the requesting agent (`@author answer`); Shift-click puts the same text in the composer with the reply link, to change before sending. A free answer is typed in the composer as a reply to the message (a reply to a message with a request open for you is sent as the answer, so it resolves the item and the Inbox count drops), or, in the Inbox, with its "Answer…" button under the chips. Each open question adds Other text. Sending resolves one inbox
+The inbox and room show the same pending request. A proposed answer is a compact button (as in v1): a click sends it addressed to the requesting agent (`@author answer`); Shift-click puts the same text in the composer with the reply link, to change before sending. A free answer is typed in the composer as a reply to the message (a reply in the room to a message with a free-text request open for you, mentioning no one but the requester and with no attachment, is sent as the answer, so it resolves the item and the Inbox count drops; any other reply, and every reply in a thread panel, is an ordinary reply that leaves the request open), or, in the Inbox, with its "Answer…" button under the chips. Each open question adds Other text. Sending resolves one inbox
 item and posts a structural reply addressed to the requesting agent. A request you had open that is now settled leaves a quiet, disabled "Answered" under the message for the rest of the session (as in v1) instead of silently losing its buttons; after a reload the message shows no controls.
 The Open Questions dialog shows one question at a time with a numbered
 stepper (answered questions are marked), an "N/M answered" counter and a
 review step; Send is enabled only once every question is answered, and an
-Other answer must not be empty. Picking an option moves on to the next question (and from the last to the review once everything is answered); moving between options with the arrow keys does not. Answers are kept per request: closing the
+Other answer must not be empty. Picking an option with a click, Enter or Space moves on to the next question (and from the last to the review once everything is answered); with the arrow keys the arrows pick and Next moves on. Answers are kept per request: closing the
 dialog, a re-render, or a page reload (same tab) keeps them, and they are
 dropped when sent or when the questions change. On phones the dialog fills the screen with a pinned
 action bar, every control is at least 40px, and tapping the Other box chooses
