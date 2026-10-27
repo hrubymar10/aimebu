@@ -205,7 +205,8 @@ environment or launcher arguments.
 - **machine \<name\>** — a connected machine whose supervisor lacks a
   capability flag warns, naming each flag and what degrades without it (for
   example `supports_session_fork`: a Claude Code session can only be continued
-  in place, not as a copy; `supports_worktree`: room worktrees cannot be created
+  in place, not as a copy; `supports_launch_path`: a session made under a link
+  to its folder cannot be continued there, its turns are held; `supports_worktree`: room worktrees cannot be created
   on that machine; `supports_stop_replay`: a stop sent while the machine was
   offline is applied by a fallback that can kill a live process early). A
   machine that is not connected right now is ok here; the offline `machines`

@@ -308,6 +308,20 @@ func sessionFoundFrom(session protocol.SessionCandidate, path string) bool {
 	return session.Dir == ccsessions.FolderName(path)
 }
 
+// sameDirectory says a session's saved working folder (cwd, in the spelling it was made under) is the directory canonical, on the machine that
+// has it: the host resolves it here; another machine already resolved it (the path probe that produced canonical took cwd itself), so there
+// is nothing more to check from this side.
+func sameDirectory(machine store.Machine, cwd, canonical string) bool {
+	if !filepath.IsAbs(cwd) || filepath.Clean(cwd) != cwd {
+		return false
+	}
+	if !machine.IsHost {
+		return true
+	}
+	resolved, err := filepath.EvalSymlinks(cwd)
+	return err == nil && filepath.Clean(resolved) == canonical
+}
+
 // sessionRoomTitle is the title of the room a continued session gets: its own title, or the start of its id when it has none.
 func sessionRoomTitle(session protocol.SessionCandidate) string {
 	if title, err := store.NormalizeRoomTitle(session.Title); err == nil && title != "" {

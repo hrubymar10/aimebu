@@ -92,9 +92,20 @@ continue: `claude-docker` forwards no `CLAUDE_CONFIG_DIR`, so a container never 
 The agent runs in the folder the session was made in, resolved on the machine,
 so it cannot use a worktree. If that folder no longer exists the start is refused
 (409 `session_folder_missing`). Claude looks a session up under a directory named
-after the folder it is started in, so a session made through a link (saved under
-the link's name) cannot be found from the resolved folder: the start is refused
-(409 `session_folder_alias`) rather than failing on the first turn.
+after the folder it is started in, as spelled, so a session made through a link
+(saved under the link's name, for example a home folder that is a link to another
+volume) is not found from the resolved path. When the session's folder and the
+resolved one are the **same directory**, the agent keeps the canonical checkout
+(every boundary, launcher and single-writer rule is about that), and its turns
+start Claude **in the session's own spelling** (`launch_path` on the delivery; the
+supervisor starts the harness there with `PWD` set, and uses it only when it
+resolves to exactly the checkout). It is kept for the agent's life: a copy's later
+turns resume under the same spelling. The supervisor must advertise
+`supports_launch_path`: spawn answers 409 `supervisor_update_needed` without it, and
+a machine that reconnects with an older supervisor holds the agent's turns
+(checked on every delivery, like a copy), says so once in the room, and sends nothing.
+A spelling that does not resolve to the checkout is refused (409
+`session_folder_alias`) rather than failing on the first turn.
 
 `resume_mode` is `continue` (append to the original transcript) or `fork` (work on
 a copy, below). **When the request does not say, it is `fork`**: the safe choice

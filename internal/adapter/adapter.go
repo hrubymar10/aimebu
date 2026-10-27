@@ -35,8 +35,11 @@ type TurnSpec struct {
 	NativeSessionStarted bool
 	// ForkSession resumes NativeSessionHandle as a copy (Claude's --fork-session): the harness saves it under a new id, which the turn
 	// reports in its native_session_started event.
-	ForkSession           bool
-	CheckoutPath          string
+	ForkSession  bool
+	CheckoutPath string
+	// LaunchPath, when set, is the folder the harness is started in instead of CheckoutPath: another spelling of the same directory, which a
+	// Claude Code session was saved under. The supervisor sets it only after checking it resolves to CheckoutPath.
+	LaunchPath            string
 	Mode                  Mode
 	NotesJSON             json.RawMessage
 	ContextJSON           json.RawMessage

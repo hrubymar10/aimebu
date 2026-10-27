@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -149,9 +150,31 @@ func (s *Store) AgentForkPending(ctx context.Context, agentID string) (bool, err
 	return pending.Valid && pending.Bool, err
 }
 
-// NoteForkHeld tells the room(s) where the agent has queued notes why it is not starting: its machine's supervisor cannot work on a copy of a
-// session, and nothing was sent to it. An agent with nothing queued (a recovery turn) is told in the first room it joined.
-func (s *Store) NoteForkHeld(ctx context.Context, agentID string) error {
+// AgentLaunchPathPending says the agent's turns must start in a spelling of its folder other than the canonical one: it continues a Claude Code
+// session that was made under a link, and Claude finds the session only from the folder as it was spelled then. Sending such a turn to a
+// supervisor that ignores the spelling would start Claude where the session cannot be found.
+func (s *Store) AgentLaunchPathPending(ctx context.Context, agentID string) (bool, error) {
+	if err := s.checkTxReentry(ctx); err != nil {
+		return false, err
+	}
+	var differs sql.NullBool
+	err := s.db.QueryRowContext(ctx, `SELECT i.cwd<>'' AND i.cwd<>c.canonical_path FROM imported_session i JOIN agent a ON a.id=i.agent_id JOIN checkout c ON c.id=a.checkout_id WHERE i.agent_id=?`, agentID).Scan(&differs)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return differs.Valid && differs.Bool, err
+}
+
+// Why a turn is held back for a supervisor that cannot run it (NoteSessionHeld).
+const (
+	HeldForFork       = "it works on a copy of a Claude Code session, and the supervisor on %s predates that (it would write into the original)"
+	HeldForLaunchPath = "it continues a Claude Code session made under a link to its folder, and the supervisor on %s predates starting Claude in that spelling (it would not find the session)"
+)
+
+// NoteSessionHeld tells the room(s) where the agent has queued notes why it is not starting: its machine's supervisor cannot run its turns,
+// and nothing was sent to it. why is one of the HeldFor constants (it takes the machine's name). An agent with nothing queued (a recovery
+// turn) is told in the first room it joined.
+func (s *Store) NoteSessionHeld(ctx context.Context, agentID, why string) error {
 	return s.Tx(ctx, func(tx *Tx) error {
 		var slug, machine string
 		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.slug,mc.name FROM agent a JOIN machine mc ON mc.id=a.machine_id WHERE a.id=?`, agentID).Scan(&slug, &machine); err != nil {
@@ -189,10 +212,28 @@ func (s *Store) NoteForkHeld(ctx context.Context, agentID string) error {
 		}
 		for _, room := range rooms {
 			if _, err := tx.InsertMessage(Message{RoomID: room, AuthorKind: "system", AuthorID: "system",
-				Body: fmt.Sprintf("%s is held: it works on a copy of a Claude Code session, and the supervisor on %s predates that (it would write into the original). Update the supervisor; nothing was sent to it.", slug, machine)}); err != nil {
+				Body: fmt.Sprintf("%s is held: "+why+". Update the supervisor; nothing was sent to it.", slug, machine)}); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+// agentLaunchPath is the spelling the agent's harness is started in when it differs from the checkout's canonical path: the folder a Claude
+// Code session was made under, kept as spelled because Claude keys its sessions by it. Empty for every agent that was not started from a
+// session, and when the spelling is the canonical path itself.
+func (tx *Tx) agentLaunchPath(agentID, checkoutPath string) (string, error) {
+	var cwd string
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT cwd FROM imported_session WHERE agent_id=?`, agentID).Scan(&cwd)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if cwd == "" || cwd == checkoutPath || !filepath.IsAbs(cwd) {
+		return "", nil
+	}
+	return cwd, nil
 }

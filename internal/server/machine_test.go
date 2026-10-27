@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1452,6 +1453,124 @@ func TestForkedTurnWaitsForASupervisorThatCanFork(t *testing.T) {
 	case spec := <-tap.specs:
 		if spec.NativeSessionHandle != original || !spec.NativeSessionStarted || !spec.ForkSession {
 			t.Fatalf("the turn does not fork the original: %+v", spec)
+		}
+	case <-time.After(machineWaitGuard):
+		t.Fatal("no turn started")
+	}
+}
+
+// A session made under a link to its folder is continued with the harness started in that spelling: the turn carries it, and a supervisor
+// that does not know it is never given the turn (Claude would start in the canonical folder and not find the session).
+func TestLaunchSpellingTurnWaitsForASupervisorThatKnowsIt(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	ctx := context.Background()
+	const original = "11111111-1111-4111-8111-111111111111"
+	checkout, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(checkout, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO role(id,key,label,body,role_key) VALUES ('role_link','worker','Worker','worker','worker')`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES ('chk_link',?,?,?)`, f.project.ID, f.machineID, checkout)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := f.db.CreateAgent(ctx, store.Agent{Slug: "linked", ProjectID: f.project.ID, RoleID: "role_link", Tool: "fake", Variant: "test", Model: "test", Provider: "test", MachineID: f.machineID, CheckoutID: "chk_link", KeyHash: "key", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.AddMember(ctx, f.room.ID, "agent", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
+		for _, statement := range []string{
+			`INSERT INTO session(id,agent_id,generation,start_mode,started_at,native_session_id,native_session_started_at) VALUES ('ses_link','` + agent.ID + `',0,'native_resume','2026-10-13T00:00:00.000000000Z','` + original + `','2026-10-13T00:00:00.000000000Z')`,
+			`INSERT INTO imported_session(agent_id,machine_id,session_id,mode,cwd,imported_by,imported_at) VALUES ('` + agent.ID + `','` + f.machineID + `','` + original + `','continue','` + link + `','owner','now')`,
+		} {
+			if _, err := tx.Exec(statement); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := f.db.AgentLaunchPathPending(ctx, agent.ID); err != nil || !pending {
+		t.Fatalf("a session saved under a link does not need its spelling: %v %v", pending, err)
+	}
+	journal, err := supervisor.OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	tap := &specTap{Fake: adapter.NewFake(), specs: make(chan adapter.TurnSpec, 4)}
+	tap.ScriptDefault(adapter.Step{Kind: adapter.StepEmit, Event: adapter.Event{Kind: adapter.EventFinalAnswer, Answer: json.RawMessage(`{"messages":[]}`)}}, adapter.Step{Kind: adapter.StepExit, Exit: adapter.ExitInfo{TerminalEvent: true}})
+	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, tap)
+	ready := make(chan struct{}, 1)
+	client.OnReady = func() { ready <- struct{}{} }
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() { _ = client.RunOnce(runCtx) }()
+	select {
+	case <-ready:
+	case <-time.After(machineWaitGuard):
+		t.Fatal("supervisor did not connect")
+	}
+	f.srv.machineMu.Lock()
+	conn := f.srv.machines[f.machineID]
+	conn.supportsLaunchPath = false
+	f.srv.machineMu.Unlock()
+	if err := f.srv.Dispatch(ctx, protocol.Delivery{AgentID: agent.ID, Generation: 0, TurnID: "turn_never", Mode: adapter.ModeNormal, NativeSessionHandle: original, NativeSessionStarted: true, LaunchPath: link}); !errors.Is(err, ErrSupervisorUpdateNeeded) {
+		t.Fatalf("a delivery with a launch spelling to a supervisor that does not know it: %v", err)
+	}
+	response := f.request("POST", "/api/rooms/"+f.room.ID+"/messages", map[string]string{"body": "@linked please work"}, true)
+	if response.StatusCode != 201 {
+		t.Fatalf("post status=%d", response.StatusCode)
+	}
+	response.Body.Close()
+	dispatcher := NewDispatcher(f.srv)
+	for i := 0; i < 3; i++ {
+		if count, err := dispatcher.Pass(ctx); err != nil || count != 0 {
+			t.Fatalf("pass %d dispatched %d: %v", i, count, err)
+		}
+	}
+	select {
+	case spec := <-tap.specs:
+		t.Fatalf("a supervisor that does not know the spelling was given a turn: %+v", spec)
+	case <-time.After(300 * time.Millisecond):
+	}
+	messages, err := f.db.ListMessagesAfter(ctx, f.room.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := 0
+	for _, message := range messages {
+		if message.AuthorKind == "system" && strings.Contains(message.Body, "linked is held") && strings.Contains(message.Body, "link to its folder") {
+			held++
+		}
+	}
+	if held != 1 {
+		t.Fatalf("the hold was said %d times, want once", held)
+	}
+	f.srv.machineMu.Lock()
+	conn.supportsLaunchPath = true
+	f.srv.machineMu.Unlock()
+	if count, err := dispatcher.Pass(ctx); err != nil || count != 1 {
+		t.Fatalf("dispatch after the supervisor knows the spelling: %d %v", count, err)
+	}
+	select {
+	case spec := <-tap.specs:
+		if spec.CheckoutPath != checkout || spec.LaunchPath != link || spec.NativeSessionHandle != original {
+			t.Fatalf("the turn does not start in the session's spelling: %+v", spec)
 		}
 	case <-time.After(machineWaitGuard):
 		t.Fatal("no turn started")

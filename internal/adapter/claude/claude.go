@@ -183,6 +183,12 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	cmd := exec.CommandContext(ctx, command, adapter.LauncherArgs(spec, args)...)
 	cmd.Dir = spec.CheckoutPath
 	cmd.Env = adapter.LauncherEnv(childEnv(), spec.LauncherEnvRefs)
+	if spec.LaunchPath != "" {
+		// Claude keys a session by the folder it is started in as spelled, which it learns from PWD (the kernel only knows the resolved path).
+		// Go does not add PWD when Env is set, so it is set here.
+		cmd.Dir = spec.LaunchPath
+		cmd.Env = append(cmd.Env, "PWD="+spec.LaunchPath)
+	}
 	if a.variant() == "docker" {
 		cmd.Env = append(cmd.Env, "CLAUDE_LAUNCH_FLAGS=")
 	}

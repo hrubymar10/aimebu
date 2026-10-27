@@ -708,6 +708,7 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		}
 	}
 	var path string
+	var sessionSpelling string // the folder a continued session was saved under, when that is another spelling of path
 	var worktreeItem *store.RoomWorktree
 	if session != nil {
 		// A continued session runs where it was made, not in the room's checkout.
@@ -716,8 +717,17 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			return
 		}
 		if !sessionFoundFrom(*session, path) {
-			apiError(w, 409, "session_folder_alias", "Claude saved this session under "+session.CWD+", a spelling of "+path+" that Claude does not treat as the same folder, so it would not find the session from there; open "+session.CWD+" in Claude once and continue it from the terminal, or start a new agent")
-			return
+			// Claude saved the session under a spelling of this folder (a link to it) and finds it only when started there as spelled. That
+			// is allowed when the spelling really is this directory: the agent keeps the canonical path, and its turns start in the spelling.
+			if !sameDirectory(machineInfo, session.CWD, path) {
+				apiError(w, 409, "session_folder_alias", "Claude saved this session under "+session.CWD+", which is not the folder "+path+" it resolves to here, so it would not find the session; open "+session.CWD+" in Claude once and continue it from the terminal, or start a new agent")
+				return
+			}
+			if !machine.supportsLaunchPath {
+				apiError(w, 409, "supervisor_update_needed", "this session was saved under a link to its folder ("+session.CWD+"); the supervisor on "+machineInfo.Name+" predates starting Claude in that spelling, so update it")
+				return
+			}
+			sessionSpelling = filepath.Clean(session.CWD)
 		}
 	} else if resuming {
 		// A resumed session runs where it was made (see legacyResumeCWD), not in the room's checkout.
@@ -760,6 +770,9 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		if session != nil {
 			input.ResumeHandle = session.ID
 			input.ResumeSession = &store.ResumeSession{ID: session.ID, CWD: path, Title: session.Title, Fork: req.ResumeMode == resumeFork}
+			if sessionSpelling != "" {
+				input.ResumeSession.CWD = sessionSpelling // the agent's turns start here; the checkout itself stays the canonical path
+			}
 			if req.NewRoom {
 				input.NewRoomTitle = sessionRoomTitle(*session)
 			}

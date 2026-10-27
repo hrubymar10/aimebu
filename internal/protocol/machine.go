@@ -59,6 +59,7 @@ type Frame struct {
 	SupportsPathProbe    bool                 `json:"supports_path_probe,omitempty"`
 	SupportsSessionScan  bool                 `json:"supports_session_scan,omitempty"`
 	SupportsSessionFork  bool                 `json:"supports_session_fork,omitempty"`
+	SupportsLaunchPath   bool                 `json:"supports_launch_path,omitempty"`
 	SupportsWorktree     bool                 `json:"supports_worktree,omitempty"`
 	SupportsLaunchers    bool                 `json:"supports_launchers,omitempty"`
 	SupportsDetect       bool                 `json:"supports_detect,omitempty"`
@@ -111,7 +112,10 @@ type Frame struct {
 	NativeSessionStarted bool                 `json:"native_session_started,omitempty"`
 	// ForkSession says this turn resumes NativeSessionHandle as a copy: the harness saves it under a new id, which the turn reports as its
 	// native session.
-	ForkSession    bool                `json:"fork_session,omitempty"`
+	ForkSession bool `json:"fork_session,omitempty"`
+	// LaunchPath is the spelling of CheckoutPath a Claude Code session was made under, when that differs from it (a link to the folder):
+	// Claude keys its sessions by the folder it is started in, so the harness is started there, not in the canonical path.
+	LaunchPath     string              `json:"launch_path,omitempty"`
 	Level          string              `json:"level,omitempty"`
 	Ref            string              `json:"ref,omitempty"`
 	SourceEventID  string              `json:"source_event_id,omitempty"`
@@ -214,14 +218,14 @@ type CapabilityReport struct {
 
 func DeliverFrame(d Delivery) Frame {
 	agent := d.Agent
-	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, AttachmentBearer: d.AttachmentBearer}
+	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, LaunchPath: d.LaunchPath, AttachmentBearer: d.AttachmentBearer}
 }
 func (f Frame) Delivery() Delivery {
 	agent := adapter.AgentSpec{}
 	if f.Agent != nil {
 		agent = *f.Agent
 	}
-	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, AttachmentBearer: f.AttachmentBearer}
+	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, LaunchPath: f.LaunchPath, AttachmentBearer: f.AttachmentBearer}
 }
 
 type HelloAgent struct {
@@ -261,7 +265,9 @@ type Delivery struct {
 	NativeSessionStarted bool              `json:"native_session_started,omitempty"`
 	ForkSession          bool              `json:"fork_session,omitempty"`
 	CheckoutPath         string            `json:"checkout_path,omitempty"`
-	AttachmentBearer     string            `json:"attachment_bearer,omitempty"`
+	// LaunchPath: see Frame.LaunchPath.
+	LaunchPath       string `json:"launch_path,omitempty"`
+	AttachmentBearer string `json:"attachment_bearer,omitempty"`
 }
 
 type DeliveryNote struct {

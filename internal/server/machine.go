@@ -41,6 +41,7 @@ type machineConn struct {
 	supportsPathProbe    bool
 	supportsSessionScan  bool
 	supportsSessionFork  bool
+	supportsLaunchPath   bool
 	supportsWorktree     bool
 	supportsLaunchers    bool
 	supportsDetect       bool
@@ -293,7 +294,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
+	c := &machineConn{id: machineID, keyHash: keyHash, conn: conn, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), replayDone: make(chan struct{}), bound: bound, journaled: journaled, capabilities: hello.Capabilities, supportsPathProbe: hello.SupportsPathProbe, supportsSessionScan: hello.SupportsSessionScan, supportsSessionFork: hello.SupportsSessionFork, supportsLaunchPath: hello.SupportsLaunchPath, supportsWorktree: hello.SupportsWorktree, supportsLaunchers: hello.SupportsLaunchers, supportsDetect: hello.SupportsDetect, supportsDetectDir: hello.SupportsDetectDir, supportsAgentLogs: hello.SupportsAgentLogs, supportsAgentLogSize: hello.SupportsAgentLogSize, supportsStopReplay: hello.SupportsStopReplay, harnesses: hello.Harnesses, launchers: hello.Launchers, harnessPending: make(map[string]chan protocol.Frame), launcherPending: make(map[string]chan protocol.Frame), pathPending: make(map[string]chan protocol.Frame)}
 	c.lastSeen.Store(time.Now().UnixNano())
 	s.machineMu.Lock()
 	old := s.machines[machineID]
@@ -705,6 +706,10 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 	// Checked on every delivery, not once at spawn: the machine may have reconnected with an older supervisor since. One that does not know
 	// the flag would run `claude --resume <original>` without --fork-session, writing into the original transcript for good.
 	if delivery.ForkSession && !c.supportsSessionFork {
+		return ErrSupervisorUpdateNeeded
+	}
+	// A supervisor that does not know launch_path would start Claude in the canonical folder, where a session made under a link is not found.
+	if delivery.LaunchPath != "" && !c.supportsLaunchPath {
 		return ErrSupervisorUpdateNeeded
 	}
 	c.boundMu.RLock()

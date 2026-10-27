@@ -202,7 +202,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -731,7 +731,7 @@ func (c *Client) handleDeliver(ctx context.Context, conn *websocket.Conn, delive
 		return errors.New("invalid delivery")
 	}
 	spec := adapter.TurnSpec{TurnID: delivery.TurnID, Agent: delivery.Agent, NativeSessionHandle: delivery.NativeSessionHandle,
-		NativeSessionStarted: delivery.NativeSessionStarted, ForkSession: delivery.ForkSession, CheckoutPath: delivery.CheckoutPath,
+		NativeSessionStarted: delivery.NativeSessionStarted, ForkSession: delivery.ForkSession, CheckoutPath: delivery.CheckoutPath, LaunchPath: launchSpelling(delivery.LaunchPath, delivery.CheckoutPath),
 		Mode: delivery.Mode, ContextJSON: delivery.Context, AllowedTools: delivery.AllowedTools}
 	containerized := delivery.Agent.Variant == "docker"
 	if delivery.Agent.LauncherID != "" {
@@ -1241,4 +1241,18 @@ func (c *Client) sweepAgentLogs(ctx context.Context) {
 			run()
 		}
 	}
+}
+
+// launchSpelling is the folder spelling a turn may start the harness in instead of its checkout: the one the server names, when it is an
+// absolute path that resolves to exactly the checkout. Anything else is ignored (the turn then starts in the checkout itself): the server
+// is trusted to say which spelling a session was saved under, never to point a harness at another folder.
+func launchSpelling(launch, checkout string) string {
+	if launch == "" || launch == checkout || !filepath.IsAbs(launch) || filepath.Clean(launch) != launch {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(launch)
+	if err != nil || filepath.Clean(resolved) != checkout {
+		return ""
+	}
+	return launch
 }

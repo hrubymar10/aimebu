@@ -149,17 +149,34 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 		}
 		// A turn that forks a Claude Code session waits for a supervisor that can: asked before the turn is prepared, so the wait does not
 		// churn turns, and said once in the agent's room.
-		if !machine.supportsSessionFork {
+		// The same wait for a turn that must start Claude in the spelling its session was saved under.
+		if !machine.supportsSessionFork || !machine.supportsLaunchPath {
 			// A failure here is this agent's, not the pass's: it is logged, the agent waits (fails closed, nothing is sent), and the
 			// other agents go on.
-			pending, err := d.Server.Store.AgentForkPending(ctx, id)
-			if err != nil {
-				log.Printf("dispatch: is %s a copy of a session still unnamed: %v", id, err)
-				continue
+			why := ""
+			if !machine.supportsSessionFork {
+				pending, err := d.Server.Store.AgentForkPending(ctx, id)
+				if err != nil {
+					log.Printf("dispatch: is %s a copy of a session still unnamed: %v", id, err)
+					continue
+				}
+				if pending {
+					why = store.HeldForFork
+				}
 			}
-			if pending {
+			if why == "" && !machine.supportsLaunchPath {
+				pending, err := d.Server.Store.AgentLaunchPathPending(ctx, id)
+				if err != nil {
+					log.Printf("dispatch: does %s need a launch spelling: %v", id, err)
+					continue
+				}
+				if pending {
+					why = store.HeldForLaunchPath
+				}
+			}
+			if why != "" {
 				if d.forkHeld[id] != machine {
-					if err := d.Server.Store.NoteForkHeld(ctx, id); err != nil {
+					if err := d.Server.Store.NoteSessionHeld(ctx, id, why); err != nil {
 						log.Printf("dispatch: saying why %s is held: %v", id, err)
 						continue
 					}

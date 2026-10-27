@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -267,4 +268,41 @@ func TestStopAcceptingAndDrainTimesOutWithTurnID(t *testing.T) {
 	close(turn.events)
 	close(turn.done)
 	client.turns.Wait()
+}
+
+// The server names the spelling a session was saved under; the supervisor starts the harness there only when it really is the checkout.
+func TestLaunchSpellingIsUsedOnlyForTheCheckoutItself(t *testing.T) {
+	base := t.TempDir()
+	real, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkout := filepath.Join(real, "proj")
+	other := filepath.Join(real, "other")
+	for _, dir := range []string{checkout, other} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(real, "link")
+	if err := os.Symlink(checkout, link); err != nil {
+		t.Fatal(err)
+	}
+	otherLink := filepath.Join(real, "other-link")
+	if err := os.Symlink(other, otherLink); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct{ launch, want string }{
+		"none":                     {"", ""},
+		"the checkout itself":      {checkout, ""},
+		"a link to the checkout":   {link, link},
+		"a link to another folder": {otherLink, ""},
+		"a relative path":          {"proj", ""},
+		"an unclean path":          {link + "/../link", ""},
+		"a missing path":           {filepath.Join(real, "gone"), ""},
+	} {
+		if got := launchSpelling(tc.launch, checkout); got != tc.want {
+			t.Errorf("%s: launchSpelling(%q) = %q, want %q", name, tc.launch, got, tc.want)
+		}
+	}
 }

@@ -808,7 +808,7 @@ it never silently reruns a turn with uncertain effects.
 
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
-  supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_worktree?, supports_launchers?, supports_detect?,
+  supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_detect?,
   supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?,
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
@@ -875,6 +875,12 @@ it never silently reruns a turn with uncertain effects.
   turn): the dispatcher holds such an agent before preparing a turn and posts one
   system note in the room where its note is queued, and `Dispatch` refuses the delivery with
   `supervisor_update_needed`.
+- S→M `deliver` carries `launch_path` for an agent started from a Claude Code session
+  that was saved under another spelling of its folder (a link): the folder the harness is
+  started in (`cmd.Dir` and `PWD`), because Claude keys sessions by the folder as spelled.
+  The checkout stays the canonical path; the supervisor ignores a `launch_path` that does
+  not resolve to exactly it. Sent only to supervisors whose hello has `supports_launch_path`,
+  with the same per-delivery check and hold as `fork_session`.
 - S→M `session_scan{v,req_id,launcher_id?,scan_folders?[1..4] | scan_session_id?}`; M→S
   `session_scan_result{v,req_id,sessions?[{id,cwd,dir?,title?,git_branch?,version?,
   entrypoint?,modified_at,size,active?}],unreadable?,scan_truncated?,code?,message?}`.

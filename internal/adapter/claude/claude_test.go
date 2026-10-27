@@ -535,3 +535,57 @@ func TestOversizedStdoutLineKillsProcessGroupBeforeWait(t *testing.T) {
 		t.Fatalf("exit=%+v err=%v", exit, waitErr)
 	}
 }
+
+// Claude keys its sessions by the folder it is started in, as spelled. A turn with a LaunchPath starts it there (Go sets PWD to Dir), so a
+// session saved under a link to the folder is found; without one it starts in the canonical checkout.
+func TestLaunchPathIsTheFolderTheHarnessStartsIn(t *testing.T) {
+	t.Setenv("AIMEBU2_ALLOW_NATIVE", "1")
+	if runtime.GOOS == "windows" {
+		t.Skip("script fixture")
+	}
+	root := t.TempDir()
+	real, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	pwdPath := filepath.Join(root, "pwd")
+	path := filepath.Join(root, "claude")
+	const session = "11111111-1111-4111-8111-111111111111"
+	script := "#!/bin/sh\nprintf '%s' \"$PWD\" > " + pwdPath + "\nprintf '%s\\n' '{\"type\":\"result\",\"session_id\":\"" + session + "\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "tools.json")
+	if err := os.WriteFile(config, []byte(`{"mcpServers":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(launch string) string {
+		t.Helper()
+		spec := adapter.TurnSpec{TurnID: "launch", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: real, LaunchPath: launch, AgentToolsConfigPath: config,
+			NativeSessionHandle: session, NativeSessionStarted: true, Mode: adapter.ModeNormal, NotesJSON: json.RawMessage(`[]`)}
+		turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range turn.Events() {
+		}
+		if _, err := turn.Wait(); err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(pwdPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(got)
+	}
+	if got := run(""); got != real {
+		t.Fatalf("without a launch path the harness started in %q, want the checkout %q", got, real)
+	}
+	if got := run(link); got != link {
+		t.Fatalf("with a launch path the harness started in %q, want %q", got, link)
+	}
+}

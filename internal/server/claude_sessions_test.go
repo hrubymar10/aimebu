@@ -37,7 +37,7 @@ func (f *fixture) connectSupervisorOn(t *testing.T, machineID string, scans bool
 	t.Helper()
 	fake := &fakeSupervisor{sessions: sessions}
 	machine := &machineConn{id: machineID, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{},
-		supportsSessionScan: scans, supportsSessionFork: true, supportsPathProbe: true,
+		supportsSessionScan: scans, supportsSessionFork: true, supportsLaunchPath: true, supportsPathProbe: true,
 		capabilities: []protocol.CapabilityReport{{Tool: "claude", Environment: adapter.Environment{Variant: "native"}}, {Tool: "codex", Environment: adapter.Environment{Variant: "native"}}}}
 	f.srv.machineMu.Lock()
 	f.srv.machines[machineID] = machine
@@ -301,7 +301,6 @@ func TestSpawnResumeSessionRefusals(t *testing.T) {
 		"a live process has it":   {map[string]any{"resume_session": sessionB}, 409, "session_active"},
 		"another harness":         {map[string]any{"resume_session": sessionA, "tool": "codex", "variant": "native", "model": "gpt-6-sol"}, 400, "tool_mismatch"},
 		"a worktree":              {map[string]any{"resume_session": sessionA, "worktree": true}, 400, "invalid_request"},
-		"a linked folder":         {map[string]any{"resume_session": sessionC}, 409, "session_folder_alias"},
 		"the folder is gone":      {map[string]any{"resume_session": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"}, 409, "session_folder_missing"},
 		"a new room with nothing": {map[string]any{"new_room": true}, 400, "invalid_request"},
 		"both kinds of resume":    {map[string]any{"resume_session": sessionA, "resume_legacy": "old@proj"}, 400, "invalid_request"},
@@ -490,6 +489,89 @@ func TestSpawnResumeThroughADockerLauncherNeedsNative(t *testing.T) {
 	for _, mode := range []string{"fork", "continue"} {
 		if status, body := f.spawnSession(t, "docker-"+mode, map[string]any{"resume_session": sessionA, "resume_mode": mode, "variant": "docker"}); status != 409 || body["error"] != "needs_native" {
 			t.Fatalf("%s through claude-docker: %d %v", mode, status, body)
+		}
+	}
+}
+
+// A session Claude saved under a link to the project folder is found only when Claude is started in the link as spelled. The agent keeps the
+// canonical checkout (every boundary and launcher rule is about it), and its turns start in the session's own spelling, for a copy as for the
+// original. A machine whose supervisor does not know that is refused before anything is created.
+func TestSpawnContinuesASessionMadeUnderALink(t *testing.T) {
+	t.Parallel()
+	for name, mode := range map[string]string{"continue": "continue", "copy": "fork", "old supervisor": "fork"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t) // one agent writes in a checkout, so each case has its own
+			f.seed()
+			link := filepath.Join(t.TempDir(), "link")
+			if err := os.Symlink(f.project.Folder, link); err != nil {
+				t.Fatal(err)
+			}
+			f.connectSupervisor(t, true, candidate(sessionC, link, "Linked folder"))
+			canonical, err := filepath.EvalSymlinks(f.project.Folder)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "old supervisor" {
+				// A supervisor that predates the spelling would start Claude where the session cannot be found.
+				f.srv.machineMu.Lock()
+				f.srv.machines[f.machineID].supportsLaunchPath = false
+				f.srv.machineMu.Unlock()
+				if status, body := f.spawnSession(t, "link-old", map[string]any{"resume_session": sessionC, "resume_mode": mode}); status != 409 || body["error"] != "supervisor_update_needed" {
+					t.Fatalf("an old supervisor: %d %v", status, body)
+				}
+				return
+			}
+			status, card := f.spawnSession(t, "link-"+name, map[string]any{"resume_session": sessionC, "resume_mode": mode, "confirm_session_closed": true})
+			if status != 201 {
+				t.Fatalf("%d %v", status, card)
+			}
+			agentID := card["id"].(string)
+			imported, ok, err := f.db.AgentImportedSession(t.Context(), agentID)
+			if err != nil || !ok || imported.CWD != link {
+				t.Fatalf("the session's own spelling was not kept: %+v %v", imported, err)
+			}
+			profile, err := f.db.AgentProfile(t.Context(), f.room.ID, agentID)
+			if err != nil || profile.Cwd != canonical {
+				t.Fatalf("the checkout is not the canonical folder: %+v %v", profile, err)
+			}
+			if pending, err := f.db.AgentLaunchPathPending(t.Context(), agentID); err != nil || !pending {
+				t.Fatalf("the turn will not start in the spelling: %v %v", pending, err)
+			}
+		})
+	}
+}
+
+func TestSameDirectoryTellsALinkFromADifferentFolder(t *testing.T) {
+	t.Parallel()
+	host := store.Machine{IsHost: true}
+	real, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		cwd, canonical string
+		machine        store.Machine
+		want           bool
+	}{
+		"a link to the folder":       {link, real, host, true},
+		"the folder itself":          {real, real, host, true},
+		"a link to another folder":   {link, other, host, false},
+		"a folder that is gone":      {filepath.Join(real, "gone"), real, host, false},
+		"a relative spelling":        {"link", real, host, false},
+		"an unclean spelling":        {link + "/../link", real, host, false},
+		"another machine's own path": {"/home/me/link", "/data/real", store.Machine{}, true},
+	} {
+		if got := sameDirectory(tc.machine, tc.cwd, tc.canonical); got != tc.want {
+			t.Errorf("%s: sameDirectory = %v, want %v", name, got, tc.want)
 		}
 	}
 }
