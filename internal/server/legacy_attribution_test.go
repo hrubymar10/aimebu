@@ -90,13 +90,17 @@ func TestResolveLegacyStartOffersTheSessionThatSentTheLatestMessage(t *testing.T
 	}
 	const sender = "0f7c6a1e-aaaa-4222-8333-444455556666"
 	fake := serveAttributions(t, f, true, []protocol.SessionAttribution{
-		{ID: sender, CWD: f.cwd, Sender: "sage@old", MessageNos: []int64{37900, 37965}, ModifiedAt: "2026-10-02T09:30:00Z"},
+		{ID: sender, CWD: f.cwd, Model: "claude-opus-4-5", Sender: "sage@old", MessageNos: []int64{37900, 37965}, ModifiedAt: "2026-10-02T09:30:00Z"},
 		{ID: "0f7c6a1e-bbbb-4222-8333-444455556666", CWD: f.cwd, Sender: "sage@old", MessageNos: []int64{12}, ModifiedAt: "2026-10-05T09:30:00Z"},
 	})
 	ctx := context.Background()
 	got, err := f.srv.resolveLegacyStart(ctx, f.project.ID, "sage@old")
-	if err != nil || got.SessionID != sender || !got.Exact || got.Tool != "claude" || got.CWD != f.cwd || got.Mismatch != "" {
+	if err != nil || got.SessionID != sender || !got.Exact || got.Tool != "claude" || got.CWD != f.cwd || got.Mismatch != "" || got.Model != "claude-opus-4-5" {
 		t.Fatalf("resolved = %+v %v, want the session that sent message 37965", got, err)
+	}
+	// The profile names the session the scan found, not the one v1 kept under the name.
+	if view := f.profile(t, "sage@old"); view.NativeSessionID != sender || view.Start == nil || view.Start.Model != "claude-opus-4-5" {
+		t.Fatalf("profile = %+v", view)
 	}
 	scan := fake.scans[0]
 	if !scan.ScanAttribution || scan.ScanAgent != "sage@old" || scan.ScanSince == "" || len(scan.ScanFolders) == 0 {

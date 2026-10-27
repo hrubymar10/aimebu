@@ -57,6 +57,9 @@ func (s *Server) resolveLegacyStart(ctx context.Context, projectID, agentID stri
 	}
 	found := entry.session
 	legacy.SessionID, legacy.CWD, legacy.LastSeen = found.ID, found.CWD, found.ModifiedAt
+	if found.Model != "" {
+		legacy.Model = found.Model // the model of the session that did the work, not of the one v1 kept under the name
+	}
 	legacy.Tool, legacy.Mismatch, legacy.Exact = store.ResumableTool(legacy.Harness), "", true
 	return legacy, nil
 }

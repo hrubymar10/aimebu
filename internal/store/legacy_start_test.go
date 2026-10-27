@@ -444,6 +444,14 @@ func TestLegacyStartOffersTheSessionOfTheSendersLatestMessage(t *testing.T) {
 	if err != nil || lost.SessionID != "" || lost.Tool != "" || !strings.Contains(lost.Mismatch, unknown) {
 		t.Fatalf("lost: %+v %v", lost, err)
 	}
+	// The profile names the same session the dialog offers, not the name's latest record: two sessions of one harness and model are
+	// not told apart by the contradiction checks, only by the stamp.
+	if profile, err := s.LegacyAgentProfile(ctx, room.ID, "who@old"); err != nil || profile.NativeSessionID != older || profile.Cwd != "/tmp/wake/sub" {
+		t.Fatalf("who profile = %+v %v, want the older session and its folder", profile, err)
+	}
+	if profile, err := s.LegacyAgentProfile(ctx, room.ID, "lost@old"); err != nil || profile.NativeSessionID != "" || profile.Cwd != "" {
+		t.Fatalf("a stamped session that cannot be verified is not shown: %+v %v", profile, err)
+	}
 	// When the latest session sent the latest message, the name's own record is used as it is.
 	say("who@old", latest, "2026-10-26T09:00:00.000000000Z", 920003)
 	if again, err := s.LegacyStart(ctx, room.ProjectID, "who@old"); err != nil || again.SessionID != latest || again.CWD != "/tmp/wake/newer" {

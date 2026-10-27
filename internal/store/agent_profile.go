@@ -189,6 +189,21 @@ func (s *Store) LegacyAgentProfile(ctx context.Context, roomID, agentID string) 
 	if err := s.db.QueryRowContext(ctx, `SELECT project_id FROM room WHERE id=?`, roomID).Scan(&projectID); err != nil {
 		return p, err
 	}
+	// The session shown is the one "Start as v2 agent" would offer (the stamped session of the sender's latest message, else the name's latest
+	// session when its messages do not contradict it), so the profile and the dialog never name two different sessions.
+	if legacy, lerr := s.LegacyStart(ctx, projectID, agentID); lerr == nil {
+		p.NativeSessionID, p.Cwd = legacy.SessionID, legacy.CWD
+		if legacy.SessionID == "" {
+			p.Cwd = ""
+		} else if legacy.LastSeen != "" {
+			p.LastSeen = legacy.LastSeen
+		}
+		return p, nil
+	} else if !errors.Is(lerr, sql.ErrNoRows) {
+		return p, lerr
+	}
+	// The agent wrote in this room only in a private chat (which is not a room of the project for starting it): what v1 kept stands unless the
+	// messages contradict it.
 	act, found, err := s.legacyActivityOf(ctx, projectID, agentID)
 	if err != nil {
 		return p, err

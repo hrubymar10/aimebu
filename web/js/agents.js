@@ -60,7 +60,13 @@ export class AgentsPanel {
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && this.profileID && !document.querySelector('dialog[open]')) { event.preventDefault(); this.closeProfile(); } });
     document.querySelector('#spawn-cancel').onclick = () => this.dialog.close();
     this.dialog.addEventListener('close', () => { this.pendingResume = null; this.renderStartRooms(); this.renderResume(); });
-    this.form.elements.tool.onchange = () => { this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1; this.renderSpawnModels(); };
+    this.form.elements.tool.onchange = () => {
+      this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1;
+      // The person's tool is remembered on its own, so a catalog reload keeps it even when they never touched the model.
+      const picked = this.form.elements.tool.selectedIndex < 0 ? null : this.catalog?.[Number(this.form.elements.tool.value)];
+      this.pickedToolKey = toolKey(picked);
+      this.renderSpawnModels();
+    };
     // What the person picked is kept while the list is rebuilt (the catalog arriving late, the same tool picked again): see renderSpawnModels.
     this.form.elements.model.onchange = () => {
       this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1;
@@ -652,7 +658,7 @@ export class AgentsPanel {
     // below, and until they are, Start stays off. Otherwise a role picked in the last opening (the lead, in a lead-only home room) could
     // still be selected while the tool catalog arrives first and enables Start, and the agent would be started as that role.
     this.rolesReady = false;
-    this.pickedModel = null;
+    this.pickedModel = null; this.pickedToolKey = '';
     this.form.elements.role.replaceChildren();
     this.pendingResume = resume;
     this.renderStartRooms();
@@ -748,7 +754,7 @@ export class AgentsPanel {
     const toolSelect = this.form.elements.tool, modelSelect = this.form.elements.model;
     // A reload (the machine changed, a live update) must not undo what the person picked: the tool they had is picked again when it is still
     // offered and available.
-    const previousTool = toolSelect.selectedIndex < 0 ? '' : toolKey(this.catalog?.[Number(toolSelect.value)]);
+    const previousTool = this.pickedToolKey || '';
     toolSelect.replaceChildren(); modelSelect.replaceChildren();
     this.form.querySelector('button[type=submit]').disabled = true;
     document.querySelector('#spawn-tool-reason').textContent = 'Loading available tools…';
@@ -765,7 +771,7 @@ export class AgentsPanel {
         option.textContent = `${tool.label || tool.tool}${tool.available ? '' : ` — ${help}`}`;
         option.disabled = !tool.available; toolSelect.append(option);
       });
-      const kept = previousTool && this.pickedModel ? this.catalog.findIndex(tool => tool.available && toolKey(tool) === previousTool) : -1;
+      const kept = previousTool ? this.catalog.findIndex(tool => tool.available && toolKey(tool) === previousTool) : -1;
       toolSelect.selectedIndex = kept >= 0 ? kept : this.catalog.findIndex(tool => tool.available);
       if (kept < 0) this.applyResumeChoice(toolSelect);
       this.renderSpawnModels();

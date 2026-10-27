@@ -1320,6 +1320,11 @@ func (s *Server) agentProfile(w http.ResponseWriter, r *http.Request) {
 			folder, _ := s.Store.ProjectFolder(r.Context(), room.ProjectID)
 			info := legacy.StartInfo(time.Now(), folder)
 			profile.Start = &info
+			// The profile names the session the dialog would continue, including one a transcript scan found.
+			profile.NativeSessionID, profile.Cwd = legacy.SessionID, legacy.CWD
+			if legacy.SessionID == "" {
+				profile.Cwd = ""
+			}
 		}
 	}
 	writeJSON(w, 200, profile)
