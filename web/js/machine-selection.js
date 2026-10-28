@@ -10,10 +10,12 @@ export class MachineSelection {
     this.wrapper = document.querySelector(`#${prefix}-machine-folder`);
     this.input = this.wrapper.querySelector('input[name=machine_folder]');
     this.status = document.querySelector(`#${prefix}-folder-status`);
-    this.select.onchange = () => { this.renderFolder(); this.onChange(); };
+    this.select.onchange = () => { this.endSave(); this.renderFolder(); this.onChange(); };
     this.input.oninput = () => { this.status.textContent = 'Save this folder to use it.'; this.onFolderEdit?.(); };
     document.querySelector(`#${prefix}-save-folder`).onclick = () => this.saveFolder();
   }
+  // A save of the last opening, or of the machine that was on show, is over for the view that replaces it: it neither speaks nor holds the button.
+  endSave() { this.saveID = (this.saveID || 0) + 1; document.querySelector(`#${this.prefix}-save-folder`).disabled = false; }
   get id() { return this.select.value; }
   get machine() { return this.machines?.find(machine => machine.id === this.id); }
   get folderReady() { return !!this.machine?.is_host || !!this.folders?.get(this.id) && this.input.value.trim() === this.folders.get(this.id); }
@@ -21,6 +23,7 @@ export class MachineSelection {
     this.projectID = projectID;
     // The dialog can be closed and opened again while this read is out; only the newest load may fill the list.
     const load = this.loadID = (this.loadID || 0) + 1;
+    this.endSave();
     this.select.replaceChildren(); this.select.disabled = true;
     this.status.textContent = 'Loading machines…';
     const folders = await request(`/api/projects/${encodeURIComponent(projectID)}/machine-folders`);
@@ -57,12 +60,15 @@ export class MachineSelection {
       this.status.textContent = 'Enter a clean absolute folder path.'; return;
     }
     const button = document.querySelector(`#${this.prefix}-save-folder`); button.disabled = true;
+    // Only the newest save of this opening for the machine on show speaks: an older one, or one of a closed opening or another machine, says nothing.
+    const save = this.saveID = (this.saveID || 0) + 1, machineID = this.id, current = () => save === this.saveID && machineID === this.id;
     try {
-      const saved = await request(`/api/projects/${encodeURIComponent(this.projectID)}/machine-folders/${encodeURIComponent(this.id)}`, { method: 'PUT', body: { folder } });
-      this.folders.set(saved.machine_id, saved.folder);
+      const saved = await request(`/api/projects/${encodeURIComponent(this.projectID)}/machine-folders/${encodeURIComponent(machineID)}`, { method: 'PUT', body: { folder } });
+      if (save === this.saveID) this.folders.set(saved.machine_id, saved.folder);
+      if (!current()) return;
       this.status.textContent = 'Folder saved.';
       await this.onChange();
-    } catch (error) { this.status.textContent = error.message; }
-    finally { button.disabled = false; }
+    } catch (error) { if (current()) this.status.textContent = error.message; }
+    finally { if (save === this.saveID) button.disabled = false; }
   }
 }

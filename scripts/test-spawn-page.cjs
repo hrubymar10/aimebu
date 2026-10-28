@@ -32,7 +32,7 @@ const catalog = { tools: [
 const machines = { machines: [{ id: 'm1', name: 'Host', is_host: true, approved: true, connected: true, project_allowed: true }, { id: 'm2', name: 'Remote', approved: true, connected: true, project_allowed: true }] };
 const roles = [{ role_key: 'worker', label: 'Worker', emoji: '🔧', cap_is_lead: false }, { role_key: 'lead', label: 'Lead', emoji: '🧭', cap_is_lead: true }];
 const stable = (extra = {}) => ({ 'GET /api/projects/p1/machine-folders': { folders: [{ machine_id: 'm2', folder: '/srv/p1' }] }, 'GET /api/machines?project_id=p1': machines, 'GET /api/roles': roles,
-  'GET /api/rooms/r1/agent-name': { name: 'nova' }, 'GET /api/spawn-catalog?machine_id=m1': catalog, 'GET /api/projects/p1/role-spawn-defaults/worker/next': { available: false }, 'GET /api/projects/p1/role-spawn-defaults/lead/next': { available: false },
+  'GET /api/rooms/r1/agent-name': { name: 'nova' }, 'GET /api/spawn-catalog?machine_id=m1': catalog, 'GET /api/spawn-catalog?machine_id=m2': catalog, 'GET /api/projects/p1/role-spawn-defaults/worker/next': { available: false }, 'GET /api/projects/p1/role-spawn-defaults/lead/next': { available: false },
   'GET /api/rooms/r1/agents': [agent('a1', 'ada')], 'GET /api/rooms/r1/members': { humans: [] },
   'GET /api/rooms/r2/agent-name': { name: 'luna' }, 'GET /api/rooms/r2/agents': [agent('a9', 'zed', { room_id: 'r2' })], 'GET /api/rooms/r2/members': { humans: [] }, ...extra });
 
@@ -396,6 +396,106 @@ async function main() {
     await answer(page, held, status, reply); await settle(page);
     assert.deepEqual(await view(), before, `${status}: the dialog of the other agent is as it was`);
     assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'GET' && request.path.startsWith('/api/rooms/r1/')).length), reads, `${status}: the old room is not read again`);
+    await page.close();
+  }
+
+  // A folder save that is still out when the dialog was opened again, or another machine was picked, neither says "saved" in the new view nor
+  // reads the catalog again for it.
+  for (const how of ['reopen', 'machine']) {
+    const page = await mount();
+    await open(page); await ready(page);
+    await select(page, 'machine', 'm2');
+    await page.waitForFunction(() => !document.querySelector('#spawn-form button[type=submit]').disabled);
+    await page.$eval('#spawn-form [name=machine_folder]', node => { node.value = '/srv/new'; node.dispatchEvent(new Event('input')); });
+    await page.$eval('#spawn-save-folder', node => node.click());
+    const held = await waitRequest(page, 'PUT', '/api/projects/p1/machine-folders/m2');
+    assert.deepEqual(await body(page, held), { folder: '/srv/new' });
+    if (how === 'reopen') { await page.evaluate(() => document.querySelector('#spawn-cancel').click()); await open(page); await ready(page); } else await select(page, 'machine', 'm1');
+    await page.waitForFunction(() => !document.querySelector('#spawn-form button[type=submit]').disabled);
+    await settle(page);
+    const catalogs = () => page.evaluate(() => window.__requests.filter(request => request.path.startsWith('/api/spawn-catalog')).length);
+    const before = await catalogs();
+    await answer(page, held, 200, { machine_id: 'm2', folder: '/srv/new' }); await settle(page);
+    assert.equal(await page.$eval('#spawn-folder-status', node => node.textContent), '', `${how}: the new view does not say the folder was saved`);
+    assert.equal(await catalogs(), before, `${how}: no catalog is read for the save that was left`);
+    assert.equal((await form(page)).submit, false);
+    await page.close();
+  }
+
+  // Two saves for the same machine: only the newest speaks and holds the Save button. The older one, answered while the newer is still out,
+  // changes no status, reads no catalog and does not enable the button; then the newer one ends normally. A save of a dialog that was opened
+  // again does not enable the new dialog's button either.
+  {
+    const page = await mount({ auto: stable({ 'PUT /api/projects/p1/machine-folders/m2': undefined }) });
+    await open(page); await ready(page);
+    await select(page, 'machine', 'm2');
+    await page.waitForFunction(() => !document.querySelector('#spawn-form button[type=submit]').disabled);
+    const save = async folder => { await page.$eval('#spawn-form [name=machine_folder]', (node, folder) => { node.value = folder; node.dispatchEvent(new Event('input')); }, folder); await page.evaluate(() => { window.__save = window.__panel.spawnMachine.saveFolder(); }); };
+    const catalogs = () => page.evaluate(() => window.__requests.filter(request => request.path.startsWith('/api/spawn-catalog')).length);
+    const status = () => page.$eval('#spawn-folder-status', node => node.textContent);
+    const disabled = () => page.$eval('#spawn-save-folder', node => node.disabled);
+    await save('/srv/a');
+    const first = await waitRequest(page, 'PUT', '/api/projects/p1/machine-folders/m2');
+    await save('/srv/b');
+    await page.waitForFunction(() => window.__requests.filter(request => request.method === 'PUT').length === 2);
+    const second = await page.evaluate(() => window.__requests.findLastIndex(request => request.method === 'PUT'));
+    assert.notEqual(first, second);
+    const before = await catalogs(), shown = await status();
+    await answer(page, first, 200, { machine_id: 'm2', folder: '/srv/a' }); await settle(page);
+    assert.deepEqual([await status(), await catalogs(), await disabled()], [shown, before, true], 'the older save changes nothing while the newer one is out');
+    await answer(page, second, 200, { machine_id: 'm2', folder: '/srv/b' }); await settle(page);
+    assert.deepEqual([await status(), await disabled()], ['Folder saved.', false]);
+    assert.equal(await catalogs(), before + 1, 'the newer save reloads the catalog once');
+    assert.equal(await page.evaluate(() => window.__panel.spawnMachine.folders.get('m2')), '/srv/b');
+    // A save of the dialog's earlier opening neither says anything nor enables the button of the new one while its own save is out.
+    await save('/srv/c');
+    const old = await waitRequest(page, 'PUT', '/api/projects/p1/machine-folders/m2');
+    await page.evaluate(() => document.querySelector('#spawn-cancel').click());
+    await open(page); await ready(page);
+    assert.equal(await disabled(), false, 'a new opening starts with Save available');
+    await select(page, 'machine', 'm2');
+    await page.waitForFunction(() => !document.querySelector('#spawn-form button[type=submit]').disabled);
+    await save('/srv/d');
+    const fresh = await page.evaluate(() => window.__requests.findLastIndex(request => request.method === 'PUT'));
+    assert.notEqual(old, fresh);
+    const beforeOld = await status();
+    await answer(page, old, 200, { machine_id: 'm2', folder: '/srv/c' }); await settle(page);
+    assert.deepEqual([await disabled(), await status()], [true, beforeOld], 'the old opening\'s save leaves the new one\'s button and status alone');
+    await answer(page, fresh, 200, { machine_id: 'm2', folder: '/srv/d' }); await settle(page);
+    assert.deepEqual([await status(), await disabled()], ['Folder saved.', false]);
+    await page.close();
+  }
+
+  // A save for one machine, answered after another machine was picked, neither says anything in the new view nor takes over its Save button:
+  // the button is available after the pick, stays held by the new machine's own save, and is freed by that save alone.
+  {
+    const two = { machines: [...machines.machines, { id: 'm3', name: 'Third', approved: true, connected: true, project_allowed: true }] };
+    const page = await mount({ auto: stable({ 'GET /api/machines?project_id=p1': two, 'GET /api/projects/p1/machine-folders': { folders: [{ machine_id: 'm2', folder: '/srv/p1' }, { machine_id: 'm3', folder: '/srv/p3' }] },
+      'GET /api/spawn-catalog?machine_id=m3': catalog, 'PUT /api/projects/p1/machine-folders/m2': undefined, 'PUT /api/projects/p1/machine-folders/m3': undefined }) });
+    await open(page); await ready(page);
+    const catalogs = () => page.evaluate(() => window.__requests.filter(request => request.path.startsWith('/api/spawn-catalog')).length);
+    const status = () => page.$eval('#spawn-folder-status', node => node.textContent);
+    const disabled = () => page.$eval('#spawn-save-folder', node => node.disabled);
+    const pick = async id => { await select(page, 'machine', id); await page.waitForFunction(() => !document.querySelector('#spawn-form button[type=submit]').disabled); };
+    const save = async folder => { await page.$eval('#spawn-form [name=machine_folder]', (node, folder) => { node.value = folder; node.dispatchEvent(new Event('input')); }, folder); await page.$eval('#spawn-save-folder', node => node.click()); };
+    await pick('m2'); await save('/srv/a2');
+    const first = await waitRequest(page, 'PUT', '/api/projects/p1/machine-folders/m2');
+    assert.equal(await disabled(), true);
+    await pick('m3');
+    assert.equal(await disabled(), false, 'picking another machine makes Save available');
+    await save('/srv/a3');
+    const second = await waitRequest(page, 'PUT', '/api/projects/p1/machine-folders/m3');
+    const shown = await status(), before = await catalogs();
+    await answer(page, first, 200, { machine_id: 'm2', folder: '/srv/a2' }); await settle(page);
+    assert.deepEqual([await disabled(), await status(), await catalogs()], [true, shown, before], 'the save of the machine that was left changes nothing and does not free the button');
+    await answer(page, second, 200, { machine_id: 'm3', folder: '/srv/a3' }); await settle(page);
+    assert.deepEqual([await disabled(), await status()], [false, 'Folder saved.']);
+    // With no save of its own, the new machine's button is available whatever the old save does.
+    await pick('m2'); await save('/srv/b2');
+    const held = await waitRequest(page, 'PUT', '/api/projects/p1/machine-folders/m2');
+    await pick('m3');
+    await answer(page, held, 200, { machine_id: 'm2', folder: '/srv/b2' }); await settle(page);
+    assert.deepEqual([await disabled(), await status()], [false, '']);
     await page.close();
   }
 
