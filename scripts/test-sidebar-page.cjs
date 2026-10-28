@@ -593,6 +593,19 @@ async function main() {
     await page.close();
   }
 
+  // A join answered in the very turn in which the list is reset (the request is past aborting) reads no chats and opens nothing.
+  {
+    const page = await mount();
+    await hold(page, 'GET /api/agent-dms');
+    await page.$eval('[data-offer-id=rm_join] .agent-chat-join', node => node.click());
+    const held = await waitRequest(page, 'POST', '/api/rooms/rm_join/join');
+    const before = await count(page, 'GET', '/api/agent-dms');
+    await page.evaluate(index => { window.__answer(index, 200, {}); window.__sidebar.reset(); }, held);
+    await settle(page);
+    assert.deepEqual([await count(page, 'GET', '/api/agent-dms'), await calls(page)], [before, []], 'a join answered as the list is reset reads no chats and opens nothing');
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('sidebar page: ok');

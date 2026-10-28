@@ -254,6 +254,7 @@ export class Sidebar {
           const generation = this.generation;
           try {
             await this.roomRequest(`/api/rooms/${offer.id}/join`, { method: 'POST' });
+            if (generation !== this.generation) return;
             await this.refreshAgentChats();
             const room = this.rooms.get(offer.id);
             if (room && generation === this.generation) this.onSelect(room);
