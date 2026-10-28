@@ -176,6 +176,23 @@ async function main() {
     assert.deepEqual((await form(page)).roles, ['🔧 Worker', '🧭 Lead'], 'the first opening answered late and filled nothing');
     await page.close();
   }
+  // The machines of an earlier opening, answered after the dialog was closed and opened again, do not replace the list of the new one.
+  {
+    const page = await mount({ auto: stable({ 'GET /api/machines?project_id=p1': undefined }) });
+    await open(page);
+    const first = await waitRequest(page, 'GET', '/api/machines?project_id=p1');
+    await page.evaluate(() => document.querySelector('#spawn-cancel').click());
+    await open(page);
+    await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/machines?project_id=p1').length === 2);
+    const second = await page.evaluate(() => window.__requests.findLastIndex(request => request.path === '/api/machines?project_id=p1'));
+    await answer(page, second, 200, machines);
+    await answer(page, first, 200, { machines: [{ id: 'm9', name: 'Old', is_host: true, approved: true, connected: true, project_allowed: true }] });
+    await ready(page);
+    assert.deepEqual(await page.$eval('#spawn-form [name=machine]', node => [...node.options].map(option => option.value)), ['m1', 'm2'], 'the first opening answered late and replaced nothing');
+    assert.equal((await form(page)).machine, 'm1');
+    await page.close();
+  }
+
   {
     const page = await mount({ auto: stable({ 'GET /api/rooms/r1/agent-name': undefined, 'GET /api/rooms/r1/agent-name?exclude=': undefined }) });
     await open(page); await ready(page);

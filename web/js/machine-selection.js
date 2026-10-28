@@ -19,11 +19,15 @@ export class MachineSelection {
   get folderReady() { return !!this.machine?.is_host || !!this.folders?.get(this.id) && this.input.value.trim() === this.folders.get(this.id); }
   async load(projectID, preferredID = '') {
     this.projectID = projectID;
+    // The dialog can be closed and opened again while this read is out; only the newest load may fill the list.
+    const load = this.loadID = (this.loadID || 0) + 1;
     this.select.replaceChildren(); this.select.disabled = true;
     this.status.textContent = 'Loading machines…';
     const folders = await request(`/api/projects/${encodeURIComponent(projectID)}/machine-folders`);
+    if (load !== this.loadID) return;
     this.folders = new Map((folders.folders || []).map(item => [item.machine_id, item.folder]));
     const machines = (await request(`/api/machines?project_id=${encodeURIComponent(projectID)}`)).machines || [];
+    if (load !== this.loadID) return;
     this.machines = machines;
     for (const machine of machines) {
       const option = document.createElement('option'); option.value = machine.id;
