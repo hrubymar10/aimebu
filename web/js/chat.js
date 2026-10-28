@@ -1175,7 +1175,7 @@ export class Chat {
     this.syncAnswerControl(bubble, this.answerItems?.get(message.id), message.id);
     if (!quiet) { if (atBottom) this.list.scrollTop = this.list.scrollHeight; else this.list.scrollTop = oldTop; this.scrollAnchor?.update(); }
     if (Array.isArray(message.reactions)) this.showReactions(message.id, message.reactions);
-    else this.refreshReactions(message.id);
+    else Promise.resolve(this.refreshReactions(message.id)).catch(() => {});
     this.scheduleExpiry();
   }
   // Expiry marks (an hourglass and one divider) are display-only: the chat shows every message. They are

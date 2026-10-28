@@ -710,6 +710,35 @@ async function main() {
     await page.close();
   }
 
+  // The read of a message's reactions that fails (the room's server is down, the message is gone) is not an error of the page: the message shows without
+  // pills and the rest of the room draws.
+  {
+    const page = await mount();
+    await hold(page, 'GET', '/api/messages/rm_a_m129/reactions');
+    await openRoom(page, 'rm_a');
+    const failing = await waitRequest(page, 'GET', '/api/messages/rm_a_m129/reactions');
+    await opened(page);
+    const before = errors.length;
+    await answer(page, failing, 500, { message: 'Reactions are unavailable.' }); await settle(page); await settle(page);
+    assert.deepEqual([errors.slice(before), await pills(page, 'rm_a_m129'), await ids(page).then(list => list.length)], [[], [], 100], 'a failed read of the reactions is quiet');
+    await page.close();
+  }
+
+  // The same read that fails (and the one that fails after the room changed or the chat was reset) is quiet in the new view.
+  for (const how of ['open', 'reset']) {
+    const page = await reactionRoom();
+    await hold(page, 'GET', '/api/messages/rm_a_m129/reactions');
+    await openRoom(page, 'rm_a');
+    const held = await waitRequest(page, 'GET', '/api/messages/rm_a_m129/reactions');
+    await opened(page);
+    if (how === 'open') { await openRoom(page, 'rm_b'); await opened(page); } else { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_b'); await opened(page); }
+    await settle(page);
+    const before = errors.length, reads = await page.evaluate(() => window.__requests.length);
+    await answer(page, held, 500, { message: 'Reactions are unavailable.' }); await settle(page); await settle(page);
+    assert.deepEqual([await page.evaluate(() => document.querySelectorAll('.reaction-pill').length), await page.evaluate(() => document.querySelector('#chat-error').textContent), await page.evaluate(() => window.__requests.length) - reads, errors.slice(before)], [0, '', 0, []], `${how}: a late failed reactions read is quiet`);
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('chat page: ok');
