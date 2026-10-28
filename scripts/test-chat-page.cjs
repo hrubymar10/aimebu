@@ -812,7 +812,12 @@ async function main() {
     await openRoom(page, 'rm_a', extra); await opened(page); await settle(page); await calls(page);
     return page;
   };
-  const leave = async (page, how) => { if (how === 'open') { await openRoom(page, 'rm_b'); await opened(page); } else { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_b'); await opened(page); } await settle(page); await calls(page); };
+  const leave = async (page, how, extra = {}) => {
+    if (how === 'open') { await openRoom(page, 'rm_b'); await opened(page); }
+    else if (how === 'reset-same') { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_a', extra); await opened(page); }
+    else { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_b'); await opened(page); }
+    await settle(page); await calls(page);
+  };
   const cases = [
     ['rename', {}, page => page.evaluate(() => { const form = window.__chat.renameForm; form.elements.title.value = 'renamed'; window.__panel = window.__chat.saveRoomTitle(); }), 'PATCH', '^/api/rooms/rm_a$', null],
     ['memory load', {}, page => page.evaluate(() => { window.__panel = window.__chat.loadRoomMemory(); }), 'GET', '/api/projects/prj_a/memory', null],
@@ -827,13 +832,14 @@ async function main() {
     ['export', {}, page => page.evaluate(() => { window.__panel = window.__chat.exportRoom('json'); }), 'GET', '/rooms/rm_a/export', null],
   ];
   for (const [name, extra, start, method, re] of cases) {
-    for (const how of ['open', 'reset']) {
+    for (const how of ['open', 'reset', 'reset-same']) {
       for (const outcome of ['ok', 'fail']) {
+        if (how === 'reset-same' && name === 'rename') continue;
         const page = await panelRoom({ extra });
         await hold(page, method, re);
         await start(page);
         const held = await waitRequest(page, method, re);
-        await leave(page, how);
+        await leave(page, how, extra);
         const before = await panelState(page);
         const reads = await page.evaluate(() => window.__requests.length);
         if (outcome === 'ok') await serve(page, held); else await answer(page, held, 500, { message: 'Refused.' });
@@ -844,6 +850,65 @@ async function main() {
       }
     }
   }
+  // Archiving a room that has open child rooms asks again for the whole tree; removing the worktree of an archived room asks, and a preserved one asks
+  // again to be discarded. A late answer to any of these asks nothing more and starts nothing.
+  for (const how of ['open', 'reset']) {
+    for (const [name, extra, start, method, re, reply] of [
+      ['cascade', {}, async page => { await page.evaluate(() => { window.__panel = window.__chat.changeRoomLifecycle('archive'); }); await dialogOk(page); }, 'POST', '/rooms/rm_a/close$', [409, { error: 'open_children', message: 'Open child rooms.' }]],
+      ['archived worktree', { lifecycle: 'closed' }, async page => { await page.evaluate(() => { window.__panel = window.__chat.removeWorktree(); }); await dialogOk(page); }, 'DELETE', '/rooms/rm_a/worktree$', [200, { state: 'preserved', reason: 'dirty' }]],
+    ]) {
+      const page = await panelRoom({ extra });
+      await hold(page, method, re);
+      await start(page);
+      const held = await waitRequest(page, method, re);
+      await leave(page, how);
+      const reads = await page.evaluate(() => window.__requests.length);
+      await answer(page, held, reply[0], reply[1]); await page.evaluate(() => window.__panel.catch(() => {})); await settle(page); await settle(page);
+      assert.deepEqual([await page.evaluate(() => !!document.querySelector('#app-dialog')?.open), await page.evaluate(() => window.__requests.length) - reads, await page.evaluate(() => window.__mutations)], [false, 0, []], `${name} ${how}: a late answer asks nothing more and starts nothing`);
+      await page.close();
+    }
+  }
+  // A preserved worktree that the reader agrees to discard is removed with a second request; its late answer changes nothing in the room opened since.
+  for (const how of ['open', 'reset']) {
+    for (const outcome of ['ok', 'fail']) {
+      const page = await panelRoom({ extra: { lifecycle: 'closed' } });
+      await hold(page, 'DELETE', '/rooms/rm_a/worktree$');
+      await page.evaluate(() => { window.__panel = window.__chat.removeWorktree(); }); await dialogOk(page);
+      await answer(page, await waitRequest(page, 'DELETE', '/rooms/rm_a/worktree$'), 200, { state: 'preserved', reason: 'dirty' });
+      await dialogOk(page);
+      const held = await waitRequest(page, 'DELETE', '/rooms/rm_a/worktree$');
+      await leave(page, how);
+      const reads = await page.evaluate(() => window.__requests.length);
+      if (outcome === 'ok') await serve(page, held); else await answer(page, held, 500, { message: 'Could not remove.' });
+      await page.evaluate(() => window.__panel.catch(() => {})); await settle(page); await settle(page);
+      assert.deepEqual([await page.evaluate(() => window.__chat.worktreeSection.querySelector('p').textContent), await page.evaluate(() => window.__requests.length) - reads], ['', 0], `forced removal ${how}/${outcome}: a late answer changes nothing and starts nothing`);
+      await page.close();
+    }
+  }
+  // A refused archive is told in the chat's own error line, and in the dialog only while the dialog is open.
+  for (const dialogOpen of [false, true]) {
+    const page = await panelRoom();
+    if (dialogOpen) await page.evaluate(() => window.__chat.showRoomInfo());
+    await hold(page, 'POST', '/rooms/rm_a/close$');
+    await page.evaluate(() => { window.__panel = window.__chat.changeRoomLifecycle('archive'); }); await dialogOk(page);
+    await answer(page, await waitRequest(page, 'POST', '/rooms/rm_a/close$'), 500, { message: 'The room cannot be archived.' });
+    await page.evaluate(() => window.__panel); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#chat-error').textContent, document.querySelector('#room-info-error').textContent]), ['The room cannot be archived.', dialogOpen ? 'The room cannot be archived.' : ''], `a refused archive with the dialog ${dialogOpen ? 'open' : 'closed'}`);
+    await page.close();
+  }
+  // The app's callback after an archive may take a while; a room left meanwhile keeps its own dialog open and hears nothing of the old one's result.
+  for (const outcome of ['ok', 'fail']) {
+    const page = await panelRoom();
+    await page.evaluate(() => { window.__chat.onRoomMutation = () => new Promise((resolve, reject) => { window.__finish = outcome => (outcome === 'ok' ? resolve() : reject(new Error('The app refused.'))); }); window.__panel = window.__chat.changeRoomLifecycle('archive'); });
+    await dialogOk(page);
+    await page.waitForFunction(() => typeof window.__finish === 'function');
+    await openRoom(page, 'rm_b'); await opened(page); await settle(page);
+    await page.evaluate(() => window.__chat.showRoomInfo()); await settle(page);
+    await page.evaluate(outcome => window.__finish(outcome), outcome); await page.evaluate(() => window.__panel.catch(() => {})); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#room-info-dialog').open, document.querySelector('#room-info-error').textContent, document.querySelector('#chat-error').textContent]), [true, '', ''], `${outcome}: the old room's result does not close or write into the new room's dialog`);
+    await page.close();
+  }
+
   // In its own room each of them does its work and tells the reader.
   {
     const page = await panelRoom();
