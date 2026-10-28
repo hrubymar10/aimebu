@@ -260,6 +260,125 @@ async function main() {
     await open.close();
   }
 
+  // The profile replaces the list of members in place: the title, the close button, the expanded card and its facts, first from the card and then
+  // with what the profile read adds; the close button, the same button again, Escape and the agent leaving all bring the list back, and Escape
+  // leaves an open dialog alone.
+  {
+    const page = await mount();
+    await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn', role_emoji: '🔧' }), agent('a2', 'bert')]);
+    const state = () => page.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, closeHidden: document.querySelector('#agent-profile-close').hidden, open: document.querySelector('#agents-panel').classList.contains('profile-open'),
+      expanded: [...document.querySelectorAll('[data-agent-id]')].map(card => [card.dataset.agentId, card.classList.contains('expanded'), card.querySelector('.agent-expand').getAttribute('aria-expanded'), card.querySelector('.agent-expand').getAttribute('aria-label')]),
+      facts: [...document.querySelectorAll('[data-agent-id=a1] .profile-fact')].map(row => [row.querySelector('.profile-fact-label').textContent, row.querySelector('.profile-fact-value').textContent]) }));
+    const closed = await state();
+    assert.deepEqual([closed.title, closed.closeHidden, closed.open], ['Room members', true, false]);
+    assert.deepEqual(closed.facts, []);
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    const profile = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/profile');
+    const opened = await state();
+    assert.deepEqual([opened.title, opened.closeHidden, opened.open], ['Agent profile', false, true]);
+    assert.deepEqual(opened.expanded, [['a1', true, 'true', 'Close agent profile'], ['a2', false, 'false', 'Open agent profile']]);
+    const labels = opened.facts.map(fact => fact[0]);
+    assert.deepEqual(labels, ['Status', 'Presence', 'Last seen', 'Runtime', 'Role', 'Agent ID'], 'the card alone gives these until the profile is read');
+    assert.deepEqual(opened.facts.find(fact => fact[0] === 'Status'), ['Status', 'Working']); assert.deepEqual(opened.facts.find(fact => fact[0] === 'Role'), ['Role', '🔧 worker']);
+    await answer(page, profile, 200, { native_session_id: 'sess-1', resume_command: 'codex resume sess-1', cwd: '/work', branch: 'main', machine_name: 'Host', project_name: 'Alpha', spawned_by: 'owner', turns_today: 3, cost_today: 0.42 });
+    await settle(page);
+    const full = await state();
+    assert.deepEqual(full.facts.map(fact => fact[0]), ['Status', 'Presence', 'Last seen', 'Runtime', 'Role', 'Session', 'Resume', 'CWD', 'Branch', 'Machine', 'Project', 'Spawned', 'Last 24 h', 'Agent ID']);
+    assert.deepEqual(full.facts.find(fact => fact[0] === 'Last 24 h'), ['Last 24 h', '3 turns · $0.42']);
+    assert.equal(await page.$eval('[data-agent-id=a1] .profile-copy', node => node.getAttribute('aria-label')), 'Copy resume');
+    await page.$eval('#agent-profile-close', node => node.click());
+    assert.deepEqual((await state()).title, 'Room members');
+    assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('[data-agent-id=a1] .agent-expand')), true, 'closing returns the focus to the card');
+    // The same button closes it again; a click on the card outside its buttons opens it.
+    await page.$eval('[data-agent-id=a2]', node => node.click());
+    assert.equal((await state()).open, true);
+    await page.$eval('[data-agent-id=a2] .agent-expand', node => node.click());
+    assert.equal((await state()).open, false);
+    // Escape closes it, unless a dialog is open.
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    await page.evaluate(() => document.querySelector('#spawn-dialog').showModal());
+    await page.keyboard.press('Escape'); await page.evaluate(() => document.querySelector('#spawn-dialog').close());
+    assert.equal((await state()).open, true, 'Escape belongs to the dialog');
+    await page.keyboard.press('Escape');
+    assert.equal((await state()).open, false);
+    // The agent leaving the room closes it.
+    await page.$eval('[data-agent-id=a2] .agent-expand', node => node.click());
+    await refresh(page, 'r1', [agent('a1', 'ada')]);
+    assert.deepEqual([(await state()).title, (await state()).open], ['Room members', false]);
+    await page.close();
+  }
+
+  // Answers of a profile that is not the open one any more draw nothing: after it was closed, after another agent was opened, after the room changed
+  // and after reset().
+  {
+    const page = await mount();
+    await show(page, 'r1', [agent('a1', 'ada'), agent('a2', 'bert')]);
+    const facts = id => page.$$eval(`[data-agent-id=${id}] .profile-fact-label`, nodes => nodes.map(node => node.textContent));
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    const first = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/profile');
+    await page.$eval('[data-agent-id=a2] .agent-expand', node => node.click());
+    const second = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a2/profile');
+    await answer(page, first, 200, { cwd: '/first' }); await settle(page);
+    assert.deepEqual([(await facts('a1')).includes('CWD'), (await facts('a2')).includes('CWD')], [false, false], 'the profile of the agent that was left for another draws nothing');
+    await answer(page, second, 200, { cwd: '/second' }); await settle(page);
+    assert.equal((await facts('a2')).includes('CWD'), true);
+    await page.$eval('#agent-profile-close', node => node.click());
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/profile');
+    const held = await page.evaluate(() => window.__requests.findLastIndex(request => request.path === '/api/rooms/r1/agents/a1/profile'));
+    await page.$eval('#agent-profile-close', node => node.click());
+    const beforeLate = await facts('a1');
+    await answer(page, held, 200, { cwd: '/late' }); await settle(page);
+    assert.deepEqual(await facts('a1'), beforeLate, 'the answer for a profile that was closed adds nothing');
+    assert.equal(beforeLate.includes('CWD'), false);
+    // A room change and a reset drop the read of a profile that is still open.
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    const open = await page.evaluate(() => window.__requests.findLastIndex(request => request.path === '/api/rooms/r1/agents/a1/profile'));
+    await page.evaluate(room => window.__panel.setRoomFacts(room), room('r2'));
+    await answer(page, open, 200, { cwd: '/other-room' }); await settle(page);
+    assert.deepEqual([(await page.$$('.profile-fact')).length, await page.$eval('#agents-panel header h2', node => node.textContent)], [0, 'Room members']);
+    await page.close();
+  }
+
+  // The Output section is for the project's owner or an admin: collapsed until opened, read from the machine on opening and on request, with the
+  // end of the output, a note when nothing was captured, the server's own words when it fails, and a read for a profile that was closed drawn nowhere.
+  {
+    const viewer = await mount({ owner: false, role: 'viewer' });
+    await show(viewer, 'r1', [agent('a1', 'ada')]);
+    await viewer.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    assert.equal(await viewer.$('[data-agent-id=a1] .profile-output'), null, 'a viewer has no Output section');
+    await viewer.close();
+    const page = await mount({ owner: false, role: 'owner' });
+    await show(page, 'r1', [agent('a1', 'ada'), agent('a2', 'bert')]);
+    const output = () => page.$eval('[data-agent-id=a1] .profile-output', node => ({ open: node.open, text: node.querySelector('.profile-output-text').textContent, hidden: node.querySelector('.profile-output-text').hidden, status: node.querySelector('.profile-output-status').textContent,
+      refresh: node.querySelector('.profile-output-refresh').disabled, download: node.querySelector('.profile-output-download').disabled }));
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    assert.deepEqual(await output(), { open: false, text: '', hidden: true, status: '', refresh: false, download: true });
+    assert.equal(await count(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200'), 0, 'nothing is read before the section is opened');
+    await page.$eval('[data-agent-id=a1] .profile-output summary', node => node.click());
+    const read = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200');
+    assert.deepEqual([(await output()).status, (await output()).refresh], ['Loading…', true]);
+    await answer(page, read, 200, { text: 'line one\nline two\n', truncated: true }); await settle(page);
+    assert.deepEqual(await output(), { open: true, text: 'line one\nline two\n', hidden: false, status: 'Earlier output is not shown.', refresh: false, download: false });
+    await page.$eval('[data-agent-id=a1] .profile-output-refresh', node => node.click());
+    await answer(page, await page.evaluate(() => window.__requests.findLastIndex(request => request.path.includes('/output'))), 200, { text: '', truncated: false }); await settle(page);
+    assert.deepEqual([(await output()).status, (await output()).hidden, (await output()).download], ['No output has been captured for this agent yet.', true, true]);
+    await page.$eval('[data-agent-id=a1] .profile-output-refresh', node => node.click());
+    await answer(page, await page.evaluate(() => window.__requests.findLastIndex(request => request.path.includes('/output'))), 404, { message: 'No output', error: 'no_output' }); await settle(page);
+    assert.equal((await output()).status, 'No output has been captured for this agent yet.');
+    await page.$eval('[data-agent-id=a1] .profile-output-refresh', node => node.click());
+    await answer(page, await page.evaluate(() => window.__requests.findLastIndex(request => request.path.includes('/output'))), 502, { message: 'The machine is offline' }); await settle(page);
+    assert.equal((await output()).status, 'The machine is offline');
+    // A read that is still held when the profile closes, and opens again, writes into the new section only.
+    await page.$eval('[data-agent-id=a1] .profile-output-refresh', node => node.click());
+    const stale = await page.evaluate(() => window.__requests.findLastIndex(request => request.path.includes('/output')));
+    await page.$eval('#agent-profile-close', node => node.click());
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    await answer(page, stale, 200, { text: 'old read', truncated: false }); await settle(page);
+    assert.deepEqual([(await output()).open, (await output()).text], [false, ''], 'a new section starts closed and empty');
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('agents page: ok');
