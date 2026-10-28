@@ -686,7 +686,6 @@ async function main() {
   // own room a failure is told.
   for (const how of ['open', 'reset']) {
     for (const outcome of ['ok', 'fail']) {
-      if (how === 'open' && outcome === 'fail') continue;
       const page = await reactionRoom();
       await openRoom(page, 'rm_a'); await opened(page); await settle(page);
       await hold(page, 'PUT', '/reactions/');

@@ -1417,9 +1417,9 @@ export class Chat {
     }
   }
   async toggleReaction(id, emoji) {
-    const session = this.sessionGeneration;
+    const session = this.sessionGeneration, room = this.room?.id;
     const mine = this.reactions.get(id)?.some(entry => entry.emoji === emoji && entry.member_id === currentUser);
-    try { await request(`/api/messages/${id}/reactions/${encodeURIComponent(emoji)}`, { method: mine ? 'DELETE' : 'PUT' }); if (session !== this.sessionGeneration) return; await this.refreshReactions(id); }
-    catch (error) { if (session === this.sessionGeneration) this.error.textContent = error.message; }
+    try { await request(`/api/messages/${id}/reactions/${encodeURIComponent(emoji)}`, { method: mine ? 'DELETE' : 'PUT' }); if (!this.current(session, room)) return; await this.refreshReactions(id); }
+    catch (error) { if (this.current(session, room)) this.error.textContent = error.message; }
   }
 }
