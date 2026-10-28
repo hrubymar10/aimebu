@@ -372,6 +372,33 @@ async function main() {
     await page.close();
   }
 
+  // A Switch that is still out when the room changed does not close, refresh or mark busy the dialog that was opened afterwards for another agent.
+  for (const [status, reply] of [[200, agent('a1', 'ada', { model: 'gpt-6-mini', desired_rev: 2 })], [409, { message: 'The agent is busy', error: 'busy' }]]) {
+    const page = await mount({ withCard: true });
+    await page.waitForSelector('[data-agent-id=a1]');
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    await page.$eval('[data-agent-id=a1] .agent-switch', node => node.click());
+    await page.waitForFunction(() => document.querySelector('#switch-form').elements.model.options.length);
+    await settle(page);
+    await page.evaluate(() => { const el = document.querySelector('#switch-form').elements.model; el.value = 'gpt-6-mini'; el.dispatchEvent(new Event('change')); });
+    await page.$eval('#switch-form button[type=submit]', node => node.click());
+    const held = await waitRequest(page, 'POST', '/api/agents/a1/switch');
+    await page.evaluate(room => { window.__shown = window.__panel.setRoom(room); }, room('r2'));
+    await page.waitForSelector('[data-agent-id=a9]');
+    await page.$eval('[data-agent-id=a9] .agent-expand', node => node.click());
+    await page.$eval('[data-agent-id=a9] .agent-switch', node => node.click());
+    await page.waitForFunction(() => document.querySelector('#switch-form').elements.model.options.length && document.querySelector('#switch-agent-name').textContent.startsWith('zed'));
+    await settle(page);
+    const view = () => page.evaluate(() => ({ open: document.querySelector('#switch-dialog').open, name: document.querySelector('#switch-agent-name').textContent, error: document.querySelector('#switch-error').textContent,
+      submit: document.querySelector('#switch-form button[type=submit]').disabled, cancel: document.querySelector('#switch-cancel').disabled, models: document.querySelector('#switch-form').elements.model.value }));
+    const before = await view();
+    const reads = await page.evaluate(() => window.__requests.filter(request => request.method === 'GET' && request.path.startsWith('/api/rooms/r1/')).length);
+    await answer(page, held, status, reply); await settle(page);
+    assert.deepEqual(await view(), before, `${status}: the dialog of the other agent is as it was`);
+    assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'GET' && request.path.startsWith('/api/rooms/r1/')).length), reads, `${status}: the old room is not read again`);
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('spawn page: ok');

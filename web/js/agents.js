@@ -525,6 +525,8 @@ export class AgentsPanel {
     const agent = this.cards.get(id); if (!agent) return;
     this.switchAgentID = id;
     this.switchRoomID = this.room.id;
+    this.switchOpening = (this.switchOpening || 0) + 1;
+    document.querySelector('#switch-cancel').disabled = false;
     this.switchDialog.showModal();
     document.querySelector('#switch-agent-name').textContent = `${agentLabel(agent) || id} · ${harnessName(agent.tool)} · ${agent.model}`;
     const tools = this.switchForm.elements.tool, models = this.switchForm.elements.model;
@@ -593,16 +595,18 @@ export class AgentsPanel {
     const selected = tools.selectedIndex < 0 ? null : this.switchCatalog?.[Number(tools.value)];
     const model = this.switchForm.elements.model.value;
     if (!id || !selected?.available || !model) return;
+    const opening = this.switchOpening, generation = this.refreshGeneration, stale = () => opening !== this.switchOpening || generation !== this.refreshGeneration;
     const submit = this.switchForm.querySelector('button[type=submit]');
     const cancel = document.querySelector('#switch-cancel');
     submit.disabled = true; cancel.disabled = true;
     document.querySelector('#switch-error').textContent = '';
     try {
       await this.source.switch(id, { room_id: this.switchRoomID, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, machine_id: this.switchMachine.id });
+      if (stale()) return;
       await this.refresh();
       this.switchDialog.close();
-    } catch (error) { document.querySelector('#switch-error').textContent = error.message; this.renderSwitchModels(false); }
-    finally { cancel.disabled = false; }
+    } catch (error) { if (stale()) return; document.querySelector('#switch-error').textContent = error.message; this.renderSwitchModels(false); }
+    finally { if (!stale()) cancel.disabled = false; }
   }
   // The worktree choice, as a request carries it: only a task room can have a worktree, so from any other room nothing is sent, however the
   // box was left (it is hidden there and could not be unticked).
