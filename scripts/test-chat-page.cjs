@@ -908,6 +908,60 @@ async function main() {
     await history.close();
   }
 
+  // A destroyed chat (the replacement's adapter has destroy(); the hand-written chat does not): what was still out when it was destroyed changes nothing
+  // and starts no request, and none of its entries sends one afterwards.
+  if (REPLACED) {
+    const destroyed = [
+      ['open', {}, page => openRoom(page, 'rm_a'), 'GET', 'rooms/rm_a/messages\\?limit=100'],
+      ['refresh', { opened: true }, page => page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_m131', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'late', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); window.__late = window.__chat.refreshMessages(); }), 'GET', 'rooms/rm_a/messages\\?after='],
+      ['older', { opened: true }, page => page.evaluate(() => { document.querySelector('#messages').scrollTop = 0; }), 'GET', 'rooms/rm_a/messages\\?before='],
+      ['jump', { opened: true }, page => page.evaluate(() => { window.__late = window.__chat.jumpToMessage('rm_a_m10'); }), 'GET', 'rooms/rm_a/messages\\?around='],
+      ['number lookup', { opened: true, other: true }, page => page.evaluate(() => { window.__late = window.__chat.jumpToMessage(1003); }), 'GET', 'message-numbers/'],
+      ['forward page', { opened: true, windowed: true }, page => page.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = list.scrollHeight; }), 'GET', 'rooms/rm_a/messages\\?after=100'],
+      ['send', { opened: true }, async page => { await typeDraft(page, 'out the door'); await submit(page); }, 'POST', '/messages$'],
+      ['thread read', { opened: true, replies: true }, page => page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click()), 'GET', 'thread_root='],
+      ['older thread read', { opened: true, replies: 130, threadOpen: true }, page => page.evaluate(() => { document.querySelector('#thread-messages').scrollTop = 0; }), 'GET', 'thread_root=.*before='],
+      ['thread send', { opened: true, replies: true, threadOpen: true }, page => page.evaluate(() => { window.__chat.threadDraft.value = 'late reply'; window.__late = window.__chat.sendThread(); }), 'POST', '/messages$'],
+      ['reactions read', { reactions: true }, page => openRoom(page, 'rm_a'), 'GET', '/api/messages/rm_a_m129/reactions'],
+      ['reaction change', { opened: true, reactions: true }, page => page.$eval('[data-message-id=rm_a_m130] .reaction-pill[data-emoji="🎉"]', node => node.click()), 'PUT', '/reactions/'],
+    ];
+    for (const [name, setup, start, method, re] of destroyed) {
+      const page = await mount({ rooms: { rm_a: 130, rm_b: 5 } });
+      if (setup.other) await page.evaluate(() => { for (const message of window.__data.rooms.rm_b.messages) message.no += 1000; });
+      if (setup.reactions) await page.evaluate(() => { window.__data.rooms.rm_a.messages[129].reactions = [{ emoji: '🎉', member_kind: 'agent', member_id: 'agt_zed', member_name: 'zed' }]; window.__data.reactions.rm_a_m129 = [{ emoji: '👀', member_kind: 'user', member_id: 'usr_ann', member_name: 'ann' }]; });
+      if (setup.replies) await addReplies(page, setup.replies === true ? 3 : setup.replies);
+      if (setup.opened) { await openRoom(page, 'rm_a'); await opened(page); await settle(page); await calls(page); }
+      if (setup.windowed) { await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10')); await settle(page); }
+      if (setup.threadOpen) { await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click()); await page.waitForFunction(count => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1, {}, 1); await settle(page); }
+      await hold(page, method, re);
+      await start(page);
+      const held = await waitRequest(page, method, re);
+      await page.evaluate(() => window.__chat.destroy());
+      await settle(page);
+      const state = () => page.evaluate(() => ({ rows: document.querySelectorAll('#messages article').length, thread: document.querySelectorAll('#thread-messages article').length, error: document.querySelector('#chat-error').textContent, calls: window.__calls.splice(0), pills: document.querySelectorAll('.reaction-pill').length }));
+      const before = await state(), sent = await page.evaluate(() => window.__requests.length), draft = await draftText(page);
+      const failBefore = errors.length;
+      await serve(page, held); await page.evaluate(() => (window.__late || window.__sending || Promise.resolve()).catch?.(() => {})); await settle(page); await settle(page);
+      assert.deepEqual([await state(), await page.evaluate(() => window.__requests.length) - sent, await draftText(page), errors.slice(failBefore)], [{ ...before, calls: [] }, 0, draft, []], `destroy: ${name} answered after destroy changes nothing and starts nothing`);
+      await page.close();
+    }
+    // no entry sends a request once the chat is destroyed
+    {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await page.evaluate(() => window.__chat.destroy());
+      const sent = await page.evaluate(() => window.__requests.length);
+      await page.evaluate(async () => {
+        const chat = window.__chat, room = { id: 'rm_a', project_id: 'prj_a', title: 'rm_a', kind: 'task', lifecycle: 'open', member_count: 2 };
+        const calls = [() => chat.open(room), () => chat.refreshMessages(), () => chat.loadOlder(), () => chat.loadNewer(), () => chat.jumpToMessage('rm_a_m10'), () => chat.jumpToMessage(7), () => chat.send(), () => chat.sendThread(), () => chat.openThread({ id: 'rm_a_m120', seq: 120 }), () => chat.loadOlderThread(), () => chat.refreshReactions('rm_a_m129'), () => chat.toggleReaction('rm_a_m129', '🎉'), () => chat.saveRoomTitle(), () => chat.loadRoomMemory(), () => chat.changeRoomMemory(), () => chat.loadWorktree(), () => chat.leaveChat(), () => chat.exportRoom('json'), () => chat.addFiles([new File(['x'], 'a.txt')])];
+        for (const call of calls) { try { await call(); } catch {} }
+      });
+      await new Promise(resolve => setTimeout(resolve, 400));
+      assert.equal(await page.evaluate(() => window.__requests.length) - sent, 0, 'no entry of a destroyed chat starts a request');
+      await page.close();
+    }
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('chat page: ok');
