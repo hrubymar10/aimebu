@@ -8155,20 +8155,20 @@ async function main() {
     const reviewPage = await reviewContext.newPage();
     await login(reviewPage);
     const memoryView = await reviewPage.evaluate(async () => {
-      const { KnowledgePanel } = await import('/js/knowledge.js');
+      const { KnowledgePanel } = await import('/js/pages/knowledge/page.js');
       const panel = new KnowledgePanel(() => ({ projects: [], selectedProjectID: '' }), () => null);
-      panel.mode = 'project';
-      panel.data = { enabled: true, can_edit: true, cap_bytes: 4096, records: [
+      const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+      panel.store.mode.value = 'project';
+      panel.store.data.value = { enabled: true, can_edit: true, cap_bytes: 4096, records: [
         { id: 'knw_imported', scope_id: 'prj_test', body: 'brought over from v1', rev: 3, author_kind: 'user', author_id: 'alice', updated_at: '2026-10-01', active: true, _edit: true },
       ] };
-      panel.render();
-      const record = panel.records.querySelector('article');
-      const buttons = [...record.querySelectorAll('button')].map(button => button.getAttribute('aria-label') || button.textContent);
-      panel.data.can_edit = false;
-      panel.data.records[0]._edit = false;
-      panel.render();
-      const viewer = panel.records.querySelector('article');
-      return { buttons, readOnly: record.querySelector('textarea').readOnly, status: panel.status.textContent, review: !!panel.dialog.querySelector('input[data-review-id]') || /review/i.test(panel.dialog.textContent),
+      await tick();
+      const record = panel.dialog.querySelector('.knowledge-records article');
+      const buttons = [...record.querySelectorAll('button')].map(button => button.getAttribute('aria-label') || button.textContent), editable = !record.querySelector('textarea').readOnly;
+      panel.store.data.value = { ...panel.store.data.value, can_edit: false, records: [{ ...panel.store.data.value.records[0], _edit: false }] };
+      await tick();
+      const viewer = panel.dialog.querySelector('.knowledge-records article');
+      return { buttons, readOnly: !editable, status: panel.dialog.querySelector('#knowledge-status').textContent, review: !!panel.dialog.querySelector('input[data-review-id]') || /review/i.test(panel.dialog.textContent),
         viewerReadOnly: viewer.querySelector('textarea').readOnly, viewerButtons: viewer.querySelectorAll('button').length };
     });
     assert.deepEqual(memoryView.buttons, ['Save', 'Delete'], `an imported record is edited like any other: ${JSON.stringify(memoryView)}`);

@@ -14,7 +14,7 @@ import { SettingsPanel } from './settings.js';
 import { UsagesPopover } from './usages-popover.js';
 import { TopbarMenu } from './topbar-menu.js';
 import { createUsagesSource } from './usages-source.js';
-import { KnowledgePanel } from './knowledge.js';
+import { KnowledgePanel } from './pages/knowledge/page.js';
 import { Health } from './pages/health/page.js';
 import { SystemEvents } from './system-events.js';
 import { retention } from './retention.js';
