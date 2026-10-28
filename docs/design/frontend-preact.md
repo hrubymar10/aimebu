@@ -211,6 +211,11 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
   read taking the Usages tab away; the Users tab holding its place and then showing or going; choosing a tab showing its section alone and
   setting the title and the dialog's section; a destroyed shell drawing nothing more) and `scripts/test-shell-model.cjs` (the pure
   rules, in `make test-web`).
+- `make test-ui` also runs `scripts/test-health-page.cjs` (the Health panel in Chromium with requests held; first written against the hand-written
+  panel and run unchanged against the page that replaced it: the badge and its labels, the entries and where one goes, the limit rows,
+  the limit guard asked once and not again after a refusal, reads answered out of order, the disk read and its race, the dry-run then
+  confirmed cleanup, a refresh not wiping an open preview, the failure texts, the daily schedule's saves; and a destroy while a read or a
+  cleanup is held sending nothing more) and `scripts/test-health-model.cjs` (the pure rules, in `make test-web`).
 - `make test-ui` also runs `scripts/test-claude-import-page.cjs` (the Claude Code sessions import dialog over a source with calls held: it opens on the host
   machine with the native harness, the default model and preset roles; reads answered out of order; starting reads the role boxes then,
   locks the dialog while it runs and the started rows after; and a destroy while a read or a start is held sends nothing more) next to
@@ -306,6 +311,8 @@ Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`),
 - Acceptance: the section's existing `test-ui` checks pass against the Preact page, none weakened.
 
 ### Step 3: Health, Knowledge, Inbox
+
+Done so far: Health (`web/js/pages/health/`: the popover over a `HealthStore`, with the disk section as `DiskUsage`, a store of its own; the toolbar's toggle and count stay in `index.html` and the adapter is their only writer).
 
 - Scope: the Health panel, the Knowledge (memory) viewer, the Inbox and its notifications.
 - Files: `health.js`, `knowledge.js`, `inbox.js`, `inbox-source.js` (the source stays a plain store; the page reads it

@@ -1,5 +1,5 @@
 import { MachineSelection } from './machine-selection.js';
-import { healthLabel } from './health.js';
+import { healthLabel } from './pages/health/model.js';
 import { request, currentUser, rights } from './api.js';
 import { harnessIcon, agentLabel } from './sender-identity.js';
 import { setGlyph } from './icon-button.js';

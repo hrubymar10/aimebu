@@ -4144,7 +4144,7 @@ async function main() {
       // person who is not the owner is not asked again at all.
       const fresh = () => settingsPage.evaluate(async () => {
         const version = new URL(document.querySelector('script[type=module][src]').src).search;
-        const { Health } = await import(`/js/health.js${version}`);
+        const { Health } = await import(`/js/pages/health/page.js${version}`);
         const health = new Health({ setHealth() {}, rooms: new Map() }, { cards: new Map() }, () => {}, () => {});
         clearInterval(health.limitTimer);
         // Count this instance's own reads: the signed-in page's Health also polls the same mock on its timer, so the mock's global

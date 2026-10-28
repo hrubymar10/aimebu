@@ -156,15 +156,15 @@ const FIXTURE = async () => {
   // The real automatic-switching and limit-guard blocks over the mock APIs, with the decision list opened, so the audits see every control.
   const { QuotaStore } = await import('/js/pages/usages/quota-store.js'), { QuotaBlock } = await import('/js/pages/usages/quota-block.js');
   const { GuardStore } = await import('/js/pages/usages/guard-store.js'), { GuardBlock } = await import('/js/pages/usages/guard-block.js');
-  const { HttpLimitGuardSource } = await import('/js/limit-guard-source.js'), { Health } = await import('/js/health.js'), { html, render } = await import('/js/ui.js');
+  const { HttpLimitGuardSource } = await import('/js/limit-guard-source.js'), { LimitRows } = await import('/js/pages/health/health-popover.js'), { html, render } = await import('/js/ui.js');
   const quotaHost = make('div', '', '', document.querySelector('#settings-usages')), guardHost = make('div', '', '', document.querySelector('#settings-usages'));
   const quota = new QuotaStore({ source: new HttpQuotaSource(), isEditing: () => false }), guard = new GuardStore({ source: new HttpLimitGuardSource(), isEditing: () => false });
   render(html`<${QuotaBlock} store=${quota} />`, quotaHost); render(html`<${GuardBlock} store=${guard} />`, guardHost);
   await quota.sync({ owner: true, enabled: true }); await guard.sync({ owner: true });
   await new Promise(resolve => setTimeout(resolve, 150));
   quotaHost.querySelectorAll('details').forEach(item => { item.open = true; });
-  const guardData = await new HttpLimitGuardSource().load(), healthLimits = Health.prototype.limitRows(guardData);
-  if (healthLimits) document.querySelector('#health-popover').prepend(healthLimits);
+  const guardData = await new HttpLimitGuardSource().load();
+  render(html`<${LimitRows} guard=${guardData} />`, document.querySelector('#health-popover'));
   // The room dialog's member list with every row kind, so the audits see people, agents, badges and singleton roles.
   const { RoomMembers } = await import('/js/room-members.js');
   new RoomMembers(document.querySelector('#room-member-list')).render({

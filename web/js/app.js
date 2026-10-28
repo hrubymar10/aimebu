@@ -15,7 +15,7 @@ import { UsagesPopover } from './usages-popover.js';
 import { TopbarMenu } from './topbar-menu.js';
 import { createUsagesSource } from './usages-source.js';
 import { KnowledgePanel } from './knowledge.js';
-import { Health } from './health.js';
+import { Health } from './pages/health/page.js';
 import { SystemEvents } from './system-events.js';
 import { retention } from './retention.js';
 import { showWelcome } from './welcome.js';
@@ -29,7 +29,7 @@ import { initUIVariants } from './ui-variant.js';
 import { copyText } from './markdown.js';
 import { ImportV1Wizard } from './import-v1.js';
 import { offerHarnessSetup, anyHarnessConfigured, HARNESS_SKIP_PREFERENCE } from './harness-offer.js';
-import { DiskUsage } from './disk-usage.js';
+import { DiskUsage } from './pages/health/disk.js';
 import { showBuildVersion } from './build-version.js';
 import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
 
