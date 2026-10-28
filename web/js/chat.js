@@ -692,7 +692,7 @@ export class Chat {
     if (!this.room) return;
     const room = this.room, session = this.roomSession;
     const baseRef = await promptDialog('Base branch or ref (leave blank for current HEAD)', { title: 'Create worktree', label: 'Base branch or ref', placeholder: 'Current HEAD', confirm: 'Create' });
-    if (baseRef === null) return;
+    if (baseRef === null || !this.currentRoom(session, room.id)) return;
     try { await request(`/api/rooms/${room.id}/worktree`, { method: 'POST', body: { enabled: true, base_ref: baseRef.trim() } }); if (!this.currentRoom(session, room.id)) return; await this.loadWorktree(); }
     catch (error) { if (this.currentRoom(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
   }
@@ -704,10 +704,12 @@ export class Chat {
       return;
     }
     if (!room || !await confirmDialog('Remove this archived room worktree? Clean merged worktrees are removed; a dirty or unmerged worktree will be preserved.', { title: 'Remove worktree', confirm: 'Remove', danger: true })) return;
+    if (!this.currentRoom(session, room.id)) return;
     try {
       let result = await request(`/api/rooms/${room.id}/worktree`, { method: 'DELETE', body: { force: false } });
       if (!this.currentRoom(session, room.id)) return;
       if (result.state === 'preserved' && await confirmDialog(`Worktree is preserved: ${result.reason}. Remove its checkout and discard uncommitted local files? Committed changes remain on the room branch.`, { title: 'Discard local files', confirm: 'Discard and remove', danger: true })) {
+        if (!this.currentRoom(session, room.id)) return;
         result = await request(`/api/rooms/${room.id}/worktree`, { method: 'DELETE', body: { force: true, confirm: `REMOVE ${room.id}` } });
         if (!this.currentRoom(session, room.id)) return;
       }
@@ -732,6 +734,7 @@ export class Chat {
     const errorNode = document.querySelector('#room-info-error');
     const closing = intent === 'archive' || room.lifecycle !== 'closed';
     if (closing && !await confirmDialog(`Archive ${room.title}? Agents homed here stop, and open questions are withdrawn. Its history remains available.`, { title: 'Archive room', confirm: 'Archive' })) return;
+    if (!this.currentRoom(session, room.id)) return;
     action.disabled = true; errorNode.textContent = '';
     const path = `/api/rooms/${room.id}/${closing ? 'close' : 'reopen'}`;
     try {
@@ -740,6 +743,7 @@ export class Chat {
       catch (error) {
         if (!this.currentRoom(session, room.id)) return;
         if (!closing || error.code !== 'open_children' || !await confirmDialog(`Archive ${room.title} and all its open child rooms? Agents homed in these rooms stop, and open questions are withdrawn.`, { title: 'Archive room and its child rooms', confirm: 'Archive all' })) throw error;
+        if (!this.currentRoom(session, room.id)) return;
         updated = await request(path, { method: 'POST', body: { lifecycle_rev: room.lifecycle_rev || 0, cascade: true } });
       }
       if (!this.currentRoom(session, room.id)) return;
@@ -769,6 +773,7 @@ export class Chat {
     const session = this.roomSession;
     const button = document.querySelector('#room-remove'), errorNode = document.querySelector('#room-info-error');
     if (!await confirmDialog(`Remove ${room.title} for good? Its messages, reactions, notes, attachments and its usage and cost records are deleted and cannot be restored.`, { title: 'Remove room', confirm: 'Remove for good', danger: true })) return;
+    if (!this.currentRoom(session, room.id)) return;
     button.disabled = true; errorNode.textContent = '';
     try {
       await request(`/api/rooms/${room.id}`, { method: 'DELETE' });

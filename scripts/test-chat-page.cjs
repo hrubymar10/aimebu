@@ -896,6 +896,45 @@ async function main() {
     assert.deepEqual(await page.evaluate(() => [document.querySelector('#chat-error').textContent, document.querySelector('#room-info-error').textContent]), ['The room cannot be archived.', dialogOpen ? 'The room cannot be archived.' : ''], `a refused archive with the dialog ${dialogOpen ? 'open' : 'closed'}`);
     await page.close();
   }
+  // A question the reader has not answered yet when the room changes or the chat is reset: answering it afterwards starts nothing.
+  const asking = [
+    ['create worktree', {}, page => page.evaluate(() => { window.__panel = window.__chat.createWorktree(); }), 'POST', 'worktree'],
+    ['archived worktree', { lifecycle: 'closed' }, page => page.evaluate(() => { window.__panel = window.__chat.removeWorktree(); }), 'DELETE', 'worktree'],
+    ['archive', {}, page => page.evaluate(() => { window.__panel = window.__chat.changeRoomLifecycle('archive'); }), 'POST', 'close'],
+    ['remove room', { lifecycle: 'closed' }, page => page.evaluate(() => { window.__panel = window.__chat.removeRoom(); }), 'DELETE', 'rooms/rm_a'],
+  ];
+  for (const how of ['open', 'reset', 'revisit']) {
+    for (const [name, extra, start, method, mark] of asking) {
+      const page = await panelRoom({ extra });
+      await start(page);
+      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+      await leave(page, how, extra);
+      const reads = await page.evaluate(() => window.__requests.length);
+      await page.evaluate(() => document.querySelector('#app-dialog .app-dialog-ok').click());
+      await page.evaluate(() => window.__panel.catch(() => {})); await settle(page); await settle(page);
+      assert.deepEqual([await page.evaluate(() => window.__requests.length) - reads, await page.evaluate(() => window.__mutations)], [0, []], `${name} ${how}: confirming a question after the room changed starts nothing`);
+      await page.close();
+    }
+  }
+  for (const how of ['open', 'reset', 'revisit']) {
+    for (const [name, extra, start, reply] of [
+      ['cascade', {}, page => page.evaluate(() => { window.__panel = window.__chat.changeRoomLifecycle('archive'); }), [409, { error: 'open_children', message: 'Open child rooms.' }]],
+      ['forced worktree removal', { lifecycle: 'closed' }, page => page.evaluate(() => { window.__panel = window.__chat.removeWorktree(); }), [200, { state: 'preserved', reason: 'dirty' }]],
+    ]) {
+      const page = await panelRoom({ extra });
+      await page.evaluate(() => { window.__holds.push({ method: 'POST', re: 'close$' }, { method: 'DELETE', re: 'worktree$' }); });
+      await start(page); await dialogOk(page);
+      const first = await waitRequest(page, name === 'cascade' ? 'POST' : 'DELETE', name === 'cascade' ? 'close$' : 'worktree$');
+      await answer(page, first, reply[0], reply[1]);
+      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+      await leave(page, how, extra);
+      const reads = await page.evaluate(() => window.__requests.length);
+      await page.evaluate(() => document.querySelector('#app-dialog .app-dialog-ok').click());
+      await page.evaluate(() => window.__panel.catch(() => {})); await settle(page); await settle(page);
+      assert.equal(await page.evaluate(() => window.__requests.length) - reads, 0, `${name} ${how}: the second question, answered after the room changed, starts nothing`);
+      await page.close();
+    }
+  }
   // The app's callback after an archive may take a while; a room left meanwhile keeps its own dialog open and hears nothing of the old one's result.
   for (const outcome of ['ok', 'fail']) {
     const page = await panelRoom();
