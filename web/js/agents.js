@@ -957,12 +957,16 @@ export class AgentsPanel {
     if (continuing && !forkMode && resume.active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that you closed this session.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
     const legacyFork = !continuing && !!resume?.resumable && this.form.elements.resume_mode.value === 'fork';
     if (!continuing && !legacyFork && resume?.v1_active && !document.querySelector('#spawn-resume-confirm').checked) { document.querySelector('#spawn-resume-notes').textContent = 'Confirm that v1 is not running this session any more.'; document.querySelector('#spawn-resume-confirm').focus(); return; }
+    // The dialog can be closed and opened again for another room, or the panel reset, while the call is out; its outcome is then not this view's.
+    const opening = this.spawnOpening, generation = this.refreshGeneration, stale = () => opening !== this.spawnOpening || generation !== this.refreshGeneration;
     try { const card = await this.source.spawn(target.id, { role, tool: selected.tool, variant: selected.variant, launcher_id: selected.launcher_id, model, provider: selected.provider, machine_id: this.spawnMachine.id, ...(name ? { name } : {}), ...(resume?.resumable ? {} : this.worktreeChoice()), ...(resume && !continuing ? { resume_legacy: resume.legacy_id, ...(resume.resumable ? { resume_mode: legacyFork ? 'fork' : 'continue' } : {}), confirm_v1_idle: !legacyFork && document.querySelector('#spawn-resume-confirm').checked } : {}), ...(continuing ? { resume_session: resume.session_id, resume_mode: forkMode ? 'fork' : 'continue', confirm_session_closed: !forkMode && document.querySelector('#spawn-resume-confirm').checked, new_room: this.form.elements.start_room.value === NEW_ROOM } : {}) });
+      if (stale()) return;
       this.dialog.close(); this.form.reset();
       // A session continued in a room of its own: that room is where the person goes.
       if (continuing && card?.room_id && card.room_id !== this.room.id && card.room_id !== target.id) await this.showRoomByID?.(this.room.project_id, card.room_id);
       else if (target.id !== this.room.id) await this.showRoom?.(target); else await this.refresh(); }
     catch (error) {
+      if (stale()) return;
       // A refused name is answered under its field and the dialog stays open, with everything else as it was, so another name can be tried.
       if (error.code === 'name_in_use' || error.code === 'invalid_name') { this.nameError.textContent = error.message; this.nameInput.focus(); return; }
       this.error.textContent = error.message; this.dialog.close();

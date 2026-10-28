@@ -33,7 +33,8 @@ const machines = { machines: [{ id: 'm1', name: 'Host', is_host: true, approved:
 const roles = [{ role_key: 'worker', label: 'Worker', emoji: '🔧', cap_is_lead: false }, { role_key: 'lead', label: 'Lead', emoji: '🧭', cap_is_lead: true }];
 const stable = (extra = {}) => ({ 'GET /api/projects/p1/machine-folders': { folders: [{ machine_id: 'm2', folder: '/srv/p1' }] }, 'GET /api/machines?project_id=p1': machines, 'GET /api/roles': roles,
   'GET /api/rooms/r1/agent-name': { name: 'nova' }, 'GET /api/spawn-catalog?machine_id=m1': catalog, 'GET /api/projects/p1/role-spawn-defaults/worker/next': { available: false }, 'GET /api/projects/p1/role-spawn-defaults/lead/next': { available: false },
-  'GET /api/rooms/r1/agents': [agent('a1', 'ada')], 'GET /api/rooms/r1/members': { humans: [] }, ...extra });
+  'GET /api/rooms/r1/agents': [agent('a1', 'ada')], 'GET /api/rooms/r1/members': { humans: [] },
+  'GET /api/rooms/r2/agent-name': { name: 'luna' }, 'GET /api/rooms/r2/agents': [agent('a9', 'zed', { room_id: 'r2' })], 'GET /api/rooms/r2/members': { humans: [] }, ...extra });
 
 // fetch is held unless a rule answers it: a rule is a body, or { status, body }.
 function installFetch(auto) {
@@ -345,6 +346,29 @@ async function main() {
     assert.equal((await sw()).open, false, 'a change of room closes the dialog');
     await answer(page, held, 200, catalog); await settle(page);
     assert.deepEqual([(await sw()).tool, (await sw()).submit], ['', true], 'the late catalog fills nothing');
+    await page.close();
+  }
+
+  // A Spawn that is still out when the dialog was closed and opened again for another room, or the panel was reset, changes nothing of the new
+  // view: the new dialog stays open and keeps its name, nothing is shown in the panel, nobody is taken to the room of the old call.
+  for (const [how, status, reply] of [['room', 200, agent('a2', 'nova')], ['reset', 200, agent('a2', 'nova')], ['room', 400, { message: 'The role needs a harness', error: 'invalid' }], ['room', 409, { message: 'that name is in use', error: 'name_in_use' }], ['reset', 400, { message: 'refused', error: 'invalid' }]]) {
+    const page = await mount();
+    await open(page); await ready(page);
+    await page.$eval('#spawn-form button[type=submit]', node => node.click());
+    const held = await waitRequest(page, 'POST', '/api/rooms/r1/agents');
+    await page.evaluate(() => document.querySelector('#spawn-cancel').click());
+    if (how === 'room') {
+      await page.evaluate(room => window.__panel.setRoomFacts(room), room('r2'));
+      await open(page); await ready(page);
+    } else await page.evaluate(() => window.__panel.reset());
+    const reads = () => page.evaluate(() => window.__requests.filter(request => request.method === 'GET').map(request => request.path));
+    const before = (await reads()).length;
+    await calls(page);
+    await answer(page, held, status, reply); await settle(page);
+    const after = await page.evaluate(() => ({ open: document.querySelector('#spawn-dialog').open, name: document.querySelector('#spawn-form [name=name]').value, nameError: document.querySelector('#spawn-name-error').textContent, error: document.querySelector('#agents-error').textContent }));
+    assert.deepEqual(after, { open: how === 'room', name: how === 'room' ? 'luna' : after.name, nameError: '', error: '' }, `${how} ${status}: the old call does not touch the new view`);
+    assert.deepEqual(await calls(page), [], `${how} ${status}: nobody is taken anywhere`);
+    assert.equal((await reads()).slice(before).some(path => path.startsWith('/api/rooms/r1/')), false, `${how} ${status}: the room that was left is not read again`);
     await page.close();
   }
 
