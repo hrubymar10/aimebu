@@ -464,6 +464,16 @@ async function main() {
     await page.close();
   }
 
+  // A mute that was running when the list was reset does not draw the list again when it runs out.
+  {
+    const soon = new Date(Date.now() + 500).toISOString();
+    const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => (item.id === 'rm_mute' ? { ...item, muted_until: soon } : item)) }) });
+    await page.evaluate(() => window.__sidebar.reset());
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    assert.equal(await page.$eval('#projects', node => node.children.length), 0, 'the list stays empty after a reset');
+    await page.close();
+  }
+
   // The sort menu: it opens on the chosen order, moves with the arrows, closes with Escape (the focus back on the button) or a click outside, and a
   // choice reorders the projects, keeps the choice in the browser and sends it to the server.
   {

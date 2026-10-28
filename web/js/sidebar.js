@@ -43,6 +43,7 @@ export class Sidebar {
   reset() {
     this.reads.reset();
     this.generation++;
+    clearTimeout(this.muteTimer);
     for (const timer of this.archiveTimers.values()) clearTimeout(timer);
     for (const requestID of this.archiveRequests.values()) requestID.abort();
     for (const requestID of this.roomRequests) requestID.abort();
