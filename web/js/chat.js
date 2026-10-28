@@ -611,8 +611,9 @@ export class Chat {
     const hide = document.querySelector('#room-hide');
     hide.onclick = async () => {
       const room = this.room; hide.disabled = true;
+      const session = this.sessionGeneration;
       const done = await this.setRoomPreference?.(this.roomView?.(room.id) || room, 'hidden', true);
-      hide.disabled = false; if (done) this.infoDialog.close();
+      hide.disabled = false; if (done && this.current(session, room.id)) this.infoDialog.close();
     };
   }
   async loadRoomMemory() {

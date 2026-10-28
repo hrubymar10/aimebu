@@ -908,6 +908,23 @@ async function main() {
     await page.close();
   }
 
+  // Hide takes the room off the person's lists and closes the dialog; the answer of a hide that outlives its room closes nothing.
+  {
+    const page = await panelRoom();
+    await page.evaluate(() => { window.__hidden = []; window.__chat.setRoomPreference = async (room, field, value) => { window.__hidden.push([room.id, field, value]); return true; }; window.__chat.showRoomInfo(); });
+    await settle(page);
+    await page.$eval('#room-hide', node => node.click()); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [window.__hidden, document.querySelector('#room-info-dialog').open, document.querySelector('#room-hide').disabled]), [[['rm_a', 'hidden', true]], false, false]);
+    await page.evaluate(() => { window.__chat.setRoomPreference = () => new Promise(resolve => { window.__hideDone = resolve; }); window.__chat.showRoomInfo(); });
+    await settle(page);
+    await page.$eval('#room-hide', node => node.click());
+    await openRoom(page, 'rm_b'); await opened(page); await settle(page);
+    await page.evaluate(() => window.__chat.showRoomInfo()); await settle(page);
+    await page.evaluate(() => window.__hideDone(true)); await settle(page);
+    assert.equal(await page.evaluate(() => document.querySelector('#room-info-dialog').open), true, 'a late hide does not close the dialog of the room opened since');
+    await page.close();
+  }
+
   // In its own room each of them does its work and tells the reader.
   {
     const page = await panelRoom();
