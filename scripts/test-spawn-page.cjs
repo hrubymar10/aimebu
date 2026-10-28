@@ -580,6 +580,29 @@ async function main() {
     await page.close();
   }
 
+  // The Switch dialog: the tool catalog of an earlier opening, answered while the same agent's dialog was opened again and is still waiting for its
+  // machines, does not fill the new opening; and a Switch answered after the dialog was closed changes nothing.
+  {
+    const page = await mount({ withCard: true, auto: stable({ 'GET /api/spawn-catalog?machine_id=m1': undefined }) });
+    await page.waitForSelector('[data-agent-id=a1]');
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    const openSwitch = () => page.$eval('[data-agent-id=a1] .agent-switch', node => node.click());
+    await openSwitch();
+    const first = await waitRequest(page, 'GET', '/api/spawn-catalog?machine_id=m1');
+    await page.evaluate(() => document.querySelector('#switch-cancel').click());
+    await page.evaluate(() => { window.__auto['GET /api/machines?project_id=p1'] = null; });
+    await openSwitch();
+    await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/machines?project_id=p1').length === 2);
+    const machinesHeld = await page.evaluate(() => window.__requests.findLastIndex(request => request.path === '/api/machines?project_id=p1'));
+    await answer(page, first, 200, catalog); await settle(page);
+    const view = () => page.evaluate(() => ({ tools: document.querySelector('#switch-form').elements.tool.options.length, submit: document.querySelector('#switch-form button[type=submit]').disabled, reason: document.querySelector('#switch-tool-reason').textContent }));
+    assert.deepEqual([(await view()).tools, (await view()).submit], [0, true], 'the new opening has no tools from the earlier opening');
+    await answer(page, machinesHeld, 200, machines);
+    await answer(page, await waitRequest(page, 'GET', '/api/spawn-catalog?machine_id=m1'), 200, catalog); await settle(page);
+    assert.equal((await view()).tools > 0, true, 'the new opening then completes normally');
+    await page.close();
+  }
+
   // A panel destroyed while a read of the Spawn dialog or its call is out takes the answer and does nothing with it: no machines, roles, tools or
   // name are stored, no read follows, no folder status, and a spawn that succeeds or is refused navigates, refreshes and says nothing.
   {

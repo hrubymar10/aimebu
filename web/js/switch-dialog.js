@@ -26,6 +26,7 @@ export class SwitchDialog {
     this.switchAgentID = id;
     this.switchRoomID = this.room.id;
     this.switchOpening = (this.switchOpening || 0) + 1;
+    this.switchCatalogRequestID = (this.switchCatalogRequestID || 0) + 1; // a catalog asked for by an earlier opening is no answer to this one
     document.querySelector('#switch-cancel').disabled = false;
     this.switchDialog.showModal();
     document.querySelector('#switch-agent-name').textContent = `${agentLabel(agent) || id} · ${harnessName(agent.tool)} · ${agent.model}`;
