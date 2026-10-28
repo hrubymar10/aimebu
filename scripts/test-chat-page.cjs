@@ -51,7 +51,13 @@ function installServer() {
     }
     if (method === 'POST' && parts[1] === 'rooms' && parts[3] === 'attachments') { window.__uploads = (window.__uploads || 0) + 1; return ok({ id: `att_${window.__uploads}`, name: `file${window.__uploads}.txt`, mime: 'text/plain', url: `/files/${window.__uploads}`, size: 5 }); }
     if (method === 'DELETE' && parts[1] === 'rooms' && parts[3] === 'attachments') return { status: 204, body: null };
-    if (method === 'GET' && parts[1] === 'messages' && parts[3] === 'reactions') return ok(window.__data.reactions[parts[2]] || []);
+    if (parts[1] === 'messages' && parts[3] === 'reactions') {
+      const id = parts[2], all = Object.values(window.__data.rooms).flatMap(room => room.messages);
+      const list = window.__data.reactions[id] ||= (all.find(message => message.id === id)?.reactions || []).map(entry => ({ ...entry }));
+      if (method === 'PUT') { const emoji = decodeURIComponent(parts[4]); if (!list.some(entry => entry.emoji === emoji && entry.member_id === 'usr_me')) list.push({ emoji, member_kind: 'user', member_id: 'usr_me', member_name: 'me' }); return { status: 204, body: null }; }
+      if (method === 'DELETE') { const emoji = decodeURIComponent(parts[4]); window.__data.reactions[id] = list.filter(entry => !(entry.emoji === emoji && entry.member_id === 'usr_me')); return { status: 204, body: null }; }
+      return ok(list);
+    }
     if (method === 'GET' && parts[1] === 'message-numbers') {
       for (const [id, room] of Object.entries(window.__data.rooms)) { const found = room.messages.find(message => message.no === Number(parts[2])); if (found) return ok({ id: found.id, room_id: id, no: found.no }); }
       return { status: 404, body: { message: 'not found' } };
@@ -629,6 +635,80 @@ async function main() {
     await serve(late, held); await late.evaluate(() => window.__jumping); await settle(late);
     assert.deepEqual([(await panel(late)).hidden, (await panel(late)).entries.length, await late.evaluate(() => document.querySelector('#chat-error').textContent)], [true, 0, ''], 'a late root lookup opens no thread in the new room');
     await late.close();
+  }
+
+  // Reactions. A message that carries its reactions shows them without a request; one that does not asks for them. Entries group by emoji with a count, the
+  // names as the tooltip, and the viewer's own pressed; a click on a pill adds or removes the viewer's reaction and reads the pills again.
+  const pills = (page, id) => page.evaluate(id => [...document.querySelectorAll(`[data-message-id=${id}] .reaction-pill`)].map(node => [node.textContent, node.title, node.getAttribute('aria-pressed'), node.dataset.emoji]), id);
+  const reactionRoom = async () => {
+    const page = await mount();
+    await page.evaluate(() => {
+      window.__data.rooms.rm_a.messages[129].reactions = [{ emoji: '👍', member_kind: 'user', member_id: 'usr_ann', member_name: 'ann' }, { emoji: '👍', member_kind: 'user', member_id: 'usr_me', member_name: 'me' }, { emoji: '🎉', member_kind: 'agent', member_id: 'agt_zed', member_name: 'zed' }];
+      window.__data.reactions.rm_a_m129 = [{ emoji: '👀', member_kind: 'user', member_id: 'usr_ann', member_name: 'ann' }];
+    });
+    return page;
+  };
+  {
+    const page = await reactionRoom();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.deepEqual(await pills(page, 'rm_a_m130'), [['👍 2', 'ann, me', 'true', '👍'], ['🎉 1', 'zed', 'false', '🎉']]);
+    assert.deepEqual(await pills(page, 'rm_a_m129'), [['👀 1', 'ann', 'false', '👀']], 'a message without its reactions asks for them');
+    assert.equal(await count(page, 'GET', '/api/messages/rm_a_m130/reactions'), 0, 'a message that carries them does not');
+    assert.equal(await count(page, 'GET', '/api/messages/rm_a_m129/reactions'), 1);
+    await page.$eval('[data-message-id=rm_a_m130] .reaction-pill[data-emoji="👍"]', node => node.click()); await settle(page);
+    assert.deepEqual([await count(page, 'DELETE', '/api/messages/rm_a_m130/reactions/'), await pills(page, 'rm_a_m130')], [1, [['👍 1', 'ann', 'false', '👍'], ['🎉 1', 'zed', 'false', '🎉']]], 'my own pill removes my reaction');
+    await page.$eval('[data-message-id=rm_a_m130] .reaction-pill[data-emoji="🎉"]', node => node.click()); await settle(page);
+    assert.deepEqual([await count(page, 'PUT', '/api/messages/rm_a_m130/reactions/'), (await pills(page, 'rm_a_m130')).at(-1)], [1, ['🎉 2', 'zed, me', 'true', '🎉']], 'someone else\'s pill adds mine');
+    await page.$eval('[data-message-id=rm_a_m130] .message-bubble', node => node.scrollIntoView());
+    await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m130] .message-action[aria-haspopup]').click());
+    await page.$eval('[data-message-id=rm_a_m130] .quick-reaction[data-emoji="✅"]', node => node.click()); await settle(page);
+    assert.deepEqual((await pills(page, 'rm_a_m130')).map(pill => pill[3]), ['👍', '🎉', '✅'], 'a quick reaction from the message actions');
+    await page.close();
+  }
+
+  // The automatic read of a message's reactions that is still out when another room is opened or the chat is reset draws no pill, says nothing and starts
+  // nothing in the new view, answered well.
+  for (const how of ['open', 'reset']) {
+    const page = await reactionRoom();
+    await hold(page, 'GET', '/api/messages/rm_a_m129/reactions');
+    await openRoom(page, 'rm_a');
+    const held = await waitRequest(page, 'GET', '/api/messages/rm_a_m129/reactions');
+    await opened(page);
+    if (how === 'open') { await openRoom(page, 'rm_b'); await opened(page); } else { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_b'); await opened(page); }
+    await settle(page);
+    const before = errors.length, reads = await page.evaluate(() => window.__requests.length);
+    await serve(page, held); await settle(page);
+    assert.deepEqual([await page.evaluate(() => document.querySelectorAll('.reaction-pill').length), await page.evaluate(() => document.querySelector('#chat-error').textContent), await page.evaluate(() => window.__requests.length) - reads, errors.slice(before), await page.evaluate(() => window.__chat.reactions.has('rm_a_m129'))], [0, '', 0, [], false], `${how}: a late reactions read changes nothing and is not kept`);
+    await page.close();
+  }
+
+  // A reaction change still out when another room is opened or the chat is reset reads nothing afterwards and says nothing, answered well or badly; in its
+  // own room a failure is told.
+  for (const how of ['open', 'reset']) {
+    for (const outcome of ['ok', 'fail']) {
+      if (how === 'open' && outcome === 'fail') continue;
+      const page = await reactionRoom();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await hold(page, 'PUT', '/reactions/');
+      await page.$eval('[data-message-id=rm_a_m130] .reaction-pill[data-emoji="🎉"]', node => node.click());
+      const held = await waitRequest(page, 'PUT', '/reactions/');
+      if (how === 'open') { await openRoom(page, 'rm_b'); await opened(page); } else { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_b'); await opened(page); }
+      await settle(page);
+      const reads = await count(page, 'GET', '/api/messages/');
+      if (outcome === 'ok') await serve(page, held); else await answer(page, held, 500, { message: 'Reaction refused.' });
+      await settle(page);
+      assert.deepEqual([await count(page, 'GET', '/api/messages/'), await page.evaluate(() => document.querySelector('#chat-error').textContent)], [reads, ''], `${how}/${outcome}: a late reaction answer reads nothing and says nothing`);
+      await page.close();
+    }
+  }
+  {
+    const page = await reactionRoom();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await hold(page, 'PUT', '/reactions/');
+    await page.$eval('[data-message-id=rm_a_m130] .reaction-pill[data-emoji="🎉"]', node => node.click());
+    await answer(page, await waitRequest(page, 'PUT', '/reactions/'), 403, { message: 'Viewers cannot react.' }); await settle(page);
+    assert.equal(await page.evaluate(() => document.querySelector('#chat-error').textContent), 'Viewers cannot react.');
+    await page.close();
   }
 
   await browser.close(); server.close();
