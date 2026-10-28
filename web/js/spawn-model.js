@@ -206,3 +206,32 @@ export function spawnRequest({ role, tool, model, typed, machineID, resume, mode
     ...(resume && !continuing ? { resume_legacy: resume.legacy_id, ...(resume.resumable ? { resume_mode: legacyFork ? 'fork' : 'continue' } : {}), confirm_v1_idle: !legacyFork && !!confirmed } : {}),
     ...(continuing ? { resume_session: resume.session_id, resume_mode: fork ? 'fork' : 'continue', confirm_session_closed: !fork && !!confirmed, new_room: !!newRoom } : {}) } };
 }
+
+// The Switch dialog's tool rows: the entry's index as its value, and for an unavailable one why.
+export function switchRows(catalog) {
+  return (catalog || []).map((tool, index) => ({ value: String(index), label: `${tool.label || tool.tool}${tool.available ? '' : ` — ${tool.unavailable_reason || 'unavailable'}`}`, disabled: !tool.available }));
+}
+
+// The tool the dialog starts on: the agent's own when the machine offers it, else the first that is available (-1 when none is).
+export function switchStart(catalog, agent) {
+  const current = catalog.findIndex(tool => tool.available && tool.tool === agent?.tool && tool.variant === agent?.variant);
+  return current >= 0 ? current : catalog.findIndex(tool => tool.available);
+}
+
+// The model a tool opens on: the harness's default, or the agent's own when it stays on that tool and the tool lists it.
+export function switchModel(tool, agent) {
+  const models = (tool?.models || []).map(model => model.id);
+  if (tool?.tool === agent?.tool && tool?.variant === agent?.variant && models.includes(agent.model)) return agent.model;
+  return (tool?.models || []).find(model => model.default)?.id || models[0] || '';
+}
+
+// Whether the pick is the agent as it already is, which is not a switch.
+export const switchUnchanged = ({ tool, model, agent, machineID }) => tool?.tool === agent?.tool && tool?.variant === agent?.variant && model === agent?.model && (!agent?.machine_id || machineID === agent.machine_id);
+
+export function switchReason({ needsUpdate, tool, modelCount, unchanged }) {
+  return needsUpdate && !tool?.available ? 'This machine\'s supervisor predates harnesses. Update the supervisor to add harnesses.'
+    : !tool ? `No harness is available on a connected machine. Add one in ${HARNESSES}.`
+    : !modelCount ? `This harness has no models yet. Add one under ${HARNESSES}.`
+      : unchanged ? 'Choose a different model or tool.'
+        : tool.toolbox === false ? `No agent toolbox: ${tool.toolbox_reason || 'unavailable for this launcher'}.` : '';
+}

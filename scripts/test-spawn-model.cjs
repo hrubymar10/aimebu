@@ -9,9 +9,10 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'spawn-model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning, NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, resumeBanner, spawnRequest };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning, NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, resumeBanner, spawnRequest, switchRows, switchStart, switchModel, switchUnchanged, switchReason };', context);
 const { modelFamily, modelVersion, matchModel, chooseModel, toolKey, modelChangeWarning } = context.api;
 const plain = value => JSON.parse(JSON.stringify(value)); // plain objects: a vm context has its own Object
+const { switchRows, switchStart, switchModel, switchUnchanged, switchReason } = context.api;
 const { NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, resumeBanner, spawnRequest } = context.api;
 const sessionEntryState = (...args) => JSON.parse(JSON.stringify(context.api.sessionEntryState(...args))); // plain objects: a vm context has its own Object
 
@@ -182,5 +183,27 @@ assert.equal(spawnRequest({ ...ready, resume: { ...session, tool: 'claude' }, to
 const sent = plain(spawnRequest({ ...ready, tool: { available: true, tool: 'claude' }, resume: { ...session, tool: 'claude', active: false }, newRoom: true, typed: 'cc1' })).params;
 assert.deepEqual([sent.resume_session, sent.resume_mode, sent.confirm_session_closed, sent.new_room, sent.name, 'worktree' in sent], ['11111111-aaaa', 'continue', false, true, 'cc1', false]);
 assert.equal(spawnRequest({ ...ready, tool: { available: true, tool: 'claude' }, resume: { ...session, tool: 'claude' }, mode: 'fork', typed: 'cc1' }).params.confirm_session_closed, false);
+
+
+// The Switch dialog: the rows, the tool it starts on, the model a tool opens on, when a pick is no change, and what the line under the tool says.
+assert.deepEqual(plain(switchRows([{ tool: 'codex', label: 'Codex', available: true }, { tool: 'pi', available: false }, { label: 'Vibe', available: false, unavailable_reason: 'no models' }])),
+  [{ value: '0', label: 'Codex', disabled: false }, { value: '1', label: 'pi — unavailable', disabled: true }, { value: '2', label: 'Vibe — no models', disabled: true }]);
+const own = [{ tool: 'claude', variant: 'native', available: true, models: [{ id: 'opus' }, { id: 'sonnet', default: true }] }, { tool: 'codex', variant: 'native', available: true, models: [{ id: 'gpt-6-sol' }, { id: 'gpt-6-mini', default: true }] }, { tool: 'pi', variant: 'native', available: false, models: [] }];
+assert.equal(switchStart(own, { tool: 'codex', variant: 'native' }), 1, 'the agent\'s own tool');
+assert.equal(switchStart(own, { tool: 'pi', variant: 'native' }), 0, 'an unavailable tool falls back to the first available');
+assert.equal(switchStart([own[2]], { tool: 'x' }), -1);
+assert.equal(switchModel(own[1], { tool: 'codex', variant: 'native', model: 'gpt-6-sol' }), 'gpt-6-sol', 'the agent keeps its own model on its own tool');
+assert.equal(switchModel(own[1], { tool: 'codex', variant: 'native', model: 'gone' }), 'gpt-6-mini', 'else the harness default');
+assert.equal(switchModel(own[0], { tool: 'codex', variant: 'native', model: 'gpt-6-sol' }), 'sonnet', 'another tool opens on its default');
+assert.equal(switchModel({ tool: 'x', models: [{ id: 'a' }, { id: 'b' }] }, {}), 'a', 'with no default, the first');
+assert.equal(switchModel(null, {}), '');
+const agent = { tool: 'codex', variant: 'native', model: 'gpt-6-sol', machine_id: 'm1' };
+assert.deepEqual([switchUnchanged({ tool: own[1], model: 'gpt-6-sol', agent, machineID: 'm1' }), switchUnchanged({ tool: own[1], model: 'gpt-6-mini', agent, machineID: 'm1' }), switchUnchanged({ tool: own[1], model: 'gpt-6-sol', agent, machineID: 'm2' }), switchUnchanged({ tool: own[0], model: 'gpt-6-sol', agent, machineID: 'm1' }), switchUnchanged({ tool: own[1], model: 'gpt-6-sol', agent: { ...agent, machine_id: '' }, machineID: 'm2' })], [true, false, false, false, true]);
+assert.equal(switchReason({ needsUpdate: true, tool: null }), 'This machine\'s supervisor predates harnesses. Update the supervisor to add harnesses.');
+assert.equal(switchReason({ tool: null }), 'No harness is available on a connected machine. Add one in Settings → Harnesses.');
+assert.equal(switchReason({ tool: { available: true }, modelCount: 0 }), 'This harness has no models yet. Add one under Settings → Harnesses.');
+assert.equal(switchReason({ tool: { available: true }, modelCount: 1, unchanged: true }), 'Choose a different model or tool.');
+assert.equal(switchReason({ tool: { available: true, toolbox: false, toolbox_reason: 'no channel' }, modelCount: 1 }), 'No agent toolbox: no channel.');
+assert.equal(switchReason({ tool: { available: true }, modelCount: 1 }), '');
 
 console.log('spawn model tests passed');

@@ -1,18 +1,19 @@
 import { html, effect } from '../../ui.js';
 import { rights } from '../../api.js';
 import { mountPreactPage } from '../mount-page.js';
-import { SwitchDialog } from '../../switch-dialog.js';
 import { AgentsStore } from './store.js';
 import { AgentsList, HumansList } from './agents-list.js';
 import { SpawnForm } from './spawn-dialog.js';
 import { SpawnStore } from './spawn-store.js';
+import { SwitchForm } from './switch-form.js';
+import { SwitchStore } from './switch-store.js';
 
 // A touch screen wider than a phone and up to 900px (an iPad upright): one side panel at a time.
 const TABLET = matchMedia('(min-width: 701px) and (max-width: 900px) and (pointer: coarse)');
 
 // The adapter keeps the panel's public face for app.js, the health popover and the dialogs: the cards are the store's, drawn by the lists
-// below, and everything outside them (the panel's title, its close button, the Spawn button) is written from here. The Spawn dialog is a page
-// of its own over a SpawnStore; the Switch dialog is still the hand-written SwitchDialog, which reads the panel through the getters below.
+// below, and everything outside them (the panel's title, its close button, the Spawn button) is written from here. The Spawn dialog
+// and the Switch dialog are pages of their own over a SpawnStore and a SwitchStore.
 export class AgentsPanel {
   constructor(source, onRecovery, onChange, onPrivate, onPrivateHuman) {
     this.source = source; this.onRecovery = onRecovery; this.onChange = onChange; this.onPrivate = onPrivate; this.onPrivateHuman = onPrivateHuman;
@@ -20,10 +21,12 @@ export class AgentsPanel {
     this.cardListeners = new Set();
     this.store = new AgentsStore({ source, onError: message => { this.error.textContent = message; }, onChange: agents => this.onChange?.(agents), onCards: () => this.notifyCards(), onSync: () => this.syncSpawnControl() });
     this.api = { store: this.store, source, onPrivate: agent => this.onPrivate?.(agent), onRecovery: agent => this.onRecovery(agent), onPrivateHuman: human => this.onPrivateHuman?.(human),
-      openSwitch: id => this.switchDialog.openSwitch(id), canReadOutput: () => this.canReadOutput() };
+      openSwitch: id => this.switch.open(id), canReadOutput: () => this.canReadOutput() };
     this.spawnDialog = document.querySelector('#spawn-dialog');
     this.spawn = new SpawnStore(this);
-    this.switchDialog = new SwitchDialog(this);
+    this.switchDialog = document.querySelector('#switch-dialog');
+    this.switch = new SwitchStore(this);
+    this.switchPage = mountPreactPage(this.switchDialog, () => html`<${SwitchForm} store=${this.switch} host=${this} />`);
     this.spawnPage = mountPreactPage(this.spawnDialog, () => html`<${SpawnForm} store=${this.spawn} host=${this} />`);
     this.spawnDialog.addEventListener('close', () => this.spawn.closed());
     document.querySelector('#spawn-open').onclick = () => this.openSpawn();
@@ -57,7 +60,7 @@ export class AgentsPanel {
   get refreshGeneration() { return this.store.generation; }
   get generation() { return this.store.generation; }
   get spawnMachine() { return this.spawn.machine; }
-  get switchMachine() { return this.switchDialog.switchMachine; }
+  get switchMachine() { return this.switch.machine; }
   setMobileOpen(open) {
     this.panel.classList.toggle('mobile-open', open);
     document.querySelector('.chat').classList.toggle('agents-open', open);
@@ -87,10 +90,10 @@ export class AgentsPanel {
   notifyCards() { for (const listener of this.cardListeners) listener(); }
   reset() {
     this.store.reset();
-    this.setMobileOpen(false); this.spawn.invalidate(); this.switchDialog.roomChanged(); document.querySelector('#spawn-open').disabled = true;
+    this.setMobileOpen(false); this.spawn.invalidate(); this.switch.invalidate(); document.querySelector('#spawn-open').disabled = true;
   }
   setRoomFacts(room) {
-    if (this.store.cardsRoomID !== room.id) { this.switchDialog.roomChanged(); this.spawn.invalidate(); }
+    if (this.store.cardsRoomID !== room.id) { this.switch.invalidate(); this.spawn.invalidate(); }
     this.store.setRoomFacts(room);
     this.spawn.touchRoom();
     this.syncSpawnControl();
@@ -108,15 +111,14 @@ export class AgentsPanel {
   focusConfirm() { this.spawnDialog.querySelector('#spawn-resume-confirm')?.focus(); }
   canManageHarnesses() { return rights.admin; }
   // Settings opens on the machine the dialog was showing.
-  openSettings() {
-    const machineID = this.spawn.machine.id.peek();
+  openSettings(machineID) {
     this.spawnDialog.close(); this.switchDialog.close();
     document.dispatchEvent(new CustomEvent('aimebu:open-settings', { detail: { section: 'harnesses', machineID } }));
   }
   refresh() { return this.store.refresh(); }
   control(id, action) { return this.store.control(id, action); }
   openSpawn(options) { return this.spawn.open(options); }
-  openSwitch(id) { return this.switchDialog.openSwitch(id); }
+  openSwitch(id) { return this.switch.open(id); }
   openProfile(id) { if (this.store.openProfile(id)) { this.panel.scrollTop = 0; this.list.scrollTop = 0; } }
   closeProfile() {
     const id = this.store.closeProfile();
@@ -126,6 +128,6 @@ export class AgentsPanel {
   canReadOutput() { return !!this.room && (rights.admin || this.projectRole?.(this.room.project_id) === 'owner'); }
 
   destroy() {
-    this.stopPanel(); document.removeEventListener('keydown', this.onKey); this.unsubscribe?.(); this.store.destroy(); this.spawn.destroy(); this.listPage.destroy(); this.humansPage.destroy(); this.spawnPage.destroy();
+    this.stopPanel(); document.removeEventListener('keydown', this.onKey); this.unsubscribe?.(); this.store.destroy(); this.spawn.destroy(); this.switch.destroy(); this.listPage.destroy(); this.humansPage.destroy(); this.spawnPage.destroy(); this.switchPage.destroy();
   }
 }

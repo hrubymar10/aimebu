@@ -340,9 +340,9 @@ the cards keyed by agent id, `model.js` for the plain rules; the toolbar, the pa
 `index.html` and the adapter is their only writer). The store keeps the record it holds for an agent whose data is unchanged, so a refresh
 renders only the cards that changed and the clock re-renders only the age and the live chip. The Spawn dialog is a page of its own in the same
 folder (`SpawnStore` over a `MachineStore` for the machine and its folder; `spawn-model.js` holds the pure rules for the tool and model lists, the
-v1 banner, the worktree box and the request). Every opening, catalog read, name read, spawn and folder save carries a number and says nothing
-once a newer one started or the panel is gone. The Switch dialog is still the hand-written one, in `switch-dialog.js`, until its own part
-replaces it.
+v1 banner, the worktree box and the request) and so is the Switch dialog (`SwitchStore`, sharing `MachineStore`). Every opening, catalog read,
+name read, call and folder save carries a number and says nothing once a newer one started, the dialog was closed or the panel is gone.
+`room-members.js` and `sender-profile.js` are the remaining parts of the step.
 
 ### Step 5: sidebar and navigation
 

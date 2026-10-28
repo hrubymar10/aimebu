@@ -1,11 +1,12 @@
 import { html } from '../../ui.js';
 import { IconButton } from '../../components/icon-button.js';
 import { toolRows } from '../../spawn-model.js';
+import { MachineFields } from './machine-fields.js';
 
 // The reason line under the tool: plain words, or words with Settings → Harnesses as a button that opens it.
 function Reason({ id, className, text, store, host }) {
   const parts = store.hint(text);
-  return html`<p id=${id} class=${className}>${parts.link ? html`${parts.before}<button type="button" class="inline-link" onClick=${() => host.openSettings()}>${parts.link}</button>${parts.after}` : parts.text}</p>`;
+  return html`<p id=${id} class=${className}>${parts.link ? html`${parts.before}<button type="button" class="inline-link" onClick=${() => host.openSettings(store.machine.id.peek())}>${parts.link}</button>${parts.after}` : parts.text}</p>`;
 }
 
 // The Spawn dialog's form. The dialog element and its static frame stay in index.html; the adapter shows and closes it.
@@ -21,9 +22,8 @@ export function SpawnForm({ store, host }) {
   };
   return html`<form id="spawn-form" onSubmit=${submit}><h2>${banner.title}</h2>
     <button type="button" id="spawn-sessions" class="btn spawn-sessions" hidden=${sessionsHidden} disabled=${!sessions.enabled} title="Continue a Claude Code session" aria-label="Continue a Claude Code session" onClick=${() => store.openSessionPicker()}><span class="icon-mask icon-mask-reopen" aria-hidden="true"></span>${' Continue a session…'}</button>
-    <p id="spawn-sessions-note" class="spawn-sessions-note" role="status" hidden=${sessionsHidden || !sessions.note}><span id="spawn-sessions-note-text">${(() => { const parts = store.hint(sessions.note); return parts.link ? html`${parts.before}<button type="button" class="inline-link" onClick=${() => host.openSettings()}>${parts.link}</button>${parts.after}` : parts.text; })()}</span>${' '}<button type="button" id="spawn-sessions-switch" class="btn" hidden=${!swap} onClick=${() => store.useTool(sessions.switchTo)}>${swap ? `Use ${swap.label || 'the native launcher'}` : ''}</button></p>
-    <label>Machine<select name="machine" id="spawn-machine" required disabled=${machine.disabled.value} value=${machine.id.value} onChange=${event => machine.pick(event.currentTarget.value)}>${machine.machines.value.map(item => html`<option key=${item.id} value=${item.id} disabled=${!!item.revoked_at || !item.approved}>${`${item.name}${item.is_host ? ' · Host' : ''}${item.revoked_at ? ' · Revoked' : !item.approved ? ' · Pending approval' : !item.connected ? ' · Offline' : !item.project_allowed ? ' · Project approval needed' : ''}`}</option>`)}</select></label>
-    <div id="spawn-machine-folder" class="machine-folder" hidden=${!machine.folderShown}><label>Project folder on this machine<input name="machine_folder" placeholder="/absolute/path/to/project" value=${machine.folder.value} onInput=${event => machine.edit(event.currentTarget.value)} /></label><button type="button" id="spawn-save-folder" class="btn" disabled=${machine.saving.value} onClick=${() => machine.saveFolder()}>Save folder</button><p id="spawn-folder-status" role="status">${machine.status.value}</p></div>
+    <p id="spawn-sessions-note" class="spawn-sessions-note" role="status" hidden=${sessionsHidden || !sessions.note}><span id="spawn-sessions-note-text">${(() => { const parts = store.hint(sessions.note); return parts.link ? html`${parts.before}<button type="button" class="inline-link" onClick=${() => host.openSettings(store.machine.id.peek())}>${parts.link}</button>${parts.after}` : parts.text; })()}</span>${' '}<button type="button" id="spawn-sessions-switch" class="btn" hidden=${!swap} onClick=${() => store.useTool(sessions.switchTo)}>${swap ? `Use ${swap.label || 'the native launcher'}` : ''}</button></p>
+    <${MachineFields} machine=${machine} prefix="spawn" />
     <div id="spawn-resume" class="spawn-resume" hidden=${banner.hidden}><p id="spawn-resume-text">${banner.text}</p>
       <dl id="spawn-resume-card" class="spawn-resume-card" hidden=${!banner.card}>${(banner.card || []).map(([name, value, mono]) => html`<dt key=${`t${name}`}>${name}</dt><dd key=${`d${name}`} class=${mono ? 'mono' : null}>${value}</dd>`)}</dl>
       <fieldset id="spawn-resume-mode" class="spawn-resume-mode" hidden=${!banner.choosing}><legend>How</legend><label title="Continue the original session"><input type="radio" name="resume_mode" value="continue" checked=${store.mode.value === 'continue'} disabled=${banner.held} onChange=${() => store.pickMode('continue')} /> Continue</label><label title="Work on a copy (fork): the original stays as it is"><input type="radio" name="resume_mode" value="fork" checked=${store.mode.value === 'fork'} onChange=${() => store.pickMode('fork')} /> Work on a copy</label></fieldset>

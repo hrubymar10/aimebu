@@ -750,6 +750,63 @@ async function main() {
     await page.close();
   }
 
+  // A panel destroyed while a read of the Switch dialog or its call is out takes the answer and does nothing with it.
+  {
+    const open = async (auto, destroy = true) => {
+      const page = await mount({ withCard: true, auto: stable(auto) });
+      await page.waitForSelector('[data-agent-id=a1]');
+      await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+      await page.$eval('[data-agent-id=a1] .agent-switch', node => node.click());
+      return page;
+    };
+    const state = page => page.evaluate(() => { const store = window.__panel.switch; return { machines: store.machine.machines.value.length, tools: store.catalog.value.length, error: store.error.value, sending: store.sending.value }; });
+    const reads = (page, prefix) => page.evaluate(prefix => window.__requests.filter(request => request.path.startsWith(prefix)).length, prefix);
+    let page = await open({ 'GET /api/projects/p1/machine-folders': undefined });
+    let held = await waitRequest(page, 'GET', '/api/projects/p1/machine-folders');
+    const asked = await reads(page, '/api/machines');
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, held, 200, { folders: [] }); await settle(page);
+    assert.equal(await reads(page, '/api/machines'), asked, 'a destroyed panel asks for no machines after the folders');
+    await page.close();
+    page = await open({ 'GET /api/machines?project_id=p1': undefined });
+    held = await waitRequest(page, 'GET', '/api/machines?project_id=p1');
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, held, 200, machines); await settle(page);
+    assert.deepEqual([(await state(page)).machines, await reads(page, '/api/spawn-catalog')], [0, 0], 'a destroyed panel keeps no machine and reads no catalog');
+    await page.close();
+    // A refusal of the machines read says so in the dialog, and says nothing once the panel is gone.
+    page = await open({ 'GET /api/machines?project_id=p1': undefined });
+    held = await waitRequest(page, 'GET', '/api/machines?project_id=p1');
+    await answer(page, held, 500, { message: 'The machines are down' }); await settle(page);
+    assert.equal(await page.$eval('#switch-tool-reason', node => node.textContent), 'Machines unavailable: The machines are down');
+    await page.close();
+    page = await open({ 'GET /api/machines?project_id=p1': undefined });
+    held = await waitRequest(page, 'GET', '/api/machines?project_id=p1');
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, held, 500, { message: 'The machines are down' }); await settle(page);
+    assert.equal(await page.evaluate(() => window.__panel.switch.override.value), 'Loading available tools…', 'a destroyed panel says nothing of a refusal');
+    await page.close();
+    page = await open({ 'GET /api/spawn-catalog?machine_id=m1': undefined });
+    held = await waitRequest(page, 'GET', '/api/spawn-catalog?machine_id=m1');
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, held, 200, catalog); await settle(page);
+    assert.equal((await state(page)).tools, 0, 'a destroyed panel keeps no tool');
+    await page.close();
+    for (const [status, reply] of [[200, agent('a1', 'ada', { model: 'gpt-6-mini', desired_rev: 2 })], [409, { message: 'The agent is busy', error: 'busy' }]]) {
+      page = await open({});
+      await page.waitForFunction(() => document.querySelector('#switch-form').elements.model.options.length);
+      await settle(page);
+      await page.evaluate(() => { const el = document.querySelector('#switch-form').elements.model; el.value = 'gpt-6-mini'; el.dispatchEvent(new Event('change')); });
+      await page.$eval('#switch-form button[type=submit]', node => node.click());
+      held = await waitRequest(page, 'POST', '/api/agents/a1/switch');
+      const total = await page.evaluate(() => window.__requests.length);
+      await page.evaluate(() => window.__panel.destroy());
+      await answer(page, held, status, reply); await settle(page);
+      assert.deepEqual([await page.evaluate(() => window.__requests.length), (await state(page)).error], [total, ''], `${status}: a destroyed panel reads nothing and shows nothing`);
+      await page.close();
+    }
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('spawn page: ok');

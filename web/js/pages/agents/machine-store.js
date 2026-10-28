@@ -8,7 +8,7 @@ export class MachineStore {
     this.onChange = onChange; this.onFolderEdit = onFolderEdit;
     this.machines = signal([]);
     this.id = signal('');
-    this.disabled = signal(true);
+    this.disabled = signal(false); // as the static select was, until a load starts
     this.folder = signal('');
     this.status = signal('');
     this.saving = signal(false);
