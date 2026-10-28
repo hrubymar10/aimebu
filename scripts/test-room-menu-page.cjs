@@ -11,7 +11,8 @@ let puppeteer;
 try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr/local/lib/node_modules/puppeteer-core'); }
 
 const root = path.join(__dirname, '..', 'web');
-const MODULE = fs.existsSync(path.join(root, 'js', 'pages', 'room-menu', 'page.js')) ? '/js/pages/room-menu/page.js' : '/js/room-menu.js';
+const REPLACED = fs.existsSync(path.join(root, 'js', 'pages', 'room-menu', 'page.js'));
+const MODULE = REPLACED ? '/js/pages/room-menu/page.js' : '/js/room-menu.js';
 const fixture = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/<script type="module" src="\/js\/app\.js[^"]*"><\/script>/, '');
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
@@ -58,7 +59,7 @@ async function main() {
     let now = await state(page);
     assert.deepEqual([now.toggleHidden, now.expanded, now.menuHidden], [false, 'false', true]);
     assert.deepEqual(await page.$eval('#room-menu-toggle', node => [node.getAttribute('aria-haspopup'), node.getAttribute('aria-label'), node.title]), ['menu', 'Room actions', 'Room actions']);
-    assert.deepEqual(await page.$eval('#room-menu', node => [node.getAttribute('role'), node.getAttribute('aria-label'), node.parentElement === document.body]), ['menu', 'Room actions', true]);
+    assert.deepEqual(await page.$eval('#room-menu', node => [node.getAttribute('role'), node.getAttribute('aria-label'), (node.parentElement === document.body || (node.parentElement.parentElement === document.body && getComputedStyle(node.parentElement).display === 'contents'))]), ['menu', 'Room actions', true]); // on the body, directly or in the replacement's box-less host
     await page.$eval('#room-menu-toggle', node => node.click());
     now = await state(page);
     assert.deepEqual([now.menuHidden, now.expanded], [false, 'true']);
@@ -179,6 +180,25 @@ async function main() {
     await page.$eval('#room-menu-toggle', node => node.click());
     assert.equal((await state(page)).items.some(item => item[0] === 'Only a title'), true, 'a control without an accessible name is labelled by its title');
     await page.close();
+  }
+
+  // A destroyed menu leaves nothing behind: its nodes are gone and it no longer follows the header, the layout or the page.
+  if (REPLACED) {
+    const page = await mount();
+    await page.$eval('#room-menu-toggle', node => node.click());
+    await page.evaluate(() => { window.__menu.destroy(); window.__entries = window.__menu.store.entries.value.length; });
+    assert.deepEqual(await page.evaluate(() => [!!document.querySelector('#room-menu-toggle'), !!document.querySelector('#room-menu'), window.__menu.store.open.value]), [false, false, false]);
+    await page.evaluate(() => { for (const button of document.querySelectorAll('.room-controls button')) button.hidden = true; });
+    await page.setViewport({ width: 1280, height: 800 }); await settle(page);
+    await page.keyboard.press('Escape'); await page.mouse.click(5, 5);
+    assert.deepEqual(await page.evaluate(() => [window.__menu.store.entries.value.length, window.__menu.store.onPhone.value]), [await page.evaluate(() => window.__entries), true], 'it no longer reads the header or the layout');
+    await page.close();
+    // The entries are read again without a change: the same list stays.
+    {
+      const page = await mount();
+      assert.equal(await page.evaluate(async () => { const before = window.__menu.store.entries.value; for (const button of document.querySelectorAll('.room-controls button')) button.hidden = button.hidden; await new Promise(resolve => setTimeout(resolve, 60)); return window.__menu.store.entries.value === before; }), true, 'unchanged entries keep their list');
+      await page.close();
+    }
   }
 
   await browser.close(); server.close();

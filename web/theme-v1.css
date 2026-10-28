@@ -1048,7 +1048,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .app.rooms-open #rooms-scrim { inset: var(--bar-h, 53px) 0 0; }
 }
 @media (max-width: 360px) { .workspace-brand { display: none; } }
-/* Room header on phones: the six room controls collapse into one overflow menu (js/room-menu.js)
+/* Room header on phones: the six room controls collapse into one overflow menu (js/pages/room-menu)
    so the title keeps room and the Agents button never covers a control. A touch screen up to 900px (an iPad upright, where the chat
    column shares the window with the side panels) does the same. */
 .room-menu-toggle, .room-menu { display: none; }

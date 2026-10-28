@@ -22,7 +22,7 @@ import { showWelcome } from './welcome.js';
 import { ownerSetup } from './setup.js';
 import { Onboarding } from './onboarding.js';
 import { loadPreferences } from './preferences.js';
-import { RoomMenu } from './room-menu.js';
+import { RoomMenu } from './pages/room-menu/page.js';
 import { MessageDebug } from './message-debug.js';
 import { initMobileTabs } from './mobile-tabs.js';
 import { initUIVariants } from './ui-variant.js';
