@@ -124,6 +124,7 @@ async function main() {
     assert.equal(await page.$$eval('#mobile-tabs .mobile-tab', nodes => nodes.length), 0);
     await set(page, '#app-view', 'rooms-open', true); await settle(page);
     assert.equal(await page.$$eval('#mobile-tabs .mobile-tab', nodes => nodes.length), 0, 'a drawer opening redraws nothing');
+    assert.equal(await page.evaluate(() => window.__tabs.store.current.value), 'chat', 'nor does it follow the page any more');
     await page.close();
   }
 

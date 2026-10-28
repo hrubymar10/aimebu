@@ -24,7 +24,7 @@ import { Onboarding } from './onboarding.js';
 import { loadPreferences } from './preferences.js';
 import { RoomMenu } from './pages/room-menu/page.js';
 import { MessageDebug } from './message-debug.js';
-import { initMobileTabs } from './mobile-tabs.js';
+import { initMobileTabs } from './pages/mobile-tabs/page.js';
 import { initUIVariants } from './ui-variant.js';
 import { copyText } from './markdown.js';
 import { ImportV1Wizard } from './import-v1.js';

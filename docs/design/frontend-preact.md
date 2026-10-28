@@ -378,7 +378,10 @@ Owner's decision (2026-10-28): continue with the remaining units.
   and `room-unread.js` are gone; the page tests written against them first (`test-sidebar-page.cjs`) run unchanged on the new code.
 - Done for the room header's phone overflow menu: `web/js/pages/room-menu/` (`store.js` reads the header's buttons through a mutation observer and the
   phone breakpoint, `room-menu.js` has the button and the menu, `page.js` mounts them in two box-less hosts, the menu on the body). Its items still click
-  the real header buttons. `room-menu.js` is gone; `mobile-tabs.js` and the wiring in `app.js` stay for a later part of this step.
+  the real header buttons. `room-menu.js` is gone.
+- Done for the phone's bottom tab bar: `web/js/pages/mobile-tabs/` (`store.js` follows the page's drawer classes with a mutation observer and presses the
+  drawers' own buttons, `mobile-tabs.js` draws the three tabs into the `#mobile-tabs` nav, `page.js` mounts them and keeps `initMobileTabs()` for `app.js`).
+  `mobile-tabs.js` is gone. What remains of this step is the wiring in `app.js`, which belongs to the shell step.
 
 ### Step 6: chat (last)
 
