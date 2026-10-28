@@ -62,6 +62,14 @@ function installServer() {
       for (const [id, room] of Object.entries(window.__data.rooms)) { const found = room.messages.find(message => message.no === Number(parts[2])); if (found) return ok({ id: found.id, room_id: id, no: found.no }); }
       return { status: 404, body: { message: 'not found' } };
     }
+    if (parts[1] === 'rooms' && parts[3] === 'worktree') return method === 'GET' ? ok({ enabled: true, state: 'ready', path: '/w/x', relative_path: 'x' }) : ok({ state: 'removed' });
+    if (method === 'GET' && parts[1] === 'projects' && parts[3] === 'memory') return ok({ enabled: true, can_edit: true });
+    if (method === 'PUT' && parts[1] === 'rooms' && parts[3] === 'memory-enabled') return ok({ memory_enabled: body.enabled });
+    if (method === 'PATCH' && parts[1] === 'rooms' && parts.length === 3) return ok({ id: parts[2], title: body.title });
+    if (method === 'POST' && parts[1] === 'rooms' && (parts[3] === 'close' || parts[3] === 'reopen')) return ok({ id: parts[2], project_id: 'prj_a', title: parts[2], kind: 'task', lifecycle: parts[3] === 'close' ? 'closing' : 'open', member_count: 2 });
+    if (method === 'POST' && parts[1] === 'rooms' && parts[3] === 'leave') return { status: 204, body: null };
+    if (method === 'DELETE' && parts[1] === 'rooms' && parts.length === 3) return { status: 204, body: null };
+    if (method === 'GET' && parts[1] === 'rooms' && parts[3] === 'export') return ok({ messages: [] });
     if (method === 'GET' && parts[1] === 'rooms' && ['read-receipts', 'agents', 'mention-users'].includes(parts[3])) return ok([]);
     if (method === 'GET' && parts[1] === 'rooms' && parts[3] === 'members') return ok({ humans: [], agents: [], singletons: [] });
     return { status: 404, body: { message: `unexpected ${method} ${path}` } };
@@ -792,6 +800,78 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1'); await settle(page);
     assert.equal(await page.evaluate(() => document.activeElement === window.__focus), true, 'a button of a row keeps the focus when an older page is put above');
     await page.close();
+  }
+
+  // The room panel: rename, the memory setting, the worktree, archive and reopen, leaving a chat, removing a room and the export. Each call that is still
+  // out when another room is opened or the chat is reset changes nothing in what the reader sees now and reports nothing to the app, answered well or badly.
+  const dialogOk = async page => { await page.waitForFunction(() => document.querySelector('#app-dialog')?.open); await page.evaluate(() => document.querySelector('#app-dialog .app-dialog-ok').click()); };
+  const panelState = page => page.evaluate(() => ({ title: document.querySelector('#room-title').textContent, rename: document.querySelector('#room-rename-status').textContent, memory: window.__chat.memorySection.querySelector('p').textContent, worktree: window.__chat.worktreeSection.querySelector('p').textContent, info: document.querySelector('#room-info-error').textContent, error: document.querySelector('#chat-error').textContent, urls: window.__urls, calls: window.__calls.splice(0) }));
+  const panelRoom = async ({ extra = {}, who = 'owner' } = {}) => {
+    const page = await mount();
+    await page.evaluate(() => { window.__mutations = []; window.__chat.onRoomMutation = room => window.__mutations.push(['mutation', room.id, room.lifecycle]); window.__chat.onChatLeft = room => window.__mutations.push(['left', room.id]); window.__chat.onRoomRemoved = room => window.__mutations.push(['removed', room.id]); const original = URL.createObjectURL; window.__urls = 0; URL.createObjectURL = blob => { window.__urls++; return original.call(URL, blob); }; });
+    await openRoom(page, 'rm_a', extra); await opened(page); await settle(page); await calls(page);
+    return page;
+  };
+  const leave = async (page, how) => { if (how === 'open') { await openRoom(page, 'rm_b'); await opened(page); } else { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_b'); await opened(page); } await settle(page); await calls(page); };
+  const cases = [
+    ['rename', {}, page => page.evaluate(() => { const form = window.__chat.renameForm; form.elements.title.value = 'renamed'; window.__panel = window.__chat.saveRoomTitle(); }), 'PATCH', '^/api/rooms/rm_a$', null],
+    ['memory load', {}, page => page.evaluate(() => { window.__panel = window.__chat.loadRoomMemory(); }), 'GET', '/api/projects/prj_a/memory', null],
+    ['memory change', {}, page => page.evaluate(() => { const select = window.__chat.memorySection.querySelector('select'); select.disabled = false; select.value = 'off'; window.__panel = window.__chat.changeRoomMemory(); }), 'PUT', '/memory-enabled$', null],
+    ['worktree load', {}, page => page.evaluate(() => { window.__panel = window.__chat.loadWorktree(); }), 'GET', '/rooms/rm_a/worktree$', null],
+    ['worktree create', {}, async page => { await page.evaluate(() => { window.__panel = window.__chat.createWorktree(); }); await page.waitForFunction(() => document.querySelector('#app-dialog')?.open); await page.evaluate(() => document.querySelector('#app-dialog .app-dialog-ok').click()); }, 'POST', '/rooms/rm_a/worktree$', null],
+    ['worktree cancel', {}, page => page.evaluate(() => { window.__panel = window.__chat.removeWorktree(); }), 'DELETE', '/rooms/rm_a/worktree$', null],
+    ['archive', {}, async page => { await page.evaluate(() => { window.__panel = window.__chat.changeRoomLifecycle('archive'); }); await dialogOk(page); }, 'POST', '/rooms/rm_a/close$', null],
+    ['reopen', { lifecycle: 'closed' }, page => page.evaluate(() => { window.__panel = window.__chat.changeRoomLifecycle('toggle'); }), 'POST', '/rooms/rm_a/reopen$', null],
+    ['leave chat', { agent_chat: true }, page => page.evaluate(() => { window.__panel = window.__chat.leaveChat(); }), 'POST', '/rooms/rm_a/leave$', null],
+    ['remove room', { lifecycle: 'closed' }, async page => { await page.evaluate(() => { window.__panel = window.__chat.removeRoom(); }); await dialogOk(page); }, 'DELETE', '^/api/rooms/rm_a$', null],
+    ['export', {}, page => page.evaluate(() => { window.__panel = window.__chat.exportRoom('json'); }), 'GET', '/rooms/rm_a/export', null],
+  ];
+  for (const [name, extra, start, method, re] of cases) {
+    for (const how of ['open', 'reset']) {
+      for (const outcome of ['ok', 'fail']) {
+        const page = await panelRoom({ extra });
+        await hold(page, method, re);
+        await start(page);
+        const held = await waitRequest(page, method, re);
+        await leave(page, how);
+        const before = await panelState(page);
+        const reads = await page.evaluate(() => window.__requests.length);
+        if (outcome === 'ok') await serve(page, held); else await answer(page, held, 500, { message: 'Refused.' });
+        await page.evaluate(() => window.__panel.catch(() => {})); await settle(page); await settle(page);
+        const after = await panelState(page);
+        assert.deepEqual([after, await page.evaluate(() => window.__mutations), await page.evaluate(() => window.__requests.length) - reads], [{ ...before, calls: [] }, [], 0], `${name} ${how}/${outcome}: a late answer changes nothing and starts nothing`);
+        await page.close();
+      }
+    }
+  }
+  // In its own room each of them does its work and tells the reader.
+  {
+    const page = await panelRoom();
+    await page.evaluate(() => { window.__chat.renameForm.elements.title.value = 'renamed'; return window.__chat.saveRoomTitle(); }); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#room-title').textContent, document.querySelector('#room-rename-status').textContent]), ['renamed', 'Saved.']);
+    await page.evaluate(() => { window.__chat.renameForm.elements.title.value = '  '; return window.__chat.saveRoomTitle(); });
+    assert.equal(await page.evaluate(() => document.querySelector('#room-rename-status').textContent), 'A room needs a title.');
+    await page.evaluate(() => { window.__chat.renameForm.elements.title.value = 'renamed'; return window.__chat.saveRoomTitle(); });
+    assert.equal(await page.evaluate(() => document.querySelector('#room-rename-status').textContent), 'Nothing changed.');
+    await page.evaluate(() => window.__chat.loadRoomMemory()); await settle(page);
+    assert.equal(await page.evaluate(() => window.__chat.memorySection.querySelector('p').textContent), 'Project memory is on.');
+    await page.evaluate(() => window.__chat.loadWorktree()); await settle(page);
+    assert.equal(await page.evaluate(() => window.__chat.worktreeSection.querySelector('p').textContent), 'ready: /w/x');
+    await page.evaluate(() => { window.__panel = window.__chat.changeRoomLifecycle('archive'); }); await dialogOk(page); await page.evaluate(() => window.__panel); await settle(page);
+    assert.deepEqual(await page.evaluate(() => window.__mutations), [['mutation', 'rm_a', 'closing']], 'archiving tells the app');
+    await page.close();
+    const chat = await panelRoom({ extra: { agent_chat: true } });
+    await chat.evaluate(() => window.__chat.leaveChat()); await settle(chat);
+    assert.deepEqual(await chat.evaluate(() => window.__mutations), [['left', 'rm_a']]);
+    await chat.close();
+    const removal = await panelRoom({ extra: { lifecycle: 'closed' } });
+    await removal.evaluate(() => { window.__panel = window.__chat.removeRoom(); }); await dialogOk(removal); await removal.evaluate(() => window.__panel); await settle(removal);
+    assert.deepEqual(await removal.evaluate(() => window.__mutations), [['removed', 'rm_a']]);
+    await removal.close();
+    const exporting = await panelRoom();
+    await exporting.evaluate(() => window.__chat.exportRoom('markdown')); await settle(exporting);
+    assert.equal(await exporting.evaluate(() => window.__urls), 1, 'the export is saved once');
+    await exporting.close();
   }
 
   await browser.close(); server.close();
