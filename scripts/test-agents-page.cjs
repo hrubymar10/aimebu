@@ -379,6 +379,27 @@ async function main() {
     await page.close();
   }
 
+  // A control call that is still out when the panel moves to another room or is reset changes nothing there: no read of the new room, no error
+  // in its panel, the cards it shows stay as they are.
+  for (const [how, status] of [['room', 200], ['reset', 200], ['room', 409], ['reset', 409]]) {
+    const page = await mount();
+    await show(page, 'r1', [agent('a1', 'ada')]);
+    await page.$eval('[data-agent-id=a1] .agent-act-pause', node => node.click());
+    const held = await waitRequest(page, 'POST', '/api/agents/a1/control');
+    if (how === 'room') await page.evaluate(room => window.__panel.setRoomFacts(room), room('r2')); else await page.evaluate(() => window.__panel.reset());
+    const reads = () => page.evaluate(() => window.__requests.filter(request => request.method === 'GET').map(request => request.path));
+    const before = await reads();
+    await answer(page, held, status, status === 200 ? agent('a1', 'ada', { desired: 'not_accepting', desired_rev: 2 }) : { message: 'The agent changed', error: 'stale' });
+    await settle(page);
+    const after = await page.evaluate(() => ({ error: document.querySelector('#agents-error').textContent, cards: document.querySelectorAll('[data-agent-id]').length }));
+    assert.deepEqual(after, { error: '', cards: 0 }, `${how} ${status}: a call of the room that was left shows nothing`);
+    const added = (await reads()).slice(before.length);
+    assert.equal(added.some(path => path.startsWith('/api/rooms/r1/')), false, `${how} ${status}: the room that was left is not read again`);
+    // The source tells the panel to refresh when a control call ends, so the room the panel has moved to may be read once; nothing else is.
+    assert.equal(added.every(path => path === '/api/rooms/r2/agents') && added.length <= 1, true, `${how} ${status}: at most one read of the room on show, got ${added}`);
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('agents page: ok');

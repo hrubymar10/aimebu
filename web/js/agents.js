@@ -516,7 +516,11 @@ export class AgentsPanel {
     const seconds = Math.max(0, Math.floor((Date.now() - at) / 1000));
     chip.textContent = `${node.dataset.liveLabel} ${stateAge(seconds)}`;
   }
-  async control(id, action) { this.error.textContent = ''; try { await this.source.control(id, action); await this.refresh(); } catch (error) { this.error.textContent = error.message; } }
+  async control(id, action) {
+    const generation = this.refreshGeneration; // a call of the room that was left must not show its refusal in the next one
+    this.error.textContent = '';
+    try { await this.source.control(id, action); if (generation === this.refreshGeneration) await this.refresh(); } catch (error) { if (generation === this.refreshGeneration) this.error.textContent = error.message; }
+  }
   async openSwitch(id) {
     const agent = this.cards.get(id); if (!agent) return;
     this.switchAgentID = id;
