@@ -98,6 +98,7 @@ async function main() {
     assert.deepEqual(full.extra, ['Session', 'Resume', 'CWD', 'Project', 'Last active in v1']);
     assert.equal(full.note, 'This sender comes from imported v1 history.');
     assert.match(full.start, /Start as v2 agent/); assert.match(full.start, /Continues the v1 session in \/work\/old\. That folder is outside the project folder; the owner approves it first\. v1 saw it a moment ago/);
+    assert.deepEqual(await page.$eval('#sender-profile-start', node => [node.title, node.getAttribute('aria-label'), node.querySelector('.icon-mask-play') !== null]), ['Start as v2 agent', 'Start as v2 agent', true], 'the start button carries its tooltip and name');
     await page.$eval('#sender-profile-start', node => node.click());
     assert.deepEqual(await calls(page), [['start', { ...start, legacy_id: 'old-bot' }]]);
     assert.equal(await gone(page), true, 'starting closes the profile');
@@ -151,6 +152,7 @@ async function main() {
     assert.equal(await gone(page), true);
     const heldClosed = await page.evaluate(() => window.__requests.length - 1);
     await answer(page, heldClosed, 200, { cwd: '/late', start }); await settle(page);
+    assert.equal(await page.evaluate(() => window.__opening.then(dialog => dialog === undefined)), true, 'the call that was left resolves to nothing');
     assert.equal(await gone(page), true, 'an answer after the dialog went draws nothing');
     assert.deepEqual(await calls(page), []);
     await openProfile(page, { name: 'first', authorID: 'first' });

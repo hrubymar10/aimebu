@@ -342,7 +342,26 @@ renders only the cards that changed and the clock re-renders only the age and th
 folder (`SpawnStore` over a `MachineStore` for the machine and its folder; `spawn-model.js` holds the pure rules for the tool and model lists, the
 v1 banner, the worktree box and the request) and so is the Switch dialog (`SwitchStore`, sharing `MachineStore`). Every opening, catalog read,
 name read, call and folder save carries a number and says nothing once a newer one started, the dialog was closed or the panel is gone.
-The room dialog's member list is a page of its own (`web/js/pages/members/`: a `MembersStore` whose loads take a ticket, with `model.js` for the state words); `sender-profile.js` is the remaining part of the step.
+The room dialog's member list is a page of its own (`web/js/pages/members/`: a `MembersStore` whose loads take a ticket, with `model.js` for the state words); and so is the read-only profile of a sender that is no longer a live member (`web/js/pages/sender-profile/`: `openSenderProfile` keeps its call and mounts a page in a dialog of its own, over a store whose profile read dies with the dialog).
+
+#### Stop-rule checkpoint after step 4
+
+The design's rule: compare the migrated pages with the legacy ones for size, bugs and test churn; if they are not clearly simpler, stop and
+keep the islands. The numbers for `2c5498b..` the end of step 4 (22 commits):
+
+| Measure | Legacy | Preact | Note |
+| --- | --- | --- | --- |
+| Production lines of the step's modules | 1198 (`agents.js` 967, `room-members.js` 84, `sender-profile.js` 83, `machine-selection.js` 64) | 1427 (1272 in `pages/agents`, `pages/members`, `pages/sender-profile`, 155 added to `spawn-model.js`) | about 19% more; 319 of them are import-free model code run in a vm |
+| `git diff --numstat` of `web/js` without `pages/*/model.js` | | +1267 -1202 | |
+| Bugs | | 13 `fix(web)` commits for races in the old code (stale answers after a reopen, a room change, a cancel; folder saves; late close events) and 5 more holes found in review of the new code and folded into its commits | each with a test that fails without its guard |
+| Test churn | `test-ui.cjs` and the audit fixture +31 -37 (module paths, five steps that called class methods or built a card, the age and member-list steps) | new page tests and vm tests: `scripts` +2012 -38 | the old checks survived |
+
+Assessment: the new modules are not smaller. Their structure is partly simpler: the rules (state words, disabled reasons, the v1 banner, the
+Switch and Spawn requests) are pure and tested, a card is no longer rewritten on every refresh, and every stale answer is a numbered, tested
+guard. The same number of guards still has to be written by hand, now as tickets, and the store, model and component split adds files. It is
+not clearly simpler on size, bugs or churn.
+
+Owner's decision: pending.
 
 ### Step 5: sidebar and navigation
 

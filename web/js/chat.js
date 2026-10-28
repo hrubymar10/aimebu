@@ -11,7 +11,7 @@ import { setGlyph, iconGlyph } from './icon-button.js';
 import { stampTime, refreshRelativeTimes } from './time.js';
 import { ScrollAnchor } from './scroll-anchor.js';
 import { senderIdentity, senderKind, createSenderPresence, applySenderIdentity, agentLabel } from './sender-identity.js';
-import { openSenderProfile } from './sender-profile.js';
+import { openSenderProfile } from './pages/sender-profile/page.js';
 import { renderVisualPlan } from './visual-plan.js';
 import { RoomScopeControl, RoomUsage } from './pages/project/room-panels.js';
 import { Schedules } from './schedules.js';
