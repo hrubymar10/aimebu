@@ -76,10 +76,10 @@ async function main() {
     // The tab holds its place until the access check answers, then settles visible; the section is made of its blocks in order.
     {
       const page = await mount({ open: false });
-      assert.deepEqual(await page.$eval('#settings-users-tab', el => [el.classList.contains('settings-tab-pending'), el.getAttribute('aria-hidden'), el.tabIndex]), [true, 'true', -1]);
+      assert.equal(await page.evaluate(() => window.__page.store.tab.value), 'pending', 'the tab waits for the access check');
       await page.evaluate(() => { window.__page.open(); });
       await ready(page);
-      assert.deepEqual(await page.$eval('#settings-users-tab', el => [el.hidden, el.classList.contains('settings-tab-pending'), el.hasAttribute('aria-hidden'), el.textContent]), [false, false, false, 'Users']);
+      assert.equal(await page.evaluate(() => window.__page.store.tab.value), 'shown');
       assert.deepEqual(await page.evaluate(() => [...document.querySelector('#settings-users').children].map(node => `${node.tagName.toLowerCase()}${node.className ? `.${node.className.split(' ')[0]}` : ''}`)),
         ['h3', 'p.error', 'div.settings-group', 'form.user-invite-form', 'input', 'p.settings-intro', 'div.user-members', 'div.user-accounts']);
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#settings-users p.error').getAttribute('role'), [...document.querySelectorAll('#users-project option')].map(o => [o.value, o.textContent]), document.querySelector('#users-project').value,
@@ -178,12 +178,12 @@ async function main() {
       const own = { 'GET /api/users': { status: 403, body: { message: 'forbidden' } }, 'GET /api/users?project_id=p1': { users: members }, 'GET /api/users?project_id=p3': { status: 403, body: { message: 'forbidden' } } };
       const page = await mount({ auto: own, admin: false });
       await page.waitForSelector('#settings-users .user-members .user-row');
-      assert.deepEqual(await page.evaluate(() => [[...document.querySelectorAll('#users-project option')].map(o => o.value), document.querySelector('#settings-users-tab').hidden, document.querySelectorAll('#settings-users .user-accounts *').length]), [['p1'], false, 0]);
+      assert.deepEqual(await page.evaluate(() => [[...document.querySelectorAll('#users-project option')].map(o => o.value), window.__page.store.tab.value, document.querySelectorAll('#settings-users .user-accounts *').length]), [['p1'], 'shown', 0]);
       assert.deepEqual((await page.evaluate(() => window.__requests.map(request => request.path))).filter(item => item.includes('p2')), [], 'a project the person does not own is not asked about');
       await page.close();
       const nobody = await mount({ auto: { 'GET /api/users': { status: 403, body: { message: 'forbidden' } }, 'GET /api/users?project_id=p1': { status: 403, body: { message: 'forbidden' } }, 'GET /api/users?project_id=p3': { status: 403, body: { message: 'forbidden' } } }, admin: false });
-      await nobody.waitForFunction(() => !document.querySelector('#settings-users-tab').classList.contains('settings-tab-pending'));
-      assert.equal(await nobody.$eval('#settings-users-tab', el => el.hidden), true);
+      await nobody.waitForFunction(() => window.__page.store.tab.value !== 'pending');
+      assert.equal(await nobody.evaluate(() => window.__page.store.tab.value), 'hidden');
       await nobody.close();
     }
     // The open project of the app is the picker's choice when the person manages it; an answer that fails to arrive hides the tab.
@@ -211,7 +211,7 @@ async function main() {
       await page.evaluate(() => window.__page.destroy());
       await answer(page, access, 200, { global_owner: true, global_admin: true, users: accounts, projects });
       await settle(page);
-      assert.deepEqual(await page.evaluate(() => [window.__requests.length, document.querySelectorAll('#settings-users *').length, document.querySelector('#settings-users-tab').classList.contains('settings-tab-pending')]), [1, 0, true], 'no read after destroy and nothing drawn');
+      assert.deepEqual(await page.evaluate(() => [window.__requests.length, document.querySelectorAll('#settings-users *').length, window.__page.store.tab.value]), [1, 0, 'pending'], 'no read after destroy and nothing drawn');
       await page.close();
       const loading = await mount({ auto: { 'GET /api/users': { global_owner: true, global_admin: true, users: accounts, projects } } });
       const read = await pending(loading, 'GET', '/api/users?project_id=p1');

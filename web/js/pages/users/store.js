@@ -5,6 +5,8 @@ import { chosenProject, inviteHint } from './model.js';
 export class UsersStore {
   constructor(projectContext) {
     this.projectContext = projectContext;
+    // The nav's Users tab holds its place invisibly until the access check answers, so the tabs below it never move under a pointer.
+    this.tab = signal('pending');
     this.error = signal('');
     this.allowed = signal([]);
     this.project = signal('');

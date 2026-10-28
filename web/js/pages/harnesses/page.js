@@ -2,19 +2,10 @@ import { html } from '../../ui.js';
 import { mountPreactPage } from '../mount-page.js';
 import { HarnessesPage } from './harnesses-page.js';
 
-// What the settings shell and the onboarding hold: a tab and a section, with Preact rendering only inside the section. Embedded (the
-// onboarding step) there is no tab, the section shows at once inside `host`, and its ids carry a prefix so they never repeat Settings'.
+// Embedded (the onboarding step) the section shows at once inside `host`, and its ids carry a prefix so they never repeat Settings'.
 export class HarnessSettings {
   constructor(dialog, { embedded = false, host = null } = {}) {
     const prefix = embedded ? 'onboarding-' : '';
-    if (!embedded) {
-      this.tab = document.createElement('button');
-      this.tab.type = 'button';
-      this.tab.className = 'row-btn';
-      this.tab.textContent = 'Harnesses';
-      this.tab.id = 'settings-harnesses-tab';
-      dialog.querySelector('nav').append(this.tab);
-    }
     this.section = document.createElement('section');
     this.section.className = 'settings-content';
     this.section.id = `${prefix}settings-harnesses`;
