@@ -22,6 +22,9 @@ export class MachineStore {
   get ready() { this.version.value; const folder = this.folders.get(this.id.value); return !!this.machine?.is_host || (!!folder && this.folder.value.trim() === folder); }
   get folderShown() { const machine = this.machine; return !!machine && !machine.is_host; }
 
+  // The dialog that was loading is gone: no read of the load goes on, and a save in flight neither speaks nor holds the button.
+  cancel() { this.loadID++; this.endSave(); }
+
   // A save of the last opening, or of the machine that was on show, is over for the view that replaces it: it neither speaks nor holds the button.
   endSave() { this.saveID++; this.saving.value = false; }
 

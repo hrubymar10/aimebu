@@ -65,7 +65,13 @@ export class SpawnStore {
   // The worktree box cannot stay ticked where the machine refuses it.
   syncWorktree() { if (this.worktreeView.value.refused) this.worktree.value = false; }
 
-  roomChanged() { this.roomTick.value++; }
+  touchRoom() { this.roomTick.value++; }
+
+  // The room changed or the panel was reset: the opening is over, the dialog closes, and what it was waiting for starts nothing.
+  invalidate() {
+    this.dialog.close();
+    this.opening++; this.catalogRequestID++; this.nameRequestID++; this.defaultPreviewToken++; this.pickToken++; this.machine.cancel();
+  }
 
   renderStartRooms() {
     const resume = this.resume.peek(), room = this.room;
@@ -291,5 +297,5 @@ export class SpawnStore {
 
   hint(text) { return hintParts(text, this.host.canManageHarnesses()); }
 
-  destroy() { this.alive = false; this.pickToken++; this.picker.dialog.close(); this.opening++; this.catalogRequestID++; this.nameRequestID++; this.defaultPreviewToken++; this.machine.loadID++; this.machine.endSave(); }
+  destroy() { this.alive = false; this.picker.dialog.close(); this.invalidate(); }
 }

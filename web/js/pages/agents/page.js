@@ -87,12 +87,12 @@ export class AgentsPanel {
   notifyCards() { for (const listener of this.cardListeners) listener(); }
   reset() {
     this.store.reset();
-    this.setMobileOpen(false); this.spawnDialog.close(); this.switchDialog.roomChanged(); document.querySelector('#spawn-open').disabled = true;
+    this.setMobileOpen(false); this.spawn.invalidate(); this.switchDialog.roomChanged(); document.querySelector('#spawn-open').disabled = true;
   }
   setRoomFacts(room) {
-    if (this.store.cardsRoomID !== room.id) this.switchDialog.roomChanged();
+    if (this.store.cardsRoomID !== room.id) { this.switchDialog.roomChanged(); this.spawn.invalidate(); }
     this.store.setRoomFacts(room);
-    this.spawn.roomChanged();
+    this.spawn.touchRoom();
     this.syncSpawnControl();
   }
   syncSpawnControl() {

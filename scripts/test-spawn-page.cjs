@@ -642,6 +642,24 @@ async function main() {
     }
   }
 
+  // A Spawn opening that is still waiting for its folders or its machines when the room changes or the panel is reset does not go on: the dialog is
+  // closed, and the answer starts no further read (not the machines after the folders, not the catalog after the machines) and changes nothing.
+  for (const how of ['room', 'reset']) {
+    for (const [rule, path, answerBody, next] of [['GET /api/projects/p1/machine-folders', '/api/projects/p1/machine-folders', { folders: [] }, '/api/machines'], ['GET /api/machines?project_id=p1', '/api/machines?project_id=p1', machines, '/api/spawn-catalog']]) {
+      const page = await mount({ withCard: true, auto: stable({ [rule]: undefined }) });
+      await open(page);
+      const held = await waitRequest(page, 'GET', path);
+      const before = await page.evaluate(() => window.__requests.length);
+      if (how === 'room') await page.evaluate(room => window.__panel.setRoomFacts(room), room('r2')); else await page.evaluate(() => window.__panel.reset());
+      const after = await page.evaluate(() => window.__requests.length);
+      await answer(page, held, 200, answerBody); await settle(page);
+      const asked = await page.evaluate(({ from, prefix }) => window.__requests.slice(from).filter(request => request.path.startsWith(prefix)).length, { from: after, prefix: next });
+      assert.equal(asked, 0, `${how}: the Spawn opening that was left asks for nothing more (${next})`);
+      assert.equal(await page.$eval('#spawn-dialog', node => node.open), false, `${how}: the dialog is closed`);
+      await page.close();
+    }
+  }
+
   // A panel destroyed while a read of the Spawn dialog or its call is out takes the answer and does nothing with it: no machines, roles, tools or
   // name are stored, no read follows, no folder status, and a spawn that succeeds or is refused navigates, refreshes and says nothing.
   {
