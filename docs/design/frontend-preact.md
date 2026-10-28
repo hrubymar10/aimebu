@@ -361,7 +361,7 @@ Switch and Spawn requests) are pure and tested, a card is no longer rewritten on
 guard. The same number of guards still has to be written by hand, now as tickets, and the store, model and component split adds files. It is
 not clearly simpler on size, bugs or churn.
 
-Owner's decision: pending.
+Owner's decision (2026-10-28): continue with the remaining units.
 
 ### Step 5: sidebar and navigation
 
