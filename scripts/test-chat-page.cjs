@@ -834,7 +834,6 @@ async function main() {
   for (const [name, extra, start, method, re] of cases) {
     for (const how of ['open', 'reset', 'reset-same']) {
       for (const outcome of ['ok', 'fail']) {
-        if (how === 'reset-same' && name === 'rename') continue;
         const page = await panelRoom({ extra });
         await hold(page, method, re);
         await start(page);

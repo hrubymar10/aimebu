@@ -571,6 +571,7 @@ export class Chat {
   async saveRoomTitle() {
     const room = this.room, form = this.renameForm, input = form.elements.title, save = form.querySelector('#room-rename-save'), status = form.querySelector('#room-rename-status');
     if (!room) return;
+    const session = this.sessionGeneration;
     const title = input.value.trim();
     status.className = 'room-rename-status'; status.textContent = '';
     if (!title) { status.className = 'room-rename-status error'; status.textContent = 'A room needs a title.'; input.focus(); return; }
@@ -580,11 +581,11 @@ export class Chat {
     save.disabled = true;
     try {
       const updated = await request(`/api/rooms/${encodeURIComponent(room.id)}`, { method: 'PATCH', body: { title } });
-      if (this.room?.id !== room.id) return;
+      if (!this.current(session, room.id)) return;
       room.title = updated.title; this.title.textContent = updated.title; input.value = updated.title;
       status.textContent = 'Saved.';
     } catch (error) {
-      if (this.room?.id === room.id) { status.className = 'room-rename-status error'; status.textContent = error.message; input.focus(); }
+      if (this.current(session, room.id)) { status.className = 'room-rename-status error'; status.textContent = error.message; input.focus(); }
     } finally { save.disabled = false; }
   }
   // Archive/Reopen and Remove follow the room's lifecycle, also while the dialog is open (a room goes closing, then closed).
