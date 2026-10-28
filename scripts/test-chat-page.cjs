@@ -88,12 +88,12 @@ async function main() {
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
   const room = (id, extra = {}) => ({ id, project_id: 'prj_a', title: id, kind: 'task', lifecycle: 'open', member_count: 2, ...extra });
-  const mount = async ({ rooms = { rm_a: 130, rm_b: 5 }, setup = '' } = {}) => {
+  const mount = async ({ rooms = { rm_a: 130, rm_b: 5 }, setup = '', plain = false } = {}) => {
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) errors.push(message.text()); });
     await page.setViewport({ width: 1280, height: 900 });
-    await page.evaluateOnNewDocument(() => { try { localStorage.clear(); } catch {} });
+    await page.evaluateOnNewDocument(plain => { try { localStorage.clear(); if (plain) localStorage.setItem('aimebu2.composer.formatting', 'off'); } catch {} }, plain);
     await page.goto(`${origin}/fixture.html`);
     await page.evaluate(installServer);
     await page.evaluate(() => { document.querySelector('#app-view').hidden = false; });
@@ -736,6 +736,61 @@ async function main() {
     const before = errors.length, reads = await page.evaluate(() => window.__requests.length);
     await answer(page, held, 500, { message: 'Reactions are unavailable.' }); await settle(page); await settle(page);
     assert.deepEqual([await page.evaluate(() => document.querySelectorAll('.reaction-pill').length), await page.evaluate(() => document.querySelector('#chat-error').textContent), await page.evaluate(() => window.__requests.length) - reads, errors.slice(before)], [0, '', 0, []], `${how}: a late failed reactions read is quiet`);
+    await page.close();
+  }
+
+  // Keyboard. The arrows, Home and End move between the buttons of a focused message's action bar and wrap; Up in an empty composer walks back through the
+  // viewer's own messages, Down walks forward and past the newest restores what was being written, Escape restores it too; Enter sends and Shift+Enter
+  // does not.
+  {
+    const page = await mount({ plain: true });
+    await page.evaluate(() => { for (const [seq, body] of [[121, 'mine one'], [124, 'mine two'], [127, 'mine two'], [129, 'mine three']]) Object.assign(window.__data.rooms.rm_a.messages[seq - 1], { author_id: 'usr_me', author_name: 'me', body }); });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => { const bar = document.querySelector('[data-message-id=rm_a_m120] .message-actions'); window.__buttons = [...bar.querySelectorAll('button')].filter(button => !button.closest('[hidden]')).map(button => button.getAttribute('aria-label')); bar.querySelector('button').focus(); });
+    const focused = () => page.evaluate(() => document.activeElement.getAttribute('aria-label'));
+    const labels = await page.evaluate(() => window.__buttons);
+    assert.ok(labels.length >= 4, 'the bar has its buttons');
+    await page.keyboard.press('ArrowRight'); assert.equal(await focused(), labels[1]);
+    await page.keyboard.press('End'); assert.equal(await focused(), labels.at(-1));
+    await page.keyboard.press('ArrowRight'); assert.equal(await focused(), labels[0], 'wraps after the last');
+    await page.keyboard.press('ArrowLeft'); assert.equal(await focused(), labels.at(-1), 'wraps before the first');
+    await page.keyboard.press('Home'); assert.equal(await focused(), labels[0]);
+    await page.focus('#composer textarea[name=body]');
+    const draft = () => draftText(page);
+    await page.keyboard.press('ArrowUp'); assert.equal(await draft(), 'mine three');
+    await page.keyboard.press('ArrowUp'); assert.equal(await draft(), 'mine two', 'consecutive duplicates are one entry');
+    await page.keyboard.press('ArrowUp'); assert.equal(await draft(), 'mine one');
+    await page.keyboard.press('ArrowDown'); assert.equal(await draft(), 'mine two');
+    await page.keyboard.press('Escape'); assert.equal(await draft(), '', 'Escape restores what was being written');
+    await page.keyboard.type('draft in progress'); await page.evaluate(() => { const draft = document.querySelector('#composer textarea[name=body]'); draft.setSelectionRange(0, 0); });
+    await page.keyboard.press('ArrowUp'); assert.equal(await draft(), 'mine three', 'Up at the start of a draft recalls too');
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');
+    assert.equal(await draft(), 'draft in progress', 'past the newest the draft is back');
+    await page.keyboard.down('Shift'); await page.keyboard.press('Enter'); await page.keyboard.up('Shift');
+    assert.deepEqual([await posts(page), (await draft()).includes('\n')], [[], true], 'Shift+Enter is a new line');
+    await typeDraft(page, 'sent with enter'); await page.focus('#composer textarea[name=body]'); await page.keyboard.press('Enter'); await settle(page);
+    assert.deepEqual([(await posts(page)).map(post => post.body), await draft()], [['sent with enter'], '']);
+    await page.close();
+  }
+
+  // The reader's place survives a live update: the composer keeps its text and caret and the focus, the thread's composer keeps its text, and a button of
+  // a message row that has the focus keeps it while rows are added below, and after an older page is put above.
+  {
+    const page = await mount({ plain: true });
+    await addReplies(page, 2);
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 3); await settle(page);
+    await page.evaluate(() => { window.__chat.threadDraft.value = 'thread draft'; });
+    await page.focus('#composer textarea[name=body]'); await page.keyboard.type('main draft'); await page.keyboard.press('Home');
+    await page.evaluate(() => { const messages = window.__data.rooms.rm_a.messages; messages.push({ id: 'rm_a_live', seq: messages.length + 1, no: messages.length + 1, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'live', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); });
+    await settle(page);
+    assert.deepEqual(await page.evaluate(() => { const draft = document.querySelector('#composer textarea[name=body]'); return [document.activeElement === draft, draft.value, draft.selectionStart, window.__chat.threadDraft.value, !!document.querySelector('[data-message-id=rm_a_live]')]; }), [true, 'main draft', 0, 'thread draft', true]);
+    await page.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = 0; });
+    await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m40] .message-action').focus());
+    await page.evaluate(() => { window.__focus = document.activeElement; });
+    await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1'); await settle(page);
+    assert.equal(await page.evaluate(() => document.activeElement === window.__focus), true, 'a button of a row keeps the focus when an older page is put above');
     await page.close();
   }
 
