@@ -15,5 +15,5 @@ export function HealthPopover({ store, disk, onEntry }) {
   const rows = store.rows.value;
   const entries = (rows || []).flatMap(row => row.flags.map(flag => html`<button type="button" class="row-btn health-item" data-health-agent=${row.id} data-code=${flag.code} onClick=${() => onEntry(row, flag)}>
     <span class="health-item-title">${healthSentence(row.name, flag)}</span><span class="health-item-hint">${healthExplanation(flag)}</span></button>`));
-  return html`${disk && rows && html`<${DiskSection} disk=${disk} />`}<${LimitRows} guard=${store.guard.value} />${entries}${!entries.length && html`<p>All agents healthy</p>`}`;
+  return html`${disk && html`<${DiskSection} disk=${disk} />`}<${LimitRows} guard=${store.guard.value} />${entries}${!entries.length && html`<p>All agents healthy</p>`}`;
 }

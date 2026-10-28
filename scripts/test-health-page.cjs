@@ -248,12 +248,12 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [document.querySelector('.health-disk-plan .error').textContent, document.querySelector('#cleanup-attachment-days').value, window.__requests.filter(request => request.method === 'PUT').length]), ['Enter a number of days from 0 to 3650.', '90', 3]);
       await page.close();
     }
-    // The popover is drawn from the first agent read that works: until then (or when it only fails) it holds its one line, with no disk section.
+    // The disk section does not depend on the agent read: when that fails the popover holds its one line, with the disk section above it.
     {
       const page = await mount({ auto: answerAll({ 'GET /api/health': { status: 500, body: { message: 'down' } } }) });
       await open(page);
       await settle(page);
-      assert.deepEqual(await page.evaluate(() => [!!document.querySelector('#health-disk'), [...document.querySelectorAll('#health-popover > *')].map(node => node.tagName.toLowerCase() + (node.className ? `.${node.className}` : '')), document.querySelector('#health-popover').textContent.includes('All agents healthy')]), [false, ['div.health-limits', 'p'], true]);
+      assert.deepEqual(await page.evaluate(() => [!!document.querySelector('#health-disk'), [...document.querySelectorAll('#health-popover > *')].map(node => node.tagName.toLowerCase() + (node.className ? `.${node.className}` : '')), document.querySelector('#health-popover').textContent.includes('All agents healthy')]), [true, ['section.health-disk', 'div.health-limits', 'p'], true]);
       await page.close();
     }
     // A panel destroyed while a read or a write is held sends nothing more and draws nothing.
