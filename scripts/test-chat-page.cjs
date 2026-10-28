@@ -290,6 +290,35 @@ async function main() {
     await page.close();
   }
 
+  // A lookup answered after the reader has moved on to another room, or after a reset, opens nothing.
+  {
+    const page = await mount({ rooms: { rm_a: 5, rm_b: 5, rm_c: 5 } });
+    await page.evaluate(() => { for (const message of window.__data.rooms.rm_b.messages) message.no += 1000; });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page); await calls(page);
+    await hold(page, 'GET', 'message-numbers/');
+    await page.evaluate(() => { window.__jumping = window.__chat.jumpToMessage(1004); });
+    const held = await waitRequest(page, 'GET', 'message-numbers/1004');
+    await openRoom(page, 'rm_c'); await opened(page); await settle(page); await calls(page);
+    await serve(page, held); await page.evaluate(() => window.__jumping); await settle(page);
+    assert.deepEqual(await calls(page), [], 'a lookup answered after the reader moved on opens nothing');
+    await page.evaluate(() => { window.__jumping = window.__chat.jumpToMessage(9999); });
+    const missing = await waitRequest(page, 'GET', 'message-numbers/9999');
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await serve(page, missing); await page.evaluate(() => window.__jumping); await settle(page);
+    assert.equal(await page.evaluate(() => document.querySelector('#chat-error').textContent), '', 'nor does a lookup that failed write its error into the new room');
+    await page.close();
+    const reset = await mount({ rooms: { rm_a: 5, rm_b: 5 } });
+    await reset.evaluate(() => { for (const message of window.__data.rooms.rm_b.messages) message.no += 1000; });
+    await openRoom(reset, 'rm_a'); await opened(reset); await settle(reset); await calls(reset);
+    await hold(reset, 'GET', 'message-numbers/');
+    await reset.evaluate(() => { window.__jumping = window.__chat.jumpToMessage(1004); });
+    const second = await waitRequest(reset, 'GET', 'message-numbers/1004');
+    await reset.evaluate(() => window.__chat.reset());
+    await serve(reset, second); await reset.evaluate(() => window.__jumping); await settle(reset);
+    assert.deepEqual(await calls(reset), [], 'nor after a reset');
+    await reset.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('chat page: ok');

@@ -797,13 +797,14 @@ export class Chat {
   async jumpToMessage(key) {
     if (!this.room) return;
     if (typeof key === 'number') {
+      const roomID = this.room.id, session = this.sessionGeneration;
       const loaded = [...this.messages.values()].find(item => item.no === key);
       if (loaded) key = loaded.id;
       else {
         let found;
         try { found = await request(`/api/message-numbers/${encodeURIComponent(key)}`); }
-        catch (error) { this.error.textContent = error.status === 404 ? `Message #${key} does not exist or is not visible to you.` : error.message; return; }
-        if (!this.room) return;
+        catch (error) { if (this.current(session, roomID)) this.error.textContent = error.status === 404 ? `Message #${key} does not exist or is not visible to you.` : error.message; return; }
+        if (!this.current(session, roomID)) return;
         if (found.room_id !== this.room.id) { this.error.textContent = ''; this.onOpenMessage?.(found); return; }
         key = found.id;
       }
