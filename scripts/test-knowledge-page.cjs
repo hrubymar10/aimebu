@@ -163,6 +163,7 @@ async function main() {
       await failing.waitForFunction(() => window.__requests.filter(request => request.method === 'DELETE').length === 2);
       await settle(failing);
       assert.deepEqual((await calls(failing, 'DELETE')).map(([p]) => p), [`${PROJECT}/k1?rev=2&scope_key=p1`, `${PROJECT}/k2?rev=2&scope_key=p1`], 'each record is one request, and a refusal does not stop the list being read again');
+      assert.equal(await failing.$eval('#knowledge-error', el => el.textContent), 'Deleted 1 of 2: It changed', 'the account of a partial clear stays on screen after the list is read again');
       await failing.close();
     }
     // A read that is answered late: the newer view wins and the late answer draws nothing.

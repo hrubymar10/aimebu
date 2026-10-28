@@ -171,7 +171,7 @@ export class KnowledgeStore {
     if (!this.alive || view !== this.view) return;
     const turn = ++this.cleanTurn;
     batch(() => { this.error.value = ''; this.cleaning.value = true; });
-    let removed = 0;
+    let removed = 0, message = '';
     try {
       for (const item of targets) {
         if (!this.alive || view !== this.view) break;
@@ -179,10 +179,12 @@ export class KnowledgeStore {
         await request(`${path}?rev=${item.rev}&scope_key=${encodeURIComponent(item.scope_id)}`, { method: 'DELETE' });
         removed += 1;
       }
-    } catch (failure) { if (this.alive && view === this.view) this.error.value = `Deleted ${removed} of ${targets.length}: ${failure.message || 'could not delete record'}`; }
+    } catch (failure) { message = `Deleted ${removed} of ${targets.length}: ${failure.message || 'could not delete record'}`; }
     if (!this.alive) return;
     if (turn === this.cleanTurn) this.cleaning.value = false;
     if (view === this.view && this.dialog.open) await this.load();
+    // The read clears the error, so the account of a partial clear is set after it.
+    if (message && this.alive && view === this.view) this.error.value = message;
   }
 
   onEvent(event) {
