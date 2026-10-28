@@ -39,7 +39,7 @@ function loadManual() { try { const list = JSON.parse(localStorage.getItem(order
 function loadCollapsed() { try { const list = JSON.parse(localStorage.getItem(collapsedKey) || '[]'); return new Set(Array.isArray(list) ? list.filter(id => typeof id === 'string') : []); } catch { return new Set(); } }
 
 export class Sidebar {
-  constructor(container, onSelect) { this.container = container; this.onSelect = onSelect; this.projects = new Map(); this.rooms = new Map(); this.roomNodes = new Map(); this.collapsedRooms = loadCollapsed(); this.archiveNodes = new Map(); this.hiddenNodes = new Map(); this.archivedOpen = new Map(); this.archiveSearchNodes = new Map(); this.archiveHitNodes = new Map(); this.archiveFilter = new Map(); this.archiveTimers = new Map(); this.archiveRequests = new Map(); this.roomRequests = new Set(); this.listSeqs = new Map(); this.generation = 0; this.reads = new ReadMarker((roomID, seq) => request(`/api/rooms/${roomID}/read`, { method: 'POST', body: seq > 0 ? { seq } : {} })); this.health = new Map(); this.active = ''; this.loadedUser = null; this.filter = ''; this.createBox = null; this.sort = DEFAULT_SORT; this.manual = []; this.sortButton = null; this.sortMenu = null; this.dragging = null; this.collapseButton = null; this.collapsible = new Set(); }
+  constructor(container, onSelect) { this.container = container; this.onSelect = onSelect; this.projects = new Map(); this.saves = new Map(); this.rooms = new Map(); this.roomNodes = new Map(); this.collapsedRooms = loadCollapsed(); this.archiveNodes = new Map(); this.hiddenNodes = new Map(); this.archivedOpen = new Map(); this.archiveSearchNodes = new Map(); this.archiveHitNodes = new Map(); this.archiveFilter = new Map(); this.archiveTimers = new Map(); this.archiveRequests = new Map(); this.roomRequests = new Set(); this.listSeqs = new Map(); this.generation = 0; this.reads = new ReadMarker((roomID, seq) => request(`/api/rooms/${roomID}/read`, { method: 'POST', body: seq > 0 ? { seq } : {} })); this.health = new Map(); this.active = ''; this.loadedUser = null; this.filter = ''; this.createBox = null; this.sort = DEFAULT_SORT; this.manual = []; this.sortButton = null; this.sortMenu = null; this.dragging = null; this.collapseButton = null; this.collapsible = new Set(); }
   reset() {
     this.reads.reset();
     this.generation++;
@@ -402,7 +402,13 @@ export class Sidebar {
       });
     }
   }
-  setManual(order) { this.manual = order; try { localStorage.setItem(orderKey(), JSON.stringify(order)); } catch { /* private mode */ } savePreference('sidebar_project_order', JSON.stringify(order)); this.render(); }
+  // A save still queued when the list is reset, or one a newer save of the same name replaced, is not sent.
+  persist(name, value) {
+    const generation = this.generation, ticket = (this.saves.get(name) || 0) + 1;
+    this.saves.set(name, ticket);
+    return savePreference(name, value, { live: () => generation === this.generation && this.saves.get(name) === ticket });
+  }
+  setManual(order) { this.manual = order; try { localStorage.setItem(orderKey(), JSON.stringify(order)); } catch { /* private mode */ } this.persist('sidebar_project_order', JSON.stringify(order)); this.render(); }
   moveProject(id, delta) { this.setManual(moveProject([...this.projects.values()], this.manual, id, delta)); }
   setSort(sort) {
     if (!SORTS.some(([key]) => key === sort)) return;
@@ -410,7 +416,7 @@ export class Sidebar {
     if (sort === 'manual' && this.sort !== 'manual') this.manual = orderProjects([...this.projects.values()], [...this.rooms.values()], this.sort, this.manual).map(project => project.id);
     this.sort = sort;
     try { localStorage.setItem(sortKey(), sort); if (sort === 'manual') localStorage.setItem(orderKey(), JSON.stringify(this.manual)); } catch { /* private mode */ }
-    savePreference('sidebar_sort', sort); if (sort === 'manual') savePreference('sidebar_project_order', JSON.stringify(this.manual));
+    this.persist('sidebar_sort', sort); if (sort === 'manual') this.persist('sidebar_project_order', JSON.stringify(this.manual));
     this.render(); this.syncSortMenu();
   }
   // The collapse button in the ROOMS header folds every project's tree or opens them all again. It shows a chevron down while

@@ -606,6 +606,40 @@ async function main() {
     await page.close();
   }
 
+  // A save of the sort or the order that is still queued when the list is reset is not sent (the first one, already out, is left alone); of several
+  // queued saves of one name only the newest goes out.
+  {
+    const move = (page, id, direction) => page.$eval(`[data-room-id=${id}] .project-move-${direction}`, node => node.click());
+    const saves = page => page.evaluate(() => window.__requests.filter(request => request.method === 'PUT' && request.path === '/api/me/preferences').map(request => request.body.preferences));
+    let page = await mount();
+    await hold(page, 'PUT /api/me/preferences');
+    await move(page, 'rm_ah', 'down');
+    const first = await waitRequest(page, 'PUT', '/api/me/preferences');
+    await move(page, 'rm_bh', 'down');
+    await page.evaluate(() => window.__sidebar.reset());
+    await answer(page, first, 200, { preferences: {} }); await settle(page);
+    assert.deepEqual(await saves(page), [{ sidebar_project_order: '["prj_b","prj_a","prj_c"]' }], 'a queued order save is not sent after a reset');
+    await page.close();
+    page = await mount();
+    await hold(page, 'PUT /api/me/preferences');
+    await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=name]', node => node.click());
+    const named = await waitRequest(page, 'PUT', '/api/me/preferences');
+    await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=activity]', node => node.click());
+    await page.evaluate(() => window.__sidebar.reset());
+    await answer(page, named, 200, { preferences: {} }); await settle(page);
+    assert.deepEqual(await saves(page), [{ sidebar_sort: 'name' }], 'a queued sort save is not sent after a reset');
+    await page.close();
+    page = await mount();
+    await hold(page, 'PUT /api/me/preferences');
+    await move(page, 'rm_ah', 'down');
+    const out = await waitRequest(page, 'PUT', '/api/me/preferences');
+    await move(page, 'rm_bh', 'down'); await move(page, 'rm_ah', 'down');
+    await answer(page, out, 200, { preferences: {} });
+    await waitRequest(page, 'PUT', '/api/me/preferences'); await settle(page);
+    assert.deepEqual(await saves(page), [{ sidebar_project_order: '["prj_b","prj_a","prj_c"]' }, { sidebar_project_order: '["prj_b","prj_a","prj_c"]' }], 'of two queued saves of one name only the newest goes out');
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('sidebar page: ok');

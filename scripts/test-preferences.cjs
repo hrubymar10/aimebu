@@ -78,5 +78,16 @@ const { loadPreferences, savePreference, PREFERENCE_KEYS, PREFERENCE_LIMITS, set
   const blocked = savePreference('sidebar_sort', 'manual', { send });
   setSession(''); await blocked;
   assert.equal(sent.length, 2, 'nothing is sent after sign-out');
+  // A caller that no longer wants a queued save says so with `live`: the save behind a slow one is dropped, the slow one is left alone.
+  sent.length = 0;
+  setSession('user3');
+  await loadPreferences('user3', { send: async () => ({ preferences: {} }), storage: { getItem: () => null, setItem() {} } });
+  let wanted = true;
+  const out = savePreference('sidebar_sort', 'name', { send });
+  const dropped = savePreference('sidebar_sort', 'manual', { send, live: () => wanted });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  wanted = false; sent[0].done(); await out; await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(sent.length, 1, 'a queued save its caller no longer wants is not sent');
+  await dropped;
   console.log('preferences test passed');
 })().catch(error => { console.error(error); process.exit(1); });

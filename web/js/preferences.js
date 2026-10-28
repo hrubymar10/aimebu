@@ -45,13 +45,14 @@ export async function loadPreferences(userID, { send = request, storage = localS
 // Stores one preference on the server; the caller has already written its own cache. Failures are silent: the next change or sign-in retries.
 // The saves of one name go out one after another, so a slow older value (the manual project order, say) can never land after a newer one.
 // A queued save belongs to the person who made it: if the session has changed by the time it would be sent (signed out, or someone else
-// signed in on this page), it is dropped, so it can never reach another person's preferences with their cookie.
+// signed in on this page), it is dropped, so it can never reach another person's preferences with their cookie. A caller that outlives its
+// own use (a list that was reset) passes `live`: a queued save it no longer wants is dropped the same way.
 const chains = new Map();
-export function savePreference(name, value, { send = request } = {}) {
+export function savePreference(name, value, { send = request, live = () => true } = {}) {
   if (!user || !Object.hasOwn(PREFERENCE_KEYS, name)) return Promise.resolve();
   const owner = user, key = `${owner}\n${name}`;
   const next = (chains.get(key) || Promise.resolve())
-    .then(() => owner === user && owner === currentUser ? send('/api/me/preferences', { method: 'PUT', body: { preferences: { [name]: String(value) } } }) : undefined)
+    .then(() => owner === user && owner === currentUser && live() ? send('/api/me/preferences', { method: 'PUT', body: { preferences: { [name]: String(value) } } }) : undefined)
     .catch(() => {});
   chains.set(key, next);
   next.then(() => { if (chains.get(key) === next) chains.delete(key); });
