@@ -67,6 +67,7 @@ async function main() {
     await page.evaluate(() => { document.querySelector('#app-view').hidden = false; });
     await page.evaluate(async ({ module }) => {
       (await import('/js/api.js')).setSession({ csrf_token: 'token', id: 'usr_me', owner: true, admin: true });
+      await (await import('/js/preferences.js')).loadPreferences('usr_me', { send: async () => ({ preferences: {} }) });
       const { Sidebar } = await import(module);
       window.__calls = [];
       const sidebar = window.__sidebar = new Sidebar(document.querySelector('#projects'), (room, messageID) => { window.__calls.push(['select', room.id, messageID || '']); });
@@ -269,6 +270,304 @@ async function main() {
     assert.deepEqual(await page.$eval('[data-room-id=rm_api] .room-health', node => [node.textContent, node.title, node.hidden]), ['⚠ 1', 'ada: stuck', false]);
     await page.evaluate(() => window.__sidebar.setHealth([]));
     assert.equal(await page.$eval('[data-room-id=rm_api] .room-health', node => node.hidden), true);
+    await page.close();
+  }
+
+  // A change of a room's preference (showing a hidden room) asks the server, reads the project again and opens the room; a refusal is told in a
+  // dialog; a reset while the request is out takes the answer, reads nothing and opens nothing.
+  {
+    const hiddenFold = page => page.evaluate(() => { for (const fold of document.querySelectorAll('details.hidden-rooms')) fold.open = true; });
+    let page = await mount();
+    await hold(page, 'GET /api/projects/prj_a/rooms');
+    await page.$eval('[data-hidden-room-id=rm_hid]', node => node.click());
+    let held = await waitRequest(page, 'PATCH', '/api/rooms/rm_hid/preferences');
+    assert.deepEqual(await page.evaluate(index => window.__requests[index].body, held), { hidden: false });
+    await answer(page, held, 200, {});
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/rooms'), 200, rooms().prj_a.map(item => (item.id === 'rm_hid' ? { ...item, hidden: false } : item)));
+    await settle(page);
+    assert.deepEqual(await calls(page), [['select', 'rm_hid', '']]);
+    assert.equal((await rows(page)).some(row => row[0] === 'rm_hid'), true, 'the shown room is in the list');
+    await page.close();
+    page = await mount();
+    await page.$eval('[data-hidden-room-id=rm_hid]', node => node.click());
+    await answer(page, await waitRequest(page, 'PATCH', '/api/rooms/rm_hid/preferences'), 409, { message: 'The room changed', error: 'stale' });
+    await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#app-dialog-title').textContent, document.querySelector('.app-dialog-message').textContent]), ['Could not change the room', 'The room changed']);
+    assert.deepEqual(await calls(page), []);
+    await page.close();
+    page = await mount();
+    await hold(page, 'GET /api/projects/prj_a/rooms');
+    await page.$eval('[data-hidden-room-id=rm_hid]', node => node.click());
+    held = await waitRequest(page, 'PATCH', '/api/rooms/rm_hid/preferences');
+    await page.evaluate(() => window.__sidebar.reset());
+    const before = await count(page, 'GET', '/api/projects/prj_a');
+    await answer(page, held, 200, {}); await settle(page);
+    assert.deepEqual([await count(page, 'GET', '/api/projects/prj_a'), await calls(page), await page.evaluate(() => !!document.querySelector('#app-dialog')?.open)], [before, [], false], 'a reset takes the answer: no read, no room opened, no dialog');
+    await page.close();
+  }
+
+  // Reopening an archived room, joining a chat of agents and creating a room under a home room: each sends its call, reads again and opens the room; a
+  // reset while the call is out reads nothing and opens nothing.
+  {
+    const fill = (page, title) => page.evaluate(title => { const dialog = document.querySelector('#app-dialog'); dialog.querySelector('[name=title]').value = title; dialog.querySelector('form').requestSubmit(); }, title);
+    // reopen
+    let page = await mount();
+    await hold(page, 'GET /api/projects/prj_a/rooms');
+    await page.$eval('[data-room-id=rm_old] .reopen-room', node => node.click());
+    let held = await waitRequest(page, 'POST', '/api/rooms/rm_old/reopen');
+    assert.deepEqual(await page.evaluate(index => window.__requests[index].body, held), { lifecycle_rev: 1 });
+    await answer(page, held, 200, room('rm_old', 'prj_a', 'old-room', { parent_id: 'rm_ah' }));
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/rooms'), 200, rooms().prj_a.map(item => (item.id === 'rm_old' ? { ...item, lifecycle: 'open' } : item)));
+    await settle(page);
+    assert.equal(await page.$eval('[data-room-id=rm_old] .room-row', node => node.classList.contains('archived')), false);
+    await page.close();
+    page = await mount();
+    await hold(page, 'GET /api/projects/prj_a/rooms');
+    await page.$eval('[data-room-id=rm_old] .reopen-room', node => node.click());
+    held = await waitRequest(page, 'POST', '/api/rooms/rm_old/reopen');
+    await page.evaluate(() => window.__sidebar.reset());
+    await answer(page, held, 200, room('rm_old', 'prj_a', 'old-room')); await settle(page);
+    assert.deepEqual([await count(page, 'GET', '/api/projects/prj_a'), await calls(page), await page.evaluate(() => window.__sidebar.rooms.size)], [0 + (await count(page, 'GET', '/api/projects/prj_a')), [], 0], 'a reset takes the answer of a reopen');
+    await page.close();
+    // join
+    page = await mount();
+    await hold(page, 'GET /api/agent-dms');
+    await page.$eval('[data-offer-id=rm_join] .agent-chat-join', node => node.click());
+    held = await waitRequest(page, 'POST', '/api/rooms/rm_join/join');
+    await answer(page, held, 200, {});
+    const withJoined = { ...chats(), rooms: [...chats().rooms, room('rm_join', 'prj_agentdm', 'bert & cleo', { kind: 'dm', agent_chat: true })], joinable: [] };
+    await answer(page, await waitRequest(page, 'GET', '/api/agent-dms'), 200, withJoined);
+    await settle(page);
+    assert.deepEqual(await calls(page), [['select', 'rm_join', '']]);
+    assert.equal(await page.$('[data-offer-id=rm_join]'), null, 'the joined chat is no offer any more');
+    await page.close();
+    page = await mount();
+    await hold(page, 'GET /api/agent-dms');
+    await page.$eval('[data-offer-id=rm_join] .agent-chat-join', node => node.click());
+    held = await waitRequest(page, 'POST', '/api/rooms/rm_join/join');
+    await page.evaluate(() => window.__sidebar.reset());
+    await answer(page, held, 200, {}); await settle(page);
+    assert.deepEqual([await count(page, 'GET', '/api/agent-dms'), await calls(page)], [1, []], 'a reset takes the answer of a join: no read, nothing opened');
+    await page.close();
+    // create
+    page = await mount();
+    await page.$eval('[data-room-id=rm_ah] .add-room', node => node.click());
+    await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+    await fill(page, 'fresh-room');
+    held = await waitRequest(page, 'POST', '/api/projects/prj_a/rooms');
+    assert.deepEqual(await page.evaluate(index => window.__requests[index].body, held), { title: 'fresh-room', parent_id: 'rm_ah', worktree: { enabled: false, base_ref: '' } });
+    await answer(page, held, 200, room('rm_fresh', 'prj_a', 'fresh-room', { parent_id: 'rm_ah' }));
+    await settle(page);
+    assert.deepEqual(await calls(page), [['select', 'rm_fresh', '']]);
+    assert.equal((await rows(page)).some(row => row[0] === 'rm_fresh'), true);
+    await page.close();
+    page = await mount();
+    await page.$eval('[data-room-id=rm_ah] .add-room', node => node.click());
+    await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+    await fill(page, 'fresh-room');
+    held = await waitRequest(page, 'POST', '/api/projects/prj_a/rooms');
+    await page.evaluate(() => window.__sidebar.reset());
+    await answer(page, held, 200, room('rm_fresh', 'prj_a', 'fresh-room', { parent_id: 'rm_ah' })); await settle(page);
+    assert.deepEqual([await calls(page), await page.$$eval('#projects .room-group', nodes => nodes.length)], [[], 0], 'a reset takes the answer of a new room');
+    await page.close();
+  }
+
+  // Read marks: one request per room at a time, the furthest mark asked for meanwhile follows it, and the count that comes back is the room's; a
+  // reset while a mark is out lets it go and sends nothing for the old room.
+  {
+    let page = await mount();
+    await page.evaluate(() => { window.__shown = { rm_api: 40 }; window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_api')); });
+    const first = await waitRequest(page, 'POST', '/api/rooms/rm_api/read');
+    assert.deepEqual(await page.evaluate(index => window.__requests[index].body, first), { seq: 40 });
+    await page.evaluate(() => { window.__shown.rm_api = 50; window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_api')); window.__shown.rm_api = 45; window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_api')); });
+    assert.equal(await count(page, 'POST', '/api/rooms/rm_api/read'), 1, 'one mark in flight per room');
+    await answer(page, first, 200, { unread_count: 5, read_cursor: 40 }); await settle(page);
+    assert.equal(await page.evaluate(() => window.__sidebar.rooms.get('rm_api').unread_count), 5);
+    const second = await waitRequest(page, 'POST', '/api/rooms/rm_api/read');
+    assert.deepEqual(await page.evaluate(index => window.__requests[index].body, second), { seq: 50 }, 'the furthest mark asked for follows');
+    await answer(page, second, 200, { unread_count: 0, read_cursor: 50 }); await settle(page);
+    assert.equal(await count(page, 'POST', '/api/rooms/rm_api/read'), 2);
+    assert.equal(await page.evaluate(() => window.__sidebar.rooms.get('rm_api').unread_count), 0);
+    await page.close();
+    page = await mount();
+    await page.evaluate(() => { window.__shown = { rm_api: 40 }; window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_api')); });
+    const held = await waitRequest(page, 'POST', '/api/rooms/rm_api/read');
+    await page.evaluate(() => { window.__shown.rm_api = 60; window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_api')); window.__sidebar.reset(); });
+    await answer(page, held, 200, { unread_count: 1, read_cursor: 40 }); await settle(page);
+    assert.equal(await count(page, 'POST', '/api/rooms/rm_api/read'), 1, 'a reset sends no follow-up for the old room');
+    await page.close();
+  }
+
+  // The archive search: a query asks after a short wait, a newer query ends the older, an older answer does nothing, hits open their room at the
+  // message, a failure says so, and a reset takes the wait and the request.
+  {
+    const type = (page, text) => page.$eval('.archive-search', (node, text) => { node.value = text; node.dispatchEvent(new Event('input')); }, text);
+    const hits = [{ room_id: 'rm_old', room_name: 'old-room', snippet: 'the old thing', message_id: 'msg_1' }];
+    let page = await mount();
+    await page.evaluate(() => { document.querySelector('details.archived-rooms').open = true; });
+    await type(page, 'old');
+    assert.equal(await count(page, 'GET', '/api/projects/prj_a/archive'), 0, 'the query waits for a pause in the typing');
+    const first = await waitRequest(page, 'GET', '/api/projects/prj_a/archive/search?q=old');
+    await type(page, 'older');
+    const second = await waitRequest(page, 'GET', '/api/projects/prj_a/archive/search?q=older');
+    assert.equal(await page.evaluate(index => window.__requests[index].aborted, first), true, 'the newer query ends the older request');
+    await answer(page, first, 200, [{ room_id: 'rm_old', room_name: 'stale', snippet: 'x', message_id: 'm0' }]);
+    await answer(page, second, 200, hits); await settle(page);
+    assert.deepEqual(await page.$$eval('.archive-hit', nodes => nodes.map(node => [node.querySelector('strong').textContent, node.querySelector('span').textContent])), [['old-room', 'the old thing']]);
+    await page.$eval('.archive-hit', node => node.click()); await settle(page);
+    assert.deepEqual(await calls(page), [['select', 'rm_old', 'msg_1']]);
+    await type(page, '');
+    assert.equal(await page.$eval('.archive-hits', node => node.hidden), true, 'an empty query clears the hits');
+    await type(page, 'boom');
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/archive/search?q=boom'), 500, { message: 'down' }); await settle(page);
+    assert.equal(await page.$eval('.archive-search-error', node => node.textContent), 'Could not search archived messages.');
+    await page.close();
+    // a reset in the wait and a reset while the request is out
+    page = await mount();
+    await page.evaluate(() => { document.querySelector('details.archived-rooms').open = true; });
+    await type(page, 'old');
+    await page.evaluate(() => window.__sidebar.reset());
+    await new Promise(resolve => setTimeout(resolve, 500));
+    assert.equal(await count(page, 'GET', '/api/projects/prj_a/archive'), 0, 'a reset ends the wait');
+    await page.close();
+    page = await mount();
+    await page.evaluate(() => { document.querySelector('details.archived-rooms').open = true; });
+    await type(page, 'old');
+    const out = await waitRequest(page, 'GET', '/api/projects/prj_a/archive/search?q=old');
+    await page.evaluate(() => window.__sidebar.reset());
+    assert.equal(await page.evaluate(index => window.__requests[index].aborted, out), true, 'a reset ends the request');
+    await answer(page, out, 200, hits); await settle(page);
+    assert.deepEqual([await page.$$eval('.archive-hit', nodes => nodes.length), await calls(page)], [0, []]);
+    await page.close();
+    // a hit whose room the list does not hold asks for it, and a reset in between opens nothing
+    page = await mount();
+    await page.evaluate(() => { document.querySelector('details.archived-rooms').open = true; });
+    await type(page, 'far');
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/archive/search?q=far'), 200, [{ room_id: 'rm_far', room_name: 'far', snippet: 's', message_id: 'm9' }]); await settle(page);
+    await page.$eval('.archive-hit', node => node.click());
+    const loading = await waitRequest(page, 'GET', '/api/rooms/rm_far');
+    await page.evaluate(() => window.__sidebar.reset());
+    await answer(page, loading, 200, room('rm_far', 'prj_a', 'far')); await settle(page);
+    assert.deepEqual(await calls(page), [], 'a reset takes the room a hit asked for');
+    await page.close();
+  }
+
+  // The sort menu: it opens on the chosen order, moves with the arrows, closes with Escape (the focus back on the button) or a click outside, and a
+  // choice reorders the projects, keeps the choice in the browser and sends it to the server.
+  {
+    const page = await mount();
+    const menu = () => page.evaluate(() => ({ hidden: document.querySelector('#rooms-sort-menu').hidden, expanded: document.querySelector('#rooms-sort').getAttribute('aria-expanded'), focus: document.activeElement.dataset.sort || document.activeElement.id,
+      checked: [...document.querySelectorAll('.sort-item')].map(item => item.getAttribute('aria-checked')) }));
+    assert.deepEqual([(await menu()).hidden, (await menu()).expanded, (await menu()).checked], [true, 'false', ['false', 'false', 'true']]);
+    await page.$eval('#rooms-sort', node => node.click());
+    assert.deepEqual(await menu(), { hidden: false, expanded: 'true', focus: 'manual', checked: ['false', 'false', 'true'] });
+    await page.keyboard.press('ArrowDown');
+    assert.equal((await menu()).focus, 'name');
+    await page.keyboard.press('ArrowUp'); await page.keyboard.press('ArrowUp');
+    assert.equal((await menu()).focus, 'activity');
+    await page.keyboard.press('Escape');
+    assert.deepEqual([(await menu()).hidden, (await menu()).focus], [true, 'rooms-sort']);
+    await page.$eval('#rooms-sort', node => node.click());
+    await page.mouse.click(700, 500);
+    assert.deepEqual([(await menu()).hidden, (await menu()).expanded], [true, 'false']);
+    const projectsInOrder = () => page.$$eval('#projects > .room-group', nodes => nodes.map(node => node.dataset.roomId));
+    assert.deepEqual(await projectsInOrder(), ['rm_ah', 'rm_bh']);
+    await page.$eval('#rooms-sort', node => node.click());
+    await page.$eval('.sort-item[data-sort=name]', node => node.click());
+    assert.deepEqual([(await menu()).hidden, (await menu()).checked, await page.evaluate(() => localStorage.getItem('aimebu2.ui.sidebar_sort.usr_me'))], [true, ['true', 'false', 'false'], 'name']);
+    const saved = await waitRequest(page, 'PUT', '/api/me/preferences');
+    assert.deepEqual(await page.evaluate(index => window.__requests[index].body, saved), { preferences: { sidebar_sort: 'name' } });
+    await page.$eval('#rooms-sort', node => node.click());
+    await page.$eval('.sort-item[data-sort=activity]', node => node.click());
+    assert.deepEqual(await projectsInOrder(), ['rm_ah', 'rm_bh'], 'by latest activity the project with the newer room leads');
+    await page.close();
+  }
+
+  // The manual order of projects: the move buttons of a home row, the drag of its handle onto another project's row, the end rows disabled, the order
+  // kept in the browser and sent to the server, and dragging that is not a project drag changes nothing.
+  {
+    const page = await mount();
+    const order = () => page.$$eval('#projects > .room-group', nodes => nodes.map(node => node.dataset.roomId));
+    const moves = () => page.evaluate(() => ({ upFirst: document.querySelector('[data-room-id=rm_ah] .project-move-up').disabled, downFirst: document.querySelector('[data-room-id=rm_ah] .project-move-down').disabled, downLast: document.querySelector('[data-room-id=rm_bh] .project-move-down').disabled,
+      grip: document.querySelector('[data-room-id=rm_ah] .project-grip').getAttribute('aria-label') }));
+    assert.deepEqual(await moves(), { upFirst: true, downFirst: false, downLast: true, grip: 'Drag to move Alpha' });
+    await page.$eval('[data-room-id=rm_ah] .project-move-down', node => node.click());
+    assert.deepEqual(await order(), ['rm_bh', 'rm_ah']);
+    assert.equal(await page.evaluate(() => localStorage.getItem('aimebu2.ui.sidebar_project_order.usr_me')), '["prj_b","prj_a","prj_c"]');
+    const saved = await waitRequest(page, 'PUT', '/api/me/preferences');
+    assert.deepEqual(await page.evaluate(index => window.__requests[index].body, saved), { preferences: { sidebar_project_order: '["prj_b","prj_a","prj_c"]' } });
+    await page.$eval('[data-room-id=rm_ah] .project-move-up', node => node.click());
+    assert.deepEqual(await order(), ['rm_ah', 'rm_bh']);
+    const drag = (type, target, y) => page.evaluate((type, target, y) => { const row = document.querySelector(`[data-room-id=${target}] > .room-row`); const box = row.getBoundingClientRect(); window.__transfer ||= new DataTransfer();
+      row.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: window.__transfer, clientY: box.top + box.height * y })); return [row.classList.contains('drop-before'), row.classList.contains('drop-after')]; }, type, target, y);
+    await drag('dragstart', 'rm_ah', 0.5);
+    assert.deepEqual(await drag('dragover', 'rm_bh', 0.9), [false, true], 'over the lower half the drop goes after');
+    assert.deepEqual(await drag('dragover', 'rm_bh', 0.1), [true, false]);
+    await drag('dragover', 'rm_bh', 0.9);
+    await drag('drop', 'rm_bh', 0.9);
+    assert.deepEqual(await order(), ['rm_bh', 'rm_ah'], 'the dropped project follows the row it was dropped on');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('.drop-before, .drop-after').length), 0);
+    await drag('dragstart', 'rm_gen', 0.5); // a task room is no project
+    assert.deepEqual(await drag('dragover', 'rm_bh', 0.9), [false, false]);
+    await page.close();
+  }
+
+  // Saving the sort or the manual order is fire-and-forget: the list keeps its own cache and the server copy follows. A save still out when the list is
+  // reset or destroyed, answered well or badly, changes nothing, asks for nothing more and shows no error; saves of one name go out one at a time.
+  {
+    const triggers = {
+      sort: async page => { await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=name]', node => node.click()); },
+      manual: page => page.$eval('[data-room-id=rm_ah] .project-move-down', node => node.click()),
+    };
+    for (const [what, trigger] of Object.entries(triggers)) {
+      for (const how of ['reset']) {
+        for (const status of [200, 500]) {
+          const page = await mount();
+          await hold(page, 'PUT /api/me/preferences');
+          await trigger(page);
+          const saved = await waitRequest(page, 'PUT', '/api/me/preferences');
+          await page.evaluate(how => { window.__sidebar[how](); window.__before = { sort: window.__sidebar.sort, manual: String(window.__sidebar.manual), sent: window.__requests.length }; }, how);
+          await answer(page, saved, status, status === 200 ? { preferences: {} } : { error: 'nope' });
+          await settle(page);
+          assert.deepEqual(await page.evaluate(() => ({ sort: window.__sidebar.sort, manual: String(window.__sidebar.manual), sent: window.__requests.length })), await page.evaluate(() => window.__before), `${what}: a save answered ${status} after a ${how} changes nothing and sends nothing`);
+          assert.deepEqual([await page.$$eval('#projects > *', nodes => nodes.length), await page.evaluate(() => !!document.querySelector('#app-dialog')?.open), await calls(page)], [0, false, []], `${what}: nor draws, opens a dialog or selects (${how}, ${status})`);
+          await page.close();
+        }
+      }
+    }
+    // Two saves of one name: the second waits for the first, so the older value can never land after the newer one.
+    for (const [what, move] of [['manual', page => page.$eval('[data-room-id=rm_ah] .project-move-down', node => node.click())], ['sort', async page => { await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=name]', node => node.click()); }]]) {
+      const page = await mount();
+      await hold(page, 'PUT /api/me/preferences');
+      await move(page);
+      const first = await waitRequest(page, 'PUT', '/api/me/preferences');
+      if (what === 'manual') await page.$eval('[data-room-id=rm_bh] .project-move-down', node => node.click());
+      else { await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=activity]', node => node.click()); }
+      await settle(page);
+      assert.equal(await count(page, 'PUT', '/api/me/preferences'), 1, `${what}: the second save waits while the first is out`);
+      await answer(page, first, 500, { error: 'nope' });
+      const second = await waitRequest(page, 'PUT', '/api/me/preferences');
+      const bodies = await page.evaluate(() => window.__requests.filter(request => request.method === 'PUT' && request.path === '/api/me/preferences').map(request => request.body));
+      assert.equal(bodies.length, 2, `${what}: it goes out after the first fails`);
+      assert.deepEqual(bodies[1], what === 'manual' ? { preferences: { sidebar_project_order: '["prj_a","prj_b","prj_c"]' } } : { preferences: { sidebar_sort: 'activity' } }, `${what}: it carries the latest value`);
+      await answer(page, second, 200, { preferences: {} });
+      await page.close();
+    }
+  }
+
+  // A save queued behind one that is still out belongs to the person who made it: if someone else is signed in by the time the first answer comes,
+  // it is dropped rather than sent with their cookie.
+  for (const [what, first, second] of [['manual', page => page.$eval('[data-room-id=rm_ah] .project-move-down', node => node.click()), page => page.$eval('[data-room-id=rm_bh] .project-move-down', node => node.click())],
+    ['sort', async page => { await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=name]', node => node.click()); }, async page => { await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=activity]', node => node.click()); }]]) {
+    const page = await mount();
+    await hold(page, 'PUT /api/me/preferences');
+    await first(page);
+    const out = await waitRequest(page, 'PUT', '/api/me/preferences');
+    await second(page);
+    await page.evaluate(async () => { (await import('/js/api.js')).setSession({ csrf_token: 'other', id: 'usr_other', owner: false, admin: false }); });
+    await answer(page, out, 200, { preferences: {} });
+    await settle(page);
+    assert.equal(await count(page, 'PUT', '/api/me/preferences'), 1, `${what}: a queued save is dropped when another person is signed in`);
     await page.close();
   }
 
