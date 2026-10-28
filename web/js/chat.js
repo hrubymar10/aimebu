@@ -15,7 +15,7 @@ import { openSenderProfile } from './sender-profile.js';
 import { renderVisualPlan } from './visual-plan.js';
 import { RoomScopeControl, RoomUsage } from './pages/project/room-panels.js';
 import { Schedules } from './schedules.js';
-import { RoomMembers } from './room-members.js';
+import { RoomMembers } from './pages/members/page.js';
 import { QuickCommands } from './quick-commands.js';
 import { MacroAutocomplete } from './macros.js';
 import { MentionAutocomplete, MentionIndex, highlightMentions } from './mentions.js';

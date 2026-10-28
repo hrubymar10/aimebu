@@ -128,6 +128,20 @@ async function main() {
     await page.close();
   }
 
+  // A list destroyed while its read is out takes the answer, or the failure, and does nothing with it; nothing is asked for afterwards.
+  {
+    for (const [code, body] of [[200, members], [500, { message: 'late failure' }]]) {
+      const page = await mount();
+      await load(page, 'r1');
+      await page.evaluate(() => window.__members.destroy());
+      await answer(page, 0, code, body); await settle(page);
+      assert.deepEqual([await status(page), (await groups(page)).length, await page.evaluate(() => window.__members.store.members.value)], ['Loading members…', 0, null], `${code}: a destroyed list draws and keeps nothing, and its status is left as it was`);
+      await load(page, 'r2');
+      assert.equal(await page.evaluate(() => window.__requests.length), 1, 'a destroyed list asks for nothing');
+      await page.close();
+    }
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('room members page: ok');

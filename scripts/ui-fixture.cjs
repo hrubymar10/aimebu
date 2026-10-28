@@ -164,12 +164,13 @@ const FIXTURE = async () => {
   const guardData = await new HttpLimitGuardSource().load();
   render(html`<${LimitRows} guard=${guardData} />`, document.querySelector('#health-popover'));
   // The room dialog's member list with every row kind, so the audits see people, agents, badges and singleton roles.
-  const { RoomMembers } = await import('/js/room-members.js');
+  const { RoomMembers } = await import('/js/pages/members/page.js');
   new RoomMembers(document.querySelector('#room-member-list')).render({
     humans: [{ id: 'u1', login: 'ada', role: 'owner' }, { id: 'u2', login: 'bert', role: 'viewer' }],
     agents: [{ id: 'a1', slug: 'tessa', role_key: 'lead', role_label: 'Lead', role_emoji: '👑', singleton: true, desired: 'active', observed: 'in_turn' }, { id: 'a2', slug: 'drew', role_key: 'worker', role_label: 'Worker', role_emoji: '🛠', desired: 'stopped', observed: 'stopped', role_deleted: true }],
     singletons: [{ role_key: 'lead', label: 'Lead', emoji: '👑', held_by: { agent_id: 'a1', slug: 'tessa', in_this_room: true } }, { role_key: 'scribe', label: 'Scribe', emoji: '', held_by: null }],
   });
+  await new Promise(resolve => setTimeout(resolve, 50)); // Preact draws the list on the next tick
   // The usages column, rendered by the real popover over the mock snapshots (open, so the audits see it).
   const { UsagesPopover } = await import('/js/usages-popover.js'), { MockUsagesSource } = await import('/js/usages-source.js');
   const mockUsages = new MockUsagesSource(), usagesColumn = new UsagesPopover(mockUsages, () => {});

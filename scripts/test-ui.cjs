@@ -5596,10 +5596,11 @@ async function main() {
       assert.deepEqual(listed.lists, ['People in this room', 'Agents in this room', 'Singleton roles']);
       // Hostile names stay text, and a slow answer for a room that was reset is dropped.
       const inert = await first.evaluate(async () => {
-        const { RoomMembers } = await import('/js/room-members.js');
+        const { RoomMembers } = await import('/js/pages/members/page.js');
         const root = document.createElement('section'); root.innerHTML = '<p class="room-members-status"></p><div class="room-members-body"></div>'; document.body.append(root);
         const view = new RoomMembers(root);
         view.render({ humans: [{ id: 'u', login: '<img src=x onerror=window.__memberXss=1>', role: '<b>owner</b>' }], agents: [{ id: 'a', slug: '<i>slug</i>', role_key: 'k', role_label: '<u>Role</u>', role_emoji: '<s>x</s>', singleton: true, desired: 'active', observed: 'idle' }], singletons: [{ role_key: 'k', label: '<em>Lead</em>', emoji: '', held_by: { agent_id: 'a', slug: '<i>slug</i>', in_this_room: false } }] });
+        await new Promise(resolve => setTimeout(resolve, 50)); // Preact draws the list on the next tick
         const out = { markup: root.querySelectorAll('img, b, i, u, s, em').length, xss: window.__memberXss || 0, held: root.querySelector('.room-members-singletons .room-member-state').textContent };
         const original = window.fetch; let release;
         window.fetch = (input, options) => String(input).endsWith('/members') ? new Promise(resolve => { release = () => resolve(new Response(JSON.stringify({ humans: [{ id: 'late', login: 'late', role: 'viewer' }], agents: [], singletons: [] }), { headers: { 'Content-Type': 'application/json' } })); }) : original(input, options);

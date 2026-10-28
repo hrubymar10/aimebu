@@ -342,7 +342,7 @@ renders only the cards that changed and the clock re-renders only the age and th
 folder (`SpawnStore` over a `MachineStore` for the machine and its folder; `spawn-model.js` holds the pure rules for the tool and model lists, the
 v1 banner, the worktree box and the request) and so is the Switch dialog (`SwitchStore`, sharing `MachineStore`). Every opening, catalog read,
 name read, call and folder save carries a number and says nothing once a newer one started, the dialog was closed or the panel is gone.
-`room-members.js` and `sender-profile.js` are the remaining parts of the step.
+The room dialog's member list is a page of its own (`web/js/pages/members/`: a `MembersStore` whose loads take a ticket, with `model.js` for the state words); `sender-profile.js` is the remaining part of the step.
 
 ### Step 5: sidebar and navigation
 
