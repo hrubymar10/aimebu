@@ -87,7 +87,7 @@ export class AgentsPanel {
   notifyCards() { for (const listener of this.cardListeners) listener(); }
   reset() {
     this.store.reset();
-    this.setMobileOpen(false); this.spawnDialog.close(); this.switchDialog.close(); document.querySelector('#spawn-open').disabled = true;
+    this.setMobileOpen(false); this.spawnDialog.close(); this.switchDialog.roomChanged(); document.querySelector('#spawn-open').disabled = true;
   }
   setRoomFacts(room) {
     if (this.store.cardsRoomID !== room.id) this.switchDialog.roomChanged();

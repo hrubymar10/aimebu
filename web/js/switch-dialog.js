@@ -19,7 +19,11 @@ export class SwitchDialog {
   get source() { return this.host.source; }
   get refreshGeneration() { return this.host.refreshGeneration; }
   refresh() { return this.host.refresh(); }
-  roomChanged() { this.switchDialog.close(); this.switchAgentID = null; }
+  // The room changed or the panel was reset: the opening is over, and what it was waiting for starts nothing.
+  roomChanged() {
+    this.switchDialog.close(); this.switchAgentID = null;
+    this.switchOpening = (this.switchOpening || 0) + 1; this.switchCatalogRequestID = (this.switchCatalogRequestID || 0) + 1; this.switchMachine.cancel();
+  }
   close() { this.switchDialog.close(); }
   async openSwitch(id) {
     const agent = this.cards.get(id); if (!agent) return;

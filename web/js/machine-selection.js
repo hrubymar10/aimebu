@@ -16,6 +16,8 @@ export class MachineSelection {
   }
   // A save of the last opening, or of the machine that was on show, is over for the view that replaces it: it neither speaks nor holds the button.
   endSave() { this.saveID = (this.saveID || 0) + 1; document.querySelector(`#${this.prefix}-save-folder`).disabled = false; }
+  // The dialog that was loading is gone: no read of the load goes on, and a save in flight neither speaks nor holds the button.
+  cancel() { this.loadID = (this.loadID || 0) + 1; this.endSave(); }
   get id() { return this.select.value; }
   get machine() { return this.machines?.find(machine => machine.id === this.id); }
   get folderReady() { return !!this.machine?.is_host || !!this.folders?.get(this.id) && this.input.value.trim() === this.folders.get(this.id); }
