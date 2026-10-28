@@ -548,6 +548,23 @@ async function main() {
     await page.close();
   }
 
+  // A Spawn that is still out when the dialog was cancelled changes nothing when it is answered: nobody is taken anywhere and no refusal is shown.
+  for (const [status, reply] of [[200, agent('a2', 'nova')], [409, { message: 'that name is in use', error: 'name_in_use' }], [400, { message: 'refused', error: 'invalid' }]]) {
+    const page = await mount({ current: room('r1') });
+    await page.evaluate(() => { window.__panel.showRoom = target => window.__calls.push(['showRoom', target.id]); });
+    await open(page); await ready(page);
+    await page.$eval('#spawn-form button[type=submit]', node => node.click());
+    const held = await waitRequest(page, 'POST', '/api/rooms/r1/agents');
+    await page.evaluate(() => document.querySelector('#spawn-cancel').click());
+    await calls(page);
+    const reads = await page.evaluate(() => window.__requests.filter(request => request.method === 'GET' && request.path.startsWith('/api/rooms/r1/agents')).length);
+    await answer(page, held, status, reply); await settle(page);
+    const after = await page.evaluate(() => ({ error: document.querySelector('#agents-error').textContent, nameError: document.querySelector('#spawn-name-error').textContent, open: document.querySelector('#spawn-dialog').open }));
+    assert.deepEqual([after, await calls(page)], [{ error: '', nameError: '', open: false }, []], `${status}: a spawn answered after Cancel changes nothing`);
+    assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'GET' && request.path.startsWith('/api/rooms/r1/agents')).length) <= reads + 1, true, `${status}: at most the source's own refresh`);
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('spawn page: ok');
