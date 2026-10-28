@@ -49,6 +49,8 @@ function installServer() {
       room.messages.push(message); window.__posted.push(body);
       return ok(message);
     }
+    if (method === 'POST' && parts[1] === 'rooms' && parts[3] === 'attachments') { window.__uploads = (window.__uploads || 0) + 1; return ok({ id: `att_${window.__uploads}`, name: `file${window.__uploads}.txt`, mime: 'text/plain', url: `/files/${window.__uploads}`, size: 5 }); }
+    if (method === 'DELETE' && parts[1] === 'rooms' && parts[3] === 'attachments') return { status: 204, body: null };
     if (method === 'GET' && parts[1] === 'messages' && parts[3] === 'reactions') return ok(window.__data.reactions[parts[2]] || []);
     if (method === 'GET' && parts[1] === 'message-numbers') {
       for (const [id, room] of Object.entries(window.__data.rooms)) { const found = room.messages.find(message => message.no === Number(parts[2])); if (found) return ok({ id: found.id, room_id: id, no: found.no }); }
@@ -60,7 +62,7 @@ function installServer() {
   };
   window.__respond = respond;
   window.fetch = (input, options = {}) => new Promise((resolve, reject) => {
-    const request = { path: String(input), method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : undefined, answered: false, aborted: false };
+    const request = { path: String(input), method: options.method || 'GET', body: typeof options.body === 'string' ? JSON.parse(options.body) : undefined, answered: false, aborted: false };
     request.answer = (status, body) => { request.answered = true; resolve(new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })); };
     options.signal?.addEventListener('abort', () => { request.aborted = true; reject(new DOMException('aborted', 'AbortError')); });
     window.__requests.push(request);
@@ -317,6 +319,139 @@ async function main() {
     await serve(reset, second); await reset.evaluate(() => window.__jumping); await settle(reset);
     assert.deepEqual(await calls(reset), [], 'nor after a reset');
     await reset.close();
+  }
+
+  const typeDraft = (page, text) => page.evaluate(text => { const draft = document.querySelector('#composer textarea[name=body]'); draft.value = text; draft.dispatchEvent(new Event('input', { bubbles: true })); }, text);
+  const draftText = page => page.evaluate(() => document.querySelector('#composer textarea[name=body]').value);
+  const submit = page => page.evaluate(() => { window.__sending = window.__chat.send(); });
+  const noticeText = page => page.evaluate(() => document.querySelector('.composer-notice')?.textContent || '');
+  const posts = page => page.evaluate(() => window.__requests.filter(request => request.method === 'POST' && /\/messages$/.test(request.path)).map(request => request.body));
+  const file = (page, name, size = 5) => page.evaluate((name, size) => new File(['x'.repeat(size)], name, { type: 'text/plain' }) && null, name, size);
+  const addFile = (page, name = 'a.txt', size = 5) => page.evaluate((name, size) => { window.__adding = window.__chat.addFiles([new File(['x'.repeat(size)], name, { type: 'text/plain' })]); }, name, size);
+  const pending = page => page.evaluate(() => [...document.querySelectorAll('#pending-attachments .pending-image')].map(node => node.textContent.trim()).concat(document.querySelector('#pending-attachments > span:last-child:not(.pending-image)')?.textContent ? [document.querySelector('#pending-attachments > span:last-child').textContent] : []));
+
+  // Sending: the text goes to the open room and the draft empties, the reply chip goes, the message is drawn at the bottom; a failure keeps the draft and
+  // says why in the composer.
+  {
+    const page = await mount();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await typeDraft(page, 'hello there'); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
+    assert.deepEqual([await posts(page), await draftText(page), await ids(page).then(list => list.at(-1)), await page.evaluate(() => { const list = document.querySelector('#messages'); return list.scrollHeight - list.scrollTop - list.clientHeight < 2; })], [[{ body: 'hello there', attachments: [] }], '', 'rm_a_m131', true]);
+    await page.evaluate(() => { const message = window.__chat.messages.get('rm_a_m120'); window.__chat.setReply(message); });
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#reply-chip').hidden, document.querySelector('#reply-chip-jump').textContent]), [false, 'Replying to ann: rm_a message 120']);
+    await typeDraft(page, 'a reply'); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
+    assert.deepEqual([(await posts(page)).at(-1), await page.evaluate(() => document.querySelector('#reply-chip').hidden), await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m132] .quote')?.textContent)], [{ body: 'a reply', attachments: [], reply_to: 'rm_a_m120' }, true, '↪ #120 ann: rm_a message 120']);
+    await typeDraft(page, '   '); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
+    assert.equal((await posts(page)).length, 2, 'an empty draft is not sent');
+    await page.evaluate(() => { window.__respond0 = window.__respond; window.__holds.push({ method: 'POST', re: '/messages$' }); });
+    await typeDraft(page, 'will fail'); await submit(page);
+    await answer(page, await waitRequest(page, 'POST', '/messages$'), 500, { message: 'The room is read-only.' });
+    await page.evaluate(() => window.__sending); await settle(page);
+    assert.deepEqual([await draftText(page), await noticeText(page)], ['will fail', 'The room is read-only.'], 'a failure keeps the draft and says why');
+    await page.close();
+  }
+
+  // A send still out when another room is opened or the chat is reset leaves the new view alone: no notice, no row, no cleared draft of the new room.
+  for (const how of ['open', 'reset']) {
+    for (const outcome of ['ok', 'fail']) {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await hold(page, 'POST', '/messages$');
+      await typeDraft(page, 'out the door'); await submit(page);
+      const held = await waitRequest(page, 'POST', '/messages$');
+      if (how === 'open') { await openRoom(page, 'rm_b'); await opened(page); } else { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_b'); await opened(page); }
+      await settle(page); await typeDraft(page, 'next room text'); await calls(page);
+      if (outcome === 'ok') await serve(page, held); else await answer(page, held, 500, { message: 'nope' });
+      await page.evaluate(() => window.__sending); await settle(page);
+      assert.deepEqual([await draftText(page), await noticeText(page), await ids(page).then(list => list.length), await calls(page)], ['next room text', '', 5, []], `${how}/${outcome}: a late send changes nothing in the new room`);
+      await page.close();
+    }
+  }
+
+  // Sending from a history window shows the latest view with the new message instead of appending among old ones.
+  {
+    const page = await mount();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10')); await settle(page);
+    await typeDraft(page, 'from the past'); await submit(page); await page.evaluate(() => window.__sending);
+    await page.waitForFunction(() => window.__chat.contextMode === false && !!document.querySelector('[data-message-id=rm_a_m131]'), { timeout: 5000 });
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, document.querySelector('#messages').lastElementChild.dataset.messageId]), [true, 'rm_a_m131']);
+    await page.close();
+  }
+
+  // Attachments: a picked file uploads (the composer waits), shows in the strip and goes with the message; limits say why; a file that arrives after
+  // the room changed is deleted again, and a reset aborts the upload.
+  {
+    const page = await mount();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await hold(page, 'POST', '/attachments$');
+    await addFile(page, 'a.txt');
+    const upload = await waitRequest(page, 'POST', '/attachments$');
+    assert.deepEqual([await pending(page), await page.evaluate(() => document.querySelector('#composer button[type=submit]').disabled)], [['Uploading 1…'], true], 'the composer waits for the upload');
+    await serve(page, upload); await page.evaluate(() => window.__adding); await settle(page);
+    assert.deepEqual([await pending(page), await page.evaluate(() => document.querySelector('#composer button[type=submit]').disabled)], [['file1.txt'], false]);
+    await typeDraft(page, ''); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
+    assert.deepEqual([(await posts(page)).at(-1), await pending(page)], [{ body: '', attachments: ['att_1'] }, []], 'a message of only a file is sent, and the strip empties');
+    await addFile(page, 'empty.txt', 0); await page.evaluate(() => window.__adding);
+    assert.equal(await noticeText(page), 'empty.txt is empty.');
+    await addFile(page, 'big.bin', 11 * 1024 * 1024); await page.evaluate(() => window.__adding);
+    assert.match(await noticeText(page), /big\.bin is too big/);
+    await page.close();
+  }
+  for (const how of ['open', 'reset']) {
+    const page = await mount();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await hold(page, 'POST', '/attachments$');
+    await addFile(page, 'late.txt');
+    const upload = await waitRequest(page, 'POST', '/attachments$');
+    if (how === 'open') { await openRoom(page, 'rm_b'); await opened(page); } else { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_b'); await opened(page); }
+    await settle(page);
+    const aborted = await page.evaluate(index => window.__requests[index].aborted, upload);
+    if (!aborted) await serve(page, upload);
+    await page.evaluate(() => window.__adding.catch(() => {})); await settle(page);
+    assert.deepEqual([await pending(page), await noticeText(page), how === 'reset' ? aborted : await count(page, 'DELETE', '/attachments/att_1$'), await page.evaluate(() => document.querySelector('#composer button[type=submit]').disabled)], [[], '', how === 'reset' ? true : 1, false], `${how}: a late upload is dropped (deleted, or aborted by a reset) and leaves the composer usable`);
+    await page.close();
+  }
+
+  // A failed upload says which file and why; once the room has changed it says nothing.
+  {
+    const page = await mount();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await hold(page, 'POST', '/attachments$');
+    await addFile(page, 'bad.txt');
+    await answer(page, await waitRequest(page, 'POST', '/attachments$'), 413, { message: 'File too large.' });
+    await page.evaluate(() => window.__adding); await settle(page);
+    assert.deepEqual([await noticeText(page), await pending(page)], ['bad.txt: File too large.', []]);
+    await addFile(page, 'worse.txt');
+    const late = await waitRequest(page, 'POST', '/attachments$');
+    await openRoom(page, 'rm_b'); await opened(page); await settle(page);
+    await answer(page, late, 500, { message: 'Broken.' });
+    await page.evaluate(() => window.__adding); await settle(page);
+    assert.equal(await noticeText(page), '', 'a failure after the room changed says nothing');
+    await page.close();
+  }
+
+  // A reply to a question open for this person that is one of its proposed answers answers it through the Inbox instead of posting a message; a refusal
+  // says so, keeps the text and posts nothing.
+  {
+    const page = await mount();
+    await page.evaluate(() => { window.__data.rooms.rm_a.messages[119] = { ...window.__data.rooms.rm_a.messages[119], author_kind: 'agent', author_id: 'agt_zed', author_name: 'zed', body: 'Which one?', proposed_answers: ['alpha', 'beta'] }; window.__answered = []; });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => {
+      window.__chat.agents = new Map([['agt_zed', { slug: 'zed' }]]);
+      window.__chat.setInbox({ answer: async (item, text) => { window.__answered.push([item.id, text]); return window.__answerResult ?? true; } });
+      window.__chat.updateAnswerControls([{ id: 'inb_1', rev: 1, kind: 'question', message_id: 'rm_a_m120', proposed_answers: ['alpha', 'beta'], options: [], free_text: false, can_decide: true }]);
+      window.__chat.setReply(window.__chat.messages.get('rm_a_m120'));
+    });
+    await typeDraft(page, '@zed beta'); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
+    assert.deepEqual([await page.evaluate(() => window.__answered), (await posts(page)).length, await draftText(page), await page.evaluate(() => document.querySelector('#reply-chip').hidden)], [[['inb_1', '@zed beta']], 0, '', true], 'an answer goes through the inbox, not as a message');
+    await page.evaluate(() => { window.__answerResult = false; window.__chat.setReply(window.__chat.messages.get('rm_a_m120')); });
+    await typeDraft(page, '@zed alpha'); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
+    assert.deepEqual([await noticeText(page), await draftText(page), (await posts(page)).length], ['Could not send the answer', '@zed alpha', 0], 'a refused answer keeps the text');
+    await page.evaluate(() => { window.__answerResult = true; window.__chat.setReply(window.__chat.messages.get('rm_a_m120')); });
+    await typeDraft(page, 'something else entirely'); await submit(page); await page.evaluate(() => window.__sending); await settle(page);
+    assert.deepEqual([(await posts(page)).at(-1), (await page.evaluate(() => window.__answered)).length], [{ body: 'something else entirely', attachments: [], reply_to: 'rm_a_m120' }, 2], 'text that is not an option is an ordinary reply');
+    await page.close();
   }
 
   await browser.close(); server.close();
