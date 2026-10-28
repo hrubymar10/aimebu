@@ -664,6 +664,7 @@ export class AgentsPanel {
   // openSpawn({ resume }) opens the dialog to start an agent from imported v1 history: the name is the old one, the tool and model are
   // what v1 ran, and the v1 session is continued when the harness can. Without it, it is the ordinary spawn dialog.
   async openSpawn({ resume = null } = {}) {
+    this.catalogRequestID = (this.catalogRequestID || 0) + 1; // a catalog asked for by an earlier opening is no answer to this one
     this.resetWorktreeChoice();
     // Nothing of the last opening is left to act on: the role list and the lead-only rule are read again
     // below, and until they are, Start stays off. Otherwise a role picked in the last opening (the lead, in a lead-only home room) could

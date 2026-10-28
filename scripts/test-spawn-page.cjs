@@ -499,6 +499,25 @@ async function main() {
     await page.close();
   }
 
+  // The tool catalog of an earlier opening, answered while the new opening is still waiting for its machines, does not fill the new one.
+  {
+    const page = await mount({ auto: stable({ 'GET /api/spawn-catalog?machine_id=m1': undefined }) });
+    await open(page);
+    const first = await waitRequest(page, 'GET', '/api/spawn-catalog?machine_id=m1');
+    await page.evaluate(() => document.querySelector('#spawn-cancel').click());
+    await page.evaluate(() => { window.__auto['GET /api/machines?project_id=p1'] = null; });
+    await open(page);
+    await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/machines?project_id=p1').length === 2);
+    const heldMachines = await page.evaluate(() => window.__requests.findLastIndex(request => request.path === '/api/machines?project_id=p1'));
+    await answer(page, first, 200, catalog); await settle(page);
+    assert.deepEqual([(await form(page)).tools, (await form(page)).submit], [[], true], 'the new opening has no tools from the earlier opening');
+    await answer(page, heldMachines, 200, machines);
+    const second = await waitRequest(page, 'GET', '/api/spawn-catalog?machine_id=m1');
+    await answer(page, second, 200, catalog); await settle(page);
+    assert.deepEqual([(await form(page)).tool, (await form(page)).submit], ['Codex', false], 'the new opening then completes normally');
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('spawn page: ok');
