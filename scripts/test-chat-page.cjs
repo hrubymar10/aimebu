@@ -908,6 +908,80 @@ async function main() {
     await history.close();
   }
 
+  // The room's header (icon, title, member count and what its lifecycle or project says) follows the room, and the settings dialog shows what this person
+  // may do with it: the facts, the title field for whoever may rename, archive or reopen, remove, leave and hide, the notes, the worktree and the memory.
+  {
+    const header = page => page.evaluate(() => { const icon = document.querySelector('#room-icon'), members = document.querySelector('#room-members'); return { title: document.querySelector('#room-title').textContent, icon: [icon.textContent, icon.hidden, icon.classList.contains('dm')], count: members.querySelector('.room-members-count').textContent, status: members.querySelector('.room-header-status')?.textContent || '', label: members.getAttribute('aria-label'), tooltip: members.title, hidden: members.hidden }; });
+    const page = await mount();
+    assert.deepEqual(await header(page), { title: 'Choose a room', icon: ['', true, false], count: '', status: '', label: null, tooltip: '', hidden: true });
+    for (const [extra, expected] of [
+      [{}, ['#', false, false, '2 members', '']],
+      [{ kind: 'home', title: 'Alpha' }, ['⌂', false, false, '2 members', '']],
+      [{ kind: 'dm', member_count: 1 }, ['@', false, true, '1 member', '']],
+      [{ agent_chat: true }, ['⇄', false, false, '2 members', '']],
+      [{ lifecycle: 'closing' }, ['#', false, false, '2 members · Closing…', 'Closing…']],
+      [{ lifecycle: 'closed' }, ['#', false, false, '2 members · Archived', 'Archived']],
+    ]) {
+      await openRoom(page, 'rm_a', extra); await opened(page); await settle(page);
+      const state = await header(page);
+      assert.deepEqual([state.title, ...state.icon, state.count, state.status, state.label, state.tooltip, state.hidden], [extra.title || 'rm_a', expected[0], expected[1], expected[2], String(extra.member_count ?? 2), expected[4], expected[3], expected[3], false]);
+    }
+    await page.evaluate(() => { window.__chat.projectArchived = () => true; window.__chat.setRoomFacts(window.__chat.room); }); await settle(page);
+    assert.equal((await header(page)).status, 'Project archived');
+    await page.evaluate(() => { window.__chat.room.title = 'renamed elsewhere'; window.__chat.setRoomFacts(window.__chat.room); }); await settle(page);
+    assert.equal((await header(page)).title, 'renamed elsewhere', 'a rename by someone else reaches the header');
+    await page.evaluate(() => window.__chat.reset()); await settle(page);
+    assert.deepEqual([(await header(page)).title, (await header(page)).icon[1], (await header(page)).hidden], ['Choose a room', true, true], 'a reset takes the room away');
+    await page.close();
+  }
+  {
+    const dialog = page => page.evaluate(() => {
+      const visible = node => !!node && !node.hidden && !node.closest('[hidden]');
+      const button = id => { const node = document.querySelector(id); return { shown: visible(node), disabled: node.disabled, label: node.getAttribute('aria-label'), title: node.title }; };
+      const section = node => ({ shown: visible(node), text: [...node.children].filter(child => !child.hidden).map(child => child.textContent.replace(/\s+/g, ' ').trim()).join(' ') });
+      return { open: document.querySelector('#room-info-dialog').open, rename: [visible(document.querySelector('#room-rename-form')), document.querySelector('#room-rename-title').value],
+        facts: [...document.querySelectorAll('#room-info-facts > *')].map(node => node.textContent), debug: [...document.querySelectorAll('#room-info-facts .room-fact-debug')].length,
+        lifecycle: button('#room-lifecycle'), leave: button('#room-leave'), remove: button('#room-remove'), hide: visible(document.querySelector('#room-hide')),
+        notes: section(window.__chat.notesSection), worktree: section(window.__chat.worktreeSection), memory: section(window.__chat.memorySection), error: document.querySelector('#room-info-error').textContent };
+    });
+    const show = async (extra, role = 'owner') => {
+      const page = await mount();
+      await page.evaluate(role => { window.__chat.projectRole = () => role; }, role);
+      await openRoom(page, 'rm_a', extra); await opened(page); await settle(page);
+      await page.evaluate(() => window.__chat.showRoomInfo()); await settle(page); await settle(page);
+      return page;
+    };
+    let page = await show({});
+    let state = await dialog(page);
+    assert.deepEqual([state.open, state.rename, state.facts, state.debug], [true, [true, 'rm_a'], ['Kind', 'task', 'Status', 'open', 'Members', '2', 'Room ID', 'rm_a'], 4], 'an owner renames the task room in its own field');
+    assert.deepEqual([state.lifecycle, state.leave.shown, state.remove, state.hide], [{ shown: true, disabled: false, label: 'Archive room', title: 'Archive room' }, false, { shown: true, disabled: true, label: 'Remove room', title: 'Archive the room before removing it' }, true]);
+    assert.deepEqual([state.notes, state.worktree.shown, state.memory.shown], [{ shown: true, text: 'Task notes Notes the agents keep for this task. They stay with this room. Open task notes' }, true, true]);
+    await page.$eval('#room-info-close', node => node.click());
+    assert.equal((await dialog(page)).open, false, 'Close closes the dialog');
+    await page.evaluate(() => { window.__chat.setRoomFacts({ ...window.__chat.room, lifecycle: 'closing' }); window.__chat.showRoomInfo(); }); await settle(page); await settle(page);
+    assert.deepEqual((await dialog(page)).lifecycle, { shown: true, disabled: true, label: 'Closing…', title: 'Closing…' }, 'a room that is closing cannot be archived again');
+    await page.evaluate(() => window.__chat.setRoomFacts({ ...window.__chat.room, lifecycle: 'closed' })); await settle(page);
+    state = await dialog(page);
+    assert.deepEqual([state.lifecycle, state.remove], [{ shown: true, disabled: false, label: 'Reopen room', title: 'Reopen room' }, { shown: true, disabled: false, label: 'Remove room', title: 'Remove this room and its messages for good' }], 'the open dialog follows the room\'s lifecycle');
+    await page.close();
+    page = await show({}, 'viewer');
+    state = await dialog(page);
+    assert.deepEqual([state.rename[0], state.facts.slice(0, 2), state.remove.shown], [false, ['Name', 'rm_a'], false], 'a viewer reads the name and cannot remove the room');
+    await page.close();
+    page = await show({ kind: 'home', title: 'Alpha' });
+    state = await dialog(page);
+    assert.deepEqual([state.lifecycle.shown, state.remove.shown, state.notes.text, state.worktree, state.memory.shown], [false, false, 'Project memory The home room has no task notes of its own: its agents use the project’s memory (project facts). Open project memory', { shown: true, text: 'Git worktree The home room works in the project folder. Task rooms can have their own Git worktree.' }, true]);
+    await page.close();
+    page = await show({ kind: 'dm' });
+    state = await dialog(page);
+    assert.deepEqual([state.rename[0], state.remove.shown, state.notes.shown, state.worktree.shown], [false, false, false, false], 'a private chat has no title field, removal, notes or worktree');
+    await page.close();
+    page = await show({ agent_chat: true });
+    state = await dialog(page);
+    assert.deepEqual([state.leave.shown, state.leave.label, state.memory.shown], [true, 'Leave chat', false], 'a chat between agents can be left and has no memory setting');
+    await page.close();
+  }
+
   // A destroyed chat (the replacement's adapter has destroy(); the hand-written chat does not): what was still out when it was destroyed changes nothing
   // and starts no request, and none of its entries sends one afterwards.
   if (REPLACED) {
