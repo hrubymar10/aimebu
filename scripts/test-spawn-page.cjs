@@ -565,6 +565,21 @@ async function main() {
     await page.close();
   }
 
+  // A close event that arrives after the dialog was opened again (the browser queues it after close()) does not wipe the start from history that
+  // the new opening set up.
+  {
+    const page = await mount();
+    const resume = { slug: 'old-bot', legacy_id: 'old-bot', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: false, reason: '' };
+    await open(page, { resume }); await ready(page);
+    await page.evaluate(() => document.querySelector('#spawn-dialog').dispatchEvent(new Event('close')));
+    await settle(page);
+    const state = await page.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, banner: document.querySelector('#spawn-resume').hidden, rooms: document.querySelector('#spawn-form').elements.start_room.options.length }));
+    assert.deepEqual([state.title, state.banner, state.rooms > 0], ['Start old-bot as a v2 agent', false, true], 'the late close event of an earlier opening changes nothing');
+    await page.evaluate(() => document.querySelector('#spawn-cancel').click()); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#spawn-form h2').textContent, document.querySelector('#spawn-resume').hidden]), ['Spawn', true], 'a real close still clears it');
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('spawn page: ok');

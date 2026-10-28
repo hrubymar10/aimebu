@@ -61,7 +61,8 @@ export class AgentsPanel {
     this.panelTitle = this.panel.querySelector('header h2');
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && this.profileID && !document.querySelector('dialog[open]')) { event.preventDefault(); this.closeProfile(); } });
     document.querySelector('#spawn-cancel').onclick = () => this.dialog.close();
-    this.dialog.addEventListener('close', () => { this.pendingResume = null; this.renderStartRooms(); this.renderResume(); });
+    // The browser queues the event after close(): one that arrives once the dialog was opened again belongs to the opening before.
+    this.dialog.addEventListener('close', () => { if (this.dialog.open) return; this.pendingResume = null; this.renderStartRooms(); this.renderResume(); });
     this.form.elements.tool.onchange = () => {
       this.defaultPreviewToken = (this.defaultPreviewToken || 0) + 1;
       // The person's tool is remembered on its own, so a catalog reload keeps it even when they never touched the model.
