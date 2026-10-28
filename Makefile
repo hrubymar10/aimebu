@@ -86,6 +86,7 @@ test-ui: ## Run Chromium smoke against a scratch server, then the Preact page te
 	node scripts/test-room-members-page.cjs
 	node scripts/test-sender-profile-page.cjs
 	node scripts/test-sidebar-page.cjs
+	node scripts/test-room-menu-page.cjs
 
 dev: ## Run the server with live reload
 	go tool air -c .air.toml
