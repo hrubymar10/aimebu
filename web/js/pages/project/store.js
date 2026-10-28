@@ -2,7 +2,7 @@ import { batch, signal } from '../../ui.js';
 import { request, rights } from '../../api.js';
 import { confirmDialog, formDialog } from '../../dialogs.js';
 import { createAgentSource } from '../../agent-source.js';
-import { ClaudeSessionImport } from '../../claude-session-import.js';
+import { ClaudeSessionImport } from '../claude-import/page.js';
 import { ScopeStore } from '../../components/scope-control.js';
 import { UsageSummaryStore } from '../../components/usage-summary.js';
 import { UsageLimitStore } from './usage-limit.js';
@@ -153,5 +153,5 @@ export class ProjectStore {
 
   lifecycle() { const view = this.view.value; return lifecycleView(this.project.value, view.canName); }
 
-  destroy() { this.alive = false; this.generation++; this.scope.destroy(); this.limit.destroy(); this.usage.destroy(); }
+  destroy() { this.alive = false; this.generation++; this.scope.destroy(); this.limit.destroy(); this.usage.destroy(); this.importer?.destroy(); }
 }

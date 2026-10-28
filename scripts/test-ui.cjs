@@ -2984,7 +2984,7 @@ async function main() {
       // (the first session of a folder works, the rest review), what is ticked is started in order as copies in rooms of their own, and a
       // spawn limit stops the rest and says so.
       const imported = await first.evaluate(async projectID => {
-        const { ClaudeSessionImport } = await import('/js/claude-session-import.js');
+        const { ClaudeSessionImport } = await import('/js/pages/claude-import/page.js');
         const calls = [];
         const sessions = [
           { id: 'aaaaaaaa-0000-4000-8000-000000000001', title: 'First of /p', cwd: '/p', modified_at: '2026-10-24T10:00:00Z', size: 100 },
@@ -3016,6 +3016,7 @@ async function main() {
           flags: [...document.querySelectorAll('#cc-import-list .cc-import-row')].map(row => [...row.querySelectorAll('.cc-session-flag')].map(flag => flag.textContent)),
         };
         document.querySelector('#cc-import-all').click();
+        await new Promise(resolve => setTimeout(resolve, 0)); // the page draws what the click changed
         shown.afterAll = { ticked: document.querySelectorAll('#cc-import-list input:checked').length, runDisabled: document.querySelector('#cc-import-run').disabled };
         document.querySelector('#cc-import-list select').value = 'reviewer';
         document.querySelector('#cc-import-run').click();
@@ -3039,7 +3040,7 @@ async function main() {
       assert.deepEqual(imported.afterRun, { ticked: 1, locked: [true, true, false] }, 'started sessions are locked, the unstarted one stays ticked for another try');
       // A Docker Claude harness that shares the host's Claude home is offered next to the native one; one that does not say so is not.
       assert.deepEqual(await first.evaluate(async projectID => {
-        const { ClaudeSessionImport } = await import('/js/claude-session-import.js');
+        const { ClaudeSessionImport } = await import('/js/pages/claude-import/page.js');
         const entry = (launcher, label, containerized, shares) => ({ tool: 'claude', variant: containerized ? 'docker' : 'native', launcher_id: launcher, containerized, shares_claude_home: shares, available: true, label, models: [{ id: 'haiku', default: true }] });
         const source = { roles: async () => [{ role_key: 'worker', label: 'Worker' }], claudeSessions: async () => ({ sessions: [] }), spawn: async () => ({}),
           catalog: async () => ({ tools: [entry('l_native', 'Claude Code', false, false), entry('l_shared', 'Claude Code (shared home)', true, true), entry('l_own', 'Claude Code (own home)', true, false)] }) };
@@ -3053,7 +3054,7 @@ async function main() {
       // While an import runs its dialog cannot be closed (a reopened one could mix projects): Close is disabled and Escape is refused, both
       // until the import is done.
       const guarded = await first.evaluate(async projectID => {
-        const { ClaudeSessionImport } = await import('/js/claude-session-import.js');
+        const { ClaudeSessionImport } = await import('/js/pages/claude-import/page.js');
         let release; const gate = new Promise(resolve => { release = resolve; });
         const rooms = [];
         const source = {
@@ -3067,6 +3068,7 @@ async function main() {
         const waitFor = async test => { for (let i = 0; i < 100 && !test(); i++) await new Promise(resolve => setTimeout(resolve, 20)); };
         await waitFor(() => document.querySelectorAll('#cc-import-list .cc-import-row').length === 1);
         document.querySelector('#cc-import-all').click();
+        await new Promise(resolve => setTimeout(resolve, 0)); // the page draws what the click changed
         document.querySelector('#cc-import-run').click();
         await waitFor(() => rooms.length === 1);
         dialog.homeRoomID = 'room_two'; // a reopen for another project changes what the dialog holds; the running import must not follow
