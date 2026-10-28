@@ -747,6 +747,7 @@ export class AgentsPanel {
       const choice = await request(`/api/projects/${encodeURIComponent(this.room.project_id)}/role-spawn-defaults/${encodeURIComponent(roleKey)}/next`);
       if (token !== this.defaultPreviewToken || !this.dialog.open || this.form.elements.role.value !== roleKey || !choice.available) return;
       if (choice.machine_id && this.spawnMachine.id !== choice.machine_id) {
+        this.spawnMachine.endSave(); // a folder save of the machine it leaves is over, as when the person picks another machine
         this.spawnMachine.select.value = choice.machine_id;
         this.spawnMachine.renderFolder();
         await this.loadSpawnCatalog();

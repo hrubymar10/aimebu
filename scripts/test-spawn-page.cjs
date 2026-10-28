@@ -518,6 +518,36 @@ async function main() {
     await page.close();
   }
 
+  // A role default that picks another machine ends the save of the machine it left: the Save button is available again, and the old save, answered
+  // while a save for the new machine is out, changes nothing.
+  {
+    const two = { machines: [...machines.machines, { id: 'm3', name: 'Third', approved: true, connected: true, project_allowed: true }] };
+    const page = await mount({ auto: stable({ 'GET /api/machines?project_id=p1': two, 'GET /api/projects/p1/machine-folders': { folders: [{ machine_id: 'm2', folder: '/srv/p1' }, { machine_id: 'm3', folder: '/srv/p3' }] },
+      'GET /api/spawn-catalog?machine_id=m3': catalog, 'GET /api/projects/p1/role-spawn-defaults/lead/next': undefined, 'PUT /api/projects/p1/machine-folders/m2': undefined, 'PUT /api/projects/p1/machine-folders/m3': undefined }) });
+    await open(page); await ready(page);
+    await select(page, 'machine', 'm2');
+    await page.waitForFunction(() => !document.querySelector('#spawn-form button[type=submit]').disabled);
+    await page.$eval('#spawn-form [name=machine_folder]', node => { node.value = '/srv/a'; node.dispatchEvent(new Event('input')); });
+    await page.$eval('#spawn-save-folder', node => node.click());
+    const first = await waitRequest(page, 'PUT', '/api/projects/p1/machine-folders/m2');
+    const disabled = () => page.$eval('#spawn-save-folder', node => node.disabled), status = () => page.$eval('#spawn-folder-status', node => node.textContent);
+    assert.equal(await disabled(), true);
+    await select(page, 'role', 'lead');
+    const preview = await waitRequest(page, 'GET', '/api/projects/p1/role-spawn-defaults/lead/next');
+    await answer(page, preview, 200, { available: true, machine_id: 'm3', launcher_id: 'l1', model: 'gpt-6-mini' });
+    await page.waitForFunction(() => document.querySelector('#spawn-form [name=machine]').value === 'm3' && !document.querySelector('#spawn-form button[type=submit]').disabled);
+    assert.equal(await disabled(), false, 'the role default made another machine the one on show, and its Save is available');
+    await page.$eval('#spawn-form [name=machine_folder]', node => { node.value = '/srv/b'; node.dispatchEvent(new Event('input')); });
+    await page.$eval('#spawn-save-folder', node => node.click());
+    const second = await waitRequest(page, 'PUT', '/api/projects/p1/machine-folders/m3');
+    const shown = await status();
+    await answer(page, first, 200, { machine_id: 'm2', folder: '/srv/a' }); await settle(page);
+    assert.deepEqual([await disabled(), await status()], [true, shown], 'the old save changes nothing while the new one is out');
+    await answer(page, second, 200, { machine_id: 'm3', folder: '/srv/b' }); await settle(page);
+    assert.deepEqual([await disabled(), await status()], [false, 'Folder saved.']);
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('spawn page: ok');
