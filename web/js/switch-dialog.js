@@ -96,7 +96,7 @@ export class SwitchDialog {
     const selected = tools.selectedIndex < 0 ? null : this.switchCatalog?.[Number(tools.value)];
     const model = this.switchForm.elements.model.value;
     if (!id || !selected?.available || !model) return;
-    const opening = this.switchOpening, generation = this.refreshGeneration, stale = () => opening !== this.switchOpening || generation !== this.refreshGeneration;
+    const opening = this.switchOpening, generation = this.refreshGeneration, stale = () => !this.switchDialog.open || opening !== this.switchOpening || generation !== this.refreshGeneration;
     const submit = this.switchForm.querySelector('button[type=submit]');
     const cancel = document.querySelector('#switch-cancel');
     submit.disabled = true; cancel.disabled = true;

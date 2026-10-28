@@ -603,6 +603,25 @@ async function main() {
     await page.close();
   }
 
+  for (const [status, reply] of [[200, agent('a1', 'ada', { model: 'gpt-6-mini', desired_rev: 2 })], [409, { message: 'The agent is busy', error: 'busy' }]]) {
+    const page = await mount({ withCard: true });
+    await page.waitForSelector('[data-agent-id=a1]');
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    await page.$eval('[data-agent-id=a1] .agent-switch', node => node.click());
+    await page.waitForFunction(() => document.querySelector('#switch-form').elements.model.options.length);
+    await settle(page);
+    await page.evaluate(() => { const el = document.querySelector('#switch-form').elements.model; el.value = 'gpt-6-mini'; el.dispatchEvent(new Event('change')); });
+    await page.$eval('#switch-form button[type=submit]', node => node.click());
+    const held = await waitRequest(page, 'POST', '/api/agents/a1/switch');
+    await page.evaluate(() => document.querySelector('#switch-dialog').close());
+    const reads = () => page.evaluate(() => window.__requests.filter(request => request.method === 'GET' && request.path === '/api/rooms/r1/agents').length);
+    const before = await reads();
+    await answer(page, held, status, reply); await settle(page);
+    assert.deepEqual([await page.$eval('#switch-error', node => node.textContent), await page.$eval('#switch-dialog', node => node.open)], ['', false], `${status}: a Switch answered after the dialog closed shows nothing`);
+    assert.equal(await reads() <= before + 1, true, `${status}: at most the source's own refresh`);
+    await page.close();
+  }
+
   // A panel destroyed while a read of the Spawn dialog or its call is out takes the answer and does nothing with it: no machines, roles, tools or
   // name are stored, no read follows, no folder status, and a spawn that succeeds or is refused navigates, refreshes and says nothing.
   {
