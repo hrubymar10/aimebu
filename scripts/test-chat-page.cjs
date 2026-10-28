@@ -874,6 +874,40 @@ async function main() {
     await exporting.close();
   }
 
+  // Late growth (an image or a diagram that finishes after its row was drawn) does not move the reader: a list at the bottom stays pinned to it, a list
+  // scrolled up keeps the first visible message where it was.
+  {
+    const page = await mount();
+    await page.evaluate(() => { window.__data.rooms.rm_a.messages[119].attachments = [{ id: 'att_i', name: 'pic.png', mime: 'image/png', url: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=', width: 0, height: 0 }]; });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    const grow = (page, id, height) => page.evaluate((id, height) => { const body = document.querySelector(`[data-message-id=${id}] .message-body`); const filler = document.createElement('div'); filler.className = 'late-growth'; filler.style.height = `${height}px`; body.append(filler); }, id, height);
+    await grow(page, 'rm_a_m120', 400); await settle(page); await settle(page);
+    assert.equal(await page.evaluate(() => { const list = document.querySelector('#messages'); return list.scrollHeight - list.scrollTop - list.clientHeight < 3; }), true, 'a list at the bottom stays pinned when a row above grows');
+    await page.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = 1500; window.__before = document.querySelector('[data-message-id=rm_a_m60]').getBoundingClientRect().top; window.__top = list.scrollTop; });
+    await settle(page);
+    await page.evaluate(() => { window.__before = document.querySelector('[data-message-id=rm_a_m60]').getBoundingClientRect().top; });
+    await grow(page, 'rm_a_m40', 300); await settle(page); await settle(page);
+    assert.equal(await page.evaluate(() => Math.abs(document.querySelector('[data-message-id=rm_a_m60]').getBoundingClientRect().top - window.__before) < 3), true, 'a list scrolled up keeps the first visible message in place when a row above grows');
+    await page.close();
+  }
+
+  // The caps: a reader at the live end keeps only the live cap of rows (older ones come back by scrolling up); paging far back drops the newest rows and
+  // the view becomes a history window with Back to latest.
+  {
+    const page = await mount({ setup: 'window.__renderCap = 60; window.__liveCap = 60;' });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => { const messages = window.__data.rooms.rm_a.messages; messages.push({ id: 'rm_a_m131', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'one more', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); });
+    await settle(page);
+    assert.deepEqual(await page.evaluate(() => { const rows = [...document.querySelectorAll('#messages > article.message')]; return [rows.length, rows[0].dataset.messageId, rows.at(-1).dataset.messageId, document.querySelector('#messages').dataset.hasOlder, window.__chat.contextMode]; }), [60, 'rm_a_m72', 'rm_a_m131', 'true', false], 'the live end keeps its cap');
+    await page.close();
+    const history = await mount({ setup: 'window.__renderCap = 60; window.__liveCap = 60;' });
+    await openRoom(history, 'rm_a'); await opened(history); await settle(history);
+    await history.evaluate(() => { document.querySelector('#messages').scrollTop = 0; });
+    await history.waitForFunction(() => window.__chat.contextMode === true, { timeout: 5000 }); await settle(history);
+    assert.deepEqual(await history.evaluate(() => { const rows = [...document.querySelectorAll('#messages > article.message')]; return [rows.length, rows[0].dataset.messageId, document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden]; }), [60, 'rm_a_m1', false], 'paging back past the cap drops the newest rows and shows a window');
+    await history.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('chat page: ok');
