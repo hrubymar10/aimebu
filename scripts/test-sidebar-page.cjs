@@ -372,6 +372,18 @@ async function main() {
     await page.close();
   }
 
+  // The dialog that asks for a new room's name belongs to the list it was opened in: answered after a reset, it sends nothing.
+  {
+    const page = await mount();
+    await page.$eval('[data-room-id=rm_ah] .add-room', node => node.click());
+    await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+    await page.evaluate(() => window.__sidebar.reset());
+    await page.evaluate(() => { const dialog = document.querySelector('#app-dialog'); dialog.querySelector('[name=title]').value = 'late-room'; dialog.querySelector('form').requestSubmit(); });
+    await settle(page);
+    assert.deepEqual([await count(page, 'POST', '/api/projects/'), await calls(page)], [0, []], 'a name given after a reset creates nothing');
+    await page.close();
+  }
+
   // Read marks: one request per room at a time, the furthest mark asked for meanwhile follows it, and the count that comes back is the room's; a
   // reset while a mark is out lets it go and sends nothing for the old room.
   {

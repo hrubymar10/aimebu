@@ -473,13 +473,13 @@ export class Sidebar {
       row.onclick = event => { if (!event.target.closest('button, input, select, a')) this.onSelect(this.rooms.get(room.id) || room); };
       const add = document.createElement('button'); add.type = 'button'; add.className = 'row-btn add-room'; setGlyph(add, 'plus', `New task room under ${room.title}`);
       add.onclick = async () => {
+        const generation = this.generation; // the answer belongs to the list the dialog was opened in
         const answer = await formDialog({ title: `New task room under ${room.title}`, confirm: 'Create room', fields: [
           { name: 'title', label: 'Room name', required: true, requiredMessage: 'Give the room a name.' },
           { name: 'worktree', type: 'checkbox', label: 'Create a Git worktree for this room', hint: 'It starts from committed HEAD; uncommitted base changes stay in the project folder.' },
           { name: 'base_ref', label: 'Base branch or ref (optional)', placeholder: 'Current HEAD', showIf: values => values.worktree },
         ] });
-        if (!answer) return;
-        const generation = this.generation;
+        if (!answer || generation !== this.generation) return;
         try {
           const child = await this.roomRequest(`/api/projects/${room.project_id}/rooms`, { method: 'POST', body: { title: answer.title, parent_id: room.id, worktree: { enabled: answer.worktree, base_ref: answer.worktree ? answer.base_ref : '' } } });
           if (generation !== this.generation) return;
