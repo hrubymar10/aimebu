@@ -542,7 +542,7 @@ async function main() {
       manual: page => page.$eval('[data-room-id=rm_ah] .project-move-down', node => node.click()),
     };
     for (const [what, trigger] of Object.entries(triggers)) {
-      for (const how of ['reset']) {
+      for (const how of REPLACED ? ['reset', 'destroy'] : ['reset']) {
         for (const status of [200, 500]) {
           const page = await mount();
           await hold(page, 'PUT /api/me/preferences');
@@ -593,6 +593,178 @@ async function main() {
     await page.close();
   }
 
+  // The same for an answer that arrives in the very turn in which the list is reset or destroyed (the request is past aborting): the code that runs on
+  // it must not store, draw, read or open anything.
+  for (const how of REPLACED ? ['reset', 'destroy'] : ['reset']) {
+    const end = (page, index, status, body) => page.evaluate((index, status, body, how) => { window.__answer(index, status, body); window.__sidebar[how](); }, index, status, body, how);
+    const quiet = async (page, extra, label) => {
+      await settle(page);
+      assert.deepEqual([await page.$$eval('#projects .room-group', nodes => nodes.length), await calls(page), await page.evaluate(() => !!document.querySelector('#app-dialog')?.open), ...extra], [0, [], false, ...extra.map(() => 0)], `${how}: ${label}`);
+    };
+    // the project list, a project's rooms and the chats of agents
+    let page = await mount({ auto: {}, load: false });
+    await page.evaluate(() => { window.__loading = window.__sidebar.load(); });
+    await end(page, await waitRequest(page, 'GET', '/api/projects'), 200, projects); await page.evaluate(() => window.__loading);
+    await quiet(page, [await count(page, 'GET', '/api/projects/')], 'the project list answered as the list ends reads no rooms');
+    await page.close();
+    page = await mount({ auto: {}, load: false });
+    await page.evaluate(() => { window.__loading = window.__sidebar.load(); });
+    await answer(page, await waitRequest(page, 'GET', '/api/projects'), 200, projects);
+    const pending = [];
+    for (const id of ['prj_a', 'prj_b', 'prj_c']) pending.push(await waitRequest(page, 'GET', `/api/projects/${id}/rooms`));
+    const dms = await waitRequest(page, 'GET', '/api/agent-dms');
+    await page.evaluate((pending, bodies, how) => { for (const [position, index] of pending.entries()) window.__answer(index, 200, bodies[position]); window.__sidebar[how](); }, pending, Object.values(rooms()), how);
+    await settle(page);
+    assert.equal(await page.evaluate(() => window.__sidebar.rooms.size), 0, `${how}: the rooms answered as the list ends are not stored`);
+    await answer(page, dms, 200, chats());
+    await page.close();
+    page = await mount({ auto: {}, load: false });
+    await page.evaluate(() => { window.__loading = window.__sidebar.load(); });
+    await answer(page, await waitRequest(page, 'GET', '/api/projects'), 200, projects);
+    for (const id of ['prj_a', 'prj_b', 'prj_c']) await answer(page, await waitRequest(page, 'GET', `/api/projects/${id}/rooms`), 200, rooms()[id]);
+    await end(page, await waitRequest(page, 'GET', '/api/agent-dms'), 200, chats()); await page.evaluate(() => window.__loading);
+    assert.equal(await page.evaluate(() => window.__sidebar.rooms.size), 0, `${how}: nor the chats`);
+    await page.close();
+    // a refresh of one project
+    page = await mount();
+    await hold(page, 'GET /api/projects/prj_a/rooms');
+    await page.evaluate(() => { window.__refreshing = window.__sidebar.refreshProject('prj_a'); });
+    await end(page, await waitRequest(page, 'GET', '/api/projects/prj_a/rooms'), 200, [room('rm_new', 'prj_a', 'zeta')]); await page.evaluate(() => window.__refreshing);
+    assert.equal(await page.evaluate(() => window.__sidebar.rooms.has('rm_new')), false, `${how}: a refresh answered as the list ends stores nothing`);
+    await page.close();
+    // a project added by hand and the chats of agents refreshed on their own
+    page = await mount();
+    await hold(page, 'GET /api/projects/prj_z/rooms', 'GET /api/agent-dms');
+    await page.evaluate(() => { window.__adding = window.__sidebar.addProject({ id: 'prj_z', name: 'z' }); });
+    await end(page, await waitRequest(page, 'GET', '/api/projects/prj_z/rooms'), 200, [room('rm_z', 'prj_z', 'zed')]); await page.evaluate(() => window.__adding);
+    assert.deepEqual(await page.evaluate(() => [window.__sidebar.projects.has('prj_z'), window.__sidebar.rooms.has('rm_z')]), [false, false], `${how}: a project answered as the list ends is not stored`);
+    await page.close();
+    page = await mount();
+    await hold(page, 'GET /api/agent-dms');
+    await page.evaluate(() => { window.__chatting = window.__sidebar.refreshAgentChats(); });
+    await end(page, await waitRequest(page, 'GET', '/api/agent-dms'), 200, chats()); await page.evaluate(() => window.__chatting);
+    const stored = await page.evaluate(() => window.__sidebar.rooms.size);
+    assert.equal(stored, await page.evaluate(() => 0), `${how}: chats answered as the list ends are not stored`);
+    await page.close();
+    // calls: show a hidden room, reopen, join, create
+    for (const [name, start, method, path, body, follow] of [['preference', () => document.querySelector('[data-hidden-room-id=rm_hid]').click(), 'PATCH', '/api/rooms/rm_hid/preferences', {}, '/api/projects/prj_a/rooms'],
+      ['reopen', () => document.querySelector('[data-room-id=rm_old] .reopen-room').click(), 'POST', '/api/rooms/rm_old/reopen', room('rm_old', 'prj_a', 'old-room'), '/api/projects/prj_a/rooms'],
+      ['join', () => document.querySelector('[data-offer-id=rm_join] .agent-chat-join').click(), 'POST', '/api/rooms/rm_join/join', {}, '/api/agent-dms']]) {
+      page = await mount();
+      await hold(page, 'GET /api/projects/prj_a/rooms', 'GET /api/agent-dms');
+      const before = await count(page, 'GET', follow);
+      await page.evaluate(start);
+      await end(page, await waitRequest(page, method, path), 200, body);
+      await settle(page);
+      assert.deepEqual([await count(page, 'GET', follow), await calls(page), await page.evaluate(() => !!document.querySelector('#app-dialog')?.open)], [before, [], false], `${how}: ${name} answered as the list ends reads nothing, opens nothing`);
+      await page.close();
+    }
+    page = await mount();
+    await page.$eval('[data-room-id=rm_ah] .add-room', node => node.click());
+    await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+    await page.evaluate(() => { const dialog = document.querySelector('#app-dialog'); dialog.querySelector('[name=title]').value = 'fresh'; dialog.querySelector('form').requestSubmit(); });
+    await end(page, await waitRequest(page, 'POST', '/api/projects/prj_a/rooms'), 200, room('rm_fresh', 'prj_a', 'fresh-room', { parent_id: 'rm_ah' }));
+    await quiet(page, [], 'a new room answered as the list ends is not opened or drawn');
+    await page.close();
+    // the archive search and a hit
+    page = await mount();
+    await page.evaluate(() => { document.querySelector('details.archived-rooms').open = true; });
+    await page.$eval('.archive-search', node => { node.value = 'old'; node.dispatchEvent(new Event('input')); });
+    await end(page, await waitRequest(page, 'GET', '/api/projects/prj_a/archive/search?q=old'), 200, [{ room_id: 'rm_old', room_name: 'old-room', snippet: 's', message_id: 'm1' }]);
+    await settle(page);
+    assert.equal(await page.$$eval('.archive-hit', nodes => nodes.length), 0, `${how}: hits answered as the list ends are not drawn`);
+    await page.close();
+    page = await mount();
+    await page.evaluate(() => { document.querySelector('details.archived-rooms').open = true; });
+    await page.$eval('.archive-search', node => { node.value = 'far'; node.dispatchEvent(new Event('input')); });
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/archive/search?q=far'), 200, [{ room_id: 'rm_far', room_name: 'far', snippet: 's', message_id: 'm9' }]); await settle(page);
+    await page.$eval('.archive-hit', node => node.click());
+    await end(page, await waitRequest(page, 'GET', '/api/rooms/rm_far'), 200, room('rm_far', 'prj_a', 'far'));
+    await settle(page);
+    assert.deepEqual(await calls(page), [], `${how}: the room a hit asked for, answered as the list ends, is not opened`);
+    await page.close();
+  }
+
+  // A list destroyed while a read or a call is out takes the answer and does nothing with it: nothing is stored or drawn, no read follows, no room is opened,
+  // no dialog is shown, the archive search ends and the mute timer stops.
+  if (REPLACED) {
+    const destroy = page => page.evaluate(() => window.__sidebar.destroy());
+    const empty = page => page.$eval('#projects', node => node.children.length);
+    let page = await mount({ auto: {}, load: false });
+    await page.evaluate(() => { window.__loading = window.__sidebar.load(); });
+    let held = await waitRequest(page, 'GET', '/api/projects');
+    await destroy(page);
+    await answer(page, held, 200, projects); await page.evaluate(() => window.__loading); await settle(page);
+    assert.deepEqual([await count(page, 'GET', '/api/projects/'), await empty(page)], [0, 0], 'a destroyed list reads no rooms');
+    await page.close();
+    page = await mount({ auto: {}, load: false });
+    await page.evaluate(() => { window.__loading = window.__sidebar.load(); });
+    await answer(page, await waitRequest(page, 'GET', '/api/projects'), 200, projects);
+    const pending = [];
+    for (const id of ['prj_a', 'prj_b', 'prj_c']) pending.push(await waitRequest(page, 'GET', `/api/projects/${id}/rooms`));
+    const dms = await waitRequest(page, 'GET', '/api/agent-dms');
+    await destroy(page);
+    for (const [index, id] of ['prj_a', 'prj_b', 'prj_c'].entries()) await answer(page, pending[index], 200, rooms()[id]);
+    await answer(page, dms, 200, chats()); await page.evaluate(() => window.__loading); await settle(page);
+    assert.deepEqual([await empty(page), await page.evaluate(() => window.__sidebar.rooms.size)], [0, 0], 'the answers after destroy store and draw nothing');
+    await page.close();
+    // A refresh, a call and a dialog that finish after destroy do nothing.
+    page = await mount();
+    await hold(page, 'GET /api/projects/prj_a/rooms', 'GET /api/agent-dms');
+    await page.evaluate(() => { window.__refreshing = window.__sidebar.refreshProject('prj_a'); });
+    held = await waitRequest(page, 'GET', '/api/projects/prj_a/rooms');
+    await destroy(page);
+    await answer(page, held, 200, [room('rm_new', 'prj_a', 'zeta')]); await page.evaluate(() => window.__refreshing); await settle(page);
+    assert.equal(await page.evaluate(() => window.__sidebar.rooms.has('rm_new')), false, 'a refresh answered after destroy stores nothing');
+    await page.close();
+    for (const [name, start, path, body] of [['reopen', () => document.querySelector('[data-room-id=rm_old] .reopen-room').click(), '/api/rooms/rm_old/reopen', room('rm_old', 'prj_a', 'old-room')],
+      ['join', () => document.querySelector('[data-offer-id=rm_join] .agent-chat-join').click(), '/api/rooms/rm_join/join', {}], ['preference', () => document.querySelector('[data-hidden-room-id=rm_hid]').click(), '/api/rooms/rm_hid/preferences', {}]]) {
+      page = await mount();
+      await hold(page, 'GET /api/projects/prj_a/rooms', 'GET /api/agent-dms');
+      await page.evaluate(start);
+      const call = await waitRequest(page, name === 'preference' ? 'PATCH' : 'POST', path);
+      const total = await page.evaluate(() => window.__requests.length);
+      await destroy(page);
+      await answer(page, call, 200, body); await settle(page);
+      assert.deepEqual([await page.evaluate(() => window.__requests.length), await calls(page), await page.evaluate(() => !!document.querySelector('#app-dialog')?.open)], [total, [], false], `${name}: a destroyed list reads nothing, opens nothing and shows nothing`);
+      await page.close();
+    }
+    page = await mount();
+    await page.$eval('[data-room-id=rm_ah] .add-room', node => node.click());
+    await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+    await destroy(page);
+    await page.evaluate(() => { const dialog = document.querySelector('#app-dialog'); dialog.querySelector('[name=title]').value = 'late-room'; dialog.querySelector('form').requestSubmit(); });
+    await settle(page);
+    assert.deepEqual([await count(page, 'POST', '/api/projects/'), await calls(page)], [0, []], 'a name given after destroy creates nothing');
+    await page.close();
+    page = await mount();
+    await page.evaluate(() => { document.querySelector('details.archived-rooms').open = true; });
+    await page.$eval('.archive-search', node => { node.value = 'old'; node.dispatchEvent(new Event('input')); });
+    held = await waitRequest(page, 'GET', '/api/projects/prj_a/archive/search?q=old');
+    await destroy(page);
+    assert.equal(await page.evaluate(index => window.__requests[index].aborted, held), true, 'destroy ends the archive request');
+    await page.close();
+    page = await mount();
+    await page.$eval('.archive-search', node => { node.value = 'old'; node.dispatchEvent(new Event('input')); });
+    await destroy(page);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    assert.equal(await count(page, 'GET', '/api/projects/prj_a/archive'), 0, 'destroy ends the wait of the archive search');
+    await page.close();
+    page = await mount();
+    await page.evaluate(() => { window.__shown = { rm_api: 40 }; window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_api')); });
+    held = await waitRequest(page, 'POST', '/api/rooms/rm_api/read');
+    await page.evaluate(() => { window.__shown.rm_api = 60; window.__sidebar.markSeen(window.__sidebar.rooms.get('rm_api')); window.__sidebar.destroy(); });
+    await answer(page, held, 200, { unread_count: 1, read_cursor: 40 }); await settle(page);
+    assert.equal(await count(page, 'POST', '/api/rooms/rm_api/read'), 1, 'destroy sends no follow-up mark');
+    await page.close();
+    const soon = new Date(Date.now() + 500).toISOString();
+    page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => (item.id === 'rm_mute' ? { ...item, muted_until: soon } : item)) }) });
+    await destroy(page);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    assert.equal(await empty(page), 0, 'the list stays empty after destroy');
+    await page.close();
+  }
+
   // A join answered in the very turn in which the list is reset (the request is past aborting) reads no chats and opens nothing.
   {
     const page = await mount();
@@ -638,6 +810,148 @@ async function main() {
     await waitRequest(page, 'PUT', '/api/me/preferences'); await settle(page);
     assert.deepEqual(await saves(page), [{ sidebar_project_order: '["prj_b","prj_a","prj_c"]' }, { sidebar_project_order: '["prj_b","prj_a","prj_c"]' }], 'of two queued saves of one name only the newest goes out');
     await page.close();
+  }
+
+  // A destroyed list sends nothing: every entry that reads, calls or saves is asked once the list is gone, and no request goes out.
+  if (REPLACED) {
+    const entries = {
+      load: store => store.load(), addProject: store => store.addProject({ id: 'prj_a', name: 'Alpha' }), refreshProject: store => store.refreshProject('prj_a'), refreshChats: store => store.refreshAgentChats(),
+      setPreference: store => store.setPreference({ id: 'rm_gen', project_id: 'prj_a' }, 'hidden', true), reopen: store => store.reopen({ id: 'rm_old', project_id: 'prj_a' }),
+      join: store => store.join({ id: 'rm_join', title: 'x' }), createRoom: store => store.createRoom({ id: 'rm_ah', project_id: 'prj_a' }, { title: 'x', worktree: false }, store.generation),
+      openHit: store => store.openHit({ room_id: 'rm_far', project_id: 'prj_a' }), moveProject: store => store.moveProject('prj_a', 1), setSort: store => store.setSort('name'),
+      markSeen: store => store.markSeen({ id: 'rm_gen', unread_count: 3, notify: 'default' }), archive: store => store.searchArchive('prj_a', 'old'),
+    };
+    for (const [name, call] of Object.entries(entries)) {
+      const page = await mount();
+      await page.evaluate(() => { window.__sidebar.shownSeq = () => 5; window.__sidebar.destroy(); window.__sent = window.__requests.length; });
+      await page.evaluate(`(async () => { try { await (${call.toString()})(window.__sidebar.store); } catch {} })()`);
+      await settle(page); await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 400)));
+      assert.equal(await page.evaluate(() => window.__requests.length - window.__sent), 0, `${name}: a destroyed list sends no request`);
+      await page.close();
+    }
+    // The same entries on a live list do send (the check above is not vacuous).
+    for (const [name, call] of Object.entries(entries)) {
+      const page = await mount({ auto: answerAll() });
+      await page.evaluate(() => { window.__sidebar.shownSeq = () => 5; window.__sent = window.__requests.length; });
+      await page.evaluate(`(async () => { try { await Promise.race([(${call.toString()})(window.__sidebar.store), new Promise(resolve => setTimeout(resolve, 400))]); } catch {} })()`);
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 400)));
+      assert.ok(await page.evaluate(() => window.__requests.length - window.__sent) > 0, `${name}: a live list sends`);
+      await page.close();
+    }
+    // A queued sort or order save is not sent once the list is destroyed either.
+    const page = await mount();
+    await hold(page, 'PUT /api/me/preferences');
+    await page.$eval('[data-room-id=rm_ah] .project-move-down', node => node.click());
+    const first = await waitRequest(page, 'PUT', '/api/me/preferences');
+    await page.$eval('[data-room-id=rm_bh] .project-move-down', node => node.click());
+    await page.evaluate(() => window.__sidebar.destroy());
+    await answer(page, first, 200, { preferences: {} }); await settle(page);
+    assert.equal(await count(page, 'PUT', '/api/me/preferences'), 1, 'a queued order save is not sent after a destroy');
+    await page.close();
+  }
+
+  // What the callers see: a read or call that fails in the very turn in which the list ends settles quietly (no error thrown, no dialog), a call that was
+  // still working when the list ended says so with false, and the store keeps nothing of an answer that came too late.
+  if (REPLACED) {
+    for (const how of ['reset', 'destroy']) {
+      const end = (page, index, status, body) => page.evaluate((index, status, body, how) => { window.__answer(index, status, body); window.__sidebar[how](); }, index, status, body, how);
+      const quietly = page => page.evaluate(async () => { const result = await window.__call.then(value => ({ value }), error => ({ error: error.message })); return { ...result, dialog: !!document.querySelector('#app-dialog')?.open }; });
+      for (const [name, hold1, start, request] of [
+        ['addProject', 'GET /api/projects/prj_z/rooms', () => { window.__call = window.__sidebar.addProject({ id: 'prj_z', name: 'z' }); }, ['GET', '/api/projects/prj_z/rooms']],
+        ['refreshAgentChats', 'GET /api/agent-dms', () => { window.__call = window.__sidebar.refreshAgentChats(); }, ['GET', '/api/agent-dms']],
+        ['refreshProject', 'GET /api/projects/prj_a/rooms', () => { window.__call = window.__sidebar.refreshProject('prj_a'); }, ['GET', '/api/projects/prj_a/rooms']],
+        ['createRoom', 'POST /api/projects/prj_a/rooms', () => { const store = window.__sidebar.store; window.__call = store.createRoom({ id: 'rm_ah', project_id: 'prj_a' }, { title: 'x', worktree: false }, store.generation); }, ['POST', '/api/projects/prj_a/rooms']],
+      ]) {
+        const page = await mount();
+        await hold(page, hold1);
+        await page.evaluate(start);
+        await end(page, await waitRequest(page, ...request), 500, { error: 'nope' });
+        const result = await quietly(page);
+        assert.deepEqual([result.error, result.dialog], [undefined, false], `${how}: ${name} failing as the list ends throws nothing and shows nothing`);
+        await page.close();
+      }
+      // a call that is still reading when the list ends says it did not finish, and opens nothing
+      for (const [name, start, method, path, body] of [
+        ['setPreference', () => { window.__call = window.__sidebar.store.setPreference({ id: 'rm_hid', project_id: 'prj_a' }, 'hidden', false); }, 'PATCH', '/api/rooms/rm_hid/preferences', {}],
+        ['reopen', () => { window.__call = window.__sidebar.store.reopen({ id: 'rm_old', project_id: 'prj_a' }); }, 'POST', '/api/rooms/rm_old/reopen', room('rm_old', 'prj_a', 'old-room')],
+      ]) {
+        const page = await mount();
+        await hold(page, 'GET /api/projects/prj_a/rooms');
+        await page.evaluate(() => { window.__sidebar.setActive('rm_old'); });
+        await page.evaluate(start);
+        await answer(page, await waitRequest(page, method, path), 200, body);
+        await waitRequest(page, 'GET', '/api/projects/prj_a/rooms');
+        await page.evaluate(how => window.__sidebar[how](), how);
+        const result = await quietly(page);
+        assert.deepEqual([result.value, result.error, result.dialog, await calls(page)], [false, undefined, false, []], `${how}: ${name} still reading as the list ends says it did not finish`);
+        await page.close();
+      }
+      // a refresh that started after the load did is not undone by the load's older list
+      if (how === 'reset') {
+        const page = await mount({ auto: {}, load: false });
+        await page.evaluate(() => { window.__loading = window.__sidebar.load(); });
+        await answer(page, await waitRequest(page, 'GET', '/api/projects'), 200, projects);
+        const older = await waitRequest(page, 'GET', '/api/projects/prj_a/rooms');
+        for (const id of ['prj_b', 'prj_c']) await answer(page, await waitRequest(page, 'GET', `/api/projects/${id}/rooms`), 200, rooms()[id]);
+        await page.evaluate(() => { window.__refreshing = window.__sidebar.refreshProject('prj_a'); });
+        const newer = await page.evaluate(() => window.__requests.findLastIndex(request => request.path === '/api/projects/prj_a/rooms' && !request.answered));
+        await answer(page, newer, 200, rooms().prj_a.concat(room('rm_late', 'prj_a', 'late')));
+        await page.evaluate(() => window.__refreshing);
+        await answer(page, older, 200, rooms().prj_a);
+        await answer(page, await waitRequest(page, 'GET', '/api/agent-dms'), 200, chats());
+        await page.evaluate(() => window.__loading);
+        assert.equal(await page.evaluate(() => window.__sidebar.rooms.has('rm_late')), true, 'the load\'s older list does not remove a room the newer refresh listed');
+        await page.close();
+      }
+      // a project added by hand whose list a newer refresh has already replaced does not undo that refresh
+      if (how === 'reset') {
+        let page = await mount();
+        await hold(page, 'GET /api/projects/prj_z/rooms');
+        await page.evaluate(() => { window.__adding = window.__sidebar.addProject({ id: 'prj_z', name: 'z' }); });
+        const older = await waitRequest(page, 'GET', '/api/projects/prj_z/rooms');
+        await page.evaluate(() => { window.__refreshing = window.__sidebar.refreshProject('prj_z'); });
+        const newer = await page.evaluate(() => window.__requests.findLastIndex(request => request.path === '/api/projects/prj_z/rooms' && !request.answered));
+        await answer(page, newer, 200, [room('rm_z', 'prj_z', 'zed'), room('rm_z2', 'prj_z', 'zed two')]);
+        await page.evaluate(() => window.__refreshing);
+        await answer(page, older, 200, [room('rm_z', 'prj_z', 'zed')]);
+        await page.evaluate(() => window.__adding);
+        assert.equal(await page.evaluate(() => window.__sidebar.rooms.has('rm_z2')), true, 'an older list of an added project does not remove a room the newer refresh listed');
+        await page.close();
+        // a read mark answered for a record that a refresh has replaced is not written into it
+        page = await mount();
+        await page.evaluate(() => { window.__old = window.__sidebar.rooms.get('rm_api'); window.__sidebar.shownSeq = () => 5; window.__sidebar.markSeen(window.__old); });
+        const mark = await waitRequest(page, 'POST', '/api/rooms/rm_api/read');
+        await hold(page, 'GET /api/projects/prj_a/rooms');
+        await page.evaluate(() => { window.__refreshing = window.__sidebar.refreshProject('prj_a'); });
+        await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/rooms'), 200, rooms().prj_a.map(item => (item.id === 'rm_api' ? { ...item, unread_count: 14 } : item)));
+        await page.evaluate(() => window.__refreshing);
+        await answer(page, mark, 200, { unread_count: 0, read_cursor: 5 }); await settle(page);
+        assert.deepEqual(await page.evaluate(() => [window.__old.unread_count, window.__sidebar.rooms.get('rm_api').unread_count, window.__sidebar.rooms.get('rm_api') === window.__old]), [12, 14, false], 'a stale record is left alone');
+        await page.close();
+      }
+      // the store keeps nothing of a hit or an error that arrives too late
+      for (const [label, status, body] of [['hits', 200, [{ room_id: 'rm_old', room_name: 'old-room', snippet: 's', message_id: 'm1' }]], ['an error', 500, { error: 'nope' }]]) {
+        const page = await mount();
+        await page.evaluate(() => { document.querySelector('details.archived-rooms').open = true; });
+        await page.$eval('.archive-search', node => { node.value = 'old'; node.dispatchEvent(new Event('input')); });
+        await end(page, await waitRequest(page, 'GET', '/api/projects/prj_a/archive/search?q=old'), status, body);
+        await settle(page);
+        assert.equal(await page.evaluate(() => window.__sidebar.store.archiveHits.size), 0, `${how}: ${label} answered as the list ends are not kept`);
+        await page.close();
+      }
+      // the room a hit asked for is not kept either
+      {
+        const page = await mount();
+        await page.evaluate(() => { document.querySelector('details.archived-rooms').open = true; });
+        await page.$eval('.archive-search', node => { node.value = 'far'; node.dispatchEvent(new Event('input')); });
+        await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/archive/search?q=far'), 200, [{ room_id: 'rm_far', room_name: 'far', snippet: 's', message_id: 'm9' }]); await settle(page);
+        await page.$eval('.archive-hit', node => node.click());
+        await end(page, await waitRequest(page, 'GET', '/api/rooms/rm_far'), 200, room('rm_far', 'prj_a', 'far'));
+        await settle(page);
+        assert.equal(await page.evaluate(() => window.__sidebar.rooms.has('rm_far')), false, `${how}: the room a hit asked for, answered as the list ends, is not kept`);
+        await page.close();
+      }
+    }
   }
 
   await browser.close(); server.close();

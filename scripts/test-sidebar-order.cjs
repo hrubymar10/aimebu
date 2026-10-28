@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'sidebar-order.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'sidebar', 'model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
 vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { SORTS, DEFAULT_SORT, orderProjects, orderRooms, manualSequence, moveProject, placeProject, projectActivity };', context);

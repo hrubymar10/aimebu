@@ -1,6 +1,6 @@
 import './dialog-focus.js';
 import { request, setSession, clearSession, currentUser, rights } from './api.js';
-import { Sidebar } from './sidebar.js';
+import { Sidebar } from './pages/sidebar/page.js';
 import { Chat } from './chat.js';
 import { setProjectNames } from './sender-identity.js';
 import { ReadReceipts } from './read-receipts.js';

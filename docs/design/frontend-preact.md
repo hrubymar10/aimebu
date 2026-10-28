@@ -368,6 +368,14 @@ Owner's decision (2026-10-28): continue with the remaining units.
 - Scope: the room list (unread counts, ordering, collapse, selection), mobile tabs.
 - Files: `sidebar.js`, `sidebar-order.js`, `room-unread.js` (pure, stays), `mobile-tabs.js`, the wiring in `app.js`.
 - Acceptance: unread and ordering tests unchanged; selection and collapse survive live updates.
+- Done for the room list: `web/js/pages/sidebar/` holds `store.js` (signals for the rooms, projects, filter, sort, manual order and fold state; every read,
+  call, archive search, mute timer and sort or order save is tied to a generation, a ticket or an abort controller and says nothing once the list was
+  reset or destroyed, and a destroyed list sends no request at all; a sort or order save still queued behind another one when the list is reset is
+  dropped, since a reset only follows a sign-in or a workspace reset, which load the preferences afresh, and of several queued saves of one name only the
+  newest goes out), `model.js` (import-free: the orderings, the unread rules, `ReadMarker`, and `treeOf`, which turns the state into the rows to
+  draw; vm-tested), the components (`sidebar-list.js`, `sort-menu.js`) and `page.js`, the adapter that keeps the `Sidebar` API `app.js` uses. A room keeps
+  the same record object while its data is unchanged, so a refresh redraws only the rows that changed. The legacy `sidebar.js`, `sidebar-order.js`
+  and `room-unread.js` are gone; the page tests written against them first (`test-sidebar-page.cjs`) run unchanged on the new code.
 
 ### Step 6: chat (last)
 

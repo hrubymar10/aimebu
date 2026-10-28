@@ -128,7 +128,7 @@ const FIXTURE = async () => {
   // The real room list over fake data (two projects, a direct message, a closed and a hidden room), in the layout
   // so the audits see the box, the rows, the chips and the folds.
   {
-    const { Sidebar } = await import('/js/sidebar.js');
+    const { Sidebar } = await import('/js/pages/sidebar/page.js');
     const list = new Sidebar(document.querySelector('#projects'), () => {});
     for (const project of [{ id: 'p1', name: 'Alpha project' }, { id: 'p2', name: 'Beta project' }]) list.projects.set(project.id, project);
     const room = (id, project, kind, title, extra = {}) => ({ id, project_id: project, kind, title, lifecycle: 'open', member_count: 3, unread_count: 0, last_activity_at: `2026-10-17T12:0${id.length}:00Z`, last_message_body: 'Last words', ...extra });
@@ -136,7 +136,8 @@ const FIXTURE = async () => {
       room('r4', 'p2', 'home', 'Beta home'), room('r5', 'p2', 'dm', 'ada · bert', { unread_count: 2 }), room('r6', 'p2', 'task', 'Old task', { lifecycle: 'closed', parent_id: 'r4' }), room('r7', 'p2', 'task', 'Quiet task', { hidden: true, parent_id: 'r4' })]) list.rooms.set(item.id, item);
     // The sort menu is open, so the audits see it too.
     list.bindSort(document.querySelector('#rooms-sort')); list.openSortMenu();
-    list.active = 'r1'; list.health.set('r3', [{ name: 'xan', flags: [{ code: 'held_answer' }] }]); list.render();
+    list.setActive('r1'); list.health.set('r3', [{ name: 'xan', flags: [{ code: 'held_answer' }] }]); list.render();
+    await new Promise(resolve => setTimeout(resolve, 50)); // Preact draws the list on the next tick
   }
   // The bar that offers browser notifications, shown through the real module (the room header's neighbour).
   { const { NotificationBanner } = await import('/js/notification-banner.js'); new NotificationBanner({ notifications: { available: true, requestPermission: async () => {} }, saveDismissed: () => {} }).show(); }

@@ -2404,7 +2404,7 @@ async function main() {
     await first.waitForFunction(() => /^\d+ new messages in /.test(document.querySelector('#live-announcer').textContent), { timeout: 15000 }); // the 22-message burst is coalesced
     for (let i = 0; i < 120; i++) await post(`History ${i}`);
     await first.waitForFunction(() => [...document.querySelectorAll('.message-body')].some(el => el.textContent === 'History 119'));
-    await first.evaluate(async () => { await document.querySelector('.room-row.active .room-name').onclick(); });
+    await first.evaluate(() => { document.querySelector('.room-row.active .room-name').click(); });
     await first.waitForFunction(() => document.querySelector('#messages').dataset.hasOlder === 'true');
     // With older messages still to load, the top of the list is not the start of the room.
     assert.equal(await first.$eval('#messages', el => getComputedStyle(el, '::before').content), 'none', 'no start-of-room marker while older messages remain');
@@ -5168,24 +5168,24 @@ async function main() {
     await domClick(agentPage, '#inbox-toggle');
     await agentPage.waitForFunction(() => !document.querySelector('#inbox-view').hidden);
     // A health item with an Inbox item behind it opens that item; one without goes to the room.
-    await agentPage.evaluate(async () => { await document.querySelector('.room-row.active .room-name').onclick(); });
+    await agentPage.evaluate(async () => { document.querySelector('.room-row.active .room-name').click(); });
     await agentPage.waitForFunction(() => document.querySelector('#inbox-view').hidden);
     await domClick(agentPage, '#health-toggle');
     await agentPage.click('#health-popover .health-item[data-code="recovery_waiting"]');
     await agentPage.waitForFunction(() => !document.querySelector('#inbox-view').hidden && document.querySelector('#inbox-view [data-inbox-id="mock_approval"]'));
     assert.equal(await agentPage.$eval('#health-popover', el => el.hidden), true, 'choosing a health item closes the list');
     // Leave the Inbox, then the held answer opens its own item.
-    await agentPage.evaluate(async () => { await document.querySelector('.room-row.active .room-name').onclick(); });
+    await agentPage.evaluate(async () => { document.querySelector('.room-row.active .room-name').click(); });
     await agentPage.waitForFunction(() => document.querySelector('#inbox-view').hidden);
     await domClick(agentPage, '#health-toggle');
     await domClick(agentPage, '#health-popover .health-item[data-code="held_answer"]');
     await agentPage.waitForFunction(() => !document.querySelector('#inbox-view').hidden && document.querySelector('#inbox-view [data-inbox-id="mock_held"]'));
-    await agentPage.evaluate(async () => { await document.querySelector('.room-row.active .room-name').onclick(); });
+    await agentPage.evaluate(async () => { document.querySelector('.room-row.active .room-name').click(); });
     await agentPage.waitForFunction(() => document.querySelector('#inbox-view').hidden);
     await agentPage.setViewport({ width: 390, height: 780 });
     await domClick(agentPage, '.mobile-tab[data-tab="rooms"]');
     await agentPage.waitForFunction(() => document.querySelector('#app-view').classList.contains('rooms-open') && !document.querySelector('#app-view').classList.contains('inbox-open') && document.querySelector('#inbox-view').hidden);
-    await agentPage.evaluate(async () => { const room = document.querySelector('.room-row.active .room-name'); if (!room) throw new Error('room missing'); await room.onclick(); });
+    await agentPage.evaluate(async () => { const room = document.querySelector('.room-row.active .room-name'); if (!room) throw new Error('room missing'); room.click(); });
     await agentPage.waitForFunction(() => document.querySelector('#app-view')?.classList.contains('chat-open') && !document.querySelector('#app-view').classList.contains('rooms-open') && document.querySelectorAll('.agent-card[data-agent-id]').length === 3 && getComputedStyle(document.querySelector('.chat')).display === 'flex');
     // Phone: Health sits in the ⋯ menu; choosing a recovery item there opens the Inbox on its card with the drawers closed.
     await domClick(agentPage, '#more-toggle');
@@ -5195,7 +5195,7 @@ async function main() {
     await agentPage.waitForFunction(() => !document.querySelector('#inbox-view').hidden && document.querySelector('#inbox-view [data-inbox-id="mock_approval"]') && !document.querySelector('#agents-panel').classList.contains('mobile-open') && !document.querySelector('#app-view').classList.contains('rooms-open'));
     await domClick(agentPage, '.mobile-tab[data-tab="rooms"]');
     await agentPage.waitForFunction(() => document.querySelector('#app-view').classList.contains('rooms-open') && document.querySelector('#inbox-view').hidden);
-    await agentPage.evaluate(async () => { await document.querySelector('.room-row.active .room-name').onclick(); });
+    await agentPage.evaluate(async () => { document.querySelector('.room-row.active .room-name').click(); });
     await agentPage.waitForFunction(() => document.querySelector('#app-view')?.classList.contains('chat-open') && !document.querySelector('#app-view').classList.contains('rooms-open'));
     await agentPage.click('.mobile-tab[data-tab="agents"]');
     assert.equal(await agentPage.$eval('#agents-panel', el => getComputedStyle(el).display), 'flex', 'agents drawer did not open on phone');
@@ -5308,8 +5308,8 @@ async function main() {
     // The pages may be sitting in the Inbox view; its toggle is the way back to the chat now that the top-bar Rooms button is gone on desktop.
     for (const page of [first, second]) if (await page.$eval('#inbox-view', el => !el.hidden)) await domClick(page, '#inbox-toggle');
     await first.waitForFunction(() => document.querySelector('#inbox-view').hidden && !document.querySelector('.chat').hidden); await second.waitForFunction(() => document.querySelector('#inbox-view').hidden && !document.querySelector('.chat').hidden);
-    await first.evaluate(async () => { const room = [...document.querySelectorAll('.room-name')].find(el => el.textContent.includes('Nested task')); await room.onclick(); });
-    await second.evaluate(async () => { const room = [...document.querySelectorAll('.room-name')].find(el => el.textContent.includes('Nested task')); await room.onclick(); });
+    await first.evaluate(async () => { const room = [...document.querySelectorAll('.room-name')].find(el => el.textContent.includes('Nested task')); room.click(); });
+    await second.evaluate(async () => { const room = [...document.querySelectorAll('.room-name')].find(el => el.textContent.includes('Nested task')); room.click(); });
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     const liveCatalog = await first.evaluate(async () => (await (await fetch('/api/spawn-catalog')).json()).tools);
@@ -7029,12 +7029,12 @@ async function main() {
     // Room lists that finish out of order: a read of a project's rooms that started before a newer one was applied must not remove a room the
     // newer one already shows (a room created in between), whichever answers last.
     assert.deepEqual(await first.evaluate(async () => {
-      const { Sidebar } = await import('/js/sidebar.js');
+      const { Sidebar } = await import('/js/pages/sidebar/page.js');
       const sidebar = new Sidebar(document.createElement('div'), () => {});
       sidebar.projects.set('p-order', { id: 'p-order', name: 'Order' });
       const room = id => ({ id, project_id: 'p-order', parent_id: '', depth: 0, kind: 'task', title: id, lifecycle: 'open', unread_count: 0, member_count: 0 });
       const answers = [];
-      sidebar.roomRequest = () => new Promise(resolve => answers.push(resolve));
+      sidebar.store.roomRequest = () => new Promise(resolve => answers.push(resolve));
       const older = sidebar.refreshProject('p-order'), newer = sidebar.refreshProject('p-order');
       answers[1]([room('one'), room('two')]); await newer;
       answers[0]([room('one')]); await older;
@@ -8234,7 +8234,7 @@ async function main() {
     await probePage.waitForSelector('#login-view:not([hidden])');
     const resyncUnread = await probePage.evaluate(async () => {
       const { setSession } = await import('/js/api.js'); setSession({ id: 'snapshot-probe-user' });
-      const { Sidebar } = await import('/js/sidebar.js');
+      const { Sidebar } = await import('/js/pages/sidebar/page.js');
       const project = { id: 'snapshot-unread-probe', name: 'Snapshot unread probe' };
       const oldRoom = { id: 'snapshot-old-room', project_id: project.id, kind: 'home', title: 'Old room', message_count: 2, unread_count: 0 };
       const newRoom = { id: 'snapshot-new-room', project_id: project.id, kind: 'dm', title: 'New chat', message_count: 1, unread_count: 1 };
@@ -8314,11 +8314,12 @@ async function main() {
     const archivePage = await archiveContext.newPage();
     await archivePage.goto(origin);
     const archiveReset = await archivePage.evaluate(async () => {
-      const { Sidebar } = await import('/js/sidebar.js');
+      const { Sidebar } = await import('/js/pages/sidebar/page.js');
       const project = { id: 'archive-reset-probe', name: 'Archive reset probe' };
       const room = { id: 'archive-reset-room', project_id: project.id, kind: 'task', title: 'Archived', lifecycle: 'closed', message_count: 1 };
-      const sidebar = new Sidebar(document.createElement('div'), () => {});
-      sidebar.projects.set(project.id, project); sidebar.rooms.set(room.id, room); sidebar.render();
+      const container = document.createElement('div'), tick = () => new Promise(resolve => setTimeout(resolve, 30));
+      const sidebar = new Sidebar(container, () => {});
+      sidebar.projects.set(project.id, project); sidebar.rooms.set(room.id, room); sidebar.render(); await tick();
       let releaseOld, oldSignal;
       const originalFetch = window.fetch;
       window.fetch = (input, options) => {
@@ -8329,16 +8330,16 @@ async function main() {
         return originalFetch(input, options);
       };
       try {
-        const search = sidebar.archiveSearchNode(project.id);
+        const search = container.querySelector('.archive-search');
         search.value = 'same query'; search.dispatchEvent(new Event('input'));
         await new Promise(resolve => setTimeout(resolve, 300));
         if (!releaseOld) throw new Error('archive search did not start');
         sidebar.reset();
-        sidebar.projects.set(project.id, project); sidebar.rooms.set(room.id, room); sidebar.render();
-        sidebar.archiveFilter.set(project.id, 'same query');
+        sidebar.projects.set(project.id, project); sidebar.rooms.set(room.id, room); sidebar.render(); await tick();
+        sidebar.store.archiveFilter.set(project.id, 'same query');
         releaseOld();
         await new Promise(resolve => setTimeout(resolve, 0));
-        return { aborted: oldSignal.aborted, leaked: sidebar.archiveHitsNode(project.id).textContent.includes('Private message snippet') };
+        return { aborted: oldSignal.aborted, leaked: (container.querySelector('.archive-hits')?.textContent || '').includes('Private message snippet') };
       } finally { window.fetch = originalFetch; }
     });
     await archiveContext.close();
