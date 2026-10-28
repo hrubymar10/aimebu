@@ -95,15 +95,13 @@ const FIXTURE = async () => {
     const person = make('article', 'agent-card human-card is-you', '', humans); const personTitle = make('div', 'agent-title', '', person);
     make('span', 'presence-dot', '', personTitle); { const icon = make('img', 'agent-harness-icon', '', personTitle); icon.src = '/icons/human.svg'; icon.alt = ''; } make('strong', 'agent-name human-name', 'ada', personTitle); make('small', 'human-role', 'owner', personTitle);
     // The real member card, opened as a profile (a working agent, so Reactivate is unavailable and says why), plus the facts the server adds.
-    const { AgentsPanel } = await import('/js/agents.js');
-    const panel = Object.create(AgentsPanel.prototype); panel.source = { available: true }; panel.room = { lifecycle: 'open' }; panel.control = () => {}; panel.openSwitch = () => {}; panel.onPrivate = () => {};
+    const { html, render } = await import('/js/ui.js');
+    const { AgentCard } = await import('/js/pages/agents/agents-list.js');
+    const api = { store: { now: { value: Date.now() }, toggleProfile() {}, control() {}, setOutputOpen() {}, loadOutput() {} }, onPrivate() {}, onRecovery() {}, openSwitch() {} };
     const agent = { id: 'agt_fixture', name: 'claude-reviewer', slug: 'claude-reviewer', role: 'worker', role_key: 'worker', role_emoji: '🛠', tool: 'codex', model: 'm', desired: 'active', observed: 'in_turn', activity: 'tool inspect', activity_at: new Date(Date.now() - 74000).toISOString(), health_flags: [], recovery_block: false };
-    const card = panel.card(agent); card.classList.add('expanded'); agents.append(card); panel.update(card, agent);
-    const factsList = make('div', 'profile-facts-list', '', card.querySelector('.agent-profile-facts'));
-    for (const [label, value, mono, copy] of [['Status', 'Working'], ['Runtime', 'fixture-model · codex'], ['Session', '3b241101-e2bb-4255-8caf-4136c566a962', true], ['Resume', 'cd /tmp/work && claude --resume 3b241101', true, true], ['CWD', '/tmp/work', true], ['Machine', 'host']]) {
-      const row = make('div', 'profile-fact', '', factsList); make('span', 'profile-fact-label', label, row); make(mono ? 'code' : 'strong', 'profile-fact-value', value, row);
-      if (copy) { const button = make('button', 'icon-btn profile-copy', '', row); make('span', 'icon-mask icon-mask-copy', '', button).setAttribute('aria-hidden', 'true'); button.title = 'Copy resume'; button.setAttribute('aria-label', 'Copy resume'); }
-    }
+    const profile = { native_session_id: '3b241101-e2bb-4255-8caf-4136c566a962', resume_command: 'cd /tmp/work && claude --resume 3b241101', cwd: '/tmp/work', machine_name: 'host' };
+    const slot = document.createElement('div'); slot.style.display = 'contents'; agents.append(slot);
+    render(html`<${AgentCard} agent=${agent} expanded=${true} profile=${profile} output=${null} readOutput=${false} down="" lifecycle="open" api=${api} />`, slot);
   }
   // Settings -> Harnesses, from the real page over the fixture server's answers: the list beside one harness, with the Edit form open on a disabled one.
   {

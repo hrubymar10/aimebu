@@ -159,6 +159,26 @@ async function main() {
     await page.close();
   }
 
+  // A refresh with the same data changes nothing: the page keeps the record it holds for each agent, so no card renders and nothing in the list is
+  // written (the clock's own text apart); one that changed renders that card alone. The hand-written panel rewrote every card on every refresh.
+  if (REPLACED) {
+    const page = await mount();
+    await show(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn' }), agent('a2', 'bert')]);
+    await page.evaluate(() => {
+      window.__heldMap = window.__panel.cards; window.__held = new Map(window.__heldMap); window.__written = [];
+      new MutationObserver(records => { for (const record of records) { const node = record.target.nodeType === 1 ? record.target : record.target.parentElement; if (!node.closest('.agent-state-age, .agent-live-chip')) window.__written.push(`${record.type}:${node.className}`); } })
+        .observe(document.querySelector('#agents-list'), { subtree: true, childList: true, characterData: true, attributes: true });
+    });
+    await refresh(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn' }), agent('a2', 'bert')]);
+    assert.deepEqual(await page.evaluate(() => [window.__panel.cards === window.__heldMap ? 'same map' : 'new map', window.__written]), ['same map', []], 'unchanged data is not written');
+    await refresh(page, 'r1', [agent('a1', 'ada', { observed: 'in_turn' }), agent('a2', 'bert', { desired: 'not_accepting' })]);
+    const kept = await page.evaluate(() => ({ a1: window.__panel.cards.get('a1') === window.__held.get('a1'), a2: window.__panel.cards.get('a2') === window.__held.get('a2'), written: [...new Set(window.__written)] }));
+    assert.deepEqual([kept.a1, kept.a2], [true, false], 'the record of the unchanged agent is kept');
+    assert.equal(kept.written.length > 0 && kept.written.every(entry => entry.length > 0), true);
+    assert.equal(await page.$$eval('[data-agent-id=a1] *', nodes => nodes.length > 0), true);
+    await page.close();
+  }
+
   // A card keeps its place when another one goes and a new one arrives, and the one that went takes its node with it.
   {
     const page = await mount();
@@ -397,6 +417,131 @@ async function main() {
     assert.equal(added.some(path => path.startsWith('/api/rooms/r1/')), false, `${how} ${status}: the room that was left is not read again`);
     // The source tells the panel to refresh when a control call ends, so the room the panel has moved to may be read once; nothing else is.
     assert.equal(added.every(path => path === '/api/rooms/r2/agents') && added.length <= 1, true, `${how} ${status}: at most one read of the room on show, got ${added}`);
+    await page.close();
+  }
+
+  // Two reads for the same room can finish in either order: the older one answered last must not replace what the newer one drew, neither the
+  // cards nor the people.
+  {
+    const page = await mount();
+    await show(page, 'r1', [agent('a1', 'ada')], { humans: [{ id: 'usr_me', login: 'me', role: 'owner' }] });
+    const last = (path) => page.evaluate(path => window.__requests.findLastIndex(request => request.path === path && !request.answered), path);
+    // The agent list: the first read is held, the second is answered with newer data, then the first is released with the older.
+    await page.evaluate(() => { window.__first = window.__panel.refresh(); });
+    const first = await waitRequest(page, 'GET', '/api/rooms/r1/agents');
+    await page.evaluate(() => { window.__second = window.__panel.refresh(); });
+    await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/rooms/r1/agents' && !request.answered).length === 2);
+    const second = await last('/api/rooms/r1/agents');
+    assert.notEqual(first, second);
+    await answer(page, second, 200, [agent('a1', 'ada', { desired: 'not_accepting', desired_rev: 2 })]);
+    await answer(page, first, 200, [agent('a1', 'ada'), agent('a2', 'old')]);
+    await page.evaluate(() => Promise.all([window.__first, window.__second])); await settle(page);
+    assert.deepEqual(await cards(page), [['a1', 'ada', 'paused']], 'the older list does not replace the newer');
+    assert.equal(await count(page, 'GET', '/api/rooms/r1/members'), 2, 'the older list starts no read of the people');
+    for (const index of await page.evaluate(() => window.__requests.map((request, position) => (request.path === '/api/rooms/r1/members' && !request.answered ? position : -1)).filter(position => position >= 0))) await answer(page, index, 200, { humans: [{ id: 'usr_me', login: 'me', role: 'owner' }] });
+    await settle(page);
+    // The people: the first read of the people is held, the second is answered with newer data, then the first is released.
+    await page.evaluate(() => { window.__one = window.__panel.refresh(); });
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents'), 200, [agent('a1', 'ada')]);
+    const olderPeople = await waitRequest(page, 'GET', '/api/rooms/r1/members');
+    await page.evaluate(() => { window.__two = window.__panel.refresh(); });
+    await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/rooms/r1/agents' && !request.answered).length === 1);
+    await answer(page, await last('/api/rooms/r1/agents'), 200, [agent('a1', 'ada')]);
+    await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/rooms/r1/members' && !request.answered).length === 2);
+    const newerPeople = await last('/api/rooms/r1/members');
+    assert.notEqual(olderPeople, newerPeople);
+    await answer(page, newerPeople, 200, { humans: [{ id: 'usr_bob', login: 'bob', role: 'viewer' }] });
+    await answer(page, olderPeople, 200, { humans: [{ id: 'usr_old', login: 'old', role: 'viewer' }] });
+    await page.evaluate(() => Promise.all([window.__one, window.__two])); await settle(page);
+    assert.deepEqual((await humans(page)).map(human => human[0]), ['usr_bob'], 'the older answer for the people does not replace the newer');
+    await page.close();
+  }
+
+  // The profile belongs to one opening: an answer for an earlier opening of the same agent, or for an earlier reload, does not fill the one that
+  // replaced it.
+  {
+    const page = await mount({ auto: { 'GET /api/rooms/r1/agents/a1/profile': undefined } });
+    await show(page, 'r1', [agent('a1', 'ada')]);
+    const cwd = () => page.$$eval('[data-agent-id=a1] .profile-fact', rows => rows.filter(row => row.querySelector('.profile-fact-label').textContent === 'CWD').map(row => row.querySelector('.profile-fact-value').textContent));
+    const pending = () => page.evaluate(() => window.__requests.map((request, position) => (request.path === '/api/rooms/r1/agents/a1/profile' && !request.answered ? position : -1)).filter(position => position >= 0));
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    const old = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/profile');
+    await page.$eval('#agent-profile-close', node => node.click());
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/rooms/r1/agents/a1/profile' && !request.answered).length === 2);
+    const fresh = (await pending()).find(index => index !== old);
+    await answer(page, fresh, 200, { cwd: '/new' });
+    await answer(page, old, 200, { cwd: '/old' }); await settle(page);
+    assert.deepEqual(await cwd(), ['/new'], 'the answer of the earlier opening does not fill the reopened profile');
+    // Two reloads of an open profile that are out together: the newer answers first, and the older one then changes nothing.
+    await page.evaluate(() => { window.__panel.store.profileLoadedAt = 0; });
+    await page.evaluate(() => { window.__one = window.__panel.refresh(); });
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents'), 200, [agent('a1', 'ada')]);
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/members'), 200, people);
+    const olderReload = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/profile');
+    await page.evaluate(() => { window.__panel.store.profileLoadedAt = 0; window.__two = window.__panel.refresh(); });
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents'), 200, [agent('a1', 'ada')]);
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/members'), 200, people);
+    await page.waitForFunction(() => window.__requests.filter(request => request.path === '/api/rooms/r1/agents/a1/profile' && !request.answered).length === 2);
+    const newerReload = (await pending()).find(index => index !== olderReload);
+    await answer(page, newerReload, 200, { cwd: '/newer' });
+    await answer(page, olderReload, 200, { cwd: '/older' }); await settle(page);
+    assert.deepEqual(await cwd(), ['/newer'], 'an older reload does not replace the newer');
+    await page.close();
+  }
+
+  // A panel that is destroyed while a read or a call is out takes the answer and does nothing with it: no card, no person, no profile or output,
+  // no read that would follow, no error in the panel, and nothing is drawn into the emptied lists.
+  {
+    const reads = page => page.evaluate(() => window.__requests.filter(request => request.method === 'GET').length);
+    const empty = page => page.evaluate(() => [document.querySelectorAll('#agents-list *').length, document.querySelectorAll('#agents-humans *').length, document.querySelector('#agents-error').textContent]);
+    // The agent read.
+    let page = await mount();
+    await page.evaluate(room => { window.__shown = window.__panel.setRoom(room); }, room('r1'));
+    const list = await waitRequest(page, 'GET', '/api/rooms/r1/agents');
+    await calls(page);
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, list, 200, [agent('a1', 'ada')]); await page.evaluate(() => window.__shown); await settle(page);
+    assert.deepEqual([await empty(page), await count(page, 'GET', '/api/rooms/r1/members'), await calls(page)], [[0, 0, ''], 0, []], 'a destroyed panel draws no card, tells nobody and reads no members');
+    await page.close();
+    // The members read.
+    page = await mount();
+    await page.evaluate(room => { window.__shown = window.__panel.setRoom(room); }, room('r1'));
+    await answer(page, await waitRequest(page, 'GET', '/api/rooms/r1/agents'), 200, [agent('a1', 'ada')]);
+    const members = await waitRequest(page, 'GET', '/api/rooms/r1/members');
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, members, 200, people); await settle(page);
+    assert.deepEqual([await empty(page), await page.evaluate(() => window.__panel.store.humans.value.length)], [[0, 0, ''], 0], 'a destroyed panel keeps and draws no person');
+    await page.close();
+    // The profile and the Output reads.
+    page = await mount({ owner: true, auto: { 'GET /api/rooms/r1/agents/a1/profile': undefined, 'GET /api/rooms/r1/agents/a1/output?lines=200': undefined } });
+    await show(page, 'r1', [agent('a1', 'ada')]);
+    await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
+    const profile = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/profile');
+    await page.$eval('[data-agent-id=a1] .profile-output summary', node => node.click());
+    const output = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/output?lines=200');
+    const before = await reads(page);
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, profile, 200, { cwd: '/late' }); await answer(page, output, 200, { text: 'late', truncated: false }); await settle(page);
+    assert.deepEqual([await empty(page), await reads(page), await page.evaluate(() => [window.__panel.store.profileData.value, window.__panel.store.output.value?.text])], [[0, 0, ''], before, [null, '']], 'a destroyed panel keeps neither the profile nor the output and reads nothing more');
+    await page.close();
+    // A control call.
+    page = await mount();
+    await show(page, 'r1', [agent('a1', 'ada')]);
+    await page.$eval('[data-agent-id=a1] .agent-act-pause', node => node.click());
+    const control = await waitRequest(page, 'POST', '/api/agents/a1/control');
+    const total = await page.evaluate(() => window.__requests.length);
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, control, 409, { message: 'The agent changed', error: 'stale' }); await settle(page);
+    assert.deepEqual([await empty(page), await page.evaluate(() => window.__requests.length)], [[0, 0, ''], total], 'a destroyed panel shows no refusal and reads nothing');
+    await page.close();
+    // An event that reaches a destroyed panel through the source starts no read.
+    page = await mount();
+    await show(page, 'r1', [agent('a1', 'ada')]);
+    const base = await page.evaluate(() => window.__requests.length);
+    await page.evaluate(() => { const panel = window.__panel; panel.destroy(); panel.source.changed(); });
+    await settle(page);
+    assert.equal(await page.evaluate(() => window.__requests.length), base, 'a destroyed panel does not read again');
     await page.close();
   }
 

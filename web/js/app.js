@@ -8,7 +8,7 @@ import { EventStream } from './events.js';
 import { Inbox } from './pages/inbox/page.js';
 import { createInboxSource } from './inbox-source.js';
 import { InboxNotifications } from './inbox-notifications.js';
-import { AgentsPanel } from './agents.js';
+import { AgentsPanel } from './pages/agents/page.js';
 import { createAgentSource } from './agent-source.js';
 import { SettingsPanel } from './settings.js';
 import { UsagesPopover } from './usages-popover.js';
@@ -632,7 +632,7 @@ document.querySelector('#inbox-toggle').onclick = () => { setRoomsOpen(false); a
 document.querySelector('#rooms-toggle').onclick = () => { inbox.hide(); if (matchMedia('(max-width: 700px)').matches) { appView.classList.add('chat-open'); setRoomsOpen(!appView.classList.contains('rooms-open')); } else { setRoomsCollapsed(!appView.classList.contains('rooms-collapsed')); } };
 // Desktop left-panel collapse persists under the v1 localStorage key.
 // On a touch tablet (701-900px) only one side panel is open at a time; the panel one closes to make room is not remembered as a choice, but a
-// person's own expand or collapse is (see agents.js).
+// person's own expand or collapse is (see pages/agents/page.js).
 const TABLET = matchMedia('(min-width: 701px) and (max-width: 900px) and (pointer: coarse)');
 function setRoomsCollapsed(collapsed, remember = true) {
   appView.classList.toggle('rooms-collapsed', collapsed);

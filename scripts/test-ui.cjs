@@ -2860,12 +2860,12 @@ async function main() {
       // Which entry the dialog picks: a continued claude session takes the native claude entry even when a Docker one sorts first (and leaves
       // other tools and containers unselectable), and a fresh start only preselects the v1 tool without locking the others.
       assert.deepEqual(await first.evaluate(async () => {
-        const { AgentsPanel } = await import('/js/agents.js');
+        const { SpawnDialogs } = await import('/js/spawn-dialogs.js');
         const pick = (resume, catalog) => {
           const select = document.createElement('select');
           catalog.forEach((tool, index) => { const option = document.createElement('option'); option.value = String(index); option.disabled = !tool.available; select.append(option); });
           select.selectedIndex = catalog.findIndex(tool => tool.available);
-          AgentsPanel.prototype.applyResumeChoice.call({ pendingResume: resume, catalog }, select);
+          SpawnDialogs.prototype.applyResumeChoice.call({ pendingResume: resume, catalog }, select);
           return { selected: select.selectedIndex, disabled: [...select.options].map(option => option.disabled) };
         };
         const catalog = [{ tool: 'claude', containerized: true, available: true }, { tool: 'codex', containerized: false, available: true }, { tool: 'claude', containerized: false, available: true }];
@@ -2905,7 +2905,7 @@ async function main() {
       fs.mkdirSync(path.join(claudeHome, 'sessions'), { recursive: true });
       fs.writeFileSync(path.join(claudeHome, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: idActive, cwd: gitRoot, kind: 'interactive', status: 'idle' }));
       // Whether a native Claude is on offer comes from the machine's tool detection, which can still be running when this step starts. The
-      // dialog says a session "is not available natively" until the catalog lists one it can continue on (agents.js applyResumeChoice: native, or a container
+      // dialog says a session "is not available natively" until the catalog lists one it can continue on (spawn-dialogs.js applyResumeChoice: native, or a container
       // that shares the host's Claude home), so wait for the catalog the dialog will read to do so.
       await first.waitForFunction(async () => (await (await fetch('/api/spawn-catalog')).json()).tools?.some(tool => tool.tool === 'claude' && tool.available && !(tool.containerized && !tool.shares_claude_home)), { polling: 500, timeout: 30000 }).catch(() => {});
       await domClick(first, '#spawn-open');
@@ -4940,13 +4940,14 @@ async function main() {
     }
     // A turn that began with another agent's reply says so on the card; any other turn does not.
     const wokenTag = await agentPage.evaluate(async () => {
-      const { AgentsPanel } = await import('/js/agents.js');
-      const panel = Object.create(AgentsPanel.prototype); panel.source = { available: true }; panel.room = { lifecycle: 'open' }; panel.control = () => {}; panel.openSwitch = () => {}; panel.onPrivate = () => {};
+      const { html, render } = await import('/js/ui.js');
+      const { AgentCard } = await import('/js/pages/agents/agents-list.js');
+      const api = { store: { now: { value: Date.now() }, toggleProfile() {}, control() {} }, onPrivate() {}, onRecovery() {}, openSwitch() {} };
       const agent = { id: 'agt_tag', name: 'tag', slug: 'tag', role: 'worker', role_key: 'worker', tool: 'codex', model: 'm', desired: 'active', observed: 'in_turn', activity: 'tool inspect' };
-      const card = panel.card(agent); document.body.append(card);
-      const read = value => { panel.update(card, { ...agent, woken_by: value }); return card.querySelector('.agent-activity').textContent; };
+      const slot = document.createElement('div'); document.body.append(slot);
+      const read = value => { render(html`<${AgentCard} agent=${{ ...agent, woken_by: value }} expanded=${false} profile=${null} output=${null} readOutput=${false} down="" lifecycle="open" api=${api} />`, slot); return slot.querySelector('.agent-activity').textContent; };
       const out = { reply: read('reply'), none: read(''), other: read('mention') };
-      card.remove(); return out;
+      slot.remove(); return out;
     });
     assert.deepEqual(wokenTag, { reply: 'Woken by reply · tool inspect', none: 'tool inspect', other: 'tool inspect' }, 'a card tags a turn woken by a reply');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-live-chip', el => /^tool 0:\d\d$/.test(el.textContent)), true);
@@ -4998,7 +4999,7 @@ async function main() {
     // A long-lived state reads "4d", never a clock that runs past the card: 104 h 40 min ago, whole and untruncated at both widths.
     for (const width of [1440, 390]) {
       await agentPage.setViewport({ width, height: 900 });
-      await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-state', (state, since) => { state.dataset.since = since; }, new Date(Date.now() - (104 * 3600 + 40 * 60) * 1000).toISOString());
+      await agentPage.evaluate(since => { const panel = window.__mockAgentsPanel; panel.source.agents.get('agt_mock_worker').activity_at = since; panel.source.notify(); }, new Date(Date.now() - (104 * 3600 + 40 * 60) * 1000).toISOString());
       await agentPage.waitForFunction(() => document.querySelector('[data-agent-id="agt_mock_worker"] .agent-state-age')?.textContent === '4d', { timeout: 5000 });
       assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-state-pill', el => el.scrollWidth <= el.clientWidth + 1 && el.getBoundingClientRect().right <= innerWidth), true, `the state age is cut off at ${width}px`);
     }
@@ -5329,8 +5330,8 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#spawn-tool-reason').textContent.includes('Settings → Harnesses'), { timeout: 10000 }); // with no harness the dialog points to Settings → Harnesses
     // The hint is a link for the owner, and plain words for anyone else (who could only be refused): checked on the real class.
     const hints = await first.evaluate(async () => {
-      const { AgentsPanel } = await import('/js/agents.js');
-      const panel = Object.create(AgentsPanel.prototype);
+      const { SpawnDialogs } = await import('/js/spawn-dialogs.js');
+      const panel = Object.create(SpawnDialogs.prototype);
       panel.dialog = { close() {} }; panel.switchDialog = { open: false, close() {} }; panel.spawnMachine = { id: 'mch_here' };
       const events = []; const listen = event => { events.push(event.detail); event.stopPropagation(); }; // the app's own listener must not open Settings here
       window.addEventListener('aimebu:open-settings', listen, true);
@@ -5470,10 +5471,10 @@ async function main() {
     // A worktree is offered where the project folder is a Git repository (this one is); where the machine says it is not, the box is off
     // with the reason, and a machine that does not say leaves it available.
     assert.deepEqual(await first.evaluate(async () => {
-      const { AgentsPanel } = await import('/js/agents.js');
+      const { SpawnDialogs } = await import('/js/spawn-dialogs.js');
       const form = document.querySelector('#spawn-form'), option = form.querySelector('.spawn-worktree-option');
       const state = () => ({ hidden: option.hidden, disabled: form.elements.worktree.disabled, note: option.querySelector('.spawn-worktree-note').hidden, display: getComputedStyle(option).display });
-      const sync = (git, kind = 'task') => { AgentsPanel.prototype.syncWorktreeOption.call({ form, room: { kind }, spawnRoom() { return this.room; }, spawnMachine: { machine: git === undefined ? {} : { project_worktree: git ? { ok: true } : { ok: false, code: 'git_unusable', reason: 'Git cannot use the project folder: detected dubious ownership' } } }, pendingResume: null }); return state(); };
+      const sync = (git, kind = 'task') => { SpawnDialogs.prototype.syncWorktreeOption.call({ form, room: { kind }, spawnRoom() { return this.room; }, spawnMachine: { machine: git === undefined ? {} : { project_worktree: git ? { ok: true } : { ok: false, code: 'git_unusable', reason: 'Git cannot use the project folder: detected dubious ownership' } } }, pendingResume: null }); return state(); };
       const live = state(), notRepo = sync(false), reason = option.querySelector('.spawn-worktree-note').textContent, unknown = sync(undefined), home = sync(false, 'home'); sync(undefined);
       return { live, notRepo, reason, unknown, home };
     }), {
