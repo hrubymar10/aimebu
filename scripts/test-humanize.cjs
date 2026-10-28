@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'inbox.js'), 'utf8');
-const head = source.slice(0, source.indexOf('export class Inbox')).replace(/^import .*$/gm, '').replace(/^export /gm, '');
+const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'inbox', 'model.js'), 'utf8');
+const head = source.replace(/^export /gm, '');
 const context = {};
 vm.createContext(context);
 vm.runInContext(head + '\nglobalThis.api = { humanize, readablePreview, deliveryEvidence };', context);

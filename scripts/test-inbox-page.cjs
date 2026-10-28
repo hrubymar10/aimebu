@@ -255,6 +255,76 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.inbox-card').length, document.querySelector('#inbox-count').hidden, document.querySelector('#inbox-count').textContent, document.querySelector('#inbox-error').textContent, document.querySelector('#inbox-view').hidden, window.__inbox.items === undefined]), [0, true, '0', '', true, true]);
       await page.close();
     }
+    // A view destroyed while a read or a write is held draws nothing and sends nothing more; it lets go of the source, and an event it was told of
+    // after that reads nothing.
+    {
+      const read = await mount({ held: ['list'], refresh: false });
+      await read.evaluate(() => { window.__listener = [...window.__listeners][0]; window.__inbox.refresh({ notify: false }); });
+      await read.waitForFunction(() => window.__waiting.list?.length === 1);
+      await read.evaluate(() => { window.__inbox.destroy(); window.__release('list'); });
+      await settle(read);
+      assert.deepEqual(await read.evaluate(() => [document.querySelectorAll('.inbox-card').length, window.__listeners.size, window.__onItems.length]), [0, 0, 0], 'a list answered after destroy draws nothing and the source is let go');
+      await read.evaluate(() => { window.__listener(); window.__inbox.refresh(); });
+      await settle(read);
+      assert.equal((await calls(read, 'list')).length, 1, 'an event after destroy reads nothing');
+      await read.close();
+      const answering = await mount({ held: ['answer'] });
+      await waitList(answering);
+      await answering.$eval('[data-inbox-id=q2] .btn', el => el.click());
+      await answering.waitForFunction(() => window.__waiting.answer?.length === 1);
+      await answering.evaluate(() => { window.__inbox.destroy(); window.__release('answer'); });
+      await settle(answering);
+      assert.equal((await calls(answering, 'list')).length, 1, 'an answer finishing after destroy reads the list no more');
+      assert.deepEqual(await answering.evaluate(async () => { const before = window.__calls.length; const inbox = window.__inbox; await inbox.answer(window.__items[0], 'x'); await inbox.store.decide(window.__items[0], 'resume'); await inbox.store.dismiss(window.__items[0]); await inbox.store.dismissResolved(); return window.__calls.length - before; }), 0, 'a destroyed view sends nothing');
+      await answering.close();
+      const failures = [{ ...base, id: 'd1', kind: 'delivery_failed', room_lifecycle: 'closed', question: 'First', held_reason: 'room_closed' }, { ...base, id: 'd2', kind: 'delivery_failed', room_lifecycle: 'closed', question: 'Second', held_reason: 'room_closed' }];
+      const bulk = await mount({ list: failures, held: ['dismiss'] });
+      await waitList(bulk);
+      await bulk.$eval('.inbox-dismiss-resolved', el => el.click());
+      await bulk.waitForFunction(() => window.__waiting.dismiss?.length === 1);
+      await bulk.evaluate(() => { window.__inbox.destroy(); window.__release('dismiss'); });
+      await settle(bulk);
+      assert.equal((await calls(bulk, 'dismiss')).length, 1, 'the dismissal stops where the view was destroyed');
+      await bulk.close();
+    }
+    // A write begun before the list is reset (sign-out) does not bring the Inbox back when it finishes, and a bulk dismissal stops where it was.
+    {
+      for (const [name, id, press] of [['answer', 'q2', '[data-inbox-id=q2] .btn'], ['decision', 'rec1', '[data-inbox-id=rec1] .inbox-decisions .btn'], ['dismiss', 'del1', '[data-inbox-id=del1] .icon-btn:not(.inbox-raw-toggle):not(.inbox-jump)']]) {
+        const page = await mount({ held: [name] });
+        await waitList(page);
+        await page.$eval(press, el => el.click());
+        await page.waitForFunction(name => window.__waiting[name]?.length === 1, {}, name);
+        await page.evaluate(() => window.__inbox.reset());
+        await page.evaluate(name => window.__release(name), name);
+        await settle(page);
+        assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.inbox-card').length, window.__calls.filter(call => call[0] === 'list').length, window.__inbox.items === undefined]), [0, 1, true], `a ${name} finishing after a reset does not read or draw the list (${id})`);
+        await page.close();
+      }
+      const failures = [{ ...base, id: 'd1', kind: 'delivery_failed', room_lifecycle: 'closed', question: 'First', held_reason: 'room_closed' }, { ...base, id: 'd2', kind: 'delivery_failed', room_lifecycle: 'closed', question: 'Second', held_reason: 'room_closed' }];
+      const bulk = await mount({ list: failures, held: ['dismiss'] });
+      await waitList(bulk);
+      await bulk.$eval('.inbox-dismiss-resolved', el => el.click());
+      await bulk.waitForFunction(() => window.__waiting.dismiss?.length === 1);
+      await bulk.evaluate(() => window.__inbox.reset());
+      await bulk.evaluate(() => window.__release('dismiss'));
+      await settle(bulk);
+      assert.deepEqual(await bulk.evaluate(() => [window.__calls.filter(call => call[0] === 'dismiss').length, window.__calls.filter(call => call[0] === 'list').length, document.querySelector('.inbox-dismiss-resolved').disabled]), [1, 1, false], 'a bulk dismissal stops after its current item on a reset, reads nothing and is free to run again');
+      await bulk.close();
+    }
+    // An item revised while its card is open keeps the card, the node and what was typed in it, and is answered at the new revision.
+    {
+      const page = await mount();
+      await waitList(page);
+      await page.$eval('[data-inbox-id=q1] .inbox-answer textarea', el => { el.value = 'my draft'; el.__node = true; });
+      await page.evaluate(() => { window.__items = window.__items.map(item => ({ ...item, rev: 2 })); return window.__inbox.refresh(); });
+      assert.deepEqual(await page.$eval('[data-inbox-id=q1] .inbox-answer textarea', el => [el.__node === true, el.value, document.querySelector('[data-inbox-id=q1]').dataset.rev]), [true, 'my draft', '2'], 'the draft and its node survive the revision');
+      await page.$eval('[data-inbox-id=q2] .btn', el => el.click());
+      await page.$eval('[data-inbox-id=ap1] .proposed-answer-btn', el => el.click());
+      await page.$eval('[data-inbox-id=q1] .inbox-answer', el => el.requestSubmit());
+      await page.waitForFunction(() => window.__calls.filter(call => call[0] === 'answer').length === 3);
+      assert.deepEqual(await page.evaluate(() => window.__calls.filter(call => call[0] === 'answer').map(call => [call[1], call[2], call[4]])), [['q2', 'Fine', 2], ['ap1', 'Approve', 2], ['q1', 'my draft', 2]]);
+      await page.close();
+    }
     assert.deepEqual(errors, [], 'no page errors');
     console.log('inbox page tests passed');
   } finally {

@@ -5,7 +5,7 @@ import { Chat } from './chat.js';
 import { setProjectNames } from './sender-identity.js';
 import { ReadReceipts } from './read-receipts.js';
 import { EventStream } from './events.js';
-import { Inbox } from './inbox.js';
+import { Inbox } from './pages/inbox/page.js';
 import { createInboxSource } from './inbox-source.js';
 import { InboxNotifications } from './inbox-notifications.js';
 import { AgentsPanel } from './agents.js';

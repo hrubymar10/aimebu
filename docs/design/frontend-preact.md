@@ -222,6 +222,13 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
   person has left not drawing, events, the room's task-notes and project-memory button and a failed read; and what was begun on a view
   the person has left not touching the one they are on, and a destroy while reads are held) and `scripts/test-knowledge-model.cjs` (the
   pure rules, in `make test-web`).
+- `make test-ui` also runs `scripts/test-inbox-page.cjs` (the Inbox view in Chromium over a source whose calls are held; first written against the hand-written
+  view and run unchanged against the page that replaced it: every kind of item with its words and decisions for someone who may and someone
+  who may not decide it, the count, the toggle's name and the tab title, cards that keep their nodes and what was typed in them across
+  a new list, a changed item replaced and a gone one dropped with its group, the newer of two reads winning, a card waiting for an answer
+  not answered twice and a retry keeping its idempotency key, a stale item read again, the raw record, jumping to a room, opening Usages,
+  dismissing one and every resolved failure, a change the source announces, and reset; and a destroy while a read, an answer or a bulk
+  dismissal is held sending nothing more and the source let go) and `scripts/test-inbox-model.cjs` (the pure rules, in `make test-web`).
 - `make test-ui` also runs `scripts/test-claude-import-page.cjs` (the Claude Code sessions import dialog over a source with calls held: it opens on the host
   machine with the native harness, the default model and preset roles; reads answered out of order; starting reads the role boxes then,
   locks the dialog while it runs and the started rows after; and a destroy while a read or a start is held sends nothing more) next to
@@ -318,7 +325,7 @@ Done so far: Prompts (`web/js/pages/prompts/`), Macros (`web/js/pages/macros/`),
 
 ### Step 3: Health, Knowledge, Inbox
 
-Done so far: Health (`web/js/pages/health/`: the popover over a `HealthStore`, with the disk section as `DiskUsage`, a store of its own; the toolbar's toggle and count stay in `index.html` and the adapter is their only writer).; Knowledge (`web/js/pages/knowledge/`: the Memory viewer over a `KnowledgeStore` that fills the static `#knowledge-dialog`; the toolbar's two buttons stay in `index.html`, the room's one written by the adapter).
+Done so far: Health (`web/js/pages/health/`: the popover over a `HealthStore`, with the disk section as `DiskUsage`, a store of its own; the toolbar's toggle and count stay in `index.html` and the adapter is their only writer).; Knowledge (`web/js/pages/knowledge/`: the Memory viewer over a `KnowledgeStore` that fills the static `#knowledge-dialog`; the toolbar's two buttons stay in `index.html`, the room's one written by the adapter); Inbox (`web/js/pages/inbox/`: the view over an `InboxStore`; `inbox-source.js` stays the one place requests and mutations go through, the adapter keeps and calls the unsubscribe it returns, and `answer-controls.js`, which the chat shares, is held in an island inside the card).
 
 - Scope: the Health panel, the Knowledge (memory) viewer, the Inbox and its notifications.
 - Files: `health.js`, `knowledge.js`, `inbox.js`, `inbox-source.js` (the source stays a plain store; the page reads it
