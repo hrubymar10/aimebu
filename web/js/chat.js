@@ -1,5 +1,4 @@
-import { RoomNotifySettings } from './room-notify-settings.js';
-import { request, upload, download, currentUser, currentLogin, rights } from './api.js';
+import { request, upload, currentUser, currentLogin } from './api.js';
 import { PREFERENCE_KEYS, savePreference } from './preferences.js';
 import { retention } from './retention.js';
 import { expiryCutoffMs, planExpiry } from './expiry.js';
@@ -13,9 +12,7 @@ import { ScrollAnchor } from './scroll-anchor.js';
 import { senderIdentity, senderKind, createSenderPresence, applySenderIdentity, agentLabel } from './sender-identity.js';
 import { openSenderProfile } from './pages/sender-profile/page.js';
 import { renderVisualPlan } from './visual-plan.js';
-import { RoomScopeControl, RoomUsage } from './pages/project/room-panels.js';
-import { Schedules } from './schedules.js';
-import { RoomMembers } from './pages/members/page.js';
+import { RoomPanel } from './pages/room-panel/page.js';
 import { QuickCommands } from './quick-commands.js';
 import { MacroAutocomplete } from './macros.js';
 import { MentionAutocomplete, MentionIndex, highlightMentions } from './mentions.js';
@@ -26,7 +23,7 @@ import { LiveAnnouncer } from './live-region.js';
 import { ComposerFormatting } from './composer.js';
 import { buildMessageActions, messageAction } from './message-actions.js';
 import { answerControls, answerHistory } from './answer-controls.js';
-import { confirmDialog, promptDialog } from './dialogs.js';
+import { promptDialog } from './dialogs.js';
 import { expandShortcodes } from './emoji-data.js';
 
 const MENTION_LOGINS_TTL_MS = 30000;
@@ -113,48 +110,11 @@ export class Chat {
     document.querySelector('#cancel-reply').onclick = () => this.setReply(null);
     this.openGeneration = 0;
     this.sessionGeneration = 0;
-    this.roomSession = 0; // moves whenever another room is shown or the chat is reset: what the room's dialog started for another room is not for this one
     this.uploadRequests = new Set();
     this.raw = false;
-    this.infoDialog = document.querySelector('#room-info-dialog');
-    this.worktreeSection = document.createElement('section'); this.worktreeSection.className = 'room-worktree';
-    this.worktreeSection.innerHTML = '<h3>Git worktree</h3><p role="status"></p><button type="button" class="btn btn-primary">Create worktree</button><button type="button" class="btn btn-danger" hidden>Remove worktree</button>';
-    document.querySelector('#room-info-error').before(this.worktreeSection);
-    // Task rooms keep task notes; the home room has none of its own and points at the project's memory instead.
-    this.notesSection = document.createElement('section'); this.notesSection.className = 'room-notes'; this.notesSection.setAttribute('aria-labelledby', 'room-notes-title');
-    this.notesSection.hidden = true;
-    this.notesSection.innerHTML = '<h3 id="room-notes-title">Task notes</h3><p class="settings-intro"></p><button type="button" class="btn">Open task notes</button>';
-    this.notesSection.querySelector('button').onclick = () => this.openRoomNotes();
-    document.querySelector('#room-info-error').before(this.notesSection);
-    this.projectSection = document.querySelector('#room-project');
-    // The title of the room, edited here and nowhere else: the home room's is the project's name.
-    this.renameForm = document.querySelector('#room-rename-form');
-    setGlyph(this.renameForm.querySelector('#room-rename-save'), 'check', 'Save title');
-    this.renameForm.onsubmit = event => { event.preventDefault(); this.saveRoomTitle(); };
-    this.renameForm.elements.title.oninput = () => { this.renameForm.querySelector('#room-rename-status').textContent = ''; };
-    this.notifySettings = new RoomNotifySettings(document.querySelector('#room-member-list'), (field, value) => this.setRoomPreference?.(this.roomView?.(this.room?.id) || this.room, field, value), () => this.roomView?.(this.room?.id) || this.room);
-    this.memorySection = document.createElement('section');
-    this.memorySection.className = 'room-memory-setting';
-    this.memorySection.innerHTML = '<h3>Room memory</h3><label>Message memory <select><option value="inherit">Use project setting</option><option value="off">Off in this room</option></select></label><p role="status"></p><p>Turning this off prevents this room’s messages from feeding memory or recall. It does not erase saved memory.</p>';
-    document.querySelector('#room-info-error').before(this.memorySection);
-    this.memorySection.querySelector('select').onchange = () => this.changeRoomMemory();
-    this.worktreeSection.querySelector('button:first-of-type').onclick = () => this.createWorktree();
-    this.worktreeSection.querySelector('button:last-of-type').onclick = () => this.removeWorktree();
-    this.scopeControl = new RoomScopeControl(document.querySelector('#room-scope-control'));
-    this.schedules = new Schedules(document.querySelector('#room-schedules'));
-    this.memberList = new RoomMembers(document.querySelector('#room-member-list'));
-    this.exportDialog = document.querySelector('#room-export-dialog');
-    this.roomUsage = new RoomUsage(document.querySelector('#room-usage'));
-    document.querySelector('#room-info').onclick = () => this.showRoomInfo();
-    document.querySelector('#room-info-close').onclick = () => this.infoDialog.close();
-    this.infoDialog.addEventListener('close', () => this.projectSettings?.release(this.projectSection));
-    document.querySelector('#room-lifecycle').onclick = () => this.changeRoomLifecycle();
-    document.querySelector('#room-remove').onclick = () => this.removeRoom();
+    this.panel = new RoomPanel(this);
     document.querySelector('#room-jump').onclick = () => this.promptJump();
     document.querySelector('#room-raw').onclick = () => this.toggleRaw();
-    document.querySelector('#room-export').onclick = () => this.exportDialog.showModal();
-    document.querySelector('#room-export-close').onclick = () => this.exportDialog.close();
-    for (const button of this.exportDialog.querySelectorAll('[data-format]')) button.onclick = () => this.exportRoom(button.dataset.format);
     this.quickCommands = new QuickCommands(this.formatting.input, () => this.archiveRoom(), () => this.spawnCallback?.(),
       () => this.canArchiveRoom(), () => this.canSpawnAgent());
     this.macroAutocomplete = new MacroAutocomplete(this.formatting.input);
@@ -170,8 +130,8 @@ export class Chat {
     const generation = ++this.openGeneration;
     const session = this.sessionGeneration;
     this.announcer.reset();
-    if (this.room?.id !== room.id) { this.roomSession++; this.pendingAttachments = []; this.renderPending(); if (this.recall) this.recall.index = null; }
-    closeMessageUsage(); this.room = room; this.syncEmpty(); this.title.textContent = room.title; this.setRoomFacts(room); this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.answeredMessages = new Set(); this.repliedTo = new Set(); this.nodes.clear(); this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.initialLoading = true; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0; this.loadingNewer = false; this.missedIDs = new Set(); this.updateLatestLabel(); this.setReply(null); this.closeThread();
+    if (this.room?.id !== room.id) { this.pendingAttachments = []; this.renderPending(); if (this.recall) this.recall.index = null; }
+    closeMessageUsage(); this.room = room; this.syncEmpty(); this.setRoomFacts(room); this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.answeredMessages = new Set(); this.repliedTo = new Set(); this.nodes.clear(); this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.initialLoading = true; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0; this.loadingNewer = false; this.missedIDs = new Set(); this.updateLatestLabel(); this.setReply(null); this.closeThread();
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = false;
     this.setRoomFacts(room);
     this.scrollAnchor.reset();
@@ -209,22 +169,20 @@ export class Chat {
     setLatest(this.latestButton, count ? `Back to latest · ${count} new` : 'Back to latest', count);
   }
   reset() {
-    this.openGeneration++; this.sessionGeneration++; this.roomSession++; if (this.recall) this.recall.index = null; this.announcer.reset();
+    this.openGeneration++; this.sessionGeneration++; if (this.recall) this.recall.index = null; this.announcer.reset();
     for (const controller of this.uploadRequests) controller.abort();
     this.uploadRequests.clear();
-    this.room = null; this.syncEmpty(); this.title.textContent = 'Choose a room'; this.roomIcon.hidden = true; this.members.hidden = true;
+    this.room = null; this.syncEmpty(); this.panel.reset();
     this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.answeredMessages = new Set(); this.repliedTo = new Set(); this.nodes.clear(); this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear(); this.agents.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.initialLoading = false; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0; this.loadingNewer = false; this.missedIDs = new Set(); this.updateLatestLabel(); this.answerItems = new Map(); this.closeBlocked?.clear(); this.worktree = null;
     this.setReply(null); this.closeThread(); this.pendingAttachments = []; this.pendingUploads = 0; this.pendingNode.replaceChildren(); this.draft.value = ''; this.resizeDraft();
-    this.infoDialog.close(); this.exportDialog.close(); this.lightbox.close();
-    this.scopeControl.reset(); this.schedules.reset(); this.memberList.reset(); this.quickCommands.reset(); this.macroAutocomplete.reset(); this.mentionAutocomplete.reset(); this.threadMentionAutocomplete.reset(); this.emojiAutocomplete.reset(); this.threadEmojiAutocomplete.reset(); closeEmojiPicker(false); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
-    this.worktreeSection.querySelector('p').textContent = ''; this.memorySection.querySelector('p').textContent = '';
+    this.lightbox.close();
+    this.quickCommands.reset(); this.macroAutocomplete.reset(); this.mentionAutocomplete.reset(); this.threadMentionAutocomplete.reset(); this.emojiAutocomplete.reset(); this.threadEmojiAutocomplete.reset(); closeEmojiPicker(false); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = true;
     this.draft.disabled = true; this.emojiButton.disabled = true; this.attachmentInput.disabled = true; this.form.querySelector('button[type=submit]').disabled = true;
   }
   // With no room open the chat shows an empty-state card instead of the composer and room controls; the app decides what the card says.
   syncEmpty() { this.onEmptyChange?.(!this.room); }
   current(session, roomID) { return session === this.sessionGeneration && this.room?.id === roomID; }
-  currentRoom(session, roomID) { return session === this.roomSession && this.room?.id === roomID; }
   // A list too short to scroll cannot ask for more by scrolling, so a short page with more behind it asks right away.
   loadOlderIfShort() {
     requestAnimationFrame(() => { if (this.hasMoreOlder && this.list.scrollHeight <= this.list.clientHeight + 80) this.loadOlder(); });
@@ -482,27 +440,14 @@ export class Chat {
   setRoomFacts(room) {
     if (this.room?.id !== room.id) { this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1; }
     this.room = room;
-    this.title.textContent = room.title; // a rename by someone else reaches here through the room list
+    this.panel.setRoom(room);
     this.refreshMentions();
     this.loadMentionLogins(room);
-    const count = room.member_count || 0;
     const archivedProject = !!this.projectArchived?.(room.project_id);
-    const status = archivedProject ? 'Project archived' : room.lifecycle === 'closing' ? 'Closing…' : room.lifecycle === 'closed' ? 'Archived' : '';
-    this.roomIcon.textContent = room.kind === 'home' ? '⌂' : room.agent_chat ? '⇄' : room.kind === 'dm' ? '@' : '#';
-    this.roomIcon.classList.toggle('dm', room.kind === 'dm'); this.roomIcon.hidden = false;
-    this.members.querySelector('.room-members-count').textContent = String(count);
-    this.members.querySelector('.room-header-status')?.remove();
-    if (status) {
-      const statusNode = document.createElement('span'); statusNode.className = 'room-header-status'; statusNode.textContent = status;
-      this.members.append(statusNode);
-    }
-    const membersLabel = `${count} ${count === 1 ? 'member' : 'members'}${status ? ` · ${status}` : ''}`;
-    this.members.title = membersLabel; this.members.setAttribute('aria-label', membersLabel); this.members.hidden = false;
     const blocked = this.closeBlocked?.get(room.id);
     if (blocked && room.lifecycle === 'closing') this.error.textContent = `Room closing blocked: ${blocked}`;
     else if (this.error.textContent.startsWith('Room closing blocked:')) this.error.textContent = '';
     if (room.lifecycle !== 'closing') this.closeBlocked?.delete(room.id);
-    if (this.infoDialog.open) this.renderRoomActions();
     const open = (!room.lifecycle || room.lifecycle === 'open') && !archivedProject;
     // A viewer can read an ordinary room but not write in it or run agents there (a private chat between two members is the exception),
     // so those controls are off with the reason, rather than live and answering 403.
@@ -527,195 +472,21 @@ export class Chat {
     archivedNote.hidden = !archivedProject;
     archivedNote.textContent = 'This project is archived and read-only. The owner or an admin can reopen it in the project\'s home-room settings.';
   }
-  showRoomInfo() {
-    if (!this.room) return;
-    this.roomUsage.load(this.room.id);
-    const controls = document.querySelector('#room-scope-control');
-    controls.hidden = this.room.kind === 'dm';
-    const facts = document.querySelector('#room-info-facts'); facts.replaceChildren();
-    // Kind and Room ID are for debugging: they show only while the message debug inspector is on (Settings → General).
-    // Whoever may rename the room edits its title in the form above the facts instead of reading it among them.
-    const canRename = this.canRenameRoom(this.room);
-    this.renameForm.hidden = !canRename;
-    if (canRename) { this.renameForm.elements.title.value = this.room.title; this.renameForm.querySelector('#room-rename-status').textContent = ''; }
-    for (const [label, value, debug] of [...(canRename ? [] : [['Name', this.room.title]]), ['Kind', this.room.kind, true], ['Status', this.room.lifecycle || 'open'], ['Members', String(this.room.member_count || 0)], ['Room ID', this.room.id, true]]) {
-      const term = document.createElement('dt'); term.textContent = label;
-      const detail = document.createElement('dd'); detail.textContent = value;
-      if (debug) { term.className = detail.className = 'room-fact-debug'; }
-      facts.append(term, detail);
-    }
-    this.renderRoomActions();
-    document.querySelector('#room-info-error').textContent = '';
-    this.renderViewActions();
-    this.notifySettings.render();
-    const home = this.room.kind === 'home';
-    this.infoDialog.classList.toggle('room-info-home', home);
-    this.renderRoomNotes();
-    this.projectSection.hidden = !home || !this.projectSettings;
-    this.infoDialog.showModal();
-    // The home room's settings carry the project's own settings.
-    if (!this.projectSection.hidden) this.projectSettings.mount(this.projectSection, this.room.project_id);
-    this.loadWorktree();
-    // What is said in a chat between agents never feeds memory or recall, so there is no setting to show.
-    this.memorySection.hidden = !!this.room.agent_chat;
-    if (!this.room.agent_chat) this.loadRoomMemory();
-    if (!controls.hidden) this.scopeControl.load(this.room.id);
-    this.schedules.load(this.room);
-    this.memberList.load(this.room.id);
-  }
-  // The server decides; this only keeps a field out of sight that it would refuse. A task room's title is for owners and operators, the home
-  // room's is the project's name (its owner or an admin), and a private chat has none of its own.
-  canRenameRoom(room) {
-    const role = this.projectRole?.(room.project_id);
-    if (room.kind === 'dm') return false;
-    return room.kind === 'home' ? role === 'owner' || rights.admin : !!role && role !== 'viewer';
-  }
-  async saveRoomTitle() {
-    const room = this.room, form = this.renameForm, input = form.elements.title, save = form.querySelector('#room-rename-save'), status = form.querySelector('#room-rename-status');
-    if (!room) return;
-    const session = this.roomSession;
-    const title = input.value.trim();
-    status.className = 'room-rename-status'; status.textContent = '';
-    if (!title) { status.className = 'room-rename-status error'; status.textContent = 'A room needs a title.'; input.focus(); return; }
-    // The home room's title is the project's name, which this field may not show (a title that drifted from it), so only the server can
-    // tell a home room's rename from no change.
-    if (room.kind !== 'home' && title === room.title) { input.value = title; status.textContent = 'Nothing changed.'; return; }
-    save.disabled = true;
-    try {
-      const updated = await request(`/api/rooms/${encodeURIComponent(room.id)}`, { method: 'PATCH', body: { title } });
-      if (!this.currentRoom(session, room.id)) return;
-      room.title = updated.title; this.title.textContent = updated.title; input.value = updated.title;
-      status.textContent = 'Saved.';
-    } catch (error) {
-      if (this.currentRoom(session, room.id)) { status.className = 'room-rename-status error'; status.textContent = error.message; input.focus(); }
-    } finally { save.disabled = false; }
-  }
-  // Archive/Reopen and Remove follow the room's lifecycle, also while the dialog is open (a room goes closing, then closed).
-  renderRoomActions() {
-    const room = this.room, action = document.querySelector('#room-lifecycle'), remove = document.querySelector('#room-remove');
-    if (!room) return;
-    action.hidden = room.kind === 'home';
-    action.disabled = room.lifecycle === 'closing';
-    setGlyph(action, room.lifecycle === 'closed' ? 'reopen' : 'archive', room.lifecycle === 'closed' ? 'Reopen room' : room.lifecycle === 'closing' ? 'Closing…' : 'Archive room');
-    // Removing is for archived task rooms only: never a home room or a private chat, and not while the room is open.
-    remove.hidden = room.kind === 'home' || room.kind === 'dm' || this.projectRole?.(room.project_id) !== 'owner';
-    remove.disabled = room.lifecycle !== 'closed';
-    // Someone who joined a chat between agents can leave it again; there is nothing else to do to it from here.
-    const leave = document.querySelector('#room-leave');
-    leave.hidden = !room.agent_chat;
-    setGlyph(leave, 'left', 'Leave chat');
-    leave.onclick = () => this.leaveChat();
-    setGlyph(remove, 'trash', 'Remove room');
-    remove.title = remove.disabled ? 'Archive the room before removing it' : 'Remove this room and its messages for good';
-  }
-  // Hide (per user, on the room lists) is set here rather than on the rows. Pinning is for projects, from the room list.
-  renderViewActions() {
-    const hide = document.querySelector('#room-hide');
-    hide.onclick = async () => {
-      const room = this.room; hide.disabled = true;
-      const session = this.roomSession;
-      const done = await this.setRoomPreference?.(this.roomView?.(room.id) || room, 'hidden', true);
-      hide.disabled = false; if (done && this.currentRoom(session, room.id)) this.infoDialog.close();
-    };
-  }
-  async loadRoomMemory() {
-    const room = this.room;
-    if (!room) return;
-    const session = this.roomSession;
-    const select = this.memorySection.querySelector('select');
-    const status = this.memorySection.querySelector('p');
-    select.value = room.memory_enabled === false ? 'off' : 'inherit';
-    select.disabled = true;
-    try {
-      const project = await request(`/api/projects/${encodeURIComponent(room.project_id)}/memory`);
-      if (!this.currentRoom(session, room.id)) return;
-      status.textContent = project.enabled ? 'Project memory is on.' : 'Project memory is off.';
-      select.disabled = !project.can_edit;
-    } catch (error) { if (this.currentRoom(session, room.id)) status.textContent = error.message || 'Could not load memory setting'; }
-  }
-  async changeRoomMemory() {
-    const room = this.room;
-    if (!room) return;
-    const session = this.roomSession;
-    const select = this.memorySection.querySelector('select');
-    const status = this.memorySection.querySelector('p');
-    select.disabled = true;
-    try {
-      const result = await request(`/api/rooms/${encodeURIComponent(room.id)}/memory-enabled`, { method: 'PUT', body: { enabled: select.value === 'off' ? false : null } });
-      if (!this.currentRoom(session, room.id)) return;
-      room.memory_enabled = result.memory_enabled;
-      status.textContent = select.value === 'off' ? 'Room message memory is off.' : 'Room follows the project setting.';
-      select.disabled = false;
-    } catch (error) { if (this.currentRoom(session, room.id)) { select.value = room.memory_enabled === false ? 'off' : 'inherit'; status.textContent = error.message || 'Could not change room memory'; select.disabled = false; } }
-  }
-  renderRoomNotes() {
-    const kind = this.room?.kind, home = kind === 'home';
-    this.notesSection.hidden = kind !== 'task' && !home;
-    this.notesSection.querySelector('h3').textContent = home ? 'Project memory' : 'Task notes';
-    this.notesSection.querySelector('p').textContent = home ? 'The home room has no task notes of its own: its agents use the project\u2019s memory (project facts).' : 'Notes the agents keep for this task. They stay with this room.';
-    this.notesSection.querySelector('button').textContent = home ? 'Open project memory' : 'Open task notes';
-  }
-  openRoomNotes() {
-    const room = this.room;
-    if (!room) return;
-    this.infoDialog.close();
-    if (room.kind === 'home') this.openProjectMemory?.(room.project_id); else this.openTaskNotes?.();
-  }
-  async loadWorktree() {
-    const buttons = this.worktreeSection.querySelectorAll('button');
-    if (this.room?.kind === 'home') {
-      // The home room always works in the project folder; only task rooms get a worktree of their own.
-      this.worktreeSection.hidden = false;
-      for (const button of buttons) button.hidden = true;
-      this.worktreeSection.querySelector('p').textContent = 'The home room works in the project folder. Task rooms can have their own Git worktree.';
-      return;
-    }
-    if (!this.room || this.room.kind !== 'task') { this.worktreeSection.hidden = true; return; }
-    const room = this.room, session = this.roomSession;
-    this.worktreeSection.hidden = false;
-    this.worktreeSection.querySelector('p').textContent = '';
-    try {
-      const item = await request(`/api/rooms/${room.id}/worktree`);
-      if (!this.currentRoom(session, room.id)) return;
-      this.worktree = item;
-      const status = this.worktreeSection.querySelector('p');
-      status.textContent = item.enabled === false ? 'Using the project folder.' : `${item.state}: ${item.path || item.relative_path}${item.reason ? ` · ${item.reason}` : ''}${item.dirty_base_count ? ` · The base has ${item.dirty_base_count} uncommitted changes, which are not in the worktree.` : ''}`;
-      const create = this.worktreeSection.querySelector('button:first-of-type');
-      const remove = this.worktreeSection.querySelector('button:last-of-type');
-      create.hidden = this.room.lifecycle !== 'open' || (item.enabled !== false && item.state !== 'failed');
-      create.textContent = item.state === 'failed' ? 'Retry worktree' : 'Create worktree';
-      remove.hidden = item.enabled === false || (this.room.lifecycle !== 'closed' && !!item.path);
-      remove.textContent = this.room.lifecycle === 'closed' ? 'Remove worktree' : 'Cancel worktree';
-    } catch (error) { if (this.currentRoom(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
-  }
-  async createWorktree() {
-    if (!this.room) return;
-    const room = this.room, session = this.roomSession;
-    const baseRef = await promptDialog('Base branch or ref (leave blank for current HEAD)', { title: 'Create worktree', label: 'Base branch or ref', placeholder: 'Current HEAD', confirm: 'Create' });
-    if (baseRef === null || !this.currentRoom(session, room.id)) return;
-    try { await request(`/api/rooms/${room.id}/worktree`, { method: 'POST', body: { enabled: true, base_ref: baseRef.trim() } }); if (!this.currentRoom(session, room.id)) return; await this.loadWorktree(); }
-    catch (error) { if (this.currentRoom(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
-  }
-  async removeWorktree() {
-    const room = this.room, session = this.roomSession;
-    if (room?.lifecycle === 'open') {
-      try { await request(`/api/rooms/${room.id}/worktree`, { method: 'DELETE', body: {} }); if (!this.currentRoom(session, room.id)) return; await this.loadWorktree(); }
-      catch (error) { if (this.currentRoom(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
-      return;
-    }
-    if (!room || !await confirmDialog('Remove this archived room worktree? Clean merged worktrees are removed; a dirty or unmerged worktree will be preserved.', { title: 'Remove worktree', confirm: 'Remove', danger: true })) return;
-    if (!this.currentRoom(session, room.id)) return;
-    try {
-      let result = await request(`/api/rooms/${room.id}/worktree`, { method: 'DELETE', body: { force: false } });
-      if (!this.currentRoom(session, room.id)) return;
-      if (result.state === 'preserved' && await confirmDialog(`Worktree is preserved: ${result.reason}. Remove its checkout and discard uncommitted local files? Committed changes remain on the room branch.`, { title: 'Discard local files', confirm: 'Discard and remove', danger: true })) {
-        if (!this.currentRoom(session, room.id)) return;
-        result = await request(`/api/rooms/${room.id}/worktree`, { method: 'DELETE', body: { force: true, confirm: `REMOVE ${room.id}` } });
-        if (!this.currentRoom(session, room.id)) return;
-      }
-      await this.loadWorktree();
-    } catch (error) { if (this.currentRoom(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
-  }
+  get renameForm() { return this.panel.renameForm; }
+  get memorySection() { return this.panel.memorySection; }
+  get notesSection() { return this.panel.notesSection; }
+  get worktreeSection() { return this.panel.worktreeSection; }
+  get infoDialog() { return this.panel.infoDialog; }
+  get exportDialog() { return this.panel.exportDialog; }
+  showRoomInfo() { this.panel.show(); }
+  canRenameRoom(room) { return this.panel.canRename(room); }
+  saveRoomTitle() { return this.panel.saveTitle(); }
+  loadRoomMemory() { return this.panel.store.loadMemory(); }
+  changeRoomMemory() { return this.panel.changeMemory(); }
+  openRoomNotes() { this.panel.openNotes(); }
+  loadWorktree() { return this.panel.store.loadWorktree(); }
+  createWorktree() { return this.panel.store.createWorktree(); }
+  removeWorktree() { return this.panel.store.removeWorktree(); }
   canArchiveRoom() {
     const room = this.room, role = room && this.projectRole?.(room.project_id);
     return !!room && room.kind === 'task' && (!room.lifecycle || room.lifecycle === 'open') && (role === 'owner' || role === 'operator');
@@ -725,63 +496,9 @@ export class Chat {
     if (!this.canArchiveRoom()) return;
     return this.changeRoomLifecycle('archive');
   }
-  async changeRoomLifecycle(intent = 'toggle') {
-    const room = this.room;
-    if (intent === 'archive' && !this.canArchiveRoom()) return;
-    if (!room || room.kind === 'home' || room.lifecycle === 'closing') return;
-    const session = this.roomSession;
-    const action = document.querySelector('#room-lifecycle');
-    const errorNode = document.querySelector('#room-info-error');
-    const closing = intent === 'archive' || room.lifecycle !== 'closed';
-    if (closing && !await confirmDialog(`Archive ${room.title}? Agents homed here stop, and open questions are withdrawn. Its history remains available.`, { title: 'Archive room', confirm: 'Archive' })) return;
-    if (!this.currentRoom(session, room.id)) return;
-    action.disabled = true; errorNode.textContent = '';
-    const path = `/api/rooms/${room.id}/${closing ? 'close' : 'reopen'}`;
-    try {
-      let updated;
-      try { updated = await request(path, { method: 'POST', body: { lifecycle_rev: room.lifecycle_rev || 0 } }); }
-      catch (error) {
-        if (!this.currentRoom(session, room.id)) return;
-        if (!closing || error.code !== 'open_children' || !await confirmDialog(`Archive ${room.title} and all its open child rooms? Agents homed in these rooms stop, and open questions are withdrawn.`, { title: 'Archive room and its child rooms', confirm: 'Archive all' })) throw error;
-        if (!this.currentRoom(session, room.id)) return;
-        updated = await request(path, { method: 'POST', body: { lifecycle_rev: room.lifecycle_rev || 0, cascade: true } });
-      }
-      if (!this.currentRoom(session, room.id)) return;
-      this.setRoomFacts(updated);
-      await this.onRoomMutation?.(updated);
-      if (!this.currentRoom(session, room.id)) return;
-      this.infoDialog.close();
-    } catch (error) { if (this.currentRoom(session, room.id)) { this.error.textContent = error.message; if (this.infoDialog.open) errorNode.textContent = error.message; action.disabled = false; } }
-  }
-  async leaveChat() {
-    const room = this.room;
-    if (!room?.agent_chat) return;
-    const session = this.roomSession;
-    const button = document.querySelector('#room-leave'), errorNode = document.querySelector('#room-info-error');
-    button.disabled = true; errorNode.textContent = '';
-    try {
-      await request(`/api/rooms/${room.id}/leave`, { method: 'POST' });
-      if (!this.currentRoom(session, room.id)) return;
-      this.infoDialog.close();
-      await this.onChatLeft?.(room);
-    } catch (error) { if (this.currentRoom(session, room.id)) errorNode.textContent = error.message || 'Could not leave the chat'; }
-    button.disabled = false;
-  }
-  async removeRoom() {
-    const room = this.room;
-    if (!room || room.kind === 'home' || room.kind === 'dm' || room.lifecycle !== 'closed') return;
-    const session = this.roomSession;
-    const button = document.querySelector('#room-remove'), errorNode = document.querySelector('#room-info-error');
-    if (!await confirmDialog(`Remove ${room.title} for good? Its messages, reactions, notes, attachments and its usage and cost records are deleted and cannot be restored.`, { title: 'Remove room', confirm: 'Remove for good', danger: true })) return;
-    if (!this.currentRoom(session, room.id)) return;
-    button.disabled = true; errorNode.textContent = '';
-    try {
-      await request(`/api/rooms/${room.id}`, { method: 'DELETE' });
-      if (!this.currentRoom(session, room.id)) return;
-      this.infoDialog.close();
-      await this.onRoomRemoved?.(room);
-    } catch (error) { if (this.currentRoom(session, room.id)) { errorNode.textContent = error.message || 'Could not remove the room'; button.disabled = false; } }
-  }
+  changeRoomLifecycle(intent = 'toggle') { return this.panel.store.changeLifecycle(intent); }
+  leaveChat() { return this.panel.store.leave(); }
+  removeRoom() { return this.panel.store.remove(); }
   showCloseBlocked(roomID, reason) {
     this.closeBlocked ||= new Map();
     const label = reason === 'agent_stop_invalid_transition' ? 'an agent could not be stopped' : (reason || 'unknown reason').replaceAll('_', ' ');
@@ -937,20 +654,7 @@ export class Chat {
       if (message) this.renderBody(element, message);
     }
   }
-  async exportRoom(format) {
-    if (!this.room) return;
-    const room = this.room, session = this.roomSession;
-    try {
-      // The server writes the file (every message of the room, with replies, attachments and reactions); the page only saves it.
-      const { blob, filename } = await download(`/api/rooms/${room.id}/export?format=${format === 'json' ? 'json' : 'markdown'}`);
-      if (!this.currentRoom(session, room.id)) return;
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a'); anchor.href = url;
-      anchor.download = filename || `${room.title.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '') || 'room'}.${format === 'json' ? 'json' : 'md'}`;
-      anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-      this.exportDialog.close();
-    } catch (error) { if (this.currentRoom(session, room.id)) { this.error.textContent = error.message; this.exportDialog.close(); } }
-  }
+  exportRoom(format) { return this.panel.exportRoom(format); }
   async refreshMessages() {
     if (!this.room || this.initialLoading) return;
     const id = this.room.id, session = this.sessionGeneration, generation = this.openGeneration;

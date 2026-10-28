@@ -390,6 +390,13 @@ Owner's decision (2026-10-28): continue with the remaining units.
 - Files: `chat.js`, `message-actions.js`, `answer-controls.js`, `visual-plan.js`, `composer*.js` (host only).
 - Acceptance: the existing message identity, draft and scroll-under-live-update checks pass; no scroll jump with
   late images, Mermaid or attachments.
+- Done for the room panel (the header and the settings dialog): `web/js/pages/room-panel/` holds `model.js` (import-free: the header's words, who may
+  rename, which controls the dialog shows and how, the worktree, memory and notes sections; vm-tested), `store.js` (the room being shown and the calls
+  that change it: title, memory setting, worktree, archive and reopen, leave, remove, hide and export, each taking the panel's session and the room it
+  was started for, so an answer for a room that was left, a reset or a destroyed panel changes nothing and starts nothing), `room-panel.js` (the
+  components) and `page.js`, which writes the header's elements from an effect and fills the dialog's parts: the rename form, the facts, the controls,
+  the error line and the worktree, memory and notes sections. `Chat` keeps its methods and properties for the app and the tests and delegates to it.
+  While a worktree is loading its buttons stay hidden, where the old dialog showed the previous room's.
 
 ### Step 7: the shell
 

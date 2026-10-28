@@ -13,6 +13,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 const root = path.join(__dirname, '..', 'web');
 const REPLACED = fs.existsSync(path.join(root, 'js', 'pages', 'chat', 'page.js'));
 const MODULE = REPLACED ? '/js/pages/chat/page.js' : '/js/chat.js';
+const PANEL = fs.existsSync(path.join(root, 'js', 'pages', 'room-panel', 'page.js'));
 const fixture = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/<script type="module" src="\/js\/app\.js[^"]*"><\/script>/, '');
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
@@ -1101,6 +1102,153 @@ async function main() {
     state = await dialog(page);
     assert.deepEqual([state.leave.shown, state.leave.label, state.memory.shown], [true, 'Leave chat', false], 'a chat between agents can be left and has no memory setting');
     await page.close();
+  }
+
+  // A destroyed room panel: a call that was still out when it was destroyed changes nothing, tells the app nothing and starts nothing, and none of its
+  // entries starts a request afterwards, not even for a room it is handed again.
+  if (PANEL) {
+    for (const [name, extra, start, method, re] of cases) {
+      const page = await panelRoom({ extra });
+      await hold(page, method, re);
+      await start(page);
+      const held = await waitRequest(page, method, re);
+      await page.evaluate(() => window.__chat.panel.destroy());
+      await settle(page);
+      const sent = await page.evaluate(() => window.__requests.length), before = errors.length;
+      await serve(page, held); await page.evaluate(() => window.__panel.catch(() => {})); await settle(page); await settle(page);
+      assert.deepEqual([await page.evaluate(() => window.__mutations), await page.evaluate(() => window.__requests.length) - sent, errors.slice(before)], [[], 0, []], `destroy: ${name} answered after the panel was destroyed changes nothing and starts nothing`);
+      await page.close();
+    }
+    const page = await panelRoom({ extra: { lifecycle: 'closed', agent_chat: true } });
+    await page.evaluate(() => window.__chat.panel.destroy());
+    const sent = await page.evaluate(() => window.__requests.length);
+    await page.evaluate(async () => {
+      const panel = window.__chat.panel, store = panel.store;
+      panel.setRoom(window.__chat.room);
+      for (const call of [() => store.loadMemory(), () => store.changeMemory('off'), () => store.loadWorktree(), () => store.createWorktree(), () => store.removeWorktree(), () => store.changeLifecycle(), () => store.leave(), () => store.remove(), () => store.exportRoom('json'), () => panel.saveTitle(), () => store.hide()]) { try { await call(); } catch {} }
+    });
+    await settle(page);
+    assert.equal(await page.evaluate(() => window.__requests.length) - sent, 0, 'no entry of a destroyed panel starts a request');
+    await page.close();
+  }
+
+  // The panel's calls of one kind answered out of order: the answer of the older one is dropped (the title, the memory setting and the worktree show what
+  // the newer one said; the app hears of a leave, a removal, an archive or a hide once; an export is saved once). A destroyed panel takes the answer of a
+  // question left open too.
+  if (PANEL) {
+    const twice = async (name, extra, first, second, method, re, bodies, check) => {
+      const page = await panelRoom({ extra });
+      await hold(page, method, re);
+      await page.evaluate(first); const one = await waitRequest(page, method, re);
+      await page.evaluate(second); await page.waitForFunction((method, re) => window.__requests.filter(request => request.method === method && !request.answered && new RegExp(re).test(request.path)).length === 2, {}, method, re);
+      const newer = await find(page, method, re);
+      await answer(page, newer, ...bodies[1]); await settle(page);
+      await answer(page, one, ...bodies[0]); await settle(page); await settle(page);
+      await check(page, name);
+      await page.close();
+    };
+    await twice('title', {}, () => { window.__a = window.__chat.panel.store.saveTitle('older title'); }, () => { window.__b = window.__chat.panel.store.saveTitle('newer title'); }, 'PATCH', '^/api/rooms/rm_a$', [[200, { id: 'rm_a', title: 'older title' }], [200, { id: 'rm_a', title: 'newer title' }]],
+      async (page, name) => assert.deepEqual(await page.evaluate(() => [window.__chat.panel.store.room.peek().title, document.querySelector('#room-title').textContent, window.__chat.panel.store.renameStatus.peek().text]), ['newer title', 'newer title', 'Saved.'], `${name}: the older save does not overwrite the newer`));
+    await twice('memory read', {}, () => { window.__a = window.__chat.panel.store.loadMemory(); }, () => { window.__b = window.__chat.panel.store.loadMemory(); }, 'GET', '/projects/prj_a/memory$', [[200, { enabled: false, can_edit: false }], [200, { enabled: true, can_edit: true }]],
+      async (page, name) => assert.deepEqual(await page.evaluate(() => [window.__chat.panel.store.memory.peek().status, window.__chat.panel.store.memory.peek().disabled]), ['Project memory is on.', false], `${name}: the older read does not overwrite the newer`));
+    await twice('memory change', {}, () => { window.__a = window.__chat.panel.store.changeMemory('off'); }, () => { window.__b = window.__chat.panel.store.changeMemory('inherit'); }, 'PUT', '/memory-enabled$', [[200, { memory_enabled: false }], [200, { memory_enabled: null }]],
+      async (page, name) => assert.deepEqual(await page.evaluate(() => [window.__chat.panel.store.memory.peek().value, window.__chat.panel.store.memory.peek().status, window.__chat.panel.store.room.peek().memory_enabled]), ['inherit', 'Room follows the project setting.', null], `${name}: the older change does not overwrite the newer`));
+    await twice('worktree read', {}, () => { window.__a = window.__chat.panel.store.loadWorktree(); }, () => { window.__b = window.__chat.panel.store.loadWorktree(); }, 'GET', '/rooms/rm_a/worktree$', [[200, { enabled: true, state: 'ready', path: '/w/old' }], [200, { enabled: true, state: 'failed', reason: 'git said no', relative_path: 'x' }]],
+      async (page, name) => assert.equal(await page.evaluate(() => window.__chat.panel.store.worktree.peek().status), 'failed: x · git said no', `${name}: the older read does not overwrite the newer`));
+    await twice('leave chat', { agent_chat: true }, () => { window.__a = window.__chat.panel.store.leave(); }, () => { window.__b = window.__chat.panel.store.leave(); }, 'POST', '/leave$', [[204, null], [204, null]],
+      async (page, name) => assert.deepEqual(await page.evaluate(() => window.__mutations), [['left', 'rm_a']], `${name}: the app hears of it once`));
+    await twice('export', {}, () => { window.__a = window.__chat.panel.store.exportRoom('json'); }, () => { window.__b = window.__chat.panel.store.exportRoom('json'); }, 'GET', '/export', [[200, { messages: [1] }], [200, { messages: [] }]],
+      async (page, name) => assert.equal(await page.evaluate(() => window.__urls), 1, `${name}: it is saved once`));
+    {
+      const page = await panelRoom();
+      await hold(page, 'PATCH', '^/api/rooms/rm_a$'); await hold(page, 'GET', '/projects/prj_a/memory$'); await hold(page, 'GET', '/rooms/rm_a/worktree$');
+      await page.evaluate(() => { const store = window.__chat.panel.store; window.__a = store.saveTitle('three at once'); window.__b = store.loadMemory(); window.__c = store.loadWorktree(); });
+      await answer(page, await waitRequest(page, 'GET', '/rooms/rm_a/worktree$'), 200, { enabled: true, state: 'ready', path: '/w/x' });
+      await answer(page, await waitRequest(page, 'GET', '/projects/prj_a/memory$'), 200, { enabled: true, can_edit: true });
+      await answer(page, await waitRequest(page, 'PATCH', '^/api/rooms/rm_a$'), 200, { id: 'rm_a', title: 'three at once' }); await settle(page); await settle(page);
+      assert.deepEqual(await page.evaluate(() => [window.__chat.panel.store.room.peek().title, window.__chat.panel.store.memory.peek().status, window.__chat.panel.store.worktree.peek().status]), ['three at once', 'Project memory is on.', 'ready: /w/x'], 'calls of different kinds do not cancel each other');
+      await page.close();
+    }
+    // A control stays busy while the newest call of its kind is out: the answer of an older one, well or badly, does not free it.
+    {
+      const page = await panelRoom();
+      await hold(page, 'PATCH', '^/api/rooms/rm_a$');
+      await page.evaluate(() => { window.__chat.showRoomInfo(); window.__a = window.__chat.panel.store.saveTitle('first'); }); const first = await waitRequest(page, 'PATCH', '^/api/rooms/rm_a$');
+      await page.evaluate(() => { window.__b = window.__chat.panel.store.saveTitle('second'); }); await page.waitForFunction(() => window.__requests.filter(request => request.method === 'PATCH' && !request.answered).length === 2);
+      await answer(page, first, 500, { message: 'Too late.' }); await settle(page); await settle(page);
+      assert.equal(await page.evaluate(() => document.querySelector('#room-rename-save').disabled), true, 'rename: the older answer does not free the button');
+      await page.evaluate(() => document.querySelector('#room-rename-save').click()); await settle(page);
+      assert.equal(await count(page, 'PATCH', '^/api/rooms/rm_a$'), 2, 'rename: no third request starts');
+      await answer(page, await find(page, 'PATCH', '^/api/rooms/rm_a$'), 200, { id: 'rm_a', title: 'second' }); await settle(page); await settle(page);
+      assert.equal(await page.evaluate(() => document.querySelector('#room-rename-save').disabled), false, 'rename: the newest answer frees it');
+      await page.close();
+    }
+    {
+      const page = await panelRoom({ extra: { agent_chat: true } });
+      await hold(page, 'POST', '/leave$');
+      await page.evaluate(() => { window.__chat.showRoomInfo(); window.__a = window.__chat.panel.store.leave(); }); const first = await waitRequest(page, 'POST', '/leave$');
+      await page.evaluate(() => { window.__b = window.__chat.panel.store.leave(); }); await page.waitForFunction(() => window.__requests.filter(request => request.method === 'POST' && /leave$/.test(request.path) && !request.answered).length === 2);
+      await answer(page, first, 500, { message: 'Could not leave.' }); await settle(page); await settle(page);
+      assert.equal(await page.evaluate(() => document.querySelector('#room-leave').disabled), true, 'leave: the older failure does not free the button');
+      await page.evaluate(() => document.querySelector('#room-leave').click()); await settle(page);
+      assert.equal(await count(page, 'POST', '/leave$'), 2, 'leave: no third request starts');
+      await answer(page, await find(page, 'POST', '/leave$'), 204, null); await settle(page); await settle(page);
+      assert.equal(await page.evaluate(() => window.__chat.panel.store.busy.peek().leave), false, 'leave: the newest answer frees it');
+      await page.close();
+    }
+    {
+      const page = await panelRoom();
+      await page.evaluate(() => { window.__hides = []; window.__chat.setRoomPreference = () => new Promise(resolve => window.__hides.push(resolve)); window.__chat.showRoomInfo(); window.__a = window.__chat.panel.store.hide(); window.__b = window.__chat.panel.store.hide(); });
+      await settle(page);
+      await page.evaluate(() => window.__hides[0](false)); await settle(page);
+      assert.equal(await page.evaluate(() => document.querySelector('#room-hide').disabled), true, 'hide: the older answer does not free the button');
+      await page.evaluate(() => document.querySelector('#room-hide').click()); await settle(page);
+      assert.equal(await page.evaluate(() => window.__hides.length), 2, 'hide: no third call starts');
+      await page.evaluate(() => window.__hides[1](false)); await settle(page);
+      assert.equal(await page.evaluate(() => document.querySelector('#room-hide').disabled), false, 'hide: the newest answer frees it');
+      await page.close();
+    }
+    for (const [name, extra, call, method, re, bodies, expected] of [
+      ['archive', {}, 'changeLifecycle(\'archive\')', 'POST', '/rooms/rm_a/close$', [[200, { id: 'rm_a', project_id: 'prj_a', title: 'rm_a', kind: 'task', lifecycle: 'closing' }], [200, { id: 'rm_a', project_id: 'prj_a', title: 'rm_a', kind: 'task', lifecycle: 'closing' }]], [['mutation', 'rm_a', 'closing']]],
+      ['remove room', { lifecycle: 'closed' }, 'remove()', 'DELETE', '^/api/rooms/rm_a$', [[204, null], [204, null]], [['removed', 'rm_a']]],
+    ]) {
+      const page = await panelRoom({ extra });
+      await hold(page, method, re);
+      await page.evaluate(call => { window.__a = new Function('return window.__chat.panel.store.' + call)(); }, call); await dialogOk(page);
+      const one = await waitRequest(page, method, re);
+      await page.evaluate(call => { window.__b = new Function('return window.__chat.panel.store.' + call)(); }, call); await dialogOk(page);
+      await page.waitForFunction((method, re) => window.__requests.filter(request => request.method === method && !request.answered && new RegExp(re).test(request.path)).length === 2, {}, method, re);
+      const newer = await find(page, method, re);
+      await answer(page, newer, ...bodies[1]); await settle(page);
+      await answer(page, one, ...bodies[0]); await settle(page); await settle(page);
+      assert.deepEqual(await page.evaluate(() => window.__mutations), expected, `${name}: the app hears of it once`);
+      await page.close();
+    }
+    {
+      const page = await panelRoom();
+      await page.evaluate(() => { window.__hides = []; window.__chat.setRoomPreference = () => new Promise(resolve => window.__hides.push(resolve)); window.__chat.showRoomInfo(); window.__a = window.__chat.panel.store.hide(); window.__b = window.__chat.panel.store.hide(); });
+      await settle(page);
+      await page.evaluate(() => window.__hides[1](false)); await settle(page);
+      await page.evaluate(() => window.__hides[0](true)); await page.evaluate(() => Promise.all([window.__a, window.__b])); await settle(page);
+      assert.equal(await page.evaluate(() => document.querySelector('#room-info-dialog').open), true, 'hide: the older answer does not close the dialog the newer one left open');
+      await page.close();
+    }
+    for (const [name, extra, start] of [
+      ['create worktree', {}, page => page.evaluate(() => { window.__panel = window.__chat.createWorktree(); })],
+      ['archived worktree', { lifecycle: 'closed' }, page => page.evaluate(() => { window.__panel = window.__chat.removeWorktree(); })],
+      ['archive', {}, page => page.evaluate(() => { window.__panel = window.__chat.changeRoomLifecycle('archive'); })],
+      ['remove room', { lifecycle: 'closed' }, page => page.evaluate(() => { window.__panel = window.__chat.removeRoom(); })],
+    ]) {
+      const page = await panelRoom({ extra });
+      await start(page);
+      await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
+      await page.evaluate(() => window.__chat.panel.destroy());
+      const reads = await page.evaluate(() => window.__requests.length);
+      await page.evaluate(() => document.querySelector('#app-dialog .app-dialog-ok').click());
+      await page.evaluate(() => window.__panel.catch(() => {})); await settle(page); await settle(page);
+      assert.equal(await page.evaluate(() => window.__requests.length) - reads, 0, `destroy: ${name}: confirming a question after the panel was destroyed starts nothing`);
+      await page.close();
+    }
   }
 
   // A destroyed chat (the replacement's adapter has destroy(); the hand-written chat does not): what was still out when it was destroyed changes nothing
