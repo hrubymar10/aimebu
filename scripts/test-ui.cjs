@@ -2860,13 +2860,10 @@ async function main() {
       // Which entry the dialog picks: a continued claude session takes the native claude entry even when a Docker one sorts first (and leaves
       // other tools and containers unselectable), and a fresh start only preselects the v1 tool without locking the others.
       assert.deepEqual(await first.evaluate(async () => {
-        const { SpawnDialogs } = await import('/js/spawn-dialogs.js');
+        const { resumeToolChoice } = await import('/js/spawn-model.js');
         const pick = (resume, catalog) => {
-          const select = document.createElement('select');
-          catalog.forEach((tool, index) => { const option = document.createElement('option'); option.value = String(index); option.disabled = !tool.available; select.append(option); });
-          select.selectedIndex = catalog.findIndex(tool => tool.available);
-          SpawnDialogs.prototype.applyResumeChoice.call({ pendingResume: resume, catalog }, select);
-          return { selected: select.selectedIndex, disabled: [...select.options].map(option => option.disabled) };
+          const choice = resumeToolChoice(catalog, resume), first = catalog.findIndex(tool => tool.available);
+          return { selected: choice.index !== null ? choice.index : first, disabled: catalog.map((tool, index) => !tool.available || !!choice.disabled?.[index]) };
         };
         const catalog = [{ tool: 'claude', containerized: true, available: true }, { tool: 'codex', containerized: false, available: true }, { tool: 'claude', containerized: false, available: true }];
         return [pick({ tool: 'claude', resumable: true }, catalog), pick({ tool: 'codex', resumable: false }, catalog), pick({ tool: 'claude', resumable: true }, catalog.slice(0, 2)),
@@ -2905,7 +2902,7 @@ async function main() {
       fs.mkdirSync(path.join(claudeHome, 'sessions'), { recursive: true });
       fs.writeFileSync(path.join(claudeHome, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: idActive, cwd: gitRoot, kind: 'interactive', status: 'idle' }));
       // Whether a native Claude is on offer comes from the machine's tool detection, which can still be running when this step starts. The
-      // dialog says a session "is not available natively" until the catalog lists one it can continue on (spawn-dialogs.js applyResumeChoice: native, or a container
+      // dialog says a session "is not available natively" until the catalog lists one it can continue on (spawn-model.js resumeToolChoice: native, or a container
       // that shares the host's Claude home), so wait for the catalog the dialog will read to do so.
       await first.waitForFunction(async () => (await (await fetch('/api/spawn-catalog')).json()).tools?.some(tool => tool.tool === 'claude' && tool.available && !(tool.containerized && !tool.shares_claude_home)), { polling: 500, timeout: 30000 }).catch(() => {});
       await domClick(first, '#spawn-open');
@@ -5330,21 +5327,13 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#spawn-tool-reason').textContent.includes('Settings → Harnesses'), { timeout: 10000 }); // with no harness the dialog points to Settings → Harnesses
     // The hint is a link for the owner, and plain words for anyone else (who could only be refused): checked on the real class.
     const hints = await first.evaluate(async () => {
-      const { SpawnDialogs } = await import('/js/spawn-dialogs.js');
-      const panel = Object.create(SpawnDialogs.prototype);
-      panel.dialog = { close() {} }; panel.switchDialog = { open: false, close() {} }; panel.spawnMachine = { id: 'mch_here' };
-      const events = []; const listen = event => { events.push(event.detail); event.stopPropagation(); }; // the app's own listener must not open Settings here
-      window.addEventListener('aimebu:open-settings', listen, true);
-      const text = (owner, message) => { panel.canManageHarnesses = owner; const node = document.createElement('p'); panel.setHint(node, message); return [node.textContent, !!node.querySelector('button.inline-link')]; };
-      const out = { ownerLink: text(true, 'No harness yet. Add a harness in Settings → Harnesses.'), other: text(false, 'No harness yet. Add a harness in Settings → Harnesses.'),
+      const { hintParts } = await import('/js/spawn-model.js');
+      const text = (owner, message) => { const parts = hintParts(message, owner); return [parts.link ? `${parts.before}${parts.link}${parts.after}` : parts.text, !!parts.link]; };
+      return { ownerLink: text(true, 'No harness yet. Add a harness in Settings → Harnesses.'), other: text(false, 'No harness yet. Add a harness in Settings → Harnesses.'),
         otherCheck: text(false, 'not found; check Settings → Harnesses'), otherEnable: text(false, 'disabled by owner; enable it in Settings → Harnesses'), none: text(false, 'No models') };
-      panel.canManageHarnesses = true; const node = document.createElement('p'); panel.setHint(node, 'x Settings → Harnesses'); node.querySelector('button').click();
-      window.removeEventListener('aimebu:open-settings', listen, true);
-      out.event = events;
-      return out;
     });
     assert.deepEqual(hints, { ownerLink: ['No harness yet. Add a harness in Settings → Harnesses.', true], other: ['No harness yet. Ask an admin to add a harness.', false], otherCheck: ['not found; ask an admin to check the harnesses', false],
-      otherEnable: ['disabled by owner; ask an admin to enable it', false], none: ['No models', false], event: [{ section: 'harnesses', machineID: 'mch_here' }] });
+      otherEnable: ['disabled by owner; ask an admin to enable it', false], none: ['No models', false] });
     // ... as a link: it closes the dialog and opens Settings → Harnesses.
     await first.waitForSelector('#spawn-tool-reason button.inline-link');
     await first.click('#spawn-tool-reason button.inline-link');
@@ -5471,10 +5460,14 @@ async function main() {
     // A worktree is offered where the project folder is a Git repository (this one is); where the machine says it is not, the box is off
     // with the reason, and a machine that does not say leaves it available.
     assert.deepEqual(await first.evaluate(async () => {
-      const { SpawnDialogs } = await import('/js/spawn-dialogs.js');
+      const { worktreeOption } = await import('/js/spawn-model.js');
       const form = document.querySelector('#spawn-form'), option = form.querySelector('.spawn-worktree-option');
       const state = () => ({ hidden: option.hidden, disabled: form.elements.worktree.disabled, note: option.querySelector('.spawn-worktree-note').hidden, display: getComputedStyle(option).display });
-      const sync = (git, kind = 'task') => { SpawnDialogs.prototype.syncWorktreeOption.call({ form, room: { kind }, spawnRoom() { return this.room; }, spawnMachine: { machine: git === undefined ? {} : { project_worktree: git ? { ok: true } : { ok: false, code: 'git_unusable', reason: 'Git cannot use the project folder: detected dubious ownership' } } }, pendingResume: null }); return state(); };
+      const sync = (git, kind = 'task') => {
+        const view = worktreeOption({ roomKind: kind, resumable: false, check: git === undefined ? undefined : git ? { ok: true } : { ok: false, code: 'git_unusable', reason: 'Git cannot use the project folder: detected dubious ownership' } });
+        option.hidden = view.hidden; form.elements.worktree.disabled = view.disabled; option.querySelector('.spawn-worktree-note').hidden = !view.refused; option.querySelector('.spawn-worktree-note').textContent = view.note;
+        return state();
+      };
       const live = state(), notRepo = sync(false), reason = option.querySelector('.spawn-worktree-note').textContent, unknown = sync(undefined), home = sync(false, 'home'); sync(undefined);
       return { live, notRepo, reason, unknown, home };
     }), {

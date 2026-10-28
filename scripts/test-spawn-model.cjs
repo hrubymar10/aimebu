@@ -9,8 +9,10 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'spawn-model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning, NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, resumeBanner, spawnRequest };', context);
 const { modelFamily, modelVersion, matchModel, chooseModel, toolKey, modelChangeWarning } = context.api;
+const plain = value => JSON.parse(JSON.stringify(value)); // plain objects: a vm context has its own Object
+const { NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, resumeBanner, spawnRequest } = context.api;
 const sessionEntryState = (...args) => JSON.parse(JSON.stringify(context.api.sessionEntryState(...args))); // plain objects: a vm context has its own Object
 
 const claude = [{ value: 'haiku', label: 'Haiku' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }];
@@ -89,4 +91,96 @@ assert.equal(modelChangeWarning('claude-opus-4-5-20251101', sonnet), 'This sessi
 assert.equal(modelChangeWarning('', sonnet), '');
 assert.equal(modelChangeWarning('claude-opus-4-5', null), '');
 assert.match(modelChangeWarning('claude-opus-4-5', { value: 'gpt-6-sol', label: 'GPT 6 Sol' }), /continue it on GPT 6 Sol/);
+
+// The tool list: unavailable entries say why and where to look, once.
+assert.deepEqual(plain(toolRows([{ tool: 'codex', label: 'Codex', available: true }, { tool: 'pi', available: false }, { label: 'Vibe', available: false, unavailable_reason: 'no models; see Settings → Harnesses' }, { label: 'Dock', available: false, unavailable_reason: 'not installed' }])),
+  [{ value: '0', label: 'Codex', disabled: false }, { value: '1', label: 'pi — unavailable; check Settings → Harnesses', disabled: true }, { value: '2', label: 'Vibe — no models; see Settings → Harnesses', disabled: true }, { value: '3', label: 'Dock — not installed; check Settings → Harnesses', disabled: true }]);
+
+// A start from v1 history picks the tool that can continue it and says so when none can.
+const catalog = [{ tool: 'claude', containerized: true, available: true }, { tool: 'codex', available: true }, { tool: 'claude', available: true, launcher_id: 'l2' }];
+assert.deepEqual(plain(resumeToolChoice(catalog, { tool: 'claude', resumable: true })), { index: 2, disabled: [true, true, false], note: '' });
+assert.deepEqual(plain(resumeToolChoice(catalog, { tool: 'claude', resumable: true, launcher_id: 'l2' })).index, 2);
+assert.deepEqual(plain(resumeToolChoice(catalog, { tool: 'codex', resumable: false })), { index: 1, disabled: null, note: '' });
+assert.deepEqual(plain(resumeToolChoice(catalog.slice(0, 2), { tool: 'claude', resumable: true })), { index: -1, disabled: [true, true], note: 'claude is not available natively on the chosen machine, so the session cannot be continued here.' });
+assert.equal(resumeToolChoice([{ tool: 'claude', containerized: true, available: true, shares_claude_home: true }], { tool: 'claude', resumable: true }).index, 0, 'a container that shares the host Claude home can continue a session');
+assert.deepEqual(plain(resumeToolChoice(catalog, undefined)), { index: null, disabled: null, note: '' });
+assert.equal(resumeToolChoice([{ tool: 'codex', available: true }], { tool: 'claude', resumable: false }).index, null, 'a fresh start leaves the choice alone');
+
+// The worktree box: a task room only, refused with the machine's reason, not for a continued session.
+assert.deepEqual(plain(worktreeOption({ roomKind: 'task', resumable: false })), { hidden: false, disabled: false, refused: false, note: '' });
+assert.deepEqual(plain(worktreeOption({ roomKind: 'task', check: { ok: false, reason: 'not a repo' } })), { hidden: false, disabled: true, refused: true, note: 'No worktree here: not a repo' });
+assert.equal(worktreeOption({ roomKind: 'task', check: { ok: false } }).note, 'No worktree here: the project folder cannot have one.');
+assert.deepEqual([worktreeOption({ roomKind: 'home' }).hidden, worktreeOption({ roomKind: 'task', resumable: true }).hidden], [true, true]);
+
+// A hint names Settings → Harnesses as a button for an admin, and gives anyone else plain words.
+assert.deepEqual(plain(hintParts('No harness yet. Add a harness in Settings → Harnesses.', true)), { before: 'No harness yet. Add a harness in ', link: 'Settings → Harnesses', after: '.' });
+assert.equal(hintParts('No harness yet. Add a harness in Settings → Harnesses.', false).text, 'No harness yet. Ask an admin to add a harness.');
+assert.equal(hintParts('This harness has no models yet. Add one under Settings → Harnesses.', false).text, 'This harness has no models yet. Ask an admin to add one.');
+assert.equal(hintParts('x; check Settings → Harnesses', false).text, 'x; ask an admin to check the harnesses');
+assert.equal(hintParts('x. Check Settings → Harnesses.', false).text, 'x. Ask an admin to check the harnesses.');
+assert.equal(hintParts('disabled; enable it in Settings → Harnesses', false).text, 'disabled; ask an admin to enable it');
+assert.deepEqual(plain(hintParts('No models', true)), { text: 'No models' });
+
+// What the line under the tool says.
+const codex = { available: true, models: [] };
+assert.equal(spawnReason({ needsUpdate: true, tool: null, catalogCount: 0, modelCount: 0 }), 'This machine\'s supervisor predates harnesses. Update the supervisor to add harnesses.');
+assert.equal(spawnReason({ tool: null, catalogCount: 0 }), 'No harness yet. Add a harness in Settings → Harnesses.');
+assert.equal(spawnReason({ tool: null, catalogCount: 2 }), 'No tool is available on a connected machine. Check Settings → Harnesses.');
+assert.equal(spawnReason({ tool: { unavailable_reason: 'not installed' }, catalogCount: 1 }), 'not installed; check Settings → Harnesses');
+assert.equal(spawnReason({ tool: { unavailable_reason: 'see Settings → Harnesses' }, catalogCount: 1 }), 'see Settings → Harnesses');
+assert.equal(spawnReason({ tool: codex, modelCount: 0 }), 'This harness has no models yet. Add one under Settings → Harnesses.');
+assert.equal(spawnReason({ tool: { available: true, toolbox: false, toolbox_reason: 'no channel' }, modelCount: 1 }), 'No agent toolbox: no channel.');
+assert.equal(spawnReason({ tool: { available: true }, modelCount: 1 }), '');
+
+assert.deepEqual(['nova', 'a-b_1', '', 'ab', 'Ab1', '1abc', 'abc-'].map(validName), [true, true, true, false, false, false, false]);
+
+// The rooms a start from history can go to.
+const rooms = [{ id: 'r1', title: 'one', kind: 'task', lifecycle: 'open', depth: 1 }, { id: 'r2', title: 'general', kind: 'task', lifecycle: 'open', depth: 0 }, { id: 'r3', title: 'old', kind: 'task', lifecycle: 'archived' }, { id: 'h', title: 'home', kind: 'home', lifecycle: 'open' }];
+assert.deepEqual(plain(startRoomChoices(rooms, null, 'r1')), { options: [], value: '' });
+assert.deepEqual(plain(startRoomChoices(rooms, { slug: 'old' }, 'r1')), { options: [{ value: 'r1', label: 'one' }, { value: 'r2', label: 'general' }], value: 'r2' });
+assert.equal(startRoomChoices(rooms.filter(room => room.id !== 'r2'), { slug: 'old' }, 'r1').value, 'r1', 'without general the open room is chosen when it is a task room');
+assert.equal(startRoomChoices(rooms.filter(room => room.id !== 'r2'), { slug: 'old' }, 'h').value, 'r1');
+assert.deepEqual(plain(startRoomChoices(rooms, { kind: 'claude_session' }, 'r1')).options[0], { value: NEW_ROOM, label: 'A new room for this session' });
+assert.equal(startRoomChoices(rooms, { kind: 'claude_session' }, 'r1').value, NEW_ROOM);
+assert.deepEqual(plain(startRoomChoices([], { slug: 'old' }, 'r1')), { options: [], value: '' });
+
+// The banner of a start from history.
+const relative = value => `rel(${value})`;
+const banner = (resume, patch = {}) => plain(resumeBanner({ resume, mode: 'continue', hasRoom: true, toolNote: '', warning: '', relative, ...patch }));
+assert.deepEqual([banner(null).hidden, banner(null).title, banner(null).confirmText], [true, 'Spawn', ' v1 is not running this session any more']);
+const v1 = { slug: 'old-bot', legacy_id: 'old-bot', tool: 'codex', resumable: true, cwd: '/work/old', v1_active: true, outside_folder: true };
+assert.deepEqual([banner(v1).title, banner(v1).text, banner(v1).choosing, banner(v1).confirmHidden], ['Start old-bot as a v2 agent', 'This continues the v1 session of old-bot, working in /work/old.', true, false]);
+assert.equal(banner(v1).notes, 'It works in /work/old, outside the project folder, so the owner must approve it in the Inbox before it starts. v1 saw this agent a moment ago and may still be using the session. Stop it in v1 first: two processes on one session corrupt it.');
+const fork = banner(v1, { mode: 'fork', warning: 'W' });
+assert.deepEqual([fork.title, fork.confirmHidden, fork.forking, fork.notes.endsWith('W')], ['Start old-bot on a copy of its v1 session', true, true, true]);
+assert.equal(banner({ slug: 'x', reason: 'No session was kept.' }).text, 'No session was kept.');
+assert.equal(banner({ slug: 'x' }).text, 'This agent starts fresh with the same name.');
+assert.equal(banner(v1, { hasRoom: false }).notes.startsWith('This project has no open task room to start it in.'), true);
+const session = { kind: 'claude_session', resumable: true, session_id: '11111111-aaaa', cwd: '/w', modified_at: 'T', model: 'opus', active: true, held_by: 'ada', outside_folder: false };
+const cont = banner(session, { toolNote: 'N', warning: 'W' });
+assert.deepEqual([cont.title, cont.held, cont.card, cont.confirmText, cont.confirmHidden], ['Continue a Claude Code session', true, [['Session', '11111111', true], ['Folder', '/w', true], ['Last active', 'rel(T)', false], ['Ran on', 'opus', true]], ' I closed this session in my terminal', false]);
+assert.equal(cont.notes, 'ada already continues this session, so it can only be copied. A Claude process has this session open. Close it first: two processes on one session corrupt it. N W');
+assert.deepEqual([banner(session, { mode: 'fork' }).title, banner(session, { mode: 'fork' }).confirmHidden], ['Work on a copy of a Claude Code session', true]);
+assert.equal(banner({ ...session, modified_at: '' }).card[2][1], 'unknown');
+
+// What a Spawn sends, or why it does not.
+const ready = { role: 'worker', tool: { available: true, tool: 'codex', variant: 'native', launcher_id: 'l1', provider: 'p' }, model: 'm', typed: ' nova ', machineID: 'mch', mode: 'continue', target: { kind: 'task' }, worktree: true, baseRef: 'main' };
+assert.deepEqual(plain(spawnRequest(ready)), { params: { role: 'worker', tool: 'codex', variant: 'native', launcher_id: 'l1', model: 'm', provider: 'p', machine_id: 'mch', name: 'nova', worktree: true, base_ref: 'main' } });
+assert.deepEqual(plain(spawnRequest({ ...ready, typed: '', target: { kind: 'home' } })).params.worktree, false);
+assert.equal('name' in spawnRequest({ ...ready, typed: '  ' }).params, false);
+assert.deepEqual([{ ...ready, role: '' }, { ...ready, model: '' }, { ...ready, tool: { available: false } }, { ...ready, tool: null }].map(item => spawnRequest(item).skip), [true, true, true, true]);
+assert.match(spawnRequest({ ...ready, typed: 'A!' }).nameError, /^A name is 3 to 21 characters/);
+assert.equal(spawnRequest({ ...ready, resume: { ...v1, tool: 'claude' } }).error, 'To continue this session the tool must be claude.');
+assert.equal(spawnRequest({ ...ready, resume: { ...v1, tool: 'codex' } }).confirm, 'Confirm that v1 is not running this session any more.');
+const confirmed = plain(spawnRequest({ ...ready, resume: { ...v1, tool: 'codex' }, confirmed: true })).params;
+assert.deepEqual([confirmed.resume_legacy, confirmed.resume_mode, confirmed.confirm_v1_idle, 'worktree' in confirmed, 'name' in confirmed], ['old-bot', 'continue', true, false, false]);
+const forked = plain(spawnRequest({ ...ready, resume: { ...v1, tool: 'codex' }, mode: 'fork' })).params;
+assert.deepEqual([forked.resume_mode, forked.confirm_v1_idle], ['fork', false]);
+const notResumable = plain(spawnRequest({ ...ready, resume: { slug: 'old', legacy_id: 'old', resumable: false } })).params;
+assert.deepEqual([notResumable.resume_legacy, 'resume_mode' in notResumable, notResumable.worktree, 'name' in notResumable], ['old', false, true, false]);
+assert.equal(spawnRequest({ ...ready, resume: { ...session, tool: 'claude' }, tool: { available: true, tool: 'claude' } }).confirm, 'Confirm that you closed this session.');
+const sent = plain(spawnRequest({ ...ready, tool: { available: true, tool: 'claude' }, resume: { ...session, tool: 'claude', active: false }, newRoom: true, typed: 'cc1' })).params;
+assert.deepEqual([sent.resume_session, sent.resume_mode, sent.confirm_session_closed, sent.new_room, sent.name, 'worktree' in sent], ['11111111-aaaa', 'continue', false, true, 'cc1', false]);
+assert.equal(spawnRequest({ ...ready, tool: { available: true, tool: 'claude' }, resume: { ...session, tool: 'claude' }, mode: 'fork', typed: 'cc1' }).params.confirm_session_closed, false);
+
 console.log('spawn model tests passed');

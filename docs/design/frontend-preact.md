@@ -338,13 +338,11 @@ Done so far: Health (`web/js/pages/health/`: the popover over a `HealthStore`, w
 Done so far: the panel of agent cards and people, with the profile and its Output section (`web/js/pages/agents/`: an `AgentsStore` of signals,
 the cards keyed by agent id, `model.js` for the plain rules; the toolbar, the panel's title, its close button and the Spawn button stay in
 `index.html` and the adapter is their only writer). The store keeps the record it holds for an agent whose data is unchanged, so a refresh
-renders only the cards that changed and the clock re-renders only the age and the live chip. The Spawn and Switch dialogs are still the
-hand-written ones, moved unchanged into `spawn-dialogs.js` until their own parts replace them.
-
-- Scope: the agent cards and member list, the member profile, then the spawn and switch dialogs.
-- Files: `agents.js`, `room-members.js`, `agent-source.js`, `sender-profile.js`.
-- Acceptance: identity and stale-room guarantees kept (`agents.js:111-143`); a card updates in place under the event stream;
-  the stop rule is applied after this step.
+renders only the cards that changed and the clock re-renders only the age and the live chip. The Spawn dialog is a page of its own in the same
+folder (`SpawnStore` over a `MachineStore` for the machine and its folder; `spawn-model.js` holds the pure rules for the tool and model lists, the
+v1 banner, the worktree box and the request). Every opening, catalog read, name read, spawn and folder save carries a number and says nothing
+once a newer one started or the panel is gone. The Switch dialog is still the hand-written one, in `switch-dialog.js`, until its own part
+replaces it.
 
 ### Step 5: sidebar and navigation
 

@@ -580,6 +580,96 @@ async function main() {
     await page.close();
   }
 
+  // A panel destroyed while a read of the Spawn dialog or its call is out takes the answer and does nothing with it: no machines, roles, tools or
+  // name are stored, no read follows, no folder status, and a spawn that succeeds or is refused navigates, refreshes and says nothing.
+  {
+    const state = page => page.evaluate(() => { const store = window.__panel.spawn; return { machines: store.machine.machines.value.length, roles: store.roles.value.length, tools: store.catalog.value.length, name: store.name.value, status: store.machine.status.value, ready: store.rolesReady.value }; });
+    const reads = (page, prefix) => page.evaluate(prefix => window.__requests.filter(request => request.path.startsWith(prefix)).length, prefix);
+    // The machines of an opening.
+    let page = await mount({ auto: stable({ 'GET /api/machines?project_id=p1': undefined }) });
+    await open(page);
+    let held = await waitRequest(page, 'GET', '/api/machines?project_id=p1');
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, held, 200, machines); await settle(page);
+    assert.deepEqual([(await state(page)).machines, await reads(page, '/api/spawn-catalog')], [0, 0], 'a destroyed panel keeps no machine and reads no catalog');
+    await page.close();
+    // The folders, which the machines wait for.
+    page = await mount({ auto: stable({ 'GET /api/projects/p1/machine-folders': undefined }) });
+    await open(page);
+    held = await waitRequest(page, 'GET', '/api/projects/p1/machine-folders');
+    const asked = await reads(page, '/api/machines');
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, held, 200, { folders: [] }); await settle(page);
+    assert.equal(await reads(page, '/api/machines'), asked, 'a destroyed panel asks for no machines after the folders');
+    await page.close();
+    // The roles.
+    page = await mount({ auto: stable({ 'GET /api/roles': undefined }) });
+    await open(page);
+    held = await waitRequest(page, 'GET', '/api/roles');
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, held, 200, roles); await settle(page);
+    assert.deepEqual([(await state(page)).roles, (await state(page)).ready], [0, false], 'a destroyed panel keeps no role');
+    await page.close();
+    // The tool catalog.
+    page = await mount({ auto: stable({ 'GET /api/spawn-catalog?machine_id=m1': undefined }) });
+    await open(page);
+    held = await waitRequest(page, 'GET', '/api/spawn-catalog?machine_id=m1');
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, held, 200, catalog); await settle(page);
+    assert.equal((await state(page)).tools, 0, 'a destroyed panel keeps no tool');
+    await page.close();
+    // The suggested name, and the role's default.
+    page = await mount({ auto: stable({ 'GET /api/rooms/r1/agent-name': undefined, 'GET /api/projects/p1/role-spawn-defaults/worker/next': undefined }) });
+    await open(page);
+    const suggestion = await waitRequest(page, 'GET', '/api/rooms/r1/agent-name');
+    const preview = await waitRequest(page, 'GET', '/api/projects/p1/role-spawn-defaults/worker/next');
+    const before = await page.evaluate(() => window.__requests.length);
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, suggestion, 200, { name: 'late' }); await answer(page, preview, 200, { available: true, machine_id: 'm2', launcher_id: 'l2', model: 'opus' }); await settle(page);
+    assert.deepEqual([(await state(page)).name, await page.evaluate(() => window.__requests.length)], ['', before], 'a destroyed panel keeps no name and acts on no default');
+    await page.close();
+    // A spawn, answered with a success and with a refusal.
+    for (const [status, reply] of [[200, agent('a2', 'nova')], [409, { message: 'that name is in use', error: 'name_in_use' }], [400, { message: 'refused', error: 'invalid' }]]) {
+      page = await mount();
+      await open(page); await ready(page);
+      await page.$eval('#spawn-form button[type=submit]', node => node.click());
+      held = await waitRequest(page, 'POST', '/api/rooms/r1/agents');
+      const total = await page.evaluate(() => window.__requests.length);
+      await calls(page);
+      await page.evaluate(() => window.__panel.destroy());
+      await answer(page, held, status, reply); await settle(page);
+      assert.deepEqual([await page.evaluate(() => window.__requests.length), await calls(page), await page.$eval('#agents-error', node => node.textContent), await page.evaluate(() => window.__panel.spawn.nameError.value)], [total, [], '', ''], `${status}: a destroyed panel does not navigate, read or say anything`);
+      await page.close();
+    }
+    // The session picker: a session picked after the panel was destroyed opens nothing and asks for nothing.
+    {
+      const sessions = { sessions: [{ id: '11111111-aaaa-4aaa-8aaa-000000000001', title: 'Fix the login bug', cwd: '/work/project', modified_at: at, size: 2048, git_branch: 'main' }] };
+      const picker = await mount({ auto: stable({ 'GET /api/projects/p1/claude-sessions?machine_id=m1&launcher_id=l2': sessions }) });
+      await open(picker); await ready(picker);
+      await select(picker, 'tool', '1');
+      await picker.$eval('#spawn-sessions', node => node.click());
+      await picker.waitForSelector('#cc-sessions-list .cc-session-pick');
+      await picker.evaluate(() => window.__panel.destroy());
+      const total = await picker.evaluate(() => window.__requests.length);
+      await picker.$eval('#cc-sessions-list .cc-session-pick', node => node.click()); await settle(picker);
+      assert.deepEqual([await picker.$eval('#spawn-dialog', node => node.open), await picker.evaluate(() => window.__requests.length), await picker.evaluate(() => window.__panel.spawn.resume.value)], [false, total, null], 'a session picked after destroy opens nothing');
+      await picker.close();
+    }
+    // A folder save.
+    page = await mount({ auto: stable({ 'PUT /api/projects/p1/machine-folders/m2': undefined }) });
+    await open(page); await ready(page);
+    await select(page, 'machine', 'm2');
+    await page.waitForFunction(() => !document.querySelector('#spawn-form button[type=submit]').disabled);
+    await page.$eval('#spawn-form [name=machine_folder]', node => { node.value = '/srv/new'; node.dispatchEvent(new Event('input')); });
+    await page.$eval('#spawn-save-folder', node => node.click());
+    held = await waitRequest(page, 'PUT', '/api/projects/p1/machine-folders/m2');
+    const catalogs = await reads(page, '/api/spawn-catalog'), status = (await state(page)).status;
+    await page.evaluate(() => window.__panel.destroy());
+    await answer(page, held, 200, { machine_id: 'm2', folder: '/srv/new' }); await settle(page);
+    assert.deepEqual([(await state(page)).status, await reads(page, '/api/spawn-catalog'), await page.evaluate(() => window.__panel.spawn.machine.folders.get('m2'))], [status, catalogs, '/srv/p1'], 'a destroyed panel keeps no saved folder and reads no catalog');
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('spawn page: ok');
