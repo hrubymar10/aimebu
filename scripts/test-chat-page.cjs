@@ -996,6 +996,28 @@ async function main() {
     await exporting.close();
   }
 
+  // The read mark of the latest view is the live cursor and costs no look at the list; a history window reads its newest row.
+  {
+    const page = await mount();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    const reads = await page.evaluate(() => {
+      const list = document.querySelector('#messages'), chat = window.__chat; let count = 0;
+      const real = Object.getOwnPropertyDescriptor(Element.prototype, 'lastElementChild') || Object.getOwnPropertyDescriptor(Node.prototype, 'lastElementChild');
+      Object.defineProperty(list, 'lastElementChild', { configurable: true, get() { count++; return real.get.call(this); } });
+      const latest = [chat.newestShownSeq(), count];
+      chat.contextMode = true; count = 0;
+      const window_ = [chat.newestShownSeq(), count > 0];
+      chat.contextMode = false; chat.catchingUp = true; count = 0;
+      const catching = [chat.newestShownSeq(), count > 0];
+      chat.catchingUp = false; chat.initialLoading = true; count = 0;
+      const loading = [chat.newestShownSeq(), count];
+      chat.initialLoading = false; delete list.lastElementChild;
+      return { latest, window_, catching, loading };
+    });
+    assert.deepEqual(reads, { latest: [130, 0], window_: [130, true], catching: [130, true], loading: [0, 0] }, 'the latest view and a loading room do not look at the list');
+    await page.close();
+  }
+
   // Late growth (an image or a diagram that finishes after its row was drawn) does not move the reader: a list at the bottom stays pinned to it, a list
   // scrolled up keeps the first visible message where it was.
   {

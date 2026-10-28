@@ -25,23 +25,9 @@ import { buildMessageActions, messageAction } from './message-actions.js';
 import { answerControls, answerHistory } from './answer-controls.js';
 import { promptDialog } from './dialogs.js';
 import { expandShortcodes } from './emoji-data.js';
+import { MENTION_LOGINS_TTL_MS, answerArea, answerEligible, answersThroughInbox as answersThrough, articleClass, groupReactions, latestLabel, liveArrival as isLiveArrival, liveRoute, messageSnippet, newestShownSeq as shownSeq, newRepliesLabel, overCap, plainText, recallCandidates as ownMessages, recallStep, threadChip, threadCount, threadLabel as threadLabelOf, threadTitle, trimCap } from './pages/chat/model.js';
 
-const MENTION_LOGINS_TTL_MS = 30000;
-
-// One line of a message for a quote or a reply chip: whitespace collapsed, cut to 96 characters, "[attachment]" for a message that is only files.
-// The words of a message without its Markdown syntax (bold, code, links, quotes and headings), for a one-line quote of it.
-export const plainText = text => String(text || '')
-  .replace(/^\s{0,3}(?:#{1,6}(?=\s|$)|>)\s?/gm, '')
-  .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-  .replace(/(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1/g, '$2')
-  .replace(/(^|[\s(])([*_])(?=\S)([^*_\n]+?)(?<=\S)\2(?=$|[\s).,;:!?])/g, '$1$3')
-  .replace(/`+([^`]*)`+/g, '$1');
-
-export function messageSnippet(message) {
-  let text = plainText(message?.body).replace(/\s+/g, ' ').trim();
-  if (!text && message?.attachments?.length) text = '[attachment]';
-  return text.length > 96 ? `${text.slice(0, 95).trimEnd()}…` : text;
-}
+export { plainText, messageSnippet };
 
 // "Back to latest" and its thread twins are icon buttons; a count of missed messages is a pill on the icon, and the tooltip and
 // accessible name carry the full wording ("Back to latest · 2 new").
@@ -155,18 +141,17 @@ export class Chat {
   // Otherwise (a history window, or its catch-up in flight) only the newest top-level row actually in the list counts,
   // never a thread reply, which an open thread panel can hold far past the window's end.
   newestShownSeq() {
-    if (this.initialLoading) return 0;
-    if (!this.contextMode && !this.catchingUp) return this.newestSeq || 0;
-    for (let node = this.list.lastElementChild; node; node = node.previousElementSibling) {
-      if (node.matches('article.message[data-message-id]')) return Number(node.dataset.seq) || 0;
-    }
-    return 0;
+    const lastRowSeq = () => {
+      for (let node = this.list.lastElementChild; node; node = node.previousElementSibling) if (node.matches('article.message[data-message-id]')) return Number(node.dataset.seq) || 0;
+      return 0;
+    };
+    return shownSeq({ initialLoading: this.initialLoading, contextMode: this.contextMode, catchingUp: this.catchingUp, newestSeq: this.newestSeq, lastRowSeq });
   }
   // Live top-level messages that arrived while a history window was shown: they are not in the list, so the
   // Back to latest button counts them.
   updateLatestLabel() {
     const count = this.missedIDs?.size || 0;
-    setLatest(this.latestButton, count ? `Back to latest · ${count} new` : 'Back to latest', count);
+    setLatest(this.latestButton, latestLabel(count), count);
   }
   reset() {
     this.openGeneration++; this.sessionGeneration++; if (this.recall) this.recall.index = null; this.announcer.reset();
@@ -220,7 +205,7 @@ export class Chat {
   trimLive() {
     if (this.contextMode || this.loadingOlder || this.initialLoading) return;
     const atBottom = this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 48;
-    if (this.trimOldest(atBottom ? this.liveCap() : this.renderCap())) this.scrollAnchor?.update();
+    if (this.trimOldest(trimCap(atBottom, this.liveCap(), this.renderCap()))) this.scrollAnchor?.update();
   }
   renderedRows() { return [...this.list.children].filter(node => node.matches?.('article.message[data-message-id]')); }
   // A dropped row takes its thread replies and counts along; they come back with the row when its page is loaded again
@@ -238,7 +223,7 @@ export class Chat {
   // is deferred to the next page, by which time the reader has moved on (only possible with a cap near a screenful).
   trimNewest() {
     const rows = this.renderedRows(), cap = this.renderCap();
-    if (rows.length <= cap || this.loadingNewer) return;
+    if (!overCap(rows.length, cap) || this.loadingNewer) return;
     if (rows[cap].getBoundingClientRect().top < this.list.getBoundingClientRect().bottom) return;
     this.dropRows(rows.slice(cap));
     this.windowSeq = Number(rows[cap - 1].dataset.seq);
@@ -249,7 +234,7 @@ export class Chat {
   // Also used by the live end (trimLive) with its own cap. Returns whether rows were dropped.
   trimOldest(cap = this.renderCap()) {
     const rows = this.renderedRows();
-    if (rows.length <= cap) return false;
+    if (!overCap(rows.length, cap)) return false;
     if (rows[rows.length - cap - 1].getBoundingClientRect().bottom > this.list.getBoundingClientRect().top) return false;
     const keep = rows[rows.length - cap], keepTop = keep.getBoundingClientRect().top;
     this.dropRows(rows.slice(0, rows.length - cap));
@@ -363,8 +348,7 @@ export class Chat {
   // The room's messages, oldest first, for the inspector's previous and next.
   orderedMessages() { return [...this.messages.values()].sort((a, b) => a.seq - b.seq); }
   threadLabel(id) {
-    const count = Math.max(this.threadCounts.get(id) || 0, this.serverThreadCounts?.get(id) || 0);
-    return count ? `Thread · ${count}` : 'Reply in thread';
+    return threadLabelOf(threadCount(this.threadCounts, this.serverThreadCounts, id));
   }
   setInbox(inbox) { this.inbox = inbox; }
   // `messageID` is the message the container belongs to (an item is not there once it has been answered). A question this viewer
@@ -374,7 +358,7 @@ export class Chat {
     if (!container) return;
     const current = container.querySelector(':scope > .answer-controls');
     const id = messageID ?? item?.message_id;
-    const eligible = item && ['question', 'approval'].includes(item.kind) && !item.boundary_pending && item.can_decide !== false;
+    const eligible = answerEligible(item);
     const marker = () => container.querySelector(':scope > .answer-done');
     const history = () => container.querySelector(':scope > .answer-history');
     if (!eligible) {
@@ -383,8 +367,8 @@ export class Chat {
       // A question or proposed answers on a message with nothing open for it (history, an imported ask, an answered one) stay
       // visible under it, disabled: "Answered" when it was answered, otherwise marked as no longer pending.
       const message = id ? this.messages?.get(id) || (this.threadRoot?.id === id ? this.threadRoot : null) : null;
-      const answered = Boolean(id && (this.answeredMessages?.has(id) || this.repliedTo?.has(id)));
-      if (message && (message.proposed_answers?.length || message.open_questions?.length)) {
+      const answered = Boolean(id && (this.answeredMessages?.has(id) || this.repliedTo?.has(id))), area = answerArea(item, message, answered);
+      if (area === 'history') {
         marker()?.remove();
         const shown = history();
         if (shown?.dataset.answered === String(answered)) return;
@@ -393,7 +377,7 @@ export class Chat {
         return;
       }
       history()?.remove();
-      if (answered && !marker()) {
+      if (area === 'done' && !marker()) {
         const done = document.createElement('div'); done.className = 'answer-done';
         const button = document.createElement('button'); button.type = 'button'; button.className = 'btn'; button.disabled = true; button.textContent = 'Answered';
         done.append(button); container.append(done);
@@ -662,14 +646,10 @@ export class Chat {
       const messages = await request(`/api/rooms/${id}/messages?after=${this.newestSeq || 0}&limit=${this.pageSize}`);
       if (!this.current(session, id) || generation !== this.openGeneration) return;
       for (const message of messages) {
-        // A refresh that overlapped another can return a row the live cap already dropped: appending it would put it out of order.
-        if (!message.thread_root && this.hasMoreOlder && message.seq < this.oldestSeq) continue;
-        // A live reply whose root is neither rendered nor open has no row to count it on (the cap trimmed the root, or it was
-        // never loaded): kept, it would pile up in the maps with no owner. The root's page brings the count back.
-        if (message.thread_root && !this.nodes.has(message.thread_root) && this.threadRoot?.id !== message.thread_root) continue;
-        if (message.thread_root === this.threadRoot?.id && !this.threadLatestButton.hidden && !this.threadEntryIDs.has(message.id)) { this.markNewThreadReply(message); continue; }
-        if (!this.contextMode || (message.thread_root && (this.threadRoot?.id === message.thread_root || this.nodes.has(message.thread_root)))) { const known = this.messages.has(message.id); this.add(message); if (!known && this.liveArrival(message) && !this.announcedIDs?.has(message.id)) this.announce(message); }
-        else if (!message.thread_root && !this.messages.has(message.id) && !this.missedIDs.has(message.id)) {
+        const route = liveRoute(message, { hasMoreOlder: this.hasMoreOlder, oldestSeq: this.oldestSeq, rootRendered: this.nodes.has(message.thread_root), openThreadID: this.threadRoot?.id, threadLatestHidden: this.threadLatestButton.hidden, threadEntryKnown: this.threadEntryIDs.has(message.id), contextMode: this.contextMode, known: this.messages.has(message.id), missed: this.missedIDs.has(message.id) });
+        if (route === 'new-reply') this.markNewThreadReply(message);
+        else if (route === 'add') { const known = this.messages.has(message.id); this.add(message); if (!known && this.liveArrival(message) && !this.announcedIDs?.has(message.id)) this.announce(message); }
+        else if (route === 'missed') {
           // A history window does not show the live end of the room, but the arrival is still news: count it on the button and announce it.
           this.missedIDs.add(message.id); this.updateLatestLabel();
           if (!this.initialLoading && message.author_kind !== 'system') this.announce(message);
@@ -687,7 +667,7 @@ export class Chat {
   // Only messages that land in the main list while the room is open are announced: not history, older
   // pages, thread replies or system notices. What this tab sent is silenced by the announcer, by id.
   liveArrival(message) {
-    return !this.initialLoading && !this.contextMode && !message.thread_root && message.author_kind !== 'system';
+    return isLiveArrival(message, this);
   }
   async fetchMessage() {
     await this.refreshMessages();
@@ -785,34 +765,21 @@ export class Chat {
     this.updateAuthor(wrapper, message); return wrapper;
   }
   // The viewer's own messages in this room, oldest first, consecutive duplicates collapsed.
-  recallCandidates() {
-    const own = [...this.messages.values()].filter(message => message.author_kind === 'user' && message.author_id === currentUser && !message.thread_root).sort((a, b) => a.seq - b.seq);
-    const out = [];
-    for (const message of own) if (out.at(-1) !== message.body) out.push(message.body);
-    return out.slice(-200);
-  }
+  recallCandidates() { return ownMessages(this.messages.values(), currentUser); }
   // Terminal-style history: Up at an empty composer or caret start walks back through own messages (once recalling, on the first line),
   // Down walks forward (restoring the in-progress draft past the newest), Esc restores the draft.
   // Returns true when the key was consumed. Open autocomplete popups keep their own arrow keys.
   recallKey(event) {
     if (event.isComposing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return false;
     if (![this.quickCommands, this.macroAutocomplete, this.mentionAutocomplete].every(popup => popup?.popup.hidden !== false)) return false;
-    const draft = this.draft, recall = this.recall, at = draft.selectionStart, end = draft.selectionEnd, empty = !draft.value;
-    const show = value => { draft.value = value; draft.setSelectionRange(value.length, value.length); this.resizeDraft(); };
-    if (event.key === 'Escape' && recall.index !== null) { event.preventDefault(); show(recall.draft); recall.index = null; return true; }
-    if (event.key === 'ArrowUp' && (empty || (at === 0 && end === 0) || (recall.index !== null && !draft.value.slice(0, at).includes('\n')))) {
-      const candidates = this.recallCandidates(); if (!candidates.length) return false;
-      event.preventDefault();
-      if (recall.index === null) { recall.draft = draft.value; recall.index = candidates.length - 1; } else recall.index = Math.max(recall.index - 1, 0);
-      show(candidates[recall.index]); return true;
-    }
-    if (event.key === 'ArrowDown' && recall.index !== null && (empty || !draft.value.slice(end).includes('\n'))) {
-      const candidates = this.recallCandidates(); event.preventDefault();
-      recall.index++;
-      if (recall.index >= candidates.length) { show(recall.draft); recall.index = null; } else show(candidates[recall.index]);
-      return true;
-    }
-    return false;
+    const draft = this.draft, recall = this.recall;
+    const walking = event.key === 'ArrowUp' || event.key === 'ArrowDown';
+    const step = recallStep({ key: event.key, value: draft.value, at: draft.selectionStart, end: draft.selectionEnd }, recall, walking ? this.recallCandidates() : []);
+    if (!step) return false;
+    event.preventDefault();
+    recall.index = step.index; recall.draft = step.draft;
+    draft.value = step.value; draft.setSelectionRange(step.value.length, step.value.length); this.resizeDraft();
+    return true;
   }
   // Arrow keys move between the buttons of a focused action bar.
   moveActionFocus(event) {
@@ -854,7 +821,7 @@ export class Chat {
     // these are read only for a live appended message, which is the one case that uses them.
     const oldTop = quiet ? 0 : this.list.scrollTop;
     if (this.list.dataset.empty === 'true' && message.author_kind !== 'system') this.list.dataset.empty = 'false';
-    const article = document.createElement('article'); article.className = message.author_kind === 'system' ? 'message system-notice' : message.author_kind === 'user' && message.author_id === currentUser ? 'message self' : 'message'; article.dataset.messageId = message.id; article.dataset.seq = String(message.seq); article.dataset.no = String(message.no);
+    const article = document.createElement('article'); article.className = articleClass(message, currentUser); article.dataset.messageId = message.id; article.dataset.seq = String(message.seq); article.dataset.no = String(message.no);
     if (message.author_kind === 'system') {
       const row = document.createElement('div'); row.className = 'system-row';
       const body = document.createElement('span'); body.className = 'message-body'; body.textContent = message.body;
@@ -923,11 +890,11 @@ export class Chat {
     }
   }
   updateThreadCount(id) {
-    const count = Math.max(this.threadCounts.get(id) || 0, this.serverThreadCounts?.get(id) || 0), label = this.threadLabel(id);
+    const count = threadCount(this.threadCounts, this.serverThreadCounts, id), label = this.threadLabel(id);
     const article = this.nodes.get(id);
     for (const button of article?.querySelectorAll('.thread-action') || []) { button.title = label; button.setAttribute('aria-label', label); }
-    const chip = article?.querySelector(':scope > .thread-chip'); if (chip) { chip.hidden = !count; chip.textContent = count === 1 ? '1 reply' : `${count} replies`; chip.title = 'Open thread'; chip.setAttribute('aria-label', `Open thread, ${count} ${count === 1 ? 'reply' : 'replies'}`); }
-    if (this.threadRoot?.id === id && this.threadTitle) this.threadTitle.textContent = count ? `Thread · ${count}` : 'Thread';
+    const chip = article?.querySelector(':scope > .thread-chip'); if (chip) { const view = threadChip(count); chip.hidden = view.hidden; chip.textContent = view.text; chip.title = 'Open thread'; chip.setAttribute('aria-label', view.label); }
+    if (this.threadRoot?.id === id && this.threadTitle) this.threadTitle.textContent = threadTitle(count);
   }
   // The header line of a message, in the main list and in the thread panel alike: sender, (bell), #number, bug, time.
   messageMeta(message, article) {
@@ -972,7 +939,7 @@ export class Chat {
   }
   updateThreadNewMarker() {
     const count = this.threadNewReplyIDs.size;
-    setLatest(this.threadNewButton, `${count} new ${count === 1 ? 'reply' : 'replies'}`, count);
+    setLatest(this.threadNewButton, newRepliesLabel(count), count);
     this.threadNewButton.hidden = count === 0;
   }
   async openThread(root, focus = null) {
@@ -1060,15 +1027,7 @@ export class Chat {
   // Whether a reply to `parent` with this text is the answer to `item` (see send): a question or approval this person decides, answered with text
   // that mentions at most the requester. A free-text ask takes any text; an options-only ask only the text of one of its options (so Shift-clicking
   // an answer and sending it unedited acts like the button, while edited text is an ordinary reply).
-  answersThroughInbox(item, parent, body) {
-    if (!['question', 'approval'].includes(item.kind) || item.boundary_pending || item.can_decide === false) return false;
-    const requester = this.answerOptions(parent).mention.toLowerCase();
-    const mentioned = [...String(body).matchAll(/(^|[^\w@`\\])@([a-z0-9][a-z0-9_-]*(?:@[a-z0-9_-]+)?)/gi)].map(match => `@${match[2].toLowerCase()}`);
-    if (!mentioned.every(name => name === requester)) return false;
-    if (item.free_text) return true;
-    const text = String(body).trim(), plain = requester && text.toLowerCase().startsWith(requester) ? text.slice(requester.length).trim() : text;
-    return [...(item.proposed_answers || []), ...(item.options || [])].includes(plain);
-  }
+  answersThroughInbox(item, parent, body) { return answersThrough(item, this.answerOptions(parent).mention, body); }
   async send() {
     if (!this.room || this.pendingUploads || (!this.draft.value.trim() && !this.pendingAttachments.length)) return;
     const room = this.room.id, body = this.draft.value, reply = this.reply, attachments = this.pendingAttachments.map(a => a.id), session = this.sessionGeneration;
@@ -1122,11 +1081,9 @@ export class Chat {
     this.reactions.set(id, entries);
     const article = this.nodes.get(id); if (!article) return;
     const pills = article.querySelector('.reaction-pills'); pills.replaceChildren();
-    const grouped = new Map();
-    for (const entry of entries) { if (!grouped.has(entry.emoji)) grouped.set(entry.emoji, []); grouped.get(entry.emoji).push(entry); }
-    for (const [emoji, members] of grouped) {
-      const pill = document.createElement('button'); pill.type = 'button'; pill.className = 'row-btn reaction-pill'; pill.textContent = `${emoji} ${members.length}`;
-      pill.title = members.map(member => member.member_name || member.member_id).join(', '); pill.setAttribute('aria-pressed', members.some(member => member.member_id === currentUser)); pill.dataset.emoji = emoji; pills.append(pill);
+    for (const group of groupReactions(entries, currentUser)) {
+      const pill = document.createElement('button'); pill.type = 'button'; pill.className = 'row-btn reaction-pill'; pill.textContent = `${group.emoji} ${group.count}`;
+      pill.title = group.title; pill.setAttribute('aria-pressed', group.pressed); pill.dataset.emoji = group.emoji; pills.append(pill);
     }
   }
   async toggleReaction(id, emoji) {

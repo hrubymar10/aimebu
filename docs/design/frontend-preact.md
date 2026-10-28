@@ -397,6 +397,10 @@ Owner's decision (2026-10-28): continue with the remaining units.
   components) and `page.js`, which writes the header's elements from an effect and fills the dialog's parts: the rename form, the facts, the controls,
   the error line and the worktree, memory and notes sections. `Chat` keeps its methods and properties for the app and the tests and delegates to it.
   While a worktree is loading its buttons stay hidden, where the old dialog showed the previous room's.
+- Done for the message rules: `web/js/pages/chat/model.js` (import-free, vm-tested) holds what a message reads like in a quote, the thread counts and their words,
+  how reactions group, what a live refresh does with a message of a page (skip, draw, count as a new reply, count on Back to latest), how far the read mark
+  may go, the caps of the list, when a reply answers a question through the Inbox, what a message's answer area shows, and the walk back through the
+  viewer's own messages. `Chat` calls it and keeps the DOM work; `plainText` and `messageSnippet` are still exported from `chat.js`.
 
 ### Step 7: the shell
 
