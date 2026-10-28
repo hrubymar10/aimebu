@@ -814,6 +814,7 @@ async function main() {
   };
   const leave = async (page, how, extra = {}) => {
     if (how === 'open') { await openRoom(page, 'rm_b'); await opened(page); }
+    else if (how === 'revisit') { await openRoom(page, 'rm_b'); await opened(page); await settle(page); await openRoom(page, 'rm_a', extra); await opened(page); }
     else if (how === 'reset-same') { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_a', extra); await opened(page); }
     else { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_b'); await opened(page); }
     await settle(page); await calls(page);
@@ -832,7 +833,7 @@ async function main() {
     ['export', {}, page => page.evaluate(() => { window.__panel = window.__chat.exportRoom('json'); }), 'GET', '/rooms/rm_a/export', null],
   ];
   for (const [name, extra, start, method, re] of cases) {
-    for (const how of ['open', 'reset', 'reset-same']) {
+    for (const how of ['open', 'reset', 'reset-same', 'revisit']) {
       for (const outcome of ['ok', 'fail']) {
         const page = await panelRoom({ extra });
         await hold(page, method, re);

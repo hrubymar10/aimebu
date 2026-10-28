@@ -113,6 +113,7 @@ export class Chat {
     document.querySelector('#cancel-reply').onclick = () => this.setReply(null);
     this.openGeneration = 0;
     this.sessionGeneration = 0;
+    this.roomSession = 0; // moves whenever another room is shown or the chat is reset: what the room's dialog started for another room is not for this one
     this.uploadRequests = new Set();
     this.raw = false;
     this.infoDialog = document.querySelector('#room-info-dialog');
@@ -169,7 +170,7 @@ export class Chat {
     const generation = ++this.openGeneration;
     const session = this.sessionGeneration;
     this.announcer.reset();
-    if (this.room?.id !== room.id) { this.pendingAttachments = []; this.renderPending(); if (this.recall) this.recall.index = null; }
+    if (this.room?.id !== room.id) { this.roomSession++; this.pendingAttachments = []; this.renderPending(); if (this.recall) this.recall.index = null; }
     closeMessageUsage(); this.room = room; this.syncEmpty(); this.title.textContent = room.title; this.setRoomFacts(room); this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.answeredMessages = new Set(); this.repliedTo = new Set(); this.nodes.clear(); this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.initialLoading = true; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0; this.loadingNewer = false; this.missedIDs = new Set(); this.updateLatestLabel(); this.setReply(null); this.closeThread();
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = false;
     this.setRoomFacts(room);
@@ -208,7 +209,7 @@ export class Chat {
     setLatest(this.latestButton, count ? `Back to latest · ${count} new` : 'Back to latest', count);
   }
   reset() {
-    this.openGeneration++; this.sessionGeneration++; if (this.recall) this.recall.index = null; this.announcer.reset();
+    this.openGeneration++; this.sessionGeneration++; this.roomSession++; if (this.recall) this.recall.index = null; this.announcer.reset();
     for (const controller of this.uploadRequests) controller.abort();
     this.uploadRequests.clear();
     this.room = null; this.syncEmpty(); this.title.textContent = 'Choose a room'; this.roomIcon.hidden = true; this.members.hidden = true;
@@ -223,6 +224,7 @@ export class Chat {
   // With no room open the chat shows an empty-state card instead of the composer and room controls; the app decides what the card says.
   syncEmpty() { this.onEmptyChange?.(!this.room); }
   current(session, roomID) { return session === this.sessionGeneration && this.room?.id === roomID; }
+  currentRoom(session, roomID) { return session === this.roomSession && this.room?.id === roomID; }
   // A list too short to scroll cannot ask for more by scrolling, so a short page with more behind it asks right away.
   loadOlderIfShort() {
     requestAnimationFrame(() => { if (this.hasMoreOlder && this.list.scrollHeight <= this.list.clientHeight + 80) this.loadOlder(); });
@@ -571,7 +573,7 @@ export class Chat {
   async saveRoomTitle() {
     const room = this.room, form = this.renameForm, input = form.elements.title, save = form.querySelector('#room-rename-save'), status = form.querySelector('#room-rename-status');
     if (!room) return;
-    const session = this.sessionGeneration;
+    const session = this.roomSession;
     const title = input.value.trim();
     status.className = 'room-rename-status'; status.textContent = '';
     if (!title) { status.className = 'room-rename-status error'; status.textContent = 'A room needs a title.'; input.focus(); return; }
@@ -581,11 +583,11 @@ export class Chat {
     save.disabled = true;
     try {
       const updated = await request(`/api/rooms/${encodeURIComponent(room.id)}`, { method: 'PATCH', body: { title } });
-      if (!this.current(session, room.id)) return;
+      if (!this.currentRoom(session, room.id)) return;
       room.title = updated.title; this.title.textContent = updated.title; input.value = updated.title;
       status.textContent = 'Saved.';
     } catch (error) {
-      if (this.current(session, room.id)) { status.className = 'room-rename-status error'; status.textContent = error.message; input.focus(); }
+      if (this.currentRoom(session, room.id)) { status.className = 'room-rename-status error'; status.textContent = error.message; input.focus(); }
     } finally { save.disabled = false; }
   }
   // Archive/Reopen and Remove follow the room's lifecycle, also while the dialog is open (a room goes closing, then closed).
@@ -611,40 +613,40 @@ export class Chat {
     const hide = document.querySelector('#room-hide');
     hide.onclick = async () => {
       const room = this.room; hide.disabled = true;
-      const session = this.sessionGeneration;
+      const session = this.roomSession;
       const done = await this.setRoomPreference?.(this.roomView?.(room.id) || room, 'hidden', true);
-      hide.disabled = false; if (done && this.current(session, room.id)) this.infoDialog.close();
+      hide.disabled = false; if (done && this.currentRoom(session, room.id)) this.infoDialog.close();
     };
   }
   async loadRoomMemory() {
     const room = this.room;
     if (!room) return;
-    const session = this.sessionGeneration;
+    const session = this.roomSession;
     const select = this.memorySection.querySelector('select');
     const status = this.memorySection.querySelector('p');
     select.value = room.memory_enabled === false ? 'off' : 'inherit';
     select.disabled = true;
     try {
       const project = await request(`/api/projects/${encodeURIComponent(room.project_id)}/memory`);
-      if (!this.current(session, room.id)) return;
+      if (!this.currentRoom(session, room.id)) return;
       status.textContent = project.enabled ? 'Project memory is on.' : 'Project memory is off.';
       select.disabled = !project.can_edit;
-    } catch (error) { if (this.current(session, room.id)) status.textContent = error.message || 'Could not load memory setting'; }
+    } catch (error) { if (this.currentRoom(session, room.id)) status.textContent = error.message || 'Could not load memory setting'; }
   }
   async changeRoomMemory() {
     const room = this.room;
     if (!room) return;
-    const session = this.sessionGeneration;
+    const session = this.roomSession;
     const select = this.memorySection.querySelector('select');
     const status = this.memorySection.querySelector('p');
     select.disabled = true;
     try {
       const result = await request(`/api/rooms/${encodeURIComponent(room.id)}/memory-enabled`, { method: 'PUT', body: { enabled: select.value === 'off' ? false : null } });
-      if (!this.current(session, room.id)) return;
+      if (!this.currentRoom(session, room.id)) return;
       room.memory_enabled = result.memory_enabled;
       status.textContent = select.value === 'off' ? 'Room message memory is off.' : 'Room follows the project setting.';
       select.disabled = false;
-    } catch (error) { if (this.current(session, room.id)) { select.value = room.memory_enabled === false ? 'off' : 'inherit'; status.textContent = error.message || 'Could not change room memory'; select.disabled = false; } }
+    } catch (error) { if (this.currentRoom(session, room.id)) { select.value = room.memory_enabled === false ? 'off' : 'inherit'; status.textContent = error.message || 'Could not change room memory'; select.disabled = false; } }
   }
   renderRoomNotes() {
     const kind = this.room?.kind, home = kind === 'home';
@@ -669,12 +671,12 @@ export class Chat {
       return;
     }
     if (!this.room || this.room.kind !== 'task') { this.worktreeSection.hidden = true; return; }
-    const room = this.room, session = this.sessionGeneration;
+    const room = this.room, session = this.roomSession;
     this.worktreeSection.hidden = false;
     this.worktreeSection.querySelector('p').textContent = '';
     try {
       const item = await request(`/api/rooms/${room.id}/worktree`);
-      if (!this.current(session, room.id)) return;
+      if (!this.currentRoom(session, room.id)) return;
       this.worktree = item;
       const status = this.worktreeSection.querySelector('p');
       status.textContent = item.enabled === false ? 'Using the project folder.' : `${item.state}: ${item.path || item.relative_path}${item.reason ? ` · ${item.reason}` : ''}${item.dirty_base_count ? ` · The base has ${item.dirty_base_count} uncommitted changes, which are not in the worktree.` : ''}`;
@@ -684,33 +686,33 @@ export class Chat {
       create.textContent = item.state === 'failed' ? 'Retry worktree' : 'Create worktree';
       remove.hidden = item.enabled === false || (this.room.lifecycle !== 'closed' && !!item.path);
       remove.textContent = this.room.lifecycle === 'closed' ? 'Remove worktree' : 'Cancel worktree';
-    } catch (error) { if (this.current(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
+    } catch (error) { if (this.currentRoom(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
   }
   async createWorktree() {
     if (!this.room) return;
-    const room = this.room, session = this.sessionGeneration;
+    const room = this.room, session = this.roomSession;
     const baseRef = await promptDialog('Base branch or ref (leave blank for current HEAD)', { title: 'Create worktree', label: 'Base branch or ref', placeholder: 'Current HEAD', confirm: 'Create' });
     if (baseRef === null) return;
-    try { await request(`/api/rooms/${room.id}/worktree`, { method: 'POST', body: { enabled: true, base_ref: baseRef.trim() } }); if (!this.current(session, room.id)) return; await this.loadWorktree(); }
-    catch (error) { if (this.current(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
+    try { await request(`/api/rooms/${room.id}/worktree`, { method: 'POST', body: { enabled: true, base_ref: baseRef.trim() } }); if (!this.currentRoom(session, room.id)) return; await this.loadWorktree(); }
+    catch (error) { if (this.currentRoom(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
   }
   async removeWorktree() {
-    const room = this.room, session = this.sessionGeneration;
+    const room = this.room, session = this.roomSession;
     if (room?.lifecycle === 'open') {
-      try { await request(`/api/rooms/${room.id}/worktree`, { method: 'DELETE', body: {} }); if (!this.current(session, room.id)) return; await this.loadWorktree(); }
-      catch (error) { if (this.current(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
+      try { await request(`/api/rooms/${room.id}/worktree`, { method: 'DELETE', body: {} }); if (!this.currentRoom(session, room.id)) return; await this.loadWorktree(); }
+      catch (error) { if (this.currentRoom(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
       return;
     }
     if (!room || !await confirmDialog('Remove this archived room worktree? Clean merged worktrees are removed; a dirty or unmerged worktree will be preserved.', { title: 'Remove worktree', confirm: 'Remove', danger: true })) return;
     try {
       let result = await request(`/api/rooms/${room.id}/worktree`, { method: 'DELETE', body: { force: false } });
-      if (!this.current(session, room.id)) return;
+      if (!this.currentRoom(session, room.id)) return;
       if (result.state === 'preserved' && await confirmDialog(`Worktree is preserved: ${result.reason}. Remove its checkout and discard uncommitted local files? Committed changes remain on the room branch.`, { title: 'Discard local files', confirm: 'Discard and remove', danger: true })) {
         result = await request(`/api/rooms/${room.id}/worktree`, { method: 'DELETE', body: { force: true, confirm: `REMOVE ${room.id}` } });
-        if (!this.current(session, room.id)) return;
+        if (!this.currentRoom(session, room.id)) return;
       }
       await this.loadWorktree();
-    } catch (error) { if (this.current(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
+    } catch (error) { if (this.currentRoom(session, room.id)) this.worktreeSection.querySelector('p').textContent = error.message; }
   }
   canArchiveRoom() {
     const room = this.room, role = room && this.projectRole?.(room.project_id);
@@ -725,7 +727,7 @@ export class Chat {
     const room = this.room;
     if (intent === 'archive' && !this.canArchiveRoom()) return;
     if (!room || room.kind === 'home' || room.lifecycle === 'closing') return;
-    const session = this.sessionGeneration;
+    const session = this.roomSession;
     const action = document.querySelector('#room-lifecycle');
     const errorNode = document.querySelector('#room-info-error');
     const closing = intent === 'archive' || room.lifecycle !== 'closed';
@@ -736,44 +738,44 @@ export class Chat {
       let updated;
       try { updated = await request(path, { method: 'POST', body: { lifecycle_rev: room.lifecycle_rev || 0 } }); }
       catch (error) {
-        if (!this.current(session, room.id)) return;
+        if (!this.currentRoom(session, room.id)) return;
         if (!closing || error.code !== 'open_children' || !await confirmDialog(`Archive ${room.title} and all its open child rooms? Agents homed in these rooms stop, and open questions are withdrawn.`, { title: 'Archive room and its child rooms', confirm: 'Archive all' })) throw error;
         updated = await request(path, { method: 'POST', body: { lifecycle_rev: room.lifecycle_rev || 0, cascade: true } });
       }
-      if (!this.current(session, room.id)) return;
+      if (!this.currentRoom(session, room.id)) return;
       this.setRoomFacts(updated);
       await this.onRoomMutation?.(updated);
-      if (!this.current(session, room.id)) return;
+      if (!this.currentRoom(session, room.id)) return;
       this.infoDialog.close();
-    } catch (error) { if (this.current(session, room.id)) { this.error.textContent = error.message; if (this.infoDialog.open) errorNode.textContent = error.message; action.disabled = false; } }
+    } catch (error) { if (this.currentRoom(session, room.id)) { this.error.textContent = error.message; if (this.infoDialog.open) errorNode.textContent = error.message; action.disabled = false; } }
   }
   async leaveChat() {
     const room = this.room;
     if (!room?.agent_chat) return;
-    const session = this.sessionGeneration;
+    const session = this.roomSession;
     const button = document.querySelector('#room-leave'), errorNode = document.querySelector('#room-info-error');
     button.disabled = true; errorNode.textContent = '';
     try {
       await request(`/api/rooms/${room.id}/leave`, { method: 'POST' });
-      if (!this.current(session, room.id)) return;
+      if (!this.currentRoom(session, room.id)) return;
       this.infoDialog.close();
       await this.onChatLeft?.(room);
-    } catch (error) { if (this.current(session, room.id)) errorNode.textContent = error.message || 'Could not leave the chat'; }
+    } catch (error) { if (this.currentRoom(session, room.id)) errorNode.textContent = error.message || 'Could not leave the chat'; }
     button.disabled = false;
   }
   async removeRoom() {
     const room = this.room;
     if (!room || room.kind === 'home' || room.kind === 'dm' || room.lifecycle !== 'closed') return;
-    const session = this.sessionGeneration;
+    const session = this.roomSession;
     const button = document.querySelector('#room-remove'), errorNode = document.querySelector('#room-info-error');
     if (!await confirmDialog(`Remove ${room.title} for good? Its messages, reactions, notes, attachments and its usage and cost records are deleted and cannot be restored.`, { title: 'Remove room', confirm: 'Remove for good', danger: true })) return;
     button.disabled = true; errorNode.textContent = '';
     try {
       await request(`/api/rooms/${room.id}`, { method: 'DELETE' });
-      if (!this.current(session, room.id)) return;
+      if (!this.currentRoom(session, room.id)) return;
       this.infoDialog.close();
       await this.onRoomRemoved?.(room);
-    } catch (error) { if (this.current(session, room.id)) { errorNode.textContent = error.message || 'Could not remove the room'; button.disabled = false; } }
+    } catch (error) { if (this.currentRoom(session, room.id)) { errorNode.textContent = error.message || 'Could not remove the room'; button.disabled = false; } }
   }
   showCloseBlocked(roomID, reason) {
     this.closeBlocked ||= new Map();
@@ -932,17 +934,17 @@ export class Chat {
   }
   async exportRoom(format) {
     if (!this.room) return;
-    const room = this.room, session = this.sessionGeneration;
+    const room = this.room, session = this.roomSession;
     try {
       // The server writes the file (every message of the room, with replies, attachments and reactions); the page only saves it.
       const { blob, filename } = await download(`/api/rooms/${room.id}/export?format=${format === 'json' ? 'json' : 'markdown'}`);
-      if (!this.current(session, room.id)) return;
+      if (!this.currentRoom(session, room.id)) return;
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a'); anchor.href = url;
       anchor.download = filename || `${room.title.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '') || 'room'}.${format === 'json' ? 'json' : 'md'}`;
       anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
       this.exportDialog.close();
-    } catch (error) { if (this.current(session, room.id)) { this.error.textContent = error.message; this.exportDialog.close(); } }
+    } catch (error) { if (this.currentRoom(session, room.id)) { this.error.textContent = error.message; this.exportDialog.close(); } }
   }
   async refreshMessages() {
     if (!this.room || this.initialLoading) return;
