@@ -152,7 +152,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 #startup-status[hidden] { display: none; }
 #startup-status[data-loading="true"]::before { content: ''; width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid var(--border-hover); border-top-color: var(--accent); border-radius: 50%; animation: startup-spin .8s linear infinite; }
 @keyframes startup-spin { to { transform: rotate(360deg); } }
-#build-version { margin-left: 3px; color: var(--text-muted); font: 8.4px/1.5 var(--font-mono); white-space: nowrap; }
+#build-version { margin-left: 3px; color: var(--text-muted); opacity: .9; font: 8.4px/1 var(--font-mono); white-space: nowrap; }
 .connection-dot { display: inline-block; flex: 0 0 auto; width: 9px; height: 9px; margin: 0 6px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 2px var(--red-halo); }
 .connection-dot.connected { background: var(--green-text); box-shadow: 0 0 0 2px var(--green-halo); }
 .badge { background: var(--accent); color: var(--bg-primary); }
@@ -995,6 +995,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 [data-theme="high-contrast-dark"] { --button-text: #ffffff; --overlay-shadow: #fff4; }
 [data-theme="high-contrast-dark"] { --red: #ff6b6b; }
 [data-theme="high-contrast-light"] { --button-text: #ffffff; }
+:is([data-theme="high-contrast-dark"], [data-theme="high-contrast-light"]) #build-version { opacity: 1; }
 [data-theme="green-dark"] { --button-text: #0d1a13; }
 [data-theme="blue-dark"] { --button-text: #0d121f; }
 [data-theme="red-dark"] { --button-text: #1a0d0d; }

@@ -1862,6 +1862,18 @@ async function main() {
     assert.match(buildInfo.version, /^aimebu v2/, 'the test server reports a version');
     await first.waitForFunction(text => document.querySelector('#build-version').textContent === text, {}, buildInfo.version.replace(/^aimebu\s+/i, ''));
     assert.equal(await first.$eval('#build-version', el => el.title), `${buildInfo.version.replace(/^aimebu\s+/i, '')} · ${buildInfo.go_version}`, 'the tooltip names the version and the Go toolchain');
+    const originalTheme = await first.evaluate(() => document.documentElement.dataset.theme);
+    for (const theme of ['', 'light', 'high-contrast-dark', 'high-contrast-light']) {
+      const look = await first.evaluate(theme => {
+        if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme;
+        const version = document.querySelector('#build-version'), title = document.querySelector('.workspace-brand strong');
+        const middle = node => { const box = node.getBoundingClientRect(); return (box.top + box.bottom) / 2; };
+        return { delta: Math.abs(middle(version) - middle(title)), opacity: getComputedStyle(version).opacity, lineHeight: getComputedStyle(version).lineHeight };
+      }, theme);
+      assert.ok(look.delta <= 1, `version and title are vertically centred in ${theme || 'dark'}: ${JSON.stringify(look)}`);
+      assert.deepEqual([look.opacity, look.lineHeight], [theme.startsWith('high-contrast') ? '1' : '0.9', '8.4px'], `version styling in ${theme || 'dark'}`);
+    }
+    await first.evaluate(theme => { document.documentElement.dataset.theme = theme; }, originalTheme);
     await first.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
     const returning = await a.newPage();
     await returning.evaluateOnNewDocument(() => {
@@ -2145,7 +2157,7 @@ async function main() {
       unread: ['700', '9.1px', '1px 7px', 'rgb(31, 111, 235)', 'rgb(255, 255, 255)'],
       preview: ['10.5px', '15.75px'], header: [43, '12px', '0px 16px'],
       count: [22, 'rgb(28, 33, 40)', '9.1px'],
-      bar: [53, 30, 'rgba(0, 0, 0, 0)', '8.4px', '1'],
+      bar: [53, 30, 'rgba(0, 0, 0, 0)', '8.4px', '0.9'],
     }, 'desktop panels retain the v1 measurements');
     await second.evaluate(() => [...document.querySelectorAll('.room-name')].find(el => el.textContent.startsWith('⌂'))?.click());
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke');
