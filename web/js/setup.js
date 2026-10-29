@@ -32,10 +32,13 @@ async function askToken({ tokenView, tokenForm, linked, send }) {
   input.focus();
   return new Promise(resolve => {
     tokenForm.onsubmit = async event => {
-      event.preventDefault(); error.textContent = '';
+      event.preventDefault();
+      const submit = tokenForm.querySelector('button[type=submit]');
+      if (submit.disabled) return;
+      error.textContent = '';
       const value = input.value.trim();
       if (!value) { error.textContent = 'Enter the setup token.'; return; }
-      const submit = tokenForm.querySelector('button[type=submit]'); submit.disabled = true;
+      submit.disabled = true;
       try { await check(value); tokenView.hidden = true; resolve(value); }
       catch (problem) { error.textContent = problemText(problem); submit.disabled = false; input.select(); }
     };
@@ -51,7 +54,9 @@ export async function ownerSetup({ view, form, error, tokenView, tokenForm, them
   login.focus();
   return new Promise(resolve => {
     form.onsubmit = async event => {
-      event.preventDefault(); error.textContent = '';
+      event.preventDefault();
+      if (form.querySelector('button[type=submit]').disabled) return;
+      error.textContent = '';
       const name = login.value.trim().toLowerCase(), password = form.elements.password.value;
       if (!/^[a-z][a-z0-9_-]{2,31}$/.test(name)) { error.textContent = 'Choose a login of 3 to 32 lowercase letters, digits, - or _, starting with a letter.'; return; }
       if (password.length < MIN_PASSWORD) { error.textContent = `Use a password of at least ${MIN_PASSWORD} characters.`; return; }

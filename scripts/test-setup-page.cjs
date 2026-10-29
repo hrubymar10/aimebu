@@ -133,6 +133,26 @@ async function main() {
     assert.equal((await status(page)).open, false, 'the server has an owner now');
     await page.close();
   });
+  // a double submit sends one request: the token check and the owner create
+  await withServer(async server => {
+    const page = await toWelcome(server); await pass(page);
+    const checks = requests(page, /\/api\/setup\/token$/);
+    await page.type('#setup-token-form [name=token]', 'wrong-token');
+    await page.$eval('#setup-token-form', form => { form.requestSubmit(); form.requestSubmit(); });
+    await page.waitForFunction(() => document.querySelector('#setup-token-error').textContent !== '' && !document.querySelector('#setup-token-form button[type=submit]').disabled);
+    assert.equal(checks.length, 1, 'a double submit checks the token once');
+    await page.$eval('#setup-token-form [name=token]', input => { input.value = ''; });
+    await page.type('#setup-token-form [name=token]', await tokenOf(page));
+    await page.$eval('#setup-token-form', form => { form.requestSubmit(); form.requestSubmit(); });
+    await page.waitForSelector('#setup-view:not([hidden])');
+    assert.equal(checks.length, 2, 'and the right one once');
+    const creates = requests(page, /\/api\/setup$/);
+    await page.type('#setup-form [name=login]', 'boss'); await page.type('#setup-form [name=password]', PASSWORD); await page.type('#setup-form [name=confirm]', PASSWORD);
+    await page.evaluate(() => { const form = document.querySelector('#setup-form'); form.requestSubmit(); form.requestSubmit(); });
+    await page.waitForSelector('#theme-view:not([hidden])');
+    assert.deepEqual([creates.length, await page.evaluate(() => document.querySelector('#setup-error').textContent)], [1, ''], 'a double submit creates the owner once and says nothing');
+    await page.close();
+  });
   console.log('setup page: ok');
 }
 
