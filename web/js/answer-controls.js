@@ -4,9 +4,17 @@ import { renderMarkdown } from './markdown.js';
 // `mention` ("@author") is put in front of a proposed answer, as v1 does, so the reply reads as an answer to that person; `compose(text)` puts
 // the text in the composer, with the reply link, instead of sending it (Shift-click). Without it a Shift-click sends like any click.
 // With `freeAnswer` (the inbox, which has no composer) a compact "Answer…" button under the chips opens a small text field for an answer of one's own.
-export function answerControls(item, submit, { mention = '', compose = null, freeAnswer = false } = {}) {
-  const wrap = document.createElement('div');
-  wrap.className = 'answer-controls';
+export const ANSWER_CONTROLS_ROOT = { tag: 'div', class: 'answer-controls' };
+
+export function answerControls(item, submit, options = {}) {
+  const wrap = document.createElement(ANSWER_CONTROLS_ROOT.tag);
+  wrap.className = ANSWER_CONTROLS_ROOT.class;
+  fillAnswerControls(wrap, item, submit, options);
+  return wrap;
+}
+
+export function fillAnswerControls(wrap, item, submit, { mention = '', compose = null, freeAnswer = false } = {}) {
+  wrap.replaceChildren();
   if (item.open_questions?.length) {
     const open = document.createElement('button');
     open.type = 'button'; open.className = 'btn open-questions-open';
@@ -39,15 +47,22 @@ export function answerControls(item, submit, { mention = '', compose = null, fre
     input.onkeydown = event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) { event.preventDefault(); form.requestSubmit(); } };
     wrap.append(open, form);
   }
-  return wrap;
 }
 
 // What a question or proposed answers on a message look like once nothing is open for them: the same buttons and question count, all
 // disabled, kept under the message so the history reads as it did. An answered one says "Answered"; any other is marked as no
 // longer pending, because nothing can answer it from here (imported history, or a question that was closed unanswered).
+export const ANSWER_HISTORY_ROOT = { tag: 'div', class: 'answer-history' };
+
 export function answerHistory(message, answered) {
-  const wrap = document.createElement('div');
-  wrap.className = 'answer-history'; wrap.dataset.answered = String(answered);
+  const wrap = document.createElement(ANSWER_HISTORY_ROOT.tag);
+  wrap.className = ANSWER_HISTORY_ROOT.class; wrap.dataset.answered = String(answered);
+  fillAnswerHistory(wrap, message, answered);
+  return wrap;
+}
+
+export function fillAnswerHistory(wrap, message, answered) {
+  wrap.replaceChildren();
   const note = answered ? 'Answered' : 'No longer pending';
   const disabled = (button, text, className = 'btn proposed-answer-btn') => { button.type = 'button'; button.className = className; button.disabled = true; button.title = note; button.textContent = text; return button; };
   if (message.open_questions?.length) {
@@ -58,7 +73,6 @@ export function answerHistory(message, answered) {
   for (const value of message.proposed_answers || []) wrap.append(disabled(document.createElement('button'), value));
   const status = document.createElement('span'); status.className = 'answer-history-status'; status.textContent = note;
   wrap.append(status);
-  return wrap;
 }
 
 async function send(wrap, submit, value) {

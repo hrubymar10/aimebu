@@ -48,12 +48,19 @@ export function senderIdentity(message, agent) {
 
 // Create the icon + dot elements once; applySenderIdentity updates them in place
 // so a liveness change never re-renders the message.
+export const SENDER_PRESENCE_ROOT = { tag: 'span', class: 'msg-sender-presence' };
+
 export function createSenderPresence() {
-  const wrap = document.createElement('span'); wrap.className = 'msg-sender-presence';
+  const wrap = document.createElement(SENDER_PRESENCE_ROOT.tag); wrap.className = SENDER_PRESENCE_ROOT.class;
+  fillSenderPresence(wrap);
+  return wrap;
+}
+
+export function fillSenderPresence(wrap) {
+  wrap.replaceChildren();
   const icon = document.createElement('img'); icon.className = 'msg-sender-icon'; icon.width = 14; icon.height = 14;
   const dot = document.createElement('span'); dot.className = 'msg-sender-dot';
   wrap.append(icon, dot);
-  return wrap;
 }
 
 export function applySenderIdentity(wrap, identity) {

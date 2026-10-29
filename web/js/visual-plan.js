@@ -268,11 +268,24 @@ function renderBlock(block) {
   section.append(header, body); return section;
 }
 
+export const VISUAL_PLAN_ROOT = { tag: 'div', class: 'visual-plan' };
+
+export function hasVisualPlan(message) {
+  const blocks = message.visual_plan, pages = message.appendix_pages;
+  return !((blocks == null || (Array.isArray(blocks) && !blocks.length)) && (pages == null || (Array.isArray(pages) && !pages.length)));
+}
+
 export function renderVisualPlan(message) {
+  if (!hasVisualPlan(message)) return null;
+  const wrap = element(VISUAL_PLAN_ROOT.tag, VISUAL_PLAN_ROOT.class);
+  fillVisualPlan(wrap, message);
+  return wrap;
+}
+
+export function fillVisualPlan(wrap, message) {
   const blocks = message.visual_plan;
   const pages = message.appendix_pages;
-  if ((blocks == null || (Array.isArray(blocks) && !blocks.length)) && (pages == null || (Array.isArray(pages) && !pages.length))) return null;
-  const wrap = element('div', 'visual-plan');
+  wrap.replaceChildren();
   if (Array.isArray(blocks)) {
     [...blocks].sort((a, b) => (Number(a?.order) || 0) - (Number(b?.order) || 0)).forEach(block => wrap.append(renderBlock(block)));
   } else if (blocks != null) wrap.append(fallback(blocks));
@@ -289,5 +302,4 @@ export function renderVisualPlan(message) {
     });
     details.append(body); wrap.append(details);
   } else if (pages != null) wrap.append(fallback(pages));
-  return wrap;
 }

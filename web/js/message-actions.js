@@ -96,9 +96,19 @@ export function messageAction(chat, button, message) {
   return true;
 }
 
+export function messageActionsProps(message) {
+  return { tag: 'div', class: 'message-actions', role: 'toolbar', 'aria-label': `Actions for message #${message.no}` };
+}
+
 export function buildMessageActions(chat, message) {
-  const bar = document.createElement('div'); bar.className = 'message-actions';
-  bar.setAttribute('role', 'toolbar'); bar.setAttribute('aria-label', `Actions for message #${message.no}`);
+  const props = messageActionsProps(message), bar = document.createElement(props.tag); bar.className = props.class;
+  bar.setAttribute('role', props.role); bar.setAttribute('aria-label', props['aria-label']);
+  fillMessageActions(bar, chat, message);
+  return bar;
+}
+
+export function fillMessageActions(bar, chat, message) {
+  bar.replaceChildren();
   const react = iconButton('react', 'Add reaction', 'message-react');
   const reply = iconButton('reply', `Reply to #${message.no}`, 'message-reply');
   const reactionRow = emojiRow(message, chat); attachPopup(react, reactionRow);
@@ -107,5 +117,4 @@ export function buildMessageActions(chat, message) {
   const copyLink = iconButton('link', `Copy link to #${message.no}`, 'message-copy message-link');
   const thread = iconButton('thread', chat.threadLabel(message.id), 'thread-action');
   bar.append(react, find, reply, thread, copyText_, copyLink, reactionRow);
-  return bar;
 }
