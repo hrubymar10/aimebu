@@ -151,7 +151,7 @@ function surfaceAudit(MIN) {
 async function menuAudit(page, vw) {
   return page.evaluate(async width => {
     const findings = [];
-    const { TopbarMenu } = await import('/js/topbar-menu.js');
+    const { TopbarMenu } = await import('/js/pages/topbar/page.js');
     const toggle = document.querySelector('#more-toggle'), menu = document.querySelector('#more-menu');
     if (width > 900) { if (toggle && getComputedStyle(toggle).display !== 'none') findings.push('menu: the overflow button shows above 900px'); return findings; }
     new TopbarMenu();

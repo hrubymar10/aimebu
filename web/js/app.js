@@ -12,7 +12,7 @@ import { AgentsPanel } from './pages/agents/page.js';
 import { createAgentSource } from './agent-source.js';
 import { SettingsPanel } from './settings.js';
 import { UsagesPopover } from './usages-popover.js';
-import { TopbarMenu } from './topbar-menu.js';
+import { TopbarMenu } from './pages/topbar/page.js';
 import { createUsagesSource } from './usages-source.js';
 import { KnowledgePanel } from './pages/knowledge/page.js';
 import { Health } from './pages/health/page.js';

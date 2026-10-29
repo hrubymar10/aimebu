@@ -72,6 +72,67 @@ async function main() {
     await page.evaluate(() => { const badge = document.querySelector('#system-events-toggle .badge'); if (badge) { badge.textContent = '7'; badge.hidden = false; } });
     const badge = await page.evaluate(() => { const item = [...document.querySelectorAll('#more-menu .more-item')][0]; const mark = item.querySelector('.badge'); return mark ? [mark.textContent, mark.hidden] : null; });
     if (badge) assert.deepEqual(badge, ['7', false], 'the badge of the real button shows on its item');
+    // teardown: a menu destroyed while open stops answering the page, and stops following the buttons it mirrored
+    {
+      const torn = await page.evaluate(async () => {
+        const { TopbarMenu } = await import('/js/pages/topbar/page.js');
+        const host = document.createElement('div'); document.body.append(host);
+        const button = (id, label) => { const node = document.createElement('button'); node.id = id; node.textContent = label; host.append(node); return node; };
+        const toggle = button('late-toggle', 'more'), menu = document.createElement('div'); menu.id = 'late-menu'; menu.hidden = true; host.append(menu);
+        const targets = [button('late-a', 'a'), button('late-health', 'health'), button('late-c', 'c')];
+        const badge = document.createElement('span'); badge.className = 'badge'; badge.textContent = '2'; targets[1].append(badge);
+        const clicks = []; for (const target of targets) target.addEventListener('click', () => clicks.push(target.id));
+        const menuObject = new TopbarMenu({ toggle, menu, health: targets[1], sources: targets.map((target, index) => ({ target, label: ['A', 'Health', 'C'][index] })) });
+        const settle = () => new Promise(resolve => setTimeout(resolve, 50));
+        await settle();
+        const out = { items: [...menu.querySelectorAll('[role=menuitem]')].map(item => item.textContent), expanded: toggle.getAttribute('aria-expanded') };
+        toggle.click();
+        out.opened = [!menu.hidden, toggle.getAttribute('aria-expanded'), document.activeElement === menu.querySelector('[role=menuitem]')];
+        menuObject.destroy();
+        out.afterDestroy = { menuKept: !menu.hidden, children: menu.children.length };
+        // the page no longer reaches it: Escape, a click outside and the toggle change nothing
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        document.body.click();
+        out.escapeAndOutside = [!menu.hidden, menuObject.store.open.value];
+        toggle.click();
+        out.toggled = [!menu.hidden, menuObject.store.open.value];
+        // and the buttons it mirrored no longer reach it
+        targets[0].hidden = true; badge.textContent = '9'; targets[1].classList.add('has-issues');
+        await settle();
+        out.mirrored = { hidden: menuObject.store.items.value[0].hidden, badge: menuObject.store.items.value[1].badge.text, issues: menuObject.store.issues.value, mark: toggle.classList.contains('has-issues') };
+        out.clicks = clicks.length;
+        host.remove();
+        return out;
+      });
+      // a second menu on the same toggle and menu replaces the first: one click opens it once
+      const again = await page.evaluate(async () => {
+        const { TopbarMenu } = await import('/js/pages/topbar/page.js');
+        const host = document.createElement('div'); document.body.append(host);
+        const toggle = document.createElement('button'), menu = document.createElement('div'), target = document.createElement('button');
+        menu.hidden = true; host.append(toggle, menu, target);
+        const sources = [{ target, label: 'One' }];
+        const first = new TopbarMenu({ toggle, menu, sources, health: target }), second = new TopbarMenu({ toggle, menu, sources, health: target });
+        toggle.click();
+        const out = { open: !menu.hidden, first: first.store.open.value, second: second.store.open.value, items: menu.querySelectorAll('[role=menuitem]').length };
+        // destroying the replaced menu again takes nothing from the one that replaced it, nor its claim on the menu
+        toggle.click(); first.destroy(); first.destroy();
+        out.afterStale = { items: menu.querySelectorAll('[role=menuitem]').length, open: !menu.hidden };
+        toggle.click();
+        out.afterToggle = !menu.hidden;
+        const third = new TopbarMenu({ toggle, menu, sources, health: target });
+        toggle.click();
+        out.third = { open: !menu.hidden, second: second.store.open.value, third: third.store.open.value };
+        second.destroy(); third.destroy(); host.remove();
+        return out;
+      });
+      assert.deepEqual(again, { open: true, first: false, second: true, items: 1, afterStale: { items: 1, open: false }, afterToggle: true, third: { open: true, second: true, third: true } }, 'a second menu on the same elements replaces the first, and destroying the first again takes nothing from the second');
+      assert.deepEqual(torn.items, ['A', 'Health2', 'C'], 'the menu draws an item per button, with the badge');
+      assert.deepEqual([torn.expanded, torn.opened], ['false', [true, 'true', true]], 'it opens and focuses the first item');
+      assert.deepEqual([torn.escapeAndOutside, torn.toggled], [[true, true], [true, true]], 'a destroyed menu is not closed by Escape or a click outside, nor toggled');
+      assert.deepEqual(torn.mirrored, { hidden: false, badge: '2', issues: false, mark: false }, 'a destroyed menu no longer mirrors its buttons');
+      assert.equal(torn.clicks, 0, 'and nothing was forwarded');
+    }
+
     // Sign out through the menu signs out
     await page.$eval('#more-toggle', button => button.click());
     await page.evaluate(() => [...document.querySelectorAll('#more-menu .more-item')].find(button => button.firstElementChild.textContent === 'Sign out').click());
