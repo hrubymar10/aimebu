@@ -1478,18 +1478,14 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .room-muted[hidden] { display: none; }
 .room-muted .icon-mask { width: 13px; height: 13px; }
 
-/* Phone top bar: 40px targets in a bar that scrolls sideways instead of clipping or wrapping. */
+/* Phone top bar: keep the controls at the right edge and tuck only those that do not fit. */
 @media (max-width: 700px) {
   :root { --bar-h: 56px; }
   .workspace-bar { height: 56px; min-height: 56px; padding: 0 8px; gap: 6px; }
   .workspace-bar > .workspace-brand { flex: 0 0 auto; }
-  .workspace-bar nav { flex: 1 1 auto; justify-content: flex-start; gap: 2px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain;
-    background:
-      linear-gradient(to right, var(--bg-secondary) 30%, transparent) left center / 24px 100% local no-repeat,
-      linear-gradient(to left, var(--bg-secondary) 30%, transparent) right center / 24px 100% local no-repeat,
-      radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, .4), transparent) left center / 10px 100% scroll no-repeat,
-      radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, .4), transparent) right center / 10px 100% scroll no-repeat; }
-  .workspace-bar nav::-webkit-scrollbar { display: none; }
+  .workspace-bar nav { flex: 1 1 auto; justify-content: flex-end; gap: 2px; overflow: visible; }
+  .app > .workspace-bar nav .icon-btn.topbar-tucked { display: none; }
+  .workspace-bar.topbar-has-overflow #more-toggle { display: inline-grid; }
   .workspace-bar nav button, .workspace-bar .icon-btn { flex: 0 0 auto; min-width: 40px; height: 40px; min-height: 40px; padding: 0 8px; font-size: 11px; white-space: nowrap; }
   .workspace-bar .icon-btn { width: 40px; padding: 0; }
   .workspace-bar #logout { margin-left: 2px; }
@@ -1502,14 +1498,10 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .more-menu .more-item[hidden] { display: none; }
 .more-menu .more-item:hover { background: var(--bg-hover); }
 .workspace-bar #more-toggle.has-issues { color: var(--orange); }
-@media (min-width: 901px), (min-width: 481px) and (pointer: fine) { .more-menu { display: none !important; } }
+@media (min-width: 901px), (min-width: 701px) and (pointer: fine) { .more-menu { display: none !important; } }
 @media (max-width: 480px) {
   .workspace-brand strong { display: none; }
   .workspace-brand img { display: block; width: 22px; height: 22px; }
-  /* Below 480px the bar keeps Rooms, Inbox, the UI switch, usages and settings; the rest live in the menu. */
-  .workspace-bar #system-events-toggle, .workspace-bar #health-toggle, .workspace-bar #knowledge-toggle, .workspace-bar #logout { display: none; }
-  .workspace-bar #more-toggle { display: inline-grid; }
-  .workspace-bar nav { overflow-x: visible; background: none; }
 }
 
 /* Touch devices: message actions are real tap targets. */
@@ -2173,7 +2165,7 @@ button > .icon-mask { pointer-events: none; }
 /* Tablets and big phones (a touch screen up to 900px wide, such as an iPad mini upright): 40px buttons no longer fit next to the
    brand and the experiment pill, so the bar keeps what a phone's keeps (Rooms, Inbox, Usages, Settings) and the rest live in the
    ⋯ menu. The version text and the pill's long label go, so nothing is squashed or clipped. */
-@media (max-width: 900px) and (pointer: coarse) {
+@media (min-width: 701px) and (max-width: 900px) and (pointer: coarse) {
   .workspace-bar #system-events-toggle, .workspace-bar #health-toggle, .workspace-bar #knowledge-toggle, .workspace-bar #logout { display: none; }
   .workspace-bar #more-toggle { display: inline-grid; }
   .workspace-bar nav { overflow-x: visible; background: none; }

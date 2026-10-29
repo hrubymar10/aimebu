@@ -7,7 +7,7 @@ const { withPages } = require('./ui-fixture.cjs');
 const MIN = 40;
 // Landscape phones and tablets run the same checks as portrait phones; all are touch devices.
 const EXTRA = [['844x390', { width: 844, height: 390 }], ['740x360', { width: 740, height: 360 }], ['744x1000', { width: 744, height: 1000 }], ['768x1024', { width: 768, height: 1024 }], ['820x1180', { width: 820, height: 1180 }], ['1024x768', { width: 1024, height: 768 }]];
-const PHONES = [['320x640', { width: 320, height: 640 }], ['360x740', { width: 360, height: 740 }], ['390x844', { width: 390, height: 844 }], ['480x800', { width: 480, height: 800 }], ['600x900', { width: 600, height: 900 }]];
+const PHONES = [['320x640', { width: 320, height: 640 }], ['360x740', { width: 360, height: 740 }], ['390x844', { width: 390, height: 844 }], ['440x956', { width: 440, height: 956 }], ['480x800', { width: 480, height: 800 }], ['600x900', { width: 600, height: 900 }]];
 
 function audit(MIN) {
   const findings = [];
@@ -151,27 +151,69 @@ function surfaceAudit(MIN) {
 async function menuAudit(page, vw) {
   return page.evaluate(async width => {
     const findings = [];
-    const { TopbarMenu } = await import('/js/pages/topbar/page.js');
     const toggle = document.querySelector('#more-toggle'), menu = document.querySelector('#more-menu');
     if (width > 900) { if (toggle && getComputedStyle(toggle).display !== 'none') findings.push('menu: the overflow button shows above 900px'); return findings; }
-    new TopbarMenu();
+    if (width === 360) {
+      document.querySelector('#health-toggle').classList.add('has-issues');
+      const pill = document.querySelector('#ui-variant-toggle');
+      pill.style.minWidth = '105px'; pill.hidden = false;
+      await new Promise(resolve => setTimeout(resolve, 100));
+      if (!document.querySelector('#health-toggle').classList.contains('topbar-tucked') || !toggle.classList.contains('has-issues')) findings.push('menu: tucked Health warning is missing');
+    }
+    if (width === 440) {
+      const nav = document.querySelector('.workspace-bar nav');
+      const brand = document.querySelector('.workspace-brand').getBoundingClientRect();
+      const buttons = [...nav.querySelectorAll('button')].filter(button => !button.hidden && button.getBoundingClientRect().width);
+      if (getComputedStyle(toggle).display !== 'none') findings.push('menu: overflow shows with room for every button at 440px');
+      const connection = document.querySelector('#connection').getBoundingClientRect();
+      if (buttons.length !== 7 || buttons[0].getBoundingClientRect().left < brand.right + 20 || getComputedStyle(nav).justifyContent !== 'flex-end' || width - connection.right > 16) findings.push('menu: controls are missing or not right-aligned at 440px');
+      document.querySelector('#health-toggle').classList.add('has-issues');
+      const logout = document.querySelector('#logout');
+      logout.style.flexBasis = logout.style.width = logout.style.minWidth = '112px';
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const tucked = [...nav.querySelectorAll('.topbar-tucked')].map(button => button.id);
+      if (tucked.join() !== 'logout' || toggle.classList.contains('has-issues')) findings.push('menu: visible Health incorrectly colors More when only Sign out is tucked');
+      return findings;
+    }
+    const tucked = [...document.querySelectorAll('.workspace-bar nav .topbar-tucked')].filter(button => !button.hidden);
+    if (width <= 700) {
+      const nav = document.querySelector('.workspace-bar nav');
+      const visible = [...nav.children].filter(element => element.getBoundingClientRect().width);
+      if (nav.scrollWidth > nav.clientWidth + 1 || visible.some(element => { const rect = element.getBoundingClientRect(); return rect.left < -1 || rect.right > width + 1; })) findings.push(`menu: top bar overflows at ${width}px`);
+    }
+    if (width <= 360) {
+      const order = ['logout', 'system-events-toggle', 'knowledge-toggle', 'health-toggle'];
+      const ids = tucked.map(button => button.id);
+      if (ids.some(id => !order.slice(0, ids.length).includes(id))) findings.push(`menu: tuck priority is wrong at ${width}px`);
+    }
+    const shown = getComputedStyle(toggle).display !== 'none';
+    if (width <= 360 && (!shown || !tucked.length)) findings.push(`menu: overflow controls are not tucked at ${width}px`);
+    if (!shown) return findings;
     let clicked = 0; for (const id of ['#system-events-toggle', '#health-toggle', '#knowledge-toggle', '#logout']) document.querySelector(id).addEventListener('click', () => clicked++);
-    for (const id of ['#system-events-toggle', '#health-toggle', '#knowledge-toggle', '#logout']) if (getComputedStyle(document.querySelector(id)).display !== 'none') findings.push(`menu: ${id} is still in the bar at ${width}px`);
+    for (const button of tucked) if (getComputedStyle(button).display !== 'none') findings.push(`menu: ${button.id} is still in the bar at ${width}px`);
     toggle.click();
     if (menu.hidden || toggle.getAttribute('aria-expanded') !== 'true') findings.push('menu: the button does not open it');
     const items = [...menu.querySelectorAll('[role=menuitem]')];
-    if (items.map(item => item.textContent.replace(/\d+$/, '')).join() !== 'System events,Health,Memory,Sign out') findings.push(`menu: unexpected items ${items.map(item => item.textContent)}`);
-    for (const item of items) { const rect = item.getBoundingClientRect(); if (rect.height < 40) findings.push(`menu: ${item.textContent} is ${Math.round(rect.height)}px tall`); if (rect.left < 0 || rect.right > width) findings.push(`menu: ${item.textContent} is outside the viewport`); }
-    if (document.activeElement !== items[0]) findings.push('menu: opening does not focus the first item');
+    const visible = items.filter(item => !item.hidden);
+    const expected = width > 700 ? 4 : tucked.length;
+    if (visible.length !== expected) findings.push(`menu: shows ${visible.length} items for ${expected} overflow controls`);
+    if (width <= 700) {
+      const labels = { 'system-events-toggle': 'System events', 'health-toggle': 'Health', 'knowledge-toggle': 'Memory', logout: 'Sign out' };
+      const wanted = tucked.map(button => labels[button.id]).sort();
+      const offered = visible.map(item => item.textContent.replace(/\d+$/, '')).sort();
+      if (wanted.join() !== offered.join()) findings.push(`menu: items do not match tucked controls at ${width}px`);
+    }
+    for (const item of visible) { const rect = item.getBoundingClientRect(); if (rect.height < 40) findings.push(`menu: ${item.textContent} is ${Math.round(rect.height)}px tall`); if (rect.left < 0 || rect.right > width) findings.push(`menu: ${item.textContent} is outside the viewport`); }
+    if (document.activeElement !== visible[0]) findings.push('menu: opening does not focus the first item');
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
-    if (document.activeElement !== items[1]) findings.push('menu: ArrowDown does not move focus');
+    if (document.activeElement !== visible[1 % visible.length]) findings.push('menu: ArrowDown does not move focus');
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     if (!menu.hidden || document.activeElement !== toggle) findings.push('menu: Escape does not close it and return focus to the button');
-    toggle.click(); items[1].click();
+    toggle.click(); visible[0].click();
     if (clicked !== 1 || !menu.hidden) findings.push('menu: an item does not forward its click and close');
     // The first item opens the System events panel and leaves it open (the same click must not close what it opened).
     const panel = document.querySelector('#system-events-popover');
-    if (panel) {
+    if (panel && tucked.some(button => button.id === 'system-events-toggle')) {
       if (!panel.hidden) document.querySelector('#system-events-toggle').click();
       toggle.click(); items[0].click();
       await new Promise(resolve => setTimeout(resolve, 0));
@@ -180,7 +222,8 @@ async function menuAudit(page, vw) {
     }
     document.querySelector('#health-toggle').classList.add('has-issues');
     await new Promise(resolve => setTimeout(resolve, 0));
-    if (!toggle.classList.contains('has-issues')) findings.push('menu: the health warning is not mirrored on the button');
+    const healthInMenu = width > 700 || tucked.some(button => button.id === 'health-toggle');
+    if (toggle.classList.contains('has-issues') !== healthInMenu) findings.push('menu: the health warning does not match Health visibility');
     return findings;
   }, vw);
 }
@@ -189,6 +232,7 @@ async function menuAudit(page, vw) {
   const report = {};
   await withPages([...PHONES, ...EXTRA], async (name, page) => {
     await page.addStyleTag({ content: '*,*::before,*::after{transition:none!important;animation:none!important}' });
+    await page.evaluate(async () => { const { TopbarMenu } = await import('/js/pages/topbar/page.js'); new TopbarMenu(); await new Promise(resolve => setTimeout(resolve, 100)); });
     const phone = PHONES.some(([label]) => label === name), narrow = phone || page.viewport().width <= 900 && page.viewport().height >= 700;
     report[name] = narrow ? await page.evaluate(audit, MIN) : [];
     if (narrow) report[name].push(...await menuAudit(page, page.viewport().width));

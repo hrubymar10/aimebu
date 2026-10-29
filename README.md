@@ -491,7 +491,10 @@ Copy command, card Approve, memory activation and row Delete use the same
 tooltip and accessible-name rule; their icon and label follow the current
 action. The bar
 also has a live connection indicator
-at its far right. The Usages icon opens the usages column in place of the members column (instance
+at its far right. On phones, controls align to the right of the logo. When
+space runs out, Sign out, System events, Memory, then Health move into the
+More menu in that order; controls that fit remain in the bar. More carries
+the Health warning color only while Health is in the menu. The Usages icon opens the usages column in place of the members column (instance
 owner only), laid out as in v1: a toolbar on the left (close, refresh, group by) and the title on
 the right; one card per provider with its icon, "Updated Ns ago" and each profile (the active
 one first with an ACTIVE badge; every profile with its token-expiry icon, a SWITCH pill on the

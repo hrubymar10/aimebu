@@ -20,6 +20,43 @@ async function main() {
     await page.waitForSelector('#onboarding-view:not([hidden])'); await page.keyboard.press('Escape');
     await page.$eval('#onboarding-view', view => { view.hidden = true; });
     const menu = () => page.evaluate(() => ({ open: !document.querySelector('#more-menu').hidden, expanded: document.querySelector('#more-toggle').getAttribute('aria-expanded'), focus: document.activeElement?.classList.contains('more-item') ? document.activeElement.firstElementChild.textContent : document.activeElement?.id || '', items: [...document.querySelectorAll('#more-menu .more-item')].map(button => [button.firstElementChild.textContent, button.hidden]) }));
+    // on a phone the bar tucks controls only when they do not fit, in the order Sign out, System events, Memory, Health
+    const bar = () => page.evaluate(() => ({
+      tucked: [...document.querySelectorAll('.workspace-bar nav .topbar-tucked')].map(button => button.id),
+      more: getComputedStyle(document.querySelector('#more-toggle')).display !== 'none',
+      offered: [...document.querySelectorAll('#more-menu .more-item')].filter(button => !button.hidden).map(button => button.firstElementChild.textContent),
+      mark: document.querySelector('#more-toggle').classList.contains('has-issues'),
+      overflow: document.querySelector('.workspace-bar nav').scrollWidth > document.querySelector('.workspace-bar nav').clientWidth + 1 || document.documentElement.scrollWidth > innerWidth,
+    }));
+    const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 50)))));
+    await page.setViewport({ width: 600, height: 900 }); await settle();
+    assert.deepEqual(await bar(), { tucked: [], more: false, offered: [], mark: false, overflow: false }, 'with room for every control nothing is tucked and the overflow button is gone');
+    const aligned = await page.evaluate(() => { const nav = document.querySelector('.workspace-bar nav'), brand = document.querySelector('.workspace-brand').getBoundingClientRect(); return [getComputedStyle(nav).justifyContent, [...nav.querySelectorAll('button')].find(button => button.getBoundingClientRect().width).getBoundingClientRect().left > brand.right + 20, innerWidth - document.querySelector('#connection').getBoundingClientRect().right <= 16]; });
+    assert.deepEqual(aligned, ['flex-end', true, true], 'the controls sit at the right edge, away from the logo');
+    await page.$eval('#health-toggle', button => button.classList.add('has-issues')); await settle();
+    assert.equal((await bar()).mark, false, 'a Health warning does not colour the overflow button while Health is in the bar');
+    // a wide Sign out does not fit: it alone goes into the menu, and Health, still in the bar, keeps the warning off the button
+    await page.$eval('#logout', button => { button.style.cssText = 'width:400px;min-width:400px;flex-basis:400px'; }); await settle();
+    assert.deepEqual(await bar(), { tucked: ['logout'], more: true, offered: ['Sign out'], mark: false, overflow: false }, 'only Sign out is tucked, and the menu offers only it');
+    // a wide Settings leaves no room for the rest: all four go, Health last, and the warning moves to the overflow button
+    await page.$eval('#settings-toggle', button => { button.style.cssText = 'width:600px;min-width:600px;flex-basis:600px'; }); await settle();
+    const crowded = await bar();
+    assert.ok(['logout', 'knowledge-toggle', 'health-toggle'].every(id => crowded.tucked.includes(id)), `Sign out, Memory and Health are all tucked: ${crowded.tucked}`);
+    assert.deepEqual([crowded.more, crowded.mark], [true, true], 'with Health tucked the overflow button carries its warning');
+    // an open menu closes when every control fits again, and the focus inside it goes to a control that came back to the bar
+    await page.$eval('#more-toggle', button => button.click());
+    assert.ok(await page.evaluate(() => document.querySelector('#more-menu').contains(document.activeElement)), 'opening the menu focuses an item');
+    await page.$eval('#settings-toggle', button => { button.style.cssText = ''; }); await page.$eval('#logout', button => { button.style.cssText = ''; }); await settle();
+    const closed = await page.evaluate(() => ({ open: !document.querySelector('#more-menu').hidden, focus: document.activeElement?.id, shown: !!document.activeElement && getComputedStyle(document.activeElement).display !== 'none' }));
+    assert.deepEqual([closed.open, closed.shown, ['logout', 'health-toggle', 'knowledge-toggle', 'system-events-toggle'].includes(closed.focus)], [false, true, true], `the menu closed itself and its focus moved to a control back in the bar, not to the body or the hidden overflow button: ${closed.focus}`);
+    // what fits again comes back: the bar is measured again as the controls change
+    await page.$eval('#settings-toggle', button => { button.style.cssText = ''; }); await page.$eval('#logout', button => { button.style.cssText = ''; }); await settle();
+    assert.deepEqual(await bar(), { tucked: [], more: false, offered: [], mark: false, overflow: false }, 'when the controls fit again nothing is tucked and the warning stays off');
+    await page.$eval('#health-toggle', button => button.classList.remove('has-issues'));
+    // from here on every control is crowded out, so the menu has all four
+    await page.setViewport({ width: 390, height: 844 });
+    await page.$eval('#settings-toggle', button => { button.style.cssText = 'width:600px;min-width:600px;flex-basis:600px'; }); await settle();
+    assert.ok((await bar()).more, 'the overflow button is there');
     // closed at first, with its toggle described; the menu has an item for each button
     assert.deepEqual(await page.evaluate(() => [document.querySelector('#more-toggle').getAttribute('aria-haspopup'), getComputedStyle(document.querySelector('#more-toggle')).display !== 'none', document.querySelector('#more-menu').hidden, [...document.querySelectorAll('#more-menu .more-item')].map(button => [button.getAttribute('role'), button.firstElementChild.textContent])]),
       ['menu', true, true, [['menuitem', 'System events'], ['menuitem', 'Health'], ['menuitem', 'Memory'], ['menuitem', 'Sign out']]], 'on a phone the overflow toggle is there and its menu is closed');

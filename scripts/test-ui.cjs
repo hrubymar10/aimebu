@@ -5251,9 +5251,8 @@ async function main() {
     await agentPage.waitForFunction(() => document.querySelector('#app-view').classList.contains('rooms-open') && !document.querySelector('#app-view').classList.contains('inbox-open') && document.querySelector('#inbox-view').hidden);
     await agentPage.evaluate(async () => { const room = document.querySelector('.room-row.active .room-name'); if (!room) throw new Error('room missing'); room.click(); });
     await agentPage.waitForFunction(() => document.querySelector('#app-view')?.classList.contains('chat-open') && !document.querySelector('#app-view').classList.contains('rooms-open') && document.querySelectorAll('.agent-card[data-agent-id]').length === 3 && getComputedStyle(document.querySelector('.chat')).display === 'flex');
-    // Phone: Health sits in the ⋯ menu; choosing a recovery item there opens the Inbox on its card with the drawers closed.
-    await domClick(agentPage, '#more-toggle');
-    await agentPage.evaluate(() => [...document.querySelectorAll('#more-menu .more-item')].find(item => item.textContent.startsWith('Health')).click());
+    // Phone: Health stays in the bar while it fits; choosing a recovery item opens the Inbox with the drawers closed.
+    await domClick(agentPage, '#health-toggle');
     await agentPage.waitForSelector('#health-popover:not([hidden]) .health-item[data-code="recovery_waiting"]');
     await domClick(agentPage, '#health-popover .health-item[data-code="recovery_waiting"]');
     await agentPage.waitForFunction(() => !document.querySelector('#inbox-view').hidden && document.querySelector('#inbox-view [data-inbox-id="mock_approval"]') && !document.querySelector('#agents-panel').classList.contains('mobile-open') && !document.querySelector('#app-view').classList.contains('rooms-open'));
