@@ -2914,7 +2914,11 @@ async function main() {
       ccSession(gitRoot, idAgent, { title: 'Made by an agent', entrypoint: 'sdk-cli' });
       ccSession(elsewhere, idFar, { title: 'Worked elsewhere' });
       fs.mkdirSync(path.join(claudeHome, 'sessions'), { recursive: true });
-      fs.writeFileSync(path.join(claudeHome, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: idActive, cwd: gitRoot, kind: 'interactive', status: 'idle' }));
+      const isPidAlive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+      // This process is the live pid; the gone one is above any kernel's pid limit, so it can never be assigned to a process (a stale entry, ignored).
+      const gonePid = 2 ** 31 - 2;
+      assert.ok(isPidAlive(process.pid) && !isPidAlive(gonePid), 'the fixture has one pid that is alive and one that is gone');
+      for (const [pid, sessionId] of [[process.pid, idActive], [gonePid, idOne]]) fs.writeFileSync(path.join(claudeHome, 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId, cwd: gitRoot, kind: 'interactive', status: 'idle' }));
       // Whether a native Claude is on offer comes from the machine's tool detection, which can still be running when this step starts. The
       // dialog says a session "is not available natively" until the catalog lists one it can continue on (spawn-model.js resumeToolChoice: native, or a container
       // that shares the host's Claude home), so wait for the catalog the dialog will read to do so.
