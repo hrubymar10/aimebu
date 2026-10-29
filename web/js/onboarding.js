@@ -133,10 +133,12 @@ export class Onboarding {
     (ready ? spawn : manage ? setup : this.root.querySelector('#onboarding-done')).focus();
   }
   async submit() {
+    const button = this.form.querySelector('button[type=submit]');
+    if (button.disabled) return;
     const name = this.form.elements.name.value.trim(), folder = this.form.elements.folder.value.trim();
     this.error.textContent = '';
     if (!name || !folder) { this.error.textContent = 'Enter a project name and a workspace folder.'; (name ? this.form.elements.folder : this.form.elements.name).focus(); return; }
-    const button = this.form.querySelector('button[type=submit]'); button.disabled = true;
+    button.disabled = true;
     try {
       await this.create({ name, folder });
       let ready = true; try { ready = await this.harnessReady(); } catch { ready = true; }

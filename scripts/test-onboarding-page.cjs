@@ -99,7 +99,27 @@ async function main() {
     await fourth.close();
 
     assert.deepEqual(server.errors, [], `the pages reported errors: ${server.errors.join(' | ')}`);
-    console.log('onboarding page: ok');
+      // a double submit creates one project
+    {
+      const second = await scratch();
+      try {
+        const ownerTwo = await second.ownerClient();
+        const page = await second.open({ context: await second.context() });
+        await signInAndEnter(page, second.origin);
+        await page.waitForSelector('#onboarding-view:not([hidden])');
+        const creates = []; page.on('request', request => { if (request.method() === 'POST' && /\/api\/projects$/.test(request.url())) creates.push(request.postData()); });
+        const folder = path.join(second.tmp, 'twice-repo'); fs.mkdirSync(folder);
+        await page.type('#onboarding-form [name=name]', 'Twice Project'); await page.$eval('#onboarding-form [name=folder]', input => { input.value = ''; });
+        await page.type('#onboarding-form [name=folder]', folder);
+        await page.$eval('#onboarding-form', form => { form.requestSubmit(); form.requestSubmit(); });
+        await page.waitForSelector('[data-step="harnesses"]:not([hidden])');
+        const listed = JSON.stringify((await ownerTwo('/api/projects')).body).split('Twice Project').length - 1;
+        assert.deepEqual([creates.length, listed], [1, 1], 'a double submit creates one project');
+        await page.close();
+      } finally { await second.stop(); }
+    }
+
+  console.log('onboarding page: ok');
   } finally {
     await server.stop();
   }
