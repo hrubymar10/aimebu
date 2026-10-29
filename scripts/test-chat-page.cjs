@@ -1549,7 +1549,7 @@ async function main() {
       await page.evaluate(() => window.__chat.destroy());
       const outcome = await page.evaluate(async () => {
         const chat = window.__chat, store = chat.store, hostCalls = [], sent = window.__requests.length;
-        for (const name of ['beginOpen', 'drawPage', 'showNewest', 'loadOlderIfShort', 'latestShown', 'threadState', 'markNewThreadReply', 'add', 'announce', 'updateLatestLabel', 'trimLive', 'showOlderStatus', 'prependPage', 'trimOldest', 'anchorUpdate', 'say', 'showLatestButton', 'openMessage', 'beginWindow', 'drawWindow', 'showWindow', 'openThread', 'showReply', 'showRow', 'showReactions', 'beginThread', 'drawThreadPage', 'showThreadPage', 'settleThreadLatest', 'threadError', 'showThreadOlderStatus', 'prependThreadPage', 'beginThreadSend', 'sentThreadReply', 'threadSendFailed', 'restoreThreadDraft', 'sendInput', 'beginSend', 'sendAsAnswer', 'sentMessage', 'addSent', 'sendFailed', 'sendFinished']) { const original = chat[name]; chat[name] = function (...args) { hostCalls.push(name); return original.apply(this, args); }; }
+        for (const name of ['beginOpen', 'drawPage', 'showNewest', 'loadOlderIfShort', 'threadState', 'markNewThreadReply', 'add', 'announce', 'updateLatestLabel', 'trimLive', 'showOlderStatus', 'prependPage', 'trimOldest', 'anchorUpdate', 'say', 'showLatestButton', 'openMessage', 'beginWindow', 'drawWindow', 'showWindow', 'openThread', 'showReply', 'showRow', 'beginThread', 'drawThreadPage', 'showThreadPage', 'settleThreadLatest', 'threadError', 'showThreadOlderStatus', 'prependThreadPage', 'beginThreadSend', 'sentThreadReply', 'threadSendFailed', 'restoreThreadDraft', 'sendInput', 'beginSend', 'sendAsAnswer', 'sentMessage', 'addSent', 'sendFailed', 'sendFinished']) { const original = chat[name]; chat[name] = function (...args) { hostCalls.push(name); return original.apply(this, args); }; }
         chat.room = { id: 'rm_a' }; store.hasMoreOlder = true; store.oldestSeq = 5; chat.nodes.set('rm_a_m1', document.createElement('article'));
         chat.threadRoot = { id: 'rm_a_m120', seq: 120 }; store.threadHasMoreOlder = true; store.threadOldestSeq = 5; chat.threadDraft.value = 'late reply'; chat.draft.value = 'late message';
         for (const name of ['open', 'openThread']) { const original = store[name]; store[name] = function (...args) { hostCalls.push(`store.${name}`); return original.apply(this, args); }; }
@@ -1799,6 +1799,20 @@ async function main() {
       return { destroyed, drawn: document.querySelectorAll('#messages > *').length };
     });
     assert.deepEqual(result, { destroyed: 1, drawn: 0 }, 'a destroyed chat unmounts the message list once and draws nothing after');
+    await page.close();
+  }
+  // So does the pending attachments' root.
+  if (ROWS) {
+    const page = await mount();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    const result = await page.evaluate(() => {
+      const chat = window.__chat, root = chat.pendingView, destroy = root.destroy; let destroyed = 0;
+      root.destroy = (...args) => { destroyed++; return destroy.apply(root, args); };
+      chat.destroy();
+      chat.pendingAttachments = [{ id: 'att_1', mime: 'image/png', url: '/x.png', name: 'x.png' }]; chat.renderPending();
+      return { destroyed, drawn: document.querySelectorAll('#pending-attachments > *').length };
+    });
+    assert.deepEqual(result, { destroyed: 1, drawn: 0 }, 'a destroyed chat unmounts the pending attachments once and draws nothing after');
     await page.close();
   }
 

@@ -1330,7 +1330,7 @@ async function main() {
     assert.deepEqual(await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
       const { ChatStore } = await import('/js/pages/chat/store.js');
-      const base = { room: { id: 'r' }, sessionGeneration: 1, recall: null, error: { textContent: '' }, announcer: { sendStarted() {}, sendFinished() {} }, resizeDraft() {}, current: () => true, renderPending() {}, trimLive() {}, add() {}, contextMode: false };
+      const base = { room: { id: 'r' }, recall: null, error: { textContent: '' }, announcer: { sendStarted() {}, sendFinished() {} }, resizeDraft() {}, renderPending() {}, trimLive() {}, add() {}, contextMode: false };
       const original = window.fetch, posts = [];
       window.fetch = async (path, options = {}) => { posts.push([String(path), JSON.parse(options.body || '{}').body]); return new Response(JSON.stringify({ id: 'm9' }), { status: 200, headers: { 'Content-Type': 'application/json' } }); };
       try {

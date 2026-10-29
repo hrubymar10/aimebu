@@ -1,11 +1,11 @@
-import { request, upload, currentUser, currentLogin } from './api.js';
+import { request, currentUser, currentLogin } from './api.js';
 import { PREFERENCE_KEYS, savePreference } from './preferences.js';
 import { retention } from './retention.js';
 import { expiryCutoffMs, planExpiry } from './expiry.js';
 import { usageTooltip } from './message-usage-format.js';
 import { toggleMessageUsage, closeMessageUsage } from './message-usage.js';
 import { renderMarkdown, renderRaw, copyText } from './markdown.js';
-import { setGlyph, iconGlyph } from './icon-button.js';
+import { iconGlyph } from './icon-button.js';
 import { refreshRelativeTimes } from './time.js';
 import { ScrollAnchor } from './scroll-anchor.js';
 import { senderIdentity, senderKind, agentLabel } from './sender-identity.js';
@@ -15,7 +15,7 @@ import { QuickCommands } from './quick-commands.js';
 import { MacroAutocomplete } from './macros.js';
 import { MentionAutocomplete, MentionIndex, highlightMentions } from './mentions.js';
 import { EmojiAutocomplete } from './emoji-suggest.js';
-import { Notice, megabytes } from './notice.js';
+import { Notice } from './notice.js';
 import { closeEmojiPicker, openEmojiPicker } from './emoji-picker.js';
 import { LiveAnnouncer } from './live-region.js';
 import { ComposerFormatting } from './composer.js';
@@ -24,6 +24,7 @@ import { promptDialog } from './dialogs.js';
 import { expandShortcodes } from './emoji-data.js';
 import { ChatStore } from './pages/chat/store.js';
 import { MessageList, ThreadList } from './pages/chat/rows.js';
+import { PendingAttachments } from './pages/chat/message-box.js';
 import { mountPreactPage } from './pages/mount-page.js';
 import { html } from './ui.js';
 import { MENTION_LOGINS_TTL_MS, answerArea, answerEligible, answersThroughInbox as answersThrough, articleClass, groupReactions, latestLabel, liveArrival as isLiveArrival, liveRoute, messageSnippet, newestShownSeq as shownSeq, newRepliesLabel, overCap, plainText, recallCandidates as ownMessages, recallStep, threadChip, threadCount, threadLabel as threadLabelOf, threadTitle, trimCap } from './pages/chat/model.js';
@@ -59,7 +60,7 @@ export class Chat {
     this.scrollAnchor = new ScrollAnchor(this.list);
     this.list.addEventListener('keydown', event => this.moveActionFocus(event));
     this.chip = document.querySelector('#reply-chip'); this.chipText = this.chip.querySelector('#reply-chip-jump'); this.chipText.onclick = () => { if (this.reply) this.jumpToMessage(this.reply.id); }; this.error = document.querySelector('#chat-error'); this.nodes = new Map();
-    this.pendingAttachments = []; this.pendingUploads = 0; this.pendingNode = document.querySelector('#pending-attachments'); this.attachmentInput = document.querySelector('#attachment-input');
+    this.pendingNode = document.querySelector('#pending-attachments'); this.pendingNode.replaceChildren(); this.pendingView = mountPreactPage(this.pendingNode, props => html`<${PendingAttachments} ...${props} />`, { onError: error => console.error('pending attachments failed', error) }); this.attachmentInput = document.querySelector('#attachment-input');
     this.attachmentInput.onchange = () => { this.addFiles([...this.attachmentInput.files]); this.attachmentInput.value = ''; };
     this.draft.addEventListener('input', () => this.resizeDraft());
     document.addEventListener('click', event => { const ref = event.target.closest?.('a.msg-ref'); if (!ref || event.defaultPrevented || event.button) return; event.preventDefault(); this.jumpToMessage(Number(ref.dataset.no)); });
@@ -97,7 +98,6 @@ export class Chat {
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && this.threadMentionAutocomplete?.popup.hidden !== false && this.threadEmojiAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.threadForm.requestSubmit(); }
     });
     document.querySelector('#cancel-reply').onclick = () => this.setReply(null);
-    this.uploadRequests = new Set();
     this.raw = false;
     this.panel = new RoomPanel(this);
     document.querySelector('#room-jump').onclick = () => this.promptJump();
@@ -131,7 +131,6 @@ export class Chat {
     this.list.dataset.empty = String(!this.list.querySelector('article.message:not(.system-notice)')); // notices alone leave it empty
   }
   showNewest() { this.list.dataset.hasOlder = String(this.hasMoreOlder); this.list.scrollTop = this.list.scrollHeight; this.scrollAnchor?.update(); }
-  latestShown(room) { this.onLatest?.(room); }
   // How far the read mark may go (0 while a room is still loading). At the latest view the list is contiguous to the live
   // cursor: every message up to newestSeq is applied (top-level rows rendered, thread replies counted on their roots).
   // Otherwise (a history window, or its catch-up in flight) only the newest top-level row actually in the list counts,
@@ -151,20 +150,17 @@ export class Chat {
   }
   reset() {
     this.store.reset(); if (this.recall) this.recall.index = null; this.announcer.reset();
-    for (const controller of this.uploadRequests) controller.abort();
-    this.uploadRequests.clear();
     this.room = null; this.syncEmpty(); this.panel.reset();
     this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.clearRows(); this.agents.clear(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.answerItems = new Map(); this.closeBlocked?.clear(); this.worktree = null;
-    this.setReply(null); this.closeThread(); this.pendingAttachments = []; this.pendingUploads = 0; this.pendingNode.replaceChildren(); this.draft.value = ''; this.resizeDraft();
+    this.setReply(null); this.closeThread(); this.renderPending(); this.draft.value = ''; this.resizeDraft();
     this.lightbox.close();
     this.quickCommands.reset(); this.macroAutocomplete.reset(); this.mentionAutocomplete.reset(); this.threadMentionAutocomplete.reset(); this.emojiAutocomplete.reset(); this.threadEmojiAutocomplete.reset(); closeEmojiPicker(false); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = true;
     this.draft.disabled = true; this.emojiButton.disabled = true; this.attachmentInput.disabled = true; this.form.querySelector('button[type=submit]').disabled = true;
   }
-  destroy() { this.reset(); this.store.destroy(); this.panel.destroy(); this.threadView.destroy(); this.listView.destroy(); }
+  destroy() { this.reset(); this.store.destroy(); this.panel.destroy(); this.threadView.destroy(); this.listView.destroy(); this.pendingView.destroy(); }
   // With no room open the chat shows an empty-state card instead of the composer and room controls; the app decides what the card says.
   syncEmpty() { this.onEmptyChange?.(!this.room); }
-  current(session, roomID) { return this.store.current(session, roomID); }
   // A list too short to scroll cannot ask for more by scrolling, so a short page with more behind it asks right away.
   loadOlderIfShort() {
     requestAnimationFrame(() => { if (this.hasMoreOlder && this.list.scrollHeight <= this.list.clientHeight + 80) this.loadOlder(); });
@@ -403,7 +399,6 @@ export class Chat {
   // `key` is a message number (the "#N" people write, one sequence across every room) or a message id. A number is looked up on the
   // server when this room has not loaded it, and a message of another room opens that room (onOpenMessage) on that message.
   jumpToMessage(key) { return this.store.jump(key); }
-  openMessage(found) { this.onOpenMessage?.(found); }
   // A history window around a message: the list starts again from the page that holds it.
   beginWindow() { this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.closeThread(); this.clearRows(); }
   drawWindow(messages) { this.batchRows(() => { for (const item of messages) this.add(item); }); this.list.scrollTop = this.list.scrollHeight; this.scrollAnchor?.update(); }
@@ -438,39 +433,9 @@ export class Chat {
     }
     element.append(strip);
   }
-  async addFiles(files) {
-    if (!this.room || this.room.lifecycle !== 'open') return;
-    this.notice.clear(); // a new pick, paste or drop starts over: what was said about the last one no longer holds
-    const roomID = this.room.id;
-    const session = this.sessionGeneration;
-    for (const file of files) {
-      if (!this.current(session, roomID)) return;
-      const name = file.name || 'The file';
-      if (this.pendingAttachments.length + this.pendingUploads >= 4) { this.notice.show('Up to four files per message.', { append: true }); break; }
-      if (!file.size) { this.notice.show(`${name} is empty.`, { append: true }); continue; }
-      if (file.size > 10 * 1024 * 1024) { this.notice.show(`${name} is too big (${megabytes(file.size)}). Use files up to 10 MB.`, { append: true }); continue; }
-      const controller = new AbortController(); this.uploadRequests.add(controller);
-      this.pendingUploads++; this.renderPending();
-      try {
-        const attachment = await upload(`/api/rooms/${roomID}/attachments`, file, { signal: controller.signal });
-        if (this.current(session, roomID)) this.pendingAttachments.push(attachment);
-        else await request(`/api/rooms/${roomID}/attachments/${attachment.id}`, { method: 'DELETE' }).catch(() => {});
-      } catch (error) { if (this.current(session, roomID)) this.notice.show(`${name}: ${error.message}`, { append: true }); }
-      finally { this.uploadRequests.delete(controller); if (session === this.sessionGeneration) { this.pendingUploads--; this.renderPending(); } }
-    }
-  }
+  addFiles(files) { return this.store.addFiles(files); }
   renderPending() {
-    this.pendingNode.replaceChildren();
-    for (const attachment of this.pendingAttachments) {
-      const item = document.createElement('span'); item.className = 'pending-image';
-      const preview = attachment.mime.startsWith('image/') ? document.createElement('img') : document.createElement('span');
-      if (preview.tagName === 'IMG') { preview.src = attachment.url; preview.alt = 'Pending image'; }
-      else preview.textContent = attachment.name || 'Attachment';
-      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'icon-btn'; setGlyph(remove, 'close', 'Remove file');
-      remove.onclick = async () => { if (!this.room) return; const roomID = this.room.id, session = this.sessionGeneration; try { await request(`/api/rooms/${roomID}/attachments/${attachment.id}`, { method: 'DELETE' }); if (!this.current(session, roomID)) return; this.pendingAttachments = this.pendingAttachments.filter(a => a.id !== attachment.id); this.renderPending(); } catch (error) { if (this.current(session, roomID)) this.error.textContent = error.message; } };
-      item.append(preview, remove); this.pendingNode.append(item);
-    }
-    if (this.pendingUploads) { const status = document.createElement('span'); status.textContent = `Uploading ${this.pendingUploads}…`; this.pendingNode.append(status); }
+    this.pendingView.update({ attachments: this.pendingAttachments, uploads: this.pendingUploads, onRemove: attachment => this.store.removeAttachment(attachment) });
     this.form.querySelector('button[type=submit]').disabled = this.pendingUploads > 0 || this.room?.lifecycle !== 'open';
   }
   // Whether message bodies show as raw Markdown is a personal preference kept on the server (see preferences.js); the browser copy lets the
@@ -835,14 +800,9 @@ export class Chat {
   sendFailed(message) { this.notice.show(message); }
   sendFinished(id) { this.announcer.sendFinished(id); }
   refreshReactions(id) { return this.store.refreshReactions(id); }
-  node(id) { return this.nodes.get(id); }
-  showReactions(id, entries) {
-    this.reactions.set(id, entries);
-    if (this.nodes.has(id)) this.listUpdate();
-  }
   toggleReaction(id, emoji) { return this.store.toggleReaction(id, emoji); }
 }
 
-for (const name of ['messages', 'reactions', 'threadCounts', 'serverThreadCounts', 'repliedTo', 'answeredMessages', 'historicalAuthors', 'missedIDs', 'announcedIDs', 'newestSeq', 'oldestSeq', 'hasMoreOlder', 'loadingOlder', 'loadingNewer', 'contextMode', 'catchingUp', 'windowSeq', 'initialLoading', 'openGeneration', 'sessionGeneration', 'jumpGeneration', 'pageSize', 'olderPageSize', 'threadGeneration', 'threadOldestSeq', 'threadHasMoreOlder', 'loadingOlderThread', 'threadPageSize', 'threadOlderPageSize']) {
+for (const name of ['messages', 'reactions', 'threadCounts', 'serverThreadCounts', 'repliedTo', 'answeredMessages', 'historicalAuthors', 'missedIDs', 'announcedIDs', 'newestSeq', 'oldestSeq', 'hasMoreOlder', 'loadingOlder', 'loadingNewer', 'contextMode', 'catchingUp', 'windowSeq', 'initialLoading', 'openGeneration', 'jumpGeneration', 'pageSize', 'olderPageSize', 'pendingAttachments', 'pendingUploads', 'uploadRequests', 'threadGeneration', 'threadOldestSeq', 'threadHasMoreOlder', 'loadingOlderThread', 'threadPageSize', 'threadOlderPageSize']) {
   Object.defineProperty(Chat.prototype, name, { configurable: true, get() { return this.store[name]; }, set(value) { this.store[name] = value; } });
 }

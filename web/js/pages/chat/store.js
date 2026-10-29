@@ -1,4 +1,5 @@
-import { request, currentUser } from '../../api.js';
+import { request, upload, currentUser } from '../../api.js';
+import { megabytes } from '../../notice.js';
 import { liveArrival, liveRoute } from './model.js';
 
 // The room's messages and the calls that load them; `host` draws. A call says nothing and starts nothing once its generation or the store is gone.
@@ -8,6 +9,7 @@ export class ChatStore {
     this.openGeneration = 0; this.sessionGeneration = 0; this.jumpGeneration = 0; this.pageSize = 100; this.olderPageSize = 50;
     this.threadGeneration = 0; this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadPageSize = 100; this.threadOlderPageSize = 50;
     this.initialLoading = false; this.announcedIDs = null; this.reactionTickets = new Map();
+    this.pendingAttachments = []; this.pendingUploads = 0; this.uploadRequests = new Set();
     this.clearRoom();
   }
 
@@ -19,7 +21,10 @@ export class ChatStore {
 
   current(session, roomID) { return session === this.sessionGeneration && this.host.room?.id === roomID; }
 
-  reset() { this.openGeneration++; this.sessionGeneration++; this.threadGeneration++; this.clearRoom(); this.initialLoading = false; }
+  reset() {
+    for (const controller of this.uploadRequests) controller.abort();
+    this.uploadRequests.clear(); this.pendingAttachments = []; this.pendingUploads = 0;
+    this.openGeneration++; this.sessionGeneration++; this.threadGeneration++; this.clearRoom(); this.initialLoading = false; }
 
   destroy() { this.reset(); this.alive = false; }
 
@@ -35,7 +40,7 @@ export class ChatStore {
     this.hasMoreOlder = messages.length === this.pageSize;
     this.host.showNewest();
     this.initialLoading = false; this.host.loadOlderIfShort();
-    this.host.latestShown(room);
+    this.host.onLatest?.(room);
     await this.refresh();
   }
 
@@ -57,7 +62,7 @@ export class ChatStore {
       if (messages.length) this.newestSeq = messages.at(-1).seq;
       if (messages.length) this.host.trimLive();
       // The project refresh for the same event ran before this render and could only mark up to the previous newest message.
-      if (messages.length && !this.contextMode && !this.catchingUp) this.host.latestShown(this.host.room);
+      if (messages.length && !this.contextMode && !this.catchingUp) this.host.onLatest?.(this.host.room);
       if (messages.length < this.pageSize) return;
     }
   }
@@ -114,7 +119,7 @@ export class ChatStore {
       this.host.updateLatestLabel(); return;
     }
     this.catchingUp = false;
-    this.host.latestShown(room);
+    this.host.onLatest?.(room);
   }
 
   // `key` is a message number (one sequence across every room) or a message id; a number of another room opens that room on that message.
@@ -129,7 +134,7 @@ export class ChatStore {
         try { found = await request(`/api/message-numbers/${encodeURIComponent(key)}`); }
         catch (error) { if (lookup === this.openGeneration) this.host.say(error.status === 404 ? `Message #${key} does not exist or is not visible to you.` : error.message); return; }
         if (lookup !== this.openGeneration) return;
-        if (found.room_id !== this.host.room.id) { this.host.say(''); this.host.openMessage(found); return; }
+        if (found.room_id !== this.host.room.id) { this.host.say(''); this.host.onOpenMessage?.(found); return; }
         key = found.id;
       }
     }
@@ -160,7 +165,7 @@ export class ChatStore {
           if (generation !== this.openGeneration || jump !== this.jumpGeneration) return;
           root = roots.find(item => item.id === message.thread_root);
         }
-        if (root) await this.host.openThread(root, message);
+        if (root) await this.openThread(root, message);
         if (generation !== this.openGeneration || jump !== this.jumpGeneration) return;
         this.host.showReply(message);
       } else this.host.showRow(message);
@@ -169,12 +174,17 @@ export class ChatStore {
   }
 
   async refreshReactions(id) {
-    if (!this.alive || !this.host.node(id)) return;
+    if (!this.alive || !this.host.nodes.has(id)) return;
     const generation = this.openGeneration, ticket = (this.reactionTickets.get(id) || 0) + 1;
     this.reactionTickets.set(id, ticket);
     const entries = await request(`/api/messages/${id}/reactions`);
     if (generation !== this.openGeneration || this.reactionTickets.get(id) !== ticket) return;
-    this.host.showReactions(id, entries);
+    this.showReactions(id, entries);
+  }
+
+  showReactions(id, entries) {
+    this.reactions.set(id, entries);
+    if (this.host.nodes.has(id)) this.host.listUpdate();
   }
 
   async toggleReaction(id, emoji) {
@@ -261,5 +271,37 @@ export class ChatStore {
     const thread = this.openThread(root);
     this.host.restoreThreadDraft(draft);
     await thread;
+  }
+
+  async addFiles(files) {
+    const room = this.host.room;
+    if (!this.alive || !room || room.lifecycle !== 'open') return;
+    this.host.notice.clear(); // a new pick, paste or drop starts over: what was said about the last one no longer holds
+    const roomID = room.id, session = this.sessionGeneration;
+    for (const file of files) {
+      if (!this.current(session, roomID)) return;
+      const name = file.name || 'The file';
+      if (this.pendingAttachments.length + this.pendingUploads >= 4) { this.host.notice.show('Up to four files per message.', { append: true }); break; }
+      if (!file.size) { this.host.notice.show(`${name} is empty.`, { append: true }); continue; }
+      if (file.size > 10 * 1024 * 1024) { this.host.notice.show(`${name} is too big (${megabytes(file.size)}). Use files up to 10 MB.`, { append: true }); continue; }
+      const controller = new AbortController(); this.uploadRequests.add(controller);
+      this.pendingUploads++; this.host.renderPending();
+      try {
+        const attachment = await upload(`/api/rooms/${roomID}/attachments`, file, { signal: controller.signal });
+        if (this.current(session, roomID)) this.pendingAttachments = [...this.pendingAttachments, attachment];
+        else await request(`/api/rooms/${roomID}/attachments/${attachment.id}`, { method: 'DELETE' }).catch(() => {});
+      } catch (error) { if (this.current(session, roomID)) this.host.notice.show(`${name}: ${error.message}`, { append: true }); }
+      finally { this.uploadRequests.delete(controller); if (session === this.sessionGeneration) { this.pendingUploads--; this.host.renderPending(); } }
+    }
+  }
+
+  async removeAttachment(attachment) {
+    if (!this.alive || !this.host.room) return;
+    const roomID = this.host.room.id, session = this.sessionGeneration;
+    try {
+      await request(`/api/rooms/${roomID}/attachments/${attachment.id}`, { method: 'DELETE' });
+      if (!this.current(session, roomID)) return;
+      this.pendingAttachments = this.pendingAttachments.filter(item => item.id !== attachment.id); this.host.renderPending();
+    } catch (error) { if (this.current(session, roomID)) this.host.say(error.message); }
   }
 }
