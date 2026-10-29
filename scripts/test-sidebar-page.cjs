@@ -121,6 +121,40 @@ async function main() {
     await page.close();
   }
 
+  // Home-room names use the width held by hover controls until those controls are actually shown.
+  {
+    const longTitle = 'Alpha workspace';
+    const page = await mount({ auto: answerAll({ 'GET /api/projects': projects.map(item => item.id === 'prj_a' ? { ...item, name: longTitle } : item),
+      'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => item.id === 'rm_ah' ? { ...item, title: longTitle } : item) }) });
+    await page.setViewport({ width: 1200, height: 800 });
+    const measure = () => page.$eval('[data-room-id=rm_ah] > .room-row', row => {
+      const name = row.querySelector('.room-name'), add = row.querySelector('.add-room'), move = row.querySelector('.project-move-up');
+      return { nameRight: name.getBoundingClientRect().right, rowRight: row.getBoundingClientRect().right,
+        nameWidth: name.clientWidth, textWidth: name.scrollWidth, add: getComputedStyle(add).display, move: getComputedStyle(move).display };
+    });
+    await page.mouse.move(1100, 700);
+    const idle = await measure();
+    assert.deepEqual([idle.add, idle.move], ['none', 'none'], 'desktop controls take no width before hover');
+    assert.ok(idle.textWidth <= idle.nameWidth, 'the name fits without an ellipsis');
+    assert.ok(idle.rowRight - idle.nameRight < 12, 'the name reaches the row end when controls are hidden');
+    await page.hover('[data-room-id=rm_ah] > .room-row');
+    const hovered = await measure();
+    assert.deepEqual([hovered.add, hovered.move], ['flex', 'flex']);
+    assert.ok(hovered.nameWidth < idle.nameWidth, 'the name yields width to visible controls');
+    await page.mouse.move(1100, 700);
+    await page.focus('[data-room-id=rm_ah] .room-name');
+    const focused = await measure();
+    assert.deepEqual([focused.add, focused.move], ['flex', 'flex'], 'keyboard focus reveals the controls');
+    await page.evaluate(() => { document.activeElement.blur(); document.documentElement.dataset.theme = 'high-contrast-dark'; });
+    assert.deepEqual([(await measure()).add, (await measure()).move], ['none', 'none'], 'high contrast keeps idle controls out of layout');
+    const session = await page.createCDPSession();
+    await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    assert.equal(await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches), true);
+    const touch = await measure();
+    assert.deepEqual([touch.add, touch.move], ['flex', 'flex'], 'touch keeps controls reachable without hover');
+    await page.close();
+  }
+
   // A refresh of one project changes its rows in place: the same elements stay, with the focus on one of their buttons and the fold the person
   // opened, the unread numbers and a new room follow, and an unchanged room keeps its record (the object the list holds for it).
   {

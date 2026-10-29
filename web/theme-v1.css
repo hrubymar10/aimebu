@@ -1587,18 +1587,19 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .room-row { padding: 4px 8px; }
 .room-row .room-name { flex: 1 1 auto; min-width: 7ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-row .room-project { flex: 0 100 auto; min-width: 0; max-width: 70px; margin: 0 4px; padding: 0 6px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.room-row .add-room { visibility: hidden; color: var(--text-primary); background: var(--bg-primary); opacity: 1; }
-.room-row:hover .add-room, .room-row:focus-within .add-room { visibility: visible; }
+.room-row .add-room { display: none; color: var(--text-primary); background: var(--bg-primary); opacity: 1; }
+.room-row:hover .add-room, .room-row:focus-within .add-room { display: inline-flex; }
+.room-row .add-room[hidden] { display: none; }
 /* A project's own controls on its home row: moves, only in the manual order (shown like the add button). */
-.room-row .project-move { padding: 4px; color: var(--text-muted); background: transparent; border: 0; visibility: hidden; }
-.room-row:hover .project-move, .room-row:focus-within .project-move { visibility: visible; }
+.room-row .project-move { display: none; padding: 4px; color: var(--text-muted); background: transparent; border: 0; }
+.room-row:hover .project-move, .room-row:focus-within .project-move { display: inline-flex; }
 .room-row .project-move:disabled { opacity: .3; }
 .room-row { cursor: pointer; }
 .room-row .project-grip { cursor: grab; }
 .room-row.dragging { opacity: .5; }
 .room-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 .room-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
-@media (hover: none) and (pointer: coarse) { .room-row .add-room, .room-row .project-move { visibility: visible; } }
+@media (hover: none) and (pointer: coarse) { .room-row .add-room:not([hidden]), .room-row .project-move { display: inline-flex; } }
 /* Collapse all / expand all: the chevron points down while something is open and right once everything is folded. */
 #rooms-fold .icon-mask { transform: rotate(90deg); transition: none; }
 #rooms-fold.is-collapsed .icon-mask { transform: none; }
@@ -2515,7 +2516,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #onboarding-harnesses .settings-content > p.settings-intro:first-of-type, #onboarding-harnesses .machine-activity-heading, #onboarding-harnesses [id$="machine-activity"] { display: none; }
 /* The glyph of a row's small buttons sits on the button's centre, so the + and the move icon share one axis with the room name (an inline
    glyph in a plain button rides on the text baseline, about 2.5px high). */
-.room-row :is(.add-room, .project-move, .branch, .room-pin, .room-hide) { display: inline-flex; align-items: center; justify-content: center; }
+.room-row :is(.add-room, .project-move, .branch, .room-pin, .room-hide) { align-items: center; justify-content: center; }
 /* A message the reader was just taken to (a #N link, a reply quote, jump-to, an Inbox item) is highlighted for a moment (FLASH_MS in chat.js
    removes the class). The ring fades out; with reduced motion it does not animate, it is a plain outline for the same moment. */
 @keyframes message-flash { 0% { box-shadow: 0 0 0 2px var(--accent), 0 0 14px var(--accent-dim); } 100% { box-shadow: 0 0 0 2px transparent, 0 0 14px transparent; } }

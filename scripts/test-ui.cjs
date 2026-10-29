@@ -1981,6 +1981,7 @@ async function main() {
       await first.locator('#composer textarea').fill('');
       await putMacros({});
     }
+    await first.focus('.room-row .room-name');
     await domClick(first, '.add-room');
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     await first.waitForFunction(() => document.querySelector('#messages')?.dataset.empty === 'true');
@@ -5149,7 +5150,7 @@ async function main() {
       const off = [];
       for (const row of document.querySelectorAll('.room-row')) {
         if (!row.getClientRects().length) continue;
-        for (const glyph of row.querySelectorAll(':is(.add-room, .project-move, .branch, .room-pin, .room-hide) .icon-mask')) if (Math.abs(centre(glyph) - centre(row)) > 1) off.push(`${glyph.parentElement.className}: ${(centre(glyph) - centre(row)).toFixed(1)}`);
+        for (const glyph of row.querySelectorAll(':is(.add-room, .project-move, .branch, .room-pin, .room-hide) .icon-mask')) if (glyph.getClientRects().length && Math.abs(centre(glyph) - centre(row)) > 1) off.push(`${glyph.parentElement.className}: ${(centre(glyph) - centre(row)).toFixed(1)}`);
       }
       return { checked: document.querySelectorAll('.room-row .add-room .icon-mask').length, off };
     });
@@ -9147,7 +9148,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       const moveState = () => listPage.$$eval('#projects > .room-group > .room-row', rows => rows.filter(row => (row.querySelector('.room-name')?.textContent || '').startsWith('⌂')).map(row => `${row.querySelector('.room-name').textContent.replace(/^⌂\s*/, '')}:${row.querySelector('.project-move-up')?.disabled}:${row.querySelector('.project-move-down')?.disabled}:${row.draggable}`));
       const order0 = await projectOrder();
       assert.deepEqual(await moveState(), order0.map((name, index) => `${name}:${index === 0}:${index === order0.length - 1}:false`), 'the first project cannot move up, the last cannot move down, and a row is dragged only by its handle');
-      assert.deepEqual(await listPage.$$eval('#projects > .room-group > .room-row .project-grip', grips => grips.map(grip => [grip.title.startsWith('Drag to move '), !!grip.querySelector('.icon-mask-menu'), getComputedStyle(grip).visibility, grip.nextElementSibling?.classList.contains('project-move-up')])), order0.map(() => [true, true, 'hidden', true]), 'each project has a hover-only ≡ handle left of the arrows');
+      assert.deepEqual(await listPage.$$eval('#projects > .room-group > .room-row .project-grip', grips => grips.map(grip => [grip.title.startsWith('Drag to move '), !!grip.querySelector('.icon-mask-menu'), getComputedStyle(grip).display, grip.nextElementSibling?.classList.contains('project-move-up')])), order0.map(() => [true, true, 'none', true]), 'each project has a hover-only ≡ handle left of the arrows');
       await listPage.hover('#projects > .room-group > .room-row:has(.project-grip)');
       await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
       assert.equal(await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip)', row => row.draggable), true, 'pressing the handle makes the row draggable');
@@ -9161,6 +9162,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       const [wantedHome, openedHome] = await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip):not(.active)', row => { const name = row.querySelector('.room-name').textContent; row.click(); return [name, null]; });
       await listPage.waitForFunction(name => document.querySelector('#projects .room-row.active .room-name')?.textContent === name, {}, wantedHome);
       const firstHome = (await homeIDs())[0];
+      await listPage.focus(`[data-room-id="${firstHome}"] > .room-row .room-name`);
       await domClick(listPage, `[data-room-id="${firstHome}"] > .room-row .project-move-down`);
       await listPage.waitForFunction(first => document.querySelector('#projects > .room-group').dataset.roomId !== first, {}, firstHome);
       assert.deepEqual(await projectOrder(), [...order0].reverse(), 'move down swaps the two projects');
