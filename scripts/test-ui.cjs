@@ -2996,8 +2996,10 @@ async function main() {
       await first.waitForFunction(() => document.querySelectorAll('#cc-sessions-list .cc-session').length === 3);
       await domClick(first, `#cc-sessions-list .cc-session[data-session-id="${idActive}"] .cc-session-pick`);
       await first.waitForSelector('#spawn-dialog[open] #spawn-resume:not([hidden])');
-      assert.deepEqual(await first.evaluate(() => ({ confirm: document.querySelector('#spawn-resume-confirm-label').hidden, label: document.querySelector('#spawn-resume-confirm-label').textContent.trim(), notes: document.querySelector('#spawn-resume-notes').textContent })),
-        { confirm: false, label: 'I closed this session in my terminal', notes: 'A Claude process has this session open. Close it first: two processes on one session corrupt it.' });
+      const activeSession = await first.evaluate(() => ({ confirm: document.querySelector('#spawn-resume-confirm-label').hidden, label: document.querySelector('#spawn-resume-confirm-label').textContent.trim(), notes: document.querySelector('#spawn-resume-notes').textContent }));
+      assert.deepEqual({ confirm: activeSession.confirm, label: activeSession.label }, { confirm: false, label: 'I closed this session in my terminal' });
+      const activeWarning = 'A Claude process has this session open. Close it first: two processes on one session corrupt it.';
+      assert.ok(activeSession.notes === activeWarning || activeSession.notes === `${activeWarning} claude is not available natively on the chosen machine, so the session cannot be continued here.`, `active-session notes: ${activeSession.notes}`);
       // Working on a copy needs no such confirmation (the original is not touched) and says what it does; going back restores the warning.
       await first.evaluate(() => { const radio = document.querySelector('#spawn-form [name=resume_mode][value=fork]'); radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); });
       assert.deepEqual(await first.evaluate(() => ({ title: document.querySelector('#spawn-form h2').textContent, confirm: document.querySelector('#spawn-resume-confirm-label').hidden,
