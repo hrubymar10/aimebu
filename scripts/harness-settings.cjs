@@ -278,7 +278,7 @@ async function main() {
     {
       await page.keyboard.press('Escape');
       const onboarding = await page.evaluate(async () => {
-        const { Onboarding } = await import('/js/onboarding.js');
+        const { Onboarding } = await import('/js/pages/onboarding/page.js');
         document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
         const step = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => true, pollMs: 100000 });
         await step.showHarnesses('first');

@@ -3454,7 +3454,7 @@ async function main() {
           await setupPage.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])');
           // Once a harness with a model exists (stubbed through the same module) Continue is enabled and the last step offers Spawn.
           const withHarness = await setupPage.evaluate(async () => {
-            const { Onboarding } = await import('/js/onboarding.js');
+            const { Onboarding } = await import('/js/pages/onboarding/page.js');
             document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
             // Leaving the step while it is still loading must not start the readiness poll afterwards.
             const early = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => false, pollMs: 50 });
@@ -3474,7 +3474,7 @@ async function main() {
           // Skip after a harness became ready (it saves on its own while the step is open) is not a skip: nothing is recorded and Spawn is offered.
           // Ticking a detected harness enables Continue, which adds it before going on.
           assert.deepEqual(await setupPage.evaluate(async () => {
-            const { Onboarding } = await import('/js/onboarding.js');
+            const { Onboarding } = await import('/js/pages/onboarding/page.js');
             document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
             let ready = false, skipped = 0;
             const late = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => ready, onSkip: () => { skipped++; }, confirm: async () => true, pollMs: 100000 });
@@ -3500,7 +3500,7 @@ async function main() {
           // Continue is one run at a time, and its status survives the poll: while harnesses are being added neither a poll nor a second
           // click may re-enable it or add them again; a harness added without a model keeps its message and its disabled Continue.
           assert.deepEqual(await setupPage.evaluate(async () => {
-            const { Onboarding } = await import('/js/onboarding.js');
+            const { Onboarding } = await import('/js/pages/onboarding/page.js');
             document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
             let ready = false, adds = 0, finish;
             const step = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => ready, onSkip: () => {}, confirm: async () => true, pollMs: 40 });
@@ -3514,7 +3514,7 @@ async function main() {
             const run = step.continueHarnesses();
             await new Promise(resolve => setTimeout(resolve, 200)); // several polls while the add is in flight
             const during = { adds, disabled: button.disabled };
-            button.disabled = false; button.click(); // even a re-enabled button cannot start a second add
+            button.disabled = false; button.click(); button.disabled = true; // even a re-enabled button cannot start a second add
             const doubleClick = adds;
             finish(); // the add succeeds, but no harness has a model
             await run;
@@ -3523,7 +3523,7 @@ async function main() {
             await new Promise(resolve => setTimeout(resolve, 200));
             const after = { disabled: button.disabled, status: status.textContent, stayed: !document.querySelector('#onboarding-harnesses').hidden, same: status.textContent === atOnce.status };
             // Leave the page as the next steps expect it: the last step shown, the poll stopped.
-            step.stopWatching(); step.harnesses.clear(); step.showStep('how');
+            step.stopWatching(); step.harnesses.clear(); step.store.set(() => { step.store.step.value = 'how'; });
             return { during, doubleClick, atOnce, after };
           }), { during: { adds: 1, disabled: true }, doubleClick: 1,
             atOnce: { disabled: true, status: 'The harness was added but has no model yet. Add a model by hand, or retry Auto-detect in its models, then Continue.' },
@@ -4339,7 +4339,7 @@ async function main() {
     await domClick(settingsPage, '#settings-close');
     // Onboarding embeds the same page with its own ids: Settings' copy stays alone in the page, and opening it leaves the step's alone.
     assert.deepEqual(await settingsPage.evaluate(async () => {
-      const { Onboarding } = await import('/js/onboarding.js');
+      const { Onboarding } = await import('/js/pages/onboarding/page.js');
       document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
       const step = window.__onboarding = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => true, pollMs: 50 });
       await step.showHarnesses('first');

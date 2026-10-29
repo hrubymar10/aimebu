@@ -21,7 +21,7 @@ import { retention } from './retention.js';
 import { Signin } from './pages/signin/page.js';
 import { showWelcome } from './pages/setup/welcome.js';
 import { ownerSetup } from './pages/setup/page.js';
-import { Onboarding } from './onboarding.js';
+import { Onboarding } from './pages/onboarding/page.js';
 import { loadPreferences } from './preferences.js';
 import { RoomMenu } from './pages/room-menu/page.js';
 import { MessageDebug } from './message-debug.js';
