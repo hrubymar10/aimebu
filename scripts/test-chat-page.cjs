@@ -1438,20 +1438,170 @@ async function main() {
       await page.evaluate(() => window.__chat.destroy());
       const outcome = await page.evaluate(async () => {
         const chat = window.__chat, store = chat.store, hostCalls = [], sent = window.__requests.length;
-        for (const name of ['beginOpen', 'drawPage', 'showNewest', 'loadOlderIfShort', 'latestShown', 'threadState', 'markNewThreadReply', 'add', 'announce', 'updateLatestLabel', 'trimLive', 'showOlderStatus', 'prependPage', 'trimOldest', 'anchorUpdate', 'say', 'showLatestButton', 'openMessage', 'beginWindow', 'drawWindow', 'showWindow', 'openThread', 'showReply', 'showRow', 'showReactions']) { const original = chat[name]; chat[name] = function (...args) { hostCalls.push(name); return original.apply(this, args); }; }
+        for (const name of ['beginOpen', 'drawPage', 'showNewest', 'loadOlderIfShort', 'latestShown', 'threadState', 'markNewThreadReply', 'add', 'announce', 'updateLatestLabel', 'trimLive', 'showOlderStatus', 'prependPage', 'trimOldest', 'anchorUpdate', 'say', 'showLatestButton', 'openMessage', 'beginWindow', 'drawWindow', 'showWindow', 'openThread', 'showReply', 'showRow', 'showReactions', 'beginThread', 'drawThreadPage', 'showThreadPage', 'settleThreadLatest', 'threadError', 'showThreadOlderStatus', 'prependThreadPage', 'beginThreadSend', 'sentThreadReply', 'threadSendFailed', 'restoreThreadDraft', 'sendInput', 'beginSend', 'sendAsAnswer', 'sentMessage', 'addSent', 'sendFailed', 'sendFinished']) { const original = chat[name]; chat[name] = function (...args) { hostCalls.push(name); return original.apply(this, args); }; }
         chat.room = { id: 'rm_a' }; store.hasMoreOlder = true; store.oldestSeq = 5; chat.nodes.set('rm_a_m1', document.createElement('article'));
-        store.windowSeq = 5; store.contextMode = true; store.newestSeq = 9; const before = [store.windowSeq, store.contextMode, store.newestSeq, store.catchingUp];
-        for (const call of [() => store.open({ id: 'rm_a' }), () => store.refresh(), () => store.loadOlder(), () => store.loadNewer(), () => store.leaveWindow(), () => store.jump('rm_a_m10'), () => store.jump(7), () => store.refreshReactions('rm_a_m1'), () => store.toggleReaction('rm_a_m1', '👍')]) { try { await call(); } catch (error) { hostCalls.push(`threw ${error.message}`); } }
-        return [hostCalls, window.__requests.length - sent, before, [store.windowSeq, store.contextMode, store.newestSeq, store.catchingUp]];
+        chat.threadRoot = { id: 'rm_a_m120', seq: 120 }; store.threadHasMoreOlder = true; store.threadOldestSeq = 5; chat.threadDraft.value = 'late reply'; chat.draft.value = 'late message';
+        for (const name of ['open', 'openThread']) { const original = store[name]; store[name] = function (...args) { hostCalls.push(`store.${name}`); return original.apply(this, args); }; }
+        store.windowSeq = 5; store.contextMode = true; store.newestSeq = 9; const before = [store.windowSeq, store.contextMode, store.newestSeq, store.catchingUp, store.threadGeneration, store.loadingOlderThread];
+        for (const call of [() => store.open({ id: 'rm_a' }), () => store.refresh(), () => store.loadOlder(), () => store.loadNewer(), () => store.leaveWindow(), () => store.jump('rm_a_m10'), () => store.jump(7), () => store.refreshReactions('rm_a_m1'), () => store.toggleReaction('rm_a_m1', '👍'), () => store.openThread({ id: 'rm_a_m120', seq: 120 }), () => store.loadOlderThread(), () => store.sendThread(), () => store.send(), () => store.reopenLatest()]) { try { await call(); } catch (error) { hostCalls.push(`threw ${error.message}`); } }
+        return [hostCalls, window.__requests.length - sent, before, [store.windowSeq, store.contextMode, store.newestSeq, store.catchingUp, store.threadGeneration, store.loadingOlderThread]];
       });
-      assert.deepEqual([outcome[0], outcome[1], outcome[3]], [[], 0, outcome[2]], 'a destroyed store entry touches nothing');
+      assert.deepEqual([outcome[0], outcome[1], outcome[3]], [['store.open', 'store.openThread'], 0, outcome[2]], 'a destroyed store entry touches nothing and reopens nothing');
+      await page.close();
+    }
+    // an open thread: a late check for newer replies after the thread closed settles nothing
+    {
+      const page = await mount();
+      await addReplies(page, 3);
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await hold(page, 'GET', 'thread_root=rm_a_m120&after=');
+      await page.evaluate(() => { window.__settled = 0; const settled = window.__chat.settleThreadLatest; window.__chat.settleThreadLatest = function (...args) { window.__settled++; return settled.apply(this, args); }; window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120'), { id: 'rm_a_t2' }); });
+      const held = await waitRequest(page, 'GET', 'thread_root=rm_a_m120&after=');
+      await page.evaluate(() => { window.__holds.length = 0; window.__chat.closeThread(); });
+      await serve(page, held); await page.evaluate(() => window.__open); await settle(page);
+      assert.equal(await page.evaluate(() => window.__settled), 0, 'a late newer-replies check settles nothing');
+      await page.close();
+    }
+    // older replies of a thread: one read at a time, only with a thread open and more behind it, and a read of a closed thread leaves the new one's flag alone
+    {
+      const page = await mount();
+      await addReplies(page, 130);
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      const reads = () => page.evaluate(() => window.__requests.filter(request => request.method === 'GET' && /thread_root=.*before=/.test(request.path)).length);
+      await page.evaluate(() => { window.__chat.store.threadHasMoreOlder = true; window.__chat.store.threadOldestSeq = 5; window.__chat.loadOlderThread(); }); await settle(page);
+      assert.equal(await reads(), 0, 'no older replies without a thread open');
+      await page.evaluate(() => { window.__chat.store.threadHasMoreOlder = false; window.__chat.store.threadOldestSeq = 0; });
+      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
+      await page.evaluate(() => { window.__chat.store.threadHasMoreOlder = false; window.__chat.loadOlderThread(); }); await settle(page);
+      assert.equal(await reads(), 0, 'no older replies when none are behind');
+      await page.evaluate(() => { window.__chat.store.threadHasMoreOlder = true; window.__chat.store.threadOldestSeq = 0; window.__chat.loadOlderThread(); }); await settle(page);
+      assert.equal(await reads(), 0, 'no older replies without a cursor');
+      await page.evaluate(() => { window.__chat.store.threadOldestSeq = 5; });
+      await hold(page, 'GET', 'thread_root=.*before=');
+      await page.evaluate(() => { window.__a = window.__chat.loadOlderThread(); window.__b = window.__chat.loadOlderThread(); }); await settle(page);
+      assert.equal(await reads(), 1, 'a second older read is not asked for while one is out');
+      const first = await waitRequest(page, 'GET', 'thread_root=.*before=');
+      await page.evaluate(() => { window.__holds.length = 0; window.__chat.closeThread(); });
+      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
+      await hold(page, 'GET', 'thread_root=.*before=');
+      await page.evaluate(() => { window.__c = window.__chat.loadOlderThread(); });
+      const second = await waitRequest(page, 'GET', 'thread_root=.*before=');
+      await page.evaluate(() => { window.__holds.length = 0; });
+      await serve(page, first); await page.evaluate(() => window.__a); await settle(page);
+      assert.equal(await page.evaluate(() => window.__chat.store.loadingOlderThread), true, 'a read of the closed thread leaves the new one flagged loading');
+      await serve(page, second); await page.evaluate(() => window.__c); await settle(page);
+      await page.close();
+    }
+    // a failed older-replies read of a thread that was closed shows no error in the next
+    {
+      const page = await mount();
+      await addReplies(page, 130);
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
+      await hold(page, 'GET', 'thread_root=.*before=');
+      await page.evaluate(() => { window.__late = window.__chat.loadOlderThread(); });
+      const held = await waitRequest(page, 'GET', 'thread_root=.*before=');
+      await page.evaluate(() => { window.__holds.length = 0; window.__chat.closeThread(); });
+      await answer(page, held, 500, { error: 'late failure' }); await page.evaluate(() => window.__late); await settle(page);
+      assert.equal(await page.evaluate(() => document.querySelector('#thread-error').textContent), '', 'a late failure shows no error');
+      await page.close();
+    }
+    // a thread read of a store that was reset draws nothing
+    {
+      const page = await mount();
+      await addReplies(page, 3);
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await hold(page, 'GET', 'thread_root=rm_a_m120');
+      await page.evaluate(() => { window.__drawn = 0; const draw = window.__chat.drawThreadPage; window.__chat.drawThreadPage = function (...args) { window.__drawn++; return draw.apply(this, args); }; window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120')); });
+      const held = await waitRequest(page, 'GET', 'thread_root=rm_a_m120');
+      await page.evaluate(() => { window.__holds.length = 0; window.__chat.store.reset(); });
+      await serve(page, held); await page.evaluate(() => window.__open); await settle(page);
+      assert.equal(await page.evaluate(() => window.__drawn), 0, 'a thread read of a reset store draws nothing');
+      await page.close();
+    }
+    // an answer sent through the inbox is current only while its room stays open
+    for (const leave of [false, true]) {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await typeDraft(page, 'my answer');
+      await page.evaluate(() => { window.__chat.sendAsAnswer = async (reply, attachments, body, current) => { await new Promise(resolve => { window.__release = resolve; }); window.__current = current(); return true; }; });
+      await submit(page);
+      await page.waitForFunction(() => !!window.__release);
+      if (leave) { await openRoom(page, 'rm_b'); await opened(page); await settle(page); }
+      await page.evaluate(() => { window.__release(); return window.__sending; }); await settle(page);
+      assert.equal(await page.evaluate(() => window.__current), !leave, `an inbox answer is ${leave ? 'not ' : ''}current ${leave ? 'after the room changed' : 'in its room'}`);
+      await page.close();
+    }
+    // a thread reply: none without a thread or text, and one answered after the room changed is not shown
+    {
+      const page = await mount();
+      await addReplies(page, 3);
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      const posts = () => page.evaluate(() => window.__requests.filter(request => request.method === 'POST').length);
+      await page.evaluate(() => { window.__chat.threadDraft.value = 'alone'; window.__chat.sendThread(); }); await settle(page);
+      assert.equal(await posts(), 0, 'no thread reply without a thread open');
+      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
+      await page.evaluate(() => { window.__chat.threadDraft.value = '   '; window.__chat.sendThread(); }); await settle(page);
+      assert.equal(await posts(), 0, 'no thread reply without text');
+      await hold(page, 'POST', '/messages$');
+      await page.evaluate(() => { window.__shown = 0; const sent = window.__chat.sentThreadReply; window.__chat.sentThreadReply = function (...args) { window.__shown++; return sent.apply(this, args); }; window.__chat.threadDraft.value = 'late'; window.__late = window.__chat.sendThread(); });
+      const held = await waitRequest(page, 'POST', '/messages$');
+      await page.evaluate(() => { window.__holds.length = 0; });
+      await openRoom(page, 'rm_b'); await opened(page); await settle(page);
+      await serve(page, held); await page.evaluate(() => window.__late); await settle(page);
+      assert.equal(await page.evaluate(() => window.__shown), 0, 'a thread reply answered after the room changed shows nothing');
+      await page.close();
+    }
+    // a thread reply released after the room was left and shown again, or after destroy, shows nothing and keeps the new draft
+    for (const how of ['A, B, A', 'destroy']) {
+      const page = await mount();
+      await addReplies(page, 3);
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
+      await hold(page, 'POST', '/messages$');
+      await page.evaluate(() => { window.__shown = 0; window.__failed = 0; const sent = window.__chat.sentThreadReply; window.__chat.sentThreadReply = function (...args) { window.__shown++; return sent.apply(this, args); }; window.__chat.threadDraft.value = 'late'; window.__late = window.__chat.sendThread(); });
+      const held = await waitRequest(page, 'POST', '/messages$');
+      await page.evaluate(() => { window.__holds.length = 0; });
+      if (how === 'destroy') await page.evaluate(() => window.__chat.destroy());
+      else {
+        await openRoom(page, 'rm_b'); await opened(page); await settle(page);
+        await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+        await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+        await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
+        await page.evaluate(() => { window.__chat.threadDraft.value = 'typed since'; });
+      }
+      const draft = await page.evaluate(() => window.__chat.threadDraft.value);
+      await serve(page, held); await page.evaluate(() => window.__late); await settle(page);
+      assert.deepEqual([await page.evaluate(() => window.__shown), await page.evaluate(() => window.__chat.threadDraft.value)], [0, draft], `${how}: a released thread reply shows nothing and keeps the draft`);
+      await page.close();
+    }
+    // reopening the latest view for a sent message, then leaving the room, opens no thread
+    {
+      const page = await mount();
+      await addReplies(page, 3);
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
+      await hold(page, 'GET', 'rooms/rm_a/messages\\?limit=100');
+      await page.evaluate(() => { window.__re = window.__chat.store.reopenLatest(); });
+      await waitRequest(page, 'GET', 'rooms/rm_a/messages\\?limit=100');
+      const held = await find(page, 'GET', 'rooms/rm_a/messages\\?limit=100');
+      await page.evaluate(() => { window.__holds.length = 0; window.__chat.reset(); });
+      const sent = await page.evaluate(() => window.__requests.length);
+      await serve(page, held); await page.evaluate(() => window.__re); await settle(page);
+      assert.deepEqual([(await panel(page)).hidden, await page.evaluate(() => window.__requests.length) - sent], [true, 0], 'a reopen outlived by a reset opens no thread');
       await page.close();
     }
     // with no room the list calls resolve and send nothing
     {
       const page = await mount();
-      const outcome = await page.evaluate(async () => { const store = window.__chat.store, sent = window.__requests.length, results = []; for (const call of [() => store.refresh(), () => store.loadOlder(), () => store.loadNewer(), () => store.jump('rm_a_m1'), () => store.jump(7), () => store.toggleReaction('rm_a_m1', '👍')]) { try { await call(); results.push('ok'); } catch (error) { results.push(error.message); } } return [results, window.__requests.length - sent]; });
-      assert.deepEqual(outcome, [['ok', 'ok', 'ok', 'ok', 'ok', 'ok'], 0], 'no room: the calls resolve and send nothing');
+      const outcome = await page.evaluate(async () => { document.querySelector('#composer textarea[name=body]').value = 'x'; window.__chat.threadDraft.value = 'x'; const store = window.__chat.store, sent = window.__requests.length, results = []; for (const call of [() => store.refresh(), () => store.loadOlder(), () => store.loadNewer(), () => store.jump('rm_a_m1'), () => store.jump(7), () => store.toggleReaction('rm_a_m1', '👍'), () => store.loadOlderThread(), () => store.sendThread(), () => store.send()]) { try { await call(); results.push('ok'); } catch (error) { results.push(error.message); } } return [results, window.__requests.length - sent]; });
+      assert.deepEqual(outcome, [['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok'], 0], 'no room: the calls resolve and send nothing');
       await page.close();
     }
     // a jump that a newer jump replaced, or that a room change outlived, changes nothing when its answer comes

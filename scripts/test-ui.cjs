@@ -1314,13 +1314,14 @@ async function main() {
     // the requester and has no attachment; every other reply is an ordinary one that leaves the request open.
     assert.deepEqual(await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
-      const base = { store: {}, room: { id: 'r' }, sessionGeneration: 1, recall: null, error: { textContent: '' }, announcer: { sendStarted() {}, sendFinished() {} }, resizeDraft() {}, current: () => true, renderPending() {}, trimLive() {}, add() {}, contextMode: false };
+      const { ChatStore } = await import('/js/pages/chat/store.js');
+      const base = { room: { id: 'r' }, sessionGeneration: 1, recall: null, error: { textContent: '' }, announcer: { sendStarted() {}, sendFinished() {} }, resizeDraft() {}, current: () => true, renderPending() {}, trimLive() {}, add() {}, contextMode: false };
       const original = window.fetch, posts = [];
       window.fetch = async (path, options = {}) => { posts.push([String(path), JSON.parse(options.body || '{}').body]); return new Response(JSON.stringify({ id: 'm9' }), { status: 200, headers: { 'Content-Type': 'application/json' } }); };
       try {
         const run = async (body, item, { attachments = [], answer = async () => true, reply = { id: 'm1', author_kind: 'agent', author_id: 'a1' } } = {}) => {
           const answers = [], shown = [];
-          const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
+          const chat = Object.create(Chat.prototype); chat.store = new ChatStore(chat);
           Object.assign(chat, base, { reply, pendingUploads: 0, pendingAttachments: attachments, notice: { clear() {}, show(text) { shown.push(text); } }, agents: new Map([['a1', { slug: 'tess' }]]),
             draft: { value: body, setSelectionRange() {} }, answerItems: new Map(item ? [['m1', item]] : []), setReply(message) { this.reply = message; }, inbox: { answer: async (found, text) => { answers.push([found.id, text]); return answer(); } } });
           posts.length = 0;
@@ -1346,7 +1347,7 @@ async function main() {
         };
         // A second send while an answer is in flight does nothing.
         let release; const gate = new Promise(resolve => { release = resolve; });
-        const chat = Object.assign(Object.create(Chat.prototype), { store: {} }), calls = [];
+        const chat = Object.create(Chat.prototype), calls = []; chat.store = new ChatStore(chat);
         Object.assign(chat, base, { reply: { id: 'm1', author_kind: 'agent', author_id: 'a1' }, pendingUploads: 0, pendingAttachments: [], notice: { clear() {}, show() {} }, agents: new Map([['a1', { slug: 'tess' }]]), draft: { value: '@tess ok', setSelectionRange() {} }, answerItems: new Map([['m1', free]]), setReply() {}, inbox: { answer: async () => { calls.push(1); await gate; return true; } } });
         const one = chat.send(), two = chat.send(); release(); await Promise.all([one, two]);
         out.doubleSubmit = calls.length;

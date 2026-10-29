@@ -6,6 +6,7 @@ export class ChatStore {
   constructor(host) {
     this.host = host; this.alive = true;
     this.openGeneration = 0; this.sessionGeneration = 0; this.jumpGeneration = 0; this.pageSize = 100; this.olderPageSize = 50;
+    this.threadGeneration = 0; this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadPageSize = 100; this.threadOlderPageSize = 50;
     this.initialLoading = false; this.announcedIDs = null; this.reactionTickets = new Map();
     this.clearRoom();
   }
@@ -16,7 +17,9 @@ export class ChatStore {
     this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.loadingNewer = false; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0;
   }
 
-  reset() { this.openGeneration++; this.sessionGeneration++; this.clearRoom(); this.initialLoading = false; }
+  current(session, roomID) { return session === this.sessionGeneration && this.host.room?.id === roomID; }
+
+  reset() { this.openGeneration++; this.sessionGeneration++; this.threadGeneration++; this.clearRoom(); this.initialLoading = false; }
 
   destroy() { this.reset(); this.alive = false; }
 
@@ -180,5 +183,83 @@ export class ChatStore {
     const mine = this.reactions.get(id)?.some(entry => entry.emoji === emoji && entry.member_id === currentUser);
     try { await request(`/api/messages/${id}/reactions/${encodeURIComponent(emoji)}`, { method: mine ? 'DELETE' : 'PUT' }); if (generation !== this.openGeneration) return; await this.refreshReactions(id); }
     catch (error) { if (generation === this.openGeneration) this.host.say(error.message); }
+  }
+
+  async openThread(root, focus = null) {
+    if (!this.alive) return;
+    const roomID = this.host.room?.id, thread = ++this.threadGeneration;
+    this.host.beginThread(root, focus);
+    try {
+      const context = focus ? `&around=${encodeURIComponent(focus.id)}` : '';
+      const page = await request(`/api/rooms/${roomID}/messages?thread_root=${encodeURIComponent(root.id)}${context}&limit=${this.threadPageSize}`);
+      if (thread !== this.threadGeneration) return;
+      this.host.drawThreadPage(page);
+      this.threadOldestSeq = page[0]?.seq || 0;
+      this.threadHasMoreOlder = page.length === this.threadPageSize;
+      this.host.showThreadPage(focus);
+      const lastSeq = focus ? page.at(-1)?.seq : null;
+      if (lastSeq) {
+        const newer = await request(`/api/rooms/${roomID}/messages?thread_root=${encodeURIComponent(root.id)}&after=${lastSeq}&limit=1`);
+        if (thread !== this.threadGeneration) return;
+        if (!newer.length) this.host.settleThreadLatest();
+      }
+    } catch (error) { if (thread === this.threadGeneration) this.host.threadError(error.message); }
+  }
+
+  async loadOlderThread() {
+    if (!this.alive || !this.host.threadRoot || !this.threadHasMoreOlder || !this.threadOldestSeq || this.loadingOlderThread) return;
+    const roomID = this.host.room.id, rootID = this.host.threadRoot.id, thread = this.threadGeneration;
+    this.loadingOlderThread = true; this.host.showThreadOlderStatus(true);
+    try {
+      const page = await request(`/api/rooms/${roomID}/messages?thread_root=${encodeURIComponent(rootID)}&before=${this.threadOldestSeq}&limit=${this.threadOlderPageSize}`);
+      if (thread !== this.threadGeneration) return;
+      if (page.length) this.threadOldestSeq = page[0].seq;
+      this.threadHasMoreOlder = page.length === this.threadOlderPageSize;
+      this.host.prependThreadPage(page);
+    } catch (error) {
+      if (thread === this.threadGeneration) this.host.threadError(error.message);
+    } finally {
+      if (thread === this.threadGeneration) { this.loadingOlderThread = false; this.host.showThreadOlderStatus(false); }
+    }
+  }
+
+  async sendThread() {
+    if (!this.alive || !this.host.threadRoot || !this.host.threadDraft.value.trim()) return;
+    const room = this.host.room.id, root = this.host.threadRoot.id, body = this.host.threadDraft.value, generation = this.openGeneration;
+    this.host.beginThreadSend();
+    try {
+      const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, thread_root: root, reply_to: root } });
+      if (generation === this.openGeneration && this.host.threadRoot?.id === root) this.host.sentThreadReply(message);
+    } catch (error) { if (generation === this.openGeneration) this.host.threadSendFailed(error.message); }
+  }
+
+  async send() {
+    if (!this.alive || !this.host.room) return;
+    const input = this.host.sendInput(); if (!input) return;
+    const room = this.host.room.id, session = this.sessionGeneration, { body, reply, attachments } = input;
+    this.host.beginSend();
+    let sentID = null;
+    try {
+      if (await this.host.sendAsAnswer(reply, attachments, body, () => this.current(session, room))) return;
+      const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, attachments, ...(reply ? { reply_to: reply.id } : {}) } });
+      sentID = message.id;
+      if (this.current(session, room)) {
+        this.host.sentMessage();
+        // A history window does not show the live end, so appending there would put the message among old ones: show the latest instead.
+        if (this.contextMode) await this.reopenLatest(); else this.host.addSent(message);
+      }
+    } catch (error) { if (this.current(session, room)) this.host.sendFailed(error.message); }
+    finally { this.host.sendFinished(sentID); }
+  }
+
+  // Reopening the room at the latest closes the thread panel; an open thread and its unsent reply survive it.
+  async reopenLatest() {
+    if (!this.alive) return;
+    const root = this.host.threadRoot, draft = this.host.threadDraft.value, room = this.host.room, session = this.sessionGeneration;
+    await this.open(room);
+    if (!root || !this.current(session, room.id) || this.host.threadRoot) return;
+    const thread = this.openThread(root);
+    this.host.restoreThreadDraft(draft);
+    await thread;
   }
 }

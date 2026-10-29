@@ -71,7 +71,6 @@ export class Chat {
     this.lightbox = document.querySelector('#image-lightbox'); document.querySelector('#image-lightbox-close').onclick = () => this.lightbox.close();
     this.lightbox.onclick = event => { if (event.target === this.lightbox) this.lightbox.close(); };
     this.agents = new Map(); this.threadPanel = document.querySelector('#thread-panel'); this.threadTitle = this.threadPanel.querySelector('h2'); this.threadList = document.querySelector('#thread-messages'); this.threadForm = document.querySelector('#thread-composer'); this.threadDraft = this.threadForm.elements.body; this.threadFormatting = new ComposerFormatting(this.threadDraft);
-    this.threadPageSize = 100; this.threadOlderPageSize = 50;
     this.threadOlderStatus = document.createElement('div'); this.threadOlderStatus.className = 'older-status thread-older'; this.threadOlderStatus.setAttribute('role', 'status'); this.threadOlderStatus.textContent = 'Loading older replies…'; this.threadOlderStatus.hidden = true;
     this.threadLatestButton = document.createElement('button'); this.threadLatestButton.type = 'button'; this.threadLatestButton.className = 'icon-btn back-to-latest thread-latest'; setLatest(this.threadLatestButton, 'Latest replies'); this.threadLatestButton.hidden = true;
     this.threadLatestButton.onclick = () => { if (this.threadRoot) this.openThread(this.threadRoot); };
@@ -160,7 +159,7 @@ export class Chat {
   destroy() { this.reset(); this.store.destroy(); this.panel.destroy(); }
   // With no room open the chat shows an empty-state card instead of the composer and room controls; the app decides what the card says.
   syncEmpty() { this.onEmptyChange?.(!this.room); }
-  current(session, roomID) { return session === this.sessionGeneration && this.room?.id === roomID; }
+  current(session, roomID) { return this.store.current(session, roomID); }
   // A list too short to scroll cannot ask for more by scrolling, so a short page with more behind it asks right away.
   loadOlderIfShort() {
     requestAnimationFrame(() => { if (this.hasMoreOlder && this.list.scrollHeight <= this.list.clientHeight + 80) this.loadOlder(); });
@@ -830,65 +829,11 @@ export class Chat {
     setLatest(this.threadNewButton, newRepliesLabel(count), count);
     this.threadNewButton.hidden = count === 0;
   }
-  async openThread(root, focus = null) {
-    const roomID = this.room?.id, session = this.sessionGeneration, generation = this.openGeneration;
-    const thread = this.threadGeneration = (this.threadGeneration || 0) + 1;
-    if (this.threadRoot?.id !== root.id) this.releaseThread();
-    this.threadRoot = root; this.threadTitle.textContent = 'Thread'; this.threadPanel.hidden = false; this.threadList.replaceChildren(this.threadEntry(root)); this.threadEntryIDs = new Set([root.id]);
-    this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = !focus; this.threadNewReplyIDs = new Set(); this.threadNewButton.hidden = true;
-    document.querySelector('#thread-error').textContent = '';
-    if (Number.isInteger(root.thread_count)) this.serverThreadCounts.set(root.id, Math.max(this.serverThreadCounts.get(root.id) || 0, root.thread_count));
-    this.updateThreadCount(root.id);
-    this.threadDraft.focus();
-    try {
-      const context = focus ? `&around=${encodeURIComponent(focus.id)}` : '';
-      const page = await request(`/api/rooms/${roomID}/messages?thread_root=${encodeURIComponent(root.id)}${context}&limit=${this.threadPageSize}`);
-      if (!this.current(session, roomID) || generation !== this.openGeneration || thread !== this.threadGeneration || this.threadRoot?.id !== root.id) return;
-      for (const message of page) { this.threadNewReplyIDs.delete(message.id); this.add(message); this.insertThreadEntry(message); }
-      this.updateThreadNewMarker();
-      this.threadOldestSeq = page[0]?.seq || 0;
-      this.threadHasMoreOlder = page.length === this.threadPageSize;
-      this.threadList.dataset.hasOlder = String(this.threadHasMoreOlder);
-      if (focus) this.threadList.querySelector(`[data-message-id="${CSS.escape(focus.id)}"]`)?.scrollIntoView({ block: 'center' });
-      else this.threadList.scrollTop = this.threadList.scrollHeight;
-      const lastSeq = focus ? page.at(-1)?.seq : null;
-      if (lastSeq) {
-        const newer = await request(`/api/rooms/${roomID}/messages?thread_root=${encodeURIComponent(root.id)}&after=${lastSeq}&limit=1`);
-        if (!this.current(session, roomID) || generation !== this.openGeneration || thread !== this.threadGeneration || this.threadRoot?.id !== root.id) return;
-        if (!newer.length) {
-          this.threadLatestButton.hidden = true;
-          for (const id of this.threadNewReplyIDs) {
-            const message = this.messages.get(id);
-            if (message) this.insertThreadEntry(message);
-          }
-          this.threadNewReplyIDs.clear();
-          this.updateThreadNewMarker();
-        }
-      }
-    } catch (error) {
-      if (this.current(session, roomID) && thread === this.threadGeneration) document.querySelector('#thread-error').textContent = error.message;
-    }
-  }
-  async loadOlderThread() {
-    if (!this.room || !this.threadRoot || !this.threadHasMoreOlder || !this.threadOldestSeq || this.loadingOlderThread) return;
-    const roomID = this.room.id, rootID = this.threadRoot.id, session = this.sessionGeneration, generation = this.openGeneration, thread = this.threadGeneration;
-    this.loadingOlderThread = true; this.threadOlderStatus.hidden = false;
-    try {
-      const page = await request(`/api/rooms/${roomID}/messages?thread_root=${encodeURIComponent(rootID)}&before=${this.threadOldestSeq}&limit=${this.threadOlderPageSize}`);
-      if (!this.current(session, roomID) || generation !== this.openGeneration || thread !== this.threadGeneration || this.threadRoot?.id !== rootID) return;
-      // Measured after the page arrives, as in loadOlder: only the inserted height is compensated, not the reader's own scrolling.
-      const anchor = this.threadList.children[1], anchorTop = anchor?.getBoundingClientRect().top;
-      for (const message of page) { this.add(message); this.insertThreadEntry(message); }
-      if (page.length) this.threadOldestSeq = page[0].seq;
-      this.threadHasMoreOlder = page.length === this.threadOlderPageSize;
-      this.threadList.dataset.hasOlder = String(this.threadHasMoreOlder);
-      if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
-    } catch (error) {
-      if (this.current(session, roomID) && thread === this.threadGeneration) document.querySelector('#thread-error').textContent = error.message;
-    } finally {
-      if (thread === this.threadGeneration) { this.loadingOlderThread = false; this.threadOlderStatus.hidden = true; }
-    }
-  }
+  openThread(root, focus = null) { return this.store.openThread(root, focus); }
+  loadOlderThread() { return this.store.loadOlderThread(); }
+  sendThread() { return this.store.sendThread(); }
+  send() { return this.store.send(); }
+  reopenLatest() { return this.store.reopenLatest(); }
   // Replies kept for an open thread whose root row is not rendered (trimmed from a window, or never loaded) have no other
   // owner: when the panel lets go of that thread they are dropped with its counts, and come back with the row's page.
   releaseThread() {
@@ -898,66 +843,81 @@ export class Chat {
     this.threadCounts.delete(id); this.serverThreadCounts.delete(id);
   }
   closeThread() { this.threadNotice.clear(); this.releaseThread(); this.threadGeneration = (this.threadGeneration || 0) + 1; this.threadRoot = null; this.threadTitle.textContent = 'Thread'; this.threadEntryIDs = new Set(); this.threadNewReplyIDs = new Set(); this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; this.threadList.replaceChildren(); document.querySelector('#thread-error').textContent = ''; }
-  async sendThread() {
-    if (!this.room || !this.threadRoot || !this.threadDraft.value.trim()) return;
-    const room = this.room.id, root = this.threadRoot.id, body = this.threadDraft.value, session = this.sessionGeneration;
-    const errorNode = document.querySelector('#thread-error'); errorNode.textContent = ''; this.threadNotice.clear();
-    try {
-      const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, thread_root: root, reply_to: root } });
-      if (this.current(session, room) && this.threadRoot?.id === root) {
-        this.threadDraft.value = '';
-        if (!this.threadLatestButton.hidden) this.markNewThreadReply(message);
-        else { this.add(message); this.threadList.scrollTop = this.threadList.scrollHeight; }
-      }
-    } catch (error) { if (this.current(session, room)) this.threadNotice.show(error.message); }
-  }
   setReply(message) { this.reply = message; this.chip.hidden = !message; this.chipText.textContent = message ? `Replying to ${this.authorName(message)}: ${messageSnippet(message)}` : ''; if (message) this.draft.focus(); }
   // Whether a reply to `parent` with this text is the answer to `item` (see send): a question or approval this person decides, answered with text
   // that mentions at most the requester. A free-text ask takes any text; an options-only ask only the text of one of its options (so Shift-clicking
   // an answer and sending it unedited acts like the button, while edited text is an ordinary reply).
   answersThroughInbox(item, parent, body) { return answersThrough(item, this.answerOptions(parent).mention, body); }
-  async send() {
-    if (!this.room || this.pendingUploads || (!this.draft.value.trim() && !this.pendingAttachments.length)) return;
-    const room = this.room.id, body = this.draft.value, reply = this.reply, attachments = this.pendingAttachments.map(a => a.id), session = this.sessionGeneration;
-    this.error.textContent = ''; this.notice.clear();
-    this.announcer.sendStarted();
-    let sentID = null;
+  beginThread(root, focus) {
+    if (this.threadRoot?.id !== root.id) this.releaseThread();
+    this.threadRoot = root; this.threadTitle.textContent = 'Thread'; this.threadPanel.hidden = false; this.threadList.replaceChildren(this.threadEntry(root)); this.threadEntryIDs = new Set([root.id]);
+    this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = !focus; this.threadNewReplyIDs = new Set(); this.threadNewButton.hidden = true;
+    document.querySelector('#thread-error').textContent = '';
+    if (Number.isInteger(root.thread_count)) this.serverThreadCounts.set(root.id, Math.max(this.serverThreadCounts.get(root.id) || 0, root.thread_count));
+    this.updateThreadCount(root.id);
+    this.threadDraft.focus();
+  }
+  drawThreadPage(page) {
+    for (const message of page) { this.threadNewReplyIDs.delete(message.id); this.add(message); this.insertThreadEntry(message); }
+    this.updateThreadNewMarker();
+  }
+  showThreadPage(focus) {
+    this.threadList.dataset.hasOlder = String(this.threadHasMoreOlder);
+    if (focus) this.threadList.querySelector(`[data-message-id="${CSS.escape(focus.id)}"]`)?.scrollIntoView({ block: 'center' });
+    else this.threadList.scrollTop = this.threadList.scrollHeight;
+  }
+  settleThreadLatest() {
+  this.threadLatestButton.hidden = true;
+  for (const id of this.threadNewReplyIDs) {
+    const message = this.messages.get(id);
+    if (message) this.insertThreadEntry(message);
+  }
+  this.threadNewReplyIDs.clear();
+  this.updateThreadNewMarker();
+  }
+  threadError(message) { document.querySelector('#thread-error').textContent = message; }
+  showThreadOlderStatus(shown) { this.threadOlderStatus.hidden = !shown; }
+  prependThreadPage(page) {
+    // Measured after the page arrives, as in loadOlder: only the inserted height is compensated, not the reader's own scrolling.
+    const anchor = this.threadList.children[1], anchorTop = anchor?.getBoundingClientRect().top;
+    for (const message of page) { this.add(message); this.insertThreadEntry(message); }
+    this.threadList.dataset.hasOlder = String(this.threadHasMoreOlder);
+    if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+  }
+  beginThreadSend() { document.querySelector('#thread-error').textContent = ''; this.threadNotice.clear(); }
+  sentThreadReply(message) {
+    this.threadDraft.value = '';
+    if (!this.threadLatestButton.hidden) this.markNewThreadReply(message);
+    else { this.add(message); this.threadList.scrollTop = this.threadList.scrollHeight; }
+  }
+  threadSendFailed(message) { this.threadNotice.show(message); }
+  restoreThreadDraft(draft) { this.threadDraft.value = draft; this.draft.focus(); }
+  sendInput() {
+    if (this.pendingUploads || (!this.draft.value.trim() && !this.pendingAttachments.length)) return null;
+    return { body: this.draft.value, reply: this.reply, attachments: this.pendingAttachments.map(a => a.id) };
+  }
+  beginSend() { this.error.textContent = ''; this.notice.clear(); this.announcer.sendStarted(); }
+  async sendAsAnswer(reply, attachments, body, current) {
+    // A reply to a message with a free-text question or approval open for this person is the answer to it: it goes through the inbox, which
+    // resolves the item, so the item closes and the Inbox count drops, whether the text came from Shift-clicking an answer or was typed. It
+    // stays an ordinary reply when it carries attachments (an answer is text), when the item is not one this person decides, when the ask is
+    // options only and the text is not one of the options (arbitrary text does not answer it), or when the text mentions anyone but the requester (so
+    // an @reviewer wake still works).
+    const open = reply && !attachments.length ? this.answerItems?.get(reply.id) : null;
+    if (!(open && this.answersThroughInbox(open, reply, body))) return false;
+    if (this.answering) return true;
+    this.answering = true;
     try {
-      // A reply to a message with a free-text question or approval open for this person is the answer to it: it goes through the inbox, which
-      // resolves the item, so the item closes and the Inbox count drops, whether the text came from Shift-clicking an answer or was typed. It
-      // stays an ordinary reply when it carries attachments (an answer is text), when the item is not one this person decides, when the ask is
-      // options only and the text is not one of the options (arbitrary text does not answer it), or when the text mentions anyone but the requester (so
-      // an @reviewer wake still works).
-      const open = reply && !attachments.length ? this.answerItems?.get(reply.id) : null;
-      if (open && this.answersThroughInbox(open, reply, body)) {
-        if (this.answering) return;
-        this.answering = true;
-        try {
-          // Only a confirmed answer clears the draft; a card that is already pending answers undefined, and a refusal answers false.
-          if (await this.inbox.answer(open, body.trim()) !== true) throw new Error('Could not send the answer');
-        } finally { this.answering = false; }
-        if (this.current(session, room)) { this.draft.value = ''; if (this.recall) this.recall.index = null; this.resizeDraft(); this.setReply(null); }
-        return;
-      }
-      const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, attachments, ...(reply ? { reply_to: reply.id } : {}) } });
-      sentID = message.id;
-      if (this.current(session, room)) {
-        this.draft.value = ''; if (this.recall) this.recall.index = null; this.resizeDraft(); this.pendingAttachments = []; this.renderPending(); this.setReply(null);
-        // A history window does not show the live end, so appending there would put the message among old ones: show the latest instead.
-        if (this.contextMode) await this.reopenLatest(); else { this.add(message); this.trimLive(); }
-      }
-    } catch (error) { if (this.current(session, room)) this.notice.show(error.message); }
-    finally { this.announcer.sendFinished(sentID); }
+      // Only a confirmed answer clears the draft; a card that is already pending answers undefined, and a refusal answers false.
+      if (await this.inbox.answer(open, body.trim()) !== true) throw new Error('Could not send the answer');
+    } finally { this.answering = false; }
+    if (current()) { this.draft.value = ''; if (this.recall) this.recall.index = null; this.resizeDraft(); this.setReply(null); }
+    return true;
   }
-  // Reopening the room at the latest closes the thread panel; an open thread and its unsent reply survive it.
-  async reopenLatest() {
-    const root = this.threadRoot, draft = this.threadDraft.value, room = this.room, session = this.sessionGeneration;
-    await this.open(room);
-    if (!root || !this.current(session, room.id) || this.threadRoot) return;
-    const thread = this.openThread(root);
-    this.threadDraft.value = draft; this.draft.focus();
-    await thread;
-  }
+  sentMessage() { this.draft.value = ''; if (this.recall) this.recall.index = null; this.resizeDraft(); this.pendingAttachments = []; this.renderPending(); this.setReply(null); }
+  addSent(message) { this.add(message); this.trimLive(); }
+  sendFailed(message) { this.notice.show(message); }
+  sendFinished(id) { this.announcer.sendFinished(id); }
   refreshReactions(id) { return this.store.refreshReactions(id); }
   node(id) { return this.nodes.get(id); }
   showReactions(id, entries) {
@@ -972,6 +932,6 @@ export class Chat {
   toggleReaction(id, emoji) { return this.store.toggleReaction(id, emoji); }
 }
 
-for (const name of ['messages', 'reactions', 'threadCounts', 'serverThreadCounts', 'repliedTo', 'answeredMessages', 'historicalAuthors', 'missedIDs', 'announcedIDs', 'newestSeq', 'oldestSeq', 'hasMoreOlder', 'loadingOlder', 'loadingNewer', 'contextMode', 'catchingUp', 'windowSeq', 'initialLoading', 'openGeneration', 'sessionGeneration', 'jumpGeneration', 'pageSize', 'olderPageSize']) {
+for (const name of ['messages', 'reactions', 'threadCounts', 'serverThreadCounts', 'repliedTo', 'answeredMessages', 'historicalAuthors', 'missedIDs', 'announcedIDs', 'newestSeq', 'oldestSeq', 'hasMoreOlder', 'loadingOlder', 'loadingNewer', 'contextMode', 'catchingUp', 'windowSeq', 'initialLoading', 'openGeneration', 'sessionGeneration', 'jumpGeneration', 'pageSize', 'olderPageSize', 'threadGeneration', 'threadOldestSeq', 'threadHasMoreOlder', 'loadingOlderThread', 'threadPageSize', 'threadOlderPageSize']) {
   Object.defineProperty(Chat.prototype, name, { configurable: true, get() { return this.store[name]; }, set(value) { this.store[name] = value; } });
 }
