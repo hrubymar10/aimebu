@@ -132,6 +132,13 @@ quarantine problem does not arise for a locally built binary.
   states this.
 - It resolves symlinks to its own location, so `bin/aimebu` can be symlinked
   onto PATH or its `bin/` directory added to PATH.
+- It updates its own clone: an interactive run offers to fast-forward the
+  remote's default branch and rebuild (once per `AIMEBU2_UPDATE_INTERVAL_HOURS`,
+  skipped for machine-readable and non-terminal runs), and `aimebu update
+  [--check]` does it on demand. It never touches a dirty checkout or a
+  non-default branch, builds beside the cache and swaps it in only on success,
+  and `AIMEBU2_UPDATE_CHECK=0` disables it. Its git calls never prompt. README Install has the full list;
+  the update tests in `cmd/aimebu/binwrapper_test.go` use a local bare remote.
 
 README Install section: Manual (clone, add `bin/` to PATH, `aimebu
 version`) first, with the Go toolchain requirement.
@@ -195,8 +202,9 @@ Secondary options, none required for 2.0.0 and none verified here:
   would need the `xattr -d com.apple.quarantine ./aimebu` workaround on macOS
   because binaries stay unsigned and signing/notarization is not a goal. If
   published, add `SHA256SUMS`. The release can also just be a tag plus notes.
-- `aimebu update --check` is parked by the owner and not a release
-  blocker; v2 has no self-update.
+- Self-update is the wrapper's update check and `aimebu update [--check]`
+  (see the `bin/aimebu` notes above). It follows the clone's git remote, so it
+  does not apply to `go install`, Homebrew or prebuilt binaries.
 
 ### Homebrew formula draft
 

@@ -84,6 +84,29 @@ into a temporary binary for that run only (the cache is left alone; any other
 value, including `0`, uses the cache). The binary reports the output of
 `git describe` as its version.
 
+The wrapper can also update the clone for you. Run in a terminal, a command
+checks the remote's default branch at most once every 24 hours (a hard 5 second
+limit, no credential or passphrase prompts, silent when the remote cannot be reached) and, when the clone is behind,
+asks `aimebu update available. update now? (Y/n)`. Yes fast-forwards the clone
+and rebuilds the cached binary (the old one stays in place until the new build
+succeeds; a failed update restores the checkout), then runs your command on the
+new version. A dirty checkout or a branch other than the remote's default is
+never touched: it only prints a one-line notice. Notices go to stderr, and the
+check is skipped for `version`, `help`, `--json`, `--machine` and `--plain`
+runs, for `AIMEBU_FORCE_BUILD=1`, and whenever stdin, stdout or stderr is not a
+terminal (so `aimebu mcp`, pipes and services never check).
+`aimebu update` updates on demand and `aimebu update --check` only reports
+(`current`, `behind`, `dirty`, `non-default` or `unreachable`). Settings:
+
+| Variable | Effect |
+| --- | --- |
+| `AIMEBU2_UPDATE_CHECK=0` | turn the automatic check off (`aimebu update` still works) |
+| `AIMEBU2_UPDATE_CHECK=apply` | update without asking, and without needing a terminal (still once per interval, never on a dirty or non-default checkout) |
+| `AIMEBU2_UPDATE_INTERVAL_HOURS` | hours between automatic checks, default `24`; `0` checks on every run. The last check is the mtime of `aimebu-update-check` in the clone's git directory |
+| `AIMEBU2_UPDATE_TIMEOUT_SECONDS` | time limit for the remote lookup, default `5` |
+| `AIMEBU2_UPDATE_FETCH_TIMEOUT_SECONDS` | time limit for the fetch once an update is accepted, default `60` |
+| `AIMEBU2_UPDATE_REMOTE` | the git remote to follow, default `origin` |
+
 This branch is the v2 rewrite. The server, embedded and standalone
 supervisors, web UI, and managed adapters are implemented.
 Run `make test-full` for the same formatting, vet, and race-test checks used

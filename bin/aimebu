@@ -5,6 +5,10 @@
 #   export PATH="$PATH:/path/to/aimebu/bin"
 # A symlink to this file also works. Requires a Go toolchain at least as new as
 # the "go" line in go.mod (an older Go downloads the right one by default).
+#
+# Updates: an interactive run checks the clone's default branch at most once a day and
+# offers to update and rebuild; "aimebu update [--check]" does it on demand. See the
+# "Install" section of the README for AIMEBU2_UPDATE_CHECK and its companions.
 
 set -euo pipefail
 
@@ -26,6 +30,8 @@ resolve_script_dir() {
 SCRIPT_DIR="$(resolve_script_dir "${BASH_SOURCE[0]}")"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 BINARY="$REPO_DIR/aimebu-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+CACHE_BINARY="$BINARY"
+UPDATE_REMOTE="${AIMEBU2_UPDATE_REMOTE:-origin}"
 FORCE_BUILD="${AIMEBU_FORCE_BUILD:-}"
 TEMP_BINARY=""
 pid=""
@@ -42,6 +48,281 @@ forward_signal() {
     fi
 }
 
+# build_binary <output> compiles ./cmd/aimebu into <output>.
+# The version is a full string ("aimebu v2.0.0"); without git metadata keep the
+# default, so "aimebu version" still appends the VCS revision when it can.
+build_binary() {
+    local out="$1" ldflags="-s -w" described
+    if described="$(cd "$REPO_DIR" && git describe --tags --always --dirty 2>/dev/null)" && [ -n "$described" ]; then
+        ldflags="$ldflags -X 'main.version=aimebu $described'"
+    fi
+    (cd "$REPO_DIR" && go build -ldflags "$ldflags" -o "$out" ./cmd/aimebu)
+}
+
+# ---- update check -------------------------------------------------------------------
+# The clone is updated only from a clean checkout of the remote's default branch, by a
+# fast-forward, and the cached binary is rebuilt before it replaces the old one. Notices
+# go to stderr so machine-readable stdout stays clean. State: unreachable, dirty,
+# non-default, current or behind.
+
+# update_git <seconds> <output-file> <git args...> runs git in the clone with a hard time
+# limit, fully non-interactive: no credential, passphrase or host-key prompt (an ssh
+# configured through GIT_SSH_COMMAND is left alone). A watchdog replaces timeout(1),
+# which macOS does not ship; it signals git only after a real timeout, and the caller
+# stops it as soon as git is reaped.
+update_git() {
+    local seconds="$1" out="$2" cmd dog status=0
+    shift 2
+    GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true SSH_ASKPASS= GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}" \
+        git -C "$REPO_DIR" "$@" >"$out" 2>/dev/null </dev/null &
+    cmd=$!
+    (
+        i=0
+        while [ "$i" -lt "$seconds" ] && kill -0 "$cmd" 2>/dev/null; do
+            sleep 1
+            i=$((i + 1))
+        done
+        if [ "$i" -ge "$seconds" ]; then
+            kill "$cmd" 2>/dev/null
+        fi
+    ) >/dev/null 2>&1 &
+    dog=$!
+    disown "$dog" 2>/dev/null || true
+    wait "$cmd" 2>/dev/null || status=$?
+    kill "$dog" 2>/dev/null || true
+    return "$status"
+}
+
+# update_seconds <variable> <default> prints a whole number of seconds from the named
+# environment variable, or the default when it is unset or not a number.
+update_seconds() {
+    local value="${!1:-}"
+    case "$value" in ''|*[!0-9]*) value="$2" ;; esac
+    printf '%s' "$value"
+}
+
+update_short_oid() { printf '%.12s' "$1"; }
+
+# remote_default_target prints "<default ref> <oid>" of the remote's HEAD.
+remote_default_target() {
+    local output value name ref="" oid=""
+    output="$(mktemp "${TMPDIR:-/tmp}/aimebu-update-check.XXXXXX")"
+    if ! update_git "$(update_seconds AIMEBU2_UPDATE_TIMEOUT_SECONDS 5)" "$output" ls-remote --symref "$UPDATE_REMOTE" HEAD; then
+        rm -f "$output"
+        return 1
+    fi
+    while read -r value name _; do
+        if [ "$value" = "ref:" ] && [ "${name#refs/heads/}" != "$name" ]; then
+            ref="$name"
+        elif [ "$name" = "HEAD" ] && [[ "$value" =~ ^[0-9a-fA-F]{40,64}$ ]]; then
+            oid="$value"
+        fi
+    done <"$output"
+    rm -f "$output"
+    [ -n "$ref" ] && [ -n "$oid" ] || return 1
+    printf '%s %s\n' "$ref" "$oid"
+}
+
+classify_update() {
+    local target
+    UPDATE_STATE=unreachable UPDATE_DEFAULT_REF="" UPDATE_REMOTE_OID="" UPDATE_LOCAL_OID="" UPDATE_BRANCH=""
+    UPDATE_LOCAL_VERSION="$(git -C "$REPO_DIR" describe --tags --always 2>/dev/null || true)"
+    if [ -n "$(git -C "$REPO_DIR" status --porcelain --untracked-files=no 2>/dev/null || true)" ]; then
+        UPDATE_STATE=dirty
+        return 0
+    fi
+    target="$(remote_default_target)" || return 0
+    UPDATE_DEFAULT_REF="${target% *}" UPDATE_REMOTE_OID="${target#* }"
+    UPDATE_BRANCH="$(git -C "$REPO_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+    if [ -z "$UPDATE_BRANCH" ] || [ "refs/heads/$UPDATE_BRANCH" != "$UPDATE_DEFAULT_REF" ]; then
+        UPDATE_STATE=non-default
+        return 0
+    fi
+    UPDATE_LOCAL_OID="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)" || {
+        UPDATE_STATE=unreachable
+        return 0
+    }
+    if [ "$UPDATE_LOCAL_OID" = "$UPDATE_REMOTE_OID" ] \
+        || { git -C "$REPO_DIR" cat-file -e "$UPDATE_REMOTE_OID^{commit}" 2>/dev/null \
+            && git -C "$REPO_DIR" merge-base --is-ancestor "$UPDATE_REMOTE_OID" "$UPDATE_LOCAL_OID" 2>/dev/null; }; then
+        UPDATE_STATE=current
+    else
+        UPDATE_STATE=behind
+    fi
+}
+
+update_local_label() { printf '%s' "${UPDATE_LOCAL_VERSION:-$(update_short_oid "$UPDATE_LOCAL_OID")}"; }
+
+update_skip_warning() {
+    case "$UPDATE_STATE" in
+        dirty) echo "aimebu update check skipped: checkout is dirty." >&2 ;;
+        non-default)
+            echo "aimebu update check skipped: checkout is on '${UPDATE_BRANCH:-detached}', not default branch '${UPDATE_DEFAULT_REF#refs/heads/}'." >&2
+            ;;
+    esac
+}
+
+# restore_update_checkout <original oid> <original ref> <moved oid> puts the branch back
+# where it was after a failed update.
+restore_update_checkout() {
+    local original_oid="$1" original_ref="$2" moved_oid="$3" branch current_oid current_ref
+    current_oid="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)" || return 1
+    current_ref="$(git -C "$REPO_DIR" symbolic-ref --quiet HEAD 2>/dev/null || true)"
+    if [ "$current_oid" = "$original_oid" ] && [ "$current_ref" = "$original_ref" ]; then
+        return 0
+    fi
+    [ -n "$original_ref" ] && [ -n "$moved_oid" ] && [ "$current_oid" = "$moved_oid" ] && [ "$current_ref" = "$original_ref" ] || return 1
+    branch="${original_ref#refs/heads/}"
+    git -C "$REPO_DIR" checkout --detach "$original_oid" >/dev/null 2>&1 || return 1
+    git -C "$REPO_DIR" update-ref "$original_ref" "$original_oid" "$moved_oid" >/dev/null 2>&1 || return 1
+    git -C "$REPO_DIR" checkout "$branch" >/dev/null 2>&1 || return 1
+    [ "$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)" = "$original_oid" ]
+}
+
+# update_failure <automatic> <message> <original oid> <original ref> <moved oid>: restores
+# the checkout. An automatic update then lets the caller carry on with the previous
+# version; an explicit one stops.
+update_failure() {
+    local automatic="$1" message="$2"
+    shift 2
+    if ! restore_update_checkout "$@"; then
+        echo "aimebu update failed ($message) and the previous checkout could not be restored" >&2
+        exit 1
+    fi
+    if [ "$automatic" = true ]; then
+        echo "aimebu automatic update failed: $message; continuing on the previous version." >&2
+        return 0
+    fi
+    echo "Error: $message; the previous checkout was restored" >&2
+    exit 1
+}
+
+# apply_update <automatic> [args...] fast-forwards the clone to the advertised tip and
+# rebuilds the cached binary. Automatic: restart the wrapper on the new code (bash reads
+# a script as it runs, so it must not carry on from a file that just changed) or return
+# to continue on the previous version after a failure. Explicit: report and return.
+apply_update() {
+    local automatic="$1" original_oid original_ref moved_oid="" fetched_oid built message
+    shift
+    original_oid="$(git -C "$REPO_DIR" rev-parse HEAD)" || { echo "Error: cannot resolve current checkout revision" >&2; exit 1; }
+    original_ref="$(git -C "$REPO_DIR" symbolic-ref --quiet HEAD 2>/dev/null || true)"
+    if ! update_git "$(update_seconds AIMEBU2_UPDATE_FETCH_TIMEOUT_SECONDS 60)" /dev/null fetch --no-tags "$UPDATE_REMOTE" "$UPDATE_DEFAULT_REF"; then
+        update_failure "$automatic" "could not fetch the advertised default-branch tip within the time limit (AIMEBU2_UPDATE_FETCH_TIMEOUT_SECONDS)" "$original_oid" "$original_ref" "$moved_oid"
+        return 0
+    fi
+    fetched_oid="$(git -C "$REPO_DIR" rev-parse FETCH_HEAD 2>/dev/null || true)"
+    if [ "$fetched_oid" != "$UPDATE_REMOTE_OID" ]; then
+        update_failure "$automatic" "fetched tip did not match the advertised revision" "$original_oid" "$original_ref" "$moved_oid"
+        return 0
+    fi
+    if ! git -C "$REPO_DIR" merge --ff-only "$UPDATE_REMOTE_OID" >/dev/null 2>&1; then
+        update_failure "$automatic" "cannot fast-forward ${UPDATE_BRANCH:-the default branch}" "$original_oid" "$original_ref" "$moved_oid"
+        return 0
+    fi
+    moved_oid="$(git -C "$REPO_DIR" rev-parse HEAD)"
+    # Build beside the cache and swap it in only on success, so a failed build leaves
+    # the previous version fully usable.
+    built="$CACHE_BINARY.update.$$"
+    echo "Building aimebu..." >&2
+    if ! build_binary "$built" >&2; then
+        rm -f "$built"
+        update_failure "$automatic" "the updated source did not build" "$original_oid" "$original_ref" "$moved_oid"
+        return 0
+    fi
+    mv -f "$built" "$CACHE_BINARY"
+    message="Updated aimebu from $(update_short_oid "$original_oid") to $(update_short_oid "$moved_oid")."
+    if [ "$automatic" = true ]; then
+        echo "$message" >&2
+        AIMEBU_UPDATE_RESTARTED=1 exec "$SCRIPT_DIR/aimebu" "$@"
+    fi
+    echo "$message"
+}
+
+# update_due is true when the last automatic check is older than
+# AIMEBU2_UPDATE_INTERVAL_HOURS (default 24; 0 checks every run).
+update_due() {
+    local hours="${AIMEBU2_UPDATE_INTERVAL_HOURS:-24}" stamp
+    case "$hours" in ''|*[!0-9]*) hours=24 ;; esac
+    stamp="$(git -C "$REPO_DIR" rev-parse --absolute-git-dir 2>/dev/null)/aimebu-update-check" || return 1
+    UPDATE_STAMP="$stamp"
+    [ -e "$stamp" ] && [ "$hours" -gt 0 ] || return 0
+    [ -n "$(find "$stamp" -mmin "+$((hours * 60))" 2>/dev/null)" ]
+}
+
+# passive_update_check [args...] is the automatic check run before a command. It stays
+# out of the way: only interactive runs (stdin, stdout and stderr are terminals) of
+# real commands are checked, never machine-readable ones, and at most once per interval.
+# AIMEBU2_UPDATE_CHECK=0 turns it off; =apply updates without asking and without needing
+# a terminal (still once per interval).
+passive_update_check() {
+    local mode="${AIMEBU2_UPDATE_CHECK:-}" arg answer
+    if [ -n "${AIMEBU_UPDATE_RESTARTED:-}" ]; then
+        unset AIMEBU_UPDATE_RESTARTED
+        return 0
+    fi
+    [ "$mode" = "0" ] && return 0
+    [ "$FORCE_BUILD" = "1" ] && return 0
+    case "${1:-}" in ''|version|help|-h|--help|update) return 0 ;; esac
+    for arg in "$@"; do
+        case "$arg" in --json|--machine|--plain) return 0 ;; esac
+    done
+    if [ "$mode" != "apply" ] && { [ ! -t 0 ] || [ ! -t 1 ] || [ ! -t 2 ]; }; then
+        return 0
+    fi
+    update_due || return 0
+    : >"$UPDATE_STAMP" 2>/dev/null || true
+    classify_update
+    case "$UPDATE_STATE" in
+        current|unreachable) return 0 ;;
+        dirty|non-default) update_skip_warning; return 0 ;;
+    esac
+    if [ "$mode" = "apply" ]; then
+        apply_update true "$@"
+        return 0
+    fi
+    printf 'aimebu update available. update now? (Y/n) ' >&2
+    if IFS= read -r answer; then
+        answer="${answer#"${answer%%[![:space:]]*}"}"
+        answer="${answer%"${answer##*[![:space:]]}"}"
+        case "$answer" in ''|y|Y|yes|YES|Yes) apply_update true "$@"; return 0 ;; esac
+    fi
+    echo "aimebu update available ($(update_local_label) -> $(update_short_oid "$UPDATE_REMOTE_OID")); continuing without update." >&2
+}
+
+# cmd_update implements "aimebu update [--check]".
+cmd_update() {
+    local check_only=false
+    case "${1:-}" in
+        '') ;;
+        --check) check_only=true ;;
+        *) echo "usage: aimebu update [--check]" >&2; exit 1 ;;
+    esac
+    classify_update
+    if $check_only; then
+        case "$UPDATE_STATE" in
+            current) echo "aimebu is current at $(update_local_label)." ;;
+            behind) echo "aimebu update available: $(update_local_label) -> $(update_short_oid "$UPDATE_REMOTE_OID")." ;;
+            dirty) echo "aimebu update status: dirty checkout; check skipped." ;;
+            non-default) echo "aimebu update status: non-default branch '${UPDATE_BRANCH:-detached}'; check skipped." ;;
+            unreachable) echo "aimebu update status: remote '$UPDATE_REMOTE' is unreachable." ;;
+        esac
+        return 0
+    fi
+    case "$UPDATE_STATE" in
+        dirty) echo "Error: update refused: checkout is dirty" >&2; exit 1 ;;
+        non-default) echo "Error: update refused: checkout is on '${UPDATE_BRANCH:-detached}', not default branch '${UPDATE_DEFAULT_REF#refs/heads/}'" >&2; exit 1 ;;
+        unreachable) echo "Error: update refused: remote '$UPDATE_REMOTE' is unreachable" >&2; exit 1 ;;
+        current) echo "aimebu is already current at $(update_local_label)." ;;
+        behind) apply_update false ;;
+    esac
+}
+
+if [ "${1:-}" = "update" ]; then
+    cmd_update "${@:2}"
+    exit 0
+fi
+passive_update_check "$@"
+
 # Build if the binary doesn't exist or a rebuild is explicitly requested.
 # Set AIMEBU_FORCE_BUILD=1 to force a rebuild into a per-run tmp binary; the
 # cached binary is left alone. Any other value (including 0) uses the cache.
@@ -56,13 +337,7 @@ fi
 
 if [ ! -f "$BINARY" ] || [ "$FORCE_BUILD" = "1" ]; then
     echo "Building aimebu..." >&2
-    # version is a full string ("aimebu v2.0.0"); without git metadata keep the
-    # default, so "aimebu version" still appends the VCS revision when it can.
-    LDFLAGS="-s -w"
-    if DESCRIBED="$(cd "$REPO_DIR" && git describe --tags --always --dirty 2>/dev/null)" && [ -n "$DESCRIBED" ]; then
-        LDFLAGS="$LDFLAGS -X 'main.version=aimebu $DESCRIBED'"
-    fi
-    (cd "$REPO_DIR" && go build -ldflags "$LDFLAGS" -o "$BINARY" ./cmd/aimebu) || {
+    build_binary "$BINARY" || {
         echo "Build failed" >&2
         exit 1
     }
