@@ -56,7 +56,7 @@ type AgentCard struct {
 func (s *Store) wokenBy(ctx context.Context, agentID string) (string, error) {
 	// The note that started the turn is its earliest one; notes that joined it later do not change why it began.
 	var reason, authorKind string
-	err := s.db.QueryRowContext(ctx, `SELECT n.wake_reason, m.author_kind FROM turn t JOIN turn_note tn ON tn.turn_id=t.id JOIN note n ON n.id=tn.note_id
+	err := s.readDB.QueryRowContext(ctx, `SELECT n.wake_reason, m.author_kind FROM turn t JOIN turn_note tn ON tn.turn_id=t.id JOIN note n ON n.id=tn.note_id
 		JOIN message m ON m.id=n.message_id
 		WHERE t.agent_id=? AND t.exec IN ('pending','running')
 		ORDER BY t.rowid DESC, n.created_at ASC, n.rowid ASC LIMIT 1`, agentID).Scan(&reason, &authorKind)
@@ -492,7 +492,7 @@ func (s *Store) AgentCardsForRoom(ctx context.Context, roomID string) ([]AgentCa
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id,a.slug,a.project_id,r.role_key,r.emoji,r.deleted_at IS NOT NULL,
+	rows, err := s.readDB.QueryContext(ctx, `SELECT a.id,a.slug,a.project_id,r.role_key,r.emoji,r.deleted_at IS NOT NULL,
 		EXISTS(SELECT 1 FROM role current WHERE current.project_id IS NULL AND current.role_key=r.role_key AND current.id<>r.id AND current.deleted_at IS NULL AND (current.body<>r.body OR current.extends<>r.extends OR current.label<>r.label OR current.emoji<>r.emoji OR current.cardinality<>r.cardinality OR current.cap_is_lead<>r.cap_is_lead OR current.cap_can_spawn<>r.cap_can_spawn OR current.cap_singleton_writer<>r.cap_singleton_writer)),
 		a.tool,a.variant,COALESCE(a.launcher_id,''),a.model,a.provider,a.machine_id,a.desired,a.desired_rev,a.observed,a.generation,a.recovery_block,
 		COALESCE((SELECT MAX(e.created_at) FROM event e WHERE e.agent_id=a.id),''),COALESCE(machine.last_seen,''),
@@ -542,7 +542,7 @@ func (s *Store) AgentCardByID(ctx context.Context, id string) (AgentCard, error)
 		return AgentCard{}, err
 	}
 	var c AgentCard
-	err := s.db.QueryRowContext(ctx, `SELECT a.id,a.slug,a.project_id,r.role_key,r.emoji,r.deleted_at IS NOT NULL,
+	err := s.readDB.QueryRowContext(ctx, `SELECT a.id,a.slug,a.project_id,r.role_key,r.emoji,r.deleted_at IS NOT NULL,
 		EXISTS(SELECT 1 FROM role current WHERE current.project_id IS NULL AND current.role_key=r.role_key AND current.id<>r.id AND current.deleted_at IS NULL AND (current.body<>r.body OR current.extends<>r.extends OR current.label<>r.label OR current.emoji<>r.emoji OR current.cardinality<>r.cardinality OR current.cap_is_lead<>r.cap_is_lead OR current.cap_can_spawn<>r.cap_can_spawn OR current.cap_singleton_writer<>r.cap_singleton_writer)),
 		a.tool,a.variant,COALESCE(a.launcher_id,''),a.model,a.provider,a.machine_id,a.desired,a.desired_rev,a.observed,a.generation,a.recovery_block, m.room_id,
 		COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.turn_id=(SELECT t.id FROM turn t WHERE t.agent_id=a.id AND t.outcome='unknown' ORDER BY t.id DESC LIMIT 1) AND e.kind='turn_process_exit' LIMIT 1),''),

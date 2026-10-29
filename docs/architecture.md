@@ -14,6 +14,15 @@
    operating-system crash can lose the last few commits (never corrupt the
    database), in return for much cheaper writes. The supervisor journal has
    its own WAL database and process lock, and keeps `synchronous=FULL`.
+   One connection serializes store writes; a separate small read-only pool
+   serves message pages, room lists, agent cards, inbox, event stream and
+   health reads. A long read does not occupy the writer connection. Reads
+   inside a write transaction stay there for immediate visibility. The event
+   journal indexes turn/kind and agent/time lookups; health reads visible
+   agents in one query instead of rebuilding cards for every room (each
+   agent's rooms in the order the room list has them). The read-only pool
+   opens the database through a `file:` URI, so `store.Open` and the other
+   SQLite openers make a relative path absolute first.
 3. Native resume first where the spike validates it; fresh + history as the
    explicit fallback (also for swap/recovery); UI says which happened.
 4. Common reply schema, server-side validation; native schema modes are

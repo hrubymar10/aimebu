@@ -18,6 +18,16 @@ func TestDSNAlwaysCarriesTheBusyTimeout(t *testing.T) {
 	}
 }
 
+func TestDSNMakesARelativePathAbsolute(t *testing.T) {
+	for _, readOnly := range []bool{false, true} {
+		// "file://srv/a.sqlite" would name host "srv"; the path has to come out as an absolute one: file:///...
+		dsn := DSN("srv/a.sqlite", readOnly)
+		if !strings.HasPrefix(dsn, "file:///") || !strings.Contains(dsn, "/srv/a.sqlite?") {
+			t.Fatalf("DSN of a relative path = %q", dsn)
+		}
+	}
+}
+
 func TestRetryRepeatsOnlyBusyAnswers(t *testing.T) {
 	calls := 0
 	err := Retry(func() error {

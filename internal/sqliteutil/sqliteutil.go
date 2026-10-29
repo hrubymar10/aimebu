@@ -5,6 +5,7 @@ package sqliteutil
 
 import (
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,10 @@ const (
 // DSN returns a file: DSN for path that sets the busy timeout, read-only when readOnly. Use it for every connection that is
 // not opened through store.Open.
 func DSN(path string, readOnly bool) string {
+	// A file: URI reads the first segment of a relative path as its authority ("file://srv/a.sqlite" is host "srv"), so the path is made absolute first.
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
 	u := &url.URL{Scheme: "file", Path: path}
 	query := u.Query()
 	if readOnly {

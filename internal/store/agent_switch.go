@@ -23,7 +23,7 @@ var errSwitchTargetUnavailable = errors.New("target machine is no longer approve
 
 func (s *Store) agentSwitch(ctx context.Context, id string) (*AgentSwitch, error) {
 	var item AgentSwitch
-	err := s.db.QueryRowContext(ctx, `SELECT state,tool,variant,model,COALESCE(machine_id,''),error FROM agent_switch WHERE agent_id=?`, id).
+	err := s.readDB.QueryRowContext(ctx, `SELECT state,tool,variant,model,COALESCE(machine_id,''),error FROM agent_switch WHERE agent_id=?`, id).
 		Scan(&item.State, &item.Tool, &item.Variant, &item.Model, &item.MachineID, &item.Error)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

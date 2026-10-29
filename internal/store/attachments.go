@@ -156,7 +156,7 @@ func (s *Store) AttachmentByID(ctx context.Context, id string) (Attachment, stri
 }
 
 func (s *Store) AttachmentsForMessage(ctx context.Context, messageID string) ([]Attachment, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,filename,mime,size,width,height,COALESCE(removed_at,''),removed_after_days FROM attachment WHERE message_id=? ORDER BY created_at,id`, messageID)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT id,filename,mime,size,width,height,COALESCE(removed_at,''),removed_after_days FROM attachment WHERE message_id=? ORDER BY created_at,id`, messageID)
 	if err != nil {
 		return nil, err
 	}
@@ -169,6 +169,34 @@ func (s *Store) AttachmentsForMessage(ctx context.Context, messageID string) ([]
 		}
 		a.URL = "/api/attachments/" + a.ID
 		result = append(result, a)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) attachmentsForMessages(ctx context.Context, messages []Message) (map[string][]Attachment, error) {
+	result := make(map[string][]Attachment)
+	if len(messages) == 0 {
+		return result, nil
+	}
+	args := make([]any, len(messages))
+	for i, message := range messages {
+		args[i] = message.ID
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?,", len(messages)), ",")
+	rows, err := s.readDB.QueryContext(ctx, `SELECT message_id,id,filename,mime,size,width,height,COALESCE(removed_at,''),removed_after_days
+		FROM attachment WHERE message_id IN (`+marks+`) ORDER BY created_at,id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var messageID string
+		var a Attachment
+		if err := rows.Scan(&messageID, &a.ID, &a.Name, &a.MIME, &a.Size, &a.Width, &a.Height, &a.RemovedAt, &a.RemovedAfterDays); err != nil {
+			return nil, err
+		}
+		a.URL = "/api/attachments/" + a.ID
+		result[messageID] = append(result[messageID], a)
 	}
 	return result, rows.Err()
 }

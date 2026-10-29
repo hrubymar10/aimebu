@@ -39,38 +39,15 @@ type healthAgent struct {
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	projects, err := s.Store.ProjectsForUser(r.Context(), userID(r))
+	ordered, err := s.Store.HealthForUser(r.Context(), userID(r), time.Now(), stuckAfter())
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	byID := map[string]*healthAgent{}
-	ordered := []*healthAgent{}
-	for _, project := range projects {
-		rooms, err := s.Store.RoomsForUserProject(r.Context(), project.ID, userID(r))
-		if err != nil {
-			fail(w, err)
-			return
-		}
-		for _, room := range rooms {
-			cards, err := s.Store.AgentCardsForRoom(r.Context(), room.ID)
-			if err != nil {
-				fail(w, err)
-				return
-			}
-			for _, card := range cards {
-				item := byID[card.ID]
-				if item == nil {
-					flags, err := s.agentHealth(r.Context(), card)
-					if err != nil {
-						fail(w, err)
-						return
-					}
-					item = &healthAgent{ID: card.ID, Name: card.Slug, RoomIDs: []string{}, Flags: flags}
-					byID[card.ID] = item
-					ordered = append(ordered, item)
-				}
-				item.RoomIDs = append(item.RoomIDs, room.ID)
+	for i := range ordered {
+		if ordered[i].Desired != "stopped" {
+			if _, err := s.machineForID(ordered[i].MachineID); err != nil {
+				ordered[i].Flags = append(ordered[i].Flags, store.HealthFlag{Code: "machine_offline"})
 			}
 		}
 	}

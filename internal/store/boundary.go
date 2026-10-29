@@ -21,7 +21,7 @@ type BoundaryGrant struct {
 }
 
 func (s *Store) BoundaryGrants(ctx context.Context, agentID string) ([]BoundaryGrant, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT machine_id,canonical_path,approved_at FROM agent_boundary_grant WHERE agent_id=? ORDER BY approved_at,machine_id,canonical_path`, agentID)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT machine_id,canonical_path,approved_at FROM agent_boundary_grant WHERE agent_id=? ORDER BY approved_at,machine_id,canonical_path`, agentID)
 	if err != nil {
 		return nil, err
 	}

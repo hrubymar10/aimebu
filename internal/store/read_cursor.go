@@ -56,7 +56,7 @@ func (s *Store) MarkRoomRead(ctx context.Context, userID, roomID string, seq int
 func (s *Store) attentionByRoom(ctx context.Context, userID string) (map[string]int, error) {
 	// A count per room, not the whole inbox: every project's room list asks for this, and building each item (diagnostic reports,
 	// receipts, options) is wasted work when only the number is shown.
-	rows, err := s.db.QueryContext(ctx, `SELECT i.room_id, COUNT(*) `+inboxFromSQL+` `+inboxWhereSQL+` GROUP BY i.room_id`, userID, userID)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT i.room_id, COUNT(*) `+inboxFromSQL+` `+inboxWhereSQL+` GROUP BY i.room_id`, userID, userID)
 	if err != nil {
 		return nil, err
 	}

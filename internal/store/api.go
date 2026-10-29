@@ -24,7 +24,7 @@ func (s *Store) ProjectsForUser(ctx context.Context, userID string) ([]Project, 
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.name,p.folder,COALESCE(p.repo_url,''),m.role,COALESCE(p.archived_at,'')
+	rows, err := s.readDB.QueryContext(ctx, `SELECT p.id,p.name,p.folder,COALESCE(p.repo_url,''),m.role,COALESCE(p.archived_at,'')
 		FROM project p JOIN membership m ON m.project_id=p.id WHERE m.user_id=? ORDER BY p.created_at,p.id`, userID)
 	if err != nil {
 		return nil, err
@@ -145,7 +145,7 @@ func (s *Store) RoomsForProject(ctx context.Context, projectID string) ([]Room, 
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.project_id,r.parent_id,r.depth,r.kind,r.dm_key,r.title,r.created_by,
+	rows, err := s.readDB.QueryContext(ctx, `SELECT r.id,r.project_id,r.parent_id,r.depth,r.kind,r.dm_key,r.title,r.created_by,
 		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,r.memory_enabled,
 		`+roomMemberCountSQL+`,
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id),
@@ -197,7 +197,7 @@ func (s *Store) roomsForUserProject(ctx context.Context, projectID, userID, room
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.project_id,r.parent_id,r.depth,r.kind,r.dm_key,r.title,r.created_by,
+	rows, err := s.readDB.QueryContext(ctx, `SELECT r.id,r.project_id,r.parent_id,r.depth,r.kind,r.dm_key,r.title,r.created_by,
 		r.lifecycle,r.gate,r.lifecycle_rev,r.closed_at,r.memory_enabled,
 		`+roomMemberCountSQL+`,
 		(SELECT COUNT(*) FROM message m WHERE m.room_id=r.id),
@@ -275,7 +275,7 @@ func (s *Store) showPeerTitles(ctx context.Context, rooms []Room, userID string)
 		args = append(args, id)
 	}
 	// A peer who has left sorts after one who is still in the room.
-	rows, err := s.db.QueryContext(ctx, `SELECT m.room_id, u.login FROM room_member m JOIN user u ON u.id=m.member_id
+	rows, err := s.readDB.QueryContext(ctx, `SELECT m.room_id, u.login FROM room_member m JOIN user u ON u.id=m.member_id
 		WHERE m.member_kind='user' AND m.member_id<>? AND m.room_id IN (`+marks+`) ORDER BY m.left_at IS NOT NULL DESC`, args...)
 	if err != nil {
 		return err
@@ -347,7 +347,7 @@ func (s *Store) EventBounds(ctx context.Context) (min, max int64, err error) {
 	if err := s.checkTxReentry(ctx); err != nil {
 		return 0, 0, err
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(MIN(seq),0),COALESCE(MAX(seq),0) FROM event`).Scan(&min, &max)
+	err = s.readDB.QueryRowContext(ctx, `SELECT COALESCE(MIN(seq),0),COALESCE(MAX(seq),0) FROM event`).Scan(&min, &max)
 	return
 }
 
@@ -372,7 +372,7 @@ func (s *Store) EventsAfter(ctx context.Context, userID string, after, through i
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq`, userID, after, through, userID, userID, userID, userID, userID, userID)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq`, userID, after, through, userID, userID, userID, userID, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +395,7 @@ func (s *Store) EventsBatchAfter(ctx context.Context, userID string, after, thro
 	if limit < 1 || limit > 5000 {
 		return nil, errors.New("invalid event batch limit")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq LIMIT ?`, userID, after, through, userID, userID, userID, userID, userID, userID, limit)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT e.id,e.seq,e.kind,COALESCE(e.project_id,''),COALESCE(e.room_id,''),COALESCE(e.agent_id,''),COALESCE(e.turn_id,''),e.payload_json,e.created_at FROM event e LEFT JOIN membership m ON m.project_id=e.project_id AND m.user_id=? LEFT JOIN room r ON r.id=e.room_id WHERE e.seq>? AND e.seq<=? AND `+eventVisible+` ORDER BY e.seq LIMIT ?`, userID, after, through, userID, userID, userID, userID, userID, userID, limit)
 	if err != nil {
 		return nil, err
 	}

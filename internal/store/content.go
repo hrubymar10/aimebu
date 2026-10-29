@@ -523,7 +523,7 @@ func (s *Store) listMessages(ctx context.Context, clause string, args ...any) ([
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, messageSelect+clause, args...)
+	rows, err := s.readDB.QueryContext(ctx, messageSelect+clause, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -550,11 +550,12 @@ func (s *Store) listMessages(ctx context.Context, clause string, args ...any) ([
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	attachments, err := s.attachmentsForMessages(ctx, messages)
+	if err != nil {
+		return nil, err
+	}
 	for i := range messages {
-		messages[i].Attachments, err = s.AttachmentsForMessage(ctx, messages[i].ID)
-		if err != nil {
-			return nil, err
-		}
+		messages[i].Attachments = attachments[messages[i].ID]
 	}
 	return messages, nil
 }

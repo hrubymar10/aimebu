@@ -1525,6 +1525,10 @@ CREATE TABLE legacy_agent_session_history (
 -- picked (anything else, including the owner choosing the compass again before this ran) is not told apart from the shipped one, but nothing
 -- else is touched.
 UPDATE role SET emoji='👑' WHERE role_key='lead' AND emoji='🧭' AND deleted_at IS NULL;
+`}, {90, `
+CREATE INDEX IF NOT EXISTS event_turn_kind ON event(turn_id, kind) WHERE turn_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS event_agent_created ON event(agent_id, created_at) WHERE agent_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS turn_agent ON turn(agent_id, id);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

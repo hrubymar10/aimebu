@@ -68,7 +68,7 @@ func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, 
 	if err := s.checkTxReentry(ctx); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.project_id,i.room_id,r.lifecycle,COALESCE(i.message_id,''),COALESCE(i.agent_id,''),COALESCE(i.turn_id,''),
+	rows, err := s.readDB.QueryContext(ctx, `SELECT i.id,i.project_id,i.room_id,r.lifecycle,COALESCE(i.message_id,''),COALESCE(i.agent_id,''),COALESCE(i.turn_id,''),
 		COALESCE(t.exec,''),COALESCE(t.outcome,''),COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.turn_id=i.turn_id AND e.kind='turn_process_exit' ORDER BY e.seq DESC LIMIT 1),''),
 		COALESCE((SELECT d.report_json FROM turn d WHERE d.parent_turn_id=i.turn_id AND d.mode='diagnostic' AND d.report_json IS NOT NULL ORDER BY d.id DESC LIMIT 1),''),
 		CASE WHEN i.kind='delivery_failed' THEN COALESCE(

@@ -67,7 +67,7 @@ func (s *Store) MessageSeqInRoom(ctx context.Context, roomID, messageID string) 
 		return 0, err
 	}
 	var seq int64
-	err := s.db.QueryRowContext(ctx, `SELECT seq FROM message WHERE room_id=? AND id=?`, roomID, messageID).Scan(&seq)
+	err := s.readDB.QueryRowContext(ctx, `SELECT seq FROM message WHERE room_id=? AND id=?`, roomID, messageID).Scan(&seq)
 	return seq, err
 }
 
@@ -107,7 +107,7 @@ func (s *Store) ReactionsForMessages(ctx context.Context, messages []Message) (m
 		args[i] = message.ID
 	}
 	marks := strings.TrimSuffix(strings.Repeat("?,", len(messages)), ",")
-	rows, err := s.db.QueryContext(ctx, `SELECT r.message_id,r.member_kind,r.member_id,r.emoji,
+	rows, err := s.readDB.QueryContext(ctx, `SELECT r.message_id,r.member_kind,r.member_id,r.emoji,
 		COALESCE(u.login,a.slug,r.member_id) FROM reaction r
 		LEFT JOIN user u ON r.member_kind='user' AND u.id=r.member_id
 		LEFT JOIN agent a ON r.member_kind='agent' AND a.id=r.member_id
@@ -154,7 +154,7 @@ func (s *Store) ThreadCountsForMessages(ctx context.Context, roomID string, mess
 		return out, nil
 	}
 	marks := strings.TrimSuffix(strings.Repeat("?,", len(args)-1), ",")
-	rows, err := s.db.QueryContext(ctx, `SELECT thread_root,COUNT(*) FROM message
+	rows, err := s.readDB.QueryContext(ctx, `SELECT thread_root,COUNT(*) FROM message
 		WHERE room_id=? AND thread_root IN (`+marks+`) GROUP BY thread_root`, args...)
 	if err != nil {
 		return nil, err

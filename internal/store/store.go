@@ -30,6 +30,7 @@ type Options struct {
 
 type Store struct {
 	db            *sql.DB
+	readDB        *sql.DB
 	maxDepth      int
 	attachmentDir string
 	dbPath        string
@@ -98,19 +99,44 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 	if depth < 1 || depth > hardMaxDepth {
 		return nil, fmt.Errorf("max room depth must be between 1 and %d", hardMaxDepth)
 	}
+	// The writer and the read-only pool must open the same file: an in-memory database is private to each connection, and a file: URI
+	// would be wrapped a second time by the read-only DSN. Only a plain file path is accepted.
+	if path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return nil, fmt.Errorf("store path %q must be a file path", path)
+	}
+	// The read-only DSN is a file: URI, which reads the first segment of a relative path as its authority, so the path is made absolute once, here.
+	if !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		path = abs
+	}
 	db, err := sql.Open("sqlite", sqliteDSN(path))
 	if err != nil {
 		return nil, err
 	}
-	// One connection serializes write transactions and keeps PRAGMAs active for
-	// every operation. A later reader pool can be added without changing Tx.
+	// One connection serializes write transactions. Independent read-only
+	// connections keep long reads from blocking a write's connection.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	if err := openStoreWithBusyRetry(ctx, db, path); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	return &Store{db: db, maxDepth: depth, attachmentDir: filepath.Join(filepath.Dir(path), "attachments"), dbPath: path}, nil
+	readDB, err := sql.Open("sqlite", readOnlyDSN(path))
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	readDB.SetMaxOpenConns(4)
+	readDB.SetMaxIdleConns(4)
+	if err := readDB.PingContext(ctx); err != nil {
+		_ = readDB.Close()
+		_ = db.Close()
+		return nil, err
+	}
+	return &Store{db: db, readDB: readDB, maxDepth: depth, attachmentDir: filepath.Join(filepath.Dir(path), "attachments"), dbPath: path}, nil
 }
 
 // Another process may be opening or checkpointing the same WAL database while
@@ -151,7 +177,22 @@ func openStoreWithBusyRetry(ctx context.Context, db *sql.DB, path string) error 
 	}
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	readErr := s.readDB.Close()
+	writeErr := s.db.Close()
+	if readErr != nil {
+		return readErr
+	}
+	return writeErr
+}
+
+func readOnlyDSN(path string) string {
+	query := url.Values{}
+	query.Add("mode", "ro")
+	query.Add("_pragma", "query_only(ON)")
+	query.Add("_pragma", "busy_timeout(5000)")
+	return (&url.URL{Scheme: "file", Path: path, RawQuery: query.Encode()}).String()
+}
 
 func sqliteDSN(path string) string {
 	query := url.Values{}
