@@ -401,6 +401,10 @@ Owner's decision (2026-10-28): continue with the remaining units.
   how reactions group, what a live refresh does with a message of a page (skip, draw, count as a new reply, count on Back to latest), how far the read mark
   may go, the caps of the list, when a reply answers a question through the Inbox, what a message's answer area shows, and the walk back through the
   viewer's own messages. `Chat` calls it and keeps the DOM work; `plainText` and `messageSnippet` are still exported from `chat.js`.
+- Done for the message calls: `web/js/pages/chat/store.js` holds the room's records and cursors and the calls that load them (the newest page, the live
+  refresh, older and newer pages of a history window, a jump, the reactions), each carrying the generation of the open view (a reset, an open and a jump move
+  it) and saying nothing and starting nothing once it is gone or the chat is destroyed. `Chat` still draws: it gives the store the DOM work as host methods
+  and reads the store's fields through accessors.
 
 ### Step 7: the shell
 

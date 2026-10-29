@@ -25,6 +25,7 @@ import { buildMessageActions, messageAction } from './message-actions.js';
 import { answerControls, answerHistory } from './answer-controls.js';
 import { promptDialog } from './dialogs.js';
 import { expandShortcodes } from './emoji-data.js';
+import { ChatStore } from './pages/chat/store.js';
 import { MENTION_LOGINS_TTL_MS, answerArea, answerEligible, answersThroughInbox as answersThrough, articleClass, groupReactions, latestLabel, liveArrival as isLiveArrival, liveRoute, messageSnippet, newestShownSeq as shownSeq, newRepliesLabel, overCap, plainText, recallCandidates as ownMessages, recallStep, threadChip, threadCount, threadLabel as threadLabelOf, threadTitle, trimCap } from './pages/chat/model.js';
 
 export { plainText, messageSnippet };
@@ -41,9 +42,8 @@ export const FLASH_MS = 1500;
 export class Chat {
   constructor(onRoomMutation) {
     this.onRoomMutation = onRoomMutation;
+    this.store = new ChatStore(this);
     this.list = document.querySelector('#messages'); this.title = document.querySelector('#room-title'); this.roomIcon = document.querySelector('#room-icon'); this.members = document.querySelector('#room-members'); this.form = document.querySelector('#composer'); this.draft = this.form.elements.body; this.formatting = new ComposerFormatting(this.draft, { onFiles: files => this.addFiles(files) });
-    this.pageSize = 100;
-    this.olderPageSize = 50;
     this.announcer = new LiveAnnouncer(document.querySelector('#live-announcer'));
     // Older pages load by themselves when the list is scrolled (or keyboard-scrolled: Home, PageUp) to the top; this only says so while it fetches.
     this.olderStatus = document.createElement('div'); this.olderStatus.className = 'older-status'; this.olderStatus.setAttribute('role', 'status'); this.olderStatus.textContent = 'Loading older messages…'; this.olderStatus.hidden = true;
@@ -58,7 +58,7 @@ export class Chat {
     });
     this.scrollAnchor = new ScrollAnchor(this.list);
     this.list.addEventListener('keydown', event => this.moveActionFocus(event));
-    this.chip = document.querySelector('#reply-chip'); this.chipText = this.chip.querySelector('#reply-chip-jump'); this.chipText.onclick = () => { if (this.reply) this.jumpToMessage(this.reply.id); }; this.error = document.querySelector('#chat-error'); this.nodes = new Map(); this.messages = new Map(); this.reactions = new Map(); this.threadCounts = new Map(); this.serverThreadCounts = new Map();
+    this.chip = document.querySelector('#reply-chip'); this.chipText = this.chip.querySelector('#reply-chip-jump'); this.chipText.onclick = () => { if (this.reply) this.jumpToMessage(this.reply.id); }; this.error = document.querySelector('#chat-error'); this.nodes = new Map();
     this.pendingAttachments = []; this.pendingUploads = 0; this.pendingNode = document.querySelector('#pending-attachments'); this.attachmentInput = document.querySelector('#attachment-input');
     this.attachmentInput.onchange = () => { this.addFiles([...this.attachmentInput.files]); this.attachmentInput.value = ''; };
     this.draft.addEventListener('input', () => this.resizeDraft());
@@ -94,8 +94,6 @@ export class Chat {
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && this.threadMentionAutocomplete?.popup.hidden !== false && this.threadEmojiAutocomplete?.popup.hidden !== false) { event.preventDefault(); this.threadForm.requestSubmit(); }
     });
     document.querySelector('#cancel-reply').onclick = () => this.setReply(null);
-    this.openGeneration = 0;
-    this.sessionGeneration = 0;
     this.uploadRequests = new Set();
     this.raw = false;
     this.panel = new RoomPanel(this);
@@ -112,30 +110,24 @@ export class Chat {
     setInterval(() => this.syncExpiry(), 30000);
     if (window.__exposeChat) window.__chat = this; // test hook: the live-cap smoke reads the per-message maps
   }
-  async open(room) {
-    const generation = ++this.openGeneration;
-    const session = this.sessionGeneration;
+  open(room) { return this.store.open(room); }
+  // The view before a room's first page: the app's and the composer's state for the room, an empty list.
+  beginOpen(room) {
     this.announcer.reset();
     if (this.room?.id !== room.id) { this.pendingAttachments = []; this.renderPending(); if (this.recall) this.recall.index = null; }
-    closeMessageUsage(); this.room = room; this.syncEmpty(); this.setRoomFacts(room); this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.answeredMessages = new Set(); this.repliedTo = new Set(); this.nodes.clear(); this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.initialLoading = true; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0; this.loadingNewer = false; this.missedIDs = new Set(); this.updateLatestLabel(); this.setReply(null); this.closeThread();
+    closeMessageUsage(); this.room = room; this.syncEmpty(); this.setRoomFacts(room); this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear();
+    this.store.clearRoom(); this.store.initialLoading = true; this.nodes.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.setReply(null); this.closeThread();
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = false;
     this.setRoomFacts(room);
     this.scrollAnchor.reset();
     delete this.list.dataset.empty; // no hint while the room is still loading
-    const messages = await request(`/api/rooms/${room.id}/messages?limit=${this.pageSize}`);
-    if (session !== this.sessionGeneration || generation !== this.openGeneration || this.room?.id !== room.id) return;
+  }
+  drawPage(messages) {
     for (const message of messages) this.add(message);
     this.list.dataset.empty = String(!this.list.querySelector('article.message:not(.system-notice)')); // notices alone leave it empty
-    this.newestSeq = messages.at(-1)?.seq || 0;
-    this.oldestSeq = messages[0]?.seq || 0;
-    this.hasMoreOlder = messages.length === this.pageSize;
-    this.list.dataset.hasOlder = String(this.hasMoreOlder);
-    this.list.scrollTop = this.list.scrollHeight; this.scrollAnchor?.update();
-    this.initialLoading = false; this.loadOlderIfShort();
-    // The room is marked read once its latest page is on screen, up to that page (see newestShownSeq).
-    this.onLatest?.(room);
-    await this.refreshMessages();
   }
+  showNewest() { this.list.dataset.hasOlder = String(this.hasMoreOlder); this.list.scrollTop = this.list.scrollHeight; this.scrollAnchor?.update(); }
+  latestShown(room) { this.onLatest?.(room); }
   // How far the read mark may go (0 while a room is still loading). At the latest view the list is contiguous to the live
   // cursor: every message up to newestSeq is applied (top-level rows rendered, thread replies counted on their roots).
   // Otherwise (a history window, or its catch-up in flight) only the newest top-level row actually in the list counts,
@@ -154,17 +146,18 @@ export class Chat {
     setLatest(this.latestButton, latestLabel(count), count);
   }
   reset() {
-    this.openGeneration++; this.sessionGeneration++; if (this.recall) this.recall.index = null; this.announcer.reset();
+    this.store.reset(); if (this.recall) this.recall.index = null; this.announcer.reset();
     for (const controller of this.uploadRequests) controller.abort();
     this.uploadRequests.clear();
     this.room = null; this.syncEmpty(); this.panel.reset();
-    this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.answeredMessages = new Set(); this.repliedTo = new Set(); this.nodes.clear(); this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear(); this.agents.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.newestSeq = 0; this.oldestSeq = 0; this.hasMoreOlder = false; this.loadingOlder = false; this.initialLoading = false; this.contextMode = false; this.catchingUp = false; this.windowSeq = 0; this.loadingNewer = false; this.missedIDs = new Set(); this.updateLatestLabel(); this.answerItems = new Map(); this.closeBlocked?.clear(); this.worktree = null;
+    this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.nodes.clear(); this.agents.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.answerItems = new Map(); this.closeBlocked?.clear(); this.worktree = null;
     this.setReply(null); this.closeThread(); this.pendingAttachments = []; this.pendingUploads = 0; this.pendingNode.replaceChildren(); this.draft.value = ''; this.resizeDraft();
     this.lightbox.close();
     this.quickCommands.reset(); this.macroAutocomplete.reset(); this.mentionAutocomplete.reset(); this.threadMentionAutocomplete.reset(); this.emojiAutocomplete.reset(); this.threadEmojiAutocomplete.reset(); closeEmojiPicker(false); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = true;
     this.draft.disabled = true; this.emojiButton.disabled = true; this.attachmentInput.disabled = true; this.form.querySelector('button[type=submit]').disabled = true;
   }
+  destroy() { this.reset(); this.store.destroy(); this.panel.destroy(); }
   // With no room open the chat shows an empty-state card instead of the composer and room controls; the app decides what the card says.
   syncEmpty() { this.onEmptyChange?.(!this.room); }
   current(session, roomID) { return session === this.sessionGeneration && this.room?.id === roomID; }
@@ -172,25 +165,20 @@ export class Chat {
   loadOlderIfShort() {
     requestAnimationFrame(() => { if (this.hasMoreOlder && this.list.scrollHeight <= this.list.clientHeight + 80) this.loadOlder(); });
   }
-  async loadOlder() {
-    if (!this.room || !this.hasMoreOlder || !this.oldestSeq || this.loadingOlder) return;
-    const roomID = this.room.id, session = this.sessionGeneration, generation = this.openGeneration;
-    this.loadingOlder = true; this.olderStatus.hidden = false;
-    try {
-      const messages = await request(`/api/rooms/${roomID}/messages?before=${this.oldestSeq}&limit=${this.olderPageSize}`);
-      if (!this.current(session, roomID) || generation !== this.openGeneration) return;
-      // Measure the anchor now, not before the request: the reader may have scrolled while the page was loading, and only the
-      // height inserted above the anchor may be compensated, never the reader's own movement.
-      const anchor = this.list.firstElementChild, anchorTop = anchor?.getBoundingClientRect().top;
-      for (let i = messages.length - 1; i >= 0; i--) this.add(messages[i], true);
-      if (messages.length) this.oldestSeq = messages[0].seq;
-      this.hasMoreOlder = messages.length === this.olderPageSize;
-      this.list.dataset.hasOlder = String(this.hasMoreOlder);
-      if (anchor?.isConnected) this.list.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
-      this.trimNewest();
-    } catch (error) { if (this.current(session, roomID)) this.error.textContent = error.message; }
-    finally { if (generation === this.openGeneration) { this.loadingOlder = false; this.olderStatus.hidden = true; this.loadOlderIfShort(); } }
+  loadOlder() { return this.store.loadOlder(); }
+  showOlderStatus(shown) { this.olderStatus.hidden = !shown; }
+  // Older rows go above the first row without moving what the reader looks at: only the height inserted above the anchor is compensated, never the
+  // reader's own movement, so the anchor is measured now, not before the request.
+  prependPage(messages) {
+    const anchor = this.list.firstElementChild, anchorTop = anchor?.getBoundingClientRect().top;
+    for (let i = messages.length - 1; i >= 0; i--) this.add(messages[i], true);
+    this.list.dataset.hasOlder = String(this.hasMoreOlder);
+    if (anchor?.isConnected) this.list.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+    this.trimNewest();
   }
+  say(text) { this.error.textContent = text; }
+  anchorUpdate() { this.scrollAnchor?.update(); }
+  showLatestButton(shown) { this.latestButton.hidden = !shown; }
   // Scrolling back through a long room would otherwise keep every page in the DOM (about 49 elements per message). Past the cap the
   // newest rows are dropped and the view becomes a history window: live messages stop appending, scrolling to its bottom pages
   // forward again, and "Back to latest" reloads.
@@ -242,48 +230,8 @@ export class Chat {
     this.oldestSeq = Number(keep.dataset.seq); this.hasMoreOlder = true; this.list.dataset.hasOlder = 'true';
     return true;
   }
-  async loadNewer() {
-    if (!this.room || !this.contextMode || !this.windowSeq || this.loadingNewer || this.loadingOlder) return;
-    const roomID = this.room.id, session = this.sessionGeneration, generation = this.openGeneration;
-    this.loadingNewer = true;
-    try {
-      const messages = await request(`/api/rooms/${roomID}/messages?after=${this.windowSeq}&limit=${this.olderPageSize}`);
-      if (!this.current(session, roomID) || generation !== this.openGeneration || !this.contextMode) return;
-      for (const message of messages) this.add(message, false, true);
-      if (messages.length) this.windowSeq = messages.at(-1).seq;
-      // A short page is the live end of the room: the window is the latest view again.
-      if (messages.length < this.olderPageSize) { await this.leaveWindow(); return; }
-      this.trimOldest();
-      this.scrollAnchor?.update();
-    } catch (error) { if (this.current(session, roomID)) this.error.textContent = error.message; }
-    finally { if (generation === this.openGeneration) this.loadingNewer = false; }
-  }
-  // The live cursor restarts at the window's end, not at the newest seq seen: a live refresh that ran while the last page
-  // was in flight counted arrivals newer than that page without rendering them, and this refresh is what renders them.
-  // Those were announced when counted and are not announced again. The room is marked read only once they are shown, and
-  // only up to what is shown. If that refresh fails the view stays a window ending at what it did render, with the
-  // still-unseen arrivals counted, so scrolling down again or Back to latest completes it.
-  async leaveWindow() {
-    const room = this.room, session = this.sessionGeneration, generation = this.openGeneration, missed = this.missedIDs;
-    this.newestSeq = this.windowSeq;
-    this.announcedIDs = missed;
-    // Not the latest view for the read mark until the catch-up has rendered (see holdRead in app.js).
-    this.catchingUp = true;
-    this.contextMode = false; this.windowSeq = 0; this.latestButton.hidden = true;
-    this.missedIDs = new Set(); this.updateLatestLabel();
-    this.scrollAnchor?.update();
-    let caughtUp = true;
-    try { await this.refreshMessages(); } catch (error) { caughtUp = false; if (this.current(session, room.id)) this.error.textContent = error.message; }
-    finally { this.announcedIDs = null; }
-    if (!this.current(session, room.id) || generation !== this.openGeneration || this.contextMode) return;
-    if (!caughtUp) {
-      this.contextMode = true; this.catchingUp = false; this.windowSeq = this.newestSeq; this.latestButton.hidden = false;
-      for (const id of missed) if (!this.messages.has(id)) this.missedIDs.add(id);
-      this.updateLatestLabel(); return;
-    }
-    this.catchingUp = false;
-    this.onLatest?.(room);
-  }
+  loadNewer() { return this.store.loadNewer(); }
+  leaveWindow() { return this.store.leaveWindow(); }
   setSpawnOpener(openSpawn) { this.spawnCallback = openSpawn; }
   // The two things a historical sender's profile can do: start it as a v2 agent (opens the spawn dialog prefilled), and show the agent once started.
   setLegacyActions(start, open) { this.legacyStarter = start; this.legacyOpener = open; }
@@ -504,53 +452,14 @@ export class Chat {
   }
   // `key` is a message number (the "#N" people write, one sequence across every room) or a message id. A number is looked up on the
   // server when this room has not loaded it, and a message of another room opens that room (onOpenMessage) on that message.
-  async jumpToMessage(key) {
-    if (!this.room) return;
-    if (typeof key === 'number') {
-      const roomID = this.room.id, session = this.sessionGeneration;
-      const loaded = [...this.messages.values()].find(item => item.no === key);
-      if (loaded) key = loaded.id;
-      else {
-        let found;
-        try { found = await request(`/api/message-numbers/${encodeURIComponent(key)}`); }
-        catch (error) { if (this.current(session, roomID)) this.error.textContent = error.status === 404 ? `Message #${key} does not exist or is not visible to you.` : error.message; return; }
-        if (!this.current(session, roomID)) return;
-        if (found.room_id !== this.room.id) { this.error.textContent = ''; this.onOpenMessage?.(found); return; }
-        key = found.id;
-      }
-    }
-    const roomID = this.room.id, session = this.sessionGeneration;
-    let generation = this.openGeneration;
-    const jump = this.jumpGeneration = (this.jumpGeneration || 0) + 1;
-    let message = this.messages.get(key);
-    try {
-      if (!message) {
-        const messages = await request(`/api/rooms/${roomID}/messages?around=${encodeURIComponent(key)}&limit=${this.pageSize}`);
-        if (!this.current(session, roomID) || generation !== this.openGeneration || jump !== this.jumpGeneration) return;
-        message = messages.find(item => item.id === key);
-        if (!message) throw new Error('Message is not in this room.');
-        generation = ++this.openGeneration;
-        // A page in flight belongs to the old view (its generation no longer matches, so it will not clear its own flag).
-        this.hasMoreOlder = false; this.loadingOlder = false; this.loadingNewer = false; this.catchingUp = false; this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.oldestSeq = 0;
-        this.closeThread(); this.nodes.clear(); this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear(); this.list.replaceChildren();
-        for (const item of messages) this.add(item);
-        this.oldestSeq = messages[0]?.seq || 0; this.hasMoreOlder = messages.length === this.pageSize; this.list.dataset.hasOlder = String(this.hasMoreOlder);
-        this.contextMode = true; this.latestButton.hidden = false; this.windowSeq = messages.at(-1)?.seq || 0;
-      }
-      if (message.thread_root) {
-        let root = this.messages.get(message.thread_root);
-        if (!root) {
-          const roots = await request(`/api/rooms/${roomID}/messages?around=${encodeURIComponent(message.thread_root)}&limit=1`);
-          if (!this.current(session, roomID) || generation !== this.openGeneration || jump !== this.jumpGeneration) return;
-          root = roots.find(item => item.id === message.thread_root);
-        }
-        if (root) await this.openThread(root, message);
-        if (!this.current(session, roomID) || generation !== this.openGeneration || jump !== this.jumpGeneration) return;
-        { const entry = this.threadList.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`); entry?.scrollIntoView({ block: 'center' }); this.flash(entry); }
-      } else { const row = this.nodes.get(message.id); row?.scrollIntoView({ block: 'center' }); this.scrollAnchor?.update(); this.flash(row?.querySelector('.message-bubble') || row); }
-      this.error.textContent = '';
-    } catch (error) { if (this.current(session, roomID) && jump === this.jumpGeneration) this.error.textContent = error.message; }
-  }
+  jumpToMessage(key) { return this.store.jump(key); }
+  openMessage(found) { this.onOpenMessage?.(found); }
+  // A history window around a message: the list starts again from the page that holds it.
+  beginWindow() { this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.closeThread(); this.nodes.clear(); this.list.replaceChildren(); }
+  drawWindow(messages) { for (const item of messages) this.add(item); }
+  showWindow() { this.list.dataset.hasOlder = String(this.hasMoreOlder); this.latestButton.hidden = false; }
+  showReply(message) { const entry = this.threadList.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`); entry?.scrollIntoView({ block: 'center' }); this.flash(entry); }
+  showRow(message) { const row = this.nodes.get(message.id); row?.scrollIntoView({ block: 'center' }); this.scrollAnchor?.update(); this.flash(row?.querySelector('.message-bubble') || row); }
   renderBody(element, message) { element.replaceChildren(); if (this.raw) element.append(renderRaw(message.body)); else { element.append(renderMarkdown(message.body)); highlightMentions(element, this.mentionIndex); expandShortcodes(element); } if (message.attachments?.length) this.renderAttachments(element, message.attachments); }
   renderAttachments(element, attachments) {
     const strip = document.createElement('div'); strip.className = 'message-images';
@@ -639,30 +548,9 @@ export class Chat {
     }
   }
   exportRoom(format) { return this.panel.exportRoom(format); }
-  async refreshMessages() {
-    if (!this.room || this.initialLoading) return;
-    const id = this.room.id, session = this.sessionGeneration, generation = this.openGeneration;
-    for (;;) {
-      const messages = await request(`/api/rooms/${id}/messages?after=${this.newestSeq || 0}&limit=${this.pageSize}`);
-      if (!this.current(session, id) || generation !== this.openGeneration) return;
-      for (const message of messages) {
-        const route = liveRoute(message, { hasMoreOlder: this.hasMoreOlder, oldestSeq: this.oldestSeq, rootRendered: this.nodes.has(message.thread_root), openThreadID: this.threadRoot?.id, threadLatestHidden: this.threadLatestButton.hidden, threadEntryKnown: this.threadEntryIDs.has(message.id), contextMode: this.contextMode, known: this.messages.has(message.id), missed: this.missedIDs.has(message.id) });
-        if (route === 'new-reply') this.markNewThreadReply(message);
-        else if (route === 'add') { const known = this.messages.has(message.id); this.add(message); if (!known && this.liveArrival(message) && !this.announcedIDs?.has(message.id)) this.announce(message); }
-        else if (route === 'missed') {
-          // A history window does not show the live end of the room, but the arrival is still news: count it on the button and announce it.
-          this.missedIDs.add(message.id); this.updateLatestLabel();
-          if (!this.initialLoading && message.author_kind !== 'system') this.announce(message);
-        }
-      }
-      if (messages.length) this.newestSeq = messages.at(-1).seq;
-      if (messages.length) this.trimLive();
-      // What was just rendered at the latest view is seen now. The project refresh for the same event ran before this
-      // render and could only mark up to the previous newest message.
-      if (messages.length && !this.contextMode && !this.catchingUp) this.onLatest?.(this.room);
-      if (messages.length < this.pageSize) return;
-    }
-  }
+  refreshMessages() { return this.store.refresh(); }
+  // What the open thread panel knows of a live message: whether its root is drawn, whether the panel is open on it and at its end.
+  threadState(message) { return { rootRendered: this.nodes.has(message.thread_root), openThreadID: this.threadRoot?.id, threadLatestHidden: this.threadLatestButton.hidden, threadEntryKnown: this.threadEntryIDs.has(message.id) }; }
   announce(message) { this.announcer.arrival({ id: message.id, mine: message.author_kind === 'user' && message.author_id === currentUser, from: this.authorName(message), body: message.body, room: this.room.title }); }
   // Only messages that land in the main list while the room is open are announced: not history, older
   // pages, thread replies or system notices. What this tab sent is silenced by the announcer, by id.
@@ -1070,13 +958,8 @@ export class Chat {
     this.threadDraft.value = draft; this.draft.focus();
     await thread;
   }
-  async refreshReactions(id) {
-    const article = this.nodes.get(id); if (!article) return;
-    const session = this.sessionGeneration;
-    const entries = await request(`/api/messages/${id}/reactions`);
-    if (session !== this.sessionGeneration || this.nodes.get(id) !== article) return;
-    this.showReactions(id, entries);
-  }
+  refreshReactions(id) { return this.store.refreshReactions(id); }
+  node(id) { return this.nodes.get(id); }
   showReactions(id, entries) {
     this.reactions.set(id, entries);
     const article = this.nodes.get(id); if (!article) return;
@@ -1086,10 +969,9 @@ export class Chat {
       pill.title = group.title; pill.setAttribute('aria-pressed', group.pressed); pill.dataset.emoji = group.emoji; pills.append(pill);
     }
   }
-  async toggleReaction(id, emoji) {
-    const session = this.sessionGeneration, room = this.room?.id;
-    const mine = this.reactions.get(id)?.some(entry => entry.emoji === emoji && entry.member_id === currentUser);
-    try { await request(`/api/messages/${id}/reactions/${encodeURIComponent(emoji)}`, { method: mine ? 'DELETE' : 'PUT' }); if (!this.current(session, room)) return; await this.refreshReactions(id); }
-    catch (error) { if (this.current(session, room)) this.error.textContent = error.message; }
-  }
+  toggleReaction(id, emoji) { return this.store.toggleReaction(id, emoji); }
+}
+
+for (const name of ['messages', 'reactions', 'threadCounts', 'serverThreadCounts', 'repliedTo', 'answeredMessages', 'historicalAuthors', 'missedIDs', 'announcedIDs', 'newestSeq', 'oldestSeq', 'hasMoreOlder', 'loadingOlder', 'loadingNewer', 'contextMode', 'catchingUp', 'windowSeq', 'initialLoading', 'openGeneration', 'sessionGeneration', 'jumpGeneration', 'pageSize', 'olderPageSize']) {
+  Object.defineProperty(Chat.prototype, name, { configurable: true, get() { return this.store[name]; }, set(value) { this.store[name] = value; } });
 }

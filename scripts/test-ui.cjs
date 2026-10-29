@@ -1314,13 +1314,13 @@ async function main() {
     // the requester and has no attachment; every other reply is an ordinary one that leaves the request open.
     assert.deepEqual(await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
-      const base = { room: { id: 'r' }, sessionGeneration: 1, recall: null, error: { textContent: '' }, announcer: { sendStarted() {}, sendFinished() {} }, resizeDraft() {}, current: () => true, renderPending() {}, trimLive() {}, add() {}, contextMode: false };
+      const base = { store: {}, room: { id: 'r' }, sessionGeneration: 1, recall: null, error: { textContent: '' }, announcer: { sendStarted() {}, sendFinished() {} }, resizeDraft() {}, current: () => true, renderPending() {}, trimLive() {}, add() {}, contextMode: false };
       const original = window.fetch, posts = [];
       window.fetch = async (path, options = {}) => { posts.push([String(path), JSON.parse(options.body || '{}').body]); return new Response(JSON.stringify({ id: 'm9' }), { status: 200, headers: { 'Content-Type': 'application/json' } }); };
       try {
         const run = async (body, item, { attachments = [], answer = async () => true, reply = { id: 'm1', author_kind: 'agent', author_id: 'a1' } } = {}) => {
           const answers = [], shown = [];
-          const chat = Object.create(Chat.prototype);
+          const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
           Object.assign(chat, base, { reply, pendingUploads: 0, pendingAttachments: attachments, notice: { clear() {}, show(text) { shown.push(text); } }, agents: new Map([['a1', { slug: 'tess' }]]),
             draft: { value: body, setSelectionRange() {} }, answerItems: new Map(item ? [['m1', item]] : []), setReply(message) { this.reply = message; }, inbox: { answer: async (found, text) => { answers.push([found.id, text]); return answer(); } } });
           posts.length = 0;
@@ -1346,7 +1346,7 @@ async function main() {
         };
         // A second send while an answer is in flight does nothing.
         let release; const gate = new Promise(resolve => { release = resolve; });
-        const chat = Object.create(Chat.prototype), calls = [];
+        const chat = Object.assign(Object.create(Chat.prototype), { store: {} }), calls = [];
         Object.assign(chat, base, { reply: { id: 'm1', author_kind: 'agent', author_id: 'a1' }, pendingUploads: 0, pendingAttachments: [], notice: { clear() {}, show() {} }, agents: new Map([['a1', { slug: 'tess' }]]), draft: { value: '@tess ok', setSelectionRange() {} }, answerItems: new Map([['m1', free]]), setReply() {}, inbox: { answer: async () => { calls.push(1); await gate; return true; } } });
         const one = chat.send(), two = chat.send(); release(); await Promise.all([one, two]);
         out.doubleSubmit = calls.length;
@@ -1450,7 +1450,7 @@ async function main() {
     assert.deepEqual([phoneQuestions.closeQuiet, phoneQuestions.backQuiet, phoneQuestions.nextQuiet], [true, true, false], 'Close and Back must be secondary, Next primary');
     const stableAnswerControls = await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
-      const chat = Object.create(Chat.prototype);
+      const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
       chat.nodes = new Map(); chat.threadList = document.createElement('div'); chat.inbox = { answer: async () => true };
       chat.authorMeta = () => document.createElement('span');
       chat.renderBody = (node, message) => { node.textContent = message.body; };
@@ -1492,7 +1492,7 @@ async function main() {
     // "Answered" when a person replied to it or it was answered here, otherwise "No longer pending"; nothing for a message with none.
     const askHistory = await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
-      const chat = Object.create(Chat.prototype);
+      const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
       chat.nodes = new Map(); chat.threadList = document.createElement('div'); chat.inbox = { answer: async () => true }; chat.answerItems = new Map();
       chat.answeredMessages = new Set(); chat.repliedTo = new Set();
       const asked = { id: 'ask-1', seq: 1, no: 1, proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Which?', options: ['a', 'b'] }] };
@@ -1531,7 +1531,7 @@ async function main() {
     assert.ok(Math.abs(thumbs.tall[0] / thumbs.tall[1] - 0.25) < 0.02 && thumbs.tall[1] <= 180.5, `a portrait thumbnail keeps its 1:4 shape: ${JSON.stringify(thumbs)}`);
     const nativeHistoryLayout = await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
-      const chat = Object.create(Chat.prototype);
+      const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
       chat.list = document.createElement('div'); document.body.append(chat.list);
       chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.agents = new Map(); chat.raw = false;
       chat.refreshReactions = () => {};
@@ -1549,7 +1549,7 @@ async function main() {
     assert.deepEqual(nativeHistoryLayout, { label: 'bot@repo', planInBubble: true, escaped: true, injected: false, departed: 'Agent 123456' });
     const identityHeader = await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
-      const chat = Object.create(Chat.prototype);
+      const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
       chat.list = document.createElement('div'); document.body.append(chat.list);
       chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.serverThreadCounts = new Map(); chat.raw = false;
       chat.agents = new Map([['live', { id: 'live', name: 'Live', tool: 'codex', model: 'gpt-6-sol', observed: 'in_turn' }], ['gone', { id: 'gone', name: 'Gone', tool: 'claude', model: 'opus', observed: 'stopped' }], ['wait', { id: 'wait', name: 'Wait', tool: 'pi', model: 'gemma', observed: 'idle', recovery_block: true }]]);
@@ -1628,7 +1628,7 @@ async function main() {
       const { Chat } = await import('/js/chat.js');
       const out = {};
       for (const variant of ['c']) {
-        const chat = Object.create(Chat.prototype);
+        const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
         chat.list = document.createElement('div'); document.body.append(chat.list);
         chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.serverThreadCounts = new Map(); chat.agents = new Map(); chat.raw = false;
         chat.refreshReactions = () => {}; chat.toggleReaction = (id, emoji) => { (chat.reacted ||= []).push([id, emoji]); };
@@ -1674,7 +1674,7 @@ async function main() {
     assert.deepEqual(messageActions.c.writes, ['**raw** body', '#801']);
     const prependedThreadOrder = await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
-      const chat = Object.create(Chat.prototype);
+      const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
       chat.threadList = document.createElement('div'); chat.threadCounts = new Map(); chat.serverThreadCounts = new Map(); chat.nodes = new Map(); chat.messages = new Map(); chat.agents = new Map(); chat.raw = false;
       const root = { id: 'thread-root', seq: 1, no: 1, body: 'root', author_kind: 'user', author_id: 'owner' };
       chat.threadRoot = root; chat.threadEntryIDs = new Set([root.id]); chat.threadList.append(chat.threadEntry(root));
@@ -2732,7 +2732,7 @@ async function main() {
         await first.setViewport({ width, height: 900 });
         const fit = await first.evaluate(async () => {
           const { Chat } = await import('/js/chat.js');
-          const chat = Object.create(Chat.prototype);
+          const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
           const list = document.querySelector('#messages'), kept = new Set(list.children);
           chat.list = list; chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.agents = new Map(); chat.raw = false; chat.refreshReactions = () => {};
           const long = 'verylongidentifier'.repeat(20), bodies = [
@@ -2770,7 +2770,7 @@ async function main() {
     {
       const added = await first.evaluate(async () => {
         const { Chat } = await import('/js/chat.js');
-        const chat = Object.create(Chat.prototype);
+        const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
         const list = document.querySelector('#messages');
         chat.list = list; chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.agents = new Map(); chat.raw = false; chat.refreshReactions = () => {};
         const pic = (w, h) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="steelblue"/></svg>`);

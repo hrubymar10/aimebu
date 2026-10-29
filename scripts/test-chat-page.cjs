@@ -14,6 +14,7 @@ const root = path.join(__dirname, '..', 'web');
 const REPLACED = fs.existsSync(path.join(root, 'js', 'pages', 'chat', 'page.js'));
 const MODULE = REPLACED ? '/js/pages/chat/page.js' : '/js/chat.js';
 const PANEL = fs.existsSync(path.join(root, 'js', 'pages', 'room-panel', 'page.js'));
+const STORE = fs.existsSync(path.join(root, 'js', 'pages', 'chat', 'store.js'));
 const fixture = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/<script type="module" src="\/js\/app\.js[^"]*"><\/script>/, '');
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
@@ -644,6 +645,23 @@ async function main() {
     await serve(late, held); await late.evaluate(() => window.__jumping); await settle(late);
     assert.deepEqual([(await panel(late)).hidden, (await panel(late)).entries.length, await late.evaluate(() => document.querySelector('#chat-error').textContent)], [true, 0, ''], 'a late root lookup opens no thread in the new room');
     await late.close();
+    for (const [held, what, change] of [['around=rm_a_m120', 'a late root lookup opens no thread', 'jump'], ['thread_root=rm_a_m120', 'a late thread page shows no reply', 'jump'], ['thread_root=rm_a_m120', 'a late thread page shows no reply after a room change', 'room']]) {
+      const newer = await mount();
+      await addReplies(newer, 130);
+      await openRoom(newer, 'rm_a'); await opened(newer); await settle(newer);
+      await newer.evaluate(() => { window.__shown = 0; const show = window.__chat.showReply; window.__chat.showReply = function (...args) { window.__shown++; return show.apply(this, args); }; });
+      if (held.startsWith('around')) await newer.evaluate(() => { window.__chat.messages.delete('rm_a_m120'); window.__chat.nodes.get('rm_a_m120').remove(); window.__chat.nodes.delete('rm_a_m120'); });
+      await hold(newer, 'GET', held);
+      await newer.evaluate(() => { window.__jumping = window.__chat.jumpToMessage('rm_a_t5'); });
+      const request = await waitRequest(newer, 'GET', held);
+      if (change === 'jump') await newer.evaluate(() => { window.__chat.jumpToMessage('rm_a_m100'); });
+      else { await openRoom(newer, 'rm_b'); await opened(newer); }
+      await settle(newer);
+      const hidden = (await panel(newer)).hidden;
+      await newer.evaluate(() => { window.__holds.length = 0; }); await serve(newer, request); await newer.evaluate(() => window.__jumping); await settle(newer);
+      assert.deepEqual([(await panel(newer)).hidden === hidden || !hidden, await newer.evaluate(() => window.__shown)], [true, 0], `${change === 'jump' ? 'a newer jump: ' : ''}${what}`);
+      await newer.close();
+    }
   }
 
   // Reactions. A message that carries its reactions shows them without a request; one that does not asks for them. Entries group by emoji with a count, the
@@ -1273,9 +1291,188 @@ async function main() {
     }
   }
 
+  // The store holds the room's records and cursors; the cases above read the page, these read the store.
+  if (STORE) {
+    const view = page => page.evaluate(() => { const store = window.__chat.store; return { rows: store.messages.size, newest: store.newestSeq, oldest: store.oldestSeq, more: store.hasMoreOlder, window: store.contextMode, windowSeq: store.windowSeq, catching: store.catchingUp, missed: store.missedIDs.size, loadingOlder: store.loadingOlder, loadingNewer: store.loadingNewer, loading: store.initialLoading }; });
+    const page = await mount();
+    assert.deepEqual(await view(page), { rows: 0, newest: 0, oldest: 0, more: false, window: false, windowSeq: 0, catching: false, missed: 0, loadingOlder: false, loadingNewer: false, loading: false });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.deepEqual(await view(page), { rows: 100, newest: 130, oldest: 31, more: true, window: false, windowSeq: 0, catching: false, missed: 0, loadingOlder: false, loadingNewer: false, loading: false }, 'the newest page');
+    await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10')); await settle(page);
+    assert.deepEqual(await view(page), { rows: 100, newest: 130, oldest: 1, more: true, window: true, windowSeq: 100, catching: false, missed: 0, loadingOlder: false, loadingNewer: false, loading: false }, 'a window around a message');
+    await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_m131', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'while away', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); }); await settle(page);
+    assert.deepEqual([(await view(page)).missed, (await view(page)).newest], [1, 131], 'an arrival while a window is shown is counted');
+    await page.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = list.scrollHeight; });
+    await page.waitForFunction(() => window.__chat.store.contextMode === false, { timeout: 5000 }); await settle(page);
+    assert.deepEqual(await view(page), { rows: 131, newest: 131, oldest: 1, more: true, window: false, windowSeq: 0, catching: false, missed: 0, loadingOlder: false, loadingNewer: false, loading: false }, 'the latest view again');
+    await page.evaluate(() => window.__chat.reset());
+    assert.deepEqual(await view(page), { rows: 0, newest: 0, oldest: 0, more: false, window: false, windowSeq: 0, catching: false, missed: 0, loadingOlder: false, loadingNewer: false, loading: false }, 'a reset empties it');
+    await page.close();
+    // overlapping live refreshes draw a message once and leave the cursor at the newest
+    for (const order of ['older first', 'newer first']) {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await hold(page, 'GET', 'rooms/rm_a/messages\\?after=');
+      await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_m131', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'twice', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); window.__a = window.__chat.refreshMessages(); });
+      const one = await waitRequest(page, 'GET', 'rooms/rm_a/messages\\?after=');
+      await page.evaluate(() => { window.__b = window.__chat.refreshMessages(); }); await page.waitForFunction(() => window.__requests.filter(request => request.method === 'GET' && /messages\?after=/.test(request.path) && !request.answered).length === 2);
+      const two = await find(page, 'GET', 'rooms/rm_a/messages\\?after=');
+      for (const index of order === 'older first' ? [one, two] : [two, one]) await serve(page, index);
+      await page.evaluate(() => Promise.all([window.__a, window.__b])); await settle(page);
+      assert.deepEqual([await page.evaluate(() => document.querySelectorAll('[data-message-id=rm_a_m131]').length), (await view(page)).newest, (await view(page)).rows], [1, 131, 101], `overlapping refreshes, ${order}: one row, the cursor at the newest`);
+      await page.close();
+    }
+    // the reactions of different messages read at once are both kept; of one message the newest read wins whichever answer comes first
+    for (const order of ['older first', 'newer first']) {
+      const page = await reactionRoom();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await hold(page, 'GET', '/api/messages/rm_a_m1(28|29)/reactions');
+      await page.evaluate(() => { window.__data.reactions.rm_a_m128 = [{ emoji: '👍', member_kind: 'user', member_id: 'usr_ann', member_name: 'ann' }]; window.__chat.refreshReactions('rm_a_m128'); window.__first = window.__chat.refreshReactions('rm_a_m129'); });
+      await page.waitForFunction(() => window.__requests.filter(request => /reactions$/.test(request.path) && !request.answered && /m129|m128/.test(request.path)).length >= 2);
+      const older = await find(page, 'GET', '/api/messages/rm_a_m129/reactions'), other = await find(page, 'GET', '/api/messages/rm_a_m128/reactions');
+      await page.evaluate(() => { window.__data.reactions.rm_a_m129 = [{ emoji: '🚀', member_kind: 'user', member_id: 'usr_ann', member_name: 'ann' }]; window.__second = window.__chat.refreshReactions('rm_a_m129'); });
+      await page.waitForFunction(() => window.__requests.filter(request => request.path.endsWith('rm_a_m129/reactions') && !request.answered).length === 2);
+      const newer = await find(page, 'GET', '/api/messages/rm_a_m129/reactions');
+      await answer(page, other, 200, [{ emoji: '👍', member_kind: 'user', member_id: 'usr_ann', member_name: 'ann' }]);
+      const answers = [[older, [{ emoji: '👀', member_kind: 'user', member_id: 'usr_ann', member_name: 'ann' }]], [newer, [{ emoji: '🚀', member_kind: 'user', member_id: 'usr_ann', member_name: 'ann' }]]];
+      for (const [index, body] of order === 'older first' ? answers : answers.slice().reverse()) await answer(page, index, 200, body);
+      await page.evaluate(() => Promise.all([window.__first, window.__second])); await settle(page);
+      assert.deepEqual(await page.evaluate(() => [window.__chat.store.reactions.get('rm_a_m129')?.map(entry => entry.emoji), window.__chat.store.reactions.get('rm_a_m128')?.map(entry => entry.emoji)]), [['🚀'], ['👍']], `reactions, ${order}: the newest read of a message wins and another message's read is kept`);
+      await page.close();
+    }
+    // one older page at a time; a forward page only in a window and not beside an older page
+    {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      const count = (re) => page.evaluate(re => window.__requests.filter(request => request.method === 'GET' && new RegExp(re).test(request.path)).length, re);
+      const sent = await page.evaluate(() => window.__requests.length);
+      await page.evaluate(() => window.__chat.loadNewer()); await settle(page);
+      assert.equal(await page.evaluate(() => window.__requests.length), sent, 'no forward page outside a window');
+      await hold(page, 'GET', 'rooms/rm_a/messages\\?before=');
+      await page.evaluate(() => { window.__a = window.__chat.loadOlder(); window.__b = window.__chat.loadOlder(); }); await settle(page);
+      assert.equal(await count('messages\\?before='), 1, 'a second older page is not asked for while one is out');
+      const older = await waitRequest(page, 'GET', 'rooms/rm_a/messages\\?before=');
+      await page.evaluate(() => { window.__chat.store.contextMode = true; window.__chat.store.windowSeq = 77; window.__chat.loadNewer(); }); await settle(page);
+      assert.equal(await count('messages\\?after=77'), 0, 'no forward page while an older page is out');
+      await page.evaluate(() => { window.__chat.store.contextMode = false; window.__chat.store.windowSeq = 0; });
+      await serve(page, older); await settle(page);
+      await hold(page, 'GET', 'rooms/rm_a/messages\\?after=77');
+      await page.evaluate(() => { window.__chat.store.contextMode = true; window.__chat.store.windowSeq = 77; window.__c = window.__chat.loadNewer(); window.__d = window.__chat.loadNewer(); }); await settle(page);
+      assert.equal(await count('messages\\?after=77'), 1, 'a second forward page is not asked for while one is out');
+      await serve(page, await waitRequest(page, 'GET', 'rooms/rm_a/messages\\?after=77')); await page.evaluate(() => Promise.all([window.__c, window.__d])); await page.evaluate(() => Promise.all([window.__a, window.__b])); await settle(page);
+      await page.close();
+    }
+    // a forward page that was out when the window moved or closed is dropped
+    for (const how of ['another window', 'latest view']) {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10')); await settle(page);
+      await hold(page, 'GET', 'rooms/rm_a/messages\\?after=100');
+      await page.evaluate(() => { window.__late = window.__chat.loadNewer(); });
+      const held = await waitRequest(page, 'GET', 'rooms/rm_a/messages\\?after=100');
+      if (how === 'another window') { await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m120')); await settle(page); }
+      else await page.evaluate(() => { window.__chat.store.contextMode = false; });
+      const before = await view(page);
+      await serve(page, held); await page.evaluate(() => window.__late); await settle(page);
+      assert.deepEqual(await view(page), { ...before, loadingNewer: false }, `${how}: a late forward page changes nothing`);
+      await page.close();
+    }
+    // a reaction change released after the room was left and shown again reads nothing
+    {
+      const page = await reactionRoom();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await hold(page, 'PUT', '/reactions/');
+      await page.evaluate(() => { window.__toggle = window.__chat.toggleReaction('rm_a_m130', '🎉'); });
+      const held = await waitRequest(page, 'PUT', '/reactions/');
+      await page.evaluate(() => { window.__holds.length = 0; });
+      await openRoom(page, 'rm_b'); await opened(page); await settle(page);
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      const reads = await page.evaluate(() => window.__requests.filter(request => request.method === 'GET' && /reactions$/.test(request.path)).length);
+      await serve(page, held); await page.evaluate(() => window.__toggle); await settle(page);
+      assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'GET' && /reactions$/.test(request.path)).length), reads, 'a stale reaction change starts no reactions read');
+      await page.close();
+    }
+    // a catch-up released after the room changed leaves the suppression set of a newer catch-up alone
+    {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10')); await settle(page);
+      await hold(page, 'GET', 'rooms/rm_a/messages\\?after=');
+      await page.evaluate(() => { window.__old = window.__chat.store.leaveWindow(); });
+      const oldRead = await waitRequest(page, 'GET', 'rooms/rm_a/messages\\?after=');
+      await page.evaluate(() => { window.__holds.length = 0; });
+      assert.equal(await page.evaluate(() => window.__chat.store.announcedIDs instanceof Set), true, 'a catch-up in flight holds a suppression set');
+      await openRoom(page, 'rm_b'); await opened(page); await settle(page);
+      assert.equal(await page.evaluate(() => window.__chat.store.announcedIDs), null, 'another room starts with none');
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10')); await settle(page);
+      await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_m131', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'while away', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); }); await settle(page);
+      await hold(page, 'GET', 'rooms/rm_a/messages\\?after=');
+      await page.evaluate(() => { window.__new = window.__chat.store.leaveWindow(); });
+      const newRead = await waitRequest(page, 'GET', 'rooms/rm_a/messages\\?after=');
+      await page.evaluate(() => { window.__holds.length = 0; });
+      await serve(page, oldRead); await page.evaluate(() => window.__old); await settle(page);
+      assert.equal(await page.evaluate(() => window.__chat.store.announcedIDs instanceof Set), true, 'an old catch-up leaves the newer one its suppression set');
+      await serve(page, newRead); await page.evaluate(() => window.__new); await settle(page);
+      assert.equal(await page.evaluate(() => window.__chat.store.announcedIDs), null, 'the newer catch-up clears it');
+      await page.close();
+    }
+    // a jump to another window ends the suppression of a catch-up that was out
+    {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10')); await settle(page);
+      await hold(page, 'GET', 'rooms/rm_a/messages\\?after=');
+      await page.evaluate(() => { window.__old = window.__chat.store.leaveWindow(); });
+      const read = await waitRequest(page, 'GET', 'rooms/rm_a/messages\\?after=');
+      await page.evaluate(() => { window.__holds.length = 0; window.__chat.jumpToMessage('rm_a_m110'); }); await settle(page);
+      assert.equal(await page.evaluate(() => window.__chat.store.announcedIDs), null, 'a new window starts with none');
+      await serve(page, read); await page.evaluate(() => window.__old); await settle(page);
+      await page.close();
+    }
+    // once the store is destroyed none of its entries touches the host or sends a request
+    {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10')); await settle(page);
+      await page.evaluate(() => window.__chat.destroy());
+      const outcome = await page.evaluate(async () => {
+        const chat = window.__chat, store = chat.store, hostCalls = [], sent = window.__requests.length;
+        for (const name of ['beginOpen', 'drawPage', 'showNewest', 'loadOlderIfShort', 'latestShown', 'threadState', 'markNewThreadReply', 'add', 'announce', 'updateLatestLabel', 'trimLive', 'showOlderStatus', 'prependPage', 'trimOldest', 'anchorUpdate', 'say', 'showLatestButton', 'openMessage', 'beginWindow', 'drawWindow', 'showWindow', 'openThread', 'showReply', 'showRow', 'showReactions']) { const original = chat[name]; chat[name] = function (...args) { hostCalls.push(name); return original.apply(this, args); }; }
+        chat.room = { id: 'rm_a' }; store.hasMoreOlder = true; store.oldestSeq = 5; chat.nodes.set('rm_a_m1', document.createElement('article'));
+        store.windowSeq = 5; store.contextMode = true; store.newestSeq = 9; const before = [store.windowSeq, store.contextMode, store.newestSeq, store.catchingUp];
+        for (const call of [() => store.open({ id: 'rm_a' }), () => store.refresh(), () => store.loadOlder(), () => store.loadNewer(), () => store.leaveWindow(), () => store.jump('rm_a_m10'), () => store.jump(7), () => store.refreshReactions('rm_a_m1'), () => store.toggleReaction('rm_a_m1', '👍')]) { try { await call(); } catch (error) { hostCalls.push(`threw ${error.message}`); } }
+        return [hostCalls, window.__requests.length - sent, before, [store.windowSeq, store.contextMode, store.newestSeq, store.catchingUp]];
+      });
+      assert.deepEqual([outcome[0], outcome[1], outcome[3]], [[], 0, outcome[2]], 'a destroyed store entry touches nothing');
+      await page.close();
+    }
+    // with no room the list calls resolve and send nothing
+    {
+      const page = await mount();
+      const outcome = await page.evaluate(async () => { const store = window.__chat.store, sent = window.__requests.length, results = []; for (const call of [() => store.refresh(), () => store.loadOlder(), () => store.loadNewer(), () => store.jump('rm_a_m1'), () => store.jump(7), () => store.toggleReaction('rm_a_m1', '👍')]) { try { await call(); results.push('ok'); } catch (error) { results.push(error.message); } } return [results, window.__requests.length - sent]; });
+      assert.deepEqual(outcome, [['ok', 'ok', 'ok', 'ok', 'ok', 'ok'], 0], 'no room: the calls resolve and send nothing');
+      await page.close();
+    }
+    // a jump that a newer jump replaced, or that a room change outlived, changes nothing when its answer comes
+    for (const how of ['newer jump', 'room change', 'leaving the window']) {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      if (how === 'leaving the window') { await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10')); await settle(page); await hold(page, 'GET', 'rooms/rm_a/messages\\?after='); await page.evaluate(() => { window.__late = window.__chat.leaveWindow(); }); }
+      else { await hold(page, 'GET', 'rooms/rm_a/messages\\?around='); await page.evaluate(() => { window.__late = window.__chat.jumpToMessage('rm_a_m10'); }); }
+      const held = await waitRequest(page, 'GET', how === 'leaving the window' ? 'rooms/rm_a/messages\\?after=' : 'rooms/rm_a/messages\\?around=');
+      if (how === 'newer jump') { await page.evaluate(() => { window.__chat.store.jumpGeneration++; }); }
+      else { await openRoom(page, 'rm_b'); await opened(page); await settle(page); }
+      const before = await view(page); await calls(page);
+      await serve(page, held); await page.evaluate(() => window.__late); await settle(page);
+      assert.deepEqual([await view(page), await calls(page)], [before, []], `${how}: a late answer changes nothing and marks nothing read`);
+      await page.close();
+    }
+  }
+
   // A destroyed chat (the replacement's adapter has destroy(); the hand-written chat does not): what was still out when it was destroyed changes nothing
   // and starts no request, and none of its entries sends one afterwards.
-  if (REPLACED) {
+  if (REPLACED || STORE) {
     const destroyed = [
       ['open', {}, page => openRoom(page, 'rm_a'), 'GET', 'rooms/rm_a/messages\\?limit=100'],
       ['refresh', { opened: true }, page => page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_m131', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'late', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); window.__late = window.__chat.refreshMessages(); }), 'GET', 'rooms/rm_a/messages\\?after='],
