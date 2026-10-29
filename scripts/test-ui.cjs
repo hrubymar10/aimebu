@@ -277,7 +277,7 @@ async function main() {
       assert.equal(await first.evaluate(async () => (await (await fetch('/api/me')).json()).first_run), false, 'the server remembers it was seen');
       // Skipping, and reduced motion, go straight to the finished screen.
       const skips = await first.evaluate(async () => {
-        const { showWelcome } = await import('/js/welcome.js' + new URL(document.querySelector('script[type=module]').src).search);
+        const { showWelcome } = await import('/js/pages/setup/welcome.js' + new URL(document.querySelector('script[type=module]').src).search);
         const out = {};
         for (const how of ['click', 'Enter', 'Space', 'reduced']) {
           const done = showWelcome(null, { reduced: how === 'reduced' });
@@ -295,7 +295,7 @@ async function main() {
       const ringOf = () => first.evaluate(() => { const button = document.querySelector('#welcome-continue'), style = getComputedStyle(button); return { focused: document.activeElement === button, auto: 'autoFocus' in button.dataset, border: style.borderTopWidth, ring: style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0, shadow: style.boxShadow, fill: style.backgroundColor }; });
       for (const theme of ['', 'high-contrast-dark']) {
         const saved = await first.evaluate(value => { const before = document.documentElement.dataset.theme || ''; if (value) document.documentElement.dataset.theme = value; return before; }, theme);
-        await first.evaluate(async () => { const { showWelcome } = await import('/js/welcome.js' + new URL(document.querySelector('script[type=module]').src).search); window.__welcomeDone = showWelcome(null, { reduced: true }); });
+        await first.evaluate(async () => { const { showWelcome } = await import('/js/pages/setup/welcome.js' + new URL(document.querySelector('script[type=module]').src).search); window.__welcomeDone = showWelcome(null, { reduced: true }); });
         await first.waitForSelector('#welcome-continue:not([inert])');
         const idle = await ringOf();
         assert.deepEqual([idle.focused, idle.auto, idle.border, idle.ring, idle.shadow], [true, true, '0px', false, 'none'], `${theme || 'default'} theme: Continue is focused with no border and no ring: ${JSON.stringify(idle)}`);
@@ -309,7 +309,7 @@ async function main() {
         await first.evaluate(value => { if (value) document.documentElement.dataset.theme = value; else delete document.documentElement.dataset.theme; }, saved);
       }
       // The artwork follows the theme: the dark icon on a dark theme, the light icon on a light one.
-      await first.evaluate(async () => { const { showWelcome } = await import('/js/welcome.js' + new URL(document.querySelector('script[type=module]').src).search); window.__welcomeDone = showWelcome(null, { reduced: true }); });
+      await first.evaluate(async () => { const { showWelcome } = await import('/js/pages/setup/welcome.js' + new URL(document.querySelector('script[type=module]').src).search); window.__welcomeDone = showWelcome(null, { reduced: true }); });
       await first.waitForSelector('#welcome-view');
       const themed = [], savedTheme = await first.evaluate(() => document.documentElement.dataset.theme || '');
       for (const theme of ['light', 'blue-light', 'dark', 'high-contrast-dark']) { await first.evaluate(value => { document.documentElement.dataset.theme = value; }, theme); themed.push([theme, (await iconState()).shown[0]]); }

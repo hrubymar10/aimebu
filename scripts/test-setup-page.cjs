@@ -153,6 +153,154 @@ async function main() {
     assert.deepEqual([creates.length, await page.evaluate(() => document.querySelector('#setup-error').textContent)], [1, ''], 'a double submit creates the owner once and says nothing');
     await page.close();
   });
+  // late answers: a second setup on a page without the app, its requests held and answered by the test in the order it chooses
+  await withServer(async server => {
+    const page = await server.open({ context: await server.context() });
+    await page.setRequestInterception(true);
+    const held = [], seen = [];
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (/\/js\/app\.js$/.test(url.pathname)) { request.abort(); return; }
+      if (/^\/api\/(setup|welcome|me\/preferences)/.test(url.pathname) && !(url.pathname === '/api/setup/status' && request.method() === 'GET')) { seen.push(`${request.method()} ${url.pathname}`); held.push({ url: url.pathname, method: request.method(), request }); } else request.continue();
+    });
+    await page.goto(server.origin);
+    const answer = (entry, status, body) => entry.request.respond({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    const settle = () => new Promise(resolve => setTimeout(resolve, 150));
+    const pending = async count => { for (let i = 0; i < 200 && held.length < count; i++) await new Promise(resolve => setTimeout(resolve, 25)); assert.equal(held.length, count, `expected ${count} held requests, saw ${held.length}: ${seen.join(', ')}`); };
+    const make = async (search = '', options = {}) => {
+      held.length = 0; seen.length = 0;
+      await page.evaluate(async (search, options) => {
+        const { Setup } = await import('/js/pages/setup/page.js');
+        document.querySelectorAll('.late-view').forEach(node => node.remove());
+        const views = {};
+        for (const name of ['token', 'owner', 'theme']) { const view = document.createElement('main'); view.className = `late-view login`; view.id = `late-${name}`; view.hidden = true; document.body.append(view); views[name] = view; }
+        window.__setup = new Setup({ views, search, welcome: async () => {} });
+        window.__result = 'pending'; window.__setup.run().then(session => { window.__result = session; });
+        window.__started = true;
+      }, search, options);
+    };
+    const shown = () => page.evaluate(() => Object.fromEntries(['token', 'owner', 'theme'].map(name => [name, !!document.querySelector(`#late-${name}`) && !document.querySelector(`#late-${name}`).hidden && document.querySelector(`#late-${name}`).childElementCount > 0])));
+    const text = selector => page.evaluate(selector => document.querySelector(selector)?.textContent ?? '', selector);
+    const call = body => page.evaluate(new Function(`window.__setup.store.${body}`));
+    const toOwner = async () => {
+      await make();
+      await page.waitForFunction(() => window.__setup.store.step.value === 'token');
+      call("submitToken('typed')"); await pending(1);
+      answer(held[0], 200, {}); await page.waitForFunction(() => window.__setup.store.step.value === 'owner');
+      held.length = 0; seen.length = 0;
+    };
+    const submitOwner = () => page.evaluate(() => { window.__setup.store.submitOwner('late', 'late-password-12', 'late-password-12'); });
+    const session = { user_id: 'u1', id: 'u1', login: 'late', csrf_token: 'c' };
+
+    // the token from the link and a token typed meanwhile: the typed one is the later action, whichever answers first
+    for (const [name, typed, linked, order] of [['typed rejected, link accepted, link answers first', 401, 200, 'link first'], ['typed rejected, link accepted, typed answers first', 401, 200, 'typed first'], ['typed accepted, link rejected, link answers first', 200, 401, 'link first'], ['typed accepted, link rejected, typed answers first', 200, 401, 'typed first']]) {
+      await make('?token=from-link');
+      await pending(1);
+      const link = held[0];
+      call("submitToken('typed')"); await pending(2);
+      const manual = held[1];
+      const reply = { link: () => answer(link, linked, linked === 200 ? {} : { message: 'link rejected' }), typed: () => answer(manual, typed, typed === 200 ? {} : { message: 'typed rejected' }) };
+      if (order === 'link first') { reply.link(); await settle(); reply.typed(); } else { reply.typed(); await settle(); reply.link(); }
+      await settle();
+      const expected = typed === 200 ? { token: false, owner: true, theme: false } : { token: true, owner: false, theme: false };
+      assert.deepEqual([await shown(), await text('#late-token #setup-token-error')], [expected, typed === 200 ? '' : 'typed rejected'], `${name}: the typed token decides, its error stays and the link's answer changes nothing`);
+    }
+
+    // a link that is right skips the token step; a wrong one is put in the field with the server's sentence
+    await make('?token=from-link'); await pending(1); answer(held[0], 200, {}); await settle();
+    assert.deepEqual(await shown(), { token: false, owner: true, theme: false }, 'a right link goes to the owner form');
+    await make('?token=from-link'); await pending(1); answer(held[0], 401, { message: 'link rejected' }); await settle();
+    assert.deepEqual([await shown(), await text('#late-token #setup-token-error'), await page.evaluate(() => document.querySelector('#late-token input').value)], [{ token: true, owner: false, theme: false }, 'link rejected', 'from-link'], 'a wrong link shows its sentence and the token in the field');
+
+    // the link answered after destroy: nothing is shown
+    await make('?token=from-link'); await pending(1);
+    await call('destroy()');
+    answer(held[0], 200, {}); await settle();
+    assert.deepEqual(await shown(), { token: false, owner: false, theme: false }, 'a link checked and answered after destroy shows nothing');
+
+    // the owner made, then destroyed at each boundary: nothing after that point happens
+    await toOwner(); await submitOwner(); await pending(1);
+    await call('destroy()');
+    answer(held[0], 200, session); await settle();
+    assert.deepEqual([seen.length, await page.evaluate(() => window.__result)], [1, 'pending'], 'an owner created and answered after destroy sends nothing more and finishes nothing');
+
+    await toOwner(); await submitOwner(); await pending(1);
+    answer(held[0], 200, session); await pending(2);
+    assert.equal(held[1].url, '/api/welcome/seen', 'the welcome is recorded once the owner exists');
+    await call('destroy()');
+    answer(held[1], 200, {}); await settle();
+    assert.deepEqual([seen, await page.evaluate(() => window.__result)], [['POST /api/setup', 'POST /api/welcome/seen'], 'pending'], 'the welcome answered after destroy loads no preferences');
+
+    await toOwner(); await submitOwner(); await pending(1);
+    answer(held[0], 200, session); await pending(2); answer(held[1], 200, {}); await pending(3);
+    assert.equal(held[2].url, '/api/me/preferences', 'the preferences are read next');
+    await call('destroy()');
+    answer(held[2], 200, { preferences: {} }); await pending(4); answer(held[3], 200, {}); await settle();
+    // reading the preferences uploads what only this browser holds (its own business); a theme is not among it
+    const themeSaves = () => held.filter(entry => entry.method === 'PUT' && /"theme"/.test(entry.request.postData() || '')).length;
+    assert.deepEqual([themeSaves(), await shown(), await page.evaluate(() => window.__result)], [0, { token: false, owner: false, theme: false }, 'pending'], 'the preferences answered after destroy show no theme step and save no theme');
+    await call("select('red-dark')"); await settle();
+    assert.deepEqual([themeSaves(), await page.evaluate(() => [window.__setup.store.step.value, window.__setup.store.theme.value !== 'red-dark', localStorage.getItem('aimebu2.ui.theme.u1')])], [0, ['idle', true, null]], 'the step does not open, and a theme picked after destroy is neither kept nor saved');
+
+    // an owner refused keeps the server's sentence; a second submit while one is out sends nothing
+    await toOwner();
+    await page.evaluate(() => { window.__setup.store.submitOwner('late', 'late-password-12', 'late-password-12'); window.__setup.store.submitOwner('late', 'late-password-12', 'late-password-12'); }); await pending(1);
+    await settle(); assert.equal(held.length, 1, 'a second submit while one is out sends nothing');
+    answer(held[0], 409, { message: 'owner already exists' }); await settle();
+    assert.deepEqual([await text('#late-owner #setup-error'), await page.evaluate(() => window.__setup.store.busy.owner.value)], ['owner already exists', false], 'a refused owner shows the server\'s sentence and can be tried again');
+
+    // the theme step: pick, save, and Continue ends the run with the session and the theme
+    await toOwner(); await submitOwner(); await pending(1);
+    answer(held[0], 200, session); await pending(2); answer(held[1], 200, {}); await pending(3); answer(held[2], 200, { preferences: {} });
+    await pending(4); answer(held[3], 200, {}); // what only this browser held is uploaded before the theme step opens
+    await page.waitForFunction(() => window.__setup.store.step.value === 'theme');
+    await pending(5);
+    assert.deepEqual([held[4].method, held[4].url, /"theme"/.test(held[4].request.postData())], ['PUT', '/api/me/preferences', true], 'entering the theme step saves the current theme');
+    answer(held[4], 200, {});
+    await page.evaluate(() => { window.__setup.store.continueTheme(); });
+    await page.waitForFunction(() => window.__result !== 'pending');
+    assert.deepEqual(await page.evaluate(() => ({ login: window.__result.login, first: window.__result.first_run })), { login: 'late', first: false }, 'Continue ends the setup with the session');
+
+    // saves queued behind a held one: dropped when the setup is destroyed unfinished, sent when it ended with Continue
+    const toTheme = async () => {
+      await toOwner(); await submitOwner(); await pending(1);
+      answer(held[0], 200, session); await pending(2); answer(held[1], 200, {}); await pending(3); answer(held[2], 200, { preferences: {} });
+      await pending(4); answer(held[3], 200, {});
+      await page.waitForFunction(() => window.__setup.store.step.value === 'theme'); await pending(5);
+      await call("select('red-dark')"); await settle();
+      assert.equal(held.length, 5, 'the second theme waits behind the first save');
+    };
+    const themeBodies = () => held.slice(4).filter(entry => entry.method === 'PUT').map(entry => JSON.parse(entry.request.postData()).preferences.theme);
+    await toTheme();
+    await call('destroy()');
+    answer(held[4], 200, {}); await settle();
+    assert.deepEqual(themeBodies(), [themeBodies()[0]], 'a save queued behind a held one is dropped when the setup is destroyed unfinished');
+    assert.equal(held.length, 5, 'and nothing more is sent');
+    await toTheme();
+    await page.evaluate(() => { window.__setup.store.continueTheme(); window.__setup.destroy(); });
+    answer(held[4], 200, {}); await pending(6);
+    assert.equal(JSON.parse(held[5].request.postData()).preferences.theme, 'red-dark', 'a save queued before Continue is still sent after the setup is torn down');
+    answer(held[5], 200, {});
+
+    // the welcome: its timer and its request after destroy
+    const timers = await page.evaluate(async () => {
+      const { openWelcome } = await import('/js/pages/setup/welcome.js');
+      const out = {};
+      const slow = openWelcome(null, { reduced: false, finishMs: 150 }); slow.destroy();
+      await new Promise(resolve => setTimeout(resolve, 400));
+      out.afterTimer = [!!document.querySelector('#welcome-view'), slow.store.stage.value];
+      let resolveRequest, ended = false;
+      const open = openWelcome(() => new Promise(resolve => { resolveRequest = resolve; }), { reduced: true });
+      open.done.then(() => { ended = true; });
+      document.querySelector('#welcome-continue').click();
+      open.destroy(); resolveRequest();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      out.afterRequest = [ended, !!document.querySelector('#welcome-view')];
+      return out;
+    });
+    assert.deepEqual(timers, { afterTimer: [false, 'logo'], afterRequest: [false, false] }, 'a welcome destroyed before its timer or its request ends changes nothing');
+    await page.close();
+  });
   console.log('setup page: ok');
 }
 

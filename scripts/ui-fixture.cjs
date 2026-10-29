@@ -142,7 +142,7 @@ const FIXTURE = async () => {
   // The bar that offers browser notifications, shown through the real module (the room header's neighbour).
   { const { NotificationBanner } = await import('/js/notification-banner.js'); new NotificationBanner({ notifications: { available: true, requestPermission: async () => {} }, saveDismissed: () => {} }).show(); }
   // The first-run theme picker, from the real module: each tile paints its own theme, and its label has to read on it in every page theme.
-  { const { chooseTheme } = await import('/js/setup.js'); void chooseTheme(document.querySelector('#theme-view'), '', async () => ({})); document.querySelector('#theme-view').hidden = true; }
+  { const { chooseTheme } = await import('/js/pages/setup/page.js'); void chooseTheme(document.querySelector('#theme-view'), '', async () => ({})); document.querySelector('#theme-view').hidden = true; }
   const quick = make('div', 'quick-commands', '', document.querySelector('#composer')); quick.dataset.fixture = 'quick'; const option = make('div', 'quick-command', '', quick); make('strong', '', '/archive', option); make('span', '', 'Archive room', option); option.setAttribute('aria-selected', 'true');
   make('div', 'quick-command', '', quick).append(make('strong', '', '/spawn'), make('span', '', 'Open spawn dialog'));
   const macroPopup = make('div', 'quick-commands macro-commands', '', document.querySelector('#composer')); macroPopup.dataset.fixture = 'macros';

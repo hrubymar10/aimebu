@@ -2184,7 +2184,7 @@ button > .icon-mask { pointer-events: none; }
   #settings-dialog nav button { min-height: 40px; }
 }
 
-/* First-run welcome (see web/js/welcome.js): four bands top to bottom. The art takes the first two, the name the third and Continue the
+/* First-run welcome (see web/js/pages/setup/welcome.js): four bands top to bottom. The art takes the first two, the name the third and Continue the
    fourth. data-stage reveals the parts in turn ("done" shows everything) and data-variant picks how each one arrives; reduced motion
    starts at "done". */
 .welcome { position: fixed; inset: 0; z-index: 100; display: grid; grid-template-rows: repeat(4, 1fr); justify-items: center; align-items: center; background: var(--bg-primary); color: var(--text-primary); padding: 0 16px; box-sizing: border-box; overflow: hidden; }

@@ -19,8 +19,8 @@ import { Health } from './pages/health/page.js';
 import { SystemEvents } from './system-events.js';
 import { retention } from './retention.js';
 import { Signin } from './pages/signin/page.js';
-import { showWelcome } from './welcome.js';
-import { ownerSetup } from './setup.js';
+import { showWelcome } from './pages/setup/welcome.js';
+import { ownerSetup } from './pages/setup/page.js';
 import { Onboarding } from './onboarding.js';
 import { loadPreferences } from './preferences.js';
 import { RoomMenu } from './pages/room-menu/page.js';
@@ -584,7 +584,7 @@ document.querySelector('#boot-retry').onclick = () => location.reload();
 try {
   // The first-run owner setup (welcome, setup token, Create owner, theme) runs on /setup, and also on / while the server has no owner and
   // is waiting for its setup token: no session exists yet, and it ends signed in as the new owner.
-  const runSetup = () => ownerSetup({ view: document.querySelector('#setup-view'), form: document.querySelector('#setup-form'), error: document.querySelector('#setup-error'), tokenView: document.querySelector('#setup-token-view'), tokenForm: document.querySelector('#setup-token-form'), themeView: document.querySelector('#theme-view') });
+  const runSetup = () => ownerSetup({ views: { token: document.querySelector('#setup-token-view'), owner: document.querySelector('#setup-view'), theme: document.querySelector('#theme-view') } });
   let session = null;
   if (location.pathname === '/setup') { bootView.hidden = true; session = await runSetup(); }
   if (!session) {
