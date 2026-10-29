@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -120,7 +122,11 @@ const (
 // probeLauncherVersion runs the launcher with --version in dir (empty for the supervisor's own) and returns its answer, or why there is none:
 // what it printed on stderr (a Docker launcher says "Directory … is not mounted in the harness container" there), or that it timed out.
 func probeLauncherVersion(def protocol.LauncherDefinition, path, dir string, timeout time.Duration) (version, problem string) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return probeLauncherVersionContext(context.Background(), def, path, dir, timeout)
+}
+
+func probeLauncherVersionContext(parent context.Context, def protocol.LauncherDefinition, path, dir string, timeout time.Duration) (version, problem string) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	args := append(append([]string{}, def.Args...), "--version")
 	cmd := exec.CommandContext(ctx, path, args...)
@@ -145,30 +151,92 @@ func probeLauncherVersion(def protocol.LauncherDefinition, path, dir string, tim
 	return "", err.Error()
 }
 
-// reprobeSlowLaunchers asks again, with more time, the container launchers whose first --version did not answer in time, and reports the
-// rows it filled in. A container can take longer to answer than the first look waits, and the connection must not wait on every launcher.
-func (c *Client) reprobeSlowLaunchers(ctx context.Context) {
+func (c *Client) hasUnknownContainerLauncherLocked() bool {
+	if c.harnessProbeDir == "" {
+		return false
+	}
+	for _, row := range c.Launchers {
+		if row.Containerized && row.ResolvedCommand != "" && row.Version == "" && row.VersionProblem != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// A connection has at most one retry loop. New launcher definitions can start it again after all unknown versions were resolved.
+func (c *Client) startLauncherReprobe(ctx context.Context) {
+	c.mu.Lock()
+	if ctx.Err() != nil || c.reprobeRunning || !c.hasUnknownContainerLauncherLocked() {
+		c.mu.Unlock()
+		return
+	}
+	c.reprobeRunning = true
+	c.reprobeDone = make(chan struct{})
+	done := c.reprobeDone
+	interval := c.launcherReprobeInterval
+	c.mu.Unlock()
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			c.reprobeRunning = false
+			restart := ctx.Err() == nil && c.hasUnknownContainerLauncherLocked()
+			close(done)
+			c.mu.Unlock()
+			if restart {
+				c.startLauncherReprobe(ctx)
+			}
+		}()
+		// A timeout gets its existing prompt retry; other failures wait for a later tick.
+		c.reprobeUnknownLaunchers(ctx, true)
+		for {
+			c.mu.Lock()
+			pending := c.hasUnknownContainerLauncherLocked()
+			c.mu.Unlock()
+			if !pending || ctx.Err() != nil {
+				return
+			}
+			jitter := time.Duration(rand.Int63n(int64(interval/5) + 1))
+			timer := time.NewTimer(interval + jitter)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			c.reprobeUnknownLaunchers(ctx, false)
+		}
+	}()
+}
+
+// Recheck unresolved container versions sequentially and report only a changed row.
+func (c *Client) reprobeUnknownLaunchers(ctx context.Context, timedOutOnly bool) {
 	c.mu.Lock()
 	dir := c.harnessProbeDir
-	var slow []protocol.LauncherRow
+	var pending []protocol.LauncherRow
 	for _, row := range c.Launchers {
-		if row.Containerized && row.VersionProblem == versionTimedOut && row.ResolvedCommand != "" {
-			slow = append(slow, row)
+		if row.Containerized && row.ResolvedCommand != "" && row.Version == "" && row.VersionProblem != "" && (!timedOutOnly || row.VersionProblem == versionTimedOut) {
+			pending = append(pending, row)
 		}
 	}
 	c.mu.Unlock()
-	if dir == "" || len(slow) == 0 {
+	if dir == "" {
 		return
 	}
 	changed := false
-	for _, row := range slow {
+	for _, row := range pending {
 		if ctx.Err() != nil {
 			return
 		}
-		version, problem := probeLauncherVersion(row.LauncherDefinition, row.ResolvedCommand, dir, versionReprobeTimeout)
+		version, problem := probeLauncherVersionContext(ctx, row.LauncherDefinition, row.ResolvedCommand, dir, versionReprobeTimeout)
+		if ctx.Err() != nil {
+			return
+		}
 		c.mu.Lock()
 		for i := range c.Launchers {
-			if c.Launchers[i].ID == row.ID && c.Launchers[i].VersionProblem == versionTimedOut {
+			if c.Launchers[i].ID == row.ID && c.Launchers[i].Version == "" && c.Launchers[i].VersionProblem == row.VersionProblem && reflect.DeepEqual(c.Launchers[i].LauncherDefinition, row.LauncherDefinition) && (version != "" || problem != row.VersionProblem) {
 				c.Launchers[i].Version, c.Launchers[i].VersionProblem = version, problem
 				changed = true
 			}
@@ -176,7 +244,8 @@ func (c *Client) reprobeSlowLaunchers(ctx context.Context) {
 		c.mu.Unlock()
 	}
 	if changed {
-		_ = c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.LauncherStatus, Launchers: c.launcherRows(), Capabilities: c.CapabilityReports})
+		c.refreshCapabilities()
+		_ = c.sendCurrent(ctx, protocol.Frame{V: protocol.Version, Type: protocol.LauncherStatus, Launchers: c.launcherRows(), Capabilities: c.capabilityReportsSnapshot()})
 	}
 }
 

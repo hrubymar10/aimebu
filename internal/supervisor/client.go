@@ -30,15 +30,18 @@ import (
 )
 
 type Client struct {
-	MachineID         string
-	MachineKey        string
-	ServerURL         string
-	HTTPClient        *http.Client
-	SupervisorVersion string
-	CapabilityReports []protocol.CapabilityReport
-	Harnesses         []protocol.HarnessRow
-	Launchers         []protocol.LauncherRow
-	harnessProbeDir   string
+	MachineID               string
+	MachineKey              string
+	ServerURL               string
+	HTTPClient              *http.Client
+	SupervisorVersion       string
+	CapabilityReports       []protocol.CapabilityReport
+	Harnesses               []protocol.HarnessRow
+	Launchers               []protocol.LauncherRow
+	harnessProbeDir         string
+	launcherReprobeInterval time.Duration
+	reprobeRunning          bool
+	reprobeDone             chan struct{}
 	// ConfigDir is the machine's aimebu config root; model detection uses a private detect/run-* folder unless the request names a folder.
 	ConfigDir string
 	// ClaudeConfigDir is where Claude Code keeps its sessions for a session scan; empty means CLAUDE_CONFIG_DIR, else ~/.claude (tests set it).
@@ -66,7 +69,7 @@ type Client struct {
 }
 
 func NewClient(machineID, machineKey, serverURL string, journal *Journal, implementation adapter.Adapter) *Client {
-	client := &Client{MachineID: machineID, MachineKey: machineKey, ServerURL: serverURL, HTTPClient: tlsclient.NewHTTPClient(0), SupervisorVersion: "aimebu-v2-development", Journal: journal, Adapter: implementation, PingInterval: 15 * time.Second, ReconnectDelay: time.Second, desired: make(map[string]protocol.DesiredAgent), active: make(map[string]string), running: make(map[string]adapter.Turn)}
+	client := &Client{MachineID: machineID, MachineKey: machineKey, ServerURL: serverURL, HTTPClient: tlsclient.NewHTTPClient(0), SupervisorVersion: "aimebu-v2-development", Journal: journal, Adapter: implementation, PingInterval: 15 * time.Second, ReconnectDelay: time.Second, launcherReprobeInterval: time.Minute, desired: make(map[string]protocol.DesiredAgent), active: make(map[string]string), running: make(map[string]adapter.Turn)}
 	for _, item := range implementation.Catalog() {
 		client.CapabilityReports = append(client.CapabilityReports, protocol.CapabilityReport{Tool: item.Tool, Version: item.Version, Environment: item.Environment, Flags: implementation.Capabilities(item.Version, item.Environment)})
 	}
@@ -136,6 +139,12 @@ func (c *Client) refreshCapabilities() {
 	c.CapabilityReports = reports
 }
 
+func (c *Client) capabilityReportsSnapshot() []protocol.CapabilityReport {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]protocol.CapabilityReport(nil), c.CapabilityReports...)
+}
+
 func (c *Client) Run(ctx context.Context) error {
 	go c.sweepAgentLogs(ctx)
 	for {
@@ -189,7 +198,15 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		_ = conn.Close(websocket.StatusNormalClosure, "")
 	}()
 	probeCtx, cancelProbes := context.WithCancel(ctx)
-	defer cancelProbes()
+	defer func() {
+		cancelProbes()
+		c.mu.Lock()
+		done := c.reprobeDone
+		c.mu.Unlock()
+		if done != nil {
+			<-done
+		}
+	}()
 	conn.SetReadLimit(protocol.MaxMachineFrameBytes)
 	agents, err := c.Journal.OpenTurns(ctx)
 	if err != nil {
@@ -202,7 +219,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
-	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, Capabilities: c.CapabilityReports, Harnesses: c.Harnesses, Agents: agents}); err != nil {
+	if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.Hello, MachineID: c.MachineID, JournalID: c.Journal.ID, SupervisorVersion: c.SupervisorVersion, SupportsPathProbe: true, SupportsSessionScan: true, SupportsSessionFork: true, SupportsSessionAttribution: true, SupportsLaunchPath: true, SupportsWorktree: true, SupportsLaunchers: true, SupportsDetect: true, SupportsDetectDir: true, SupportsAgentLogs: c.AgentLogs != nil, SupportsAgentLogSize: c.AgentLogs != nil, SupportsStopReplay: true, Capabilities: c.capabilityReportsSnapshot(), Harnesses: c.Harnesses, Agents: agents}); err != nil {
 		return err
 	}
 	ack, err := readFrame(ctx, conn)
@@ -240,18 +257,17 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	}
 	c.refreshCapabilities()
 	if len(ack.LauncherDefinitions) > 0 {
-		if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.LauncherStatus, Launchers: c.launcherRows(), Capabilities: c.CapabilityReports}); err != nil {
+		if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.LauncherStatus, Launchers: c.launcherRows(), Capabilities: c.capabilityReportsSnapshot()}); err != nil {
 			return err
 		}
 	}
 	if len(ack.HarnessSettings) > 0 || ack.HarnessProbeDir != "" {
-		if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.HarnessStatus, Harnesses: c.Harnesses, Capabilities: c.CapabilityReports}); err != nil {
+		if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.HarnessStatus, Harnesses: c.Harnesses, Capabilities: c.capabilityReportsSnapshot()}); err != nil {
 			return err
 		}
 	}
 	c.mu.Lock()
 	c.currentConn = conn
-	go c.reprobeSlowLaunchers(ctx)
 	stoppedTurns := []adapter.Turn{}
 	for _, item := range ack.Desired {
 		c.desired[item.AgentID] = item
@@ -260,6 +276,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 		}
 	}
 	c.mu.Unlock()
+	c.startLauncherReprobe(probeCtx)
 	for _, turn := range stoppedTurns {
 		_ = turn.Cancel()
 	}
@@ -486,9 +503,10 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			}
 			if result.Launcher != nil && frame.Type == protocol.LauncherSet {
 				if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.LauncherStatus,
-					Launchers: c.launcherRows(), Capabilities: c.CapabilityReports}); err != nil {
+					Launchers: c.launcherRows(), Capabilities: c.capabilityReportsSnapshot()}); err != nil {
 					return err
 				}
+				c.startLauncherReprobe(probeCtx)
 			}
 		case protocol.Spawn:
 			result := c.applySpawn(frame)
@@ -503,9 +521,10 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				if err := c.setLauncher(row.LauncherDefinition); err == nil {
 					c.refreshCapabilities()
 					if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.LauncherStatus,
-						Launchers: c.launcherRows(), Capabilities: c.CapabilityReports}); err != nil {
+						Launchers: c.launcherRows(), Capabilities: c.capabilityReportsSnapshot()}); err != nil {
 						return err
 					}
+					c.startLauncherReprobe(probeCtx)
 				}
 			} else if result.Result == "ok" && frame.Agent != nil && frame.Agent.Variant == "docker" {
 				c.mu.Lock()
@@ -515,7 +534,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 				if err := c.setHarness(row.HarnessSetting); err == nil {
 					c.refreshCapabilities()
 					if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.HarnessStatus,
-						Harnesses: c.Harnesses, Capabilities: c.CapabilityReports}); err != nil {
+						Harnesses: c.Harnesses, Capabilities: c.capabilityReportsSnapshot()}); err != nil {
 						return err
 					}
 				}
