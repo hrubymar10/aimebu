@@ -1,6 +1,8 @@
 import { request, upload, currentUser } from '../../api.js';
 import { megabytes } from '../../notice.js';
-import { liveArrival, liveRoute } from './model.js';
+import { expiryCutoffMs, planExpiry } from '../../expiry.js';
+import { retention } from '../../retention.js';
+import { answerEligible, liveArrival, liveRoute, messageSnippet, overCap, threadCount, trimCap } from './model.js';
 
 // The room's messages and the calls that load them; `host` draws. A call says nothing and starts nothing once its generation or the store is gone.
 export class ChatStore {
@@ -10,6 +12,8 @@ export class ChatStore {
     this.threadGeneration = 0; this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadPageSize = 100; this.threadOlderPageSize = 50;
     this.initialLoading = false; this.announcedIDs = null; this.reactionTickets = new Map();
     this.pendingAttachments = []; this.pendingUploads = 0; this.uploadRequests = new Set();
+    this.rows = []; this.quotes = new Map(); this.rowBatching = false; this.rowPending = []; this.expiry = { expired: new Set(), divider: null }; this.expiryQueued = false;
+    this.threadEntries = []; this.threadEntryIDs = new Set(); this.threadBatching = false; this.threadNewReplyIDs = new Set(); this.answerItems = new Map();
     this.clearRoom();
   }
 
@@ -23,18 +27,21 @@ export class ChatStore {
 
   reset() {
     for (const controller of this.uploadRequests) controller.abort();
-    this.uploadRequests.clear(); this.pendingAttachments = []; this.pendingUploads = 0;
-    this.openGeneration++; this.sessionGeneration++; this.threadGeneration++; this.clearRoom(); this.initialLoading = false; }
+    this.uploadRequests.clear(); this.pendingAttachments = []; this.pendingUploads = 0; this.answerItems = new Map();
+    this.openGeneration++; this.sessionGeneration++; this.threadGeneration++; this.clearRoom(); this.clearRows(); this.initialLoading = false; }
 
   destroy() { this.reset(); this.alive = false; }
 
   async open(room) {
     if (!this.alive) return;
     const generation = ++this.openGeneration;
+    if (this.host.room?.id !== room.id) this.pendingAttachments = [];
+    this.clearRoom(); this.initialLoading = true; this.clearRows(); this.closeThread();
     this.host.beginOpen(room);
     const messages = await request(`/api/rooms/${room.id}/messages?limit=${this.pageSize}`);
     if (generation !== this.openGeneration) return;
-    this.host.drawPage(messages);
+    this.batchRows(() => { for (const message of messages) this.add(message); });
+    this.host.pageDrawn();
     this.newestSeq = messages.at(-1)?.seq || 0;
     this.oldestSeq = messages[0]?.seq || 0;
     this.hasMoreOlder = messages.length === this.pageSize;
@@ -51,16 +58,16 @@ export class ChatStore {
       const messages = await request(`/api/rooms/${id}/messages?after=${this.newestSeq || 0}&limit=${this.pageSize}`);
       if (generation !== this.openGeneration) return;
       for (const message of messages) {
-        const route = liveRoute(message, { hasMoreOlder: this.hasMoreOlder, oldestSeq: this.oldestSeq, contextMode: this.contextMode, known: this.messages.has(message.id), missed: this.missedIDs.has(message.id), ...this.host.threadState(message) });
-        if (route === 'new-reply') this.host.markNewThreadReply(message);
-        else if (route === 'add') { const known = this.messages.has(message.id); this.host.add(message); if (!known && liveArrival(message, this) && !this.announcedIDs?.has(message.id)) this.host.announce(message); }
+        const route = liveRoute(message, { hasMoreOlder: this.hasMoreOlder, oldestSeq: this.oldestSeq, contextMode: this.contextMode, known: this.messages.has(message.id), missed: this.missedIDs.has(message.id), ...this.threadState(message) });
+        if (route === 'new-reply') this.markNewThreadReply(message);
+        else if (route === 'add') { const known = this.messages.has(message.id); this.add(message); if (!known && liveArrival(message, this) && !this.announcedIDs?.has(message.id)) this.host.announce(message); }
         else if (route === 'missed') {
           this.missedIDs.add(message.id); this.host.updateLatestLabel();
           if (!this.initialLoading && message.author_kind !== 'system') this.host.announce(message);
         }
       }
       if (messages.length) this.newestSeq = messages.at(-1).seq;
-      if (messages.length) this.host.trimLive();
+      if (messages.length) this.trimLive();
       // The project refresh for the same event ran before this render and could only mark up to the previous newest message.
       if (messages.length && !this.contextMode && !this.catchingUp) this.host.onLatest?.(this.host.room);
       if (messages.length < this.pageSize) return;
@@ -76,7 +83,10 @@ export class ChatStore {
       if (generation !== this.openGeneration) return;
       if (messages.length) this.oldestSeq = messages[0].seq;
       this.hasMoreOlder = messages.length === this.olderPageSize;
-      this.host.prependPage(messages);
+      const place = this.host.holdPlace();
+      this.host.hasOlder(this.hasMoreOlder);
+      this.batchRows(() => { for (let i = messages.length - 1; i >= 0; i--) this.add(messages[i], true); }, place);
+      this.trimNewest();
     } catch (error) { if (generation === this.openGeneration) this.host.say(error.message); }
     finally { if (generation === this.openGeneration) { this.loadingOlder = false; this.host.showOlderStatus(false); this.host.loadOlderIfShort(); } }
   }
@@ -88,11 +98,11 @@ export class ChatStore {
     try {
       const messages = await request(`/api/rooms/${roomID}/messages?after=${this.windowSeq}&limit=${this.olderPageSize}`);
       if (generation !== this.openGeneration || !this.contextMode) return;
-      for (const message of messages) this.host.add(message, false, true);
+      for (const message of messages) this.add(message, false, true);
       if (messages.length) this.windowSeq = messages.at(-1).seq;
       // A short page is the live end of the room: the window is the latest view again.
       if (messages.length < this.olderPageSize) { await this.leaveWindow(); return; }
-      this.host.trimOldest();
+      this.trimOldest();
       this.host.anchorUpdate();
     } catch (error) { if (generation === this.openGeneration) this.host.say(error.message); }
     finally { if (generation === this.openGeneration) this.loadingNewer = false; }
@@ -151,9 +161,11 @@ export class ChatStore {
         generation = ++this.openGeneration; this.announcedIDs = null;
         // A page in flight belongs to the old view and will not clear its own flag.
         this.hasMoreOlder = false; this.loadingOlder = false; this.loadingNewer = false; this.catchingUp = false; this.oldestSeq = 0;
+        this.closeThread(); this.clearRows();
         this.host.beginWindow();
         this.messages.clear(); this.historicalAuthors = new Set(); this.reactions.clear(); this.threadCounts.clear(); this.serverThreadCounts.clear();
-        this.host.drawWindow(messages);
+        this.batchRows(() => { for (const item of messages) this.add(item); });
+        this.host.windowDrawn();
         this.oldestSeq = messages[0]?.seq || 0; this.hasMoreOlder = messages.length === this.pageSize;
         this.host.showWindow();
         this.contextMode = true; this.host.showLatestButton(true); this.windowSeq = messages.at(-1)?.seq || 0;
@@ -195,15 +207,229 @@ export class ChatStore {
     catch (error) { if (generation === this.openGeneration) this.host.say(error.message); }
   }
 
+  // Expiry marks (an hourglass and one divider) are display-only: the chat shows every message. They are
+  // recomputed once per task after a burst of add() calls, when the window changes, and every 30 s.
+  scheduleExpiry() {
+    if (this.expiryQueued) return;
+    this.expiryQueued = true;
+    queueMicrotask(() => { this.expiryQueued = false; this.syncExpiry(); });
+  }
+
+  syncExpiry() {
+    if (!this.alive) return;
+    const cutoff = expiryCutoffMs(Date.now(), retention.seconds);
+    const plan = planExpiry(this.rows.map(message => ({ id: message.id, createdMs: Date.parse(message.created_at), expirable: message.expirable === true })), cutoff);
+    const same = plan.expired.size === this.expiry.expired.size && [...plan.expired].every(id => this.expiry.expired.has(id));
+    if (same && (plan.divider || null) === this.expiry.divider) return;
+    this.expiry = { expired: plan.expired, divider: plan.divider || null };
+    this.host.listUpdate();
+  }
+
+  clearRows() { this.rows = []; this.quotes.clear(); this.expiry = { expired: new Set(), divider: null }; this.host.listUpdate(); }
+
+  batchRows(fill, restore) {
+    this.rowBatching = true; this.rowPending = [];
+    try { fill(); } finally { this.rowBatching = false; }
+    this.host.listUpdate(restore);
+    const pending = this.rowPending; this.rowPending = [];
+    for (const id of pending) Promise.resolve(this.refreshReactions(id)).catch(() => {});
+    this.scheduleExpiry();
+  }
+
+  // A prepended (older) or paged (newer, in a history window) message leaves the scroll position alone; only a live append follows the bottom.
+  add(message, prepend = false, paged = false) {
+    if (Number.isInteger(message.thread_count)) {
+      const rootID = message.thread_root || message.id;
+      this.serverThreadCounts.set(rootID, Math.max(this.serverThreadCounts.get(rootID) || 0, message.thread_count));
+      this.updateThreadCount(rootID);
+    }
+    if (this.messages.has(message.id)) return;
+    this.noteAuthor(message);
+    this.messages.set(message.id, message);
+    // A person replying to a question is its answer, for the history block under that question (the next update draws it).
+    if (message.reply_to && message.author_kind === 'user') this.repliedTo.add(message.reply_to);
+    if (this.missedIDs.delete(message.id)) this.host.updateLatestLabel();
+    if (message.thread_root) {
+      const count = (this.threadCounts.get(message.thread_root) || 0) + 1;
+      this.threadCounts.set(message.thread_root, count);
+      this.updateThreadCount(message.thread_root);
+      // The thread panel pages and refreshes itself; a forward page of the main list could land outside the replies it shows.
+      if (this.host.threadRoot?.id === message.thread_root && !paged) this.insertThreadEntry(message);
+      return;
+    }
+    const quiet = prepend || paged || this.rowBatching;
+    const place = quiet ? null : this.host.listPlace();
+    this.host.noteRow(message);
+    if (Array.isArray(message.reactions)) this.reactions.set(message.id, message.reactions);
+    if (answerEligible(this.answerItems.get(message.id))) this.answeredMessages.delete(message.id);
+    if (message.reply_to) this.quotes.set(message.id, this.quoteFor(message));
+    this.rows = prepend ? [message, ...this.rows] : [...this.rows, message];
+    if (this.rowBatching) { if (!Array.isArray(message.reactions)) this.rowPending.push(message.id); }
+    else {
+      this.host.listUpdate();
+      if (place) this.host.followList(place);
+      if (!Array.isArray(message.reactions)) Promise.resolve(this.refreshReactions(message.id)).catch(() => {});
+    }
+    this.scheduleExpiry();
+  }
+
+  // The line a reply quotes, read once when its row is made: a parent in the loaded window is read from it; one outside it comes with the reply itself (reply_preview).
+  quoteFor(message) {
+    const loaded = this.messages.get(message.reply_to), preview = message.reply_preview;
+    const parent = loaded ? { no: loaded.no, name: this.host.authorName(loaded), snippet: messageSnippet(loaded) }
+      : preview ? { no: preview.no, name: this.host.authorName({ author_kind: preview.author_kind, author_id: preview.author_id, author_name: preview.author_name }), snippet: preview.snippet } : null;
+    return { text: parent ? `↪ #${parent.no} ${parent.name}: ${parent.snippet}`.trimEnd().replace(/:$/, '') : '↪ Earlier message', title: parent ? `Go to #${parent.no}` : undefined };
+  }
+
+  // A question this viewer had open that is now gone from the inbox leaves a quiet "Answered" in its place; one that is open again loses it.
+  updateAnswerControls(items) {
+    const next = new Map(items.map(item => [item.message_id, item]));
+    for (const [id, item] of this.answerItems) if (!next.has(id) && answerEligible(item) && (this.host.nodes.has(id) || this.threadEntryIDs.has(id))) this.answeredMessages.add(id);
+    for (const [id, item] of next) if (answerEligible(item)) this.answeredMessages.delete(id);
+    this.answerItems = next;
+    this.host.listUpdate(); this.host.threadUpdate();
+  }
+
+  // An agent that wrote in this room and is no longer a member (or came from the v1 import) still reads as @name in message bodies:
+  // its slug and its full id are remembered per room, and the highlight is redone once after a burst of messages.
+  noteAuthor(message) {
+    if (message.author_kind !== 'agent') return;
+    const name = this.host.authorName(message), set = this.historicalAuthors;
+    if (name.startsWith('Agent ')) return;
+    const keys = [name, name.split('@')[0]].map(key => key.toLowerCase()).filter(key => /^[a-z][a-z0-9_-]*(@[a-z0-9_.-]+)?$/.test(key));
+    let added = false; for (const key of keys) if (!set.has(key)) { set.add(key); added = true; }
+    if (added) this.host.scheduleMentions();
+  }
+
+  updateThreadCount(id) {
+    if (this.host.nodes.has(id)) this.host.listUpdate();
+    this.host.showThreadCount(id, threadCount(this.threadCounts, this.serverThreadCounts, id));
+  }
+
+  // The panel's entries: the root first, the replies by seq. An update renders at once, so callers read the rows back.
+  insertThreadEntry(message) {
+    if (this.threadEntryIDs.has(message.id)) return;
+    this.threadEntryIDs.add(message.id);
+    let low = 1, high = this.threadEntries.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (this.threadEntries[middle].seq < message.seq) low = middle + 1;
+      else high = middle;
+    }
+    this.threadEntries = [...this.threadEntries.slice(0, low), message, ...this.threadEntries.slice(low)];
+    if (!this.threadBatching) this.host.threadUpdate();
+  }
+
+  batchThreadEntries(fill, restore) {
+    this.threadBatching = true;
+    try { fill(); } finally { this.threadBatching = false; }
+    this.host.threadUpdate(restore);
+  }
+
+  markNewThreadReply(message) {
+    this.threadNewReplyIDs.add(message.id);
+    this.messages.set(message.id, message);
+    if (Number.isInteger(message.thread_count)) this.serverThreadCounts.set(message.thread_root, Math.max(this.serverThreadCounts.get(message.thread_root) || 0, message.thread_count));
+    this.updateThreadCount(message.thread_root);
+    this.host.updateThreadNewMarker();
+  }
+
+  settleThreadLatest() {
+    this.host.hideThreadLatest();
+    this.batchThreadEntries(() => {
+      for (const id of this.threadNewReplyIDs) {
+        const message = this.messages.get(id);
+        if (message) this.insertThreadEntry(message);
+      }
+    });
+    this.threadNewReplyIDs.clear();
+    this.host.updateThreadNewMarker();
+  }
+
+  // What the open thread panel knows of a live message: whether its root is drawn, whether the panel is open on it and at its end.
+  threadState(message) {
+    return { rootRendered: this.host.nodes.has(message.thread_root), openThreadID: this.host.threadRoot?.id, threadLatestHidden: this.host.threadLatestHidden(), threadEntryKnown: this.threadEntryIDs.has(message.id) };
+  }
+
+  // Replies kept for an open thread whose root row is not rendered (trimmed from a window, or never loaded) have no other
+  // owner: when the panel lets go of that thread they are dropped with its counts, and come back with the row's page.
+  releaseThread() {
+    const id = this.host.threadRoot?.id;
+    if (!id || this.host.nodes.has(id)) return;
+    for (const [key, message] of this.messages) if (message.thread_root === id) this.messages.delete(key);
+    this.threadCounts.delete(id); this.serverThreadCounts.delete(id);
+  }
+
+  closeThread() {
+    this.releaseThread();
+    this.threadGeneration++;
+    this.threadEntryIDs = new Set(); this.threadEntries = []; this.threadNewReplyIDs = new Set();
+    this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false;
+    this.host.threadClosed();
+  }
+
+  // A dropped row takes its thread replies and counts along; they come back with the row when its page is loaded again
+  // (kept, they would linger in the inspector's previous/next and stay in memory). The open thread keeps its replies.
+  dropRows(ids) {
+    const gone = new Set(), open = this.host.threadRoot?.id;
+    for (const id of ids) {
+      this.messages.delete(id); this.reactions.delete(id); gone.add(id);
+      if (id !== open) { this.threadCounts.delete(id); this.serverThreadCounts.delete(id); }
+    }
+    for (const [id, message] of this.messages) if (message.thread_root && message.thread_root !== open && gone.has(message.thread_root)) this.messages.delete(id);
+    this.rows = this.rows.filter(message => !gone.has(message.id));
+    for (const id of gone) this.quotes.delete(id);
+    this.host.listUpdate();
+  }
+
+  // After live appends: a reader following the bottom keeps the live cap, one scrolled up keeps the history cap (their rows
+  // are not taken from under them, see trimOldest). The dropped rows come back by scrolling up (hasMoreOlder is set).
+  // Never while an older page is in flight: it was requested before the current oldest row and would land behind a gap.
+  trimLive() {
+    if (this.contextMode || this.loadingOlder || this.initialLoading) return;
+    if (this.trimOldest(trimCap(this.host.listAtBottom(), this.host.liveCap(), this.host.renderCap()))) this.host.anchorUpdate();
+  }
+
+  // A trim never removes what the reader is looking at: when the rows to drop reach into the visible part of the list it
+  // is deferred to the next page, by which time the reader has moved on (only possible with a cap near a screenful).
+  trimNewest() {
+    const rows = this.host.rowBoxes(), cap = this.host.renderCap();
+    if (!overCap(rows.length, cap) || this.loadingNewer) return;
+    if (rows[cap].top < this.host.listBox().bottom) return;
+    this.dropRows(rows.slice(cap).map(row => row.id));
+    this.windowSeq = rows[cap - 1].seq;
+    this.contextMode = true; this.host.showLatestButton(true);
+  }
+
+  // The mirror of trimNewest while a history window pages forward: past the cap the oldest rows go, and the list is
+  // scrolled by the height they took so the reader does not move.
+  // Also used by the live end (trimLive) with its own cap. Returns whether rows were dropped.
+  trimOldest(cap = this.host.renderCap()) {
+    const rows = this.host.rowBoxes();
+    if (!overCap(rows.length, cap)) return false;
+    if (rows[rows.length - cap - 1].bottom > this.host.listBox().top) return false;
+    const keep = rows[rows.length - cap], settle = this.host.keepPlace(keep.id);
+    this.dropRows(rows.slice(0, rows.length - cap).map(row => row.id));
+    settle();
+    this.oldestSeq = keep.seq; this.hasMoreOlder = true; this.host.hasOlder(true);
+    return true;
+  }
+
   async openThread(root, focus = null) {
     if (!this.alive) return;
     const roomID = this.host.room?.id, thread = ++this.threadGeneration;
+    if (this.host.threadRoot?.id !== root.id) this.releaseThread();
+    this.threadEntries = [root]; this.threadEntryIDs = new Set([root.id]); this.threadNewReplyIDs = new Set();
+    this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false;
+    if (Number.isInteger(root.thread_count)) this.serverThreadCounts.set(root.id, Math.max(this.serverThreadCounts.get(root.id) || 0, root.thread_count));
     this.host.beginThread(root, focus);
+    this.updateThreadCount(root.id);
     try {
       const context = focus ? `&around=${encodeURIComponent(focus.id)}` : '';
       const page = await request(`/api/rooms/${roomID}/messages?thread_root=${encodeURIComponent(root.id)}${context}&limit=${this.threadPageSize}`);
       if (thread !== this.threadGeneration) return;
-      this.host.drawThreadPage(page);
+      this.batchThreadEntries(() => { for (const message of page) { this.threadNewReplyIDs.delete(message.id); this.add(message); this.insertThreadEntry(message); } });
+      this.host.updateThreadNewMarker();
       this.threadOldestSeq = page[0]?.seq || 0;
       this.threadHasMoreOlder = page.length === this.threadPageSize;
       this.host.showThreadPage(focus);
@@ -211,7 +437,7 @@ export class ChatStore {
       if (lastSeq) {
         const newer = await request(`/api/rooms/${roomID}/messages?thread_root=${encodeURIComponent(root.id)}&after=${lastSeq}&limit=1`);
         if (thread !== this.threadGeneration) return;
-        if (!newer.length) this.host.settleThreadLatest();
+        if (!newer.length) this.settleThreadLatest();
       }
     } catch (error) { if (thread === this.threadGeneration) this.host.threadError(error.message); }
   }
@@ -225,7 +451,8 @@ export class ChatStore {
       if (thread !== this.threadGeneration) return;
       if (page.length) this.threadOldestSeq = page[0].seq;
       this.threadHasMoreOlder = page.length === this.threadOlderPageSize;
-      this.host.prependThreadPage(page);
+      const place = this.host.holdThreadPlace();
+      this.batchThreadEntries(() => { for (const message of page) { this.add(message); this.insertThreadEntry(message); } }, place);
     } catch (error) {
       if (thread === this.threadGeneration) this.host.threadError(error.message);
     } finally {
@@ -239,7 +466,12 @@ export class ChatStore {
     this.host.beginThreadSend();
     try {
       const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, thread_root: root, reply_to: root } });
-      if (generation === this.openGeneration && this.host.threadRoot?.id === root) this.host.sentThreadReply(message);
+      if (generation === this.openGeneration && this.host.threadRoot?.id === root) {
+        this.host.sentThreadReply();
+        const atEnd = this.host.threadLatestHidden();
+        if (atEnd) this.add(message); else this.markNewThreadReply(message);
+        if (atEnd) this.host.threadToEnd();
+      }
     } catch (error) { if (generation === this.openGeneration) this.host.threadSendFailed(error.message); }
   }
 
@@ -254,9 +486,10 @@ export class ChatStore {
       const message = await request(`/api/rooms/${room}/messages`, { method: 'POST', body: { body, attachments, ...(reply ? { reply_to: reply.id } : {}) } });
       sentID = message.id;
       if (this.current(session, room)) {
+        this.pendingAttachments = [];
         this.host.sentMessage();
         // A history window does not show the live end, so appending there would put the message among old ones: show the latest instead.
-        if (this.contextMode) await this.reopenLatest(); else this.host.addSent(message);
+        if (this.contextMode) await this.reopenLatest(); else { this.add(message); this.trimLive(); }
       }
     } catch (error) { if (this.current(session, room)) this.host.sendFailed(error.message); }
     finally { this.host.sendFinished(sentID); }

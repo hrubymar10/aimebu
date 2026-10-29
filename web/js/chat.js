@@ -1,7 +1,6 @@
 import { request, currentUser, currentLogin } from './api.js';
 import { PREFERENCE_KEYS, savePreference } from './preferences.js';
 import { retention } from './retention.js';
-import { expiryCutoffMs, planExpiry } from './expiry.js';
 import { usageTooltip } from './message-usage-format.js';
 import { toggleMessageUsage, closeMessageUsage } from './message-usage.js';
 import { renderMarkdown, renderRaw, copyText } from './markdown.js';
@@ -27,7 +26,7 @@ import { MessageList, ThreadList } from './pages/chat/rows.js';
 import { PendingAttachments } from './pages/chat/message-box.js';
 import { mountPreactPage } from './pages/mount-page.js';
 import { html } from './ui.js';
-import { MENTION_LOGINS_TTL_MS, answerArea, answerEligible, answersThroughInbox as answersThrough, articleClass, groupReactions, latestLabel, liveArrival as isLiveArrival, liveRoute, messageSnippet, newestShownSeq as shownSeq, newRepliesLabel, overCap, plainText, recallCandidates as ownMessages, recallStep, threadChip, threadCount, threadLabel as threadLabelOf, threadTitle, trimCap } from './pages/chat/model.js';
+import { MENTION_LOGINS_TTL_MS, answerArea, answerEligible, answersThroughInbox as answersThrough, articleClass, groupReactions, latestLabel, liveArrival as isLiveArrival, messageSnippet, newestShownSeq as shownSeq, newRepliesLabel, plainText, recallCandidates as ownMessages, recallStep, threadChip, threadCount, threadLabel as threadLabelOf, threadTitle } from './pages/chat/model.js';
 
 export { plainText, messageSnippet };
 
@@ -79,9 +78,7 @@ export class Chat {
     this.threadNewButton.onclick = () => { if (this.threadRoot) this.openThread(this.threadRoot); };
     this.threadList.before(this.threadOlderStatus, this.threadLatestButton, this.threadNewButton);
     this.threadList.addEventListener('scroll', () => { if (this.threadList.scrollTop < 80) this.loadOlderThread(); });
-    this.rows = []; this.quotes = new Map(); this.rowBatching = false; this.rowPending = []; this.expiry = { expired: new Set(), divider: null };
     this.list.replaceChildren(); this.listView = mountPreactPage(this.list, props => html`<${MessageList} ...${props} />`, { onError: error => console.error('message list failed', error) });
-    this.threadEntries = []; this.threadEntryIDs = new Set(); this.threadBatching = false;
     this.threadList.replaceChildren(); this.threadView = mountPreactPage(this.threadList, props => html`<${ThreadList} ...${props} />`, { onError: error => console.error('thread list failed', error) });
     this.delegateRows(this.list); this.delegateRows(this.threadList);
     this.threadForm.onsubmit = event => { event.preventDefault(); this.sendThread(); };
@@ -109,24 +106,23 @@ export class Chat {
     this.emojiAutocomplete = new EmojiAutocomplete(this.formatting.input); this.threadEmojiAutocomplete = new EmojiAutocomplete(this.threadFormatting.input);
     this.emojiButton = document.querySelector('#emoji-button'); this.emojiButton.onclick = () => openEmojiPicker({ anchor: this.emojiButton, onPick: glyph => this.insertEmoji(glyph) });
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = true;
-    retention.onChange(() => this.scheduleExpiry());
-    setInterval(() => this.syncExpiry(), 30000);
+    retention.onChange(() => this.store.scheduleExpiry());
+    setInterval(() => this.store.syncExpiry(), 30000);
     if (window.__exposeChat) window.__chat = this; // test hook: the live-cap smoke reads the per-message maps
   }
   open(room) { return this.store.open(room); }
   // The view before a room's first page: the app's and the composer's state for the room, an empty list.
   beginOpen(room) {
     this.announcer.reset();
-    if (this.room?.id !== room.id) { this.pendingAttachments = []; this.renderPending(); if (this.recall) this.recall.index = null; }
+    if (this.room?.id !== room.id) { this.renderPending(); if (this.recall) this.recall.index = null; }
     closeMessageUsage(); this.room = room; this.syncEmpty(); this.setRoomFacts(room); this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear();
-    this.store.clearRoom(); this.store.initialLoading = true; this.clearRows(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.setReply(null); this.closeThread();
+    this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.setReply(null);
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = false;
     this.setRoomFacts(room);
     this.scrollAnchor.reset();
     delete this.list.dataset.empty; // no hint while the room is still loading
   }
-  drawPage(messages) {
-    this.batchRows(() => { for (const message of messages) this.add(message); });
+  pageDrawn() {
     this.list.scrollTop = this.list.scrollHeight;
     this.list.dataset.empty = String(!this.list.querySelector('article.message:not(.system-notice)')); // notices alone leave it empty
   }
@@ -151,7 +147,7 @@ export class Chat {
   reset() {
     this.store.reset(); if (this.recall) this.recall.index = null; this.announcer.reset();
     this.room = null; this.syncEmpty(); this.panel.reset();
-    this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.clearRows(); this.agents.clear(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.answerItems = new Map(); this.closeBlocked?.clear(); this.worktree = null;
+    this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.agents.clear(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.closeBlocked?.clear(); this.worktree = null;
     this.setReply(null); this.closeThread(); this.renderPending(); this.draft.value = ''; this.resizeDraft();
     this.lightbox.close();
     this.quickCommands.reset(); this.macroAutocomplete.reset(); this.mentionAutocomplete.reset(); this.threadMentionAutocomplete.reset(); this.emojiAutocomplete.reset(); this.threadEmojiAutocomplete.reset(); closeEmojiPicker(false); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
@@ -169,12 +165,24 @@ export class Chat {
   showOlderStatus(shown) { this.olderStatus.hidden = !shown; }
   // Older rows go above the first row without moving what the reader looks at: only the height inserted above the anchor is compensated, never the
   // reader's own movement, so the anchor is measured now, not before the request.
-  prependPage(messages) {
+  holdPlace() {
     const anchor = this.list.firstElementChild, anchorTop = anchor?.getBoundingClientRect().top;
-    this.list.dataset.hasOlder = String(this.hasMoreOlder);
-    this.batchRows(() => { for (let i = messages.length - 1; i >= 0; i--) this.add(messages[i], true); },
-      () => { if (anchor?.isConnected) this.list.scrollTop += anchor.getBoundingClientRect().top - anchorTop; });
-    this.trimNewest();
+    return () => { if (anchor?.isConnected) this.list.scrollTop += anchor.getBoundingClientRect().top - anchorTop; };
+  }
+  hasOlder(flag) { this.list.dataset.hasOlder = String(flag); }
+  windowDrawn() { this.list.scrollTop = this.list.scrollHeight; this.scrollAnchor?.update(); }
+  // A prepended (older) or paged (newer, in a history window) message leaves the scroll position alone; only a live append follows the bottom.
+  listPlace() { return { atBottom: this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 48, top: this.list.scrollTop }; }
+  followList(place) { this.list.scrollTop = place.atBottom ? this.list.scrollHeight : place.top; this.scrollAnchor?.update(); }
+  noteRow(message) { if (this.list.dataset.empty === 'true' && message.author_kind !== 'system') this.list.dataset.empty = 'false'; }
+  listAtBottom() { return this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 48; }
+  listBox() { const box = this.list.getBoundingClientRect(); return { top: box.top, bottom: box.bottom }; }
+  rowBoxes() {
+    return this.renderedRows().map(node => ({ id: node.dataset.messageId, seq: Number(node.dataset.seq), get top() { return node.getBoundingClientRect().top; }, get bottom() { return node.getBoundingClientRect().bottom; } }));
+  }
+  keepPlace(id) {
+    const node = this.nodes.get(id), keepTop = node.getBoundingClientRect().top;
+    return () => { this.list.scrollTop += node.getBoundingClientRect().top - keepTop; };
   }
   say(text) { this.error.textContent = text; }
   anchorUpdate() { this.scrollAnchor?.update(); }
@@ -187,52 +195,7 @@ export class Chat {
   // the list (rows, listeners, records) for as long as the tab lived. __liveCap is a test hook; otherwise a lowered
   // __renderCap lowers it too, so the live cap never exceeds the history cap.
   liveCap() { return window.__liveCap || Math.min(300, this.renderCap()); }
-  // After live appends: a reader following the bottom keeps the live cap, one scrolled up keeps the history cap (their rows
-  // are not taken from under them, see trimOldest). The dropped rows come back by scrolling up (hasMoreOlder is set).
-  // Never while an older page is in flight: it was requested before the current oldest row and would land behind a gap.
-  trimLive() {
-    if (this.contextMode || this.loadingOlder || this.initialLoading) return;
-    const atBottom = this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 48;
-    if (this.trimOldest(trimCap(atBottom, this.liveCap(), this.renderCap()))) this.scrollAnchor?.update();
-  }
   renderedRows() { return [...this.list.children].filter(node => node.matches?.('article.message[data-message-id]')); }
-  // A dropped row takes its thread replies and counts along; they come back with the row when its page is loaded again
-  // (kept, they would linger in the inspector's previous/next and stay in memory). The open thread keeps its replies.
-  dropRows(rows) {
-    const gone = new Set(), open = this.threadRoot?.id;
-    for (const node of rows) {
-      const id = node.dataset.messageId;
-      this.messages.delete(id); this.reactions.delete(id); gone.add(id);
-      if (id !== open) { this.threadCounts.delete(id); this.serverThreadCounts.delete(id); }
-    }
-    for (const [id, message] of this.messages) if (message.thread_root && message.thread_root !== open && gone.has(message.thread_root)) this.messages.delete(id);
-    this.rows = this.rows.filter(message => !gone.has(message.id));
-    for (const id of gone) this.quotes.delete(id);
-    this.listUpdate();
-  }
-  // A trim never removes what the reader is looking at: when the rows to drop reach into the visible part of the list it
-  // is deferred to the next page, by which time the reader has moved on (only possible with a cap near a screenful).
-  trimNewest() {
-    const rows = this.renderedRows(), cap = this.renderCap();
-    if (!overCap(rows.length, cap) || this.loadingNewer) return;
-    if (rows[cap].getBoundingClientRect().top < this.list.getBoundingClientRect().bottom) return;
-    this.dropRows(rows.slice(cap));
-    this.windowSeq = Number(rows[cap - 1].dataset.seq);
-    this.contextMode = true; this.latestButton.hidden = false;
-  }
-  // The mirror of trimNewest while a history window pages forward: past the cap the oldest rows go, and the list is
-  // scrolled by the height they took so the reader does not move.
-  // Also used by the live end (trimLive) with its own cap. Returns whether rows were dropped.
-  trimOldest(cap = this.renderCap()) {
-    const rows = this.renderedRows();
-    if (!overCap(rows.length, cap)) return false;
-    if (rows[rows.length - cap - 1].getBoundingClientRect().bottom > this.list.getBoundingClientRect().top) return false;
-    const keep = rows[rows.length - cap], keepTop = keep.getBoundingClientRect().top;
-    this.dropRows(rows.slice(0, rows.length - cap));
-    this.list.scrollTop += keep.getBoundingClientRect().top - keepTop;
-    this.oldestSeq = Number(keep.dataset.seq); this.hasMoreOlder = true; this.list.dataset.hasOlder = 'true';
-    return true;
-  }
   loadNewer() { return this.store.loadNewer(); }
   leaveWindow() { return this.store.leaveWindow(); }
   setSpawnOpener(openSpawn) { this.spawnCallback = openSpawn; }
@@ -302,12 +265,7 @@ export class Chat {
       },
     };
   }
-  updateAnswerControls(items) {
-    const next = new Map(items.map(item => [item.message_id, item]));
-    for (const [id, item] of this.answerItems || []) if (!next.has(id) && answerEligible(item) && (this.nodes.has(id) || this.threadEntryIDs.has(id))) this.answeredMessages.add(id);
-    this.answerItems = next;
-    this.listUpdate(); this.threadUpdate();
-  }
+  updateAnswerControls(items) { return this.store.updateAnswerControls(items); }
   // Inserts at the caret through execCommand so the edit stays undoable; the range assignment is the fallback.
   insertEmoji(glyph) {
     const draft = this.draft; if (draft.disabled) return;
@@ -400,8 +358,7 @@ export class Chat {
   // server when this room has not loaded it, and a message of another room opens that room (onOpenMessage) on that message.
   jumpToMessage(key) { return this.store.jump(key); }
   // A history window around a message: the list starts again from the page that holds it.
-  beginWindow() { this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.closeThread(); this.clearRows(); }
-  drawWindow(messages) { this.batchRows(() => { for (const item of messages) this.add(item); }); this.list.scrollTop = this.list.scrollHeight; this.scrollAnchor?.update(); }
+  beginWindow() { this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; }
   showWindow() { this.list.dataset.hasOlder = String(this.hasMoreOlder); this.latestButton.hidden = false; }
   showReply(message) { const entry = this.threadList.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`); entry?.scrollIntoView({ block: 'center' }); this.flash(entry); }
   showRow(message) { const row = this.nodes.get(message.id); row?.scrollIntoView({ block: 'center' }); this.scrollAnchor?.update(); this.flash(row?.querySelector('.message-bubble') || row); }
@@ -462,8 +419,8 @@ export class Chat {
   }
   exportRoom(format) { return this.panel.exportRoom(format); }
   refreshMessages() { return this.store.refresh(); }
-  // What the open thread panel knows of a live message: whether its root is drawn, whether the panel is open on it and at its end.
-  threadState(message) { return { rootRendered: this.nodes.has(message.thread_root), openThreadID: this.threadRoot?.id, threadLatestHidden: this.threadLatestButton.hidden, threadEntryKnown: this.threadEntryIDs.has(message.id) }; }
+  threadLatestHidden() { return this.threadLatestButton.hidden; }
+  hideThreadLatest() { this.threadLatestButton.hidden = true; }
   announce(message) { this.announcer.arrival({ id: message.id, mine: message.author_kind === 'user' && message.author_id === currentUser, from: this.authorName(message), body: message.body, room: this.room.title }); }
   // Only messages that land in the main list while the room is open are announced: not history, older
   // pages, thread replies or system notices. What this tab sent is silenced by the announcer, by id.
@@ -488,16 +445,7 @@ export class Chat {
       this.mentionLogins = logins || []; this.refreshMentions();
     } catch { if (this.mentionLoginsSeq === seq) this.mentionLoginsAt = 0; }
   }
-  // An agent that wrote in this room and is no longer a member (or came from the v1 import) still reads as @name in message bodies:
-  // its slug and its full id are remembered per room, and the highlight is redone once after a burst of messages.
-  noteAuthor(message) {
-    if (message.author_kind !== 'agent') return;
-    const name = this.authorName(message), set = this.historicalAuthors ||= new Set();
-    if (name.startsWith('Agent ')) return;
-    const keys = [name, name.split('@')[0]].map(key => key.toLowerCase()).filter(key => /^[a-z][a-z0-9_-]*(@[a-z0-9_.-]+)?$/.test(key));
-    let added = false; for (const key of keys) if (!set.has(key)) { set.add(key); added = true; }
-    if (added && !this.mentionTimer) this.mentionTimer = setTimeout(() => { this.mentionTimer = null; this.refreshMentions(); }, 60);
-  }
+  scheduleMentions() { if (!this.mentionTimer) this.mentionTimer = setTimeout(() => { this.mentionTimer = null; this.refreshMentions(); }, 60); }
   refreshMentions() {
     const index = this.room ? new MentionIndex([...this.agents.values()].filter(agent => agent.room_id === this.room.id), this.room.project_id, this.mentionLogins, [...(this.historicalAuthors || [])], currentLogin) : null;
     if (index?.signature === this.mentionIndex?.signature) return;
@@ -560,62 +508,7 @@ export class Chat {
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
     buttons[next].focus();
   }
-  // A prepended (older) or paged (newer, in a history window) message leaves the scroll position alone; only a live
-  // append follows the bottom.
-  add(message, prepend = false, paged = false) {
-    if (Number.isInteger(message.thread_count)) {
-      const rootID = message.thread_root || message.id;
-      this.serverThreadCounts.set(rootID, Math.max(this.serverThreadCounts.get(rootID) || 0, message.thread_count));
-      this.updateThreadCount(rootID);
-    }
-    if (this.messages.has(message.id)) return;
-    this.noteAuthor(message);
-    this.messages.set(message.id, message);
-    // A person replying to a question is its answer, for the history block under that question (the next update draws it).
-    if (message.reply_to && message.author_kind === 'user') this.repliedTo.add(message.reply_to);
-    if (this.missedIDs?.delete(message.id)) this.updateLatestLabel();
-    if (message.thread_root) {
-      const count = (this.threadCounts.get(message.thread_root) || 0) + 1;
-      this.threadCounts.set(message.thread_root, count);
-      this.updateThreadCount(message.thread_root);
-      // The thread panel pages and refreshes itself; a forward page of the main list could land outside the replies it shows.
-      if (this.threadRoot?.id === message.thread_root && !paged) this.insertThreadEntry(message);
-      return;
-    }
-    const quiet = prepend || paged || this.rowBatching;
-    const atBottom = !quiet && this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 48;
-    // Reading scrollTop or scrollHeight forces a layout of the whole list, so only a live appended message does.
-    const oldTop = quiet ? 0 : this.list.scrollTop;
-    if (this.list.dataset.empty === 'true' && message.author_kind !== 'system') this.list.dataset.empty = 'false';
-    if (Array.isArray(message.reactions)) this.reactions.set(message.id, message.reactions);
-    this.rows = prepend ? [message, ...this.rows] : [...this.rows, message];
-    if (this.rowBatching) { if (!Array.isArray(message.reactions)) this.rowPending.push(message.id); }
-    else {
-      this.listUpdate();
-      if (!quiet) { if (atBottom) this.list.scrollTop = this.list.scrollHeight; else this.list.scrollTop = oldTop; this.scrollAnchor?.update(); }
-      if (!Array.isArray(message.reactions)) Promise.resolve(this.refreshReactions(message.id)).catch(() => {});
-    }
-    this.scheduleExpiry();
-  }
-  // Expiry marks (an hourglass and one divider) are display-only: the chat shows every message. They are
-  // recomputed once per task after a burst of add() calls, when the window changes, and every 30 s.
-  scheduleExpiry() {
-    if (this.expiryQueued) return;
-    this.expiryQueued = true;
-    queueMicrotask(() => { this.expiryQueued = false; this.syncExpiry(); });
-  }
-  syncExpiry() {
-    const cutoff = expiryCutoffMs(Date.now(), retention.seconds);
-    const plan = planExpiry(this.rows.map(message => ({ id: message.id, createdMs: Date.parse(message.created_at), expirable: message.expirable === true })), cutoff);
-    const same = plan.expired.size === this.expiry.expired.size && [...plan.expired].every(id => this.expiry.expired.has(id));
-    if (same && (plan.divider || null) === this.expiry.divider) return;
-    this.expiry = { expired: plan.expired, divider: plan.divider || null };
-    this.listUpdate();
-  }
-  updateThreadCount(id) {
-    if (this.nodes.has(id)) this.listUpdate();
-    if (this.threadRoot?.id === id && this.threadTitle) this.threadTitle.textContent = threadTitle(threadCount(this.threadCounts, this.serverThreadCounts, id));
-  }
+  showThreadCount(id, count) { if (this.threadRoot?.id === id && this.threadTitle) this.threadTitle.textContent = threadTitle(count); }
   // The panel's entries are a Preact list (rows.js): the root first, the replies by seq. An update renders at once, so callers read the rows back.
   threadUpdate(restore) {
     if (!this.threadView) return;
@@ -627,45 +520,8 @@ export class Chat {
     this.delegateRows(this.list);
     this.listView.update({ entries: this.rows, host: this, viewOf: message => this.rowView(message, true), restore });
   }
-  clearRows() { this.rows = []; this.quotes.clear(); this.expiry = { expired: new Set(), divider: null }; this.listUpdate(); }
-  batchRows(fill, restore) {
-    this.rowBatching = true; this.rowPending = [];
-    try { fill(); } finally { this.rowBatching = false; }
-    this.listUpdate(restore);
-    const pending = this.rowPending; this.rowPending = [];
-    for (const id of pending) Promise.resolve(this.refreshReactions(id)).catch(() => {});
-    this.scheduleExpiry();
-  }
   registerNode(id, element) { if (element) this.nodes.set(id, element); else this.nodes.delete(id); }
-  // The line a reply quotes: a parent in the loaded window is read from it; one outside it comes with the reply itself (reply_preview).
-  quoteView(message) {
-    if (!message.reply_to) return null;
-    const kept = this.quotes.get(message.id);
-    if (kept) return kept;
-    const loaded = this.messages.get(message.reply_to), preview = message.reply_preview;
-    const parent = loaded ? { no: loaded.no, name: this.authorName(loaded), snippet: messageSnippet(loaded) }
-      : preview ? { no: preview.no, name: this.authorName({ author_kind: preview.author_kind, author_id: preview.author_id, author_name: preview.author_name }), snippet: preview.snippet } : null;
-    const quote = { text: parent ? `↪ #${parent.no} ${parent.name}: ${parent.snippet}`.trimEnd().replace(/:$/, '') : '↪ Earlier message', title: parent ? `Go to #${parent.no}` : undefined };
-    this.quotes.set(message.id, quote);
-    return quote;
-  }
-  insertThreadEntry(message) {
-    if (this.threadEntryIDs.has(message.id)) return;
-    this.threadEntryIDs.add(message.id);
-    let low = 1, high = this.threadEntries.length;
-    while (low < high) {
-      const middle = (low + high) >> 1;
-      if (this.threadEntries[middle].seq < message.seq) low = middle + 1;
-      else high = middle;
-    }
-    this.threadEntries = [...this.threadEntries.slice(0, low), message, ...this.threadEntries.slice(low)];
-    if (!this.threadBatching) this.threadUpdate();
-  }
-  batchThreadEntries(fill, restore) {
-    this.threadBatching = true;
-    try { fill(); } finally { this.threadBatching = false; }
-    this.threadUpdate(restore);
-  }
+  quoteView(message) { return this.quotes.get(message.id) ?? null; }
   // What a row shows that is not in its record: the author as the page knows it, the answer state, and the keys that make the row draw again.
   rowView(message, main = false) {
     const agent = this.agents.get(message.author_id), kind = senderKind(message, agent), live = kind === 'live' && message.author_kind === 'agent';
@@ -686,7 +542,7 @@ export class Chat {
   }
   answerView(message) {
     const id = message.id, item = this.answerItems?.get(id);
-    if (answerEligible(item)) { this.answeredMessages.delete(id); return { kind: 'controls', item, parent: message, key: `c:${item.id}:${item.rev}` }; }
+    if (answerEligible(item)) { return { kind: 'controls', item, parent: message, key: `c:${item.id}:${item.rev}` }; }
     const answered = Boolean(this.answeredMessages.has(id) || this.repliedTo.has(id)), area = answerArea(item, message, answered);
     if (area === 'history') return { kind: 'history', answered, key: `h:${answered}` };
     if (area === 'done') return { kind: 'done', answered, key: 'd' };
@@ -694,15 +550,6 @@ export class Chat {
   }
   answer(item, value) { return this.inbox.answer(item, value); }
   highlight(element) { if (!this.raw) highlightMentions(element, this.mentionIndex); }
-  markNewThreadReply(message) {
-    if (!this.threadNewReplyIDs.has(message.id)) {
-      this.threadNewReplyIDs.add(message.id);
-    }
-    this.messages.set(message.id, message);
-    if (Number.isInteger(message.thread_count)) this.serverThreadCounts.set(message.thread_root, Math.max(this.serverThreadCounts.get(message.thread_root) || 0, message.thread_count));
-    this.updateThreadCount(message.thread_root);
-    this.updateThreadNewMarker();
-  }
   updateThreadNewMarker() {
     const count = this.threadNewReplyIDs.size;
     setLatest(this.threadNewButton, newRepliesLabel(count), count);
@@ -713,64 +560,38 @@ export class Chat {
   sendThread() { return this.store.sendThread(); }
   send() { return this.store.send(); }
   reopenLatest() { return this.store.reopenLatest(); }
-  // Replies kept for an open thread whose root row is not rendered (trimmed from a window, or never loaded) have no other
-  // owner: when the panel lets go of that thread they are dropped with its counts, and come back with the row's page.
-  releaseThread() {
-    const id = this.threadRoot?.id;
-    if (!id || this.nodes.has(id)) return;
-    for (const [key, message] of this.messages) if (message.thread_root === id) this.messages.delete(key);
-    this.threadCounts.delete(id); this.serverThreadCounts.delete(id);
+  closeThread() { return this.store.closeThread(); }
+  threadClosed() {
+    this.threadNotice.clear(); this.threadRoot = null; this.threadTitle.textContent = 'Thread'; this.threadUpdate(); this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false';
+    this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; document.querySelector('#thread-error').textContent = '';
   }
-  closeThread() { this.threadNotice.clear(); this.releaseThread(); this.threadGeneration = (this.threadGeneration || 0) + 1; this.threadRoot = null; this.threadTitle.textContent = 'Thread'; this.threadEntryIDs = new Set(); this.threadEntries = []; this.threadUpdate(); this.threadNewReplyIDs = new Set(); this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; document.querySelector('#thread-error').textContent = ''; }
   setReply(message) { this.reply = message; this.chip.hidden = !message; this.chipText.textContent = message ? `Replying to ${this.authorName(message)}: ${messageSnippet(message)}` : ''; if (message) this.draft.focus(); }
   // Whether a reply to `parent` with this text is the answer to `item` (see send): a question or approval this person decides, answered with text
   // that mentions at most the requester. A free-text ask takes any text; an options-only ask only the text of one of its options (so Shift-clicking
   // an answer and sending it unedited acts like the button, while edited text is an ordinary reply).
   answersThroughInbox(item, parent, body) { return answersThrough(item, this.answerOptions(parent).mention, body); }
   beginThread(root, focus) {
-    if (this.threadRoot?.id !== root.id) this.releaseThread();
-    this.threadRoot = root; this.threadTitle.textContent = 'Thread'; this.threadPanel.hidden = false; this.threadEntries = [root]; this.threadEntryIDs = new Set([root.id]); this.threadUpdate();
-    this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = !focus; this.threadNewReplyIDs = new Set(); this.threadNewButton.hidden = true;
+    this.threadRoot = root; this.threadTitle.textContent = 'Thread'; this.threadPanel.hidden = false; this.threadUpdate();
+    this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = !focus; this.threadNewButton.hidden = true;
     document.querySelector('#thread-error').textContent = '';
-    if (Number.isInteger(root.thread_count)) this.serverThreadCounts.set(root.id, Math.max(this.serverThreadCounts.get(root.id) || 0, root.thread_count));
-    this.updateThreadCount(root.id);
     this.threadDraft.focus();
-  }
-  drawThreadPage(page) {
-    this.batchThreadEntries(() => { for (const message of page) { this.threadNewReplyIDs.delete(message.id); this.add(message); this.insertThreadEntry(message); } });
-    this.updateThreadNewMarker();
   }
   showThreadPage(focus) {
     this.threadList.dataset.hasOlder = String(this.threadHasMoreOlder);
     if (focus) this.threadList.querySelector(`[data-message-id="${CSS.escape(focus.id)}"]`)?.scrollIntoView({ block: 'center' });
     else this.threadList.scrollTop = this.threadList.scrollHeight;
   }
-  settleThreadLatest() {
-    this.threadLatestButton.hidden = true;
-    this.batchThreadEntries(() => {
-      for (const id of this.threadNewReplyIDs) {
-        const message = this.messages.get(id);
-        if (message) this.insertThreadEntry(message);
-      }
-    });
-    this.threadNewReplyIDs.clear();
-    this.updateThreadNewMarker();
-  }
   threadError(message) { document.querySelector('#thread-error').textContent = message; }
   showThreadOlderStatus(shown) { this.threadOlderStatus.hidden = !shown; }
-  prependThreadPage(page) {
+  holdThreadPlace() {
     // Measured after the page arrives, as in loadOlder: only the inserted height is compensated, not the reader's own scrolling.
     const anchor = this.threadList.children[1], anchorTop = anchor?.getBoundingClientRect().top;
     this.threadList.dataset.hasOlder = String(this.threadHasMoreOlder);
-    this.batchThreadEntries(() => { for (const message of page) { this.add(message); this.insertThreadEntry(message); } },
-      () => { if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop; });
+    return () => { if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop; };
   }
   beginThreadSend() { document.querySelector('#thread-error').textContent = ''; this.threadNotice.clear(); }
-  sentThreadReply(message) {
-    this.threadDraft.value = '';
-    if (!this.threadLatestButton.hidden) this.markNewThreadReply(message);
-    else { this.add(message); this.threadList.scrollTop = this.threadList.scrollHeight; }
-  }
+  sentThreadReply() { this.threadDraft.value = ''; }
+  threadToEnd() { this.threadList.scrollTop = this.threadList.scrollHeight; }
   threadSendFailed(message) { this.threadNotice.show(message); }
   restoreThreadDraft(draft) { this.threadDraft.value = draft; this.draft.focus(); }
   sendInput() {
@@ -795,14 +616,13 @@ export class Chat {
     if (current()) { this.draft.value = ''; if (this.recall) this.recall.index = null; this.resizeDraft(); this.setReply(null); }
     return true;
   }
-  sentMessage() { this.draft.value = ''; if (this.recall) this.recall.index = null; this.resizeDraft(); this.pendingAttachments = []; this.renderPending(); this.setReply(null); }
-  addSent(message) { this.add(message); this.trimLive(); }
+  sentMessage() { this.draft.value = ''; if (this.recall) this.recall.index = null; this.resizeDraft(); this.renderPending(); this.setReply(null); }
   sendFailed(message) { this.notice.show(message); }
   sendFinished(id) { this.announcer.sendFinished(id); }
   refreshReactions(id) { return this.store.refreshReactions(id); }
   toggleReaction(id, emoji) { return this.store.toggleReaction(id, emoji); }
 }
 
-for (const name of ['messages', 'reactions', 'threadCounts', 'serverThreadCounts', 'repliedTo', 'answeredMessages', 'historicalAuthors', 'missedIDs', 'announcedIDs', 'newestSeq', 'oldestSeq', 'hasMoreOlder', 'loadingOlder', 'loadingNewer', 'contextMode', 'catchingUp', 'windowSeq', 'initialLoading', 'openGeneration', 'jumpGeneration', 'pageSize', 'olderPageSize', 'pendingAttachments', 'pendingUploads', 'uploadRequests', 'threadGeneration', 'threadOldestSeq', 'threadHasMoreOlder', 'loadingOlderThread', 'threadPageSize', 'threadOlderPageSize']) {
+for (const name of ['messages', 'reactions', 'threadCounts', 'serverThreadCounts', 'repliedTo', 'answeredMessages', 'historicalAuthors', 'missedIDs', 'announcedIDs', 'newestSeq', 'oldestSeq', 'hasMoreOlder', 'loadingOlder', 'loadingNewer', 'contextMode', 'catchingUp', 'windowSeq', 'initialLoading', 'openGeneration', 'jumpGeneration', 'pageSize', 'olderPageSize', 'answerItems', 'rows', 'quotes', 'expiry', 'threadEntries', 'threadEntryIDs', 'threadNewReplyIDs', 'pendingAttachments', 'pendingUploads', 'uploadRequests', 'threadGeneration', 'threadOldestSeq', 'threadHasMoreOlder', 'loadingOlderThread', 'threadPageSize', 'threadOlderPageSize']) {
   Object.defineProperty(Chat.prototype, name, { configurable: true, get() { return this.store[name]; }, set(value) { this.store[name] = value; } });
 }

@@ -1293,6 +1293,39 @@ async function main() {
   }
 
   // The store holds the room's records and cursors; the cases above read the page, these read the store.
+  // The rows, the thread's entries and the counts are the store's: the chat holds none of its own and the page shows what the store holds.
+  if (ROWS) {
+    const page = await mount();
+    await addReplies(page, 3);
+    await page.evaluate(() => { window.__data.rooms.rm_a.messages.find(message => message.id === 'rm_a_m125').reply_to = 'rm_a_m100'; });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 4); await settle(page);
+    const own = names => page.evaluate(names => names.map(name => Object.hasOwn(window.__chat, name)), names);
+    assert.deepEqual(await own(['rows', 'threadEntries', 'threadEntryIDs', 'threadNewReplyIDs', 'quotes', 'expiry', 'messages', 'threadCounts']), Array(8).fill(false), 'the chat keeps no state of its own for the lists');
+    const shown = () => page.evaluate(() => { const store = window.__chat.store; return [store.rows.map(row => row.id).join() === [...document.querySelectorAll('#messages > article.message')].map(node => node.dataset.messageId).join(), store.threadEntries.map(row => row.id).join() === [...document.querySelectorAll('#thread-messages > article')].map(node => node.dataset.messageId).join(), store.rows.length, store.threadEntries.length]; });
+    assert.deepEqual(await shown(), [true, true, 100, 4], 'the page shows what the store holds');
+    // computing a row's view writes nothing, and the page's effects change no store state: the transitions are the store's
+    const probe = await page.evaluate(() => {
+      const chat = window.__chat, store = chat.store, reply = store.rows.find(row => row.reply_to), item = { id: 'inb-x', message_id: 'x', kind: 'question', rev: 0, proposed_answers: ['Go'], can_decide: true };
+      const out = {};
+      store.quotes.delete(reply.id); chat.rowView(reply, true); out.quoteRead = store.quotes.has(reply.id);
+      store.answeredMessages.add('x'); store.answerItems = new Map([['x', item]]); chat.answerView({ id: 'x' }); out.answeredRead = store.answeredMessages.has('x');
+      store.updateAnswerControls([item]); out.answeredCleared = !store.answeredMessages.has('x');
+      store.updateAnswerControls([]); out.answeredSet = store.answeredMessages.has('x') ? 'kept' : 'not set (no row)';
+      const files = [{ id: 'att_1', mime: 'image/png', url: '/x.png', name: 'x.png' }]; store.pendingAttachments = files;
+      chat.sentMessage(); out.sentKept = store.pendingAttachments === files;
+      const room = chat.room; chat.beginOpen({ ...room, id: 'rm_other' }); out.openKept = store.pendingAttachments === files; chat.room = room;
+      store.pendingAttachments = []; store.answeredMessages.delete('x');
+      return out;
+    });
+    assert.deepEqual(probe, { quoteRead: false, answeredRead: true, answeredCleared: true, answeredSet: 'not set (no row)', sentKept: true, openKept: true }, 'a row view and the page effects write no store state');
+    await page.evaluate(() => window.__chat.store.dropRows(window.__chat.store.rows.slice(0, 10).map(row => row.id)));
+    assert.deepEqual(await shown(), [true, true, 90, 4], 'and follows a drop');
+    await page.evaluate(() => window.__chat.reset());
+    assert.deepEqual(await shown(), [true, true, 0, 0], 'and a reset');
+    await page.close();
+  }
   // The message list's rows follow the expiry window and their thread's count without a redraw of the others.
   if (ROWS) {
     const page = await mount();
@@ -1310,11 +1343,11 @@ async function main() {
     await page.evaluate(async () => {
       const { retention } = await import('/js/retention.js'), chat = window.__chat;
       chat.rows = chat.rows.map(message => ({ ...message, expirable: true, created_at: message.seq <= 60 ? '2020-01-01T00:00:00Z' : new Date().toISOString() }));
-      retention.seconds = 3600; chat.syncExpiry();
+      retention.seconds = 3600; chat.store.syncExpiry();
     });
     const marked = await state();
     assert.deepEqual([marked.expired, marked.marks, marked.boundary, marked.labels], [30, 30, ['61'], 1], 'the old rows carry the hourglass and the first newer one the boundary');
-    await page.evaluate(async () => { const { retention } = await import('/js/retention.js'); retention.seconds = 0; window.__chat.syncExpiry(); });
+    await page.evaluate(async () => { const { retention } = await import('/js/retention.js'); retention.seconds = 0; window.__chat.store.syncExpiry(); });
     assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#messages .message-expired').length, document.querySelectorAll('#messages .expiry-boundary').length, document.querySelectorAll('#messages .message-expired-mark, #messages .expiry-label').length]), [0, 0, 0], 'and they leave when expiry is turned off');
     await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_t9', seq: 998, no: 998, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'one more', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: 'rm_a_m120' }); return window.__chat.refreshMessages(); });
     await settle(page);
@@ -1549,12 +1582,12 @@ async function main() {
       await page.evaluate(() => window.__chat.destroy());
       const outcome = await page.evaluate(async () => {
         const chat = window.__chat, store = chat.store, hostCalls = [], sent = window.__requests.length;
-        for (const name of ['beginOpen', 'drawPage', 'showNewest', 'loadOlderIfShort', 'threadState', 'markNewThreadReply', 'add', 'announce', 'updateLatestLabel', 'trimLive', 'showOlderStatus', 'prependPage', 'trimOldest', 'anchorUpdate', 'say', 'showLatestButton', 'openMessage', 'beginWindow', 'drawWindow', 'showWindow', 'openThread', 'showReply', 'showRow', 'beginThread', 'drawThreadPage', 'showThreadPage', 'settleThreadLatest', 'threadError', 'showThreadOlderStatus', 'prependThreadPage', 'beginThreadSend', 'sentThreadReply', 'threadSendFailed', 'restoreThreadDraft', 'sendInput', 'beginSend', 'sendAsAnswer', 'sentMessage', 'addSent', 'sendFailed', 'sendFinished']) { const original = chat[name]; chat[name] = function (...args) { hostCalls.push(name); return original.apply(this, args); }; }
-        chat.room = { id: 'rm_a' }; store.hasMoreOlder = true; store.oldestSeq = 5; chat.nodes.set('rm_a_m1', document.createElement('article'));
+        for (const name of ['beginOpen', 'pageDrawn', 'showNewest', 'loadOlderIfShort', 'announce', 'updateLatestLabel', 'showOlderStatus', 'holdPlace', 'say', 'anchorUpdate', 'showLatestButton', 'beginWindow', 'windowDrawn', 'showWindow', 'showReply', 'showRow', 'beginThread', 'showThreadPage', 'showThreadOlderStatus', 'holdThreadPlace', 'beginThreadSend', 'sentThreadReply', 'threadSendFailed', 'restoreThreadDraft', 'sendInput', 'beginSend', 'sendAsAnswer', 'sentMessage', 'sendFailed', 'sendFinished', 'listUpdate', 'threadUpdate', 'threadClosed', 'updateThreadNewMarker', 'hideThreadLatest', 'noteRow', 'scheduleMentions', 'showThreadCount', 'followList', 'renderPending']) { const original = chat[name]; chat[name] = function (...args) { hostCalls.push(name); return original.apply(this, args); }; }
+        chat.room = { id: 'rm_a', lifecycle: 'open' }; store.expiry = { expired: new Set(['zz']), divider: null }; store.hasMoreOlder = true; store.oldestSeq = 5; chat.nodes.set('rm_a_m1', document.createElement('article'));
         chat.threadRoot = { id: 'rm_a_m120', seq: 120 }; store.threadHasMoreOlder = true; store.threadOldestSeq = 5; chat.threadDraft.value = 'late reply'; chat.draft.value = 'late message';
         for (const name of ['open', 'openThread']) { const original = store[name]; store[name] = function (...args) { hostCalls.push(`store.${name}`); return original.apply(this, args); }; }
         store.windowSeq = 5; store.contextMode = true; store.newestSeq = 9; const before = [store.windowSeq, store.contextMode, store.newestSeq, store.catchingUp, store.threadGeneration, store.loadingOlderThread];
-        for (const call of [() => store.open({ id: 'rm_a' }), () => store.refresh(), () => store.loadOlder(), () => store.loadNewer(), () => store.leaveWindow(), () => store.jump('rm_a_m10'), () => store.jump(7), () => store.refreshReactions('rm_a_m1'), () => store.toggleReaction('rm_a_m1', '👍'), () => store.openThread({ id: 'rm_a_m120', seq: 120 }), () => store.loadOlderThread(), () => store.sendThread(), () => store.send(), () => store.reopenLatest()]) { try { await call(); } catch (error) { hostCalls.push(`threw ${error.message}`); } }
+        for (const call of [() => store.open({ id: 'rm_a' }), () => store.refresh(), () => store.loadOlder(), () => store.loadNewer(), () => store.leaveWindow(), () => store.jump('rm_a_m10'), () => store.jump(7), () => store.refreshReactions('rm_a_m1'), () => store.toggleReaction('rm_a_m1', '👍'), () => store.openThread({ id: 'rm_a_m120', seq: 120 }), () => store.loadOlderThread(), () => store.sendThread(), () => store.send(), () => store.reopenLatest(), () => store.syncExpiry(), () => store.addFiles([new File(['x'], 'a.txt')]), () => store.removeAttachment({ id: 'att_1' })]) { try { await call(); } catch (error) { hostCalls.push(`threw ${error.message}`); } }
         return [hostCalls, window.__requests.length - sent, before, [store.windowSeq, store.contextMode, store.newestSeq, store.catchingUp, store.threadGeneration, store.loadingOlderThread]];
       });
       assert.deepEqual([outcome[0], outcome[1], outcome[3]], [['store.open', 'store.openThread'], 0, outcome[2]], 'a destroyed store entry touches nothing and reopens nothing');
@@ -1566,7 +1599,7 @@ async function main() {
       await addReplies(page, 3);
       await openRoom(page, 'rm_a'); await opened(page); await settle(page);
       await hold(page, 'GET', 'thread_root=rm_a_m120&after=');
-      await page.evaluate(() => { window.__settled = 0; const settled = window.__chat.settleThreadLatest; window.__chat.settleThreadLatest = function (...args) { window.__settled++; return settled.apply(this, args); }; window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120'), { id: 'rm_a_t2' }); });
+      await page.evaluate(() => { window.__settled = 0; const store = window.__chat.store, settled = store.settleThreadLatest; store.settleThreadLatest = function (...args) { window.__settled++; return settled.apply(this, args); }; window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120'), { id: 'rm_a_t2' }); });
       const held = await waitRequest(page, 'GET', 'thread_root=rm_a_m120&after=');
       await page.evaluate(() => { window.__holds.length = 0; window.__chat.closeThread(); });
       await serve(page, held); await page.evaluate(() => window.__open); await settle(page);
@@ -1644,7 +1677,7 @@ async function main() {
       await addReplies(page, 3);
       await openRoom(page, 'rm_a'); await opened(page); await settle(page);
       await hold(page, 'GET', 'thread_root=rm_a_m120');
-      await page.evaluate(() => { window.__drawn = 0; const draw = window.__chat.drawThreadPage; window.__chat.drawThreadPage = function (...args) { window.__drawn++; return draw.apply(this, args); }; window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120')); });
+      await page.evaluate(() => { window.__drawn = 0; const draw = window.__chat.updateThreadNewMarker; window.__chat.updateThreadNewMarker = function (...args) { window.__drawn++; return draw.apply(this, args); }; window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120')); });
       const held = await waitRequest(page, 'GET', 'thread_root=rm_a_m120');
       await page.evaluate(() => { window.__holds.length = 0; window.__chat.store.reset(); });
       await serve(page, held); await page.evaluate(() => window.__open); await settle(page);
@@ -1745,11 +1778,56 @@ async function main() {
       assert.deepEqual(same, [true, true, true, true, true], 'each leaf equals its root plus fill');
       await page.close();
     }
+    // a pick of several files stops once the room has changed
+    {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await hold(page, 'POST', '/attachments$');
+      await page.evaluate(() => { window.__adding = window.__chat.addFiles([new File(['one'], 'one.txt'), new File(['two'], 'two.txt')]); });
+      const first = await waitRequest(page, 'POST', '/attachments$');
+      await page.evaluate(() => { window.__holds.length = 0; });
+      await openRoom(page, 'rm_b'); await opened(page); await settle(page);
+      await serve(page, first); await page.evaluate(() => window.__adding); await settle(page);
+      assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'POST' && /attachments$/.test(request.path)).length), 1, 'the second file of a pick is not sent from another room');
+      await page.close();
+    }
+    // removing a pending file: the answer of a room that was left changes and says nothing
+    for (const how of ['removed', 'failed', 'failed here']) {
+      const page = await mount();
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await hold(page, 'POST', '/attachments$');
+      await addFile(page, 'x.txt');
+      await serve(page, await waitRequest(page, 'POST', '/attachments$')); await page.evaluate(() => window.__adding); await settle(page);
+      await page.evaluate(() => { window.__holds.length = 0; });
+      await hold(page, 'DELETE', '/attachments/att_1$');
+      await page.$eval('#pending-attachments .pending-image button', node => node.click());
+      const held = await waitRequest(page, 'DELETE', '/attachments/att_1$');
+      await page.evaluate(() => { window.__holds.length = 0; window.__redrawn = 0; window.__said = 0; const chat = window.__chat, pending = chat.renderPending, say = chat.say; chat.renderPending = function (...args) { window.__redrawn++; return pending.apply(this, args); }; chat.say = function (...args) { window.__said++; return say.apply(this, args); }; });
+      if (how !== 'failed here') { await openRoom(page, 'rm_b'); await opened(page); await settle(page); await page.evaluate(() => { window.__redrawn = 0; window.__said = 0; }); }
+      if (how === 'removed') await serve(page, held); else await answer(page, held, 500, { error: 'cannot remove' });
+      await settle(page);
+      const result = await page.evaluate(() => [window.__redrawn, window.__said, document.querySelector('#chat-error').textContent]);
+      assert.deepEqual(result, how === 'failed here' ? [0, 1, 'Request failed (500)'] : [0, 0, ''], `a removal ${how === 'failed here' ? 'that failed here says why' : `that ${how} after the room changed changes and says nothing`}`);
+      await page.close();
+    }
+    // the live end keeps its cap, but not while an older page is in flight
+    {
+      const page = await mount();
+      await page.evaluate(() => { window.__liveCap = 20; });
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      const rows = () => page.evaluate(() => window.__chat.store.rows.length);
+      assert.equal(await rows(), 100, 'a page of rows');
+      await page.evaluate(() => { const store = window.__chat.store; store.loadingOlder = true; store.trimLive(); });
+      assert.equal(await rows(), 100, 'nothing is dropped while an older page is out');
+      await page.evaluate(() => { const store = window.__chat.store; store.loadingOlder = false; store.trimLive(); });
+      assert.equal(await rows(), 20, 'and the live cap applies once it is back');
+      await page.close();
+    }
     // with no room the list calls resolve and send nothing
     {
       const page = await mount();
-      const outcome = await page.evaluate(async () => { document.querySelector('#composer textarea[name=body]').value = 'x'; window.__chat.threadDraft.value = 'x'; const store = window.__chat.store, sent = window.__requests.length, results = []; for (const call of [() => store.refresh(), () => store.loadOlder(), () => store.loadNewer(), () => store.jump('rm_a_m1'), () => store.jump(7), () => store.toggleReaction('rm_a_m1', '👍'), () => store.loadOlderThread(), () => store.sendThread(), () => store.send()]) { try { await call(); results.push('ok'); } catch (error) { results.push(error.message); } } return [results, window.__requests.length - sent]; });
-      assert.deepEqual(outcome, [['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok'], 0], 'no room: the calls resolve and send nothing');
+      const outcome = await page.evaluate(async () => { document.querySelector('#composer textarea[name=body]').value = 'x'; window.__chat.threadDraft.value = 'x'; const store = window.__chat.store, sent = window.__requests.length, results = []; for (const call of [() => store.refresh(), () => store.loadOlder(), () => store.loadNewer(), () => store.jump('rm_a_m1'), () => store.jump(7), () => store.toggleReaction('rm_a_m1', '👍'), () => store.loadOlderThread(), () => store.sendThread(), () => store.send(), () => store.addFiles([new File(['x'], 'a.txt')]), () => store.removeAttachment({ id: 'att_1' })]) { try { await call(); results.push('ok'); } catch (error) { results.push(error.message); } } return [results, window.__requests.length - sent]; });
+      assert.deepEqual(outcome, [['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok'], 0], 'no room: the calls resolve and send nothing');
       await page.close();
     }
     // a jump that a newer jump replaced, or that a room change outlived, changes nothing when its answer comes

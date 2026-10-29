@@ -1327,21 +1327,22 @@ async function main() {
     }), { closed: ['Answer…', true, 'false'], opened: [false, 'true', true], sent: ['Proceed, but carefully'], room: false }, 'the inbox can give a free-text answer; the room view has no such box');
     // A reply to a message with a free-text request open for this person is sent as the answer (so the item resolves) when it mentions no one but
     // the requester and has no attachment; every other reply is an ordinary one that leaves the request open.
+    await installFixtureChat(first);
     assert.deepEqual(await first.evaluate(async () => {
-      const { Chat } = await import('/js/chat.js');
-      const { ChatStore } = await import('/js/pages/chat/store.js');
       const base = { room: { id: 'r' }, recall: null, error: { textContent: '' }, announcer: { sendStarted() {}, sendFinished() {} }, resizeDraft() {}, renderPending() {}, trimLive() {}, add() {}, contextMode: false };
       const original = window.fetch, posts = [];
       window.fetch = async (path, options = {}) => { posts.push([String(path), JSON.parse(options.body || '{}').body]); return new Response(JSON.stringify({ id: 'm9' }), { status: 200, headers: { 'Content-Type': 'application/json' } }); };
       try {
         const run = async (body, item, { attachments = [], answer = async () => true, reply = { id: 'm1', author_kind: 'agent', author_id: 'a1' } } = {}) => {
           const answers = [], shown = [];
-          const chat = Object.create(Chat.prototype); chat.store = new ChatStore(chat);
+          const list = document.createElement('div'); document.body.append(list); const chat = window.__fixtureChat(list);
           Object.assign(chat, base, { reply, pendingUploads: 0, pendingAttachments: attachments, notice: { clear() {}, show(text) { shown.push(text); } }, agents: new Map([['a1', { slug: 'tess' }]]),
             draft: { value: body, setSelectionRange() {} }, answerItems: new Map(item ? [['m1', item]] : []), setReply(message) { this.reply = message; }, inbox: { answer: async (found, text) => { answers.push([found.id, text]); return answer(); } } });
           posts.length = 0;
           await chat.send();
-          return { answered: answers.length, posted: posts.length, draft: chat.draft.value, shown: [...shown] };
+          const result = { answered: answers.length, posted: posts.length, draft: chat.draft.value, shown: [...shown] };
+          list.remove();
+          return result;
         };
         const free = { id: 'inb', kind: 'question', rev: 0, can_decide: true, free_text: true };
         const out = {
@@ -1362,7 +1363,7 @@ async function main() {
         };
         // A second send while an answer is in flight does nothing.
         let release; const gate = new Promise(resolve => { release = resolve; });
-        const chat = Object.create(Chat.prototype), calls = []; chat.store = new ChatStore(chat);
+        const calls = [], list = document.createElement('div'); document.body.append(list); const chat = window.__fixtureChat(list);
         Object.assign(chat, base, { reply: { id: 'm1', author_kind: 'agent', author_id: 'a1' }, pendingUploads: 0, pendingAttachments: [], notice: { clear() {}, show() {} }, agents: new Map([['a1', { slug: 'tess' }]]), draft: { value: '@tess ok', setSelectionRange() {} }, answerItems: new Map([['m1', free]]), setReply() {}, inbox: { answer: async () => { calls.push(1); await gate; return true; } } });
         const one = chat.send(), two = chat.send(); release(); await Promise.all([one, two]);
         out.doubleSubmit = calls.length;
@@ -1473,7 +1474,7 @@ async function main() {
         proposed_answers: ['Proceed', 'Hold'], free_text: true, can_decide: true };
       chat.answerItems = new Map([[item.message_id, item]]);
       const record = { id: item.message_id, seq: 1, no: 1, body: 'Choose', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner', room_id: 'r' };
-      chat.add(record);
+      chat.store.add(record);
       chat.threadEntries = [record]; chat.threadEntryIDs = new Set([record.id]); chat.threadUpdate();
       const bubble = main.querySelector('.message-bubble'), threadNode = thread.querySelector('.thread-entry');
       chat.updateAnswerControls([item]);
@@ -1492,7 +1493,7 @@ async function main() {
       const answered = { room: marker(bubble), thread: marker(threadNode) };
       chat.updateAnswerControls([]);
       const stillOnce = marker(bubble).length;
-      chat.rows = []; chat.listUpdate(); chat.messages.delete(record.id); chat.add(record);
+      chat.rows = []; chat.listUpdate(); chat.messages.delete(record.id); chat.store.add(record);
       const redrawn = marker(main.querySelector('.message-bubble')).length;
       chat.updateAnswerControls([{ ...item, rev: 2 }]);
       const reopened = { controls: !!main.querySelector('.message-bubble .answer-controls'), marker: marker(main.querySelector('.message-bubble')).length };
@@ -1511,8 +1512,8 @@ async function main() {
       chat.renderBody = (node, message) => { node.textContent = message.body || ''; };
       chat.answeredMessages = new Set(); chat.repliedTo = new Set();
       const base = { seq: 1, no: 1, body: 'q', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner', room_id: 'r' };
-      chat.add({ ...base, id: 'ask-1', proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Which?', options: ['a', 'b'] }] });
-      chat.add({ ...base, id: 'plain', seq: 2, no: 2, body: 'hi' });
+      chat.store.add({ ...base, id: 'ask-1', proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Which?', options: ['a', 'b'] }] });
+      chat.store.add({ ...base, id: 'plain', seq: 2, no: 2, body: 'hi' });
       const read = node => ({ buttons: [...node.querySelectorAll('.answer-history button')].map(button => [button.textContent.trim(), button.disabled, button.title]), status: node.querySelector('.answer-history-status')?.textContent || '', blocks: node.querySelectorAll('.answer-history').length });
       const bubble = main.querySelector('[data-message-id=ask-1] .message-bubble');
       const pending = read(bubble); const block = bubble.querySelector('.answer-history');
@@ -1550,7 +1551,7 @@ async function main() {
       const list = document.createElement('div'); document.body.append(list); const chat = window.__fixtureChat(list);
       chat.refreshReactions = () => {};
       const visual_plan = [{ type: 'future', data: { text: '<img src=x onerror=alert(1)>' } }];
-      chat.add({ id: '123', seq: 123, no: 123, room_id: 'room_test', author_kind: 'agent', author_id: 'bot@repo',
+      chat.store.add({ id: '123', seq: 123, no: 123, room_id: 'room_test', author_kind: 'agent', author_id: 'bot@repo',
         author_harness: 'codex', author_model: 'gpt-6-sol', body: 'Historical body', created_at: '2026-10-14T00:00:00Z', visual_plan });
       const article = chat.list.firstElementChild;
       const result = { label: article.querySelector('.message-author')?.textContent,
@@ -1567,14 +1568,14 @@ async function main() {
       chat.agents = new Map([['live', { id: 'live', name: 'Live', tool: 'codex', model: 'gpt-6-sol', observed: 'in_turn' }], ['gone', { id: 'gone', name: 'Gone', tool: 'claude', model: 'opus', observed: 'stopped' }], ['wait', { id: 'wait', name: 'Wait', tool: 'pi', model: 'gemma', observed: 'idle', recovery_block: true }]]);
       chat.refreshReactions = () => {};
       const base = { room_id: 'room_test', body: 'hi', created_at: '2026-10-14T00:00:00Z' };
-      chat.add({ ...base, id: 'i1', seq: 901, no: 901, author_kind: 'agent', author_id: 'live' });
-      chat.add({ ...base, id: 'i2', seq: 902, no: 902, author_kind: 'agent', author_id: 'gone' });
-      chat.add({ ...base, id: 'i3', seq: 903, no: 903, author_kind: 'agent', author_id: 'wait' });
-      chat.add({ ...base, id: 'i4', seq: 904, no: 904, author_kind: 'agent', author_id: 'missing' });
-      chat.add({ ...base, id: 'i5', seq: 905, no: 905, author_kind: 'user', author_id: 'someone', needs_attention: true });
-      chat.add({ ...base, id: 'i6', seq: 906, no: 906, author_kind: 'user', author_id: 'someone' });
-      chat.add({ ...base, id: 'i7', seq: 907, no: 907, author_kind: 'agent', author_id: 'agt_01GONE0000', author_model: 'opus4.8', author_harness: 'claude-code' });
-      chat.add({ ...base, id: 'i8', seq: 908, no: 908, author_kind: 'agent', author_id: 'imported-bot', author_model: 'sonnet4.6', author_harness: 'codex' });
+      chat.store.add({ ...base, id: 'i1', seq: 901, no: 901, author_kind: 'agent', author_id: 'live' });
+      chat.store.add({ ...base, id: 'i2', seq: 902, no: 902, author_kind: 'agent', author_id: 'gone' });
+      chat.store.add({ ...base, id: 'i3', seq: 903, no: 903, author_kind: 'agent', author_id: 'wait' });
+      chat.store.add({ ...base, id: 'i4', seq: 904, no: 904, author_kind: 'agent', author_id: 'missing' });
+      chat.store.add({ ...base, id: 'i5', seq: 905, no: 905, author_kind: 'user', author_id: 'someone', needs_attention: true });
+      chat.store.add({ ...base, id: 'i6', seq: 906, no: 906, author_kind: 'user', author_id: 'someone' });
+      chat.store.add({ ...base, id: 'i7', seq: 907, no: 907, author_kind: 'agent', author_id: 'agt_01GONE0000', author_model: 'opus4.8', author_harness: 'claude-code' });
+      chat.store.add({ ...base, id: 'i8', seq: 908, no: 908, author_kind: 'agent', author_id: 'imported-bot', author_model: 'sonnet4.6', author_harness: 'codex' });
       const read = id => { const el = chat.list.querySelector(`[data-message-id="${id}"]`); const dot = el.querySelector('.msg-sender-dot'); const icon = el.querySelector('.msg-sender-icon');
         return { icon: icon.getAttribute('src'), title: icon.title, dot: dot.hidden ? null : [dot.className.replace('msg-sender-dot ', ''), dot.title], bell: Boolean(el.querySelector('.message-attention')) }; };
       const out = { live: read('i1'), stopped: read('i2'), wait: read('i3'), historical: read('i4'), attention: read('i5'), plain: read('i6'), departed: read('i7'), importedKnown: read('i8') };
@@ -1594,13 +1595,13 @@ async function main() {
       chat.legacyOpener = id => { out.openedAgent = id; };
       author('i1').click(); await new Promise(resolve => setTimeout(resolve, 50)); out.liveOpens = Boolean(document.querySelector('#sender-profile-dialog'));
       // A reply whose parent is not loaded quotes it from the preview the server sent along; with no preview it says only that it is earlier.
-      chat.add({ ...base, id: 'q1', seq: 951, no: 951, author_kind: 'user', author_id: 'someone', reply_to: 'msg_unloaded', reply_preview: { no: 77, author_kind: 'agent', author_id: 'live', snippet: 'quoted text' } });
-      chat.add({ ...base, id: 'q2', seq: 952, no: 952, author_kind: 'user', author_id: 'someone', reply_to: 'msg_unloaded_too' });
+      chat.store.add({ ...base, id: 'q1', seq: 951, no: 951, author_kind: 'user', author_id: 'someone', reply_to: 'msg_unloaded', reply_preview: { no: 77, author_kind: 'agent', author_id: 'live', snippet: 'quoted text' } });
+      chat.store.add({ ...base, id: 'q2', seq: 952, no: 952, author_kind: 'user', author_id: 'someone', reply_to: 'msg_unloaded_too' });
       const quote = id => { const el = chat.list.querySelector(`[data-message-id="${id}"] .quote`); return [el.textContent, el.title]; };
       out.quotes = [quote('q1'), quote('q2')];
       // An agent message carries the usage of its turn: a chart icon with a tooltip and an accessible name opens a popover with every figure
       // (a dash for one nobody reported), Escape closes it and gives the focus back to the icon; a message with no usage has no icon.
-      chat.add({ ...base, id: 'u1', seq: 961, no: 961, author_kind: 'agent', author_id: 'live', usage: { turn_id: 'turn_1', index: 2, count: 3, tokens_in: 1200, tokens_out: 34, tokens_cache_read: 5000, cost: 0.0042, model: 'claude-haiku-4-5', partial: true } });
+      chat.store.add({ ...base, id: 'u1', seq: 961, no: 961, author_kind: 'agent', author_id: 'live', usage: { turn_id: 'turn_1', index: 2, count: 3, tokens_in: 1200, tokens_out: 34, tokens_cache_read: 5000, cost: 0.0042, model: 'claude-haiku-4-5', partial: true } });
       const usageButton = chat.list.querySelector('[data-message-id="u1"] .chat-msg-usage-toggle');
       out.usageButton = { present: !!usageButton, title: usageButton?.title, label: usageButton?.getAttribute('aria-label'), glyph: !!usageButton?.querySelector('.icon-mask-chart-column'), text: usageButton?.textContent, withoutUsage: !chat.list.querySelector('[data-message-id="i1"] .chat-msg-usage-toggle') };
       usageButton.click(); await new Promise(resolve => setTimeout(resolve, 50));
@@ -1644,7 +1645,7 @@ async function main() {
         chat.refreshReactions = () => {}; chat.toggleReaction = (id, emoji) => { (chat.reacted ||= []).push([id, emoji]); };
         chat.list.addEventListener('keydown', event => chat.moveActionFocus(event));
         const base = { room_id: 'room_test', created_at: '2026-10-14T00:00:00Z', author_kind: 'user', author_id: 'someone' };
-        chat.add({ ...base, id: 'a1', seq: 801, no: 801, body: '**raw** body' });
+        chat.store.add({ ...base, id: 'a1', seq: 801, no: 801, body: '**raw** body' });
         const one = chat.list.querySelector('.message');
         const bar = one.querySelector('.message-actions');
         const writes = []; const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
@@ -1683,16 +1684,15 @@ async function main() {
     }
     assert.deepEqual(messageActions.c.writes, ['**raw** body', '#801']);
     const prependedThreadOrder = await first.evaluate(async () => {
-      const { Chat } = await import('/js/chat.js');
-      const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
-      const { mountPreactPage } = await import('/js/pages/mount-page.js'), { ThreadList } = await import('/js/pages/chat/rows.js'), { html } = await import('/js/ui.js');
-      chat.threadList = document.createElement('div'); document.body.append(chat.threadList); chat.threadCounts = new Map(); chat.serverThreadCounts = new Map(); chat.nodes = new Map(); chat.messages = new Map(); chat.agents = new Map(); chat.raw = false; chat.answeredMessages = new Set(); chat.repliedTo = new Set();
-      chat.threadView = mountPreactPage(chat.threadList, props => html`<${ThreadList} ...${props} />`);
+      const main = document.createElement('div'), thread = document.createElement('div'); document.body.append(main, thread);
+      const chat = window.__fixtureChat(main, thread);
       const root = { id: 'thread-root', seq: 1, no: 1, body: 'root', author_kind: 'user', author_id: 'owner', created_at: '2026-01-10T12:00:00Z' };
       chat.renderBody = (node, message) => { node.textContent = message.body; };
       chat.threadRoot = root; chat.threadEntries = [root]; chat.threadEntryIDs = new Set([root.id]); chat.threadUpdate();
-      for (const seq of [4, 3, 2]) chat.add({ id: `reply-${seq}`, seq, thread_root: root.id, body: `reply ${seq}`, author_kind: 'user', author_id: 'owner' }, true);
-      return [...chat.threadList.children].map(entry => Number(entry.dataset.seq));
+      for (const seq of [4, 3, 2]) chat.store.add({ id: `reply-${seq}`, seq, thread_root: root.id, body: `reply ${seq}`, author_kind: 'user', author_id: 'owner' }, true);
+      const order = [...thread.children].map(entry => Number(entry.dataset.seq));
+      main.remove(); thread.remove();
+      return order;
     });
     assert.deepEqual(prependedThreadOrder, [1, 2, 3, 4], 'older replies arrived out of order in an open thread');
     assert.equal(await first.evaluate(() => Boolean(document.querySelector('script[src="/vendor/mermaid.min.js"]'))), false, 'Mermaid stays unloaded without diagrams');
@@ -2756,8 +2756,8 @@ async function main() {
             '# ' + 'H'.repeat(300) + '\n\n1. item\n   ```\n   ' + 'n'.repeat(300) + '\n   ```\n2. [' + 'link'.repeat(80) + '](https://e.test/x)',
             '```diff\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-short\n+' + 'long '.repeat(120) + '\n```',
           ];
-          bodies.forEach((body, index) => chat.add({ id: `9${index}`, seq: 9000, no: 9000 + index, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body, created_at: '2026-10-14T00:00:00Z' }));
-          chat.add({ id: '99', seq: 9099, no: 9099, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body: 'plan', created_at: '2026-10-14T00:00:00Z', visual_plan: [
+          bodies.forEach((body, index) => chat.store.add({ id: `9${index}`, seq: 9000, no: 9000 + index, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body, created_at: '2026-10-14T00:00:00Z' }));
+          chat.store.add({ id: '99', seq: 9099, no: 9099, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body: 'plan', created_at: '2026-10-14T00:00:00Z', visual_plan: [
             { type: 'markdown', data: { markdown: '| a | b |\n|---|---|\n| ' + 'cell '.repeat(60) + ' | z |\n\n```\n' + 'x'.repeat(300) + '\n```\n\nhttps://example.test/' + 'a'.repeat(300) } },
             { type: 'file-tree', data: { root: { name: long, type: 'dir', note: 'n'.repeat(300), children: [{ name: long + '.go', note: 'm'.repeat(300) }] } } },
             { type: 'data-model', data: { entities: [{ name: long, fields: [{ name: long, type: 'string'.repeat(30), note: 'q'.repeat(200) }] }] } },
@@ -2789,7 +2789,7 @@ async function main() {
         const chat = window.__fixtureChat(list);
         const pic = (w, h) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="steelblue"/></svg>`);
         const kept = new Set();
-        chat.add({ id: '9801', seq: 9801, no: 9801, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body: 'pictures', created_at: '2026-10-14T00:00:00Z', attachments: [
+        chat.store.add({ id: '9801', seq: 9801, no: 9801, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body: 'pictures', created_at: '2026-10-14T00:00:00Z', attachments: [
           { mime: 'image/png', url: pic(900, 450), name: 'a-very-long-file-name-that-must-not-widen-its-figure-' + 'x'.repeat(80) + '.png', width: 900, height: 450 },
           { mime: 'image/png', url: pic(200, 100), name: 'small.png', width: 200, height: 100 },
           { mime: 'image/png', url: pic(300, 900), name: 'tall.png', width: 300, height: 900 }] });
