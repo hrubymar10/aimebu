@@ -415,6 +415,7 @@ Owner's decision (2026-10-28): continue with the remaining units.
 - Scope: `app.js` boot, sign-in, setup and onboarding, the top bar.
 - Files: `app.js`, `setup.js`, `welcome.js`, `onboarding.js`, `topbar-menu.js`.
 - Acceptance: boot and sign-in checks pass; after this step the legacy modules can be retired one by one.
+- Done for sign-in and the invitation card: `web/js/pages/signin/` draws `#login-view` (the sign-in form and the card a link opens) and the dialog a signed-in person gets for a pending link. `model.js` holds the card's texts, `store.js` the state and the three submits, `components.js` the markup, `page.js` the adapter that writes the view's `hidden` and the dialog's open state. Every request takes the store's ticket; `show()`, `hide()`, switching to the ordinary sign-in and `destroy()` start a new one, so a late session, error, inspection or redemption changes nothing, and a second submit while one is in flight sends nothing. `app.js` only constructs the page and calls `show()`, `hide()` and `openDialog()`; routes and API calls are unchanged. `scripts/test-signin-page.cjs` proves the guards against a scratch server, `scripts/test-signin-model.cjs` the rules.
 
 ## 9. Open questions
 

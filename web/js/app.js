@@ -18,6 +18,7 @@ import { KnowledgePanel } from './pages/knowledge/page.js';
 import { Health } from './pages/health/page.js';
 import { SystemEvents } from './system-events.js';
 import { retention } from './retention.js';
+import { Signin } from './pages/signin/page.js';
 import { showWelcome } from './welcome.js';
 import { ownerSetup } from './setup.js';
 import { Onboarding } from './onboarding.js';
@@ -38,7 +39,6 @@ initUIVariants();
 
 const loginView = document.querySelector('#login-view'), appView = document.querySelector('#app-view');
 const bootView = document.querySelector('#boot-view');
-const loginForm = document.querySelector('#login-form');
 const startupStatus = document.createElement('div');
 startupStatus.id = 'startup-status'; startupStatus.setAttribute('role', 'status'); startupStatus.hidden = true;
 const startupText = document.createElement('span');
@@ -60,45 +60,13 @@ function setStartupState(state) {
   startupText.textContent = busy ? 'Finishing sign-in…' : state === 'timeout' ? "Some checks didn't finish." : '';
   startupRetry.hidden = state !== 'timeout';
 }
-let pendingInvite = new URLSearchParams(location.hash.slice(1)).get('invite') || '';
-let redeemedInviteLogin = '';
-// A pending invitation link is its own card, in place of the sign-in card: what the link is for, the login (chosen for a new account,
-// shown for a reset) and a password, and one action. Someone who already has an account can still switch to signing in.
-const invitePanel = document.createElement('form'); invitePanel.className = 'invite-entry'; invitePanel.hidden = true; invitePanel.noValidate = false;
-invitePanel.innerHTML = '<h1>aimebu</h1><p class="invite-lead"></p><label class="invite-login">Login<input name="login" autocomplete="username"></label><label>Password<input name="password" type="password" autocomplete="new-password" required minlength="12"></label><button type="submit" class="btn btn-primary"></button><p class="error" role="alert"></p><button type="button" class="btn invite-switch">I already have an account</button>';
-loginView.append(invitePanel);
-const inviteLead = invitePanel.querySelector('.invite-lead'), inviteSubmit = invitePanel.querySelector('button[type=submit]'), inviteSwitch = invitePanel.querySelector('.invite-switch');
-let inviteInfo = null;
-const roleWords = { owner: 'an owner', operator: 'an operator', viewer: 'a viewer' };
-// Shows the sign-in screen, or the invitation card when a link is pending. The link is read first, so the card can say what it is for.
-async function showLogin() {
-  loginView.hidden = false;
-  if (!pendingInvite) { invitePanel.hidden = true; loginForm.hidden = false; return; }
-  const token = pendingInvite;
-  inviteInfo = await request('/api/invites/inspect', { method: 'POST', body: { token } }).catch(error => ({ error }));
-  if (token !== pendingInvite) return;
-  const info = inviteInfo, login = invitePanel.elements.login;
-  invitePanel.querySelector('.error').textContent = '';
-  if (info.error) {
-    inviteLead.textContent = info.error.status === 429 ? 'Too many tries. Wait a moment and reload this link.' : 'This invitation is not valid: it was already used, it expired, or the person who made it can no longer invite.';
-    for (const node of invitePanel.querySelectorAll('label, button[type=submit]')) node.hidden = true;
-    inviteSwitch.textContent = 'Sign in'; inviteSwitch.hidden = false;
-  } else {
-    for (const node of invitePanel.querySelectorAll('label, button[type=submit]')) node.hidden = false;
-    const reset = info.kind === 'reset';
-    inviteLead.textContent = reset ? `Choose a new password for ${info.login}.` : `You are invited to ${info.project_name} as ${roleWords[info.role] || info.role}. Choose a login and a password to create your account.`;
-    invitePanel.querySelector('.invite-login').hidden = false;
-    login.value = reset ? info.login : login.value; login.readOnly = reset; login.required = !reset;
-    invitePanel.querySelector('.invite-login').firstChild.textContent = reset ? 'Account' : 'Login';
-    inviteSubmit.textContent = reset ? 'Set password and sign in' : 'Create account and sign in';
-    inviteSwitch.textContent = 'I already have an account'; inviteSwitch.hidden = reset;
-  }
-  invitePanel.hidden = false; loginForm.hidden = true;
-}
-const inviteDialog = document.createElement('dialog'); inviteDialog.className = 'invite-dialog dialog-card dialog-card-primary';
-inviteDialog.innerHTML = '<h2>Use invitation</h2><p>Join this project with your signed-in account. If this is a password reset link, enter a new password.</p><form><label>New password (reset links only)<input name="password" type="password" autocomplete="new-password"></label><div class="dialog-actions"><button type="button" class="btn invite-cancel">Cancel</button><button type="submit" class="btn btn-primary">Use invitation</button></div></form><p class="error" role="alert"></p>';
-document.body.append(inviteDialog);
-inviteDialog.querySelector('.invite-cancel').onclick = () => inviteDialog.close();
+const signin = new Signin({
+  view: loginView,
+  signedIn: session => signedIn(session),
+  afterReset: () => { resetWorkspace(); clearSession(); appView.hidden = true; void signin.show(); },
+  resync: () => resync(),
+  onError: error => console.error('sign-in page:', error),
+});
 const chat = new Chat(async room => {
   const generation = sessionGeneration;
   await sidebar.refreshProject(room.project_id);
@@ -441,7 +409,7 @@ async function signedIn(session) {
   const startupAbort = new AbortController();
   const startupActive = () => active() && !startupExpired && !startupAbort.signal.aborted;
   startupController = startupAbort;
-  setSession(session); void showBuildVersion(request, document.querySelector('#build-version')); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; loginView.hidden = true;
+  setSession(session); void showBuildVersion(request, document.querySelector('#build-version')); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; signin.hide();
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
   if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
   setStartupState('loading'); appView.hidden = false;
@@ -527,7 +495,7 @@ async function signedIn(session) {
     refreshEmptyState();
     // The last step of the first run: with no project yet (nothing imported, or the import skipped) the owner makes the first one.
     if (!importWizard.dialog.open && sidebar.projects.size === 0) onboarding.show();
-    if (pendingInvite && !inviteDialog.open) inviteDialog.showModal();
+    if (signin.pendingInvite) signin.openDialog();
     startupSucceeded = true;
     // Items already waiting for the person are something that needs them too: the bar is offered once, the first time.
     if (inbox.items?.length) notificationBanner.attention();
@@ -544,7 +512,7 @@ async function signedIn(session) {
     if (!active()) return;
     if (error.status === 401 || error.status === 403) {
       resetWorkspace(); clearSession(); document.title = 'aimebu';
-      appView.hidden = true; void showLogin();
+      appView.hidden = true; void signin.show();
       return;
     }
     console.error('workspace startup:', error);
@@ -555,58 +523,6 @@ async function signedIn(session) {
     if (startupSucceeded && startupActive()) setStartupState('ready');
   }
 }
-let cardBusy = false;
-invitePanel.onsubmit = async event => {
-  event.preventDefault();
-  if (cardBusy) return;
-  cardBusy = true;
-  const errorNode = invitePanel.querySelector('.error'); errorNode.textContent = '';
-  const login = invitePanel.elements.login.value.trim(), password = invitePanel.elements.password.value;
-  try {
-    if (!redeemedInviteLogin) {
-      const reset = inviteInfo?.kind === 'reset';
-      const result = await request('/api/invites/redeem', { method: 'POST', body: { token: pendingInvite, ...(reset ? {} : { login }), password } });
-      pendingInvite = ''; history.replaceState(null, '', location.pathname + location.search);
-      redeemedInviteLogin = result.login;
-      invitePanel.elements.login.value = result.login; invitePanel.elements.login.readOnly = true;
-      inviteSubmit.textContent = 'Sign in'; inviteSwitch.hidden = true;
-    }
-    const session = await request('/api/login', { method: 'POST', body: { login: redeemedInviteLogin, password } });
-    invitePanel.hidden = true; await signedIn(session);
-  } catch (error) { errorNode.textContent = error.message; }
-  finally { cardBusy = false; }
-};
-// "I already have an account": the sign-in card, with the way back to the invitation; the link stays pending and is offered after sign-in.
-const backToInvite = document.createElement('button'); backToInvite.type = 'button'; backToInvite.className = 'btn invite-back'; backToInvite.textContent = 'Back to the invitation'; backToInvite.hidden = true;
-loginForm.append(backToInvite);
-backToInvite.onclick = () => { backToInvite.hidden = true; void showLogin(); };
-inviteSwitch.onclick = () => {
-  if (inviteInfo?.error) pendingInvite = '';
-  invitePanel.hidden = true; loginForm.hidden = false; backToInvite.hidden = !pendingInvite;
-};
-let dialogBusy = false;
-inviteDialog.querySelector('form').onsubmit = async event => {
-  event.preventDefault();
-  if (dialogBusy) return;
-  dialogBusy = true;
-  const errorNode = inviteDialog.querySelector('.error'); errorNode.textContent = '';
-  try {
-    const result = await request('/api/invites/redeem', { method: 'POST', body: { token: pendingInvite, password: event.currentTarget.elements.password.value } });
-    pendingInvite = ''; inviteDialog.close();
-    if (result.kind === 'reset') { resetWorkspace(); clearSession(); appView.hidden = true; void showLogin(); }
-    else await resync();
-  } catch (error) { errorNode.textContent = error.message; }
-  finally { dialogBusy = false; }
-};
-let loginBusy = false;
-loginForm.onsubmit = async event => {
-  event.preventDefault();
-  if (loginBusy) return;
-  loginBusy = true; document.querySelector('#login-error').textContent = '';
-  try { const session = await request('/api/login', { method: 'POST', body: { login: loginForm.elements.login.value, password: loginForm.elements.password.value } }); await signedIn(session); }
-  catch (error) { document.querySelector('#login-error').textContent = error.message; }
-  finally { loginBusy = false; }
-};
 const projectDialog = document.querySelector('#project-dialog');
 const projectForm = document.querySelector('#project-form');
 // Creating a project is the owner's and the admins'; for anyone else the button is off, with the reason, instead of ending in a 403.
@@ -639,7 +555,7 @@ projectForm.onsubmit = async event => {
     const rooms = await sidebar.addProject(project); if (rooms[0]) await selectRoom(rooms[0]);
   } catch (error) { if (generation === sessionGeneration) errorNode.textContent = error.message; }
 };
-document.querySelector('#logout').onclick = async () => { cancelStartup(); try { await request('/api/logout', { method: 'POST' }); } finally { resetWorkspace(); clearSession(); document.title = 'aimebu'; appView.hidden = true; void showLogin(); } };
+document.querySelector('#logout').onclick = async () => { cancelStartup(); try { await request('/api/logout', { method: 'POST' }); } finally { resetWorkspace(); clearSession(); document.title = 'aimebu'; appView.hidden = true; void signin.show(); } };
 document.querySelector('#inbox-toggle').onclick = () => { setRoomsOpen(false); agents.setMobileOpen(false); if (!inbox.view.hidden) inbox.hide(); else inbox.show(); };
 document.querySelector('#rooms-toggle').onclick = () => { inbox.hide(); if (matchMedia('(max-width: 700px)').matches) { appView.classList.add('chat-open'); setRoomsOpen(!appView.classList.contains('rooms-open')); } else { setRoomsCollapsed(!appView.classList.contains('rooms-collapsed')); } };
 // Desktop left-panel collapse persists under the v1 localStorage key.
@@ -686,7 +602,7 @@ try {
   bootView.hidden = true;
   await signedIn(session);
 } catch (error) {
-  if (error.status === 401) { bootView.hidden = true; void showLogin(); }
+  if (error.status === 401) { bootView.hidden = true; void signin.show(); }
   else if (!bootView.hidden) {
     document.querySelector('#boot-status').textContent = 'Could not load workspace.';
     document.querySelector('#boot-retry').hidden = false;
