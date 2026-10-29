@@ -1,10 +1,12 @@
-import { html, Component, useLayoutEffect, useRef } from '../../ui.js';
+import { html, Component, useCallback, useLayoutEffect, useRef } from '../../ui.js';
+import { EXPIRED_HOURGLASS } from '../../usage-expiry.js';
+import { fillMessageActions, messageActionsProps } from '../../message-actions.js';
 import { stampTime } from '../../time.js';
 import { applySenderIdentity, fillSenderPresence, SENDER_PRESENCE_ROOT } from '../../sender-identity.js';
 import { fillVisualPlan, hasVisualPlan, VISUAL_PLAN_ROOT } from '../../visual-plan.js';
 import { ANSWER_CONTROLS_ROOT, ANSWER_HISTORY_ROOT, fillAnswerControls, fillAnswerHistory } from '../../answer-controls.js';
 
-export const rowRenders = { count: 0 };
+export const rowRenders = { count: 0, thread: 0, main: 0 };
 
 // A row re-renders only when its record or one of the keys the page computes for it changes.
 export class Row extends Component {
@@ -12,9 +14,9 @@ export class Row extends Component {
     const now = this.props;
     return next.message !== now.message || next.view.key !== now.view.key;
   }
-  render({ message, view, host, className, children }) {
-    rowRenders.count++;
-    return children({ message, view, host, className });
+  render({ message, view, host, kind, children }) {
+    rowRenders.count++; rowRenders[kind]++;
+    return children();
   }
 }
 
@@ -32,6 +34,8 @@ function Stamp({ createdAt }) {
   return html`<time ref=${root} />`;
 }
 
+const ExpiredMark = () => html`<span class="message-expired-mark" title="Older than the expiry window: AI room chatter this old is not delivered to agents. Still shown here." role="img" aria-label="Expired from AI context" dangerouslySetInnerHTML=${{ __html: EXPIRED_HOURGLASS }} />`;
+
 // The header line of a message, in the list and in the thread panel alike: sender, (bell), #number, bug, time.
 export function MessageMeta({ message, view }) {
   const author = view.author;
@@ -44,7 +48,7 @@ export function MessageMeta({ message, view }) {
   <button type="button" class="row-btn quiet-glyph message-number" title="Click to copy">${`#${message.no}`}</button>
   ${usageButton(view, message)}
   <button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button>
-  <${Stamp} createdAt=${message.created_at} /></div>`;
+  ${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /></div>`;
 }
 
 export function Body({ message, view, host }) {
@@ -74,7 +78,7 @@ export function AnswerSlot({ message, view, host }) {
 }
 
 export function ThreadEntry({ message, view, host }) {
-  return html`<${Row} message=${message} view=${view} host=${host}>${() => html`<article class=${view.needsAttention ? 'thread-entry needs-attention' : 'thread-entry'} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)}>
+  return html`<${Row} kind="thread" message=${message} view=${view} host=${host}>${() => html`<article class=${view.needsAttention ? 'thread-entry needs-attention' : 'thread-entry'} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)}>
     <${MessageMeta} message=${message} view=${view} /><${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${AnswerSlot} message=${message} view=${view} host=${host} />
   </article>`}<//>`;
 }
@@ -82,4 +86,52 @@ export function ThreadEntry({ message, view, host }) {
 export function ThreadList({ entries = [], host, viewOf, restore }) {
   useLayoutEffect(() => { restore?.(); });
   return entries.map(message => html`<${ThreadEntry} key=${message.id} message=${message} view=${viewOf(message)} host=${host} />`);
+}
+
+function Actions({ message, host, label }) {
+  const root = useRef(null), props = messageActionsProps(message);
+  useLayoutEffect(() => { fillMessageActions(root.current, host, message); }, [message]);
+  useLayoutEffect(() => { for (const button of root.current.querySelectorAll('.thread-action')) { button.title = label; button.setAttribute('aria-label', label); } }, [message, label]);
+  return html`<${props.tag} class=${props.class} role=${props.role} aria-label=${props['aria-label']} ref=${root} />`;
+}
+
+const Pills = ({ pills }) => html`<span class="reaction-pills">${pills.map(pill => html`<button type="button" class="row-btn reaction-pill" title=${pill.title} aria-pressed=${String(pill.pressed)} data-emoji=${pill.emoji}>${`${pill.emoji} ${pill.count}`}</button>`)}</span>`;
+
+const Quote = ({ quote }) => html`<button type="button" class="row-btn quote" title=${quote.title}>${quote.text}</button>`;
+
+// A notice shows its text as it is; a change of the Markdown mode draws it like any body, and a new mention index only highlights it.
+function NoticeBody({ message, view, host }) {
+  const root = useRef(null), drawn = useRef(false), marked = useRef(false);
+  useLayoutEffect(() => {
+    if (drawn.current) host.renderBody(root.current, message); else root.current.textContent = message.body;
+    drawn.current = true;
+  }, [message, view.raw]);
+  useLayoutEffect(() => {
+    if (marked.current) host.highlight(root.current);
+    marked.current = true;
+  }, [view.mentionKey]);
+  return html`<span class="message-body" ref=${root} />`;
+}
+
+function SystemRow({ message, view, host, classes, register }) {
+  return html`<article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
+    <div class="system-row"><${NoticeBody} message=${message} view=${view} host=${host} />${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>
+    <${Plan} message=${message} />
+  </article>`;
+}
+
+export function MessageRow({ message, view, host }) {
+  const register = useCallback(element => host.registerNode(message.id, element), [message.id]);
+  const classes = [view.articleClass, view.needsAttention ? 'needs-attention' : '', view.expired ? 'message-expired' : '', view.boundary ? 'expiry-boundary' : ''].filter(Boolean).join(' ');
+  return html`<${Row} kind="main" message=${message} view=${view} host=${host}>${() => message.author_kind === 'system' ? html`<${SystemRow} message=${message} view=${view} host=${host} classes=${classes} register=${register} />` : html`<article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
+    ${view.boundary && html`<span class="expiry-label">Older AI chatter won't reach agents automatically</span>`}
+    <${MessageMeta} message=${message} view=${view} />
+    <div class="message-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /><${AnswerSlot} message=${message} view=${view} host=${host} /></div>
+    <button type="button" class="row-btn thread-chip" hidden=${view.chip.hidden} title="Open thread" aria-label=${view.chip.label}>${view.chip.text}</button>
+  </article>`}<//>`;
+}
+
+export function MessageList({ entries = [], host, viewOf, restore }) {
+  useLayoutEffect(() => { restore?.(); });
+  return entries.map(message => html`<${MessageRow} key=${message.id} message=${message} view=${viewOf(message)} host=${host} />`);
 }

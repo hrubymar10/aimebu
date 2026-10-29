@@ -1293,9 +1293,42 @@ async function main() {
   }
 
   // The store holds the room's records and cursors; the cases above read the page, these read the store.
+  // The message list's rows follow the expiry window and their thread's count without a redraw of the others.
+  if (ROWS) {
+    const page = await mount();
+    await addReplies(page, 3);
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    const state = () => page.evaluate(() => {
+      const rows = [...document.querySelectorAll('#messages > article.message[data-message-id]')];
+      const root = document.querySelector('#messages [data-message-id=rm_a_m120]');
+      return { expired: rows.filter(node => node.classList.contains('message-expired')).length, marks: document.querySelectorAll('#messages .message-expired-mark').length,
+        boundary: rows.filter(node => node.classList.contains('expiry-boundary')).map(node => node.dataset.seq), labels: document.querySelectorAll('#messages .expiry-label').length,
+        chip: root.querySelector(':scope > .thread-chip').textContent, action: root.querySelector('.thread-action').title, toolbar: root.querySelector('.message-actions').getAttribute('aria-label') };
+    });
+    const before = await state();
+    assert.equal(before.chip, '3 replies');
+    await page.evaluate(async () => {
+      const { retention } = await import('/js/retention.js'), chat = window.__chat;
+      chat.rows = chat.rows.map(message => ({ ...message, expirable: true, created_at: message.seq <= 60 ? '2020-01-01T00:00:00Z' : new Date().toISOString() }));
+      retention.seconds = 3600; chat.syncExpiry();
+    });
+    const marked = await state();
+    assert.deepEqual([marked.expired, marked.marks, marked.boundary, marked.labels], [30, 30, ['61'], 1], 'the old rows carry the hourglass and the first newer one the boundary');
+    await page.evaluate(async () => { const { retention } = await import('/js/retention.js'); retention.seconds = 0; window.__chat.syncExpiry(); });
+    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#messages .message-expired').length, document.querySelectorAll('#messages .expiry-boundary').length, document.querySelectorAll('#messages .message-expired-mark, #messages .expiry-label').length]), [0, 0, 0], 'and they leave when expiry is turned off');
+    await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_t9', seq: 998, no: 998, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'one more', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: 'rm_a_m120' }); return window.__chat.refreshMessages(); });
+    await settle(page);
+    const grown = await state();
+    assert.deepEqual([grown.chip, grown.action === before.action], ['4 replies', false], 'a new reply updates its root\'s chip and thread action');
+    await page.evaluate(() => { const chat = window.__chat; chat.rows = chat.rows.map(message => message.id === 'rm_a_m120' ? { ...message, no: 4242 } : message); chat.listUpdate(); });
+    assert.equal((await state()).toolbar, 'Actions for message #4242', 'a changed record draws its toolbar again');
+    assert.equal(await page.evaluate(() => document.querySelector('#messages [data-message-id=rm_a_m120] .message-reply').title), 'Reply to #4242', 'and its buttons');
+    await page.close();
+  }
+
   // The thread panel's rows draw only when their record or their keys change, and leave with their thread.
   if (ROWS) {
-    const renders = page => page.evaluate(() => import('/js/pages/chat/rows.js').then(rows => rows.rowRenders.count));
+    const renders = page => page.evaluate(() => import('/js/pages/chat/rows.js').then(rows => rows.rowRenders.thread));
     const entries = page => page.evaluate(() => [...document.querySelectorAll('#thread-messages > article.thread-entry')].map(node => node.dataset.messageId));
     const opened_ = async () => {
       const page = await mount();
@@ -1352,9 +1385,9 @@ async function main() {
       ];
       for (const [name, change, check] of fields) {
         const drawn = await page.evaluate(async (change, source) => {
-          const rows = await import('/js/pages/chat/rows.js'), chat = window.__chat, before = rows.rowRenders.count;
+          const rows = await import('/js/pages/chat/rows.js'), chat = window.__chat, before = rows.rowRenders.thread;
           chat.threadEntries = chat.threadEntries.map(message => message.id === 'rm_a_t3' ? { ...message, ...change } : message); chat.threadUpdate();
-          return rows.rowRenders.count - before;
+          return rows.rowRenders.thread - before;
         }, change);
         assert.equal(drawn, 1, `a changed ${name} draws one row`);
         assert.equal(await page.evaluate(check), true, `a changed ${name} shows`);
@@ -1751,6 +1784,21 @@ async function main() {
       return { destroyed, drawn: document.querySelectorAll('#thread-messages > *').length };
     });
     assert.deepEqual(result, { destroyed: 1, drawn: 0 }, 'a destroyed chat unmounts the thread panel once and draws nothing after');
+    await page.close();
+  }
+  // The message list's root goes the same way.
+  if (ROWS) {
+    const page = await mount();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    const result = await page.evaluate(() => {
+      const chat = window.__chat, root = chat.listView, destroy = root.destroy; let destroyed = 0;
+      root.destroy = (...args) => { destroyed++; return destroy.apply(root, args); };
+      const rows = chat.rows.slice();
+      chat.destroy();
+      chat.rows = rows; chat.listUpdate(); chat.setAgents([]);
+      return { destroyed, drawn: document.querySelectorAll('#messages > *').length };
+    });
+    assert.deepEqual(result, { destroyed: 1, drawn: 0 }, 'a destroyed chat unmounts the message list once and draws nothing after');
     await page.close();
   }
 

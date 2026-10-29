@@ -53,6 +53,21 @@ const waitRoomRow = (page, label, roomID) => waitDump(page, label, id => !!docum
   rows: [...document.querySelectorAll('[data-room-id]')].map(row => `${row.dataset.roomId}:${(row.querySelector('.room-name')?.textContent || '').slice(0, 20)}`),
   projects: document.querySelector('#projects')?.innerText.replace(/\s+/g, ' ').slice(0, 300), wanted: id,
 }), roomID);
+const installFixtureChat = page => page.evaluate(async () => {
+  const [{ Chat }, { ChatStore }, { mountPreactPage }, { MessageList, ThreadList }, { html }] = await Promise.all([import('/js/chat.js'), import('/js/pages/chat/store.js'), import('/js/pages/mount-page.js'), import('/js/pages/chat/rows.js'), import('/js/ui.js')]);
+  // A chat built without its constructor, with the keyed lists mounted on the containers it is given.
+  window.__fixtureChat = (list, threadList) => {
+    const chat = Object.create(Chat.prototype); chat.store = new ChatStore(chat);
+    chat.list = list; chat.nodes = new Map(); chat.agents = new Map(); chat.raw = false; chat.messages = new Map(); chat.threadCounts = new Map(); chat.serverThreadCounts = new Map(); chat.answerItems = new Map();
+    chat.rows = []; chat.quotes = new Map(); chat.rowBatching = false; chat.rowPending = []; chat.expiry = { expired: new Set(), divider: null };
+    chat.listView = mountPreactPage(list, props => html`<${MessageList} ...${props} />`);
+    chat.threadEntries = []; chat.threadEntryIDs = new Set(); chat.threadBatching = false;
+    if (threadList) { chat.threadList = threadList; chat.threadView = mountPreactPage(threadList, props => html`<${ThreadList} ...${props} />`); }
+    chat.refreshReactions = () => {};
+    return chat;
+  };
+});
+
 async function main() {
   {
     const audit = spawnSync(process.execPath, [path.join(__dirname, 'a11y-audit.cjs'), '--strict'], { env: isolatedEnv, encoding: 'utf8' });
@@ -1449,23 +1464,18 @@ async function main() {
     assert.ok(phoneQuestions.targets.every(target => target.h >= 39.5) && phoneQuestions.rows.every(height => height >= 39.5), `Open Questions targets under 40px: ${JSON.stringify([phoneQuestions.targets, phoneQuestions.rows])}`);
     assert.deepEqual([phoneQuestions.before.disabled, phoneQuestions.before.checked, phoneQuestions.afterFocus.checked, phoneQuestions.afterFocus.answered, phoneQuestions.afterTyping], [false, false, true, '0/2 answered', '1/2 answered'], 'tapping Other did not choose it');
     assert.deepEqual([phoneQuestions.closeQuiet, phoneQuestions.backQuiet, phoneQuestions.nextQuiet], [true, true, false], 'Close and Back must be secondary, Next primary');
+    await installFixtureChat(first);
     const stableAnswerControls = await first.evaluate(async () => {
-      const { Chat } = await import('/js/chat.js');
-      const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
-      const { mountPreactPage } = await import('/js/pages/mount-page.js'), { ThreadList } = await import('/js/pages/chat/rows.js'), { html } = await import('/js/ui.js');
-      chat.nodes = new Map(); chat.threadList = document.createElement('div'); document.body.append(chat.threadList); chat.inbox = { answer: async () => true };
-      chat.agents = new Map(); chat.messages = new Map(); chat.raw = false; chat.answeredMessages = new Set(); chat.repliedTo = new Set();
-      chat.threadView = mountPreactPage(chat.threadList, props => html`<${ThreadList} ...${props} />`);
+      const main = document.createElement('div'), thread = document.createElement('div'); document.body.append(main, thread);
+      const chat = window.__fixtureChat(main, thread); chat.inbox = { answer: async () => true };
       chat.renderBody = (node, message) => { node.textContent = message.body; };
-      chat.legacyDetails = () => null;
       const item = { id: 'inb-draft', message_id: 'msg-draft', kind: 'question', rev: 0,
         proposed_answers: ['Proceed', 'Hold'], free_text: true, can_decide: true };
       chat.answerItems = new Map([[item.message_id, item]]);
-      const roomNode = document.createElement('article');
-      const bubble = document.createElement('div'); bubble.className = 'message-bubble'; roomNode.append(bubble);
-      chat.nodes.set(item.message_id, roomNode);
-      chat.threadEntries = [{ id: item.message_id, seq: 1, no: 1, body: 'Choose', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner' }]; chat.threadEntryIDs = new Set([item.message_id]); chat.threadUpdate();
-      const threadNode = chat.threadList.querySelector('.thread-entry');
+      const record = { id: item.message_id, seq: 1, no: 1, body: 'Choose', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner', room_id: 'r' };
+      chat.add(record);
+      chat.threadEntries = [record]; chat.threadEntryIDs = new Set([record.id]); chat.threadUpdate();
+      const bubble = main.querySelector('.message-bubble'), threadNode = thread.querySelector('.thread-entry');
       chat.updateAnswerControls([item]);
       const roomControls = bubble.querySelector('.answer-controls');
       const threadControls = threadNode.querySelector('.answer-controls');
@@ -1480,41 +1490,44 @@ async function main() {
       // The answered question keeps a quiet "Answered" (once, in the room and the thread), including after the message is drawn again.
       const marker = node => [...node.querySelectorAll(':scope > .answer-done button')].map(button => [button.textContent, button.disabled]);
       const answered = { room: marker(bubble), thread: marker(threadNode) };
-      chat.syncAnswerControl(bubble, undefined, item.message_id); chat.updateAnswerControls([]);
+      chat.updateAnswerControls([]);
       const stillOnce = marker(bubble).length;
-      const fresh = document.createElement('div'); fresh.className = 'message-bubble'; chat.syncAnswerControl(fresh, undefined, item.message_id);
-      const redrawn = marker(fresh).length;
+      chat.rows = []; chat.listUpdate(); chat.messages.delete(record.id); chat.add(record);
+      const redrawn = marker(main.querySelector('.message-bubble')).length;
       chat.updateAnswerControls([{ ...item, rev: 2 }]);
-      const reopened = { controls: !!bubble.querySelector('.answer-controls'), marker: marker(bubble).length };
-      chat.answeredMessages = new Set(); const other = document.createElement('div'); chat.syncAnswerControl(other, undefined, 'msg-never-open');
-      return { kept, replaced, removed, answered, stillOnce, redrawn, reopened, neverOpen: marker(other).length };
+      const reopened = { controls: !!main.querySelector('.message-bubble .answer-controls'), marker: marker(main.querySelector('.message-bubble')).length };
+      chat.answeredMessages = new Set(); chat.updateAnswerControls([]);
+      const neverOpen = chat.answerView({ id: 'msg-never-open' }).kind;
+      main.remove(); thread.remove();
+      return { kept, replaced, removed, answered, stillOnce, redrawn, reopened, neverOpen };
     });
-    assert.deepEqual(stableAnswerControls, { kept: true, replaced: true, removed: true, answered: { room: [['Answered', true]], thread: [['Answered', true]] }, stillOnce: 1, redrawn: 1, reopened: { controls: true, marker: 0 }, neverOpen: 0 },
+    assert.deepEqual(stableAnswerControls, { kept: true, replaced: true, removed: true, answered: { room: [['Answered', true]], thread: [['Answered', true]] }, stillOnce: 1, redrawn: 1, reopened: { controls: true, marker: 0 }, neverOpen: 'none' },
       'an answered question keeps a disabled "Answered", once; a reopened one swaps it for its buttons; a message that was never open gets none');
     // Proposed answers and open questions stay visible under their message once nothing is open for them (imported or old asks): disabled,
     // "Answered" when a person replied to it or it was answered here, otherwise "No longer pending"; nothing for a message with none.
     const askHistory = await first.evaluate(async () => {
-      const { Chat } = await import('/js/chat.js');
-      const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
-      chat.nodes = new Map(); chat.threadList = document.createElement('div'); chat.inbox = { answer: async () => true }; chat.answerItems = new Map();
+      const main = document.createElement('div'); document.body.append(main);
+      const chat = window.__fixtureChat(main); chat.inbox = { answer: async () => true };
+      chat.renderBody = (node, message) => { node.textContent = message.body || ''; };
       chat.answeredMessages = new Set(); chat.repliedTo = new Set();
-      const asked = { id: 'ask-1', seq: 1, no: 1, proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Which?', options: ['a', 'b'] }] };
-      chat.messages = new Map([[asked.id, asked], ['plain', { id: 'plain', seq: 2, no: 2, body: 'hi' }]]);
+      const base = { seq: 1, no: 1, body: 'q', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner', room_id: 'r' };
+      chat.add({ ...base, id: 'ask-1', proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Which?', options: ['a', 'b'] }] });
+      chat.add({ ...base, id: 'plain', seq: 2, no: 2, body: 'hi' });
       const read = node => ({ buttons: [...node.querySelectorAll('.answer-history button')].map(button => [button.textContent.trim(), button.disabled, button.title]), status: node.querySelector('.answer-history-status')?.textContent || '', blocks: node.querySelectorAll('.answer-history').length });
-      const bubble = document.createElement('div'); document.body.append(bubble);
-      chat.syncAnswerControl(bubble, undefined, 'ask-1');
+      const bubble = main.querySelector('[data-message-id=ask-1] .message-bubble');
       const pending = read(bubble); const block = bubble.querySelector('.answer-history');
-      chat.syncAnswerControl(bubble, undefined, 'ask-1');
+      chat.listUpdate();
       const same = bubble.querySelector('.answer-history') === block;
-      // A person replies to it: the next sync says Answered.
-      chat.repliedTo.add('ask-1'); chat.syncAnswerControl(bubble, undefined, 'ask-1');
+      // A person replies to it: the next draw says Answered.
+      chat.repliedTo.add('ask-1'); chat.listUpdate();
       const answered = read(bubble);
       // It becomes open again: the live buttons replace the history.
-      chat.syncAnswerControl(bubble, { id: 'inb', message_id: 'ask-1', kind: 'question', rev: 0, proposed_answers: ['Proceed'], free_text: true, can_decide: true }, 'ask-1');
+      chat.updateAnswerControls([{ id: 'inb', message_id: 'ask-1', kind: 'question', rev: 0, proposed_answers: ['Proceed'], free_text: true, can_decide: true }]);
       const reopened = { history: bubble.querySelectorAll('.answer-history').length, live: bubble.querySelectorAll('.answer-controls').length };
-      const none = document.createElement('div'); chat.syncAnswerControl(none, undefined, 'plain');
-      bubble.remove();
-      return { pending, same, answered, reopened, plain: none.querySelectorAll('.answer-history, .answer-done').length };
+      const none = main.querySelector('[data-message-id=plain] .message-bubble');
+      const result = { pending, same, answered, reopened, plain: none.querySelectorAll('.answer-history, .answer-done').length };
+      main.remove();
+      return result;
     });
     assert.deepEqual(askHistory.pending, { buttons: [['Open Questions 1', true, 'No longer pending'], ['Proceed', true, 'No longer pending'], ['Hold', true, 'No longer pending']], status: 'No longer pending', blocks: 1 }, 'an ask with nothing open shows its buttons, disabled and marked no longer pending');
     assert.equal(askHistory.same, true, 'a sync that changes nothing keeps the same block');
@@ -1534,9 +1547,7 @@ async function main() {
     assert.ok(Math.abs(thumbs.tall[0] / thumbs.tall[1] - 0.25) < 0.02 && thumbs.tall[1] <= 180.5, `a portrait thumbnail keeps its 1:4 shape: ${JSON.stringify(thumbs)}`);
     const nativeHistoryLayout = await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
-      const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
-      chat.list = document.createElement('div'); document.body.append(chat.list);
-      chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.agents = new Map(); chat.raw = false;
+      const list = document.createElement('div'); document.body.append(list); const chat = window.__fixtureChat(list);
       chat.refreshReactions = () => {};
       const visual_plan = [{ type: 'future', data: { text: '<img src=x onerror=alert(1)>' } }];
       chat.add({ id: '123', seq: 123, no: 123, room_id: 'room_test', author_kind: 'agent', author_id: 'bot@repo',
@@ -1552,9 +1563,7 @@ async function main() {
     assert.deepEqual(nativeHistoryLayout, { label: 'bot@repo', planInBubble: true, escaped: true, injected: false, departed: 'Agent 123456' });
     const identityHeader = await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
-      const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
-      chat.list = document.createElement('div'); document.body.append(chat.list);
-      chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.serverThreadCounts = new Map(); chat.raw = false;
+      const list = document.createElement('div'); document.body.append(list); const chat = window.__fixtureChat(list);
       chat.agents = new Map([['live', { id: 'live', name: 'Live', tool: 'codex', model: 'gpt-6-sol', observed: 'in_turn' }], ['gone', { id: 'gone', name: 'Gone', tool: 'claude', model: 'opus', observed: 'stopped' }], ['wait', { id: 'wait', name: 'Wait', tool: 'pi', model: 'gemma', observed: 'idle', recovery_block: true }]]);
       chat.refreshReactions = () => {};
       const base = { room_id: 'room_test', body: 'hi', created_at: '2026-10-14T00:00:00Z' };
@@ -1569,7 +1578,7 @@ async function main() {
       const read = id => { const el = chat.list.querySelector(`[data-message-id="${id}"]`); const dot = el.querySelector('.msg-sender-dot'); const icon = el.querySelector('.msg-sender-icon');
         return { icon: icon.getAttribute('src'), title: icon.title, dot: dot.hidden ? null : [dot.className.replace('msg-sender-dot ', ''), dot.title], bell: Boolean(el.querySelector('.message-attention')) }; };
       const out = { live: read('i1'), stopped: read('i2'), wait: read('i3'), historical: read('i4'), attention: read('i5'), plain: read('i6'), departed: read('i7'), importedKnown: read('i8') };
-      chat.agents.get('live').observed = 'lost'; chat.updateAuthor(chat.list.querySelector('[data-message-id="i1"]'), chat.messages.get('i1'));
+      chat.agents.get('live').observed = 'lost'; chat.agentSigs = new Map([['live', 'lost']]); chat.listUpdate();
       out.liveAfter = read('i1').dot;
       const number = chat.list.querySelector('[data-message-id="i5"] .message-number');
       out.numberText = number.textContent; number.click(); await new Promise(resolve => setTimeout(resolve, 200));
@@ -1631,9 +1640,7 @@ async function main() {
       const { Chat } = await import('/js/chat.js');
       const out = {};
       for (const variant of ['c']) {
-        const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
-        chat.list = document.createElement('div'); document.body.append(chat.list);
-        chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.serverThreadCounts = new Map(); chat.agents = new Map(); chat.raw = false;
+        const list = document.createElement('div'); document.body.append(list); const chat = window.__fixtureChat(list);
         chat.refreshReactions = () => {}; chat.toggleReaction = (id, emoji) => { (chat.reacted ||= []).push([id, emoji]); };
         chat.list.addEventListener('keydown', event => chat.moveActionFocus(event));
         const base = { room_id: 'room_test', created_at: '2026-10-14T00:00:00Z', author_kind: 'user', author_id: 'someone' };
@@ -2736,11 +2743,12 @@ async function main() {
       const before = first.viewport();
       for (const width of [1440, 390]) {
         await first.setViewport({ width, height: 900 });
+        await installFixtureChat(first);
         const fit = await first.evaluate(async () => {
           const { Chat } = await import('/js/chat.js');
-          const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
-          const list = document.querySelector('#messages'), kept = new Set(list.children);
-          chat.list = list; chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.agents = new Map(); chat.raw = false; chat.refreshReactions = () => {};
+          const held = document.querySelector('#messages'); held.id = 'messages-held';
+          const list = document.createElement('div'); list.id = 'messages'; list.className = held.className; held.after(list);
+          const chat = window.__fixtureChat(list), kept = new Set();
           const long = 'verylongidentifier'.repeat(20), bodies = [
             '```\n' + 'x'.repeat(400) + '\n```',
             '| a | b | c | d | e |\n|---|---|---|---|---|\n| ' + Array(5).fill('cell '.repeat(30)).join(' | ') + ' |',
@@ -2764,7 +2772,7 @@ async function main() {
           const box = list.getBoundingClientRect();
           const out = { overflowX: getComputedStyle(list).overflowX, scrollWidth: list.scrollWidth, clientWidth: list.clientWidth,
             outside: [...list.children].filter(node => !kept.has(node)).filter(node => node.getBoundingClientRect().right > box.right + 1).length };
-          for (const node of [...list.children]) if (!kept.has(node)) node.remove();
+          list.remove(); held.id = 'messages';
           return out;
         });
         assert.deepEqual([fit.overflowX, fit.scrollWidth <= fit.clientWidth, fit.outside], ['hidden', true, 0], `the chat scrolls sideways at ${width}px: ${JSON.stringify(fit)}`);
@@ -2774,13 +2782,13 @@ async function main() {
     // Hovering a thumbnail never moves the image out of its frame: the frame (the button, whose border shows on hover) hugs the image, the
     // image stays inside it before and while the pointer is over it, and a long file name never widens the figure past the image.
     {
+      await installFixtureChat(first);
       const added = await first.evaluate(async () => {
-        const { Chat } = await import('/js/chat.js');
-        const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
-        const list = document.querySelector('#messages');
-        chat.list = list; chat.messages = new Map(); chat.nodes = new Map(); chat.threadCounts = new Map(); chat.agents = new Map(); chat.raw = false; chat.refreshReactions = () => {};
+        const held = document.querySelector('#messages'); held.id = 'messages-held';
+        const list = document.createElement('div'); list.id = 'messages'; list.className = held.className; held.after(list);
+        const chat = window.__fixtureChat(list);
         const pic = (w, h) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="steelblue"/></svg>`);
-        const kept = new Set(list.children);
+        const kept = new Set();
         chat.add({ id: '9801', seq: 9801, no: 9801, room_id: 'x', author_kind: 'agent', author_id: 'bot@repo', author_harness: 'codex', author_model: 'm', body: 'pictures', created_at: '2026-10-14T00:00:00Z', attachments: [
           { mime: 'image/png', url: pic(900, 450), name: 'a-very-long-file-name-that-must-not-widen-its-figure-' + 'x'.repeat(80) + '.png', width: 900, height: 450 },
           { mime: 'image/png', url: pic(200, 100), name: 'small.png', width: 200, height: 100 },
@@ -2817,7 +2825,7 @@ async function main() {
         await expectFrames(`while hovering thumbnail ${index}`);
       }
       await first.mouse.move(2, 2);
-      await first.evaluate(() => document.querySelector('[data-thumb-probe]')?.remove());
+      await first.evaluate(() => { document.querySelector('#messages').remove(); document.querySelector('#messages-held').id = 'messages'; });
     }
     await first.evaluate(() => {
       window.__soundPlays = 0;

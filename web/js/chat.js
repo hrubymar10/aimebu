@@ -2,16 +2,14 @@ import { request, upload, currentUser, currentLogin } from './api.js';
 import { PREFERENCE_KEYS, savePreference } from './preferences.js';
 import { retention } from './retention.js';
 import { expiryCutoffMs, planExpiry } from './expiry.js';
-import { EXPIRED_HOURGLASS } from './usage-expiry.js';
 import { usageTooltip } from './message-usage-format.js';
 import { toggleMessageUsage, closeMessageUsage } from './message-usage.js';
 import { renderMarkdown, renderRaw, copyText } from './markdown.js';
 import { setGlyph, iconGlyph } from './icon-button.js';
-import { stampTime, refreshRelativeTimes } from './time.js';
+import { refreshRelativeTimes } from './time.js';
 import { ScrollAnchor } from './scroll-anchor.js';
-import { senderIdentity, senderKind, createSenderPresence, applySenderIdentity, agentLabel } from './sender-identity.js';
+import { senderIdentity, senderKind, agentLabel } from './sender-identity.js';
 import { openSenderProfile } from './pages/sender-profile/page.js';
-import { renderVisualPlan } from './visual-plan.js';
 import { RoomPanel } from './pages/room-panel/page.js';
 import { QuickCommands } from './quick-commands.js';
 import { MacroAutocomplete } from './macros.js';
@@ -21,12 +19,11 @@ import { Notice, megabytes } from './notice.js';
 import { closeEmojiPicker, openEmojiPicker } from './emoji-picker.js';
 import { LiveAnnouncer } from './live-region.js';
 import { ComposerFormatting } from './composer.js';
-import { buildMessageActions, messageAction } from './message-actions.js';
-import { answerControls, answerHistory } from './answer-controls.js';
+import { messageAction } from './message-actions.js';
 import { promptDialog } from './dialogs.js';
 import { expandShortcodes } from './emoji-data.js';
 import { ChatStore } from './pages/chat/store.js';
-import { ThreadList } from './pages/chat/rows.js';
+import { MessageList, ThreadList } from './pages/chat/rows.js';
 import { mountPreactPage } from './pages/mount-page.js';
 import { html } from './ui.js';
 import { MENTION_LOGINS_TTL_MS, answerArea, answerEligible, answersThroughInbox as answersThrough, articleClass, groupReactions, latestLabel, liveArrival as isLiveArrival, liveRoute, messageSnippet, newestShownSeq as shownSeq, newRepliesLabel, overCap, plainText, recallCandidates as ownMessages, recallStep, threadChip, threadCount, threadLabel as threadLabelOf, threadTitle, trimCap } from './pages/chat/model.js';
@@ -81,6 +78,8 @@ export class Chat {
     this.threadNewButton.onclick = () => { if (this.threadRoot) this.openThread(this.threadRoot); };
     this.threadList.before(this.threadOlderStatus, this.threadLatestButton, this.threadNewButton);
     this.threadList.addEventListener('scroll', () => { if (this.threadList.scrollTop < 80) this.loadOlderThread(); });
+    this.rows = []; this.quotes = new Map(); this.rowBatching = false; this.rowPending = []; this.expiry = { expired: new Set(), divider: null };
+    this.list.replaceChildren(); this.listView = mountPreactPage(this.list, props => html`<${MessageList} ...${props} />`, { onError: error => console.error('message list failed', error) });
     this.threadEntries = []; this.threadEntryIDs = new Set(); this.threadBatching = false;
     this.threadList.replaceChildren(); this.threadView = mountPreactPage(this.threadList, props => html`<${ThreadList} ...${props} />`, { onError: error => console.error('thread list failed', error) });
     this.delegateRows(this.list); this.delegateRows(this.threadList);
@@ -120,14 +119,15 @@ export class Chat {
     this.announcer.reset();
     if (this.room?.id !== room.id) { this.pendingAttachments = []; this.renderPending(); if (this.recall) this.recall.index = null; }
     closeMessageUsage(); this.room = room; this.syncEmpty(); this.setRoomFacts(room); this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear();
-    this.store.clearRoom(); this.store.initialLoading = true; this.nodes.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.setReply(null); this.closeThread();
+    this.store.clearRoom(); this.store.initialLoading = true; this.clearRows(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.setReply(null); this.closeThread();
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = false;
     this.setRoomFacts(room);
     this.scrollAnchor.reset();
     delete this.list.dataset.empty; // no hint while the room is still loading
   }
   drawPage(messages) {
-    for (const message of messages) this.add(message);
+    this.batchRows(() => { for (const message of messages) this.add(message); });
+    this.list.scrollTop = this.list.scrollHeight;
     this.list.dataset.empty = String(!this.list.querySelector('article.message:not(.system-notice)')); // notices alone leave it empty
   }
   showNewest() { this.list.dataset.hasOlder = String(this.hasMoreOlder); this.list.scrollTop = this.list.scrollHeight; this.scrollAnchor?.update(); }
@@ -154,14 +154,14 @@ export class Chat {
     for (const controller of this.uploadRequests) controller.abort();
     this.uploadRequests.clear();
     this.room = null; this.syncEmpty(); this.panel.reset();
-    this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.nodes.clear(); this.agents.clear(); this.list.replaceChildren(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.answerItems = new Map(); this.closeBlocked?.clear(); this.worktree = null;
+    this.error.textContent = ''; this.notice.clear(); this.threadNotice.clear(); this.clearRows(); this.agents.clear(); this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.latestButton.hidden = true; this.updateLatestLabel(); this.answerItems = new Map(); this.closeBlocked?.clear(); this.worktree = null;
     this.setReply(null); this.closeThread(); this.pendingAttachments = []; this.pendingUploads = 0; this.pendingNode.replaceChildren(); this.draft.value = ''; this.resizeDraft();
     this.lightbox.close();
     this.quickCommands.reset(); this.macroAutocomplete.reset(); this.mentionAutocomplete.reset(); this.threadMentionAutocomplete.reset(); this.emojiAutocomplete.reset(); this.threadEmojiAutocomplete.reset(); closeEmojiPicker(false); this.mentionIndex = null; this.mentionLogins = []; this.mentionLoginsRoom = ''; this.mentionLoginsAt = 0; this.mentionLoginsSeq = (this.mentionLoginsSeq || 0) + 1;
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = true;
     this.draft.disabled = true; this.emojiButton.disabled = true; this.attachmentInput.disabled = true; this.form.querySelector('button[type=submit]').disabled = true;
   }
-  destroy() { this.reset(); this.store.destroy(); this.panel.destroy(); this.threadView.destroy(); }
+  destroy() { this.reset(); this.store.destroy(); this.panel.destroy(); this.threadView.destroy(); this.listView.destroy(); }
   // With no room open the chat shows an empty-state card instead of the composer and room controls; the app decides what the card says.
   syncEmpty() { this.onEmptyChange?.(!this.room); }
   current(session, roomID) { return this.store.current(session, roomID); }
@@ -175,9 +175,9 @@ export class Chat {
   // reader's own movement, so the anchor is measured now, not before the request.
   prependPage(messages) {
     const anchor = this.list.firstElementChild, anchorTop = anchor?.getBoundingClientRect().top;
-    for (let i = messages.length - 1; i >= 0; i--) this.add(messages[i], true);
     this.list.dataset.hasOlder = String(this.hasMoreOlder);
-    if (anchor?.isConnected) this.list.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+    this.batchRows(() => { for (let i = messages.length - 1; i >= 0; i--) this.add(messages[i], true); },
+      () => { if (anchor?.isConnected) this.list.scrollTop += anchor.getBoundingClientRect().top - anchorTop; });
     this.trimNewest();
   }
   say(text) { this.error.textContent = text; }
@@ -206,10 +206,13 @@ export class Chat {
     const gone = new Set(), open = this.threadRoot?.id;
     for (const node of rows) {
       const id = node.dataset.messageId;
-      node.remove(); this.nodes.delete(id); this.messages.delete(id); this.reactions.delete(id); gone.add(id);
+      this.messages.delete(id); this.reactions.delete(id); gone.add(id);
       if (id !== open) { this.threadCounts.delete(id); this.serverThreadCounts.delete(id); }
     }
     for (const [id, message] of this.messages) if (message.thread_root && message.thread_root !== open && gone.has(message.thread_root)) this.messages.delete(id);
+    this.rows = this.rows.filter(message => !gone.has(message.id));
+    for (const id of gone) this.quotes.delete(id);
+    this.listUpdate();
   }
   // A trim never removes what the reader is looking at: when the rows to drop reach into the visible part of the list it
   // is deferred to the next page, by which time the reader has moved on (only possible with a cap near a screenful).
@@ -240,20 +243,6 @@ export class Chat {
   // The two things a historical sender's profile can do: start it as a v2 agent (opens the spawn dialog prefilled), and show the agent once started.
   setLegacyActions(start, open) { this.legacyStarter = start; this.legacyOpener = open; }
   setDebugInspector(open) { this.debugCallback = open; }
-  // v1's bug icon: opens the message's debug inspector. It is hidden unless Settings > General turns the inspector on.
-  // The turn's spend, from the chart icon beside the number, on a message an agent wrote (the server sends `usage` with it).
-  usageButton(message) {
-    if (!message.usage) return null;
-    const button = document.createElement('button'); button.type = 'button'; button.className = 'row-btn quiet-glyph chat-msg-usage-toggle';
-    button.title = usageTooltip(message.usage); button.setAttribute('aria-label', button.title); button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-expanded', 'false');
-    const glyph = document.createElement('span'); glyph.className = 'icon-mask icon-mask-chart-column'; glyph.setAttribute('aria-hidden', 'true'); button.append(glyph);
-    return button;
-  }
-  debugButton(message) {
-    const button = document.createElement('button'); button.type = 'button'; button.className = 'row-btn quiet-glyph chat-msg-debug-toggle'; button.title = 'Open debug inspector'; button.setAttribute('aria-label', 'Open debug inspector');
-    const glyph = document.createElement('span'); glyph.className = 'icon-mask icon-mask-bug'; glyph.setAttribute('aria-hidden', 'true'); button.append(glyph);
-    return button;
-  }
   // One click and one key listener per list serve every row's controls (see onMessageClick), so a row costs no closures.
   // Rows also install them (once per list), for a chat assembled without its constructor.
   delegateRows(container) {
@@ -303,48 +292,6 @@ export class Chat {
     return threadLabelOf(threadCount(this.threadCounts, this.serverThreadCounts, id));
   }
   setInbox(inbox) { this.inbox = inbox; }
-  // `messageID` is the message the container belongs to (an item is not there once it has been answered). A question this viewer
-  // had open that is now gone from the inbox leaves a quiet, disabled "Answered" in its place for the rest of the session, as v1
-  // did, instead of just losing its buttons.
-  syncAnswerControl(container, item, messageID) {
-    if (!container) return;
-    const current = container.querySelector(':scope > .answer-controls');
-    const id = messageID ?? item?.message_id;
-    const eligible = answerEligible(item);
-    const marker = () => container.querySelector(':scope > .answer-done');
-    const history = () => container.querySelector(':scope > .answer-history');
-    if (!eligible) {
-      if (current && !item && id) (this.answeredMessages ||= new Set()).add(id);
-      current?.remove();
-      // A question or proposed answers on a message with nothing open for it (history, an imported ask, an answered one) stay
-      // visible under it, disabled: "Answered" when it was answered, otherwise marked as no longer pending.
-      const message = id ? this.messages?.get(id) || (this.threadRoot?.id === id ? this.threadRoot : null) : null;
-      const answered = Boolean(id && (this.answeredMessages?.has(id) || this.repliedTo?.has(id))), area = answerArea(item, message, answered);
-      if (area === 'history') {
-        marker()?.remove();
-        const shown = history();
-        if (shown?.dataset.answered === String(answered)) return;
-        shown?.remove();
-        container.append(answerHistory(message, answered));
-        return;
-      }
-      history()?.remove();
-      if (area === 'done' && !marker()) {
-        const done = document.createElement('div'); done.className = 'answer-done';
-        const button = document.createElement('button'); button.type = 'button'; button.className = 'btn'; button.disabled = true; button.textContent = 'Answered';
-        done.append(button); container.append(done);
-      }
-      return;
-    }
-    history()?.remove();
-    marker()?.remove(); this.answeredMessages?.delete(id);
-    if (current?.dataset.inboxId === item.id && current.dataset.rev === String(item.rev)) return;
-    current?.remove();
-    const parent = id ? this.messages?.get(id) || (this.threadRoot?.id === id ? this.threadRoot : null) : null;
-    const controls = answerControls(item, value => this.inbox.answer(item, value), this.answerOptions(parent));
-    controls.dataset.inboxId = item.id; controls.dataset.rev = String(item.rev);
-    container.append(controls);
-  }
   // How a proposed answer addresses the message it answers: "@author answer" is what a click sends, and Shift-click puts the same text in the composer,
   // as a reply to that message, to change before sending.
   answerOptions(message) {
@@ -363,10 +310,7 @@ export class Chat {
     const next = new Map(items.map(item => [item.message_id, item]));
     for (const [id, item] of this.answerItems || []) if (!next.has(id) && answerEligible(item) && (this.nodes.has(id) || this.threadEntryIDs.has(id))) this.answeredMessages.add(id);
     this.answerItems = next;
-    for (const [id, node] of this.nodes) {
-      this.syncAnswerControl(node.querySelector('.message-bubble'), this.answerItems.get(id), id);
-    }
-    this.threadUpdate();
+    this.listUpdate(); this.threadUpdate();
   }
   // Inserts at the caret through execCommand so the edit stays undoable; the range assignment is the fallback.
   insertEmoji(glyph) {
@@ -461,8 +405,8 @@ export class Chat {
   jumpToMessage(key) { return this.store.jump(key); }
   openMessage(found) { this.onOpenMessage?.(found); }
   // A history window around a message: the list starts again from the page that holds it.
-  beginWindow() { this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.closeThread(); this.nodes.clear(); this.list.replaceChildren(); }
-  drawWindow(messages) { for (const item of messages) this.add(item); }
+  beginWindow() { this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; this.closeThread(); this.clearRows(); }
+  drawWindow(messages) { this.batchRows(() => { for (const item of messages) this.add(item); }); this.list.scrollTop = this.list.scrollHeight; this.scrollAnchor?.update(); }
   showWindow() { this.list.dataset.hasOlder = String(this.hasMoreOlder); this.latestButton.hidden = false; }
   showReply(message) { const entry = this.threadList.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`); entry?.scrollIntoView({ block: 'center' }); this.flash(entry); }
   showRow(message) { const row = this.nodes.get(message.id); row?.scrollIntoView({ block: 'center' }); this.scrollAnchor?.update(); this.flash(row?.querySelector('.message-bubble') || row); }
@@ -549,10 +493,7 @@ export class Chat {
     button.setAttribute('aria-pressed', String(this.raw));
     button.title = this.raw ? 'Show rendered Markdown' : 'Show raw Markdown';
     button.setAttribute('aria-label', button.title);
-    for (const element of document.querySelectorAll('.chat .message[data-message-id] .message-body')) {
-      const message = this.entryMessage(element.closest('[data-message-id]').dataset.messageId);
-      if (message) this.renderBody(element, message);
-    }
+    this.listUpdate();
   }
   exportRoom(format) { return this.panel.exportRoom(format); }
   refreshMessages() { return this.store.refresh(); }
@@ -597,16 +538,14 @@ export class Chat {
     if (index?.signature === this.mentionIndex?.signature) return;
     this.mentionIndex = index;
     this.mentionAutocomplete?.setIndex(index); this.threadMentionAutocomplete?.setIndex(index);
-    if (!this.raw) for (const body of document.querySelectorAll('.chat .message-body')) highlightMentions(body, index);
-    this.threadUpdate();
+    this.listUpdate(); this.threadUpdate();
   }
   setAgents(agents) {
     this.agents = new Map(agents.map(agent => [agent.id, agent]));
-    // One signature per agent record, so updateAuthor can skip nodes whose author did not change between polls.
+    // One signature per agent record, so a row whose sender did not change between polls is not drawn again.
     this.agentSigs = new Map(agents.map(agent => [agent.id, JSON.stringify(agent)]));
     this.refreshMentions();
-    for (const [id, node] of this.nodes) this.updateAuthor(node, this.messages.get(id));
-    this.threadUpdate();
+    this.listUpdate(); this.threadUpdate();
     if (this.reply) this.chipText.textContent = `Replying to ${this.authorName(this.reply)}: ${messageSnippet(this.reply)}`;
   }
   authorName(message) {
@@ -616,28 +555,6 @@ export class Chat {
     if (agent?.name || agent?.slug) return agentLabel(agent);
     // A native agent whose record is gone has only an opaque id; an imported v1 author's id is already the readable name.
     return message.author_id.startsWith('agt_') ? `Agent ${message.author_id.slice(-6)}` : message.author_id;
-  }
-  updateAuthor(node, message) {
-    if (!message) return;
-    const author = node.querySelector('.message-author');
-    if (!author) return;
-    const sig = `${message.author_kind}|${message.author_id}|${this.agentSigs?.get(message.author_id) ?? ''}`;
-    if (node.__authorSig === sig) return;
-    node.__authorSig = sig;
-    author.textContent = this.authorName(message);
-    const presence = node.querySelector('.msg-sender-presence');
-    if (presence) applySenderIdentity(presence, senderIdentity(message, this.agents.get(message.author_id)));
-    const role = node.querySelector('.message-role');
-    if (role) { const agent = this.agents.get(message.author_id); role.textContent = agent?.role_emoji || ''; role.title = agent?.role || ''; role.hidden = !role.textContent; }
-    // A sender with no live record (imported history, or an agent that left) has its name open a read-only profile.
-    const kind = senderKind(message, this.agents.get(message.author_id));
-    author.dataset.senderKind = kind;
-    // A live agent's name opens its profile in the members panel; a sender with no live record opens the read-only one.
-    const live = kind === 'live' && message.author_kind === 'agent';
-    const link = kind !== 'live' || live;
-    author.classList.toggle('message-author-link', link);
-    if (link) { author.tabIndex = 0; author.setAttribute('role', 'button'); author.title = live ? 'Open profile' : `${kind === 'historical' ? 'Historical sender' : 'Departed agent'}: open profile`; }
-    else { author.removeAttribute('tabindex'); author.removeAttribute('role'); author.removeAttribute('title'); }
   }
   // A mention of an agent opens its profile: the live one in this room, or else an author of the history that has left.
   openMention(text) {
@@ -652,13 +569,6 @@ export class Chat {
     const kind = senderKind(message, this.agents.get(message.author_id));
     if (kind === 'live') { if (message.author_kind === 'agent') this.legacyOpener?.(message.author_id); return; }
     return openSenderProfile({ name: this.authorName(message), authorID: message.author_id, kind, roomID: this.room?.id, messages: this.messages.values(), identity: senderIdentity(message, undefined), onStartAgent: this.legacyStarter, onOpenAgent: this.legacyOpener });
-  }
-  authorMeta(message) {
-    const author = document.createElement('strong'); author.className = 'message-author';
-    const role = document.createElement('span'); role.className = 'message-role';
-    const wrapper = document.createElement('span'); wrapper.className = 'message-author-wrap';
-    if (message.author_kind === 'system') wrapper.append(author, role); else wrapper.append(createSenderPresence(), author, role);
-    this.updateAuthor(wrapper, message); return wrapper;
   }
   // The viewer's own messages in this room, oldest first, consecutive duplicates collapsed.
   recallCandidates() { return ownMessages(this.messages.values(), currentUser); }
@@ -696,11 +606,8 @@ export class Chat {
     if (this.messages.has(message.id)) return;
     this.noteAuthor(message);
     this.messages.set(message.id, message);
-    if (message.reply_to && message.author_kind === 'user') {
-      // A person replying to a question is its answer, for the history block under that question.
-      (this.repliedTo ||= new Set()).add(message.reply_to);
-      const asked = this.nodes.get(message.reply_to); if (asked) this.syncAnswerControl(asked.querySelector('.message-bubble'), this.answerItems?.get(message.reply_to), message.reply_to);
-    }
+    // A person replying to a question is its answer, for the history block under that question (the next update draws it).
+    if (message.reply_to && message.author_kind === 'user') this.repliedTo.add(message.reply_to);
     if (this.missedIDs?.delete(message.id)) this.updateLatestLabel();
     if (message.thread_root) {
       const count = (this.threadCounts.get(message.thread_root) || 0) + 1;
@@ -710,48 +617,19 @@ export class Chat {
       if (this.threadRoot?.id === message.thread_root && !paged) this.insertThreadEntry(message);
       return;
     }
-    this.delegateRows(this.list);
-    const quiet = prepend || paged;
+    const quiet = prepend || paged || this.rowBatching;
     const atBottom = !quiet && this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 48;
-    // Reading scrollTop or scrollHeight forces a layout of the whole list. A page is added message by message, so
-    // these are read only for a live appended message, which is the one case that uses them.
+    // Reading scrollTop or scrollHeight forces a layout of the whole list, so only a live appended message does.
     const oldTop = quiet ? 0 : this.list.scrollTop;
     if (this.list.dataset.empty === 'true' && message.author_kind !== 'system') this.list.dataset.empty = 'false';
-    const article = document.createElement('article'); article.className = articleClass(message, currentUser); article.dataset.messageId = message.id; article.dataset.seq = String(message.seq); article.dataset.no = String(message.no);
-    if (message.author_kind === 'system') {
-      const row = document.createElement('div'); row.className = 'system-row';
-      const body = document.createElement('span'); body.className = 'message-body'; body.textContent = message.body;
-      const time = stampTime(document.createElement('time'), message.created_at);
-      row.append(body, time, this.debugButton(message)); article.append(row);
-      const visualPlan = renderVisualPlan(message); if (visualPlan) article.append(visualPlan);
-      this.nodes.set(message.id, article); if (prepend) this.list.prepend(article); else this.list.append(article);
+    if (Array.isArray(message.reactions)) this.reactions.set(message.id, message.reactions);
+    this.rows = prepend ? [message, ...this.rows] : [...this.rows, message];
+    if (this.rowBatching) { if (!Array.isArray(message.reactions)) this.rowPending.push(message.id); }
+    else {
+      this.listUpdate();
       if (!quiet) { if (atBottom) this.list.scrollTop = this.list.scrollHeight; else this.list.scrollTop = oldTop; this.scrollAnchor?.update(); }
-      this.scheduleExpiry();
-      return;
+      if (!Array.isArray(message.reactions)) Promise.resolve(this.refreshReactions(message.id)).catch(() => {});
     }
-    article.append(this.messageMeta(message, article));
-    const bubble = document.createElement('div'); bubble.className = 'message-bubble'; article.append(bubble);
-    if (message.reply_to) {
-      const quote = document.createElement('button'); quote.className = 'row-btn quote'; quote.type = 'button';
-      // A parent in the loaded window is read from it; one outside it comes with the reply itself (reply_preview, from the server).
-      const loaded = this.messages.get(message.reply_to), preview = message.reply_preview;
-      const parent = loaded ? { no: loaded.no, name: this.authorName(loaded), snippet: messageSnippet(loaded) }
-        : preview ? { no: preview.no, name: this.authorName({ author_kind: preview.author_kind, author_id: preview.author_id, author_name: preview.author_name }), snippet: preview.snippet } : null;
-      quote.textContent = parent ? `↪ #${parent.no} ${parent.name}: ${parent.snippet}`.trimEnd().replace(/:$/, '') : '↪ Earlier message';
-      if (parent) quote.title = `Go to #${parent.no}`;
-      bubble.append(quote);
-    }
-    const body = document.createElement('div'); body.className = 'message-body'; this.renderBody(body, message); bubble.append(body);
-    const visualPlan = renderVisualPlan(message); if (visualPlan) bubble.append(visualPlan);
-    const actions = buildMessageActions(this, message);
-    const pills = document.createElement('span'); pills.className = 'reaction-pills'; const threadChip = document.createElement('button'); threadChip.type = 'button'; threadChip.className = 'row-btn thread-chip';
-    bubble.append(actions, pills); article.append(threadChip);
-    this.nodes.set(message.id, article); if (prepend) this.list.prepend(article); else this.list.append(article);
-    this.updateThreadCount(message.id);
-    this.syncAnswerControl(bubble, this.answerItems?.get(message.id), message.id);
-    if (!quiet) { if (atBottom) this.list.scrollTop = this.list.scrollHeight; else this.list.scrollTop = oldTop; this.scrollAnchor?.update(); }
-    if (Array.isArray(message.reactions)) this.showReactions(message.id, message.reactions);
-    else Promise.resolve(this.refreshReactions(message.id)).catch(() => {});
     this.scheduleExpiry();
   }
   // Expiry marks (an hourglass and one divider) are display-only: the chat shows every message. They are
@@ -763,50 +641,48 @@ export class Chat {
   }
   syncExpiry() {
     const cutoff = expiryCutoffMs(Date.now(), retention.seconds);
-    const articles = [...this.list.children].filter(item => item.matches?.('article.message[data-message-id]'));
-    const plan = planExpiry(articles.map(item => { const message = this.messages.get(item.dataset.messageId); return { id: item.dataset.messageId, createdMs: Date.parse(message?.created_at), expirable: message?.expirable === true }; }), cutoff);
-    for (const article of articles) {
-      const expired = plan.expired.has(article.dataset.messageId);
-      if (article.classList.contains('message-expired') === expired) continue;
-      article.classList.toggle('message-expired', expired);
-      article.querySelector('.message-expired-mark')?.remove();
-      if (expired) {
-        const mark = document.createElement('span'); mark.className = 'message-expired-mark'; mark.innerHTML = EXPIRED_HOURGLASS; mark.title = 'Older than the expiry window: AI room chatter this old is not delivered to agents. Still shown here.'; mark.setAttribute('role', 'img'); mark.setAttribute('aria-label', 'Expired from AI context');
-        const holder = article.querySelector('.message-meta, .system-row'); const time = holder?.querySelector('time'); if (time) time.before(mark); else holder?.append(mark);
-      }
-    }
-    // The boundary label is a real element drawn out of flow in the gap above the first newer message, so adding or
-    // removing it never moves what the reader is looking at.
-    const target = plan.divider ? this.nodes.get(plan.divider) : null;
-    for (const marked of this.list.querySelectorAll(':scope > .expiry-boundary')) if (marked !== target) { marked.classList.remove('expiry-boundary'); marked.querySelector(':scope > .expiry-label')?.remove(); }
-    if (target && this.list.contains(target) && !target.classList.contains('expiry-boundary')) {
-      target.classList.add('expiry-boundary');
-      const label = document.createElement('span'); label.className = 'expiry-label'; label.textContent = "Older AI chatter won't reach agents automatically";
-      target.prepend(label);
-    }
+    const plan = planExpiry(this.rows.map(message => ({ id: message.id, createdMs: Date.parse(message.created_at), expirable: message.expirable === true })), cutoff);
+    const same = plan.expired.size === this.expiry.expired.size && [...plan.expired].every(id => this.expiry.expired.has(id));
+    if (same && (plan.divider || null) === this.expiry.divider) return;
+    this.expiry = { expired: plan.expired, divider: plan.divider || null };
+    this.listUpdate();
   }
   updateThreadCount(id) {
-    const count = threadCount(this.threadCounts, this.serverThreadCounts, id), label = this.threadLabel(id);
-    const article = this.nodes.get(id);
-    for (const button of article?.querySelectorAll('.thread-action') || []) { button.title = label; button.setAttribute('aria-label', label); }
-    const chip = article?.querySelector(':scope > .thread-chip'); if (chip) { const view = threadChip(count); chip.hidden = view.hidden; chip.textContent = view.text; chip.title = 'Open thread'; chip.setAttribute('aria-label', view.label); }
-    if (this.threadRoot?.id === id && this.threadTitle) this.threadTitle.textContent = threadTitle(count);
-  }
-  // The header line of a message, in the main list and in the thread panel alike: sender, (bell), #number, bug, time.
-  messageMeta(message, article) {
-    const meta = document.createElement('div'); meta.className = 'message-meta';
-    meta.append(this.authorMeta(message));
-    const date = stampTime(document.createElement('time'), message.created_at);
-    const number = document.createElement('button'); number.type = 'button'; number.className = 'row-btn quiet-glyph message-number'; number.textContent = `#${message.no}`; number.title = 'Click to copy';
-    const attention = message.needs_attention ? document.createElement('span') : null;
-    if (attention) { attention.className = 'message-attention'; attention.textContent = '🔔'; attention.title = 'Needs human attention'; attention.setAttribute('aria-label', 'Needs human attention'); article.classList.add('needs-attention'); }
-    meta.append(...(attention ? [attention] : []), number, ...[this.usageButton(message)].filter(Boolean), this.debugButton(message), date);
-    return meta;
+    if (this.nodes.has(id)) this.listUpdate();
+    if (this.threadRoot?.id === id && this.threadTitle) this.threadTitle.textContent = threadTitle(threadCount(this.threadCounts, this.serverThreadCounts, id));
   }
   // The panel's entries are a Preact list (rows.js): the root first, the replies by seq. An update renders at once, so callers read the rows back.
   threadUpdate(restore) {
     if (!this.threadView) return;
+    this.delegateRows(this.threadList);
     this.threadView.update({ entries: this.threadEntries, host: this, viewOf: message => this.rowView(message), restore });
+  }
+  listUpdate(restore) {
+    if (!this.listView) return;
+    this.delegateRows(this.list);
+    this.listView.update({ entries: this.rows, host: this, viewOf: message => this.rowView(message, true), restore });
+  }
+  clearRows() { this.rows = []; this.quotes.clear(); this.expiry = { expired: new Set(), divider: null }; this.listUpdate(); }
+  batchRows(fill, restore) {
+    this.rowBatching = true; this.rowPending = [];
+    try { fill(); } finally { this.rowBatching = false; }
+    this.listUpdate(restore);
+    const pending = this.rowPending; this.rowPending = [];
+    for (const id of pending) Promise.resolve(this.refreshReactions(id)).catch(() => {});
+    this.scheduleExpiry();
+  }
+  registerNode(id, element) { if (element) this.nodes.set(id, element); else this.nodes.delete(id); }
+  // The line a reply quotes: a parent in the loaded window is read from it; one outside it comes with the reply itself (reply_preview).
+  quoteView(message) {
+    if (!message.reply_to) return null;
+    const kept = this.quotes.get(message.id);
+    if (kept) return kept;
+    const loaded = this.messages.get(message.reply_to), preview = message.reply_preview;
+    const parent = loaded ? { no: loaded.no, name: this.authorName(loaded), snippet: messageSnippet(loaded) }
+      : preview ? { no: preview.no, name: this.authorName({ author_kind: preview.author_kind, author_id: preview.author_id, author_name: preview.author_name }), snippet: preview.snippet } : null;
+    const quote = { text: parent ? `↪ #${parent.no} ${parent.name}: ${parent.snippet}`.trimEnd().replace(/:$/, '') : '↪ Earlier message', title: parent ? `Go to #${parent.no}` : undefined };
+    this.quotes.set(message.id, quote);
+    return quote;
   }
   insertThreadEntry(message) {
     if (this.threadEntryIDs.has(message.id)) return;
@@ -826,13 +702,22 @@ export class Chat {
     this.threadUpdate(restore);
   }
   // What a row shows that is not in its record: the author as the page knows it, the answer state, and the keys that make the row draw again.
-  rowView(message) {
+  rowView(message, main = false) {
     const agent = this.agents.get(message.author_id), kind = senderKind(message, agent), live = kind === 'live' && message.author_kind === 'agent';
     const author = { name: this.authorName(message), kind, link: kind !== 'live' || live, title: live ? 'Open profile' : `${kind === 'historical' ? 'Historical sender' : 'Departed agent'}: open profile`,
       identity: senderIdentity(message, agent), roleEmoji: agent?.role_emoji || '', roleTitle: agent?.role || '' };
     const answer = this.answerView(message), bodyKey = `${this.raw}|${this.mentionIndex?.signature ?? ''}`;
-    return { author, answer, bodyKey, usageTitle: message.usage ? usageTooltip(message.usage) : '', needsAttention: !!message.needs_attention,
-      key: `${this.agentSigs?.get(message.author_id) ?? ''}|${bodyKey}|${answer.key}` };
+    const view = { author, answer, bodyKey, raw: this.raw, mentionKey: this.mentionIndex?.signature ?? '', usageTitle: message.usage ? usageTooltip(message.usage) : '', needsAttention: !!message.needs_attention };
+    let extra = '';
+    if (main) {
+      const count = threadCount(this.threadCounts, this.serverThreadCounts, message.id);
+      view.articleClass = articleClass(message, currentUser); view.chip = threadChip(count); view.threadLabel = this.threadLabel(message.id);
+      view.pills = groupReactions(this.reactions.get(message.id) || [], currentUser); view.quote = this.quoteView(message);
+      view.expired = this.expiry.expired.has(message.id); view.boundary = this.expiry.divider === message.id;
+      extra = `|${count}|${JSON.stringify(view.pills)}|${view.expired}|${view.boundary}`;
+    }
+    view.key = `${this.agentSigs?.get(message.author_id) ?? ''}|${bodyKey}|${answer.key}${extra}`;
+    return view;
   }
   answerView(message) {
     const id = message.id, item = this.answerItems?.get(id);
@@ -843,6 +728,7 @@ export class Chat {
     return { kind: 'none', answered, key: '' };
   }
   answer(item, value) { return this.inbox.answer(item, value); }
+  highlight(element) { if (!this.raw) highlightMentions(element, this.mentionIndex); }
   markNewThreadReply(message) {
     if (!this.threadNewReplyIDs.has(message.id)) {
       this.threadNewReplyIDs.add(message.id);
@@ -952,12 +838,7 @@ export class Chat {
   node(id) { return this.nodes.get(id); }
   showReactions(id, entries) {
     this.reactions.set(id, entries);
-    const article = this.nodes.get(id); if (!article) return;
-    const pills = article.querySelector('.reaction-pills'); pills.replaceChildren();
-    for (const group of groupReactions(entries, currentUser)) {
-      const pill = document.createElement('button'); pill.type = 'button'; pill.className = 'row-btn reaction-pill'; pill.textContent = `${group.emoji} ${group.count}`;
-      pill.title = group.title; pill.setAttribute('aria-pressed', group.pressed); pill.dataset.emoji = group.emoji; pills.append(pill);
-    }
+    if (this.nodes.has(id)) this.listUpdate();
   }
   toggleReaction(id, emoji) { return this.store.toggleReaction(id, emoji); }
 }
