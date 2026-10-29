@@ -135,6 +135,45 @@ async function main() {
       await page.close();
     }
 
+    // a double submit sends one request, in the form, on the card and in the dialog
+    {
+      const redeemsOf = page => { const posts = []; page.on('request', request => { if (/\/api\/invites\/redeem$/.test(request.url())) posts.push(request.postData()); }); return posts; };
+      const page = await signedOut();
+      await page.waitForSelector('#login-view:not([hidden])');
+      const posts = loginPosts(page);
+      await page.type('#login-form [name=login]', 'newcomer'); await page.type('#login-form [name=password]', 'another-long-pass-2');
+      await page.$eval('#login-form', form => { form.requestSubmit(); form.requestSubmit(); });
+      await enterApp(page);
+      assert.deepEqual([posts.length, await page.evaluate(() => document.querySelector('#login-error').textContent)], [1, ''], 'a double submit signs in once and says nothing');
+      await page.close();
+      const invite = await owner('/api/invites', { method: 'POST', body: { project_id: projectID, role: 'viewer' } });
+      const card = await server.open({ context: await server.context() });
+      await card.goto(`${origin}/#invite=${encodeURIComponent(invite.body.token)}`);
+      await card.waitForSelector('.invite-entry:not([hidden])');
+      const redeems = redeemsOf(card);
+      await card.type('.invite-entry [name=login]', 'twice'); await card.type('.invite-entry [name=password]', 'a-long-password-3');
+      await card.$eval('.invite-entry', form => { form.requestSubmit(); form.requestSubmit(); });
+      await enterApp(card);
+      assert.deepEqual([redeems.length, await card.evaluate(() => document.querySelector('.invite-entry .error').textContent)], [1, ''], 'a double submit on the card redeems once');
+      await card.close();
+      const third = await owner('/api/projects', { method: 'POST', body: { name: 'Third Project', folder: (() => { const dir = path.join(server.tmp, 'third'); fs.mkdirSync(dir); return dir; })() } });
+      const join = await owner('/api/invites', { method: 'POST', body: { project_id: third.body.id || third.body.project?.id, role: 'viewer' } });
+      const dialog = await signedOut();
+      await dialog.waitForSelector('#login-view:not([hidden])');
+      await dialog.evaluate(token => { location.hash = `invite=${encodeURIComponent(token)}`; location.reload(); }, join.body.token);
+      await dialog.waitForSelector('.invite-entry:not([hidden])');
+      await dialog.click('.invite-switch');
+      await dialog.type('#login-form [name=login]', 'twice'); await dialog.type('#login-form [name=password]', 'a-long-password-3');
+      await dialog.$eval('#login-form', form => form.requestSubmit());
+      await enterApp(dialog);
+      await dialog.waitForSelector('.invite-dialog[open]');
+      const used = redeemsOf(dialog);
+      await dialog.$eval('.invite-dialog form', form => { form.requestSubmit(); form.requestSubmit(); });
+      await dialog.waitForFunction(() => !document.querySelector('.invite-dialog').open);
+      assert.deepEqual([used.length, await dialog.evaluate(() => document.querySelector('.invite-dialog .error').textContent)], [1, ''], 'a double submit in the dialog uses the link once');
+      await dialog.close();
+    }
+
     assert.deepEqual(server.errors, [], `the pages reported errors: ${server.errors.join(' | ')}`);
     console.log('sign-in page: ok');
   } finally {

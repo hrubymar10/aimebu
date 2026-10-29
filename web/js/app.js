@@ -555,8 +555,11 @@ async function signedIn(session) {
     if (startupSucceeded && startupActive()) setStartupState('ready');
   }
 }
+let cardBusy = false;
 invitePanel.onsubmit = async event => {
   event.preventDefault();
+  if (cardBusy) return;
+  cardBusy = true;
   const errorNode = invitePanel.querySelector('.error'); errorNode.textContent = '';
   const login = invitePanel.elements.login.value.trim(), password = invitePanel.elements.password.value;
   try {
@@ -571,6 +574,7 @@ invitePanel.onsubmit = async event => {
     const session = await request('/api/login', { method: 'POST', body: { login: redeemedInviteLogin, password } });
     invitePanel.hidden = true; await signedIn(session);
   } catch (error) { errorNode.textContent = error.message; }
+  finally { cardBusy = false; }
 };
 // "I already have an account": the sign-in card, with the way back to the invitation; the link stays pending and is offered after sign-in.
 const backToInvite = document.createElement('button'); backToInvite.type = 'button'; backToInvite.className = 'btn invite-back'; backToInvite.textContent = 'Back to the invitation'; backToInvite.hidden = true;
@@ -580,8 +584,11 @@ inviteSwitch.onclick = () => {
   if (inviteInfo?.error) pendingInvite = '';
   invitePanel.hidden = true; loginForm.hidden = false; backToInvite.hidden = !pendingInvite;
 };
+let dialogBusy = false;
 inviteDialog.querySelector('form').onsubmit = async event => {
   event.preventDefault();
+  if (dialogBusy) return;
+  dialogBusy = true;
   const errorNode = inviteDialog.querySelector('.error'); errorNode.textContent = '';
   try {
     const result = await request('/api/invites/redeem', { method: 'POST', body: { token: pendingInvite, password: event.currentTarget.elements.password.value } });
@@ -589,11 +596,16 @@ inviteDialog.querySelector('form').onsubmit = async event => {
     if (result.kind === 'reset') { resetWorkspace(); clearSession(); appView.hidden = true; void showLogin(); }
     else await resync();
   } catch (error) { errorNode.textContent = error.message; }
+  finally { dialogBusy = false; }
 };
+let loginBusy = false;
 loginForm.onsubmit = async event => {
-  event.preventDefault(); document.querySelector('#login-error').textContent = '';
+  event.preventDefault();
+  if (loginBusy) return;
+  loginBusy = true; document.querySelector('#login-error').textContent = '';
   try { const session = await request('/api/login', { method: 'POST', body: { login: loginForm.elements.login.value, password: loginForm.elements.password.value } }); await signedIn(session); }
   catch (error) { document.querySelector('#login-error').textContent = error.message; }
+  finally { loginBusy = false; }
 };
 const projectDialog = document.querySelector('#project-dialog');
 const projectForm = document.querySelector('#project-form');
