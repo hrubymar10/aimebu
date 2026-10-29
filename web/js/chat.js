@@ -26,6 +26,9 @@ import { answerControls, answerHistory } from './answer-controls.js';
 import { promptDialog } from './dialogs.js';
 import { expandShortcodes } from './emoji-data.js';
 import { ChatStore } from './pages/chat/store.js';
+import { ThreadList } from './pages/chat/rows.js';
+import { mountPreactPage } from './pages/mount-page.js';
+import { html } from './ui.js';
 import { MENTION_LOGINS_TTL_MS, answerArea, answerEligible, answersThroughInbox as answersThrough, articleClass, groupReactions, latestLabel, liveArrival as isLiveArrival, liveRoute, messageSnippet, newestShownSeq as shownSeq, newRepliesLabel, overCap, plainText, recallCandidates as ownMessages, recallStep, threadChip, threadCount, threadLabel as threadLabelOf, threadTitle, trimCap } from './pages/chat/model.js';
 
 export { plainText, messageSnippet };
@@ -78,6 +81,8 @@ export class Chat {
     this.threadNewButton.onclick = () => { if (this.threadRoot) this.openThread(this.threadRoot); };
     this.threadList.before(this.threadOlderStatus, this.threadLatestButton, this.threadNewButton);
     this.threadList.addEventListener('scroll', () => { if (this.threadList.scrollTop < 80) this.loadOlderThread(); });
+    this.threadEntries = []; this.threadEntryIDs = new Set(); this.threadBatching = false;
+    this.threadList.replaceChildren(); this.threadView = mountPreactPage(this.threadList, props => html`<${ThreadList} ...${props} />`, { onError: error => console.error('thread list failed', error) });
     this.delegateRows(this.list); this.delegateRows(this.threadList);
     this.threadForm.onsubmit = event => { event.preventDefault(); this.sendThread(); };
     document.querySelector('#close-thread').onclick = () => this.closeThread();
@@ -156,7 +161,7 @@ export class Chat {
     for (const button of document.querySelectorAll('.room-controls button')) button.disabled = true;
     this.draft.disabled = true; this.emojiButton.disabled = true; this.attachmentInput.disabled = true; this.form.querySelector('button[type=submit]').disabled = true;
   }
-  destroy() { this.reset(); this.store.destroy(); this.panel.destroy(); }
+  destroy() { this.reset(); this.store.destroy(); this.panel.destroy(); this.threadView.destroy(); }
   // With no room open the chat shows an empty-state card instead of the composer and room controls; the app decides what the card says.
   syncEmpty() { this.onEmptyChange?.(!this.room); }
   current(session, roomID) { return this.store.current(session, roomID); }
@@ -355,11 +360,13 @@ export class Chat {
     };
   }
   updateAnswerControls(items) {
-    this.answerItems = new Map(items.map(item => [item.message_id, item]));
+    const next = new Map(items.map(item => [item.message_id, item]));
+    for (const [id, item] of this.answerItems || []) if (!next.has(id) && answerEligible(item) && (this.nodes.has(id) || this.threadEntryIDs.has(id))) this.answeredMessages.add(id);
+    this.answerItems = next;
     for (const [id, node] of this.nodes) {
       this.syncAnswerControl(node.querySelector('.message-bubble'), this.answerItems.get(id), id);
     }
-    for (const entry of this.threadList.querySelectorAll('.thread-entry[data-message-id]')) this.syncAnswerControl(entry, this.answerItems.get(entry.dataset.messageId), entry.dataset.messageId);
+    this.threadUpdate();
   }
   // Inserts at the caret through execCommand so the edit stays undoable; the range assignment is the fallback.
   insertEmoji(glyph) {
@@ -537,11 +544,12 @@ export class Chat {
   }
   setRaw(raw) {
     this.raw = raw;
+    this.threadUpdate();
     const button = document.querySelector('#room-raw');
     button.setAttribute('aria-pressed', String(this.raw));
     button.title = this.raw ? 'Show rendered Markdown' : 'Show raw Markdown';
     button.setAttribute('aria-label', button.title);
-    for (const element of document.querySelectorAll('.chat .message[data-message-id] .message-body, .chat .thread-entry[data-message-id] .message-body')) {
+    for (const element of document.querySelectorAll('.chat .message[data-message-id] .message-body')) {
       const message = this.entryMessage(element.closest('[data-message-id]').dataset.messageId);
       if (message) this.renderBody(element, message);
     }
@@ -590,6 +598,7 @@ export class Chat {
     this.mentionIndex = index;
     this.mentionAutocomplete?.setIndex(index); this.threadMentionAutocomplete?.setIndex(index);
     if (!this.raw) for (const body of document.querySelectorAll('.chat .message-body')) highlightMentions(body, index);
+    this.threadUpdate();
   }
   setAgents(agents) {
     this.agents = new Map(agents.map(agent => [agent.id, agent]));
@@ -597,7 +606,7 @@ export class Chat {
     this.agentSigs = new Map(agents.map(agent => [agent.id, JSON.stringify(agent)]));
     this.refreshMentions();
     for (const [id, node] of this.nodes) this.updateAuthor(node, this.messages.get(id));
-    for (const node of this.threadList.querySelectorAll('.thread-entry')) this.updateAuthor(node, this.entryMessage(node.dataset.messageId));
+    this.threadUpdate();
     if (this.reply) this.chipText.textContent = `Replying to ${this.authorName(this.reply)}: ${messageSnippet(this.reply)}`;
   }
   authorName(message) {
@@ -794,27 +803,46 @@ export class Chat {
     meta.append(...(attention ? [attention] : []), number, ...[this.usageButton(message)].filter(Boolean), this.debugButton(message), date);
     return meta;
   }
-  threadEntry(message) {
-    this.delegateRows(this.threadList);
-    const entry = document.createElement('article'); entry.className = 'thread-entry'; entry.dataset.messageId = message.id; entry.dataset.seq = String(message.seq); entry.dataset.no = String(message.no);
-    const body = document.createElement('div'); body.className = 'message-body'; this.renderBody(body, message);
-    entry.append(this.messageMeta(message, entry), body);
-    const visualPlan = renderVisualPlan(message); if (visualPlan) entry.append(visualPlan);
-    this.syncAnswerControl(entry, this.answerItems?.get(message.id), message.id);
-    return entry;
+  // The panel's entries are a Preact list (rows.js): the root first, the replies by seq. An update renders at once, so callers read the rows back.
+  threadUpdate(restore) {
+    if (!this.threadView) return;
+    this.threadView.update({ entries: this.threadEntries, host: this, viewOf: message => this.rowView(message), restore });
   }
   insertThreadEntry(message) {
     if (this.threadEntryIDs.has(message.id)) return;
     this.threadEntryIDs.add(message.id);
-    const entries = this.threadList.children;
-    let low = 1, high = entries.length;
+    let low = 1, high = this.threadEntries.length;
     while (low < high) {
       const middle = (low + high) >> 1;
-      if (Number(entries[middle].dataset.seq) < message.seq) low = middle + 1;
+      if (this.threadEntries[middle].seq < message.seq) low = middle + 1;
       else high = middle;
     }
-    this.threadList.insertBefore(this.threadEntry(message), entries[low] || null);
+    this.threadEntries = [...this.threadEntries.slice(0, low), message, ...this.threadEntries.slice(low)];
+    if (!this.threadBatching) this.threadUpdate();
   }
+  batchThreadEntries(fill, restore) {
+    this.threadBatching = true;
+    try { fill(); } finally { this.threadBatching = false; }
+    this.threadUpdate(restore);
+  }
+  // What a row shows that is not in its record: the author as the page knows it, the answer state, and the keys that make the row draw again.
+  rowView(message) {
+    const agent = this.agents.get(message.author_id), kind = senderKind(message, agent), live = kind === 'live' && message.author_kind === 'agent';
+    const author = { name: this.authorName(message), kind, link: kind !== 'live' || live, title: live ? 'Open profile' : `${kind === 'historical' ? 'Historical sender' : 'Departed agent'}: open profile`,
+      identity: senderIdentity(message, agent), roleEmoji: agent?.role_emoji || '', roleTitle: agent?.role || '' };
+    const answer = this.answerView(message), bodyKey = `${this.raw}|${this.mentionIndex?.signature ?? ''}`;
+    return { author, answer, bodyKey, usageTitle: message.usage ? usageTooltip(message.usage) : '', needsAttention: !!message.needs_attention,
+      key: `${this.agentSigs?.get(message.author_id) ?? ''}|${bodyKey}|${answer.key}` };
+  }
+  answerView(message) {
+    const id = message.id, item = this.answerItems?.get(id);
+    if (answerEligible(item)) { this.answeredMessages.delete(id); return { kind: 'controls', item, parent: message, key: `c:${item.id}:${item.rev}` }; }
+    const answered = Boolean(this.answeredMessages.has(id) || this.repliedTo.has(id)), area = answerArea(item, message, answered);
+    if (area === 'history') return { kind: 'history', answered, key: `h:${answered}` };
+    if (area === 'done') return { kind: 'done', answered, key: 'd' };
+    return { kind: 'none', answered, key: '' };
+  }
+  answer(item, value) { return this.inbox.answer(item, value); }
   markNewThreadReply(message) {
     if (!this.threadNewReplyIDs.has(message.id)) {
       this.threadNewReplyIDs.add(message.id);
@@ -842,7 +870,7 @@ export class Chat {
     for (const [key, message] of this.messages) if (message.thread_root === id) this.messages.delete(key);
     this.threadCounts.delete(id); this.serverThreadCounts.delete(id);
   }
-  closeThread() { this.threadNotice.clear(); this.releaseThread(); this.threadGeneration = (this.threadGeneration || 0) + 1; this.threadRoot = null; this.threadTitle.textContent = 'Thread'; this.threadEntryIDs = new Set(); this.threadNewReplyIDs = new Set(); this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; this.threadList.replaceChildren(); document.querySelector('#thread-error').textContent = ''; }
+  closeThread() { this.threadNotice.clear(); this.releaseThread(); this.threadGeneration = (this.threadGeneration || 0) + 1; this.threadRoot = null; this.threadTitle.textContent = 'Thread'; this.threadEntryIDs = new Set(); this.threadEntries = []; this.threadUpdate(); this.threadNewReplyIDs = new Set(); this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = true; this.threadNewButton.hidden = true; this.threadPanel.hidden = true; this.threadDraft.value = ''; document.querySelector('#thread-error').textContent = ''; }
   setReply(message) { this.reply = message; this.chip.hidden = !message; this.chipText.textContent = message ? `Replying to ${this.authorName(message)}: ${messageSnippet(message)}` : ''; if (message) this.draft.focus(); }
   // Whether a reply to `parent` with this text is the answer to `item` (see send): a question or approval this person decides, answered with text
   // that mentions at most the requester. A free-text ask takes any text; an options-only ask only the text of one of its options (so Shift-clicking
@@ -850,7 +878,7 @@ export class Chat {
   answersThroughInbox(item, parent, body) { return answersThrough(item, this.answerOptions(parent).mention, body); }
   beginThread(root, focus) {
     if (this.threadRoot?.id !== root.id) this.releaseThread();
-    this.threadRoot = root; this.threadTitle.textContent = 'Thread'; this.threadPanel.hidden = false; this.threadList.replaceChildren(this.threadEntry(root)); this.threadEntryIDs = new Set([root.id]);
+    this.threadRoot = root; this.threadTitle.textContent = 'Thread'; this.threadPanel.hidden = false; this.threadEntries = [root]; this.threadEntryIDs = new Set([root.id]); this.threadUpdate();
     this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadOlderStatus.hidden = true; this.threadList.dataset.hasOlder = 'false'; this.threadLatestButton.hidden = !focus; this.threadNewReplyIDs = new Set(); this.threadNewButton.hidden = true;
     document.querySelector('#thread-error').textContent = '';
     if (Number.isInteger(root.thread_count)) this.serverThreadCounts.set(root.id, Math.max(this.serverThreadCounts.get(root.id) || 0, root.thread_count));
@@ -858,7 +886,7 @@ export class Chat {
     this.threadDraft.focus();
   }
   drawThreadPage(page) {
-    for (const message of page) { this.threadNewReplyIDs.delete(message.id); this.add(message); this.insertThreadEntry(message); }
+    this.batchThreadEntries(() => { for (const message of page) { this.threadNewReplyIDs.delete(message.id); this.add(message); this.insertThreadEntry(message); } });
     this.updateThreadNewMarker();
   }
   showThreadPage(focus) {
@@ -867,22 +895,24 @@ export class Chat {
     else this.threadList.scrollTop = this.threadList.scrollHeight;
   }
   settleThreadLatest() {
-  this.threadLatestButton.hidden = true;
-  for (const id of this.threadNewReplyIDs) {
-    const message = this.messages.get(id);
-    if (message) this.insertThreadEntry(message);
-  }
-  this.threadNewReplyIDs.clear();
-  this.updateThreadNewMarker();
+    this.threadLatestButton.hidden = true;
+    this.batchThreadEntries(() => {
+      for (const id of this.threadNewReplyIDs) {
+        const message = this.messages.get(id);
+        if (message) this.insertThreadEntry(message);
+      }
+    });
+    this.threadNewReplyIDs.clear();
+    this.updateThreadNewMarker();
   }
   threadError(message) { document.querySelector('#thread-error').textContent = message; }
   showThreadOlderStatus(shown) { this.threadOlderStatus.hidden = !shown; }
   prependThreadPage(page) {
     // Measured after the page arrives, as in loadOlder: only the inserted height is compensated, not the reader's own scrolling.
     const anchor = this.threadList.children[1], anchorTop = anchor?.getBoundingClientRect().top;
-    for (const message of page) { this.add(message); this.insertThreadEntry(message); }
     this.threadList.dataset.hasOlder = String(this.threadHasMoreOlder);
-    if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+    this.batchThreadEntries(() => { for (const message of page) { this.add(message); this.insertThreadEntry(message); } },
+      () => { if (anchor?.isConnected) this.threadList.scrollTop += anchor.getBoundingClientRect().top - anchorTop; });
   }
   beginThreadSend() { document.querySelector('#thread-error').textContent = ''; this.threadNotice.clear(); }
   sentThreadReply(message) {

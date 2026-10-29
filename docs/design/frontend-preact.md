@@ -405,6 +405,7 @@ Owner's decision (2026-10-28): continue with the remaining units.
   refresh, older and newer pages of a history window, a jump, the reactions), each carrying the generation of the open view (a reset, an open and a jump move
   it) and saying nothing and starting nothing once it is gone or the chat is destroyed. `Chat` still draws: it gives the store the DOM work as host methods
   and reads the store's fields through accessors. The store also holds the thread's records and calls (the thread read, older replies, a thread reply) and the sending of a message, keyed by the thread's own generation, which a reset, an open and a window all move.
+- Done for the thread panel: its entries are a keyed Preact list (`web/js/pages/chat/rows.js`) in `#thread-messages`, fed by `Chat.threadUpdate()`, which renders at once so callers read the rows back. A row draws again only when its record or its page-computed key (author, Markdown mode and mention index, answer state) changes. The imperative leaves (Markdown body, visual plan, answer controls and history, sender presence, time) are islands: Preact renders the leaf's own root element and the leaf's `fill…` function fills it, with no wrapper. Older replies keep the reader's place through a layout-effect restore.
 
 ### Step 7: the shell
 

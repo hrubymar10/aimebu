@@ -1452,8 +1452,10 @@ async function main() {
     const stableAnswerControls = await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
       const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
-      chat.nodes = new Map(); chat.threadList = document.createElement('div'); chat.inbox = { answer: async () => true };
-      chat.authorMeta = () => document.createElement('span');
+      const { mountPreactPage } = await import('/js/pages/mount-page.js'), { ThreadList } = await import('/js/pages/chat/rows.js'), { html } = await import('/js/ui.js');
+      chat.nodes = new Map(); chat.threadList = document.createElement('div'); document.body.append(chat.threadList); chat.inbox = { answer: async () => true };
+      chat.agents = new Map(); chat.messages = new Map(); chat.raw = false; chat.answeredMessages = new Set(); chat.repliedTo = new Set();
+      chat.threadView = mountPreactPage(chat.threadList, props => html`<${ThreadList} ...${props} />`);
       chat.renderBody = (node, message) => { node.textContent = message.body; };
       chat.legacyDetails = () => null;
       const item = { id: 'inb-draft', message_id: 'msg-draft', kind: 'question', rev: 0,
@@ -1462,8 +1464,8 @@ async function main() {
       const roomNode = document.createElement('article');
       const bubble = document.createElement('div'); bubble.className = 'message-bubble'; roomNode.append(bubble);
       chat.nodes.set(item.message_id, roomNode);
-      const threadNode = chat.threadEntry({ id: item.message_id, seq: 1, no: 1, body: 'Choose' });
-      chat.threadList.append(threadNode);
+      chat.threadEntries = [{ id: item.message_id, seq: 1, no: 1, body: 'Choose', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner' }]; chat.threadEntryIDs = new Set([item.message_id]); chat.threadUpdate();
+      const threadNode = chat.threadList.querySelector('.thread-entry');
       chat.updateAnswerControls([item]);
       const roomControls = bubble.querySelector('.answer-controls');
       const threadControls = threadNode.querySelector('.answer-controls');
@@ -1676,9 +1678,12 @@ async function main() {
     const prependedThreadOrder = await first.evaluate(async () => {
       const { Chat } = await import('/js/chat.js');
       const chat = Object.assign(Object.create(Chat.prototype), { store: {} });
-      chat.threadList = document.createElement('div'); chat.threadCounts = new Map(); chat.serverThreadCounts = new Map(); chat.nodes = new Map(); chat.messages = new Map(); chat.agents = new Map(); chat.raw = false;
-      const root = { id: 'thread-root', seq: 1, no: 1, body: 'root', author_kind: 'user', author_id: 'owner' };
-      chat.threadRoot = root; chat.threadEntryIDs = new Set([root.id]); chat.threadList.append(chat.threadEntry(root));
+      const { mountPreactPage } = await import('/js/pages/mount-page.js'), { ThreadList } = await import('/js/pages/chat/rows.js'), { html } = await import('/js/ui.js');
+      chat.threadList = document.createElement('div'); document.body.append(chat.threadList); chat.threadCounts = new Map(); chat.serverThreadCounts = new Map(); chat.nodes = new Map(); chat.messages = new Map(); chat.agents = new Map(); chat.raw = false; chat.answeredMessages = new Set(); chat.repliedTo = new Set();
+      chat.threadView = mountPreactPage(chat.threadList, props => html`<${ThreadList} ...${props} />`);
+      const root = { id: 'thread-root', seq: 1, no: 1, body: 'root', author_kind: 'user', author_id: 'owner', created_at: '2026-01-10T12:00:00Z' };
+      chat.renderBody = (node, message) => { node.textContent = message.body; };
+      chat.threadRoot = root; chat.threadEntries = [root]; chat.threadEntryIDs = new Set([root.id]); chat.threadUpdate();
       for (const seq of [4, 3, 2]) chat.add({ id: `reply-${seq}`, seq, thread_root: root.id, body: `reply ${seq}`, author_kind: 'user', author_id: 'owner' }, true);
       return [...chat.threadList.children].map(entry => Number(entry.dataset.seq));
     });

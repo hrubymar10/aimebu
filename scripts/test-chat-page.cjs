@@ -15,6 +15,7 @@ const REPLACED = fs.existsSync(path.join(root, 'js', 'pages', 'chat', 'page.js')
 const MODULE = REPLACED ? '/js/pages/chat/page.js' : '/js/chat.js';
 const PANEL = fs.existsSync(path.join(root, 'js', 'pages', 'room-panel', 'page.js'));
 const STORE = fs.existsSync(path.join(root, 'js', 'pages', 'chat', 'store.js'));
+const ROWS = fs.existsSync(path.join(root, 'js', 'pages', 'chat', 'rows.js'));
 const fixture = fs.readFileSync(path.join(root, 'index.html'), 'utf8').replace(/<script type="module" src="\/js\/app\.js[^"]*"><\/script>/, '');
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
@@ -100,8 +101,8 @@ async function main() {
   const room = (id, extra = {}) => ({ id, project_id: 'prj_a', title: id, kind: 'task', lifecycle: 'open', member_count: 2, ...extra });
   const mount = async ({ rooms = { rm_a: 130, rm_b: 5 }, setup = '', plain = false } = {}) => {
     const page = await browser.newPage();
-    page.on('pageerror', error => errors.push(error.message));
-    page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) errors.push(message.text()); });
+    page.on('pageerror', error => { errors.push(error.message); if (process.env.DEBUG_ERRORS) console.error('PAGEERROR', error.message, error.stack?.split('\n').slice(0, 4).join(' | ')); });
+    page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) { errors.push(message.text()); if (process.env.DEBUG_ERRORS) console.error('CONSOLE', message.text().slice(0, 400)); } });
     await page.setViewport({ width: 1280, height: 900 });
     await page.evaluateOnNewDocument(plain => { try { localStorage.clear(); if (plain) localStorage.setItem('aimebu2.composer.formatting', 'off'); } catch {} }, plain);
     await page.goto(`${origin}/fixture.html`);
@@ -1292,6 +1293,83 @@ async function main() {
   }
 
   // The store holds the room's records and cursors; the cases above read the page, these read the store.
+  // The thread panel's rows draw only when their record or their keys change, and leave with their thread.
+  if (ROWS) {
+    const renders = page => page.evaluate(() => import('/js/pages/chat/rows.js').then(rows => rows.rowRenders.count));
+    const entries = page => page.evaluate(() => [...document.querySelectorAll('#thread-messages > article.thread-entry')].map(node => node.dataset.messageId));
+    const opened_ = async () => {
+      const page = await mount();
+      await addReplies(page, 3);
+      await page.evaluate(() => {
+        const messages = window.__data.rooms.rm_a.messages, last = messages.find(message => message.id === 'rm_a_t2');
+        last.author_kind = 'agent'; last.author_id = 'agt_x'; last.author_name = 'tess';
+        window.__data.agents = [{ id: 'agt_x', room_id: 'rm_a', slug: 'tess', name: 'tess', tool: 'claude', model: 'm', role_emoji: '🛠', role: 'dev', project_id: 'prj_a' }];
+      });
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 4); await settle(page);
+      return page;
+    };
+    {
+      const page = await opened_();
+      const delta = async action => { const before = await renders(page); await page.evaluate(action); await settle(page); return (await renders(page)) - before; };
+      assert.deepEqual(await entries(page), ['rm_a_m120', 'rm_a_t1', 'rm_a_t2', 'rm_a_t3']);
+      await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_t4', seq: 999, no: 999, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'live reply', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: 'rm_a_m120' }); });
+      assert.equal(await delta(() => window.__chat.refreshMessages()), 1, 'a live reply draws one row');
+      await page.evaluate(() => { const chat = window.__chat; chat.threadEntries = chat.threadEntries.map(message => message.id === 'rm_a_t3' ? { ...message, body: 'a **bold** b' } : message); chat.threadUpdate(); });
+      const bold = () => page.evaluate(() => !!document.querySelector('#thread-messages [data-message-id=rm_a_t3] .message-body strong'));
+      assert.equal(await bold(), true, 'rendered Markdown');
+      assert.equal(await delta(() => window.__chat.setRaw(true)), 5, 'the Markdown mode draws every row');
+      assert.equal(await bold(), false, 'and shows the raw text');
+      assert.equal(await delta(() => window.__chat.setRaw(false)), 5, 'and back');
+      assert.equal(await delta(() => { window.__chat.mentionIndex = { signature: 'other' }; window.__chat.threadUpdate(); }), 5, 'a new mention index draws every row');
+      assert.equal(await delta(() => { window.__chat.mentionIndex = null; window.__chat.threadUpdate(); }), 5, 'and back');
+      assert.equal(await delta(() => window.__chat.threadUpdate()), 0, 'an update with nothing new draws nothing');
+      const item = { id: 'inb', message_id: 'rm_a_t1', kind: 'question', rev: 0, proposed_answers: ['Go'], free_text: true, can_decide: true };
+      assert.equal(await delta(() => window.__chat.updateAnswerControls([{ id: 'inb', message_id: 'rm_a_t1', kind: 'question', rev: 0, proposed_answers: ['Go'], free_text: true, can_decide: true }])), 1, 'an answer for one reply draws that row');
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#thread-messages .answer-controls')].map(node => node.closest('article').dataset.messageId)), ['rm_a_t1']);
+      const goButtons = () => page.evaluate(() => [...document.querySelectorAll('#thread-messages [data-message-id=rm_a_t1] .answer-controls .proposed-answer-btn')].map(button => button.textContent).join());
+      assert.equal(await goButtons(), 'Go', 'the buttons of the question');
+      assert.equal(await delta(() => window.__chat.updateAnswerControls([{ id: 'inb', message_id: 'rm_a_t1', kind: 'question', rev: 1, proposed_answers: ['Go', 'Other'], free_text: true, can_decide: true }])), 1, 'a new revision draws it again');
+      assert.equal(await goButtons(), 'Go,Other', 'with the new revision\'s buttons');
+      assert.equal(await delta(() => window.__chat.updateAnswerControls([])), 1, 'a closed question draws its row');
+      assert.equal(await page.evaluate(() => !!document.querySelector('#thread-messages [data-message-id=rm_a_t1] .answer-done')), true, 'and leaves "Answered"');
+      await page.evaluate(() => window.__chat.setAgents([{ id: 'agt_x', room_id: 'rm_a', slug: 'tess', name: 'tess', tool: 'claude', model: 'm', role_emoji: '🛠', role: 'dev', project_id: 'prj_a' }])); await settle(page);
+      assert.equal(await delta(() => { window.__chat.setAgents([{ id: 'agt_x', room_id: 'rm_a', slug: 'tess', name: 'tess', tool: 'claude', model: 'm', role_emoji: '🔧', role: 'dev', project_id: 'prj_a' }]); }), 1, 'a changed sender draws only its rows');
+      assert.equal(await page.evaluate(() => document.querySelector('#thread-messages [data-message-id=rm_a_t2] .message-role').textContent), '🔧');
+      assert.equal(await delta(() => { window.__chat.setAgents([{ id: 'agt_x', room_id: 'rm_a', slug: 'tess', name: 'tess', tool: 'codex', model: 'm', role_emoji: '🔧', role: 'dev', project_id: 'prj_a' }]); }), 1, 'a changed harness draws only its rows');
+      assert.match(await page.evaluate(() => document.querySelector('#thread-messages [data-message-id=rm_a_t2] .msg-sender-icon').getAttribute('src')), /codex/, 'with the new harness icon');
+      // a changed record draws its row, one field at a time
+      const fields = [
+        ['no', { no: 4242 }, () => document.querySelector('#thread-messages [data-message-id=rm_a_t3] .message-number').textContent === '#4242'],
+        ['body', { body: 'changed words' }, () => document.querySelector('#thread-messages [data-message-id=rm_a_t3] .message-body').textContent.includes('changed words')],
+        ['created_at', { created_at: '2020-02-02T02:02:02Z' }, () => document.querySelector('#thread-messages [data-message-id=rm_a_t3] time').dateTime === '2020-02-02T02:02:02Z'],
+        ['needs_attention', { needs_attention: true }, () => !!document.querySelector('#thread-messages [data-message-id=rm_a_t3] .message-attention') && document.querySelector('#thread-messages [data-message-id=rm_a_t3]').classList.contains('needs-attention')],
+        ['usage', { usage: { input_tokens: 5, output_tokens: 6 } }, () => !!document.querySelector('#thread-messages [data-message-id=rm_a_t3] .chat-msg-usage-toggle')],
+        ['visual_plan', { visual_plan: [{ type: 'markdown', title: 'Plan', data: { markdown: 'Plan **text**' } }] }, () => !!document.querySelector('#thread-messages [data-message-id=rm_a_t3] .visual-plan .visual-plan-block')],
+        ['proposed_answers', { proposed_answers: ['Proceed', 'Hold'] }, () => [...document.querySelectorAll('#thread-messages [data-message-id=rm_a_t3] .answer-history button')].map(button => button.textContent).join() === 'Proceed,Hold'],
+        ['proposed_answers again', { proposed_answers: ['Other'] }, () => [...document.querySelectorAll('#thread-messages [data-message-id=rm_a_t3] .answer-history button')].map(button => button.textContent).join() === 'Other'],
+      ];
+      for (const [name, change, check] of fields) {
+        const drawn = await page.evaluate(async (change, source) => {
+          const rows = await import('/js/pages/chat/rows.js'), chat = window.__chat, before = rows.rowRenders.count;
+          chat.threadEntries = chat.threadEntries.map(message => message.id === 'rm_a_t3' ? { ...message, ...change } : message); chat.threadUpdate();
+          return rows.rowRenders.count - before;
+        }, change);
+        assert.equal(drawn, 1, `a changed ${name} draws one row`);
+        assert.equal(await page.evaluate(check), true, `a changed ${name} shows`);
+      }
+      // the rows leave with their thread
+      await page.evaluate(() => window.__chat.closeThread()); await settle(page);
+      assert.deepEqual(await entries(page), [], 'closing the thread removes its rows');
+      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 1); await settle(page);
+      await openRoom(page, 'rm_b'); await opened(page); await settle(page);
+      assert.deepEqual(await entries(page), [], 'leaving the room removes them too');
+      await page.close();
+    }
+  }
+
   if (STORE) {
     const view = page => page.evaluate(() => { const store = window.__chat.store; return { rows: store.messages.size, newest: store.newestSeq, oldest: store.oldestSeq, more: store.hasMoreOlder, window: store.contextMode, windowSeq: store.windowSeq, catching: store.catchingUp, missed: store.missedIDs.size, loadingOlder: store.loadingOlder, loadingNewer: store.loadingNewer, loading: store.initialLoading }; });
     const page = await mount();
@@ -1494,6 +1572,24 @@ async function main() {
       await serve(page, second); await page.evaluate(() => window.__c); await settle(page);
       await page.close();
     }
+    // older replies go above the first reply without moving what the reader looks at
+    {
+      const page = await mount();
+      await addReplies(page, 130);
+      await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+      await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+      await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length > 50); await settle(page);
+      await hold(page, 'GET', 'thread_root=.*before=');
+      await page.evaluate(() => { document.querySelector('#thread-messages').scrollTop = 0; });
+      const held = await waitRequest(page, 'GET', 'thread_root=.*before=');
+      await page.evaluate(() => { window.__holds.length = 0; });
+      const before = await page.evaluate(() => { const node = document.querySelector('#thread-messages').children[1]; return { id: node.dataset.messageId, top: node.getBoundingClientRect().top }; });
+      await serve(page, held);
+      await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article').length > 101, { timeout: 5000 }); await settle(page);
+      const after = await page.evaluate(id => document.querySelector(`#thread-messages [data-message-id=${id}]`).getBoundingClientRect().top, before.id);
+      assert.ok(Math.abs(after - before.top) < 1.5, `the reader's reply stays where it was (${before.top} -> ${after})`);
+      await page.close();
+    }
     // a failed older-replies read of a thread that was closed shows no error in the next
     {
       const page = await mount();
@@ -1637,6 +1733,25 @@ async function main() {
       assert.deepEqual([await view(page), await calls(page)], [before, []], `${how}: a late answer changes nothing and marks nothing read`);
       await page.close();
     }
+  }
+
+  // The thread panel's root is destroyed with the chat: it is unmounted once and later updates draw nothing.
+  if (ROWS) {
+    const page = await mount();
+    await addReplies(page, 3);
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.$eval('[data-message-id=rm_a_m120] .thread-chip', node => node.click());
+    await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 4); await settle(page);
+    const result = await page.evaluate(() => {
+      const chat = window.__chat, root = chat.threadView, destroy = root.destroy; let destroyed = 0;
+      root.destroy = (...args) => { destroyed++; return destroy.apply(root, args); };
+      const entries = chat.threadEntries.slice();
+      chat.destroy();
+      chat.threadEntries = entries; chat.threadUpdate();
+      return { destroyed, drawn: document.querySelectorAll('#thread-messages > *').length };
+    });
+    assert.deepEqual(result, { destroyed: 1, drawn: 0 }, 'a destroyed chat unmounts the thread panel once and draws nothing after');
+    await page.close();
   }
 
   // A destroyed chat (the replacement's adapter has destroy(); the hand-written chat does not): what was still out when it was destroyed changes nothing
