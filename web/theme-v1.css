@@ -1211,13 +1211,13 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
    text so they never take the name's width; on touch they sit on their own line. Clicking the row opens its detail. */
 .agent-card { position: relative; cursor: pointer; padding: 7px 8px; }
 .agent-card .agent-title { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: nowrap; min-height: 17px; }
-.agent-card .agent-identity { flex: 1 1 auto; min-width: min(12ch, 100%); display: block; overflow: hidden; }
+.agent-card .agent-identity { flex: 1 1 0; min-width: 0; display: block; overflow: hidden; }
 .agent-card .agent-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.2px; font-weight: 600; line-height: 1.5; }
 /* The harness icon (or the person icon) is always there, between the presence dot and the role emoji. */
 /* v1 drew vibe and cline in white, which vanishes on a light surface; there the glyph is turned dark. Message headers use the same two files. */
 [data-theme$="light"] :is(.agent-harness-icon, .msg-sender-icon)[src$="/vibe.svg"], [data-theme$="light"] :is(.agent-harness-icon, .msg-sender-icon)[src$="/cline.svg"], [data-theme$="light"] :is(.agent-harness-icon, .msg-sender-icon)[src$="/human.svg"] { filter: invert(1); }
 .agent-card .agent-harness-icon { flex: 0 0 auto; width: 14px; height: 14px; opacity: .75; }
-.agent-card .agent-state { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; gap: 5px; margin: 0; padding: 0; border: 0; background: none; color: var(--state-color, var(--text-muted)); font: 500 11px/1.2 var(--font-sans); white-space: nowrap; }
+.agent-card .agent-state { flex: 0 0 auto; max-width: 100%; gap: 5px; margin: 0; padding: 0; border: 0; background: none; color: var(--state-color, var(--text-muted)); font: 500 11px/1.2 var(--font-sans); white-space: nowrap; }
 .agent-card .agent-state::before { display: none; }
 .agent-card .agent-role, .agent-card .agent-role-update { display: none; }
 .agent-card.expanded .agent-title { flex-wrap: wrap; }

@@ -5002,6 +5002,37 @@ async function main() {
       panel.style.width = before;
       return [results.length > 0, results.every(Boolean)];
     }), [true, true], 'the state of an agent card never overflows the card');
+    // A long slug@project name is cut with an ellipsis; the state and its timer stay whole inside the card, in a narrow panel and on a phone.
+    const longName = 'a-very-long-agent-slug-name@a-project-with-a-very-long-name-as-well';
+    const stateFit = (phone = false) => agentPage.evaluate((longName, phone) => {
+      const panel = document.querySelector('#agents-panel'), app = document.querySelector('#app-view'), before = panel.style.width, results = [];
+      if (phone) panel.classList.add('mobile-open');
+      for (const width of phone ? [''] : ['180px', '220px', '']) {
+        panel.style.width = width;
+        for (const card of document.querySelectorAll('#agents-list .agent-card[data-agent-id]')) {
+          if (!card.offsetParent) continue;
+          const name = card.querySelector('.agent-name'), state = card.querySelector('.agent-state'), label = name.textContent; name.textContent = longName;
+          const box = card.getBoundingClientRect(), pill = state.getBoundingClientRect();
+          results.push({ width, inside: pill.left >= box.left - 0.5 && pill.right <= box.right + 0.5, whole: state.scrollWidth <= state.clientWidth, cut: name.scrollWidth > name.clientWidth, ellipsis: getComputedStyle(name).textOverflow === 'ellipsis' });
+          name.textContent = label;
+        }
+      }
+      panel.style.width = before;
+      if (!results.length) results.push({ diag: [...document.querySelectorAll('#agents-list .agent-card')].map(c => { const chain = []; for (let n = c; n && n !== document.body; n = n.parentElement) chain.push(`${n.id || n.className}:${getComputedStyle(n).display}`); return chain.join(' < '); }), app: app.className, vw: innerWidth });
+      if (phone) panel.classList.remove('mobile-open');
+      return results;
+    }, longName, phone);
+    const fits = results => [results.length > 0 && !results[0].diag, results.filter(r => !(r.inside && r.whole && r.cut && r.ellipsis))];
+    assert.deepEqual(fits(await stateFit()), [true, []], 'a long agent name is cut and the state stays whole inside the card');
+    const cardCount = await agentPage.$$eval('#agents-list .agent-card[data-agent-id]', cards => cards.length);
+    const reopenRoom = async () => {
+      await agentPage.evaluate(() => { document.querySelector('.room-row.active .room-name')?.click(); });
+      await agentPage.waitForFunction(count => document.querySelectorAll('#agents-list .agent-card[data-agent-id]').length === count, {}, cardCount);
+    };
+    await agentPage.setViewport({ width: 390, height: 780, isMobile: true, hasTouch: true });
+    await domClick(agentPage, '.mobile-tab[data-tab="rooms"]'); await reopenRoom();
+    assert.deepEqual(fits(await stateFit(true)), [true, []], 'on a phone a long agent name is cut and the state stays whole inside the card');
+    await agentPage.setViewport({ width: 1100, height: 720 }); await reopenRoom();
     await agentPage.hover('[data-agent-id="agt_mock_worker"] .agent-name');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-quick', el => getComputedStyle(el).opacity), '1', 'hovering a member shows its buttons');
     await domClick(agentPage, '[data-agent-id="agt_mock_worker"] .agent-name');
