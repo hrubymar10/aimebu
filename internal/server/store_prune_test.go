@@ -14,7 +14,7 @@ import (
 // pruneCounts is a snapshot of what a prune leaves behind, used to compare the
 // online (DELETE /all) and offline (PruneDataDir) paths against each other.
 type pruneCounts struct {
-	rooms, messages, agents, sessions, reactions, attachments, roomPrefs int
+	rooms, messages, agents, sessions, history, reactions, attachments, roomPrefs int
 }
 
 func reloadPruneCounts(t *testing.T, dir string) pruneCounts {
@@ -32,6 +32,9 @@ func reloadPruneCounts(t *testing.T, dir string) pruneCounts {
 	}
 	c.agents = len(s.agents)
 	c.sessions = len(s.agentSessions)
+	for _, entries := range s.agentSessionHistory {
+		c.history += len(entries)
+	}
 	for _, prefs := range s.roomPrefs {
 		c.roomPrefs += len(prefs)
 	}
@@ -180,7 +183,10 @@ func TestPruneOnlineOfflineIdenticalEndState(t *testing.T) {
 	before := reloadPruneCounts(t, fixture)
 	wantPlain := before
 	wantPlain.agents = 0
-	wantPlain.sessions = 0
+	wantPlain.sessions = 0 // the history of those sessions is durable and survives
+	if wantPlain.history == 0 {
+		t.Fatalf("fixture has no session history: %+v", before)
+	}
 	if wantPlain.rooms == 0 || wantPlain.messages == 0 || wantPlain.reactions == 0 || wantPlain.attachments == 0 || wantPlain.roomPrefs == 0 {
 		t.Fatalf("fixture undercounted: %+v — test is meaningless without spared content", before)
 	}
@@ -229,7 +235,7 @@ func TestPruneOnlineOfflineIdenticalEndState(t *testing.T) {
 		name string
 		got  pruneCounts
 	}{{"online", onlineA}, {"offline", offlineA}} {
-		if c.got.messages != 0 || c.got.agents != 0 || c.got.sessions != 0 || c.got.reactions != 0 || c.got.attachments != 0 || c.got.roomPrefs != 0 {
+		if c.got.messages != 0 || c.got.agents != 0 || c.got.sessions != 0 || c.got.history != 0 || c.got.reactions != 0 || c.got.attachments != 0 || c.got.roomPrefs != 0 {
 			t.Fatalf("%s prune -a end state = %+v, want only the _system room (everything else wiped)", c.name, c.got)
 		}
 		if c.got.rooms > 1 {

@@ -223,11 +223,14 @@ enables `--resume-id` and `--resume-name` to restore a prior session without
 re-bootstrapping. `--resume-name <slug>` is scoped to the current
 working-directory project, so same-slug agents in other projects are ignored.
 The saved full ID also lets the wrapper rejoin the same rooms if the aimebu
-server restarts and loses the in-memory registration.
+server restarts and loses the in-memory registration. The session is saved as
+soon as the `session` event has been seen and the agent has registered, not only
+after the bootstrap run ends, so an interrupted bootstrap still leaves it behind.
 
 The wrapper also best-effort reports the pi session ID from the JSON
-`session` event to the server-side `agent_sessions` registry after bootstrap
-and resume. Use `aimebu sessions` to see the merged local/server view. Plain
+`session` event to the server-side `agent_sessions` registry as soon as it is
+known, and again after bootstrap and resume; the server also keeps every session
+the agent name has run in (`GET /agents/{id}/sessions`). Use `aimebu sessions` to see the merged local/server view. Plain
 MCP pi sessions should only pass `bus_register(session=...)` when the current
 session ID is actually available.
 

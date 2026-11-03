@@ -32,6 +32,7 @@ type Message struct {
 	FromKind            string            `json:"from_kind,omitempty"`    // "ai", "human", or "system" — empty for legacy persisted messages
 	FromHarness         string            `json:"from_harness,omitempty"` // sender harness, persisted at send time so a departed sender keeps its icon
 	FromModel           string            `json:"from_model,omitempty"`   // sender model, persisted at send time for the icon tooltip
+	FromSession         string            `json:"from_session,omitempty"` // the sender's harness session id at send time; empty for humans, system messages and senders with no known session
 	Body                string            `json:"body"`
 	CreatedAt           string            `json:"created_at"`
 	ReplyTo             int64             `json:"reply_to,omitempty"`
@@ -120,6 +121,23 @@ type AgentSession struct {
 	CWD              string    `json:"cwd,omitempty"`
 	HarnessSessionID string    `json:"harness_session_id,omitempty"`
 	ResumeCommand    string    `json:"resume_command,omitempty"`
+	RegistrationID   string    `json:"registration_id,omitempty"` // the agent registration (Agent.RegistrationID) this record was pushed under
+	RegisteredAt     time.Time `json:"registered_at"`
+	LastSeen         time.Time `json:"last_seen"`
+}
+
+// AgentSessionHistoryEntry is one harness session an agent identity has run in. AgentSession holds only the latest per identity; a name
+// reused by a new instance appends here instead of overwriting. CWD is stored exactly as the harness reported it, without symlink
+// resolution, because harnesses key their own session files by that spelling.
+type AgentSessionHistoryEntry struct {
+	ID               int64     `json:"id"`
+	FullID           string    `json:"full_id"`
+	HarnessSessionID string    `json:"harness_session_id"`
+	Harness          string    `json:"harness,omitempty"`
+	Model            string    `json:"model,omitempty"`
+	Project          string    `json:"project,omitempty"`
+	CWD              string    `json:"cwd,omitempty"`
+	Origin           string    `json:"origin"` // "wrapper" or "mcp"
 	RegisteredAt     time.Time `json:"registered_at"`
 	LastSeen         time.Time `json:"last_seen"`
 }
@@ -139,6 +157,10 @@ type Agent struct {
 	Warnings     []string          `json:"warnings,omitempty"`
 	RegisteredAt string            `json:"registered_at"`
 	LastSeen     string            `json:"last_seen"`
+	// RegistrationID names one registration of this agent ID: a name that is released and taken again by a new instance gets a new one,
+	// a reclaim of the same registration keeps it. Session records carry the id of the registration that pushed them (empty on records
+	// from before it existed, which match each other).
+	RegistrationID string `json:"registration_id,omitempty"`
 	// ReadCursors tracks the highest message ID this agent has read per room.
 	// Populated by bus_wait (implicit, on delivery) and POST /agents/{id}/read
 	// (explicit, e.g. frontend "user opened the room"). Persisted with the

@@ -94,11 +94,15 @@ func (s *store) roomSendWithVisualPlan(roomID, from, body string, needsAttention
 	// (humans → default respond, AIs → default silent) without guessing from
 	// the ID shape.
 	s.mu.RLock()
-	var fromKind, fromHarness, fromModel string
+	var fromKind, fromHarness, fromModel, fromSession string
 	if a, ok := s.agents[from]; ok {
 		fromKind = a.Kind
 		fromHarness = a.Harness
 		fromModel = a.Model
+		// Only an AI has a harness session; a person's messages never carry one, whatever record shares the name.
+		if sess := s.agentSessions[from]; a.Kind == "ai" && sessionIsCurrentLocked(a, sess) {
+			fromSession = sess.HarnessSessionID
+		}
 	}
 	s.mu.RUnlock()
 
@@ -110,6 +114,7 @@ func (s *store) roomSendWithVisualPlan(roomID, from, body string, needsAttention
 		FromKind:            fromKind,
 		FromHarness:         fromHarness,
 		FromModel:           fromModel,
+		FromSession:         fromSession,
 		Body:                body,
 		CreatedAt:           now(),
 		ReplyTo:             replyTo,

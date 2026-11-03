@@ -391,7 +391,8 @@ POST   /dm                             {"from": "alice@aimebu", "to": "bob@aimeb
 # Agents
 POST   /agents                         Register (kind=ai or kind=human; AI may include optional session hint {harness_session_id,resume_command,cwd}); legacy role/name collisions include warnings
 GET    /agents                         List; snapshot-only idle overlays set state_overlay=true without rewriting state_at; legacy role/name collisions include per-agent warnings
-GET    /agent-sessions                 List durable session hints keyed by full agent ID
+GET    /agent-sessions                 List durable session hints keyed by full agent ID (the latest session per agent)
+GET    /agents/{id}/sessions           Every harness session this agent ID has run in, most recently seen first: {agent_id, sessions:[{id, full_id, harness_session_id, harness, model, project, cwd, origin, registered_at, last_seen}]}; `cwd` is stored exactly as the harness reported it, without symlink resolution
 GET    /agents/by-spawn-tag            Lookup wrapper-registered AI by `?tag=<spawn_tag>`
 DELETE /agents/{id}                    Forced deregistration + room cleanup
 POST   /agents/{id}/heartbeat          Refresh agent last_seen only; no messages, cursors, rooms, or state changes
@@ -470,7 +471,10 @@ GET    /ws                             WebSocket push
 Message objects (returned by `GET /rooms/{id}/messages`, `GET /messages/{id}`,
 and room/DM send responses) carry sender identity persisted at send time:
 `from`, `from_kind` (`"ai"`, `"human"`, `"system"`; empty on legacy messages),
-`from_harness`, and `from_model`. `from_harness`/`from_model` are captured from
+`from_harness`, `from_model`, and `from_session` (the sender's harness session
+ID at send time; empty for humans, system messages and senders with no session
+from their current registration: a name taken over by a new instance does not
+inherit the previous holder's session). `from_harness`/`from_model`/`from_session` are captured from
 the agent record when the message is sent, so a deregistered sender keeps its
 harness icon and `model · harness` tooltip instead of falling back to the
 unknown icon; the live agent record is consulted only for the message liveness
@@ -815,9 +819,10 @@ take ownership of state. Unknown files at the root are left alone.
 
 `aimebu prune` clears runtime agent state only — the server-side `agents`
 registry and `agent_sessions` table, plus `agents/agent-sessions.json` and
-`agents/agent-logs/*`. Rooms, messages, reactions, attachments, and all user
-settings survive; agents simply re-register. `aimebu prune -a` additionally
-wipes everything: rooms, messages, agents, sessions, reactions, attachments,
+`agents/agent-logs/*`. Rooms, messages, reactions, attachments, the session
+history (`agent_session_history`, every session an agent name has run in) and
+all user settings survive; agents simply re-register. `aimebu prune -a` additionally
+wipes everything: rooms, messages, agents, sessions, session history, reactions, attachments,
 memory, macros, fleet command bundles, prompt overrides, sounds, and
 `agents/agent-warning-acknowledged`. If `AIMEBU_URL`
 points at loopback (`localhost`, `127.0.0.1`, `::1`) and the server is down,
@@ -904,11 +909,16 @@ grep -m1 thread.started ~/.aimebu/agents/agent-logs/<agent>-<tag>.log
 aimebu agent --resume-id "<uuid>" --name <slug> --room <room> --assume-role <role> -- <harness>
 ```
 
-A successful resume writes the recovered entry back to
+The wrapper saves a bootstrap's session as soon as its ID and the agent's name
+are both known, so an interrupted bootstrap leaves one behind. A successful
+resume writes the recovered entry back to
 `agents/agent-sessions.json`, refreshes `last_used`, and best-effort reports
 the session hint to the server-side registry. `aimebu sessions` merges the
 local file with `GET /agent-sessions`; the local file remains the authority
-for `--resume-id` and `--resume-name`.
+for `--resume-id` and `--resume-name`. A resumed harness registers anew (the
+previous registration is deleted when its wrapper stops), so the wrapper pushes
+the session again once it sees that registration; until then the server has no
+session of its own for it and leaves `from_session` empty.
 
 Events captured: `wrapper_start`, `harness_spawn`, `harness_stdout_raw`
 (4096-byte line cap), `session_id_parsed`, `session_id_pregenerated`,

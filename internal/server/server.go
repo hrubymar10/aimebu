@@ -1104,6 +1104,11 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 			jsonError(w, "agent not found", http.StatusNotFound)
 			return
 		}
+		if agent.Kind != "ai" {
+			s.mu.Unlock()
+			jsonError(w, "only an AI agent has a harness session", http.StatusBadRequest)
+			return
+		}
 		if err := s.upsertAgentSessionLocked(agent, agentSessionOriginWrapper, sessionHint); err != nil {
 			s.mu.Unlock()
 			jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -1112,6 +1117,13 @@ func setupHandlers(mux *http.ServeMux, s *store, build BuildInfo, usageManager *
 		sess := *s.agentSessions[agentID]
 		s.mu.Unlock()
 		_ = jsonOK(w, map[string]any{"agent_session": sess})
+	})
+
+	// GET /agents/{id}/sessions — every harness session this agent identity has run in, most recently seen first. The latest of them is
+	// what GET /agent-sessions lists.
+	mux.HandleFunc("GET /agents/{id}/sessions", func(w http.ResponseWriter, r *http.Request) {
+		agentID := r.PathValue("id")
+		_ = jsonOK(w, map[string]any{"agent_id": agentID, "sessions": s.listAgentSessionHistory(agentID)})
 	})
 
 	// POST /agents/{id}/state — wrapper-pushed live activity state.

@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -462,7 +463,8 @@ func agentCmd(args []string) {
 	}
 	fmt.Fprintln(agentStderr, spawnLog+")…")
 
-	sessionID, agentName, err := agentBootstrapSession(harness, command, prompt, modelSlug, childEnv, aimebuURL, spawnTag, name, sigCh, debug)
+	sessionID, agentName, err := agentBootstrapSession(harness, command, prompt, modelSlug, childEnv, aimebuURL, spawnTag, name, sigCh, debug,
+		agentSessionSaver(debug, aimebuURL, harness, modelSlug, rooms, assumeRole, command))
 	if errors.Is(err, agentErrInterrupted) {
 		return
 	}
@@ -1269,6 +1271,26 @@ func agentSaveSession(sess agentSession) error {
 	return os.Rename(tmp, path)
 }
 
+// agentSessionSaver builds the observer a bootstrap gets: it saves and pushes the session, with the launch details only the caller has, the
+// moment the bootstrap knows its id and name. The save that follows a normal bootstrap writes the same entry again; the server treats a
+// repeated session id as the same session.
+func agentSessionSaver(debug *agentDebugLog, aimebuURL, harness, modelSlug string, rooms []string, assumeRole string, command []string) agentSessionObserver {
+	return func(sessionID, name string) {
+		cwd, _ := os.Getwd()
+		agentPersistSession(debug, aimebuURL, agentSession{
+			CWD:        cwd,
+			Harness:    harness,
+			SessionID:  sessionID,
+			Name:       name,
+			Model:      modelSlug,
+			Rooms:      append([]string(nil), rooms...),
+			AssumeRole: assumeRole,
+			Command:    command,
+			LastUsed:   time.Now().UTC(),
+		})
+	}
+}
+
 func agentPersistSession(debug *agentDebugLog, aimebuURL string, sess agentSession) {
 	if err := agentSaveSession(sess); err != nil {
 		path := agentSessionsPath()
@@ -1536,10 +1558,20 @@ func agentBootstrapStart(harness string, command []string, prompt, sessionID, ai
 	return cmd, buf, stderrBuf, stdoutWriter, agentID, stateWriter, progress, nil
 }
 
-func agentBootstrapSession(harness string, command []string, prompt string, modelSlug string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog) (string, string, error) {
+// agentSessionObserver is told a bootstrap's session id and agent name as soon as both are known, long before the harness run ends, so the
+// session can be saved and pushed even when that run is interrupted. It may be called again with the same pair or a changed name.
+type agentSessionObserver func(sessionID, name string)
+
+// agentBootstrapSession runs the bootstrap turn(s). At most one observer may be given; with none the session is only reported through the
+// return values, as before.
+func agentBootstrapSession(harness string, command []string, prompt string, modelSlug string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog, observer ...agentSessionObserver) (string, string, error) {
+	var observe agentSessionObserver
+	if len(observer) > 0 {
+		observe = observer[0]
+	}
 	backoff := agentRecoveryInitialBackoff
 	for attempt := 1; ; attempt++ {
-		sessionID, agentName, err, failureClass := agentBootstrapSessionProcess(harness, command, prompt, modelSlug, env, aimebuURL, spawnTag, knownName, sigCh, debug)
+		sessionID, agentName, err, failureClass := agentBootstrapSessionProcess(harness, command, prompt, modelSlug, env, aimebuURL, spawnTag, knownName, sigCh, debug, observe)
 		if err != nil && harness == "pi" && agentName == "" && failureClass == "model_turn_timeout" && attempt == 1 {
 			agentLogBootstrapRetry(debug, harness, failureClass, attempt+1)
 			continue
@@ -1557,7 +1589,42 @@ func agentBootstrapSession(harness string, command []string, prompt string, mode
 	}
 }
 
-func agentBootstrapSessionProcess(harness string, command []string, prompt string, modelSlug string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog) (string, string, error, string) {
+// agentEarlySession joins the two halves of a session's identity, which become known at different moments (Claude's id at spawn, the name when
+// the agent registers; Codex's and Pi's id when the harness prints it), and tells the observer once both are there and whenever the pair
+// changes. The observer runs outside the lock.
+type agentEarlySession struct {
+	observe            agentSessionObserver
+	mu                 sync.Mutex
+	id, name           string
+	firedID, firedName string
+}
+
+func (e *agentEarlySession) update(id, name string) {
+	if e == nil || e.observe == nil {
+		return
+	}
+	e.mu.Lock()
+	if id != "" {
+		e.id = id
+	}
+	if name != "" {
+		e.name = name
+	}
+	id, name = e.id, e.name
+	fire := id != "" && name != "" && (id != e.firedID || name != e.firedName)
+	if fire {
+		e.firedID, e.firedName = id, name
+	}
+	e.mu.Unlock()
+	if fire {
+		e.observe(id, name)
+	}
+}
+
+// agentEarlySessionPollInterval is how often a Codex or Pi bootstrap's output is looked at for its session id while the harness still runs.
+var agentEarlySessionPollInterval = 250 * time.Millisecond
+
+func agentBootstrapSessionProcess(harness string, command []string, prompt string, modelSlug string, env []string, aimebuURL, spawnTag, knownName string, sigCh <-chan os.Signal, debug *agentDebugLog, observe agentSessionObserver) (string, string, error, string) {
 	startedAt := time.Now()
 
 	preSessionID := ""
@@ -1565,12 +1632,44 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 		preSessionID = agentGenSessionID()
 		agentLogSessionIDPreGenerated(debug, harness, preSessionID)
 	}
+	// Only the id is known before the harness has run; the name counts once the registration has been seen. A name given up front (--name,
+	// a recovery bootstrap) is a request, not a registration: saving it now would replace a resumable entry with a session that never ran.
+	early := &agentEarlySession{observe: observe}
+	early.update(preSessionID, "")
 
 	bootstrapCmd, bootstrapBuf, stderrBuf, stdoutWriter, agentID, stateWriter, progress, err := agentBootstrapStart(harness, command, prompt, preSessionID, aimebuURL, modelSlug, env, debug)
 	if err != nil {
 		return "", "", err, ""
 	}
 	defer progress.Close()
+
+	// Codex and Pi print their session id while they run: look for it, so the session is saved before the run ends. The poller reads a
+	// snapshot of the output and parses it with no lock held; it is stopped, and waited for, when this function returns.
+	if harness == "codex" || harness == "pi" {
+		pollCtx, stopPoll := context.WithCancel(context.Background())
+		var pollWG sync.WaitGroup
+		pollWG.Add(1)
+		go func() {
+			defer pollWG.Done()
+			ticker := time.NewTicker(agentEarlySessionPollInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-pollCtx.Done():
+					return
+				case <-ticker.C:
+					if id, _ := agentParseSessionID(harness, bootstrapBuf.Bytes()); id != "" {
+						early.update(id, "")
+						return
+					}
+				}
+			}
+		}()
+		defer func() {
+			stopPoll()
+			pollWG.Wait()
+		}()
+	}
 
 	registrationCtx, stopRegistration := context.WithCancel(context.Background())
 	defer stopRegistration()
@@ -1588,6 +1687,7 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 			setAgentTerminalTitle(agentTitleRegistered, agentFullID(n), agentTitleBase(command))
 			fmt.Fprintf(agentStderr, "aimebu agent: registered as %s\n", n)
 			agentLogRegisterObserved(debug, n, time.Since(startedAt))
+			early.update("", n)
 		}
 		nameCh <- n
 	}()
@@ -1617,13 +1717,31 @@ func agentBootstrapSessionProcess(harness string, command []string, prompt strin
 		agentPrintHarnessDiagnostics("interrupt", stdoutSnapshot, stderrSnapshot)
 		agentLogHarnessDiagnostics(debug, "interrupt", stdoutSnapshot, stderrSnapshot)
 		_ = stateWriter.Close()
+		// The server is asked at most once for the registered name, whichever of the two uses below needs it.
+		lookedUp, lookupDone := "", false
+		lookup := func() string {
+			if !lookupDone {
+				lookedUp, lookupDone = agentLookupName(aimebuURL, spawnTag, time.Second), true
+			}
+			return lookedUp
+		}
 		shutdownName := knownName
 		if shutdownName == "" {
 			shutdownName = observedName
 		}
 		if shutdownName == "" {
-			shutdownName = agentLookupName(aimebuURL, spawnTag, time.Second)
+			shutdownName = lookup()
 		}
+		// An interrupted bootstrap still leaves the session it had: Claude's pre-generated id, or what Codex or Pi had printed so far.
+		interruptedID := preSessionID
+		if interruptedID == "" {
+			interruptedID, _ = agentParseSessionID(harness, stdoutSnapshot)
+		}
+		registeredName := observedName
+		if registeredName == "" {
+			registeredName = lookup()
+		}
+		early.update(interruptedID, registeredName)
 		agentGracefulShutdown(aimebuURL, spawnTag, shutdownName, bootstrapCmd, doneCh, sigCh, debug, sig)
 		stdoutWriter.Flush()
 		return "", shutdownName, agentErrInterrupted, ""
@@ -1810,6 +1928,7 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 	if len(rooms) == 0 {
 		rooms = nil
 	}
+	saveSession := agentSessionSaver(debug, aimebuURL, harness, modelSlug, rooms, assumeRole, command)
 
 	for {
 		recoveryClass := agentRecoveryNormalEnd
@@ -1885,6 +2004,17 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 			withinBudget = progress.WithinBudget
 		}
 		agentStartResumeHeartbeat(heartbeatCtx, aimebuURL, agentFullID(agentName), withinBudget, debug)
+		// The session pushed before this run may have been refused or lost: the agent's registration is deleted when a wrapper is stopped, so
+		// a resumed harness registers anew and the server has no session of its own for that registration. Push again once the registration is
+		// seen (at once when it is already there); the watcher ends with the run.
+		if sessionID != "" && agentName != "" && spawnTag != "" {
+			resumedSession, resumedName := sessionID, agentName
+			go func() {
+				if agentWatchRegistration(heartbeatCtx, aimebuURL, spawnTag, nil) != "" {
+					saveSession(resumedSession, resumedName)
+				}
+			}()
+		}
 		var stallTimer *time.Timer
 		var stallCh <-chan time.Time
 		if progress == nil {
@@ -2015,7 +2145,8 @@ func agentResumeLoop(harness string, command []string, sessionID, agentName stri
 			agentPushState(aimebuURL, agentFullID(agentName), "respawning")
 			recoveryPrompt := agentBuildRecoveryPrompt(aimebuURL, harness, spawnTag, agentName, rooms, assumeRole, modelSlug)
 			fmt.Fprintf(agentStderr, "aimebu agent: codex thread %s vanished, bootstrapping a fresh thread (%d/%d)\n", sessionID, consecutiveFailureCount, agentRecoveryFailureCap)
-			newSessionID, recoveredName, bootErr := agentBootstrapSession(harness, command, recoveryPrompt, modelSlug, env, aimebuURL, spawnTag, agentName, sigCh, debug)
+			newSessionID, recoveredName, bootErr := agentBootstrapSession(harness, command, recoveryPrompt, modelSlug, env, aimebuURL, spawnTag, agentName, sigCh, debug,
+				agentSessionSaver(debug, aimebuURL, harness, modelSlug, rooms, assumeRole, command))
 			if errors.Is(bootErr, agentErrInterrupted) {
 				return
 			}

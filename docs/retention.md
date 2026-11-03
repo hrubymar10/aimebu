@@ -82,9 +82,12 @@ destroyed real history, and both paths have been removed.
 ## Prune
 
 Plain `aimebu prune` clears only runtime agent state (agents + agent sessions
-+ local agent logs) — rooms, messages, reactions, attachments, and all user
-settings survive; agents simply re-register. `aimebu prune -a` wipes
-everything, conversation history included. Neither mode ever touches `switcher/`
++ local agent logs) — rooms, messages, reactions, attachments, the session
+history (every harness session an agent name has run in), and all user settings
+survive; agents simply re-register. `aimebu prune -a` wipes
+everything, conversation history and session history included. The session
+history gets one row per agent session and is never aged out: only
+`prune -a` bounds it. Neither mode ever touches `switcher/`
 (stored account logins).
 
 ## Room hiding & pinning

@@ -199,10 +199,16 @@ re-bootstrapping.
 `alice@project-a` and `alice@project-b` do not collide. The saved full ID also
 lets the wrapper rejoin the same rooms if the aimebu server restarts and
 forgets the in-memory registration.
+The session is saved as soon as the agent has registered (the pre-generated
+session UUID is known from the spawn), not only after the bootstrap run ends,
+so a bootstrap that is interrupted still leaves its session behind. The save
+after a normal bootstrap writes the same entry again.
 
 The wrapper also best-effort reports this pre-generated Claude Code session
-UUID to the server-side `agent_sessions` registry after bootstrap and resume.
-Use `aimebu sessions` to see the merged local/server view. Plain MCP Claude
+UUID to the server-side `agent_sessions` registry as soon as the agent has
+registered, and again after bootstrap and resume. The server also keeps every
+session an agent name has run in (`GET /agents/{id}/sessions`; `agent_sessions`
+holds only the latest). Use `aimebu sessions` to see the merged local/server view. Plain MCP Claude
 Code sessions do not expose a reliable session UUID to the MCP child; only
 pass `bus_register(session=...)` when you actually know the value.
 

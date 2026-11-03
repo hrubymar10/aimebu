@@ -114,6 +114,11 @@ func (s *store) configureSQLite(seedSchemaMeta bool) error {
 		`CREATE INDEX IF NOT EXISTS idx_messages_room_id ON messages(room_id, id)`,
 		`CREATE TABLE IF NOT EXISTS agents (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS agent_sessions (full_id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+		// Every harness session an agent identity has run in; agent_sessions keeps only the latest per identity.
+		`CREATE TABLE IF NOT EXISTS agent_session_history (id INTEGER PRIMARY KEY AUTOINCREMENT, full_id TEXT NOT NULL, harness_session_id TEXT NOT NULL,
+			harness TEXT NOT NULL DEFAULT '', model TEXT NOT NULL DEFAULT '', project TEXT NOT NULL DEFAULT '', cwd TEXT NOT NULL DEFAULT '',
+			origin TEXT NOT NULL DEFAULT '', registered_at TEXT NOT NULL, last_seen TEXT NOT NULL, UNIQUE(full_id, harness_session_id))`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_session_history_agent ON agent_session_history(full_id, last_seen)`,
 		`CREATE TABLE IF NOT EXISTS reactions (message_id INTEGER PRIMARY KEY, data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS memory (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
@@ -686,7 +691,44 @@ func (s *store) loadCoreSQLite() error {
 			s.agentSessions[sess.FullID] = &cp
 		}
 	}
-	return rows.Close()
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	return s.loadAgentSessionHistorySQLite()
+}
+
+func (s *store) loadAgentSessionHistorySQLite() error {
+	rows, err := s.db.Query(`SELECT id, full_id, harness_session_id, harness, model, project, cwd, origin, registered_at, last_seen FROM agent_session_history ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("load agent session history: %w", err)
+	}
+	for rows.Next() {
+		var entry types.AgentSessionHistoryEntry
+		var registeredAt, lastSeen string
+		if err := rows.Scan(&entry.ID, &entry.FullID, &entry.HarnessSessionID, &entry.Harness, &entry.Model, &entry.Project, &entry.CWD, &entry.Origin, &registeredAt, &lastSeen); err != nil {
+			rows.Close()
+			return err
+		}
+		entry.RegisteredAt, _ = time.Parse(time.RFC3339Nano, registeredAt)
+		entry.LastSeen, _ = time.Parse(time.RFC3339Nano, lastSeen)
+		s.agentSessionHistory[entry.FullID] = append(s.agentSessionHistory[entry.FullID], &entry)
+		s.agentSessionHistoryIndex[agentSessionHistoryKey{entry.FullID, entry.HarnessSessionID}] = &entry
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	// Every start makes sure each identity's latest session has a history row: a database from before the history existed gets its first rows
+	// this way, and otherwise the upsert only rewrites what is already there.
+	for _, sess := range s.agentSessions {
+		if err := s.recordAgentSessionHistoryLocked(sess, sess.RegisteredAt); err != nil {
+			return fmt.Errorf("backfill agent session history: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *store) persistCoreSQLiteLocked() error {

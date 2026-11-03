@@ -257,15 +257,16 @@ func (s *store) registerAIWithSession(model, harness, project string, meta map[s
 	}
 
 	agent := &types.Agent{
-		ID:           id,
-		Name:         name,
-		Kind:         "ai",
-		Model:        model,
-		Harness:      harness,
-		Project:      project,
-		Meta:         meta,
-		RegisteredAt: now(),
-		LastSeen:     now(),
+		ID:             id,
+		Name:           name,
+		Kind:           "ai",
+		Model:          model,
+		Harness:        harness,
+		Project:        project,
+		Meta:           meta,
+		RegisteredAt:   now(),
+		LastSeen:       now(),
+		RegistrationID: randomID() + randomID(),
 	}
 	s.agents[id] = agent
 	if sessionHint != nil {

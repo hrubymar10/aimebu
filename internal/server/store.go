@@ -106,6 +106,11 @@ type store struct {
 	// agentSessions is a durable resume-hint registry keyed by full agent ID.
 	// It intentionally outlives live agent pruning.
 	agentSessions map[string]*types.AgentSession
+	// agentSessionHistory keeps every harness session an agent identity has run in, per full agent ID, in the order they were first seen.
+	// agentSessions holds only the latest of them. Plain prune keeps it; prune -a clears it.
+	agentSessionHistory      map[string][]*types.AgentSessionHistoryEntry
+	agentSessionHistoryIndex map[agentSessionHistoryKey]*types.AgentSessionHistoryEntry // the rows of agentSessionHistory, by (agent, session)
+	nextSessionHistory       int64                                                      // id of the next history row when there is no database to assign one
 
 	// Per-room SSE subscribers
 	subMu    sync.Mutex
@@ -249,6 +254,13 @@ func (s *store) clearAll(includeSettings bool) {
 	s.messages = make(map[string][]types.Message)
 	s.agents = make(map[string]*types.Agent)
 	s.agentSessions = make(map[string]*types.AgentSession)
+	s.agentSessionHistory = make(map[string][]*types.AgentSessionHistoryEntry)
+	s.agentSessionHistoryIndex = make(map[agentSessionHistoryKey]*types.AgentSessionHistoryEntry)
+	if s.db != nil {
+		if err := s.clearTable("agent_session_history"); err != nil {
+			log.Printf("aimebu: clear agent session history sqlite: %v", err)
+		}
+	}
 	// roomPrefs is s.mu-guarded, so clear it under the same lock. Calling it
 	// unlocked at the tail (as it previously was) races with concurrent
 	// roomPref reads (e.g. the UI polling /agents/{id}/rooms during prune -a)

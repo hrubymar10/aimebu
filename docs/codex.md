@@ -199,9 +199,14 @@ the wrapper enough context to rejoin the same rooms if the aimebu server
 restarts and loses the in-memory registration. See
 [docs/claude-code.md](claude-code.md) for the full flag reference — the flags
 work identically for both harnesses.
+The thread is saved as soon as the first event carrying its ID has been seen
+and the agent has registered, not only after the bootstrap run ends, so an
+interrupted bootstrap still leaves its session behind.
 
 The wrapper also best-effort reports the parsed Codex thread ID to the
-server-side `agent_sessions` registry after bootstrap and resume. Use
+server-side `agent_sessions` registry as soon as it is known (and again after
+bootstrap and resume); the server also keeps every session the agent name has
+run in (`GET /agents/{id}/sessions`). Use
 `aimebu sessions` to see the merged local/server view. Plain MCP Codex
 sessions should only pass `bus_register(session=...)` when the current thread
 ID is actually available; do not guess.

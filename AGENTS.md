@@ -308,7 +308,10 @@ timestamped wrapper stderr to
 `agent-logs/<agent-id>-<spawn_tag>.stderr.log`; optional structured JSONL
 diagnostics use the sibling `.log` file when `AIMEBU_AGENT_DEBUG` is enabled.
 `aimebu.sqlite` stores rooms, messages, agents, the durable agent session
-registry (`agent_sessions`, keyed by full agent ID), reactions, memory,
+registry (`agent_sessions`, keyed by full agent ID, the latest session per
+name), the session history (`agent_session_history`: every harness session a
+name has run in, with its cwd exactly as the harness reported it; served by
+`GET /agents/{id}/sessions`), reactions, memory,
 leaderboards, macros, fleet command bundles, prompt overrides, role
 definitions/emoji, sound metadata, attachment metadata, UI preferences, per-human
 room view preferences (hidden/pinned), plus
@@ -370,10 +373,10 @@ the room API. The earlier behaviour that deleted empty rooms on startup (and
 destroyed real history) has been removed.
 `aimebu prune` clears runtime agent state only — the server-side `agents`
 registry and `agent_sessions` table, plus `agents/agent-sessions.json` and
-`agents/agent-logs/*`; rooms, messages, reactions, attachments, and all user
-settings survive (agents re-register). `aimebu prune -a` also wipes user
-settings AND conversation state — rooms, messages, agents, sessions,
-reactions, attachments, memory, macros, fleet command bundles, prompt
+`agents/agent-logs/*`; rooms, messages, reactions, attachments, the session
+history, and all user settings survive (agents re-register). `aimebu prune -a`
+also wipes user settings AND conversation state — rooms, messages, agents,
+sessions, session history, reactions, attachments, memory, macros, fleet command bundles, prompt
 overrides, role definitions/emoji, sounds, and
 `agents/agent-warning-acknowledged`. Runtime diagnostics
 (`server/aimebu.log`, shared by foreground and daemon server processes) are
