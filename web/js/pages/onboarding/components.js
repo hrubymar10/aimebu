@@ -20,12 +20,15 @@ function ProjectStep({ store }) {
 }
 
 function HarnessesStep({ store }) {
-  return html`<section data-step="harnesses" id="onboarding-harnesses" hidden=${store.step.value !== 'harnesses'}>
-    <h1>Set up a harness</h1>
-    <p>A harness is the coding tool (Claude Code, Codex, Pi, OpenCode, Mistral Vibe) your agents run on. Auto-detect what is installed on this machine, or add one by hand, and give it at least one model.</p>
+  const step = store.step.value, result = step === 'result';
+  return html`<section data-step="harnesses" id="onboarding-harnesses" data-phase=${result ? 'result' : 'setup'} hidden=${step !== 'harnesses' && !result}>
+    <h1>${result ? 'Your harnesses are ready' : 'Set up a harness'}</h1>
+    ${!result && html`<p>A harness is the coding tool (Claude Code, Codex, Pi, OpenCode, Mistral Vibe) your agents run on. Auto-detect what is installed on this machine, or add one by hand, and give it at least one model.</p>`}
+    ${result && html`<p>Here is what was added and the models found for it. Set the role defaults below if you like, then continue.</p>`}
     <div id="onboarding-harnesses-host"></div>
-    <p id="onboarding-harness-status" role="status">${store.harnessStatus.value}</p>
-    <div class="onboarding-actions"><button type="button" id="onboarding-harnesses-skip" class="btn" onClick=${() => void store.skipHarnesses()}>Skip for now</button><button type="button" id="onboarding-harnesses-continue" class="btn btn-primary" disabled=${store.continueDisabled.value} onClick=${() => void store.continueHarnesses()}>Continue</button></div>
+    <p id="onboarding-harness-status" role="status" hidden=${result}>${store.harnessStatus.value}</p>
+    ${!result && html`<div class="onboarding-actions"><button type="button" id="onboarding-harnesses-skip" class="btn" onClick=${() => void store.skipHarnesses()}>Skip for now</button><button type="button" id="onboarding-harnesses-continue" class="btn btn-primary" disabled=${store.continueDisabled.value} onClick=${() => void store.continueHarnesses()}>Continue</button></div>`}
+    ${result && html`<div class="onboarding-actions"><button type="button" id="onboarding-result-continue" class="btn btn-primary" onClick=${() => void store.finishResult()}>Continue</button></div>`}
   </section>`;
 }
 

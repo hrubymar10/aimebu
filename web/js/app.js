@@ -315,6 +315,7 @@ function resetWorkspace() {
   sidebar.reset(); chat.reset(); inbox.reset(); agents.reset(); knowledge.setRoom(null);
   health.ticket++;
   systemEvents.reset(); messageDebug.reset();
+  onboarding.close(); // its card covers the viewport, so it must not outlive the session (it would sit over the sign-in page)
 }
 
 function setRoomsOpen(open) {

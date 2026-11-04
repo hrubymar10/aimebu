@@ -38,9 +38,12 @@ const APP_READY_TIMEOUT = 90000;
 // A project starts folded, so the page is handed over with its projects open: most checks reach rooms inside them. Where the default is the point
 // the page is waited for with appReadyFolded.
 const appReadyFolded = page => page.waitForSelector('#app-view:not([hidden]):not([aria-busy])', { timeout: APP_READY_TIMEOUT });
+// With no project yet the first-run card (a modal over the whole viewport) opens once the room list is known; it is skipped here so the toolbar
+// behind it can be reached. The tests of the card itself (the setup flow) do not use it: they wait for the card.
 const appReady = async page => {
   await appReadyFolded(page);
-  await page.waitForSelector('#projects .room-group', { timeout: 5000 }).catch(() => {}); // the list is drawn after the page is shown; a page with no project has none
+  await page.waitForFunction(() => !document.querySelector('#onboarding-view').hidden || document.querySelector('#projects .room-group'), { timeout: 8000 }).catch(() => {}); // the list is drawn after the page is shown; a page with no project has none
+  if (await page.$('#onboarding-view:not([hidden])')) { await page.click('#onboarding-view .onboarding-skip'); await page.waitForSelector('#onboarding-view', { hidden: true }); }
   await page.evaluate(() => { for (const toggle of document.querySelectorAll('.room-group.collapsed > .room-row > .room-collapse')) toggle.click(); });
 };
 function freePort() { return new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); }); }
@@ -185,7 +188,8 @@ async function main() {
       // A database nobody has signed in to yet shows the owner the welcome first (the servers other than the main one start that way): skip it.
       await page.waitForSelector('#welcome-view, #app-view:not([hidden]):not([aria-busy])', { timeout: APP_READY_TIMEOUT });
       if (await page.$('#welcome-view')) { await page.$eval('#welcome-view', view => view.click()); await page.waitForSelector('#welcome-continue:not([hidden])'); await page.click('#welcome-continue'); }
-      await appReady(page); await page.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected'); }
+      await appReady(page); await page.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
+      }
     // puppeteer has no check()/uncheck(); toggle through the element's own click so change handlers run.
     async function setChecked(page, selector, checked) { await page.$eval(selector, (el, want) => { if (el.checked !== want) el.click(); }, checked); }
     // The Settings nav in two groups: SETTINGS (General ... Macros), then a gap and AGENTS (Machines, Harnesses). `items` lists the shown
@@ -3489,6 +3493,10 @@ async function main() {
           // This server has no machine, so no harness: after the project the first run does not go on to a spawn that cannot start. It asks
           // for a harness first, with the Settings → Harnesses component itself, and offers Continue only once a harness has a model.
           await setupPage.waitForSelector('#onboarding-view [data-step="harnesses"]:not([hidden])');
+          // The card is a modal over the viewport: the page does not scroll behind it and the app under it cannot be reached.
+          assert.deepEqual(await setupPage.evaluate(() => { const view = document.querySelector('#onboarding-view'), box = view.getBoundingClientRect(); return { fixed: getComputedStyle(view).position, covers: box.top <= 0 && box.left <= 0 && box.right >= innerWidth - 1 && box.bottom >= innerHeight - 1, appInert: document.querySelector('#app-view').inert }; }), { fixed: 'fixed', covers: true, appInert: true }, 'the first-run card covers the viewport and the app behind it is inert');
+          // No harness is listed yet, so the role defaults (nothing to tick before a model exists) are not shown; the empty-state line is not shown under a detected list.
+          assert.deepEqual(await setupPage.evaluate(() => ({ roles: !!document.querySelector('#onboarding-harnesses .harness-roles') })), { roles: false }, 'the role defaults wait for the result step');
           // The first run opens the project's home room (where the leader is), not general.
           await setupPage.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'demo');
           assert.deepEqual(await setupPage.evaluate(async () => { const project = (await (await fetch('/api/projects')).json())[0]; const rooms = await (await fetch(`/api/projects/${project.id}/rooms`)).json(); return [rooms.find(room => room.kind === 'home').id === decodeURIComponent(location.hash.slice(1))]; }), [true], 'the home room is the selected room');
@@ -3559,6 +3567,8 @@ async function main() {
             const enabled = !document.querySelector('#onboarding-harnesses-continue').disabled;
             document.querySelector('#onboarding-harnesses-continue').click();
             await new Promise(resolve => setTimeout(resolve, 200));
+            document.querySelector('#onboarding-result-continue').click(); // a harness that was already ready lands on the result step too
+            await new Promise(resolve => setTimeout(resolve, 200));
             return { lateWatch, enabled, ready: readyCalls > 0, spawn: document.querySelector('#onboarding-spawn').hidden, setup: document.querySelector('#onboarding-setup-harness').hidden, note: document.querySelector('#onboarding-harness-note').hidden };
           });
           assert.deepEqual(withHarness, { lateWatch: null, enabled: true, ready: true, spawn: false, setup: true, note: true }, 'with a harness the onboarding continues to Spawn, and tells the app one is ready (a skip from earlier is then forgotten)');
@@ -3585,9 +3595,13 @@ async function main() {
             const ticked = { disabled: document.querySelector('#onboarding-harnesses-continue').disabled, status: document.querySelector('#onboarding-harness-status').textContent };
             document.querySelector('#onboarding-harnesses-continue').click();
             await new Promise(resolve => setTimeout(resolve, 200));
-            return { afterReady, before, ticked, added, spawn: document.querySelector('#onboarding-spawn').hidden, skipped };
-          }), { afterReady: { skipped: 0, spawn: false, setup: true }, before: { disabled: true }, ticked: { disabled: false, status: 'One harness is ticked: Continue adds it and looks up the models.' }, added: 1, spawn: false, skipped: 0 },
-          'Skip after a harness is ready is no skip; a ticked harness enables Continue, which adds it first');
+            // Continue lands on a result step instead of closing or moving on silently; Continue there goes on to the last step.
+            const result = { phase: document.querySelector('#onboarding-harnesses').dataset.phase, shown: !document.querySelector('#onboarding-harnesses').hidden, setupButtons: !!document.querySelector('#onboarding-harnesses-continue'), spawnWaits: document.querySelector('[data-step="how"]').hidden };
+            document.querySelector('#onboarding-result-continue').click();
+            await new Promise(resolve => setTimeout(resolve, 200));
+            return { afterReady, before, ticked, added, result, spawn: document.querySelector('#onboarding-spawn').hidden, skipped };
+          }), { afterReady: { skipped: 0, spawn: false, setup: true }, before: { disabled: true }, ticked: { disabled: false, status: 'One harness is ticked: Continue adds it and looks up the models.' }, added: 1, result: { phase: 'result', shown: true, setupButtons: false, spawnWaits: true }, spawn: false, skipped: 0 },
+          'Skip after a harness is ready is no skip; a ticked harness enables Continue, which adds it and shows the result before going on');
           // Continue is one run at a time, and its status survives the poll: while harnesses are being added neither a poll nor a second
           // click may re-enable it or add them again; a harness added without a model keeps its message and its disabled Continue.
           assert.deepEqual(await setupPage.evaluate(async () => {
@@ -3615,6 +3629,7 @@ async function main() {
             const after = { disabled: button.disabled, status: status.textContent, stayed: !document.querySelector('#onboarding-harnesses').hidden, same: status.textContent === atOnce.status };
             // Leave the page as the next steps expect it: the last step shown, the poll stopped.
             step.stopWatching(); step.harnesses.clear(); step.store.set(() => { step.store.step.value = 'how'; });
+            window.__lastOnboarding = step;
             return { during, doubleClick, atOnce, after };
           }), { during: { adds: 1, disabled: true }, doubleClick: 1,
             atOnce: { disabled: true, status: 'The harness was added but has no model yet. Add a model by hand, or retry Auto-detect in its models, then Continue.' },
@@ -3626,8 +3641,8 @@ async function main() {
             const answers = rows => anyReady(rows) ? 1 : 0;
             return [answers([{ enabled: true, models: [{ slug: 'm' }] }]), answers([{ enabled: false, models: [{ slug: 'm' }] }]), answers([{ enabled: true, models: [] }]), answers([])];
           }), [1, 0, 0, 0], 'a harness that is enabled and has a model is ready; a disabled one, or one with no model, is not');
-          await setupPage.click('#onboarding-done');
-          assert.equal(await setupPage.evaluate(() => document.querySelector('#onboarding-view').hidden), true, 'Not now closes the onboarding');
+          // The app's own onboarding (still on its Harnesses step) polls and draws into the same card, so the last step is shown and left in one go.
+          assert.equal(await setupPage.evaluate(() => { const step = window.__lastOnboarding; step.store.set(() => { step.store.open.value = true; step.store.step.value = 'how'; }); document.querySelector('#onboarding-done').click(); return document.querySelector('#onboarding-view').hidden; }), true, 'Not now closes the onboarding');
           assert.equal(new URL(setupPage.url()).pathname, '/', 'the setup address stays in the address bar after setup');
           assert.equal((await fetch(`${setupOrigin}/setup?token=${setupToken}`)).status, 404, '/setup must be gone once an owner exists');
           assert.equal(fs.existsSync(tokenFile), false, 'the token file must be removed after use');

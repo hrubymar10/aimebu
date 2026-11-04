@@ -11,6 +11,7 @@ export class HarnessSettings {
     this.section.id = `${prefix}settings-harnesses`;
     this.section.hidden = !embedded;
     (embedded ? host : dialog).append(this.section);
+    this.embedded = embedded;
     this.wanted = '';
     this.onReady = null;
     this.onTick = null;
@@ -45,9 +46,13 @@ export class HarnessSettings {
   clear() {
     this.clearing = true;
     this.page.clear();
+    if (this.embedded) this.page.update({ result: false, showRoles: false });
     this.clearing = false;
     this.settle();
   }
+
+  // The onboarding's result step: the harnesses and their models as they are now, and the role defaults (which have nothing to tick before a model exists).
+  showResult(on) { this.page.update({ result: on, showRoles: on }); }
 
   // How many detected harnesses are ticked in the open detect panel, and adding them (whether it went through).
   tickedCount() { return this.controls.current?.count() ?? 0; }

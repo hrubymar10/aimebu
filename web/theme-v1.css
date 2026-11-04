@@ -2497,6 +2497,11 @@ dialog:focus, dialog:focus-visible { outline: none; }
 
 /* The Harnesses step of the first run is the Settings component in a wider card; the page's own form rules (full-width labels, inputs and
    buttons) must not reshape it, so they are undone inside it. */
+/* The first-run card is a modal: it covers the viewport, and what is taller than the window scrolls inside it. */
+#onboarding-view:not([hidden]) { position: fixed; inset: 0; z-index: 60; overflow-y: auto; overscroll-behavior: contain; background: var(--bg-primary); }
+/* Nested sections (the role defaults) are not cards of their own: the card's `.onboarding section` rule must not narrow them. */
+#onboarding-harnesses section.harness-roles { width: auto; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.harness-result { margin: 12px 0 0; color: var(--text-primary); font-weight: 600; }
 #onboarding-view section[data-step="harnesses"] { width: min(100%, 760px); max-height: calc(100dvh - 40px); overflow: auto; }
 #onboarding-harnesses section.settings-content { width: auto; padding: 0; margin: 16px 0 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
 #onboarding-harnesses .settings-content h3 { display: none; }

@@ -10,8 +10,12 @@ import { MasterList } from './master-list.js';
 import { RolePanel } from './role-panel.js';
 import { IdPrefix } from './id-prefix.js';
 
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+// What the result step says was added: the harnesses and how many models they offer.
+const resultLine = rows => `${plural(rows.length, 'harness', 'harnesses')}, ${plural(rows.reduce((sum, row) => sum + (row.models?.length || 0), 0), 'model', 'models')} found.`;
+
 // `wanted` is the machine to open on. Embedded (the onboarding step) the detect panel has no Add button: `controls` lets the step add what is ticked, `onTick` says how many are.
-export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = false, controls = null, onTick, onOpened, onDirty = () => {}, onView = () => {}, onReady = () => {}, isHidden = () => false }) {
+export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = false, controls = null, result = false, showRoles = !embedded, onTick, onOpened, onDirty = () => {}, onView = () => {}, onReady = () => {}, isHidden = () => false }) {
   const [panel, setPanel] = useState(null);
   const panelRef = useRef(null);
   const data = useHarnesses({ openToken, wanted, closePanel: () => setPanel(null), onReady, onOpened, isHidden });
@@ -96,8 +100,9 @@ export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = fal
           />
         `}
       </div>
+      ${result && rows && html`<p class="harness-result" role="status">${resultLine(rows)}</p>`}
       <div class="harness-list" id=${`${idPrefix}harnesses-list`}>
-        ${rows && !rows.length && html`<p class="settings-intro">No harnesses on this machine yet. Add one, or auto-detect what is installed.</p>`}
+        ${rows && !rows.length && !(panel?.kind === 'detect' && panel.candidates.length) && html`<p class="settings-intro">No harnesses on this machine yet. Add one, or auto-detect what is installed.</p>`}
         ${rows?.length > 0 && html`
           <div class="harness-split">
             <${MasterList} rows=${rows} selected=${selected} onSelect=${data.selectHarness} />
@@ -106,7 +111,7 @@ export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = fal
         `}
       </div>
       <div class="harness-roles-host" id=${`${idPrefix}harness-roles-host`}>
-        ${rows && html`<${RolePanel} roles=${roles} labelOf=${data.labelOfDefault} store=${data.defaults} run=${runRole} />`}
+        ${rows && showRoles && html`<${RolePanel} roles=${roles} labelOf=${data.labelOfDefault} store=${data.defaults} run=${runRole} />`}
       </div>
       <p class="error" role="alert">${state.roleError.value}</p>
       <h4 class="machine-activity-heading">Activity</h4>

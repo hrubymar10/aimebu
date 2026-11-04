@@ -85,12 +85,23 @@ export class OnboardingStore {
         this.lastReady = ready;
         if (!ready) { this.harnessNote = NO_MODEL_NOTE; return; }
       }
+      // Whether Continue added harnesses or one was already ready (set up by hand, or reported by the poll), what there is is shown, with its models and
+      // the role defaults, before the step is left: going on at once, or closing, looks like a failure.
+      clearInterval(this.watch); this.watch = null;
+      this.set(() => { this.step.value = 'result'; this.harnessStatus.value = ''; this.continueDisabled.value = false; });
+      this.harnesses.showResult?.(true);
       proceed = true;
+      return;
     } finally {
       if (this.adding === ticket) this.adding = 0;
       // The status and the button follow what is true now, with the note kept until the person does something about it.
       if (!proceed && this.current(ticket) && this.step.value === 'harnesses') await this.checkHarness();
     }
+  }
+
+  // Continue on the result step: on to what follows the Harnesses step (the last step, or closing when it was opened on its own).
+  async finishResult() {
+    if (this.step.value !== 'result') return;
     await this.leaveHarnesses(true);
   }
 
@@ -102,7 +113,7 @@ export class OnboardingStore {
 
   async leaveHarnesses(ready) {
     const ticket = this.stopWatching();
-    this.harnesses.clear(); this.harnessNote = '';
+    this.harnesses.clear(); this.harnesses.showResult?.(false); this.harnessNote = '';
     // A harness may have become ready while this step was open (it saves on its own): look again before calling this a skip, so a person
     // who set one up is neither recorded as having skipped nor told to set one up first.
     if (!ready) { try { ready = await this.harnessReady(); } catch { ready = false; } if (!this.current(ticket)) return; }

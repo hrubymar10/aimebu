@@ -282,13 +282,19 @@ async function main() {
         document.querySelectorAll('#onboarding-settings-harnesses').forEach(node => node.remove());
         const step = new Onboarding({ create: async () => {}, spawn: () => {}, harnessReady: async () => true, pollMs: 100000 });
         await step.showHarnesses('first');
+        for (let i = 0; i < 100 && !document.querySelector('#onboarding-harnesses-host .harness-role-switch'); i++) await new Promise(resolve => setTimeout(resolve, 100));
+        // Before the result step the role defaults are not shown (there is nothing to tick until a model exists); the per-model switches are.
+        const before = !!document.querySelector('#onboarding-harness-roles-host .harness-roles');
+        const switches = document.querySelectorAll('#onboarding-harnesses-host .harness-role-switch').length > 0;
+        step.harnesses.showResult(true);
         for (let i = 0; i < 100 && !document.querySelector('#onboarding-harness-roles-host .harness-role-card[data-role-key="worker"]'); i++) await new Promise(resolve => setTimeout(resolve, 100));
         const worker = document.querySelector('#onboarding-harness-roles-host .harness-role-card[data-role-key="worker"]');
-        const result = { panel: !!document.querySelector('#onboarding-harness-roles-host .harness-roles'), worker: !!worker, switches: document.querySelectorAll('#onboarding-harnesses-host .harness-role-switch').length > 0 };
+        const summary = document.querySelector('#onboarding-harnesses-host .harness-result')?.textContent || '';
+        const result = { before, panel: !!document.querySelector('#onboarding-harness-roles-host .harness-roles'), worker: !!worker, switches, summary: /^\d+ harness(es)?, \d+ models? found\.$/.test(summary) };
         step.close();
         return result;
       });
-      assert.deepEqual(onboarding, { panel: true, worker: true, switches: true }, 'the onboarding Harnesses step shows the role defaults panel and the per-model role switches');
+      assert.deepEqual(onboarding, { before: false, panel: true, worker: true, switches: true, summary: true }, 'the onboarding Harnesses step has the per-model role switches, and the role defaults and the summary of what was found only on the result step');
     }
     assert.deepEqual(pageErrors, [], 'no script errors at the end');
     console.log('harness settings ok');

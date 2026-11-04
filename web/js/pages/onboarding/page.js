@@ -14,7 +14,8 @@ export class Onboarding {
     this.store = new OnboardingStore({ create, spawn, harnessReady, canSetUp, onSkip, onReady, confirm, pollMs });
     root.replaceChildren();
     this.page = mountPreactPage(root, () => html`<${OnboardingPage} store=${this.store} root=${root} />`, { onError: error => console.error('onboarding:', error) });
-    this.store.flush = () => { root.hidden = !this.store.open.value; this.page.update({}); };
+    // The card covers the viewport (CSS) and the app behind it can neither be reached nor read while it is up.
+    this.store.flush = () => { root.hidden = !this.store.open.value; const app = document.querySelector('#app-view'); if (app) app.inert = !root.hidden; this.page.update({}); };
     this.harnesses = this.store.harnesses = new HarnessSettings(null, { embedded: true, host: root.querySelector('#onboarding-harnesses-host') });
     this.harnesses.onReady = () => this.store.onReady();
     // Ticking a detected harness is enough to go on: Continue adds what is ticked first.
@@ -32,5 +33,5 @@ export class Onboarding {
   stopWatching() { return this.store.stopWatching(); }
   continueHarnesses() { return this.store.continueHarnesses(); }
 
-  destroy() { this.root.removeEventListener('keydown', this.onKey); this.store.destroy(); this.harnesses.clear(); this.page.destroy(); }
+  destroy() { const app = document.querySelector('#app-view'); if (app) app.inert = false; this.root.removeEventListener('keydown', this.onKey); this.store.destroy(); this.harnesses.clear(); this.page.destroy(); }
 }

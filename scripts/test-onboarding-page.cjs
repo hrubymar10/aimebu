@@ -143,6 +143,7 @@ async function main() {
         step.harnesses.clear = () => {};
         step.harnesses.tickedCount = () => ticked;
         step.harnesses.addTicked = () => { calls.adds++; return gate(gates.add)(); };
+        step.harnesses.showResult = on => { step.harnesses.shown = on; };
         window.__late = { step, calls, gates, root, setTicked: value => { ticked = value; } };
         return true;
       }, options);
@@ -304,7 +305,19 @@ async function main() {
       const older = await view();
       assert.deepEqual([older.calls.adds, older.calls.ready, older.steps.how ?? false, older.continueDisabled], [2, askedBefore, false, true], 'the older addition answering unlocks nothing and advances nothing; the newer stays locked');
       await answer('add', 1, 'resolve', true); await settle(); await answer('ready', 2, 'resolve', true); await settle();
-      assert.equal((await view()).steps.how, true, 'the newer addition goes on when it answers');
+      // what was added is shown on a result step first (the harnesses with their models and the role defaults), and Continue there goes on
+      assert.deepEqual(await run(`return [late.step.store.step.value, late.root.querySelector('#onboarding-harnesses').dataset.phase, !!late.root.querySelector('#onboarding-result-continue'), !late.root.querySelector('#onboarding-harnesses-continue'), late.step.harnesses.shown ?? null]`), ['result', 'result', true, true, true], 'the newer addition lands on the result step when it answers');
+      assert.equal((await view()).steps.how ?? false, false, 'the last step waits for Continue on the result');
+      await run(`late.root.querySelector('#onboarding-result-continue').click()`); await settle();
+      assert.equal((await view()).steps.how, true, 'Continue on the result step goes on');
+      // A harness that was set up by hand (nothing ticked, one already ready) lands on the result step too, and Continue there goes on.
+      await make({});
+      await run(`late.step.showHarnesses('first')`); await answer('open', 0, 'resolve'); await settle(); await answer('ready', 0, 'resolve', true); await settle();
+      await run(`late.root.querySelector('#onboarding-harnesses-continue').click()`); await settle();
+      assert.deepEqual(await run(`return [late.step.store.step.value, late.root.querySelector('#onboarding-harnesses').dataset.phase, late.step.harnesses.shown ?? null, late.step.store.watch]`), ['result', 'result', true, null], 'with a harness already ready and nothing ticked Continue lands on the result step and stops the poll');
+      assert.deepEqual([(await view()).calls.adds, (await view()).steps.how ?? false], [0, false], 'nothing is added, and the last step waits for Continue on the result');
+      await run(`late.root.querySelector('#onboarding-result-continue').click()`); await settle();
+      assert.equal((await view()).steps.how, true, 'Continue on the result step goes on after a harness set up by hand');
 
       // a skip confirmed after the page moved on records nothing
       for (const [name, change] of Object.entries({ close: supersede.close, destroy: supersede.destroy })) {
