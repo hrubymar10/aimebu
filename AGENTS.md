@@ -21,10 +21,14 @@ For JSON, always import `github.com/goccy/go-json` (package `json`), never
 
 ## Tests and commits
 
-Never commit a red tree. Run `make test-full` before sharing substantive
-changes for commit. Commit messages must use a conventional subject, a blank
-line, and a wrapped body explaining the reason and tradeoffs. Do not add AI
-attribution or override the configured Git author.
+Never commit a red tree, but test in proportion while iterating: run
+`go test -race` on the changed packages, `make test-web`, and the
+`scripts/test-*-page.cjs` for the touched area; run `scripts/test-ui.cjs`
+only when a change touches the chat or app-wide flows it covers. The full
+gate — `make test-full` plus `make test-ui` twice — runs once, on the
+squashed tip, before it is pushed. Commit messages must use a conventional
+subject, a blank line, and a wrapped body explaining the reason and
+tradeoffs. Do not add AI attribution or override the configured Git author.
 
 For concurrent agent work, use only your assigned worktree. Run test commands
 under the shared workspace `flock` gate for their full duration. Use an
