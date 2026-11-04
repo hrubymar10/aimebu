@@ -1,4 +1,4 @@
-import { html, Component, useCallback, useLayoutEffect, useRef } from '../../ui.js';
+import { html, Component, Fragment, useCallback, useLayoutEffect, useRef } from '../../ui.js';
 import { EXPIRED_HOURGLASS } from '../../usage-expiry.js';
 import { fillMessageActions, messageActionsProps } from '../../message-actions.js';
 import { stampTime } from '../../time.js';
@@ -64,16 +64,17 @@ export function Plan({ message }) {
 }
 
 // The controls, the history or the "Answered" marker under a question; which one follows from the page's answer view.
-export function AnswerSlot({ message, view, host }) {
+// `listed` is the slot as a row of the message list, under its message's card and aligned with it (`self`: the viewer's own); in the thread panel it is part of the entry.
+export function AnswerSlot({ message, view, host, listed = '' }) {
   const root = useRef(null), answer = view.answer;
   useLayoutEffect(() => {
     if (!root.current) return;
     if (answer.kind === 'controls') fillAnswerControls(root.current, answer.item, value => host.answer(answer.item, value), host.answerOptions(answer.parent));
     else if (answer.kind === 'history') fillAnswerHistory(root.current, message, answer.answered);
   }, [message, answer.key]);
-  if (answer.kind === 'controls') return html`<${ANSWER_CONTROLS_ROOT.tag} key=${answer.key} class=${ANSWER_CONTROLS_ROOT.class} data-inbox-id=${answer.item.id} data-rev=${String(answer.item.rev)} ref=${root} />`;
-  if (answer.kind === 'history') return html`<${ANSWER_HISTORY_ROOT.tag} key=${answer.key} class=${ANSWER_HISTORY_ROOT.class} data-answered=${String(answer.answered)} ref=${root} />`;
-  if (answer.kind === 'done') return html`<div key=${answer.key} class="answer-done"><button type="button" class="btn" disabled>Answered</button></div>`;
+  if (answer.kind === 'controls') return html`<${ANSWER_CONTROLS_ROOT.tag} key=${answer.key} class=${`${ANSWER_CONTROLS_ROOT.class}${listed}`} data-inbox-id=${answer.item.id} data-rev=${String(answer.item.rev)} ref=${root} />`;
+  if (answer.kind === 'history') return html`<${ANSWER_HISTORY_ROOT.tag} key=${answer.key} class=${`${ANSWER_HISTORY_ROOT.class}${listed}`} data-answered=${String(answer.answered)} ref=${root} />`;
+  if (answer.kind === 'done') return html`<div key=${answer.key} class=${`answer-done${listed}`}><button type="button" class="btn" disabled>Answered</button></div>`;
   return null;
 }
 
@@ -123,12 +124,12 @@ function SystemRow({ message, view, host, classes, register }) {
 export function MessageRow({ message, view, host }) {
   const register = useCallback(element => host.registerNode(message.id, element), [message.id]);
   const classes = [view.articleClass, view.needsAttention ? 'needs-attention' : '', view.expired ? 'message-expired' : '', view.boundary ? 'expiry-boundary' : ''].filter(Boolean).join(' ');
-  return html`<${Row} kind="main" message=${message} view=${view} host=${host}>${() => message.author_kind === 'system' ? html`<${SystemRow} message=${message} view=${view} host=${host} classes=${classes} register=${register} />` : html`<article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
+  return html`<${Row} kind="main" message=${message} view=${view} host=${host}>${() => message.author_kind === 'system' ? html`<${SystemRow} message=${message} view=${view} host=${host} classes=${classes} register=${register} />` : html`<${Fragment}><article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
     ${view.boundary && html`<span class="expiry-label">Older AI chatter won't reach agents automatically</span>`}
     <${MessageMeta} message=${message} view=${view} />
-    <div class="message-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /><${AnswerSlot} message=${message} view=${view} host=${host} /></div>
+    <div class="message-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /></div>
     <button type="button" class="row-btn thread-chip" hidden=${view.chip.hidden} title="Open thread" aria-label=${view.chip.label}>${view.chip.text}</button>
-  </article>`}<//>`;
+  </article><${AnswerSlot} message=${message} view=${view} host=${host} listed=${/\bself\b/.test(view.articleClass || '') ? ' answer-row answer-row-self' : ' answer-row'} /><//>`}<//>`;
 }
 
 export function MessageList({ entries = [], host, viewOf, restore }) {

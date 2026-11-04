@@ -1533,27 +1533,27 @@ async function main() {
       const record = { id: item.message_id, seq: 1, no: 1, body: 'Choose', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner', room_id: 'r' };
       chat.store.add(record);
       chat.threadEntries = [record]; chat.threadEntryIDs = new Set([record.id]); chat.threadUpdate();
-      const bubble = main.querySelector('.message-bubble'), threadNode = thread.querySelector('.thread-entry');
+      const roomControlsOf = () => main.querySelector(':scope > .answer-controls'), threadNode = thread.querySelector('.thread-entry'); // in the room the answers are a row of the list under the card
       chat.updateAnswerControls([item]);
-      const roomControls = bubble.querySelector('.answer-controls');
+      const roomControls = roomControlsOf();
       const threadControls = threadNode.querySelector('.answer-controls');
       roomControls.dataset.mark = 'Room'; threadControls.dataset.mark = 'Thread'; // the same node, with what it holds, is kept while the item is unchanged
       chat.updateAnswerControls([{ ...item }]);
-      const kept = bubble.querySelector('.answer-controls') === roomControls && threadNode.querySelector('.answer-controls') === threadControls
+      const kept = roomControlsOf() === roomControls && threadNode.querySelector('.answer-controls') === threadControls
         && roomControls.dataset.mark === 'Room' && threadControls.dataset.mark === 'Thread';
       chat.updateAnswerControls([{ ...item, rev: 1 }]);
-      const replaced = bubble.querySelector('.answer-controls') !== roomControls && threadNode.querySelector('.answer-controls') !== threadControls;
+      const replaced = roomControlsOf() !== roomControls && threadNode.querySelector('.answer-controls') !== threadControls;
       chat.updateAnswerControls([]);
-      const removed = !bubble.querySelector('.answer-controls') && !threadNode.querySelector('.answer-controls');
+      const removed = !roomControlsOf() && !threadNode.querySelector('.answer-controls');
       // The answered question keeps a quiet "Answered" (once, in the room and the thread), including after the message is drawn again.
       const marker = node => [...node.querySelectorAll(':scope > .answer-done button')].map(button => [button.textContent, button.disabled]);
-      const answered = { room: marker(bubble), thread: marker(threadNode) };
+      const answered = { room: marker(main), thread: marker(threadNode) };
       chat.updateAnswerControls([]);
-      const stillOnce = marker(bubble).length;
+      const stillOnce = marker(main).length;
       chat.rows = []; chat.listUpdate(); chat.messages.delete(record.id); chat.store.add(record);
-      const redrawn = marker(main.querySelector('.message-bubble')).length;
+      const redrawn = marker(main).length;
       chat.updateAnswerControls([{ ...item, rev: 2 }]);
-      const reopened = { controls: !!main.querySelector('.message-bubble .answer-controls'), marker: marker(main.querySelector('.message-bubble')).length };
+      const reopened = { controls: !!roomControlsOf(), marker: marker(main).length };
       chat.answeredMessages = new Set(); chat.updateAnswerControls([]);
       const neverOpen = chat.answerView({ id: 'msg-never-open' }).kind;
       main.remove(); thread.remove();
@@ -1571,25 +1571,32 @@ async function main() {
       const base = { seq: 1, no: 1, body: 'q', created_at: '2026-01-10T12:00:00Z', author_kind: 'user', author_id: 'owner', room_id: 'r' };
       chat.store.add({ ...base, id: 'ask-1', proposed_answers: ['Proceed', 'Hold'], open_questions: [{ question: 'Which?', options: ['a', 'b'] }] });
       chat.store.add({ ...base, id: 'plain', seq: 2, no: 2, body: 'hi' });
-      const read = node => ({ buttons: [...node.querySelectorAll('.answer-history button')].map(button => [button.textContent.trim(), button.disabled, button.title]), status: node.querySelector('.answer-history-status')?.textContent || '', blocks: node.querySelectorAll('.answer-history').length });
-      const bubble = main.querySelector('[data-message-id=ask-1] .message-bubble');
-      const pending = read(bubble); const block = bubble.querySelector('.answer-history');
+      const read = node => ({ buttons: [...node.querySelectorAll(':scope > .answer-history button')].map(button => [button.textContent.trim(), button.disabled, button.title]), status: node.querySelector('.answer-history-status')?.textContent || '', blocks: node.querySelectorAll(':scope > .answer-history').length });
+      const bubble = main; // the answers are a row of the list under the message's card
+      const pending = read(bubble); const block = bubble.querySelector(':scope > .answer-history');
+      const card = main.querySelector('[data-message-id=ask-1]').getBoundingClientRect(), under = block.getBoundingClientRect();
+      const placed = { below: under.top >= card.bottom - 0.5, outside: under.top >= card.bottom - 0.5 && under.left >= card.left - 0.5 && Math.abs(under.left - card.left) < 2 };
       chat.listUpdate();
-      const same = bubble.querySelector('.answer-history') === block;
+      const same = bubble.querySelector(':scope > .answer-history') === block;
       // A person replies to it: the next draw says Answered.
       chat.repliedTo.add('ask-1'); chat.listUpdate();
       const answered = read(bubble);
       // It becomes open again: the live buttons replace the history.
       chat.updateAnswerControls([{ id: 'inb', message_id: 'ask-1', kind: 'question', rev: 0, proposed_answers: ['Proceed'], free_text: true, can_decide: true }]);
-      const reopened = { history: bubble.querySelectorAll('.answer-history').length, live: bubble.querySelectorAll('.answer-controls').length };
-      const none = main.querySelector('[data-message-id=plain] .message-bubble');
-      const result = { pending, same, answered, reopened, plain: none.querySelectorAll('.answer-history, .answer-done').length };
+      const reopened = { history: bubble.querySelectorAll(':scope > .answer-history').length, live: bubble.querySelectorAll(':scope > .answer-controls').length };
+      const none = main.querySelector('[data-message-id=plain]');
+      // A row ends where its answers end: trimming the oldest rows must not drop one whose card is off the top while its answers are still in view.
+      const boxes = chat.rowBoxes(), tail = main.querySelector(':scope > .answer-row');
+      const rowEnd = { askEndsAtItsAnswers: Math.abs(boxes.find(box => box.id === 'ask-1').bottom - tail.getBoundingClientRect().bottom) < 1, plainEndsAtItsCard: Math.abs(boxes.find(box => box.id === 'plain').bottom - main.querySelector('[data-message-id=plain]').getBoundingClientRect().bottom) < 1 };
+      const result = { pending, placed, rowEnd, same, answered, reopened, plain: main.querySelectorAll('[data-message-id=plain] ~ .answer-row').length + none.querySelectorAll('.answer-history, .answer-done').length };
       main.remove();
       return result;
     });
     assert.deepEqual(askHistory.pending, { buttons: [['Open Questions 1', true, 'No longer pending'], ['Proceed', true, 'No longer pending'], ['Hold', true, 'No longer pending']], status: 'No longer pending', blocks: 1 }, 'an ask with nothing open shows its buttons, disabled and marked no longer pending');
     assert.equal(askHistory.same, true, 'a sync that changes nothing keeps the same block');
-    assert.deepEqual([askHistory.answered.status, askHistory.answered.buttons.every(([, disabled, title]) => disabled && title === 'Answered'), askHistory.answered.blocks], ['Answered', true, 1], 'a replied-to ask says Answered');
+    assert.deepEqual(askHistory.rowEnd, { askEndsAtItsAnswers: true, plainEndsAtItsCard: true }, 'a row with answers ends at its answers, one without at its card');
+    assert.deepEqual(askHistory.placed, { below: true, outside: true }, 'the answers sit under the message card, outside it, aligned with its left edge');
+    assert.deepEqual([askHistory.answered.status, askHistory.answered.buttons.every(([, disabled, title]) => disabled && title === 'Answered'), askHistory.answered.blocks], ['', true, 1], 'a replied-to ask is its dimmed buttons, with no label of their own (their tooltip says Answered)');
     assert.deepEqual([askHistory.reopened, askHistory.plain], [{ history: 0, live: 1 }, 0], 'an open ask swaps the history for live buttons; a message without an ask gets nothing');
     // A thumbnail with a known size keeps its shape: a panorama and a portrait are scaled into the box, not letterboxed in it.
     const thumbs = await first.evaluate(async () => {
@@ -2412,7 +2419,7 @@ async function main() {
     assert.equal(await first.$eval('#reply-chip', el => el.hidden), false, 'jumping to the parent keeps the reply pending');
     await first.locator('#composer textarea').fill('Reply body'); await first.locator('#composer button[type=submit]').click();
     await first.waitForFunction(() => document.querySelectorAll('.message').length === 2);
-    assert.equal(await first.$eval('.message:nth-child(2) .quote', el => /^↪ #\d+ (You|owner): \S/.test(el.textContent)), true, 'a reply quotes a snippet of its parent');
+    assert.equal(await first.$eval('article.message:nth-of-type(2) .quote', el => /^↪ #\d+ (You|owner): \S/.test(el.textContent)), true, 'a reply quotes a snippet of its parent');
     assert.deepEqual(await first.evaluate(async () => {
       const { messageSnippet } = await import('/js/chat.js' + new URL(document.querySelector('script[type=module]').src).search);
       return [messageSnippet({ body: '  a\n\n  b   c ' }), messageSnippet({ body: '', attachments: [{}] }), messageSnippet({ body: 'x'.repeat(200) }).length, messageSnippet({ body: 'word '.repeat(40) }).endsWith('…'), messageSnippet({ body: '' }), messageSnippet(undefined), messageSnippet({ body: '**Done** with `code`, [a link](http://x), _soft_ and snake_case_name\n> quoted' }), messageSnippet({ body: '#42 and #general\n## Heading' })];
@@ -2527,7 +2534,7 @@ async function main() {
     await quiet();
     await first.evaluate(() => { const list = document.querySelector('#messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = Math.floor((list.scrollHeight - list.clientHeight) / 2); });
     await quiet();
-    await first.click('#messages .message:nth-child(40) .message-body');
+    await first.click('#messages article.message:nth-of-type(40) .message-body');
     await quiet();
     await first.keyboard.press('Home');
     await waitDump(first, 'keyboard Home', count => document.querySelectorAll('.message').length > count,
@@ -2584,7 +2591,7 @@ async function main() {
     const markdown = '## Heading\n\n**bold** *italic* `inline`\n\n- one\n- two\n\n> quoted\n\n| Left | Right |\n| :--- | ---: |\n| cell | **value** |\n\n[Safe](https://example.com/path) [Bad](javascript:alert(1))\n\n```js\nconst n = 1;\n```';
     await post(markdown);
     await first.waitForFunction(() => [...document.querySelectorAll('.message-body h2')].some(el => el.textContent === 'Heading'));
-    const md = await first.$('.message:last-child .message-body');
+    const md = await first.$('article.message:last-of-type .message-body');
     assert.equal(await md.$eval('strong', el => el.textContent), 'bold');
     assert.equal(await md.$eval('.md-table-wrap table tbody tr td:last-child strong', el => el.textContent), 'value');
     assert.deepEqual(await md.$$eval('.md-table-wrap th', cells => cells.map(el => getComputedStyle(el).textAlign)), ['left', 'right']);
@@ -2663,7 +2670,7 @@ async function main() {
     assert.deepEqual(await first.evaluate(() => [...document.querySelectorAll('#room-raw svg')].map(svg => svg.getAttribute('class') + ':' + (getComputedStyle(svg).display !== 'none'))), ['icon-rendered:false', 'icon-raw:true'], 'while rendered the toggle shows the raw-code icon (v1)');
     await domClick(first, '#room-raw');
     assert.equal(await first.$eval('#room-raw', el => el.getAttribute('aria-pressed')), 'true');
-    assert.equal(await first.$eval('.message:last-child .message-body', el => el.textContent.startsWith('## Heading')), true);
+    assert.equal(await first.$eval('article.message:last-of-type .message-body', el => el.textContent.startsWith('## Heading')), true);
     assert.deepEqual(await first.evaluate(() => [...document.querySelectorAll('#room-raw svg')].map(svg => svg.getAttribute('class') + ':' + (getComputedStyle(svg).display !== 'none'))), ['icon-rendered:true', 'icon-raw:false'], 'while raw the toggle shows the eye icon (v1)');
     // A room whose whole history is loaded says where it starts.
     assert.deepEqual(await first.$eval('#messages', el => [el.dataset.hasOlder, getComputedStyle(el, '::before').content]), ['false', '"Start of room"'], 'the start of the room is marked once nothing older remains');
@@ -2673,13 +2680,13 @@ async function main() {
     {
       const fresh = await browser.createBrowserContext(), freshPage = await fresh.newPage();
       await login(freshPage, `${origin}/#${encodeURIComponent(roomID)}`);
-      await freshPage.waitForFunction(() => document.querySelector('#room-raw')?.getAttribute('aria-pressed') === 'true' && document.querySelector('.message:last-child .message-body')?.textContent.startsWith('## Heading'), { timeout: 15000 });
+      await freshPage.waitForFunction(() => document.querySelector('#room-raw')?.getAttribute('aria-pressed') === 'true' && document.querySelector('article.message:last-of-type .message-body')?.textContent.startsWith('## Heading'), { timeout: 15000 });
       await fresh.close();
     }
     await domClick(first, '#room-raw');
     await first.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.markdown_mode === 'rendered', { timeout: 10000 });
     assert.equal(await markdownMode(first), 'rendered');
-    assert.equal(await first.$eval('.message:last-child .message-body h2', el => el.textContent), 'Heading');
+    assert.equal(await first.$eval('article.message:last-of-type .message-body h2', el => el.textContent), 'Heading');
     jumpSeq = String(await first.evaluate(async id => { const messages = await (await fetch(`/api/rooms/${id}/messages`)).json(); return messages.find(item => item.body === 'Thread reply').no; }, roomID));
     await domClick(first, '#room-jump');
     await first.waitForFunction(() => !document.querySelector('#thread-panel').hidden && [...document.querySelectorAll('.thread-entry .message-body')].some(el => el.textContent === 'Thread reply'));
@@ -2777,10 +2784,10 @@ async function main() {
     const xss = '<script>alert(1)</script> <img src=x onerror=alert(2)> [click](javascript:evil) ``nested ` ticks``';
     await post(xss);
     await first.waitForFunction(() => [...document.querySelectorAll('.message-body')].some(el => el.textContent.includes('<script>alert(1)</script>')));
-    assert.equal(await first.$eval('.message:last-child .message-body', el => el.querySelectorAll('script,img,a').length), 0, 'XSS markup became DOM');
-    assert.equal(await first.$eval('.message:last-child .message-body', el => el.textContent.includes('onerror=alert(2)')), true);
-    assert.equal(await first.$eval('.message:last-child .message-body code', el => el.textContent), 'nested ` ticks');
-    assert.deepEqual(await first.$$eval('.message:last-child .quick-reaction', els => els.map(el => el.textContent)), ['👍', '🆗', '✅', '👀', '🙏', '🎉']);
+    assert.equal(await first.$eval('article.message:last-of-type .message-body', el => el.querySelectorAll('script,img,a').length), 0, 'XSS markup became DOM');
+    assert.equal(await first.$eval('article.message:last-of-type .message-body', el => el.textContent.includes('onerror=alert(2)')), true);
+    assert.equal(await first.$eval('article.message:last-of-type .message-body code', el => el.textContent), 'nested ` ticks');
+    assert.deepEqual(await first.$$eval('article.message:last-of-type .quick-reaction', els => els.map(el => el.textContent)), ['👍', '🆗', '✅', '👀', '🙏', '🎉']);
     const actualProjectID = await first.evaluate(async () => (await (await fetch('/api/projects')).json()).find(p => p.name === 'UI smoke').id);
     // Message numbers: "#N" is one sequence across every room, shown and written by people. A #N in a message jumps to that message, in
     // another room too (it opens that room), and an unknown number says so.
@@ -4541,11 +4548,11 @@ async function main() {
     await agentPage.keyboard.type('\\@here `@bert` @nobody ');
     await agentPage.keyboard.press('Enter');
     await agentPage.waitForFunction(() => [...document.querySelectorAll('.message-body')].some(el => el.textContent.includes('@nobody')));
-    assert.deepEqual(await agentPage.$$eval('.message:last-child .message-body .mention', els => els.map(el => el.textContent)), ['@ada', '@worker'], 'only live in-room mentions are highlighted');
+    assert.deepEqual(await agentPage.$$eval('article.message:last-of-type .message-body .mention', els => els.map(el => el.textContent)), ['@ada', '@worker'], 'only live in-room mentions are highlighted');
     // A mention of an agent opens its profile (a button for the keyboard too); roles and groups do not; a mention of the viewer is marked.
     {
-      assert.deepEqual(await agentPage.$$eval('.message:last-child .message-body .mention', els => els.map(el => el.getAttribute('role'))), ['button', null], 'an agent mention is a button, a role is not');
-      await agentPage.$eval('.message:last-child .message-body .mention[role=button]', el => el.click());
+      assert.deepEqual(await agentPage.$$eval('article.message:last-of-type .message-body .mention', els => els.map(el => el.getAttribute('role'))), ['button', null], 'an agent mention is a button, a role is not');
+      await agentPage.$eval('article.message:last-of-type .message-body .mention[role=button]', el => el.click());
       await agentPage.waitForFunction(() => document.querySelector('#agents-panel').classList.contains('profile-open'), { timeout: 10000 });
       await agentPage.$eval('#agent-profile-close', el => el.click());
       const marked = await agentPage.evaluate(async () => {
@@ -4599,8 +4606,8 @@ async function main() {
       await clearDraft(); await agentPage.keyboard.type('`a` :shrug:'); assert.equal(await draftValue(), '`a` 🤷', 'after a closed code span it converts again');
       await clearDraft();
       // Picker from the toolbar: search, react.
-      await agentPage.hover('.message:last-child');
-      await domClick(agentPage, '.message:last-child .message-find');
+      await agentPage.hover('article.message:last-of-type');
+      await domClick(agentPage, 'article.message:last-of-type .message-find');
       await agentPage.waitForSelector('.emoji-picker .emoji-cell');
       assert.equal(await agentPage.evaluate(() => document.activeElement?.classList.contains('emoji-search')), true, 'the search box is focused on open');
       assert.deepEqual(await agentPage.$$eval('.emoji-tab', tabs => tabs.map(tab => tab.getAttribute('aria-label'))), ['People', 'Nature', 'Food', 'Travel', 'Activities', 'Objects', 'Symbols', 'Flags']);
@@ -4610,7 +4617,7 @@ async function main() {
       assert.equal(await agentPage.$eval('.emoji-preview-code', el => el.textContent), ':rocket:', 'the footer previews the hovered emoji');
       await agentPage.click('.emoji-picker .emoji-cell');
       await agentPage.waitForFunction(() => !document.querySelector('.emoji-picker'));
-      await agentPage.waitForFunction(() => [...document.querySelectorAll('.message:last-child .reaction-pill')].some(pill => pill.textContent === '🚀 1'));
+      await agentPage.waitForFunction(() => [...document.querySelectorAll('article.message:last-of-type .reaction-pill')].some(pill => pill.textContent === '🚀 1'));
       // Picker from the composer button: Escape, keyboard navigation, tone persistence.
       await agentPage.click('#emoji-button'); await agentPage.waitForSelector('.emoji-picker .emoji-cell');
       assert.equal(await agentPage.$$eval('.emoji-cell', cells => cells.length > 1800), true, 'the whole database is in the grid');
@@ -4831,7 +4838,7 @@ async function main() {
       await touch.close(); await agentPage.bringToFront();
     }
     await agentPage.$eval('#composer textarea', el => { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); });
-    await domClick(agentPage, '.message:last-child .thread-action');
+    await domClick(agentPage, 'article.message:last-of-type .thread-action');
     await agentPage.waitForFunction(() => !document.querySelector('#thread-panel').hidden);
     await agentPage.focus('#thread-composer textarea'); await agentPage.keyboard.type('thanks @a');
     await agentPage.waitForFunction(() => { const popup = document.querySelector('#thread-composer .mention-commands'); return popup && !popup.hidden; });
@@ -6378,11 +6385,11 @@ async function main() {
       await domClick(first, `[data-room-id="${roomID}"] .room-name`);
       await first.waitForFunction(id => document.querySelector('.room-row.active')?.parentElement.dataset.roomId === id, {}, roomID);
       // The room's agents load after the room is shown; until they have, senders read as their bare ids.
-      await first.waitForFunction((id, name) => document.querySelector(`[data-agent-id="${id}"]`) && document.querySelector('.message:last-child .message-author')?.textContent === name, {}, realAgentID, realAgentName);
+      await first.waitForFunction((id, name) => document.querySelector(`[data-agent-id="${id}"]`) && document.querySelector('article.message:last-of-type .message-author')?.textContent === name, {}, realAgentID, realAgentName);
     }
-    assert.equal(await first.$eval('.message:last-child .message-author', el => el.textContent), realAgentName, 'agent author shows raw ID');
-    assert.deepEqual(await first.$eval('.message:last-child .message-role', el => [el.textContent, el.title.toLowerCase()]), ['🛠️', 'worker']);
-    assert.deepEqual(await first.$eval('.message:last-child .msg-sender-presence', el => [el.querySelector('img').title.endsWith('· fake'), el.querySelector('.msg-sender-dot').className]), [true, 'msg-sender-dot dot-active'], 'agent message lacks identity icon/dot');
+    assert.equal(await first.$eval('article.message:last-of-type .message-author', el => el.textContent), realAgentName, 'agent author shows raw ID');
+    assert.deepEqual(await first.$eval('article.message:last-of-type .message-role', el => [el.textContent, el.title.toLowerCase()]), ['🛠️', 'worker']);
+    assert.deepEqual(await first.$eval('article.message:last-of-type .msg-sender-presence', el => [el.querySelector('img').title.endsWith('· fake'), el.querySelector('.msg-sender-dot').className]), [true, 'msg-sender-dot dot-active'], 'agent message lacks identity icon/dot');
     assert.equal(await first.$eval('.message.self .msg-sender-icon', el => el.getAttribute('src')), '/icons/human.svg');
     if (await first.$eval(`[data-agent-id="${realAgentID}"]`, el => !el.classList.contains('expanded'))) await domClick(first, `[data-agent-id="${realAgentID}"] .agent-name`);
     await domClick(first, `[data-agent-id="${realAgentID}"] .agent-message`);
@@ -8645,7 +8652,7 @@ with con:
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.deepEqual(await perfPage.evaluate(id => window.__readPosts.filter(url => url.includes(id)), perfRoomID), [], 'the room was marked read while its newest messages were hidden');
     await perfPage.click('.back-to-latest:not(.thread-latest):not(.thread-new)');
-    await waitDump(perfPage, 'return to latest', id => window.__readPosts.some(url => url.includes(id)) && document.querySelector('#messages .message:last-child')?.dataset.messageId === 'msg_perf_late_2', () => ({ reads: window.__readPosts, last: document.querySelector('#messages .message:last-child')?.dataset.messageId }), perfRoomID);
+    await waitDump(perfPage, 'return to latest', id => window.__readPosts.some(url => url.includes(id)) && document.querySelector('#messages article.message:last-of-type')?.dataset.messageId === 'msg_perf_late_2', () => ({ reads: window.__readPosts, last: document.querySelector('#messages article.message:last-of-type')?.dataset.messageId }), perfRoomID);
     assert.equal(await perfPage.$eval('.back-to-latest:not(.thread-latest):not(.thread-new)', el => el.hidden && el.getAttribute('aria-label') === 'Back to latest'), true, 'Back to latest kept its count after returning');
     // A trimmed window pages forward when its bottom is reached, trimming its oldest rows, and is the latest view again at the end.
     const perfRows = () => perfPage.evaluate(() => { const rows = [...document.querySelectorAll('#messages > article.message')]; return { count: rows.length, first: rows[0]?.dataset.messageId, last: rows.at(-1)?.dataset.messageId, lastSeq: Number(rows.at(-1)?.dataset.seq), latestHidden: document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, hasOlder: document.querySelector('#messages').dataset.hasOlder }; });
@@ -8660,26 +8667,26 @@ with con:
     await scrollBack(8);
     let forward = await perfRows();
     await perfPage.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = list.scrollHeight; });
-    await waitDump(perfPage, 'page forward', last => document.querySelector('#messages > article.message:last-child')?.dataset.messageId !== last, () => ({ rows: document.querySelectorAll('#messages > article.message').length, last: document.querySelector('#messages > article.message:last-child')?.dataset.messageId }), forward.last);
+    await waitDump(perfPage, 'page forward', last => document.querySelector('#messages > article.message:last-of-type')?.dataset.messageId !== last, () => ({ rows: document.querySelectorAll('#messages > article.message').length, last: document.querySelector('#messages > article.message:last-of-type')?.dataset.messageId }), forward.last);
     await new Promise(resolve => setTimeout(resolve, 500));
     let paged = await perfRows();
     assert(paged.lastSeq - forward.lastSeq <= 50 && !paged.latestHidden, `one scroll to the bottom paged ${paged.lastSeq - forward.lastSeq} messages forward: ${JSON.stringify(paged)}`);
     assert(paged.count <= 300 && paged.first !== forward.first && paged.hasOlder === 'true', `paging forward did not trim the oldest rows: ${JSON.stringify({ forward, paged })}`);
     for (let step = 0; step < 20 && !paged.latestHidden; step++) {
       await perfPage.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = list.scrollHeight; });
-      await perfPage.waitForFunction(last => document.querySelector('#messages > article.message:last-child')?.dataset.messageId !== last || document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, { timeout: 15000 }, paged.last);
+      await perfPage.waitForFunction(last => document.querySelector('#messages > article.message:last-of-type')?.dataset.messageId !== last || document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, { timeout: 15000 }, paged.last);
       paged = await perfRows();
       assert(paged.count <= 300, `paging forward kept ${paged.count} messages in the DOM`);
     }
     assert.deepEqual([paged.latestHidden, paged.last], [true, 'msg_perf_late_2'], 'paging forward did not return to the latest view');
     await postAsOwner(first, perfRoomID, 'Perf after paging');
-    await perfPage.waitForFunction(() => document.querySelector('#messages > article.message:last-child')?.textContent.includes('Perf after paging'));
+    await perfPage.waitForFunction(() => document.querySelector('#messages > article.message:last-of-type')?.textContent.includes('Perf after paging'));
     // Sending from a history window shows the latest view with the sent message at its end, not the message among old rows.
     await scrollBack(8);
     await perfPage.locator('#composer textarea').fill('Perf sent from the window');
     await perfPage.keyboard.press('Enter');
-    await waitDump(perfPage, 'send from window', () => document.querySelector('#messages > article.message:last-child')?.textContent.includes('Perf sent from the window') && document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, () => ({ last: document.querySelector('#messages > article.message:last-child')?.textContent, button: document.querySelector('.back-to-latest').hidden }));
-    assert.equal(await perfPage.evaluate(() => document.querySelector('#messages > article.message:last-child').previousElementSibling?.textContent.includes('Perf after paging')), true, 'the sent message does not follow the room\'s previous newest message');
+    await waitDump(perfPage, 'send from window', () => document.querySelector('#messages > article.message:last-of-type')?.textContent.includes('Perf sent from the window') && document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, () => ({ last: document.querySelector('#messages > article.message:last-of-type')?.textContent, button: document.querySelector('.back-to-latest').hidden }));
+    assert.equal(await perfPage.evaluate(() => document.querySelector('#messages > article.message:last-of-type').previousElementSibling?.textContent.includes('Perf after paging')), true, 'the sent message does not follow the room\'s previous newest message');
     // Trimming a thread root also forgets its replies: the inspector's previous/next must end at the newest rendered row.
     const threadPerf = spawnSync('python3', ['-c', `
 import sqlite3, sys
@@ -8689,9 +8696,9 @@ with con:
 `, path.join(tmp, 'server', 'aimebu.sqlite')], { encoding: 'utf8' });
     if (threadPerf.status !== 0) throw new Error(`perf thread seed failed: ${threadPerf.stderr}`);
     await perfPage.reload();
-    await perfPage.waitForFunction(() => document.querySelector('#messages > article.message:last-child')?.textContent.includes('Perf sent from the window') && document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
+    await perfPage.waitForFunction(() => document.querySelector('#messages > article.message:last-of-type')?.textContent.includes('Perf sent from the window') && document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
     await scrollBack(8);
-    await perfPage.evaluate(() => document.querySelector('#messages > article.message:last-child .chat-msg-debug-toggle').click());
+    await perfPage.evaluate(() => document.querySelector('#messages > article.message:last-of-type .chat-msg-debug-toggle').click());
     await perfPage.waitForFunction(() => document.querySelector('#message-debug-dialog')?.open && document.querySelector('#message-debug-dialog .message-debug-position').textContent);
     const trimmedPosition = await perfPage.$eval('#message-debug-dialog .message-debug-position', el => el.textContent);
     await domClick(perfPage, '#message-debug-close');
@@ -8700,7 +8707,7 @@ with con:
     for (let step = 0; step < 20 && !(await perfRows()).latestHidden; step++) {
       const last = (await perfRows()).last;
       await perfPage.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = list.scrollHeight; });
-      await perfPage.waitForFunction(last => document.querySelector('#messages > article.message:last-child')?.dataset.messageId !== last || document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, { timeout: 15000 }, last);
+      await perfPage.waitForFunction(last => document.querySelector('#messages > article.message:last-of-type')?.dataset.messageId !== last || document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, { timeout: 15000 }, last);
     }
     assert.equal(await perfPage.$eval('#messages > article[data-message-id="msg_perf_19900"] > .thread-chip', el => el.textContent), '9 replies', 'a trimmed thread root counted its replies twice after paging forward');
     // The open thread's root still follows the raw/rendered switch after its row was trimmed away.
@@ -8714,14 +8721,14 @@ with con:
     await perfPage.evaluate(() => document.querySelector('#close-thread').click());
     assert.deepEqual(rawEntries, Array(10).fill(true), 'the open thread did not switch to raw Markdown after its root row was trimmed');
     // Closing that thread lets go of the replies kept for it: the inspector again ends at the newest rendered row.
-    await perfPage.evaluate(() => document.querySelector('#messages > article.message:last-child .chat-msg-debug-toggle').click());
+    await perfPage.evaluate(() => document.querySelector('#messages > article.message:last-of-type .chat-msg-debug-toggle').click());
     await perfPage.waitForFunction(() => document.querySelector('#message-debug-dialog')?.open && document.querySelector('#message-debug-dialog .message-debug-position').textContent);
     const closedThreadPosition = await perfPage.$eval('#message-debug-dialog .message-debug-position', el => el.textContent);
     await domClick(perfPage, '#message-debug-close');
     assert.match(closedThreadPosition, /^(\d+) \/ \1$/, `a closed thread's replies stayed after its root row was trimmed: ${closedThreadPosition}`);
     // A cap smaller than what an older page pushes below the reader must not trim the rows on screen: the trim waits.
     await domClick(perfPage, '.back-to-latest:not(.thread-latest):not(.thread-new)');
-    await perfPage.waitForFunction(() => document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden && document.querySelector('#messages > article.message:last-child')?.textContent.includes('Perf sent from the window'));
+    await perfPage.waitForFunction(() => document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden && document.querySelector('#messages > article.message:last-of-type')?.textContent.includes('Perf sent from the window'));
     // Watched for removal: a row dropped and paged back in later would look kept at the end.
     const visibleBefore = await perfPage.evaluate(() => {
       window.__renderCap = 20; const id = document.querySelector('#messages > article.message').dataset.messageId;
@@ -8789,14 +8796,14 @@ with con:
     await perfPage.evaluate(() => window.__releaseNewer());
     const jumpedLast = (await perfRows()).last;
     await perfPage.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = list.scrollHeight; });
-    await waitDump(perfPage, 'paging after a jump', last => document.querySelector('#messages > article.message:last-child')?.dataset.messageId !== last, () => ({ last: document.querySelector('#messages > article.message:last-child')?.dataset.messageId }), jumpedLast);
+    await waitDump(perfPage, 'paging after a jump', last => document.querySelector('#messages > article.message:last-of-type')?.dataset.messageId !== last, () => ({ last: document.querySelector('#messages > article.message:last-of-type')?.dataset.messageId }), jumpedLast);
     // Sending from a window with a thread open keeps the thread panel and its unsent reply across the jump to the latest.
-    const windowRoot = await perfPage.evaluate(() => { const row = document.querySelector('#messages > article.message:last-child'); row.querySelector('.thread-action').click(); return row.dataset.messageId; });
+    const windowRoot = await perfPage.evaluate(() => { const row = document.querySelector('#messages > article.message:last-of-type'); row.querySelector('.thread-action').click(); return row.dataset.messageId; });
     await perfPage.waitForFunction(id => !document.querySelector('#thread-panel').hidden && document.querySelector('#thread-messages .thread-entry')?.dataset.messageId === id, {}, windowRoot);
     await perfPage.evaluate(() => { document.querySelector('#thread-composer').elements.body.value = 'Perf unsent thread reply'; });
     await perfPage.locator('#composer textarea').fill('Perf sent with a thread open');
     await perfPage.keyboard.press('Enter');
-    await perfPage.waitForFunction(() => document.querySelector('#messages > article.message:last-child')?.textContent.includes('Perf sent with a thread open') && document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden);
+    await perfPage.waitForFunction(() => document.querySelector('#messages > article.message:last-of-type')?.textContent.includes('Perf sent with a thread open') && document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden);
     // The thread is reopened once the room has reopened; a lost thread fails the assertion below after this wait.
     await perfPage.waitForFunction(() => !document.querySelector('#thread-panel').hidden, { timeout: 5000 }).catch(() => {});
     const threadAfterSend = await perfPage.evaluate(() => ({ open: !document.querySelector('#thread-panel').hidden, root: document.querySelector('#thread-messages .thread-entry')?.dataset.messageId, draft: document.querySelector('#thread-composer').elements.body.value }));
@@ -8832,8 +8839,8 @@ with con:
     const afterFailure = await perfPage.evaluate(() => ({ button: document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden ? 'hidden' : document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').getAttribute('aria-label'), reads: window.__readBodies.length }));
     assert.deepEqual(afterFailure, { button: 'Back to latest · 1 new', reads: 0 }, 'a failed catch-up marked the room read or lost the arrival count');
     await domClick(perfPage, '.back-to-latest:not(.thread-latest):not(.thread-new)');
-    await perfPage.waitForFunction(() => window.__readBodies.length === 1 && document.querySelector('#messages > article.message:last-child')?.dataset.messageId === 'msg_perf_late_4');
-    const shownSeq = await perfPage.$eval('#messages > article.message:last-child', el => Number(el.dataset.seq));
+    await perfPage.waitForFunction(() => window.__readBodies.length === 1 && document.querySelector('#messages > article.message:last-of-type')?.dataset.messageId === 'msg_perf_late_4');
+    const shownSeq = await perfPage.$eval('#messages > article.message:last-of-type', el => Number(el.dataset.seq));
     assert.deepEqual(await perfPage.evaluate(() => JSON.parse(window.__readBodies[0])), { seq: shownSeq }, 'Back to latest did not mark read up to the newest message shown');
     // A project refresh while the catch-up is in flight must not mark read past what is shown, and a failed catch-up then
     // leaves the unseen row unread on the server.
@@ -8862,13 +8869,13 @@ with con:
     const duringCatchUp = { reads: await perfPage.evaluate(() => window.__readBodies.length), unread: await perfUnread(), shown: await perfPage.evaluate(() => !!document.querySelector('#messages > article[data-message-id="msg_perf_late_5"]')) };
     assert.deepEqual(duringCatchUp, { reads: 0, unread: 1, shown: false }, 'a project refresh during the catch-up marked the room read past what was shown');
     await domClick(perfPage, '.back-to-latest:not(.thread-latest):not(.thread-new)');
-    await perfPage.waitForFunction(() => document.querySelector('#messages > article.message:last-child')?.dataset.messageId === 'msg_perf_late_5');
+    await perfPage.waitForFunction(() => document.querySelector('#messages > article.message:last-of-type')?.dataset.messageId === 'msg_perf_late_5');
     for (let i = 0; i < 50 && await perfUnread() !== 0; i++) await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(await perfUnread(), 0, 'Back to latest did not mark the shown row read');
     // A thread open beside a window can hold a reply newer than the top-level rows the window hides. Reselecting the room
     // (its latest page failing to load) must not mark read past the window's newest top-level row.
     await scrollBack(8);
-    const windowEnd = await perfPage.evaluate(() => { const row = document.querySelector('#messages > article.message:last-child'); return { id: row.dataset.messageId, seq: Number(row.dataset.seq) }; });
+    const windowEnd = await perfPage.evaluate(() => { const row = document.querySelector('#messages > article.message:last-of-type'); return { id: row.dataset.messageId, seq: Number(row.dataset.seq) }; });
     seedPerfRows('msg_perf_late_6', 'msg_perf_late_7', 'msg_perf_late_8');
     const replySeed = spawnSync('python3', ['-c', `
 import sqlite3, sys
@@ -8877,7 +8884,7 @@ with con:
     con.execute("UPDATE message SET thread_root=?, reply_to=? WHERE id='msg_perf_late_8'", (sys.argv[2], sys.argv[2]))
 `, path.join(tmp, 'server', 'aimebu.sqlite'), windowEnd.id], { encoding: 'utf8' });
     if (replySeed.status !== 0) throw new Error(`perf reply seed failed: ${replySeed.stderr}`);
-    await perfPage.evaluate(() => document.querySelector('#messages > article.message:last-child .thread-action').click());
+    await perfPage.evaluate(() => document.querySelector('#messages > article.message:last-of-type .thread-action').click());
     await perfPage.waitForFunction(() => [...document.querySelectorAll('#thread-messages .thread-entry')].some(entry => entry.dataset.messageId === 'msg_perf_late_8'));
     await first.evaluate(async projectID => {
       const { csrf_token } = await (await fetch('/api/me')).json();
@@ -8895,7 +8902,7 @@ with con:
     await new Promise(resolve => setTimeout(resolve, 500));
     assert.equal(await perfUnread(), 3, `reselecting the room marked read past the window's newest top-level row (#${windowEnd.seq})`);
     await perfPage.evaluate(() => [...document.querySelectorAll('.room-name')].find(el => el.textContent.includes('Perf history')).click());
-    await perfPage.waitForFunction(() => document.querySelector('#messages > article.message:last-child')?.dataset.messageId === 'msg_perf_late_7');
+    await perfPage.waitForFunction(() => document.querySelector('#messages > article.message:last-of-type')?.dataset.messageId === 'msg_perf_late_7');
     for (let i = 0; i < 50 && await perfUnread() !== 0; i++) await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(await perfUnread(), 0, 'reopening the room did not mark it read');
     await perfContext.close();

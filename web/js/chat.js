@@ -56,7 +56,7 @@ export class Chat {
       // A history window pages forward again when its bottom is reached (only then is scrollHeight read on scroll).
       if (this.contextMode && this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 80) this.loadNewer();
     });
-    this.scrollAnchor = new ScrollAnchor(this.list);
+    this.scrollAnchor = new ScrollAnchor(this.list, '.message, .answer-row');
     this.list.addEventListener('keydown', event => this.moveActionFocus(event));
     this.chip = document.querySelector('#reply-chip'); this.chipText = this.chip.querySelector('#reply-chip-jump'); this.chipText.onclick = () => { if (this.reply) this.jumpToMessage(this.reply.id); }; this.error = document.querySelector('#chat-error'); this.nodes = new Map();
     this.pendingNode = document.querySelector('#pending-attachments'); this.pendingNode.replaceChildren(); this.pendingView = mountPreactPage(this.pendingNode, props => html`<${PendingAttachments} ...${props} />`, { onError: error => console.error('pending attachments failed', error) }); this.attachmentInput = document.querySelector('#attachment-input');
@@ -178,7 +178,9 @@ export class Chat {
   listAtBottom() { return this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 48; }
   listBox() { const box = this.list.getBoundingClientRect(); return { top: box.top, bottom: box.bottom }; }
   rowBoxes() {
-    return this.renderedRows().map(node => ({ id: node.dataset.messageId, seq: Number(node.dataset.seq), get top() { return node.getBoundingClientRect().top; }, get bottom() { return node.getBoundingClientRect().bottom; } }));
+    // A row's answers (the controls, the history or the marker) are a row of the list under its card: the row ends where they end.
+    const tailOf = node => { const next = node.nextElementSibling; return next?.classList.contains('answer-row') ? next : node; };
+    return this.renderedRows().map(node => ({ id: node.dataset.messageId, seq: Number(node.dataset.seq), get top() { return node.getBoundingClientRect().top; }, get bottom() { return tailOf(node).getBoundingClientRect().bottom; } }));
   }
   keepPlace(id) {
     const node = this.nodes.get(id), keepTop = node.getBoundingClientRect().top;

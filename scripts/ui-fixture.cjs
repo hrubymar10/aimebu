@@ -80,7 +80,7 @@ const FIXTURE = async () => {
     const { answerControls } = await import('/js/answer-controls.js');
     const asked = message('answer-fixture', 'Should I go ahead with the migration?');
     const controls = answerControls({ proposed_answers: ['Proceed', 'Hold', 'Revise'], free_text: true }, async () => {}, { mention: '@tess' });
-    asked.querySelector('.message-bubble').append(controls);
+    controls.classList.add('answer-row'); asked.after(controls); // a row of the list under the message's card, as in the chat
   }
   // Highlighted code and a diff, from the real renderer; the audits wait for the lazy highlight.js load.
   const codeFixture = message('code-fixture', '```go\npackage main\n\n// greet says hello\nfunc greet(name string) string { return \"hi \" + name + \" 42\" }\n```\n\n```diff\ndiff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,3 +1,3 @@\n package main\n-var x = 1\n+var x = 2\n```\n\n```html\n<div class=\"a\">x</div>\n```');

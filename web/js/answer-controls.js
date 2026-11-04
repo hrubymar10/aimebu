@@ -50,8 +50,9 @@ export function fillAnswerControls(wrap, item, submit, { mention = '', compose =
 }
 
 // What a question or proposed answers on a message look like once nothing is open for them: the same buttons and question count, all
-// disabled, kept under the message so the history reads as it did. An answered one says "Answered"; any other is marked as no
-// longer pending, because nothing can answer it from here (imported history, or a question that was closed unanswered).
+// disabled, kept under the message so the history reads as it did. An answered one is just the dimmed buttons (their tooltip says
+// "Answered"); any other says "No longer pending", because nothing can answer it from here (imported history, or a question that
+// was closed unanswered).
 export const ANSWER_HISTORY_ROOT = { tag: 'div', class: 'answer-history' };
 
 export function answerHistory(message, answered) {
@@ -71,6 +72,7 @@ export function fillAnswerHistory(wrap, message, answered) {
     open.append(' ', count); wrap.append(open);
   }
   for (const value of message.proposed_answers || []) wrap.append(disabled(document.createElement('button'), value));
+  if (answered) return;
   const status = document.createElement('span'); status.className = 'answer-history-status'; status.textContent = note;
   wrap.append(status);
 }
