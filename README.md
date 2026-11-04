@@ -473,7 +473,7 @@ are created with a row's `+` or a project's ☰ menu. A project's tree ends with
 its children (and that Archived row). A project starts collapsed the first time this browser sees it; after that the choice is remembered in this browser (a project you opened stays open), and a collapsed
 root shows its children's unread total. The collapse button in the ROOMS header folds every project at once
 (or opens them all again once everything is folded). A `Hidden (N)` row closes the tree the same way and can show a room again.
-A hidden room returns when a new message addresses that user or someone joins
+The chat header shows the room's path before its title (`project › room`, each a button to that room; a project's home room has none), and on a phone only the nearest crumb stays, truncated. A hidden room returns when a new message addresses that user or someone joins
 the room. These preferences are stored on the server and shared across that
 user's tabs.
 Closing rooms show their state and any stop-blocked

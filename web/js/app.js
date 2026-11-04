@@ -82,6 +82,8 @@ chat.roomView = id => sidebar.rooms.get(id);
 chat.setRoomPreference = (room, field, value) => sidebar.setPreference(room, field, value);
 sidebar.bindSort(document.querySelector('#rooms-sort'));
 sidebar.bindCollapseAll(document.querySelector('#rooms-fold'));
+chat.roomPath = { room: id => sidebar.rooms.get(id), project: id => sidebar.projects.get(id), home: projectID => [...sidebar.rooms.values()].find(item => item.project_id === projectID && item.kind === 'home') };
+chat.openCrumb = id => { const target = sidebar.rooms.get(id); if (target) void selectRoom(target); };
 chat.projectRole = projectID => sidebar.projects.get(projectID)?.role;
 chat.projectArchived = projectID => !!sidebar.projects.get(projectID)?.archived_at;
 setProjectNames(projectID => sidebar.projects.get(projectID)?.name || '');
@@ -450,8 +452,9 @@ async function signedIn(session) {
         await sidebar.refreshProject(event.project_id);
         if (!active()) return;
         if (event.kind === 'room_close_blocked') chat.showCloseBlocked(event.room_id, payload.reason);
-        if (chat.room?.id === event.room_id) {
-          const room = sidebar.rooms.get(event.room_id) || chat.room;
+        // A rename of any room of the open room's project redraws it too: the header's path names the rooms above it.
+        if (chat.room?.id === event.room_id || (event.kind === 'room_renamed' && chat.room?.project_id === event.project_id)) {
+          const room = sidebar.rooms.get(chat.room.id) || chat.room;
           chat.setRoomFacts(room); agents.setRoomFacts(room);
         }
         if (event.kind !== 'room_created') await inbox.refresh();

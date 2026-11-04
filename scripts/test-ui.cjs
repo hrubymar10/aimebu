@@ -2204,6 +2204,26 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke');
     await domClick(first, `[data-room-id="${roomID}"] .room-name`);
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task' && document.querySelectorAll('.message').length === 1 && document.querySelector('.message-body')?.textContent === 'First message');
+    // The header shows where the room sits: its project above the title, the crumb leads back to the project's home room, a home room has no path, and on a
+    // phone the path shrinks instead of pushing the title out of the header.
+    {
+      const crumbs = () => first.evaluate(() => ({ shown: [...document.querySelectorAll('#room-crumbs .room-crumb')].filter(node => node.getClientRects().length).map(node => node.textContent), hidden: document.querySelector('#room-crumbs').hidden, title: document.querySelector('#room-title').textContent, titleWidth: Math.round(document.querySelector('#room-title').getBoundingClientRect().width), overflow: (node => node.scrollWidth > node.clientWidth + 1)(document.querySelector('.room-heading')) }));
+      const nested = await crumbs();
+      assert.deepEqual([nested.hidden, nested.shown.length, nested.title], [false, 1, 'Nested task'], 'a task room shows its project above the title');
+      const narrowPage = await a.newPage();
+      await narrowPage.emulate({ viewport: { width: 390, height: 780, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' });
+      await narrowPage.goto(`${origin}/#${roomID}`); await appReady(narrowPage);
+      await narrowPage.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
+      const narrow = await narrowPage.evaluate(() => ({ shown: [...document.querySelectorAll('#room-crumbs .room-crumb')].filter(node => node.getClientRects().length).map(node => node.textContent), titleWidth: Math.round(document.querySelector('#room-title').getBoundingClientRect().width), overflow: (node => node.scrollWidth > node.clientWidth + 1)(document.querySelector('.room-heading')) }));
+      await narrowPage.close();
+      assert.equal(narrow.overflow, false, 'the path does not overflow the header on a phone');
+      assert.ok(narrow.shown.length === 1 && narrow.titleWidth >= 40, `the title keeps room on a phone: ${JSON.stringify(narrow)}`);
+      await domClick(first, '#room-crumbs .room-crumb');
+      await first.waitForFunction(id => document.querySelector('#projects .room-row.active')?.closest('.room-group')?.dataset.roomId === id, {}, homeID);
+      assert.equal(await first.evaluate(() => document.querySelector('#room-crumbs').hidden), true, 'a home room is its project and has no path');
+      await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+      await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
+    }
     await domClick(second, `[data-room-id="${roomID}"] .room-name`);
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task' && document.querySelector('.message-body')?.textContent === 'First message');
     const id = await first.$eval('.message', el => el.dataset.messageId);

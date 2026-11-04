@@ -6,7 +6,7 @@ import { Schedules } from '../../schedules.js';
 import { RoomMembers } from '../members/page.js';
 import { RoomScopeControl, RoomUsage } from '../project/room-panels.js';
 import { InfoError, MemorySection, NotesSection, RenameForm, RoomActions, RoomFacts, ViewActions, WorktreeSection } from './room-panel.js';
-import { canRename, headerStatus, kindIcon, membersLabel, notesView } from './model.js';
+import { canRename, headerStatus, kindIcon, membersLabel, notesView, roomPath } from './model.js';
 import { RoomPanelStore } from './store.js';
 
 const section = (className, label) => { const node = document.createElement('section'); node.className = className; if (label) node.setAttribute('aria-labelledby', label); return node; };
@@ -58,11 +58,12 @@ export class RoomPanel {
 
   // The header: the room's kind icon, title, member count and what its lifecycle or project says.
   header() {
-    const title = document.querySelector('#room-title'), icon = document.querySelector('#room-icon'), members = document.querySelector('#room-members');
+    const title = document.querySelector('#room-title'), crumbs = document.querySelector('#room-crumbs'), icon = document.querySelector('#room-icon'), members = document.querySelector('#room-members');
     return effect(() => {
       this.store.version.value;
       const room = this.store.room.value;
-      if (!room) { title.textContent = 'Choose a room'; icon.hidden = true; members.hidden = true; return; }
+      if (!room) { title.textContent = 'Choose a room'; icon.hidden = true; members.hidden = true; crumbs.replaceChildren(); crumbs.hidden = true; return; }
+      this.crumbs(crumbs, room);
       title.textContent = room.title; // a rename by someone else reaches here through the room list
       const count = room.member_count || 0, status = headerStatus(room, !!this.chat.projectArchived?.(room.project_id));
       icon.textContent = kindIcon(room); icon.classList.toggle('dm', room.kind === 'dm'); icon.hidden = false;
@@ -72,6 +73,20 @@ export class RoomPanel {
       const label = membersLabel(count, status);
       members.title = label; members.setAttribute('aria-label', label); members.hidden = false;
     });
+  }
+
+  // The path beside the title (before it): project › room › … The crumbs are buttons to those rooms; on a narrow header they shrink to an ellipsis (the style
+  // sheet), and the whole path is the tooltip of each.
+  crumbs(host, room) {
+    const path = this.chat.roomPath ? roomPath(room, this.chat.roomPath) : [];
+    host.replaceChildren(); host.hidden = path.length === 0;
+    for (const crumb of path) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'room-crumb'; button.textContent = crumb.label; button.title = path.map(item => item.label).concat(room.title).join(' › ');
+      button.disabled = !crumb.roomID; button.onclick = () => this.chat.openCrumb?.(crumb.roomID);
+      const sep = document.createElement('span'); sep.className = 'room-crumb-sep'; sep.textContent = '›'; sep.setAttribute('aria-hidden', 'true');
+      host.append(button, sep);
+    }
   }
 
   setRoom(room) { this.store.setRoom(room); }

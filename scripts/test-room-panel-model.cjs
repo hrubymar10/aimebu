@@ -9,8 +9,8 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'room-panel', 'model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { kindIcon, headerStatus, membersLabel, canRename, facts, lifecycleControl, removeControl, canLeave, worktreeView, memoryValue, notesView, closeBlockedLabel };', context);
-const { kindIcon, headerStatus, membersLabel, canRename, facts, lifecycleControl, removeControl, canLeave, worktreeView, memoryValue, notesView, closeBlockedLabel } = context.api;
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { roomPath, kindIcon, headerStatus, membersLabel, canRename, facts, lifecycleControl, removeControl, canLeave, worktreeView, memoryValue, notesView, closeBlockedLabel };', context);
+const { roomPath, kindIcon, headerStatus, membersLabel, canRename, facts, lifecycleControl, removeControl, canLeave, worktreeView, memoryValue, notesView, closeBlockedLabel } = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
 assert.deepEqual(['home', 'task', 'dm'].map(kind => kindIcon({ kind })), ['⌂', '#', '@']);
@@ -49,4 +49,16 @@ assert.deepEqual([plain(notesView({ kind: 'task' })), plain(notesView({ kind: 'h
   { hidden: false, heading: 'Task notes', text: 'Notes the agents keep for this task. They stay with this room.', button: 'Open task notes' },
   { hidden: false, heading: 'Project memory', text: 'The home room has no task notes of its own: its agents use the project’s memory (project facts).', button: 'Open project memory' }, true]);
 assert.deepEqual([closeBlockedLabel('agent_stop_invalid_transition'), closeBlockedLabel('open_children_left'), closeBlockedLabel('')], ['an agent could not be stopped', 'open children left', 'unknown reason']);
+// The path above a room's title: the project, then the rooms between it and the project's home room; home rooms and chats outside a project have none.
+{
+  const rooms = { home: { id: 'rm_h', kind: 'home', project_id: 'p1', title: 'Alpha' }, a: { id: 'rm_a', kind: 'task', project_id: 'p1', parent_id: 'rm_h', title: 'Auth' }, b: { id: 'rm_b', kind: 'task', project_id: 'p1', parent_id: 'rm_a', title: 'Login' } };
+  const lookup = { room: id => Object.values(rooms).find(item => item.id === id), project: id => (id === 'p1' ? { name: 'Alpha project' } : undefined), home: () => rooms.home };
+  assert.deepEqual(plain(roomPath(rooms.home, lookup)), [], 'a home room is its project');
+  assert.deepEqual(plain(roomPath(rooms.a, lookup)), [{ label: 'Alpha project', roomID: 'rm_h', project: true }]);
+  assert.deepEqual(plain(roomPath(rooms.b, lookup)), [{ label: 'Alpha project', roomID: 'rm_h', project: true }, { label: 'Auth', roomID: 'rm_a' }], 'project, then the room above');
+  assert.deepEqual(plain(roomPath({ id: 'rm_d', kind: 'dm', title: 'ada' }, lookup)), [], 'a chat outside a project has no path');
+  assert.deepEqual(plain(roomPath({ ...rooms.a, project_id: 'gone' }, lookup)), [], 'nothing is guessed about a project that is not loaded');
+  const loop = { id: 'rm_x', kind: 'task', project_id: 'p1', parent_id: 'rm_y', title: 'X' }, other = { id: 'rm_y', kind: 'task', project_id: 'p1', parent_id: 'rm_x', title: 'Y' };
+  assert.equal(roomPath(loop, { ...lookup, room: id => (id === 'rm_y' ? other : loop) }).length, 2, 'a parent loop ends instead of spinning');
+}
 console.log('room panel model: ok');

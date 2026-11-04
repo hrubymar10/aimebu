@@ -4,6 +4,20 @@ export function headerStatus(room, archivedProject) {
   return archivedProject ? 'Project archived' : room.lifecycle === 'closing' ? 'Closing…' : room.lifecycle === 'closed' ? 'Archived' : '';
 }
 
+// Where a room sits: its project, then the rooms it is nested under, outermost first. Each crumb names where it leads (a project leads to its home room).
+// A project's home room is the project itself, and a chat outside any project has no path. `lookup` reads the loaded lists: room(id), project(id),
+// home(projectID).
+export function roomPath(room, lookup) {
+  if (!room || room.kind === 'home' || !room.project_id) return [];
+  const project = lookup.project(room.project_id);
+  if (!project) return [];
+  const trail = [], seen = new Set([room.id]);
+  for (let parent = room.parent_id && lookup.room(room.parent_id); parent && parent.kind !== 'home' && !seen.has(parent.id); parent = parent.parent_id && lookup.room(parent.parent_id)) {
+    seen.add(parent.id); trail.unshift({ label: parent.title, roomID: parent.id });
+  }
+  return [{ label: project.name, roomID: lookup.home(room.project_id)?.id || '', project: true }, ...trail];
+}
+
 export const membersLabel = (count, status) => `${count} ${count === 1 ? 'member' : 'members'}${status ? ` · ${status}` : ''}`;
 
 // The server decides; this only keeps a field out of sight that it would refuse. A task room's title is for owners and operators, the home room's is
