@@ -5,6 +5,7 @@ import { useAlive } from '../../hooks/use-alive.js';
 import { useDirty } from '../../hooks/use-dirty.js';
 import { IconButton } from '../../components/icon-button.js';
 import { ModelsPanel } from './models.js';
+import { ProvidersPanel } from './providers.js';
 import { useIdPrefix } from './id-prefix.js';
 import { versionLabel } from '../../harness-version.js';
 import { familyName, harnessStatus, harnessTitle, harnessLabel, formFromHarness, launcherBody, enabledBody } from './model.js';
@@ -27,7 +28,7 @@ const Switch = ({ label, checked, onChange }) => html`
 `;
 
 // Drafts survive other cards' refreshes; a save clears its draft only if nothing was typed meanwhile.
-export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen, draft, onDraft, roles, defaults, onRoleChanged, modelFailure, onModelFailure, onReload, onRefresh, onModelsSaved, onStale, onSnapshot, onDirty }) {
+export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen, draft, onDraft, roles, defaults, onRoleChanged, modelFailure, onModelFailure, onReload, onRefresh, onModelsSaved, onStale, onStaleProviders, onSnapshot, onDirty }) {
   const alive = useAlive();
   const edits = draft?.form ?? null;
   const setEdits = update => onDraft('form', update);
@@ -180,6 +181,18 @@ export function HarnessCard({ machineID, harness, selected, formOpen, onFormOpen
         </div>
         <p class="error" role="alert">${error}</p>
       </form>
+      ${harness.tool === 'opencode' && html`
+        <${ProvidersPanel}
+          machineID=${machineID}
+          harness=${harness}
+          draft=${draft?.providers ?? null}
+          setDraft=${update => onDraft('providers', update)}
+          onSaved=${onModelsSaved}
+          onStale=${onStaleProviders}
+          onSnapshot=${onSnapshot}
+          onDirty=${onDirty}
+        />
+      `}
       <${ModelsPanel}
         machineID=${machineID}
         harness=${harness}

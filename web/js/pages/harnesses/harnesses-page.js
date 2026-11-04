@@ -30,7 +30,7 @@ export function HarnessesPage({ openToken, wanted, idPrefix = '', embedded = fal
     machineID, harness, key: harness.id, selected: harness.id === selected,
     formOpen: openForms.has(harness.id),
     onFormOpen: data.setFormOpen,
-    roles, defaults: data.defaults, onRoleChanged: data.roleChanged, onStale: data.staleModels,
+    roles, defaults: data.defaults, onRoleChanged: data.roleChanged, onStale: data.staleModels, onStaleProviders: data.staleProviders,
     draft: state.drafts.value.get(harness.id),
     onDraft: (kind, update) => data.setDraft(harness.id, kind, update),
     modelFailure: state.modelFailures.value.get(harness.id) || '',

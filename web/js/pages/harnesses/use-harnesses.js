@@ -3,7 +3,7 @@ import { request } from '../../api.js';
 import { useAlive } from '../../hooks/use-alive.js';
 import { launcherReady } from '../../harness-offer.js';
 import { RoleDefaults, ROLE_DEFAULTS_CHANGED } from '../../role-defaults.js';
-import { harnessFromLauncher, createBody, initialModels, detectNotes, detectionFailure, machineSummary, chosenHarness, staleModelsMessage, defaultLabel } from './model.js';
+import { harnessFromLauncher, createBody, initialModels, detectNotes, detectionFailure, machineSummary, chosenHarness, staleModelsMessage, staleProvidersMessage, defaultLabel } from './model.js';
 
 export const anyReady = rows => rows.some(row => launcherReady(row.enabled, row.models));
 
@@ -224,6 +224,14 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
     if (alive() && state.machineID.peek() === id) setError(staleModelsMessage(harness));
   };
 
+  // Same for the providers: a list saved elsewhere meanwhile is reloaded, the draft of it dropped, and the person told.
+  const staleProviders = async harness => {
+    const id = state.machineID.peek();
+    setDraft(harness.id, 'providers', null);
+    await load(id);
+    if (alive() && state.machineID.peek() === id) setError(staleProvidersMessage(harness));
+  };
+
   // The roles are the store's list, read and saved through the same /api/roles as Settings -> Roles; the signal holds a copy to draw from.
   const syncRoles = () => { state.roles.value = [...defaults.roles]; };
   async function loadRoles() {
@@ -276,6 +284,6 @@ export function useHarnesses({ openToken, wanted, closePanel, onReady = () => {}
 
   return {
     state, alive, load, chooseMachine, detect, addDetected, addByHand, defaults, roleChanged, labelOfDefault,
-    setModelFailure, patchRow, setFormOpen, selectHarness, setDraft, staleModels,
+    setModelFailure, patchRow, setFormOpen, selectHarness, setDraft, staleModels, staleProviders,
   };
 }

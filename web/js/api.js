@@ -27,6 +27,7 @@ export async function request(path, options = {}) {
     error.code = problem.error;
     error.detectDir = problem.detect_dir;
     error.retryAfter = problem.retry_after_sec;
+    error.body = problem; // the fields an answer carries beyond its message (a refused provider's id and model count)
     throw error;
   }
   return response.status === 204 ? null : response.json();

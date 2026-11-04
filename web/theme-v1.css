@@ -2581,3 +2581,16 @@ dialog:focus, dialog:focus-visible { outline: none; }
   .room-crumbs .room-crumb { max-width: 8ch; }
   .room-crumbs .room-crumb:not(:nth-last-of-type(1)), .room-crumbs .room-crumb:not(:nth-last-of-type(1)) + .room-crumb-sep { display: none; }
 }
+
+/* Custom providers of an OpenCode harness: rows like the models', a key-status word beside each id, and the answers the import and the refused save give. */
+.harness-providers { display: grid; gap: 8px; margin: 12px 0; }
+.harness-provider-rows { display: grid; gap: 8px; }
+.harness-provider-row input[type=text] { min-width: 0; width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: inherit; }
+.harness-provider-row .harness-detail-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.harness-detail-top .harness-provider-key { flex: 0 1 auto; color: var(--text-muted); font-size: 12px; }
+.harness-provider-key.is-set { color: var(--green-text); }
+.harness-provider-key.is-missing { color: var(--red-text, var(--text-primary)); }
+.harness-detail-top .harness-provider-remove { flex: 0 0 auto; margin-left: auto; }
+.harness-provider-use { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
+.harness-endpoint-problems { margin: 4px 0; padding-left: 18px; color: var(--text-muted); font-size: 12px; }
+@media (max-width: 700px) { .harness-provider-row .harness-detail-fields { grid-template-columns: minmax(0, 1fr); } }

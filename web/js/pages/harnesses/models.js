@@ -21,6 +21,7 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [failureDetail, setFailureDetail] = useState('');
+  const [failureProblems, setFailureProblems] = useState({});
   const [status, setStatus] = useState('');
   const [found, setFound] = useState(null);
   const [retryShown, setRetryShown] = useState(false);
@@ -40,6 +41,7 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
     const failure = problem?.summary ? problem : detectionFailure(problem, !!harness.containerized);
     setError(failure.summary);
     setFailureDetail(failure.detail);
+    setFailureProblems(problem?.body?.endpoint_problems || {}); // a listing that failed still says which custom endpoints could not be asked
     if (harness.tool !== 'claude') setRetryShown(true);
   };
   useEffect(() => { if (failure) failed(failure); }, [failure]);
@@ -68,6 +70,7 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
     const latest = () => alive() && run === detectRun.current;
     setError('');
     setFailureDetail('');
+    setFailureProblems({});
     setDetecting(true);
     try {
       const result = await request(`${modelsURL(machineID, harness.id)}/detect`, { method: 'POST', body: folder ? { dir: folder } : {} });
@@ -268,6 +271,7 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
         <${IconButton} name="refresh" label="Retry auto-detect in this folder" className="harness-detect-retry-button" disabled=${detecting} onClick=${retry} />
       </div>
       <${DetectionDetails} detail=${failureDetail} />
+      <${EndpointProblems} problems=${failureProblems} />
       <div class="harness-detect-models">
         ${found && html`
           <${ModelCandidates}
@@ -282,6 +286,12 @@ export function ModelsPanel({ machineID, harness, draft, setDraft, roles, defaul
       <p class="settings-desc" role="status">${status}</p>
     </div>
   `;
+}
+
+// A custom provider whose endpoint could not be asked for its models (the reason, never the endpoint's own words), per provider id.
+function EndpointProblems({ problems }) {
+  const entries = Object.entries(problems || {});
+  return entries.length > 0 && html`<ul class="harness-endpoint-problems" role="status">${entries.map(([id, reason]) => html`<li data-provider=${id} key=${id}>${`${id}: its endpoint could not be asked (${reason})`}</li>`)}</ul>`;
 }
 
 function ModelCandidates({ found, onAdd, onClose, onDirty, dirtyKey }) {
@@ -319,6 +329,7 @@ function ModelCandidates({ found, onAdd, onClose, onDirty, dirtyKey }) {
           />
         </div>
       </div>
+      <${EndpointProblems} problems=${found.endpoint_problems} />
       <div class="harness-candidate-list">
         ${candidates.map(candidate => html`
           <label class="machine-harness-enabled harness-detect-row" data-slug=${candidate.slug} key=${candidate.slug}>

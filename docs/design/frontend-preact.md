@@ -258,6 +258,7 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
   - a models save sends the revision its draft started from, and one refused as stale drops the models draft (not the Edit form's), reads again and says so;
     a save moves the draft on to the revision it answered with, so an edit made during the save, and the next edit after a
     failed re-read, are not refused as stale;
+  - the providers panel of an OpenCode harness works the same way (its own `providers` draft; a `409 stale_providers` drops it and reads again; `409 provider_in_use` lists every provider that would lose models and offers the save again with `remove_models`; any edit withdraws the offer), with the key status read from `key-status` and the import's suggestions joining the unsaved list only;
   - role defaults: a switch per role on every model saves the role on its own, the role panel names its entries (those of
     another machine are read once), a refused save says why and the views show what is stored, and a role save made in
     Settings → Roles is read here while the page is shown and ignored while it is hidden.

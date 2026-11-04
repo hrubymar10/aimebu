@@ -534,6 +534,164 @@ async function main() {
       assert.equal(await page.evaluate(() => window.__page.hasUnsavedChanges()), false, 'a cancelled Add harness form is not unsaved');
       await page.close();
     }
+
+    // Custom providers of an OpenCode harness: only OpenCode has the section; rows, key status per provider (set, not set, machine offline, supervisor
+    // update), a save that sends the whole list with the revision it started from and the limits as a pair, the refusals, and the import.
+    {
+      const base = launcher('mch_a', 'oc1');
+      const provider = (id, extra = {}) => ({ id, name: id.toUpperCase(), npm: '@ai-sdk/openai-compatible', base_url: `https://${id}.example/v1`, key_env: `${id.toUpperCase()}_KEY`, ...extra });
+      const opencode = { ...base, config: { ...base.config, tool: 'opencode' }, providers: [provider('acme'), provider('local', { key_env: '' })], providers_rev: 'p1', models: [{ slug: 'acme/big', label: 'Big', note: '', default: true }], models_rev: 'm1' };
+      const list = { launchers: [opencode, launchers.mch_a[1]], activity: [] };
+      const keyURL = '/api/machines/mch_a/launchers/oc1/providers/key-status', putURL = '/api/machines/mch_a/launchers/oc1/providers', panel = `${card('oc1')} .harness-providers`;
+      const states = page => page.$$eval(`${panel} .harness-provider-row`, rows => rows.map(row => [row.dataset.provider, row.querySelector('.harness-provider-key').textContent]));
+      const setup = (keys = { machine_online: true, supervisor_supported: true, keys: [{ provider_id: 'acme', key_env: 'ACME_KEY', set: true }] }, more = {}) => ({ 'GET /api/machines/mch_a/launchers': list, [`GET ${keyURL}`]: keys, ...more });
+      {
+        const page = await mount(setup());
+        assert.equal(await page.$(`${card('a2')} .harness-providers`), null, 'a harness of another family has no providers section');
+        await page.waitForFunction(selector => document.querySelector(`${selector} .harness-provider-key`)?.textContent === 'ACME_KEY is set', {}, panel);
+        assert.deepEqual(await states(page), [['acme', 'ACME_KEY is set'], ['local', 'No key variable']], 'one row per provider, with its key status (never a value)');
+        assert.equal(await page.$eval(`${panel} [name=key_env]`, el => el.value), 'ACME_KEY');
+        assert.equal(await page.$eval(`${panel} .harness-provider-add`, el => el.title), 'Add a provider', 'the controls are icons with tooltips');
+        await page.close();
+      }
+      for (const [keys, expected] of [[{ machine_online: false, supervisor_supported: true, keys: [] }, 'Machine offline: key not checked'], [{ machine_online: true, supervisor_supported: false, keys: [] }, 'Supervisor update needed to check the key'],
+        [{ machine_online: true, supervisor_supported: true, keys: [{ provider_id: 'acme', key_env: 'ACME_KEY', set: false }] }, 'ACME_KEY is not set on that machine'], [{ machine_online: true, supervisor_supported: true, keys: [{ provider_id: 'acme', key_env: 'ACME_KEY', set: null }] }, 'Key not checked']]) {
+        const page = await mount(setup(keys));
+        await page.waitForFunction((selector, text) => document.querySelector(`${selector} .harness-provider-key`)?.textContent === text, {}, panel, expected);
+        await page.close();
+      }
+      // Save: the whole list, the revision, the limits only as a pair; a key variable edited but not saved has no status to show.
+      {
+        const page = await mount(setup());
+        await page.waitForSelector(panel);
+        await page.$eval(`${panel} .harness-provider-add`, el => el.click());
+        await page.waitForFunction(selector => document.querySelectorAll(`${selector} .harness-provider-row`).length === 3, {}, panel);
+        const row = `${panel} .harness-provider-row:nth-of-type(3)`;
+        await type(page, `${row} [name=id]`, 'Bad Id'); await type(page, `${row} [name=base_url]`, 'https://new.example/v1');
+        await page.$eval(`${panel} .btn-primary`, el => el.click());
+        await settle(page);
+        assert.match(await page.$eval(`${panel} .error`, el => el.textContent), /lowercase letters, digits and hyphens/, 'a bad id is refused inline');
+        assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'PUT').length), 0, 'and nothing is sent');
+        await type(page, `${row} [name=id]`, 'fresh'); await type(page, `${row} [name=context_tokens]`, '128000');
+        await page.$eval(`${panel} .btn-primary`, el => el.click());
+        await settle(page);
+        assert.match(await page.$eval(`${panel} .error`, el => el.textContent), /both token limits or neither/);
+        await type(page, `${row} [name=output_tokens]`, '8000'); await type(page, `${row} [name=key_env]`, 'FRESH_KEY');
+        await hold(page, 'GET /api/machines/mch_a/launchers');
+        await page.$eval(`${panel} .btn-primary`, el => el.click());
+        const put = await pending(page, 'PUT', putURL);
+        assert.deepEqual(await page.evaluate(index => window.__requests[index].body, put), { providers: [provider('acme'), { id: 'local', name: 'LOCAL', npm: '@ai-sdk/openai-compatible', base_url: 'https://local.example/v1' }, { id: 'fresh', name: 'fresh', npm: '@ai-sdk/openai-compatible', base_url: 'https://new.example/v1', key_env: 'FRESH_KEY', context_tokens: 128000, output_tokens: 8000 }], expected_rev: 'p1' }, 'the whole list, the revision it started from, the limits as a pair');
+        await answer(page, put, 400, { error: 'invalid_providers', message: 'fresh: base_url must be https' });
+        await page.waitForFunction(selector => /base_url must be https/.test(document.querySelector(`${selector} .error`).textContent), {}, panel);
+        assert.equal(await page.$eval(`${panel} .btn-primary`, el => el.disabled), false, 'a refused list stays a draft');
+        await page.close();
+      }
+      // A list changed elsewhere meanwhile: reload, drop the draft, say so.
+      {
+        const page = await mount(setup());
+        await page.waitForSelector(panel);
+        await type(page, `${panel} [name=name]`, 'Mine');
+        await hold(page, 'GET /api/machines/mch_a/launchers');
+        await page.$eval(`${panel} .btn-primary`, el => el.click());
+        await answer(page, await pending(page, 'PUT', putURL), 409, { error: 'stale_providers', message: 'changed' });
+        await answer(page, await pending(page, 'GET', '/api/machines/mch_a/launchers'), 200, { launchers: [{ ...opencode, providers: [provider('acme', { name: 'Theirs' }), provider('local', { key_env: '' })], providers_rev: 'p2' }, launchers.mch_a[1]], activity: [] });
+        await page.waitForFunction(selector => document.querySelector(`${selector} [name=name]`)?.value === 'Theirs', {}, panel);
+        assert.match(await page.$eval('#settings-harnesses > .error', el => el.textContent), /Someone changed the providers of oc1 in the meantime/);
+        assert.equal(await page.$eval(`${panel} .btn-primary`, el => el.disabled), true, 'the refused draft is gone');
+        await page.close();
+      }
+      // Removing a provider whose models are still listed offers to remove them with it, and sends remove_models.
+      {
+        const page = await mount(setup());
+        await page.waitForSelector(panel);
+        await page.$eval(`${panel} .harness-provider-row[data-provider=acme] .harness-provider-remove`, el => el.click());
+        await page.$eval(`${panel} .harness-provider-row[data-provider=local] .harness-provider-remove`, el => el.click());
+        await page.$eval(`${panel} .btn-primary`, el => el.click());
+        await answer(page, await pending(page, 'PUT', putURL), 409, { error: 'provider_in_use', message: 'acme is in use', provider_id: 'acme', model_count: 1, in_use: [{ provider_id: 'acme', model_count: 1 }, { provider_id: 'local', model_count: 2 }] });
+        await page.waitForSelector(`${panel} .harness-provider-remove-models`);
+        assert.equal(await page.$eval(`${panel} .harness-provider-remove-models`, el => el.title), 'Remove acme, local with their 3 models', 'the offer names every provider that would lose models');
+        assert.match(await page.$eval(`${panel} .harness-provider-use`, el => el.textContent), /acme \(1\), local \(2\) still have models listed/);
+        // Any edit withdraws the offer: it was made for the list as it was.
+        await page.$eval(`${panel} .harness-provider-add`, el => el.click());
+        await settle(page);
+        assert.equal(await page.$(`${panel} .harness-provider-remove-models`), null, 'an edit clears the offer');
+        await page.$eval(`${panel} .harness-provider-row:last-of-type .harness-provider-remove`, el => el.click());
+        await page.$eval(`${panel} .btn-primary`, el => el.click());
+        await answer(page, await pending(page, 'PUT', putURL), 409, { error: 'provider_in_use', message: 'x', provider_id: 'acme', model_count: 1, in_use: [{ provider_id: 'acme', model_count: 1 }, { provider_id: 'local', model_count: 2 }] });
+        await page.waitForSelector(`${panel} .harness-provider-remove-models`);
+        await hold(page, 'GET /api/machines/mch_a/launchers');
+        await page.$eval(`${panel} .harness-provider-remove-models`, el => el.click());
+        const again = await pending(page, 'PUT', putURL);
+        assert.deepEqual(await page.evaluate(index => [window.__requests[index].body.remove_models, window.__requests[index].body.providers.map(item => item.id)], again), [true, []]);
+        await page.close();
+      }
+      // An edit made while a save is in flight must not be offered the removal that was refused for the list that was sent.
+      {
+        const page = await mount(setup());
+        await page.waitForSelector(panel);
+        await page.$eval(`${panel} .harness-provider-row[data-provider=acme] .harness-provider-remove`, el => el.click());
+        await hold(page, 'GET /api/machines/mch_a/launchers');
+        await page.$eval(`${panel} .btn-primary`, el => el.click());
+        const put = await pending(page, 'PUT', putURL);
+        await type(page, `${panel} .harness-provider-row[data-provider=local] [name=name]`, 'Edited meanwhile');
+        await answer(page, put, 409, { error: 'provider_in_use', message: 'acme is in use', provider_id: 'acme', model_count: 1, in_use: [{ provider_id: 'acme', model_count: 1 }] });
+        await page.waitForFunction(selector => /changed while it was being saved/.test(document.querySelector(`${selector} .error`).textContent), {}, panel);
+        assert.equal(await page.$(`${panel} .harness-provider-remove-models`), null, 'no offer for a list that was edited during the save');
+        await page.close();
+      }
+      // The import: suggestions go into the unsaved list, not the server; one already there, one with a problem and one with an inline key say so.
+      {
+        const suggestions = { source: '~/.config/opencode/opencode.json', suggestions: [
+          { provider: provider('acme'), models: [], already_added: true },
+          { provider: provider('lab', { key_env: '' }), models: [{ slug: 'lab/x', label: 'X' }], inline_key: true },
+          { provider: provider('broken', { base_url: 'http://example.com/v1' }), models: [], problem: 'plain http is only for this machine' },
+          { provider: provider('team'), models: [] }], skipped: [{ id: 'anth', reason: 'not OpenAI-compatible' }] };
+        const page = await mount(setup(undefined, { [`POST ${putURL}/import`]: suggestions }));
+        await page.waitForSelector(panel);
+        await page.$eval(`${panel} .harness-provider-import`, el => el.click());
+        await page.waitForSelector(`${panel} .harness-provider-suggestions`);
+        assert.deepEqual(await page.$$eval(`${panel} .harness-provider-suggestions input`, inputs => inputs.map(el => [el.getAttribute('aria-label'), el.disabled])), [['Add acme', true], ['Add lab', false], ['Add broken', true], ['Add team', false]]);
+        const text = await page.$eval(`${panel} .harness-provider-suggestions`, el => el.textContent);
+        assert.match(text, /already in the list/); assert.match(text, /models: lab\/x/, 'the model ids of a suggestion are shown'); assert.match(text, /plain http is only for this machine/); assert.match(text, /set an environment variable and enter its name/); assert.match(text, /Not offered: anth \(not OpenAI-compatible\)/);
+        await page.$eval(`${panel} .harness-provider-suggestions [aria-label="Add lab"]`, el => el.click());
+        await page.$eval(`${panel} .harness-provider-suggestions [aria-label="Add team"]`, el => el.click());
+        await page.$eval(`${panel} .harness-provider-suggestions .btn-primary`, el => el.click());
+        await page.waitForFunction(selector => document.querySelectorAll(`${selector} .harness-provider-row`).length === 4, {}, panel);
+        assert.equal(await page.evaluate(() => window.__requests.filter(request => request.method === 'PUT').length), 0, 'nothing is saved by the import');
+        assert.equal(await page.$eval(`${panel} .btn-primary`, el => el.disabled), false, 'the list is an unsaved draft');
+        assert.match(await page.$eval(`${panel} [role=status]:last-child`, el => el.textContent), /Save providers to keep them/);
+        await page.close();
+      }
+      // A listing that fails still names the endpoints that could not be asked.
+      {
+        const page = await mount(setup());
+        await page.waitForSelector(`${card('oc1')} .harness-model-detect`);
+        await hold(page, 'POST /api/machines/mch_a/launchers/oc1/models/detect');
+        await page.$eval(`${card('oc1')} .harness-model-detect`, el => el.click());
+        await answer(page, await pending(page, 'POST', '/api/machines/mch_a/launchers/oc1/models/detect'), 502, { error: 'detect_failed', message: "Couldn't detect the models: nothing usable was listed.", endpoint_problems: { local: 'the endpoint answered HTTP 500' } });
+        await page.waitForSelector(`${card('oc1')} .harness-endpoint-problems`);
+        assert.match(await page.$eval(`${card('oc1')} .harness-endpoint-problems`, el => el.textContent), /local: its endpoint could not be asked \(the endpoint answered HTTP 500\)/);
+        await page.close();
+      }
+      // The import's refusals are shown.
+      for (const [status, message, expected] of [[503, 'machine offline', /Can't read the OpenCode config now: machine offline/], [502, 'bad json', /could not be read: bad json/]]) {
+        const page = await mount(setup(undefined, { [`POST ${putURL}/import`]: null }));
+        await page.waitForSelector(panel);
+        await page.$eval(`${panel} .harness-provider-import`, el => el.click());
+        await answer(page, await pending(page, 'POST', `${putURL}/import`), status, { error: 'import_failed', message });
+        await page.waitForFunction((selector, text) => new RegExp(text).test(document.querySelector(`${selector} .error`).textContent), {}, panel, expected.source);
+        await page.close();
+      }
+      // Detecting models names the providers whose endpoint could not be asked.
+      {
+        const page = await mount(setup(undefined, { 'POST /api/machines/mch_a/launchers/oc1/models/detect': { candidates: [{ slug: 'acme/big', label: 'Big', already_listed: true }], source: 'harness', endpoint_problems: { local: 'connection refused' } } }));
+        await page.waitForSelector(`${card('oc1')} .harness-model-detect`);
+        await page.$eval(`${card('oc1')} .harness-model-detect`, el => el.click());
+        await page.waitForSelector(`${card('oc1')} .harness-endpoint-problems`);
+        assert.match(await page.$eval(`${card('oc1')} .harness-endpoint-problems`, el => el.textContent), /local: its endpoint could not be asked \(connection refused\)/);
+        await page.close();
+      }
+    }
     assert.deepEqual(errors, [], 'no page errors');
     console.log('harness page tests passed');
   } finally {

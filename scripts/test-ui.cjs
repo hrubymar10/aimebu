@@ -789,6 +789,43 @@ async function main() {
       // Settings now lists a harness that can start an agent (enabled, with a model): the skip this owner started with is forgotten on the
       // server at once, not at the next sign-in.
       await first.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.harness_setup_skipped === '0', { timeout: 20000 });
+      // Custom providers of an OpenCode harness, against the real server: the section is there, a provider added in the UI is stored (its key variable
+      // name only), its models detect is not needed to save, and removing it again leaves the list as it was.
+      {
+        const apiCall = (method, apiPath, body) => first.evaluate(async (method, apiPath, body) => {
+          const { csrf_token } = await (await fetch('/api/me')).json();
+          const response = await fetch(apiPath, { method, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: body === undefined ? undefined : JSON.stringify(body) });
+          return { status: response.status, body: response.status === 204 ? null : await response.json().catch(() => null) };
+        }, method, apiPath, body);
+        const created = await apiCall('POST', `/api/machines/${machineID}/launchers`, { tool: 'opencode', command: 'opencode', args: [], env_refs: {}, enabled: true, containerized: false, path_maps: [], visible_roots: [], supports_toolbox: true });
+        assert.equal(created.status, 200, 'an OpenCode harness is added through the API');
+        const openID = created.body.config?.id || created.body.id;
+        await first.evaluate(() => { const select = document.querySelector('#harness-machine'); select.dispatchEvent(new Event('change', { bubbles: true })); });
+        await first.waitForSelector(`#harnesses-list .harness-master-item[data-harness-id="${openID}"]`);
+        await domClick(first, `#harnesses-list .harness-master-item[data-harness-id="${openID}"]`);
+        const panel = `#harness-card-${openID} .harness-providers`;
+        await first.waitForSelector(panel);
+        assert.equal(await first.$(`#harnesses-list .machine-harness[data-tool=codex] .harness-providers`), null, 'only an OpenCode harness has the providers section');
+        await domClick(first, `${panel} .harness-provider-add`);
+        await first.locator(`${panel} [name=id]`).fill('uiprov'); await first.locator(`${panel} [name=name]`).fill('UI provider');
+        await first.locator(`${panel} [name=base_url]`).fill('https://uiprov.example/v1'); await first.locator(`${panel} [name=key_env]`).fill('UIPROV_API_KEY');
+        await domClick(first, `${panel} .btn-primary`);
+        await first.waitForFunction(selector => document.querySelector(`${selector} [role=status]:last-child`)?.textContent === 'Providers saved.', {}, panel);
+        const stored = await apiCall('GET', `/api/machines/${machineID}/launchers/${openID}/providers`);
+        assert.deepEqual(stored.body.providers.map(item => [item.id, item.name, item.base_url, item.key_env]), [['uiprov', 'UI provider', 'https://uiprov.example/v1', 'UIPROV_API_KEY']], 'the provider and the NAME of its key variable are stored');
+        assert.equal(JSON.stringify(stored.body).includes('sk-'), false, 'no key is stored');
+        assert.equal(await first.$eval(`${panel} .harness-provider-key`, el => el.textContent.length > 0), true, 'the key status says something (offline or not set), never a value');
+        await first.waitForFunction(selector => document.querySelector(`${selector} .btn-primary`).disabled, {}, panel);
+        // A list a second tab changed meanwhile is refused as stale and reloaded.
+        await apiCall('PUT', `/api/machines/${machineID}/launchers/${openID}/providers`, { providers: [{ ...stored.body.providers[0], name: 'Changed elsewhere' }], expected_rev: stored.body.providers_rev });
+        await first.locator(`${panel} [name=name]`).fill('Mine');
+        await domClick(first, `${panel} .btn-primary`);
+        await first.waitForFunction(selector => document.querySelector(`${selector} [name=name]`)?.value === 'Changed elsewhere', {}, panel);
+        assert.match(await first.$eval('#settings-harnesses > .error', el => el.textContent), /Someone changed the providers/, 'a stale save is refused and says so');
+        assert.equal((await apiCall('DELETE', `/api/machines/${machineID}/launchers/${openID}`)).status < 300, true);
+        await first.evaluate(() => { document.querySelector('#harness-machine').dispatchEvent(new Event('change', { bubbles: true })); });
+        await first.waitForFunction(id => !document.querySelector(`#harness-card-${id}`), {}, openID);
+      }
       // Remove the harness again so later steps start clean.
       await domClick(first, '#harnesses-list .machine-harness .machine-harness-edit');
       assert.deepEqual(await first.$eval('#harnesses-list .machine-harness-remove', button => [button.title, button.getAttribute('aria-label'), !!button.querySelector('.icon-mask-trash')]), ['Remove Codex', 'Remove Codex', true], 'the harness remove action is a trash icon');

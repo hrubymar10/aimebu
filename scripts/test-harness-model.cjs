@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 
 assert.ok(!/^import /m.test(source), 'model.js stays import-free so it can run here');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { MODELS_MAX, familyName, harnessLabel, addFoundModels, detectionFailure, lines, pairs, harnessFromLauncher, harnessStatus, harnessTitle, persistedDefinition, formFromHarness, launcherBody, enabledBody, createBody, addModel, removeModel, setDefaultModel, updateModel, modelsError, initialModels, detectNotes, machineSummary, FAMILIES, tabTitle, staleModelsMessage, chosenHarness, tabKeyTarget, defaultLabel };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { PROVIDERS_MAX, emptyProvider, editableProvider, addProvider, removeProvider, updateProvider, providersError, providersBody, providerInUse, removeWithModelsLabel, inUseMessage, keyState, suggestionState, addSuggestions, MODELS_MAX, familyName, harnessLabel, addFoundModels, detectionFailure, lines, pairs, harnessFromLauncher, harnessStatus, harnessTitle, persistedDefinition, formFromHarness, launcherBody, enabledBody, createBody, addModel, removeModel, setDefaultModel, updateModel, modelsError, initialModels, detectNotes, machineSummary, FAMILIES, tabTitle, staleModelsMessage, chosenHarness, tabKeyTarget, defaultLabel };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -104,4 +104,51 @@ assert.equal(m.defaultLabel(item, null, { machine: 'Other', label: 'Pi', models:
 assert.equal(m.staleModelsMessage({ label: 'Claude Code', name: 'native' }), 'Someone changed the models of Claude Code in the meantime. The list was reloaded; make your changes again.');
 assert.equal(m.staleModelsMessage({ name: 'native' }), 'Someone changed the models of native in the meantime. The list was reloaded; make your changes again.');
 
+
+// Custom providers: a stored provider is edited with its limits as text, and goes out with the limits only as a pair and the key variable's NAME only.
+{
+  const stored = { id: 'acme', name: 'Acme', npm: '@ai-sdk/openai-compatible', base_url: 'https://acme.example/v1', key_env: 'ACME_KEY', context_tokens: 128000, output_tokens: 8000 };
+  const editable = m.editableProvider(stored);
+  assert.deepEqual(plain([editable.context_tokens, editable.output_tokens]), ['128000', '8000']);
+  assert.deepEqual(plain(m.providersBody([editable], 'p1')), { providers: [stored], expected_rev: 'p1' });
+  assert.deepEqual(plain(m.providersBody([m.editableProvider({ ...stored, key_env: '', context_tokens: 0, output_tokens: 0, name: '' })], 'p1', true)), { providers: [{ id: 'acme', name: 'acme', npm: '@ai-sdk/openai-compatible', base_url: 'https://acme.example/v1' }], expected_rev: 'p1', remove_models: true }, 'no key variable, no limits, a name defaulting to the id, and remove_models only when asked');
+  const bad = change => m.providersError([{ ...editable, ...change }]);
+  assert.equal(bad({}), '');
+  assert.match(bad({ id: 'Bad Id' }), /lowercase letters/); assert.match(bad({ base_url: ' ' }), /endpoint URL/); assert.match(bad({ key_env: 'lower' }), /upper case/);
+  assert.match(bad({ output_tokens: '' }), /both token limits or neither/); assert.match(bad({ context_tokens: '0', output_tokens: '5' }), /whole numbers above zero/);
+  assert.equal(bad({ context_tokens: '', output_tokens: '', key_env: '' }), '', 'limits and the key are optional');
+  assert.match(m.providersError([editable, editable]), /Two providers are called acme/);
+  assert.equal(m.addProvider(Array.from({ length: m.PROVIDERS_MAX }, () => editable), undefined).length, m.PROVIDERS_MAX, 'the list stops at its limit');
+  assert.deepEqual(plain(m.removeProvider([1, 2, 3], 1)), [1, 3]);
+  assert.equal(m.harnessFromLauncher({ config: { id: 'x', name: 'n' }, providers: [stored], providers_rev: 'p9' }).providers_rev, 'p9');
+  assert.equal('providers' in m.persistedDefinition({ id: 'x', providers: [stored], providers_rev: 'p9' }), false, 'a launcher save never carries the providers');
+  assert.deepEqual(plain(m.providerInUse({ code: 'provider_in_use', body: { provider_id: 'acme', model_count: 2 } })), { providers: [{ id: 'acme', count: 2 }], count: 2 }, 'an older answer names one provider');
+  const two = m.providerInUse({ code: 'provider_in_use', body: { provider_id: 'acme', model_count: 2, in_use: [{ provider_id: 'acme', model_count: 2 }, { provider_id: 'lab', model_count: 1 }] } });
+  assert.deepEqual(plain(two), { providers: [{ id: 'acme', count: 2 }, { id: 'lab', count: 1 }], count: 3 }, 'every provider that would lose models is listed');
+  assert.equal(m.providerInUse({ code: 'other' }), null);
+  assert.deepEqual([m.removeWithModelsLabel(m.providerInUse({ code: 'provider_in_use', body: { provider_id: 'acme', model_count: 1 } })), m.removeWithModelsLabel(two)], ['Remove acme with its 1 model', 'Remove acme, lab with their 3 models']);
+  assert.equal(m.inUseMessage(two), 'acme (2), lab (1) still have models listed.');
+  // The key's state: a word from the saved variable and the answer, never a value.
+  const key = (provider, saved, status) => m.keyState(provider, saved, status).text;
+  assert.equal(key({ ...editable, key_env: '' }, stored, null), 'No key variable');
+  assert.equal(key(editable, { key_env: 'OTHER' }, null), 'Save to check the key');
+  assert.equal(key(editable, stored, null), 'Key not checked');
+  assert.equal(key(editable, stored, { machine_online: false }), 'Machine offline: key not checked');
+  assert.equal(key(editable, stored, { machine_online: true, supervisor_supported: false }), 'Supervisor update needed to check the key');
+  assert.equal(key(editable, stored, { machine_online: true, supervisor_supported: true, keys: [{ provider_id: 'acme', set: true }] }), 'ACME_KEY is set');
+  assert.equal(key(editable, stored, { machine_online: true, supervisor_supported: true, keys: [{ provider_id: 'acme', set: false }] }), 'ACME_KEY is not set on that machine');
+  assert.equal(key(editable, stored, { machine_online: true, supervisor_supported: true, keys: [{ provider_id: 'acme', set: null }], error: 'no answer' }), 'Key not checked: no answer');
+  // Import suggestions: one already there or with a problem is not taken; the others join the unsaved list, an inline key says what to do.
+  const suggestion = (id, extra = {}) => ({ provider: { id, name: id, npm: '@ai-sdk/openai-compatible', base_url: `https://${id}.example/v1`, key_env: '' }, models: [], ...extra });
+  const picked = [suggestion('acme'), suggestion('lab', { inline_key: true }), suggestion('bad', { problem: 'nope' }), suggestion('team', { already_added: true }), suggestion('fresh')];
+  assert.deepEqual(['acme', 'lab', 'bad', 'team'].map(id => m.suggestionState(picked.find(item => item.provider.id === id), [editable])), ['already', 'ok', 'problem', 'already']);
+  const result = m.addSuggestions([editable], picked);
+  assert.deepEqual(plain(result.providers.map(item => item.id)), ['acme', 'lab', 'fresh']);
+  assert.equal(result.taken, 2); assert.match(result.status, /2 added to the list; its key was written into the OpenCode config/);
+  assert.equal(m.addSuggestions([editable], [suggestion('acme')]).status, 'Nothing new to add.');
+  // Only what was added counts: an inline-key suggestion that was not taken (the list is full, or its id is there) does not.
+  const full = Array.from({ length: m.PROVIDERS_MAX - 1 }, (_, index) => m.editableProvider({ ...stored, id: `p${index}` }));
+  const capped = m.addSuggestions(full, [suggestion('one'), suggestion('two', { inline_key: true })]);
+  assert.deepEqual([capped.taken, /key was written/.test(capped.status)], [1, false], 'the inline key of a suggestion that did not fit is not mentioned');
+}
 console.log('harness model tests passed');
