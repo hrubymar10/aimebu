@@ -192,7 +192,9 @@ func TestSpawnRejectsUnavailableLauncherForRestartAndReplay(t *testing.T) {
 }
 
 func TestSlowPathProbeDoesNotBlockMachineFrames(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	// What the test proves is order: the ping's pong and the launcher status arrive before the slow probe's result, which a blocked read loop
+	// would reverse. The deadline only guards against a hang, so it is far above what a loaded machine needs (the probe itself sleeps 2s).
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	root := t.TempDir()
 	command := filepath.Join(root, "slow-launcher")
