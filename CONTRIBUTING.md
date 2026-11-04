@@ -89,6 +89,11 @@ For UI work without agents, the web app has mock switches such as
 | `make test-race` | `go test -race ./...`, with progress output | after touching concurrency, the store, WebSocket or supervisor code |
 | `make test-full` | `fmt-check`, `vet`, `test-race`, `test-web` | before every commit; it is also what CI runs |
 
+`make test` and `make test-race` (so `make test-full` and CI) run Go with `-timeout 25m` instead of Go's 10
+minutes per package: a package such as `cmd/aimebu` can pass 10 minutes under `-race` on CI's two CPUs without
+any test being wrong. `GO_TEST_TIMEOUT=10m` restores Go's limit; a stuck test is found by the `HANG?` line
+described below, not by this limit.
+
 `test-ui` is not part of `test-full`, so run it yourself for UI changes. Two
 more scripts check the UI without a server and exit non-zero on findings:
 `node scripts/phone-audit.cjs` (tap targets, overlap and reachability at phone

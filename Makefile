@@ -9,6 +9,9 @@
 # PLAIN=1 runs plain go test instead; PROGRESS_FLAGS passes flags to it (for example PROGRESS_FLAGS='-quiet 10s -hang 2m').
 GOTESTPROGRESS := tmp/gotestprogress
 PROGRESS_FLAGS ?=
+# Go's own limit for one package's test binary is 10 minutes, which a slow runner (CI's two CPUs) can pass under -race without any test being
+# wrong; the progress runner's HANG? line, not this limit, is what finds a stuck test. GO_TEST_TIMEOUT=10m goes back to Go's default.
+GO_TEST_TIMEOUT ?= 25m
 
 $(GOTESTPROGRESS): $(wildcard scripts/gotestprogress/*.go) go.mod
 	@mkdir -p tmp
@@ -16,7 +19,7 @@ $(GOTESTPROGRESS): $(wildcard scripts/gotestprogress/*.go) go.mod
 
 # gotest runs go test with the given arguments, through the progress runner unless PLAIN=1.
 define gotest
-	@if [ -n "$(PLAIN)" ]; then go test $(1); else $(GOTESTPROGRESS) $(PROGRESS_FLAGS) -- $(1); fi
+	@if [ -n "$(PLAIN)" ]; then go test -timeout $(GO_TEST_TIMEOUT) $(1); else $(GOTESTPROGRESS) $(PROGRESS_FLAGS) -- -timeout $(GO_TEST_TIMEOUT) $(1); fi
 endef
 
 test: $(GOTESTPROGRESS) ## Run unit tests
