@@ -97,9 +97,13 @@ export class TopbarMenu {
       tucked = planTuck({ available: this.nav.clientWidth, gap: parseFloat(getComputedStyle(this.nav).columnGap) || 0, moreWidth: this.width(this.toggle), entries });
     }
     const before = this.tucked;
+    // The menu item that has focus, if any: its control may come back to the bar in this very layout, which hides the item and would drop the
+    // focus on the body, even though the menu stays open for the controls that are still tucked.
+    const held = this.menu.hidden ? -1 : [...this.menu.querySelectorAll('[role=menuitem]')].indexOf(document.activeElement);
     this.tucked = new Set(tucked);
     this.tablet = !matchMedia(PHONE).matches && matchMedia(TABLET).matches;
     this.targets.forEach((target, index) => { target.classList.toggle('topbar-tucked', this.tucked.has(index)); this.syncItem(index); });
+    if (held >= 0 && (this.targets[held].hidden || !this.offered(held))) this.moveFocusOffItem(held);
     this.bar.classList.toggle('topbar-has-overflow', this.tucked.size > 0);
     this.syncIssues();
     if (!this.tucked.size && !this.tablet && !this.menu.hidden) {
@@ -108,6 +112,15 @@ export class TopbarMenu {
       this.store.setOpen(false);
       if (focused) [...before].map(index => this.targets[index]).find(target => !target.hidden)?.focus();
     }
+  }
+
+  // The focused menu item is no longer on offer. Focus goes to its own control when that came back to the bar, so the person keeps their place;
+  // otherwise to the first item still on offer; with none left the menu closes (below) and the body is all there is to give it to.
+  moveFocusOffItem(held) {
+    const back = this.targets[held];
+    if (!back.hidden && !this.tucked.has(held) && getComputedStyle(back).display !== 'none') { back.focus(); return; }
+    const next = this.targets.findIndex((target, index) => !target.hidden && this.offered(index));
+    if (next >= 0) this.store.focusOn(next);
   }
 
   keydown(event) {

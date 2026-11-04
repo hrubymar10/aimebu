@@ -46,9 +46,20 @@ async function main() {
     // an open menu closes when every control fits again, and the focus inside it goes to a control that came back to the bar
     await page.$eval('#more-toggle', button => button.click());
     assert.ok(await page.evaluate(() => document.querySelector('#more-menu').contains(document.activeElement)), 'opening the menu focuses an item');
-    await page.$eval('#settings-toggle', button => { button.style.cssText = ''; }); await page.$eval('#logout', button => { button.style.cssText = ''; }); await settle();
-    const closed = await page.evaluate(() => ({ open: !document.querySelector('#more-menu').hidden, focus: document.activeElement?.id, shown: !!document.activeElement && getComputedStyle(document.activeElement).display !== 'none' }));
-    assert.deepEqual([closed.open, closed.shown, ['logout', 'health-toggle', 'knowledge-toggle', 'system-events-toggle'].includes(closed.focus)], [false, true, true], `the menu closed itself and its focus moved to a control back in the bar, not to the body or the hidden overflow button: ${closed.focus}`);
+    const where = () => page.evaluate(() => ({ open: !document.querySelector('#more-menu').hidden, offered: [...document.querySelectorAll('#more-menu .more-item')].filter(button => !button.hidden).map(button => button.firstElementChild.textContent),
+      focus: (element => (element ? `${element.tagName.toLowerCase()}${element.id ? `#${element.id}` : ''}${element.closest?.('#more-menu') ? ' (in the menu)' : ''}` : 'nothing'))(document.activeElement) }));
+    const focusedBefore = (await where()).focus;
+    // Settings shrinks first, while Sign out is still wide: Health and Memory come back to the bar, so the item that has focus goes, but the menu
+    // stays open for Sign out. Focus follows its control into the bar instead of dropping on the body. (This used to depend on timing: the
+    // intermediate layout only showed under load.)
+    await page.$eval('#settings-toggle', button => { button.style.cssText = ''; }); await settle();
+    const partly = await where();
+    assert.deepEqual([partly.open, partly.offered], [true, ['Sign out']], `the menu stays open for the control that is still tucked: ${JSON.stringify(partly)}`);
+    assert.ok(/^button#(system-events-toggle|health-toggle|knowledge-toggle)$/.test(partly.focus), `the focused item's control came back to the bar and took the focus (it was ${focusedBefore}): focus is on ${partly.focus}`);
+    await page.$eval('#logout', button => { button.style.cssText = ''; }); await settle();
+    const closed = await page.evaluate(() => ({ open: !document.querySelector('#more-menu').hidden, focus: document.activeElement?.id, shown: !!document.activeElement && getComputedStyle(document.activeElement).display !== 'none',
+      which: (element => (element ? `${element.tagName.toLowerCase()}${element.id ? `#${element.id}` : ''}${element.className ? `.${String(element.className).trim().split(/\s+/).join('.')}` : ''}${element.closest?.('#more-menu') ? ' (in the menu)' : ''}` : 'nothing'))(document.activeElement) }));
+    assert.deepEqual([closed.open, closed.shown, ['logout', 'health-toggle', 'knowledge-toggle', 'system-events-toggle'].includes(closed.focus)], [false, true, true], `the menu closed itself and its focus moved to a control back in the bar, not to the body or the hidden overflow button: focus is on ${closed.which}`);
     // what fits again comes back: the bar is measured again as the controls change
     await page.$eval('#settings-toggle', button => { button.style.cssText = ''; }); await page.$eval('#logout', button => { button.style.cssText = ''; }); await settle();
     assert.deepEqual(await bar(), { tucked: [], more: false, offered: [], mark: false, overflow: false }, 'when the controls fit again nothing is tucked and the warning stays off');
