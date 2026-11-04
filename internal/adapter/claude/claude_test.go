@@ -589,3 +589,55 @@ func TestLaunchPathIsTheFolderTheHarnessStartsIn(t *testing.T) {
 		t.Fatalf("with a launch path the harness started in %q, want %q", got, link)
 	}
 }
+
+// An explicit error result of a turn that ran no tool and produced no output is a definite failure with the harness's own sentence; one that
+// came after tool use or output is not: effects may have happened, so the outcome stays uncertain.
+func TestClaudeErrorResultIsADefiniteFailureOnlyWhenTheTurnDidNothing(t *testing.T) {
+	const sentence = "Failed to authenticate: OAuth session expired · Please run /login aak_secret"
+	line := func(extra string) string {
+		return `{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"` + sentence + `","usage":{"input_tokens":3,"output_tokens":` + extra + `}}`
+	}
+	tool := `{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"toolu_1","name":"Bash"}]}}`
+	for name, c := range map[string]struct {
+		events   []string
+		definite bool
+	}{
+		"nothing happened":    {[]string{line("0")}, true},
+		"after a tool ran":    {[]string{tool, line("0")}, false},
+		"after output":        {[]string{line("17")}, false},
+		"no sentence at all":  {[]string{`{"type":"result","is_error":true}`}, false},
+		"an ordinary success": {[]string{`{"type":"result","is_error":false,"result":"{\"messages\":[]}"}`}, false},
+	} {
+		root := t.TempDir()
+		path := filepath.Join(root, "claude")
+		program := "#!/bin/sh\n"
+		for _, event := range c.events {
+			program += "printf '%s\\n' '" + event + "'\n"
+		}
+		program += "exit 1\n"
+		if err := os.WriteFile(path, []byte(program), 0700); err != nil {
+			t.Fatal(err)
+		}
+		turn, err := (&Adapter{Command: path, AllowNative: true}).Start(context.Background(), adapter.TurnSpec{
+			TurnID: "definite", Agent: adapter.AgentSpec{ID: "agt_test", Model: "haiku"}, CheckoutPath: root, Mode: adapter.ModeCorrection,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range turn.Events() {
+		}
+		exit, err := turn.Wait()
+		if err != nil || exit.DefiniteFailure != c.definite {
+			t.Errorf("%s: definite=%t, want %t (exit=%+v err=%v)", name, exit.DefiniteFailure, c.definite, exit, err)
+		}
+		if strings.Contains(exit.ErrorSummary, "aak_secret") || strings.Contains(exit.ErrorEvent, "aak_secret") {
+			t.Errorf("%s: a secret survived: %+v", name, exit)
+		}
+		if c.definite && exit.ErrorSummary != "Failed to authenticate: OAuth session expired · Please run /login [REDACTED]" && !strings.HasPrefix(exit.ErrorSummary, "Failed to authenticate: OAuth session expired") {
+			t.Errorf("%s: summary %q", name, exit.ErrorSummary)
+		}
+		if name == "an ordinary success" && (exit.ErrorSummary != "" || exit.ErrorEvent != "") {
+			t.Errorf("%s: evidence of an error that was none: %+v", name, exit)
+		}
+	}
+}

@@ -294,7 +294,8 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 	steps := map[string]claudeStep{} // the main loop's API responses seen so far, by message id
 	sawResult := false
 	var candidate json.RawMessage
-	var errorResult string
+	var errorResult, errorSummary string
+	errorIsResult, toolStarted, producedOutput := false, false, false
 	haveCandidate := false
 	for scanner.Scan() {
 		t.lastOutput.Store(time.Now().UnixNano())
@@ -342,6 +343,9 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 			}
 			activity := adapter.Event{Kind: adapter.EventActivity, Summary: event.Type}
 			started, finished := harness.ClaudeToolUses(event)
+			if len(started) > 0 {
+				toolStarted = true
+			}
 			for _, id := range started {
 				activity.Tools = append(activity.Tools, adapter.ToolEvent{ID: id})
 			}
@@ -369,6 +373,13 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 			}
 			if result.IsError {
 				errorResult = adapter.SanitizeStderr(string(event.Raw))
+				errorIsResult = true
+				if result.Result != nil {
+					errorSummary = adapter.SanitizeStderr(*result.Result)
+				}
+				if result.Usage.OutputTokens != nil && *result.Usage.OutputTokens > 0 {
+					producedOutput = true
+				}
 			}
 			sawResult = true
 			usage := &adapter.Usage{TokensIn: result.Usage.InputTokens, TokensOut: result.Usage.OutputTokens, TokensCacheRead: result.Usage.CacheReadInputTokens, TokensCacheWrite: result.Usage.CacheCreationInputTokens}
@@ -455,6 +466,12 @@ func (t *turn) run(stdout, stderr interface{ Read([]byte) (int, error) }) {
 	if !terminal {
 		exit.StderrTail = tail.String()
 		exit.ErrorEvent = errorResult
+		if errorIsResult {
+			// An explicit error result of a turn that ran no tool and produced no output (a failed sign-in, an expired session) failed before
+			// doing anything: it is a definite failure, not an uncertain outcome.
+			exit.ErrorSummary = errorSummary
+			exit.DefiniteFailure = errorSummary != "" && !toolStarted && !producedOutput
+		}
 	}
 	t.mu.Lock()
 	exit.CancelIntent = t.cancel

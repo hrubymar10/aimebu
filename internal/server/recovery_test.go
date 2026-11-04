@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
 
@@ -146,5 +148,55 @@ func TestLostRecoveryWaitingItemOverrideEndpoint(t *testing.T) {
 	}
 	if items = inbox(); len(items) != 0 {
 		t.Fatalf("override left item=%+v", items)
+	}
+}
+
+// The decision endpoint refuses a choice the item does not offer: a turn that failed before it did anything is offered Retry and Abandon, so
+// Resume is a 400 through the API too and changes nothing, while Retry still works.
+func TestDefiniteFailureCannotBeResumedThroughTheAPI(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	agent, turn, note, _ := f.execution(t)
+	ctx := context.Background()
+	if err := f.db.AdmitTurn(ctx, store.Admission{TurnID: turn.ID, AgentID: agent.ID, MachineID: f.machineID, Generation: 0, DesiredRev: 0, NoteIDs: []string{note.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.AckTurn(ctx, turn.ID, agent.ID, 0, "accepted"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.RecordProcessInfo(ctx, turn.ID, agent.ID, 0, adapter.ExitInfo{ExitCode: 1, ErrorEvent: `{"is_error":true}`, ErrorSummary: "Failed to authenticate", DefiniteFailure: true}); err != nil {
+		t.Fatal(err)
+	}
+	response := f.request("GET", "/api/inbox", nil, false)
+	var items []store.InboxEntry
+	if err := json.NewDecoder(response.Body).Decode(&items); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if len(items) != 1 || strings.Join(items[0].Options, ",") != "Retry,Abandon" {
+		t.Fatalf("inbox=%+v", items)
+	}
+	post := func(key, choice string, rev int) (int, map[string]any) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"choice": choice, "rev": rev})
+		req, _ := http.NewRequest("POST", f.http.URL+"/api/inbox/"+items[0].ID+"/decision", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", f.csrf)
+		req.Header.Set("Idempotency-Key", key)
+		req.AddCookie(f.cookie)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var result map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&result)
+		return resp.StatusCode, result
+	}
+	if status, refused := post("resume-refused", "resume", int(items[0].Rev)); status != 400 || refused["error"] != "invalid_choice" {
+		t.Fatalf("resume of a definite failure: %d %+v", status, refused)
+	}
+	if status, retried := post("retry-ok", "retry", int(items[0].Rev)); status != 201 || retried["turn_id"] == "" {
+		t.Fatalf("retry after the refusal: %d %+v", status, retried)
 	}
 }

@@ -374,3 +374,40 @@ func TestUsageEventsReplayUntilExitAcknowledged(t *testing.T) {
 	}
 	check(0)
 }
+
+// The sentence a harness gave and the verdict that the turn failed before it did anything are kept with the exit until the server has
+// acknowledged it, so a reconnect resends them rather than losing them.
+func TestExitKeepsTheErrorSummaryAndDefiniteVerdictUntilAcknowledged(t *testing.T) {
+	ctx := context.Background()
+	j, err := OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	if _, err := j.RecordStart(ctx, StartRecord{TurnID: "turn-definite", AgentID: "agent", Mode: "normal", SpecJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RecordExitInfo(ctx, "turn-definite", adapter.ExitInfo{ExitCode: 1, ErrorEvent: `{"is_error":true}`, ErrorSummary: "Failed to authenticate", DefiniteFailure: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.RecordStart(ctx, StartRecord{TurnID: "turn-plain", AgentID: "agent2", Mode: "normal", SpecJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RecordExitInfo(ctx, "turn-plain", adapter.ExitInfo{ExitCode: 1, StderrTail: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := j.PendingExits(ctx)
+	if err != nil || len(pending) != 2 {
+		t.Fatalf("pending: %+v %v", pending, err)
+	}
+	byTurn := map[string]adapter.ExitInfo{}
+	for _, exit := range pending {
+		byTurn[exit.TurnID] = exit.Exit
+	}
+	if got := byTurn["turn-definite"]; got.ErrorSummary != "Failed to authenticate" || !got.DefiniteFailure || got.ErrorEvent != `{"is_error":true}` {
+		t.Fatalf("the definite exit: %+v", got)
+	}
+	if got := byTurn["turn-plain"]; got.ErrorSummary != "" || got.DefiniteFailure || got.StderrTail != "boom" {
+		t.Fatalf("an ordinary exit gained something: %+v", got)
+	}
+}

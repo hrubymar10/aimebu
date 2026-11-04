@@ -557,7 +557,10 @@ while the tab is hidden, and clicking one opens its item in the Inbox or room,
 according to the selected UI variant. Elsewhere,
 Settings explains that browser notifications are unavailable. The mute switch is the master switch for every chime, Inbox and chat. Recovery
 actions use the decision endpoint: uncertain turns offer Resume,
-Retry, and Abandon; loop budget items offer Continue and Abandon. Settings →
+Retry, and Abandon; a turn that failed before it did anything (an error result such as
+an expired sign-in, with no tool run) shows the harness's sentence with its raw output folded
+away and offers Retry and Abandon only, and a retry that fails the same way says so;
+loop budget items offer Continue and Abandon. Settings →
 Project has an off-by-default auto-resume toggle for clean diagnostic reports,
 with the risk of repeated actions explained beside it. Open
 `/?mock_inbox=1` to exercise questions without agent messages, or

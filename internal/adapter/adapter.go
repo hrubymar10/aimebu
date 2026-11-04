@@ -129,6 +129,12 @@ type ExitInfo struct {
 	CancelIntent  bool   `json:"cancel_intent"`
 	StderrTail    string `json:"stderr_tail,omitempty"`
 	ErrorEvent    string `json:"error_event,omitempty"`
+	// ErrorSummary is what the harness said was wrong, as one readable sentence (Claude Code's result text of an is_error result), where
+	// ErrorEvent is the raw event it came from. DefiniteFailure says the turn failed before it did anything: an explicit error result
+	// with no tool run and no output, such as a failed sign-in. Nothing was done, so Retry is safe and a diagnostic or Resume has nothing
+	// to find. Both are empty for a harness that does not say.
+	ErrorSummary    string `json:"error_summary,omitempty"`
+	DefiniteFailure bool   `json:"definite_failure,omitempty"`
 }
 
 // ToolEvent marks a tool execution (shell command, MCP call, ...) beginning

@@ -558,7 +558,20 @@ regardless of project role. Boundary admission remains owner-only. A repeated
 idempotency key returns the original message; a changed
 answer with that key returns `conflict`. A stale revision returns `stale_rev`.
 Uncertain-turn recovery items carry Resume, Retry, and Abandon; loop-budget
-items carry Continue and Abandon. `choice` is the lowercase form of the
+items carry Continue and Abandon. A turn that ended with an explicit error result
+before it did anything (Claude Code `is_error` with no tool run and no output, such
+as a failed sign-in) is a definite failure, not an uncertain outcome: no read-only
+diagnostic is run for it, its item carries `definite_failure: true` and
+`result_text` (the sentence the harness gave) next to the raw `evidence`, and its
+options are Retry and Abandon only (Resume has nothing to find). The evidence line
+for a harness's error output is labelled by that harness (`Claude Code error
+result:`, `Codex error event:`, `Harness error event:`). A Retry or Resume that
+fails the same way again opens an item whose question begins "Same failure again —
+fix the cause first", instead of the cycle going round silently: the same failure is the
+same `result_text` when both turns have one, else the same evidence when it says more than
+an exit code (two unrelated failures that both exited with code 1 are not a repeat). The
+decision endpoint refuses a choice the item was not stored with (`400 invalid_choice`),
+so Resume of a definite failure is refused through the API as well as not offered. `choice` is the lowercase form of the
 button label. Project owners and operators may decide recovery in every room.
 The human peer can view a private-chat recovery item, but only a project owner
 or operator may decide it. Owners and operators can see those recovery items

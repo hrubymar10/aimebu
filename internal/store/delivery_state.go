@@ -492,7 +492,15 @@ func (s *Store) RecordProcessInfo(ctx context.Context, turnID, agentID string, g
 				payload["evidence"] += "\n" + stderr
 			}
 			if errorEvent != "" {
-				payload["evidence"] += "\nCodex error event: " + errorEvent
+				payload["evidence"] += "\n" + errorEvidenceLabel(tool) + ": " + errorEvent
+			}
+			// What the harness said, readable, and whether the turn failed before doing anything: the recovery card shows the sentence and
+			// folds the raw evidence away, and a definite failure is offered Retry alone (a diagnostic or Resume has nothing to find).
+			if summary := adapter.SanitizeStderr(info.ErrorSummary); summary != "" {
+				payload["result_text"] = summary
+				if info.DefiniteFailure {
+					payload["definite_failure"] = "1"
+				}
 			}
 		}
 		_, err := tx.AppendEvent(Event{Kind: "turn_process_exit", ProjectID: projectID, RoomID: roomID, AgentID: agentID, TurnID: turnID, PayloadJSON: payloadJSON(payload)})
@@ -616,4 +624,17 @@ func (s *Store) RecordTurnEvent(ctx context.Context, turnID, agentID, sourceID, 
 		}
 		return tx.recordUsageOrCompaction(turnID, agentID, projectID, roomID, sourceID, kind, payload)
 	})
+}
+
+// errorEvidenceLabel names the harness a process's error event came from, for the evidence a person reads: the event is whatever that
+// harness reported, so it is labelled by it. The harnesses whose adapters already open their message with their own name ("OpenCode
+// error: ...") are not named twice.
+func errorEvidenceLabel(tool string) string {
+	switch tool {
+	case "claude":
+		return "Claude Code error result"
+	case "codex":
+		return "Codex error event"
+	}
+	return "Harness error event"
 }

@@ -111,13 +111,25 @@ export function cardKey(item) {
 export function decisionOptions(item) {
   if (item.kind === 'usage_limit') return (item.options || []).map(label => [label, label.startsWith('Continue:') ? 'continue' : 'abandon']);
   if (item.recovery_phase === 'quiescence_wait') return [['Override', 'override'], ['Abandon', 'abandon']];
+  // A turn that failed before it did anything has nothing to resume: Retry is the one way on.
+  if (item.turn_id && item.definite_failure) return [['Retry', 'retry'], ['Abandon', 'abandon']];
   return item.turn_id ? [['Resume', 'resume'], ['Retry', 'retry'], ['Abandon', 'abandon']] : [['Continue', 'continue'], ['Abandon', 'abandon']];
 }
 
 export const retryWarning = item => (item.recovery_phase === 'quiescence_wait' ? 'The old process may still be running. Override can overlap it and repeat an action.'
+  : item.turn_id && item.definite_failure ? 'Retry is safe: the turn failed before it did anything. It fails the same way until the cause is fixed.'
   : item.turn_id ? 'Resume may repeat an action if the diagnostic missed an effect. Retry repeats the task.' : '');
 
+// What the harness said went wrong, as a sentence, with the raw output kept apart: a recovery card shows `text` and folds `raw` behind a
+// details toggle. Null when the harness gave no sentence of its own.
+export function recoveryResult(item) {
+  if (item.kind !== 'recovery' || !item.result_text) return null;
+  return { text: humanize(item.result_text), raw: humanize(item.evidence || '') };
+}
+
 export function evidenceText(item) {
+  const result = recoveryResult(item);
+  if (result) return result.text;
   return humanize((item.kind === 'delivery_failed' && deliveryEvidence(item)) || item.evidence || (item.kind === 'delivery_failed' ? 'The reply was held; view the room for context.'
     : item.diagnostic_report ? 'A diagnostic report is available below.' : item.turn_exec === 'lost' ? 'The previous process may still be running; no diagnostic was run.' : 'No diagnostic report is available yet.'));
 }

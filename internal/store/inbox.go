@@ -9,16 +9,20 @@ import (
 
 // InboxEntry is the owner/operator's view of an open question or approval.
 type InboxEntry struct {
-	ID                string                `json:"id"`
-	ProjectID         string                `json:"project_id"`
-	RoomID            string                `json:"room_id"`
-	RoomLifecycle     string                `json:"room_lifecycle"`
-	MessageID         string                `json:"message_id,omitempty"`
-	AgentID           string                `json:"agent_id,omitempty"`
-	TurnID            string                `json:"turn_id,omitempty"`
-	TurnExec          string                `json:"turn_exec,omitempty"`
-	TurnOutcome       string                `json:"turn_outcome,omitempty"`
-	Evidence          string                `json:"evidence,omitempty"`
+	ID            string `json:"id"`
+	ProjectID     string `json:"project_id"`
+	RoomID        string `json:"room_id"`
+	RoomLifecycle string `json:"room_lifecycle"`
+	MessageID     string `json:"message_id,omitempty"`
+	AgentID       string `json:"agent_id,omitempty"`
+	TurnID        string `json:"turn_id,omitempty"`
+	TurnExec      string `json:"turn_exec,omitempty"`
+	TurnOutcome   string `json:"turn_outcome,omitempty"`
+	Evidence      string `json:"evidence,omitempty"`
+	// ResultText is what the harness said was wrong, as a sentence, when it said (Claude Code's error result); Evidence holds it inside the
+	// raw output. DefiniteFailure says the turn failed before it did anything, so Retry is safe and Resume cannot help.
+	ResultText        string                `json:"result_text,omitempty"`
+	DefiniteFailure   bool                  `json:"definite_failure,omitempty"`
 	DiagnosticReport  json.RawMessage       `json:"diagnostic_report,omitempty"`
 	RecoveryPhase     string                `json:"recovery_phase,omitempty"`
 	HeldReason        string                `json:"held_reason,omitempty"`
@@ -70,6 +74,8 @@ func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, 
 	}
 	rows, err := s.readDB.QueryContext(ctx, `SELECT i.id,i.project_id,i.room_id,r.lifecycle,COALESCE(i.message_id,''),COALESCE(i.agent_id,''),COALESCE(i.turn_id,''),
 		COALESCE(t.exec,''),COALESCE(t.outcome,''),COALESCE((SELECT json_extract(e.payload_json,'$.evidence') FROM event e WHERE e.turn_id=i.turn_id AND e.kind='turn_process_exit' ORDER BY e.seq DESC LIMIT 1),''),
+		COALESCE((SELECT json_extract(e.payload_json,'$.result_text') FROM event e WHERE e.turn_id=i.turn_id AND e.kind='turn_process_exit' ORDER BY e.seq DESC LIMIT 1),''),
+		COALESCE((SELECT json_extract(e.payload_json,'$.definite_failure') FROM event e WHERE e.turn_id=i.turn_id AND e.kind='turn_process_exit' ORDER BY e.seq DESC LIMIT 1),'')='1',
 		COALESCE((SELECT d.report_json FROM turn d WHERE d.parent_turn_id=i.turn_id AND d.mode='diagnostic' AND d.report_json IS NOT NULL ORDER BY d.id DESC LIMIT 1),''),
 		CASE WHEN i.kind='delivery_failed' THEN COALESCE(
 			NULLIF((SELECT json_extract(r.result_json,'$.held_reason') FROM receipt r WHERE r.turn_id=i.turn_id AND r.answer_rev=0),''),
@@ -101,7 +107,7 @@ func (s *Store) InboxForUser(ctx context.Context, userID string) ([]InboxEntry, 
 		var item InboxEntry
 		var options, fallback, report, memberRole, roomKind string
 		if err := rows.Scan(&item.ID, &item.ProjectID, &item.RoomID, &item.RoomLifecycle, &item.MessageID, &item.AgentID, &item.TurnID,
-			&item.TurnExec, &item.TurnOutcome, &item.Evidence, &report, &item.HeldReason, &item.DeliveryError, &item.Kind, &options, &fallback, &item.State, &item.Rev, &item.CreatedAt, &memberRole, &roomKind,
+			&item.TurnExec, &item.TurnOutcome, &item.Evidence, &item.ResultText, &item.DefiniteFailure, &report, &item.HeldReason, &item.DeliveryError, &item.Kind, &options, &fallback, &item.State, &item.Rev, &item.CreatedAt, &memberRole, &roomKind,
 			&item.BoundaryPending, &item.BoundaryMachine, &item.BoundaryPath, &item.BoundaryRequester); err != nil {
 			return nil, err
 		}

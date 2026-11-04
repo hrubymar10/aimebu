@@ -2,7 +2,7 @@ import { html, useLayoutEffect, useRef, useState } from '../../ui.js';
 import { rights } from '../../api.js';
 import { IconButton } from '../../components/icon-button.js';
 import { answerControls } from '../../answer-controls.js';
-import { KIND_LABELS, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, readablePreview, readableReport, resolvedItems, retryWarning } from './model.js';
+import { KIND_LABELS, boundaryText, bulkLabel, cardKey, decisionOptions, evidenceText, groupItems, groupTitle, humanize, readablePreview, readableReport, recoveryResult, resolvedItems, retryWarning } from './model.js';
 
 // answerControls is shared with the chat, so its DOM is built by that function and held in this island; the wrapper takes no space of its own.
 function AnswerIsland({ item, store, pending }) {
@@ -40,6 +40,7 @@ function Card({ item, store, rooms, onJump, openUsages }) {
   const jump = rooms.has(item.room_id) && html`<${IconButton} name="external-link" label="View in room" className="inbox-jump" disabled=${pending} onClick=${() => onJump(item)} />`;
   const evidence = (kind === 'recovery' || kind === 'delivery_failed') && html`<p class="inbox-evidence">${evidenceText(item)}</p>
     ${kind === 'delivery_failed' && item.candidate_preview && html`<p class="inbox-evidence inbox-preview">${readablePreview(item.candidate_preview)}</p>`}
+    ${recoveryResult(item)?.raw && html`<details class="inbox-diagnostic inbox-raw"><summary>Raw output</summary><pre>${recoveryResult(item).raw}</pre></details>`}
     ${kind === 'recovery' && item.diagnostic_report && html`<details class="inbox-diagnostic"><summary>Diagnostic report</summary><pre>${readableReport(item.diagnostic_report)}</pre></details>`}`;
   if (kind === 'recovery' || kind === 'usage_limit') {
     if (kind === 'recovery' && item.can_decide === false) return wrap(html`${jump}${evidence}<p class="inbox-evidence">A project owner or operator must decide this recovery item.</p>`);

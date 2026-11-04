@@ -100,6 +100,26 @@ async function main() {
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#inbox-view').hidden, document.querySelector('.chat').hidden, document.querySelector('.sidebar').hidden, document.querySelector('#app-view').classList.contains('inbox-open')]), [true, false, false, false]);
       await page.close();
     }
+    // A recovery card of a turn that failed before it did anything shows the sentence the harness gave, the raw output folded away behind a
+    // toggle, Retry and Abandon only (nothing to resume), and a repeated failure says so in its question.
+    {
+      const sentence = 'Failed to authenticate: OAuth session expired · Please run /login';
+      const raw = 'Process exited with code 1.\nClaude Code error result: {"type":"result","is_error":true,"result":"Failed to authenticate"}';
+      const failed = { ...base, id: 'def1', kind: 'recovery', turn_id: 't9', definite_failure: true, result_text: sentence, evidence: raw,
+        question: 'Same failure again — fix the cause first; doing the same thing will fail the same way. The turn failed before it did anything: ' + sentence };
+      const page = await mount({ list: [failed] });
+      await waitList(page);
+      const card = await page.$eval('[data-inbox-id=def1]', node => ({ question: node.querySelector('h3').textContent, buttons: [...node.querySelectorAll('.inbox-decisions button')].map(b => b.textContent),
+        evidence: [...node.querySelectorAll('.inbox-evidence')].map(p => p.textContent), summary: node.querySelector('details.inbox-raw summary')?.textContent, raw: node.querySelector('details.inbox-raw pre')?.textContent,
+        open: node.querySelector('details.inbox-raw')?.open, warning: node.querySelector('.inbox-retry-warning')?.textContent }));
+      assert.match(card.question, /^Same failure again — fix the cause first/);
+      assert.deepEqual(card.buttons, ['Retry', 'Abandon']);
+      assert.deepEqual(card.evidence, [sentence], 'the card reads the harness sentence, not the raw JSON');
+      assert.deepEqual([card.summary, card.open], ['Raw output', false], 'the raw output is folded away');
+      assert.equal(card.raw, raw);
+      assert.match(card.warning, /^Retry is safe: the turn failed before it did anything/);
+      await page.close();
+    }
     // Every kind of item, grouped by project and room, with its words, its decisions and what it says to someone who may not decide it.
     {
       const page = await mount();

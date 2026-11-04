@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strconv"
+	"strings"
 
 	"github.com/goccy/go-json"
 )
@@ -105,6 +106,11 @@ func (s *Store) DecideRecovery(ctx context.Context, itemID, userID, key, choice 
 		} else {
 			if choice != "resume" && choice != "retry" && choice != "abandon" {
 				return "", ErrInvalidTransition
+			}
+			// Only what the item offers: a turn that failed before it did anything is offered Retry and Abandon, and Resume has nothing to
+			// continue, so the API refuses it too, not just the buttons. (An item stored without options, from before they were kept, offers all.)
+			if !choiceOffered(ask.Options, choice) {
+				return "", ErrChoiceNotOffered
 			}
 			var newer int
 			if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM turn WHERE parent_turn_id=? AND mode='normal'`, source.String).Scan(&newer); err != nil {
@@ -233,4 +239,20 @@ func (tx *Tx) decideQuiescenceWait(originID, projectID, roomID, agentID, actorID
 	default:
 		return "", ErrInvalidTransition
 	}
+}
+
+// ErrChoiceNotOffered is a recovery decision that is not among the options the item was stored with.
+var ErrChoiceNotOffered = errors.New("choice_not_offered")
+
+// choiceOffered says whether a decision (the lowercase form of a button label) is among the stored options; an item without any offers all.
+func choiceOffered(options []string, choice string) bool {
+	if len(options) == 0 {
+		return true
+	}
+	for _, option := range options {
+		if strings.EqualFold(option, choice) {
+			return true
+		}
+	}
+	return false
 }

@@ -451,3 +451,220 @@ func TestRecoveryGateAfterUnreportedEffectDoesNotRunTwice(t *testing.T) {
 		t.Fatalf("side effect repeated: %q %v", contents, err)
 	}
 }
+
+// A turn of a Claude agent that ends with an explicit error result before doing anything (a failed sign-in) is a definite failure, not an
+// uncertain outcome: the evidence is labelled by the real harness, no read-only diagnostic is run (it would only fail the same way), the
+// person is offered Retry alone with the harness's own sentence, and a retry that fails with the same evidence says so.
+func TestDefiniteFailureOfAClaudeTurnOffersRetryAndSaysWhenItRepeats(t *testing.T) {
+	t.Parallel()
+	s, f, owner := recoveryFixture(t, true)
+	ctx := context.Background()
+	if _, err := s.db.Exec(`UPDATE agent SET tool='claude' WHERE id=?`, f.agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	capabilities := `[{"tool":"claude","version":"test","environment":{"variant":"native"},"flags":{"readonly_verified":true}}]`
+	if _, err := s.db.Exec(`UPDATE machine SET capabilities_json=? WHERE id=?`, capabilities, f.agent.MachineID); err != nil {
+		t.Fatal(err)
+	}
+	const sentence = "Failed to authenticate: OAuth session expired · Please run /login"
+	raw := `{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":"` + sentence + `"}`
+	fail := func(turnID string) {
+		t.Helper()
+		if err := s.RecordProcessInfo(ctx, turnID, f.agent.ID, 0, adapter.ExitInfo{ExitCode: 1, ErrorEvent: raw, ErrorSummary: sentence, DefiniteFailure: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fail(f.turn.ID)
+	var diagnostics int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM turn WHERE parent_turn_id=? AND mode='diagnostic'`, f.turn.ID).Scan(&diagnostics); err != nil || diagnostics != 0 {
+		t.Fatalf("a diagnostic was run for a definite failure: %d %v", diagnostics, err)
+	}
+	items, err := s.InboxForUser(ctx, owner)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items=%+v %v", items, err)
+	}
+	item := items[0]
+	if strings.Join(item.Options, ",") != "Retry,Abandon" || !item.DefiniteFailure || item.ResultText != sentence {
+		t.Fatalf("options %v definite=%t result=%q", item.Options, item.DefiniteFailure, item.ResultText)
+	}
+	if !strings.Contains(item.Question, "failed before it did anything: "+sentence+". Nothing needs checking") || !strings.Contains(item.Question, "Retry is safe and Resume cannot help") || strings.Contains(item.Question, "Same failure again") {
+		t.Fatalf("question=%q", item.Question)
+	}
+	if !strings.Contains(item.Evidence, "Claude Code error result: ") || strings.Contains(item.Evidence, "Codex") || !strings.Contains(item.Evidence, `"is_error":true`) {
+		t.Fatalf("evidence=%q", item.Evidence)
+	}
+	// Retry, and the retry fails the same way: the new item says so.
+	decision, _, err := s.DecideRecovery(ctx, item.ID, owner, "retry-key", "retry", int(item.Rev))
+	if err != nil || decision.TurnID == "" {
+		t.Fatalf("retry: %+v %v", decision, err)
+	}
+	delivery, ready, err := s.PrepareDispatch(ctx, f.agent.ID, "")
+	if err != nil || !ready || delivery.TurnID != decision.TurnID {
+		t.Fatalf("retry delivery: %+v ready=%t %v", delivery, ready, err)
+	}
+	if err := s.AdmitTurn(ctx, Admission{TurnID: delivery.TurnID, AgentID: f.agent.ID, MachineID: f.agent.MachineID, Generation: 0, DesiredRev: 0, NoteIDs: []string{f.note.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AckTurn(ctx, delivery.TurnID, f.agent.ID, 0, "accepted"); err != nil {
+		t.Fatal(err)
+	}
+	fail(delivery.TurnID)
+	items, err = s.InboxForUser(ctx, owner)
+	if err != nil || len(items) != 1 || items[0].TurnID != delivery.TurnID {
+		t.Fatalf("items after the retry failed: %+v %v", items, err)
+	}
+	if !strings.HasPrefix(items[0].Question, "Same failure again — fix the cause first") || !strings.Contains(items[0].Question, sentence) || strings.Join(items[0].Options, ",") != "Retry,Abandon" {
+		t.Fatalf("a repeated failure: %q %v", items[0].Question, items[0].Options)
+	}
+	// A different failure after a retry is not called the same.
+	decision, _, err = s.DecideRecovery(ctx, items[0].ID, owner, "retry-two", "retry", int(items[0].Rev))
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery, ready, err = s.PrepareDispatch(ctx, f.agent.ID, "")
+	if err != nil || !ready || delivery.TurnID != decision.TurnID {
+		t.Fatalf("second retry delivery: %+v ready=%t %v", delivery, ready, err)
+	}
+	if err := s.AdmitTurn(ctx, Admission{TurnID: delivery.TurnID, AgentID: f.agent.ID, MachineID: f.agent.MachineID, Generation: 0, DesiredRev: 0, NoteIDs: []string{f.note.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AckTurn(ctx, delivery.TurnID, f.agent.ID, 0, "accepted"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordProcessInfo(ctx, delivery.TurnID, f.agent.ID, 0, adapter.ExitInfo{ExitCode: 1, ErrorEvent: raw, ErrorSummary: "Overloaded: try again later", DefiniteFailure: true}); err != nil {
+		t.Fatal(err)
+	}
+	if items, err = s.InboxForUser(ctx, owner); err != nil || len(items) != 1 || strings.Contains(items[0].Question, "Same failure again") || !strings.Contains(items[0].Question, "Overloaded") {
+		t.Fatalf("a different failure: %+v %v", items, err)
+	}
+}
+
+// Without a sentence and a definite verdict from the harness the outcome stays uncertain, as before, and the evidence is labelled by its harness.
+func TestUncertainFailureKeepsResumeAndLabelsEvidenceByHarness(t *testing.T) {
+	t.Parallel()
+	for tool, label := range map[string]string{"claude": "Claude Code error result: ", "codex": "Codex error event: ", "opencode": "Harness error event: "} {
+		s, f, owner := recoveryFixture(t, false)
+		ctx := context.Background()
+		if _, err := s.db.Exec(`UPDATE agent SET tool=? WHERE id=?`, tool, f.agent.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RecordProcessInfo(ctx, f.turn.ID, f.agent.ID, 0, adapter.ExitInfo{ExitCode: 1, ErrorEvent: "something went wrong", ErrorSummary: "the turn ended after running tools", DefiniteFailure: false}); err != nil {
+			t.Fatal(err)
+		}
+		items, err := s.InboxForUser(ctx, owner)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("%s: %+v %v", tool, items, err)
+		}
+		if !strings.Contains(items[0].Evidence, label+"something went wrong") {
+			t.Errorf("%s: evidence %q lacks %q", tool, items[0].Evidence, label)
+		}
+		if strings.Join(items[0].Options, ",") != "Resume,Retry,Abandon" || items[0].DefiniteFailure || !strings.Contains(items[0].Question, "uncertain outcome") {
+			t.Errorf("%s: options %v definite=%t question %q", tool, items[0].Options, items[0].DefiniteFailure, items[0].Question)
+		}
+		if items[0].ResultText != "the turn ended after running tools" {
+			t.Errorf("%s: the sentence is kept for the card: %q", tool, items[0].ResultText)
+		}
+	}
+}
+
+// A retry of an uncertain failure that ends with identical evidence is called the same failure too, with no sentence from the harness to go by.
+func TestRepeatedUncertainFailureIsCalledOut(t *testing.T) {
+	t.Parallel()
+	s, f, owner := recoveryFixture(t, false)
+	ctx := context.Background()
+	info := adapter.ExitInfo{ExitCode: 3, StderrTail: "connection reset by peer"}
+	if err := s.RecordProcessInfo(ctx, f.turn.ID, f.agent.ID, 0, info); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.InboxForUser(ctx, owner)
+	if err != nil || len(items) != 1 || strings.Contains(items[0].Question, "Same failure again") {
+		t.Fatalf("the first failure: %+v %v", items, err)
+	}
+	decision, _, err := s.DecideRecovery(ctx, items[0].ID, owner, "retry-uncertain", "retry", int(items[0].Rev))
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery, ready, err := s.PrepareDispatch(ctx, f.agent.ID, "")
+	if err != nil || !ready || delivery.TurnID != decision.TurnID {
+		t.Fatalf("retry delivery: %+v ready=%t %v", delivery, ready, err)
+	}
+	if err := s.AdmitTurn(ctx, Admission{TurnID: delivery.TurnID, AgentID: f.agent.ID, MachineID: f.agent.MachineID, Generation: 0, DesiredRev: 0, NoteIDs: []string{f.note.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AckTurn(ctx, delivery.TurnID, f.agent.ID, 0, "accepted"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordProcessInfo(ctx, delivery.TurnID, f.agent.ID, 0, info); err != nil {
+		t.Fatal(err)
+	}
+	items, err = s.InboxForUser(ctx, owner)
+	if err != nil || len(items) != 1 || !strings.HasPrefix(items[0].Question, "Same failure again — fix the cause first") || strings.Join(items[0].Options, ",") != "Resume,Retry,Abandon" {
+		t.Fatalf("the repeat: %+v %v", items, err)
+	}
+}
+
+// What counts as the same failure: the harness's sentence when both turns gave one, however much the raw output differs (costs and ids change
+// from run to run); evidence that is only an exit code proves nothing, so two unrelated failures that both exited with code 1 are not a repeat;
+// and a sentence on one side only is not a match.
+func TestWhatCountsAsTheSameFailure(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct {
+		first, second adapter.ExitInfo
+		repeated      bool
+	}{
+		"the same sentence, different raw output": {adapter.ExitInfo{ExitCode: 1, ErrorEvent: `{"cost":0.01,"id":"a"}`, ErrorSummary: "Failed to authenticate", DefiniteFailure: true},
+			adapter.ExitInfo{ExitCode: 1, ErrorEvent: `{"cost":0.02,"id":"b"}`, ErrorSummary: "Failed to authenticate", DefiniteFailure: true}, true},
+		"another sentence, the same raw output": {adapter.ExitInfo{ExitCode: 1, ErrorEvent: `{"id":"a"}`, ErrorSummary: "Failed to authenticate"},
+			adapter.ExitInfo{ExitCode: 1, ErrorEvent: `{"id":"a"}`, ErrorSummary: "Overloaded"}, false},
+		"a sentence on one side only":   {adapter.ExitInfo{ExitCode: 1, ErrorSummary: "Failed to authenticate", ErrorEvent: "x"}, adapter.ExitInfo{ExitCode: 1, ErrorEvent: "x"}, false},
+		"only an exit code, both times": {adapter.ExitInfo{ExitCode: 1}, adapter.ExitInfo{ExitCode: 1}, false},
+		"the same output, no sentence":  {adapter.ExitInfo{ExitCode: 3, StderrTail: "connection reset by peer"}, adapter.ExitInfo{ExitCode: 3, StderrTail: "connection reset by peer"}, true},
+		"different output, no sentence": {adapter.ExitInfo{ExitCode: 3, StderrTail: "connection reset by peer"}, adapter.ExitInfo{ExitCode: 3, StderrTail: "timeout"}, false},
+	} {
+		s, f, owner := recoveryFixture(t, false)
+		ctx := context.Background()
+		if err := s.RecordProcessInfo(ctx, f.turn.ID, f.agent.ID, 0, c.first); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		items, err := s.InboxForUser(ctx, owner)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("%s: %+v %v", name, items, err)
+		}
+		choice := "retry"
+		decision, _, err := s.DecideRecovery(ctx, items[0].ID, owner, "k-"+choice, choice, int(items[0].Rev))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		delivery, ready, err := s.PrepareDispatch(ctx, f.agent.ID, "")
+		if err != nil || !ready || delivery.TurnID != decision.TurnID {
+			t.Fatalf("%s: retry delivery %+v ready=%t %v", name, delivery, ready, err)
+		}
+		if err := s.AdmitTurn(ctx, Admission{TurnID: delivery.TurnID, AgentID: f.agent.ID, MachineID: f.agent.MachineID, Generation: 0, DesiredRev: 0, NoteIDs: []string{f.note.ID}}); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if err := s.AckTurn(ctx, delivery.TurnID, f.agent.ID, 0, "accepted"); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if err := s.RecordProcessInfo(ctx, delivery.TurnID, f.agent.ID, 0, c.second); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		items, err = s.InboxForUser(ctx, owner)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("%s: after the retry %+v %v", name, items, err)
+		}
+		if got := strings.HasPrefix(items[0].Question, "Same failure again"); got != c.repeated {
+			t.Errorf("%s: same-failure notice=%t, want %t: %q", name, got, c.repeated, items[0].Question)
+		}
+	}
+}
+
+// The harness's error text is closed with a full stop when it has none, and left alone when it has one, so the sentence after it never runs on.
+func TestSentenceEnd(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{"Failed to authenticate": "Failed to authenticate.", "Failed to authenticate.": "Failed to authenticate.", "Quota exceeded!": "Quota exceeded!",
+		"Why?": "Why?", "  padded  ": "padded.", "": ""} {
+		if got := sentenceEnd(in); got != want {
+			t.Errorf("sentenceEnd(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -361,7 +361,14 @@ func (j *Journal) RecordExitInfo(ctx context.Context, turnID string, exit adapte
 		return sql.ErrNoRows
 	}
 	if !exit.TerminalEvent && (exit.StderrTail != "" || exit.ErrorEvent != "") {
-		data, err := json.Marshal(map[string]string{"stderr_tail": adapter.SanitizeStderr(exit.StderrTail), "error_event": adapter.SanitizeStderr(exit.ErrorEvent)})
+		diagnostic := map[string]any{"stderr_tail": adapter.SanitizeStderr(exit.StderrTail), "error_event": adapter.SanitizeStderr(exit.ErrorEvent)}
+		if exit.ErrorSummary != "" {
+			diagnostic["error_summary"] = adapter.SanitizeStderr(exit.ErrorSummary)
+		}
+		if exit.DefiniteFailure {
+			diagnostic["definite_failure"] = true
+		}
+		data, err := json.Marshal(diagnostic)
 		if err != nil {
 			return err
 		}
@@ -508,7 +515,9 @@ type PendingExit struct {
 func (j *Journal) PendingExits(ctx context.Context) ([]PendingExit, error) {
 	rows, err := j.db.QueryContext(ctx, `SELECT t.turn_id,t.agent_id,t.generation,t.exit_code,t.terminal_event,t.cancel_intent,
 		COALESCE((SELECT json_extract(e.payload_json,'$.stderr_tail') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),''),
-		COALESCE((SELECT json_extract(e.payload_json,'$.error_event') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),'')
+		COALESCE((SELECT json_extract(e.payload_json,'$.error_event') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),''),
+		COALESCE((SELECT json_extract(e.payload_json,'$.error_summary') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),''),
+		COALESCE((SELECT json_extract(e.payload_json,'$.definite_failure') FROM journal_event e WHERE e.turn_id=t.turn_id AND e.kind='exit_diagnostic' LIMIT 1),0)
 		FROM turn_start t WHERE t.exec='exited' AND t.exit_acked=0 ORDER BY t.started_at,t.turn_id`)
 	if err != nil {
 		return nil, err
@@ -517,7 +526,7 @@ func (j *Journal) PendingExits(ctx context.Context) ([]PendingExit, error) {
 	exits := []PendingExit{}
 	for rows.Next() {
 		var exit PendingExit
-		if err := rows.Scan(&exit.TurnID, &exit.AgentID, &exit.Generation, &exit.Exit.ExitCode, &exit.Exit.TerminalEvent, &exit.Exit.CancelIntent, &exit.Exit.StderrTail, &exit.Exit.ErrorEvent); err != nil {
+		if err := rows.Scan(&exit.TurnID, &exit.AgentID, &exit.Generation, &exit.Exit.ExitCode, &exit.Exit.TerminalEvent, &exit.Exit.CancelIntent, &exit.Exit.StderrTail, &exit.Exit.ErrorEvent, &exit.Exit.ErrorSummary, &exit.Exit.DefiniteFailure); err != nil {
 			return nil, err
 		}
 		exits = append(exits, exit)

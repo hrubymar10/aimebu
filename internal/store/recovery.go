@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"strings"
 
 	"github.com/goccy/go-json"
 )
@@ -68,6 +69,13 @@ func (tx *Tx) ensureRecoveryPath(turnID string) error {
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT a.desired FROM turn t JOIN agent a ON a.id=t.agent_id WHERE t.id=?`, turnID).Scan(&desired); err != nil {
 		return err
 	}
+	// A turn that failed before it did anything has nothing for a read-only diagnostic to find, and the diagnostic would only fail the same
+	// way: it goes straight to the person, who is offered Retry.
+	if definite, _, err := tx.definiteFailure(turnID); err != nil {
+		return err
+	} else if definite {
+		return tx.ensureRecoveryItem(turnID, exec)
+	}
 	if exec != "lost" && desired == "active" {
 		var policy TurnPolicy
 		if json.Unmarshal([]byte(policyJSON), &policy) == nil && policy.Capabilities.ReadonlyVerified {
@@ -101,6 +109,15 @@ func (tx *Tx) ensureDiagnosticTurn(originID string) error {
 	return err
 }
 
+// sentenceEnd closes a harness's error text with a full stop when it has none, so the sentence that follows it does not run on from it.
+func sentenceEnd(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" || strings.ContainsAny(text[len(text)-1:], ".!?") {
+		return text
+	}
+	return text + "."
+}
+
 func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 	if originID == "" {
 		return ErrInvalidTransition
@@ -122,10 +139,24 @@ func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 		return err
 	}
 	question := "An agent turn has an uncertain outcome. Review the evidence before continuing."
+	options := []string{"Resume", "Retry", "Abandon"}
 	if reason == "lost" {
 		question = "The previous process may still be running; no diagnostic was run. Resume or Retry may repeat an action."
 	}
-	optionsBytes, err := json.Marshal(inboxAsk{Text: question, Options: []string{"Resume", "Retry", "Abandon"}})
+	definite, resultText, err := tx.definiteFailure(originID)
+	if err != nil {
+		return err
+	}
+	if definite && reason != "lost" {
+		question = "The turn failed before it did anything: " + sentenceEnd(resultText) + " Nothing needs checking, so Retry is safe and Resume cannot help. Fix the cause first (for example sign in again), then Retry."
+		options = []string{"Retry", "Abandon"}
+	}
+	if repeated, err := tx.repeatsParentFailure(originID); err != nil {
+		return err
+	} else if repeated {
+		question = "Same failure again — fix the cause first; doing the same thing will fail the same way. " + question
+	}
+	optionsBytes, err := json.Marshal(inboxAsk{Text: question, Options: options})
 	if err != nil {
 		return err
 	}
@@ -136,6 +167,62 @@ func (tx *Tx) ensureRecoveryItem(originID, reason string) error {
 	_, err = tx.AppendEvent(Event{Kind: "inbox_item_created", ProjectID: projectID, RoomID: roomID,
 		AgentID: agentID, TurnID: originID, PayloadJSON: payloadJSON(map[string]string{"inbox_item_id": id, "kind": "recovery", "reason": reason})})
 	return err
+}
+
+// definiteFailure says whether the turn's process exit reported a failure before it did anything (see adapter.ExitInfo.DefiniteFailure),
+// with the sentence the harness gave.
+func (tx *Tx) definiteFailure(turnID string) (bool, string, error) {
+	var definite sql.NullString
+	var text sql.NullString
+	err := tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.definite_failure'),json_extract(payload_json,'$.result_text') FROM event
+		WHERE turn_id=? AND kind='turn_process_exit' ORDER BY seq DESC LIMIT 1`, turnID).Scan(&definite, &text)
+	if err == sql.ErrNoRows {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	return definite.String == "1" && text.String != "", text.String, nil
+}
+
+// repeatsParentFailure says whether this turn is a retry or a resume of a turn that failed the same way: its process exit says the same as its
+// parent's, so doing the same again would fail again. The person is told, instead of the cycle going round silently. "The same" is the
+// sentence the harness gave when both exits have one; otherwise the evidence of both, but only when it says more than an exit code (two
+// unrelated failures that both exited with code 1 are not the same failure). Raw output is not compared when a sentence exists: it carries
+// costs, token counts and ids that differ from one run to the next.
+func (tx *Tx) repeatsParentFailure(turnID string) (bool, error) {
+	var parent sql.NullString
+	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT parent_turn_id FROM turn WHERE id=?`, turnID).Scan(&parent); err != nil {
+		return false, err
+	}
+	if !parent.Valid || parent.String == "" {
+		return false, nil
+	}
+	exit := func(turn string) (evidence, result string, err error) {
+		var e, r sql.NullString
+		err = tx.tx.QueryRowContext(tx.ctx, `SELECT json_extract(payload_json,'$.evidence'),json_extract(payload_json,'$.result_text') FROM event
+			WHERE turn_id=? AND kind='turn_process_exit' ORDER BY seq DESC LIMIT 1`, turn).Scan(&e, &r)
+		if err == sql.ErrNoRows {
+			return "", "", nil
+		}
+		return e.String, r.String, err
+	}
+	evidence, result, err := exit(turnID)
+	if err != nil {
+		return false, err
+	}
+	parentEvidence, parentResult, err := exit(parent.String)
+	if err != nil {
+		return false, err
+	}
+	switch {
+	case result != "" && parentResult != "":
+		return result == parentResult, nil
+	case result != "" || parentResult != "":
+		return false, nil
+	}
+	// Evidence with nothing but the exit code ("Process exited with code 1.") is on every failure, so it proves nothing.
+	return strings.Contains(evidence, "\n") && evidence == parentEvidence, nil
 }
 
 func (tx *Tx) completeDiagnostic(turnID string) error {

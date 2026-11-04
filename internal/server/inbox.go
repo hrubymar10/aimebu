@@ -167,6 +167,8 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 			apiError(w, 409, "already_withdrawn", "inbox item is withdrawn")
 		case errors.Is(err, store.ErrStaleInboxRev):
 			apiError(w, 409, "stale_rev", "inbox item or recovery evidence changed")
+		case errors.Is(err, store.ErrChoiceNotOffered):
+			apiError(w, 400, "invalid_choice", "this item does not offer that choice")
 		case errors.Is(err, store.ErrInvalidTransition):
 			apiError(w, 409, "invalid_transition", "choice is invalid for this recovery item")
 		case errors.Is(err, store.ErrWriterOccupied):
