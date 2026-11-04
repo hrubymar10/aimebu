@@ -184,7 +184,7 @@ async function main() {
     await settle(page);
     assert.deepEqual(await page.evaluate(() => { const list = document.querySelector('#messages'); return [list.lastElementChild.dataset.messageId, list.scrollHeight - list.scrollTop - list.clientHeight < 2, document.activeElement === window.__focus, document.querySelector('#composer textarea[name=body]').value]; }), ['rm_a_m131', true, true, 'half a thought']);
     assert.deepEqual(await calls(page), [['latest', 'rm_a'], ['latest', 'rm_a']], 'the new page is marked read');
-    await page.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = 600; window.__top = list.scrollTop; window.__anchor = document.querySelector('[data-message-id=rm_a_m100]').getBoundingClientRect().top; });
+    await page.evaluate(() => { const list = document.querySelector('#messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 600; window.__top = list.scrollTop; window.__anchor = document.querySelector('[data-message-id=rm_a_m100]').getBoundingClientRect().top; });
     await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_m132', seq: 132, no: 132, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'live two', created_at: '2026-01-10T12:01:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); });
     await settle(page);
     assert.deepEqual(await page.evaluate(() => [document.querySelector('#messages').scrollTop === window.__top, Math.abs(document.querySelector('[data-message-id=rm_a_m100]').getBoundingClientRect().top - window.__anchor) < 2, !!document.querySelector('[data-message-id=rm_a_m132]')]), [true, true, true], 'a reader scrolled up is not moved by an arrival');
@@ -212,7 +212,7 @@ async function main() {
   {
     const page = await mount();
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.evaluate(() => { window.__anchor = document.querySelector('[data-message-id=rm_a_m35]'); window.__list = document.querySelector('#messages'); window.__list.scrollTop = 0; window.__before = window.__anchor.getBoundingClientRect().top; });
+    await page.evaluate(() => { window.__anchor = document.querySelector('[data-message-id=rm_a_m35]'); window.__list = document.querySelector('#messages'); window.__list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); window.__list.scrollTop = 0; window.__before = window.__anchor.getBoundingClientRect().top; });
     await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1');
     await settle(page);
     assert.deepEqual(await page.evaluate(() => [window.__data.rooms.rm_a.messages.length, document.querySelectorAll('#messages > article.message').length, document.querySelector('#messages').dataset.hasOlder, Math.abs(window.__anchor.getBoundingClientRect().top - window.__before) < 3]), [130, 130, 'false', true], 'all 130 rows, nothing more behind');
@@ -225,12 +225,12 @@ async function main() {
     const page = await mount({ rooms: { rm_a: 130, rm_b: 130 } });
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     await hold(page, 'GET', 'rooms/rm_a/messages\\?before=');
-    await page.evaluate(() => { document.querySelector('#messages').scrollTop = 0; });
+    await page.evaluate(() => { { const reader = document.querySelector('#messages'); reader.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); reader.scrollTop = 0; } });
     const held = await waitRequest(page, 'GET', 'rooms/rm_a/messages\\?before=');
     if (how === 'open') { await openRoom(page, 'rm_b'); await opened(page); await settle(page); } else { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_b'); await opened(page); await settle(page); }
     await serve(page, held); await settle(page);
     assert.deepEqual(await ids(page).then(list => [list.length, list[0]]), [100, 'rm_b_m31'], `${how}: the old room's older page is not drawn`);
-    await page.evaluate(() => { document.querySelector('#messages').scrollTop = 0; });
+    await page.evaluate(() => { { const reader = document.querySelector('#messages'); reader.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); reader.scrollTop = 0; } });
     await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_b_m1', { timeout: 5000 }).catch(() => {});
     assert.equal(await count(page, 'GET', 'rooms/rm_b/messages\\?before='), 1, `${how}: the next room asks for its own older page`);
     await page.close();
@@ -814,7 +814,7 @@ async function main() {
     await page.evaluate(() => { const messages = window.__data.rooms.rm_a.messages; messages.push({ id: 'rm_a_live', seq: messages.length + 1, no: messages.length + 1, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'live', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); });
     await settle(page);
     assert.deepEqual(await page.evaluate(() => { const draft = document.querySelector('#composer textarea[name=body]'); return [document.activeElement === draft, draft.value, draft.selectionStart, window.__chat.threadDraft.value, !!document.querySelector('[data-message-id=rm_a_live]')]; }), [true, 'main draft', 0, 'thread draft', true]);
-    await page.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = 0; });
+    await page.evaluate(() => { const list = document.querySelector('#messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 0; });
     await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m40] .message-action').focus());
     await page.evaluate(() => { window.__focus = document.activeElement; });
     await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1'); await settle(page);
@@ -1046,7 +1046,7 @@ async function main() {
     const grow = (page, id, height) => page.evaluate((id, height) => { const body = document.querySelector(`[data-message-id=${id}] .message-body`); const filler = document.createElement('div'); filler.className = 'late-growth'; filler.style.height = `${height}px`; body.append(filler); }, id, height);
     await grow(page, 'rm_a_m120', 400); await settle(page); await settle(page);
     assert.equal(await page.evaluate(() => { const list = document.querySelector('#messages'); return list.scrollHeight - list.scrollTop - list.clientHeight < 3; }), true, 'a list at the bottom stays pinned when a row above grows');
-    await page.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = 1500; window.__before = document.querySelector('[data-message-id=rm_a_m60]').getBoundingClientRect().top; window.__top = list.scrollTop; });
+    await page.evaluate(() => { const list = document.querySelector('#messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 1500; window.__before = document.querySelector('[data-message-id=rm_a_m60]').getBoundingClientRect().top; window.__top = list.scrollTop; });
     await settle(page);
     await page.evaluate(() => { window.__before = document.querySelector('[data-message-id=rm_a_m60]').getBoundingClientRect().top; });
     await grow(page, 'rm_a_m40', 300); await settle(page); await settle(page);
@@ -1065,7 +1065,7 @@ async function main() {
     await page.close();
     const history = await mount({ setup: 'window.__renderCap = 60; window.__liveCap = 60;' });
     await openRoom(history, 'rm_a'); await opened(history); await settle(history);
-    await history.evaluate(() => { document.querySelector('#messages').scrollTop = 0; });
+    await history.evaluate(() => { { const reader = document.querySelector('#messages'); reader.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); reader.scrollTop = 0; } });
     await history.waitForFunction(() => window.__chat.contextMode === true, { timeout: 5000 }); await settle(history);
     assert.deepEqual(await history.evaluate(() => { const rows = [...document.querySelectorAll('#messages > article.message')]; return [rows.length, rows[0].dataset.messageId, document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden]; }), [60, 'rm_a_m1', false], 'paging back past the cap drops the newest rows and shows a window');
     await history.close();
@@ -1900,7 +1900,7 @@ async function main() {
     const destroyed = [
       ['open', {}, page => openRoom(page, 'rm_a'), 'GET', 'rooms/rm_a/messages\\?limit=100'],
       ['refresh', { opened: true }, page => page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_m131', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'late', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); window.__late = window.__chat.refreshMessages(); }), 'GET', 'rooms/rm_a/messages\\?after='],
-      ['older', { opened: true }, page => page.evaluate(() => { document.querySelector('#messages').scrollTop = 0; }), 'GET', 'rooms/rm_a/messages\\?before='],
+      ['older', { opened: true }, page => page.evaluate(() => { { const reader = document.querySelector('#messages'); reader.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); reader.scrollTop = 0; } }), 'GET', 'rooms/rm_a/messages\\?before='],
       ['jump', { opened: true }, page => page.evaluate(() => { window.__late = window.__chat.jumpToMessage('rm_a_m10'); }), 'GET', 'rooms/rm_a/messages\\?around='],
       ['number lookup', { opened: true, other: true }, page => page.evaluate(() => { window.__late = window.__chat.jumpToMessage(1003); }), 'GET', 'message-numbers/'],
       ['forward page', { opened: true, windowed: true }, page => page.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = list.scrollHeight; }), 'GET', 'rooms/rm_a/messages\\?after=100'],

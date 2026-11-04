@@ -2422,7 +2422,7 @@ async function main() {
     await first.waitForFunction(() => document.querySelector('#live-announcer').textContent === 'New message from You: Other tab', {}).catch(async () => { throw new Error(`same-account announcement was ${JSON.stringify(await first.$eval('#live-announcer', el => el.textContent))}`); });
     for (let i = 0; i < 22; i++) await post(`Filler ${i}`);
     await first.waitForFunction(() => document.querySelectorAll('.message').length >= 25);
-    await first.$eval('#messages', el => { el.scrollTop = 100; });
+    await first.$eval('#messages', el => { el.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); el.scrollTop = 100; });
     const scrollBefore = await first.$eval('#messages', el => el.scrollTop);
     await post('While scrolled up'); await first.waitForFunction(() => [...document.querySelectorAll('.message-body')].some(el => el.textContent === 'While scrolled up'));
     const scrollAfter = await first.$eval('#messages', el => el.scrollTop);
@@ -2449,7 +2449,7 @@ async function main() {
     }));
     await first.evaluate(() => { window.__anchorLog = []; });
     await quiet();
-    await first.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = Math.floor((list.scrollHeight - list.clientHeight) / 2); });
+    await first.evaluate(() => { const list = document.querySelector('#messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = Math.floor((list.scrollHeight - list.clientHeight) / 2); });
     await quiet();
     await first.click('#messages .message:nth-child(40) .message-body');
     await quiet();
@@ -2467,7 +2467,7 @@ async function main() {
       document.body.append(list);
       const frames = count => new Promise(resolve => { const tick = () => --count <= 0 ? resolve() : requestAnimationFrame(tick); requestAnimationFrame(tick); });
       const anchor = new ScrollAnchor(list); list.scrollTop = list.scrollHeight; anchor.update(); await frames(5);
-      await new Promise(resolve => requestAnimationFrame(() => { list.scrollTop = 0; list.children[10].style.height = '80px'; resolve(); }));
+      await new Promise(resolve => requestAnimationFrame(() => { list.dispatchEvent(new WheelEvent('wheel', { deltaY: -400, bubbles: true })); list.scrollTop = 0; list.children[10].style.height = '80px'; resolve(); }));
       await frames(6); const stayed = list.scrollTop;
       list.remove();
       return { stayedAtTop: stayed === 0 };
@@ -5901,8 +5901,8 @@ async function main() {
         // Not scrollTop 0: within 80px of the top the list asks for the older page (the suite's room has more history), and when
         // that page arrives it is compensated for by moving scrollTop by the height it inserted. That is correct, but this test
         // measures scrollTop and element positions, so a page that lands mid-measurement (a busy machine) reads as a jump.
-        list.scrollTop = 120; await wait(100);
-        list.scrollTop = mid.offsetTop - list.offsetTop - 40; await wait(150);
+        list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 120; await wait(100);
+        list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = mid.offsetTop - list.offsetTop - 40; await wait(150);
         const before = mid.getBoundingClientRect().top;
         note('grow-above', { before: Math.round(before), items: list.querySelectorAll('.message').length, aboveH: above.offsetHeight });
         above.querySelector('img').src = tall; await until(() => above.querySelector('img').complete); await wait(200);
@@ -5938,6 +5938,68 @@ async function main() {
       } finally { box.remove(); }
     });
     assert.deepEqual(lateScrollEvent, { pinned: true, gap: 0 }, 'a late scroll event re-derived the pinned state from the grown layout');
+    // A pinned list whose content shrinks and grows back before the scroll event is delivered (Mermaid swapping rows for shorter placeholders,
+    // code highlighting) is clamped by the browser, and the late event reports the clamp against the regrown layout. With no reader input that is
+    // the layout's doing: the list keeps following the bottom. A reader who scrolls up (a wheel, then the move) is still the reader's.
+    const clampedList = await first.evaluate(async () => {
+      const { ScrollAnchor } = await import('/js/scroll-anchor.js');
+      const frames = n => new Promise(resolve => { const step = () => n-- > 0 ? requestAnimationFrame(step) : resolve(); step(); });
+      const make = () => {
+        const box = document.createElement('div'); box.style.cssText = 'position:fixed;left:0;top:0;width:200px;height:200px;overflow-y:auto;visibility:hidden;overflow-anchor:none';
+        const items = [0, 1, 2, 3, 4, 5].map(() => { const item = document.createElement('article'); item.className = 'message'; item.style.height = '100px'; box.append(item); return item; });
+        document.body.append(box);
+        return { box, items };
+      };
+      const out = {};
+      let { box, items } = make();
+      try {
+        const anchor = new ScrollAnchor(box);
+        await frames(2);
+        box.scrollTop = box.scrollHeight; anchor.update(true); await frames(2);
+        const bottom = box.scrollTop;
+        for (const item of items.slice(2)) item.style.display = 'none';
+        out.clampedBy = Math.round(bottom - box.scrollTop); // reading scrollTop lays the list out: the browser has clamped it
+        for (const item of items.slice(2)) item.style.display = '';
+        await frames(6);
+        out.layoutPinned = anchor.pinned; out.layoutGap = box.scrollHeight - box.scrollTop - box.clientHeight;
+      } finally { box.remove(); }
+      ({ box, items } = make());
+      try {
+        const anchor = new ScrollAnchor(box);
+        await frames(2);
+        box.scrollTop = box.scrollHeight; anchor.update(true); await frames(2);
+        box.dispatchEvent(new WheelEvent('wheel', { deltaY: -200, bubbles: true })); box.scrollTop = 100;
+        await frames(6);
+        out.readerPinned = anchor.pinned; out.readerTop = box.scrollTop;
+      } finally { box.remove(); }
+      // The keys that scroll a list count as the reader's with focus on the body, so does a move after the find shortcut (and F3), a Tab that moves
+      // focus into a row, and a scrollbar thumb held for longer than the input window before it is dragged. None of these has a wheel event.
+      for (const [name, act, wait, block = 0] of [
+        ['key', () => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true })), 0],
+        ['find', () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', metaKey: true, bubbles: true })), 0],
+        ['f3', () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', bubbles: true })), 0],
+        ['focus', () => items[0].dispatchEvent(new FocusEvent('focusin', { bubbles: true })), 0],
+        ['held', () => box.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, buttons: 1 })), 600],
+        // Assistive technology or an extension scrolls a quiet list far up, at its recorded height, with no event the page sees: that is the reader's.
+        ['quiet', () => {}, 1200],
+        // The page is busy (a long task) between the reader's scroll and the delivery of its event: late handling must not make it a layout clamp.
+        ['late', () => box.dispatchEvent(new WheelEvent('wheel', { deltaY: -200, bubbles: true })), 0, 700]]) {
+        ({ box, items } = make());
+        try {
+          const anchor = new ScrollAnchor(box);
+          await frames(2);
+          box.scrollTop = box.scrollHeight; anchor.update(true); await frames(2);
+          act(); if (wait) await new Promise(resolve => setTimeout(resolve, wait)); box.scrollTop = 100;
+          if (block) { const from = performance.now(); while (performance.now() - from < block) { /* busy */ } }
+          await frames(6);
+          out[`${name}Pinned`] = anchor.pinned; out[`${name}Top`] = box.scrollTop;
+          window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+        } finally { box.remove(); }
+      }
+      return out;
+    });
+    assert.ok(clampedList.clampedBy > 0, `the test did not clamp the list: ${JSON.stringify(clampedList)}`);
+    assert.deepEqual({ layoutPinned: clampedList.layoutPinned, layoutGap: clampedList.layoutGap, readerPinned: clampedList.readerPinned, readerTop: clampedList.readerTop, keyPinned: clampedList.keyPinned, keyTop: clampedList.keyTop, findPinned: clampedList.findPinned, findTop: clampedList.findTop, f3Pinned: clampedList.f3Pinned, f3Top: clampedList.f3Top, focusPinned: clampedList.focusPinned, focusTop: clampedList.focusTop, heldPinned: clampedList.heldPinned, heldTop: clampedList.heldTop, quietPinned: clampedList.quietPinned, quietTop: clampedList.quietTop, latePinned: clampedList.latePinned, lateTop: clampedList.lateTop }, { layoutPinned: true, layoutGap: 0, readerPinned: false, readerTop: 100, keyPinned: false, keyTop: 100, findPinned: false, findTop: 100, f3Pinned: false, f3Top: 100, focusPinned: false, focusTop: 100, heldPinned: false, heldTop: 100, quietPinned: false, quietTop: 100, latePinned: false, lateTop: 100 }, 'a layout clamp was read as the reader leaving the bottom, or a reader scroll (wheel, a key, find, focus, a held scrollbar) was undone');
     // An explicit update() (the chat calls it after every render) that lands after late content grew but before
     // the resize callback must neither swallow the growth above a scrolled-up reader nor unpin a pinned list.
     const updateBeforeResize = await first.evaluate(async () => {
@@ -5954,7 +6016,7 @@ async function main() {
       try {
         const anchor = new ScrollAnchor(box);
         await frames(2);
-        box.scrollTop = 250; anchor.update(true);
+        box.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); box.scrollTop = 250; anchor.update(true);
         const before = items[2].getBoundingClientRect().top - box.getBoundingClientRect().top;
         items[0].style.height = '400px';
         anchor.update(); // lands before the resize callback
@@ -5999,7 +6061,7 @@ async function main() {
       try {
         const anchor = new ScrollAnchor(box);
         await frames(3);
-        box.scrollTop = 250; anchor.update(true);
+        box.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); box.scrollTop = 250; anchor.update(true);
         const before = items[3].getBoundingClientRect().top - box.getBoundingClientRect().top;
         const arrival = make(); box.insertBefore(arrival, items[0]); // above the reader
         const scrollTopAfterInsert = box.scrollTop;
@@ -6024,7 +6086,7 @@ async function main() {
       try {
         const anchor = new ScrollAnchor(box);
         await frames(2);
-        box.scrollTop = 300; await frames(3); anchor.update(); // items 3 and 4 are in view, items 0-2 are above
+        box.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); box.scrollTop = 300; await frames(3); anchor.update(); // items 3 and 4 are in view, items 0-2 are above
         const view = topOf(items[3]);
         items[0].style.height = '500px'; // grows above the viewport
         anchor.update();                  // a late update, after the growth and before the observer runs
@@ -7968,12 +8030,12 @@ async function main() {
         const originalFetch = window.fetch;
         window.fetch = (input, options) => /\/messages\?before=/.test(String(input)) ? new Promise((resolve, reject) => { window.__releaseOlder = () => originalFetch(input, options).then(resolve, reject); }) : originalFetch(input, options);
         const list = document.querySelector('#messages');
-        list.scrollTop = 0; // near the top: the list asks for the older page, and the request is held
+        list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 0; // near the top: the list asks for the older page, and the request is held
       });
       await olderPage.waitForFunction(() => Boolean(window.__releaseOlder));
       const probe = await olderPage.evaluate(() => {
         const list = document.querySelector('#messages');
-        list.scrollTop = 1500; // the reader moves on while the page is in flight
+        list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 1500; // the reader moves on while the page is in flight
         return new Promise(resolve => setTimeout(() => {
           const top = list.getBoundingClientRect().top;
           window.__probe = [...list.querySelectorAll('.message')].find(el => el.getBoundingClientRect().top >= top + 20);
@@ -8007,7 +8069,7 @@ async function main() {
         active: [...document.querySelectorAll('.room-row.active')].map(row => row.textContent.trim().slice(0, 40)), rows: [...document.querySelectorAll('[data-room-id] .room-name')].map(row => row.textContent.trim().slice(0, 30)),
         connection: document.querySelector('#connection')?.getAttribute('aria-label'), error: document.querySelector('#chat-error')?.textContent, busy: document.querySelector('#app-view')?.getAttribute('aria-busy'),
       }));
-      await olderPage.$eval('#messages', el => { el.scrollTop = 0; });
+      await olderPage.$eval('#messages', el => { el.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); el.scrollTop = 0; });
       await olderPage.waitForFunction(() => [...document.querySelectorAll('#messages .message')].some(el => el.textContent.includes('Thread root for older replies')));
       await olderPage.evaluate(() => [...document.querySelectorAll('#messages .message')].find(el => el.textContent.includes('Thread root for older replies')).querySelector('.thread-action').click());
       await waitDump(olderPage, 'older thread opens with 101 entries', () => document.querySelectorAll('#thread-messages .thread-entry').length === 101 && document.querySelector('#thread-messages').dataset.hasOlder === 'true', () => {
@@ -8023,7 +8085,7 @@ async function main() {
       await olderPage.waitForFunction(() => Boolean(window.__releaseOlder));
       const threadProbe = await olderPage.evaluate(() => {
         const list = document.querySelector('#thread-messages');
-        list.scrollTop = 1500;
+        list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 1500;
         return new Promise(resolve => setTimeout(() => {
           const top = list.getBoundingClientRect().top;
           window.__probe = [...list.querySelectorAll('.thread-entry')].find(el => el.getBoundingClientRect().top >= top + 20);
@@ -8452,7 +8514,7 @@ with con:
     let perfPages = 0;
     for (; perfPages < 8; perfPages++) {
       const before = await perfPage.evaluate(() => document.querySelector('#messages .message')?.dataset.messageId);
-      await perfPage.evaluate(() => { document.querySelector('#messages').scrollTop = 0; });
+      await perfPage.evaluate(() => { { const reader = document.querySelector('#messages'); reader.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); reader.scrollTop = 0; } });
       await perfPage.waitForFunction(id => document.querySelector('#messages .message')?.dataset.messageId !== id, { timeout: 15000 }, before);
     }
     const perfLayouts = (await layoutCount()) - layoutsBefore;
@@ -8503,7 +8565,7 @@ with con:
     const scrollBack = async pages => {
       for (let page = 0; page < pages; page++) {
         const before = (await perfRows()).first;
-        await perfPage.evaluate(() => { document.querySelector('#messages').scrollTop = 0; });
+        await perfPage.evaluate(() => { { const reader = document.querySelector('#messages'); reader.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); reader.scrollTop = 0; } });
         await perfPage.waitForFunction(id => document.querySelector('#messages .message')?.dataset.messageId !== id, { timeout: 15000 }, before);
       }
       await perfPage.waitForFunction(() => !document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden);
@@ -8581,7 +8643,7 @@ with con:
       window.__visibleWatch.observe(document.querySelector('#messages'), { childList: true });
       return id;
     });
-    await perfPage.evaluate(() => { document.querySelector('#messages').scrollTop = 0; });
+    await perfPage.evaluate(() => { { const reader = document.querySelector('#messages'); reader.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); reader.scrollTop = 0; } });
     await perfPage.waitForFunction(id => document.querySelector('#messages > article.message')?.dataset.messageId !== id, { timeout: 15000 }, visibleBefore);
     await new Promise(resolve => setTimeout(resolve, 300));
     const visibleAfter = await perfPage.evaluate(id => { window.__visibleWatch.disconnect(); const row = document.querySelector(`#messages > article[data-message-id="${id}"]`), list = document.querySelector('#messages').getBoundingClientRect(); const rect = row?.getBoundingClientRect(); return { removed: window.__visibleRemoved, onScreen: !!rect && rect.bottom > list.top && rect.top < list.bottom, rows: document.querySelectorAll('#messages > article.message').length }; }, visibleBefore);
@@ -8831,7 +8893,7 @@ with con:
     assert(liveLateReplies.rows <= 40, `the live end kept ${liveLateReplies.rows} rows past its cap of 40`);
     for (const [name, size] of Object.entries(liveLateReplies.maps)) assert(size <= 60, `the chat's ${name} map kept ${size} entries after replies to a trimmed root: ${JSON.stringify(liveLateReplies)}`);
     // Scrolling up re-fetches what the cap dropped, in order and without a gap.
-    await livePage.evaluate(() => { document.querySelector('#messages').scrollTop = 0; });
+    await livePage.evaluate(() => { { const reader = document.querySelector('#messages'); reader.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); reader.scrollTop = 0; } });
     await waitDump(livePage, 'live cap older page', first => document.querySelector('#messages > article.message .message-body')?.textContent !== first, () => ({ first: document.querySelector('#messages > article.message .message-body')?.textContent }), liveLateReplies.first);
     const liveOlder = await livePage.evaluate(() => [...document.querySelectorAll('#messages > article.message .message-body')].map(body => Number(body.textContent.replace('Live cap ', ''))));
     assert(liveOlder[0] < Number(liveLateReplies.first.replace('Live cap ', '')) && liveOlder.every((n, i) => i === 0 || n === liveOlder[i - 1] + 1), `scrolling up after a live trim did not restore the dropped rows in order: ${liveOlder.join(',')}`);
@@ -8895,7 +8957,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     assert(initialLarge.requests.some(url => url.includes('limit=100')), 'initial history did not request a bounded page');
     assert.equal(initialLarge.requests.filter(url => url.includes('/reactions')).length, 0, 'initial page fetched reactions one message at a time');
     const anchor = await largePage.$eval('#messages', element => {
-      element.scrollTop = 0;
+      element.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); element.scrollTop = 0;
       const message = element.querySelector('.message');
       return { id: message.dataset.messageId, top: message.getBoundingClientRect().top };
     });
@@ -8961,7 +9023,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     assert.equal(await largePage.$$eval('#thread-messages .thread-entry', nodes => nodes.length), 101, 'latest thread page was unbounded');
     assert.equal(await largePage.$eval('#thread-messages', node => node.dataset.hasOlder), 'true', 'a large thread still has older replies behind the loaded page');
     const threadAnchor = await largePage.$eval('#thread-messages', element => {
-      element.scrollTop = 0;
+      element.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); element.scrollTop = 0;
       const reply = element.children[1];
       return { id: reply.dataset.messageId, top: reply.getBoundingClientRect().top };
     });

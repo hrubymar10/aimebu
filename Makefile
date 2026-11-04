@@ -89,6 +89,7 @@ test-ui: ## Run Chromium smoke against a scratch server, then the Preact page te
 	node scripts/test-room-menu-page.cjs
 	node scripts/test-mobile-tabs-page.cjs
 	node scripts/test-chat-page.cjs
+	node scripts/test-scroll-page.cjs
 	node scripts/test-signin-page.cjs
 	node scripts/test-setup-page.cjs
 	node scripts/test-onboarding-page.cjs
