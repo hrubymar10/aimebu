@@ -39,6 +39,7 @@ type Client struct {
 	Harnesses               []protocol.HarnessRow
 	Launchers               []protocol.LauncherRow
 	harnessProbeDir         string
+	harnessProbeMore        []string
 	launcherReprobeInterval time.Duration
 	reprobeRunning          bool
 	reprobeDone             chan struct{}
@@ -231,6 +232,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 	}
 	c.mu.Lock()
 	c.harnessProbeDir = ack.HarnessProbeDir
+	c.harnessProbeMore = ack.HarnessProbeDirs
 	// The server's definitions are authoritative after reconnect. Dropped
 	// launchers must not remain selectable in this long-running process.
 	c.Launchers = nil
@@ -241,7 +243,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			c.OnError(err)
 		}
 	}
-	if ack.HarnessProbeDir != "" {
+	if ack.HarnessProbeDir != "" || len(ack.HarnessProbeDirs) > 0 {
 		for _, row := range rows {
 			if row.Variant == "docker" {
 				if err := c.setHarness(row.HarnessSetting); err != nil && c.OnError != nil {
@@ -261,7 +263,7 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			return err
 		}
 	}
-	if len(ack.HarnessSettings) > 0 || ack.HarnessProbeDir != "" {
+	if len(ack.HarnessSettings) > 0 || ack.HarnessProbeDir != "" || len(ack.HarnessProbeDirs) > 0 {
 		if err := c.send(ctx, conn, protocol.Frame{V: protocol.Version, Type: protocol.HarnessStatus, Harnesses: c.Harnesses, Capabilities: c.capabilityReportsSnapshot()}); err != nil {
 			return err
 		}
@@ -483,10 +485,13 @@ func (c *Client) RunOnce(ctx context.Context) error {
 			if frame.LauncherDefinition == nil {
 				result.Code, result.Message = "invalid_request", "missing launcher definition"
 			} else if frame.Type == protocol.LauncherValidate {
-				c.mu.Lock()
-				probeDir := c.harnessProbeDir
-				c.mu.Unlock()
-				if row, err := inspectLauncher(*frame.LauncherDefinition, probeDir); err != nil {
+				dirs := c.probeDirs()
+				var first string
+				var more []string
+				if len(dirs) > 0 {
+					first, more = dirs[0], dirs[1:]
+				}
+				if row, err := inspectLauncher(*frame.LauncherDefinition, first, more...); err != nil {
 					result.Code, result.Message = "invalid_launcher", err.Error()
 				} else {
 					result.Launcher = &row

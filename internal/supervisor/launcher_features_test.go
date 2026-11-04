@@ -46,11 +46,19 @@ echo 2.0`)
 		t.Fatalf("a failing probe: %+v %v", row, err)
 	}
 
-	// Native launchers, Docker launchers of a tool that needs no feature, and any launcher with no checkout to run in are not probed at all.
-	write("echo should-not-run; exit 9")
-	if row, err = inspectLauncher(def, ""); err != nil || row.FeatureProblem != "" || row.Features != nil || !row.Available {
-		t.Fatalf("no checkout: %+v %v", row, err)
+	// With no project folder the probe still runs, from an empty folder of ours: a current launcher answers before it touches Docker, and one
+	// that predates the probe checks the mount first and says so, which is read as "too old", not as a failure.
+	write(`if [ "$HARNESS_DOCKER_PRINT_FEATURES" = 1 ]; then printf 'forward_env\n'; exit 0; fi
+echo 2.0`)
+	if row, err = inspectLauncher(def, ""); err != nil || row.FeatureProblem != "" || strings.Join(row.Features, ",") != "forward_env" || !row.Available {
+		t.Fatalf("no checkout, a current launcher: %+v %v", row, err)
 	}
+	write(`echo "Error: Directory '$PWD' is not mounted in the harness container." >&2; exit 1`)
+	if row, err = inspectLauncher(def, ""); err != nil || !strings.Contains(row.FeatureProblem, "launcher too old") || !row.Available {
+		t.Fatalf("no checkout, an old launcher: %+v %v", row, err)
+	}
+	write("echo should-not-run; exit 9")
+	// Native launchers and Docker launchers of a tool that needs no feature are not probed for one they cannot have.
 	native := def
 	native.Containerized = false
 	if row, err = inspectLauncher(native, checkout); err != nil || row.FeatureProblem != "" || row.Features != nil {

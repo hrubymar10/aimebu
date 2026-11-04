@@ -72,23 +72,47 @@ func (s *Store) AgentCheckoutPath(ctx context.Context, agentID string) (string, 
 	return path, err
 }
 
-// FirstMachineFolder provides a neutral mapped directory for launcher version
-// probes. Spawn still validates the particular checkout it will use.
-func (s *Store) FirstMachineFolder(ctx context.Context, machineID string) (string, error) {
+// MachineProbeFolders lists the project folders a machine has, in project order (at most limit, each once), for launcher probes: a
+// container launcher answers --version only from a folder its container mounts, and the server cannot know which of the folders that is, so
+// the supervisor tries them in turn. On the host machine a project's own folder is the machine's folder; on any other machine it is the
+// folder the owner mapped for it (a project without one has none there).
+func (s *Store) MachineProbeFolders(ctx context.Context, machineID string, limit int) ([]string, error) {
 	if err := s.checkTxReentry(ctx); err != nil {
-		return "", err
+		return nil, err
 	}
-	var folder string
-	err := s.db.QueryRowContext(ctx, `SELECT CASE WHEN m.is_host=1 THEN p.folder ELSE f.folder END
+	rows, err := s.db.QueryContext(ctx, `SELECT CASE WHEN m.is_host=1 THEN p.folder ELSE f.folder END
 		FROM machine m JOIN project p LEFT JOIN project_machine_folder f ON f.machine_id=m.id AND f.project_id=p.id
 		WHERE m.id=? AND m.revoked_at IS NULL AND p.system=0 AND
 			CASE WHEN m.is_host=1 THEN p.folder ELSE f.folder END IS NOT NULL AND
 			CASE WHEN m.is_host=1 THEN p.folder ELSE f.folder END != ''
-		ORDER BY p.id LIMIT 1`, machineID).Scan(&folder)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+		ORDER BY p.id`, machineID)
+	if err != nil {
+		return nil, err
 	}
-	return folder, err
+	defer rows.Close()
+	seen := map[string]bool{}
+	folders := []string{}
+	for rows.Next() {
+		var folder string
+		if err := rows.Scan(&folder); err != nil {
+			return nil, err
+		}
+		if !seen[folder] && len(folders) < limit {
+			seen[folder] = true
+			folders = append(folders, folder)
+		}
+	}
+	return folders, rows.Err()
+}
+
+// FirstMachineFolder is the first of MachineProbeFolders: a neutral mapped directory for a launcher version probe. Spawn still validates
+// the particular checkout it will use.
+func (s *Store) FirstMachineFolder(ctx context.Context, machineID string) (string, error) {
+	folders, err := s.MachineProbeFolders(ctx, machineID, 1)
+	if err != nil || len(folders) == 0 {
+		return "", err
+	}
+	return folders[0], nil
 }
 
 func (s *Store) SetProjectMachineFolder(ctx context.Context, projectID, machineID, userID, folder string) (MachineFolder, error) {

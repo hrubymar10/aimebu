@@ -68,8 +68,11 @@ func validateLauncher(def protocol.LauncherDefinition) error {
 	return nil
 }
 
-func inspectLauncher(def protocol.LauncherDefinition, checkout string) (protocol.LauncherRow, error) {
+// inspectLauncher makes the row of a launcher. checkout is the folder a container launcher is first asked from; more are the other project
+// folders of the machine, tried in turn when the first is one its container does not mount.
+func inspectLauncher(def protocol.LauncherDefinition, checkout string, more ...string) (protocol.LauncherRow, error) {
 	row := protocol.LauncherRow{LauncherDefinition: def}
+	dirs := probeFolders(checkout, more)
 	if err := validateLauncher(def); err != nil {
 		return row, err
 	}
@@ -85,8 +88,8 @@ func inspectLauncher(def protocol.LauncherDefinition, checkout string) (protocol
 		return row, err
 	}
 	row.ResolvedCommand = path
-	if checkout != "" || !def.Containerized {
-		version, problem := probeLauncherVersion(def, path, checkout, versionProbeTimeout)
+	if len(dirs) > 0 || !def.Containerized {
+		version, problem := probeLauncherVersionIn(context.Background(), def, path, dirs, versionProbeTimeout)
 		row.Version = version
 		if problem != "" {
 			if def.Containerized {
@@ -98,9 +101,10 @@ func inspectLauncher(def protocol.LauncherDefinition, checkout string) (protocol
 	} else {
 		row.VersionProblem = "no project folder is set on this machine yet, and a container launcher can only be asked from a folder it mounts"
 	}
-	// Like the --version probe above, only with a checkout to run in: an old launcher that ignores the probe runs the harness with these
-	// arguments, which must not happen in an arbitrary directory, and the hello loop must not wait on every launcher.
-	if def.Containerized && checkout != "" && (adapter.DockerNeedsForwardEnv(def.Tool) || def.Tool == "claude") {
+	// The feature probe exits before it touches Docker, so it needs no folder the container mounts: without a project folder it runs in a fresh
+	// empty one of ours. A launcher too old to know the probe would run the harness there, and dies first on "not mounted" (the folder is not).
+	// The hello loop must not wait on every launcher, so the answer is asked once, from the first folder.
+	if def.Containerized && (adapter.DockerNeedsForwardEnv(def.Tool) || def.Tool == "claude") {
 		probeLauncherFeatures(&row, def, path, checkout)
 	}
 	if !def.Enabled {
@@ -123,6 +127,57 @@ const (
 // what it printed on stderr (a Docker launcher says "Directory … is not mounted in the harness container" there), or that it timed out.
 func probeLauncherVersion(def protocol.LauncherDefinition, path, dir string, timeout time.Duration) (version, problem string) {
 	return probeLauncherVersionContext(context.Background(), def, path, dir, timeout)
+}
+
+// probeFolders is the folders a container launcher is asked from: first, then more, each once, none empty.
+func probeFolders(first string, more []string) []string {
+	var dirs []string
+	seen := map[string]bool{}
+	for _, dir := range append([]string{first}, more...) {
+		if dir != "" && !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
+}
+
+// probeLauncherVersionIn asks the launcher for its version from each folder in turn and stops at the first answer. A container launcher
+// only runs in a folder its container mounts and the server cannot tell which of a machine's project folders that is, so one that is
+// not mounted must not hide the version: only when none answers is the problem returned, and then the most useful one (what the launcher
+// said that is not just "not mounted", else that no project folder of this machine is mounted). No folder at all is a launcher that runs
+// anywhere (dirs empty: the supervisor's own folder).
+func probeLauncherVersionIn(parent context.Context, def protocol.LauncherDefinition, path string, dirs []string, timeout time.Duration) (version, problem string) {
+	if len(dirs) == 0 {
+		return probeLauncherVersionContext(parent, def, path, "", timeout)
+	}
+	// One deadline for the whole launcher, however many folders there are, and the first timeout ends it: a launcher that hangs is hanging
+	// for every folder, and the hello loop asks launchers one after another before it reads any frame, so the time a launcher may take is
+	// what the caller gave it, not that times the number of folders.
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	notMounted, other := 0, ""
+	for _, dir := range dirs {
+		version, problem = probeLauncherVersionContext(ctx, def, path, dir, timeout)
+		if version != "" {
+			return version, ""
+		}
+		if ctx.Err() != nil || problem == versionTimedOut {
+			return "", versionTimedOut
+		}
+		if strings.Contains(problem, "not mounted") {
+			notMounted++
+		} else if other == "" {
+			other = problem
+		}
+	}
+	if other != "" {
+		return "", other
+	}
+	if notMounted > 1 {
+		return "", fmt.Sprintf("none of this machine's %d project folders is mounted in the harness container", notMounted)
+	}
+	return "", problem
 }
 
 func probeLauncherVersionContext(parent context.Context, def protocol.LauncherDefinition, path, dir string, timeout time.Duration) (version, problem string) {
@@ -152,7 +207,7 @@ func probeLauncherVersionContext(parent context.Context, def protocol.LauncherDe
 }
 
 func (c *Client) hasUnknownContainerLauncherLocked() bool {
-	if c.harnessProbeDir == "" {
+	if c.harnessProbeDir == "" && len(c.harnessProbeMore) == 0 {
 		return false
 	}
 	for _, row := range c.Launchers {
@@ -214,7 +269,7 @@ func (c *Client) startLauncherReprobe(ctx context.Context) {
 // Recheck unresolved container versions sequentially and report only a changed row.
 func (c *Client) reprobeUnknownLaunchers(ctx context.Context, timedOutOnly bool) {
 	c.mu.Lock()
-	dir := c.harnessProbeDir
+	dirs := probeFolders(c.harnessProbeDir, c.harnessProbeMore)
 	var pending []protocol.LauncherRow
 	for _, row := range c.Launchers {
 		if row.Containerized && row.ResolvedCommand != "" && row.Version == "" && row.VersionProblem != "" && (!timedOutOnly || row.VersionProblem == versionTimedOut) {
@@ -222,7 +277,7 @@ func (c *Client) reprobeUnknownLaunchers(ctx context.Context, timedOutOnly bool)
 		}
 	}
 	c.mu.Unlock()
-	if dir == "" {
+	if len(dirs) == 0 {
 		return
 	}
 	changed := false
@@ -230,7 +285,7 @@ func (c *Client) reprobeUnknownLaunchers(ctx context.Context, timedOutOnly bool)
 		if ctx.Err() != nil {
 			return
 		}
-		version, problem := probeLauncherVersionContext(ctx, row.LauncherDefinition, row.ResolvedCommand, dir, versionReprobeTimeout)
+		version, problem := probeLauncherVersionIn(ctx, row.LauncherDefinition, row.ResolvedCommand, dirs, versionReprobeTimeout)
 		if ctx.Err() != nil {
 			return
 		}
@@ -253,10 +308,26 @@ func (c *Client) reprobeUnknownLaunchers(ctx context.Context, timedOutOnly bool)
 func probeLauncherFeatures(row *protocol.LauncherRow, def protocol.LauncherDefinition, path, checkout string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	private := checkout == ""
+	if private {
+		empty, err := os.MkdirTemp("", "aimebu-feature-probe-")
+		if err != nil {
+			row.FeatureProblem = "the launcher's feature probe could not run: " + err.Error()
+			return
+		}
+		defer os.RemoveAll(empty)
+		checkout = empty
+	}
 	features, err := adapter.DockerFeatures(ctx, path, def.Args, checkout, launcherEnvironment(def.EnvRefs, def.Tool))
 	if err != nil {
 		if !adapter.DockerNeedsForwardEnv(def.Tool) {
 			return // the tool needs no feature: an answer that cannot be read only means none is known
+		}
+		if private && strings.Contains(err.Error(), "not mounted") {
+			// Asked from a folder of ours, a launcher that predates the probe checks the mount before anything else and says so: that is
+			// the launcher being old, not a failure of this one.
+			row.FeatureProblem = "launcher too old: it does not answer the feature probe, which " + def.Tool + " needs (update harness-docker)"
+			return
 		}
 		row.FeatureProblem = "the launcher's feature probe failed: " + err.Error()
 		return
@@ -354,11 +425,22 @@ func preflightLauncher(ctx context.Context, def protocol.LauncherDefinition, row
 	return visible, nil
 }
 
-func (c *Client) setLauncher(def protocol.LauncherDefinition) error {
+// probeDirs are the folders a container launcher is asked from: the first one known to work (a spawned checkout), then the machine's
+// project folders.
+func (c *Client) probeDirs() []string {
 	c.mu.Lock()
-	probeDir := c.harnessProbeDir
-	c.mu.Unlock()
-	row, err := inspectLauncher(def, probeDir)
+	defer c.mu.Unlock()
+	return probeFolders(c.harnessProbeDir, c.harnessProbeMore)
+}
+
+func (c *Client) setLauncher(def protocol.LauncherDefinition) error {
+	dirs := c.probeDirs()
+	var first string
+	var more []string
+	if len(dirs) > 0 {
+		first, more = dirs[0], dirs[1:]
+	}
+	row, err := inspectLauncher(def, first, more...)
 	if err != nil {
 		return err
 	}

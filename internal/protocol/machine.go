@@ -73,6 +73,7 @@ type Frame struct {
 	Harnesses                  []HarnessRow         `json:"harnesses,omitempty"`
 	HarnessSettings            []HarnessSetting     `json:"harness_settings,omitempty"`
 	HarnessProbeDir            string               `json:"harness_probe_dir,omitempty"`
+	HarnessProbeDirs           []string             `json:"harness_probe_dirs,omitempty"`
 	Harness                    *HarnessRow          `json:"harness,omitempty"`
 	HarnessSetting             *HarnessSetting      `json:"harness_setting,omitempty"`
 	Launchers                  []LauncherRow        `json:"launchers,omitempty"`
@@ -391,6 +392,8 @@ type HarnessCandidate struct {
 	Command       string `json:"command"`
 	Containerized bool   `json:"containerized"`
 	Version       string `json:"version,omitempty"`
+	// VersionProblem says why Version is empty for a harness that runs in a container: no folder to ask it from, or what the launcher said.
+	VersionProblem string `json:"version_problem,omitempty"`
 }
 
 // ModelCandidate is a model a harness reported. Note is what the harness says about it (context size and the like).

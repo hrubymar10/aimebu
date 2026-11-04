@@ -591,3 +591,32 @@ func TestDetectModelsOfVibeLabelsByProviderAndFlagsLoopbackForContainers(t *test
 		}
 	}
 }
+
+// A container launcher in the harness list gets its version from the machine's project folders in turn, or says why it has none.
+func TestDetectContainerHarnessesAskTheMachinesFolders(t *testing.T) {
+	dir, good, bad := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", dir)
+	writeScript(t, dir, "claude-docker", `case "$PWD" in *`+filepath.Base(good)+`) echo "2.1.284 (Claude Code)";; *) echo "Error: Directory '$PWD' is not mounted in the harness container." >&2; exit 1;; esac`)
+	writeScript(t, dir, "codex-docker", `echo "Error: Directory '$PWD' is not mounted in the harness container." >&2; exit 1`)
+	mine := func(dirs []string) map[string]protocol.HarnessCandidate {
+		out := map[string]protocol.HarnessCandidate{}
+		for _, candidate := range detectHarnessesIn(t.Context(), dirs) {
+			if strings.HasPrefix(candidate.Command, dir) {
+				out[candidate.Family] = candidate
+			}
+		}
+		return out
+	}
+	got := mine([]string{bad, good})
+	if claude := got["claude"]; claude.Version != "2.1.284 (Claude Code)" || claude.VersionProblem != "" || !claude.Containerized {
+		t.Fatalf("claude-docker: %+v", claude)
+	}
+	if codex := got["codex"]; codex.Version != "" || !strings.Contains(codex.VersionProblem, "none of this machine's 2 project folders is mounted") {
+		t.Fatalf("codex-docker, whose folder is not mounted: %+v", codex)
+	}
+	got = mine(nil)
+	if claude := got["claude"]; claude.Version != "" || !strings.Contains(claude.VersionProblem, "no project folder is set on this machine yet") {
+		t.Fatalf("no folder known: %+v", claude)
+	}
+}

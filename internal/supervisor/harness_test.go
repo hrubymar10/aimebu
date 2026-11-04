@@ -178,3 +178,28 @@ func TestDockerDiscoveryOutsideMirroredCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The legacy Docker harness row, like a launcher row, is asked from each of the machine's folders in turn until one answers, within one deadline.
+func TestLegacyDockerHarnessIsAskedFromEveryFolder(t *testing.T) {
+	root, good, bad := t.TempDir(), t.TempDir(), t.TempDir()
+	launcher := filepath.Join(root, "claude-docker")
+	script := "#!/bin/sh\ncase \"$PWD\" in *" + filepath.Base(good) + ") echo 'claude 4.5.6';; *) echo \"Error: Directory '$PWD' is not mounted\" >&2; exit 1;; esac\n"
+	if err := os.WriteFile(launcher, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	setting := protocol.HarnessSetting{Tool: "claude", Variant: "docker", Enabled: true}
+	row, err := inspectHarness(setting, bad, good)
+	if err != nil || !row.Available || row.Version != "claude 4.5.6" {
+		t.Fatalf("the second folder is mounted: %+v %v", row, err)
+	}
+	row, err = inspectHarness(setting, bad)
+	if err != nil || !row.Available || row.Version != "" {
+		t.Fatalf("no folder is mounted: %+v %v", row, err)
+	}
+	// Through the client the folders are the ones the server sent: the first known to work, then the machine's.
+	client := &Client{harnessProbeDir: bad, harnessProbeMore: []string{good}, Harnesses: []protocol.HarnessRow{{HarnessSetting: setting}}}
+	if err := client.setHarness(setting); err != nil || client.Harnesses[0].Version != "claude 4.5.6" {
+		t.Fatalf("setHarness: %+v %v", client.Harnesses[0], err)
+	}
+}

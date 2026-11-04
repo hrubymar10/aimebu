@@ -129,8 +129,19 @@ server's allowlist must admit its source IP. A stale spawn is rejected before
 this write; a write failure sends a failed
 `spawn_result` for that agent while the machine connection stays open.
 
-A container launcher's version is asked from a project folder of the machine (the launcher only
-runs in a folder its container mounts). When it cannot be answered the launcher row carries a
+A container launcher's version is asked from the project folders of the machine, in turn, until
+one answers, within one deadline per launcher (3 seconds when its row is made, 20 on the retry after
+connection) however many folders there are, and the first timeout ends the asking (a launcher that hangs
+hangs for every folder, and the launchers are asked one after another before any frame is read). The
+legacy Docker harness rows are asked the same way (the launcher only runs in a folder its container mounts, and the server cannot tell
+which of the machine's folders that is; when none is mounted the row says so once, not with one
+folder's text). The harnesses found on the machine ("Found on this machine" in the wizard and in
+Settings → Harnesses) get their container versions the same way, within a shared 20 second budget;
+without a project folder the entry says why instead of showing nothing. A container launcher's
+features (`claude_home_shared`, `forward_env`) are asked with `HARNESS_DOCKER_PRINT_FEATURES=1`,
+which exits before it touches Docker, so they need no project folder: without one the probe runs in
+a fresh empty folder of the supervisor's (a launcher too old to know the probe checks the mount
+first, fails there, and is reported as too old). When it cannot be answered the launcher row carries a
 `version_problem` instead of a bare "unknown": the missing folder, what the launcher said on stderr,
 or that it did not answer in time. A timeout gets a prompt 20-second retry after connection;
 while a container launcher still has an unresolved version and a probe folder is available,

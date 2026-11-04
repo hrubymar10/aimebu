@@ -72,14 +72,18 @@ func inspectHarness(setting protocol.HarnessSetting, mountedDir ...string) (prot
 	// Docker launchers require a mirrored working directory even for --version.
 	// Discovery has no checkout yet; keep the PATH result and defer the version
 	// probe unless a known mounted directory is supplied.
-	if setting.Variant != "docker" || len(mountedDir) > 0 && mountedDir[0] != "" {
+	dirs := probeFolders("", mountedDir)
+	if setting.Variant == "docker" && len(dirs) > 0 {
+		// Asked from each folder the machine has in turn, within one deadline, as a launcher row is: which of them the container mounts is not known.
+		version, problem := probeLauncherVersionIn(context.Background(), protocol.LauncherDefinition{Tool: setting.Tool, Containerized: true}, row.LauncherPath, dirs, 3*time.Second)
+		row.Version = version
+		if problem != "" {
+			versionErr = errors.New(problem)
+		}
+	} else if setting.Variant != "docker" {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, row.LauncherPath, "--version")
-		if setting.Variant == "docker" {
-			cmd.Dir = mountedDir[0]
-			cmd.Env = append(os.Environ(), strings.ToUpper(setting.Tool)+"_LAUNCH_FLAGS=")
-		}
 		out, err := cmdprobe.Output(cmd) // a launcher that exits 0 and leaves a helper behind still reported its version
 		versionErr = err
 		if err == nil {
@@ -106,10 +110,7 @@ func defaultHarnesses() []protocol.HarnessRow {
 }
 
 func (c *Client) setHarness(setting protocol.HarnessSetting) error {
-	c.mu.Lock()
-	probeDir := c.harnessProbeDir
-	c.mu.Unlock()
-	row, err := inspectHarness(setting, probeDir)
+	row, err := inspectHarness(setting, c.probeDirs()...)
 	if err != nil {
 		return err
 	}

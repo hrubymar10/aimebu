@@ -83,3 +83,58 @@ func TestChangingRemoteProjectFolderRequiresNewAdmission(t *testing.T) {
 	set("/remote/second")
 	allowed(false)
 }
+
+// A container launcher is asked its version from a folder its container mounts, which the server cannot tell: the machine's folders come
+// back in project order, each once, up to the limit; on the host a project's own folder counts, on another machine only a mapped one.
+func TestMachineProbeFolders(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := testStore(t, Options{})
+	var host, remote Machine
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		var err error
+		if host, err = tx.CreateMachine(Machine{Name: "host", KeyHash: "host-key", IsHost: true, Approved: true}); err != nil {
+			return err
+		}
+		remote, err = tx.CreateMachine(Machine{Name: "remote", KeyHash: "remote-key", Approved: true})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var projects []Project
+	for _, folder := range []string{"/work/a", "/work/b", "/work/a", "/work/c"} { // one folder shared by two projects counts once
+		project, err := s.CreateProject(ctx, Project{Name: "p" + folder, Folder: folder})
+		if err != nil {
+			t.Fatal(err)
+		}
+		projects = append(projects, project)
+	}
+	list := func(machineID string, limit int) []string {
+		t.Helper()
+		got, err := s.MachineProbeFolders(ctx, machineID, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := list(host.ID, 8); len(got) != 3 || got[0] != "/work/a" || got[1] != "/work/b" || got[2] != "/work/c" {
+		t.Fatalf("host folders: %v", got)
+	}
+	if got := list(host.ID, 2); len(got) != 2 || got[1] != "/work/b" {
+		t.Fatalf("limited: %v", got)
+	}
+	if got := list(remote.ID, 8); len(got) != 0 {
+		t.Fatalf("a remote machine has no folder until one is mapped: %v", got)
+	}
+	for i, folder := range map[int]string{3: "/remote/c", 1: "/remote/b"} {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO project_machine_folder(project_id,machine_id,folder) VALUES (?,?,?)`, projects[i].ID, remote.ID, folder); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := list(remote.ID, 8); len(got) != 2 || got[0] != "/remote/b" || got[1] != "/remote/c" {
+		t.Fatalf("remote folders in project order: %v", got)
+	}
+	if first, err := s.FirstMachineFolder(ctx, remote.ID); err != nil || first != "/remote/b" {
+		t.Fatalf("first folder: %q %v", first, err)
+	}
+}

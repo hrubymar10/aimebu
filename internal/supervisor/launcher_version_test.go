@@ -147,3 +147,102 @@ func TestContainerLauncherVersionRecoversAfterStartupFailure(t *testing.T) {
 		t.Fatalf("unexpected version probes: %q %v", data, err)
 	}
 }
+
+// A container launcher is asked from the machine's project folders in turn: the first may be one its container does not mount, which must
+// not hide the version. When none answers, the most useful problem is returned.
+func TestContainerLauncherVersionTriesEveryProjectFolder(t *testing.T) {
+	good, bad := t.TempDir(), t.TempDir()
+	def, _ := versionLauncher(t, `case "$PWD" in *`+filepath.Base(good)+`) echo "2.1.284 (Claude Code)";; *) echo "Error: Directory '$PWD' is not mounted in the harness container." >&2; exit 1;; esac`)
+	// The first folder is not mounted, the second is.
+	if version, problem := probeLauncherVersionIn(context.Background(), def, def.Command, []string{bad, good}, 5*time.Second); version != "2.1.284 (Claude Code)" || problem != "" {
+		t.Fatalf("version after an unmounted folder: %q %q", version, problem)
+	}
+	row, err := inspectLauncher(def, bad, good)
+	if err != nil || row.Version != "2.1.284 (Claude Code)" || row.VersionProblem != "" {
+		t.Fatalf("a row asked from both folders: %+v %v", row, err)
+	}
+	// None mounted: one problem that says so, not the text of whichever folder came first.
+	other := t.TempDir()
+	if version, problem := probeLauncherVersionIn(context.Background(), def, def.Command, []string{bad, other}, 5*time.Second); version != "" || !strings.Contains(problem, "none of this machine's 2 project folders is mounted") {
+		t.Fatalf("no folder mounted: %q %q", version, problem)
+	}
+	// A single folder keeps the launcher's own words.
+	if _, problem := probeLauncherVersionIn(context.Background(), def, def.Command, []string{bad}, 5*time.Second); !strings.Contains(problem, "is not mounted in the harness container") {
+		t.Fatalf("one folder: %q", problem)
+	}
+	// A different failure outranks "not mounted": that is what the owner can act on.
+	broken, _ := versionLauncher(t, `case "$PWD" in *`+filepath.Base(bad)+`) echo "Error: Docker is not running." >&2; exit 1;; *) echo "Error: Directory '$PWD' is not mounted in the harness container." >&2; exit 1;; esac`)
+	if _, problem := probeLauncherVersionIn(context.Background(), broken, broken.Command, []string{other, bad}, 5*time.Second); !strings.Contains(problem, "Docker is not running") {
+		t.Fatalf("the actionable problem: %q", problem)
+	}
+	// No folder at all runs the launcher where the supervisor is, as a native one is.
+	if version, _ := probeLauncherVersionIn(context.Background(), def, def.Command, nil, 5*time.Second); version != "" {
+		t.Fatalf("no folder, an unmounted working directory: %q", version)
+	}
+}
+
+// The feature probe exits before it touches Docker, so a container launcher reports its features (shares_claude_home among them) even when
+// the machine has no project folder yet; it runs in an empty private folder that is removed afterwards.
+func TestContainerLauncherFeaturesNeedNoProjectFolder(t *testing.T) {
+	record := filepath.Join(t.TempDir(), "cwd")
+	def, _ := versionLauncher(t, `if [ "$HARNESS_DOCKER_PRINT_FEATURES" = 1 ]; then pwd > `+record+`; ls -A . | wc -l >> `+record+`; echo forward_env; echo claude_home_shared; exit 0; fi; echo "9.9.9"`)
+	row, err := inspectLauncher(def, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(row.Features, ",") != "claude_home_shared,forward_env" || row.FeatureProblem != "" {
+		t.Fatalf("features without a folder: %+v", row)
+	}
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Fields(string(data))
+	if len(lines) != 2 || lines[1] != "0" || !strings.Contains(lines[0], "aimebu-feature-probe-") {
+		t.Fatalf("the probe ran in %v, want an empty private folder", lines)
+	}
+	if _, err := os.Stat(lines[0]); !os.IsNotExist(err) {
+		t.Fatalf("the private folder was left behind: %v", err)
+	}
+	// An old launcher ignores the probe and would start the harness; in a folder its container does not mount it dies first, and that is
+	// all the row learns (Claude needs no feature, so there is nothing to complain about).
+	old, _ := versionLauncher(t, `echo "Error: Directory '$PWD' is not mounted in the harness container." >&2; exit 1`)
+	if row, err := inspectLauncher(old, ""); err != nil || len(row.Features) != 0 || row.FeatureProblem != "" {
+		t.Fatalf("an old launcher: %+v %v", row, err)
+	}
+}
+
+// A launcher that hangs has one deadline however many folders the machine has, and the first timeout ends the asking: the hello loop asks
+// launchers one after another before it reads a frame, so eight folders must not make a hanging launcher eight times as slow (nor a few of
+// them push the connection past the server's frame timeout).
+func TestHangingContainerLauncherIsAskedOnceWithinOneDeadline(t *testing.T) {
+	calls := filepath.Join(t.TempDir(), "calls")
+	// It answers the feature probe at once (that exits before Docker) and hangs on --version, as a launcher whose container is starting does.
+	def, _ := versionLauncher(t, `if [ "$HARNESS_DOCKER_PRINT_FEATURES" = 1 ]; then echo forward_env; exit 0; fi; echo "$PWD" >> `+calls+`; sleep 30`)
+	dirs := make([]string, 8)
+	for i := range dirs {
+		dirs[i] = t.TempDir()
+	}
+	started := time.Now()
+	version, problem := probeLauncherVersionIn(context.Background(), def, def.Command, dirs, 500*time.Millisecond)
+	elapsed := time.Since(started)
+	if version != "" || problem != versionTimedOut {
+		t.Fatalf("a hanging launcher: %q %q", version, problem)
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("asked %d folders for %v: the whole launcher gets one deadline of 500ms", len(dirs), elapsed)
+	}
+	data, _ := os.ReadFile(calls)
+	if got := len(strings.Fields(string(data))); got != 1 {
+		t.Fatalf("the launcher was started %d times; the first timeout must end the asking", got)
+	}
+	// Through a launcher row the same limit holds: eight folders cost one probe of versionProbeTimeout, not eight.
+	started = time.Now()
+	row, err := inspectLauncher(def, dirs[0], dirs[1:]...)
+	if err != nil || row.Version != "" || row.VersionProblem != versionTimedOut || time.Since(started) > versionProbeTimeout+3*time.Second {
+		t.Fatalf("row of a hanging launcher: %+v %v after %v", row, err, time.Since(started))
+	}
+	if data, _ = os.ReadFile(calls); len(strings.Fields(string(data))) != 2 {
+		t.Fatalf("the row's probe started the launcher %d times in all, want once for it", len(strings.Fields(string(data))))
+	}
+}

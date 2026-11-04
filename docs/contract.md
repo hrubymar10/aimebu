@@ -840,8 +840,10 @@ it never silently reruns a turn with uncertain effects.
   digest?}]}]}`
 - S→M `hello_ack{v, desired[{agent_id, generation, desired, desired_rev}],
   redeliver[...], resend_receipts[...], harness_settings[...],
-  harness_probe_dir?, launcher_definitions[...]}` — the optional probe directory is the first project
-  folder mapped to that machine, used only for launcher version discovery.
+  harness_probe_dir?, harness_probe_dirs?, launcher_definitions[...]}` — the optional probe directories are the
+  project folders mapped to that machine (`harness_probe_dir` the first, `harness_probe_dirs` all of them in project order,
+  each once, at most 8), used only for launcher version discovery: a container launcher answers only from a folder its
+  container mounts, which the server cannot know, so the supervisor asks from each in turn until one answers.
 - S→M `harness_set{v, req_id, harness_setting:{tool,variant,enabled,override_path}}`;
   M→S `harness_result{v,req_id,harness?,code?,message?}` validates and applies
   the setting on that supervisor. M→S

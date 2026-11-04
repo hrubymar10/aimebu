@@ -2,6 +2,7 @@ import { html, useState, useLayoutEffect, useRef } from '../../ui.js';
 import { useAlive } from '../../hooks/use-alive.js';
 import { useDirty } from '../../hooks/use-dirty.js';
 import { useIdPrefix } from './id-prefix.js';
+import { candidateVersionLabel } from '../../harness-version.js';
 
 // Embedded in the onboarding there is no Add or Close button: its Continue adds what is ticked (through `controls`), so ticking only reports how many.
 export function DetectPanel({ candidates, embedded = false, controls = null, onTick = () => {}, onClose, onAdd, onFailed, onDirty }) {
@@ -65,7 +66,7 @@ export function DetectPanel({ candidates, embedded = false, controls = null, onT
             aria-label=${`Add ${candidate.label} at ${candidate.command}`}
             onChange=${() => toggle(index)}
           />
-          <span>${`${candidate.label} · ${candidate.command}${candidate.version ? ` · ${candidate.version}` : ''}${candidate.already_added ? ' · already added' : ''}`}</span>
+          <span>${`${candidate.label} · ${candidate.command}${candidateVersionLabel(candidate)}${candidate.already_added ? ' · already added' : ''}`}</span>
         </label>
       `)}
       <div class="machine-harness-actions">

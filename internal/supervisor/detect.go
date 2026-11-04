@@ -46,6 +46,10 @@ const (
 	detectStderrLines   = 3
 	detectStderrChars   = 400
 	detectStaleRunAge   = time.Hour
+	// detectContainerVersionWait is how long one container launcher gets, for all the folders it is asked from together, to give its version while the harnesses are listed, and
+	// detectContainerVersionBudget how long all of them get together.
+	detectContainerVersionWait   = 5 * time.Second
+	detectContainerVersionBudget = 20 * time.Second
 )
 
 func (c *Client) detectResult(ctx context.Context, frame protocol.Frame) protocol.Frame {
@@ -64,7 +68,7 @@ func (c *Client) detectResult(ctx context.Context, frame protocol.Frame) protoco
 		answer.ReqID = frame.ReqID
 		return answer
 	case "harnesses":
-		result.HarnessCandidates = detectHarnesses(ctx)
+		result.HarnessCandidates = detectHarnessesIn(ctx, c.probeDirs())
 	case "models":
 		dir := frame.Detect.Dir
 		temporary := dir == ""
@@ -136,7 +140,16 @@ func detectModelsInRunWith(ctx context.Context, family, command string, args []s
 // detectHarnesses looks for the known harness executables on PATH and in the places a user-level install puts them, and reports each
 // once (symlinks resolved). Nothing is saved.
 func detectHarnesses(ctx context.Context) []protocol.HarnessCandidate {
+	return detectHarnessesIn(ctx, nil)
+}
+
+// detectHarnessesIn is detectHarnesses with the folders a container launcher may be asked its version from (the machine's project folders,
+// tried in turn): without any, or when none is mounted, the candidate says why it has no version instead of showing nothing.
+func detectHarnessesIn(ctx context.Context, probeDirs []string) []protocol.HarnessCandidate {
 	dirs := searchDirs(ctx)
+	// Asking the container launchers must not make the whole list wait: they share one budget, and a launcher that is not asked in time says so.
+	budget, cancelBudget := context.WithTimeout(ctx, detectContainerVersionBudget)
+	defer cancelBudget()
 	seen := map[string]bool{}
 	found := []protocol.HarnessCandidate{}
 	for _, item := range detectNames {
@@ -153,6 +166,10 @@ func detectHarnesses(ctx context.Context) []protocol.HarnessCandidate {
 			candidate := protocol.HarnessCandidate{Family: item.family, Command: abs, Containerized: item.docker}
 			if !item.docker {
 				candidate.Version = commandVersion(ctx, abs)
+			} else if len(probeDirs) == 0 {
+				candidate.VersionProblem = "no project folder is set on this machine yet, and a container launcher can only be asked from a folder it mounts"
+			} else {
+				candidate.Version, candidate.VersionProblem = probeLauncherVersionIn(budget, protocol.LauncherDefinition{Tool: item.family, Command: abs, Containerized: true}, abs, probeDirs, detectContainerVersionWait)
 			}
 			found = append(found, candidate)
 		}

@@ -285,10 +285,14 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 	for _, item := range launchers {
 		definitions = append(definitions, launcherDefinition(item))
 	}
-	probeDir, err := s.Store.FirstMachineFolder(ctx, machineID)
+	probeDirs, err := s.Store.MachineProbeFolders(ctx, machineID, maxProbeFolders)
 	if err != nil {
 		conn.Close(websocket.StatusInternalError, "machine folder error")
 		return
+	}
+	probeDir := ""
+	if len(probeDirs) > 0 {
+		probeDir = probeDirs[0]
 	}
 	if len(hello.Harnesses) > 0 {
 		if err := s.Store.RecordMachineHarnesses(ctx, machineID, hello.Harnesses); err != nil {
@@ -331,7 +335,7 @@ func (s *Server) machineSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, LauncherDefinitions: definitions}); err != nil {
+	if err := c.send(protocol.Frame{V: protocol.Version, Type: protocol.HelloAck, Desired: desired, Redeliver: []protocol.Delivery{}, ResendReceipts: resend, HarnessSettings: settings, HarnessProbeDir: probeDir, HarnessProbeDirs: probeDirs, LauncherDefinitions: definitions}); err != nil {
 		return
 	}
 	if err := s.enqueuePendingSpawns(ctx, c); err != nil {
@@ -747,6 +751,9 @@ func (s *Server) Dispatch(ctx context.Context, delivery protocol.Delivery) error
 	}
 	return c.send(protocol.DeliverFrame(delivery))
 }
+
+// maxProbeFolders bounds how many of a machine's project folders are handed to its supervisor to ask a container launcher from.
+const maxProbeFolders = 8
 
 func (s *Server) machineForID(id string) (*machineConn, error) {
 	s.machineMu.Lock()
