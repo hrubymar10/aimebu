@@ -71,6 +71,7 @@ async function main() {
       window.__panel.projectRole = () => 'owner';
       window.__panel.showRoom = target => { window.__calls.push(['showRoom', target.id]); };
       window.__panel.showRoomByID = async (project, id) => { window.__calls.push(['showRoomByID', project, id]); };
+      window.__panel.projectName = () => 'Alpha';
       window.__panel.projectRooms = () => [{ id: 'r1', kind: 'task', lifecycle: 'open', title: 'one', depth: 1 }, { id: 'r2', kind: 'task', lifecycle: 'open', title: 'general', depth: 0 }, { id: 'r3', kind: 'task', lifecycle: 'archived', title: 'old', depth: 1 }];
       if (withCard) await window.__panel.setRoom(current); else window.__panel.setRoomFacts(current);
     }, { module: PANEL, admin, current, withCard });
@@ -270,7 +271,7 @@ async function main() {
       mode: !document.querySelector('#spawn-resume-mode').hidden, rooms: [...document.querySelector('#spawn-form').elements.start_room.options].map(o => o.textContent), room: document.querySelector('#spawn-form').elements.start_room.selectedOptions[0].textContent }));
     assert.equal(banner.text, 'This continues the v1 session of old-bot, working in /work/old.');
     assert.match(banner.notes, /outside the project folder.*v1 saw this agent a moment ago/);
-    assert.deepEqual([banner.confirm, banner.mode, banner.rooms, banner.room], [true, true, ['one', 'general'], 'general']);
+    assert.deepEqual([banner.confirm, banner.mode, banner.rooms, banner.room], [true, true, ['Alpha › one', 'Alpha › general'], 'Alpha › general']);
     await page.$eval('#spawn-form button[type=submit]', node => node.click());
     assert.equal(await page.$eval('#spawn-resume-notes', node => node.textContent), 'Confirm that v1 is not running this session any more.');
     assert.equal(await count(page, 'POST', '/api/rooms/r2/agents'), 0);

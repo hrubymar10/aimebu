@@ -2966,7 +2966,7 @@ async function main() {
       });
       if (modelPick) assert.equal(modelPick.kept, modelPick.picked, 'a rebuilt model list keeps what the person picked');
       await first.waitForFunction(() => document.querySelector('#spawn-form [name=role]').value === 'reviewer', {}, {});
-      assert.deepEqual(await first.evaluate(() => ({ shown: !document.querySelector('#spawn-start-in').hidden, value: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent })), { shown: true, value: 'general' }, 'a start from v1 history says which room it starts in, general by default');
+      assert.deepEqual(await first.evaluate(() => ({ shown: !document.querySelector('#spawn-start-in').hidden, value: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent })), { shown: true, value: 'UI smoke › general' }, 'a start from v1 history says which room it starts in (project › room), general by default');
       // Which entry the dialog picks: a continued claude session takes the native claude entry even when a Docker one sorts first (and leaves
       // other tools and containers unselectable), and a fresh start only preselects the v1 tool without locking the others.
       assert.deepEqual(await first.evaluate(async () => {
@@ -9524,7 +9524,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
         const label = document.querySelector('#spawn-start-in'), select = document.querySelector('#spawn-start-room');
         return { shown: !label.hidden, text: label.firstChild.textContent, value: select.selectedOptions[0]?.textContent, options: [...select.options].map(option => option.textContent), roles: [...document.querySelectorAll('#spawn-form [name=role] option')].map(option => option.value), role: document.querySelector('#spawn-form [name=role]').value, hint: document.querySelector('#spawn-home-hint').hidden };
       });
-      assert.ok(picker.shown && picker.text === 'Start in' && picker.value === 'general' && picker.options.includes('general') && !picker.options.includes('home'), `the start dialog offers the project's task rooms, general first: ${JSON.stringify(picker)}`);
+      assert.ok(picker.shown && picker.text === 'Start in' && picker.value === 'UI smoke › general' && picker.options.includes('UI smoke › general') && !picker.options.some(option => /home/i.test(option)), `the start dialog offers the project's task rooms, general first: ${JSON.stringify(picker)}`);
       assert.ok(picker.roles.length > 1 && picker.roles.includes('worker') && picker.role === 'reviewer' && picker.hint === true, `a start in a task room keeps the role v1 gave and shows no home-room note: ${JSON.stringify(picker)}`);
       // Keyboard: the picker takes focus and a different room can be chosen with the arrow keys; it names itself to assistive technology.
       await first.focus('#spawn-start-room');

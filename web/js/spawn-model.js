@@ -143,10 +143,17 @@ export const validName = name => !name || /^[a-z][a-z0-9_-]{1,19}[a-z0-9]$/.test
 // The rooms a v1 agent can be started in: the project's open task rooms. Its history may be only in the home room (which keeps its own
 // lead-only rule) or in a room since archived, so the start is not tied to the room the profile was opened in. A continued Claude Code
 // session gets a room of its own unless the person picks an existing one.
-export function startRoomChoices(rooms, resume, currentRoomID) {
+// A room is named by where it sits, `project › room` (and the rooms it is nested under between the two), like the header's path.
+export function startRoomLabel(room, rooms, projectName = '') {
+  const byID = new Map(rooms.map(item => [item.id, item])), seen = new Set([room.id]), trail = [];
+  for (let parent = byID.get(room.parent_id); parent && parent.kind !== 'home' && !seen.has(parent.id); parent = byID.get(parent.parent_id)) { seen.add(parent.id); trail.unshift(parent.title); }
+  return [projectName, ...trail, room.title].filter(Boolean).join(' › ');
+}
+
+export function startRoomChoices(rooms, resume, currentRoomID, projectName = '') {
   if (!resume) return { options: [], value: '' };
   const open = rooms.filter(room => room.kind === 'task' && room.lifecycle === 'open');
-  const options = open.map(room => ({ value: room.id, label: room.title }));
+  const options = open.map(room => ({ value: room.id, label: startRoomLabel(room, rooms, projectName) }));
   const continuing = resume.kind === 'claude_session';
   if (continuing) options.unshift({ value: NEW_ROOM, label: 'A new room for this session' });
   // general is the project's shared task room; otherwise the open room if it is one, else the first.

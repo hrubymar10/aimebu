@@ -215,6 +215,7 @@ setInterval(() => {
 chat.setSpawnOpener(() => agents.openSpawn());
 chat.setLegacyActions(start => agents.openSpawn({ resume: start }), id => { agents.setMobileOpen(true); agents.openProfile(id); });
 agents.projectRole = chat.projectRole;
+agents.projectName = projectID => sidebar.projects.get(projectID)?.name || '';
 agents.projectRooms = projectID => [...sidebar.rooms.values()].filter(room => room.project_id === projectID);
 agents.showRoom = room => selectRoom(room);
 // A room the server made (a continued Claude Code session's): refresh the project's list so it is there, then open it.

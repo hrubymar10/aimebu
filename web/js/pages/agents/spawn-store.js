@@ -78,7 +78,7 @@ export class SpawnStore {
     this.startRooms = new Map();
     if (!resume || !room) { batch(() => { this.startOptions.value = []; this.startRoom.value = ''; }); return; }
     const rooms = this.host.projectRooms?.(room.project_id) || [];
-    const choices = startRoomChoices(rooms, resume, room.id);
+    const choices = startRoomChoices(rooms, resume, room.id, this.host.projectName?.(room.project_id) || '');
     for (const item of rooms) if (item.kind === 'task' && item.lifecycle === 'open') this.startRooms.set(item.id, item);
     batch(() => { this.startOptions.value = choices.options; this.startRoom.value = choices.value; });
   }

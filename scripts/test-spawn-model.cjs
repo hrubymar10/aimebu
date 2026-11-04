@@ -9,11 +9,11 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'spawn-model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning, NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, resumeBanner, spawnRequest, switchRows, switchStart, switchModel, switchUnchanged, switchReason };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning, NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, startRoomLabel, resumeBanner, spawnRequest, switchRows, switchStart, switchModel, switchUnchanged, switchReason };', context);
 const { modelFamily, modelVersion, matchModel, chooseModel, toolKey, modelChangeWarning } = context.api;
 const plain = value => JSON.parse(JSON.stringify(value)); // plain objects: a vm context has its own Object
 const { switchRows, switchStart, switchModel, switchUnchanged, switchReason } = context.api;
-const { NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, resumeBanner, spawnRequest } = context.api;
+const { NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, startRoomLabel, resumeBanner, spawnRequest } = context.api;
 const sessionEntryState = (...args) => JSON.parse(JSON.stringify(context.api.sessionEntryState(...args))); // plain objects: a vm context has its own Object
 
 const claude = [{ value: 'haiku', label: 'Haiku' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }];
@@ -139,6 +139,12 @@ assert.deepEqual(['nova', 'a-b_1', '', 'ab', 'Ab1', '1abc', 'abc-'].map(validNam
 const rooms = [{ id: 'r1', title: 'one', kind: 'task', lifecycle: 'open', depth: 1 }, { id: 'r2', title: 'general', kind: 'task', lifecycle: 'open', depth: 0 }, { id: 'r3', title: 'old', kind: 'task', lifecycle: 'archived' }, { id: 'h', title: 'home', kind: 'home', lifecycle: 'open' }];
 assert.deepEqual(plain(startRoomChoices(rooms, null, 'r1')), { options: [], value: '' });
 assert.deepEqual(plain(startRoomChoices(rooms, { slug: 'old' }, 'r1')), { options: [{ value: 'r1', label: 'one' }, { value: 'r2', label: 'general' }], value: 'r2' });
+// Named by where they sit: the project, the rooms they are nested under, then the room.
+assert.deepEqual(plain(startRoomChoices(rooms, { slug: 'old' }, 'r1', 'Alpha')).options.map(option => option.label), ['Alpha › one', 'Alpha › general']);
+{
+  const tree = [{ id: 'h', kind: 'home', title: 'Alpha' }, { id: 'a', kind: 'task', title: 'Auth', parent_id: 'h', lifecycle: 'open' }, { id: 'b', kind: 'task', title: 'Login', parent_id: 'a', lifecycle: 'open' }, { id: 'x', kind: 'task', title: 'Loop', parent_id: 'y', lifecycle: 'open' }, { id: 'y', kind: 'task', title: 'Other', parent_id: 'x', lifecycle: 'open' }];
+  assert.deepEqual([startRoomLabel(tree[1], tree, 'Alpha'), startRoomLabel(tree[2], tree, 'Alpha'), startRoomLabel(tree[2], tree, ''), startRoomLabel(tree[3], tree, 'Alpha')], ['Alpha › Auth', 'Alpha › Auth › Login', 'Auth › Login', 'Alpha › Other › Loop'], 'a nested room names the rooms above it, not the home room, and a parent loop ends');
+}
 assert.equal(startRoomChoices(rooms.filter(room => room.id !== 'r2'), { slug: 'old' }, 'r1').value, 'r1', 'without general the open room is chosen when it is a task room');
 assert.equal(startRoomChoices(rooms.filter(room => room.id !== 'r2'), { slug: 'old' }, 'h').value, 'r1');
 assert.deepEqual(plain(startRoomChoices(rooms, { kind: 'claude_session' }, 'r1')).options[0], { value: NEW_ROOM, label: 'A new room for this session' });

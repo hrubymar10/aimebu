@@ -344,7 +344,7 @@ automatic. The button opens the Spawn dialog for the old name (the
 v1 slug, if it is free in the project and fits the agent-name rule; otherwise
 the start is refused; the dialog has no Name field because the agent keeps it), the tool and model v1 ran, and the role v1 gave the
 agent most often, if v2 has it (otherwise worker). The dialog has a **Start in**
-picker listing the project's open task rooms, `general` by default: the agent
+picker listing the project's open task rooms, each named by where it sits (`project › room`, with the rooms it is nested under in between), `general` by default: the agent
 is started in the room picked there, not necessarily the room whose profile was
 opened. The lookup is **per project**: an agent that wrote in any room of the
 project can be started, so a worker whose v1 history is only in a home room
