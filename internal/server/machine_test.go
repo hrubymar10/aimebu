@@ -72,6 +72,8 @@ func (f *fixture) execution(t *testing.T) (store.Agent, store.Turn, store.Note, 
 	return agent, turn, note, delivery
 }
 
+// Every wait below is for a state that stays once it is reached (the connection, the settled turn, the stop), so it is bounded by
+// machineWaitGuard, which only stops a test that would hang for good, not by a short deadline that a loaded machine can miss.
 func TestMachineAuthenticationAndFullFakeTurn(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -99,13 +101,13 @@ func TestMachineAuthenticationAndFullFakeTurn(t *testing.T) {
 	go func() { done <- client.RunOnce(ctx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not connect")
 	}
 	if err := f.srv.Dispatch(ctx, delivery); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(machineWaitGuard)
 	for {
 		state, err := f.db.DeliveryState(context.Background(), turn.ID)
 		if err != nil {
@@ -136,7 +138,7 @@ func TestMachineAuthenticationAndFullFakeTurn(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(machineWaitGuard):
 		t.Fatal("supervisor did not stop")
 	}
 }
