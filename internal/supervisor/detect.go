@@ -19,6 +19,7 @@ import (
 
 	"github.com/goccy/go-json"
 
+	"github.com/hrubymar10/aimebu/internal/adapter"
 	"github.com/hrubymar10/aimebu/internal/cmdprobe"
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/vibeconfig"
@@ -54,6 +55,14 @@ func (c *Client) detectResult(ctx context.Context, frame protocol.Frame) protoco
 		return result
 	}
 	switch frame.Detect.Kind {
+	case "provider_keys":
+		answer := c.providerKeysAnswer(*frame.Detect)
+		answer.ReqID = frame.ReqID
+		return answer
+	case "provider_import":
+		answer := c.providerImportAnswer()
+		answer.ReqID = frame.ReqID
+		return answer
 	case "harnesses":
 		result.HarnessCandidates = detectHarnesses(ctx)
 	case "models":
@@ -83,7 +92,13 @@ func (c *Client) detectResult(ctx context.Context, frame protocol.Frame) protoco
 		} else {
 			result.DetectDir = dir
 		}
-		models, err := detectModelsInRun(ctx, frame.Detect.Family, frame.Detect.Command, frame.Detect.Args, dir, frame.Detect.Containerized, remove)
+		extras := detectExtras{providers: frame.Detect.Providers, refs: c.launcherRow(frame.Detect.LauncherID).EnvRefs}
+		models, err := detectModelsInRunWith(ctx, frame.Detect.Family, frame.Detect.Command, frame.Detect.Args, dir, frame.Detect.Containerized, remove, &extras)
+		// The endpoints that could not be asked are reported with a failure as much as with an answer: when the listing found nothing and every
+		// endpoint failed, they are the owner's only clue.
+		if len(extras.problems) > 0 {
+			result.Details, _ = json.Marshal(protocol.ProviderModelsAnswer{EndpointProblems: extras.problems})
+		}
 		if err != nil {
 			result.Code, result.Message = "detect_failed", fmt.Sprintf("model detection in %s: %v", dir, err)
 			return result
@@ -96,7 +111,20 @@ func (c *Client) detectResult(ctx context.Context, frame protocol.Frame) protoco
 }
 
 func detectModelsInRun(ctx context.Context, family, command string, args []string, dir string, containerized bool, remove func(string) error) ([]protocol.ModelCandidate, error) {
-	models, err := detectModelsFor(ctx, family, command, args, dir, containerized)
+	return detectModelsInRunWith(ctx, family, command, args, dir, containerized, remove, nil)
+}
+
+// detectExtras is what an OpenCode listing needs beyond the command: the harness's custom providers (defined in the private config the
+// listing runs in, and each one's own endpoint is asked), and the launcher's environment references for their keys. problems collects what
+// the endpoints that did not answer said.
+type detectExtras struct {
+	providers []adapter.CustomProvider
+	refs      map[string]string
+	problems  map[string]string
+}
+
+func detectModelsInRunWith(ctx context.Context, family, command string, args []string, dir string, containerized bool, remove func(string) error, extras *detectExtras) ([]protocol.ModelCandidate, error) {
+	models, err := detectModelsWith(ctx, family, command, args, dir, containerized, extras)
 	if remove != nil {
 		if cleanupErr := remove(dir); cleanupErr != nil {
 			log.Printf("model detection: remove run folder %s: %v", dir, cleanupErr)
@@ -296,6 +324,10 @@ func detectModels(ctx context.Context, family, command string, launcherArgs []st
 // detectModelsFor is detectModels for a harness that runs natively (containerized false) or in a container, which changes which models can
 // be used: see ModelCandidate.Unreachable.
 func detectModelsFor(ctx context.Context, family, command string, launcherArgs []string, dir string, containerized bool) ([]protocol.ModelCandidate, error) {
+	return detectModelsWith(ctx, family, command, launcherArgs, dir, containerized, nil)
+}
+
+func detectModelsWith(ctx context.Context, family, command string, launcherArgs []string, dir string, containerized bool, extras *detectExtras) ([]protocol.ModelCandidate, error) {
 	if err := executablePath(command); err != nil {
 		return nil, fmt.Errorf("the harness command is not usable: %w", err)
 	}
@@ -327,25 +359,67 @@ func detectModelsFor(ctx context.Context, family, command string, launcherArgs [
 	cmd.Dir = dir
 	// A Docker launcher puts its built-in flags (OpenCode's --auto, for one) before the arguments; the listing command must see none of them.
 	cmd.Env = append(os.Environ(), strings.ToUpper(family)+"_LAUNCH_FLAGS=")
+	if family == "opencode" {
+		// The listing runs in the private config an agent turn gets, so it shows what an agent can use, not what the person's own OpenCode
+		// config happens to define.
+		var custom []adapter.CustomProvider
+		if extras != nil {
+			custom = extras.providers
+		}
+		private, cleanup, err := opencodeListingEnv(dir, containerized, custom)
+		defer cleanup()
+		if err != nil {
+			return nil, fmt.Errorf("the harness's private configuration could not be prepared: %w", err)
+		}
+		cmd.Env = append(cmd.Env, private...)
+	}
 	var out bytes.Buffer
 	stderr := &tailWriter{keep: detectStderrKeep}
 	cmd.Stdout = &limitWriter{buf: &out, left: detectOutputLimit}
 	cmd.Stderr = stderr
-	if err := cmdprobe.Run(cmd); err != nil {
+	custom := family == "opencode" && extras != nil && len(extras.providers) > 0
+	var models []protocol.ModelCandidate
+	var err error
+	if runErr := cmdprobe.Run(cmd); runErr != nil {
 		if run.Err() != nil {
 			return nil, errors.New("the harness did not answer in time")
 		}
 		// Keep line boundaries for login diagnostics; lastLines joins them for
 		// display and may put unrelated prose before the meaningful line.
 		if reportsNoModels(string(stderr.buf)) || reportsNoModels(out.String()) {
-			return nil, noModelsError(family)
+			// OpenCode's own list being empty says nothing about a custom provider's endpoint, which is still asked below.
+			if !custom {
+				return nil, noModelsError(family)
+			}
+			err = noModelsError(family)
+		} else if said := stderr.lastLines(detectStderrLines, detectStderrChars); said != "" {
+			return nil, fmt.Errorf("the harness could not list its models (%v): %s", runErr, said)
+		} else {
+			return nil, fmt.Errorf("the harness could not list its models: %w", runErr)
 		}
-		if said := stderr.lastLines(detectStderrLines, detectStderrChars); said != "" {
-			return nil, fmt.Errorf("the harness could not list its models (%v): %s", err, said)
-		}
-		return nil, fmt.Errorf("the harness could not list its models: %w", err)
+	} else {
+		models, err = parse(out.Bytes())
 	}
-	return parse(out.Bytes())
+	if custom {
+		// A custom provider's models are what its endpoint serves: ask it (with its own key, if set here) and add what it lists.
+		listed, problems := providerEndpointModels(ctx, extras.providers, extras.refs)
+		extras.problems = problems
+		if len(listed) > 0 {
+			if err != nil {
+				models, err = nil, nil
+			}
+			have := map[string]bool{}
+			for _, model := range models {
+				have[model.Slug] = true
+			}
+			for _, model := range listed {
+				if !have[model.Slug] {
+					models = append(models, model)
+				}
+			}
+		}
+	}
+	return models, err
 }
 
 // tailWriter keeps only the last keep bytes written to it.

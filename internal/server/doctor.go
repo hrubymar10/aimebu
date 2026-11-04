@@ -71,6 +71,7 @@ var doctorCapabilities = []struct {
 	{"supports_session_fork", "a Claude Code session cannot be continued as a copy (fork); only continued in place", func(c *machineConn) bool { return c.supportsSessionFork }},
 	{"supports_launch_path", "a Claude Code session made under a link to its folder cannot be continued on this machine: its turns are held", func(c *machineConn) bool { return c.supportsLaunchPath }},
 	{"supports_session_attribution", "an imported v1 sender whose messages carry no session cannot be matched to the Claude Code session that sent them; the session v1 kept under its name is offered, checked against its messages", func(c *machineConn) bool { return c.supportsSessionAttribution }},
+	{"supports_providers", "an OpenCode agent on a custom provider cannot run on this machine: its turns are held", func(c *machineConn) bool { return c.supportsProviders }},
 	{"supports_agent_logs", "an agent's captured stderr cannot be read from the web UI", func(c *machineConn) bool { return c.supportsAgentLogs }},
 	{"supports_agent_log_size", "the size of the agent logs on this machine is not shown", func(c *machineConn) bool { return c.supportsAgentLogSize }},
 	{"supports_stop_replay", "a stop sent while the machine was offline is applied by a fallback that can kill a live process early", func(c *machineConn) bool { return c.supportsStopReplay }},

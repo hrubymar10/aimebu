@@ -179,6 +179,7 @@ func (s *Store) AgentLaunchPath(ctx context.Context, agentID string) (string, er
 // Why a turn is held back for a supervisor that cannot run it (NoteSessionHeld).
 const (
 	HeldForFork       = "it works on a copy of a Claude Code session, and the supervisor on %s predates that (it would write into the original)"
+	HeldForProviders  = "it runs on a custom OpenCode provider, and the supervisor on %s predates that (OpenCode would start without the endpoint)"
 	HeldForLaunchPath = "it continues a Claude Code session made under a link to its folder, and the supervisor on %s predates starting Claude in that spelling (it would not find the session)"
 )
 

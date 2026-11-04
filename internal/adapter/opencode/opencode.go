@@ -169,6 +169,10 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		// that act are denied, which removes them from the model's tool list.
 		config["permission"] = map[string]any{"bash": "deny", "edit": "deny", "webfetch": "deny", "external_directory": "deny"}
 	}
+	providerKeys, err := addCustomProviders(config, spec)
+	if err != nil {
+		return nil, err
+	}
 	configJSON, err := json.Marshal(config)
 	if err != nil {
 		return nil, err
@@ -196,7 +200,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	// stdin to the message and otherwise waits for it forever.
 	cmd.Stdin = bytes.NewReader(input)
 	if docker {
-		env, forwarded := dockerEnv(filepath.Join(visibleRuntime, "config"), filepath.Join(visibleRuntime, "opencode.db"), string(configJSON))
+		env, forwarded := dockerEnv(filepath.Join(visibleRuntime, "config"), filepath.Join(visibleRuntime, "opencode.db"), string(configJSON), providerKeys, spec.LauncherEnvRefs)
 		// An older launcher would run the harness without any of this: refuse it here, before the turn starts, not after a spawn that looked fine.
 		probe, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err := adapter.RequireDockerFeature(probe, "OpenCode", command, spec.LauncherArgs, spec.CheckoutPath, env, adapter.FeatureForwardEnv)
@@ -206,7 +210,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		}
 		cmd.Env = adapter.LauncherEnv(env, launcherRefs(spec.LauncherEnvRefs, forwarded))
 	} else {
-		cmd.Env = adapter.LauncherEnv(childEnv(configHome, filepath.Join(runtimeDir, "opencode.db"), string(configJSON)), spec.LauncherEnvRefs)
+		cmd.Env = adapter.LauncherEnv(childEnv(configHome, filepath.Join(runtimeDir, "opencode.db"), string(configJSON), providerKeys), spec.LauncherEnvRefs)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
@@ -264,11 +268,8 @@ func turnInput(spec adapter.TurnSpec) ([]byte, error) {
 	return []byte(promptFor(spec) + string(input)), nil
 }
 
-// providerKeys are the environment variables a provider reads its key from.
-// OpenCode takes credentials from its own auth.json (never read here) or from
-// these, so only this bounded list reaches the child.
-var providerKeys = []string{"OLLAMA_API_KEY", "OPENCODE_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
-	"GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY", "XAI_API_KEY"}
+// The environment variables a provider of OpenCode's own reads its key from (adapter.KnownProviderKeys). OpenCode takes credentials from its
+// own auth.json (never read here) or from these, so only this bounded list reaches the child.
 
 func versionEnv() []string {
 	return passThrough(map[string]bool{"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "LANG": true, "LC_ALL": true,
@@ -279,12 +280,15 @@ func versionEnv() []string {
 // but gives the agent a private config directory, session database, and an
 // inline config, so the user's global config, MCP servers, plugins, and
 // instructions never reach an agent turn.
-func childEnv(configHome, dbPath, configJSON string) []string {
+func childEnv(configHome, dbPath, configJSON string, extraKeys []string) []string {
 	allowed := map[string]bool{"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "LANG": true,
 		"LC_ALL": true, "LC_CTYPE": true, "TERM": true, "TMPDIR": true,
 		"XDG_DATA_HOME": true, "XDG_CACHE_HOME": true, "XDG_STATE_HOME": true,
 		"HTTPS_PROXY": true, "HTTP_PROXY": true, "NO_PROXY": true, "SSL_CERT_FILE": true, "SSL_CERT_DIR": true}
-	for _, key := range providerKeys {
+	for _, key := range adapter.KnownProviderKeys {
+		allowed[key] = true
+	}
+	for _, key := range extraKeys {
 		allowed[key] = true
 	}
 	out := passThrough(allowed)
@@ -325,7 +329,7 @@ func launcherRefs(refs map[string]string, forwarded []string) map[string]string 
 // which makes the launcher pass them to the harness by name: their values are in this process's environment, never in an argument list.
 // OPENCODE_LAUNCH_FLAGS is cleared because the launcher's built-in --auto comes before the subcommand and would start the interface
 // instead of `run`; the adapter passes its own flags after `run`.
-func dockerEnv(configHome, dbPath, configJSON string) (env, forwarded []string) {
+func dockerEnv(configHome, dbPath, configJSON string, extraKeys []string, refs map[string]string) (env, forwarded []string) {
 	env = adapter.DockerBaseEnv()
 	set := func(name, value string) {
 		env = append(env, name+"="+value)
@@ -337,12 +341,89 @@ func dockerEnv(configHome, dbPath, configJSON string) (env, forwarded []string) 
 	set("OPENCODE_DISABLE_AUTOUPDATE", "1")
 	set("OPENCODE_DISABLE_PROJECT_CONFIG", "1")
 	set("OPENCODE_DISABLE_CLAUDE_CODE", "1")
-	for _, key := range providerKeys {
+	for _, key := range adapter.KnownProviderKeys {
 		if value := os.Getenv(key); value != "" {
 			set(key, value)
 		}
 	}
+	// The key variables of a custom provider are forwarded by name like the others; where the owner's launcher references another variable
+	// for one, that variable's value is the key.
+	for _, key := range extraKeys {
+		if value := adapter.EnvValue(key, refs); value != "" && !forwardedName(forwarded, key) {
+			set(key, value)
+		}
+	}
 	return append(env, "HARNESS_DOCKER_FORWARD_ENV="+strings.Join(forwarded, ","), "OPENCODE_LAUNCH_FLAGS="), forwarded
+}
+
+func forwardedName(forwarded []string, name string) bool {
+	for _, item := range forwarded {
+		if item == name {
+			return true
+		}
+	}
+	return false
+}
+
+// addCustomProviders puts the custom providers of the turn into the agent's private config document and returns the names of their key
+// variables. A provider's key is only ever written as the reference {env:NAME}, which OpenCode resolves itself from its environment: the
+// value is never part of the document, the argument list or a log. A provider whose key variable is not set where the turn runs is refused
+// before anything starts, naming the variable, instead of failing later with the endpoint's 401.
+func addCustomProviders(config map[string]any, spec adapter.TurnSpec) ([]string, error) {
+	if len(spec.Providers) == 0 {
+		return nil, nil
+	}
+	document, keys, err := ProviderDocument(spec.Providers)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range spec.Providers {
+		if p.KeyEnv != "" && adapter.EnvValue(p.KeyEnv, spec.LauncherEnvRefs) == "" {
+			return nil, fmt.Errorf("custom provider %q: the key variable %s is not set on this machine", p.ID, p.KeyEnv)
+		}
+	}
+	config["provider"] = document
+	return keys, nil
+}
+
+// ProviderDocument is the "provider" section of an OpenCode config for custom providers, and the names of their key variables. The key is
+// only the reference {env:NAME}. Anything a config built from a delivery must not trust is refused: the server checks it when it saves a
+// provider, and this checks again because the providers arrive over the wire.
+func ProviderDocument(providers []adapter.CustomProvider) (document map[string]any, keys []string, err error) {
+	document = map[string]any{}
+	for _, p := range providers {
+		if p.ID == "" || strings.Contains(p.ID, "/") {
+			return nil, nil, fmt.Errorf("custom provider id %q is not usable", p.ID)
+		}
+		if p.NPM != adapter.CustomProviderNPM {
+			return nil, nil, fmt.Errorf("custom provider %q names package %q: only %s is allowed", p.ID, p.NPM, adapter.CustomProviderNPM)
+		}
+		if !strings.HasPrefix(p.BaseURL, "https://") && !strings.HasPrefix(p.BaseURL, "http://") {
+			return nil, nil, fmt.Errorf("custom provider %q has no usable base URL", p.ID)
+		}
+		options := map[string]any{"baseURL": p.BaseURL}
+		if p.KeyEnv != "" {
+			if adapter.ProtectedKeyEnv(p.KeyEnv) {
+				return nil, nil, fmt.Errorf("custom provider %q: %s is a variable the harness uses itself and cannot hold a key", p.ID, p.KeyEnv)
+			}
+			options["apiKey"] = "{env:" + p.KeyEnv + "}"
+			keys = append(keys, p.KeyEnv)
+		}
+		models := map[string]any{}
+		for _, m := range p.Models {
+			model := map[string]any{"name": m.Name}
+			if p.ContextTokens > 0 && p.OutputTokens > 0 {
+				model["limit"] = map[string]any{"context": p.ContextTokens, "output": p.OutputTokens}
+			}
+			models[m.ID] = model
+		}
+		name := p.Name
+		if name == "" {
+			name = p.ID
+		}
+		document[p.ID] = map[string]any{"npm": p.NPM, "name": name, "options": options, "models": models}
+	}
+	return document, keys, nil
 }
 
 func passThrough(allowed map[string]bool) []string {

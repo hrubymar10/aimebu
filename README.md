@@ -667,7 +667,11 @@ two-turn canaries are
 `AIMEBU2_LIVE_CC_DOCKER=1 go test ./internal/adapter/claude` and
 `AIMEBU2_LIVE_CODEX_DOCKER=1 go test ./internal/adapter/codex` and
 `AIMEBU2_LIVE_PI_DOCKER=1 go test ./internal/adapter/pi`; OpenCode and Vibe have
-`AIMEBU2_LIVE_OPENCODE_DOCKER=1 go test ./internal/adapter/opencode` and
+`AIMEBU2_LIVE_OPENCODE_DOCKER=1 go test ./internal/adapter/opencode` (and, for a custom
+OpenCode provider, `AIMEBU2_LIVE_OPENCODE_PROVIDER=1` with `AIMEBU2_LIVE_OPENCODE_PROVIDER_URL`,
+`AIMEBU2_LIVE_OPENCODE_PROVIDER_MODEL` and the key in the variable named by
+`AIMEBU2_LIVE_OPENCODE_PROVIDER_KEY_ENV`, default `LIVE_OPENCODE_PROVIDER_KEY`; add
+`AIMEBU2_LIVE_OPENCODE_PROVIDER_DOCKER=1` for the Docker launcher) and
 `AIMEBU2_LIVE_VIBE_DOCKER=1 go test ./internal/adapter/vibe`, and the Claude Code
 fork canary is `AIMEBU2_LIVE_CLAUDE_FORK=1 go test ./internal/adapter/claude`.
 
@@ -715,7 +719,22 @@ list when it cannot be reached). The candidate panel shows how many models were 
 Select all for models not already listed; selections update its count. At most 64 models can be
 added to one harness. Empty lists or login prompts from Pi, OpenCode, or Codex report that the
 harness has no models and suggest running `/login` in it. Nothing detected is saved until it is
-ticked and Save models is pressed. Disabled or
+ticked and Save models is pressed. An OpenCode harness can also have custom providers (an
+OpenAI-compatible endpoint: an id, a name, an `https://` base URL, or `http://` for this machine,
+`host.docker.internal` or a private network address, and optional token limits): the provider stores
+only the NAME of the environment variable its key is read from, never the key. The turn's private
+OpenCode config refers to the key as `{env:NAME}`, native turns pass that variable through and Docker
+turns forward it by name; set it where the turn runs (the supervisor's environment, or the launcher's
+environment references). A provider's key variable and base URL are the owner's (or an admin's) to set, like a launcher's command and
+environment references: the refused names (`PATH`, `HOME`, `LD_*`, `XDG_*`, `OPENCODE_*`, `AIMEBU*`, …, and the keys of OpenCode's own providers such as
+`OPENAI_API_KEY`, whose host value would otherwise go to the custom base URL) keep a saved provider from
+disturbing the harness itself, not from naming another variable of the supervisor's environment, so only someone trusted with a machine's
+harness settings should be allowed to add providers. Its models are listed like any other, as `<provider id>/<model>`, and a turn is
+refused up front, naming the variable, when it is not set on that machine. A machine whose supervisor
+predates providers holds such turns with a note in the room. Each provider's key status (set or not set on that machine, never the value) and
+an import from the person's own OpenCode config (URL and model ids; a key is never copied) are available, auto-detect of an
+OpenCode harness's models runs in the same private config as a turn and asks each custom provider's own endpoint for its models, and
+`aimebu doctor --machine` warns about key variables that are not set. Disabled or
 unavailable harnesses stay visible with a reason; they cannot be selected for
 spawn. Each change is shown in Activity. The supervisor validates definitions,
 so changing an offline machine returns an error until it reconnects. The

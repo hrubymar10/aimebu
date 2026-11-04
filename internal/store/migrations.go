@@ -1529,6 +1529,21 @@ UPDATE role SET emoji='👑' WHERE role_key='lead' AND emoji='🧭' AND deleted_
 CREATE INDEX IF NOT EXISTS event_turn_kind ON event(turn_id, kind) WHERE turn_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS event_agent_created ON event(agent_id, created_at) WHERE agent_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS turn_agent ON turn(agent_id, id);
+`}, {91, `
+-- Custom OpenCode providers: an OpenAI-compatible endpoint an OpenCode harness can run models on. Only the NAME of the environment variable the
+-- key is read from is stored, never a key; a provider's models are ordinary harness_model rows whose slug starts with "<id>/".
+CREATE TABLE harness_provider (
+  launcher_id TEXT NOT NULL REFERENCES machine_launcher(id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  npm TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  key_env TEXT NOT NULL DEFAULT '',
+  context_tokens INTEGER NOT NULL DEFAULT 0 CHECK (context_tokens >= 0),
+  output_tokens INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
+  position INTEGER NOT NULL,
+  PRIMARY KEY (launcher_id, id)
+);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

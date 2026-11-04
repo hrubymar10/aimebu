@@ -119,6 +119,8 @@ func TestGlobalAdminPermissionMatrix(t *testing.T) {
 		{"macros", "PUT", "/api/macros", map[string]string{}, ownerAdmin},
 		{"message expiry", "PUT", "/api/retention", map[string]int{"messages_considered_expired_after_seconds": 21600}, ownerAdmin},
 		{"edit a harness's models", "PUT", "/api/machines/" + w.f.machineID + "/launchers/mln_none/models", map[string]any{"models": []any{}}, ownerAdmin},
+		{"edit a harness's providers", "PUT", "/api/machines/" + w.f.machineID + "/launchers/mln_none/providers", map[string]any{"providers": []any{}}, ownerAdmin},
+		{"read a harness's providers", "GET", "/api/machines/" + w.f.machineID + "/launchers/mln_none/providers", nil, ownerAdmin},
 		{"list machines", "GET", "/api/machines", nil, ownerAdmin},
 		{"machine launchers", "GET", "/api/machines/mch_none/launchers", nil, ownerAdmin},
 		{"machine harnesses", "GET", "/api/machines/mch_none/harnesses", nil, ownerAdmin},

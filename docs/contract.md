@@ -288,7 +288,7 @@ Machines and workspace
   machine, an owner-facing `label`. Owner configuration and stable ID select
   execution; `variant` is a compatibility alias. Environment references store
   variable names only. **machine_launcher_activity** records owner changes
-  (`save`, `delete`, `models`, and `model_default` when an agent's removed model
+  (`save`, `delete`, `models`, `providers`, and `model_default` when an agent's removed model
   was replaced by the default). Nothing is seeded: a new machine has no
   harness. Migration 69 deleted the seeded launchers that were disabled and
   unused, cleared `preset`, set labels and copied the old per-tool model list
@@ -297,6 +297,19 @@ Machines and workspace
   for `harness-docker` in older API requests). Active or stopping agents
   (including revoked agents) and in-flight switch targets block edits and
   removal until their stop or switch is observed.
+- **harness_provider**(launcher_id → machine_launcher ON DELETE CASCADE, id, name,
+  npm, base_url, key_env, context_tokens, output_tokens, position) — PRIMARY KEY
+  (launcher_id, id). A custom OpenCode provider: an OpenAI-compatible endpoint whose
+  models are ordinary `harness_model` rows with the slug `<id>/<model>`. `npm` is
+  always `@ai-sdk/openai-compatible` (OpenCode installs a provider's package at run
+  time, so nothing else is accepted). `key_env` is the NAME of the environment
+  variable the key is read from on the machine that runs the turn (empty: no key);
+  **no key or key value is stored anywhere**. Plain `http://` is accepted only for
+  loopback, `host.docker.internal` and private-network hosts. The list is replaced
+  whole, with the same revision check as models (`stale_providers`); dropping a
+  provider that models still use is refused (`provider_in_use`) unless its models
+  are removed in the same transaction (the refusal lists every such provider, `in_use`). Changes are logged as `providers` in
+  `machine_launcher_activity`. Migration 91.
 - **harness_model**(launcher_id → machine_launcher ON DELETE CASCADE, slug,
   label, note, is_default, position) — PRIMARY KEY (launcher_id, slug); a
   partial unique index allows one default per harness. The slug is the exact model
@@ -820,7 +833,7 @@ it never silently reruns a turn with uncertain effects.
 
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
-  supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_detect?,
+  supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
   supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?,
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
@@ -893,6 +906,27 @@ it never silently reruns a turn with uncertain effects.
   The checkout stays the canonical path; the supervisor ignores a `launch_path` that does
   not resolve to exactly it. Sent only to supervisors whose hello has `supports_launch_path`,
   with the same per-delivery check and hold as `fork_session`.
+- S→M `deliver` carries `providers[{id,name,npm,base_url,key_env?,context_tokens?,output_tokens?,
+  models[{id,name}]}]` for an OpenCode agent whose model id starts with `<id>/` of a custom
+  provider of its harness: the one provider the turn's model names, with the harness's models of
+  it (ids without the prefix), and nothing for any other model. The supervisor holds no server
+  settings, so the document travels with the turn. `key_env` is the NAME of the variable the key
+  is read from on the machine; **no key value is ever in a delivery**. The model counts as the one
+  the turn starts with: an agent whose model the harness no longer lists starts with the harness
+  default. Sent only to supervisors whose hello has `supports_providers`: the dispatcher holds an
+  agent whose next turn needs a provider before preparing the turn and posts one system note in
+  the room where its note is queued, and `Dispatch` refuses the delivery with
+  `supervisor_update_needed`.
+- S→M `detect{detect:{kind: provider_keys | provider_import | models, launcher_id?, key_names?, providers?}}`,
+  answered by M→S `detect_result` (`details`), is how the server asks a supervisor that says
+  `supports_providers` about custom providers. `provider_keys` answers `{set:{NAME:bool}}`: whether each
+  name has a value where the supervisor starts the launcher's turns (its environment or the launcher's
+  environment references); only whether, and a name the harness uses itself is not answered.
+  `provider_import` answers the custom providers the person's own OpenCode config defines
+  (`{source, suggestions:[{provider, inline_key?}], skipped?}`), never a key: a `{env:NAME}` key becomes
+  the name, a key written as text is only flagged. `models` for an OpenCode harness carries `providers`
+  (with their models): the listing runs in the same private config as a turn and each provider's own
+  endpoint is asked for its models; the answer's `details` carry `endpoint_problems`.
 - S→M `session_scan{v,req_id,launcher_id?,scan_folders?[1..4] | scan_session_id?}`; M→S
   `session_scan_result{v,req_id,sessions?[{id,cwd,dir?,title?,git_branch?,version?,
   entrypoint?,model?,modified_at,size,active?}],unreadable?,scan_truncated?,code?,message?}`.

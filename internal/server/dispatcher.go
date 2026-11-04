@@ -150,7 +150,8 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 		// A turn that forks a Claude Code session waits for a supervisor that can: asked before the turn is prepared, so the wait does not
 		// churn turns, and said once in the agent's room.
 		// The same wait for a turn that must start Claude in the spelling its session was saved under.
-		if !machine.supportsSessionFork || !machine.supportsLaunchPath {
+		// And for a turn on a custom OpenCode provider, which an older supervisor would start without the endpoint.
+		if !machine.supportsSessionFork || !machine.supportsLaunchPath || !machine.supportsProviders {
 			// A failure here is this agent's, not the pass's: it is logged, the agent waits (fails closed, nothing is sent), and the
 			// other agents go on.
 			why := ""
@@ -172,6 +173,16 @@ func (d *Dispatcher) Pass(ctx context.Context) (int, error) {
 				}
 				if pending {
 					why = store.HeldForLaunchPath
+				}
+			}
+			if why == "" && !machine.supportsProviders {
+				pending, err := d.Server.Store.AgentProviderPending(ctx, id)
+				if err != nil {
+					log.Printf("dispatch: does %s run on a custom provider: %v", id, err)
+					continue
+				}
+				if pending {
+					why = store.HeldForProviders
 				}
 			}
 			if why != "" {

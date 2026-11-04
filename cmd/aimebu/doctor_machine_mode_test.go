@@ -360,3 +360,64 @@ func TestDoctorMachineMode(t *testing.T) {
 		t.Fatalf("machine mode changed the config root\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }
+
+func TestCheckProviderKeys(t *testing.T) {
+	credential := hostMachineCredential{MachineID: "mch1", Key: "secret-key"}
+	serve := func(status int, body string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/machines/mch1/pair-status" || r.Header.Get("Authorization") != "Bearer secret-key" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(status)
+			fmt.Fprint(w, body)
+		}))
+	}
+	const keys = `{"approved":true,"provider_keys":[` +
+		`{"launcher":"OpenCode","provider_id":"corp-llm","key_env":"DOCTOR_CORP_KEY"},` +
+		`{"launcher":"OpenCode (Docker)","provider_id":"lab-llm","key_env":"DOCTOR_LAB_KEY","env_refs":{"DOCTOR_LAB_KEY":"DOCTOR_LAB_SOURCE"}}]}`
+	t.Setenv("DOCTOR_CORP_KEY", "sk-value-must-not-be-printed")
+	t.Setenv("DOCTOR_LAB_KEY", "set-but-overridden-by-the-reference")
+	t.Setenv("DOCTOR_LAB_SOURCE", "")
+	run := func(body string) []doctorCheck {
+		server := serve(200, body)
+		defer server.Close()
+		return checkProviderKeys(context.Background(), server.URL, credential)
+	}
+	// The reference wins over the variable itself, as it does when the turn starts: its source is empty, so the key is missing.
+	checks := run(keys)
+	if len(checks) != 1 || checks[0].Status != statusWarn || !strings.Contains(checks[0].Description, "DOCTOR_LAB_KEY (provider lab-llm of OpenCode (Docker))") ||
+		strings.Contains(checks[0].Description, "DOCTOR_CORP_KEY") || checks[0].Hint == "" {
+		t.Fatalf("a missing key: %+v", checks)
+	}
+	t.Setenv("DOCTOR_LAB_SOURCE", "value")
+	if checks := run(keys); len(checks) != 1 || checks[0].Status != statusOK || !strings.Contains(checks[0].Description, "2 key variable") {
+		t.Fatalf("all set: %+v", checks)
+	}
+	for _, check := range append(run(keys), checks...) {
+		if strings.Contains(check.Description+check.Hint, "must-not-be-printed") || strings.Contains(check.Description+check.Hint, "secret-key") {
+			t.Fatalf("a value leaked into the report: %+v", check)
+		}
+	}
+	// A protected name is never judged by the environment: it is reported as unusable.
+	if checks := run(`{"approved":true,"provider_keys":[{"launcher":"L","provider_id":"p","key_env":"PATH"}]}`); len(checks) != 1 || checks[0].Status != statusWarn {
+		t.Fatalf("a protected name: %+v", checks)
+	}
+	// Nothing to say: no provider keys, a pending machine, a server that is down or answers badly.
+	for name, body := range map[string]string{"none": `{"approved":true}`, "pending": `{"approved":false,"provider_keys":[{"launcher":"L","provider_id":"p","key_env":"X_KEY"}]}`, "garbage": `nope`} {
+		if checks := run(body); len(checks) != 0 {
+			t.Errorf("%s: %+v", name, checks)
+		}
+	}
+	server := serve(503, ``)
+	defer server.Close()
+	if checks := checkProviderKeys(context.Background(), server.URL, credential); len(checks) != 0 {
+		t.Fatalf("a failing server: %+v", checks)
+	}
+	down := serve(200, `{}`)
+	url := down.URL
+	down.Close()
+	if checks := checkProviderKeys(context.Background(), url, credential); len(checks) != 0 {
+		t.Fatalf("an unreachable server: %+v", checks)
+	}
+}

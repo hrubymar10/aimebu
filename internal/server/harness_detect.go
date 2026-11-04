@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/goccy/go-json"
+
 	"github.com/hrubymar10/aimebu/internal/protocol"
 	"github.com/hrubymar10/aimebu/internal/store"
 )
@@ -24,7 +26,9 @@ const (
 	claudeModelsLimit   = 4 << 20
 	detectHarnessWait   = 40 * time.Second
 	detectModelsWait    = 30 * time.Second
-	detectFailedHint    = "Add the model ID manually."
+	// detectKeysWait bounds the small questions about custom providers (is a key variable set, what does the OpenCode config define).
+	detectKeysWait   = 8 * time.Second
+	detectFailedHint = "Add the model ID manually."
 )
 
 // detectedHarness is a candidate the owner may tick; nothing is saved until the owner adds it.
@@ -154,6 +158,7 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 	}
 	var found []protocol.ModelCandidate
 	source := ""
+	var endpointProblems map[string]string
 	switch {
 	case harness.Tool == "claude":
 		found, source = s.claudeModelCandidates(r.Context())
@@ -178,7 +183,14 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 			apiError(w, 409, "launcher_unavailable", "The harness was not found on the machine. "+detectFailedHint)
 			return
 		}
-		request := protocol.DetectRequest{Kind: "models", Family: harness.Tool, Command: resolved, Args: harness.Args, Dir: body.Dir, Containerized: harness.Containerized}
+		request := protocol.DetectRequest{Kind: "models", Family: harness.Tool, Command: resolved, Args: harness.Args, Dir: body.Dir, Containerized: harness.Containerized, LauncherID: launcherID}
+		if harness.Tool == "opencode" {
+			// The listing runs in the private config an agent turn gets, with the harness's custom providers defined and each one's endpoint asked.
+			if request.Providers, err = s.Store.HarnessCustomProviders(r.Context(), launcherID); err != nil {
+				fail(w, err)
+				return
+			}
+		}
 		answer, err := s.requestDetect(r.Context(), conn, request, detectModelsWait)
 		if err != nil {
 			apiError(w, 502, "detect_failed", "Couldn't detect the models: "+err.Error()+". "+detectFailedHint)
@@ -188,11 +200,19 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 			apiError(w, 400, "invalid_dir", answer.Message)
 			return
 		}
+		var asked protocol.ProviderModelsAnswer
+		if len(answer.Details) > 0 && json.Unmarshal(answer.Details, &asked) == nil {
+			endpointProblems = asked.EndpointProblems
+		}
 		if answer.Code != "" {
-			writeJSON(w, 502, map[string]any{
+			failure := map[string]any{
 				"error": "detect_failed", "message": "Couldn't detect the models: " + strings.TrimRight(answer.Message, ". ") + ". " + detectFailedHint,
 				"detect_dir": answer.DetectDir,
-			})
+			}
+			if len(endpointProblems) > 0 {
+				failure["endpoint_problems"] = endpointProblems
+			}
+			writeJSON(w, 502, failure)
 			return
 		}
 		found, source = answer.ModelCandidates, "harness"
@@ -212,10 +232,18 @@ func (s *Server) machineHarnessModelsDetect(w http.ResponseWriter, r *http.Reque
 		candidates = append(candidates, detectedModel{ModelCandidate: candidate, AlreadyListed: have[candidate.Slug]})
 	}
 	if len(candidates) == 0 {
-		apiError(w, 502, "detect_failed", "Couldn't detect the models: nothing usable was listed. "+detectFailedHint)
+		failure := map[string]any{"error": "detect_failed", "message": "Couldn't detect the models: nothing usable was listed. " + detectFailedHint}
+		if len(endpointProblems) > 0 {
+			failure["endpoint_problems"] = endpointProblems
+		}
+		writeJSON(w, 502, failure)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"candidates": candidates, "source": source})
+	response := map[string]any{"candidates": candidates, "source": source}
+	if len(endpointProblems) > 0 {
+		response["endpoint_problems"] = endpointProblems
+	}
+	writeJSON(w, 200, response)
 }
 
 // cleanModelCandidate drops what the model list would refuse (a bad id) and trims what it limits (label and note length).

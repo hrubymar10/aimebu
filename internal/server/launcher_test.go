@@ -575,3 +575,248 @@ func TestLauncherListSaysWhyAContainerVersionIsUnknown(t *testing.T) {
 		t.Fatalf("the list does not say why the version is unknown: %+v", row)
 	}
 }
+
+// A harness's custom OpenCode providers are read and replaced on the same terms as its models: the listing carries providers and
+// providers_rev, a stale edit is refused with 409 stale_providers, dropping a provider whose models are listed is refused with
+// 409 provider_in_use unless remove_models is sent, and a bad list is a 400 that changes nothing.
+func TestHarnessProvidersEditAndRemoval(t *testing.T) {
+	f := newFixture(t)
+	harness := f.harness(t, "opencode", "native")
+	url := "/api/machines/" + f.machineID + "/launchers/" + harness.ID + "/providers"
+	type answer struct {
+		Code       string `json:"error"`
+		Message    string `json:"message"`
+		ProviderID string `json:"provider_id"`
+		ModelCount int    `json:"model_count"`
+		InUse      []struct {
+			ProviderID string `json:"provider_id"`
+			ModelCount int    `json:"model_count"`
+		} `json:"in_use"`
+		Providers    []store.HarnessProvider `json:"providers"`
+		ProvidersRev string                  `json:"providers_rev"`
+		Models       []store.HarnessModel    `json:"models"`
+	}
+	call := func(method string, body any) (int, answer) {
+		t.Helper()
+		resp := f.request(method, url, body, method != http.MethodGet)
+		defer resp.Body.Close()
+		var out answer
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		return resp.StatusCode, out
+	}
+	listed := func() (providers []store.HarnessProvider, rev string) {
+		t.Helper()
+		resp := f.request(http.MethodGet, "/api/machines/"+f.machineID+"/launchers", nil, false)
+		defer resp.Body.Close()
+		var body struct {
+			Launchers []struct {
+				Config       store.Launcher          `json:"config"`
+				Providers    []store.HarnessProvider `json:"providers"`
+				ProvidersRev string                  `json:"providers_rev"`
+			} `json:"launchers"`
+		}
+		if resp.StatusCode != 200 || json.NewDecoder(resp.Body).Decode(&body) != nil {
+			t.Fatalf("listing: %d", resp.StatusCode)
+		}
+		for _, row := range body.Launchers {
+			if row.Config.ID == harness.ID {
+				if row.Providers == nil {
+					t.Fatal("a harness without providers lists an empty array, not null")
+				}
+				return row.Providers, row.ProvidersRev
+			}
+		}
+		t.Fatal("harness missing from the listing")
+		return nil, ""
+	}
+	corp := store.HarnessProvider{ID: "corp-llm", Name: "Corp LLM", NPM: store.HarnessProviderNPM, BaseURL: "https://llm.example.com/v1", KeyEnv: "CORP_LLM_KEY", ContextTokens: 128000, OutputTokens: 8192}
+	lab := store.HarnessProvider{ID: "lab-llm", Name: "Lab", NPM: store.HarnessProviderNPM, BaseURL: "http://192.168.1.4:8080/v1"}
+	if status, out := call(http.MethodGet, nil); status != 200 || len(out.Providers) != 0 || out.ProvidersRev != store.HarnessProvidersRev(nil) {
+		t.Fatalf("initial read: %d %+v", status, out)
+	}
+	if providers, rev := listed(); len(providers) != 0 || rev != store.HarnessProvidersRev(nil) {
+		t.Fatalf("initial listing: %+v %q", providers, rev)
+	}
+	// Two editors read the empty list; the first saves, and the answer's revision is the listing's.
+	_, oldRev := listed()
+	status, first := call(http.MethodPut, map[string]any{"providers": []store.HarnessProvider{corp, lab}, "expected_rev": oldRev})
+	if status != 200 || len(first.Providers) != 2 || first.ProvidersRev != store.HarnessProvidersRev([]store.HarnessProvider{corp, lab}) {
+		t.Fatalf("first edit: %d %+v", status, first)
+	}
+	if got, rev := listed(); rev != first.ProvidersRev || len(got) != 2 || got[0] != corp {
+		t.Fatalf("listing after the edit: %+v %q", got, rev)
+	}
+	if status, out := call(http.MethodPut, map[string]any{"providers": []store.HarnessProvider{corp}, "expected_rev": oldRev}); status != 409 || out.Code != "stale_providers" {
+		t.Fatalf("stale edit: %d %+v", status, out)
+	}
+	// A bad list is a 400 and changes nothing.
+	bad := corp
+	bad.NPM = "left-pad"
+	if status, out := call(http.MethodPut, map[string]any{"providers": []store.HarnessProvider{bad}}); status != 400 || out.Code != "invalid_providers" || !strings.Contains(out.Message, store.HarnessProviderNPM) {
+		t.Fatalf("bad provider: %d %+v", status, out)
+	}
+	for name, edit := range map[string]func(*store.HarnessProvider){
+		"protected variable": func(p *store.HarnessProvider) { p.KeyEnv = "OPENCODE_CONFIG_CONTENT" },
+		"plain http, public": func(p *store.HarnessProvider) { p.BaseURL = "http://llm.example.com/v1" },
+	} {
+		changed := corp
+		edit(&changed)
+		if status, out := call(http.MethodPut, map[string]any{"providers": []store.HarnessProvider{changed}}); status != 400 || out.Code != "invalid_providers" {
+			t.Errorf("%s: %d %+v", name, status, out)
+		}
+	}
+	if got, _ := listed(); len(got) != 2 {
+		t.Fatalf("a refused edit must change nothing: %+v", got)
+	}
+	// Models of a provider keep it from being dropped; the 409 names it and counts them.
+	modelsURL := "/api/machines/" + f.machineID + "/launchers/" + harness.ID + "/models"
+	resp := f.request(http.MethodPut, modelsURL, map[string]any{"models": []store.HarnessModel{
+		{Slug: "corp-llm/fast", Label: "Fast", Default: true}, {Slug: "corp-llm/big", Label: "Big"}, {Slug: "lab-llm/x", Label: "X"}}}, true)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("models: %d", resp.StatusCode)
+	}
+	status, out := call(http.MethodPut, map[string]any{"providers": []store.HarnessProvider{lab}})
+	if status != 409 || out.Code != "provider_in_use" || out.ProviderID != "corp-llm" || out.ModelCount != 2 {
+		t.Fatalf("a provider in use: %d %+v", status, out)
+	}
+	if got, _ := listed(); len(got) != 2 {
+		t.Fatalf("a refused removal must change nothing: %+v", got)
+	}
+	// Dropping both names both: remove_models would delete the models of every dropped provider, so the offer must list them all.
+	status, out = call(http.MethodPut, map[string]any{"providers": []store.HarnessProvider{}})
+	if status != 409 || out.Code != "provider_in_use" || out.ProviderID != "corp-llm" || out.ModelCount != 2 || len(out.InUse) != 2 ||
+		out.InUse[0].ProviderID != "corp-llm" || out.InUse[0].ModelCount != 2 || out.InUse[1].ProviderID != "lab-llm" || out.InUse[1].ModelCount != 1 {
+		t.Fatalf("two providers in use: %d %+v", status, out)
+	}
+	// With remove_models the provider goes together with its models, and the answer carries the models that are left.
+	status, out = call(http.MethodPut, map[string]any{"providers": []store.HarnessProvider{lab}, "remove_models": true})
+	if status != 200 || len(out.Providers) != 1 || len(out.Models) != 1 || out.Models[0].Slug != "lab-llm/x" || !out.Models[0].Default {
+		t.Fatalf("remove with models: %d %+v", status, out)
+	}
+}
+
+// A turn on a custom OpenCode provider is never sent to a supervisor that does not know providers (it would start OpenCode without the
+// endpoint): the dispatcher holds it and says so once in the agent's room, a direct dispatch is refused, and once the supervisor knows
+// providers the turn goes out carrying the provider document: names, URL and the model ids, no key.
+func TestCustomProviderTurnWaitsForASupervisorThatKnowsProviders(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	ctx := context.Background()
+	harness := f.harness(t, "opencode", "native")
+	provider := store.HarnessProvider{ID: "corp-llm", Name: "Corp LLM", NPM: store.HarnessProviderNPM, BaseURL: "https://llm.example.com/v1", KeyEnv: "CORP_LLM_KEY"}
+	if err := f.db.ReplaceHarnessProvidersIfRev(ctx, "owner", f.machineID, harness.ID, []store.HarnessProvider{provider}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.ReplaceHarnessModels(ctx, "owner", f.machineID, harness.ID, []store.HarnessModel{{Slug: "corp-llm/fast", Label: "Fast", Default: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO role(id,key,label,body,role_key) VALUES ('role_prov','worker','Worker','worker','worker')`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO checkout(id,project_id,machine_id,canonical_path) VALUES ('chk_prov',?,?,?)`, f.project.ID, f.machineID, t.TempDir())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := f.db.CreateAgent(ctx, store.Agent{Slug: "provided", ProjectID: f.project.ID, RoleID: "role_prov", Tool: "opencode", Variant: "native", LauncherID: harness.ID,
+		Model: "corp-llm/fast", Provider: "corp-llm", MachineID: f.machineID, CheckoutID: "chk_prov", KeyHash: "key", CreatedBy: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.AddMember(ctx, f.room.ID, "agent", agent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
+		_, err := tx.Exec(`INSERT INTO session(id,agent_id,generation,start_mode,started_at) VALUES ('ses_prov',?,0,'fresh_with_history','2026-10-13T00:00:00.000000000Z')`, agent.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := f.db.MachineByID(ctx, f.machineID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine := &machineConn{id: f.machineID, keyHash: stored.KeyHash, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{agent.ID: 0},
+		supportsLaunchPath: true, supportsSessionFork: true, supportsLaunchers: true}
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID] = machine
+	f.srv.machineMu.Unlock()
+	if err := f.srv.Dispatch(ctx, protocol.Delivery{AgentID: agent.ID, Generation: 0, TurnID: "turn_never", Mode: adapter.ModeNormal, Providers: []adapter.CustomProvider{{ID: "corp-llm"}}}); !errors.Is(err, ErrSupervisorUpdateNeeded) {
+		t.Fatalf("a delivery with providers to a supervisor that does not know them: %v", err)
+	}
+	response := f.request("POST", "/api/rooms/"+f.room.ID+"/messages", map[string]string{"body": "@provided please work"}, true)
+	if response.StatusCode != 201 {
+		t.Fatalf("post status=%d", response.StatusCode)
+	}
+	response.Body.Close()
+	dispatcher := NewDispatcher(f.srv)
+	for i := 0; i < 3; i++ {
+		if count, err := dispatcher.Pass(ctx); err != nil || count != 0 {
+			t.Fatalf("pass %d dispatched %d: %v", i, count, err)
+		}
+	}
+	if len(machine.sendQueue) != 0 {
+		t.Fatalf("a supervisor that does not know providers was sent %d frame(s)", len(machine.sendQueue))
+	}
+	messages, err := f.db.ListMessagesAfter(ctx, f.room.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := 0
+	for _, message := range messages {
+		if message.AuthorKind == "system" && strings.Contains(message.Body, "provided is held") && strings.Contains(message.Body, "custom OpenCode provider") {
+			held++
+		}
+	}
+	if held != 1 {
+		t.Fatalf("the hold was said %d times, want once", held)
+	}
+	machine.supportsProviders = true
+	if count, err := dispatcher.Pass(ctx); err != nil || count != 1 {
+		t.Fatalf("dispatch after the supervisor knows providers: %d %v", count, err)
+	}
+	select {
+	case frame := <-machine.sendQueue:
+		delivery := frame.Delivery()
+		if len(delivery.Providers) != 1 || delivery.Providers[0].ID != "corp-llm" || delivery.Providers[0].KeyEnv != "CORP_LLM_KEY" ||
+			len(delivery.Providers[0].Models) != 1 || delivery.Providers[0].Models[0].ID != "fast" || delivery.Agent.Model != "corp-llm/fast" {
+			t.Fatalf("the turn's provider document: %+v", delivery)
+		}
+	default:
+		t.Fatal("no frame was sent")
+	}
+}
+
+// The supervisor says in its hello that it knows custom providers, which is what lets the dispatcher send it their turns.
+func TestSupervisorHelloSaysItKnowsProviders(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	ctx := context.Background()
+	journal, err := supervisor.OpenJournal(ctx, filepath.Join(t.TempDir(), "journal.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	client := supervisor.NewClient(f.machineID, f.machineKey, f.http.URL, journal, adapter.NewFake())
+	ready := make(chan struct{}, 1)
+	client.OnReady = func() { ready <- struct{}{} }
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() { _ = client.RunOnce(runCtx) }()
+	select {
+	case <-ready:
+	case <-time.After(machineWaitGuard):
+		t.Fatal("supervisor did not connect")
+	}
+	f.srv.machineMu.Lock()
+	defer f.srv.machineMu.Unlock()
+	if conn := f.srv.machines[f.machineID]; conn == nil || !conn.supportsProviders {
+		t.Fatalf("the connected supervisor does not say it knows providers: %+v", conn)
+	}
+}

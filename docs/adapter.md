@@ -307,6 +307,39 @@ Settings → Harnesses (Auto-detect models runs `opencode models`); ids must be
 The adapter's capabilities are pinned to the verified release, 1.19.0 on
 Linux.
 
+#### Custom providers
+
+An OpenCode harness may have custom providers (Settings → Harnesses): OpenAI-compatible endpoints with a
+base URL and the name of the environment variable their key is read from. A turn whose model id starts with
+`<id>/` of one carries that provider (`TurnSpec.Providers`: id, name, npm package, base URL, key variable
+name, token limits and the harness's models of it), and the adapter adds it to the same private inline
+config as `provider.<id>` with `npm`, `name`, `options.baseURL` and the models (the token limits, when set
+as a pair, as each model's `limit`). The key is written only as the reference `"apiKey": "{env:NAME}"`,
+which OpenCode resolves from its own environment: the key's value is never in the config, the argument
+list, a delivery, the database or a log. Natively the variable is passed through by name (with the other
+provider keys); in Docker it is added to `HARNESS_DOCKER_FORWARD_ENV` and the launcher forwards it by name.
+Where the owner's launcher references another variable for the key (`env_refs`), that variable's value
+is what the provider's variable holds. A turn is refused before anything starts, naming the variable, when
+the key variable is not set where the turn runs, and also for a package other than
+`@ai-sdk/openai-compatible` (OpenCode installs a provider's package at run time), a key variable the
+harness uses itself (`PATH`, `OPENCODE_*`, `XDG_*`, …) or the key of one of OpenCode's own providers
+(`OPENAI_API_KEY`, …: the host's value of one would be sent to the custom base URL, in Docker and natively alike),
+an id with a slash or a URL that is not http(s).
+Trust boundary: the refused key-variable names are a denylist of what the harness or its launcher uses itself, which keeps a saved provider
+from redirecting the harness; it does not stop whoever may save a provider from naming any other variable of the supervisor's environment
+as the key and an endpoint of their choosing as its URL, so the key would be sent there. That is not more than the same person can do with
+a launcher's command and environment references, which is why saving providers belongs to the owner and admins, never to a project role.
+A supervisor that does not say `supports_providers` in its hello is never given such a turn: it is held
+with a note in the room (see `docs/contract.md`).
+The opt-in canary `AIMEBU2_LIVE_OPENCODE_PROVIDER=1 go test ./internal/adapter/opencode` runs the same two
+real turns (a nonce, then a resumed turn that must return it) on a custom provider the person names with
+`AIMEBU2_LIVE_OPENCODE_PROVIDER_URL`, `AIMEBU2_LIVE_OPENCODE_PROVIDER_MODEL` and the key in the variable named by
+`AIMEBU2_LIVE_OPENCODE_PROVIDER_KEY_ENV` (default `LIVE_OPENCODE_PROVIDER_KEY`; a name the harness uses itself is refused; unset: the endpoint takes
+no key), natively or, with `AIMEBU2_LIVE_OPENCODE_PROVIDER_DOCKER=1`, through `opencode-docker`. It spends a little on the
+endpoint and is never part of the gate. The config shape and the `{env:NAME}` key were also checked offline
+against opencode 1.19.5 and a local stand-in for an OpenAI-compatible endpoint: the request carried the key from
+the environment, the provider's model id and a streamed answer, and the turn ended with its final answer.
+
 ### OpenCode in Docker
 
 The Docker variant runs the same turn through the `opencode-docker` launcher. OpenCode is configured
@@ -347,7 +380,8 @@ read-only turns, cancel and cost inside a container are not verified by it.
 
 An agent turn does not see the person's own OpenCode configuration (the config folder is private and project
 config is off), so a provider defined only there, such as a custom OpenAI-compatible endpoint, is unavailable to
-it: only the built-in providers whose key variables are in the forwarded list can be used.
+it unless the owner adds it to the harness as a custom provider (see above); otherwise only the built-in
+providers whose key variables are in the forwarded list can be used.
 
 A model that reasons in its reply text (GLM over an OpenAI-compatible provider) streams `<think>…</think>`
 ahead of the JSON in the same text part. The adapter passes the text through unchanged; the server's answer

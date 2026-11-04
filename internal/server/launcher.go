@@ -123,6 +123,11 @@ func (s *Server) machineLaunchers(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	providers, err := s.Store.MachineHarnessProviders(r.Context(), id)
+	if err != nil {
+		fail(w, err)
+		return
+	}
 	rows := make([]map[string]any, 0, len(definitions))
 	observed := map[string]protocol.LauncherRow{}
 	if conn, err := s.machineForID(id); err == nil {
@@ -138,6 +143,11 @@ func (s *Server) machineLaunchers(w http.ResponseWriter, r *http.Request) {
 			row["models"] = []store.HarnessModel{}
 		}
 		row["models_rev"] = store.HarnessModelsRev(models[definition.ID])
+		row["providers"] = providers[definition.ID]
+		if len(providers[definition.ID]) == 0 {
+			row["providers"] = []store.HarnessProvider{}
+		}
+		row["providers_rev"] = store.HarnessProvidersRev(providers[definition.ID])
 		if report, ok := observed[definition.ID]; ok {
 			row["available"] = report.Available
 			row["version"] = report.Version
@@ -385,6 +395,84 @@ func (s *Server) machineHarnessModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"models": models, "models_rev": store.HarnessModelsRev(models)})
+}
+
+// machineHarnessProviders replaces an OpenCode harness's whole list of custom providers (owner or admin), on the same terms as the model
+// list: validated as a whole, atomic, and with expected_rev (the providers_rev of the list the edit was based on) a list that has changed
+// since is refused with 409 stale_providers. A provider that is dropped while models of the harness still start with "<id>/" is refused
+// with 409 provider_in_use (naming every such provider and its number of models) unless remove_models is true, which deletes those models in the
+// same transaction. The answer carries both lists, since the models may have changed. Only names of key variables are stored: no key
+// ever passes through here.
+func (s *Server) machineHarnessProviders(w http.ResponseWriter, r *http.Request) {
+	if !s.adminMachine(w, r) {
+		return
+	}
+	machineID, launcherID := r.PathValue("id"), r.PathValue("launcher")
+	var body struct {
+		Providers    []store.HarnessProvider `json:"providers"`
+		ExpectedRev  string                  `json:"expected_rev"`
+		RemoveModels bool                    `json:"remove_models"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if body.Providers == nil {
+		body.Providers = []store.HarnessProvider{}
+	}
+	if err := s.Store.ReplaceHarnessProvidersIfRev(r.Context(), userID(r), machineID, launcherID, body.Providers, body.ExpectedRev, body.RemoveModels); err != nil {
+		var inUse *store.HarnessProviderInUseError
+		switch {
+		case errors.Is(err, store.ErrStaleHarnessProviders):
+			apiError(w, 409, "stale_providers", "someone changed this harness's providers in the meantime; reload the list and make the change again")
+		case errors.As(err, &inUse):
+			// The first provider keeps the original fields; in_use lists every one the replace would drop with models, as remove_models would delete them all.
+			uses := make([]map[string]any, 0, len(inUse.All))
+			for _, use := range inUse.All {
+				uses = append(uses, map[string]any{"provider_id": use.ProviderID, "model_count": use.Models})
+			}
+			writeJSON(w, 409, map[string]any{"error": "provider_in_use", "message": err.Error() + "; remove those models first, or remove the providers together with them",
+				"provider_id": inUse.ProviderID, "model_count": inUse.Models, "in_use": uses})
+		case errors.Is(err, store.ErrInvalidHarnessProviders):
+			apiError(w, 400, "invalid_providers", strings.TrimPrefix(err.Error(), store.ErrInvalidHarnessProviders.Error()+": "))
+		case errors.Is(err, sql.ErrNoRows):
+			apiError(w, 404, "not_found", "harness not found")
+		default:
+			fail(w, err)
+		}
+		return
+	}
+	s.writeHarnessProviders(w, r, launcherID)
+}
+
+// machineHarnessProvidersGet answers a harness's providers and models with their revisions.
+func (s *Server) machineHarnessProvidersGet(w http.ResponseWriter, r *http.Request) {
+	if !s.adminMachine(w, r) {
+		return
+	}
+	launcher, err := s.Store.LauncherByID(r.Context(), r.PathValue("id"), r.PathValue("launcher"))
+	if errors.Is(err, sql.ErrNoRows) {
+		apiError(w, 404, "not_found", "harness not found")
+		return
+	}
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	s.writeHarnessProviders(w, r, launcher.ID)
+}
+
+func (s *Server) writeHarnessProviders(w http.ResponseWriter, r *http.Request, launcherID string) {
+	providers, err := s.Store.HarnessProviders(r.Context(), launcherID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	models, err := s.Store.HarnessModels(r.Context(), launcherID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"providers": providers, "providers_rev": store.HarnessProvidersRev(providers), "models": models, "models_rev": store.HarnessModelsRev(models)})
 }
 
 // checkSpawnModel resolves the model an agent will start with: the harness it runs on (the launcher chosen, or the machine's launcher

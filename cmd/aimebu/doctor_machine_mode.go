@@ -67,6 +67,7 @@ func checkMachineMode(ctx context.Context, config serverConfig) []doctorCheck {
 			serverURL = "http://127.0.0.1:" + strconv.Itoa(config.port)
 		}
 		checks = append(checks, checkPairedServer(ctx, serverURL, *credential))
+		checks = append(checks, checkProviderKeys(ctx, serverURL, *credential)...)
 	}
 	return scopeAll(checks, scopeMachine)
 }
@@ -336,4 +337,52 @@ func checkPairedServer(ctx context.Context, serverURL string, credential hostMac
 			Hint: "Pair this machine again with a fresh token (remove supervisor/machine.key first)."}
 	}
 	return doctorCheck{Name: name, Status: statusWarn, Description: fmt.Sprintf("%s answered HTTP %d to the approval check", serverURL, resp.StatusCode)}
+}
+
+// checkProviderKeys asks the paired server (with the machine's key, as the approval check does) which key variables the custom providers of
+// this machine's OpenCode harnesses are read from, and warns about those with no value in this environment, where a turn on that provider
+// would be refused up front. It says nothing when the server cannot be reached (the paired server check already does) or no provider names
+// a key. Only names cross the wire, and only whether each is set is reported.
+func checkProviderKeys(ctx context.Context, serverURL string, credential hostMachineCredential) []doctorCheck {
+	const name = "custom provider keys"
+	probe, cancel := context.WithTimeout(ctx, machineProbeTimeout)
+	defer cancel()
+	requestURL := strings.TrimRight(serverURL, "/") + "/api/machines/" + url.PathEscape(credential.MachineID) + "/pair-status"
+	req, err := http.NewRequestWithContext(probe, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+credential.Key)
+	resp, err := tlsclient.NewHTTPClient(machineProbeTimeout).Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var status struct {
+		Approved     bool `json:"approved"`
+		ProviderKeys []struct {
+			Launcher   string            `json:"launcher"`
+			ProviderID string            `json:"provider_id"`
+			KeyEnv     string            `json:"key_env"`
+			EnvRefs    map[string]string `json:"env_refs"`
+		} `json:"provider_keys"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, machinePairStatusMax*16)).Decode(&status); err != nil || !status.Approved || len(status.ProviderKeys) == 0 {
+		return nil
+	}
+	var missing []string
+	for _, key := range status.ProviderKeys {
+		if adapter.ProtectedKeyEnv(key.KeyEnv) || adapter.EnvValue(key.KeyEnv, key.EnvRefs) == "" {
+			missing = append(missing, fmt.Sprintf("%s (provider %s of %s)", key.KeyEnv, key.ProviderID, key.Launcher))
+		}
+	}
+	if len(missing) == 0 {
+		return []doctorCheck{{Name: name, Status: statusOK, Description: fmt.Sprintf("%d key variable(s) of custom OpenCode providers are set here", len(status.ProviderKeys))}}
+	}
+	sort.Strings(missing)
+	return []doctorCheck{{Name: name, Status: statusWarn, Description: "not set here: " + strings.Join(missing, ", "),
+		Hint: "A turn on that provider is refused up front until its key variable is set where the supervisor runs. Doctor sees this shell's environment; a supervisor started by a service manager has its own, so set it there (or in the harness's environment references)."}}
 }

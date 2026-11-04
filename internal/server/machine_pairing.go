@@ -204,7 +204,51 @@ func (s *Server) machinePairStatus(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 401, "unauthorized", "invalid machine credential")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"approved": m.Approved, "name": m.Name})
+	answer := map[string]any{"approved": m.Approved, "name": m.Name}
+	if m.Approved {
+		keys, err := s.providerKeyRefs(r.Context(), m.ID)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		if len(keys) > 0 {
+			answer["provider_keys"] = keys
+		}
+	}
+	writeJSON(w, 200, answer)
+}
+
+// providerKeyRef names a key variable a custom provider of one of this machine's OpenCode harnesses is read from, with the harness's
+// environment references (variable names only), which say where that variable takes its value. `aimebu doctor --machine` asks for these
+// with the machine's own key and checks them against the environment it runs in. Never a value.
+type providerKeyRef struct {
+	Launcher   string            `json:"launcher"`
+	ProviderID string            `json:"provider_id"`
+	KeyEnv     string            `json:"key_env"`
+	EnvRefs    map[string]string `json:"env_refs,omitempty"`
+}
+
+func (s *Server) providerKeyRefs(ctx context.Context, machineID string) ([]providerKeyRef, error) {
+	launchers, err := s.Store.MachineLaunchers(ctx, machineID)
+	if err != nil {
+		return nil, err
+	}
+	providers, err := s.Store.MachineHarnessProviders(ctx, machineID)
+	if err != nil {
+		return nil, err
+	}
+	var refs []providerKeyRef
+	for _, launcher := range launchers {
+		if launcher.Tool != "opencode" || !launcher.Enabled {
+			continue
+		}
+		for _, p := range providers[launcher.ID] {
+			if p.KeyEnv != "" {
+				refs = append(refs, providerKeyRef{Launcher: launcher.Label, ProviderID: p.ID, KeyEnv: p.KeyEnv, EnvRefs: launcher.EnvRefs})
+			}
+		}
+	}
+	return refs, nil
 }
 
 func (s *Server) machineApproval(w http.ResponseWriter, r *http.Request) {

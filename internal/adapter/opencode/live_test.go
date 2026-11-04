@@ -30,6 +30,13 @@ func TestLiveDockerCanary(t *testing.T) {
 	if model == "" {
 		model = "ollama-cloud/gemma4:31b"
 	}
+	runLiveCanary(t, NewDocker(), "docker", model, nil)
+}
+
+// runLiveCanary runs the two real turns of the canaries: the first hands the agent a nonce, the second resumes the session and must give it
+// back. providers, when set, are the custom providers the turns carry.
+func runLiveCanary(t *testing.T, a *Adapter, variant, model string, providers []adapter.CustomProvider) {
+	t.Helper()
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +45,7 @@ func TestLiveDockerCanary(t *testing.T) {
 	if err := os.MkdirAll(base, 0700); err != nil {
 		t.Fatal(err)
 	}
-	checkout, err := os.MkdirTemp(base, "opencode-docker-canary-")
+	checkout, err := os.MkdirTemp(base, "opencode-canary-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,13 +55,13 @@ func TestLiveDockerCanary(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := "canary-" + hex.EncodeToString(random[:])
-	a := NewDocker()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	run := func(id, handle string, started bool, body string) (answer, session string) {
 		notes, _ := json.Marshal([]map[string]string{{"body": body}})
 		turnSpec := spec(t, checkout)
-		turnSpec.TurnID, turnSpec.Agent.Variant, turnSpec.Agent.Model = id, "docker", model
+		turnSpec.TurnID, turnSpec.Agent.Variant, turnSpec.Agent.Model = id, variant, model
+		turnSpec.Providers = providers
 		turnSpec.NativeSessionHandle, turnSpec.NativeSessionStarted, turnSpec.NotesJSON = handle, started, notes
 		turnSpec.ContextJSON = json.RawMessage(`{"role_body":"Follow the user note exactly."}`)
 		turn, err := a.Start(ctx, turnSpec)
@@ -89,4 +96,37 @@ func TestLiveDockerCanary(t *testing.T) {
 	if !strings.Contains(answer, nonce) {
 		t.Fatalf("the resumed turn did not recall the nonce: %q", answer)
 	}
+}
+
+// TestLiveCustomProviderCanary is the two-turn canary for a custom provider: the turns carry an OpenAI-compatible endpoint the person names,
+// run natively (or through the opencode-docker launcher with AIMEBU2_LIVE_OPENCODE_PROVIDER_DOCKER=1), and the key reaches OpenCode only
+// through its environment variable. It is opt-in (AIMEBU2_LIVE_OPENCODE_PROVIDER=1), never part of the gate, and spends a little on the
+// endpoint. AIMEBU2_LIVE_OPENCODE_PROVIDER_URL is the base URL, AIMEBU2_LIVE_OPENCODE_PROVIDER_MODEL the model id at that endpoint,
+// AIMEBU2_LIVE_OPENCODE_PROVIDER_KEY_ENV the name of the variable holding the key (default LIVE_OPENCODE_PROVIDER_KEY; a name the harness uses itself,
+// such as anything starting with AIMEBU or OPENCODE_, is refused; unset variable: the endpoint takes no key). Natively the OpenCode on PATH is used, with a temporary private home.
+func TestLiveCustomProviderCanary(t *testing.T) {
+	if os.Getenv("AIMEBU2_LIVE_OPENCODE_PROVIDER") != "1" {
+		t.Skip("set AIMEBU2_LIVE_OPENCODE_PROVIDER=1 for the two-turn custom provider canary")
+	}
+	baseURL, modelID := os.Getenv("AIMEBU2_LIVE_OPENCODE_PROVIDER_URL"), os.Getenv("AIMEBU2_LIVE_OPENCODE_PROVIDER_MODEL")
+	if baseURL == "" || modelID == "" {
+		t.Skip("set AIMEBU2_LIVE_OPENCODE_PROVIDER_URL and AIMEBU2_LIVE_OPENCODE_PROVIDER_MODEL")
+	}
+	keyEnv := os.Getenv("AIMEBU2_LIVE_OPENCODE_PROVIDER_KEY_ENV")
+	if keyEnv == "" {
+		keyEnv = "LIVE_OPENCODE_PROVIDER_KEY"
+	}
+	if adapter.ProtectedKeyEnv(keyEnv) {
+		t.Fatalf("AIMEBU2_LIVE_OPENCODE_PROVIDER_KEY_ENV=%s names a variable the harness uses itself, which a provider's key cannot be read from: pick another name", keyEnv)
+	}
+	if os.Getenv(keyEnv) == "" {
+		keyEnv = "" // the endpoint takes no key
+	}
+	provider := adapter.CustomProvider{ID: "canary-llm", Name: "Canary provider", NPM: adapter.CustomProviderNPM, BaseURL: baseURL, KeyEnv: keyEnv,
+		Models: []adapter.CustomProviderModel{{ID: modelID, Name: modelID}}}
+	a, variant := New(t.TempDir()), "native"
+	if os.Getenv("AIMEBU2_LIVE_OPENCODE_PROVIDER_DOCKER") == "1" {
+		a, variant = NewDocker(), "docker"
+	}
+	runLiveCanary(t, a, variant, "canary-llm/"+modelID, []adapter.CustomProvider{provider})
 }

@@ -25,6 +25,27 @@ type AgentSpec struct {
 	Provider   string `json:"provider"`
 }
 
+// CustomProvider is an OpenAI-compatible endpoint an OpenCode turn runs its model on: the owner's setting for the harness, carried with
+// the turn because the supervisor holds none of the server's settings. KeyEnv is the NAME of the environment variable the key is read
+// from on the machine that runs the turn; no key value is ever part of it. Models are the harness's models of this provider (their ids
+// without the "<id>/" prefix).
+type CustomProvider struct {
+	ID            string                `json:"id"`
+	Name          string                `json:"name"`
+	NPM           string                `json:"npm"`
+	BaseURL       string                `json:"base_url"`
+	KeyEnv        string                `json:"key_env,omitempty"`
+	ContextTokens int                   `json:"context_tokens,omitempty"`
+	OutputTokens  int                   `json:"output_tokens,omitempty"`
+	Models        []CustomProviderModel `json:"models"`
+}
+
+// CustomProviderModel is one model of a CustomProvider: its id at the endpoint and the label the owner gave it.
+type CustomProviderModel struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // TurnSpec is the complete, immutable input to one process-per-wake turn.
 // NotesJSON and ContextJSON are wire-shaped JSON; the adapter must not decide
 // room access or validate the final answer's target rooms.
@@ -51,6 +72,8 @@ type TurnSpec struct {
 	LauncherContainerized bool
 	VisibleCheckoutPath   string
 	AgentServerURL        string
+	// Providers are the custom providers the turn's model needs (OpenCode only): the one provider its model id names, or none.
+	Providers []CustomProvider
 	// These are process-only capabilities for Pi Docker. They must never enter
 	// the supervisor journal or its persisted turn spec.
 	AttachmentBaseURL string `json:"-"`

@@ -236,7 +236,11 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 			if err != nil {
 				return err
 			}
-			delivery = protocol.Delivery{AgentID: agentID, Generation: generation, DesiredRev: desiredRev, TurnID: special.ID,
+			providers, err := tx.providersForTurn(launcherID, tool, model)
+			if err != nil {
+				return err
+			}
+			delivery = protocol.Delivery{AgentID: agentID, Generation: generation, DesiredRev: desiredRev, TurnID: special.ID, Providers: providers,
 				Mode: adapter.Mode(special.Mode), ParentTurnID: special.ParentTurnID, Notes: specialNotes,
 				Agent: adapter.AgentSpec{ID: agentID, Tool: tool, Variant: variant, LauncherID: launcherID, Model: model, Provider: provider}, Context: contextJSON, AllowedTools: allowedTools,
 				NativeSessionHandle: handle, NativeSessionStarted: started, ForkSession: forking, CheckoutPath: checkoutPath, LaunchPath: launchPath}
@@ -473,7 +477,11 @@ func (s *Store) PrepareDispatch(ctx context.Context, agentID, afterRoom string) 
 		if err != nil {
 			return err
 		}
-		delivery = protocol.Delivery{AgentID: agentID, Generation: generation, DesiredRev: desiredRev, TurnID: turn.ID, Mode: adapter.ModeNormal, Notes: notes,
+		providers, err := tx.providersForTurn(launcherID, tool, model)
+		if err != nil {
+			return err
+		}
+		delivery = protocol.Delivery{AgentID: agentID, Generation: generation, DesiredRev: desiredRev, TurnID: turn.ID, Mode: adapter.ModeNormal, Notes: notes, Providers: providers,
 			Agent: adapter.AgentSpec{ID: agentID, Tool: tool, Variant: variant, LauncherID: launcherID, Model: model, Provider: provider}, Context: contextJSON,
 			NativeSessionHandle: handle, NativeSessionStarted: started, ForkSession: forking, CheckoutPath: checkoutPath, LaunchPath: launchPath}
 		ready = true

@@ -168,6 +168,13 @@ its lock is only tested, not taken.
   directory, with a 10-second limit. The features are listed; a launcher
   without `forward_env` warns "too old" (update harness-docker). Docker
   launchers of other tools are not run.
+- **custom provider keys** — shown when a harness of this machine has a custom OpenCode provider
+  that names a key variable. The paired server lists those names (and the harness's environment
+  references) in its approval answer; doctor warns about each that has no value in **its own**
+  environment, where a turn on that provider would be refused up front. Doctor sees the shell it
+  runs in, so a supervisor started by a service manager may have another environment: the
+  Settings → Harnesses key status shows what the running supervisor sees. Only whether a variable is
+  set is reported, never a value.
 - **paired server** — asks the paired server (`AIMEBU2_URL`, else the URL in
   the credential) whether it knows this machine and has approved it, with the
   machine's own key as the bearer token, exactly as the supervisor does at
@@ -207,7 +214,8 @@ environment or launcher arguments.
   example `supports_session_attribution`: an imported v1 sender's session is not
   matched to its messages by reading transcripts; `supports_session_fork`: a Claude Code session can only be continued
   in place, not as a copy; `supports_launch_path`: a session made under a link
-  to its folder cannot be continued there, its turns are held; `supports_worktree`: room worktrees cannot be created
+  to its folder cannot be continued there, its turns are held; `supports_providers`: an OpenCode agent on a
+  custom provider cannot run there, its turns are held; `supports_worktree`: room worktrees cannot be created
   on that machine; `supports_stop_replay`: a stop sent while the machine was
   offline is applied by a fallback that can kill a live process early). A
   machine that is not connected right now is ok here; the offline `machines`

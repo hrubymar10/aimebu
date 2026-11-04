@@ -149,6 +149,12 @@ type Frame struct {
 	ScanTruncated bool   `json:"scan_truncated,omitempty"`
 	Code          string `json:"code,omitempty"`
 	Message       string `json:"message,omitempty"`
+
+	// SupportsProviders says the supervisor runs an OpenCode turn that carries custom providers (Delivery.Providers). One that does not
+	// would start OpenCode without the endpoint, so the server holds such turns instead of sending them.
+	SupportsProviders bool `json:"supports_providers,omitempty"`
+	// Providers: see Delivery.Providers.
+	Providers []adapter.CustomProvider `json:"providers,omitempty"`
 }
 
 // SessionAttribution is what a session's aimebu tool results say about whose it was.
@@ -240,14 +246,14 @@ type CapabilityReport struct {
 
 func DeliverFrame(d Delivery) Frame {
 	agent := d.Agent
-	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, LaunchPath: d.LaunchPath, AttachmentBearer: d.AttachmentBearer}
+	return Frame{V: Version, Type: Deliver, AgentID: d.AgentID, Generation: d.Generation, DesiredRev: d.DesiredRev, TurnID: d.TurnID, Mode: d.Mode, ParentTurnID: d.ParentTurnID, Notes: d.Notes, Context: d.Context, AllowedTools: d.AllowedTools, Agent: &agent, NativeSessionHandle: d.NativeSessionHandle, NativeSessionStarted: d.NativeSessionStarted, ForkSession: d.ForkSession, CheckoutPath: d.CheckoutPath, LaunchPath: d.LaunchPath, AttachmentBearer: d.AttachmentBearer, Providers: d.Providers}
 }
 func (f Frame) Delivery() Delivery {
 	agent := adapter.AgentSpec{}
 	if f.Agent != nil {
 		agent = *f.Agent
 	}
-	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, LaunchPath: f.LaunchPath, AttachmentBearer: f.AttachmentBearer}
+	return Delivery{AgentID: f.AgentID, Generation: f.Generation, DesiredRev: f.DesiredRev, TurnID: f.TurnID, Mode: f.Mode, ParentTurnID: f.ParentTurnID, Notes: f.Notes, Context: f.Context, AllowedTools: f.AllowedTools, Agent: agent, NativeSessionHandle: f.NativeSessionHandle, NativeSessionStarted: f.NativeSessionStarted, ForkSession: f.ForkSession, CheckoutPath: f.CheckoutPath, LaunchPath: f.LaunchPath, AttachmentBearer: f.AttachmentBearer, Providers: f.Providers}
 }
 
 type HelloAgent struct {
@@ -290,6 +296,8 @@ type Delivery struct {
 	// LaunchPath: see Frame.LaunchPath.
 	LaunchPath       string `json:"launch_path,omitempty"`
 	AttachmentBearer string `json:"attachment_bearer,omitempty"`
+	// Providers are the custom providers an OpenCode turn's model needs: the one its model id names. Names of key variables only.
+	Providers []adapter.CustomProvider `json:"providers,omitempty"`
 }
 
 type DeliveryNote struct {
@@ -336,6 +344,45 @@ type DetectRequest struct {
 	// Containerized says the harness runs in a container: a model whose provider listens on the machine's own loopback is then not
 	// reachable from it, which detection reports (ModelCandidate.Unreachable).
 	Containerized bool `json:"containerized,omitempty"`
+	// LauncherID names the harness a provider request is about: its environment references say where a key variable gets its value.
+	LauncherID string `json:"launcher_id,omitempty"`
+	// KeyNames are the key variables kind "provider_keys" asks about.
+	KeyNames []string `json:"key_names,omitempty"`
+	// Providers are the harness's custom providers, for kind "models" of an OpenCode harness: the listing runs with them in its private
+	// config, and each provider's own endpoint is asked which models it serves.
+	Providers []adapter.CustomProvider `json:"providers,omitempty"`
+}
+
+// ProviderKeysAnswer is the Details of the answer to kind "provider_keys": for each name asked about, whether it has a value where this
+// machine's supervisor starts turns. Only whether, never the value.
+type ProviderKeysAnswer struct {
+	Set map[string]bool `json:"set"`
+}
+
+// ProviderImportAnswer is the Details of the answer to kind "provider_import": the custom providers the machine's own OpenCode config
+// defines that a harness could take over. A key is never copied: a provider whose key is a reference to an environment variable carries
+// that variable's name, and one whose key sits in the config as text is only flagged (InlineKey).
+type ProviderImportAnswer struct {
+	// Source is where the providers were read, with the home folder shown as ~.
+	Source      string               `json:"source"`
+	Suggestions []ProviderSuggestion `json:"suggestions"`
+	Skipped     []ProviderSkipped    `json:"skipped,omitempty"`
+}
+
+type ProviderSuggestion struct {
+	Provider  adapter.CustomProvider `json:"provider"`
+	InlineKey bool                   `json:"inline_key,omitempty"`
+}
+
+// ProviderSkipped is a provider of the config that cannot become a custom provider, and why.
+type ProviderSkipped struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// ProviderModelsAnswer is the Details of a model listing that asked providers' endpoints: what each endpoint that failed to answer said.
+type ProviderModelsAnswer struct {
+	EndpointProblems map[string]string `json:"endpoint_problems,omitempty"`
 }
 
 // HarnessCandidate is an executable found on the machine that looks like a harness. Command is the absolute path.
