@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/hrubymar10/aimebu/internal/store"
 )
 
 func TestPlainPruneKeepsServerDataAndMachineKeys(t *testing.T) {
@@ -19,10 +17,7 @@ func TestPlainPruneKeepsServerDataAndMachineKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbPath := filepath.Join(serverDir, "aimebu.sqlite")
-	db, err := store.Open(context.Background(), dbPath, store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openFixtureStore(t, dbPath)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}

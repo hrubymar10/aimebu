@@ -179,7 +179,7 @@ func TestSetupTokenIsNotWrittenToTheLog(t *testing.T) {
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "")
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	useMigratedConfigDir(t, root)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

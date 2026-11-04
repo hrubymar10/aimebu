@@ -159,7 +159,7 @@ func TestServerServesHTTPAndHTTPSWithSameAllowlist(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ports := freeTCPPorts(t, 2)
 			httpPort, httpsPort := ports[0], ports[1]
-			t.Setenv("AIMEBU2_CONFIG_DIR", t.TempDir())
+			useMigratedConfigDir(t, t.TempDir())
 			t.Setenv("AIMEBU2_PORT", fmt.Sprint(httpPort))
 			t.Setenv("AIMEBU2_TLS_PORT", fmt.Sprint(httpsPort))
 			t.Setenv("AIMEBU2_ALLOW", tc.allow)

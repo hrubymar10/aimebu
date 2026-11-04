@@ -57,20 +57,11 @@ func TestCheckConfigDir(t *testing.T) {
 	}
 }
 
-// createFixtureDatabase builds a real v2 database (all migrations applied) at
-// path, the way `aimebu server` does on first start.
+// createFixtureDatabase puts a real v2 database (all migrations applied) at path, the way `aimebu server` leaves it after its first start;
+// it is a copy of one migrated once per test binary (fixture_template_test.go).
 func createFixtureDatabase(t *testing.T, path string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	db, err := store.Open(context.Background(), path, store.Options{})
-	if err != nil {
-		t.Fatalf("open fixture database %s: %v", path, err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	copyFixtureDatabase(t, path)
 }
 
 // rewriteSchemaVersion makes the fixture's schema_version table report the

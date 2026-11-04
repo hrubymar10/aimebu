@@ -135,7 +135,7 @@ func TestServerBootstrapOnce(t *testing.T) {
 	t.Setenv("AIMEBU2_USAGES", "0")
 	useFreePort(t)
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
 	var stdout, stderr bytes.Buffer
@@ -186,7 +186,7 @@ func TestServerBootstrapRejectsExistingHostKeyWithoutOwner(t *testing.T) {
 	t.Setenv("AIMEBU2_USAGES", "0")
 	useFreePort(t)
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
 	dir := filepath.Join(root, "server")
@@ -231,7 +231,7 @@ func TestServerCommandServesHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -291,7 +291,7 @@ func TestServerCommandServesHTTP(t *testing.T) {
 func TestServerCanDisableEmbeddedSupervisor(t *testing.T) {
 	t.Setenv("AIMEBU2_USAGES", "0")
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
 	t.Setenv("AIMEBU2_EMBEDDED_SUPERVISOR", "0")
@@ -320,7 +320,7 @@ func TestServerCanDisableEmbeddedSupervisor(t *testing.T) {
 func TestEmbeddedSupervisorReconcilesCrashedTurn(t *testing.T) {
 	t.Setenv("AIMEBU2_USAGES", "0")
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -615,7 +615,7 @@ func TestAFailedStartJoinsTheTokenCopyGoroutines(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
 	// The embedded supervisor's journal cannot be opened under a regular file: the start fails after the server wiring.

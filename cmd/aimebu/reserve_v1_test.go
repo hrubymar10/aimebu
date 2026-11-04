@@ -62,10 +62,7 @@ func TestFirstStartReservesV1NumbersBeforeSetupEvents(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	v1BackupWithMessage(t, root, 700)
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "aimebu.sqlite"), store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openFixtureStore(t, filepath.Join(t.TempDir(), "aimebu.sqlite"))
 	defer db.Close()
 	var stderr bytes.Buffer
 	if err := reserveV1History(context.Background(), db, root, &stderr); err != nil || stderr.Len() != 0 {
@@ -78,10 +75,7 @@ func TestFirstStartReservesV1NumbersBeforeSetupEvents(t *testing.T) {
 
 func TestNoBackupMeansNoReservation(t *testing.T) {
 	t.Parallel()
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "aimebu.sqlite"), store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openFixtureStore(t, filepath.Join(t.TempDir(), "aimebu.sqlite"))
 	defer db.Close()
 	if err := reserveV1History(context.Background(), db, t.TempDir(), &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
@@ -102,10 +96,7 @@ func TestUnreadableBackupWarnsButDoesNotStopStartup(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "aimebu.sqlite"), []byte("not a database"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "aimebu.sqlite"), store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openFixtureStore(t, filepath.Join(t.TempDir(), "aimebu.sqlite"))
 	defer db.Close()
 	var stderr bytes.Buffer
 	if err := reserveV1History(context.Background(), db, root, &stderr); err != nil || !strings.Contains(stderr.String(), "could not reserve") {
@@ -117,10 +108,7 @@ func TestOverlappingActivityIsReportedNotRenumbered(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	v1BackupWithMessage(t, root, 5)
-	db, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "aimebu.sqlite"), store.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openFixtureStore(t, filepath.Join(t.TempDir(), "aimebu.sqlite"))
 	defer db.Close()
 	for i := 0; i < 8; i++ {
 		nextEventSeq(t, db)

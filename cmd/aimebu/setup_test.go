@@ -107,7 +107,7 @@ func runFirstRunSetup(t *testing.T, root string, embedded bool) {
 	t.Helper()
 	t.Setenv("AIMEBU2_USAGES", "0")
 	useFreePort(t)
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "")
 	base := "http://127.0.0.1:" + os.Getenv("AIMEBU2_PORT")
@@ -221,7 +221,7 @@ func TestEnvironmentOwnerIsHeldToTheSameRules(t *testing.T) {
 		{"Bad Login", "correct horse battery staple", "3-32 lowercase letters"},
 	} {
 		useFreePort(t)
-		t.Setenv("AIMEBU2_CONFIG_DIR", t.TempDir())
+		useMigratedConfigDir(t, t.TempDir())
 		t.Setenv("AIMEBU2_OWNER_LOGIN", tc.login)
 		t.Setenv("AIMEBU2_OWNER_PASSWORD", tc.password)
 		var stdout, stderr bytes.Buffer
@@ -240,7 +240,7 @@ func TestServerAnswersBeforeTheEmbeddedSupervisorIsUp(t *testing.T) {
 	t.Setenv("AIMEBU2_EMBEDDED_SUPERVISOR", "1")
 	useFreePort(t)
 	root := t.TempDir()
-	t.Setenv("AIMEBU2_CONFIG_DIR", root)
+	useMigratedConfigDir(t, root)
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
 	release := make(chan struct{})
@@ -316,7 +316,7 @@ func TestAServeErrorDoesNotLetAPendingSupervisorStart(t *testing.T) {
 	t.Setenv("AIMEBU2_USAGES", "0")
 	t.Setenv("AIMEBU2_EMBEDDED_SUPERVISOR", "1")
 	useFreePort(t)
-	t.Setenv("AIMEBU2_CONFIG_DIR", t.TempDir())
+	useMigratedConfigDir(t, t.TempDir())
 	t.Setenv("AIMEBU2_OWNER_LOGIN", "owner")
 	t.Setenv("AIMEBU2_OWNER_PASSWORD", "correct horse battery staple")
 	release := make(chan struct{})
