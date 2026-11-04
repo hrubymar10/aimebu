@@ -349,7 +349,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-role-update { display: block; color: var(--warning); font-size: 10px; margin-top: 3px; }
 .agent-meta, .agent-activity { color: var(--text-muted); font-size: 10px; }
 .agent-state { --state-color: var(--green-text); display: inline-flex; align-items: center; width: max-content; min-height: 16px; margin-top: 7px; padding: 0 5px; border: 1px solid color-mix(in srgb, var(--state-color) 42%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--state-color) 12%, transparent); color: var(--state-color); font: 600 8px/1 var(--font-mono); }
-.agent-state[data-state="working"], .agent-state[data-state="paused"] { --state-color: var(--orange); }
+.agent-state[data-state="working"], .agent-state[data-state="paused"], .agent-state[data-state="attention"] { --state-color: var(--orange); }
 .agent-state[data-state="error"] { --state-color: var(--red); }
 .agent-state[data-state="stopped"] { --state-color: var(--text-secondary); }
 .agent-recovery { color: var(--orange); }
@@ -1234,7 +1234,7 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .presence-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
 .presence-dot[data-state="idle"], .presence-dot[data-state="working"] { background: var(--green-text); }
 .presence-dot[data-state="paused"] { background: var(--orange); opacity: .6; }
-.presence-dot[data-state="stale"] { background: var(--orange); }
+.presence-dot[data-state="stale"], .presence-dot[data-state="attention"] { background: var(--orange); }
 .presence-dot[data-state="error"], .presence-dot[data-state="stopped"], .presence-dot[data-state="offline"] { background: var(--red); }
 .human-card { cursor: default; }
 .human-card .presence-dot { background: var(--green-text); }
@@ -1817,7 +1817,8 @@ button.icon-btn[aria-pressed="true"] { border-color: var(--accent); color: var(-
 
 /* The state reads like v1: the state and how long it has lasted ("idle 0:44"), in the state's colour. In the profile it is a pill. */
 .agent-state-age:not(:empty) { font-variant-numeric: tabular-nums; opacity: .85; }
-.agent-state-pill { display: inline-flex; gap: 5px; }
+.agent-state-pill { display: inline-flex; gap: 5px; max-width: 100%; }
+.agent-state-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .agent-card.expanded .agent-state-pill { align-items: center; min-height: 22px; padding: 0 9px; border: 1px solid color-mix(in srgb, var(--state-color, var(--text-muted)) 55%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--state-color, var(--text-muted)) 12%, transparent); font-size: 12px; font-weight: 600; }
 .agent-card.expanded .agent-state-label { text-transform: capitalize; }
 [data-theme="high-contrast-dark"] .agent-card.expanded .agent-state-pill { background: var(--bg-primary); border-color: var(--state-color, var(--text-muted)); }

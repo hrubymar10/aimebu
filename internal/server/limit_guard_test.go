@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hrubymar10/aimebu/internal/quota"
+	"github.com/hrubymar10/aimebu/internal/store"
 )
 
 func guardRequest(t *testing.T, f *fixture, method, path string, body any) (int, string) {
@@ -132,5 +133,54 @@ func TestLimitGuardSettingsTravelInTheSettingsBackup(t *testing.T) {
 	bare := newFixture(t)
 	if _, preview := previewBackup(t, bare, backup); sectionOf(preview, "limit_guard").Unavailable == "" {
 		t.Fatal("a missing guard must be reported as unavailable")
+	}
+}
+
+// An idle agent on the host whose tool the limit guard holds says so on its card (hold: which window, how full, why nothing starts); an agent
+// that is working, one on a remote machine (its own login), one that needs a decision, a stopped one and one of another tool do not.
+func TestAgentCardsSayWhenTheLimitGuardHoldsTheirNewTurns(t *testing.T) {
+	f, _, _ := quotaEnv(t)
+	ctx := context.Background()
+	src := &quotaFakeSource{}
+	guard := quota.NewGuard(f.srv.Store, src, f.srv.Store, quotaEvents{f.srv})
+	f.srv.guard.Store(guard)
+	var remote string
+	if err := f.db.Tx(ctx, func(tx *store.Tx) error {
+		machine, err := tx.CreateMachine(store.Machine{Name: "remote", KeyHash: "remote-key", Approved: true})
+		remote = machine.ID
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	card := func(id, tool, machine, observed string) store.AgentCard {
+		return store.AgentCard{ID: id, Tool: tool, MachineID: machine, Desired: "active", Observed: observed}
+	}
+	cards := []store.AgentCard{
+		card("idle", quota.ToolClaude, f.machineID, "idle"), card("working", quota.ToolClaude, f.machineID, "in_turn"), card("remote", quota.ToolClaude, remote, "idle"),
+		card("codex", quota.ToolCodex, f.machineID, "idle"), card("lost", quota.ToolClaude, f.machineID, "lost"),
+	}
+	stopped := card("stopped", quota.ToolClaude, f.machineID, "stopped")
+	stopped.Desired = "stopped"
+	blocked := card("blocked", quota.ToolClaude, f.machineID, "idle")
+	blocked.RecoveryBlock = true
+	cards = append(cards, stopped, blocked)
+	if holds := f.srv.agentHolds(ctx, cards); len(holds) != 0 {
+		t.Fatalf("holds without a hold on the tool: %+v", holds)
+	}
+	src.set(quota.Observation{Active: "A", Profiles: []quota.Obs{qobs("A", 96, 10)}, Ready: true})
+	guard.Evaluate(ctx)
+	holds := f.srv.agentHolds(ctx, cards)
+	if len(holds) != 1 || holds["idle"] == nil {
+		t.Fatalf("only the idle claude agent on the host is held: %+v", holds)
+	}
+	hold := holds["idle"]
+	if hold.Code != "limit_guard" || hold.Text != "claude session 96%" || !strings.Contains(hold.Detail, "session limit of the active account is 96% full") ||
+		!strings.Contains(hold.Detail, "turn that is running finishes") {
+		t.Fatalf("the hold: %+v", hold)
+	}
+	// Without the guard's own reading the card still says there is a hold, by the reason the store holds it for.
+	f.srv.guard.Store(nil)
+	if holds := f.srv.agentHolds(ctx, cards); holds["idle"] == nil || holds["idle"].Text != "claude limit" || !strings.Contains(holds["idle"].Detail, "approaching the usage limit") {
+		t.Fatalf("a hold without a guard reading: %+v", holds["idle"])
 	}
 }

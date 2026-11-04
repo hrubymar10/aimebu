@@ -29,12 +29,20 @@ export function stateOf(agent) {
   if (agent.recovery_block && agent.last_exit_evidence) title += `\n${agent.last_exit_evidence}`;
   // A working agent counts from the start of its turn, any other state from the last thing it did.
   const since = (agent.observed === 'in_turn' ? agent.activity_at || agent.last_activity_at : agent.last_activity_at) || '';
+  // An idle agent that accepts work but will not start is not "idle": its last turn needs the person's decision, or the limit guard is
+  // holding new turns of its tool. The dot goes orange and the state says which, and `why` is the sentence the card shows beside it.
+  const free = agent.desired === 'active' && agent.observed === 'idle' && !agent.boundary_pending;
+  if (free && agent.recovery_block) {
+    const why = 'Needs your decision: its last turn did not finish cleanly, so nothing new starts until you decide what to do in Inbox.';
+    return { name: 'needs decision', kind: 'attention', title: agent.last_exit_evidence ? `${why}\n${agent.last_exit_evidence}` : why, since, observed, why };
+  }
+  if (free && agent.hold) return { name: `held: ${agent.hold.text}`, kind: 'attention', title: agent.hold.detail, since, observed, why: agent.hold.detail };
   return { name, kind, title, since, observed };
 }
 
 export function activityOf(agent, state) {
   const woken = agent.woken_by === 'reply' ? 'Woken by reply · ' : '';
-  const text = woken + (agent.activity || (state.observed === 'Working' ? 'Working…' : 'No recent activity'));
+  const text = state.why || woken + (agent.activity || (state.observed === 'Working' ? 'Working…' : 'No recent activity'));
   const last = agent.last_activity_at || agent.activity_at, seen = agent.machine_last_seen;
   return { text, last, seen };
 }

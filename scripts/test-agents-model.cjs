@@ -34,6 +34,25 @@ assert.deepEqual([state({ desired: 'stopped', observed: 'stopped' }).name, state
 assert.deepEqual([state({ observed: 'lost' }).kind, state({ boundary_pending: true }).kind, state({ desired: 'stopped', observed: 'stopped' }).kind], ['error', 'paused', 'stopped']);
 assert.equal(state({ recovery_block: true, last_exit_evidence: 'The process vanished', observed: 'lost' }).title, 'The previous process is unconfirmed; recovery is needed.\nThe process vanished');
 assert.equal(state({ last_activity_at: '' }).since, '');
+// An idle agent that will not start is not "idle": it needs a decision (orange), or the limit guard holds its tool's new turns (orange, with why).
+const needs = state({ recovery_block: true, last_exit_evidence: 'OAuth session expired' });
+assert.deepEqual([needs.name, needs.kind], ['needs decision', 'attention']);
+assert.match(needs.title, /^Needs your decision: .*decide what to do in Inbox\.\nOAuth session expired$/);
+assert.equal(needs.why.includes('OAuth'), false, 'the sentence beside the state is the decision, the evidence stays in the title');
+const guardHold = { code: 'limit_guard', text: 'claude session 95%', detail: 'The limit guard is holding new claude turns.' };
+const guardHeld = state({ hold: guardHold });
+assert.deepEqual([guardHeld.name, guardHeld.kind, guardHeld.title, guardHeld.why], ['held: claude session 95%', 'attention', guardHold.detail, guardHold.detail]);
+assert.equal(m.activityOf({ hold: guardHold }, guardHeld).text, guardHold.detail, 'the card says why nothing happens');
+assert.equal(m.activityOf({ recovery_block: true }, needs).text, needs.why);
+assert.equal(state({ recovery_block: true, hold: guardHold }).name, 'needs decision', 'a decision outranks the hold');
+// Only a free idle agent shows either: a working one is working, a stopped or paused one is that, a lost one is lost (red), and one waiting for approval waits for it.
+for (const patch of [{ observed: 'in_turn' }, { desired: 'stopped', observed: 'stopped' }, { desired: 'not_accepting' }, { observed: 'lost' }, { boundary_pending: true }]) {
+  const other = state({ ...patch, recovery_block: true, hold: guardHold });
+  assert.notEqual(other.kind, 'attention', JSON.stringify(patch));
+  assert.equal(other.why, undefined, JSON.stringify(patch));
+}
+assert.equal(state({ observed: 'lost' }).kind, 'error', 'a lost process is still red');
+assert.equal(m.activityOf({}, state({})).text, 'No recent activity', 'an ordinary idle agent is unchanged');
 
 assert.equal(m.activityOf({ woken_by: 'reply', activity: 'tool inspect' }, state({})).text, 'Woken by reply · tool inspect');
 assert.equal(m.activityOf({}, state({ observed: 'in_turn' })).text, 'Working…');

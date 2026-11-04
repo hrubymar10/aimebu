@@ -4985,7 +4985,9 @@ async function main() {
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-context', el => el.title.includes('150,000 / 200,000 tokens') && el.title.includes('Cost so far $0.35')), true);
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-context-value', el => el.textContent), '—');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-switch', el => el.disabled), false, 'active turn should allow a switch');
-    assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-state', el => el.title), 'Idle; waiting for new work.\nProcess exited with code 17.\nCheckout is not mounted.');
+    // The reviewer's last turn crashed and its recovery decision is waiting: it is not "idle". Orange dot, "needs decision", and the evidence in the tooltip.
+    assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-state', el => el.title), 'Needs your decision: its last turn did not finish cleanly, so nothing new starts until you decide what to do in Inbox.\nProcess exited with code 17.\nCheckout is not mounted.');
+    assert.deepEqual(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"]', card => [card.querySelector('.agent-state-label').textContent, card.querySelector('.agent-dot').dataset.state]), ['needs decision', 'attention']);
     // Room members (v1 style): a compact row (dot, emoji, name, DM / Pause / Stop); Switch… and Reactivate open with the row.
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-switch', el => el.offsetParent === null), true, 'the row is compact until opened');
     assert.deepEqual(await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .agent-quick button', els => els.map(el => el.getAttribute('aria-label'))), ['Message Ada privately', 'Pause', 'Stop', 'Open agent profile'], 'DM, Pause, Stop (v1 order) and the detail toggle are icon buttons with accessible names');
@@ -5088,14 +5090,14 @@ async function main() {
     await agentAct('agt_mock_reviewer', 'agent-pause');
     await agentPage.waitForFunction(() => document.querySelector('[data-agent-id="agt_mock_reviewer"] .agent-state-label')?.textContent === 'paused');
     await agentAct('agt_mock_reviewer', 'agent-reactivate');
-    await agentPage.waitForFunction(() => document.querySelector('[data-agent-id="agt_mock_reviewer"] .agent-state-label')?.textContent === 'idle');
+    await agentPage.waitForFunction(() => document.querySelector('[data-agent-id="agt_mock_reviewer"] .agent-state-label')?.textContent === 'needs decision');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-switch', el => el.disabled && el.title === 'Switch is unavailable: resolve the recovery item first'), true);
     await agentAct('agt_mock_worker', 'agent-reactivate');
     await agentPage.waitForFunction(() => document.querySelector('[data-agent-id="agt_mock_worker"] .agent-state-label')?.textContent === 'idle');
     await agentAct('agt_mock_reviewer', 'agent-stop');
     await agentPage.waitForFunction(() => document.querySelector('[data-agent-id="agt_mock_reviewer"] .agent-state-label')?.textContent === 'stopped');
     await agentAct('agt_mock_reviewer', 'agent-reactivate');
-    await agentPage.waitForFunction(() => document.querySelector('[data-agent-id="agt_mock_reviewer"] .agent-state-label')?.textContent === 'idle');
+    await agentPage.waitForFunction(() => document.querySelector('[data-agent-id="agt_mock_reviewer"] .agent-state-label')?.textContent === 'needs decision');
     const switchingCard = await agentPage.$('[data-agent-id="agt_mock_worker"]');
     await agentAct('agt_mock_worker', 'agent-switch');
     await agentPage.waitForFunction(() => document.querySelectorAll('#switch-form [name=tool] option').length === 3);

@@ -460,6 +460,65 @@ type agentCardWithUsage struct {
 	store.AgentCard
 	LatestUsage *store.AgentUsage  `json:"latest_usage,omitempty"`
 	HealthFlags []store.HealthFlag `json:"health_flags"`
+	// Hold says why this agent's next turn will not start although it is idle and accepting work: the limit guard is holding new turns of its tool.
+	Hold *agentHold `json:"hold,omitempty"`
+}
+
+// agentHold is a reason an idle agent starts no new turn, for its card: Code names it (limit_guard), Text is the short form the card's state
+// shows ("claude session 95%"), Detail the sentence behind it.
+type agentHold struct {
+	Code   string `json:"code"`
+	Text   string `json:"text"`
+	Detail string `json:"detail"`
+}
+
+// agentHolds works out the hold of each card of a list. Only the limit guard holds an idle agent without anything else showing: it judges the
+// host machine's account, so only agents on the host machine wait for it (a remote machine has its own login), and a running turn is never
+// touched, so only an agent that is not in a turn shows it.
+func (s *Server) agentHolds(ctx context.Context, cards []store.AgentCard) map[string]*agentHold {
+	holds := map[string]*agentHold{}
+	hostByMachine := map[string]bool{}
+	byTool := map[string]*agentHold{}
+	for _, card := range cards {
+		if card.Desired != "active" || card.Observed != "idle" || card.RecoveryBlock || s.Store.ToolHold(card.Tool) == "" {
+			continue
+		}
+		host, known := hostByMachine[card.MachineID]
+		if !known {
+			if machine, err := s.Store.MachineByID(ctx, card.MachineID); err == nil {
+				host = machine.IsHost
+			}
+			hostByMachine[card.MachineID] = host
+		}
+		if !host {
+			continue
+		}
+		hold, done := byTool[card.Tool]
+		if !done {
+			hold = s.toolHold(ctx, card.Tool)
+			byTool[card.Tool] = hold
+		}
+		holds[card.ID] = hold
+	}
+	return holds
+}
+
+// toolHold describes the limit guard's hold on a tool from the guard's own reading: which window is how full against which threshold.
+func (s *Server) toolHold(ctx context.Context, tool string) *agentHold {
+	hold := &agentHold{Code: "limit_guard", Text: tool + " limit", Detail: "The limit guard is holding new " + tool + " turns (" + s.Store.ToolHold(tool) + "). Queued messages wait; a turn that is running finishes."}
+	guard := s.limitGuard()
+	if guard == nil {
+		return hold
+	}
+	view, err := guard.View(ctx, tool)
+	if err != nil || view.Result.Percent == nil {
+		return hold
+	}
+	percent := fmt.Sprintf("%.0f%%", *view.Result.Percent)
+	hold.Text = tool + " " + view.Result.Window + " " + percent
+	hold.Detail = fmt.Sprintf("The limit guard is holding new %s turns: the %s limit of the active account is %s full (it holds from %.0f%%). Queued messages wait and start again when usage falls or the account switches; a turn that is running finishes.",
+		tool, view.Result.Window, percent, view.Result.Soft)
+	return hold
 }
 
 // agentNameSuggestion answers a free name for the next agent of the room's project: what the Spawn dialog prefills, and what its dice
@@ -489,6 +548,7 @@ func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		withUsage := make([]agentCardWithUsage, 0, len(cards))
+		holds := s.agentHolds(r.Context(), cards)
 		for _, card := range cards {
 			usage, err := s.Store.AgentUsage(r.Context(), card.ID)
 			if err != nil {
@@ -500,7 +560,7 @@ func (s *Server) roomAgents(w http.ResponseWriter, r *http.Request) {
 				fail(w, err)
 				return
 			}
-			withUsage = append(withUsage, agentCardWithUsage{card, usage, flags})
+			withUsage = append(withUsage, agentCardWithUsage{card, usage, flags, holds[card.ID]})
 		}
 		writeJSON(w, 200, withUsage)
 		return

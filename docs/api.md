@@ -527,6 +527,13 @@ sentence per flag ("Ada looks stuck", "An answer to Bert could not be delivered"
 "Bert needs a recovery decision"); choosing one opens the matching Inbox item
 (variant A) or the room with its inline callout (variant B) for `recovery_waiting`
 and `held_answer`, and the agent's room for the other flags.
+Listed room agent cards also carry an optional `hold` (`{code, text, detail}`) when an agent that is idle and accepting
+work will not start its next turn because the limit guard is holding new turns of its tool: `code` is `limit_guard`, `text` the
+short form ("claude session 95%": the tool, the fuller window of the active account and how full it is) and `detail` the sentence
+behind it. The guard judges the host machine's account, so only agents on the host machine have it, and an agent that is working,
+paused, stopped, lost or waiting on a recovery decision does not. The card shows an agent that needs a recovery decision
+(`recovery_block`) or has a `hold` as an orange dot with the state "needs decision" or "held: claude session 95%" and the reason on
+the card, instead of the green "idle" of an agent that is free; a lost process stays red.
 Listed room agent cards also include optional `latest_usage` with nullable
 `tokens_in`, `tokens_out`, `context_used`, `context_window`, and
 `cost_so_far`, and `cost_estimated` when any of that cost used the price list.
