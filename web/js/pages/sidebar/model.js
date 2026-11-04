@@ -128,11 +128,17 @@ export function treeOf(state) {
   const ordinary = shown.filter(room => room.kind !== 'dm');
   const liveParent = room => { const parent = room.parent_id && rooms.get(room.parent_id); return !!parent && parent.lifecycle !== 'closed' && !parent.hidden; };
   const tails = new Map(live.map(project => [project.id, filtering ? [] : tailOf(project, all, archiveFilter)]));
-  const collapsible = new Set(), tailed = new Set();
+  const collapsible = new Set(), nested = new Set(), holdsActive = new Set(), tailed = new Set();
+  // The open room and everything above it, however deep and whether or not the rooms in between are shown (archived or hidden ones count too).
+  const holders = new Set();
+  for (let room = active && rooms.get(active), guard = 0; room && guard < 64; room = room.parent_id && rooms.get(room.parent_id), guard++) holders.add(room.id);
+  if (active) holders.add(active);
   const view = (room, opts) => {
     const children = opts.nest && room.lifecycle !== 'closed' ? orderRooms([...rooms.values()].filter(other => other.parent_id === room.id && other.lifecycle !== 'closed' && !other.hidden && other.kind !== 'dm' && matchesRoom(other, filter, projects)), sort) : [];
     const tail = opts.tail || [];
     const kids = children.length + tail.length;
+    if (opts.nest) nested.add(room.id);
+    if (opts.nest && holders.has(room.id)) holdsActive.add(room.id);
     if (opts.nest && kids) collapsible.add(room.id);
     const folded = kids > 0 && collapsed.has(room.id);
     return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: children.map(child => view(child, { chip: false, nest: false })), tail, collapsible: opts.nest && kids > 0, folded,
@@ -159,7 +165,7 @@ export function treeOf(state) {
   }
   const text = filter.trim().toLocaleLowerCase();
   const joinable = (offers || []).filter(offer => !text || (offer.title || '').toLocaleLowerCase().includes(text));
-  return { filtering, many, sections, noMatch: filtering && !shown.length ? `No rooms match “${filter.trim()}”.` : '', archived: archivedShown, direct, offers: joinable, collapsible, closedProjects: live.filter(project => !all.some(room => room.project_id === project.id && room.lifecycle === 'closed' && !room.hidden && room.kind !== 'dm')).map(project => project.id) };
+  return { filtering, many, sections, noMatch: filtering && !shown.length ? `No rooms match “${filter.trim()}”.` : '', archived: archivedShown, direct, offers: joinable, collapsible, nested, holdsActive, closedProjects: live.filter(project => !all.some(room => room.project_id === project.id && room.lifecycle === 'closed' && !room.hidden && room.kind !== 'dm')).map(project => project.id) };
 }
 
 // A row with nothing under it (the rooms of a tail, an archived project's rooms, a direct message).

@@ -460,17 +460,17 @@ read up to the newest message the chat has shown: if a window cannot load the
 messages that arrived while it was shown, it stays a window with them counted
 and the room stays unread until they are shown. Room settings → Notifications sets, per person and room, how the room notifies you: **Default** (the Inbox, and chat messages that address you), **All messages**, **Only mentions and replies to me** (the room's unread badge then counts only those) or **Nothing** (no sound or notification from the room, its Inbox items included; they still arrive in the Inbox), plus a mute for 1 hour, 8 hours or until tomorrow 08:00. A room that is quiet this way (Nothing, or a running mute) shows a disabled bell in the room list; the open room, in a focused tab, needs no alert. The settings are stored on the server with the rest of the person's view of the room (`PATCH /api/rooms/{room}/preferences`). Hide is a per-user button in Room settings (the rows carry none). Nothing is
 pinned. The sort button in the ROOMS header orders projects, and the rooms inside them, by name, by latest
-activity, or manually (drag a project by its ≡ handle, shown on hover left of its move up and move down buttons, or use those buttons; the whole row opens the project's home room; in the manual sort the rooms keep
+activity, or manually (drag a project by its ☰ handle; the whole row opens the project's home room; in the manual sort the rooms keep
 the order the server lists them); the choice and the manual order are personal preferences that follow the person across devices. The room list is
 one list across projects, with no section labels: each project's home
 room (`⌂ name`) is the parent row and its task rooms nest under it, one level. Every row shows `#name`, its member count and an unread badge, plus a project chip
 when there are several projects (left off a home room that only repeats the project name); the
-row's `+` shows on hover or keyboard focus, and always on touch screens. The last message is
+row's `+` shows on hover or keyboard focus, and always on touch screens; a project's home row has a single ☰ button instead (same visibility), whose menu holds New room and, in the manual sort, Move up and Move down (and, in that sort, the button is also the drag handle). The last message is
 previewed only under the open room, and one Direct messages section covers every project and
 always comes last. The box on top only filters the list as you type (Enter does nothing); rooms
-are created with a row's `+`. A project's tree ends with an
+are created with a row's `+` or a project's ☰ menu. A project's tree ends with an
 `Archived (N)` row that lists its archived rooms inline. A chevron on a root room hides or shows
-its children (and that Archived row); the choice is remembered in this browser, and a collapsed
+its children (and that Archived row). A project starts collapsed the first time this browser sees it; after that the choice is remembered in this browser (a project you opened stays open), and a collapsed
 root shows its children's unread total. The collapse button in the ROOMS header folds every project at once
 (or opens them all again once everything is folded). A `Hidden (N)` row closes the tree the same way and can show a room again.
 A hidden room returns when a new message addresses that user or someone joins

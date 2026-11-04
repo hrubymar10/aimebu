@@ -390,6 +390,7 @@ async function snapshot(generation = sessionGeneration) {
     }
   }
   if (generation !== sessionGeneration) return null;
+  sidebar.releaseFolds(); // a room was opened above if there was one: only now may the projects fold (the one holding the open room does not)
   refreshEmptyState();
   return seq;
 }

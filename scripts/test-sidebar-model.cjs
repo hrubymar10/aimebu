@@ -46,6 +46,13 @@ assert.equal(tree.sections[0].folded, true);
 assert.equal(tree.sections[0].unread, 2);
 tree = treeOf(state([home, room('child', 'a', { parent_id: 'home', unread_count: 2 })], { active: 'child' }));
 assert.equal(tree.sections[0].unread, 0);
+// The roots on screen, and the one that holds the open room (itself or a child), for the default fold; nothing is a root while a filter is on.
+assert.deepEqual([[...tree.nested], [...tree.holdsActive], [...tree.collapsible]], [['home'], ['home'], ['home']]);
+assert.deepEqual([...treeOf(state([home, room('child', 'a', { parent_id: 'home' })], { active: 'elsewhere' })).holdsActive], []);
+// Deeper rooms and archived ones hold the project too: the open room's whole chain of parents counts, shown or not.
+assert.deepEqual([...treeOf(state([home, room('child', 'a', { parent_id: 'home' }), room('grand', 'a', { parent_id: 'child' })], { active: 'grand' })).holdsActive], ['home'], 'a room two levels down holds its project');
+assert.deepEqual([...treeOf(state([home, room('child', 'a', { parent_id: 'home' }), room('old', 'a', { parent_id: 'child', lifecycle: 'closed' })], { active: 'old' })).holdsActive], ['home'], 'an archived room holds its project');
+assert.deepEqual([...treeOf(state([home, room('child', 'a', { parent_id: 'home' })], { filter: 'child' })).nested], [], 'a filter marks no root as seen');
 
 // A closed parent frees its child to the top; a closed room goes to the archived tail of its project (narrowed by the archive search).
 tree = treeOf(state([home, room('old', 'a', { lifecycle: 'closed', title: 'Retro' }), room('older', 'a', { lifecycle: 'closed', title: 'Alpha plan' }), room('hid', 'a', { hidden: true }), room('orphan', 'a', { parent_id: 'old' })], { archiveFilter: new Map([['a', ' retro ']]) }));

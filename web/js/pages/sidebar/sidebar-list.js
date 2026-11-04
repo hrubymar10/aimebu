@@ -1,4 +1,4 @@
-import { html, useLayoutEffect, useRef, useState } from '../../ui.js';
+import { html, useEffect, useLayoutEffect, useRef, useState } from '../../ui.js';
 import { previewText } from '../../preview.js';
 import { formDialog } from '../../dialogs.js';
 import { roomSilenced, mutedNow } from '../../room-notify.js';
@@ -48,6 +48,35 @@ function arm(event, store) {
   for (const done of ['pointerup', 'pointercancel']) document.addEventListener(done, release, true);
 }
 
+// A project's home row keeps one control, the ☰ button: it opens a menu with the project's actions (a new room; moving it up or down in the manual
+// order) and, in the manual order, is also the handle the row is dragged by. The menu is a real menu: Escape or a click elsewhere closes it, the arrows
+// move between its items, and it is reachable by keyboard and touch because the button is always on the row's tab order while the row is hovered/focused.
+function ProjectMenu({ project, room, controls, manual, store, onAdd, disabled }) {
+  const [open, setOpen] = useState(false), box = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const outside = event => { if (box.current && !box.current.contains(event.target)) setOpen(false); };
+    document.addEventListener('click', outside);
+    return () => document.removeEventListener('click', outside);
+  }, [open]);
+  useLayoutEffect(() => { if (open) box.current?.querySelector('.project-menu-item:not(:disabled)')?.focus(); }, [open]);
+  const pick = action => () => { setOpen(false); box.current?.querySelector('.project-menu-btn')?.focus(); action(); };
+  const keys = event => {
+    if (!open) return; // a closed menu leaves every key (Escape closes the phone overlay and the panels) to the page
+    const items = [...box.current.querySelectorAll('.project-menu-item:not(:disabled)')], index = items.indexOf(document.activeElement);
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); box.current.querySelector('.project-menu-btn').focus(); }
+    else if (event.key === 'ArrowDown' && items.length) { event.preventDefault(); items[(index + 1) % items.length].focus(); }
+    else if (event.key === 'ArrowUp' && items.length) { event.preventDefault(); items[(index - 1 + items.length) % items.length].focus(); }
+  };
+  return html`<span class=${open ? 'project-menu is-open' : 'project-menu'} ref=${box} onKeyDown=${keys}>
+    <button type="button" class=${manual ? 'row-btn project-move project-menu-btn project-grip' : 'row-btn project-move project-menu-btn'} title=${manual ? `${project.name} actions (drag to move)` : `${project.name} actions`} aria-label=${`${project.name} actions`} aria-haspopup="menu" aria-expanded=${String(open)} onPointerDown=${event => { if (manual) arm(event, store); }} onClick=${() => setOpen(!open)}><span class="icon-mask icon-mask-menu" aria-hidden="true"></span></button>
+    ${open && html`<div class="project-menu-list" role="menu" aria-label=${`${project.name} actions`}>
+      <button type="button" class="row-btn project-menu-item project-menu-add" role="menuitem" disabled=${disabled} onClick=${pick(onAdd)}>New room</button>
+      ${manual && html`<button type="button" class="row-btn project-menu-item project-menu-up" role="menuitem" disabled=${controls.first} onClick=${pick(() => store.moveProject(project.id, -1))}>Move up</button>
+      <button type="button" class="row-btn project-menu-item project-menu-down" role="menuitem" disabled=${controls.last} onClick=${pick(() => store.moveProject(project.id, 1))}>Move down</button>`}
+    </div>`}</span>`;
+}
+
 function Row({ view, store, ctx }) {
   const { room } = view, project = store.projects.get(room.project_id), [reopening, setReopening] = useState(false);
   const archivedProject = !!project?.archived_at, projectName = project?.name || '';
@@ -71,16 +100,14 @@ function Row({ view, store, ctx }) {
   const row = html`<div class=${classes} onClick=${event => { if (!event.target.closest('button, input, select, a')) select(); }} ...${drag}>
     ${view.collapsible ? html`<button type="button" class="row-btn branch room-collapse" title=${label} aria-label=${label} aria-expanded=${String(!view.folded)} onClick=${() => store.toggleCollapsed(room.id)}><${Chevron} direction=${view.folded ? 'right' : 'down'} /></button>` : view.nest && html`<span class="branch-spacer" aria-hidden="true"></span>`}
     <button type="button" class="row-btn room-name" title=${`${room.title} · ${members} ${members === 1 ? 'member' : 'members'}`} onClick=${select}>${`${room.kind === 'home' ? '⌂' : room.agent_chat ? '⇄' : room.kind === 'dm' ? '@' : '#'} ${room.title}`}</button>
-    ${controls && manual && html`<${GlyphButton} name="menu" label=${`Drag to move ${project.name}`} className="row-btn project-move project-grip" tabIndex=${-1} onPointerDown=${event => arm(event, store)} />
-      <${GlyphButton} name="arrow-up" label=${`Move project up: ${project.name}`} className="row-btn project-move project-move-up" disabled=${controls.first} onClick=${() => store.moveProject(project.id, -1)} />
-      <${GlyphButton} name="arrow-down" label=${`Move project down: ${project.name}`} className="row-btn project-move project-move-down" disabled=${controls.last} onClick=${() => store.moveProject(project.id, 1)} />`}
+    ${controls && html`<${ProjectMenu} project=${project} room=${room} controls=${controls} manual=${manual} store=${store} onAdd=${add} disabled=${archivedProject || (!!room.lifecycle && room.lifecycle !== 'open')} />`}
     ${view.chip && projectName && !(room.kind === 'home' && room.title.trim().toLowerCase() === projectName.trim().toLowerCase()) && html`<span class="room-project" title=${`Project ${projectName}`}>${projectName}</span>`}
     ${(affected.length > 0 || store.seenHealth.has(room.id)) && html`<span class="room-health" hidden=${!affected.length} title=${affected.map(agent => `${agent.name}: ${agent.flags.map(flag => flag.code.replaceAll('_', ' ')).join(', ')}`).join('\n')}>${`⚠ ${affected.length}`}</span>`}
     ${quiet && html`<span class="room-muted" role="img" title=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'} aria-label=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'}><span class="icon-mask icon-mask-bell-disabled" aria-hidden="true"></span></span>`}
     ${room.lifecycle === 'closing' && html`<span class="room-state">Closing…</span>`}
     ${attention > 0 && html`<span class="room-item-attention" role="img" title=${`${attention} waiting for you`} aria-label=${`${attention} items need your attention`}>🔔</span>`}
     ${view.unread > 0 && html`<span class="unread-count" role="img" aria-label=${`${view.unread} unread messages`}>${String(view.unread)}</span>`}
-    <${GlyphButton} name="plus" label=${`New task room under ${room.title}`} className="row-btn add-room" disabled=${(!!room.lifecycle && room.lifecycle !== 'open') || archivedProject} hidden=${room.kind === 'dm' || room.lifecycle === 'closed' || archivedProject} onClick=${add} />
+    <${GlyphButton} name="plus" label=${`New task room under ${room.title}`} className="row-btn add-room" disabled=${(!!room.lifecycle && room.lifecycle !== 'open') || archivedProject} hidden=${!!controls || room.kind === 'dm' || room.lifecycle === 'closed' || archivedProject} onClick=${add} />
     ${room.lifecycle === 'closed' && !archivedProject && html`<${GlyphButton} name="reopen" label=${`Reopen ${room.title}`} className="row-btn reopen-room" disabled=${reopening} onClick=${reopen} />`}</div>`;
   return row;
 }
@@ -137,7 +164,10 @@ function FilterBox({ store, button }) {
 export function SidebarList({ store, projectButton }) {
   store.version.value;
   const shown = store.shown.value, sort = store.sort.value, active = store.active.value, filter = store.filter.value, manual = store.manual.value;
-  const tree = shown ? treeOf({ projects: store.projects, rooms: store.rooms, filter, sort, manual, collapsed: store.collapsedRooms, active, archiveFilter: store.archiveFilter, offers: store.joinable }) : null;
+  const build = () => treeOf({ projects: store.projects, rooms: store.rooms, filter, sort, manual, collapsed: store.collapsedRooms, active, archiveFilter: store.archiveFilter, offers: store.joinable });
+  let tree = shown ? build() : null;
+  // A project seen for the first time starts collapsed: fold it, then draw the tree again with it folded.
+  if (tree && !store.holdFolds && store.foldNew(tree.collapsible, tree.nested, tree.holdsActive)) tree = build();
   const ctx = { sort, active, previewAll: loadPreviewAll() };
   useLayoutEffect(() => {
     if (!tree) return;

@@ -28,6 +28,8 @@ export class Sidebar {
   get manual() { return this.store.manual.peek(); }
   get collapsedRooms() { return this.store.collapsedRooms; }
   set collapsedRooms(value) { this.store.collapsedRooms = value; }
+  get seenRooms() { return this.store.seenRooms; }
+  set seenRooms(value) { this.store.seenRooms = value; }
   get reads() { return this.store.reads; }
   get health() { return this.store.health; }
   set holdRead(value) { this.store.holdRead = value; }
@@ -43,6 +45,7 @@ export class Sidebar {
   forgetRoom(id) { this.store.forgetRoom(id); }
   forgetProject(id) { this.store.forgetProject(id); }
   setActive(id) { this.store.setActive(id); }
+  releaseFolds() { this.store.releaseFolds(); }
   setHealth(agents) { this.store.setHealth(agents); }
   setPreference(room, field, value) { return this.store.setPreference(room, field, value); }
   isAgentChatProject(id) { return this.store.isAgentChatProject(id); }

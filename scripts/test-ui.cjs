@@ -35,7 +35,14 @@ if (seedBuild.status !== 0) process.exit(seedBuild.status || 1);
 // The app leaves its loading state when startup finishes or hits its own 30 s deadline, so a 30 s wait here races
 // that deadline under load. Wait on the state itself with room to spare: a stuck startup still fails, a slow one passes.
 const APP_READY_TIMEOUT = 90000;
-const appReady = page => page.waitForSelector('#app-view:not([hidden]):not([aria-busy])', { timeout: APP_READY_TIMEOUT });
+// A project starts folded, so the page is handed over with its projects open: most checks reach rooms inside them. Where the default is the point
+// the page is waited for with appReadyFolded.
+const appReadyFolded = page => page.waitForSelector('#app-view:not([hidden]):not([aria-busy])', { timeout: APP_READY_TIMEOUT });
+const appReady = async page => {
+  await appReadyFolded(page);
+  await page.waitForSelector('#projects .room-group', { timeout: 5000 }).catch(() => {}); // the list is drawn after the page is shown; a page with no project has none
+  await page.evaluate(() => { for (const toggle of document.querySelectorAll('.room-group.collapsed > .room-row > .room-collapse')) toggle.click(); });
+};
 function freePort() { return new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); }); }
 // waitForFunction that names what the page looked like when it timed out: a 30 s timeout alone cannot tell a slow
 // transition from a lost one. `dump` runs in the page and its result is appended to the error.
@@ -112,6 +119,8 @@ async function main() {
     // A click that cannot be lost: wait until the control is shown, enabled and its box has not moved for two frames (an agent
     // card re-renders or expands under the pointer, and a pointer click then lands on the old position), then click it in the DOM.
     const domClick = async (page, selector) => {
+      // A project starts folded: a click on a room inside a folded project opens the project first, as a person would.
+      if (selector.includes('data-room-id')) await page.evaluate(selector => { for (let group = document.querySelector(selector)?.closest('.room-group'); group; group = group.parentElement?.closest('.room-group')) if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-row > .room-collapse')?.click(); }, selector);
       await page.waitForFunction(selector => new Promise(resolve => {
         const button = document.querySelector(selector);
         if (!button || button.disabled || button.hidden || !button.getClientRects().length) { resolve(false); return; }
@@ -120,6 +129,13 @@ async function main() {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve(button.isConnected && box() === before && !button.disabled)));
       }), {}, selector);
       await page.$eval(selector, button => button.click());
+    };
+    // A project's actions are the items of the menu behind the ☰ button of its home row: reach the button by the keyboard focus that shows it, open the
+    // menu, press the item. `row` selects the home room's group.
+    const projectMenuAct = async (page, row, item) => {
+      await page.focus(`${row} > .room-row .room-name`);
+      await domClick(page, `${row} > .room-row .project-menu-btn`);
+      await domClick(page, `${row} > .room-row .project-menu-${item}`);
     };
     // The owner's rule: a control is an icon with a tooltip and an accessible name, never text. Returns what breaks it for the
     // elements matching `selectors` (a list), and how many matched.
@@ -1993,8 +2009,7 @@ async function main() {
       await first.locator('#composer textarea').fill('');
       await putMacros({});
     }
-    await first.focus('.room-row .room-name');
-    await domClick(first, '.add-room');
+    await projectMenuAct(first, `[data-room-id="${await first.$eval('.room-row:has(.project-menu-btn)', row => row.closest('.room-group').dataset.roomId)}"]`, 'add');
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     await first.waitForFunction(() => document.querySelector('#messages')?.dataset.empty === 'true');
     assert.equal(await first.$eval('#messages', el => getComputedStyle(el, '::before').content), '"No messages in this room yet."', 'an empty room says so');
@@ -9173,7 +9188,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await listPage.waitForFunction(selector => document.querySelector(selector)?.getAttribute('aria-expanded') === 'false', {}, homeToggle);
       assert.deepEqual([await visibleIn(alpha.id), await visibleIn(beta.id), await listPage.evaluate(home => !!document.querySelector(`[data-room-id="${home}"] > .room-children > .archived-rooms`)?.checkVisibility(), home2.id)], [false, false, false], 'a collapsed root hides its children and its Archived row');
       assert.equal(await listPage.$eval(homeToggle, el => el.getAttribute('aria-label')), `Expand ${home2.title}`);
-      await listPage.reload(); await appReady(listPage);
+      await listPage.reload(); await appReadyFolded(listPage); // appReady would open the project again
       await listPage.waitForSelector(homeToggle);
       assert.equal(await listPage.$eval(homeToggle, el => el.getAttribute('aria-expanded')), 'false', 'the collapsed state is remembered');
       assert.equal(await visibleIn(alpha.id), false);
@@ -9205,7 +9220,16 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await setSort('name');
       assert.deepEqual(await projectOrder(), ['Second project', 'UI smoke'], 'by name');
       assert.deepEqual(await roomOrder(), ['Alpha list', 'Beta list'], 'rooms by name');
-      assert.equal(await listPage.$$eval('.project-move', nodes => nodes.length), 0, 'the move buttons exist only in the manual order');
+      // The ☰ button is on every project row whatever the order; its menu offers the moves only in the manual order.
+      const menuOf = async id => {
+        await listPage.focus(`[data-room-id="${id}"] > .room-row .room-name`);
+        await domClick(listPage, `[data-room-id="${id}"] > .room-row .project-menu-btn`);
+        const items = await listPage.$$eval(`[data-room-id="${id}"] > .room-row .project-menu-item`, nodes => nodes.map(node => `${node.textContent}${node.disabled ? ':disabled' : ''}`));
+        await domClick(listPage, `[data-room-id="${id}"] > .room-row .project-menu-btn`);
+        await listPage.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] > .room-row .project-menu-list`), {}, id);
+        return items;
+      };
+      assert.deepEqual(await menuOf((await homeIDs())[0]), ['New room'], 'the menu offers the moves only in the manual order');
       await setSort('activity');
       await listPage.waitForFunction(() => document.querySelector('#projects > .room-group .room-name')?.textContent.includes('UI smoke'));
       assert.deepEqual(await projectOrder(), ['UI smoke', 'Second project'], 'by latest activity the project with the newest message leads');
@@ -9222,10 +9246,10 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       const served = (await api('GET', `/api/projects/${project2.id}/rooms`)).filter(room => room.parent_id === home2.id && room.lifecycle !== 'closed' && room.title !== 'general').map(room => room.title);
       assert.deepEqual(await roomOrder(), served, 'manual leaves rooms in the order the server lists them');
       // Manual: the move buttons and the drag handle reorder projects; the end buttons are disabled.
-      const moveState = () => listPage.$$eval('#projects > .room-group > .room-row', rows => rows.filter(row => (row.querySelector('.room-name')?.textContent || '').startsWith('⌂')).map(row => `${row.querySelector('.room-name').textContent.replace(/^⌂\s*/, '')}:${row.querySelector('.project-move-up')?.disabled}:${row.querySelector('.project-move-down')?.disabled}:${row.draggable}`));
+      const moveState = async () => { const states = []; for (const id of await homeIDs()) { const row = await listPage.$eval(`[data-room-id="${id}"] > .room-row`, node => [node.querySelector('.room-name').textContent.replace(/^⌂\s*/, ''), node.draggable]); const items = await menuOf(id); states.push(`${row[0]}:${items.includes('Move up:disabled')}:${items.includes('Move down:disabled')}:${row[1]}`); } return states; };
       const order0 = await projectOrder();
       assert.deepEqual(await moveState(), order0.map((name, index) => `${name}:${index === 0}:${index === order0.length - 1}:false`), 'the first project cannot move up, the last cannot move down, and a row is dragged only by its handle');
-      assert.deepEqual(await listPage.$$eval('#projects > .room-group > .room-row .project-grip', grips => grips.map(grip => [grip.title.startsWith('Drag to move '), !!grip.querySelector('.icon-mask-menu'), getComputedStyle(grip).display, grip.nextElementSibling?.classList.contains('project-move-up')])), order0.map(() => [true, true, 'none', true]), 'each project has a hover-only ≡ handle left of the arrows');
+      assert.deepEqual(await listPage.$$eval('#projects > .room-group > .room-row .project-grip', grips => grips.map(grip => [grip.title.endsWith('(drag to move)'), !!grip.querySelector('.icon-mask-menu'), getComputedStyle(grip).display, grip.getAttribute('aria-haspopup')])), order0.map(() => [true, true, 'none', 'menu']), 'each project has one hover-only ☰ button, the drag handle and the menu in one');
       await listPage.hover('#projects > .room-group > .room-row:has(.project-grip)');
       await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
       assert.equal(await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip)', row => row.draggable), true, 'pressing the handle makes the row draggable');
@@ -9239,8 +9263,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       const [wantedHome, openedHome] = await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip):not(.active)', row => { const name = row.querySelector('.room-name').textContent; row.click(); return [name, null]; });
       await listPage.waitForFunction(name => document.querySelector('#projects .room-row.active .room-name')?.textContent === name, {}, wantedHome);
       const firstHome = (await homeIDs())[0];
-      await listPage.focus(`[data-room-id="${firstHome}"] > .room-row .room-name`);
-      await domClick(listPage, `[data-room-id="${firstHome}"] > .room-row .project-move-down`);
+      await projectMenuAct(listPage, `[data-room-id="${firstHome}"]`, 'down');
       await listPage.waitForFunction(first => document.querySelector('#projects > .room-group').dataset.roomId !== first, {}, firstHome);
       assert.deepEqual(await projectOrder(), [...order0].reverse(), 'move down swaps the two projects');
       const projectsNow = await api('GET', '/api/projects');
@@ -9302,7 +9325,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       collapse = await collapseState();
       assert.ok(collapse.folded.every(value => value === 'false'), `collapse all folds every project: ${collapse.folded}`);
       assert.equal(await listPage.$$eval('#projects .room-children', nodes => nodes.filter(node => node.checkVisibility()).length), 0, 'a folded project hides its rooms');
-      await listPage.reload(); await appReady(listPage);
+      await listPage.reload(); await appReadyFolded(listPage); // appReady would open the projects again
       await listPage.waitForSelector('#rooms-fold');
       assert.equal((await collapseState()).label, 'Expand all projects', 'the folded state is remembered');
       await domClick(listPage, '#rooms-fold');

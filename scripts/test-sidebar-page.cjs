@@ -57,11 +57,11 @@ async function main() {
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
   const answerAll = (extra = {}) => ({ 'GET /api/agent-dms': chats(), 'GET /api/projects': projects, ...Object.fromEntries(Object.entries(rooms()).map(([id, list]) => [`GET /api/projects/${id}/rooms`, list])), ...extra });
-  const mount = async ({ auto = answerAll(), load = true, setup = '' } = {}) => {
+  const mount = async ({ auto = answerAll(), load = true, setup = '', hold = false } = {}) => {
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) errors.push(message.text()); });
-    await page.evaluateOnNewDocument(() => { try { localStorage.clear(); } catch {} });
+    await page.evaluateOnNewDocument(hold => { window.__holdFolds = hold; try { localStorage.clear(); } catch {} }, hold);
     await page.goto(`${origin}/fixture.html`);
     await page.evaluate(installFetch, auto);
     await page.evaluate(() => { document.querySelector('#app-view').hidden = false; });
@@ -73,11 +73,20 @@ async function main() {
       const sidebar = window.__sidebar = new Sidebar(document.querySelector('#projects'), (room, messageID) => { window.__calls.push(['select', room.id, messageID || '']); });
       sidebar.bindSort(document.querySelector('#rooms-sort')); sidebar.bindCollapseAll(document.querySelector('#rooms-fold'));
       sidebar.watchPreview(); sidebar.shownSeq = id => (window.__shown || {})[id] || 0;
+      // The app says which room it opens (or that there is none) right after the first load, and until then no project folds. Most tests are not about
+      // that, so a load here says it at once unless the test holds the folds (`hold`).
+      const loadList = sidebar.load.bind(sidebar);
+      sidebar.load = async () => { const result = await loadList(); if (!window.__holdFolds) sidebar.releaseFolds(); return result; };
     }, { module: MODULE });
     if (setup) await page.evaluate(setup);
     if (load) { await page.evaluate(() => { window.__loading = window.__sidebar.load(); }); await page.evaluate(() => window.__loading); }
     return page;
   };
+  // A project's actions live in the menu behind its ☰ button: open it, press the item, wait for the list to draw again.
+  const projectAct = (page, id, item) => page.evaluate(async (id, item) => {
+    const row = document.querySelector(`[data-room-id=${id}] > .room-row`); row.querySelector('.project-menu-btn').click();
+    await new Promise(resolve => setTimeout(resolve, 30)); row.querySelector(`.project-menu-${item}`).click();
+  }, id, item);
   const settle = page => page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
   const answer = (page, index, status, body) => page.evaluate((index, status, body) => window.__answer(index, status, body), index, status, body);
   const waitRequest = async (page, method, requestPath) => {
@@ -104,11 +113,11 @@ async function main() {
     assert.equal(await page.$$eval('#projects .room-group', nodes => nodes.length), 0, 'nor before the chats are in');
     await answer(page, dms, 200, chats());
     await page.evaluate(() => window.__loading); await settle(page);
-    assert.deepEqual(await rows(page), [['rm_ah', '⌂ Alpha', '', false], ['rm_gen', '# general', '3', true], ['rm_api', '# api-work', '12', true], ['rm_notes', '# notes', '1', true], ['rm_mute', '# muted-room', '5', true], ['rm_old', '# old-room', '', true],
-      ['rm_bh', '⌂ Beta', '', false], ['rm_bg', '# beta-general', '7', true], ['rm_ch', '⌂ Gamma', '', false], ['rm_cg', '# gamma-room', '', false], ['rm_dm', '@ ada', '2', false], ['rm_chat', '⇄ ada & bert', '1', false]]);
+    assert.deepEqual(await rows(page), [['rm_ah', '⌂ Alpha', '21', false], ['rm_gen', '# general', '3', true], ['rm_api', '# api-work', '12', true], ['rm_notes', '# notes', '1', true], ['rm_mute', '# muted-room', '5', true], ['rm_old', '# old-room', '', true],
+      ['rm_bh', '⌂ Beta', '7', false], ['rm_bg', '# beta-general', '7', true], ['rm_ch', '⌂ Gamma', '', false], ['rm_cg', '# gamma-room', '', false], ['rm_dm', '@ ada', '2', false], ['rm_chat', '⇄ ada & bert', '1', false]]);
     const tail = await page.$$eval('#projects details', nodes => nodes.map(node => [node.className, node.querySelector('summary').textContent, node.open]));
     assert.deepEqual(tail, [['archived-rooms', 'Archived (1)', false], ['hidden-rooms', 'Hidden (1)', false], ['archived-projects', 'Archived projects (1)', false], ['archived-project', 'Gamma', false], ['agent-chat-offers', 'Agent chats you can join (1)', false]]);
-    assert.deepEqual(await tops(page), ['room-filter', 'room-group', 'room-group', 'archived-projects', 'direct-rooms']);
+    assert.deepEqual(await tops(page), ['room-filter', 'room-group collapsed', 'room-group collapsed', 'archived-projects', 'direct-rooms']);
     // The bells and the chip: a room with items waiting, a muted one, the project's name on a direct message when there are several projects.
     const marks = await page.evaluate(() => ({ attention: document.querySelector('[data-room-id=rm_api] .room-item-attention')?.title, muted: document.querySelector('[data-room-id=rm_mute] .room-muted')?.title.startsWith('Muted until'),
       chip: document.querySelector('[data-room-id=rm_dm] .room-project')?.textContent, none: document.querySelector('[data-room-id=rm_gen] .room-muted') === null, title: document.querySelector('[data-room-id=rm_api] .room-name').title,
@@ -127,31 +136,32 @@ async function main() {
     const page = await mount({ auto: answerAll({ 'GET /api/projects': projects.map(item => item.id === 'prj_a' ? { ...item, name: longTitle } : item),
       'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => item.id === 'rm_ah' ? { ...item, title: longTitle } : item) }) });
     await page.setViewport({ width: 1200, height: 800 });
+    await page.$eval('[data-room-id=rm_ah] > .room-row > .room-collapse', node => node.click()); // a folded project shows an unread badge at the row end
     const measure = () => page.$eval('[data-room-id=rm_ah] > .room-row', row => {
-      const name = row.querySelector('.room-name'), add = row.querySelector('.add-room'), move = row.querySelector('.project-move-up');
+      const name = row.querySelector('.room-name'), menu = row.querySelector('.project-menu-btn'), extra = row.querySelectorAll('.add-room:not([hidden]), .project-move:not(.project-menu-btn)').length;
       return { nameRight: name.getBoundingClientRect().right, rowRight: row.getBoundingClientRect().right,
-        nameWidth: name.clientWidth, textWidth: name.scrollWidth, add: getComputedStyle(add).display, move: getComputedStyle(move).display };
+        nameWidth: name.clientWidth, textWidth: name.scrollWidth, menu: getComputedStyle(menu).display, extra };
     });
     await page.mouse.move(1100, 700);
     const idle = await measure();
-    assert.deepEqual([idle.add, idle.move], ['none', 'none'], 'desktop controls take no width before hover');
+    assert.deepEqual([idle.menu, idle.extra], ['none', 0], 'the project row holds only the ☰ button, and it takes no width before hover');
     assert.ok(idle.textWidth <= idle.nameWidth, 'the name fits without an ellipsis');
     assert.ok(idle.rowRight - idle.nameRight < 12, 'the name reaches the row end when controls are hidden');
     await page.hover('[data-room-id=rm_ah] > .room-row');
     const hovered = await measure();
-    assert.deepEqual([hovered.add, hovered.move], ['flex', 'flex']);
+    assert.deepEqual([hovered.menu, hovered.extra], ['flex', 0]);
     assert.ok(hovered.nameWidth < idle.nameWidth, 'the name yields width to visible controls');
     await page.mouse.move(1100, 700);
     await page.focus('[data-room-id=rm_ah] .room-name');
     const focused = await measure();
-    assert.deepEqual([focused.add, focused.move], ['flex', 'flex'], 'keyboard focus reveals the controls');
+    assert.deepEqual([focused.menu, focused.extra], ['flex', 0], 'keyboard focus reveals the controls');
     await page.evaluate(() => { document.activeElement.blur(); document.documentElement.dataset.theme = 'high-contrast-dark'; });
-    assert.deepEqual([(await measure()).add, (await measure()).move], ['none', 'none'], 'high contrast keeps idle controls out of layout');
+    assert.deepEqual([(await measure()).menu], ['none'], 'high contrast keeps idle controls out of layout');
     const session = await page.createCDPSession();
     await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
     assert.equal(await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches), true);
     const touch = await measure();
-    assert.deepEqual([touch.add, touch.move], ['flex', 'flex'], 'touch keeps controls reachable without hover');
+    assert.deepEqual([touch.menu, touch.extra], ['flex', 0], 'touch keeps controls reachable without hover');
     await page.close();
   }
 
@@ -159,6 +169,7 @@ async function main() {
   // opened, the unread numbers and a new room follow, and an unchanged room keeps its record (the object the list holds for it).
   {
     const page = await mount();
+    await page.$eval('[data-room-id=rm_ah] > .room-row > .room-collapse', node => node.click()); // a folded project hides its rooms, and a hidden room cannot hold focus
     await page.evaluate(() => {
       window.__gen = document.querySelector('[data-room-id=rm_gen]'); window.__api = document.querySelector('[data-room-id=rm_api]'); window.__add = window.__gen.querySelector('.room-name');
       window.__kept = window.__sidebar.rooms.get('rm_notes'); window.__fold = document.querySelector('details.archived-rooms'); window.__fold.open = true; window.__add.focus();
@@ -252,25 +263,51 @@ async function main() {
     await page.close();
   }
 
-  // The chevron of a root folds its rooms and remembers it, and a folded root shows its rooms' unread total; collapse all and expand all work on every
-  // root and say what the next click does.
+  // A cold load draws the list before the app has opened a room: no project folds until it has, and the project holding that room (at any depth)
+  // does not fold when it does; with no room to open the projects fold at once.
+  {
+    const page = await mount({ hold: true });
+    const state = () => page.evaluate(() => ['rm_ah', 'rm_bh'].map(id => document.querySelector(`[data-room-id=${id}]`).classList.contains('collapsed')));
+    assert.deepEqual(await state(), [false, false], 'nothing folds while the app has not said which room it opens');
+    await page.evaluate(() => window.__sidebar.setActive('rm_api'));
+    assert.deepEqual(await state(), [false, true], 'the project holding the room that opened stays open, the other folds');
+    await page.close();
+    const none = await mount({ hold: true });
+    await none.evaluate(() => window.__sidebar.releaseFolds());
+    assert.deepEqual(await none.evaluate(() => ['rm_ah', 'rm_bh'].map(id => document.querySelector(`[data-room-id=${id}]`).classList.contains('collapsed'))), [true, true], 'with no room to open every project folds');
+    await none.close();
+  }
+  // A project starts folded, showing its rooms' unread total; the chevron opens it and the browser remembers that, collapse all and expand all work
+  // on every root and say what the next click does, and a root the person opened is not folded again on the next load.
   {
     const page = await mount();
     const root = id => page.evaluate(id => { const group = document.querySelector(`[data-room-id=${id}]`); const toggle = group.querySelector(':scope > .room-row > .room-collapse'); const badge = group.querySelector(':scope > .room-row > .unread-count'); return { collapsed: group.classList.contains('collapsed'), label: toggle.getAttribute('aria-label'), expanded: toggle.getAttribute('aria-expanded'), badge: badge && !badge.hidden ? badge.textContent : '' }; }, id);
-    assert.deepEqual(await root('rm_ah'), { collapsed: false, label: 'Collapse Alpha', expanded: 'true', badge: '' });
-    await page.$eval('[data-room-id=rm_ah] > .room-row > .room-collapse', node => node.click());
     assert.deepEqual(await root('rm_ah'), { collapsed: true, label: 'Expand Alpha', expanded: 'false', badge: '21' });
-    assert.equal(await page.evaluate(() => localStorage.getItem('aimebu2.rooms.collapsed')), '["rm_ah"]');
+    assert.deepEqual((await root('rm_bh')).collapsed, true, 'every project starts folded');
+    await page.$eval('[data-room-id=rm_ah] > .room-row > .room-collapse', node => node.click());
+    assert.deepEqual(await root('rm_ah'), { collapsed: false, label: 'Collapse Alpha', expanded: 'true', badge: '' });
+    assert.equal(await page.evaluate(() => localStorage.getItem('aimebu2.rooms.collapsed')), '["rm_bh"]');
     const all = () => page.$eval('#rooms-fold', node => [node.title, node.classList.contains('is-collapsed'), node.disabled]);
-    assert.deepEqual(await all(), ['Collapse all projects', false, false]);
+    assert.deepEqual(await all(), ['Collapse all projects', false, false], 'one project open: the next click folds them all');
     await page.$eval('#rooms-fold', node => node.click());
-    assert.deepEqual([await all(), (await root('rm_bh')).collapsed], [['Expand all projects', true, false], true]);
+    assert.deepEqual([await all(), (await root('rm_ah')).collapsed, (await root('rm_bh')).collapsed], [['Expand all projects', true, false], true, true]);
     await page.$eval('#rooms-fold', node => node.click());
     assert.deepEqual([await all(), (await root('rm_ah')).collapsed, (await root('rm_bh')).collapsed], [['Collapse all projects', false, false], false, false]);
+    await page.$eval('[data-room-id=rm_bh] > .room-row > .room-collapse', node => node.click());
+    // A project first seen with no rooms is open and stays open when its first room arrives, so the room just made is not hidden; one first seen with
+    // rooms starts folded.
+    assert.deepEqual(await page.evaluate(() => { const store = window.__sidebar.store; return [store.foldNew(new Set(), new Set(['rm_empty'])), store.foldNew(new Set(['rm_empty']), new Set(['rm_empty'])), store.collapsedRooms.has('rm_empty'), store.foldNew(new Set(['rm_full']), new Set(['rm_full'])), store.collapsedRooms.has('rm_full')]; }), [false, false, false, true, true]);
+    await page.evaluate(() => { const store = window.__sidebar.store; store.collapsedRooms.delete('rm_full'); store.seenRooms.delete('rm_empty'); store.seenRooms.delete('rm_full'); localStorage.setItem('aimebu2.rooms.collapsed', JSON.stringify([...store.collapsedRooms])); localStorage.setItem('aimebu2.rooms.seen', JSON.stringify([...store.seenRooms])); });
+    // The project that holds the open room is seen but not folded, so its row does not vanish under the person; Escape on a closed menu is left to the page.
+    assert.deepEqual(await page.evaluate(() => { const store = window.__sidebar.store; const result = [store.foldNew(new Set(['rm_open']), new Set(['rm_open']), new Set(['rm_open'])), store.collapsedRooms.has('rm_open'), store.seenRooms.has('rm_open')]; store.seenRooms.delete('rm_open'); return result; }), [false, false, true]);
+    assert.equal(await page.evaluate(() => { const button = document.querySelector('[data-room-id=rm_ah] > .room-row .project-menu-btn'); const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); button.dispatchEvent(event); return event.defaultPrevented; }), false, 'a closed menu does not swallow Escape');
+    // A reload keeps what the person did: the opened root stays open and the folded one stays folded, and nothing seen before is folded again.
+    const saved = await page.evaluate(() => [localStorage.getItem('aimebu2.rooms.collapsed'), localStorage.getItem('aimebu2.rooms.seen')]);
     await page.close();
-    const reloaded = await mount({ setup: () => localStorage.setItem('aimebu2.rooms.collapsed', '["rm_bh"]') });
-    await reloaded.evaluate(() => { window.__sidebar.collapsedRooms = new Set(JSON.parse(localStorage.getItem('aimebu2.rooms.collapsed'))); window.__sidebar.render(); });
-    assert.equal(await reloaded.$eval('[data-room-id=rm_bh]', node => node.classList.contains('collapsed')), true, 'the folded roots come from the browser');
+    // The sidebar is built before the setup runs, so the setup hands it what the browser held, as a reload would have.
+    const reloaded = await mount({ setup: `localStorage.setItem('aimebu2.rooms.collapsed', ${JSON.stringify(saved[0])}); localStorage.setItem('aimebu2.rooms.seen', ${JSON.stringify(saved[1])}); window.__sidebar.collapsedRooms = new Set(${saved[0]}); window.__sidebar.seenRooms = new Set(${saved[1]});` });
+    const states = await reloaded.$$eval('#projects > .room-group', nodes => nodes.map(node => [node.dataset.roomId, node.classList.contains('collapsed')]));
+    assert.deepEqual(states.filter(item => item[0] === 'rm_ah' || item[0] === 'rm_bh'), [['rm_ah', false], ['rm_bh', true]], 'what the person did survives a reload');
     await reloaded.close();
   }
 
@@ -385,7 +422,7 @@ async function main() {
     await page.close();
     // create
     page = await mount();
-    await page.$eval('[data-room-id=rm_ah] .add-room', node => node.click());
+    await projectAct(page, 'rm_ah', 'add');
     await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
     await fill(page, 'fresh-room');
     held = await waitRequest(page, 'POST', '/api/projects/prj_a/rooms');
@@ -396,7 +433,7 @@ async function main() {
     assert.equal((await rows(page)).some(row => row[0] === 'rm_fresh'), true);
     await page.close();
     page = await mount();
-    await page.$eval('[data-room-id=rm_ah] .add-room', node => node.click());
+    await projectAct(page, 'rm_ah', 'add');
     await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
     await fill(page, 'fresh-room');
     held = await waitRequest(page, 'POST', '/api/projects/prj_a/rooms');
@@ -409,7 +446,7 @@ async function main() {
   // The dialog that asks for a new room's name belongs to the list it was opened in: answered after a reset, it sends nothing.
   {
     const page = await mount();
-    await page.$eval('[data-room-id=rm_ah] .add-room', node => node.click());
+    await projectAct(page, 'rm_ah', 'add');
     await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
     await page.evaluate(() => window.__sidebar.reset());
     await page.evaluate(() => { const dialog = document.querySelector('#app-dialog'); dialog.querySelector('[name=title]').value = 'late-room'; dialog.querySelector('form').requestSubmit(); });
@@ -544,15 +581,34 @@ async function main() {
   {
     const page = await mount();
     const order = () => page.$$eval('#projects > .room-group', nodes => nodes.map(node => node.dataset.roomId));
-    const moves = () => page.evaluate(() => ({ upFirst: document.querySelector('[data-room-id=rm_ah] .project-move-up').disabled, downFirst: document.querySelector('[data-room-id=rm_ah] .project-move-down').disabled, downLast: document.querySelector('[data-room-id=rm_bh] .project-move-down').disabled,
-      grip: document.querySelector('[data-room-id=rm_ah] .project-grip').getAttribute('aria-label') }));
-    assert.deepEqual(await moves(), { upFirst: true, downFirst: false, downLast: true, grip: 'Drag to move Alpha' });
-    await page.$eval('[data-room-id=rm_ah] .project-move-down', node => node.click());
+    // Reads the move items of a project's menu: open it, look, close it with the button again.
+    const state = async id => page.evaluate(async id => {
+      const row = document.querySelector(`[data-room-id=${id}] > .room-row`), button = row.querySelector('.project-menu-btn'); button.click();
+      await new Promise(resolve => setTimeout(resolve, 30));
+      const result = { up: row.querySelector('.project-menu-up').disabled, down: row.querySelector('.project-menu-down').disabled, add: row.querySelector('.project-menu-add').disabled, label: button.getAttribute('aria-label'), title: button.title, popup: button.getAttribute('aria-haspopup'), expanded: button.getAttribute('aria-expanded') };
+      button.click(); await new Promise(resolve => setTimeout(resolve, 30)); result.closed = !row.querySelector('.project-menu-list');
+      return result;
+    }, id);
+    const moves = async () => { const first = await state('rm_ah'), last = await state('rm_bh'); return { upFirst: first.up, downFirst: first.down, downLast: last.down, grip: first.title, label: first.label, popup: first.popup, expanded: first.expanded, closed: first.closed && last.closed }; };
+    assert.deepEqual(await moves(), { upFirst: true, downFirst: false, downLast: true, grip: 'Alpha actions (drag to move)', label: 'Alpha actions', popup: 'menu', expanded: 'true', closed: true });
+    // The menu is reachable by keyboard: opening it focuses the first item, the arrows skip disabled ones, Escape closes it and hands focus back, and a
+    // click elsewhere closes it too.
+    const focused = () => page.evaluate(() => document.activeElement.className.replace(/row-btn |project-menu-item /g, ''));
+    await page.focus('[data-room-id=rm_ah] .room-name'); await page.keyboard.press('Tab'); await page.keyboard.press('Enter'); await settle(page);
+    assert.equal(await focused(), 'project-menu-add', 'opening the menu focuses its first item');
+    await page.keyboard.press('ArrowDown'); assert.equal(await focused(), 'project-menu-down', 'the arrows skip a disabled item');
+    await page.keyboard.press('ArrowDown'); assert.equal(await focused(), 'project-menu-add');
+    await page.keyboard.press('Escape'); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [!!document.querySelector('.project-menu-list'), document.activeElement.classList.contains('project-menu-btn')]), [false, true], 'Escape closes the menu and returns focus to its button');
+    await page.focus('[data-room-id=rm_ah] .room-name'); await page.keyboard.press('Tab'); await page.keyboard.press('Enter'); await settle(page);
+    await page.$eval('#projects', node => node.click()); await settle(page);
+    assert.equal(await page.evaluate(() => !!document.querySelector('.project-menu-list')), false, 'a click elsewhere closes the menu');
+    await projectAct(page, 'rm_ah', 'down');
     assert.deepEqual(await order(), ['rm_bh', 'rm_ah']);
     assert.equal(await page.evaluate(() => localStorage.getItem('aimebu2.ui.sidebar_project_order.usr_me')), '["prj_b","prj_a","prj_c"]');
     const saved = await waitRequest(page, 'PUT', '/api/me/preferences');
     assert.deepEqual(await page.evaluate(index => window.__requests[index].body, saved), { preferences: { sidebar_project_order: '["prj_b","prj_a","prj_c"]' } });
-    await page.$eval('[data-room-id=rm_ah] .project-move-up', node => node.click());
+    await projectAct(page, 'rm_ah', 'up');
     assert.deepEqual(await order(), ['rm_ah', 'rm_bh']);
     const drag = (type, target, y) => page.evaluate((type, target, y) => { const row = document.querySelector(`[data-room-id=${target}] > .room-row`); const box = row.getBoundingClientRect(); window.__transfer ||= new DataTransfer();
       row.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: window.__transfer, clientY: box.top + box.height * y })); return [row.classList.contains('drop-before'), row.classList.contains('drop-after')]; }, type, target, y);
@@ -573,7 +629,7 @@ async function main() {
   {
     const triggers = {
       sort: async page => { await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=name]', node => node.click()); },
-      manual: page => page.$eval('[data-room-id=rm_ah] .project-move-down', node => node.click()),
+      manual: page => projectAct(page, 'rm_ah', 'down'),
     };
     for (const [what, trigger] of Object.entries(triggers)) {
       for (const how of REPLACED ? ['reset', 'destroy'] : ['reset']) {
@@ -592,12 +648,12 @@ async function main() {
       }
     }
     // Two saves of one name: the second waits for the first, so the older value can never land after the newer one.
-    for (const [what, move] of [['manual', page => page.$eval('[data-room-id=rm_ah] .project-move-down', node => node.click())], ['sort', async page => { await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=name]', node => node.click()); }]]) {
+    for (const [what, move] of [['manual', page => projectAct(page, 'rm_ah', 'down')], ['sort', async page => { await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=name]', node => node.click()); }]]) {
       const page = await mount();
       await hold(page, 'PUT /api/me/preferences');
       await move(page);
       const first = await waitRequest(page, 'PUT', '/api/me/preferences');
-      if (what === 'manual') await page.$eval('[data-room-id=rm_bh] .project-move-down', node => node.click());
+      if (what === 'manual') await projectAct(page, 'rm_bh', 'down');
       else { await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=activity]', node => node.click()); }
       await settle(page);
       assert.equal(await count(page, 'PUT', '/api/me/preferences'), 1, `${what}: the second save waits while the first is out`);
@@ -613,7 +669,7 @@ async function main() {
 
   // A save queued behind one that is still out belongs to the person who made it: if someone else is signed in by the time the first answer comes,
   // it is dropped rather than sent with their cookie.
-  for (const [what, first, second] of [['manual', page => page.$eval('[data-room-id=rm_ah] .project-move-down', node => node.click()), page => page.$eval('[data-room-id=rm_bh] .project-move-down', node => node.click())],
+  for (const [what, first, second] of [['manual', page => projectAct(page, 'rm_ah', 'down'), page => projectAct(page, 'rm_bh', 'down')],
     ['sort', async page => { await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=name]', node => node.click()); }, async page => { await page.$eval('#rooms-sort', node => node.click()); await page.$eval('.sort-item[data-sort=activity]', node => node.click()); }]]) {
     const page = await mount();
     await hold(page, 'PUT /api/me/preferences');
@@ -694,7 +750,7 @@ async function main() {
       await page.close();
     }
     page = await mount();
-    await page.$eval('[data-room-id=rm_ah] .add-room', node => node.click());
+    await projectAct(page, 'rm_ah', 'add');
     await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
     await page.evaluate(() => { const dialog = document.querySelector('#app-dialog'); dialog.querySelector('[name=title]').value = 'fresh'; dialog.querySelector('form').requestSubmit(); });
     await end(page, await waitRequest(page, 'POST', '/api/projects/prj_a/rooms'), 200, room('rm_fresh', 'prj_a', 'fresh-room', { parent_id: 'rm_ah' }));
@@ -764,7 +820,7 @@ async function main() {
       await page.close();
     }
     page = await mount();
-    await page.$eval('[data-room-id=rm_ah] .add-room', node => node.click());
+    await projectAct(page, 'rm_ah', 'add');
     await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
     await destroy(page);
     await page.evaluate(() => { const dialog = document.querySelector('#app-dialog'); dialog.querySelector('[name=title]').value = 'late-room'; dialog.querySelector('form').requestSubmit(); });
@@ -815,7 +871,7 @@ async function main() {
   // A save of the sort or the order that is still queued when the list is reset is not sent (the first one, already out, is left alone); of several
   // queued saves of one name only the newest goes out.
   {
-    const move = (page, id, direction) => page.$eval(`[data-room-id=${id}] .project-move-${direction}`, node => node.click());
+    const move = (page, id, direction) => projectAct(page, id, direction);
     const saves = page => page.evaluate(() => window.__requests.filter(request => request.method === 'PUT' && request.path === '/api/me/preferences').map(request => request.body.preferences));
     let page = await mount();
     await hold(page, 'PUT /api/me/preferences');
@@ -875,9 +931,9 @@ async function main() {
     // A queued sort or order save is not sent once the list is destroyed either.
     const page = await mount();
     await hold(page, 'PUT /api/me/preferences');
-    await page.$eval('[data-room-id=rm_ah] .project-move-down', node => node.click());
+    await projectAct(page, 'rm_ah', 'down');
     const first = await waitRequest(page, 'PUT', '/api/me/preferences');
-    await page.$eval('[data-room-id=rm_bh] .project-move-down', node => node.click());
+    await projectAct(page, 'rm_bh', 'down');
     await page.evaluate(() => window.__sidebar.destroy());
     await answer(page, first, 200, { preferences: {} }); await settle(page);
     assert.equal(await count(page, 'PUT', '/api/me/preferences'), 1, 'a queued order save is not sent after a destroy');

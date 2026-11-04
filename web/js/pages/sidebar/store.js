@@ -5,6 +5,9 @@ import { noticeDialog } from '../../dialogs.js';
 import { AGENT_CHAT_PROJECT, DEFAULT_SORT, ReadMarker, SORTS, moveProject, orderProjects, placeProject } from './model.js';
 
 const collapsedKey = 'aimebu2.rooms.collapsed';
+// The roots this browser has already shown with children. A root is folded the first time it is seen (a project starts collapsed), after which
+// the person's own folding is all there is: the folded set remembers it, and a root they opened is not folded again.
+const seenKey = 'aimebu2.rooms.seen';
 // The sort and the manual project order are the person's own preferences (they follow them across devices); the browser keeps a cache under these
 // keys, filled from the server at sign-in (see preferences.js).
 const sortKey = () => `aimebu2.ui.sidebar_sort.${currentUser}`, orderKey = () => `aimebu2.ui.sidebar_project_order.${currentUser}`;
@@ -13,6 +16,7 @@ const previewKey = () => `aimebu2.ui.sidebar_preview.${currentUser}`;
 export const loadPreviewAll = () => { try { return localStorage.getItem(previewKey()) === '1'; } catch { return false; } };
 function loadSort() { try { const value = localStorage.getItem(sortKey()); return SORTS.some(([key]) => key === value) ? value : DEFAULT_SORT; } catch { return DEFAULT_SORT; } }
 function loadManual() { try { const list = JSON.parse(localStorage.getItem(orderKey()) || '[]'); return Array.isArray(list) ? list.filter(id => typeof id === 'string') : []; } catch { return []; } }
+function loadSeen() { try { const list = JSON.parse(localStorage.getItem(seenKey) || '[]'); return new Set(Array.isArray(list) ? list.filter(id => typeof id === 'string') : []); } catch { return new Set(); } }
 function loadCollapsed() { try { const list = JSON.parse(localStorage.getItem(collapsedKey) || '[]'); return new Set(Array.isArray(list) ? list.filter(id => typeof id === 'string') : []); } catch { return new Set(); } }
 
 // The projects and rooms of the person, as the list draws them. `rooms` and `projects` stay Maps (the app reads them), and `version` moves with every
@@ -26,11 +30,14 @@ export class SidebarStore {
     this.version = signal(0);
     this.shown = signal(false); this.collapsible = signal(new Set()); this.seenHealth = new Set();
     this.filter = signal(''); this.sort = signal(DEFAULT_SORT); this.manual = signal([]); this.active = signal('');
-    this.collapsedRooms = loadCollapsed();
+    this.collapsedRooms = loadCollapsed(); this.seenRooms = loadSeen();
     this.health = new Map(); this.joinable = []; this.agentChatProject = '';
     this.folds = new Map(); this.archiveFilter = new Map(); this.archiveHits = new Map();
     this.roomRequests = new Set(); this.listSeqs = new Map(); this.archiveTimers = new Map(); this.archiveRequests = new Map(); this.saves = new Map();
     this.generation = 0; this.loadedUser = null; this.dragging = null; this.alive = true;
+    // A cold load draws the list before the app has said which room it opens: the project holding that room must not be folded on the way.
+    // No project is folded until a room is made active, or the app says there is none to open (`releaseFolds`).
+    this.holdFolds = true;
     this.reads = new ReadMarker((roomID, seq) => request(`/api/rooms/${roomID}/read`, { method: 'POST', body: seq > 0 ? { seq } : {} }));
   }
 
@@ -47,6 +54,7 @@ export class SidebarStore {
     this.roomRequests.clear();
     for (const cache of [this.projects, this.rooms, this.health, this.folds, this.archiveFilter, this.archiveHits, this.archiveTimers, this.archiveRequests, this.listSeqs]) cache.clear();
     this.joinable = []; this.agentChatProject = ''; this.loadedUser = null; this.dragging = null;
+    this.holdFolds = true;
     batch(() => { this.active.value = ''; this.filter.value = ''; this.shown.value = false; this.collapsible.value = new Set(); this.seenHealth.clear(); this.version.value++; });
   }
 
@@ -172,7 +180,10 @@ export class SidebarStore {
   }
 
   // Selecting does not mark read by itself: the chat marks the room once it has rendered the latest page (Chat.open).
-  setActive(id) { batch(() => { this.shown.value = true; this.active.value = id; }); }
+  setActive(id) { this.holdFolds = false; batch(() => { this.shown.value = true; this.active.value = id; }); }
+
+  // The app opened no room (none to restore): the projects may fold now.
+  releaseFolds() { if (!this.holdFolds) return; this.holdFolds = false; this.version.value++; }
 
   unreadCount(room) { return Math.max(0, room.unread_count || 0); }
 
@@ -236,6 +247,21 @@ export class SidebarStore {
     this.sort.value = sort;
     try { localStorage.setItem(sortKey(), sort); if (sort === 'manual') localStorage.setItem(orderKey(), JSON.stringify(this.manual.peek())); } catch { /* private mode */ }
     this.persist('sidebar_sort', sort); if (sort === 'manual') this.persist('sidebar_project_order', JSON.stringify(this.manual.peek()));
+  }
+
+  // Folds the roots with children that have not been seen before, so a project starts collapsed; answers whether it folded any (the list is drawn
+  // again then). `nested` is every root on screen, with or without children: a project first seen with no rooms is open, and stays open when its first
+  // room is added, so the room someone just made is not hidden from them. Nothing is folded again once seen.
+  foldNew(collapsible, nested, holdsActive = new Set()) {
+    let folded = false, changed = false;
+    for (const id of nested) {
+      if (this.seenRooms.has(id)) continue;
+      this.seenRooms.add(id); changed = true;
+      // The project that holds the open room is seen but not folded: its row would vanish from under the person.
+      if (collapsible.has(id) && !holdsActive.has(id)) { this.collapsedRooms.add(id); folded = true; }
+    }
+    if (changed) try { localStorage.setItem(seenKey, JSON.stringify([...this.seenRooms])); localStorage.setItem(collapsedKey, JSON.stringify([...this.collapsedRooms])); } catch { /* private mode */ }
+    return folded;
   }
 
   toggleCollapsed(id) {
