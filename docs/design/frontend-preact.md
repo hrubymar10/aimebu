@@ -382,6 +382,11 @@ Owner's decision (2026-10-28): continue with the remaining units.
   draw; vm-tested), the components (`sidebar-list.js`, `sort-menu.js`) and `page.js`, the adapter that keeps the `Sidebar` API `app.js` uses. A room keeps
   the same record object while its data is unchanged, so a refresh redraws only the rows that changed. The legacy `sidebar.js`, `sidebar-order.js`
   and `room-unread.js` are gone; the page tests written against them first (`test-sidebar-page.cjs`) run unchanged on the new code.
+  The first load is streamed: `/api/projects` draws each project as a placeholder (`pending`) in its final place (the manual and by-name orders need no room;
+  the by-latest-activity order waits for every list), each project's rooms replace it as its own list lands in any order (so `rooms` holds them in arrival
+  order and `firstRoom()` walks the projects in server order), and a project the browser has not seen is drawn folded already, without saving it, except the
+  one holding the room the app will open (`expect()`, then `focusRoom()`: the address, the last room, else the first room), so opening that room changes
+  nothing that was drawn. `scripts/perf-sidebar-paint.cjs` measures it.
 - Done for the room header's phone overflow menu: `web/js/pages/room-menu/` (`store.js` reads the header's buttons through a mutation observer and the
   phone breakpoint, `room-menu.js` has the button and the menu, `page.js` mounts them in two box-less hosts, the menu on the body). Its items still click
   the real header buttons. `room-menu.js` is gone.

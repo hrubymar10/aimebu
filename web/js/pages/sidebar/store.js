@@ -38,10 +38,38 @@ export class SidebarStore {
     // A cold load draws the list before the app has said which room it opens: the project holding that room must not be folded on the way.
     // No project is folded until a room is made active, or the app says there is none to open (`releaseFolds`).
     this.holdFolds = true;
+    // Projects whose room list has not arrived on a cold load: drawn as placeholders in their final place. `expected` is the room the app means to open,
+    // so the project that holds it is not drawn folded while the rest arrives.
+    this.pending = new Set(); this.expected = []; this.touching = false;
     this.reads = new ReadMarker((roomID, seq) => request(`/api/rooms/${roomID}/read`, { method: 'POST', body: seq > 0 ? { seq } : {} }));
   }
 
   touch() { this.shown.value = true; this.version.value++; }
+  // Lists that arrive in the same turn are drawn together: one draw however many landed.
+  touchSoon(generation) {
+    if (this.touching) return;
+    this.touching = true;
+    queueMicrotask(() => { this.touching = false; if (this.owns(generation)) this.touch(); });
+  }
+  // The room a start with nothing to restore opens: the first room of the first project, in the server's project order. The lists land in whatever
+  // order the network gives them, so the first room in `rooms` is not it.
+  firstRoom() {
+    for (const project of this.projects.values()) for (const room of this.rooms.values()) if (room.project_id === project.id) return room;
+    return [...this.rooms.values()][0];
+  }
+  // The rooms the app will try to open, in its order (the one in the address, then the last one). The project holding the first of them that exists is
+  // not drawn folded while the lists arrive; when none of them exists, or there is none to try, the app opens the first room, and that is the one.
+  expect(...ids) { this.expected = ids.flat().filter(Boolean); }
+  focusRoom() {
+    for (const id of this.expected) if (this.rooms.has(id)) return id;
+    if (this.expected.length && this.pending.size) return ''; // one of them may still be in a list that has not landed
+    // The first room, once every project before it has said what it has: a project still waiting could hold the first one.
+    for (const project of this.projects.values()) {
+      if (this.pending.has(project.id)) return '';
+      for (const room of this.rooms.values()) if (room.project_id === project.id) return room.id;
+    }
+    return '';
+  }
   owns(generation) { return this.alive && generation === this.generation; }
 
   reset() {
@@ -54,7 +82,7 @@ export class SidebarStore {
     this.roomRequests.clear();
     for (const cache of [this.projects, this.rooms, this.health, this.folds, this.archiveFilter, this.archiveHits, this.archiveTimers, this.archiveRequests, this.listSeqs]) cache.clear();
     this.joinable = []; this.agentChatProject = ''; this.chatSeq = null; this.loadedUser = null; this.dragging = null;
-    this.holdFolds = true;
+    this.holdFolds = true; this.pending.clear(); this.expected = [];
     batch(() => { this.active.value = ''; this.filter.value = ''; this.shown.value = false; this.collapsible.value = new Set(); this.seenHealth.clear(); this.version.value++; });
   }
 
@@ -103,42 +131,57 @@ export class SidebarStore {
     this.joinable = data.joinable || [];
   }
 
+  // The list is drawn as its reads arrive. The projects come first, and with them their final order (the manual or by-name order needs no room), so each
+  // project is drawn as a placeholder in its place and replaced by its rooms when its own list lands: nothing above or below it moves. By latest
+  // activity the order depends on the rooms, so nothing is drawn until every list is in.
   async load() {
     const generation = this.generation;
-    const resync = this.loadedUser === currentUser;
     let projects, chats = null, chatsTicket = 0;
-    const projectRooms = [];
+    // The order first: the streamed list is drawn in it from the start.
+    batch(() => { this.sort.value = loadSort(); this.manual.value = loadManual(); });
+    const streaming = this.sort.peek() !== 'activity';
     try {
       // The chats between agents belong to no project, so they come from their own list (a failure there leaves the project rooms usable).
       chatsTicket = this.chatTicket();
       const chatsRequest = this.roomRequest('/api/agent-dms').catch(() => null);
       projects = await this.roomRequest('/api/projects');
       if (!this.owns(generation)) return [];
-      // One request per project, all at once: waiting for each in turn made the first screen take the sum of them.
+      for (const project of projects) {
+        this.projects.set(project.id, project);
+        // A project with nothing drawn yet waits as a placeholder; one the list already holds (a resync) keeps what it shows until its new list lands.
+        if (streaming && ![...this.rooms.values()].some(room => room.project_id === project.id)) this.pending.add(project.id);
+      }
+      if (streaming && this.pending.size) this.touch();
+      // One request per project, all at once: waiting for each in turn made the first screen take the sum of them. Each list is applied as it lands.
       const tickets = projects.map(project => this.listTicket(project.id));
-      const lists = await Promise.all(projects.map(project => this.roomRequest(`/api/projects/${project.id}/rooms`)));
-      projects.forEach((project, index) => projectRooms.push([project, lists[index], tickets[index]]));
+      await Promise.all(projects.map(async (project, index) => {
+        const list = await this.roomRequest(`/api/projects/${project.id}/rooms`);
+        if (!this.owns(generation)) return;
+        this.pending.delete(project.id);
+        // A project taken away while its list was out does not come back with it.
+        if (!this.listSeqs.has(project.id)) return;
+        this.projects.set(project.id, project);
+        if (this.listCurrent(project.id, tickets[index])) { this.dropUnlisted(project.id, list); for (const room of list) this.keep(room); }
+        if (streaming) this.touchSoon(generation);
+      }));
       chats = await chatsRequest;
       if (!this.owns(generation)) return [];
     } catch (error) {
       if (!this.owns(generation)) return [];
+      // What did arrive stays drawn; the projects still waiting are not drawn as placeholders for ever.
+      this.pending.clear();
+      if (this.shown.peek()) this.touch();
       throw error;
     }
+    this.pending.clear();
     const listed = new Set(projects.map(project => project.id));
-    for (const [project, list, ticket] of projectRooms) {
-      this.projects.set(project.id, project);
-      if (!this.listCurrent(project.id, ticket)) continue;
-      this.dropUnlisted(project.id, list);
-      for (const room of list) this.keep(room);
-    }
     // A project that is no longer listed (deleted, or the person was removed from it) leaves with its rooms.
     for (const id of new Set([...this.projects.keys(), ...[...this.rooms.values()].map(room => room.project_id)])) {
       if (!listed.has(id) && !this.isAgentChatProject(id)) this.forgetProject(id);
     }
     if (this.chatCurrent(chatsTicket)) this.applyAgentChats(chats);
     this.loadedUser = currentUser;
-    batch(() => { this.sort.value = loadSort(); this.manual.value = loadManual(); this.touch(); });
-    void resync;
+    this.touch();
     return projects;
   }
 

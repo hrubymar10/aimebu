@@ -120,7 +120,11 @@ function tailOf(project, all, archiveFilter) {
 // Every row is a view: { room, nest, chip, controls, children, tail, collapsible, collapsed, unread }.
 export function treeOf(state) {
   const { projects, rooms, filter, sort, manual, collapsed, active, archiveFilter, offers } = state;
-  const archivedProjects = [...projects.values()].filter(project => project.archived_at);
+  // While the lists are still arriving (`pending`: projects with no list yet), a project is drawn as a placeholder in its place, and the projects that
+  // would be folded the first time they are seen are drawn folded now (`provisional`, without saving it), so what lands later does not reflow the list:
+  // the project holding the room the app means to open (`expected`) stays open.
+  const pending = state.pending || new Set(), provisional = !!state.provisional, seen = state.seen || new Set(), expected = state.expected || '';
+  const archivedProjects = [...projects.values()].filter(project => project.archived_at && !pending.has(project.id));
   const live = [...projects.values()].filter(project => !project.archived_at), many = live.length > 1;
   const all = [...rooms.values()].filter(room => !projects.get(room.project_id)?.archived_at), filtering = !!filter.trim();
   const shown = all.filter(room => !room.hidden && room.lifecycle !== 'closed' && matchesRoom(room, filter, projects));
@@ -131,8 +135,9 @@ export function treeOf(state) {
   const collapsible = new Set(), nested = new Set(), holdsActive = new Set(), tailed = new Set();
   // The open room and everything above it, however deep and whether or not the rooms in between are shown (archived or hidden ones count too).
   const holders = new Set();
-  for (let room = active && rooms.get(active), guard = 0; room && guard < 64; room = room.parent_id && rooms.get(room.parent_id), guard++) holders.add(room.id);
-  if (active) holders.add(active);
+  const focus = active || (provisional ? expected : '');
+  for (let room = focus && rooms.get(focus), guard = 0; room && guard < 64; room = room.parent_id && rooms.get(room.parent_id), guard++) holders.add(room.id);
+  if (focus) holders.add(focus);
   const view = (room, opts) => {
     const children = opts.nest && room.lifecycle !== 'closed' ? orderRooms([...rooms.values()].filter(other => other.parent_id === room.id && other.lifecycle !== 'closed' && !other.hidden && other.kind !== 'dm' && matchesRoom(other, filter, projects)), sort) : [];
     const tail = opts.tail || [];
@@ -140,7 +145,7 @@ export function treeOf(state) {
     if (opts.nest) nested.add(room.id);
     if (opts.nest && holders.has(room.id)) holdsActive.add(room.id);
     if (opts.nest && kids) collapsible.add(room.id);
-    const folded = kids > 0 && collapsed.has(room.id);
+    const folded = kids > 0 && (collapsed.has(room.id) || (provisional && opts.nest && !seen.has(room.id) && !holders.has(room.id)));
     return { room, nest: !!opts.nest, chip: !!opts.chip, controls: opts.controls || null, children: children.map(child => view(child, { chip: false, nest: false })), tail, collapsible: opts.nest && kids > 0, folded,
       unread: rowUnread(room, children, folded, active) };
   };
@@ -152,6 +157,7 @@ export function treeOf(state) {
   const sections = [];
   const ordered = orderProjects(live, all, sort, manual);
   for (const [index, project] of ordered.entries()) {
+    if (pending.has(project.id) && !filtering) { sections.push({ placeholder: true, project }); continue; }
     const roots = orderRooms(ordinary.filter(room => room.project_id === project.id && (filtering || !liveParent(room))), sort);
     for (const room of roots) sections.push(place(room, !filtering, room.kind === 'home' && !filtering ? { controls: { first: index === 0, last: index === ordered.length - 1 } } : {}));
     // A project with no visible home room still gets its archived and hidden rows, after its rooms.
@@ -165,7 +171,7 @@ export function treeOf(state) {
   }
   const text = filter.trim().toLocaleLowerCase();
   const joinable = (offers || []).filter(offer => !text || (offer.title || '').toLocaleLowerCase().includes(text));
-  return { filtering, many, sections, noMatch: filtering && !shown.length ? `No rooms match “${filter.trim()}”.` : '', archived: archivedShown, direct, offers: joinable, collapsible, nested, holdsActive, closedProjects: live.filter(project => !all.some(room => room.project_id === project.id && room.lifecycle === 'closed' && !room.hidden && room.kind !== 'dm')).map(project => project.id) };
+  return { filtering, many, sections, noMatch: filtering && !shown.length && !pending.size ? `No rooms match “${filter.trim()}”.` : '', archived: archivedShown, direct, offers: joinable, collapsible, nested, holdsActive, closedProjects: live.filter(project => !all.some(room => room.project_id === project.id && room.lifecycle === 'closed' && !room.hidden && room.kind !== 'dm')).map(project => project.id) };
 }
 
 // A row with nothing under it (the rooms of a tail, an archived project's rooms, a direct message).

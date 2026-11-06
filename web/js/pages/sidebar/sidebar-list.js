@@ -119,6 +119,12 @@ function Group({ view, store, ctx }) {
   return html`<div class=${view.folded ? 'room-group collapsed' : 'room-group'} data-room-id=${room.id}><${Row} view=${view} store=${store} ctx=${ctx} />${preview && html`<div class="room-preview">${previewText(room.last_message_body) || 'No messages yet'}</div>`}${kids.length > 0 && html`<div class="room-children">${kids}</div>`}</div>`;
 }
 
+// A project whose rooms have not arrived: its name where its row will be, the same height as the folded row that replaces it.
+function Placeholder({ project, preview }) {
+  // With every row's last message on, a project row carries a preview line too: an empty one keeps the height.
+  return html`<div class="room-group project-placeholder" data-project-id=${project.id} aria-busy="true"><div class="room-row"><span class="branch-spacer" aria-hidden="true"></span><span class="row-btn room-name">${`⌂ ${project.name || ''}`}</span></div>${preview && html`<div class="room-preview" aria-hidden="true">\u00a0</div>`}</div>`;
+}
+
 function Fold({ id, className, open, store, children, summary, ...rest }) {
   return html`<details class=${className} open=${open} onToggle=${event => { if (event.currentTarget.open !== open) store.setFold(id, event.currentTarget.open); }} ...${rest}><summary>${summary}</summary>${children}</details>`;
 }
@@ -164,7 +170,8 @@ function FilterBox({ store, button }) {
 export function SidebarList({ store, projectButton }) {
   store.version.value;
   const shown = store.shown.value, sort = store.sort.value, active = store.active.value, filter = store.filter.value, manual = store.manual.value;
-  const build = () => treeOf({ projects: store.projects, rooms: store.rooms, filter, sort, manual, collapsed: store.collapsedRooms, active, archiveFilter: store.archiveFilter, offers: store.joinable });
+  const build = () => treeOf({ projects: store.projects, rooms: store.rooms, filter, sort, manual, collapsed: store.collapsedRooms, active, archiveFilter: store.archiveFilter, offers: store.joinable,
+    pending: store.pending, provisional: store.holdFolds, seen: store.seenRooms, expected: store.focusRoom() });
   let tree = shown ? build() : null;
   // A project seen for the first time starts collapsed: fold it, then draw the tree again with it folded.
   if (tree && !store.holdFolds && store.foldNew(tree.collapsible, tree.nested, tree.holdsActive)) tree = build();
@@ -179,7 +186,7 @@ export function SidebarList({ store, projectButton }) {
   const text = filter.trim().toLocaleLowerCase();
   const offersOpen = text ? true : !!store.folds.get('offers');
   return html`<${FilterBox} store=${store} button=${projectButton} />
-    ${tree.sections.map(section => section.tailOnly ? html`<${Tail} key=${`${section.node.kind}:${section.node.project.id}`} node=${section.node} store=${store} ctx=${ctx} />` : html`<${Group} key=${section.room.id} view=${section} store=${store} ctx=${ctx} />`)}
+    ${tree.sections.map(section => section.placeholder ? html`<${Placeholder} key=${`placeholder:${section.project.id}`} project=${section.project} preview=${ctx.previewAll} />` : section.tailOnly ? html`<${Tail} key=${`${section.node.kind}:${section.node.project.id}`} node=${section.node} store=${store} ctx=${ctx} />` : html`<${Group} key=${section.room.id} view=${section} store=${store} ctx=${ctx} />`)}
     ${tree.noMatch && html`<p class="rooms-empty">${tree.noMatch}</p>`}
     ${tree.archived.length > 0 && html`<${Fold} id="archived-projects" className="archived-projects" open=${tree.filtering ? true : !!store.folds.get('archived-projects')} store=${store} summary=${`Archived projects (${tree.archived.length})`}>${tree.archived.map(({ project, rooms }) => html`<${Fold} key=${project.id} id=${`archived-project:${project.id}`} className="archived-project" data-project-id=${project.id} open=${tree.filtering ? true : !!store.folds.get(`archived-project:${project.id}`)} store=${store} summary=${project.name}>${rooms.map(room => html`<${Group} key=${room.id} view=${leafView(room, active)} store=${store} ctx=${ctx} />`)}<//>`)}<//>`}
     <div class="direct-rooms"><h3>Direct messages</h3>${tree.direct.map(room => html`<${Group} key=${room.id} view=${leafView(room, active, tree.many)} store=${store} ctx=${ctx} />`)}

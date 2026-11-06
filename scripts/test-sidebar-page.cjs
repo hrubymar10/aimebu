@@ -101,16 +101,117 @@ async function main() {
   const rows = page => page.$$eval('#projects .room-group', groups => groups.map(group => { const row = group.querySelector(':scope > .room-row'); return [group.dataset.roomId, row.querySelector('.room-name').textContent, row.querySelector('.unread-count:not([hidden])')?.textContent || '', !!group.closest('.room-children')]; }));
   const tops = page => page.$$eval('#projects > *', nodes => nodes.map(node => node.className || node.tagName.toLowerCase()));
 
-  // Loading asks for the chats of agents and the projects at once, then every project's rooms at once, and draws only when all of them are in.
+  // Loading asks for the chats of agents and the projects at once, then every project's rooms at once. The project list draws each project as a
+  // placeholder in its final place; a project's rooms replace its placeholder when its own list lands, in whatever order the lists arrive, and the
+  // rest of the list does not move or lose the focus it had.
+  {
+    const page = await mount({ auto: {}, load: false, hold: true });
+    await page.evaluate(() => { window.__loading = window.__sidebar.load(); });
+    const dms = await waitRequest(page, 'GET', '/api/agent-dms'), list = await waitRequest(page, 'GET', '/api/projects');
+    assert.equal(await page.$$eval('#projects .room-group', nodes => nodes.length), 0, 'nothing is drawn before the project list is in');
+    await answer(page, list, 200, projects);
+    for (const id of ['prj_a', 'prj_b', 'prj_c']) await waitRequest(page, 'GET', `/api/projects/${id}/rooms`);
+    await settle(page);
+    const places = () => page.$$eval('#projects > .room-group', nodes => nodes.map(node => node.dataset.projectId ? ['placeholder', node.dataset.projectId, node.textContent.trim()] : ['rooms', node.dataset.roomId, node.classList.contains('collapsed')]));
+    assert.deepEqual(await places(), [['placeholder', 'prj_a', '⌂ Alpha'], ['placeholder', 'prj_b', '⌂ Beta']], 'each live project waits in its place (the archived one is not drawn yet)');
+    const height = await page.$eval('.project-placeholder', node => Math.round(node.getBoundingClientRect().height));
+    // The second project lands first: it is drawn below the first one's placeholder, and folded as it will be once the app has opened a room.
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_b/rooms'), 200, rooms().prj_b); await settle(page);
+    assert.deepEqual(await places(), [['placeholder', 'prj_a', '⌂ Alpha'], ['rooms', 'rm_bh', true]], 'a list that lands first is drawn in its own place');
+    assert.equal(await page.$eval('[data-room-id=rm_bh]', node => Math.round(node.getBoundingClientRect().height)), height, 'a folded project is as tall as its placeholder: nothing below it moves');
+    // Focus is on a row; the other project landing above it does not take it.
+    await page.focus('[data-room-id=rm_bh] .room-name');
+    const before = await page.evaluate(() => { window.__focused = document.activeElement; return document.activeElement.closest('[data-room-id]')?.dataset.roomId; });
+    const top = await page.$eval('[data-room-id=rm_bh]', node => Math.round(node.getBoundingClientRect().top));
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/rooms'), 200, rooms().prj_a); await settle(page);
+    assert.equal(before, 'rm_bh');
+    assert.equal(await page.evaluate(() => document.activeElement === window.__focused), true, 'the focused row is the same element after the other project landed');
+    assert.deepEqual((await places()).map(row => row.slice(0, 2).join(':')), ['rooms:rm_ah', 'rooms:rm_bh']);
+    assert.ok(await page.$eval('[data-room-id=rm_bh]', node => Math.round(node.getBoundingClientRect().top)) >= top - 1, 'the list below a landed project does not move up');
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_c/rooms'), 200, rooms().prj_c);
+    await settle(page);
+    assert.equal(await page.$('[data-room-id=rm_chat]'), null, 'the chats between agents are not drawn before their own list is in');
+    await answer(page, dms, 200, chats());
+    await page.evaluate(() => window.__loading); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [[...window.__sidebar.rooms.keys()][0], window.__sidebar.firstRoom().id]), ['rm_bh', 'rm_ah'], 'the lists landed in the other order, yet a start with nothing to restore opens the first project\'s first room');
+    // The app then opens a room, the folds are released, and what was drawn is what stays: no reflow at that moment.
+    const drawn = await tops(page), shapes = await places();
+    await page.evaluate(() => window.__sidebar.setActive(window.__sidebar.firstRoom().id)); await settle(page);
+    assert.deepEqual(await tops(page), drawn, 'opening the first room changes nothing that was drawn');
+    assert.deepEqual(await places(), shapes);
+    await page.close();
+  }
+  // The room the app means to open keeps its project open while the rest are drawn folded.
+  {
+    const page = await mount({ auto: answerAll(), load: false, hold: true });
+    await page.evaluate(() => { window.__sidebar.expect('rm_gen'); window.__loading = window.__sidebar.load(); }); await page.evaluate(() => window.__loading); await settle(page);
+    assert.deepEqual(await page.$$eval('#projects > .room-group', nodes => nodes.map(node => [node.dataset.roomId, node.classList.contains('collapsed')])), [['rm_ah', false], ['rm_bh', true]], 'the project holding the expected room is open, the others folded');
+    await page.close();
+  }
+  // A start with nothing to restore opens the first room of the first project, so that project is the one drawn open; with a stale address the
+  // fallback is the remembered room's project. Either way, selecting what the app opens changes nothing that was drawn.
+  for (const [label, ids, open, setActive] of [['nothing to restore', [], ['rm_ah', false, 'rm_bh', true], 'rm_ah'], ['a stale address falls back to the remembered room', ['rm_gone', 'rm_bg'], ['rm_ah', true, 'rm_bh', false], 'rm_bg']]) {
+    const page = await mount({ auto: answerAll(), load: false, hold: true });
+    await page.evaluate(ids => { window.__sidebar.expect(ids); window.__loading = window.__sidebar.load(); }, ids); await page.evaluate(() => window.__loading); await settle(page);
+    const fold = () => page.$$eval('#projects > .room-group', nodes => nodes.map(node => [node.dataset.roomId, node.classList.contains('collapsed')]).flat());
+    assert.deepEqual(await fold(), open, `${label}: the project that will open is drawn open, the others folded`);
+    const drawn = await tops(page), shapes = await fold();
+    await page.evaluate(room => window.__sidebar.setActive(room), setActive); await settle(page);
+    assert.deepEqual(await fold(), shapes, `${label}: opening the room does not fold or unfold anything`);
+    assert.deepEqual(await tops(page), drawn);
+    await page.close();
+  }
+  // With every row's last message shown, a project row has a preview line, and so does its placeholder: nothing moves when its rooms land.
+  {
+    const page = await mount({ auto: {}, load: false, hold: true, setup: "localStorage.setItem('aimebu2.ui.sidebar_preview.usr_me', '1')" });
+    await page.evaluate(() => { window.__loading = window.__sidebar.load(); });
+    await answer(page, await waitRequest(page, 'GET', '/api/projects'), 200, projects); await settle(page);
+    const height = await page.$eval('.project-placeholder[data-project-id=prj_b]', node => Math.round(node.getBoundingClientRect().height));
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_b/rooms'), 200, rooms().prj_b); await settle(page);
+    assert.equal(await page.$eval('[data-room-id=rm_bh]', node => Math.round(node.getBoundingClientRect().height)), height, 'with previews on, a folded project is as tall as its placeholder');
+    const hover = await page.$eval('.project-placeholder .room-row', node => { const style = getComputedStyle(node); return [style.pointerEvents, style.cursor, style.backgroundColor]; });
+    assert.deepEqual(hover.slice(0, 2), ['none', 'default'], 'a placeholder is not a control');
+    // Filtering while a list is out says nothing about rooms that are still arriving.
+    await page.evaluate(() => window.__sidebar.store.setFilter('zzz-nothing')); await settle(page);
+    assert.equal(await page.$('.rooms-empty'), null, 'no "No rooms match" while a project\'s list is still out');
+    // A project taken away while its list is out does not come back when the list lands.
+    await page.evaluate(() => { window.__sidebar.store.setFilter(''); window.__sidebar.store.forgetProject('prj_a'); }); await settle(page);
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/rooms'), 200, rooms().prj_a); await settle(page);
+    assert.equal(await page.evaluate(() => window.__sidebar.projects?.has?.('prj_a') ?? window.__sidebar.store.projects.has('prj_a')), false, 'a deleted project is not put back by its late list');
+    await page.close();
+  }
+  // By latest activity the order depends on the rooms, so nothing is drawn until every list is in (no row is placed and then moved).
+  {
+    const page = await mount({ auto: {}, load: false, setup: "localStorage.setItem('aimebu2.ui.sidebar_sort.usr_me', 'activity')" });
+    await page.evaluate(() => { window.__loading = window.__sidebar.load(); });
+    await answer(page, await waitRequest(page, 'GET', '/api/projects'), 200, projects);
+    for (const id of ['prj_a', 'prj_b', 'prj_c']) await waitRequest(page, 'GET', `/api/projects/${id}/rooms`);
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/rooms'), 200, rooms().prj_a); await settle(page);
+    assert.equal(await page.$$eval('#projects .room-group', nodes => nodes.length), 0, 'by latest activity nothing is drawn while a list is missing');
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_b/rooms'), 200, rooms().prj_b);
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_c/rooms'), 200, rooms().prj_c);
+    await answer(page, await waitRequest(page, 'GET', '/api/agent-dms'), 200, chats());
+    await page.evaluate(() => window.__loading); await settle(page);
+    assert.ok(await page.$$eval('#projects .room-group', nodes => nodes.length) > 2, 'then the whole list is drawn at once');
+    await page.close();
+  }
+  // A failed list leaves no placeholder behind.
+  {
+    const page = await mount({ auto: {}, load: false, hold: true });
+    await page.evaluate(() => { window.__loading = window.__sidebar.load().catch(error => error.message); });
+    await answer(page, await waitRequest(page, 'GET', '/api/projects'), 200, projects);
+    await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/rooms'), 500, { error: 'boom' });
+    await page.evaluate(() => window.__loading); await settle(page);
+    assert.equal(await page.$$eval('#projects .project-placeholder', nodes => nodes.length), 0, 'after a failed read no placeholder is left waiting');
+    await page.close();
+  }
   {
     const page = await mount({ auto: {}, load: false });
     await page.evaluate(() => { window.__loading = window.__sidebar.load(); });
     const dms = await waitRequest(page, 'GET', '/api/agent-dms'), list = await waitRequest(page, 'GET', '/api/projects');
     await answer(page, list, 200, projects);
     for (const id of ['prj_a', 'prj_b', 'prj_c']) await waitRequest(page, 'GET', `/api/projects/${id}/rooms`);
-    assert.equal(await page.$$eval('#projects .room-group', nodes => nodes.length), 0, 'nothing is drawn before every read is in');
     for (const [id, list] of Object.entries(rooms())) await answer(page, await waitRequest(page, 'GET', `/api/projects/${id}/rooms`), 200, list);
-    assert.equal(await page.$$eval('#projects .room-group', nodes => nodes.length), 0, 'nor before the chats are in');
     await answer(page, dms, 200, chats());
     await page.evaluate(() => window.__loading); await settle(page);
     assert.deepEqual(await rows(page), [['rm_ah', '⌂ Alpha', '21', false], ['rm_gen', '# general', '3', true], ['rm_api', '# api-work', '12', true], ['rm_notes', '# notes', '1', true], ['rm_mute', '# muted-room', '5', true], ['rm_old', '# old-room', '', true],
@@ -268,7 +369,8 @@ async function main() {
   {
     const page = await mount({ hold: true });
     const state = () => page.evaluate(() => ['rm_ah', 'rm_bh'].map(id => document.querySelector(`[data-room-id=${id}]`).classList.contains('collapsed')));
-    assert.deepEqual(await state(), [false, false], 'nothing folds while the app has not said which room it opens');
+    assert.deepEqual(await state(), [false, true], 'while the app has not said which room it opens, the projects are drawn as they will be folded (nothing is saved yet), the first room\'s project open');
+    assert.equal(await page.evaluate(() => localStorage.getItem('aimebu2.rooms.collapsed')), null, 'and nothing is remembered as folded');
     await page.evaluate(() => window.__sidebar.setActive('rm_api'));
     assert.deepEqual(await state(), [false, true], 'the project holding the room that opened stays open, the other folds');
     await page.close();

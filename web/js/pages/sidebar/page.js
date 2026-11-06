@@ -39,6 +39,8 @@ export class Sidebar {
 
   reset() { this.store.reset(); }
   load() { return this.store.load(); }
+  expect(...ids) { this.store.expect(...ids); }
+  firstRoom() { return this.store.firstRoom(); }
   addProject(project) { return this.store.addProject(project); }
   refreshProject(id) { return this.store.refreshProject(id); }
   refreshAgentChats() { return this.store.refreshAgentChats(); }

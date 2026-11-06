@@ -464,7 +464,7 @@ and the room stays unread until they are shown. Room settings → Notifications 
 pinned. The sort button in the ROOMS header orders projects, and the rooms inside them, by name, by latest
 activity, or manually (drag a project by its ☰ handle; the whole row opens the project's home room; in the manual sort the rooms keep
 the order the server lists them); the choice and the manual order are personal preferences that follow the person across devices. The room list is
-one list across projects, with no section labels: each project's home
+one list across projects, with no section labels (on opening, each project is drawn as its name in its final place the moment the project list arrives, and its rooms replace it when its own list lands, in whatever order they come; the order by latest activity waits for every list, since it depends on the rooms): each project's home
 room (`⌂ name`) is the parent row and its task rooms nest under it, one level. Every row shows `#name`, its member count and an unread badge, plus a project chip
 when there are several projects (left off a home room that only repeats the project name); the
 row's `+` shows on hover or keyboard focus, and always on touch screens; a project's home row has a ☰ button next to it (same visibility; no arrows), whose menu holds New room (as the `+` does) and, in the manual sort, Move up and Move down (and, in that sort, the button is also the drag handle). The last message is

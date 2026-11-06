@@ -400,6 +400,7 @@ async function snapshot(generation = sessionGeneration, cursor = request('/api/e
   // the old one would bump the selection generation and silently cancel the reader's navigation (a new private chat
   // stayed on the previous room when a resync landed in the same moment).
   const selection = roomSelectionGeneration;
+  sidebar.expect(roomInAddress(), rememberedRoom());
   await sidebar.load();
   if (generation !== sessionGeneration) return null;
   if (selection === roomSelectionGeneration && selectionsInFlight === 0) {
@@ -415,7 +416,7 @@ async function snapshot(generation = sessionGeneration, cursor = request('/api/e
     if (synced === 'synced') { /* done */ }
     else if (selected) await selectRoom(selected, undefined, { listed: true });
     else {
-      const first = [...sidebar.rooms.values()][0];
+      const first = sidebar.firstRoom();
       if (first) await selectRoom(first, undefined, { listed: true });
       else if (chat.room && !sidebar.rooms.has(chat.room.id)) closeOpenRoom(); // the last project is gone: nothing is left to show
     }
