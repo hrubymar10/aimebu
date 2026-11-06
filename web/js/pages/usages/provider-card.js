@@ -48,8 +48,11 @@ export function ProviderCard({ store, provider, order, providers, state, usedDis
     const name = await promptDialog('Profile name', { title: label, label: 'Profile name', required: true, confirm: label === 'Add profile' ? 'Add' : 'Import' });
     if (name?.trim()) store.mutateSwitcher(() => store.source[method](tool, name.trim()));
   };
-  return html`<article class="usage-provider" data-provider=${key}>
-    <header class="usage-provider-header"><h4 class="usage-provider-name">${provider.label || key}</h4><span class="usage-provider-status">${providerStatus(provider)}</span></header>
+  const masked = ['codex', 'claude-code', 'github-copilot', 'ollama-cloud', 'mistral'].includes(key);
+  return html`<article class="usage-provider usages-provider-tile" data-provider=${key}>
+    <header class="usage-provider-header usages-provider-heading"><div class="usages-provider-title">
+      <span class="usages-provider-icon" aria-hidden="true">${masked ? html`<span class=${`usages-provider-mask usages-provider-mask-${key}`}></span>` : 'AI'}</span>
+      <div><h4 class="usage-provider-name usages-provider-name">${provider.label || key}</h4><div class="usage-provider-status usages-provider-updated">${providerStatus(provider)}</div></div></div></header>
     <p class="usage-affected" hidden=${!switchable || !state.enabled}>${affectedText(affected)}</p>
     <div class="usage-provider-actions"><${Fragment} key=${revision}>
       ${switchable && state.enabled && owner && [['Add profile', 'add'], ['Import current login', 'import']].map(([label, method]) => html`<button type="button" class="btn" key=${method} onClick=${() => profileAction(label, method)}>${label}</button>`)}

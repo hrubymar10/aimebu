@@ -1,20 +1,27 @@
 import { html } from '../../ui.js';
-import { percent, windowLabel, resetLabel, paceExplanation, sparkGeometry } from '../../usage-format.js';
+import { percent, windowLabel, paceExplanation, sparkGeometry, countdown, shown } from '../../usage-format.js';
 
-// One limit window: its label and reset, the bar with the expected-pace marker, the 48-hour sparkline and the pace line.
-export function UsageWindow({ window, usedDisplay }) {
+// One limit window, laid out as v1's row (the same classes and rules as the popover): the label, the bar with the expected-pace tick, the 48-hour
+// sparkline (v2 only), "N% left" with the reset countdown, then the pace line.
+export function UsageWindow({ window, usedDisplay, fetchedAt }) {
   const used = percent(window.percent_used), value = usedDisplay ? used : 100 - used;
   const label = windowLabel(window.key), side = usedDisplay ? 'used' : 'left';
   const pace = window.pace, expected = Number(pace?.expected_percent);
-  const delta = Math.abs(Number(pace?.delta_percent) || 0);
-  const paceText = pace && (pace.state === 'reserve' ? `${Math.round(delta)}% in reserve` : pace.state === 'deficit' ? `${Math.round(delta)}% in deficit` : 'On pace');
-  const explanation = pace && paceExplanation(pace, usedDisplay);
+  const state = pace?.state === 'reserve' ? 'reserve' : pace?.state === 'deficit' ? 'deficit' : 'on-track';
   const spark = sparkGeometry(window, usedDisplay);
-  return html`<div class="usage-window">
-    <div class="usage-window-top"><strong>${label}</strong><span>${window.reset_at ? resetLabel(window.reset_at) : ''}</span></div>
-    <div class="usage-track" role="progressbar" aria-label=${`${label} ${side}`} aria-valuenow=${String(Math.round(value))} aria-valuemin="0" aria-valuemax="100">
+  let paceLabel = '', eta = '';
+  if (pace) {
+    const delta = Math.abs(Number(pace.delta_percent) || 0);
+    paceLabel = pace.state === 'reserve' ? `${shown(delta)} in reserve` : pace.state === 'deficit' ? `${shown(delta)} in deficit` : '';
+    if (pace.lasts_to_reset) eta = 'Lasts until reset';
+    else if (pace.eta_seconds != null) eta = `Runs out in ${countdown(new Date((Number.isFinite(Date.parse(fetchedAt)) ? Date.parse(fetchedAt) : Date.now()) + pace.eta_seconds * 1000).toISOString())}`;
+  }
+  const explanation = pace && paceExplanation(pace, usedDisplay), paceText = [paceLabel, eta].filter(Boolean).join(' · ');
+  return html`<div class="usage-window usages-window-row">
+    <div class="usages-window-top"><span>${label}</span></div>
+    <div class="usage-track usages-progress" role="progressbar" aria-label=${`${label} ${side}`} aria-valuenow=${String(Math.round(value))} aria-valuemin="0" aria-valuemax="100">
       <span class="usage-fill" style=${{ width: `${value}%` }}></span>
-      ${pace && Number.isFinite(expected) && html`<i class=${`usage-pace-marker usage-pace-${pace.state || 'on_track'}`} style=${{ left: `${usedDisplay ? percent(expected) : 100 - percent(expected)}%` }} title="Expected pace"></i>`}
+      ${pace && Number.isFinite(expected) && html`<i class=${`usage-pace-marker usages-pace-tick usages-pace-tick--${state}`} style=${{ left: `${usedDisplay ? percent(expected) : 100 - percent(expected)}%` }} title="Expected pace"></i>`}
     </div>
     ${spark && html`<div class="usage-spark-figure">
       <svg class="usage-spark" viewBox=${spark.viewBox} preserveAspectRatio="none" role="img" aria-label=${spark.label}>
@@ -23,9 +30,8 @@ export function UsageWindow({ window, usedDisplay }) {
       </svg>
       <div class="usage-spark-caption"><span>48 h ago</span><span>${`${usedDisplay ? '% used' : '% left'}, last 48 h`}</span><span>now</span></div>
     </div>`}
-    <div class="usage-window-foot">
-      <strong>${`${Math.round(value)}% ${side}`}</strong>
-      ${pace && html`<span class=${`usage-pace-text usage-pace-${pace.state || 'on_track'}`} title=${explanation} tabindex="0" aria-label=${`${paceText}. ${explanation}`}>${paceText}</span>`}
-    </div>
+    <div class="usages-window-meta usage-window-foot"><strong>${`${shown(value)} ${side}`}</strong><span>${window.reset_at ? `Resets in ${countdown(window.reset_at)}` : ''}</span></div>
+    ${paceText && html`<div class=${`usages-pace-text usages-pace-text--${state}`} title=${explanation} tabindex="0" aria-label=${`${paceText}. ${explanation}`}>
+      ${paceLabel && html`<span>${paceLabel}</span>`}${paceLabel && eta && html`<span class="usages-pace-sep">·</span>`}${eta && html`<span>${eta}</span>`}</div>`}
   </div>`;
 }

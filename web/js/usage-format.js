@@ -22,6 +22,25 @@ export function creditsText(credits) {
   return `${credits.label || 'Credits'}: ${text}`;
 }
 
+// v1's relative age: seconds, minutes, hours, days.
+export function age(value) {
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return 'just now';
+  const sec = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (sec < 60) return `${sec}s`;
+  const mins = Math.floor(sec / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
+}
+export function countdown(value) {
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return '-';
+  const sec = Math.max(0, Math.round((ms - Date.now()) / 1000)), days = Math.floor(sec / 86400), hours = Math.floor((sec % 86400) / 3600), mins = Math.floor((sec % 3600) / 60);
+  return days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+}
+export function shown(value) { const rounded = Math.max(0, Math.min(100, value)); return `${rounded.toFixed(rounded % 1 ? 1 : 0)}%`; }
+
 export function resetLabel(value) {
   const remaining = new Date(value).getTime() - Date.now();
   if (!Number.isFinite(remaining)) return '';

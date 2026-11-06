@@ -4098,9 +4098,9 @@ async function main() {
     assert.deepEqual(geometry, { left: true, label: '11.48px', desc: '10.5px', tall: true }, 'label and description sit left of the control, in the v1 type scale');
     await domClick(settingsPage, '#settings-usages-tab');
     assert.equal(await settingsPage.$$eval('.usage-provider[data-provider="codex"] .usage-profile', els => els.length), 2);
-    assert.equal(await settingsPage.$eval('.usage-provider[data-provider="codex"] .usage-window-foot', el => el.textContent.includes('reserve')), true);
+    assert.equal(await settingsPage.$eval('.usage-provider[data-provider="codex"] .usages-pace-text', el => el.textContent.includes('reserve')), true);
     assert.equal(await settingsPage.$eval('.usage-provider[data-provider="codex"] .usage-profile-credits', el => el.textContent), 'Credits: 12.50', 'credits line should render');
-    assert.equal(await settingsPage.$$eval('.usage-provider[data-provider="codex"] .usage-window strong:first-child', els => els.map(el => el.textContent).includes('Codex Spark')), true, 'spark window label should render');
+    assert.equal(await settingsPage.$$eval('.usage-provider[data-provider="codex"] .usage-window .usages-window-top span', els => els.map(el => el.textContent).includes('Codex Spark')), true, 'spark window label should render');
     assert.equal(await settingsPage.$eval('.usage-provider[data-provider="codex"] .usage-switch:not([hidden])', el => el.disabled), false, 'configured profile switch should be available');
     await answerDialogs(settingsPage, () => ({ accept: true, values: { value: 'reserve' } }));
     assert.deepEqual(await settingsPage.evaluate(() => { const button = [...document.querySelectorAll('.usage-provider[data-provider="codex"] .usage-profile')].find(el => el.querySelector('.usage-profile-name').textContent === 'backup').querySelector('.usage-rename'); return [button.title, button.getAttribute('aria-label'), !!button.querySelector('.icon-mask-edit'), button.textContent]; }), ['Rename backup', 'Rename backup', true, ''], 'Rename is an edit icon with a tooltip');

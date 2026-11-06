@@ -24,18 +24,20 @@ export function ProfileCard({ store, provider, profile, state, usedDisplay, tool
   const remove = async () => {
     if (await confirmDialog(`Delete ${name}?${profile.active ? ' This clears the live login.' : ''}`, { title: 'Delete profile', confirm: 'Delete', danger: true })) store.mutateSwitcher(() => store.source.remove(tool, name));
   };
-  return html`<section class="usage-profile">
-    <div class="usage-profile-header">
-      <strong class="usage-profile-name">${name || 'local'}</strong>
-      <span class="usage-profile-plan" hidden=${!profile.plan}>${profile.plan || ''}</span>
-      <span class="usage-profile-active" hidden=${!profile.active}>${profile.active ? 'Active' : ''}</span>
+  return html`<section class=${`usage-profile usages-popover-profile switcher-tile-profile${profile.active ? ' is-active' : ''}`}>
+    <div class="usage-profile-header switcher-tile-head">
+      <strong class="usage-profile-name switcher-tile-name">${name || 'local'}</strong>
+      <button type="button" class="btn usage-switch switcher-switch-pill" hidden=${view.hidden} disabled=${view.disabled} title=${view.title} onClick=${use}>Switch</button>
+      <span class="usage-profile-active switcher-tile-active" hidden=${!profile.active}>${profile.active ? 'Active' : ''}</span>
+      <span class="usage-profile-plan switcher-tile-plan" title=${profile.plan || ''} hidden=${!profile.plan}>${profile.plan || ''}</span>
     </div>
     <p class="usage-profile-email" hidden=${!profile.email}>${profile.email || ''}</p>
-    <div class="usage-windows">${(profile.windows || []).map((window, index) => html`<${UsageWindow} window=${window} usedDisplay=${usedDisplay} key=${`${window.key}:${index}`} />`)}</div>
-    <p class="usage-profile-credits" hidden=${!credits}>${credits}</p>
+    <div class="usage-windows">${(profile.windows || []).map((window, index) => html`<${UsageWindow} window=${window} usedDisplay=${usedDisplay} fetchedAt=${profile.last_refresh_at} key=${`${window.key}:${index}`} />`)}</div>
+    <p class="usage-profile-credits usages-credits-row" hidden=${!credits}>${credits}</p>
     <p class="usage-profile-status" hidden=${!status}>${status}</p>
-    <button type="button" class="btn usage-switch" hidden=${view.hidden} disabled=${view.disabled} title=${view.title} onClick=${use}>Switch</button>
-    <${IconButton} name="edit" label=${`Rename ${name}`} className="usage-rename" hidden=${manage} onClick=${rename} />
-    <${IconButton} name="trash" label=${`Delete ${name}`} danger className="usage-remove" hidden=${manage} onClick=${remove} />
+    <div class="usage-profile-actions" hidden=${manage}>
+      <${IconButton} name="edit" label=${`Rename ${name}`} className="usage-rename" hidden=${manage} onClick=${rename} />
+      <${IconButton} name="trash" label=${`Delete ${name}`} danger className="usage-remove" hidden=${manage} onClick=${remove} />
+    </div>
   </section>`;
 }
