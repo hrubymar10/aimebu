@@ -209,6 +209,31 @@ async function main() {
     await page.close();
   }
 
+  // Sign-in reads the newest page of the room it expects to open beside its other first reads (prefetchLatest); opening that room takes the page
+  // instead of asking again, once; another room, or a later open, asks for its own.
+  {
+    const page = await mount({ openPage: 0 });
+    const pageOf = id => `rooms/${id}/messages\\?limit=40`;
+    await page.evaluate(() => window.__chat.prefetchLatest('rm_a'));
+    assert.equal(await count(page, 'GET', pageOf('rm_a')), 1, 'the page is read at once');
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.equal(await count(page, 'GET', pageOf('rm_a')), 1, 'opening that room used the page it had read');
+    assert.deepEqual(await ids(page).then(list => [list.length, list[0], list.at(-1)]), [40, 'rm_a_m91', 'rm_a_m130'], 'and drew it');
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.equal(await count(page, 'GET', pageOf('rm_a')), 2, 'the page is taken once: the next open asks again');
+    await page.evaluate(() => window.__chat.prefetchLatest('rm_a'));
+    await openRoom(page, 'rm_b'); await opened(page); await settle(page);
+    assert.equal(await count(page, 'GET', pageOf('rm_b')), 1, 'another room asks for its own page');
+    assert.deepEqual(await ids(page).then(list => [list.length, list[0]]), [5, 'rm_b_m1'], 'and shows it, not the one that was read for the other room');
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.equal(await count(page, 'GET', pageOf('rm_a')), 4, 'a page read for a room that was not opened is not kept for later');
+    await page.evaluate(() => { window.__chat.prefetchLatest('rm_gone'); });
+    await page.evaluate(() => { window.__chat.prefetchLatest(''); });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    assert.equal(await count(page, 'GET', pageOf('rm_a')), 5, 'a prefetch that was replaced (or empty) leaves nothing behind');
+    await page.close();
+  }
+
   // Older messages: reaching the top asks for the page before the oldest row (50 at a time), puts it above without moving what the reader looks at, and
   // knows when there is no more.
   {

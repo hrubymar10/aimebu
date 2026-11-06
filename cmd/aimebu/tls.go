@@ -57,5 +57,8 @@ func listenTLS(bind string, config *serverTLSConfig) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	return tls.NewListener(listener, &tls.Config{Certificates: []tls.Certificate{config.certificate}, MinVersion: tls.VersionTLS12}), nil
+	// h2 is offered so a browser fetches the page's ~240 modules over one multiplexed connection: over HTTP/1.1 it opens six and waits for each
+	// round trip, which makes a cold load of the app several seconds on a link with any latency. net/http serves h2 on its own once the
+	// handshake negotiates it; without NextProtos here the handshake never does.
+	return tls.NewListener(listener, &tls.Config{Certificates: []tls.Certificate{config.certificate}, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"}}), nil
 }

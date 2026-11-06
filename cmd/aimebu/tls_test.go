@@ -6,10 +6,12 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -206,5 +208,42 @@ func TestServerServesHTTPAndHTTPSWithSameAllowlist(t *testing.T) {
 				t.Fatal("server did not stop")
 			}
 		})
+	}
+}
+
+// The page is ~240 modules: over HTTP/1.1 a browser fetches them six at a time and waits for every round trip, so the HTTPS listener must offer h2
+// (ALPN), and net/http must then serve it on the same listener the server uses.
+func TestHTTPSListenerNegotiatesHTTP2(t *testing.T) {
+	cert, key := testCertificate(t)
+	pair, err := tls.LoadX509KeyPair(cert, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := listenTLS("127.0.0.1", &serverTLSConfig{certificate: pair, port: freeTCPPorts(t, 1)[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, r.Proto) }), ReadHeaderTimeout: 10 * time.Second}
+	go server.Serve(listener)
+	defer server.Close()
+	for _, tc := range []struct {
+		name   string
+		protos []string
+		want   string
+	}{
+		{"a browser", []string{"h2", "http/1.1"}, "HTTP/2.0"},
+		{"a client that only speaks HTTP/1.1", []string{"http/1.1"}, "HTTP/1.1"},
+	} {
+		transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, NextProtos: tc.protos}, ForceAttemptHTTP2: len(tc.protos) > 1}
+		response, err := (&http.Client{Transport: transport, Timeout: 10 * time.Second}).Get("https://" + listener.Addr().String() + "/")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		transport.CloseIdleConnections()
+		if string(body) != tc.want {
+			t.Fatalf("%s was served as %q, want %q", tc.name, body, tc.want)
+		}
 	}
 }

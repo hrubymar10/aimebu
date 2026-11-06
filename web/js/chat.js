@@ -111,6 +111,7 @@ export class Chat {
     if (window.__exposeChat) window.__chat = this; // test hook: the live-cap smoke reads the per-message maps
   }
   open(room) { return this.store.open(room); }
+  prefetchLatest(roomID) { this.store.prefetchLatest(roomID); }
   // The view before a room's first page: the app's and the composer's state for the room, an empty list.
   beginOpen(room) {
     this.announcer.reset();

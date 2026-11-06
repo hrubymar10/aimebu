@@ -10,7 +10,7 @@ export class ChatStore {
     this.host = host; this.alive = true;
     this.openGeneration = 0; this.sessionGeneration = 0; this.jumpGeneration = 0; this.pageSize = 100; this.openPageSize = globalThis.__openPageSize || 40; this.olderPageSize = 50;
     this.threadGeneration = 0; this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadPageSize = 100; this.threadOlderPageSize = 50;
-    this.initialLoading = false; this.announcedIDs = null; this.reactionTickets = new Map();
+    this.initialLoading = false; this.announcedIDs = null; this.reactionTickets = new Map(); this.prefetched = null;
     this.pendingAttachments = []; this.pendingUploads = 0; this.uploadRequests = new Set();
     this.rows = []; this.quotes = new Map(); this.rowBatching = false; this.rowPending = []; this.expiry = { expired: new Set(), divider: null }; this.expiryQueued = false;
     this.threadEntries = []; this.threadEntryIDs = new Set(); this.threadBatching = false; this.threadNewReplyIDs = new Set(); this.answerItems = new Map();
@@ -28,9 +28,24 @@ export class ChatStore {
   reset() {
     for (const controller of this.uploadRequests) controller.abort();
     this.uploadRequests.clear(); this.pendingAttachments = []; this.pendingUploads = 0; this.answerItems = new Map();
-    this.openGeneration++; this.sessionGeneration++; this.threadGeneration++; this.clearRoom(); this.clearRows(); this.initialLoading = false; }
+    this.openGeneration++; this.sessionGeneration++; this.threadGeneration++; this.prefetched = null; this.clearRoom(); this.clearRows(); this.initialLoading = false; }
 
   destroy() { this.reset(); this.alive = false; }
+
+  // Starts reading the newest page of a room that is likely to be opened next (sign-in does this beside its other first reads, so the room's page
+  // does not wait for the lists that tell the app which room to open). Only open() of that very room takes it, and only once; a failure is
+  // dropped and open() asks again.
+  prefetchLatest(roomID) {
+    this.prefetched = null;
+    if (!roomID || !this.alive) return;
+    const page = request(`/api/rooms/${encodeURIComponent(roomID)}/messages?limit=${this.openPageSize}`);
+    page.catch(() => {});
+    this.prefetched = { roomID, page, at: Date.now() };
+  }
+  takePrefetched(roomID) {
+    const held = this.prefetched; this.prefetched = null;
+    return held && held.roomID === roomID && Date.now() - held.at < 30000 ? held.page.catch(() => null) : null;
+  }
 
   async open(room) {
     if (!this.alive) return;
@@ -38,7 +53,7 @@ export class ChatStore {
     if (this.host.room?.id !== room.id) this.pendingAttachments = [];
     this.clearRoom(); this.initialLoading = true; this.clearRows(); this.closeThread();
     this.host.beginOpen(room);
-    const messages = await request(`/api/rooms/${room.id}/messages?limit=${this.openPageSize}`);
+    const messages = (await this.takePrefetched(room.id)) || await request(`/api/rooms/${room.id}/messages?limit=${this.openPageSize}`);
     if (generation !== this.openGeneration) return;
     this.batchRows(() => { for (const message of messages) this.add(message); });
     this.host.pageDrawn();

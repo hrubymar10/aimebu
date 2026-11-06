@@ -179,6 +179,19 @@ async function main() {
       assert.deepEqual(cleared, { had: false, reloads: 1 }, 'with the draft gone, a hidden page reloads');
       await app.evaluate(() => { delete document.hidden; });
     }
+    // A sign-in from an address that is not a valid escape sequence (#%E0) opens the app like any other: the address names no room.
+    {
+      const bad = await server.open({ width: 1000, height: 700, context: await server.context() });
+      await bad.goto(`${server.origin}/#%E0`);
+      await bad.waitForSelector('#login-view:not([hidden])');
+      await bad.type('#login-form [name=login]', OWNER.login); await bad.type('#login-form [name=password]', OWNER.password);
+      await bad.$eval('#login-form', form => form.requestSubmit());
+      await bad.waitForFunction(() => document.querySelector('#welcome-continue') || !document.querySelector('#app-view').hidden);
+      if (await bad.$('#welcome-continue')) { await bad.waitForSelector('#welcome-continue:not([inert])'); await bad.click('#welcome-continue'); }
+      await bad.waitForSelector('#app-view:not([hidden])');
+      await bad.waitForFunction(() => !document.querySelector('#app-view').hasAttribute('aria-busy') && document.querySelector('#room-title')?.textContent.length > 0, { timeout: 15000 }); // finished starting, with a room open
+      await bad.close();
+    }
     assert.deepEqual(server.errors, [], 'no page errors');
     console.log('events page: ok');
   } finally { await server.stop(); }

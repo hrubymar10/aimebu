@@ -3,6 +3,7 @@ package server
 import (
 	"io"
 	"net/http"
+	"path"
 	"regexp"
 	"strings"
 	"testing"
@@ -96,5 +97,51 @@ func TestPrepareWebAssetsVersionsParentImportsAndImportMap(t *testing.T) {
 				t.Fatalf("%s: want %s in %s", name, fragment, got)
 			}
 		}
+	}
+}
+
+// A browser finds a module's imports only after it has fetched and parsed it, so the page names every module app.js reaches, once, ahead of the entry
+// script; a module nothing imports, a dynamic import and a path that is not a module are left out.
+func TestPrepareWebAssetsPreloadsEveryModuleTheEntryReaches(t *testing.T) {
+	t.Parallel()
+	files := fstest.MapFS{
+		"index.html":               {Data: []byte(`<script type="importmap">{"imports":{"preact":"/vendor/preact/preact.mjs"}}</script><link rel="stylesheet" href="/style.css"><script type="module" src="/js/app.js"></script>`)},
+		"js/app.js":                {Data: []byte(`import './dialog-focus.js';` + "\n" + `import { a } from './api.js';` + "\n" + `import { Page } from './pages/x/page.js';` + "\n" + `export * from './reexport.js';` + "\n" + `const lazy = () => import('./lazy.js');`)},
+		"js/api.js":                {Data: []byte(`export const a = 1;`)},
+		"js/dialog-focus.js":       {Data: []byte(`import { a } from './api.js';`)},
+		"js/reexport.js":           {Data: []byte(`export const r = 1;`)},
+		"js/lazy.js":               {Data: []byte(`export const l = 1;`)},
+		"js/unused.js":             {Data: []byte(`export const u = 1;`)},
+		"js/pages/x/page.js":       {Data: []byte(`import { a } from '../../api.js';` + "\n" + `import { h } from 'preact';`)},
+		"vendor/preact/preact.mjs": {Data: []byte(`export const h = 1;`)},
+	}
+	assets, err := prepareWebAssets(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(assets.index)
+	v := "?v=" + assets.version
+	var hinted []string
+	for _, match := range regexp.MustCompile(`<link rel="modulepreload" href="([^"]+)">`).FindAllStringSubmatch(page, -1) {
+		hinted = append(hinted, match[1])
+	}
+	want := []string{"/js/api.js" + v, "/js/app.js" + v, "/js/dialog-focus.js" + v, "/js/pages/x/page.js" + v, "/js/reexport.js" + v, "/vendor/preact/preact.mjs" + v}
+	if strings.Join(hinted, " ") != strings.Join(want, " ") {
+		t.Fatalf("hinted %v\nwant   %v", hinted, want)
+	}
+	// A hint that names a URL no importer uses fetches the module twice: every hinted module must be imported under exactly that URL.
+	imported := map[string]bool{"/js/app.js" + v: true} // the entry is loaded by the page itself
+	for name, script := range assets.scripts {
+		for _, match := range regexp.MustCompile(`(?:from|import)\s+['"](\.\.?/[^'"]+\.js\?v=[0-9a-f]+)['"]`).FindAllStringSubmatch(string(script), -1) {
+			imported["/"+path.Join(path.Dir(name), match[1])] = true
+		}
+	}
+	for _, url := range hinted {
+		if !imported[url] && !strings.HasPrefix(url, "/vendor/") {
+			t.Fatalf("%s is hinted but no module imports it under that URL (a bare `import './x.js'` must be versioned too)", url)
+		}
+	}
+	if hints, entry := strings.Index(page, `rel="modulepreload"`), strings.Index(page, `<script type="module" src="/js/app.js`+v); hints < 0 || entry < hints {
+		t.Fatalf("the hints must come before the entry script: %s", page)
 	}
 }

@@ -328,17 +328,21 @@ function setRoomsOpen(open) {
   document.querySelector('#back').setAttribute('aria-expanded', String(open));
   if (open) agents.setMobileOpen(false);
 }
-async function selectRoom(room, messageID) {
+// The room the address names, or '' when it names none (or is not a valid escape sequence).
+function roomInAddress() { try { return decodeURIComponent(location.hash.slice(1)); } catch { return ''; } }
+function rememberedRoom() { try { return localStorage.getItem('aimebu2.lastRoom') || ''; } catch { return ''; } }
+async function selectRoom(room, messageID, options) {
   selectionsInFlight++;
-  try { return await openRoom(room, messageID); } finally { selectionsInFlight--; }
+  try { return await openRoom(room, messageID, options); } finally { selectionsInFlight--; }
 }
-async function openRoom(room, messageID) {
+// `listed`: the project's rooms were read a moment ago (the sign-in snapshot just did), so reading them again would only add a round trip.
+async function openRoom(room, messageID, { listed = false } = {}) {
   const generation = sessionGeneration;
   const selection = ++roomSelectionGeneration;
   const current = () => generation === sessionGeneration && selection === roomSelectionGeneration;
   inbox.hide();
   setRoomsOpen(false);
-  try { await sidebar.refreshProject(room.project_id); } catch (error) {
+  try { if (!listed) await sidebar.refreshProject(room.project_id); } catch (error) {
     // The project itself is gone (or no longer reachable): it leaves the list, as when its removal arrives live. A chat between agents
     // belongs to no project, so a failed read of their list proves nothing about it: the room opens from what is already known.
     if (!sidebar.isAgentChatProject(room.project_id)) {
@@ -372,10 +376,11 @@ async function openRoom(room, messageID) {
   if (!current()) return false;
   return true;
 }
-async function snapshot(generation = sessionGeneration) {
+async function snapshot(generation = sessionGeneration, cursor = request('/api/events/cursor')) {
   // Take the cursor before the HTTP snapshots. Events committed while those
   // reads run are caught by the socket; its replay is coalesced on ready.
-  const { seq } = await request('/api/events/cursor');
+  // (A sign-in asks for it earlier still, beside the preferences, which only saves a round trip.)
+  const { seq } = await cursor;
   if (generation !== sessionGeneration) return null;
   // A room the reader opens while the snapshot loads is newer than the room this snapshot would restore. Re-selecting
   // the old one would bump the selection generation and silently cancel the reader's navigation (a new private chat
@@ -384,15 +389,15 @@ async function snapshot(generation = sessionGeneration) {
   await sidebar.load();
   if (generation !== sessionGeneration) return null;
   if (selection === roomSelectionGeneration && selectionsInFlight === 0) {
-    const remembered = (() => { try { return localStorage.getItem('aimebu2.lastRoom') || ''; } catch { return ''; } })();
+    const remembered = rememberedRoom();
     // A room that is open here but gone from the lists gives way to its project's home room.
     const open = chat.room;
     const home = open && !sidebar.rooms.has(open.id) ? [...sidebar.rooms.values()].find(room => room.project_id === open.project_id && room.kind === 'home') : null;
-    const selected = home || sidebar.rooms.get(chat.room?.id || decodeURIComponent(location.hash.slice(1))) || sidebar.rooms.get(remembered);
-    if (selected) await selectRoom(selected);
+    const selected = home || sidebar.rooms.get(chat.room?.id || roomInAddress()) || sidebar.rooms.get(remembered);
+    if (selected) await selectRoom(selected, undefined, { listed: true });
     else {
       const first = [...sidebar.rooms.values()][0];
-      if (first) await selectRoom(first);
+      if (first) await selectRoom(first, undefined, { listed: true });
       else if (chat.room && !sidebar.rooms.has(chat.room.id)) closeOpenRoom(); // the last project is gone: nothing is left to show
     }
   }
@@ -417,6 +422,12 @@ async function signedIn(session) {
   const startupAbort = new AbortController();
   const startupActive = () => active() && !startupExpired && !startupAbort.signal.aborted;
   startupController = startupAbort;
+  // The reads the sign-in is about to make one after another start now beside the preferences: the event cursor (it only has to be taken before the
+  // project and room lists, which come after), and the newest page of the room the page will most likely open (the one in the address, else the last).
+  // The page is read only once the cursor is in: whatever changes in that room after the cursor comes through the event stream, which a page read
+  // before it could miss. (The first sign-in waits behind the welcome, which can take long, so it starts nothing early.)
+  const cursor = session.first_run ? undefined : request('/api/events/cursor');
+  cursor?.then(() => chat.prefetchLatest(roomInAddress() || rememberedRoom()), () => {});
   setSession(session); void showBuildVersion(request, document.querySelector('#build-version')).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; signin.hide();
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
   if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
@@ -435,7 +446,7 @@ async function signedIn(session) {
   let startupDeadline;
   let startupSucceeded = false;
   try {
-    const seq = await snapshot(generation);
+    const seq = await snapshot(generation, cursor);
     if (!active() || seq === null) return;
     if (['mock_inbox', 'mock_delivery', 'mock_resolved'].some(key => new URLSearchParams(location.search).has(key))) {
       const room = (new URLSearchParams(location.search).has('mock_delivery') && chat.room) || (rooms => rooms.find(item => item.kind === 'task' && item.title !== 'general') || rooms.find(item => item.kind === 'task'))([...sidebar.rooms.values()]); // the mocks point at a room with work in it, not the empty general every project starts with

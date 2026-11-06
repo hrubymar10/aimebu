@@ -17,6 +17,13 @@ either file is missing or unreadable, the pair cannot be loaded, the TLS port
 is invalid, or it equals the HTTP port. With neither set, the server uses HTTP
 only. Sessions set the `Secure` cookie attribute on HTTPS requests, and on
 plain-HTTP requests addressed to the host of an `https` `AIMEBU2_PUBLIC_URL`.
+The HTTPS listener negotiates HTTP/2. This matters for the web UI more than
+for the API: the page is some 240 small modules, which a browser fetches over
+HTTP/1.1 six at a time, one round trip each. With a 100 ms round trip a cold
+load of the app took about 5.6 s that way, about 2 s over HTTP/2, and about
+1.3 s over HTTP/2 with the `modulepreload` hints the page carries. A load from
+the browser's cache is not affected. The plain-HTTP port stays HTTP/1.1, so
+use HTTPS when the UI is reached across a network.
 Open the
 web UI in a secure context (HTTPS, or `localhost`) to enable its browser
 notification permission button.
