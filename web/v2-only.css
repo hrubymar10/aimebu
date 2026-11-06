@@ -97,8 +97,8 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 :where(dialog:not(.settings-modal, .image-lightbox, .message-debug-dialog)) :where(h2) { margin: 0 0 12px; color: var(--text-primary); font: 700 0.98rem var(--font-sans); }
 
 /* A project whose rooms have not arrived yet (see the room list's streamed load): its name in its place, not a control. */
-.project-placeholder .room-row, .project-placeholder .room-row:hover { background: none; cursor: default; pointer-events: none; }
-.project-placeholder .room-name { opacity: .6; }
+.project-placeholder .room-item, .project-placeholder .room-item:hover { background: none; cursor: default; pointer-events: none; }
+.project-placeholder .room-item-name { opacity: .6; }
 
 /* ── Top bar ──
    The markup is v1's: .topbar around .topbar-left (.logo-mark, .logo, .build-version) and nav.topbar-right, the connection as .status-indicator > .status-dot,
@@ -161,3 +161,97 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
   .topbar nav button.ui-variant-toggle + button.ui-variant-toggle { margin-left: -2px; }
 }
 @media (max-width: 520px) { .topbar nav button.ui-variant-toggle { min-width: 40px; justify-content: center; } }
+
+/* Rooms sidebar. v1's .room-item (icon column, name, count, unread, preview) draws the row; this is what v2 adds around it: the project tree
+   (chevron, nested children), the project chip and health flag on a row, the project menu, drag marks and the hover buttons. */
+.room-item > :is(.branch, .branch-spacer, .add-room, .reopen-room, .project-menu, .agent-chat-join) { align-self: center; }
+.room-item .branch, .room-item .branch-spacer { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 25px; width: 25px; min-height: 30px; margin-right: 4px; }
+.room-item .branch { border: 0; background: transparent; }
+.room-item .room-collapse svg { display: block; }
+/* The name is a button (it opens the room): v1's name look (size, weight, colour, the active and unread states) applies; what is stated here is that it is
+   not drawn as a button, and that it takes the row's spare width. */
+.room-item .room-item-name { flex: 1 1 auto; min-width: 7ch; border: 0; background: transparent; text-align: left; }
+.room-item .room-item-name:hover { background: transparent; border-color: transparent; }
+.room-item.archived .room-item-name, .room-item.closing .room-item-name, .agent-chat-offer .room-item-name { color: var(--text-muted); }
+.room-item .room-health { padding: 1px 5px; } /* the row's reset zeroes the base's padding */
+.room-item .room-project { flex: 0 100 auto; min-width: 0; max-width: 70px; margin: 0 4px; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.room-item .room-project::before, .room-item .room-project::after { content: ''; display: inline-block; width: 6px; }
+.room-item .add-room { display: none; padding: 4px; border: 0; color: var(--text-primary); background: var(--bg-primary); opacity: 1; align-items: center; justify-content: center; }
+.room-item:hover .add-room, .room-item:focus-within .add-room { display: inline-flex; }
+.room-item .add-room[hidden] { display: none; }
+.room-item .project-move { display: none; align-items: center; justify-content: center; padding: 4px; color: var(--text-muted); background: transparent; border: 0; }
+.room-item:hover .project-move, .room-item:focus-within .project-move { display: inline-flex; }
+.room-item .project-move:disabled { opacity: .3; }
+.room-item .project-grip { cursor: grab; }
+/* The menu's wrapper goes with its button: an empty flex item would still take v1's 10px gap. */
+.room-item .project-menu { position: relative; display: none; flex: 0 0 auto; }
+.room-item:hover .project-menu, .room-item:focus-within .project-menu, .room-item .project-menu.is-open { display: inline-flex; }
+.room-item .project-menu.is-open .project-move { display: inline-flex; }
+.room-item.dragging { opacity: .5; }
+.room-item.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.room-item.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+[data-theme="high-contrast-dark"] .room-item :is(.branch, .add-room) { border: 0; background: transparent; }
+@media (hover: none) and (pointer: coarse) { .room-item .add-room:not([hidden]), .room-item .project-move, .room-item .project-menu { display: inline-flex; } }
+
+
+/* Markdown in a message. v1 styles a body that carries .md-rendered (headings 1-3, inline code, <pre>, lists, quotes, links, tables, the copy button and
+   mentions); this is what v2's renderer adds, which v1 has no rule for. */
+.chat-msg-body { min-width: 0; }
+/* v1 writes a paragraph break as two <br>; v2 draws paragraphs, which keep their spaces and are one line apart where text follows text. */
+.chat-msg-body.md-rendered p { margin: 0; white-space: pre-wrap; }
+/* v1 puts a blank line where the source has one (two <br>); the renderer here keeps blocks only, so two blocks side by side are a line apart. */
+.chat-msg-body.md-rendered > :is(p, ul, ol, blockquote, .md-codeblock, .md-table-wrap, hr) + :is(p, ul, ol, blockquote, .md-codeblock, .md-table-wrap, hr) { margin-top: 1.55em; }
+.chat-msg-body.md-rendered blockquote { white-space: pre-wrap; }
+.chat-msg-body.md-rendered :is(h4, h5, h6) { font-family: var(--font-sans); font-size: 0.85rem; font-weight: 700; margin: 6px 0 3px; line-height: 1.3; }
+:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description) hr { margin: 8px 0; border: 0; border-top: 1px solid var(--border); }
+.chat-msg-body.md-rendered del { opacity: .7; }
+:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description) li > :is(ul, ol) { margin: 2px 0; }
+:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description) li.md-task { list-style: none; }
+:is(.chat-msg-body.md-rendered, .visual-plan-block-body, .answer-description) li.md-task > input { margin: 0 6px 0 -20px; vertical-align: middle; }
+.chat-msg-body .md-codeblock { max-width: 100%; }
+/* A code line is a block: the diff highlight (code.hl-diff) takes the width of its longest line, which an inline element cannot. */
+.chat-msg-body.md-rendered pre code { display: block; }
+.chat-msg-body .md-copy-btn { font-weight: 400; }
+.chat-msg-body .md-copy-btn .icon-mask { display: block; width: 14px; height: 14px; }
+.chat-msg-body .mention-group { opacity: .85; }
+.chat-msg-body .mention[role=button] { cursor: pointer; }
+.chat-msg-body .mention[role=button]:is(:hover, :focus-visible) { text-decoration: underline; text-underline-offset: 3px; }
+.chat-msg-body .mention[role=button]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Touch screens: the copy button gets its own row above the code instead of sitting on it, and is a touch target. */
+@media (hover: none) and (pointer: coarse) {
+  .chat-msg-body .md-codeblock { display: flex; flex-direction: column; }
+  .chat-msg-body .md-codeblock .md-copy-btn { position: static; align-self: flex-end; order: -1; width: 40px; height: 40px; margin: 0 0 4px; opacity: 1; }
+}
+
+/* Markdown in a visual-plan block and in a question's description (v1 draws neither with code or copy-button rules of its own). */
+:is(.visual-plan-block-body, .answer-description) .md-codeblock { position: relative; display: block; width: 100%; max-width: 100%; }
+:is(.visual-plan-block-body, .answer-description) .md-codeblock pre { width: 100%; max-width: 100%; padding: 8px 34px 8px 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
+:is(.visual-plan-block-body, .answer-description) .md-codeblock pre code { display: block; background: none; padding: 0; white-space: pre; }
+:is(.visual-plan-block-body, .answer-description) .md-copy-btn { position: absolute; top: 5px; right: 5px; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; }
+:is(.visual-plan-block-body, .answer-description) .md-copy-btn .icon-mask { width: 14px; height: 14px; }
+@media (hover: hover) { :is(.visual-plan-block-body, .answer-description) .md-copy-btn { opacity: 0; } :is(.visual-plan-block-body, .answer-description) .md-codeblock:is(:hover, :focus-within) .md-copy-btn { opacity: 1; } }
+@media (hover: none) and (pointer: coarse) {
+  :is(.visual-plan-block-body, .answer-description) .md-codeblock { display: flex; flex-direction: column; }
+  :is(.visual-plan-block-body, .answer-description) .md-codeblock .md-copy-btn { position: static; align-self: flex-end; order: -1; width: 40px; height: 40px; margin: 0 0 4px; opacity: 1; }
+}
+/* ── Members panel: the agent and person cards ──
+   The cards are v1's: .agent-card.agent-card-compact around .agent-id (the .agent-online-dot, the .harness-icon, the name as .agent-id-text, the state as
+   .agent-state-badge) and the hover actions as .agent-card-actions, so v1's rules draw the box, the row, the dot, the icon, the badge and the overlay. What
+   v2 adds stays here: states v1 has no badge for, the icon buttons in the overlay, the card that opens into its profile, and the phone layout (theme-v1.css). */
+.agent-state-paused, .agent-state-attention { color: var(--orange); border-color: rgba(210, 153, 34, 0.42); background: rgba(210, 153, 34, 0.12); }
+[data-theme="high-contrast-dark"] .agent-state-badge { background: var(--bg-primary); border-color: currentColor; }
+.agent-online-dot.dead { background: var(--red); }
+/* v1 centres the hover buttons on the card; a collapsed card can have a second line (health, switch status, recovery), so the row is their box. An open card keeps the
+   card as its box (the buttons sit at its top). */
+.agent-card:not(.expanded) .agent-id { position: relative; }
+/* The amber badges are under AA in the light themes (v1's own thinking badge included); darker text there. */
+:is([data-theme="light"], [data-theme$="-light"]) :is(.agent-state-thinking, .agent-state-paused, .agent-state-attention) { color: color-mix(in srgb, var(--orange) 70%, #000); } /* red when dead (stopped, lost): v1's dot has green, amber and muted only */
+.agent-card .agent-role, .agent-card .human-role { font-weight: 400; }
+/* The open card keeps its readable state pill (the owner's choice: a rounded 12px sans pill, not v1's tiny mono tag); it takes its colour from the variant. */
+.agent-card.expanded .agent-state-pill { align-items: center; height: auto; min-height: 22px; padding: 0 9px; border: 1px solid color-mix(in srgb, currentColor 55%, transparent); border-radius: 999px; background: color-mix(in srgb, currentColor 12%, transparent); font: 600 12px/1.2 var(--font-sans); }
+.agent-card.expanded .agent-state-label { text-transform: capitalize; }
+[data-theme="high-contrast-dark"] .agent-card.expanded .agent-state-pill { background: var(--bg-primary); border-color: currentColor; }
+
+
+/* The sender's name is a <strong> here (v1's is a span inside a weight-700 wrapper): a strong inside bold text would go to 900. */
+.chat-msg-from-name { font-weight: inherit; }

@@ -45,8 +45,8 @@ async function main() {
     }));
     const distance = () => page.$eval(list, el => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
     const open = async (id, title) => {
-      await page.waitForSelector(`[data-room-id="${id}"] .room-name`);
-      await page.evaluate(id => document.querySelector(`[data-room-id="${id}"] .room-name`).click(), id);
+      await page.waitForSelector(`[data-room-id="${id}"] .room-item-name`);
+      await page.evaluate(id => document.querySelector(`[data-room-id="${id}"] .room-item-name`).click(), id);
       await page.waitForFunction(title => document.querySelector('#room-title')?.textContent === title, {}, title);
       await page.waitForFunction(() => document.querySelectorAll('#messages .chat-msg').length >= 40);
       await quiet();

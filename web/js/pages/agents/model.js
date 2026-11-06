@@ -45,6 +45,13 @@ export function stateOf(agent) {
   return { name, kind, title, since, observed };
 }
 
+// The class of the state badge for a state kind: v1's where v1 has the state (idle, thinking for a working agent, error, stopped), v2's own for the
+// ones it does not (paused, attention).
+export const stateBadge = kind => ({ idle: 'idle', working: 'thinking', error: 'error', stopped: 'stopped' })[kind] || kind;
+// The colour class of the dot before the name (v1's .agent-online-dot): green while it is up, amber when it waits or is paused or needs a decision, red
+// (v2's own `dead`) when it is stopped, lost or offline, muted for anything else.
+export const stateDot = kind => ({ idle: 'active', working: 'active', paused: 'stale', attention: 'stale', error: 'dead', stopped: 'dead', offline: 'dead' })[kind] || 'offline';
+
 export function activityOf(agent, state) {
   const woken = agent.woken_by === 'reply' ? 'Woken by reply · ' : '';
   const text = state.why || woken + (agent.activity || (state.observed === 'Working' ? 'Working…' : 'No recent activity'));

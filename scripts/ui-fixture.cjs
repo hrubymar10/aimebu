@@ -92,8 +92,8 @@ const FIXTURE = async () => {
   const agents = document.querySelector('#agents-panel') || document.querySelector('.agents-panel');
   if (agents) {
     const humans = document.querySelector('#agents-humans') || agents;
-    const person = make('article', 'agent-card human-card is-you', '', humans); const personTitle = make('div', 'agent-title', '', person);
-    make('span', 'presence-dot', '', personTitle); { const icon = make('img', 'agent-harness-icon', '', personTitle); icon.src = '/icons/human.svg'; icon.alt = ''; } make('strong', 'agent-name human-name', 'ada', personTitle); make('small', 'human-role', 'owner', personTitle);
+    const person = make('article', 'agent-card agent-card-compact human-card is-you', '', humans); const personTitle = make('div', 'agent-id agent-title', '', person);
+    make('span', 'agent-online-dot active', '', personTitle); { const icon = make('img', 'harness-icon agent-harness-icon', '', personTitle); icon.src = '/icons/human.svg'; icon.alt = ''; } make('span', 'agent-id-text agent-name human-name', 'ada', personTitle); make('small', 'human-role', 'owner', personTitle);
     // The real member card, opened as a profile (a working agent, so Reactivate is unavailable and says why), plus the facts the server adds.
     const { html, render } = await import('/js/ui.js');
     const { AgentCard } = await import('/js/pages/agents/agents-list.js');

@@ -38,12 +38,12 @@ const FIXTURE = async () => {
   const system = make('article', 'chat-msg chat-msg-system', '', list); const row = make('div', 'chat-msg-system-row', '', system); make('span', 'chat-msg-body', 'ada joined', row); make('time', '', '12:00', row);
   const agents = document.querySelector('#agents-panel') || document.querySelector('.agents-panel');
   if (agents) {
-    const card = make('article', 'agent-card', '', agents); const title = make('div', 'agent-title', '', card); const identity = make('span', 'agent-identity', '', title);
-    make('strong', 'agent-name', 'Ada', identity); make('span', 'agent-role', 'worker', title); make('small', 'agent-meta', 'codex · m', card); make('div', 'agent-state', 'Active · Idle', card);
+    const card = make('article', 'agent-card agent-card-compact', '', agents); const title = make('div', 'agent-id agent-title', '', card); make('span', 'agent-online-dot active agent-dot', '', title); const identity = make('span', 'agent-identity', '', title);
+    make('span', 'agent-id-text agent-name', 'Ada', identity); make('span', 'agent-role', 'worker', title); make('small', 'agent-meta', 'codex · m', card); const stateBox = make('div', 'agent-state', '', card); make('span', 'agent-state-pill agent-state-badge agent-state-idle', 'idle', stateBox);
     const actions = make('div', 'agent-actions', '', card); make('button', 'btn-icon btn-danger agent-stop', 'Stop', actions);
   }
   const sidebar = document.querySelector('.sidebar');
-  const group = make('div', 'room-group', '', sidebar); const roomRow = make('div', 'room-row active', '', group); make('button', 'room-name', 'general', roomRow); make('span', 'room-health', '⚠ 2', roomRow);
+  const group = make('div', 'room-group', '', sidebar); const roomRow = make('div', 'room-item active', '', group); make('button', 'room-item-name', 'general', roomRow); make('span', 'room-health', '⚠ 2', roomRow);
   const quick = make('div', 'quick-commands', '', document.querySelector('#composer')); quick.dataset.fixture = 'quick'; const option = make('button', 'quick-command', '', quick); make('strong', '', '/archive', option); make('span', '', 'Archive room', option); option.setAttribute('aria-selected', 'true');
   make('button', 'quick-command', '', quick).append(make('strong', '', '/spawn'), make('span', '', 'Open spawn dialog'));
   const section = document.querySelector('#settings-general');
@@ -59,13 +59,13 @@ const FIXTURE = async () => {
 
 const TARGETS = [
   'body', '.topbar', '.topbar-left .logo', '#rooms-toggle', '#usages-toggle', '#settings-toggle', '#health-toggle', '.badge',
-  '.sidebar', '.room-row', '.room-row .room-name', '.room-health',
+  '.sidebar', '.room-item', '.room-item .room-item-name', '.room-health',
   '.chat header', '#messages', '#composer', '#composer textarea', '#composer button[type=submit]', '.quick-commands[data-fixture=quick]', '.quick-command', '.quick-command[aria-selected=true]',
   '.chat-msg[data-fixture=plain]', '.chat-msg[data-fixture=self]', '.chat-msg.needs-attention', '.chat-msg-system', '.chat-msg-system-row', '.chat-msg-header', '.chat-msg-from-name', '.chat-msg-header time', 'button.chat-msg-id',
   '.chat-msg-bubble', '.quote', '.chat-msg-body', '.chat-msg-body h2', '.chat-msg-body p', '.chat-msg-body code', '.chat-msg-body a', '.chat-msg-body a.msg-ref', '.chat-msg-body .mention', '.chat-msg-body blockquote', '.chat-msg-body ul', '.chat-msg-body del',
-  '.chat-msg-body table', '.chat-msg-body th', '.chat-msg-body td', '.md-codeblock', '.md-codeblock pre', '.md-copy', '.message-actions', '.message-actions button', '.quick-reaction', '.reaction-pill',
+  '.chat-msg-body table', '.chat-msg-body th', '.chat-msg-body td', '.md-codeblock', '.md-codeblock pre', '.md-copy-btn', '.message-actions', '.message-actions button', '.quick-reaction', '.reaction-pill',
   '.visual-plan', '.visual-plan-block', '.visual-plan-block-header', '.visual-plan-block-type', '.visual-plan-block-title', '.visual-plan-block-body', '.visual-plan-check-row', '.visual-plan-file-tree',
-  '.agents-panel', '.agent-card', '.agent-name', '.agent-role', '.agent-state', '.agent-actions button',
+  '.agents-panel', '.agent-card', '.agent-name', '.agent-id', '.agent-online-dot', '.agent-role', '.agent-state', '.agent-state-badge', '.agent-actions button',
   '#health-popover', '#usages-popover', '#usages-popover > header', '#usages-popover button', '.usages-popover-provider-name', '.usages-popover-profile', '.usages-popover-profile.is-active', '.usages-popover-profile-name', '.usage-profile-active',
   '.usage-window', '.usage-track', '.usage-fill', '.usage-window-top strong', '.usage-window-foot',
   '#system-events-popover', '.system-events-popover', '#system-events-toggle',

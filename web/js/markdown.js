@@ -111,7 +111,7 @@ export async function copyText(value) {
   if (!fallbackCopyText(value)) throw new Error('clipboard write unavailable');
 }
 function copyButton(content) {
-  const button = document.createElement('button'); button.type = 'button'; button.className = 'row-btn md-copy'; setGlyph(button, 'copy', 'Copy code block');
+  const button = document.createElement('button'); button.type = 'button'; button.className = 'row-btn md-copy-btn'; setGlyph(button, 'copy', 'Copy code block');
   button.onclick = async () => { try { await copyText(content); setGlyph(button, 'check', 'Copied'); } catch { setGlyph(button, 'close', 'Copy failed'); } setTimeout(() => setGlyph(button, 'copy', 'Copy code block'), 1500); };
   return button;
 }
@@ -243,7 +243,7 @@ function renderBlocks(source, depth) {
     }
     const spec = tableSpec(line, lines[i + 1]);
     if (spec) {
-      const wrap = document.createElement('div'), table = document.createElement('table'), thead = document.createElement('thead'), tbody = document.createElement('tbody'); wrap.className = 'md-table-wrap';
+      const wrap = document.createElement('div'), table = document.createElement('table'), thead = document.createElement('thead'), tbody = document.createElement('tbody'); wrap.className = 'md-table-wrap'; table.className = 'md-table';
       const row = (values, tag) => { const tr = document.createElement('tr'); spec.aligns.forEach((align, index) => { const cell = document.createElement(tag); cell.className = `md-${tag} md-align-${align}`; appendInline(cell, values[index] || ''); tr.append(cell); }); return tr; };
       thead.append(row(spec.headings, 'th')); i += 2;
       while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
@@ -287,7 +287,8 @@ export function renderRaw(source) {
   return fragment;
 }
 function rawBlock(shown, copied) {
+  // v1's raw block: the text itself in a block span, not a <pre> (the body is monospace and wraps).
   const wrapper = document.createElement('div'); wrapper.className = 'md-codeblock raw-codeblock';
-  const pre = document.createElement('pre'), code = document.createElement('code'); code.textContent = shown; pre.append(code);
-  wrapper.append(copyButton(copied), pre); return wrapper;
+  const code = document.createElement('span'); code.className = 'raw-code raw-code-block'; code.textContent = shown;
+  wrapper.append(copyButton(copied), code); return wrapper;
 }

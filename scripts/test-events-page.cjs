@@ -192,8 +192,8 @@ async function main() {
       const project = (await call('/api/projects', 'POST', { name: 'Drafts', folder })).body;
       await app.reload(); await app.waitForSelector('#app-view:not([hidden])'); // the first project made, the app shows its rooms instead of the onboarding
       const home = (await call(`/api/projects/${project.id}/rooms`, 'GET')).body.find(room => room.kind === 'home');
-      await app.waitForSelector(`[data-room-id="${home.id}"] .room-name`);
-      await app.evaluate(id => document.querySelector(`[data-room-id="${id}"] .room-name`).click(), home.id);
+      await app.waitForSelector(`[data-room-id="${home.id}"] .room-item-name`);
+      await app.evaluate(id => document.querySelector(`[data-room-id="${id}"] .room-item-name`).click(), home.id);
       await app.waitForFunction(() => window.__chat?.room);
       await app.waitForSelector('#composer .ProseMirror');
       assert.equal(await app.$eval('#composer textarea', el => getComputedStyle(el).display), 'none', 'the formatted composer keeps its textarea out of sight');

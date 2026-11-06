@@ -132,13 +132,22 @@ async function main() {
     const hold = { code: 'limit_guard', text: 'claude session 95%', detail: 'The limit guard is holding new claude turns: the session limit of the active account is 95% full.' };
     await show(page, 'r1', [agent('a1', 'ada'), agent('a2', 'bert', { recovery_block: true, last_exit_evidence: 'Failed to authenticate' }), agent('a3', 'cleo', { hold })]);
     const look = id => page.$eval(`[data-agent-id=${id}]`, node => ({ label: node.querySelector('.agent-state-label').textContent, dot: node.querySelector('.agent-dot').dataset.state, state: node.querySelector('.agent-state').dataset.state,
-      activity: node.querySelector('.agent-activity').textContent, color: getComputedStyle(node.querySelector('.agent-dot')).backgroundColor, stateColor: getComputedStyle(node.querySelector('.agent-state')).color }));
+      activity: node.querySelector('.agent-activity').textContent, color: getComputedStyle(node.querySelector('.agent-dot')).backgroundColor, stateColor: getComputedStyle(node.querySelector('.agent-state-badge')).color }));
     const [ordinary, decision, held] = [await look('a1'), await look('a2'), await look('a3')];
     assert.deepEqual([ordinary.label, ordinary.dot, ordinary.activity], ['idle', 'idle', 'No recent activity']);
     assert.deepEqual([decision.label, decision.dot, decision.state], ['needs decision', 'attention', 'attention']);
     assert.match(decision.activity, /^Needs your decision: .*decide what to do in Inbox\.$/);
     assert.deepEqual([held.label, held.dot, held.state, held.activity], ['held: claude session 95%', 'attention', 'attention', hold.detail]);
     assert.equal(decision.color, held.color, 'both uncertain states share one dot colour');
+    // v1 centres the hover buttons on their containing block; a collapsed card can have more than one line (the recovery card has its button and a second line),
+    // so the name row is that block while the card is closed, and the card itself once it is open (the buttons sit at its top).
+    const box = id => page.$eval(`[data-agent-id=${id}]`, card => ({ row: getComputedStyle(card.querySelector('.agent-id')).position, actions: getComputedStyle(card.querySelector('.agent-card-actions')).position, tall: card.getBoundingClientRect().height > card.querySelector('.agent-id').getBoundingClientRect().height + 20 }));
+    const closed = await box('a2');
+    assert.equal(closed.tall, true, 'a card with a recovery decision has more than its name row');
+    assert.equal(closed.row, 'relative', 'a collapsed card centres its hover buttons on the name row, not on the whole card');
+    await page.$eval('[data-agent-id=a2] .agent-expand', button => button.click()); await settle(page);
+    assert.equal((await box('a2')).row, 'static', 'an open card keeps the card as their box');
+    await page.$eval('[data-agent-id=a2] .agent-expand', button => button.click()); await settle(page);
     assert.notEqual(decision.color, ordinary.color, 'and it is not the green of an idle agent');
     assert.notEqual(decision.stateColor, ordinary.stateColor, 'the state text is not green either');
     await page.close();

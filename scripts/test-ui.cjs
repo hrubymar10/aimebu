@@ -44,7 +44,7 @@ const appReady = async page => {
   await appReadyFolded(page);
   await page.waitForFunction(() => !document.querySelector('#onboarding-view').hidden || document.querySelector('#projects .room-group'), { timeout: 8000 }).catch(() => {}); // the list is drawn after the page is shown; a page with no project has none
   if (await page.$('#onboarding-view:not([hidden])')) { await page.click('#onboarding-view .onboarding-skip'); await page.waitForSelector('#onboarding-view', { hidden: true }); }
-  await page.evaluate(() => { for (const toggle of document.querySelectorAll('.room-group.collapsed > .room-row > .room-collapse')) toggle.click(); });
+  await page.evaluate(() => { for (const toggle of document.querySelectorAll('.room-group.collapsed > .room-item > .room-collapse')) toggle.click(); });
 };
 function freePort() { return new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const port = server.address().port; server.close(() => resolve(port)); }); }); }
 // waitForFunction that names what the page looked like when it timed out: a 30 s timeout alone cannot tell a slow
@@ -58,9 +58,9 @@ async function waitDump(page, label, predicate, dump, ...args) {
 }
 // Waits for a room row to be listed after a sign-in. On timeout it names what the page showed (rows, connection, hash, the
 // project list), so a stale room list can be told apart from a slow load.
-const waitRoomRow = (page, label, roomID) => waitDump(page, label, id => !!document.querySelector(`[data-room-id="${id}"] .room-name`), id => ({
+const waitRoomRow = (page, label, roomID) => waitDump(page, label, id => !!document.querySelector(`[data-room-id="${id}"] .room-item-name`), id => ({
   hash: location.hash, appBusy: document.querySelector('#app-view')?.getAttribute('aria-busy'), connection: document.querySelector('#connection')?.getAttribute('aria-label'),
-  rows: [...document.querySelectorAll('[data-room-id]')].map(row => `${row.dataset.roomId}:${(row.querySelector('.room-name')?.textContent || '').slice(0, 20)}`),
+  rows: [...document.querySelectorAll('[data-room-id]')].map(row => `${row.dataset.roomId}:${(row.querySelector('.room-item-name')?.textContent || '').slice(0, 20)}`),
   projects: document.querySelector('#projects')?.innerText.replace(/\s+/g, ' ').slice(0, 300), wanted: id,
 }), roomID);
 const installFixtureChat = page => page.evaluate(async () => {
@@ -130,7 +130,7 @@ async function main() {
       const rowOfControl = /^(.*?)\s*\.(?:message-actions|message-react|message-reply|message-find|message-copy|thread-action|quick-reaction|message-reaction-row)\b/.exec(selector)?.[1];
       if (rowOfControl) await reachRow(page, rowOfControl);
       // A project starts folded: a click on a room inside a folded project opens the project first, as a person would.
-      if (selector.includes('data-room-id')) await page.evaluate(selector => { for (let group = document.querySelector(selector)?.closest('.room-group'); group; group = group.parentElement?.closest('.room-group')) if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-row > .room-collapse')?.click(); }, selector);
+      if (selector.includes('data-room-id')) await page.evaluate(selector => { for (let group = document.querySelector(selector)?.closest('.room-group'); group; group = group.parentElement?.closest('.room-group')) if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-item > .room-collapse')?.click(); }, selector);
       await page.waitForFunction(selector => new Promise(resolve => {
         const button = document.querySelector(selector);
         if (!button || button.disabled || button.hidden || !button.getClientRects().length) { resolve(false); return; }
@@ -145,9 +145,9 @@ async function main() {
     // A project's actions are the items of the menu behind the ☰ button of its home row: reach the button by the keyboard focus that shows it, open the
     // menu, press the item. `row` selects the home room's group.
     const projectMenuAct = async (page, row, item) => {
-      await page.focus(`${row} > .room-row .room-name`);
-      await domClick(page, `${row} > .room-row .project-menu-btn`);
-      await domClick(page, `${row} > .room-row .project-menu-${item}`);
+      await page.focus(`${row} > .room-item .room-item-name`);
+      await domClick(page, `${row} > .room-item .project-menu-btn`);
+      await domClick(page, `${row} > .room-item .project-menu-${item}`);
     };
     // The owner's rule: a control is an icon with a tooltip and an accessible name, never text. Returns what breaks it for the
     // elements matching `selectors` (a list), and how many matched.
@@ -243,7 +243,7 @@ async function main() {
       if (await page.evaluate(() => document.querySelector('#room-info-dialog').open)) await domClick(page, '#room-info-close');
       const home = await page.evaluate(async id => (await (await fetch(`/api/projects/${id}/rooms`)).json()).find(room => room.kind === 'home').id, projectID);
       await page.evaluate(() => document.querySelectorAll('.archived-projects, .archived-project').forEach(details => { details.open = true; }));
-      await domClick(page, `[data-room-id="${home}"] .room-name`);
+      await domClick(page, `[data-room-id="${home}"] .room-item-name`);
       await page.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, home);
       await domClick(page, '#room-info');
       await page.waitForSelector('#room-info-dialog[open] #room-project:not([hidden]) #project-details');
@@ -1801,7 +1801,7 @@ async function main() {
     // [group a] Nested lists, task items and rules in a message, with their styles.
     const listParity = await first.evaluate(async () => {
       const { renderMarkdown } = await import('/js/markdown.js');
-      const message = document.createElement('div'); message.className = 'chat-msg-body';
+      const message = document.createElement('div'); message.className = 'chat-msg-body md-rendered';
       message.append(renderMarkdown('- a\n  - b\n- [x] done\n- [ ] todo\n\n---\n\n1. one\n   - sub'));
       document.body.append(message);
       const result = { nested: message.querySelectorAll('ul > li > ul > li').length, ordered: message.querySelectorAll('ol > li > ul > li').length,
@@ -1828,7 +1828,7 @@ async function main() {
         { type: 'markdown', data: { markdown: '> one\n> two\n\n```\ncode here\n```' } }, { type: 'markdown', data: 'string **data**' },
         { type: 'diff', data: { diff: '--- a/f\n+++ b/f\n@@ -1,2 +1,2 @@\n keep\n-old\n+new' } } ] });
       const bubble = document.createElement('div'); bubble.className = 'chat-msg-bubble'; bubble.append(plan); document.body.append(bubble);
-      const copy = plan.querySelector('.md-codeblock .md-copy');
+      const copy = plan.querySelector('.md-codeblock .md-copy-btn');
       const result = { plan: { quote: getComputedStyle(plan.querySelector('blockquote')).whiteSpace, copyWidth: getComputedStyle(copy).width, codePad: getComputedStyle(plan.querySelector('.md-codeblock pre')).paddingRight,
         stringStrong: plan.querySelector('strong')?.textContent, added: plan.querySelectorAll('.visual-plan-diff .hl-add').length, removed: plan.querySelectorAll('.visual-plan-diff .hl-del').length, diffMarked: plan.querySelector('.visual-plan-diff code')?.classList.contains('hl-diff'),
         diffText: plan.querySelector('.visual-plan-diff code')?.textContent } };
@@ -1894,6 +1894,7 @@ async function main() {
     assert.equal(await first.$eval('#settings-toggle', el => el.title), 'Settings');
     await openSettings(first);
     await domClick(first, '#settings-general-tab');
+    assert.deepEqual(await first.$eval('#theme-select', el => { const css = getComputedStyle(el); return [css.paddingTop, css.paddingLeft]; }), ['0px', '8px'], "the theme select is v1's field: no vertical padding to clip its text");
     await first.select('#theme-select', 'high-contrast-dark');
     assert.equal(await first.evaluate(() => document.documentElement.dataset.theme), 'high-contrast-dark');
     await domClick(first, '#settings-general-tab');
@@ -1985,7 +1986,7 @@ async function main() {
     await first.locator('#project-form [name=name]').fill('UI smoke'); await first.locator('#project-form [name=folder]').fill(gitRoot);
     await domClick(first, '#project-form [name=folder]'); await first.keyboard.press('Enter');
     await first.waitForFunction(() => !document.querySelector('#project-dialog').open);
-    await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke' && document.querySelector('.room-row.active .room-name')?.textContent.includes('UI smoke'));
+    await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke' && document.querySelector('.room-item.active .room-item-name')?.textContent.includes('UI smoke'));
     await openSettings(first);
     await first.waitForSelector('#settings-users-tab:not([hidden]):not(.settings-tab-pending)');
     await domClick(first, '#settings-users-tab');
@@ -2072,7 +2073,7 @@ async function main() {
       await first.locator('#composer textarea').fill('');
       await putMacros({});
     }
-    await projectMenuAct(first, `[data-room-id="${await first.$eval('.room-row:has(.project-menu-btn)', row => row.closest('.room-group').dataset.roomId)}"]`, 'add');
+    await projectMenuAct(first, `[data-room-id="${await first.$eval('.room-item:has(.project-menu-btn)', row => row.closest('.room-group').dataset.roomId)}"]`, 'add');
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     await first.waitForFunction(() => document.querySelector('#messages')?.dataset.empty === 'true');
     assert.equal(await first.$eval('#messages', el => getComputedStyle(el, '::before').content), '"No messages in this room yet."', 'an empty room says so');
@@ -2185,8 +2186,8 @@ async function main() {
     await domClick(first, '#knowledge-close');
     await first.waitForFunction(() => !document.querySelector('#knowledge-dialog')?.open);
     await login(second);
-    await second.waitForFunction(() => [...document.querySelectorAll('.room-name')].some(el => el.textContent.includes('Nested task')));
-    await second.evaluate(() => [...document.querySelectorAll('.room-name')].find(el => el.textContent.includes('Nested task')).click());
+    await second.waitForFunction(() => [...document.querySelectorAll('.room-item-name')].some(el => el.textContent.includes('Nested task')));
+    await second.evaluate(() => [...document.querySelectorAll('.room-item-name')].find(el => el.textContent.includes('Nested task')).click());
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     await first.locator('#composer textarea').fill('Draft');
     await first.click('#composer textarea');
@@ -2208,21 +2209,21 @@ async function main() {
     await first.keyboard.press('Enter');
     await first.waitForSelector('.chat-msg[data-message-id]');
     await second.waitForFunction(() => [...document.querySelectorAll('.chat-msg-body')].some(el => el.textContent === 'First message'));
-    await first.waitForFunction(() => [...document.querySelectorAll('.room-preview')].some(el => el.textContent === 'First message'));
+    await first.waitForFunction(() => [...document.querySelectorAll('.room-item-preview')].some(el => el.textContent === 'First message'));
     assert.deepEqual(await first.$eval('#room-members', el => [el.querySelector('.room-members-count')?.textContent, el.getAttribute('aria-label'), el.title, !!el.querySelector('svg'), el.hidden]), ['1', '1 member', '1 member', true, false]);
     assert.equal(await first.$eval('#room-members', el => !!el.querySelector('.room-header-status')), false, 'the idle member chip has no empty status gap');
     assert.equal(await first.$eval('#room-icon', el => el.textContent), '#', 'a task room shows its kind glyph');
     const panelParity = await first.evaluate(() => {
       const css = selector => getComputedStyle(document.querySelector(selector));
       const box = selector => document.querySelector(selector).getBoundingClientRect();
-      const sample = document.createElement('div'); sample.className = 'room-row active';
-      sample.innerHTML = '<button class="row-btn room-name"># sample</button><span class="unread-count">2</span>';
+      const sample = document.createElement('div'); sample.className = 'room-item active has-unread';
+      sample.innerHTML = '<button class="row-btn room-item-name">sample</button><span class="room-item-unread">2</span>';
       document.querySelector('#projects').append(sample);
       const result = {
         label: [css('.sidebar > header strong').fontSize, css('.sidebar > header strong').lineHeight],
-        room: [Math.round(box('.room-row:not(.active)').height), css('.room-row:not(.active)').padding],
-        unread: [getComputedStyle(sample.querySelector('.room-name')).fontWeight, getComputedStyle(sample.querySelector('.unread-count')).fontSize, getComputedStyle(sample.querySelector('.unread-count')).padding, getComputedStyle(sample.querySelector('.unread-count')).backgroundColor, getComputedStyle(sample.querySelector('.unread-count')).color],
-        preview: [css('.room-preview').fontSize, css('.room-preview').lineHeight],
+        room: [Math.round(box('.room-item:not(.active)').height), css('.room-item:not(.active)').padding],
+        unread: [getComputedStyle(sample.querySelector('.room-item-name')).fontWeight, getComputedStyle(sample.querySelector('.room-item-unread')).fontSize, getComputedStyle(sample.querySelector('.room-item-unread')).padding, getComputedStyle(sample.querySelector('.room-item-unread')).backgroundColor, getComputedStyle(sample.querySelector('.room-item-unread')).color],
+        preview: [css('.room-item-preview').fontSize, css('.room-item-preview').lineHeight],
         header: [Math.round(box('.chat > header').height), css('.chat > header').gap, css('.chat > header').padding],
         count: [Math.round(box('#room-members').height), css('#room-members').backgroundColor, css('#room-members').fontSize],
         bar: [Math.round(box('.topbar').height), Math.round(box('#settings-toggle').width), css('#settings-toggle').backgroundColor, css('#build-version').fontSize, css('#build-version').opacity],
@@ -2231,41 +2232,41 @@ async function main() {
       return result;
     });
     assert.deepEqual(panelParity, {
-      label: ['9.8px', '14.7px'], room: [38, '4px 8px'],
-      unread: ['700', '9.1px', '1px 7px', 'rgb(31, 111, 235)', 'rgb(255, 255, 255)'],
+      label: ['9.8px', '14.7px'], room: [50, '10px'],
+      unread: ['700', '9.1px', '1px 7px', 'rgb(47, 129, 247)', 'rgb(255, 255, 255)'],
       preview: ['10.5px', '15.75px'], header: [43, '12px', '0px 16px'],
       count: [22, 'rgb(28, 33, 40)', '9.1px'],
       bar: [53, 30, 'rgba(0, 0, 0, 0)', '8.4px', '0.6'],
     }, 'desktop panels retain the v1 measurements');
-    await second.evaluate(() => [...document.querySelectorAll('.room-name')].find(el => el.textContent.startsWith('⌂'))?.click());
+    await second.evaluate(() => [...document.querySelectorAll('.room-item')].find(row => row.querySelector('.room-item-icon')?.textContent === '⌂')?.querySelector('.room-item-name').click());
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke');
     assert.equal(await second.$eval('#room-icon', el => el.textContent), '⌂', 'the home room shows its glyph');
     await second.locator('#composer textarea').fill('Unread preview'); await second.locator('#composer button[type=submit]').click();
     const homeID = await second.evaluate(() => location.hash.slice(1));
     // Read cursors are per account, so a post from another tab of the same account is not unread here.
     // The list previews the last message only under the room that is open: the home room is not open in this tab.
-    await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] .room-name`) && !document.querySelector(`[data-room-id="${id}"] > .room-preview`), {}, homeID);
-    assert.deepEqual(await first.evaluate(id => ({ count: document.querySelectorAll('.room-count').length, tip: document.querySelector(`[data-room-id="${id}"] .room-name`).title }), homeID), { count: 0, tip: await first.$eval(`[data-room-id="${homeID}"] .room-name`, el => el.title) }, 'the grey member count is gone from the room rows');
-    assert.match(await first.$eval(`[data-room-id="${homeID}"] .room-name`, el => el.title), / · \d+ members?$/, 'the member count is in the name tooltip');
-    assert.equal(await first.$$eval('.room-preview', nodes => nodes.length), 1, 'only the active room shows a preview');
+    await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] .room-item-name`) && !document.querySelector(`[data-room-id="${id}"] > .room-item .room-item-preview`), {}, homeID);
+    assert.deepEqual(await first.evaluate(id => ({ count: document.querySelectorAll('.room-count').length, tip: document.querySelector(`[data-room-id="${id}"] .room-item-name`).title }), homeID), { count: 0, tip: await first.$eval(`[data-room-id="${homeID}"] .room-item-name`, el => el.title) }, 'the grey member count is gone from the room rows');
+    assert.match(await first.$eval(`[data-room-id="${homeID}"] .room-item-name`, el => el.title), / · \d+ members?$/, 'the member count is in the name tooltip');
+    assert.equal(await first.$$eval('.room-item-preview', nodes => nodes.length), 1, 'only the active room shows a preview');
     // The person can have every room show its last message: a labelled switch in Settings, kept on the account, off by default.
     await domClick(first, '#settings-toggle');
     await first.waitForSelector('#sidebar-preview', { visible: true });
     assert.equal(await first.$eval('#sidebar-preview', el => [el.checked, el.labels[0]?.textContent, el.getAttribute('aria-describedby')].join('|')), 'false|Show the last message under every room|sidebar-preview-desc', 'the preview switch is off by default and labelled');
     await domClick(first, '#sidebar-preview');
     await first.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.sidebar_preview === '1');
-    await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-preview`)?.textContent === 'Unread preview', {}, homeID);
-    assert.ok(await first.$$eval('.room-preview', nodes => nodes.length) > 1, 'every room shows its preview when asked');
+    await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-item .room-item-preview`)?.textContent === 'Unread preview', {}, homeID);
+    assert.ok(await first.$$eval('.room-item-preview', nodes => nodes.length) > 1, 'every room shows its preview when asked');
     await domClick(first, '#sidebar-preview');
     await first.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.sidebar_preview === '0');
-    await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] > .room-preview`), {}, homeID);
+    await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] > .room-item .room-item-preview`), {}, homeID);
     await first.evaluate(() => document.querySelector('#settings-dialog').close());
-    assert.equal(await first.$$eval('.room-preview', nodes => nodes.length), 1, 'back to the open room only');
-    assert.equal(await first.$eval(`[data-room-id="${homeID}"]`, (el, id) => { const badge = el.querySelector(':scope > .room-row .unread-count'); return badge && !badge.hidden ? badge.textContent : ''; }, homeID), '', 'a same-account post raised unread');
+    assert.equal(await first.$$eval('.room-item-preview', nodes => nodes.length), 1, 'back to the open room only');
+    assert.equal(await first.$eval(`[data-room-id="${homeID}"]`, (el, id) => { const badge = el.querySelector(':scope > .room-item .room-item-unread'); return badge && !badge.hidden ? badge.textContent : ''; }, homeID), '', 'a same-account post raised unread');
     assert.equal((await first.evaluate(async id => (await (await fetch(`/api/rooms/${id}`)).json()).unread_count, homeID)), 0, 'server unread_count counted a same-account post');
-    await domClick(first, `[data-room-id="${homeID}"] .room-name`);
+    await domClick(first, `[data-room-id="${homeID}"] .room-item-name`);
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'UI smoke');
-    await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+    await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task' && document.querySelectorAll('.chat-msg').length === 1 && document.querySelector('.chat-msg-body')?.textContent === 'First message');
     // The header shows where the room sits: its project above the title, the crumb leads back to the project's home room, a home room has no path, and on a
     // phone the path shrinks instead of pushing the title out of the header.
@@ -2282,12 +2283,12 @@ async function main() {
       assert.equal(narrow.overflow, false, 'the path does not overflow the header on a phone');
       assert.ok(narrow.shown.length === 1 && narrow.titleWidth >= 40, `the title keeps room on a phone: ${JSON.stringify(narrow)}`);
       await domClick(first, '#room-crumbs .room-crumb');
-      await first.waitForFunction(id => document.querySelector('#projects .room-row.active')?.closest('.room-group')?.dataset.roomId === id, {}, homeID);
+      await first.waitForFunction(id => document.querySelector('#projects .room-item.active')?.closest('.room-group')?.dataset.roomId === id, {}, homeID);
       assert.equal(await first.evaluate(() => document.querySelector('#room-crumbs').hidden), true, 'a home room is its project and has no path');
-      await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+      await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
       await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     }
-    await domClick(second, `[data-room-id="${roomID}"] .room-name`);
+    await domClick(second, `[data-room-id="${roomID}"] .room-item-name`);
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task' && document.querySelector('.chat-msg-body')?.textContent === 'First message');
     const id = await first.$eval('.chat-msg', el => el.dataset.messageId);
     await first.mouse.move(2, 2);
@@ -2351,7 +2352,7 @@ async function main() {
       assert.equal(await first.evaluate(() => [...document.documentElement.getAttributeNames()].some(name => name.startsWith('data-ui-'))), false, 'and no experiment option is set');
       const widths = await first.evaluate(async () => {
         const { renderMarkdown } = await import('/js/markdown.js');
-        const host = document.createElement('div'); host.className = 'chat-msg-body'; host.style.width = '1200px';
+        const host = document.createElement('div'); host.className = 'chat-msg-body md-rendered'; host.style.width = '1200px';
         host.append(renderMarkdown('A paragraph of text.\n\n- a list item\n\n> a quote\n\n```\ncode\n```\n\n| a | b |\n| - | - |\n| 1 | 2 |'));
         document.querySelector('#messages').append(host);
         const cs = selector => { const el = host.querySelector(selector); return el ? getComputedStyle(el).maxWidth : null; };
@@ -2529,7 +2530,7 @@ async function main() {
     await first.waitForFunction(() => /^\d+ new messages in /.test(document.querySelector('#live-announcer').textContent), { timeout: 15000 }); // the 22-message burst is coalesced
     for (let i = 0; i < 120; i++) await post(`History ${i}`);
     await first.waitForFunction(() => [...document.querySelectorAll('.chat-msg-body')].some(el => el.textContent === 'History 119'));
-    await first.evaluate(() => { document.querySelector('.room-row.active .room-name').click(); });
+    await first.evaluate(() => { document.querySelector('.room-item.active .room-item-name').click(); });
     await first.waitForFunction(() => document.querySelector('#messages').dataset.hasOlder === 'true');
     // With older messages still to load, the top of the list is not the start of the room.
     assert.equal(await first.$eval('#messages', el => getComputedStyle(el, '::before').content), 'none', 'no start-of-room marker while older messages remain');
@@ -2640,7 +2641,7 @@ async function main() {
     const tricky = '| L | C | R |\n| :--- | :---: | ---: |\n| **safe** | `a|b` | <img src=x onerror=alert(1)> |\n| short |\n| extra | middle | one | more |';
     const tableCheck = await first.evaluate(async source => {
       const { renderMarkdown } = await import('/js/markdown.js');
-      const host = document.createElement('div'); host.className = 'chat-msg-body'; host.append(renderMarkdown(source)); document.body.append(host);
+      const host = document.createElement('div'); host.className = 'chat-msg-body md-rendered'; host.append(renderMarkdown(source)); document.body.append(host);
       const result = { rows: host.querySelectorAll('tbody tr').length, cells: [...host.querySelectorAll('tbody tr')].map(row => row.cells.length), align: [...host.querySelectorAll('thead th')].map(el => getComputedStyle(el).textAlign), html: host.innerHTML, last: host.querySelector('tbody tr:last-child td:last-child').textContent };
       host.remove(); return result;
     }, tricky);
@@ -2688,7 +2689,7 @@ async function main() {
         mail: [...mail.querySelectorAll('a')].map(a => a.getAttribute('href')), mailText: mail.textContent,
         strike: [...strike.querySelectorAll('del')].map(el => el.textContent), strikeText: strike.textContent,
         indented: [...code.querySelectorAll('pre code')].map(el => el.textContent), codeHTML: code.innerHTML.includes('<b>'), paragraphs: [...code.querySelectorAll('p')].map(el => el.textContent),
-        rawBlocks: [...raw.querySelectorAll('.raw-codeblock code')].map(el => el.textContent), rawButtons: raw.querySelectorAll('.raw-codeblock button.md-copy').length, rawText: raw.textContent.startsWith('text'),
+        rawBlocks: [...raw.querySelectorAll('.raw-codeblock .raw-code-block')].map(el => el.textContent), rawButtons: raw.querySelectorAll('.raw-codeblock button.md-copy-btn').length, rawText: raw.textContent.startsWith('text'),
         writes,
       };
     });
@@ -2823,7 +2824,7 @@ async function main() {
     assert.equal(await md.$eval('a', el => el.getAttribute('rel').includes('noopener') && el.protocol === 'https:'), true);
     assert.equal(await md.$$eval('a', els => els.length), 1, 'unsafe link created');
     assert.equal(await md.$eval('.md-codeblock code', el => el.textContent), 'const n = 1;');
-    assert.equal(await md.$eval('.md-copy', el => el.getAttribute('aria-label')), 'Copy code block');
+    assert.equal(await md.$eval('.md-copy-btn', el => el.getAttribute('aria-label')), 'Copy code block');
     const xss = '<script>alert(1)</script> <img src=x onerror=alert(2)> [click](javascript:evil) ``nested ` ticks``';
     await post(xss);
     await first.waitForFunction(() => [...document.querySelectorAll('.chat-msg-body')].some(el => el.textContent.includes('<script>alert(1)</script>')));
@@ -2861,7 +2862,7 @@ async function main() {
       assert.deepEqual(await flashed(), ['a message in another room'], 'the jump highlighted the target message');
       await first.waitForFunction(() => !document.querySelector('#messages .message-flash'), { timeout: 5000 });
 
-      await first.evaluate(title => [...document.querySelectorAll('.room-name')].find(node => node.textContent.includes(title)).click(), originalTitle);
+      await first.evaluate(title => [...document.querySelectorAll('.room-item-name')].find(node => node.textContent.includes(title)).click(), originalTitle);
       await first.waitForFunction(title => document.querySelector('#room-title').textContent === title, {}, originalTitle);
       // With reduced motion the highlight does not animate: the same class is a plain outline.
       await first.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }]);
@@ -2872,7 +2873,7 @@ async function main() {
       assert.deepEqual(await first.evaluate(() => { const style = getComputedStyle(document.querySelector('#messages .message-flash')); return { animation: style.animationName, outline: style.outlineStyle }; }), { animation: 'none', outline: 'solid' }, 'with reduced motion the highlight is a static outline');
       await first.waitForFunction(() => !document.querySelector('#messages .message-flash'), { timeout: 5000 });
       await first.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }]);
-      await first.evaluate(title => [...document.querySelectorAll('.room-name')].find(node => node.textContent.includes(title)).click(), originalTitle);
+      await first.evaluate(title => [...document.querySelectorAll('.room-item-name')].find(node => node.textContent.includes(title)).click(), originalTitle);
       await first.waitForFunction(title => document.querySelector('#room-title').textContent === title, {}, originalTitle);
     }
     assert.ok(actualProjectID);
@@ -4727,11 +4728,11 @@ async function main() {
         const { relativeTime } = await import('/js/time.js'); out.relative = relativeTime('2026-10-18T22:25:41.123456789Z');
         // The human icon is dark in the light themes (it is white, so it would vanish on a light card).
         document.documentElement.dataset.theme = 'light';
-        const probe = document.createElement('img'); probe.className = 'agent-harness-icon'; probe.src = '/icons/human.svg'; document.body.append(probe);
+        const probe = document.createElement('img'); probe.className = 'harness-icon'; probe.src = '/icons/human.svg'; document.body.append(probe);
         await new Promise(resolve => setTimeout(resolve, 100)); out.humanFilter = getComputedStyle(probe).filter; probe.remove(); delete document.documentElement.dataset.theme;
         // A long code line in a thread entry scrolls inside the block; the block stays inside the panel.
         const panel = document.querySelector('#thread-panel'), wasHidden = panel.hidden; panel.hidden = false;
-        const entry = document.createElement('article'); entry.className = 'thread-entry'; const body = document.createElement('div'); body.className = 'chat-msg-body'; body.append(renderMarkdown('```\n' + 'x'.repeat(400) + '\n```')); entry.append(body); document.querySelector('#thread-messages').append(entry);
+        const entry = document.createElement('article'); entry.className = 'thread-entry'; const body = document.createElement('div'); body.className = 'chat-msg-body md-rendered'; body.append(renderMarkdown('```\n' + 'x'.repeat(400) + '\n```')); entry.append(body); document.querySelector('#thread-messages').append(entry);
         await new Promise(resolve => setTimeout(resolve, 150));
         out.threadInside = entry.querySelector('.md-codeblock').getBoundingClientRect().right <= panel.getBoundingClientRect().right + 0.5 && entry.querySelector('pre').scrollWidth > entry.querySelector('pre').clientWidth;
         entry.remove(); panel.hidden = wasHidden;
@@ -4782,9 +4783,9 @@ async function main() {
         const out = {}, copies = [];
         const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => { copies.push(value); } } });
-        const render = source => { const host = document.createElement('div'); host.className = 'chat-msg-body'; host.append(renderMarkdown(source)); document.body.append(host); return host; };
+        const render = source => { const host = document.createElement('div'); host.className = 'chat-msg-body md-rendered'; host.append(renderMarkdown(source)); document.body.append(host); return host; };
         const settle = async (host, selector) => { for (let i = 0; i < 100 && !host.querySelector(selector); i++) await new Promise(resolve => setTimeout(resolve, 50)); };
-        const copy = async host => { host.querySelector('.md-copy').click(); await new Promise(resolve => setTimeout(resolve, 30)); return copies.at(-1); };
+        const copy = async host => { host.querySelector('.md-copy-btn').click(); await new Promise(resolve => setTimeout(resolve, 30)); return copies.at(-1); };
         const goSource = 'package main\n\n// greet says hello\nfunc greet(name string) string { return "hi " + name }';
         const go = render('```golang\n' + goSource + '\n```'); await settle(go, '.hljs-keyword');
         out.go = { keyword: [...go.querySelectorAll('.hljs-keyword')].map(node => node.textContent).includes('func'), string: !!go.querySelector('.hljs-string'), comment: !!go.querySelector('.hljs-comment'), lang: go.querySelector('code').dataset.highlighted, text: go.querySelector('code').textContent === goSource, copied: (await copy(go)) === goSource };
@@ -4933,7 +4934,7 @@ async function main() {
     assert.deepEqual(humans.offered, ['@leader', '@ada', '@casey', '@kim@proj-1', '@reviewer'], 'a login equal to a role key is offered as the human; a colliding login is not offered');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-health', el => el.textContent.includes('Not responding')), true);
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_reviewer"] .agent-health', el => el.textContent.includes('Needs your decision')), true);
-    assert.equal(await agentPage.$eval('.room-row.active .room-health', el => el.textContent), '⚠ 2');
+    assert.equal(await agentPage.$eval('.room-item.active .room-health', el => el.textContent), '⚠ 2');
     await domClick(agentPage, '#health-toggle');
     assert.deepEqual(await agentPage.$$eval('#health-popover .health-item .health-item-title', els => els.map(el => el.textContent)), ['Ada looks stuck', 'Bert needs a recovery decision', 'An answer to Bert could not be delivered'], 'health items are plain sentences, one per problem');
     // Each entry says what the problem means, in a line of its own, and none of them shows an internal state name.
@@ -5096,7 +5097,7 @@ async function main() {
       };
       const host = document.querySelector('.agent-card');
       for (const name of ['vibe', 'cline']) {
-        const img = document.createElement('img'); img.className = 'agent-harness-icon'; img.src = `/icons/${name}.svg`; host.append(img);
+        const img = document.createElement('img'); img.className = 'harness-icon'; img.src = `/icons/${name}.svg`; host.append(img);
         root.dataset.theme = 'light'; out[`${name}Light`] = await luminance(img);
         root.dataset.theme = 'blue-dark'; out[`${name}Dark`] = await luminance(img);
         img.remove();
@@ -5133,22 +5134,29 @@ async function main() {
     assert.deepEqual(await agentPage.$$eval('[data-agent-id="agt_mock_worker"] .agent-quick button', els => els.map(el => el.getAttribute('aria-label'))), ['Message Ada privately', 'Pause', 'Stop', 'Open agent profile'], 'DM, Pause, Stop (v1 order) and the detail toggle are icon buttons with accessible names');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-name', el => el.title === el.textContent && el.textContent.length > 0), true, 'the member name carries its full text as a title');
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .agent-dot', el => el.dataset.state), 'working');
-    const cardParity = await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => {
+    const cardParity = await agentPage.$eval('[data-agent-id="agt_mock_worker"]', async card => {
+      const { stateDot } = await import('/js/pages/agents/model.js');
       const name = getComputedStyle(card.querySelector('.agent-name'));
       const colors = {};
       for (const state of ['idle', 'working', 'paused', 'error', 'stopped']) {
-        const dot = document.createElement('span'); dot.className = 'presence-dot'; dot.dataset.state = state; card.append(dot);
+        const dot = document.createElement('span'); dot.className = `agent-online-dot ${stateDot(state)}`; card.append(dot);
         colors[state] = getComputedStyle(dot).backgroundColor; dot.remove();
       }
-      return { padding: getComputedStyle(card).padding, titleHeight: getComputedStyle(card.querySelector('.agent-title')).minHeight,
-        name: [name.fontSize, name.lineHeight, name.fontWeight], colors };
+      const red = document.createElement('span'); red.style.color = 'var(--red)'; card.append(red); const redColor = getComputedStyle(red).color; red.remove();
+      return { padding: getComputedStyle(card).padding, titleHeight: getComputedStyle(card.querySelector('.agent-id')).minHeight,
+        name: [name.fontSize, name.lineHeight, name.fontWeight], colors, redColor };
     });
-    assert.deepEqual(cardParity, { padding: '7px 8px', titleHeight: '17px', name: ['11.2px', '16.8px', '600'], colors: {
-      idle: 'rgb(63, 185, 80)', working: 'rgb(63, 185, 80)', paused: 'rgb(210, 153, 34)', error: 'rgb(248, 81, 73)', stopped: 'rgb(248, 81, 73)',
-    } }, 'compact member rows match v1 sizing and state colours');
+    // v1's dot: green while up, amber when paused or waiting; v2's own red when dead (stopped, lost).
+    const redDot = cardParity.redColor;
+    assert.deepEqual({ ...cardParity, redColor: undefined }, { padding: '7px 8px', titleHeight: '17px', name: ['11.2px', '16.8px', '600'], colors: {
+      idle: 'rgb(63, 185, 80)', working: 'rgb(63, 185, 80)', paused: 'rgb(210, 153, 34)', error: redDot, stopped: redDot,
+    }, redColor: undefined }, 'compact member rows match v1 sizing and state colours');
     // One line per member: the whole name is readable, the state sits on the same line, and the buttons only show on hover.
-    const rowShape = await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => { const name = card.querySelector('.agent-name'), state = card.querySelector('.agent-state'), quick = card.querySelector('.agent-quick'); return { whole: name.scrollWidth <= name.clientWidth, wide: name.clientWidth >= 12 * 6, sameLine: Math.abs(name.getBoundingClientRect().top - state.getBoundingClientRect().top) < 8, quickRest: getComputedStyle(quick).opacity }; });
-    assert.deepEqual(rowShape, { whole: true, wide: true, sameLine: true, quickRest: '0' }, `member row shape: ${JSON.stringify(rowShape)}`);
+    // v1's overlay fades over 120ms: read the buttons at rest, not mid-fade
+    await agentPage.waitForFunction(() => matchMedia('(hover: none)').matches || getComputedStyle(document.querySelector('[data-agent-id="agt_mock_worker"] .agent-quick')).opacity === '0', { timeout: 5000 });
+    const rowShape = await agentPage.$eval('[data-agent-id="agt_mock_worker"]', card => { const name = card.querySelector('.agent-name'), state = card.querySelector('.agent-state'), quick = card.querySelector('.agent-quick'); return { whole: name.scrollWidth <= name.clientWidth, wide: name.clientWidth >= 12 * 6, sameLine: Math.abs(name.getBoundingClientRect().top - state.getBoundingClientRect().top) < 8, quickRest: getComputedStyle(quick).opacity, touch: matchMedia('(hover: none)').matches }; });
+    // v1's overlay shows its buttons at rest where there is no hover (touch), and only on hover or focus elsewhere.
+    assert.deepEqual({ ...rowShape, touch: undefined }, { whole: true, wide: true, sameLine: true, quickRest: rowShape.touch ? '1' : '0', touch: undefined }, `member row shape: ${JSON.stringify(rowShape)}`);
     // The state ("working 0:12") stays inside its card whatever the width of the panel.
     assert.deepEqual(await agentPage.evaluate(() => {
       const panel = document.querySelector('#agents-panel'), before = panel.style.width, results = [];
@@ -5183,7 +5191,7 @@ async function main() {
     assert.deepEqual(fits(await stateFit()), [true, []], 'a long agent name is cut and the state stays whole inside the card');
     const cardCount = await agentPage.$$eval('#agents-list .agent-card[data-agent-id]', cards => cards.length);
     const reopenRoom = async () => {
-      await agentPage.evaluate(() => { document.querySelector('.room-row.active .room-name')?.click(); });
+      await agentPage.evaluate(() => { document.querySelector('.room-item.active .room-item-name')?.click(); });
       await agentPage.waitForFunction(count => document.querySelectorAll('#agents-list .agent-card[data-agent-id]').length === count, {}, cardCount);
     };
     await agentPage.setViewport({ width: 390, height: 780, isMobile: true, hasTouch: true });
@@ -5304,11 +5312,11 @@ async function main() {
     const rowAxis = await agentPage.evaluate(() => {
       const centre = node => { const box = node.getBoundingClientRect(); return box.top + box.height / 2; };
       const off = [];
-      for (const row of document.querySelectorAll('.room-row')) {
+      for (const row of document.querySelectorAll('.room-item')) {
         if (!row.getClientRects().length) continue;
         for (const glyph of row.querySelectorAll(':is(.add-room, .project-move, .branch, .room-pin, .room-hide) .icon-mask')) if (glyph.getClientRects().length && Math.abs(centre(glyph) - centre(row)) > 1) off.push(`${glyph.parentElement.className}: ${(centre(glyph) - centre(row)).toFixed(1)}`);
       }
-      return { checked: document.querySelectorAll('.room-row .add-room .icon-mask').length, off };
+      return { checked: document.querySelectorAll('.room-item .add-room .icon-mask').length, off };
     });
     assert.ok(rowAxis.checked > 0 && rowAxis.off.length === 0, `room row glyphs are off the row's centre line: ${JSON.stringify(rowAxis)}`);
     const cards = await iconOnlyReport(agentPage, ['.agent-expand', '.agent-act', '.profile-copy', '.agent-card .agent-quick .btn-icon', '.add-room']);
@@ -5369,29 +5377,29 @@ async function main() {
     assert.equal(await agentPage.$eval('#inbox-view', el => !el.hidden), true, 'recovery badge did not open inbox');
     // On desktop the room list stays beside the Inbox (only the chat column is replaced); a click on a room returns to the chat.
     assert.deepEqual(await agentPage.evaluate(() => { const side = document.querySelector('.sidebar'), view = document.querySelector('#inbox-view'), s = side.getBoundingClientRect(), v = view.getBoundingClientRect(); return { sidebarShown: !side.hidden && s.width > 100, chatHidden: document.querySelector('.chat').hidden, sideBySide: s.right <= v.left + 1 }; }), { sidebarShown: true, chatHidden: true, sideBySide: true }, 'the Inbox view replaces only the chat column');
-    await domClick(agentPage, '.room-row.active .room-name');
+    await domClick(agentPage, '.room-item.active .room-item-name');
     await agentPage.waitForFunction(() => document.querySelector('#inbox-view').hidden && !document.querySelector('.chat').hidden);
     await domClick(agentPage, '#inbox-toggle');
     await agentPage.waitForFunction(() => !document.querySelector('#inbox-view').hidden);
     // A health item with an Inbox item behind it opens that item; one without goes to the room.
-    await agentPage.evaluate(async () => { document.querySelector('.room-row.active .room-name').click(); });
+    await agentPage.evaluate(async () => { document.querySelector('.room-item.active .room-item-name').click(); });
     await agentPage.waitForFunction(() => document.querySelector('#inbox-view').hidden);
     await domClick(agentPage, '#health-toggle');
     await agentPage.click('#health-popover .health-item[data-code="recovery_waiting"]');
     await agentPage.waitForFunction(() => !document.querySelector('#inbox-view').hidden && document.querySelector('#inbox-view [data-inbox-id="mock_approval"]'));
     assert.equal(await agentPage.$eval('#health-popover', el => el.hidden), true, 'choosing a health item closes the list');
     // Leave the Inbox, then the held answer opens its own item.
-    await agentPage.evaluate(async () => { document.querySelector('.room-row.active .room-name').click(); });
+    await agentPage.evaluate(async () => { document.querySelector('.room-item.active .room-item-name').click(); });
     await agentPage.waitForFunction(() => document.querySelector('#inbox-view').hidden);
     await domClick(agentPage, '#health-toggle');
     await domClick(agentPage, '#health-popover .health-item[data-code="held_answer"]');
     await agentPage.waitForFunction(() => !document.querySelector('#inbox-view').hidden && document.querySelector('#inbox-view [data-inbox-id="mock_held"]'));
-    await agentPage.evaluate(async () => { document.querySelector('.room-row.active .room-name').click(); });
+    await agentPage.evaluate(async () => { document.querySelector('.room-item.active .room-item-name').click(); });
     await agentPage.waitForFunction(() => document.querySelector('#inbox-view').hidden);
     await agentPage.setViewport({ width: 390, height: 780 });
     await domClick(agentPage, '.mobile-tab[data-tab="rooms"]');
     await agentPage.waitForFunction(() => document.querySelector('#app-view').classList.contains('rooms-open') && !document.querySelector('#app-view').classList.contains('inbox-open') && document.querySelector('#inbox-view').hidden);
-    await agentPage.evaluate(async () => { const room = document.querySelector('.room-row.active .room-name'); if (!room) throw new Error('room missing'); room.click(); });
+    await agentPage.evaluate(async () => { const room = document.querySelector('.room-item.active .room-item-name'); if (!room) throw new Error('room missing'); room.click(); });
     await agentPage.waitForFunction(() => document.querySelector('#app-view')?.classList.contains('chat-open') && !document.querySelector('#app-view').classList.contains('rooms-open') && document.querySelectorAll('.agent-card[data-agent-id]').length === 3 && getComputedStyle(document.querySelector('.chat')).display === 'flex');
     // Phone: Health stays in the bar while it fits; choosing a recovery item opens the Inbox with the drawers closed.
     await domClick(agentPage, '#health-toggle');
@@ -5400,7 +5408,7 @@ async function main() {
     await agentPage.waitForFunction(() => !document.querySelector('#inbox-view').hidden && document.querySelector('#inbox-view [data-inbox-id="mock_approval"]') && !document.querySelector('#agents-panel').classList.contains('mobile-open') && !document.querySelector('#app-view').classList.contains('rooms-open'));
     await domClick(agentPage, '.mobile-tab[data-tab="rooms"]');
     await agentPage.waitForFunction(() => document.querySelector('#app-view').classList.contains('rooms-open') && document.querySelector('#inbox-view').hidden);
-    await agentPage.evaluate(async () => { document.querySelector('.room-row.active .room-name').click(); });
+    await agentPage.evaluate(async () => { document.querySelector('.room-item.active .room-item-name').click(); });
     await agentPage.waitForFunction(() => document.querySelector('#app-view')?.classList.contains('chat-open') && !document.querySelector('#app-view').classList.contains('rooms-open'));
     await agentPage.click('.mobile-tab[data-tab="agents"]');
     assert.equal(await agentPage.$eval('#agents-panel', el => getComputedStyle(el).display), 'flex', 'agents drawer did not open on phone');
@@ -5424,7 +5432,7 @@ async function main() {
       await tab('rooms');
       assert.deepEqual(await where(), { active: ['rooms'], current: 'rooms', rooms: true, agents: false });
       // The open rooms drawer ends above the bar, and its last row can be scrolled fully into view above it.
-      const drawer = await agentPage.evaluate(async () => { const side = document.querySelector('.sidebar'); const last = [...side.querySelectorAll('.room-row, .dm-row, [data-room-id]')].pop(); last?.scrollIntoView({ block: 'end' }); await new Promise(r => setTimeout(r, 50)); const tabs = document.querySelector('#mobile-tabs').getBoundingClientRect(), box = side.getBoundingClientRect(), row = last?.getBoundingClientRect(); return { aboveBar: box.bottom <= tabs.top + 0.5, lastVisible: !row || row.bottom <= tabs.top + 0.5 }; });
+      const drawer = await agentPage.evaluate(async () => { const side = document.querySelector('.sidebar'); const last = [...side.querySelectorAll('.room-item, .dm-row, [data-room-id]')].pop(); last?.scrollIntoView({ block: 'end' }); await new Promise(r => setTimeout(r, 50)); const tabs = document.querySelector('#mobile-tabs').getBoundingClientRect(), box = side.getBoundingClientRect(), row = last?.getBoundingClientRect(); return { aboveBar: box.bottom <= tabs.top + 0.5, lastVisible: !row || row.bottom <= tabs.top + 0.5 }; });
       assert.deepEqual(drawer, { aboveBar: true, lastVisible: true }, 'the rooms drawer is not covered by the bottom bar');
       await tab('chat');
       assert.deepEqual(await where(), { active: ['chat'], current: 'chat', rooms: false, agents: false });
@@ -5513,8 +5521,8 @@ async function main() {
     // The pages may be sitting in the Inbox view; its toggle is the way back to the chat now that the top-bar Rooms button is gone on desktop.
     for (const page of [first, second]) if (await page.$eval('#inbox-view', el => !el.hidden)) await domClick(page, '#inbox-toggle');
     await first.waitForFunction(() => document.querySelector('#inbox-view').hidden && !document.querySelector('.chat').hidden); await second.waitForFunction(() => document.querySelector('#inbox-view').hidden && !document.querySelector('.chat').hidden);
-    await first.evaluate(async () => { const room = [...document.querySelectorAll('.room-name')].find(el => el.textContent.includes('Nested task')); room.click(); });
-    await second.evaluate(async () => { const room = [...document.querySelectorAll('.room-name')].find(el => el.textContent.includes('Nested task')); room.click(); });
+    await first.evaluate(async () => { const room = [...document.querySelectorAll('.room-item-name')].find(el => el.textContent.includes('Nested task')); room.click(); });
+    await second.evaluate(async () => { const room = [...document.querySelectorAll('.room-item-name')].find(el => el.textContent.includes('Nested task')); room.click(); });
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     const liveCatalog = await first.evaluate(async () => (await (await fetch('/api/spawn-catalog')).json()).tools);
@@ -5582,7 +5590,7 @@ async function main() {
     // The refused submit left the box ticked. In a room that is not a task room the box is hidden and cannot be unticked, so nothing about a
     // worktree may be sent from there, and the dialog must open with the box clear.
     const homeRoomForSpawn = await first.evaluate(async id => (await (await fetch(`/api/projects/${id}/rooms`)).json()).find(room => room.kind === 'home').id, actualProjectID);
-    await domClick(first, `[data-room-id="${homeRoomForSpawn}"] .room-name`);
+    await domClick(first, `[data-room-id="${homeRoomForSpawn}"] .room-item-name`);
     await first.waitForFunction(id => location.hash.slice(1) === id, {}, homeRoomForSpawn);
     await domClick(first, '#spawn-open');
     await first.waitForFunction(() => document.querySelector('#spawn-form [name=model]')?.value === 'test' && !document.querySelector('#spawn-form button[type=submit]').disabled);
@@ -5620,7 +5628,7 @@ async function main() {
       await first.$eval('#room-rename-title', el => { el.value = 'Renamed project'; el.dispatchEvent(new Event('input')); });
       await domClick(first, '#room-rename-save');
       await first.waitForFunction(() => document.querySelector('#room-rename-status').textContent === 'Saved.');
-      await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] .room-name`)?.textContent.includes('Renamed project') && document.querySelector('#room-title').textContent === 'Renamed project', {}, homeRoomForSpawn);
+      await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] .room-item-name`)?.textContent.includes('Renamed project') && document.querySelector('#room-title').textContent === 'Renamed project', {}, homeRoomForSpawn);
       assert.equal(await first.evaluate(async id => (await (await fetch('/api/projects')).json()).find(project => project.id === id).name, actualProjectID), 'Renamed project', 'renaming the home room renames the project');
       await first.$eval('#room-rename-title', (el, value) => { el.value = value; el.dispatchEvent(new Event('input')); }, homeTitle);
       await domClick(first, '#room-rename-save');
@@ -5636,7 +5644,7 @@ async function main() {
     assert.deepEqual(await first.evaluate(() => ({ worker: [...document.querySelectorAll('#spawn-form [name=role] option')].some(option => option.value === 'worker'), hint: document.querySelector('#spawn-home-hint').hidden })), { worker: true, hint: true }, 'with the setting off the home room offers every role');
     await domClick(first, '#spawn-cancel');
     await first.evaluate(async id => { const { csrf_token } = await (await fetch('/api/me')).json(); await fetch(`/api/projects/${id}/settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ home_lead_only: true }) }); }, actualProjectID);
-    await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+    await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
     await first.waitForFunction(id => location.hash.slice(1) === id, {}, roomID);
     // A task room is renamed the same way: the title field, the header and the room list; a refused title is answered under the field.
     {
@@ -5646,13 +5654,13 @@ async function main() {
       await first.$eval('#room-rename-title', el => { el.value = 'Renamed task'; el.dispatchEvent(new Event('input')); });
       await domClick(first, '#room-rename-save');
       await first.waitForFunction(() => document.querySelector('#room-rename-status').textContent === 'Saved.');
-      await first.waitForFunction((id, title) => document.querySelector(`[data-room-id="${id}"] .room-name`)?.textContent.includes(title) && document.querySelector('#room-title').textContent === title, {}, roomID, 'Renamed task');
+      await first.waitForFunction((id, title) => document.querySelector(`[data-room-id="${id}"] .room-item-name`)?.textContent.includes(title) && document.querySelector('#room-title').textContent === title, {}, roomID, 'Renamed task');
       await first.$eval('#room-rename-title', el => { el.value = '   '; el.dispatchEvent(new Event('input')); });
       await domClick(first, '#room-rename-save');
       await first.waitForFunction(() => document.querySelector('#room-rename-status').textContent === 'A room needs a title.');
       await first.$eval('#room-rename-title', (el, value) => { el.value = value; el.dispatchEvent(new Event('input')); }, before);
       await domClick(first, '#room-rename-save');
-      await first.waitForFunction((id, title) => document.querySelector(`[data-room-id="${id}"] .room-name`)?.textContent.includes(title) && document.querySelector('#room-title').textContent === title, {}, roomID, before);
+      await first.waitForFunction((id, title) => document.querySelector(`[data-room-id="${id}"] .room-item-name`)?.textContent.includes(title) && document.querySelector('#room-title').textContent === title, {}, roomID, before);
       await domClick(first, '#room-info-close');
     }
     await first.evaluate(() => {
@@ -5818,6 +5826,8 @@ async function main() {
       await first.waitForFunction(() => !document.querySelector('#room-info-dialog').open);
     }
     await first.waitForSelector('.chat-msg-system .chat-msg-system-row time');
+    // A notice is shown as plain text and keeps its line breaks: v1's Markdown rules (which collapse them) belong to a body that was drawn as Markdown.
+    assert.deepEqual(await first.$eval('.chat-msg-system .chat-msg-body', el => [getComputedStyle(el).whiteSpace, el.classList.contains('md-rendered')]), ['pre-wrap', false], 'a freshly mounted system notice must not take the Markdown rules');
     assert.equal(await first.$eval('.chat-msg-system .chat-msg-system-row', el => !!el.querySelector('.chat-msg-body') && !!el.querySelector('time')), true);
     assert.equal(await first.$$eval('.chat-msg-system .message-actions', els => els.length), 0, 'system notice exposes message actions');
     // t2-system-events: the bell feed and the message debug inspector.
@@ -5980,6 +5990,11 @@ async function main() {
       const header = row.querySelector('.chat-msg-header'), body = row.querySelector('.chat-msg-body');
       return [css(row).paddingTop, css(row).paddingBottom, css(row).borderBottomWidth, css(row).flexDirection, css(header).gap, css(header).alignItems, css(body).marginTop, css(body).marginBottom];
     }), ['0px', '0px', '0px', 'column', '8px', 'center', '0px', '0px'], 'a message row is drawn by v1\'s rules, with none of v2\'s old padding, divider or margins');
+    // The time and the sender's name are v1's too: a 9.1px time (v1's .chat-msg-time) and a 700 name, not the browser's 14px and 900.
+    assert.deepEqual(await first.evaluate(() => {
+      const row = document.querySelector('#messages > article.chat-msg:not(.chat-msg-system)'), css = node => getComputedStyle(node);
+      return [css(row.querySelector('.chat-msg-header time')).fontSize, css(row.querySelector('.chat-msg-from-name')).fontWeight];
+    }), ['9.1px', '700'], 'the message time or the sender name is not drawn by v1\'s rules');
     // Rules of v2's that v1 has a heavier rule against must stay v2's: the phone-only "Toggle rooms" arrow is hidden on a desktop, and a primary button
     // keeps the theme's own text colour (v1's is white on every green, which is 1.4:1 on the green-dark theme) with a 4.5:1 contrast in every theme.
     assert.equal(await first.$eval('#back', el => getComputedStyle(el).display), 'none', 'the phone back arrow shows beside a desktop room title');
@@ -6289,12 +6304,12 @@ async function main() {
         .reduce((sum, n, i) => sum + n * [.2126, .7152, .0722][i], 0);
       const contrast = (foreground, background) => { const a = luminance(foreground), b = luminance(background); return (Math.max(a, b) + .05) / (Math.min(a, b) + .05); };
       return {
-        roomBorder: css('.room-row.active .room-name').borderTopWidth,
-        roomNameBackground: css('.room-row.active .room-name').backgroundColor,
-        roomNameColor: css('.room-row.active .room-name').color,
-        roomNameSize: css('.room-row.active .room-name').fontSize,
-        roomNamePadding: css('.room-row.active .room-name').padding,
-        roomBackground: css('.room-row.active').backgroundColor,
+        roomBorder: css('.room-item.active .room-item-name').borderTopWidth,
+        roomNameBackground: css('.room-item.active .room-item-name').backgroundColor,
+        roomNameColor: css('.room-item.active .room-item-name').color,
+        roomNameSize: css('.room-item.active .room-item-name').fontSize,
+        roomNamePadding: css('.room-item.active .room-item-name').padding,
+        roomBackground: css('.room-item.active').backgroundColor,
         selfBorder: css('.chat-msg.self .chat-msg-bubble').borderTopColor,
         stateBorder: css(`[data-agent-id="${id}"] .agent-state`).borderTopWidth,
         stateRadius: css(`[data-agent-id="${id}"] .agent-state`).borderRadius,
@@ -6344,7 +6359,7 @@ async function main() {
     assert.equal(darkLegacyBackground.background, 'rgb(28, 33, 40)', 'legacy card uses the Dark tertiary surface');
     assert.notEqual(darkLegacyBackground.background, 'rgb(247, 249, 247)', 'legacy card must not keep the light surface in Dark');
     await checkHeaderGeometry('Dark');
-    assert.equal(await first.$eval('.room-row.active', el => getComputedStyle(el).backgroundColor), 'rgba(88, 166, 255, 0.1)');
+    assert.equal(await first.$eval('.room-item.active', el => getComputedStyle(el).backgroundColor), 'rgba(88, 166, 255, 0.1)');
     if (await first.$eval(`[data-agent-id="${realAgentID}"]`, el => !el.classList.contains('expanded'))) await domClick(first, `[data-agent-id="${realAgentID}"] .agent-name`);
     await domClick(first, `[data-agent-id="${realAgentID}"] .agent-act-stop`);
     await first.waitForFunction(id => document.querySelector(`[data-agent-id="${id}"] .agent-state-label`)?.textContent === 'stopped', {}, realAgentID);
@@ -6410,7 +6425,7 @@ async function main() {
       if (chatSeed.status !== 0) throw new Error(`agent chat seed failed: ${chatSeed.stderr}`);
       await first.waitForFunction(() => document.querySelector('.agent-chat-offers .agent-chat-join'), {}, {});
       assert.equal(await first.$eval('.agent-chat-offers summary', el => el.textContent), 'Agent chats you can join (1)');
-      const joinedChats = () => first.$$eval('.direct-rooms .room-group .room-name', els => els.filter(el => el.textContent.startsWith('⇄')).length);
+      const joinedChats = () => first.$$eval('.direct-rooms .room-group .room-item-icon', els => els.filter(el => el.textContent === '⇄').length);
       assert.equal(await joinedChats(), 0, 'a chat that was not joined is already listed');
       await domClick(first, '.agent-chat-offers summary');
       await domClick(first, '.agent-chat-offers .agent-chat-join');
@@ -6427,7 +6442,7 @@ async function main() {
       assert.equal(await first.$eval('.room-memory-setting', el => el.hidden), true, 'what is said in a chat between agents never feeds memory, so there is no memory setting');
       assert.equal(await first.$eval('#room-info-error', el => el.textContent), '', 'the settings of a chat between agents showed an error');
       await domClick(first, '#room-leave');
-      await first.waitForFunction(() => ![...document.querySelectorAll('.direct-rooms .room-group .room-name')].some(el => el.textContent.startsWith('⇄')) && document.querySelector('.agent-chat-offers'), {}, {});
+      await first.waitForFunction(() => ![...document.querySelectorAll('.direct-rooms .room-group .room-item-icon')].some(el => el.textContent === '⇄') && document.querySelector('.agent-chat-offers'), {}, {});
       assert.equal(await joinedChats(), 0, 'a chat that was left is still listed');
       // A chat that goes away while it is being opened: its list and its messages both fail. Only that chat leaves, never the reserved project it
       // is filed under or the real project beside it, and the person lands on a home room.
@@ -6435,7 +6450,7 @@ async function main() {
       await domClick(first, '.agent-chat-offers .agent-chat-join');
       await first.waitForFunction(() => document.querySelector('#room-icon')?.textContent === '⇄' && !document.querySelector('.agent-chat-offers'), {}, {});
       const chatID = await first.evaluate(() => location.hash.slice(1));
-      await first.waitForSelector(`[data-room-id="${chatID}"] .room-name`); // listed before the faults go in: they fail the reads that would list it
+      await first.waitForSelector(`[data-room-id="${chatID}"] .room-item-name`); // listed before the faults go in: they fail the reads that would list it
       await first.evaluate(id => {
         const real = window.fetch; window.__fetchBeforeFault = real;
         const fail = status => Promise.resolve(new Response(JSON.stringify({ error: 'fault', message: 'faked by the smoke' }), { status, headers: { 'Content-Type': 'application/json' } }));
@@ -6447,21 +6462,21 @@ async function main() {
         };
       }, chatID);
       try {
-        await domClick(first, `[data-room-id="${chatID}"] .room-name`);
+        await domClick(first, `[data-room-id="${chatID}"] .room-item-name`);
         await first.waitForFunction(() => !document.querySelector('#app-toast').hidden && document.querySelector('#app-toast').textContent.endsWith(' no longer exists.'), { timeout: 10000 });
         await first.waitForFunction(id => location.hash.slice(1) !== id && !document.querySelector('#app-view').classList.contains('no-room'), { timeout: 10000 }, chatID);
-        assert.ok(await first.$(`[data-room-id="${roomID}"] .room-name`), 'the project beside the vanished chat is still listed');
+        assert.ok(await first.$(`[data-room-id="${roomID}"] .room-item-name`), 'the project beside the vanished chat is still listed');
       } finally { await first.evaluate(() => { window.fetch = window.__fetchBeforeFault; }); }
       // The server still has the chat and this person in it: read the lists again and leave it, so the rest of the smoke starts from the same place.
       await first.reload(); await appReady(first);
-      await domClick(first, `[data-room-id="${chatID}"] .room-name`);
+      await domClick(first, `[data-room-id="${chatID}"] .room-item-name`);
       await first.waitForFunction(() => document.querySelector('#room-icon')?.textContent === '⇄', {}, {});
       await domClick(first, '#room-info');
       await domClick(first, '#room-leave');
-      await first.waitForFunction(() => ![...document.querySelectorAll('.direct-rooms .room-group .room-name')].some(el => el.textContent.startsWith('⇄')) && document.querySelector('.agent-chat-offers'), {}, {});
+      await first.waitForFunction(() => ![...document.querySelectorAll('.direct-rooms .room-group .room-item-icon')].some(el => el.textContent === '⇄') && document.querySelector('.agent-chat-offers'), {}, {});
       assert.equal(await joinedChats(), 0, 'the chat is left again after the fault');
-      await domClick(first, `[data-room-id="${roomID}"] .room-name`);
-      await first.waitForFunction(id => document.querySelector('.room-row.active')?.parentElement.dataset.roomId === id, {}, roomID);
+      await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
+      await first.waitForFunction(id => document.querySelector('.room-item.active')?.parentElement.dataset.roomId === id, {}, roomID);
       // The room's agents load after the room is shown; until they have, senders read as their bare ids.
       await first.waitForFunction((id, name) => document.querySelector(`[data-agent-id="${id}"]`) && document.querySelector('article.chat-msg:last-of-type .chat-msg-from-name')?.textContent === name, {}, realAgentID, realAgentName);
     }
@@ -6471,20 +6486,20 @@ async function main() {
     assert.equal(await first.$eval('.chat-msg.self .msg-sender-icon', el => el.getAttribute('src')), '/icons/human.svg');
     if (await first.$eval(`[data-agent-id="${realAgentID}"]`, el => !el.classList.contains('expanded'))) await domClick(first, `[data-agent-id="${realAgentID}"] .agent-name`);
     await domClick(first, `[data-agent-id="${realAgentID}"] .agent-message`);
-    await first.waitForFunction(name => document.querySelector('#room-title')?.textContent === name && !!document.querySelector('.direct-rooms .room-row.active'), {}, realAgentSlug);
+    await first.waitForFunction(name => document.querySelector('#room-title')?.textContent === name && !!document.querySelector('.direct-rooms .room-item.active'), {}, realAgentSlug);
     assert.equal(await first.$eval('#room-icon', el => el.textContent), '@', 'a private room shows its kind glyph');
     await first.waitForFunction(() => document.querySelector('#spawn-open')?.disabled);
     assert.equal(await first.$eval('#spawn-open', el => el.disabled), true, 'private chat allows spawning another agent');
     await domClick(first, '#room-info');
     assert.equal(await first.$eval('#room-scope-control', el => el.hidden), true, 'private chat shows controls for agents homed elsewhere');
     await domClick(first, '#room-info-close');
-    await second.waitForFunction(() => !!document.querySelector('.direct-rooms .room-row'));
+    await second.waitForFunction(() => !!document.querySelector('.direct-rooms .room-item'));
     await first.locator('#composer textarea').fill('Private hello');
     await first.click('#composer button[type=submit]');
     await first.waitForFunction(() => [...document.querySelectorAll('.chat-msg-body')].some(el => el.textContent.includes('I heard: Private hello')));
     // The read cursor is server-side, so the sender reading its own open chat clears the badge on the other session.
-    await second.waitForFunction(() => { const badge = document.querySelector('.direct-rooms .unread-count'); return !badge || badge.hidden; });
-    await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+    await second.waitForFunction(() => { const badge = document.querySelector('.direct-rooms .room-item-unread'); return !badge || badge.hidden; });
+    await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     await openProjectSettings(first, actualProjectID);
     await first.waitForFunction(() => !document.querySelector('#project-auto-resume').disabled);
@@ -6784,7 +6799,7 @@ async function main() {
       throw error;
     });
     const uploadRoomA = await first.evaluate(() => decodeURIComponent(location.hash.slice(1)));
-    const uploadRoomB = await first.evaluate(roomID => [...document.querySelectorAll('.room-name')].map(node => node.closest('[data-room-id]')?.dataset.roomId).find(id => id && id !== roomID), uploadRoomA);
+    const uploadRoomB = await first.evaluate(roomID => [...document.querySelectorAll('.room-item-name')].map(node => node.closest('[data-room-id]')?.dataset.roomId).find(id => id && id !== roomID), uploadRoomA);
     assert.ok(uploadRoomB, 'room-switch upload probe needs a second room');
     await first.evaluate(roomID => {
       const previousFetch = window.fetch;
@@ -6802,7 +6817,7 @@ async function main() {
     await (await first.$('#attachment-input')).uploadFile(imagePath);
     await first.waitForFunction(() => Boolean(window.__releaseRoomSwitchUpload) && document.querySelector('#pending-attachments')?.textContent.includes('Uploading 1'));
     const uploadRoomATitle = await first.$eval('#room-title', node => node.textContent);
-    await domClick(first, `[data-room-id="${uploadRoomB}"] .room-name`);
+    await domClick(first, `[data-room-id="${uploadRoomB}"] .room-item-name`);
     await first.waitForFunction(({ id, title }) => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent !== title, {}, { id: uploadRoomB, title: uploadRoomATitle });
     await first.evaluate(() => window.__releaseRoomSwitchUpload());
     await first.waitForFunction(() => window.__roomSwitchUploadDeleted && !document.querySelector('#pending-attachments')?.textContent.includes('Uploading'));
@@ -6810,7 +6825,7 @@ async function main() {
     await first.locator('#composer textarea').fill('Room switch upload check');
     await first.keyboard.press('Enter');
     await first.waitForFunction(() => [...document.querySelectorAll('#messages .chat-msg-body')].some(node => node.textContent.includes('Room switch upload check')));
-    await domClick(first, `[data-room-id="${uploadRoomA}"] .room-name`);
+    await domClick(first, `[data-room-id="${uploadRoomA}"] .room-item-name`);
     await first.waitForFunction(({ id, title }) => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent === title, {}, { id: uploadRoomA, title: uploadRoomATitle });
     // SVG attachments: a plain SVG is an image shown through an <img> only (never as markup in the page); one with script in it stays a
     // download link, and the script never runs. An SVG fetched any way but by an <img> is a download.
@@ -6821,7 +6836,7 @@ async function main() {
       fs.writeFileSync(active, '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>window.__svgRan = true</script><rect width="10" height="10"/></svg>');
       // The room-switch probe above leaves a fetch stub holding every upload to the first room, so this runs in the second one.
       const titleA = await first.$eval('#room-title', node => node.textContent);
-      await domClick(first, `[data-room-id="${uploadRoomB}"] .room-name`);
+      await domClick(first, `[data-room-id="${uploadRoomB}"] .room-item-name`);
       await first.waitForFunction(({ id, title }) => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent !== title, {}, { id: uploadRoomB, title: titleA });
       await first.evaluate(() => { window.__svgRan = false; });
       await (await first.$('#attachment-input')).uploadFile(plain, active);
@@ -6847,7 +6862,7 @@ async function main() {
       assert.equal(shown.ran, false, 'the SVG script ran');
       assert.match(shown.fetchedDisposition, /^attachment/, 'an SVG fetched by anything but an <img> is a download');
       assert.equal(shown.type, 'image/svg+xml');
-      await domClick(first, `[data-room-id="${uploadRoomA}"] .room-name`);
+      await domClick(first, `[data-room-id="${uploadRoomA}"] .room-item-name`);
       await first.waitForFunction(({ id, title }) => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent === title, {}, { id: uploadRoomA, title: titleA });
     }
     // The composer's notices (a file that is too big, an upload or send that failed) never stay: they clear on dismiss, on a timer, on
@@ -6893,10 +6908,10 @@ async function main() {
       // A room switch clears it.
       await pick([['huge.bin', BIG]]);
       await first.waitForFunction(() => !document.querySelector('#composer-notice').hidden);
-      await first.click(`[data-room-id="${uploadRoomB}"] .room-name`);
+      await first.click(`[data-room-id="${uploadRoomB}"] .room-item-name`);
       await first.waitForFunction(({ id, title }) => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent !== title, {}, { id: uploadRoomB, title: uploadRoomATitle });
       assert.equal((await notice()).hidden, true, 'a room switch clears the notice');
-      await domClick(first, `[data-room-id="${uploadRoomA}"] .room-name`);
+      await domClick(first, `[data-room-id="${uploadRoomA}"] .room-item-name`);
       await first.waitForFunction(({ id, title }) => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent === title, {}, { id: uploadRoomA, title: uploadRoomATitle });
       // A failed upload says which file, and goes away like the rest.
       await first.evaluate(() => { window.__realFetch = window.fetch; window.fetch = (input, options) => (String(input).endsWith('/attachments') && options?.method === 'POST' ? Promise.resolve(new Response(JSON.stringify({ error: 'bad_type', message: 'This file type is not allowed' }), { status: 400, headers: { 'Content-Type': 'application/json' } })) : window.__realFetch(input, options)); });
@@ -7052,7 +7067,7 @@ async function main() {
     await domClick(first, '#spawn-save-folder');
     await first.waitForFunction(() => document.querySelector('#spawn-folder-status')?.textContent === 'Folder saved.');
     await domClick(first, '#spawn-cancel');
-    await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+    await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
     await first.waitForFunction(id => {
       const button = document.querySelector(`[data-agent-id="${id}"] .agent-switch`);
       if (!button) return false;
@@ -7085,16 +7100,16 @@ async function main() {
     await domClick(roomRacePage, `[data-agent-id="${realAgentID}"] .agent-name`);
     await domClick(roomRacePage, `[data-agent-id="${realAgentID}"] .agent-switch`);
     await roomRacePage.waitForFunction(() => document.querySelector('#switch-dialog').open);
-    await roomRacePage.evaluate(id => document.querySelector(`[data-room-id="${id}"] .room-name`).click(), uploadRoomB);
+    await roomRacePage.evaluate(id => document.querySelector(`[data-room-id="${id}"] .room-item-name`).click(), uploadRoomB);
     await roomRacePage.waitForFunction(() => typeof window.__releaseHeldAgentList === 'function');
     assert.equal(await roomRacePage.$eval('#switch-dialog', dialog => dialog.open), false, 'room change left old Switch dialog open');
     assert.equal(await roomRacePage.$eval('#agents-list', list => list.querySelectorAll('.agent-card[data-agent-id]').length), 0, 'room change kept old agent controls while the new list was held');
     await roomRacePage.evaluate(() => window.__releaseHeldAgentList());
     await roomRacePage.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id && !document.querySelector('#agents-list .agent-card'), {}, uploadRoomB);
     await roomRaceContext.close();
-    await domClick(first, `[data-room-id="${uploadRoomB}"] .room-name`);
+    await domClick(first, `[data-room-id="${uploadRoomB}"] .room-item-name`);
     await waitDump(first, 'room B after the held agent list', id => decodeURIComponent(location.hash.slice(1)) === id && !document.querySelector('#agents-list .agent-card'), id => ({
-      hash: decodeURIComponent(location.hash), wanted: id, title: document.querySelector('#room-title')?.textContent, active: [...document.querySelectorAll('.room-row.active')].map(row => row.textContent.trim()),
+      hash: decodeURIComponent(location.hash), wanted: id, title: document.querySelector('#room-title')?.textContent, active: [...document.querySelectorAll('.room-item.active')].map(row => row.textContent.trim()),
       agentCards: document.querySelectorAll('#agents-list .agent-card').length, agentsList: document.querySelector('#agents-list')?.textContent.slice(0, 200), connection: document.querySelector('#connection')?.getAttribute('aria-label'),
     }), uploadRoomB);
     await first.evaluate(room => {
@@ -7108,16 +7123,16 @@ async function main() {
         return originalFetch(input, options);
       };
     }, roomID);
-    await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+    await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
     await first.waitForFunction(() => typeof window.__releaseHeldRoomMessages === 'function');
-    await domClick(first, `[data-room-id="${uploadRoomB}"] .room-name`);
+    await domClick(first, `[data-room-id="${uploadRoomB}"] .room-item-name`);
     await first.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id && !document.querySelector('#agents-list .agent-card'), {}, uploadRoomB);
     const selectedTitle = await first.$eval('#room-title', node => node.textContent);
     await first.evaluate(() => window.__releaseHeldRoomMessages());
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(await first.$eval('#room-title', node => node.textContent), selectedTitle, 'late room load replaced the selected chat');
     assert.equal(await first.$eval('#agents-list', list => list.querySelectorAll('.agent-card[data-agent-id]').length), 0, 'late room load restored old agent controls');
-    await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+    await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
     await first.waitForSelector(`[data-agent-id="${realAgentID}"]`);
     await openSettings(first); await domClick(first, '#settings-machines-tab');
     await first.waitForSelector(`[data-machine-id="${paired.machine_id}"]`);
@@ -7150,8 +7165,8 @@ async function main() {
       for (let i = 0; i < 5; i++) await send(`filler ${i} ` + 'more text '.repeat(200));
       return found;
     }, archiveRoomID);
-    await first.waitForSelector(`[data-room-id="${archiveRoomID}"] .room-name`);
-    await domClick(first, `[data-room-id="${archiveRoomID}"] .room-name`);
+    await first.waitForSelector(`[data-room-id="${archiveRoomID}"] .room-item-name`);
+    await domClick(first, `[data-room-id="${archiveRoomID}"] .room-item-name`);
     await first.waitForFunction(id => location.hash.slice(1) === id && document.querySelector('#room-title')?.textContent === 'Archive smoke', {}, archiveRoomID);
     // Archive lives in Room settings (the header has no Archive button); a room that is not archived cannot be removed.
     assert.equal(await first.$('#room-archive'), null, 'the header has no Archive button');
@@ -7186,10 +7201,10 @@ async function main() {
     await first.locator('#composer textarea').fill('/archive');
     await first.waitForFunction(() => document.querySelector('#composer .quick-commands:not([hidden]) [role="option"] strong')?.textContent === '/archive');
     await first.keyboard.press('Enter');
-    await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-row`)?.classList.contains('archived') && document.querySelector('#composer textarea').disabled, {}, archiveRoomID);
+    await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-item`)?.classList.contains('archived') && document.querySelector('#composer textarea').disabled, {}, archiveRoomID);
     assert.equal(archiveConfirmations.some(text => text.includes('Archive room |')), true, 'slash archive kept the confirmation');
     await answerDialogs(first, text => (text.includes('New task room under') ? { accept: true, values: { title: 'Nested task' } } : text.includes('Go to message') ? { accept: true, values: { value: jumpSeq } } : text.includes('Base branch or ref') ? { accept: true, values: { value: '' } } : { accept: true, values: { title: 'Nested task', value: 'Nested task' } }));
-    assert.equal(await first.$eval(`[data-room-id="${archiveChildID}"] > .room-row`, el => el.classList.contains('archived')), true, 'cascade did not archive the child room');
+    assert.equal(await first.$eval(`[data-room-id="${archiveChildID}"] > .room-item`, el => el.classList.contains('archived')), true, 'cascade did not archive the child room');
     await first.waitForFunction(() => document.querySelector('#room-members')?.textContent.includes('Archived'));
     assert.deepEqual(await first.$eval('#room-members', el => { const status = el.querySelector('.room-header-status'), css = getComputedStyle(status); return [status.textContent, css.fontSize, css.margin, Math.round(el.getBoundingClientRect().height), /^\d+ members? · Archived$/.test(el.title)]; }), ['Archived', '9.1px', '0px', 22, true], 'the archived member chip stays compact');
     // The app closes the settings dialog once the archive has been applied (after the room list refresh), which can come after the
@@ -7243,22 +7258,22 @@ async function main() {
       return rect.top >= box.top && rect.bottom <= box.bottom;
     }, {}, archiveMessageID);
     await first.evaluate(() => { const search = document.querySelector('.archive-search'); search.value = ''; search.dispatchEvent(new Event('input', { bubbles: true })); });
-    await first.waitForSelector(`[data-room-id="${archiveRoomID}"] > .room-row`);
+    await first.waitForSelector(`[data-room-id="${archiveRoomID}"] > .room-item`);
     await first.evaluate(id => {
       window.__reopenNode = document.querySelector(`[data-room-id="${id}"] .reopen-room`);
-      window.__archivedRow = document.querySelector(`[data-room-id="${id}"] > .room-row`);
+      window.__archivedRow = document.querySelector(`[data-room-id="${id}"] > .room-item`);
       window.__archivedFold = window.__archivedRow.closest('.archived-rooms');
       window.__projectNode = window.__archivedFold.parentElement;
     }, archiveRoomID);
-    await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+    await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
     await first.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task');
     assert.equal(await first.evaluate(id => window.__reopenNode?.isConnected
       && window.__reopenNode === document.querySelector(`[data-room-id="${id}"] .reopen-room`)
-      && window.__archivedRow === document.querySelector(`[data-room-id="${id}"] > .room-row`)
+      && window.__archivedRow === document.querySelector(`[data-room-id="${id}"] > .room-item`)
       && window.__archivedFold === window.__archivedRow.closest('.archived-rooms')
       && window.__projectNode === window.__archivedFold.parentElement, archiveRoomID), true, 'Archived row or Reopen button was replaced during a sidebar refresh');
     await domClick(first, `[data-room-id="${archiveRoomID}"] .reopen-room`);
-    await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] > .room-row`)?.classList.contains('archived') && !document.querySelector('#composer textarea').disabled, {}, archiveRoomID);
+    await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] > .room-item`)?.classList.contains('archived') && !document.querySelector('#composer textarea').disabled, {}, archiveRoomID);
     assert.equal(await first.$eval(`[data-room-id="${archiveChildID}"]`, el => el.closest('.archived-rooms')?.open), true, 'Archived section should stay expanded after a room refresh');
     // Removing an archived room: its own settings, destructive confirm, then it is gone for everyone and the view moves to the home room.
     {
@@ -7269,12 +7284,12 @@ async function main() {
         if (!response.ok) throw new Error(await response.text());
         return (await response.json()).id;
       }, actualProjectID);
-      await first.waitForSelector(`[data-room-id="${removeID}"] .room-name`);
-      await domClick(first, `[data-room-id="${removeID}"] .room-name`);
+      await first.waitForSelector(`[data-room-id="${removeID}"] .room-item-name`);
+      await domClick(first, `[data-room-id="${removeID}"] .room-item-name`);
       await first.waitForFunction(id => location.hash.slice(1) === id, {}, removeID);
       await domClick(first, '#room-info'); await first.waitForSelector('#room-info-dialog[open]');
       await domClick(first, '#room-lifecycle');
-      await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-row`)?.classList.contains('archived') && document.querySelector('#room-members')?.textContent.includes('Archived'), {}, removeID);
+      await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] > .room-item`)?.classList.contains('archived') && document.querySelector('#room-members')?.textContent.includes('Archived'), {}, removeID);
       // The dialog closes itself after the archive is applied, which can be after the row looks archived (see above).
       await first.waitForFunction(() => !document.querySelector('#room-info-dialog').open);
       await domClick(first, '#room-info'); await first.waitForSelector('#room-info-dialog[open]');
@@ -7283,7 +7298,7 @@ async function main() {
       await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"]`) && !document.querySelector('#room-info-dialog').open, {}, removeID);
       assert.equal(await first.evaluate(id => fetch(`/api/rooms/${id}`).then(response => response.status), removeID), 404, 'the removed room is gone from the server');
       await first.waitForFunction(id => location.hash.slice(1) !== id && document.querySelector('#room-title').textContent !== 'Remove smoke', {}, removeID);
-      await domClick(first, `[data-room-id="${returnTo}"] .room-name`);
+      await domClick(first, `[data-room-id="${returnTo}"] .room-item-name`);
       await first.waitForFunction(id => location.hash.slice(1) === id, {}, returnTo);
     }
     // A room removed on the server while this page still lists it (an event the page missed): opening it says so and goes to the project's home
@@ -7296,7 +7311,7 @@ async function main() {
         return { status: response.status, body: response.status === 204 ? null : await response.json().catch(() => null) };
       }, method, path, body);
       const goneID = (await api('POST', `/api/projects/${actualProjectID}/rooms`, { title: 'Gone smoke' })).body.id;
-      const goneRow = `[data-room-id="${goneID}"] .room-name`;
+      const goneRow = `[data-room-id="${goneID}"] .room-item-name`;
       await first.waitForSelector(goneRow);
       const home = (await api('GET', `/api/projects/${actualProjectID}/rooms`)).body.find(room => room.kind === 'home').id;
       const stale = await first.evaluate(async id => (await fetch(`/api/projects/${id}/rooms`)).text(), actualProjectID);
@@ -7321,7 +7336,7 @@ async function main() {
         await first.waitForFunction(id => location.hash.slice(1) === id && document.querySelector('#room-title').textContent !== 'Gone smoke', {}, home);
       } finally { serveStale = false; first.off('request', holdList); await first.setRequestInterception(false); }
       // The list is read again (the room being opened reads its project's rooms): the removed room leaves the list and the page.
-      await domClick(first, `[data-room-id="${returnTo}"] .room-name`);
+      await domClick(first, `[data-room-id="${returnTo}"] .room-item-name`);
       await first.waitForFunction(id => location.hash.slice(1) === id, {}, returnTo);
       await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"]`), {}, goneID);
     }
@@ -7369,7 +7384,7 @@ async function main() {
           if (read && url.pathname === '/api/projects' && faults.noProjects) { request.respond({ status: 200, contentType: 'application/json', body: '[]' }); return; }
           request.continue();
         });
-        const row = `[data-room-id="${scratchID}"] .room-name`;
+        const row = `[data-room-id="${scratchID}"] .room-item-name`;
         await page.waitForSelector(row);
         const toastIs = text => page.waitForFunction(text => !document.querySelector('#app-toast').hidden && document.querySelector('#app-toast').textContent === text, { timeout: 10000 }, text);
         // 403 on a room's messages (access lost in another tab): the notice, then the project's home room.
@@ -7412,8 +7427,8 @@ async function main() {
         if (!response.ok) throw new Error(await response.text());
         return (await response.json()).id;
       }, actualProjectID);
-      await first.waitForSelector(`[data-room-id="${composeID}"] .room-name`);
-      await domClick(first, `[data-room-id="${composeID}"] .room-name`);
+      await first.waitForSelector(`[data-room-id="${composeID}"] .room-item-name`);
+      await domClick(first, `[data-room-id="${composeID}"] .room-item-name`);
       await first.waitForFunction(id => location.hash.slice(1) === id && !document.querySelector('#composer textarea').disabled, {}, composeID);
       const editor = '#composer .composer-editing .ProseMirror';
       const draft = () => first.$eval('#composer textarea', el => el.value);
@@ -7632,7 +7647,7 @@ async function main() {
       assert.deepEqual(await shape(), { text: 'use bold and code', strong: ['bold'], code: ['code'], items: 0, pre: 0, quote: 0 }, 'a code editor copy (HTML of spans) is read as Markdown');
       await wipe();
       await first.focus('#composer .composer-editing .ProseMirror');
-      await pasteData({ 'text/html': '<div class="md-codeblock"><button type="button" class="row-btn md-copy" aria-label="Copy code block">Copy code block</button><pre><code>make test</code></pre></div><p>then <strong>ship</strong> <input type="checkbox" disabled> it</p>', 'text/plain': 'Copy code block\nmake test\nthen ship it' });
+      await pasteData({ 'text/html': '<div class="md-codeblock"><button type="button" class="md-copy-btn" aria-label="Copy code block">Copy code block</button><pre><code>make test</code></pre></div><p>then <strong>ship</strong> <input type="checkbox" disabled> it</p>', 'text/plain': 'Copy code block\nmake test\nthen ship it' });
       await first.waitForFunction(() => document.querySelector('#composer .composer-editing .ProseMirror pre'));
       assert.deepEqual(await shape(), { text: 'make testthen ship it', strong: ['ship'], code: ['make test'], items: 0, pre: 1, quote: 0 }, 'HTML from a rendered message keeps its formatting and loses its controls');
       await wipe();
@@ -7728,7 +7743,7 @@ async function main() {
       await domClick(first, '#close-thread');
       // The rest of the smoke types into the plain textarea.
       await first.evaluate(() => sessionStorage.removeItem('smoke-default-formatting'));
-      await domClick(first, `[data-room-id="${returnTo}"] .room-name`);
+      await domClick(first, `[data-room-id="${returnTo}"] .room-item-name`);
       await first.waitForFunction(id => location.hash.slice(1) === id, {}, returnTo);
     }
     const scopeDump = scope => { const root = document.querySelector(`#${scope}-scope-control`), pause = root?.querySelector('[data-scope-action="pause"]'), box = pause?.getBoundingClientRect(); return { status: root?.querySelector('.scope-control-status')?.textContent, error: root?.querySelector('.scope-control-error')?.textContent, results: root?.querySelector('.scope-control-results')?.textContent, desired: root?.dataset.desired, pauseDisabled: pause?.disabled, box: box && [box.x, box.y, box.width, box.height].map(Math.round), hit: box && document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.className }; };
@@ -7808,7 +7823,7 @@ async function main() {
     // the project's memory where a task room has task notes, and a line instead of the worktree controls.
     {
       const homeID = await first.evaluate(async id => (await (await fetch(`/api/projects/${id}/rooms`)).json()).find(room => room.kind === 'home').id, actualProjectID);
-      await domClick(first, `[data-room-id="${homeID}"] .room-name`);
+      await domClick(first, `[data-room-id="${homeID}"] .room-item-name`);
       await first.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, homeID);
       await first.waitForFunction(() => !document.querySelector('#task-notes-toggle').hidden && document.querySelector('#task-notes-toggle').getAttribute('aria-label') === 'Project memory').catch(() => {});
       assert.deepEqual(await first.$eval('#task-notes-toggle', el => ({ hidden: el.hidden, label: el.getAttribute('aria-label'), title: el.title })), { hidden: false, label: 'Project memory', title: 'Project memory' }, 'the home room\'s notes button opens the project memory');
@@ -7845,7 +7860,7 @@ async function main() {
       // Settings has no Project page any more: the form is only in the home room's settings.
       assert.equal(await first.evaluate(() => !!document.querySelector('#settings-project-tab, #settings-project, #project-settings-select')), false, 'Settings has no Project tab, section or project chooser');
       // A task room keeps its task notes and worktree controls and has no Project section.
-      await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+      await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
       await first.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#task-notes-toggle').getAttribute('aria-label') === 'Task notes', {}, roomID);
       await domClick(first, '#room-info');
       await first.waitForSelector('#room-info-dialog[open]');
@@ -7884,7 +7899,7 @@ async function main() {
         await closeRoomInfo(first);
         await first.evaluate(() => document.querySelector('.archived-projects').open = true);
         await first.evaluate(() => document.querySelector('.archived-project').open = true);
-        await domClick(first, `.archived-projects [data-room-id="${scratch.task}"] .room-name`);
+        await domClick(first, `.archived-projects [data-room-id="${scratch.task}"] .room-item-name`);
         await first.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, scratch.task);
         await first.waitForFunction(() => document.querySelector('#composer-archived-note') && !document.querySelector('#composer-archived-note').hidden);
         assert.deepEqual(await first.evaluate(() => [document.querySelector('#composer textarea').disabled, document.querySelector('#composer button[type=submit]').disabled, document.querySelector('#composer-archived-note').textContent.includes('archived and read-only'), document.querySelector('.room-header-status')?.textContent]), [true, true, true, 'Project archived'], 'an archived project\'s room is read-only');
@@ -7907,17 +7922,17 @@ async function main() {
       } finally { first.__dialogAnswer = answerBefore; }
     }
     // Hide is set from the room settings, not from the rows; nothing has a pin.
-    await domClick(first, `[data-room-id="${roomID}"] .room-name`);
+    await domClick(first, `[data-room-id="${roomID}"] .room-item-name`);
     await first.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, roomID);
     await domClick(first, '#room-info');
     assert.equal(await first.$('#room-pin'), null, 'room settings have no Pin room button');
-    assert.equal(await first.$$eval(`[data-room-id="${roomID}"] > .room-row .room-pin, [data-room-id="${roomID}"] > .room-row .room-hide, [data-room-id="${roomID}"] > .room-row .room-pinned`, nodes => nodes.length), 0, 'the rows carry no pin or hide buttons and no star');
+    assert.equal(await first.$$eval(`[data-room-id="${roomID}"] > .room-item .room-pin, [data-room-id="${roomID}"] > .room-item .room-hide, [data-room-id="${roomID}"] > .room-item .room-pinned`, nodes => nodes.length), 0, 'the rows carry no pin or hide buttons and no star');
     assert.deepEqual(await first.$eval('#room-hide', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-eye-off'), el.textContent, el.classList.contains('btn-icon')]), ['Hide room', 'Hide room', true, '', true], 'Hide room is an eye-off icon with a tooltip');
     await domClick(first, '#room-hide');
     await first.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"]`) && !!document.querySelector('.hidden-rooms') && !document.querySelector('#room-info-dialog').open, {}, roomID);
     await first.click('.hidden-rooms summary');
     await domClick(first, `.hidden-room-show[data-hidden-room-id="${roomID}"]`);
-    await first.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] > .room-row`), {}, roomID);
+    await first.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] > .room-item`), {}, roomID);
     const invitedContext = await browser.createBrowserContext();
     const invitedPage = await invitedContext.newPage();
     await invitedPage.setViewport({ width: 1100, height: 720 }); // a window of 701-900px starts with the rooms column collapsed
@@ -7983,9 +7998,9 @@ async function main() {
       await resetContext.close();
     }
     // A private chat is started from a person's card in the members panel (the Direct messages section only lists the chats).
-    await invitedPage.waitForSelector('#projects .room-group .room-name', { visible: true });
+    await invitedPage.waitForSelector('#projects .room-group .room-item-name', { visible: true });
     assert.equal(await invitedPage.$('.new-direct-chat'), null, 'the sidebar has no New private chat button');
-    await domClick(invitedPage, '#projects .room-group .room-name');
+    await domClick(invitedPage, '#projects .room-group .room-item-name');
     await invitedPage.waitForSelector('.human-dm', { visible: true });
     // A viewer is not offered what would answer 403: no writing or spawning in an ordinary room, no new project, no owner-only settings.
     assert.deepEqual(await invitedPage.evaluate(() => ({ send: document.querySelector('#composer button[type=submit]').disabled, note: !document.querySelector('#composer-viewer-note').hidden,
@@ -8000,7 +8015,7 @@ async function main() {
     // A viewer sees the home room's Project section with the same locks the owner's form has.
     {
       const viewerHome = await invitedPage.evaluate(async () => { const [project] = await (await fetch('/api/projects')).json(); return (await (await fetch(`/api/projects/${project.id}/rooms`)).json()).find(room => room.kind === 'home').id; });
-      await domClick(invitedPage, `[data-room-id="${viewerHome}"] .room-name`);
+      await domClick(invitedPage, `[data-room-id="${viewerHome}"] .room-item-name`);
       await invitedPage.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id, {}, viewerHome);
       await domClick(invitedPage, '#room-info');
       await invitedPage.waitForFunction(() => document.querySelector('#project-details-status')?.textContent === 'Only the project owner can change these.' && document.querySelector('#room-project #project-details'));
@@ -8013,26 +8028,26 @@ async function main() {
     assert.equal(await invitedPage.$eval('.human-dm', el => el.getAttribute('aria-label')), 'Message owner privately', 'the person card offers the private chat');
     assert.equal(await invitedPage.$eval('.human-dm', el => { const role = el.closest('.human-card').querySelector('.human-role').getBoundingClientRect(), box = el.getBoundingClientRect(); return box.right <= role.left + 0.5 || box.left >= role.right - 0.5; }), true, 'the private-chat button does not lie over the role');
     await domClick(invitedPage, '.human-dm');
-    await waitDump(invitedPage, 'new DM', () => document.querySelector('.room-row.active .room-name')?.textContent.trim().endsWith(' owner'), () => ({
+    await waitDump(invitedPage, 'new DM', () => document.querySelector('.room-item.active .room-item-name')?.textContent.trim() === 'owner' && document.querySelector('.room-item.active .room-item-icon')?.textContent === '@', () => ({
       hash: decodeURIComponent(location.hash),
-      title: document.querySelector('#room-title')?.textContent, active: [...document.querySelectorAll('.room-row.active')].map(row => row.textContent.trim()),
-      rows: [...document.querySelectorAll('.room-row')].map(row => row.textContent.trim()).slice(0, 12),
+      title: document.querySelector('#room-title')?.textContent, active: [...document.querySelectorAll('.room-item.active')].map(row => row.textContent.trim()),
+      rows: [...document.querySelectorAll('.room-item')].map(row => row.textContent.trim()).slice(0, 12),
     })).catch(error => { error.message += `\nnew DM POST /dms responses: ${JSON.stringify(dmResponses)}`; throw error; });
     const peopleDMID = await invitedPage.evaluate(() => decodeURIComponent(location.hash.slice(1)));
     await invitedPage.locator('#composer textarea').fill('Private hello from invitee');
     await invitedPage.keyboard.press('Enter');
     await invitedPage.waitForFunction(() => [...document.querySelectorAll('#messages .chat-msg-body')].some(node => node.textContent.includes('Private hello from invitee')));
-    await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] .unread-count`)?.textContent === '1', {}, peopleDMID);
+    await first.waitForFunction(id => document.querySelector(`[data-room-id="${id}"] .room-item-unread`)?.textContent === '1', {}, peopleDMID);
     // Opening the room marks it read on the server, so the count is gone for every session of this account.
     const roomBeforePeopleDM = await first.evaluate(() => decodeURIComponent(location.hash.slice(1)));
-    await domClick(first, `[data-room-id="${peopleDMID}"] .room-name`);
-    await first.waitForFunction(id => { const badge = document.querySelector(`[data-room-id="${id}"] .unread-count`); return !badge || badge.hidden; }, {}, peopleDMID);
+    await domClick(first, `[data-room-id="${peopleDMID}"] .room-item-name`);
+    await first.waitForFunction(id => { const badge = document.querySelector(`[data-room-id="${id}"] .room-item-unread`); return !badge || badge.hidden; }, {}, peopleDMID);
     await first.waitForFunction(async id => (await (await fetch(`/api/rooms/${id}`)).json()).unread_count === 0, {}, peopleDMID);
-    if (roomBeforePeopleDM && roomBeforePeopleDM !== peopleDMID) await domClick(first, `[data-room-id="${roomBeforePeopleDM}"] .room-name`);
+    if (roomBeforePeopleDM && roomBeforePeopleDM !== peopleDMID) await domClick(first, `[data-room-id="${roomBeforePeopleDM}"] .room-item-name`);
     // Room settings -> Notifications: the level and a timed mute are the person's own, kept on the server; a room that is quiet for them
     // shows a disabled bell in the list that says why, and the bell goes with the setting.
     {
-      await domClick(first, `[data-room-id="${peopleDMID}"] .room-name`);
+      await domClick(first, `[data-room-id="${peopleDMID}"] .room-item-name`);
       await domClick(first, '#room-info');
       await first.waitForSelector('#room-info-dialog[open] .room-notify-setting');
       assert.deepEqual(await first.evaluate(() => {
@@ -8066,7 +8081,7 @@ async function main() {
       await first.select('#room-notify-level', 'default');
       await first.waitForFunction(async id => (await (await fetch(`/api/rooms/${id}`)).json()).notify === 'default', {}, peopleDMID);
       await domClick(first, '#room-info-close');
-      if (roomBeforePeopleDM && roomBeforePeopleDM !== peopleDMID) await domClick(first, `[data-room-id="${roomBeforePeopleDM}"] .room-name`);
+      if (roomBeforePeopleDM && roomBeforePeopleDM !== peopleDMID) await domClick(first, `[data-room-id="${roomBeforePeopleDM}"] .room-item-name`);
     }
     // Global admins: the owner flags an account in Settings -> Users -> Accounts (the toggle is the owner's alone), the row says Admin, the
     // account then has the admin's reach and no more, and an admin's own list offers no way to act on the owner.
@@ -8152,7 +8167,7 @@ async function main() {
         window.WebSocket = class extends Native { constructor(...args) { super(...args); window.__sockets.push(this); } };
       });
       await login(racePage);
-      const rooms = await racePage.$$eval('.room-group', groups => groups.map(group => ({ id: group.dataset.roomId, name: group.querySelector('.room-name')?.textContent || '' })));
+      const rooms = await racePage.$$eval('.room-group', groups => groups.map(group => ({ id: group.dataset.roomId, name: group.querySelector('.room-item-name')?.textContent || '' })));
       const current = await racePage.evaluate(() => decodeURIComponent(location.hash.slice(1)));
       const other = rooms.find(room => room.id && room.id !== current && /Nested task|UI smoke/.test(room.name));
       assert.ok(other, `no second room to open: ${JSON.stringify(rooms)}`);
@@ -8164,15 +8179,15 @@ async function main() {
         };
       });
       const resync = () => racePage.evaluate(() => window.__sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'snapshot_required' }) }));
-      const click = () => racePage.click(`[data-room-id="${other.id}"] .room-name`);
+      const click = () => racePage.click(`[data-room-id="${other.id}"] .room-item-name`);
       const snapshotList = order === 'snapshot-first' ? 0 : 1, readerRefresh = order === 'snapshot-first' ? 1 : 0;
       if (order === 'snapshot-first') { await resync(); await racePage.waitForFunction(() => window.__held.length === 1); await click(); } else { await click(); await racePage.waitForFunction(() => window.__held.length === 1); await resync(); }
       await racePage.waitForFunction(() => window.__held.length === 2);
       await racePage.evaluate(index => { window.__holding = false; window.__held[index](); }, snapshotList);
       await racePage.waitForFunction(() => window.__sockets.length === 2);
       await racePage.evaluate(index => window.__held[index](), readerRefresh);
-      await waitDump(racePage, `resync during navigation (${order})`, id => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('.room-row.active .room-name')?.textContent === document.querySelector(`[data-room-id="${id}"] .room-name`)?.textContent, () => ({
-        hash: decodeURIComponent(location.hash), title: document.querySelector('#room-title')?.textContent, active: [...document.querySelectorAll('.room-row.active')].map(row => row.textContent.trim()),
+      await waitDump(racePage, `resync during navigation (${order})`, id => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('.room-item.active .room-item-name')?.textContent === document.querySelector(`[data-room-id="${id}"] .room-item-name`)?.textContent, () => ({
+        hash: decodeURIComponent(location.hash), title: document.querySelector('#room-title')?.textContent, active: [...document.querySelectorAll('.room-item.active')].map(row => row.textContent.trim()),
       }), other.id);
       await raceContext.close();
     }
@@ -8196,7 +8211,7 @@ async function main() {
       await olderPage.reload();
       await appReady(olderPage);
       await olderPage.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
-      await olderPage.$eval(`[data-room-id="${olderRoom}"] .room-name`, el => el.click());
+      await olderPage.$eval(`[data-room-id="${olderRoom}"] .room-item-name`, el => el.click());
       await olderPage.waitForFunction(() => document.querySelectorAll('#messages .chat-msg').length === 100 && document.querySelector('#messages').dataset.hasOlder === 'true');
       await olderPage.evaluate(() => {
         const originalFetch = window.fetch;
@@ -8234,11 +8249,11 @@ async function main() {
       await olderPage.reload();
       await appReady(olderPage);
       await olderPage.waitForFunction(() => document.querySelector('#connection')?.getAttribute('aria-label') === 'Connected');
-      await olderPage.$eval(`[data-room-id="${threadRoom}"] .room-name`, el => el.click());
+      await olderPage.$eval(`[data-room-id="${threadRoom}"] .room-item-name`, el => el.click());
       // The room list shows the latest 100 messages, all of them replies (not rendered there); the root is on the older page.
       await waitDump(olderPage, 'Older thread room opens', () => document.querySelector('#messages').dataset.hasOlder === 'true' && document.querySelector('#room-title')?.textContent === 'Older thread', () => ({
         hash: decodeURIComponent(location.hash), title: document.querySelector('#room-title')?.textContent, hasOlder: document.querySelector('#messages').dataset.hasOlder, messages: document.querySelectorAll('#messages .chat-msg').length,
-        active: [...document.querySelectorAll('.room-row.active')].map(row => row.textContent.trim().slice(0, 40)), rows: [...document.querySelectorAll('[data-room-id] .room-name')].map(row => row.textContent.trim().slice(0, 30)),
+        active: [...document.querySelectorAll('.room-item.active')].map(row => row.textContent.trim().slice(0, 40)), rows: [...document.querySelectorAll('[data-room-id] .room-item-name')].map(row => row.textContent.trim().slice(0, 30)),
         connection: document.querySelector('#connection')?.getAttribute('aria-label'), error: document.querySelector('#chat-error')?.textContent, busy: document.querySelector('#app-view')?.getAttribute('aria-busy'),
       }));
       await olderPage.$eval('#messages', el => { el.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); el.scrollTop = 0; });
@@ -8292,7 +8307,7 @@ async function main() {
         return originalFetch(input, options);
       };
     });
-    await domClick(invitedPage, `[data-room-id="${peopleDMID}"] .room-name`);
+    await domClick(invitedPage, `[data-room-id="${peopleDMID}"] .room-item-name`);
     await invitedPage.waitForFunction(() => Boolean(window.__releaseOldRooms));
     await domClick(invitedPage, '#logout');
     await invitedPage.waitForSelector('#login-view:not([hidden])');
@@ -8321,7 +8336,7 @@ async function main() {
     await domClick(invitedPage, '#login-form button');
     await appReady(invitedPage);
     await waitRoomRow(invitedPage, 'invitee after sign-in', peopleDMID);
-    await domClick(invitedPage, `[data-room-id="${peopleDMID}"] .room-name`);
+    await domClick(invitedPage, `[data-room-id="${peopleDMID}"] .room-item-name`);
     await invitedPage.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent !== 'Choose a room', {}, peopleDMID);
     await invitedPage.evaluate(roomID => {
       const previousFetch = window.fetch;
@@ -8348,7 +8363,7 @@ async function main() {
     await domClick(invitedPage, '#login-form button');
     await appReady(invitedPage);
     await waitRoomRow(invitedPage, 'invitee after sign-in', peopleDMID);
-    await domClick(invitedPage, `[data-room-id="${peopleDMID}"] .room-name`);
+    await domClick(invitedPage, `[data-room-id="${peopleDMID}"] .room-item-name`);
     await invitedPage.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent !== 'Choose a room', {}, peopleDMID);
     await invitedPage.evaluate(() => window.__releaseOldUpload());
     await invitedPage.waitForFunction(() => window.__oldUploadDeleted);
@@ -8364,7 +8379,7 @@ async function main() {
     await domClick(invitedPage, '#login-form button');
     await appReady(invitedPage);
     await waitRoomRow(invitedPage, 'invitee after sign-in', peopleDMID);
-    await domClick(invitedPage, `[data-room-id="${peopleDMID}"] .room-name`);
+    await domClick(invitedPage, `[data-room-id="${peopleDMID}"] .room-item-name`);
     await invitedPage.waitForFunction(id => decodeURIComponent(location.hash.slice(1)) === id && document.querySelector('#room-title')?.textContent !== 'Choose a room', {}, peopleDMID);
     await invitedPage.evaluate(roomID => {
       const previousFetch = window.fetch;
@@ -8389,7 +8404,7 @@ async function main() {
     // Sign-in can restore this room from the URL. Clicking it again starts a
     // second asynchronous load and can clear its messages between assertions.
     if (await invitedPage.evaluate(id => decodeURIComponent(location.hash.slice(1)) !== id, peopleDMID)) {
-      await domClick(invitedPage, `[data-room-id="${peopleDMID}"] .room-name`);
+      await domClick(invitedPage, `[data-room-id="${peopleDMID}"] .room-item-name`);
     }
     await invitedPage.waitForFunction(() => [...document.querySelectorAll('#messages .chat-msg-body')].some(node => node.textContent === 'Post-reset upload check'));
     await invitedPage.locator('#composer textarea').fill('Owner draft stays');
@@ -8523,7 +8538,7 @@ async function main() {
     await first.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"]`), {}, awayRoomID);
     const awayRoom = await first.evaluate(async id => {
       const { currentUser } = await import('/js/api.js');
-      const badge = document.querySelector(`[data-room-id="${id}"] .unread-count`);
+      const badge = document.querySelector(`[data-room-id="${id}"] .room-item-unread`);
       return { unread: badge && !badge.hidden ? badge.textContent : '',
         user: currentUser, room: document.querySelector(`[data-room-id="${id}"]`)?.textContent };
     }, awayRoomID);
@@ -8727,7 +8742,7 @@ with con:
       const response = await fetch(`/api/projects/${projectID}/rooms`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ title: 'Perf refresh' }) });
       if (!response.ok) throw new Error(`refresh room creation: ${response.status}`);
     }, actualProjectID);
-    await perfPage.waitForFunction(() => [...document.querySelectorAll('.room-name')].some(el => el.textContent.includes('Perf refresh')));
+    await perfPage.waitForFunction(() => [...document.querySelectorAll('.room-item-name')].some(el => el.textContent.includes('Perf refresh')));
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.deepEqual(await perfPage.evaluate(id => window.__readPosts.filter(url => url.includes(id)), perfRoomID), [], 'the room was marked read while its newest messages were hidden');
     await perfPage.click('.back-to-latest:not(.thread-latest):not(.thread-new)');
@@ -8857,7 +8872,7 @@ with con:
       const response = await fetch(`/api/projects/${projectID}/rooms`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ title: 'Perf refresh two' }) });
       if (!response.ok) throw new Error(`refresh room creation: ${response.status}`);
     }, actualProjectID);
-    await perfPage.waitForFunction(() => [...document.querySelectorAll('.room-name')].some(el => el.textContent.includes('Perf refresh two')));
+    await perfPage.waitForFunction(() => [...document.querySelectorAll('.room-item-name')].some(el => el.textContent.includes('Perf refresh two')));
     await perfPage.evaluate(id => {
       window.__readShown = null; const previous = window.fetch;
       window.fetch = (input, init) => { if (init?.method === 'POST' && String(input).endsWith(`/rooms/${id}/read`) && window.__readShown === null) window.__readShown = { live: [...document.querySelectorAll('#messages .chat-msg-body')].some(body => body.textContent.includes('Perf live during the last page')), seeded: !!document.querySelector('#messages > article[data-message-id="msg_perf_late_3"]') }; return previous(input, init); };
@@ -8903,7 +8918,7 @@ with con:
       const response = await fetch(`/api/projects/${projectID}/rooms`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ title: 'Perf refresh three' }) });
       if (!response.ok) throw new Error(`refresh room creation: ${response.status}`);
     }, actualProjectID);
-    await perfPage.waitForFunction(() => [...document.querySelectorAll('.room-name')].some(el => el.textContent.includes('Perf refresh three')));
+    await perfPage.waitForFunction(() => [...document.querySelectorAll('.room-item-name')].some(el => el.textContent.includes('Perf refresh three')));
     await perfPage.evaluate(() => {
       window.__failCatchUp = true; window.__readBodies = []; const previous = window.fetch;
       setTimeout(() => window.__releaseNewer());
@@ -8941,7 +8956,7 @@ with con:
       const response = await fetch(`/api/projects/${projectID}/rooms`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ title: 'Perf refresh four' }) });
       if (!response.ok) throw new Error(`refresh room creation: ${response.status}`);
     }, actualProjectID);
-    await perfPage.waitForFunction(() => [...document.querySelectorAll('.room-name')].some(el => el.textContent.includes('Perf refresh four')));
+    await perfPage.waitForFunction(() => [...document.querySelectorAll('.room-item-name')].some(el => el.textContent.includes('Perf refresh four')));
     await new Promise(resolve => setTimeout(resolve, 300));
     await perfPage.evaluate(() => window.__failHeldCatchUp());
     await perfPage.waitForFunction(() => !document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden);
@@ -8970,17 +8985,17 @@ with con:
       const response = await fetch(`/api/projects/${projectID}/rooms`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token }, body: JSON.stringify({ title: 'Perf refresh five' }) });
       if (!response.ok) throw new Error(`refresh room creation: ${response.status}`);
     }, actualProjectID);
-    await perfPage.waitForFunction(() => [...document.querySelectorAll('.room-name')].some(el => el.textContent.includes('Perf refresh five')));
+    await perfPage.waitForFunction(() => [...document.querySelectorAll('.room-item-name')].some(el => el.textContent.includes('Perf refresh five')));
     assert.equal(await perfUnread(), 3, 'the seeded rows were not unread before reselecting');
     await perfPage.evaluate(() => {
       window.__latestFailed = false; const previous = window.fetch;
       window.fetch = (input, init) => { if (!window.__latestFailed && /\/messages\?limit=100$/.test(String(input))) { window.__latestFailed = true; return Promise.reject(new TypeError('Failed to fetch')); } return previous(input, init); };
-      [...document.querySelectorAll('.room-name')].find(el => el.textContent.includes('Perf history')).click();
+      [...document.querySelectorAll('.room-item-name')].find(el => el.textContent.includes('Perf history')).click();
     });
     await perfPage.waitForFunction(() => window.__latestFailed);
     await new Promise(resolve => setTimeout(resolve, 500));
     assert.equal(await perfUnread(), 3, `reselecting the room marked read past the window's newest top-level row (#${windowEnd.seq})`);
-    await perfPage.evaluate(() => [...document.querySelectorAll('.room-name')].find(el => el.textContent.includes('Perf history')).click());
+    await perfPage.evaluate(() => [...document.querySelectorAll('.room-item-name')].find(el => el.textContent.includes('Perf history')).click());
     await perfPage.waitForFunction(() => document.querySelector('#messages > article.chat-msg:last-of-type')?.dataset.messageId === 'msg_perf_late_7');
     for (let i = 0; i < 50 && await perfUnread() !== 0; i++) await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(await perfUnread(), 0, 'reopening the room did not mark it read');
@@ -9303,7 +9318,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await listPage.waitForFunction(async id => { const rooms = await (await fetch(`/api/rooms/${id}`)).json(); return rooms.lifecycle === 'closed'; }, { timeout: 30000 }, delta.id);
       await listPage.reload();
       await appReady(listPage);
-      await listPage.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] .room-name`), {}, alpha.id);
+      await listPage.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] .room-item-name`), {}, alpha.id);
       const structure = () => listPage.evaluate(([home, alphaID, betaID, deltaID]) => {
         const top = [...document.querySelector('#projects').children];
         const homeGroup = document.querySelector(`[data-room-id="${home}"]`);
@@ -9315,16 +9330,16 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
           flatTasks: top.some(node => [alphaID, betaID].includes(node.dataset?.roomId)),
           oneLevel: document.querySelectorAll('#projects .room-children .room-children').length,
           branches: document.querySelectorAll('#projects .room-pin, #projects .room-hide').length,
-          homeChip: !!homeGroup?.querySelector(':scope > .room-row .room-project'), taskChip: !!document.querySelector(`[data-room-id="${alphaID}"] .room-project`),
+          homeChip: !!homeGroup?.querySelector(':scope > .room-item .room-project'), taskChip: !!document.querySelector(`[data-room-id="${alphaID}"] .room-project`),
           tail: tail ? { cls: tail.className, summary: tail.querySelector('summary')?.textContent, open: tail.open, has: !!tail.querySelector(`[data-room-id="${deltaID}"]`) } : null,
           archivedFolds: document.querySelectorAll('#projects details.archived-rooms').length, deltaVisible: !!document.querySelector(`[data-room-id="${deltaID}"]`)?.checkVisibility(),
           directSections: document.querySelectorAll('#projects .direct-rooms').length, directHeading: document.querySelector('.direct-rooms h3')?.textContent,
-          previews: document.querySelectorAll('.room-preview').length,
+          previews: document.querySelectorAll('.room-item-preview').length,
         };
       }, [home2.id, alpha.id, beta.id, delta.id]);
       {
         const variant = 'list';
-        await listPage.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] .room-name`), {}, alpha.id);
+        await listPage.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] .room-item-name`), {}, alpha.id);
         const state = await structure();
         assert.equal(state.first, 'room-filter', `${variant}: the filter box is on top`); assert.equal(state.last, 'direct-rooms', `${variant}: nothing follows the Direct messages section`);
         assert.equal(state.labels, 0, `${variant}: no project section labels`); assert.equal(state.homeIsTop, true, `${variant}: the home room is the parent row`);
@@ -9340,7 +9355,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
         await listPage.click(`[data-room-id="${home2.id}"] > .room-children > .archived-rooms > summary`);
       }
       // A root room's chevron hides or shows its children (and its Archived row); the choice survives a reload.
-      const homeToggle = `[data-room-id="${home2.id}"] > .room-row > .room-collapse`;
+      const homeToggle = `[data-room-id="${home2.id}"] > .room-item > .room-collapse`;
       const visibleIn = id => listPage.evaluate(room => !!document.querySelector(`[data-room-id="${room}"]`)?.checkVisibility(), id);
       assert.equal(await listPage.$eval(homeToggle, el => el.getAttribute('aria-expanded')), 'true');
       assert.equal(await visibleIn(alpha.id), true);
@@ -9356,9 +9371,9 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await listPage.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"]`)?.checkVisibility(), {}, alpha.id);
       // Nothing is pinned. The sort button orders the projects (and the rooms inside them); in the manual order a project is dragged or
       // moved with its buttons, and the order is a stored personal preference.
-      const projectOrder = () => listPage.$$eval('#projects > .room-group', nodes => nodes.map(node => node.querySelector(':scope > .room-row .room-name')?.textContent || '').filter(text => text.startsWith('⌂')).map(text => text.replace(/^⌂\s*/, '')));
-      const homeIDs = () => listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => (node.querySelector(':scope > .room-row .room-name')?.textContent || '').startsWith('⌂')).map(node => node.dataset.roomId));
-      const roomOrder = () => listPage.$$eval(`[data-room-id="${home2.id}"] > .room-children > .room-group`, nodes => nodes.map(node => node.querySelector('.room-name').textContent.replace(/^#\s*/, '')).filter(title => title !== 'general')); // general: every project's own task room, not under test here
+      const projectOrder = () => listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => node.querySelector(':scope > .room-item .room-item-icon')?.textContent === '⌂').map(node => node.querySelector(':scope > .room-item .room-item-name')?.textContent || ''));
+      const homeIDs = () => listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => node.querySelector(':scope > .room-item .room-item-icon')?.textContent === '⌂').map(node => node.dataset.roomId));
+      const roomOrder = () => listPage.$$eval(`[data-room-id="${home2.id}"] > .room-children > .room-group`, nodes => nodes.map(node => node.querySelector('.room-item-name').textContent.replace(/^#\s*/, '')).filter(title => title !== 'general')); // general: every project's own task room, not under test here
       const setSort = async key => { await domClick(listPage, '#rooms-sort'); await domClick(listPage, `#rooms-sort-menu .sort-item[data-sort="${key}"]`); await listPage.waitForFunction(() => document.querySelector('#rooms-sort-menu').hidden); };
       assert.deepEqual(await listPage.$$eval('#room-pin, .project-pin, .room-pin, .room-pinned', nodes => nodes.length), 0, 'there is no pin anywhere: not on a room, not on a project');
       assert.equal(await listPage.evaluate(async id => (await fetch(`/api/rooms/${id}/preferences`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': (await (await fetch('/api/me')).json()).csrf_token }, body: JSON.stringify({ pinned: true }) })).status, beta.id), 400, 'a room cannot be pinned through the API either');
@@ -9366,7 +9381,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       assert.equal((await api('GET', '/api/projects')).some(item => 'pinned' in item), false, 'the project list carries no pin');
       assert.deepEqual(await projectOrder(), ['UI smoke', 'Second project'], 'manual with nothing saved is creation order');
       // Every project row carries the chevron or an invisible spacer, so the names of all roots start at the same x.
-      const rootX = await listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => (node.querySelector(':scope > .room-row .room-name')?.textContent || '').startsWith('⌂')).map(node => Math.round(node.querySelector(':scope > .room-row .room-name').getBoundingClientRect().left)));
+      const rootX = await listPage.$$eval('#projects > .room-group', nodes => nodes.filter(node => node.querySelector(':scope > .room-item .room-item-icon')?.textContent === '⌂').map(node => Math.round(node.querySelector(':scope > .room-item .room-item-name').getBoundingClientRect().left)));
       assert.equal(new Set(rootX).size, 1, `project names do not start at the same x: ${rootX}`);
       // The sort button: by name, by latest activity, manual. Rooms inside a project follow the sort.
       const sortState = () => listPage.evaluate(() => ({ expanded: document.querySelector('#rooms-sort').getAttribute('aria-expanded'), hidden: document.querySelector('#rooms-sort-menu').hidden, checked: [...document.querySelectorAll('#rooms-sort-menu .sort-item')].filter(item => item.getAttribute('aria-checked') === 'true').map(item => item.dataset.sort), roles: [...document.querySelectorAll('#rooms-sort-menu .sort-item')].map(item => item.getAttribute('role')) }));
@@ -9382,16 +9397,16 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       assert.deepEqual(await roomOrder(), ['Alpha list', 'Beta list'], 'rooms by name');
       // The ☰ button is on every project row whatever the order; its menu offers the moves only in the manual order.
       const menuOf = async id => {
-        await listPage.focus(`[data-room-id="${id}"] > .room-row .room-name`);
-        await domClick(listPage, `[data-room-id="${id}"] > .room-row .project-menu-btn`);
-        const items = await listPage.$$eval(`[data-room-id="${id}"] > .room-row .project-menu-item`, nodes => nodes.map(node => `${node.textContent}${node.disabled ? ':disabled' : ''}`));
-        await domClick(listPage, `[data-room-id="${id}"] > .room-row .project-menu-btn`);
-        await listPage.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] > .room-row .project-menu-list`), {}, id);
+        await listPage.focus(`[data-room-id="${id}"] > .room-item .room-item-name`);
+        await domClick(listPage, `[data-room-id="${id}"] > .room-item .project-menu-btn`);
+        const items = await listPage.$$eval(`[data-room-id="${id}"] > .room-item .project-menu-item`, nodes => nodes.map(node => `${node.textContent}${node.disabled ? ':disabled' : ''}`));
+        await domClick(listPage, `[data-room-id="${id}"] > .room-item .project-menu-btn`);
+        await listPage.waitForFunction(id => !document.querySelector(`[data-room-id="${id}"] > .room-item .project-menu-list`), {}, id);
         return items;
       };
       assert.deepEqual(await menuOf((await homeIDs())[0]), ['New room'], 'the menu offers the moves only in the manual order');
       await setSort('activity');
-      await listPage.waitForFunction(() => document.querySelector('#projects > .room-group .room-name')?.textContent.includes('UI smoke'));
+      await listPage.waitForFunction(() => document.querySelector('#projects > .room-group .room-item-name')?.textContent.includes('UI smoke'));
       assert.deepEqual(await projectOrder(), ['UI smoke', 'Second project'], 'by latest activity the project with the newest message leads');
       assert.deepEqual(await roomOrder(), ['Beta list', 'Alpha list'], 'rooms by latest activity');
       await listPage.waitForFunction(async () => (await (await fetch('/api/me/preferences')).json()).preferences.sidebar_sort === 'activity'); // the save is asynchronous
@@ -9406,22 +9421,22 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       const served = (await api('GET', `/api/projects/${project2.id}/rooms`)).filter(room => room.parent_id === home2.id && room.lifecycle !== 'closed' && room.title !== 'general').map(room => room.title);
       assert.deepEqual(await roomOrder(), served, 'manual leaves rooms in the order the server lists them');
       // Manual: the move buttons and the drag handle reorder projects; the end buttons are disabled.
-      const moveState = async () => { const states = []; for (const id of await homeIDs()) { const row = await listPage.$eval(`[data-room-id="${id}"] > .room-row`, node => [node.querySelector('.room-name').textContent.replace(/^⌂\s*/, ''), node.draggable]); const items = await menuOf(id); states.push(`${row[0]}:${items.includes('Move up:disabled')}:${items.includes('Move down:disabled')}:${row[1]}`); } return states; };
+      const moveState = async () => { const states = []; for (const id of await homeIDs()) { const row = await listPage.$eval(`[data-room-id="${id}"] > .room-item`, node => [node.querySelector('.room-item-name').textContent.replace(/^⌂\s*/, ''), node.draggable]); const items = await menuOf(id); states.push(`${row[0]}:${items.includes('Move up:disabled')}:${items.includes('Move down:disabled')}:${row[1]}`); } return states; };
       const order0 = await projectOrder();
       assert.deepEqual(await moveState(), order0.map((name, index) => `${name}:${index === 0}:${index === order0.length - 1}:false`), 'the first project cannot move up, the last cannot move down, and a row is dragged only by its handle');
-      assert.deepEqual(await listPage.$$eval('#projects > .room-group > .room-row .project-grip', grips => grips.map(grip => [grip.title.endsWith('(drag to move)'), !!grip.querySelector('.icon-mask-menu'), getComputedStyle(grip).display, grip.getAttribute('aria-haspopup')])), order0.map(() => [true, true, 'none', 'menu']), 'each project has one hover-only ☰ button, the drag handle and the menu in one');
-      await listPage.hover('#projects > .room-group > .room-row:has(.project-grip)');
-      await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
-      assert.equal(await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip)', row => row.draggable), true, 'pressing the handle makes the row draggable');
-      await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })));
-      assert.equal(await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip)', row => row.draggable), false, 'and releasing it makes it a plain row again');
+      assert.deepEqual(await listPage.$$eval('#projects > .room-group > .room-item .project-grip', grips => grips.map(grip => [grip.title.endsWith('(drag to move)'), !!grip.querySelector('.icon-mask-menu'), getComputedStyle(grip).display, grip.getAttribute('aria-haspopup')])), order0.map(() => [true, true, 'none', 'menu']), 'each project has one hover-only ☰ button, the drag handle and the menu in one');
+      await listPage.hover('#projects > .room-group > .room-item:has(.project-grip)');
+      await listPage.$eval('#projects > .room-group > .room-item:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+      assert.equal(await listPage.$eval('#projects > .room-group > .room-item:has(.project-grip)', row => row.draggable), true, 'pressing the handle makes the row draggable');
+      await listPage.$eval('#projects > .room-group > .room-item:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })));
+      assert.equal(await listPage.$eval('#projects > .room-group > .room-item:has(.project-grip)', row => row.draggable), false, 'and releasing it makes it a plain row again');
       // The press ends wherever the pointer is released: the row is not left draggable when it is let go elsewhere.
-      await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+      await listPage.$eval('#projects > .room-group > .room-item:has(.project-grip) .project-grip', grip => grip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
       await listPage.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })));
-      assert.equal(await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip)', row => row.draggable), false, 'a press released elsewhere makes the row a plain row again');
+      assert.equal(await listPage.$eval('#projects > .room-group > .room-item:has(.project-grip)', row => row.draggable), false, 'a press released elsewhere makes the row a plain row again');
       // The whole project row opens its home room, not only its name.
-      const [wantedHome, openedHome] = await listPage.$eval('#projects > .room-group > .room-row:has(.project-grip):not(.active)', row => { const name = row.querySelector('.room-name').textContent; row.click(); return [name, null]; });
-      await listPage.waitForFunction(name => document.querySelector('#projects .room-row.active .room-name')?.textContent === name, {}, wantedHome);
+      const [wantedHome, openedHome] = await listPage.$eval('#projects > .room-group > .room-item:has(.project-grip):not(.active)', row => { const name = row.querySelector('.room-item-name').textContent; row.click(); return [name, null]; });
+      await listPage.waitForFunction(name => document.querySelector('#projects .room-item.active .room-item-name')?.textContent === name, {}, wantedHome);
       const firstHome = (await homeIDs())[0];
       await projectMenuAct(listPage, `[data-room-id="${firstHome}"]`, 'down');
       await listPage.waitForFunction(first => document.querySelector('#projects > .room-group').dataset.roomId !== first, {}, firstHome);
@@ -9435,7 +9450,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       const idByName = Object.fromEntries((await api('GET', '/api/projects')).map(item => [item.name, item.id]));
       assert.deepEqual(JSON.parse((await api('GET', '/api/me/preferences')).preferences.sidebar_project_order).slice(0, 2), (await projectOrder()).map(name => idByName[name]), 'the manual order is a stored personal preference');
       const drag = (from, to, edge) => listPage.evaluate(([fromID, toID, atEdge]) => {
-        const source = document.querySelector(`[data-room-id="${fromID}"] > .room-row`), target = document.querySelector(`[data-room-id="${toID}"] > .room-row`), box = target.getBoundingClientRect();
+        const source = document.querySelector(`[data-room-id="${fromID}"] > .room-item`), target = document.querySelector(`[data-room-id="${toID}"] > .room-item`), box = target.getBoundingClientRect();
         const transfer = new DataTransfer(), fire = (node, type, y) => node.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: box.left + 5, clientY: y }));
         fire(source, 'dragstart', box.top); fire(target, 'dragover', atEdge === 'after' ? box.bottom - 1 : box.top + 1); fire(target, 'drop', atEdge === 'after' ? box.bottom - 1 : box.top + 1); fire(source, 'dragend', box.top);
       }, [from, to, edge]);
@@ -9458,11 +9473,11 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await setSort('manual');
       // The box is a plain filter: it narrows the list, and Enter creates or opens nothing (rooms are made from a row's +).
       await listPage.reload(); await appReady(listPage);
-      await listPage.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] .room-name`), {}, alpha.id);
+      await listPage.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] .room-item-name`), {}, alpha.id);
       assert.deepEqual(await listPage.$$eval('.room-filter select, .room-filter button, .room-filter .error', nodes => nodes.map(node => node.id)), ['project-open'], 'the filter box has no project choice and no Create button: only New project, to its right');
       assert.deepEqual(await listPage.$eval('.room-filter-input', el => [el.placeholder, el.getAttribute('aria-label')]), ['Filter rooms…', 'Filter rooms']);
       await listPage.type('.room-filter-input', 'beta');
-      assert.deepEqual(await listPage.$$eval('#projects > .room-group .room-name', els => els.map(el => el.textContent.toLocaleLowerCase().includes('beta'))).then(list => [...new Set(list)]), [true], 'the filter keeps only matching rooms');
+      assert.deepEqual(await listPage.$$eval('#projects > .room-group .room-item-name', els => els.map(el => el.textContent.toLocaleLowerCase().includes('beta'))).then(list => [...new Set(list)]), [true], 'the filter keeps only matching rooms');
       assert.equal(await listPage.$$eval('#projects details.archived-rooms', nodes => nodes.length), 0, 'no Archived row while filtering');
       await listPage.$eval('.room-filter-input', el => { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); });
       const countRooms = async () => (await api('GET', `/api/projects/${project2.id}/rooms`)).length;
@@ -9474,9 +9489,9 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await listPage.type('.room-filter-input', ' x'); await listPage.keyboard.press('Enter');
       assert.equal(await listPage.$eval('.rooms-empty', el => el.textContent), 'No rooms match “Brand new list room x”.', 'a filter that matches nothing says so');
       await listPage.$eval('.room-filter-input', el => { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); });
-      await listPage.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] .room-name`), {}, alpha.id);
+      await listPage.waitForFunction(id => !!document.querySelector(`[data-room-id="${id}"] .room-item-name`), {}, alpha.id);
       // Collapse all and expand all: one button in the header, an icon with a tooltip, that folds every project and opens them again.
-      const collapseState = () => listPage.evaluate(() => ({ label: document.querySelector('#rooms-fold').getAttribute('aria-label'), title: document.querySelector('#rooms-fold').title, disabled: document.querySelector('#rooms-fold').disabled, icon: !!document.querySelector('#rooms-fold .icon-mask'), folded: [...document.querySelectorAll('#projects > .room-group > .room-row > .room-collapse')].map(button => button.getAttribute('aria-expanded')) }));
+      const collapseState = () => listPage.evaluate(() => ({ label: document.querySelector('#rooms-fold').getAttribute('aria-label'), title: document.querySelector('#rooms-fold').title, disabled: document.querySelector('#rooms-fold').disabled, icon: !!document.querySelector('#rooms-fold .icon-mask'), folded: [...document.querySelectorAll('#projects > .room-group > .room-item > .room-collapse')].map(button => button.getAttribute('aria-expanded')) }));
       let collapse = await collapseState();
       assert.deepEqual([collapse.label, collapse.title, collapse.disabled, collapse.icon], ['Collapse all projects', 'Collapse all projects', false, true]);
       assert.ok(collapse.folded.length >= 1 && collapse.folded.every(value => value === 'true'), `every project starts open: ${collapse.folded}`);
@@ -9492,7 +9507,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await listPage.waitForFunction(() => document.querySelector('#rooms-fold').getAttribute('aria-label') === 'Collapse all projects');
       assert.ok((await collapseState()).folded.every(value => value === 'true'), 'expand all opens every project');
       // With one project folded by hand the button still offers to fold the rest.
-      await domClick(listPage, '#projects > .room-group > .room-row > .room-collapse');
+      await domClick(listPage, '#projects > .room-group > .room-item > .room-collapse');
       assert.equal((await collapseState()).label, 'Collapse all projects', 'with something still open the button folds');
       await domClick(listPage, '#rooms-fold'); await domClick(listPage, '#rooms-fold');
       assert.equal(await listPage.$('.new-direct-chat'), null, 'the Direct messages section has no New private chat button');

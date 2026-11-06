@@ -61,13 +61,13 @@ globalThis.document = { createElement: tag => new Element(tag), createTextNode: 
   // Rules, and a rule does not swallow other syntax.
   assert.equal(html('---'), '<hr>'); assert.equal(html('* * *'), '<hr>'); assert.equal(html('___'), '<hr>'); assert.equal(html('text\n\n---\n\nmore'), '<p>text</p><hr><p>more</p>');
   assert.equal(html('text\n---'), '<p>text</p><hr>', 'a rule ends a paragraph');
-  assert.equal(html('| a | b |\n| --- | --- |\n| 1 | 2 |').startsWith('<div class="md-table-wrap"><table>'), true, 'a table delimiter row is not a rule');
+  assert.equal(html('| a | b |\n| --- | --- |\n| 1 | 2 |').startsWith('<div class="md-table-wrap"><table class="md-table">'), true, 'a table delimiter row is not a rule');
   assert.equal(html('- - -'), '<hr>'); assert.equal(html('--'), '<p>--</p>');
 
   // [end group a]
   // [group b]
   // Fences: closed ones are blocks; an unterminated one is its opening line as typed, then the rest as Markdown.
-  const block = body => `<div class="md-codeblock"><button class="row-btn md-copy" title="Copy code block" type=button><span class="icon-mask icon-mask-copy"></span></button><pre><code>${body}</code></pre></div>`;
+  const block = body => `<div class="md-codeblock"><button class="row-btn md-copy-btn" title="Copy code block" type=button><span class="icon-mask icon-mask-copy"></span></button><pre><code>${body}</code></pre></div>`;
   assert.equal(html('```\ncode\n```'), block('code'));
   assert.equal(html('~~~\nin tilde\n~~~'), block('in tilde'));
   assert.equal(html('```js\nlet a;\nmore **bold**'), '<p>```js</p><p>let a;<br>more <strong>bold</strong></p>', 'an unterminated fence is shown literally and the rest is Markdown');

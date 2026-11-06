@@ -3,7 +3,6 @@
  "classes": [
   "active",
   "agent-actions",
-  "agent-card",
   "agent-list",
   "answered",
   "behind",
@@ -27,14 +26,9 @@
   "macro-body",
   "macro-key",
   "macros-list",
-  "md-codeblock",
-  "md-table-wrap",
-  "mention",
-  "mention-self",
   "mine",
   "mobile-tab",
   "mobile-tabs",
-  "msg-ref",
   "msg-sender-dot",
   "msg-sender-presence",
   "offline",
@@ -50,9 +44,7 @@
   "receipt-avatar",
   "role-key",
   "roles-list",
-  "room-item-attention",
   "room-member-badge",
-  "room-name",
   "selected",
   "stale",
   "system-event-row",
@@ -66,14 +58,28 @@
  ],
  "released": {
   "active": [
+   "room-item",
    "settings-nav-item",
-   "settings-section"
+   "settings-section",
+   "agent-online-dot"
   ],
   "connected": [
    "status-indicator"
   ],
   "disconnected": [
    "status-indicator"
+  ],
+  "dm": [
+   "room-item"
+  ],
+  "pinned": [
+   "room-item"
+  ],
+  "stale": [
+   "agent-online-dot"
+  ],
+  "offline": [
+   "agent-online-dot"
   ]
  }
 }

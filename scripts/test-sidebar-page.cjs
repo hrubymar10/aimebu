@@ -84,7 +84,7 @@ async function main() {
   };
   // A project's actions live in the menu behind its ☰ button: open it, press the item, wait for the list to draw again.
   const projectAct = (page, id, item) => page.evaluate(async (id, item) => {
-    const row = document.querySelector(`[data-room-id=${id}] > .room-row`); row.querySelector('.project-menu-btn').click();
+    const row = document.querySelector(`[data-room-id=${id}] > .room-item`); row.querySelector('.project-menu-btn').click();
     await new Promise(resolve => setTimeout(resolve, 30)); row.querySelector(`.project-menu-${item}`).click();
   }, id, item);
   const settle = page => page.evaluate(() => new Promise(resolve => setTimeout(resolve, 80)));
@@ -98,7 +98,7 @@ async function main() {
   // The rules that answered the first load stop answering: the next read of these paths is held.
   const hold = (page, ...keys) => page.evaluate(keys => { for (const key of keys) delete window.__auto[key]; }, keys);
   // The rows as the list shows them, in order: [id, text, unread badge, nested].
-  const rows = page => page.$$eval('#projects .room-group', groups => groups.map(group => { const row = group.querySelector(':scope > .room-row'); return [group.dataset.roomId, row.querySelector('.room-name').textContent, row.querySelector('.unread-count:not([hidden])')?.textContent || '', !!group.closest('.room-children')]; }));
+  const rows = page => page.$$eval('#projects .room-group', groups => groups.map(group => { const row = group.querySelector(':scope > .room-item'); return [group.dataset.roomId, `${row.querySelector('.room-item-icon').textContent} ${row.querySelector('.room-item-name').textContent}`, row.querySelector('.room-item-unread:not([hidden])')?.textContent || '', !!group.closest('.room-children')]; }));
   const tops = page => page.$$eval('#projects > *', nodes => nodes.map(node => node.className || node.tagName.toLowerCase()));
 
   // Loading asks for the chats of agents and the projects at once, then every project's rooms at once. The project list draws each project as a
@@ -112,7 +112,7 @@ async function main() {
     await answer(page, list, 200, projects);
     for (const id of ['prj_a', 'prj_b', 'prj_c']) await waitRequest(page, 'GET', `/api/projects/${id}/rooms`);
     await settle(page);
-    const places = () => page.$$eval('#projects > .room-group', nodes => nodes.map(node => node.dataset.projectId ? ['placeholder', node.dataset.projectId, node.textContent.trim()] : ['rooms', node.dataset.roomId, node.classList.contains('collapsed')]));
+    const places = () => page.$$eval('#projects > .room-group', nodes => nodes.map(node => node.dataset.projectId ? ['placeholder', node.dataset.projectId, `${node.querySelector('.room-item-icon').textContent} ${node.querySelector('.room-item-name').textContent.trim()}`] : ['rooms', node.dataset.roomId, node.classList.contains('collapsed')]));
     assert.deepEqual(await places(), [['placeholder', 'prj_a', '⌂ Alpha'], ['placeholder', 'prj_b', '⌂ Beta']], 'each live project waits in its place (the archived one is not drawn yet)');
     const height = await page.$eval('.project-placeholder', node => Math.round(node.getBoundingClientRect().height));
     // The second project lands first: it is drawn below the first one's placeholder, and folded as it will be once the app has opened a room.
@@ -120,7 +120,7 @@ async function main() {
     assert.deepEqual(await places(), [['placeholder', 'prj_a', '⌂ Alpha'], ['rooms', 'rm_bh', true]], 'a list that lands first is drawn in its own place');
     assert.equal(await page.$eval('[data-room-id=rm_bh]', node => Math.round(node.getBoundingClientRect().height)), height, 'a folded project is as tall as its placeholder: nothing below it moves');
     // Focus is on a row; the other project landing above it does not take it.
-    await page.focus('[data-room-id=rm_bh] .room-name');
+    await page.focus('[data-room-id=rm_bh] .room-item-name');
     const before = await page.evaluate(() => { window.__focused = document.activeElement; return document.activeElement.closest('[data-room-id]')?.dataset.roomId; });
     const top = await page.$eval('[data-room-id=rm_bh]', node => Math.round(node.getBoundingClientRect().top));
     await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/rooms'), 200, rooms().prj_a); await settle(page);
@@ -169,7 +169,7 @@ async function main() {
     const height = await page.$eval('.project-placeholder[data-project-id=prj_b]', node => Math.round(node.getBoundingClientRect().height));
     await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_b/rooms'), 200, rooms().prj_b); await settle(page);
     assert.equal(await page.$eval('[data-room-id=rm_bh]', node => Math.round(node.getBoundingClientRect().height)), height, 'with previews on, a folded project is as tall as its placeholder');
-    const hover = await page.$eval('.project-placeholder .room-row', node => { const style = getComputedStyle(node); return [style.pointerEvents, style.cursor, style.backgroundColor]; });
+    const hover = await page.$eval('.project-placeholder .room-item', node => { const style = getComputedStyle(node); return [style.pointerEvents, style.cursor, style.backgroundColor]; });
     assert.deepEqual(hover.slice(0, 2), ['none', 'default'], 'a placeholder is not a control');
     // Filtering while a list is out says nothing about rooms that are still arriving.
     await page.evaluate(() => window.__sidebar.store.setFilter('zzz-nothing')); await settle(page);
@@ -221,12 +221,12 @@ async function main() {
     assert.deepEqual(await tops(page), ['room-filter', 'room-group collapsed', 'room-group collapsed', 'archived-projects', 'direct-rooms']);
     // The bells and the chip: a room with items waiting, a muted one, the project's name on a direct message when there are several projects.
     const marks = await page.evaluate(() => ({ attention: document.querySelector('[data-room-id=rm_api] .room-item-attention')?.title, muted: document.querySelector('[data-room-id=rm_mute] .room-muted')?.title.startsWith('Muted until'),
-      chip: document.querySelector('[data-room-id=rm_dm] .room-project')?.textContent, none: document.querySelector('[data-room-id=rm_gen] .room-muted') === null, title: document.querySelector('[data-room-id=rm_api] .room-name').title,
+      chip: document.querySelector('[data-room-id=rm_dm] .room-project')?.textContent, none: document.querySelector('[data-room-id=rm_gen] .room-muted') === null, title: document.querySelector('[data-room-id=rm_api] .room-item-name').title,
       sidebarRooms: [...window.__sidebar.rooms.keys()].length, sidebarProjects: [...window.__sidebar.projects.keys()].join() }));
     assert.deepEqual(marks, { attention: '2 waiting for you', muted: true, chip: 'Alpha', none: true, title: 'api-work · 2 members', sidebarRooms: 13, sidebarProjects: 'prj_a,prj_b,prj_c' });
     // Rows open their room from the name and from the row beside it.
-    await page.$eval('[data-room-id=rm_gen] .room-name', node => node.click());
-    await page.$eval('[data-room-id=rm_api] .room-row', node => node.click());
+    await page.$eval('[data-room-id=rm_gen] .room-item-name', node => node.click());
+    await page.$eval('[data-room-id=rm_api] .room-item', node => node.click());
     assert.deepEqual(await calls(page), [['select', 'rm_gen', ''], ['select', 'rm_api', '']]);
     await page.close();
   }
@@ -237,23 +237,23 @@ async function main() {
     const page = await mount({ auto: answerAll({ 'GET /api/projects': projects.map(item => item.id === 'prj_a' ? { ...item, name: longTitle } : item),
       'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => item.id === 'rm_ah' ? { ...item, title: longTitle } : item) }) });
     await page.setViewport({ width: 1200, height: 800 });
-    await page.$eval('[data-room-id=rm_ah] > .room-row > .room-collapse', node => node.click()); // a folded project shows an unread badge at the row end
-    const measure = () => page.$eval('[data-room-id=rm_ah] > .room-row', row => {
-      const name = row.querySelector('.room-name'), menu = row.querySelector('.project-menu-btn'), add = row.querySelector('.add-room:not([hidden])'), extra = row.querySelectorAll('.project-move:not(.project-menu-btn), .project-move-up, .project-move-down').length;
-      return { nameRight: name.getBoundingClientRect().right, rowRight: row.getBoundingClientRect().right,
+    await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click()); // a folded project shows an unread badge at the row end
+    const measure = () => page.$eval('[data-room-id=rm_ah] > .room-item', row => {
+      const name = row.querySelector('.room-item-name'), menu = row.querySelector('.project-menu-btn'), add = row.querySelector('.add-room:not([hidden])'), extra = row.querySelectorAll('.project-move:not(.project-menu-btn), .project-move-up, .project-move-down').length;
+      return { nameRight: row.querySelector('.room-item-info').getBoundingClientRect().right, rowRight: row.getBoundingClientRect().right,
         nameWidth: name.clientWidth, textWidth: name.scrollWidth, menu: getComputedStyle(menu).display, add: add ? getComputedStyle(add).display : 'missing', extra };
     });
     await page.mouse.move(1100, 700);
     const idle = await measure();
     assert.deepEqual([idle.menu, idle.add, idle.extra], ['none', 'none', 0], 'a project row has the ☰ and + buttons and no arrows, and they take no width before hover');
     assert.ok(idle.textWidth <= idle.nameWidth, 'the name fits without an ellipsis');
-    assert.ok(idle.rowRight - idle.nameRight < 12, 'the name reaches the row end when controls are hidden');
-    await page.hover('[data-room-id=rm_ah] > .room-row');
+    assert.ok(idle.rowRight - idle.nameRight < 12, `the name column (v1's .room-item-info) reaches the row end, less the row's padding, when controls are hidden: ${JSON.stringify(idle)}`);
+    await page.hover('[data-room-id=rm_ah] > .room-item');
     const hovered = await measure();
     assert.deepEqual([hovered.menu, hovered.add, hovered.extra], ['flex', 'flex', 0]);
     assert.ok(hovered.nameWidth < idle.nameWidth, 'the name yields width to visible controls');
     await page.mouse.move(1100, 700);
-    await page.focus('[data-room-id=rm_ah] .room-name');
+    await page.focus('[data-room-id=rm_ah] .room-item-name');
     const focused = await measure();
     assert.deepEqual([focused.menu, focused.add, focused.extra], ['flex', 'flex', 0], 'keyboard focus reveals the controls');
     await page.evaluate(() => { document.activeElement.blur(); document.documentElement.dataset.theme = 'high-contrast-dark'; });
@@ -270,9 +270,9 @@ async function main() {
   // opened, the unread numbers and a new room follow, and an unchanged room keeps its record (the object the list holds for it).
   {
     const page = await mount();
-    await page.$eval('[data-room-id=rm_ah] > .room-row > .room-collapse', node => node.click()); // a folded project hides its rooms, and a hidden room cannot hold focus
+    await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click()); // a folded project hides its rooms, and a hidden room cannot hold focus
     await page.evaluate(() => {
-      window.__gen = document.querySelector('[data-room-id=rm_gen]'); window.__api = document.querySelector('[data-room-id=rm_api]'); window.__add = window.__gen.querySelector('.room-name');
+      window.__gen = document.querySelector('[data-room-id=rm_gen]'); window.__api = document.querySelector('[data-room-id=rm_api]'); window.__add = window.__gen.querySelector('.room-item-name');
       window.__kept = window.__sidebar.rooms.get('rm_notes'); window.__fold = document.querySelector('details.archived-rooms'); window.__fold.open = true; window.__add.focus();
     });
     await hold(page, 'GET /api/projects/prj_a/rooms');
@@ -353,7 +353,7 @@ async function main() {
   {
     const page = await mount({ auto: answerAll({ 'GET /api/projects/prj_a/rooms': rooms().prj_a.map(item => (item.id === 'rm_gen' ? { ...item, last_message_body: 'The **latest** reply' } : item)) }) });
     await page.evaluate(() => window.__sidebar.setActive('rm_gen'));
-    const active = () => page.evaluate(() => ({ rows: [...document.querySelectorAll('.room-row.active')].map(row => row.parentElement.dataset.roomId), previews: [...document.querySelectorAll('.room-preview')].map(node => [node.parentElement.dataset.roomId, node.textContent]) }));
+    const active = () => page.evaluate(() => ({ rows: [...document.querySelectorAll('.room-item.active')].map(row => row.parentElement.dataset.roomId), previews: [...document.querySelectorAll('.room-item-preview')].map(node => [node.closest("[data-room-id]").dataset.roomId, node.textContent]) }));
     assert.deepEqual((await active()).rows, ['rm_gen']);
     assert.equal((await active()).previews.length, 1);
     assert.equal((await active()).previews[0][0], 'rm_gen');
@@ -383,10 +383,10 @@ async function main() {
   // on every root and say what the next click does, and a root the person opened is not folded again on the next load.
   {
     const page = await mount();
-    const root = id => page.evaluate(id => { const group = document.querySelector(`[data-room-id=${id}]`); const toggle = group.querySelector(':scope > .room-row > .room-collapse'); const badge = group.querySelector(':scope > .room-row > .unread-count'); return { collapsed: group.classList.contains('collapsed'), label: toggle.getAttribute('aria-label'), expanded: toggle.getAttribute('aria-expanded'), badge: badge && !badge.hidden ? badge.textContent : '' }; }, id);
+    const root = id => page.evaluate(id => { const group = document.querySelector(`[data-room-id=${id}]`); const toggle = group.querySelector(':scope > .room-item > .room-collapse'); const badge = group.querySelector(':scope > .room-item .room-item-unread'); return { collapsed: group.classList.contains('collapsed'), label: toggle.getAttribute('aria-label'), expanded: toggle.getAttribute('aria-expanded'), badge: badge && !badge.hidden ? badge.textContent : '' }; }, id);
     assert.deepEqual(await root('rm_ah'), { collapsed: true, label: 'Expand Alpha', expanded: 'false', badge: '21' });
     assert.deepEqual((await root('rm_bh')).collapsed, true, 'every project starts folded');
-    await page.$eval('[data-room-id=rm_ah] > .room-row > .room-collapse', node => node.click());
+    await page.$eval('[data-room-id=rm_ah] > .room-item > .room-collapse', node => node.click());
     assert.deepEqual(await root('rm_ah'), { collapsed: false, label: 'Collapse Alpha', expanded: 'true', badge: '' });
     assert.equal(await page.evaluate(() => localStorage.getItem('aimebu2.rooms.collapsed')), '["rm_bh"]');
     const all = () => page.$eval('#rooms-fold', node => [node.title, node.classList.contains('is-collapsed'), node.disabled]);
@@ -395,14 +395,14 @@ async function main() {
     assert.deepEqual([await all(), (await root('rm_ah')).collapsed, (await root('rm_bh')).collapsed], [['Expand all projects', true, false], true, true]);
     await page.$eval('#rooms-fold', node => node.click());
     assert.deepEqual([await all(), (await root('rm_ah')).collapsed, (await root('rm_bh')).collapsed], [['Collapse all projects', false, false], false, false]);
-    await page.$eval('[data-room-id=rm_bh] > .room-row > .room-collapse', node => node.click());
+    await page.$eval('[data-room-id=rm_bh] > .room-item > .room-collapse', node => node.click());
     // A project first seen with no rooms is open and stays open when its first room arrives, so the room just made is not hidden; one first seen with
     // rooms starts folded.
     assert.deepEqual(await page.evaluate(() => { const store = window.__sidebar.store; return [store.foldNew(new Set(), new Set(['rm_empty'])), store.foldNew(new Set(['rm_empty']), new Set(['rm_empty'])), store.collapsedRooms.has('rm_empty'), store.foldNew(new Set(['rm_full']), new Set(['rm_full'])), store.collapsedRooms.has('rm_full')]; }), [false, false, false, true, true]);
     await page.evaluate(() => { const store = window.__sidebar.store; store.collapsedRooms.delete('rm_full'); store.seenRooms.delete('rm_empty'); store.seenRooms.delete('rm_full'); localStorage.setItem('aimebu2.rooms.collapsed', JSON.stringify([...store.collapsedRooms])); localStorage.setItem('aimebu2.rooms.seen', JSON.stringify([...store.seenRooms])); });
     // The project that holds the open room is seen but not folded, so its row does not vanish under the person; Escape on a closed menu is left to the page.
     assert.deepEqual(await page.evaluate(() => { const store = window.__sidebar.store; const result = [store.foldNew(new Set(['rm_open']), new Set(['rm_open']), new Set(['rm_open'])), store.collapsedRooms.has('rm_open'), store.seenRooms.has('rm_open')]; store.seenRooms.delete('rm_open'); return result; }), [false, false, true]);
-    assert.equal(await page.evaluate(() => { const button = document.querySelector('[data-room-id=rm_ah] > .room-row .project-menu-btn'); const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); button.dispatchEvent(event); return event.defaultPrevented; }), false, 'a closed menu does not swallow Escape');
+    assert.equal(await page.evaluate(() => { const button = document.querySelector('[data-room-id=rm_ah] > .room-item .project-menu-btn'); const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }); button.dispatchEvent(event); return event.defaultPrevented; }), false, 'a closed menu does not swallow Escape');
     // A reload keeps what the person did: the opened root stays open and the folded one stays folded, and nothing seen before is folded again.
     const saved = await page.evaluate(() => [localStorage.getItem('aimebu2.rooms.collapsed'), localStorage.getItem('aimebu2.rooms.seen')]);
     await page.close();
@@ -492,7 +492,7 @@ async function main() {
     await answer(page, held, 200, room('rm_old', 'prj_a', 'old-room', { parent_id: 'rm_ah' }));
     await answer(page, await waitRequest(page, 'GET', '/api/projects/prj_a/rooms'), 200, rooms().prj_a.map(item => (item.id === 'rm_old' ? { ...item, lifecycle: 'open' } : item)));
     await settle(page);
-    assert.equal(await page.$eval('[data-room-id=rm_old] .room-row', node => node.classList.contains('archived')), false);
+    assert.equal(await page.$eval('[data-room-id=rm_old] .room-item', node => node.classList.contains('archived')), false);
     await page.close();
     page = await mount();
     await hold(page, 'GET /api/projects/prj_a/rooms');
@@ -539,7 +539,7 @@ async function main() {
     // create
     page = await mount();
     // The + of a project's row makes a room, as the ☰ menu's New room does (the second case below).
-    await page.$eval('[data-room-id=rm_ah] > .room-row > .add-room', node => node.click());
+    await page.$eval('[data-room-id=rm_ah] > .room-item > .add-room', node => node.click());
     await page.waitForFunction(() => document.querySelector('#app-dialog')?.open);
     await fill(page, 'fresh-room');
     held = await waitRequest(page, 'POST', '/api/projects/prj_a/rooms');
@@ -700,7 +700,7 @@ async function main() {
     const order = () => page.$$eval('#projects > .room-group', nodes => nodes.map(node => node.dataset.roomId));
     // Reads the move items of a project's menu: open it, look, close it with the button again.
     const state = async id => page.evaluate(async id => {
-      const row = document.querySelector(`[data-room-id=${id}] > .room-row`), button = row.querySelector('.project-menu-btn'); button.click();
+      const row = document.querySelector(`[data-room-id=${id}] > .room-item`), button = row.querySelector('.project-menu-btn'); button.click();
       await new Promise(resolve => setTimeout(resolve, 30));
       const result = { up: row.querySelector('.project-menu-up').disabled, down: row.querySelector('.project-menu-down').disabled, add: row.querySelector('.project-menu-add').disabled, label: button.getAttribute('aria-label'), title: button.title, popup: button.getAttribute('aria-haspopup'), expanded: button.getAttribute('aria-expanded') };
       button.click(); await new Promise(resolve => setTimeout(resolve, 30)); result.closed = !row.querySelector('.project-menu-list');
@@ -711,13 +711,13 @@ async function main() {
     // The menu is reachable by keyboard: opening it focuses the first item, the arrows skip disabled ones, Escape closes it and hands focus back, and a
     // click elsewhere closes it too.
     const focused = () => page.evaluate(() => document.activeElement.className.replace(/row-btn |project-menu-item /g, ''));
-    await page.focus('[data-room-id=rm_ah] .room-name'); await page.keyboard.press('Tab'); await page.keyboard.press('Enter'); await settle(page);
+    await page.focus('[data-room-id=rm_ah] .room-item-name'); await page.keyboard.press('Tab'); await page.keyboard.press('Enter'); await settle(page);
     assert.equal(await focused(), 'project-menu-add', 'opening the menu focuses its first item');
     await page.keyboard.press('ArrowDown'); assert.equal(await focused(), 'project-menu-down', 'the arrows skip a disabled item');
     await page.keyboard.press('ArrowDown'); assert.equal(await focused(), 'project-menu-add');
     await page.keyboard.press('Escape'); await settle(page);
     assert.deepEqual(await page.evaluate(() => [!!document.querySelector('.project-menu-list'), document.activeElement.classList.contains('project-menu-btn')]), [false, true], 'Escape closes the menu and returns focus to its button');
-    await page.focus('[data-room-id=rm_ah] .room-name'); await page.keyboard.press('Tab'); await page.keyboard.press('Enter'); await settle(page);
+    await page.focus('[data-room-id=rm_ah] .room-item-name'); await page.keyboard.press('Tab'); await page.keyboard.press('Enter'); await settle(page);
     await page.$eval('#projects', node => node.click()); await settle(page);
     assert.equal(await page.evaluate(() => !!document.querySelector('.project-menu-list')), false, 'a click elsewhere closes the menu');
     await projectAct(page, 'rm_ah', 'down');
@@ -727,7 +727,7 @@ async function main() {
     assert.deepEqual(await page.evaluate(index => window.__requests[index].body, saved), { preferences: { sidebar_project_order: '["prj_b","prj_a","prj_c"]' } });
     await projectAct(page, 'rm_ah', 'up');
     assert.deepEqual(await order(), ['rm_ah', 'rm_bh']);
-    const drag = (type, target, y) => page.evaluate((type, target, y) => { const row = document.querySelector(`[data-room-id=${target}] > .room-row`); const box = row.getBoundingClientRect(); window.__transfer ||= new DataTransfer();
+    const drag = (type, target, y) => page.evaluate((type, target, y) => { const row = document.querySelector(`[data-room-id=${target}] > .room-item`); const box = row.getBoundingClientRect(); window.__transfer ||= new DataTransfer();
       row.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: window.__transfer, clientY: box.top + box.height * y })); return [row.classList.contains('drop-before'), row.classList.contains('drop-after')]; }, type, target, y);
     await drag('dragstart', 'rm_ah', 0.5);
     assert.deepEqual(await drag('dragover', 'rm_bh', 0.9), [false, true], 'over the lower half the drop goes after');

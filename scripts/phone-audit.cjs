@@ -78,7 +78,7 @@ function audit(MIN) {
   sample.remove(); dialog.removeAttribute('open');
 
   // Code block copy button must not sit on the code text, even when the line scrolls
-  const pre = document.querySelector('.chat-msg[data-fixture=plain] .md-codeblock pre'), copy = pre.closest('.md-codeblock').querySelector('.md-copy'), code = pre.querySelector('code');
+  const pre = document.querySelector('.chat-msg[data-fixture=plain] .md-codeblock pre'), copy = pre.closest('.md-codeblock').querySelector('.md-copy-btn'), code = pre.querySelector('code');
   code.textContent = 'x'.repeat(400); pre.scrollLeft = 0;
   const copyRect = box(copy), preRect = box(pre);
   const style = getComputedStyle(pre);

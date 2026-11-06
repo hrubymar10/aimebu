@@ -6,7 +6,7 @@ rules are deleted. Things v1 never had go in `web/v2-only.css`, written with v1'
 differences from v1 that are kept on purpose, so a review does not flag them.
 
 **Cascade order.** `v1.css` (loaded first) declares `@layer v2-base, v1-reset, v1;`. `v2-base` holds the legacy `style.css` and the generic element and
-button look in `theme-v1.css`; `v1-reset` holds v1's universal reset, applied only inside the areas that have moved over (the send bar so far); `v1`
+button look in `theme-v1.css`; `v1-reset` holds v1's universal reset, applied only inside the areas that have moved over (the send bar, the room rows and the top bar's left side so far); `v1`
 holds v1's rules. A later layer beats an earlier one whatever the selectors, so v1's class rules always win over v2's base. Everything unlayered
 (the rest of `theme-v1.css`, then `v2-only.css`, loaded last) beats all three layers: that is where v2 states what must stay v2's. A rule that
 v1 has a heavier rule against has to be unlayered to stay: the `[hidden]` rule and the other `!important` ones (an `!important` declaration in a lower
@@ -23,12 +23,18 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 | Messages | `.message-number` / `.message-bubble` / `.message-body` | `.chat-msg-id` / `.chat-msg-bubble` / `.chat-msg-body` | messages |
 | Messages | `.message-attention` / `.message-expired(-mark)` | `.chat-msg-attention-icon` / `.chat-msg-expired(-icon)` | messages |
 | Messages | `.system-notice` / `.system-row` | `.chat-msg-system` / `.chat-msg-system-row` | messages |
+| Markdown | a rendered body is `.chat-msg-body` | `.chat-msg-body.md-rendered` (not in the raw view; the notice body too) | markdown |
+| Markdown | `.row-btn.md-copy` | `.md-copy-btn` | markdown |
+| Markdown | table in `.md-table-wrap` | `.md-table-wrap > table.md-table` | markdown |
+| Markdown | the raw fenced block as `<pre><code>` | v1's `span.raw-code.raw-code-block` (it wraps, where the pre scrolled sideways) | markdown |
 | Composer | (the form and the rows above it, loose children of `.chat`) | `.send-bar` wraps the reply bar, the pending-file list, the form and `#chat-error`; the form is `.send-form` (`#composer` stays as its id) | composer |
 | Composer | `#composer textarea` / `button[aria-label=Send]` | `.msg-input` / `.btn.btn-primary.btn-send` | composer |
 | Composer | `.attachment-slot` / `.composer-emoji` | `.btn.btn-md-toggle.btn-icon-sm.attachment-picker-btn` (the emoji button is the same kind of button) | composer |
 | Composer | `.reply-chip` / `.reply-chip-jump` / its `.btn-icon` | `.reply-pending` / `.reply-pending-link` / `.reply-pending-clear` | composer |
 | Composer | `.pending-attachments` / `.pending-image` | `.attachment-pending-list` / `.attachment-pending-item` (`.attachment-pending-thumb`, `-meta`, `-name`, `-status`, `.attachment-remove-btn`) | composer |
 | Composer | `.composer-note` | `.system-room-notice` | composer |
+| Rooms | `.room-row` / `.room-name` / `.room-preview` / `.unread-count` | `.room-item` / `.room-item-name` / `.room-item-preview` / `.room-item-unread` (the kind glyph is `.room-item-icon` in `.room-item-icon-group`, the name, count, attention and unread sit in `.room-item-top` inside `.room-item-info`, the preview is inside the row) | sidebar |
+| Rooms | `.room-pin`, `.room-hide`, the pin and hide buttons | not drawn (rows no longer render them) | sidebar |
 | Composer | `#composer.drag-attachment` | `.send-bar.drag-attachment` | composer |
 | Settings | `<dialog id=settings-dialog>` grid with `header`, `nav`, sections | `.settings-modal` > `.settings-pane` > `.settings-nav` + `.settings-body` (`.settings-body-header`, sections); still a `<dialog>`, reset in `v2-only.css` | settings |
 | Settings | `button.row-btn.settings-selected` | `button.settings-nav-item.active` | settings |
@@ -41,10 +47,17 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 | Top bar | `<strong>aimebu</strong>` / `#build-version` | `h1.logo` / `span.build-version#build-version` | top bar |
 | Top bar | `nav` | `nav.topbar-right` | top bar |
 | Top bar | `span.connection-dot(.connected / .disconnected)` | `span.status-indicator(.connected / .disconnected) > span.status-dot` | top bar |
+| Members panel | `.agent-card` | `.agent-card.agent-card-compact` (v1's card box; the class is released from the hold list) | members |
+| Members panel | `.agent-title` / `.agent-name` / `.agent-harness-icon` | `.agent-id` / `.agent-id-text` / `.harness-icon` (the v2 names stay on the element as hooks for the code and the tests, and carry no rules) | members |
+| Members panel | `.presence-dot.agent-dot` | `.agent-online-dot.active` / `.stale` / `.dead` (6px; `.dead` is v2's red; `data-state` stays as the hook) | members |
+| Members panel | `.agent-state > .agent-state-pill` (plain coloured text, a pill only when open) | `.agent-state-pill.agent-state-badge.agent-state-<idle\|thinking\|error\|stopped>`; a working agent is `thinking`; paused and needs-attention are `.agent-state-paused` / `.agent-state-attention` in `v2-only.css` | members |
+| Members panel | `.agent-quick` | `.agent-card-actions` (v1's hover overlay, vertically centred) holding v2's icon buttons | members |
 
 ## Kept from v2 on purpose (decided by the owner, 2026-11-05)
 
 - The floating message toolbar (not v1's frameless in-bubble controls).
+- The viewer's own sender line has 22px under it (v1: 2px): the floating toolbar sits in that room, over the bubble's top edge, so it covers neither the
+  sender line nor the text. A column narrower than 420px does the same for everyone's messages; a phone's toolbar is in the bubble's flow and needs none.
 - The composer's formatting toolbar, rich editor, link field and notices (`.composer-toolbar`, `.composer-field`, `.composer-editor`, `.composer-notice`), and the thread composer, which keeps its own markup until its area moves.
 - Own messages at most 75% wide, other people's full width.
 - Touch-sized targets on phones (v1 has none).
@@ -71,11 +84,23 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 Left under v2's names for now (their areas move later): the toolbar (`.message-actions*`, owned by the perf branch), `.reaction-pill(s)`,
 `.thread-chip`, `.message-receipts` (read receipts come back to v1's `.chat-msg-receipts` in a later step), `.message-images`, `.message-role`.
 
+## Markdown: what v2 adds, and where it differs from v1 (accepted)
+
+- v2 keeps what v1 has no rule for: h4–h6, `hr`, `del`, nested lists, task items, `.mention-group` and `role=button` mention states, the touch copy row,
+  and the code and copy-button rules inside visual-plan blocks (v1 draws those blocks without them). All of it is in `v2-only.css`.
+- Between two blocks v1 writes a paragraph break as `<br><br>`, which on top of the block's own margin gives a blank line and a bit more, so v1's
+  messages look looser. v2 draws blocks, and puts exactly one line between two of them (`1.55em`). That is the one visible difference.
+- v1's copy button is white on `--bg-tertiary`, which is low contrast in the light themes; it is v1 as it is.
+
 ## Reverted to v1 on purpose
 - Top bar atoms are v1's: the logo (1.15rem, 700, was 16px), the version text (.6rem at .6 opacity, was 8.4px at .9; high contrast keeps full
   opacity), the brand gap (10px, was 7px) and the connection dot (8px with a glow, was 9px with a halo ring). The System events popover's title is a plain
   `strong` now: it was styled as the brand (16px, letter-spaced) and hidden on phones by the bar's `strong` rule, and is 14px and shown like the other
   popovers' titles, so every popover title in the bar shows on a phone now. v1 hides the version under 740px; v2 shows it again from 701px.
+- Member cards: the dot before the name is 6px (was 8px) and takes v1's green and amber (paused, needs a decision) and a v2-only red when the agent is dead (stopped, lost, offline), as the owner asked. The badge is v1's pill (16px, 8.1px mono, tinted) in the collapsed row; the open card
+  keeps its readable rounded 12px sans pill (the owner's choice), coloured by the same variant. The name takes v1's `.agent-id` type (11.2px, 600).
+  The hover actions sit in v1's overlay, centred on the name row (a collapsed card can have a second line); an open card keeps them at its top. Where there is no hover
+  (touch, a stylus) they sit on a line of their own, as v1 shows them at rest. In the light themes the amber badges (working, paused, needs a decision) have darker text, to stay above 4.5:1.
 
 - Colour tokens and the nine palettes are v1's, including its muted text and light themes, which are under WCAG AA in places: the `test-ui`
   contrast audit now reports them instead of failing on them (`a11y-audit.cjs --strict` still enforces).
@@ -94,3 +119,9 @@ Left under v2's names for now (their areas move later): the toolbar (`.message-a
   rule wins over it); `.btn-primary` and `.btn-danger` keep v2's theme colours; the focus ring is v2's (v1 sets `outline: none`).
 - Accepted until their areas move: a `.btn` that nothing else sizes now takes v1's 11.2px text and 30.8px height (it was 12px and 34px), and the
   thread composer's B / I / U / S buttons lose their border. Both go away when those areas take v1's classes.
+
+- `scripts/v1-css-hold.json` `released` maps a held state class to the classes of moved areas that release it: `active` is released by `settings-nav-item`,
+  `settings-section` and `room-item`, `dm` and `pinned` by `room-item`, so v1's `.room-item.active`, `.room-item.dm .room-item-icon` and
+  `.room-item.pinned .room-item-name` rules come in while a bare `.active` elsewhere stays held.
+- The rooms rows show what v1 shows and v2 had hidden or drawn differently: the attention pill (`🔔 N`) is visible, the member count is always drawn (`0`
+  when the room has no count), and an unread count makes a row bold only while it is not the open one.

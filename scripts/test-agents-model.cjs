@@ -7,9 +7,14 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'agents', 'model.js'), 'utf8');
 const context = vm.createContext({ Date, Number, Math, JSON, Map, Intl, Object, Array, String });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { writerBlockText, reconcile, stateOf, activityOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, profileRows, outputStatus, outputFailure };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { writerBlockText, reconcile, stateBadge, stateDot, stateOf, activityOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, profileRows, outputStatus, outputFailure };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
+
+// The class of the state badge and of the dot before the name: v1's where v1 has the state, v2's own for the rest (amber when paused or waiting for a
+// decision, red when dead).
+assert.deepEqual(['idle', 'working', 'paused', 'attention', 'error', 'stopped'].map(m.stateBadge), ['idle', 'thinking', 'paused', 'attention', 'error', 'stopped']);
+assert.deepEqual(['idle', 'working', 'paused', 'attention', 'error', 'stopped', 'offline', 'unknown'].map(m.stateDot), ['active', 'active', 'stale', 'stale', 'dead', 'dead', 'dead', 'offline']);
 
 // A refresh keeps the record it holds for an unchanged agent, and the whole map when nothing changed or moved.
 const a = { id: 'a', name: 'ada', health_flags: [] }, b = { id: 'b', name: 'bert' };

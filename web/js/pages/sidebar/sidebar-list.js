@@ -42,7 +42,7 @@ function dragHandlers(room, store) {
 }
 
 function arm(event, store) {
-  const row = event.currentTarget.closest('.room-row');
+  const row = event.currentTarget.closest('.room-item');
   row.draggable = true;
   const release = () => { for (const done of ['pointerup', 'pointercancel']) document.removeEventListener(done, release, true); if (!store.dragging) row.draggable = false; };
   for (const done of ['pointerup', 'pointercancel']) document.addEventListener(done, release, true);
@@ -77,12 +77,13 @@ function ProjectMenu({ project, room, controls, manual, store, onAdd, disabled }
     </div>`}</span>`;
 }
 
-function Row({ view, store, ctx }) {
+function Row({ view, store, ctx, preview }) {
   const { room } = view, project = store.projects.get(room.project_id), [reopening, setReopening] = useState(false);
   const archivedProject = !!project?.archived_at, projectName = project?.name || '';
   const controls = room.kind === 'home' && project && view.controls ? view.controls : null, manual = ctx.sort === 'manual';
   const affected = store.health.get(room.id) || [], quiet = roomSilenced(room), attention = room.attention_count || 0, members = room.member_count || 0;
-  const classes = ['room-row', ctx.active === room.id ? 'active' : '', room.lifecycle === 'closed' ? 'archived' : '', room.lifecycle === 'closing' ? 'closing' : '', controls && manual ? 'project-draggable' : ''].filter(Boolean).join(' ');
+  const isActive = ctx.active === room.id, glyph = room.kind === 'home' ? '⌂' : room.agent_chat ? '⇄' : room.kind === 'dm' ? '@' : '#';
+  const classes = ['room-item', isActive ? 'active' : '', room.kind === 'dm' ? 'dm' : '', view.unread > 0 && !isActive ? 'has-unread' : '', attention > 0 ? 'has-attention' : '', room.lifecycle === 'closed' ? 'archived' : '', room.lifecycle === 'closing' ? 'closing' : '', controls && manual ? 'project-draggable' : ''].filter(Boolean).join(' ');
   const select = () => store.onSelect(store.rooms.get(room.id) || room);
   const label = `${view.collapsible && view.folded ? 'Expand' : 'Collapse'} ${room.title}`;
   const add = async () => {
@@ -99,13 +100,17 @@ function Row({ view, store, ctx }) {
   const drag = controls ? dragHandlers(room, store) : {};
   const row = html`<div class=${classes} onClick=${event => { if (!event.target.closest('button, input, select, a')) select(); }} ...${drag}>
     ${view.collapsible ? html`<button type="button" class="row-btn branch room-collapse" title=${label} aria-label=${label} aria-expanded=${String(!view.folded)} onClick=${() => store.toggleCollapsed(room.id)}><${Chevron} direction=${view.folded ? 'right' : 'down'} /></button>` : view.nest && html`<span class="branch-spacer" aria-hidden="true"></span>`}
-    <button type="button" class="row-btn room-name" title=${`${room.title} · ${members} ${members === 1 ? 'member' : 'members'}`} onClick=${select}>${`${room.kind === 'home' ? '⌂' : room.agent_chat ? '⇄' : room.kind === 'dm' ? '@' : '#'} ${room.title}`}</button>
+    <span class="room-item-icon-group"><span class="room-item-icon" aria-hidden="true">${glyph}</span></span>
+    <div class="room-item-info"><div class="room-item-top">
+    <button type="button" class="row-btn room-item-name" title=${`${room.title} · ${members} ${members === 1 ? 'member' : 'members'}`} onClick=${select}>${room.title}</button>
     ${view.chip && projectName && !(room.kind === 'home' && room.title.trim().toLowerCase() === projectName.trim().toLowerCase()) && html`<span class="room-project" title=${`Project ${projectName}`}>${projectName}</span>`}
     ${(affected.length > 0 || store.seenHealth.has(room.id)) && html`<span class="room-health" hidden=${!affected.length} title=${affected.map(agent => `${agent.name}: ${agent.flags.map(flag => flag.code.replaceAll('_', ' ')).join(', ')}`).join('\n')}>${`⚠ ${affected.length}`}</span>`}
     ${quiet && html`<span class="room-muted" role="img" title=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'} aria-label=${mutedNow(room) ? `Muted until ${new Date(room.muted_until).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}` : 'Notifications are off for this room'}><span class="icon-mask icon-mask-bell-disabled" aria-hidden="true"></span></span>`}
     ${room.lifecycle === 'closing' && html`<span class="room-state">Closing…</span>`}
-    ${attention > 0 && html`<span class="room-item-attention" role="img" title=${`${attention} waiting for you`} aria-label=${`${attention} items need your attention`}>🔔</span>`}
-    ${view.unread > 0 && html`<span class="unread-count" role="img" aria-label=${`${view.unread} unread messages`}>${String(view.unread)}</span>`}
+    <span class="room-item-count" title=${`${members} ${members === 1 ? 'member' : 'members'}`}>${String(members)}</span>
+    ${attention > 0 && html`<span class="room-item-attention" role="img" title=${`${attention} waiting for you`} aria-label=${`${attention} items need your attention`}>${`🔔 ${attention}`}</span>`}
+    ${view.unread > 0 && html`<span class="room-item-unread" role="img" aria-label=${`${view.unread} unread messages`}>${String(view.unread)}</span>`}
+    </div>${preview && html`<div class="room-item-preview">${previewText(room.last_message_body) || 'No messages yet'}</div>`}</div>
     ${controls && html`<${ProjectMenu} project=${project} room=${room} controls=${controls} manual=${manual} store=${store} onAdd=${add} disabled=${archivedProject || (!!room.lifecycle && room.lifecycle !== 'open')} />`}
     <${GlyphButton} name="plus" label=${`New task room under ${room.title}`} className="row-btn add-room" disabled=${(!!room.lifecycle && room.lifecycle !== 'open') || archivedProject} hidden=${room.kind === 'dm' || room.lifecycle === 'closed' || archivedProject} onClick=${add} />
     ${room.lifecycle === 'closed' && !archivedProject && html`<${GlyphButton} name="reopen" label=${`Reopen ${room.title}`} className="row-btn reopen-room" disabled=${reopening} onClick=${reopen} />`}</div>`;
@@ -116,13 +121,13 @@ function Group({ view, store, ctx }) {
   const { room } = view;
   const preview = room.id === ctx.active || ctx.previewAll;
   const kids = [...view.children.map(child => html`<${Group} key=${child.room.id} view=${child} store=${store} ctx=${ctx} />`), ...view.tail.map(node => html`<${Tail} key=${`${node.kind}:${node.project.id}`} node=${node} store=${store} ctx=${ctx} />`)];
-  return html`<div class=${view.folded ? 'room-group collapsed' : 'room-group'} data-room-id=${room.id}><${Row} view=${view} store=${store} ctx=${ctx} />${preview && html`<div class="room-preview">${previewText(room.last_message_body) || 'No messages yet'}</div>`}${kids.length > 0 && html`<div class="room-children">${kids}</div>`}</div>`;
+  return html`<div class=${view.folded ? 'room-group collapsed' : 'room-group'} data-room-id=${room.id}><${Row} view=${view} store=${store} ctx=${ctx} preview=${preview} />${kids.length > 0 && html`<div class="room-children">${kids}</div>`}</div>`;
 }
 
 // A project whose rooms have not arrived: its name where its row will be, the same height as the folded row that replaces it.
 function Placeholder({ project, preview }) {
   // With every row's last message on, a project row carries a preview line too: an empty one keeps the height.
-  return html`<div class="room-group project-placeholder" data-project-id=${project.id} aria-busy="true"><div class="room-row"><span class="branch-spacer" aria-hidden="true"></span><span class="row-btn room-name">${`⌂ ${project.name || ''}`}</span></div>${preview && html`<div class="room-preview" aria-hidden="true">\u00a0</div>`}</div>`;
+  return html`<div class="room-group project-placeholder" data-project-id=${project.id} aria-busy="true"><div class="room-item"><span class="branch-spacer" aria-hidden="true"></span><span class="room-item-icon-group"><span class="room-item-icon" aria-hidden="true">⌂</span></span><div class="room-item-info"><div class="room-item-top"><span class="row-btn room-item-name">${project.name || ''}</span></div>${preview && html`<div class="room-item-preview" aria-hidden="true">\u00a0</div>`}</div></div></div>`;
 }
 
 function Fold({ id, className, open, store, children, summary, ...rest }) {
@@ -151,7 +156,7 @@ function Tail({ node, store, ctx }) {
 
 function Offer({ offer, store }) {
   const [joining, setJoining] = useState(false);
-  return html`<div class="room-row agent-chat-offer" data-offer-id=${offer.id}><span class="room-name" title=${`${offer.title} · ${offer.message_count} ${offer.message_count === 1 ? 'message' : 'messages'}`}>${`⇄ ${offer.title}`}</span>
+  return html`<div class="room-item agent-chat-offer" data-offer-id=${offer.id}><span class="room-item-icon-group"><span class="room-item-icon" aria-hidden="true">⇄</span></span><div class="room-item-info"><div class="room-item-top"><span class="room-item-name" title=${`${offer.title} · ${offer.message_count} ${offer.message_count === 1 ? 'message' : 'messages'}`}>${offer.title}</span></div></div>
     <${GlyphButton} name="person-plus" label=${`Join ${offer.title}`} className="row-btn agent-chat-join" disabled=${joining} onClick=${async () => { setJoining(true); await store.join(offer); setJoining(false); }} /></div>`;
 }
 

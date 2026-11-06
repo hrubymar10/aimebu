@@ -32,8 +32,8 @@ async function main() {
     // A server with no harness offers the first-run harness card as a modal over the app: that is skipped, as the person's own stored choice.
     assert.equal((await call('/api/me/preferences', 'PUT', { preferences: { harness_setup_skipped: '1' } })).status, 200);
     await page.reload(); await page.waitForSelector('#app-view:not([hidden])');
-    await page.waitForSelector(`[data-room-id="${home.id}"] .room-name`);
-    await page.evaluate(id => document.querySelector(`[data-room-id="${id}"] .room-name`).click(), home.id);
+    await page.waitForSelector(`[data-room-id="${home.id}"] .room-item-name`);
+    await page.evaluate(id => document.querySelector(`[data-room-id="${id}"] .room-item-name`).click(), home.id);
     await page.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Emoji' && document.querySelector('#emoji-button'));
 
     const cells = () => page.$$eval('.emoji-picker .emoji-cell', nodes => nodes.length);

@@ -268,6 +268,15 @@
   outline: 1px dotted var(--accent);
 }
 
+[data-theme="high-contrast-dark"] .room-item.active {
+  background: transparent;
+  outline: 1px solid var(--accent);
+}
+
+[data-theme="high-contrast-dark"] .room-item.active .room-item-name {
+  color: var(--text-primary);
+}
+
 [data-theme="high-contrast-dark"] .room-item.has-attention {
   background: var(--accent-dim);
 }
@@ -989,6 +998,14 @@
   background: var(--bg-hover);
 }
 
+.room-item.active {
+  background: var(--accent-dim);
+}
+
+.room-item.active .room-item-name {
+  color: var(--accent);
+}
+
 .room-item-icon {
   flex-shrink: 0;
   width: 20px;
@@ -997,6 +1014,10 @@
   color: var(--text-muted);
   text-align: center;
   line-height: 1.4;
+}
+
+.room-item.dm .room-item-icon {
+  color: var(--purple);
 }
 
 .room-item-info {
@@ -1157,6 +1178,16 @@
   font-weight: 700;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.room-name {
+  min-width: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .room-header-action-icon {
@@ -1712,6 +1743,20 @@
   padding: 0;
 }
 
+.mention {
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 0 2px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.mention.mention-self {
+  color: #111827;
+  background: #e3a008;
+  box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.22);
+}
+
 .agent-profile-link {
   cursor: pointer;
 }
@@ -1732,6 +1777,11 @@
 .chat-msg-body .raw-code.raw-code-block {
   display: block;
   white-space: pre-wrap;
+}
+
+.chat-msg-body .md-codeblock {
+  position: relative;
+  display: block;
 }
 
 .chat-msg-body .md-copy-btn {
@@ -1774,6 +1824,17 @@
   width: 14px;
   height: 14px;
   color: #fff;
+}
+
+@media (hover: hover) {
+  .chat-msg-body .md-codeblock .md-copy-btn {
+    opacity: 0;
+  }
+
+  .chat-msg-body .md-codeblock:hover .md-copy-btn,
+  .chat-msg-body .md-codeblock:focus-within .md-copy-btn {
+    opacity: 1;
+  }
 }
 
 .chat-msg.self {
@@ -2315,6 +2376,20 @@
   min-height: 0;
 }
 
+.agent-card {
+  position: relative;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 8px;
+  margin-bottom: 6px;
+  transition: border-color var(--transition);
+}
+
+.agent-card:hover {
+  border-color: var(--border-hover);
+}
+
 .agent-card-compact .agent-id {
   width: 100%;
 }
@@ -2354,6 +2429,18 @@
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+.agent-online-dot.active {
+  background: var(--green-text);
+}
+
+.agent-online-dot.stale {
+  background: var(--orange);
+}
+
+.agent-online-dot.offline {
+  background: var(--text-muted);
 }
 
 /* Presence dot — per-room "are they listening right now?" state.
@@ -2490,6 +2577,12 @@
   width: 14px;
   background: linear-gradient(to right, transparent, var(--bg-tertiary));
   pointer-events: none;
+}
+
+.agent-card:hover .agent-card-actions,
+.agent-card:focus-within .agent-card-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .agent-card-actions .agent-action-btn {
@@ -3051,6 +3144,23 @@
 }
 
 /* ── Message reference autolinks ────────────────────────────── */
+
+.msg-ref {
+  color: var(--accent);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.msg-ref:hover {
+  text-decoration: underline;
+}
+
+.msg-ref.msg-ref-error {
+  color: var(--red);
+  text-decoration: line-through;
+}
 
 .reply-reference {
   display: block;
@@ -4921,6 +5031,19 @@
   vertical-align: middle;
 }
 
+.room-item-attention {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #e3a008;
+  background: rgba(227, 160, 8, 0.15);
+  border: 1px solid rgba(227, 160, 8, 0.35);
+  padding: 1px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  min-width: 18px;
+  text-align: center;
+}
+
 /* ── Notification settings ──────────────────────────────────────── */
 
 .settings-select {
@@ -4999,6 +5122,10 @@
   color: var(--text-muted);
   flex-shrink: 0;
 }
+.md-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
 
 .md-table {
   border-collapse: collapse;
@@ -5065,6 +5192,6 @@
    pin -5px over the icon span's dead space halves the measured ink-to-ink gap
    (~11px → ~6px). Derived from getBoundingClientRect measurement, not eyeballed. */
 .room-item-pin { display: inline-flex; align-items: center; margin-left: -5px; color: var(--accent, #4ea1ff); }
-
+.room-item.pinned .room-item-name { font-weight: 700; }
 
 }

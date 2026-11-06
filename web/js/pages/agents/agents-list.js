@@ -5,7 +5,7 @@ import { harnessIcon, agentLabel } from '../../sender-identity.js';
 import { relativeTime, stateAge } from '../../time.js';
 import { harnessName } from '../../harness-version.js';
 import { healthLabel } from '../health/model.js';
-import { actionsOf, activityOf, contextOf, grantsOf, liveOf, profileRows, stateOf, switchStatusOf } from './model.js';
+import { actionsOf, activityOf, contextOf, grantsOf, liveOf, profileRows, stateBadge, stateDot, stateOf, switchStatusOf } from './model.js';
 
 const PATHS = {
   dm: 'M3 4h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H9l-4 3v-3H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z',
@@ -85,14 +85,14 @@ export class AgentCard extends Component {
     const name = agentLabel(agent) || agent.id, dm = `Message ${agent.name || agent.slug || 'agent'} privately`;
     const reason = key => actions.find(action => action.name === key);
     const toggle = () => api.store.toggleProfile(agent.id);
-    return html`<article class=${expanded ? 'agent-card expanded' : 'agent-card'} data-agent-id=${agent.id} data-woken-by=${agent.woken_by || ''} data-live-at=${live.at} data-live-label=${live.label}
+    return html`<article class=${expanded ? 'agent-card agent-card-compact expanded' : 'agent-card agent-card-compact'} data-agent-id=${agent.id} data-woken-by=${agent.woken_by || ''} data-live-at=${live.at} data-live-label=${live.label}
       onClick=${event => { if (!event.target.closest('button, a, input, select, textarea, .profile-output')) toggle(); }}>
-      <div class="agent-title"><span class="presence-dot agent-dot" aria-hidden="true" data-state=${state.kind} title=${state.title}></span>
-        <img class="agent-harness-icon" alt="" src=${src} title=${`${agent.model || 'unknown'} · ${label}`} /><span class="agent-emoji" aria-hidden="true">${agent.role_emoji || ''}</span>
-        <span class="agent-identity"><strong class="agent-name" title=${name}>${name}</strong></span>
-        <div class="agent-state" data-since=${state.since} data-state=${state.kind} title=${state.title}><span class="agent-state-pill"><span class="agent-state-label">${state.name}</span>${' '}<${StateAge} store=${api.store} since=${state.since} /></span></div>
+      <div class="agent-id agent-title"><span class=${`agent-online-dot ${stateDot(state.kind)} agent-dot`} aria-hidden="true" data-state=${state.kind} title=${state.title}></span>
+        <img class="harness-icon agent-harness-icon" alt="" src=${src} title=${`${agent.model || 'unknown'} · ${label}`} /><span class="agent-emoji" aria-hidden="true">${agent.role_emoji || ''}</span>
+        <span class="agent-identity"><span class="agent-id-text agent-name" title=${name}>${name}</span></span>
+        <div class="agent-state" data-since=${state.since} data-state=${state.kind} title=${state.title}><span class=${`agent-state-pill agent-state-badge agent-state-${stateBadge(state.kind)}`}><span class="agent-state-label">${state.name}</span>${' '}<${StateAge} store=${api.store} since=${state.since} /></span></div>
         <span class="agent-role" title=${agent.role_updated ? 'Role updated; respawn to apply the project definition.' : ''}>${`${agent.role_emoji || ''} ${agent.role || 'Agent'}${agent.role_deleted ? ' (deleted)' : ''}`.trim()}</span>
-        <div class="agent-quick"><${QuickButton} className="agent-private" label=${dm} icon="dm" onClick=${() => api.onPrivate(agent)} />
+        <div class="agent-card-actions agent-quick"><${QuickButton} className="agent-private" label=${dm} icon="dm" onClick=${() => api.onPrivate(agent)} />
           <${QuickButton} className="agent-pause" label="Pause" icon="pause" disabled=${reason('act-pause').disabled} onClick=${() => api.store.control(agent.id, 'pause')} />
           <${QuickButton} className="agent-stop icon-btn-danger" label="Stop" icon="stop" disabled=${reason('act-stop').disabled} onClick=${() => api.store.control(agent.id, 'stop')} />
           <${IconButton} name=${expanded ? 'close' : 'chevron-right'} label=${expanded ? 'Close agent profile' : 'Open agent profile'} className="agent-expand" aria-expanded=${String(expanded)} onClick=${toggle} /></div></div>
@@ -114,9 +114,9 @@ export class AgentCard extends Component {
 
 function Human({ human, kind, api }) {
   const mine = human.id === currentUser;
-  return html`<article class=${mine ? 'agent-card human-card is-you' : 'agent-card human-card'} data-human-id=${human.id}><div class="agent-title"><span class="presence-dot" aria-hidden="true"></span>
-    <img class="agent-harness-icon" src="/icons/human.svg" alt="" title="human" aria-hidden="true" /><strong class="agent-name human-name" ...${mine ? { title: 'You' } : {}}>${human.login}</strong><small class="human-role">${human.role || ''}</small>
-    <div class="agent-quick">${!mine && kind !== 'dm' && html`<${QuickButton} className="human-dm" label=${`Message ${human.login} privately`} icon="dm" onClick=${() => api.onPrivateHuman?.(human)} />`}</div></div></article>`;
+  return html`<article class=${mine ? 'agent-card agent-card-compact human-card is-you' : 'agent-card agent-card-compact human-card'} data-human-id=${human.id}><div class="agent-id agent-title"><span class="agent-online-dot active" aria-hidden="true" data-state="idle"></span>
+    <img class="harness-icon agent-harness-icon" src="/icons/human.svg" alt="" title="human" aria-hidden="true" /><span class="agent-id-text agent-name human-name" ...${mine ? { title: 'You' } : {}}>${human.login}</span><small class="human-role">${human.role || ''}</small>
+    <div class="agent-card-actions agent-quick">${!mine && kind !== 'dm' && html`<${QuickButton} className="human-dm" label=${`Message ${human.login} privately`} icon="dm" onClick=${() => api.onPrivateHuman?.(human)} />`}</div></div></article>`;
 }
 
 export function HumansList({ store, api }) {

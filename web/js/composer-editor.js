@@ -59,7 +59,7 @@ function markRule(PM, pattern, markType) {
 export function cleanPastedHtml(html) {
   const template = document.createElement('template');
   template.innerHTML = html;
-  template.content.querySelectorAll('button, .md-copy, input, script, style').forEach(node => node.remove());
+  template.content.querySelectorAll('button, .md-copy-btn, input, script, style').forEach(node => node.remove());
   return template.innerHTML;
 }
 
@@ -175,7 +175,7 @@ export class ComposerEditor {
   markdownSlice(text, $context) {
     if (!looksLikeMarkdown(text)) return null;
     const fragment = renderMarkdown(text);
-    fragment.querySelectorAll?.('.md-copy, input').forEach(node => node.remove());
+    fragment.querySelectorAll?.('.md-copy-btn, input').forEach(node => node.remove());
     return this.PM.DOMParser.fromSchema(this.schema).parseSlice(fragment, { context: $context, preserveWhitespace: false });
   }
   // A code editor's copy comes as HTML made of spans and divs with the Markdown source as its plain text: the HTML would paste as unformatted

@@ -31,7 +31,7 @@ function Presence({ identity }) {
 function Stamp({ createdAt }) {
   const root = useRef(null);
   useLayoutEffect(() => { stampTime(root.current, createdAt); }, [createdAt]);
-  return html`<time ref=${root} />`;
+  return html`<time class="chat-msg-time" ref=${root} />`;
 }
 
 const ExpiredMark = () => html`<span class="chat-msg-expired-icon" title="Older than the expiry window: AI room chatter this old is not delivered to agents. Still shown here." role="img" aria-label="Expired from AI context" dangerouslySetInnerHTML=${{ __html: EXPIRED_HOURGLASS }} />`;
@@ -54,7 +54,7 @@ export function MessageMeta({ message, view }) {
 export function Body({ message, view, host }) {
   const root = useRef(null);
   useLayoutEffect(() => { host.renderBody(root.current, message); }, [message, view.bodyKey]);
-  return html`<div class="chat-msg-body" ref=${root} />`;
+  return html`<div class=${view.raw ? 'chat-msg-body' : 'chat-msg-body md-rendered'} ref=${root} />`;
 }
 
 export function Plan({ message }) {
@@ -105,7 +105,8 @@ const Quote = ({ quote }) => html`<button type="button" class="row-btn quote" ti
 function NoticeBody({ message, view, host }) {
   const root = useRef(null), drawn = useRef(false), marked = useRef(false);
   useLayoutEffect(() => {
-    if (drawn.current) host.renderBody(root.current, message); else root.current.textContent = message.body;
+    // Plain text first, as it is (its line breaks are kept by the body's own pre-wrap); the class that gives v1's Markdown rules, which collapse them, only after it is drawn.
+    if (drawn.current) { host.renderBody(root.current, message); root.current.classList.toggle('md-rendered', !view.raw); } else { root.current.textContent = message.body; root.current.classList.remove('md-rendered'); }
     drawn.current = true;
   }, [message, view.raw]);
   useLayoutEffect(() => {

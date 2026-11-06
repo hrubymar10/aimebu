@@ -30,7 +30,7 @@ button:disabled { opacity: .5; cursor: default; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
 }
-/* v1's reset (* { margin: 0; padding: 0; box-sizing: border-box }), applied only inside the areas that have moved to v1's classes: their rules were written
+/* v1's reset (* { margin: 0; padding: 0; box-sizing: border-box }), applied only inside the areas that have moved to v1's classes (the send bar, the room rows and the top bar's left side so far): their rules were written
    for it, and v2's base (the layer above) gives buttons and inputs a padding and a font they would otherwise inherit. An area is added when it moves over. */
 /* Not in the layer, because v1 has a rule of the same weight or heavier for each of these and a layered rule loses to it: what must stay v2's.
    `[hidden]` and the !important rules: an !important declaration in a lower layer would beat every other !important one. */
@@ -47,7 +47,7 @@ button.btn-danger:hover:not(:disabled), button.btn-danger:focus-visible { backgr
 /* Not in the layer: v1 sets `outline: none` on .btn and .msg-input and has no focus ring; a visible one is a v2 requirement (checked by the audits). */
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @layer v1-reset {
-  :is(.send-bar, .send-bar *, .send-bar *::before, .send-bar *::after, .topbar-left, .topbar-left *, .topbar-left *::before, .topbar-left *::after) { margin: 0; padding: 0; box-sizing: border-box; }
+  :is(.send-bar, .room-item, .topbar-left):is(*, *::before, *::after), :is(.send-bar, .room-item, .topbar-left) :is(*, *::before, *::after) { margin: 0; padding: 0; box-sizing: border-box; }
 }
 
 .app { grid-template-columns: var(--rooms-w, 240px) minmax(0, 1fr); background: var(--bg-primary); }
@@ -70,14 +70,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .sidebar header { min-height: 43px; margin: 0 -8px 8px; padding: 0 12px; border-bottom: 1px solid var(--border); }
 .sidebar header strong { font-size: 9.8px; line-height: 1.5; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
 .sidebar h2 { margin: 18px 8px 8px; color: var(--text-muted); font-size: 10px; font-weight: 600; letter-spacing: .06em; }
-.room-row { min-height: 36px; margin: 2px 0; padding: 10px; border-radius: 8px; }
-.room-row:hover { background: var(--bg-hover); }
-.sidebar .room-row.active { background: var(--accent-dim); }
-.room-row.active .room-name { color: var(--accent); }
-.room-row .room-name { padding: 0; border: 0; color: var(--text-primary); font-size: 11.9px; font-weight: 600; text-align: left; }
-.room-name:hover { background: transparent; border-color: transparent; color: var(--text-primary); }
-.room-preview { margin: -4px 30px 6px 9px; overflow: hidden; color: var(--text-muted); font-size: 10.5px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
-.room-row.archived .room-name, .room-row.closing .room-name { color: var(--text-muted); }
 .archived-rooms { margin: 2px 0; }
 .archived-rooms summary { padding: 7px 8px; color: var(--text-muted); font-size: 11px; cursor: pointer; }
 .sidebar .archive-search { margin: 2px 8px 8px; width: calc(100% - 16px); font-size: 11px; }
@@ -90,16 +82,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-chat-offers { margin: 2px 0; }
 .agent-chat-offers summary { padding: 7px 8px; color: var(--text-muted); font-size: 11px; cursor: pointer; }
 .agent-chat-offer { display: flex; align-items: center; }
-.agent-chat-offer .room-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 11.9px; }
 .direct-rooms { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 8px; }
 .direct-rooms h3 { margin: 4px 8px 8px; color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
 .reopen-room { padding: 3px 5px; color: var(--accent); font-size: 10px; }
 .room-state { padding: 1px 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); font-size: 9px; }
 .add-room:disabled { opacity: .25; }
-.unread-count { flex: 0 0 auto; min-width: 18px; margin-right: 3px; padding: 1px 7px; border-radius: 10px; background: #1f6feb; color: #fff; font-size: 9.1px; line-height: 1.5; font-weight: 700; text-align: center; }
-.room-row:has(.unread-count:not([hidden])) .room-name { font-weight: 700; }
-.unread-count[hidden] { display: none; }
-.room-row.active .room-name:hover { color: var(--accent); }
 .branch, .add-room { padding: 4px; color: var(--text-muted); }
 .room-children { border-color: var(--border); }
 .unread { background: var(--accent); }
@@ -109,7 +96,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 .chat { background: var(--bg-primary); }
 .chat > header { min-height: 51px; padding: 8px 16px; background: var(--bg-secondary); border-color: var(--border); }
-.chat h1 { color: var(--text-primary); font-size: 14px; font-weight: 600; }
+#room-title { color: var(--text-primary); font-size: 14px; font-weight: 600; }
 .chat small { color: var(--text-muted); font-size: 10px; }
 .chat header #agents-toggle { padding: 5px 10px; border: 1px solid var(--border); }
 .room-heading { min-width: 0; }
@@ -185,13 +172,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .chat-msg-body > :first-child { margin-top: 0; }
 .chat-msg-body > :last-child { margin-bottom: 0; }
 
-.chat-msg-body code { background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); }
-.chat-msg-body blockquote { border-color: var(--border-hover); color: var(--text-secondary); }
-.chat-msg-body a { color: var(--accent); }
-.md-codeblock { background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); }
-.md-copy { background: var(--bg-tertiary); border-color: var(--border); color: var(--text-secondary); }
-.md-table-wrap th, .md-table-wrap td { border-color: var(--border); }
-.md-table-wrap th { background: var(--bg-tertiary); }
 
 .thread-panel { background: var(--bg-primary); border-color: var(--border); box-shadow: -12px 0 24px var(--overlay-shadow); }
 .thread-panel header { background: var(--bg-secondary); border-color: var(--border); }
@@ -206,24 +186,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agents-panel h2 { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
 .agents-panel header button { padding: 4px 8px; }
 .agent-identity { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
-.agent-harness-icon { width: 16px; height: 16px; object-fit: contain; }
-.agent-harness-icon[hidden] { display: none; }
 .agent-live-chip { display: inline-block; margin: 0 0 7px; padding: 1px 7px; border: 1px solid var(--accent); border-radius: 20px; color: var(--accent); font: 10px var(--font-mono); }
 .agent-live-chip[hidden] { display: none; }
 .spawn-tool-reason, .spawn-version { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .spawn-tool-reason:not(:empty) { color: var(--orange); }
 #agents-list { padding: 6px 8px; }
 .agents-empty { color: var(--text-muted); }
-.agent-card { padding: 8px; margin-bottom: 6px; background: var(--bg-tertiary); border-color: var(--border); border-radius: 6px; }
-.agent-card:hover { border-color: var(--border-hover); }
-.agent-name { color: var(--text-primary); font-size: 11px; }
 .agent-role { color: var(--accent); font-size: 10px; }
 .agent-role-update { display: block; color: var(--warning); font-size: 10px; margin-top: 3px; }
 .agent-meta, .agent-activity { color: var(--text-muted); font-size: 10px; }
-.agent-state { --state-color: var(--green-text); display: inline-flex; align-items: center; width: max-content; min-height: 16px; margin-top: 7px; padding: 0 5px; border: 1px solid color-mix(in srgb, var(--state-color) 42%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--state-color) 12%, transparent); color: var(--state-color); font: 600 8px/1 var(--font-mono); }
-.agent-state[data-state="working"], .agent-state[data-state="paused"], .agent-state[data-state="attention"] { --state-color: var(--orange); }
-.agent-state[data-state="error"] { --state-color: var(--red); }
-.agent-state[data-state="stopped"] { --state-color: var(--text-secondary); }
 .agent-recovery { color: var(--orange); }
 .agent-switch-status { margin: 4px 0; color: var(--orange); font-size: 11px; }
 .agent-actions { border-color: var(--border); flex-wrap: wrap; }
@@ -495,11 +466,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 [data-theme="high-contrast-dark"] :is(.btn, .btn-icon, .row-btn) { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
 [data-theme="high-contrast-dark"] :is(.btn, .btn-icon, .row-btn):hover { background: var(--bg-hover); color: var(--text-primary); }
 [data-theme="high-contrast-dark"] button:disabled { opacity: 1; background: var(--bg-primary); border-color: var(--border); color: var(--text-muted); }
-[data-theme="high-contrast-dark"] .sidebar .room-row.active { background: var(--bg-primary); outline: 1px solid var(--accent); outline-offset: -1px; }
-[data-theme="high-contrast-dark"] .room-row.active .room-name { color: var(--text-primary); }
-[data-theme="high-contrast-dark"] .room-row .room-name, [data-theme="high-contrast-dark"] .room-row .room-name:hover { background: transparent; border: 0; color: var(--text-primary); }
-[data-theme="high-contrast-dark"] .room-row:hover { outline: 1px dotted var(--accent); outline-offset: -1px; }
-[data-theme="high-contrast-dark"] .agent-state { background: var(--bg-primary); border-color: var(--state-color); }
 [data-theme="high-contrast-dark"] .reaction-pill[aria-pressed=true] { background: var(--bg-primary); }
 [data-theme="high-contrast-dark"] :is(button,input,textarea,select):focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
@@ -560,21 +526,11 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 #project-dialog input { margin-top: 5px; }
 #project-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .sidebar #project-dialog footer button { margin: 0; }
-.room-row { padding: 10px; }
-.room-row .branch, .room-row .branch-spacer { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 25px; width: 25px; min-height: 30px; margin-right: 4px; }
-.room-row .branch { border: 0; background: transparent; }
-.room-row .add-room { border: 0; background: transparent; }
-.room-row .room-pin, .room-row .room-hide { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 34px; min-width: 34px; min-height: 34px; padding: 3px; border: 0; background: transparent; color: var(--text-muted); }
-.room-row .room-pin[aria-pressed="true"] { color: var(--accent); }
-.room-row .room-hide { flex-basis: 40px; font-size: 10px; }
 .hidden-rooms { margin: 2px 0; }
 .hidden-rooms summary { padding: 7px 8px; color: var(--text-muted); font-size: 11px; cursor: pointer; }
 .hidden-room-show { display: block; width: 100%; min-height: 36px; padding: 7px 8px; text-align: left; font-size: 11px; }
-.room-preview { margin: -4px 12px 6px 39px; }
 .room-children { margin-left: 22px; padding-left: 8px; }
 .room-health, .health-flag { background: var(--accent-dim); color: var(--orange); border-color: var(--border); }
-[data-theme="high-contrast-dark"] .room-row .branch, [data-theme="high-contrast-dark"] .room-row .add-room { border: 0; background: transparent; }
-html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var(--text-primary); }
 .messages { gap: 2px; }
 .message-role { padding: 0; border: 0; background: transparent; font-size: 13.3px; line-height: 1; }
 .answer-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-width: 100%; }
@@ -654,16 +610,11 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .invite-dialog form { display: grid; gap: 10px; }
 .invite-dialog label { display: grid; gap: 4px; }
 .invite-dialog { width: min(440px, calc(100vw - 24px)); }
-/* Mentions as v1 draws them; a mention of the viewer is the amber highlight. */
-.mention { border-radius: 3px; font-weight: 500; }
-.mention.mention-self { color: #111827; background: #e3a008; box-shadow: inset 0 0 0 1px rgba(17, 24, 39, .22); }
 .reaction-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }
 .reaction-pills:empty { display: none; }
 .reaction-pill { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 22px; height: 22px; min-height: 0; padding: 0 6px; border-radius: 999px; background: var(--bg-tertiary); border: 1px solid var(--border); font: 11.5px var(--font-sans); line-height: 1; } /* v1's size: 22px tall, a 6px side padding */
 .quote { display: block; max-width: 100%; margin: 0 0 6px; padding: 2px 0 2px 8px; border: 0; border-left: 2px solid var(--border-hover); border-radius: 0; background: transparent; color: var(--accent); font: 12.6px var(--font-mono); overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .quote:hover { border-left-color: var(--accent); }
-.agent-card { position: relative; padding: 7px 8px; }
-.agent-title { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .agent-role { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-expand { flex: 0 0 30px; width: 30px; height: 30px; margin-left: auto; padding: 0; border-color: var(--border); }
 .agent-card .agent-meta, .agent-card .agent-activity, .agent-card .agent-context { display: none; }
@@ -671,44 +622,40 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 /* Room members (v1 style): one line per person or agent: presence dot, role emoji, the full name, the state as small text.
    DM / Pause / Stop (and the detail toggle) are compact icon buttons that appear on hover or focus, drawn over the state
    text so they never take the name's width; on touch they sit on their own line. Clicking the row opens its detail. */
-.agent-card { position: relative; cursor: pointer; padding: 7px 8px; }
-.agent-card .agent-title { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: nowrap; min-height: 17px; }
+.agent-card { cursor: pointer; overflow-wrap: anywhere; }
+.agent-card .agent-id { flex-wrap: nowrap; min-height: 17px; }
 .agent-card .agent-identity { flex: 1 1 0; min-width: 0; display: block; overflow: hidden; }
-.agent-card .agent-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.2px; font-weight: 600; line-height: 1.5; }
+.agent-card .agent-id-text { display: block; line-height: 1.5; }
 /* The harness icon (or the person icon) is always there, between the presence dot and the role emoji. */
 /* v1 drew vibe and cline in white, which vanishes on a light surface; there the glyph is turned dark. Message headers use the same two files. */
-[data-theme$="light"] :is(.agent-harness-icon, .msg-sender-icon)[src$="/vibe.svg"], [data-theme$="light"] :is(.agent-harness-icon, .msg-sender-icon)[src$="/cline.svg"], [data-theme$="light"] :is(.agent-harness-icon, .msg-sender-icon)[src$="/human.svg"] { filter: invert(1); }
-.agent-card .agent-harness-icon { flex: 0 0 auto; width: 14px; height: 14px; opacity: .75; }
-.agent-card .agent-state { flex: 0 0 auto; max-width: 100%; gap: 5px; margin: 0; padding: 0; border: 0; background: none; color: var(--state-color, var(--text-muted)); font: 500 11px/1.2 var(--font-sans); white-space: nowrap; }
-.agent-card .agent-state::before { display: none; }
+[data-theme$="light"] :is(.harness-icon, .msg-sender-icon)[src$="/vibe.svg"], [data-theme$="light"] :is(.harness-icon, .msg-sender-icon)[src$="/cline.svg"], [data-theme$="light"] :is(.harness-icon, .msg-sender-icon)[src$="/human.svg"] { filter: invert(1); }
+.agent-card .agent-state { flex: 0 0 auto; max-width: 100%; margin: 0; }
 .agent-card .agent-role, .agent-card .agent-role-update { display: none; }
-.agent-card.expanded .agent-title { flex-wrap: wrap; }
+.agent-card.expanded .agent-id { flex-wrap: wrap; }
 .agent-card.expanded .agent-role { display: block; flex: 1 0 100%; }
 .agent-card.expanded .agent-state { flex: 1 0 100%; order: 5; }
 .agent-card.expanded .agent-role { order: 6; }
 .agent-card.expanded .agent-role-update { display: block; }
 .agent-emoji { flex: 0 0 auto; font-size: 13px; line-height: 1; }
 .agent-emoji:empty { display: none; }
-.agent-quick { position: absolute; top: 3px; right: 4px; display: flex; gap: 2px; padding: 0 0 0 14px; background: linear-gradient(90deg, transparent, var(--bg-tertiary) 14px); opacity: 0; pointer-events: none; }
-.agent-card:hover .agent-quick, .agent-card:focus-within .agent-quick, .agent-card.expanded .agent-quick { opacity: 1; pointer-events: auto; }
-.agent-quick .btn-icon, .agent-quick .agent-expand { flex: 0 0 22px; width: 22px; height: 22px; min-height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
-.presence-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
-.presence-dot[data-state="idle"], .presence-dot[data-state="working"] { background: var(--green-text); }
-.presence-dot[data-state="paused"] { background: var(--orange); opacity: .6; }
-.presence-dot[data-state="stale"], .presence-dot[data-state="attention"] { background: var(--orange); }
-.presence-dot[data-state="error"], .presence-dot[data-state="stopped"], .presence-dot[data-state="offline"] { background: var(--red); }
+.agent-card-actions { display: flex; gap: 2px; }
+.agent-card.expanded .agent-card-actions { top: 3px; right: 4px; transform: none; opacity: 1; pointer-events: auto; }
+.agent-card-actions .btn-icon, .agent-card-actions .agent-expand { flex: 0 0 22px; width: 22px; height: 22px; min-height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 .human-card { cursor: default; }
-.human-card .presence-dot { background: var(--green-text); }
 .human-card.is-you { border-color: var(--accent-border); }
-.human-card .agent-name { flex: 1 1 auto; }
+.human-card .agent-id-text { flex: 1 1 auto; }
 .human-role { color: var(--text-muted); font-size: 10px; flex: 0 0 auto; }
 .agents-humans:empty { display: none; }
 .agents-humans { padding: 6px 8px 0; }
 .agents-humans .agent-card { margin-bottom: 6px; }
+/* Where there is no hover (touch, a stylus, a TV) v1 shows the buttons at rest, so they take a line of their own instead of covering the state; 34px on touch. */
+@media (hover: none) {
+  .agent-card .agent-id { flex-wrap: wrap; }
+  .agent-card-actions { position: static; transform: none; opacity: 1; pointer-events: auto; flex: 1 0 100%; justify-content: flex-end; padding: 0; background: none; }
+  .agent-card-actions::before { display: none; }
+}
 @media (hover: none) and (pointer: coarse) {
-  .agent-card .agent-title { flex-wrap: wrap; }
-  .agent-quick { position: static; opacity: 1; pointer-events: auto; flex: 1 0 100%; justify-content: flex-end; padding: 0; background: none; }
-  .agent-quick .btn-icon, .agent-quick .agent-expand { flex-basis: 34px; width: 34px; height: 34px; min-height: 34px; }
+  .agent-card-actions .btn-icon, .agent-card-actions .agent-expand { flex-basis: 34px; width: 34px; height: 34px; min-height: 34px; }
   .agent-card .agent-actions { margin-top: 5px; }
 }
 
@@ -740,23 +687,11 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 [data-theme="high-contrast-dark"] .agent-card button:disabled { opacity: .5; border-style: dashed; color: #d6d6d6; }
 [data-theme="high-contrast-dark"] :is(input,textarea,select) { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border); }
 [data-theme="high-contrast-dark"] :is(.room-health, .health-flag) { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border); }
-[data-theme="high-contrast-dark"] .chat-msg-body :is(code,th,td) { color: var(--text-primary); }
-[data-theme="high-contrast-dark"] .md-codeblock { border: 1px solid var(--border); }
 #settings-general label { display: block; margin: 14px 0 5px; color: var(--text-secondary); }
-#theme-select { width: min(100%, 280px); padding: 8px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; }
+#theme-select { width: min(100%, 280px); } /* its padding, colours and size are v1's .settings-select (an 8px padding in a 28px field clipped the text) */
 
 /* UI part B: message tables and code blocks. */
 .chat-msg-body { min-width: 0; }
-.chat-msg-body .md-table-wrap { max-width: 100%; overflow-x: auto; }
-.chat-msg-body .md-table-wrap table { width: max-content; min-width: 0; }
-.chat-msg-body .md-table-wrap .md-align-left { text-align: left; }
-.chat-msg-body .md-table-wrap .md-align-center { text-align: center; }
-.chat-msg-body .md-table-wrap .md-align-right { text-align: right; }
-:is(.chat-msg-body, .visual-plan-block-body) .md-codeblock { width: 100%; max-width: 100%; background: transparent; border: 0; overflow: visible; }
-:is(.chat-msg-body, .visual-plan-block-body) .md-codeblock pre { width: 100%; max-width: 100%; padding: 8px 34px 8px 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; overflow-x: auto; }
-:is(.chat-msg-body, .visual-plan-block-body) .md-codeblock pre code { display: block; background: none; padding: 0; white-space: pre; }
-:is(.chat-msg-body, .visual-plan-block-body) .md-codeblock .md-copy { top: 5px; right: 5px; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; overflow: hidden; font-size: 0; border: 1px solid var(--border); color: var(--text-primary); }
-@media (hover: hover) { :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock .md-copy { opacity: 0; } :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock:hover .md-copy, :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock:focus-within .md-copy { opacity: 1; } }
 
 /* UI part B: settings use the v1 full-height pane and grouped rows. */
 :is(#settings-dialog, #onboarding-harnesses) .settings-section h3 { font-size: 12.6px; margin: 0 0 12px; }
@@ -797,7 +732,6 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .inbox-card .inbox-kind-error { color: var(--red); }
 .inbox-preview { border-left: 2px solid var(--border); padding-left: 10px; }
-.room-item-attention { display: none; }
 .inbox-card .inbox-jump { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 8px; }
 .import-v1-dialog { width: min(900px, 96vw); max-height: calc(100dvh - 24px); }
 .import-v1-dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
@@ -851,8 +785,6 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 #macros-list .snippet-text p { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Shared card-dialog chrome: one radius, padding, and title size for every modal card. */
-.room-item-attention { flex: 0 0 auto; margin-right: 3px; font-size: 11px; }
-.room-item-attention[hidden] { display: none; }
 /* The disabled bell of a room that is quiet for the person: level Nothing, or a mute that is running. */
 .room-muted { flex: 0 0 auto; display: inline-flex; align-items: center; margin-right: 4px; color: var(--text-muted); }
 .room-muted[hidden] { display: none; }
@@ -875,11 +807,6 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 @media (hover: none) and (pointer: coarse) {
 }
 
-/* Touch devices: the code-block copy button gets its own row above the code instead of sitting on it. */
-@media (hover: none) and (pointer: coarse) {
-  :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock { display: flex; flex-direction: column; }
-  :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock .md-copy { position: static; align-self: flex-end; order: -1; width: 40px; height: 40px; margin: 0 0 4px; opacity: 1; }
-}
 
 /* Touch dialogs: every control is a 40px target. Checkboxes and radios are sized through their label row. */
 @media (hover: none) and (pointer: coarse) {
@@ -925,29 +852,12 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .room-heading #room-info { flex: 0 0 auto; }
 @media (max-width: 700px), (max-width: 900px) and (pointer: coarse) { .room-heading #room-info { display: none; } } /* on a phone it is the first entry of the room menu */
 .sidebar .room-filter-input { flex: 1 1 100px; min-width: 0; margin: 0; padding: 6px 8px; font-size: 12px; }
-.room-row { padding: 4px 8px; }
-.room-row .room-name { flex: 1 1 auto; min-width: 7ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.room-row .room-project { flex: 0 100 auto; min-width: 0; max-width: 70px; margin: 0 4px; padding: 0 6px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.room-row .add-room { display: none; color: var(--text-primary); background: var(--bg-primary); opacity: 1; }
-.room-row:hover .add-room, .room-row:focus-within .add-room { display: inline-flex; }
-.room-row .add-room[hidden] { display: none; }
 /* A project's own controls on its home row: moves, only in the manual order (shown like the add button). */
-.room-row .project-move { display: none; padding: 4px; color: var(--text-muted); background: transparent; border: 0; }
-.room-row:hover .project-move, .room-row:focus-within .project-move { display: inline-flex; }
-.room-row .project-move:disabled { opacity: .3; }
-.room-row { cursor: pointer; }
-.room-row .project-grip { cursor: grab; }
 /* The ☰ menu of a project row: the button shows like the other hover controls (and stays while the menu is open); the list hangs under it. */
-.room-row .project-menu { position: relative; display: inline-flex; flex: 0 0 auto; }
-.room-row .project-menu.is-open .project-move { display: inline-flex; }
 .project-menu-list { position: absolute; top: 100%; right: 0; z-index: 30; display: grid; min-width: 140px; padding: 4px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .25); }
 .project-menu-item { padding: 6px 10px; text-align: left; white-space: nowrap; color: var(--text-primary); background: transparent; border: 0; border-radius: 6px; }
 .project-menu-item:hover:not(:disabled), .project-menu-item:focus-visible { background: var(--bg-hover, var(--bg-primary)); }
 .project-menu-item:disabled { opacity: .35; }
-.room-row.dragging { opacity: .5; }
-.room-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
-.room-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
-@media (hover: none) and (pointer: coarse) { .room-row .add-room:not([hidden]), .room-row .project-move { display: inline-flex; } }
 /* Collapse all / expand all: the chevron points down while something is open and right once everything is folded. */
 #rooms-fold .icon-mask { transform: rotate(90deg); transition: none; }
 #rooms-fold.is-collapsed .icon-mask { transform: none; }
@@ -960,7 +870,6 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .sort-item:hover, .sort-item:focus-visible { background: var(--bg-hover); }
 .sort-item .icon-mask { visibility: hidden; flex: 0 0 auto; }
 .sort-item.is-selected .icon-mask { visibility: visible; }
-.room-preview { margin: -2px 12px 8px 26px; }
 .room-view-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
 .room-view-actions button { border: 1px solid var(--border); }
 /* Message expiry: expired messages stay readable (the chat shows everything); they are dimmed, carry an
@@ -975,7 +884,6 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .expiry-boundary > .expiry-label::after { content: ""; flex: 1 1 auto; min-width: 24px; border-top: 1px dashed var(--border-hover); }
 
 .room-group.collapsed > .room-children { display: none; }
-.room-row .room-collapse svg { display: block; }
 /* Older history loads on scroll; this chip only shows while it fetches and floats over the top of the list, so it moves nothing. */
 .older-status { position: absolute; top: 50px; left: 50%; z-index: 2; transform: translateX(-50%); margin: 0; padding: 2px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); font-size: 11px; pointer-events: none; }
 .older-status[hidden] { display: none; }
@@ -991,7 +899,7 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 #agent-profile-close { padding: 2px 8px; font-size: 16px; line-height: 1; }
 #agent-profile-close[hidden] { display: none; }
 .agent-card.expanded { cursor: default; padding: 10px; }
-.agent-card.expanded .agent-name { font-size: 13px; }
+.agent-card.expanded .agent-id-text { font-size: 13px; }
 .agent-card.expanded .agent-meta { display: none; }
 .agent-profile-facts { display: none; }
 .agent-card.expanded .agent-profile-facts { display: block; margin: 10px 0 4px; }
@@ -1158,11 +1066,8 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
 .agent-state-age:not(:empty) { font-variant-numeric: tabular-nums; opacity: .85; }
 .agent-state-pill { display: inline-flex; gap: 5px; max-width: 100%; }
 .agent-state-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.agent-card.expanded .agent-state-pill { align-items: center; min-height: 22px; padding: 0 9px; border: 1px solid color-mix(in srgb, var(--state-color, var(--text-muted)) 55%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--state-color, var(--text-muted)) 12%, transparent); font-size: 12px; font-weight: 600; }
-.agent-card.expanded .agent-state-label { text-transform: capitalize; }
-[data-theme="high-contrast-dark"] .agent-card.expanded .agent-state-pill { background: var(--bg-primary); border-color: var(--state-color, var(--text-muted)); }
 /* The profile's actions are labelled buttons (the row's hover icons would only repeat them). */
-.agent-card.expanded .agent-quick > :not(.agent-expand) { display: none; }
+.agent-card.expanded .agent-card-actions > :not(.agent-expand) { display: none; }
 .agent-card .agent-actions { display: none; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .agent-card.expanded .agent-actions { display: flex; }
 .agent-actions .btn { min-height: 28px; padding: 0 12px; font-size: 12px; }
@@ -1416,10 +1321,6 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .chat:has(> .thread-panel:not([hidden])) > .composer-notice { margin-right: min(420px, 100%); }
 
 /* Markdown lists, task items and rules (web/js/markdown.js), in messages and in plan blocks. */
-:is(.chat-msg-body, .visual-plan-block-body) li > :is(ul, ol) { margin: 2px 0; }
-:is(.chat-msg-body, .visual-plan-block-body) li.md-task { list-style: none; }
-:is(.chat-msg-body, .visual-plan-block-body) li.md-task > input { margin: 0 6px 0 -20px; vertical-align: middle; }
-:is(.chat-msg-body, .visual-plan-block-body) hr { margin: 10px 0; border: 0; border-top: 1px solid var(--border); }
 
 /* A question that was open and is now answered (web/js/chat.js): a quiet, disabled "Answered" under the message. */
 .answer-done { margin-top: 6px; }
@@ -1554,8 +1455,6 @@ dialog:focus, dialog:focus-visible { outline: none; }
 /* An empty status or error line takes no room, so the sections below it are spaced evenly. */
 :is(#settings-dialog, #onboarding-harnesses) .settings-section :is(.settings-intro, .error):empty { display: none; }
 /* A room name takes the space first: the project pill shrinks away before the name is cut. */
-.room-row .room-project { padding: 0; margin: 0 4px; }
-.room-row .room-project::before, .room-row .room-project::after { content: ''; display: inline-block; width: 6px; }
 
 /* The formatting toolbar wraps instead of being cut off in a narrow chat column (an iPad with both side panels open). */
 .composer-tools { flex-wrap: wrap; overflow: visible; }
@@ -1758,7 +1657,8 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #messages[data-has-older="false"][data-empty="false"]::before { content: "Start of room"; display: block; width: fit-content; margin: 10px auto 14px; padding: 2px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); font-size: 11px; }
 .rooms-empty { margin: 12px 14px; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
 /* A person's card keeps its role readable: the private-chat button takes its own place after the role instead of lying over it. */
-.human-card .agent-quick { position: static; padding: 0; background: none; flex: 0 0 auto; }
+.human-card .agent-card-actions { position: static; transform: none; padding: 0; background: none; flex: 0 0 auto; }
+.human-card .agent-card-actions::before { display: none; }
 /* On a phone the members drawer closes with its one x; the desktop collapse chevron beside it is only a second, confusing way. */
 @media (max-width: 700px) { #edge-agents { display: none; } }
 /* The worktree choice in the Spawn dialog: the box beside its text, not centred above a bold label. */
@@ -1817,7 +1717,6 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #onboarding-harnesses .settings-section > p.settings-intro:first-of-type, #onboarding-harnesses .machine-activity-heading, #onboarding-harnesses [id$="machine-activity"] { display: none; }
 /* The glyph of a row's small buttons sits on the button's centre, so the + and the move icon share one axis with the room name (an inline
    glyph in a plain button rides on the text baseline, about 2.5px high). */
-.room-row :is(.add-room, .project-move, .branch, .room-pin, .room-hide) { align-items: center; justify-content: center; }
 /* A message the reader was just taken to (a #N link, a reply quote, jump-to, an Inbox item) is highlighted for a moment (FLASH_MS in chat.js
    removes the class). The ring fades out; with reduced motion it does not animate, it is a plain outline for the same moment. */
 @keyframes message-flash { 0% { box-shadow: 0 0 0 2px var(--accent), 0 0 14px var(--accent-dim); } 100% { box-shadow: 0 0 0 2px transparent, 0 0 14px transparent; } }
