@@ -1731,6 +1731,8 @@ button.icon-btn[aria-pressed="true"] { border-color: var(--accent); color: var(-
    toolbar sits in that room (see below). */
 .message-actions { position: absolute; top: -20px; right: 6px; z-index: 2; display: flex; align-items: center; gap: 4px; margin: 0; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); box-shadow: 0 2px 8px var(--overlay-shadow); opacity: 0; pointer-events: none; transition: opacity .12s; }
 .message:hover .message-actions, .message:focus-within .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
+/* A toolbar that has not been made yet (it is made when its row is reached, see message-actions.js) is not drawn. */
+.message-actions:not([data-built]) { position: absolute !important; display: block !important; width: 1px !important; height: 1px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; overflow: hidden !important; clip-path: inset(50%) !important; opacity: 0 !important; pointer-events: none !important; box-shadow: none !important; }
 /* The viewer's own sender line is right-aligned, over the very corner the toolbar occupies, so that line gets room below it (22px) and the toolbar
    sits in that room, over the bubble's top edge: it covers neither the sender line nor the text. A narrow column does the same for everyone's
    message (below). A phone's toolbar is in the bubble's flow and needs none. */

@@ -8,7 +8,7 @@ import { answerEligible, liveArrival, liveRoute, messageSnippet, overCap, thread
 export class ChatStore {
   constructor(host) {
     this.host = host; this.alive = true;
-    this.openGeneration = 0; this.sessionGeneration = 0; this.jumpGeneration = 0; this.pageSize = 100; this.olderPageSize = 50;
+    this.openGeneration = 0; this.sessionGeneration = 0; this.jumpGeneration = 0; this.pageSize = 100; this.openPageSize = globalThis.__openPageSize || 40; this.olderPageSize = 50;
     this.threadGeneration = 0; this.threadOldestSeq = 0; this.threadHasMoreOlder = false; this.loadingOlderThread = false; this.threadPageSize = 100; this.threadOlderPageSize = 50;
     this.initialLoading = false; this.announcedIDs = null; this.reactionTickets = new Map();
     this.pendingAttachments = []; this.pendingUploads = 0; this.uploadRequests = new Set();
@@ -38,13 +38,13 @@ export class ChatStore {
     if (this.host.room?.id !== room.id) this.pendingAttachments = [];
     this.clearRoom(); this.initialLoading = true; this.clearRows(); this.closeThread();
     this.host.beginOpen(room);
-    const messages = await request(`/api/rooms/${room.id}/messages?limit=${this.pageSize}`);
+    const messages = await request(`/api/rooms/${room.id}/messages?limit=${this.openPageSize}`);
     if (generation !== this.openGeneration) return;
     this.batchRows(() => { for (const message of messages) this.add(message); });
     this.host.pageDrawn();
     this.newestSeq = messages.at(-1)?.seq || 0;
     this.oldestSeq = messages[0]?.seq || 0;
-    this.hasMoreOlder = messages.length === this.pageSize;
+    this.hasMoreOlder = messages.length === this.openPageSize;
     this.host.showNewest();
     this.initialLoading = false; this.host.loadOlderIfShort();
     this.host.onLatest?.(room);

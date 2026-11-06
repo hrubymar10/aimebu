@@ -1,6 +1,6 @@
 import { html, Component, Fragment, useCallback, useLayoutEffect, useRef } from '../../ui.js';
 import { EXPIRED_HOURGLASS } from '../../usage-expiry.js';
-import { fillMessageActions, messageActionsProps } from '../../message-actions.js';
+import { fillMessageActions, messageActionsProps, placeholderMessageActions } from '../../message-actions.js';
 import { stampTime } from '../../time.js';
 import { applySenderIdentity, fillSenderPresence, SENDER_PRESENCE_ROOT } from '../../sender-identity.js';
 import { fillVisualPlan, hasVisualPlan, VISUAL_PLAN_ROOT } from '../../visual-plan.js';
@@ -91,12 +91,13 @@ export function ThreadList({ entries = [], host, viewOf, restore }) {
 
 function Actions({ message, host, label }) {
   const root = useRef(null), props = messageActionsProps(message);
-  useLayoutEffect(() => { fillMessageActions(root.current, host, message); }, [message]);
+  // The toolbar's buttons are made when the row is reached (Chat.wakeActions); one that was already made follows its message.
+  useLayoutEffect(() => { if (root.current.dataset.built) fillMessageActions(root.current, host, message); else placeholderMessageActions(root.current); }, [message]);
   useLayoutEffect(() => { for (const button of root.current.querySelectorAll('.thread-action')) { button.title = label; button.setAttribute('aria-label', label); } }, [message, label]);
   return html`<${props.tag} class=${props.class} role=${props.role} aria-label=${props['aria-label']} ref=${root} />`;
 }
 
-const Pills = ({ pills }) => html`<span class="reaction-pills">${pills.map(pill => html`<button type="button" class="row-btn reaction-pill" title=${pill.title} aria-pressed=${String(pill.pressed)} data-emoji=${pill.emoji}>${`${pill.emoji} ${pill.count}`}</button>`)}</span>`;
+const Pills = ({ pills }) => pills.length > 0 && html`<span class="reaction-pills">${pills.map(pill => html`<button type="button" class="row-btn reaction-pill" title=${pill.title} aria-pressed=${String(pill.pressed)} data-emoji=${pill.emoji}>${`${pill.emoji} ${pill.count}`}</button>`)}</span>`;
 
 const Quote = ({ quote }) => html`<button type="button" class="row-btn quote" title=${quote.title}>${quote.text}</button>`;
 
@@ -128,7 +129,7 @@ export function MessageRow({ message, view, host }) {
     ${view.boundary && html`<span class="expiry-label">Older AI chatter won't reach agents automatically</span>`}
     <${MessageMeta} message=${message} view=${view} />
     <div class="message-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /></div>
-    <button type="button" class="row-btn thread-chip" hidden=${view.chip.hidden} title="Open thread" aria-label=${view.chip.label}>${view.chip.text}</button>
+    ${!view.chip.hidden && html`<button type="button" class="row-btn thread-chip" title="Open thread" aria-label=${view.chip.label}>${view.chip.text}</button>`}
   </article><${AnswerSlot} message=${message} view=${view} host=${host} listed=${/\bself\b/.test(view.articleClass || '') ? ' answer-row answer-row-self' : ' answer-row'} /><//>`}<//>`;
 }
 

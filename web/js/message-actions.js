@@ -100,6 +100,30 @@ export function messageActionsProps(message) {
   return { tag: 'div', class: 'message-actions', role: 'toolbar', 'aria-label': `Actions for message #${message.no}` };
 }
 
+// The toolbar of a row is built when the row is first reached (hovered, focused, touched) and released again once the reader has moved on: it is
+// about 30 DOM nodes a row, which on a room of 100 rows was more than half of the page. `bar` is the row's empty .message-actions element.
+// An unmade toolbar holds one button, visually hidden, so the keyboard and screen readers can still find it (Tab stop, browse mode); it is
+// replaced by the real buttons when reached.
+export function placeholderMessageActions(bar) {
+  if (!bar || bar.dataset.built || bar.firstChild) return;
+  const wake = document.createElement('button'); wake.type = 'button'; wake.className = 'row-btn message-actions-wake'; wake.textContent = 'Message actions';
+  bar.append(wake);
+}
+export function wakeMessageActions(chat, bar, message) {
+  if (!bar || bar.dataset.built) return false;
+  fillMessageActions(bar, chat, message); bar.dataset.built = '1';
+  return true;
+}
+
+// Returns whether the toolbar was released: one that holds the focus, the pointer, a tapped selection or an open pop-up is kept.
+export function releaseMessageActions(bar) {
+  if (!bar || !bar.dataset.built) return true;
+  const row = bar.closest('.message');
+  if (row && (row.matches(':hover, :focus-within, .actions-open') || bar.querySelector('[aria-expanded="true"]'))) return false;
+  bar.replaceChildren(); delete bar.dataset.built;
+  return true;
+}
+
 export function buildMessageActions(chat, message) {
   const props = messageActionsProps(message), bar = document.createElement(props.tag); bar.className = props.class;
   bar.setAttribute('role', props.role); bar.setAttribute('aria-label', props['aria-label']);

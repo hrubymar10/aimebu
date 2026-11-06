@@ -101,7 +101,8 @@ async function main() {
     browser.process()?.once('exit', (code, signal) => { if (!browserClosing) console.error(`Chromium exited before the smoke finished (code ${code}, signal ${signal}); a pending wait fails as "frame got detached"`); });
     // The smoke exercises threads, copy and links through the compact toolbar (style C); style A, the product default, has
     // its own steps. Every page starts with that choice stored, before any navigation.
-    const prepare = async page => { await page.evaluateOnNewDocument(() => { try { if (!localStorage.getItem('aimebu2.ui.variant')) localStorage.setItem('aimebu2.ui.variant', 'c'); } catch {}
+    const prepare = async page => { await page.evaluateOnNewDocument(() => { window.__openPageSize = 100; // the smoke's rooms were written for a first page of 100 messages (test-chat-page checks the default of 40)
+      try { if (!localStorage.getItem('aimebu2.ui.variant')) localStorage.setItem('aimebu2.ui.variant', 'c'); } catch {}
       // Browser notifications are not asked for: every smoke page reports the permission as refused, so the bar that offers them never shows
       // over unrelated flows. The page that tests the bar replaces this with a permission that has not been asked yet.
       try { if ('Notification' in window) Object.defineProperty(Notification, 'permission', { configurable: true, get: () => 'denied' }); } catch {}
@@ -122,6 +123,9 @@ async function main() {
     // A click that cannot be lost: wait until the control is shown, enabled and its box has not moved for two frames (an agent
     // card re-renders or expands under the pointer, and a pointer click then lands on the old position), then click it in the DOM.
     const domClick = async (page, selector) => {
+      // A message toolbar is made when its row is reached: a click on one of its buttons reaches the row first, as the pointer would.
+      const rowOfControl = /^(.*?)\s*\.(?:message-actions|message-react|message-reply|message-find|message-copy|thread-action|quick-reaction|message-reaction-row)\b/.exec(selector)?.[1];
+      if (rowOfControl) await reachRow(page, rowOfControl);
       // A project starts folded: a click on a room inside a folded project opens the project first, as a person would.
       if (selector.includes('data-room-id')) await page.evaluate(selector => { for (let group = document.querySelector(selector)?.closest('.room-group'); group; group = group.parentElement?.closest('.room-group')) if (group.classList.contains('collapsed')) group.querySelector(':scope > .room-row > .room-collapse')?.click(); }, selector);
       await page.waitForFunction(selector => new Promise(resolve => {
@@ -133,6 +137,8 @@ async function main() {
       }), {}, selector);
       await page.$eval(selector, button => button.click());
     };
+    // A row's toolbar is made when the row is reached (hovered, focused or touched). `reach` does what the pointer does, for a row named by a selector.
+    const reachRow = (page, row) => page.evaluate(row => { const node = document.querySelector(row); (node?.querySelector('.message-bubble') || node)?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })); }, row);
     // A project's actions are the items of the menu behind the ☰ button of its home row: reach the button by the keyboard focus that shows it, open the
     // menu, press the item. `row` selects the home room's group.
     const projectMenuAct = async (page, row, item) => {
@@ -1711,11 +1717,12 @@ async function main() {
         const base = { room_id: 'room_test', created_at: '2026-10-14T00:00:00Z', author_kind: 'user', author_id: 'someone' };
         chat.store.add({ ...base, id: 'a1', seq: 801, no: 801, body: '**raw** body' });
         const one = chat.list.querySelector('.message');
+        one.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })); // the row's toolbar is made when the row is reached
         const bar = one.querySelector('.message-actions');
         const writes = []; const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => { writes.push(value); } } });
         const buttons = [...bar.querySelectorAll(':scope > .message-action')];
-        const result = { labels: buttons.map(button => button.getAttribute('aria-label')), role: bar.getAttribute('role'), title: buttons.every(button => button.title && button.matches('.icon-btn')), text: buttons.map(button => button.textContent), menu: [...bar.querySelectorAll('.message-menu-item')].map(item => item.textContent), emoji: [...bar.querySelectorAll('.message-reaction-row .quick-reaction')].map(button => button.textContent), threadChipHidden: one.querySelector(':scope > .thread-chip').hidden, oldTextButtons: one.querySelectorAll('.message-actions button.quiet:not(.icon-btn):not(.quick-reaction):not(.message-menu-item)').length, debugText: one.querySelector('.chat-msg-debug-toggle')?.textContent, debugInHeader: !!one.querySelector('.message-meta .chat-msg-debug-toggle') };
+        const result = { labels: buttons.map(button => button.getAttribute('aria-label')), role: bar.getAttribute('role'), title: buttons.every(button => button.title && button.matches('.icon-btn')), text: buttons.map(button => button.textContent), menu: [...bar.querySelectorAll('.message-menu-item')].map(item => item.textContent), emoji: [...bar.querySelectorAll('.message-reaction-row .quick-reaction')].map(button => button.textContent), threadChipHidden: !one.querySelector(':scope > .thread-chip'), oldTextButtons: one.querySelectorAll('.message-actions button.quiet:not(.icon-btn):not(.quick-reaction):not(.message-menu-item)').length, debugText: one.querySelector('.chat-msg-debug-toggle')?.textContent, debugInHeader: !!one.querySelector('.message-meta .chat-msg-debug-toggle') };
         // React opens the inline emoji row, a pick reacts and closes it, and Escape closes it too.
         const react = bar.querySelector('.message-react'); react.click();
         result.rowOpen = !bar.querySelector('.message-reaction-row').hidden && react.getAttribute('aria-expanded') === 'true';
@@ -2276,7 +2283,7 @@ async function main() {
     await second.waitForFunction(() => document.querySelector('#room-title')?.textContent === 'Nested task' && document.querySelector('.message-body')?.textContent === 'First message');
     const id = await first.$eval('.message', el => el.dataset.messageId);
     await first.mouse.move(2, 2);
-    assert.equal(await first.$eval('.message:first-child .message-actions', el => getComputedStyle(el).opacity), '0', 'the message actions stay out of the way until the message is hovered or focused');
+    assert.equal(await first.$eval('.message:first-child .message-actions', el => !el.dataset.built && el.querySelectorAll('button:not(.message-actions-wake)').length === 0 && getComputedStyle(el).width === '1px'), true, 'the message actions are not even made until the message is hovered or focused');
     await first.hover('.message:first-child');
     await first.waitForFunction(() => getComputedStyle(document.querySelector('.message:first-child .message-actions')).opacity === '1');
     assert.deepEqual(await first.evaluate(() => { const bubble = document.querySelector('.message:first-child .message-bubble').getBoundingClientRect(), bar = document.querySelector('.message:first-child .message-actions').getBoundingClientRect(); const items = [...document.querySelector('.message:first-child .message-meta').children].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect()); const clear = items.every(meta => bar.right <= meta.left || bar.left >= meta.right || bar.bottom <= meta.top || bar.top >= meta.bottom); const text = document.querySelector('.message:first-child .message-body').getBoundingClientRect(); const clearOfText = bar.right <= text.left || bar.left >= text.right || bar.bottom <= text.top || bar.top >= text.bottom; const beside = bar.right <= bubble.left + 1, corner = bar.right <= bubble.right && bubble.right - bar.right < 12 && bar.top < bubble.top + 4 && bubble.top - bar.top < 24; return { onTheBubble: corner, clearOfTheText: clearOfText, clearOfTheSenderLine: clear, buttons: document.querySelectorAll('.message:first-child .message-actions > .message-action').length }; }), { onTheBubble: true, clearOfTheText: true, clearOfTheSenderLine: true, buttons: 6 }, 'the toolbar (react, more reactions, reply, thread, copy, link) sits at the right end of the sender line over the bubble corner, whoever sent the message, and covers neither the message text nor the sender, the number or the time');
@@ -2461,6 +2468,7 @@ async function main() {
     await first.locator('#thread-composer button.btn-primary').click();
     await first.waitForFunction(() => document.querySelectorAll('.thread-entry').length === 2);
     await second.waitForFunction(() => [...document.querySelectorAll('.thread-entry .message-body')].some(el => el.textContent === 'Thread reply'));
+    await reachRow(first, '.message:first-child'); await reachRow(second, '.message:first-child');
     assert.equal(await first.$eval('.message:first-child .thread-action', el => el.title), 'Thread · 1');
     assert.equal(await second.$eval('.message:first-child .thread-action', el => el.title), 'Thread · 1');
     await domClick(first, '#close-thread'); await second.click('#close-thread');
@@ -2812,6 +2820,7 @@ async function main() {
     assert.equal(await first.$eval('article.message:last-of-type .message-body', el => el.querySelectorAll('script,img,a').length), 0, 'XSS markup became DOM');
     assert.equal(await first.$eval('article.message:last-of-type .message-body', el => el.textContent.includes('onerror=alert(2)')), true);
     assert.equal(await first.$eval('article.message:last-of-type .message-body code', el => el.textContent), 'nested ` ticks');
+    await reachRow(first, 'article.message:last-of-type');
     assert.deepEqual(await first.$$eval('article.message:last-of-type .quick-reaction', els => els.map(el => el.textContent)), ['👍', '🆗', '✅', '👀', '🙏', '🎉']);
     const actualProjectID = await first.evaluate(async () => (await (await fetch('/api/projects')).json()).find(p => p.name === 'UI smoke').id);
     // Message numbers: "#N" is one sequence across every room, shown and written by people. A #N in a message jumps to that message, in
@@ -5953,6 +5962,7 @@ async function main() {
       const { InboxNotifications } = await import('/js/inbox-notifications.js');
       return new InboxNotifications(() => {}).available === (window.isSecureContext && 'Notification' in window);
     }), true, 'notification availability is not gated on isSecureContext');
+    await reachRow(first, '#messages > article.message:last-of-type');
     assert.equal(await first.$$eval('.quick-reaction', els => [...new Set(els.map(el => el.textContent))].join('')), '👍🆗✅👀🙏🎉');
     await first.evaluate(() => { const dt = new DataTransfer(); dt.items.add(new File(['x'], 'x.txt')); document.querySelector('#composer').dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt })); });
     assert.equal(await first.$eval('#composer', el => el.classList.contains('drag-attachment')), true, 'composer did not get the drag-over class');
@@ -8190,7 +8200,7 @@ async function main() {
       }));
       await olderPage.$eval('#messages', el => { el.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); el.scrollTop = 0; });
       await olderPage.waitForFunction(() => [...document.querySelectorAll('#messages .message')].some(el => el.textContent.includes('Thread root for older replies')));
-      await olderPage.evaluate(() => [...document.querySelectorAll('#messages .message')].find(el => el.textContent.includes('Thread root for older replies')).querySelector('.thread-action').click());
+      await olderPage.evaluate(() => { const row = [...document.querySelectorAll('#messages .message')].find(el => el.textContent.includes('Thread root for older replies')); row.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })); row.querySelector('.thread-action').click(); });
       await waitDump(olderPage, 'older thread opens with 101 entries', () => document.querySelectorAll('#thread-messages .thread-entry').length === 101 && document.querySelector('#thread-messages').dataset.hasOlder === 'true', () => {
         const list = document.querySelector('#thread-messages');
         return { entries: list.querySelectorAll('.thread-entry').length, hasOlder: list.dataset.hasOlder, scrollTop: Math.round(list.scrollTop), scrollHeight: list.scrollHeight, clientHeight: list.clientHeight, olderStatusHidden: document.querySelector('.thread-older-status, #thread-older-status')?.hidden, error: document.querySelector('#thread-error')?.textContent, panelHidden: document.querySelector('#thread-panel').hidden, title: document.querySelector('#thread-panel h2')?.textContent, rootsInRoom: document.querySelectorAll('#messages .message').length };
@@ -8342,6 +8352,7 @@ async function main() {
     await invitedPage.locator('#composer textarea').fill('Owner draft stays');
     await invitedPage.evaluate(() => {
       const body = [...document.querySelectorAll('#messages .message-body')].find(node => node.textContent === 'Post-reset upload check');
+      body.closest('.message').dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
       body.closest('.message').querySelector('.message-actions .message-reply').click();
     });
     const keptDraft = await invitedPage.evaluate(async () => {
@@ -8823,7 +8834,7 @@ with con:
     await perfPage.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = list.scrollHeight; });
     await waitDump(perfPage, 'paging after a jump', last => document.querySelector('#messages > article.message:last-of-type')?.dataset.messageId !== last, () => ({ last: document.querySelector('#messages > article.message:last-of-type')?.dataset.messageId }), jumpedLast);
     // Sending from a window with a thread open keeps the thread panel and its unsent reply across the jump to the latest.
-    const windowRoot = await perfPage.evaluate(() => { const row = document.querySelector('#messages > article.message:last-of-type'); row.querySelector('.thread-action').click(); return row.dataset.messageId; });
+    const windowRoot = await perfPage.evaluate(() => { const row = document.querySelector('#messages > article.message:last-of-type'); row.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })); row.querySelector('.thread-action').click(); return row.dataset.messageId; });
     await perfPage.waitForFunction(id => !document.querySelector('#thread-panel').hidden && document.querySelector('#thread-messages .thread-entry')?.dataset.messageId === id, {}, windowRoot);
     await perfPage.evaluate(() => { document.querySelector('#thread-composer').elements.body.value = 'Perf unsent thread reply'; });
     await perfPage.locator('#composer textarea').fill('Perf sent with a thread open');
@@ -8909,7 +8920,7 @@ with con:
     con.execute("UPDATE message SET thread_root=?, reply_to=? WHERE id='msg_perf_late_8'", (sys.argv[2], sys.argv[2]))
 `, path.join(tmp, 'server', 'aimebu.sqlite'), windowEnd.id], { encoding: 'utf8' });
     if (replySeed.status !== 0) throw new Error(`perf reply seed failed: ${replySeed.stderr}`);
-    await perfPage.evaluate(() => document.querySelector('#messages > article.message:last-of-type .thread-action').click());
+    await perfPage.evaluate(() => { const row = document.querySelector('#messages > article.message:last-of-type'); row.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })); row.querySelector('.thread-action').click(); });
     await perfPage.waitForFunction(() => [...document.querySelectorAll('#thread-messages .thread-entry')].some(entry => entry.dataset.messageId === 'msg_perf_late_8'));
     await first.evaluate(async projectID => {
       const { csrf_token } = await (await fetch('/api/me')).json();
@@ -9017,7 +9028,7 @@ with con:
     const liveOlder = await livePage.evaluate(() => [...document.querySelectorAll('#messages > article.message .message-body')].map(body => Number(body.textContent.replace('Live cap ', ''))));
     assert(liveOlder[0] < Number(liveLateReplies.first.replace('Live cap ', '')) && liveOlder.every((n, i) => i === 0 || n === liveOlder[i - 1] + 1), `scrolling up after a live trim did not restore the dropped rows in order: ${liveOlder.join(',')}`);
     // Delegated row controls still work on a row that arrived live: copying the number and opening the thread from its chip.
-    await livePage.evaluate(() => [...document.querySelectorAll('#messages > article.message')].find(row => !row.querySelector('.thread-chip').hidden).querySelector('.thread-chip').click());
+    await livePage.evaluate(() => [...document.querySelectorAll('#messages > article.message')].find(row => row.querySelector('.thread-chip')).querySelector('.thread-chip').click());
     await livePage.waitForFunction(() => !document.querySelector('#thread-panel').hidden && document.querySelectorAll('#thread-messages .thread-entry').length === 2);
     await livePage.evaluate(() => document.querySelector('#close-thread').click());
     await liveContext.close();
@@ -9154,6 +9165,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     jumpTarget = firstLargeSeq;
     await domClick(largePage, '#room-jump');
     await largePage.waitForFunction(() => document.querySelector('#messages')?.textContent.includes('Imported message 00000'));
+    await reachRow(largePage, '[data-message-id="msg_large_00000"]');
     assert.equal(await largePage.$eval('[data-message-id="msg_large_00000"] .thread-action', node => node.title), 'Thread · 162', 'root count missed replies outside the context page');
     jumpTarget = firstLargeSeq + 1000;
     await domClick(largePage, '#room-jump');
@@ -9190,6 +9202,7 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
     jumpTarget = firstLargeSeq;
     await largePage.click('#room-jump');
     await largePage.waitForFunction(() => document.querySelector('#messages')?.textContent.includes('Imported message 00000'));
+    await reachRow(largePage, '[data-message-id="msg_large_00000"]');
     assert.equal(await largePage.$eval('[data-message-id="msg_large_00000"] .thread-action', node => node.title), 'Thread · 165', 'live replies did not update the full thread count');
     assert.equal(await largePage.$eval('.back-to-latest', element => element.hidden), false, 'old-message jump did not expose latest navigation');
     await domClick(largePage, '.back-to-latest');

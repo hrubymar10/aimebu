@@ -99,12 +99,13 @@ async function main() {
   const browser = await puppeteer.launch({ executablePath: chromiumPath(), headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] });
   const errors = [];
   const room = (id, extra = {}) => ({ id, project_id: 'prj_a', title: id, kind: 'task', lifecycle: 'open', member_count: 2, ...extra });
-  const mount = async ({ rooms = { rm_a: 130, rm_b: 5 }, setup = '', plain = false } = {}) => {
+  // `openPage` is the size of the page a room opens on: the tests below were written for 100 messages, and one block checks the default.
+  const mount = async ({ rooms = { rm_a: 130, rm_b: 5 }, setup = '', plain = false, openPage = 100 } = {}) => {
     const page = await browser.newPage();
     page.on('pageerror', error => { errors.push(error.message); if (process.env.DEBUG_ERRORS) console.error('PAGEERROR', error.message, error.stack?.split('\n').slice(0, 4).join(' | ')); });
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) { errors.push(message.text()); if (process.env.DEBUG_ERRORS) console.error('CONSOLE', message.text().slice(0, 400)); } });
     await page.setViewport({ width: 1280, height: 900 });
-    await page.evaluateOnNewDocument(plain => { try { localStorage.clear(); if (plain) localStorage.setItem('aimebu2.composer.formatting', 'off'); } catch {} }, plain);
+    await page.evaluateOnNewDocument((plain, openPage) => { try { localStorage.clear(); if (plain) localStorage.setItem('aimebu2.composer.formatting', 'off'); } catch {} if (openPage) window.__openPageSize = openPage; }, plain, openPage);
     await page.goto(`${origin}/fixture.html`);
     await page.evaluate(installServer);
     await page.evaluate(() => { document.querySelector('#app-view').hidden = false; });
@@ -179,6 +180,7 @@ async function main() {
   {
     const page = await mount();
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.hover('[data-message-id=rm_a_m120] .message-bubble'); // the row's toolbar is made when it is reached
     await page.evaluate(() => { document.querySelector('#composer textarea[name=body]').value = 'half a thought'; document.querySelector('[data-message-id=rm_a_m120] .message-action')?.focus(); window.__focus = document.activeElement; });
     await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_m131', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'live one', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); });
     await settle(page);
@@ -217,6 +219,26 @@ async function main() {
     await settle(page);
     assert.deepEqual(await page.evaluate(() => [window.__data.rooms.rm_a.messages.length, document.querySelectorAll('#messages > article.message').length, document.querySelector('#messages').dataset.hasOlder, Math.abs(window.__anchor.getBoundingClientRect().top - window.__before) < 3]), [130, 130, 'false', true], 'all 130 rows, nothing more behind');
     assert.equal(await count(page, 'GET', 'messages\\?before=31&limit=50'), 1);
+    await page.close();
+  }
+
+  // A room opens on its newest 40 messages (fewer rows to build, style and lay out before the first paint), and the older ones follow as the list is
+  // scrolled to the top, 50 at a time.
+  {
+    const page = await mount({ openPage: 0 });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    const state = await page.evaluate(() => { const list = document.querySelector('#messages'); return { first: list.firstElementChild.dataset.messageId, last: list.lastElementChild.dataset.messageId, rows: list.querySelectorAll(':scope > article.message').length, atBottom: list.scrollHeight - list.scrollTop - list.clientHeight < 3, hasOlder: list.dataset.hasOlder }; });
+    assert.deepEqual(state, { first: 'rm_a_m91', last: 'rm_a_m130', rows: 40, atBottom: true, hasOlder: 'true' });
+    assert.equal(await count(page, 'GET', 'messages\\?limit=40'), 1);
+    await page.evaluate(() => { window.__anchor = document.querySelector('[data-message-id=rm_a_m95]'); window.__list = document.querySelector('#messages'); window.__list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); window.__list.scrollTop = 0; window.__before = window.__anchor.getBoundingClientRect().top; });
+    await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m41');
+    await settle(page);
+    assert.equal(await count(page, 'GET', 'messages\\?before=91&limit=50'), 1);
+    assert.equal(await page.evaluate(() => Math.abs(window.__anchor.getBoundingClientRect().top - window.__before) < 3), true, 'what the reader looks at stayed put');
+    await page.evaluate(() => { window.__list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); window.__list.scrollTop = 0; });
+    await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1');
+    await settle(page);
+    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#messages > article.message').length, document.querySelector('#messages').dataset.hasOlder]), [130, 'false'], 'all 130 rows, nothing more behind');
     await page.close();
   }
 
@@ -688,6 +710,7 @@ async function main() {
     await page.$eval('[data-message-id=rm_a_m130] .reaction-pill[data-emoji="🎉"]', node => node.click()); await settle(page);
     assert.deepEqual([await count(page, 'PUT', '/api/messages/rm_a_m130/reactions/'), (await pills(page, 'rm_a_m130')).at(-1)], [1, ['🎉 2', 'zed, me', 'true', '🎉']], 'someone else\'s pill adds mine');
     await page.$eval('[data-message-id=rm_a_m130] .message-bubble', node => node.scrollIntoView());
+    await page.hover('[data-message-id=rm_a_m130] .message-bubble'); // a row's toolbar is made when the row is reached
     await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m130] .message-action[aria-haspopup]').click());
     await page.$eval('[data-message-id=rm_a_m130] .quick-reaction[data-emoji="✅"]', node => node.click()); await settle(page);
     assert.deepEqual((await pills(page, 'rm_a_m130')).map(pill => pill[3]), ['👍', '🎉', '✅'], 'a quick reaction from the message actions');
@@ -774,6 +797,7 @@ async function main() {
     const page = await mount({ plain: true });
     await page.evaluate(() => { for (const [seq, body] of [[121, 'mine one'], [124, 'mine two'], [127, 'mine two'], [129, 'mine three']]) Object.assign(window.__data.rooms.rm_a.messages[seq - 1], { author_id: 'usr_me', author_name: 'me', body }); });
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.hover('[data-message-id=rm_a_m120] .message-bubble');
     await page.evaluate(() => { const bar = document.querySelector('[data-message-id=rm_a_m120] .message-actions'); window.__buttons = [...bar.querySelectorAll('button')].filter(button => !button.closest('[hidden]')).map(button => button.getAttribute('aria-label')); bar.querySelector('button').focus(); });
     const focused = () => page.evaluate(() => document.activeElement.getAttribute('aria-label'));
     const labels = await page.evaluate(() => window.__buttons);
@@ -815,6 +839,7 @@ async function main() {
     await settle(page);
     assert.deepEqual(await page.evaluate(() => { const draft = document.querySelector('#composer textarea[name=body]'); return [document.activeElement === draft, draft.value, draft.selectionStart, window.__chat.threadDraft.value, !!document.querySelector('[data-message-id=rm_a_live]')]; }), [true, 'main draft', 0, 'thread draft', true]);
     await page.evaluate(() => { const list = document.querySelector('#messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 0; });
+    await page.hover('[data-message-id=rm_a_m40] .message-bubble'); // the row's toolbar is made when it is reached
     await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m40] .message-action').focus());
     await page.evaluate(() => { window.__focus = document.activeElement; });
     await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1'); await settle(page);
@@ -1326,11 +1351,48 @@ async function main() {
     assert.deepEqual(await shown(), [true, true, 0, 0], 'and a reset');
     await page.close();
   }
+  // A row's toolbar is not in the page until the row is reached: 100 rows used to carry 3000 nodes of buttons nobody was looking at. Hovering, focusing
+  // or touching a row makes its toolbar, only the last three made are kept, and a row that holds the focus keeps its own.
+  if (ROWS) {
+    const page = await mount();
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    const built = () => page.evaluate(() => [...document.querySelectorAll('#messages .message-actions')].filter(bar => bar.dataset.built).map(bar => bar.closest('.message').dataset.messageId));
+    const rowsNow = await page.evaluate(() => document.querySelectorAll('#messages > article.message[data-message-id]').length);
+    assert.deepEqual([rowsNow > 5, await built(), await page.evaluate(() => document.querySelectorAll('#messages .message-actions button:not(.message-actions-wake)').length)], [true, [], 0], 'no row has a toolbar before it is reached');
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages .message-actions')).width), '1px', 'and an unmade toolbar is not drawn, only its hidden "Message actions" button is left');
+    await page.hover('#messages [data-message-id=rm_a_m120] .message-bubble');
+    assert.deepEqual(await built(), ['rm_a_m120'], 'a hovered row makes its toolbar');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('[data-message-id=rm_a_m120] .message-actions > button').length), 6, 'with its six buttons');
+    for (const id of ['rm_a_m121', 'rm_a_m122', 'rm_a_m123', 'rm_a_m124']) await page.hover(`#messages [data-message-id=${id}] .message-bubble`);
+    const live = await built();
+    assert.equal(live.length <= 3 && live.includes('rm_a_m124') && !live.includes('rm_a_m120'), true, `only the last three rows reached keep a toolbar: ${live}`);
+    // The keyboard reaches a row's toolbar too: focus lands on something in the row, the toolbar is made, and the next Tab is its first button.
+    await page.mouse.move(2, 2);
+    await page.evaluate(() => document.querySelector('#messages [data-message-id=rm_a_m125] .message-number').focus());
+    assert.equal((await built()).includes('rm_a_m125'), true, 'focus in a row makes its toolbar');
+    await page.keyboard.press('Tab'); await page.keyboard.press('Tab');
+    const reached = await page.evaluate(() => document.activeElement.closest('.message-actions')?.closest('.message')?.dataset.messageId || '');
+    assert.equal(reached, 'rm_a_m125', 'and Tab goes on into it');
+    // Shift+Tab from the row below lands in the row's toolbar (its last button), not before an empty one.
+    await page.evaluate(() => document.activeElement.blur());
+    await page.mouse.move(2, 2);
+    await page.evaluate(() => { document.querySelector('#messages [data-message-id=rm_a_m129] .message-number').focus(); });
+    const before = 'rm_a_m128';
+    await page.keyboard.down('Shift'); await page.keyboard.press('Tab'); await page.keyboard.up('Shift');
+    const back = await page.evaluate(() => ({ row: document.activeElement.closest('.message')?.dataset.messageId, inBar: !!document.activeElement.closest('.message-actions'), last: document.activeElement === document.activeElement.closest('.message-actions')?.querySelector(':scope > button:last-of-type') }));
+    assert.deepEqual([back.row, back.inBar, back.last], [before, true, true], `reverse Tab from the next row enters the toolbar at its last button: ${JSON.stringify(back)}`);
+    // A row that holds the focus keeps its toolbar however many others are reached.
+    await page.evaluate(() => document.querySelector('#messages [data-message-id=rm_a_m125] .message-number').focus());
+    for (const id of ['rm_a_m126', 'rm_a_m127', 'rm_a_m128', 'rm_a_m129']) await page.evaluate(id => document.querySelector(`#messages [data-message-id=${id}] .message-bubble`).dispatchEvent(new PointerEvent('pointerover', { bubbles: true })), id);
+    assert.equal((await built()).includes('rm_a_m125'), true, 'a focused row keeps its toolbar');
+    await page.close();
+  }
   // The message list's rows follow the expiry window and their thread's count without a redraw of the others.
   if (ROWS) {
     const page = await mount();
     await addReplies(page, 3);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.hover('#messages [data-message-id=rm_a_m120] .message-bubble'); // its toolbar is made when the row is reached
     const state = () => page.evaluate(() => {
       const rows = [...document.querySelectorAll('#messages > article.message[data-message-id]')];
       const root = document.querySelector('#messages [data-message-id=rm_a_m120]');

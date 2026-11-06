@@ -18,7 +18,7 @@ import { Notice } from './notice.js';
 import { closeEmojiPicker, openEmojiPicker } from './emoji-picker.js';
 import { LiveAnnouncer } from './live-region.js';
 import { ComposerFormatting } from './composer.js';
-import { messageAction } from './message-actions.js';
+import { messageAction, wakeMessageActions, releaseMessageActions } from './message-actions.js';
 import { promptDialog } from './dialogs.js';
 import { expandShortcodes } from './emoji-data.js';
 import { ChatStore } from './pages/chat/store.js';
@@ -211,9 +211,37 @@ export class Chat {
     container.__rowsDelegated = true;
     container.addEventListener('click', event => this.onMessageClick(event));
     container.addEventListener('keydown', event => this.onAuthorKey(event));
+    // A row's toolbar is made when the row is reached by the pointer, the keyboard or a touch (see message-actions.js), and the oldest ones are
+    // released as others are reached.
+    for (const type of ['pointerover', 'focusin', 'pointerdown']) container.addEventListener(type, event => this.wakeActions(event, container));
+  }
+  wakeActions(event, container) {
+    const target = event.target;
+    const row = target.closest?.('article.message'); if (!row || !container.contains(row)) return;
+    const bar = row.querySelector('.message-actions'); if (!bar || bar.dataset.built) return;
+    const message = this.entryMessage(row.dataset.messageId); if (!message) return;
+    wakeMessageActions(this, bar, message);
+    this.enterActions(event, bar);
+    const live = (this.liveActions ||= []).filter(item => item.isConnected && item !== bar && item.dataset.built);
+    live.push(bar);
+    // Only the three most recent stay made; an older one that still holds the focus, the pointer or an open pop-up stays too, and is looked at again next time.
+    const older = live.slice(0, Math.max(0, live.length - 3)), kept = older.filter(item => !releaseMessageActions(item));
+    this.liveActions = [...kept, ...live.slice(older.length)];
+  }
+  // The focus was on the hidden "Message actions" button that has just become the toolbar: it goes to the toolbar's first button, or to
+  // its last when the row was entered from below (Shift+Tab).
+  enterActions(event, bar) {
+    if (event.type === 'pointerover' || event.type === 'pointerdown') return;
+    if (!event.target.classList?.contains('message-actions-wake')) return;
+    const buttons = bar.querySelectorAll(':scope > button'), row = bar.closest('.message');
+    const below = event.relatedTarget && row && !!(row.compareDocumentPosition(event.relatedTarget) & Node.DOCUMENT_POSITION_FOLLOWING) && !row.contains(event.relatedTarget);
+    const to = below ? buttons[buttons.length - 1] : buttons[0];
+    // The focus is still moving to the button this toolbar replaced, so it is moved on afterwards.
+    queueMicrotask(() => to?.focus());
   }
   // The row controls of the message list and the thread panel, delegated: the control's row names the message.
   onMessageClick(event) {
+    if (event.target.classList?.contains('message-actions-wake')) { this.wakeActions(event, event.currentTarget); return; }
     const control = event.target.closest?.('button, strong.message-author, span.mention[role=button]');
     if (!control || !event.currentTarget.contains(control)) return;
     const holder = control.closest('[data-message-id]'); if (!holder || !event.currentTarget.contains(holder)) return;
