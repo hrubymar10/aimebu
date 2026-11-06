@@ -41,6 +41,12 @@ export class SettingsPanel {
       general: this.generalSection, usages: this.usagesSection, notifications: this.notificationsSection, roles: this.rolesSection, users: this.usersSettings.section,
       prompts: this.promptSettings.section, macros: this.macroSettings.section, machines: this.machinesSection, harnesses: this.harnessSettings.section,
     }, { users: this.usersSettings.store.tab, onSelect: section => this.selectSection(section), onClose: () => this.dialog.close() });
+    // Each section's page is drawn when the section is selected and taken out of the page when the dialog closes (a page holding unsaved edits keeps
+    // them): the sections are about a thousand nodes together, which stay in the page for nothing otherwise.
+    this.pages = { general: this.general.page, usages: this.usages.page, notifications: this.notificationSettings.page, roles: this.roleSettings.page, users: this.usersSettings.page,
+      prompts: this.promptSettings.page, macros: this.macroSettings.page, machines: this.machinesSettings.page, harnesses: this.harnessSettings.page };
+    this.dialog.addEventListener('close', () => this.release());
+    this.release();
     document.querySelector('#settings-toggle').onclick = () => this.open();
     // v1's global shortcuts: Cmd/Ctrl+, opens Settings, and Cmd/Ctrl+W closes it while it is open.
     document.addEventListener('keydown', event => {
@@ -86,8 +92,15 @@ export class SettingsPanel {
     }
   }
   usagesChanged() { return this.usages.changed(); }
+  release() {
+    for (const [section, page] of Object.entries(this.pages)) {
+      if (page.hasUnsavedChanges()) continue;
+      if (section === 'harnesses') this.harnessSettings.clear(); else page.clear();
+    }
+  }
   selectSection(section) {
     this.shell.store.select(section);
+    this.pages[section]?.show();
     if (section === 'general') this.general.open();
     if (section === 'users') this.usersSettings.open();
     if (section === 'notifications') this.notificationSettings.open();

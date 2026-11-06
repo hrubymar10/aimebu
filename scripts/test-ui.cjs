@@ -4168,8 +4168,8 @@ async function main() {
       assert.equal(await settingsPage.$('#quota-claude-watched'), null);
       // Reopening Settings shows what the server kept.
       await domClick(settingsPage, '#settings-close'); await settingsPage.click('#settings-toggle');
+      await domClick(settingsPage, '#settings-usages-tab'); // a closed Settings keeps no section in the page: Usages is drawn when it is selected
       await settingsPage.waitForSelector(`${claude} .quota-last`);
-      await domClick(settingsPage, '#settings-usages-tab');
       assert.deepEqual(await names(claude), ['spare', 'local'], 'the saved order survived a reopen');
       assert.equal(await settingsPage.$eval(`${claude} [aria-label="spare weekly limit (%)"]`, el => el.value), '80');
       assert.equal(await settingsPage.$eval('#quota-claude-enabled', el => el.checked), true);
@@ -4360,8 +4360,6 @@ async function main() {
     await settingsTab(settingsPage, '#settings-usages-tab');
     // Settings -> Harnesses over a mock of the machine's harnesses.
     const harnessChecks = async () => {
-      assert.equal(await settingsPage.$eval('#settings-harnesses > h3', el => el.textContent.trim()), 'Harnesses', 'the page has no experiment badge');
-      assert.deepEqual(await settingsPage.evaluate(() => [document.querySelectorAll('#settings-harnesses').length, document.querySelectorAll('#settings-harnesses-tab').length]), [1, 1], 'exactly one Harnesses page is built');
       await settingsPage.evaluate(() => {
         window.__harnessFetch = window.fetch;
         window.__harnessWrites = []; window.__autoModels = undefined; window.__dockerDetect = undefined; delete window.__dockerFailure;
@@ -4409,6 +4407,8 @@ async function main() {
       });
       await settingsPage.click('#settings-harnesses-tab');
       await settingsPage.waitForFunction(() => document.querySelectorAll('.machine-harness').length === 2);
+      assert.equal(await settingsPage.$eval('#settings-harnesses > h3', el => el.textContent.trim()), 'Harnesses', 'the page has no experiment badge');
+      assert.deepEqual(await settingsPage.evaluate(() => [document.querySelectorAll('#settings-harnesses').length, document.querySelectorAll('#settings-harnesses-tab').length]), [1, 1], 'exactly one Harnesses page is built');
       assert.equal(await settingsPage.$eval('.machine-harness[data-variant="native"] [name=enabled]', el => el.disabled), false, 'owner must be able to enable native launcher');
       assert.equal(await settingsPage.$eval('.machine-harness[data-variant="native"] .machine-harness-status', el => el.textContent), 'Disabled');
       // Adding a detected harness also detects its models and saves them, the first as the default.

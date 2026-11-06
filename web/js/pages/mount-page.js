@@ -26,6 +26,8 @@ export function mountPreactPage(section, Page, { onError = () => {}, idPrefix = 
     unsaved,
     update(next) { props = { ...props, ...next }; draw(); },
     get: name => props[name],
+    // Draws again a page that was cleared, without a new open (for pages that need no open token); a page already drawn is left as it is.
+    show() { if (!cleared) return; cleared = false; draw(); },
     open() {
       cleared = false;
       openToken++;

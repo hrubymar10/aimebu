@@ -2,13 +2,14 @@ import { html, useState, useRef, useLayoutEffect } from '../../ui.js';
 import { SettingsGroup } from '../../components/settings-row.js';
 import { useAlive } from '../../hooks/use-alive.js';
 import { retention } from '../../retention.js';
+import { useDirty } from '../../hooks/use-dirty.js';
 import { validExpirySeconds, EXPIRY_MIN_SECONDS, EXPIRY_MAX_SECONDS, EXPIRY_DEFAULT_SECONDS } from '../../expiry.js';
 
 const READ_ONLY = 'Only the owner or an admin can change this.';
 const DESC = `Messages older than this are hidden from what AI agents are given. They are never deleted and stay visible here, marked with an hourglass. 0 turns expiry off; otherwise ${EXPIRY_MIN_SECONDS} to ${EXPIRY_MAX_SECONDS} seconds. Default ${EXPIRY_DEFAULT_SECONDS} (6 hours).`;
 
 // The window is the chat's too: `retention` is the shared store, and what is typed is a draft kept apart from it until Save.
-export function MessageRetention() {
+export function MessageRetention({ onDirty = () => {} }) {
   const alive = useAlive();
   const [, changed] = useState(0);
   const [draft, setDraft] = useState(null);
@@ -18,6 +19,8 @@ export function MessageRetention() {
   const [error, setError] = useState('');
   useLayoutEffect(() => retention.onChange(() => changed(count => count + 1)), []);
   const canEdit = retention.canEdit;
+  // A window typed and not saved keeps Settings' General page in the page when Settings closes.
+  useDirty(onDirty, 'message-retention', draft !== null && draft.trim() !== String(retention.seconds));
   const submit = async () => {
     setError('');
     const text = (draft ?? String(retention.seconds)).trim();

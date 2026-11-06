@@ -18,7 +18,7 @@ export class UsagesSettings {
     this.limitDefault = new LimitDefaultStore();
     this.store = new UsagesStore({ source, section, isOpen: () => dialog.open, isShown: () => dialog.open && !section.hidden,
       afterLoad: async state => { await this.quota.sync({ owner: !!state?.owner, enabled: !!state?.enabled }); if (this.store.alive) await this.guard.sync({ owner: !!state?.owner }); } });
-    this.page = mountPreactPage(section, () => html`<${UsagesPage} page=${this} />`);
+    this.page = mountPreactPage(section, ({ onDirty }) => html`<${UsagesPage} page=${this} onDirty=${onDirty} />`);
   }
 
   load() { return this.store.load(); }

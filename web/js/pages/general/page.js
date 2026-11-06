@@ -17,7 +17,7 @@ export class GeneralSettings {
     this.preview = signal(false);
     this.chat = signal({ systemEvents: true, debugInspector: false });
     this.rights = signal({ owner: false, admin: false });
-    this.page = mountPreactPage(section, () => html`<${GeneralPage} store=${this} />`);
+    this.page = mountPreactPage(section, ({ onDirty }) => html`<${GeneralPage} store=${this} onDirty=${onDirty} />`);
   }
 
   apply(theme) {
