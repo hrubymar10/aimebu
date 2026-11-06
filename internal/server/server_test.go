@@ -511,6 +511,43 @@ func TestSnapshotRequiredAfterRetentionGap(t *testing.T) {
 	}
 }
 
+// A page cannot tell a dead event socket from a quiet one, so the stream says how often it will speak (the ready frame) and then does so, whether or
+// not anything happened; the ready frame also names the build serving the page, which a page that outlives a deploy compares after reconnecting.
+func TestEventStreamHeartbeatsAndNamesItsBuild(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	f.srv.HeartbeatInterval = 1200 * time.Millisecond
+	f.srv.Version = "aimebu vtest-1"
+	_, high, _ := f.db.EventBounds(context.Background())
+	c := f.dial(t, high, f.http.URL)
+	defer c.Close(websocket.StatusNormalClosure, "")
+	ready := readFrame(t, c)
+	var typ, version string
+	var beat int
+	json.Unmarshal(ready["type"], &typ)
+	json.Unmarshal(ready["version"], &version)
+	json.Unmarshal(ready["heartbeat"], &beat)
+	if typ != "ready" || version != "aimebu vtest-1" || beat != 2 { // 1.2 s is advertised rounded up, so the page never expects it sooner than it comes
+		t.Fatalf("ready frame: type=%q version=%q heartbeat=%d (%s)", typ, version, beat, ready)
+	}
+	// Nothing happens in the room; the next frames are heartbeats, steadily.
+	for i := 0; i < 2; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, raw, err := c.Read(ctx)
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		frame := map[string]json.RawMessage{}
+		json.Unmarshal(raw, &frame)
+		json.Unmarshal(frame["type"], &typ)
+		if typ != "heartbeat" {
+			t.Fatalf("frame %d on a quiet stream: %s", i, frame)
+		}
+	}
+}
+
 func TestSlowClientQueueIsBounded(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

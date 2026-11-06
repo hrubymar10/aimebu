@@ -791,8 +791,16 @@ processed `seq`.
 The initial replay sends visible project events with `seq > after` in order,
 using bounded batches and rechecking session validity periodically during a
 long replay,
-then `{type:"ready",seq:<high-watermark>}`. Live frames use
+then `{type:"ready",seq:<high-watermark>,heartbeat:<seconds>,version:<build>}`. Live frames use
 `{type:"event",event:{...}}`; the event's `seq` is the global cursor.
+After `ready` the server also sends `{type:"heartbeat"}` every `heartbeat` seconds (20; no `seq`, nothing to
+replay), whether or not anything happened. A page cannot tell a socket that died silently (a sleeping laptop,
+a proxy that dropped an idle connection) from a quiet room, so the web UI replaces a socket that has said
+nothing for three heartbeats, and checks it at once when the tab becomes visible or the browser comes back
+online; a server that sends no `heartbeat` is never judged by silence. `version` is the build serving the
+socket (what `GET /api/buildinfo` calls `version`): a page that finds a different one after a reconnect was
+loaded from an older build, and shows a bar asking for a reload (it reloads by itself once the tab is hidden
+and no dialog is open and no field holds text).
 If the cursor predates retained events, the server sends
 `{type:"snapshot_required",min_seq:<oldest>}` and closes the socket.
 The client should reload its project and room snapshots, then reconnect

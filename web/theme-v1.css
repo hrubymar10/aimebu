@@ -2603,3 +2603,6 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .spawn-occupied p { margin: 0; }
 .spawn-occupied-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .spawn-occupied[hidden], .spawn-occupied-actions [hidden] { display: none; }
+
+/* The bar that asks for a reload after the server was replaced by another build (update-bar.js). */
+.update-bar { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 12px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); color: var(--text-primary); font-size: 13px; }

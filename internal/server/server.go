@@ -98,6 +98,7 @@ type Server struct {
 	QueueSize            int
 	MachinePingInterval  time.Duration
 	SessionCheckInterval time.Duration
+	HeartbeatInterval    time.Duration // how often the browser event stream sends a heartbeat frame (default 20s); the page reconnects when they stop
 	EventBatchQuery      func(context.Context, string, int64, int64, int) ([]store.Event, error)
 	SessionCheckQuery    func(context.Context, string) error
 	threadCountsQuery    func(context.Context, string, []store.Message) (map[string]int, error)

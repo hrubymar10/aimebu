@@ -32,6 +32,7 @@ import { ImportV1Wizard } from './import-v1.js';
 import { offerHarnessSetup, anyHarnessConfigured, HARNESS_SKIP_PREFERENCE } from './harness-offer.js';
 import { DiskUsage } from './pages/health/disk.js';
 import { showBuildVersion } from './build-version.js';
+import { UpdateBar } from './update-bar.js';
 import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
 
 
@@ -141,6 +142,8 @@ chat.onOpenMessage = async found => {
   if (!room) { chat.error.textContent = `Message #${found.no} is in a room that is not in your list.`; return; }
   await selectRoom(room, found.id);
 };
+let pageBuild = ''; // the build that served this page, as the server names it (first read at sign-in; it stays when the person signs in again)
+const updateBar = new UpdateBar({ hasDraft: () => chat.hasDraft() });
 const notifications = new InboxNotifications(item => {
   inbox.show();
   requestAnimationFrame(() => document.querySelector(`[data-inbox-id="${CSS.escape(item.id)}"]`)?.scrollIntoView({ block: 'center' }));
@@ -414,7 +417,7 @@ async function signedIn(session) {
   const startupAbort = new AbortController();
   const startupActive = () => active() && !startupExpired && !startupAbort.signal.aborted;
   startupController = startupAbort;
-  setSession(session); void showBuildVersion(request, document.querySelector('#build-version')); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; signin.hide();
+  setSession(session); void showBuildVersion(request, document.querySelector('#build-version')).then(version => { if (!pageBuild) pageBuild = version; }); void retention.load(); const storedPreferences = await loadPreferences(session.id || session.user_id); harnessSkipStored = storedPreferences?.[HARNESS_SKIP_PREFERENCE] === '1'; settings.setUser(session.id || session.user_id); settings.setRights(rights); applyRights(); systemEvents.setUser(); chat.applyMarkdownMode(); notificationBanner.reset(storedPreferences?.[BANNER_DISMISSED_PREFERENCE] === '1'); document.title = 'aimebu'; signin.hide();
   // The owner's first sign-in on an install shows the welcome once; the app waits behind it.
   if (session.first_run) { await showWelcome(() => request('/api/welcome/seen', { method: 'POST', body: {} })); if (!active()) return; }
   setStartupState('loading'); appView.hidden = false;
@@ -489,6 +492,7 @@ async function signedIn(session) {
       dot.classList.toggle('disconnected', label !== 'Connected');
       dot.title = label; dot.setAttribute('aria-label', label);
     }, seq);
+    stream.baseline = () => pageBuild; stream.onVersionChange = () => updateBar.show();
     stream.onUsagesUpdated = () => { settings.usagesChanged(); usagesPopover.changed(); inbox.refresh().catch(() => {}); };
     stream.start();
     clearTimeout(preStreamDeadline);

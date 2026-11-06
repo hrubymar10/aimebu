@@ -624,6 +624,9 @@ export class Chat {
   threadToEnd() { this.threadList.scrollTop = this.threadList.scrollHeight; }
   threadSendFailed(message) { this.threadNotice.show(message); }
   restoreThreadDraft(draft) { this.threadDraft.value = draft; this.draft.focus(); }
+  // Whether the person has typed or attached something that is not sent: the message and the thread reply, whichever way the composer is
+  // showing them (the formatted editor keeps the textarea in step), and files waiting to go with the message.
+  hasDraft() { return !!(this.draft.value.trim() || this.threadDraft.value.trim() || this.pendingAttachments?.length || this.pendingUploads); }
   sendInput() {
     if (this.pendingUploads || (!this.draft.value.trim() && !this.pendingAttachments.length)) return null;
     return { body: this.draft.value, reply: this.reply, attachments: this.pendingAttachments.map(a => a.id) };

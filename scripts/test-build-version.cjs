@@ -27,5 +27,7 @@ for (const empty of [null, undefined, {}, { version: '' }, { version: '   ' }, {
     assert.deepEqual(element, header(), 'an unreadable answer leaves the served text');
   }
   await showBuildVersion(async () => ({ version: 'x' }), null); // no header in the page: nothing to do, nothing thrown
+  assert.equal(await showBuildVersion(async () => ({ version: 'aimebu v2.1.0' }), header()), 'aimebu v2.1.0', 'the version string is handed back as the server states it');
+  assert.equal(await showBuildVersion(async () => { throw new Error('offline'); }, header()), '', 'an unreadable answer hands back nothing');
   console.log('build version test passed');
 })().catch(error => { console.error(error); process.exit(1); });

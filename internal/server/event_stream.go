@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"time"
 
@@ -139,9 +140,17 @@ func (s *Server) streamEvents(ctx context.Context, conn *websocket.Conn, user, t
 	}
 	usageUpdates, unwatchUsages := s.watchUsages()
 	defer unwatchUsages()
-	if err := s.writeFrame(ctx, conn, map[string]any{"type": "ready", "seq": initial.max}); err != nil {
+	heartbeat := s.HeartbeatInterval
+	if heartbeat <= 0 {
+		heartbeat = 20 * time.Second
+	}
+	// `heartbeat` (seconds) tells the page to expect a frame at least that often, and `version` is the build serving it: a page that finds a
+	// different version after a reconnect knows it was loaded from an older build.
+	if err := s.writeFrame(ctx, conn, map[string]any{"type": "ready", "seq": initial.max, "heartbeat": int(math.Ceil(heartbeat.Seconds())), "version": s.Version}); err != nil {
 		return
 	}
+	beat := time.NewTicker(heartbeat)
+	defer beat.Stop()
 	interval := s.PollInterval
 	if interval <= 0 {
 		interval = 50 * time.Millisecond
@@ -216,6 +225,12 @@ func (s *Server) streamEvents(ctx context.Context, conn *websocket.Conn, user, t
 			return
 		case event := <-queue:
 			if err := s.writeFrame(ctx, conn, eventFrame(event)); err != nil {
+				return
+			}
+		case <-beat.C:
+			// A connection nothing has reached for a while (a sleeping laptop, a proxy that dropped an idle socket) can look open to the page for
+			// minutes; a frame at a steady pace lets it tell, and keeps idle proxies from closing the socket.
+			if err := s.writeFrame(ctx, conn, map[string]string{"type": "heartbeat"}); err != nil {
 				return
 			}
 		case <-usageUpdates:

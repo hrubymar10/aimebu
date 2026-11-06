@@ -10,10 +10,12 @@ export function versionLabel(info) {
   return { text: version, title: [version, go].filter(Boolean).join(' · ') };
 }
 
+// Resolves to the version string as the server states it ('' when it could not be read), for the caller that wants to know which build served it.
 export async function showBuildVersion(request, element) {
-  if (!element) return;
   try {
-    const label = versionLabel(await request('/api/buildinfo'));
-    if (label) { element.textContent = label.text; element.title = label.title; }
-  } catch { /* the header keeps its default text */ }
+    const info = await request('/api/buildinfo');
+    const label = versionLabel(info);
+    if (element && label) { element.textContent = label.text; element.title = label.title; }
+    return typeof info?.version === 'string' ? info.version : '';
+  } catch { /* the header keeps its default text */ return ''; }
 }
