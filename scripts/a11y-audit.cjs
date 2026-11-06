@@ -66,7 +66,7 @@ function auditSurface({ root, show, dialog, exclude }) {
   for (const element of rootEl.querySelectorAll('button')) {
     if (!within(element)) continue;
     // A theme tile is a radio drawn as a preview of its theme (the first-run picker), not one of the three button kinds.
-    if (!element.matches('.btn, .btn-icon, .row-btn, .theme-tile[role="radio"]')) unclassed.push(`${label(element)} "${text(element).slice(0, 24)}"`);
+    if (!element.matches('.btn, .btn-icon, .row-btn, .settings-nav-item, .theme-tile[role="radio"]')) unclassed.push(`${label(element)} "${text(element).slice(0, 24)}"`);
   }
 
   // 2. contrast

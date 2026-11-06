@@ -13,10 +13,10 @@ export function MacroForm({ state, keyRef, onSave, onCancel, onDirty }) {
   return html`<form id="macro-editor" hidden=${!state.canEdit.value} onSubmit=${event => { event.preventDefault(); onSave(); }}>
     <${SettingsGroup} label="Macro">
       <${SettingsRow} label="Key" desc=${KEY_DESC} id="macro-key">
-        <input name="key" required placeholder="greeting" ref=${keyRef} disabled=${busy} value=${form.key} onInput=${event => set('key', event.currentTarget.value)} />
+        <input class="settings-text-input" name="key" required placeholder="greeting" ref=${keyRef} disabled=${busy} value=${form.key} onInput=${event => set('key', event.currentTarget.value)} />
       <//>
       <${SettingsRow} label="Body" desc=${BODY_DESC} id="macro-body" className="settings-row-stack">
-        <textarea name="body" rows="3" disabled=${busy} value=${form.body} onInput=${event => set('body', event.currentTarget.value)}></textarea>
+        <textarea class="settings-text-input settings-textarea" name="body" rows="3" disabled=${busy} value=${form.body} onInput=${event => set('body', event.currentTarget.value)}></textarea>
       <//>
     <//>
     <div class="dialog-actions">

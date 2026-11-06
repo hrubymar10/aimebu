@@ -18,8 +18,15 @@ const REMOVED = /fleet|leaderboard/;
 // column page, no scrolling) are left out; they come in with --final, when the last area has moved over.
 // Classes v2's own markup already uses, whose v1 rules would change unmigrated areas where v2 sets nothing (v1 has the same name for another job): held
 // back, per class, in scripts/v1-css-hold.json until their area moves over.
-const HOLD = new Set(JSON.parse(fs.readFileSync(path.join(__dirname, 'v1-css-hold.json'), 'utf8')).classes);
-const held = selector => [...selector.matchAll(/\.([A-Za-z_][\w-]*)/g)].some(match => HOLD.has(match[1]));
+const HOLD_FILE = JSON.parse(fs.readFileSync(path.join(__dirname, 'v1-css-hold.json'), 'utf8'));
+const HOLD = new Set(HOLD_FILE.classes);
+// A generic state class (`active`) stays held for the areas that have not moved over, but a selector that also names a class of a moved area
+// (`.settings-nav-item.active`) is that area's own rule: `released` maps the held class to the moved classes that release it.
+const RELEASED = new Map(Object.entries(HOLD_FILE.released || {}).map(([name, owners]) => [name, new Set(owners)]));
+const held = selector => {
+  const names = [...selector.matchAll(/\.([A-Za-z_][\w-]*)/g)].map(match => match[1]);
+  return names.some(name => HOLD.has(name) && !(RELEASED.has(name) && names.some(other => RELEASED.get(name).has(other))));
+};
 const TRANSITIONAL = new Set(['*', '*::before', '*::after', 'html', 'body']);
 const final = args.includes('--final');
 

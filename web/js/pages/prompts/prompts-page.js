@@ -23,12 +23,12 @@ export function PromptsPage({ openToken, projectContext, onDirty = () => {} }) {
       <p class="settings-intro" ref=${intro}>The wording an agent gets around its role instructions. A project override wins over a global one, which wins over the shipped text. The response format stays fixed, so a wording change cannot stop answers from being read.</p>
       <${SettingsGroup} label="Prompt scope and inline plans">
         <${SettingsRow} label="Scope" desc="Whose prompts you are looking at. Global applies to every project that has no override of its own." id="prompt-scope">
-          <select value=${scope} disabled=${busy} onChange=${event => chooseScope(event.currentTarget.value)}>
+          <select class="settings-select" value=${scope} disabled=${busy} onChange=${event => chooseScope(event.currentTarget.value)}>
             ${state.options.value.map(([id, label]) => html`<option value=${id} key=${id}>${label}</option>`)}
           </select>
         <//>
         <${SettingsRow} label="Inline plans" desc='Whether the lead is told to always attach the full plan as a collapsed "Full plan" block under a visual plan, or leave it to the lead. Applies to every project.' id="prompt-inline-plan">
-          <select value=${state.inline.value} disabled=${!view?.can_edit_global || busy || state.inlineSaving.value} onChange=${event => saveInline(event.currentTarget.value)}>
+          <select class="settings-select" value=${state.inline.value} disabled=${!view?.can_edit_global || busy || state.inlineSaving.value} onChange=${event => saveInline(event.currentTarget.value)}>
             <option value="optional">Optional</option>
             <option value="always">Always</option>
           </select>

@@ -52,3 +52,39 @@ button.chat-msg-id { border: 0; background: none; }
    measures the button right after sees the old size (the room-menu and top-bar placement do). Only the colours move here, as in v2's base. */
 :where(.btn, .btn-icon) { transition: background .15s, border-color .15s, color .15s; }
 
+
+/* Settings: the dialog is a <dialog> (focus trap, Escape, top layer) wearing v1's modal and pane. A closed one stays closed, and the browser's own
+   box (border, padding, background, size limits) goes. The backdrop is v1's overlay. */
+dialog.settings-modal:not([open]) { display: none; }
+dialog.settings-modal { padding: 0; border: 0; background: transparent; color: inherit; max-width: none; max-height: none; }
+dialog.settings-modal::backdrop { background: rgba(0, 0, 0, 0.5); }
+/* A group caption in the nav (Agents) sits after the first group. */
+.settings-nav-group-title { margin-top: 14px; }
+/* A nav tab that waits for the access check keeps its place but is not seen. */
+.settings-nav-item.settings-tab-pending { visibility: hidden; }
+/* Rows v1 has only as plain rows: a toggle row keeps its control at its natural width, and a stacked row puts the control under the label. */
+.settings-row-toggle .settings-control { flex: 0 0 auto; min-width: 0; }
+.settings-row-stack { flex-direction: column; align-items: stretch; gap: 8px; }
+.settings-row-stack .settings-control { flex: 1 1 auto; width: 100%; }
+.settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* Touch-sized targets on a phone (v1 has none). */
+@media (max-width: 700px), (pointer: coarse) { .settings-nav-item { min-height: 40px; } }
+
+/* The Settings title is a heading element (v1's is a span) and keeps v1's header height. A group may shrink inside a narrow column. */
+.settings-section-title { margin: 0; }
+.settings-group { min-width: 0; }
+/* A phone's dynamic toolbar: the pane is as tall as what is visible. */
+@media (max-width: 700px) { dialog.settings-modal, dialog.settings-modal .settings-pane { height: 100dvh; max-height: 100dvh; } }
+/* A toggle row stays a row on a phone, where v1's rows stack. */
+@media (max-width: 700px) { .settings-row-toggle { flex-direction: row; align-items: center; } }
+
+/* Settings fields on v1's .settings-text-input / .settings-select. A text area is v1's input without its fixed height. A field in a stacked row,
+   or one that sits under its label, takes the row's width instead of v1's 180px. */
+.settings-textarea { height: auto; min-height: 84px; padding: 6px 8px; width: 100%; box-sizing: border-box; font-family: var(--font-mono); resize: vertical; }
+.settings-row-stack :is(.settings-text-input, .settings-select), label > :is(.settings-text-input, .settings-select) { width: 100%; box-sizing: border-box; }
+label > :is(.settings-text-input, .settings-select) { display: block; margin-top: 5px; }
+.settings-text-input:focus-visible, .settings-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Touch-sized fields on a phone or a coarse pointer (v1's are 28px). */
+@media (max-width: 700px), (pointer: coarse) { .settings-text-input, .settings-select { min-height: 40px; } .settings-textarea { min-height: 84px; } }
+/* v1 sets no weight on an inactive tab: a <button> would take the browser's. The active tab is 500 in v1's own rule. */
+.settings-nav-item { font-weight: 400; }

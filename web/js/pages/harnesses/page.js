@@ -7,10 +7,10 @@ export class HarnessSettings {
   constructor(dialog, { embedded = false, host = null } = {}) {
     const prefix = embedded ? 'onboarding-' : '';
     this.section = document.createElement('section');
-    this.section.className = 'settings-content';
+    this.section.className = embedded ? 'settings-section active' : 'settings-section';
     this.section.id = `${prefix}settings-harnesses`;
     this.section.hidden = !embedded;
-    (embedded ? host : dialog).append(this.section);
+    (embedded ? host : dialog.querySelector('.settings-body') || dialog).append(this.section);
     this.embedded = embedded;
     this.wanted = '';
     this.onReady = null;

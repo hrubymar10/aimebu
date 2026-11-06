@@ -22,14 +22,14 @@ function AccountMaintenance({ store, settings }) {
       <div class="settings-control"><input type="checkbox" id="usage-token-auto-refresh" aria-describedby="usage-token-auto-refresh-desc" checked=${on} disabled=${disabled} onChange=${event => store.saveTokenAutoRefresh(event.currentTarget.checked)} /></div>
     </div>
     <${SettingsRow} label="Warm idle Claude and Codex accounts" desc="Start a five-hour session window with a short request for eligible inactive profiles. Active logins and profiles used by another credential target are skipped." id="usage-warmup-mode" className=${warmupOff ? 'usages-provider-row-disabled' : ''}>
-      <select value=${mode} disabled=${warmupOff} onChange=${event => store.mutateUsage(() => store.source.settings(warmupBody(event.currentTarget.value, settings)))}>
+      <select class="settings-select" value=${mode} disabled=${warmupOff} onChange=${event => store.mutateUsage(() => store.source.settings(warmupBody(event.currentTarget.value, settings)))}>
         ${WARMUP_MODES.map(([value, label]) => html`<option value=${value} key=${value}>${label}</option>`)}
       </select>
     <//>
     ${mode === 'scheduled' && html`<div class="settings-row">
       <div class="settings-row-info"><label class="settings-label" for="usage-warmup-schedule">Warmup schedule</label><span class="settings-desc" id="usage-warmup-schedule-desc">One five-field cron line per row, in the server’s local time. Each field accepts * or one number.</span></div>
       <div class="settings-control"><div class="usage-warmup-schedule-control">
-        <textarea id="usage-warmup-schedule" aria-describedby="usage-warmup-schedule-desc" rows="3" placeholder="30 9 * * 1" ref=${schedule} value=${settings?.warmup_schedule || ''}></textarea>
+        <textarea class="settings-text-input settings-textarea" id="usage-warmup-schedule" aria-describedby="usage-warmup-schedule-desc" rows="3" placeholder="30 9 * * 1" ref=${schedule} value=${settings?.warmup_schedule || ''}></textarea>
         <button type="button" class="settings-button" onClick=${() => store.mutateUsage(() => store.source.settings({ warmup_schedule: schedule.current.value }))}>Save schedule</button>
       </div></div>
     </div>`}
@@ -45,16 +45,16 @@ function UsageConfig({ store, settings }) {
   return html`<div class="usage-config-controls">
     <${SettingsGroup} label="Usage refresh">
       <${SettingsRow} label="Refresh interval (seconds)" desc="How often the server re-reads provider limits in the background. Minimum 15 seconds." id="usage-refresh-interval">
-        <input type="number" min="15" ref=${interval} value=${String(settings?.refresh_interval_sec || 120)} />
+        <input class="settings-text-input" type="number" min="15" ref=${interval} value=${String(settings?.refresh_interval_sec || 120)} />
       <//>
       <${SettingsRow} label="Percentages" desc="Show usage bars as the share still left or the share already used, here and in the usages popover." id="usage-percent-display">
-        <select ref=${display} value=${settings?.percent_display || 'left'}><option value="left">Percent left</option><option value="used">Percent used</option></select>
+        <select class="settings-select" ref=${display} value=${settings?.percent_display || 'left'}><option value="left">Percent left</option><option value="used">Percent used</option></select>
       <//>
       <${SettingsRow} label="Usage warning (% remaining)" desc="Send one global inbox alert per provider window and reset when this much quota remains." id="usage-alert-warning">
-        <input type="number" min="1" max="99" ref=${warning} value=${String(settings?.alert_warning_remaining ?? 20)} />
+        <input class="settings-text-input" type="number" min="1" max="99" ref=${warning} value=${String(settings?.alert_warning_remaining ?? 20)} />
       <//>
       <${SettingsRow} label="Usage critical (% remaining)" desc="Send a stronger alert at this lower remaining percentage. It must be below the warning threshold." id="usage-alert-critical">
-        <input type="number" min="1" max="99" ref=${critical} value=${String(settings?.alert_critical_remaining ?? 10)} />
+        <input class="settings-text-input" type="number" min="1" max="99" ref=${critical} value=${String(settings?.alert_critical_remaining ?? 10)} />
       <//>
     <//>
     <div class="settings-actions"><button type="button" class="btn btn-primary" onClick=${save}>Save usage settings</button><button type="button" class="btn" onClick=${refresh}>Refresh now</button></div>

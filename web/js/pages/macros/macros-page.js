@@ -26,7 +26,7 @@ export function MacrosPage({ openToken, onDirty = () => {} }) {
       <div class="macro-toolbar">
         <${SettingsGroup} label="Find macros">
           <${SettingsRow} label="Search" desc="Show only the macros whose key or text contains this." id="macros-search">
-            <input type="search" placeholder="Search macros" aria-label="Search macros" value=${state.filter.value} onInput=${event => { state.filter.value = event.currentTarget.value; }} />
+            <input class="settings-text-input" type="search" placeholder="Search macros" aria-label="Search macros" value=${state.filter.value} onInput=${event => { state.filter.value = event.currentTarget.value; }} />
           <//>
         <//>
         <div class="dialog-actions">

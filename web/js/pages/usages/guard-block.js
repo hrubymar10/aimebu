@@ -6,7 +6,7 @@ import { numberOf, boxText } from './quota-model.js';
 
 const INTRO = 'Act before an account runs out. At the soft threshold the server starts no new turns on that tool (a running turn finishes) and the automatic switcher moves to another profile that is still usable. If there is none, new turns stay held until usage falls; at the hard threshold you are told it has reached its limit. The higher of the session and weekly usage counts.';
 
-const Threshold = ({ label, value, onInput, describedBy, ...rest }) => html`<input type="number" aria-label=${label} aria-describedby=${describedBy} min="1" max="100" step="1" value=${boxText(value)} onInput=${event => onInput(numberOf(event.currentTarget.value))} ...${rest} />`;
+const Threshold = ({ label, value, onInput, describedBy, ...rest }) => html`<input class="settings-text-input" type="number" aria-label=${label} aria-describedby=${describedBy} min="1" max="100" step="1" value=${boxText(value)} onInput=${event => onInput(numberOf(event.currentTarget.value))} ...${rest} />`;
 
 // Per-profile overrides: one row per profile that has its own thresholds, and a picker for the rest.
 function Overrides({ store, tool, label, draft, stored }) {

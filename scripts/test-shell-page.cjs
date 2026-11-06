@@ -13,7 +13,7 @@ const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
 const sections = ['general', 'usages', 'notifications', 'roles', 'users', 'prompts', 'macros', 'machines', 'harnesses'];
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
-<body><dialog id="settings-dialog" aria-label="Settings" open><header></header><nav aria-label="Settings sections"></nav>${sections.map(key => `<section id="settings-${key}" class="settings-content"></section>`).join('')}</dialog></body></html>`;
+<body><dialog id="settings-dialog" class="settings-modal" aria-label="Settings" open><div class="settings-pane"><nav class="settings-nav" aria-label="Settings sections"></nav><div class="settings-body"><header class="settings-body-header"></header>${sections.map(key => `<section id="settings-${key}" class="settings-section"></section>`).join('')}</div></div></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -44,7 +44,7 @@ async function main() {
     });
     return page;
   };
-  const nav = page => page.evaluate(() => [...document.querySelector('#settings-dialog nav').children].map(node => `${node.id || 'caption'}${node.hidden ? '!' : ''}${node.classList.contains('settings-selected') ? '*' : ''}`));
+  const nav = page => page.evaluate(() => [...document.querySelector('#settings-dialog nav').children].map(node => `${node.id || 'caption'}${node.hidden ? '!' : ''}${node.classList.contains('active') ? '*' : ''}`));
   const settle = page => page.evaluate(() => new Promise(resolve => setTimeout(resolve, 30)));
   try {
     // The tabs in order under their two captions, General selected, the Users tab holding its place; the title and the close button.
@@ -56,8 +56,8 @@ async function main() {
         return { caption: [nav.firstElementChild.textContent, nav.firstElementChild.getAttribute('aria-hidden')], title: document.querySelector('#settings-title').textContent, current: [...nav.querySelectorAll('[aria-current]')].map(node => node.id),
           users: [users.classList.contains('settings-tab-pending'), users.getAttribute('aria-hidden'), users.tabIndex], group: [nav.querySelector('#settings-agents-title').textContent, nav.querySelector('#settings-agents-title').className],
           close: [close.className, close.title, close.getAttribute('aria-label'), !!close.querySelector('.icon-mask-close')], sections: sections().map(([key, hidden]) => `${key}${hidden ? '!' : ''}`), dataset: document.querySelector('#settings-dialog').dataset.section };
-        function sections() { return [...document.querySelectorAll('#settings-dialog > section')].map(node => [node.id.replace('settings-', ''), node.hidden]); }
-      }), { caption: ['Settings', 'true'], title: 'General', current: ['settings-general-tab'], users: [true, 'true', -1], group: ['Agents', 'settings-nav-title settings-nav-group-title'], close: ['btn-icon', 'Close settings', 'Close settings', true],
+        function sections() { return [...document.querySelectorAll('#settings-dialog .settings-body > section')].map(node => [node.id.replace('settings-', ''), node.hidden]); }
+      }), { caption: ['Settings', 'true'], title: 'General', current: ['settings-general-tab'], users: [true, 'true', -1], group: ['Agents', 'settings-nav-title settings-nav-group-title'], close: ['btn-icon settings-close-btn', 'Close settings', 'Close settings', true],
         sections: ['general', 'usages!', 'notifications!', 'roles!', 'users!', 'prompts!', 'macros!', 'machines!', 'harnesses!'], dataset: 'general' });
       await page.$eval('#settings-close', el => el.click());
       assert.equal(await page.evaluate(() => window.__closed), 1);
@@ -100,12 +100,12 @@ async function main() {
       await page.evaluate(() => window.__shell.store.setRights({ owner: true, admin: false }));
       await page.$eval('#settings-machines-tab', el => el.click());
       await settle(page);
-      assert.deepEqual(await page.evaluate(() => ({ asked: window.__selected, title: document.querySelector('#settings-title').textContent, selected: [...document.querySelectorAll('#settings-dialog nav .settings-selected')].map(n => n.id),
-        current: [...document.querySelectorAll('#settings-dialog nav [aria-current]')].map(n => n.id), shown: [...document.querySelectorAll('#settings-dialog > section')].filter(n => !n.hidden).map(n => n.id), dataset: document.querySelector('#settings-dialog').dataset.section })),
+      assert.deepEqual(await page.evaluate(() => ({ asked: window.__selected, title: document.querySelector('#settings-title').textContent, selected: [...document.querySelectorAll('#settings-dialog nav .active')].map(n => n.id),
+        current: [...document.querySelectorAll('#settings-dialog nav [aria-current]')].map(n => n.id), shown: [...document.querySelectorAll('#settings-dialog .settings-body > section')].filter(n => !n.hidden).map(n => n.id), dataset: document.querySelector('#settings-dialog').dataset.section })),
         { asked: ['machines'], title: 'Machines', selected: ['settings-machines-tab'], current: ['settings-machines-tab'], shown: ['settings-machines'], dataset: 'machines' });
       await page.evaluate(() => window.__shell.store.select('users'));
       await settle(page);
-      assert.deepEqual(await page.evaluate(() => [document.querySelector('#settings-title').textContent, [...document.querySelectorAll('#settings-dialog > section')].filter(n => !n.hidden).map(n => n.id)]), ['Users', ['settings-users']]);
+      assert.deepEqual(await page.evaluate(() => [document.querySelector('#settings-title').textContent, [...document.querySelectorAll('#settings-dialog .settings-body > section')].filter(n => !n.hidden).map(n => n.id)]), ['Users', ['settings-users']]);
       await page.close();
     }
     // A destroyed shell draws nothing more and stops following the selection.

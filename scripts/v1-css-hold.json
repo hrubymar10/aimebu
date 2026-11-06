@@ -56,14 +56,6 @@
   "room-member-badge",
   "room-name",
   "selected",
-  "settings-control",
-  "settings-desc",
-  "settings-group",
-  "settings-label",
-  "settings-nav-title",
-  "settings-row",
-  "settings-row-info",
-  "settings-section",
   "stale",
   "system-event-row",
   "system-event-time",
@@ -74,5 +66,11 @@
   "waiting",
   "welcome-logo",
   "welcome-title"
- ]
+ ],
+ "released": {
+  "active": [
+   "settings-nav-item",
+   "settings-section"
+  ]
+ }
 }

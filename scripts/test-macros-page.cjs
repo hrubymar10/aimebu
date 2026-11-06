@@ -53,7 +53,7 @@ async function main() {
       (await import('/js/api.js')).setSession({ csrf_token: 'token', id: 'usr_1', owner: admin, admin });
       const { MacroSettings } = await import('/js/pages/macros/page.js');
       window.__page = new MacroSettings(document.querySelector('#settings-dialog'));
-      window.__page.section.hidden = false; window.__page.open();
+      window.__page.section.hidden = false; window.__page.section.classList.add('active'); window.__page.open();
     }, admin);
     await page.waitForFunction(() => document.querySelector('#macros-list'));
     if (auto[READ]) await page.waitForFunction(() => document.querySelector('#macros-list .snippet-row, #macros-list p'));
@@ -223,7 +223,7 @@ async function main() {
       await page.waitForFunction(() => document.querySelector('#macros-list').textContent.includes('<HIDDEN>') && document.querySelector('#macro-editor [name=key]').value === '');
       await type(page, '#macro-editor [name=key]', 'before'); await openImport(page, '{"x":"y"}');
       await page.evaluate(() => { window.__page.section.hidden = true; });
-      await page.evaluate(() => { window.__page.section.hidden = false; });
+      await page.evaluate(() => { window.__page.section.hidden = false; window.__page.section.classList.add('active'); });
       assert.deepEqual([(await shown(page)).key, await page.$eval('#macros-import-text', el => el.value)], ['before', '{"x":"y"}'], 'hide keeps the drafts');
       await hold(page);
       await page.evaluate(() => window.__page.open());

@@ -14,7 +14,7 @@ function MemberRow({ store, user }) {
     store.removeMember(user);
   };
   return html`<div class="user-row"><strong>${user.login}</strong><span>${user.disabled ? 'Deactivated' : ''}</span>
-    <select aria-label=${`Role for ${user.login}`} value=${user.role} onChange=${change}>${roleOptions()}</select>
+    <select class="settings-select" aria-label=${`Role for ${user.login}`} value=${user.role} onChange=${change}>${roleOptions()}</select>
     <${IconButton} name="trash" label=${`Remove ${user.login} from this project`} danger onClick=${remove} /></div>`;
 }
 
@@ -39,13 +39,13 @@ export function UsersPage({ store }) {
   return html`<h3>People and project access</h3>
     <p class="error" role="alert">${store.error.value}</p>
     <${SettingsGroup} label="Project selection"><${SettingsRow} id="users-project" label="Project" desc="The project whose members and invitations are shown below.">
-      <select value=${store.project.value} onChange=${event => store.select(event.currentTarget.value)}>${allowed.map(project => html`<option value=${project.id}>${project.name}</option>`)}</select><//><//>
+      <select class="settings-select" value=${store.project.value} onChange=${event => store.select(event.currentTarget.value)}>${allowed.map(project => html`<option value=${project.id}>${project.name}</option>`)}</select><//><//>
     <form class="user-invite-form" onSubmit=${event => { event.preventDefault(); store.createInvite(); }}>
       <${SettingsGroup} label="Invitation"><${SettingsRow} id="users-invite-role" label="Invite as" desc="Access the invited person gets: viewer reads, operator can also run agents, owner manages the project and its people. Creates a one-time invitation link.">
-        <select value=${store.role.value} onChange=${event => { store.role.value = event.currentTarget.value; }}>${roleOptions()}</select><//><//>
+        <select class="settings-select" value=${store.role.value} onChange=${event => { store.role.value = event.currentTarget.value; }}>${roleOptions()}</select><//><//>
       <div class="settings-actions"><button type="submit" class="btn btn-primary">Create invite</button></div>
     </form>
-    <input readonly hidden=${!shown} aria-label="Invitation link" value=${shown?.url || ''} ref=${link} />
+    <input class="settings-text-input" readonly hidden=${!shown} aria-label="Invitation link" value=${shown?.url || ''} ref=${link} />
     <p class="settings-intro invite-link-hint" hidden=${!shown?.hint}>${shown?.hint || ''}</p>
     <div class="user-members">${members && html`<h4>Project members</h4>${members.map(user => html`<${MemberRow} key=${user.id} store=${store} user=${user} />`)}`}</div>
     <div class="user-accounts">${accounts && store.globalAdmin && html`<h4>Accounts</h4>${uniqueAccounts(accounts).map(user => html`<${AccountRow} key=${user.id} store=${store} user=${user} />`)}`}</div>`;

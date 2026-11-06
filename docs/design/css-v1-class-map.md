@@ -30,6 +30,12 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 | Composer | `.pending-attachments` / `.pending-image` | `.attachment-pending-list` / `.attachment-pending-item` (`.attachment-pending-thumb`, `-meta`, `-name`, `-status`, `.attachment-remove-btn`) | composer |
 | Composer | `.composer-note` | `.system-room-notice` | composer |
 | Composer | `#composer.drag-attachment` | `.send-bar.drag-attachment` | composer |
+| Settings | `<dialog id=settings-dialog>` grid with `header`, `nav`, sections | `.settings-modal` > `.settings-pane` > `.settings-nav` + `.settings-body` (`.settings-body-header`, sections); still a `<dialog>`, reset in `v2-only.css` | settings |
+| Settings | `button.row-btn.settings-selected` | `button.settings-nav-item.active` | settings |
+| Settings | `h2#settings-title`, `#settings-close` | `.settings-section-title`, `.settings-close-btn` (kept an icon button) | settings |
+| Settings | `section.settings-content` (`[hidden]`) | `section.settings-section` (`.active` when selected, `hidden` kept) | settings |
+| Settings | `.settings-section` inside a page (stacked sub-block) | `.settings-subsection` (v2's own; v1's `.settings-section` is a tab body) | settings |
+| Settings | `.settings-row` / `-group` / `-label` / `-desc` / `-control` | same names, now v1's rules (the scoped v2 copies are deleted) | settings |
 
 ## Kept from v2 on purpose (decided by the owner, 2026-11-05)
 
@@ -39,6 +45,14 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
 - Touch-sized targets on phones (v1 has none).
 - A real background on a plain `.btn` (v1 leaves the browser's grey), a hover on it, and a visible focus ring (v1's `.btn` sets `outline: none`).
 - Icon-only top bar with tooltips (v1 and v2 already agree).
+- Settings keeps what v1 never had in `v2-only.css`: the `<dialog>` reset, the caption gap before the Agents group, the hidden pending Users tab,
+  toggle and stacked rows, the actions row, and 40px tabs on touch. The quota, switcher and harness blocks keep v2's own
+  rules until their areas move.
+- Settings fields: text inputs, number fields, text areas and selects of the Settings pages carry `.settings-text-input` / `.settings-select`
+  (a text area adds `.settings-textarea`, v1's input without its fixed height); v1's field is 28px tall, phones get 40px in `v2-only.css`. The
+  Harnesses page (and its onboarding copy) still has its own field rules.
+- Usages: the provider tile, window rows, pace ticks, credits row, empty and error lines and the switcher tile use v1's rules as written (v2's px copies
+  of them are deleted); the popover's own layout (`#usages-popover`, `.usages-open`) and the sparklines stay v2's.
 - v2-only features keep their own rules: threads, the emoji picker, inbox, machines, harnesses, health, import, spawn, schedules, users and
   login, project settings, onboarding.
 

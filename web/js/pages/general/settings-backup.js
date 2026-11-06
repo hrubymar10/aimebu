@@ -99,7 +99,7 @@ export function SettingsBackup({ store }) {
     } finally { applying.current = false; if (alive()) setBusy(false); }
   };
   const tick = name => setTicked(current => { const next = new Set(current); if (next.has(name)) next.delete(name); else next.add(name); return next; });
-  return html`<div class="settings-section" id="settings-backup" hidden=${!admin}>
+  return html`<div class="settings-subsection" id="settings-backup" hidden=${!admin}>
     <h3>Settings backup</h3>
     <${SettingsGroup} label="Settings backup">
       <${SettingsRow} label="Export settings" desc=${owner ? EXPORT_OWNER_DESC : EXPORT_ADMIN_DESC} id="settings-backup-export">

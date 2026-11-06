@@ -283,6 +283,12 @@
   outline: 1px dotted var(--accent);
 }
 
+[data-theme="high-contrast-dark"] .settings-nav-item.active {
+  background: transparent;
+  color: var(--text-primary);
+  outline: 1px solid var(--accent);
+}
+
 [data-theme="high-contrast-dark"] .agent-id-input {
   color: var(--text-primary);
 }
@@ -467,6 +473,15 @@
   overflow-y: auto;
 }
 
+.settings-nav-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 4px 8px 10px;
+}
+
 .settings-nav-item {
   display: block;
   width: 100%;
@@ -485,6 +500,12 @@
 .settings-nav-item:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.settings-nav-item.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-weight: 500;
 }
 
 .settings-body {
@@ -528,9 +549,74 @@
   color: var(--text-primary);
 }
 
+.settings-section {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+  /* Nested flex columns also need min-height: 0 so this overflow container can scroll. */
+  min-height: 0;
+}
+
+.settings-section.active {
+  display: flex;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  /* overflow:hidden makes flex min-height:auto collapse to 0, so pin this group at content size and let the section above scroll. */
+  flex-shrink: 0;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-row:last-child {
+  border-bottom: none;
+}
+
+.settings-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.settings-desc {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 .settings-status {
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+.settings-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .settings-text-input {
@@ -2184,6 +2270,13 @@
   padding-top: 6px;
 }
 
+.settings-section .settings-agent-list {
+  flex: 0 0 auto;
+  overflow: visible;
+  padding: 0;
+  min-height: 0;
+}
+
 .agent-card-compact .agent-id {
   width: 100%;
 }
@@ -2588,9 +2681,16 @@
     display: none;
   }
 
-  
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
 
-  
+  .settings-control {
+    align-self: stretch;
+    flex-wrap: wrap;
+  }
 
   .settings-text-input {
     width: 100%;
@@ -3063,7 +3163,9 @@
     padding: 12px 14px 10px;
   }
 
-  
+  .settings-section {
+    padding: 12px;
+  }
 
   .message-debug-header,
   .message-debug-header-left,

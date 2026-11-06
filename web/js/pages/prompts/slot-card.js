@@ -8,7 +8,7 @@ export function SlotCard({ slot, scope, max, draft, locked, onDraft, onSave, onR
   return html`<div class="prompt-slot" data-key=${slot.key}>
     <div class="prompt-slot-head"><strong>${slot.title}</strong><span class="prompt-source">${sourceLabel(slot, scope)}</span></div>
     <p class="settings-intro">${slot.desc}</p>
-    <textarea rows="4" maxLength=${max} id=${`prompt-${slot.key}`} aria-label=${slot.title} disabled=${locked} value=${value} onInput=${event => onDraft(slot, event.currentTarget.value)}></textarea>
+    <textarea class="settings-text-input settings-textarea" rows="4" maxLength=${max} id=${`prompt-${slot.key}`} aria-label=${slot.title} disabled=${locked} value=${value} onInput=${event => onDraft(slot, event.currentTarget.value)}></textarea>
     <div class="dialog-actions">
       <button type="button" class="btn btn-primary prompt-save" disabled=${locked} onClick=${() => onSave(slot)}>Save</button>
       <button type="button" class="btn prompt-reset" disabled=${locked || !layerOf(slot, scope)} onClick=${() => onReset(slot)}>${resetLabel(scope)}</button>

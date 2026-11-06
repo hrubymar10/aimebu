@@ -236,7 +236,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .usage-limit-summary { color: var(--text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .usage-limit form { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
 .usage-limit label { display: grid; gap: 4px; color: var(--text-secondary); font-size: 12px; }
-.usage-limit input { width: 110px; padding: 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); }
+.usage-limit input { width: 110px; }
 .usage-limit button { margin: 0; }
 .room-members { border-top: 1px solid var(--border); margin: 16px 0; padding-top: 14px; }
 .room-members h3 { margin: 0 0 8px; font-size: 14px; }
@@ -362,8 +362,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 #role-editor label, #settings-roles > label { display: block; margin: 10px 0; font-size: 12px; }
 #role-editor input:not([type="checkbox"]), #role-editor select, #role-editor textarea,
 #settings-roles > label select {
-  display: block; width: 100%; margin-top: 4px; padding: 7px; color: var(--text-primary);
-  background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 5px;
+  display: block; width: 100%; margin-top: 4px;
 }
 #role-editor label:has(input[type="checkbox"]) { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; }
 .machine-harness { margin: 10px 0; }
@@ -424,7 +423,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* Settings → Harnesses: a list of harnesses beside the chosen one. */
 .harness-models .settings-desc:empty, .harness-detect-models:empty { display: none; }
 @media (min-width: 701px) {
-  #settings-dialog[data-section="harnesses"] { width: min(1120px, 96vw); }
+  #settings-dialog[data-section="harnesses"] .settings-pane { width: min(1120px, 96vw); }
 }
 #settings-dialog .harness-split .machine-harness-summary, #onboarding-harnesses .harness-split .machine-harness-summary { flex-direction: column; align-items: stretch; gap: 8px; }
 #settings-dialog .harness-split .machine-harness-summary .settings-control, #onboarding-harnesses .harness-split .machine-harness-summary .settings-control { justify-content: flex-start; }
@@ -489,17 +488,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .machine-folder p { margin: 7px 0 0; font-size: 12px; color: var(--text-secondary); }
 #switch-agent-name, .switch-note { color: var(--text-secondary); font-size: 12px; }
 #rooms-scrim, #agents-scrim, #agents-close { display: none; }
-#settings-dialog { width: min(900px, 96vw); height: min(84dvh, 720px); max-width: none; max-height: none; padding: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-primary); color: var(--text-primary); box-shadow: 0 20px 70px var(--overlay-shadow); }
-#settings-dialog[open] { display: grid; grid-template-columns: 170px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-#settings-dialog::backdrop { background: var(--scrim-strong); }
-#settings-dialog > header { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); }
-#settings-dialog h2 { margin: 0; font-size: 15px; }
-#settings-close { border-color: var(--border); font-size: 20px; line-height: 1; }
-#settings-dialog nav { padding: 16px 8px; border-right: 1px solid var(--border); background: var(--bg-secondary); }
-#settings-dialog nav button { width: 100%; text-align: left; }
-#settings-dialog nav .settings-selected { background: var(--accent-dim); color: var(--accent); }
-.settings-content { overflow: auto; padding: 20px 24px 28px; }
-.settings-content h3 { margin: 0; font-size: 18px; }
 .machine-actions, .machine-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .machine-actions { margin-bottom: 16px; }
 #machines-list { display: grid; gap: 10px; }
@@ -539,7 +527,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .usage-config-controls label { display: grid; gap: 4px; color: var(--text-secondary); font-size: 11px; }
 .usage-config-controls input { width: 88px; }
 .usage-provider-actions input, .usage-provider-actions textarea, .usage-provider-actions select,
-.usage-config-controls input, .usage-config-controls select { padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: inherit; }
 .usage-provider-actions textarea { width: 100%; min-height: 50px; resize: vertical; }
 .usage-provider-actions input[type="url"], .usage-provider-actions input[type="password"] { flex: 1 1 220px; min-width: 0; }
 .usage-copilot-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; color: var(--text-secondary); font-size: 11px; }
@@ -579,11 +566,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .chat > header { gap: 5px; }
   .room-controls { gap: 0; }
   .room-controls button { width: 24px; font-size: 12px; }
-  #settings-dialog { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
-  #settings-dialog[open] { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); }
-  #settings-dialog nav { display: flex; overflow-x: auto; gap: 4px; padding: 7px 12px; border-right: 0; border-bottom: 1px solid var(--border); }
-  #settings-dialog nav button { width: auto; }
-  .settings-content { padding: 16px 12px 24px; }
 }
 #boot-view { display: grid; place-content: center; min-height: 100dvh; gap: 8px; background: var(--bg-primary); color: var(--text-primary); text-align: center; }
 #boot-view strong { font-size: 20px; }
@@ -722,15 +704,14 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 [data-theme] :is(.room-health, .health-flag) { background: var(--accent-dim); color: var(--orange); border-color: var(--border); }
 [data-theme] :is(.health-machine_offline, .health-recovery_waiting) { background: var(--red-dim); color: var(--red); }
 [data-theme="high-contrast-dark"] button.btn-primary:hover { color: var(--bg-primary); }
-[data-theme="high-contrast-dark"] :is(.btn, .btn-icon, .row-btn), [data-theme="high-contrast-dark"] #settings-dialog nav button { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
-[data-theme="high-contrast-dark"] :is(.btn, .btn-icon, .row-btn):hover, [data-theme="high-contrast-dark"] #settings-dialog nav button:hover { background: var(--bg-hover); color: var(--text-primary); }
+[data-theme="high-contrast-dark"] :is(.btn, .btn-icon, .row-btn) { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
+[data-theme="high-contrast-dark"] :is(.btn, .btn-icon, .row-btn):hover { background: var(--bg-hover); color: var(--text-primary); }
 [data-theme="high-contrast-dark"] button:disabled { opacity: 1; background: var(--bg-primary); border-color: var(--border); color: var(--text-muted); }
 [data-theme="high-contrast-dark"] .sidebar .room-row.active { background: var(--bg-primary); outline: 1px solid var(--accent); outline-offset: -1px; }
 [data-theme="high-contrast-dark"] .room-row.active .room-name { color: var(--text-primary); }
 [data-theme="high-contrast-dark"] .room-row .room-name, [data-theme="high-contrast-dark"] .room-row .room-name:hover { background: transparent; border: 0; color: var(--text-primary); }
 [data-theme="high-contrast-dark"] .room-row:hover { outline: 1px dotted var(--accent); outline-offset: -1px; }
 [data-theme="high-contrast-dark"] .agent-state { background: var(--bg-primary); border-color: var(--state-color); }
-[data-theme="high-contrast-dark"] #settings-dialog nav .settings-selected { background: var(--bg-primary); color: var(--text-primary); outline: 1px solid var(--accent); }
 [data-theme="high-contrast-dark"] .reaction-pill[aria-pressed=true] { background: var(--bg-primary); }
 [data-theme="high-contrast-dark"] :is(button,input,textarea,select):focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
@@ -890,7 +871,6 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .user-row .user-badge-owner { border-color: var(--accent); }
 .user-row .user-admin-toggle { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 12px; }
 #settings-users > label, #settings-users > input { display: block; width: 100%; margin: 8px 0; }
-#settings-users > input { padding: 8px; }
 .invite-entry p { margin: 12px 0 0; }
 .invite-entry .invite-lead { color: var(--text-secondary); }
 .invite-entry .invite-switch, #login-form .invite-back { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
@@ -962,65 +942,18 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .chat > #usages-popover > header { display: flex; align-items: center; gap: 6px; height: 43px; padding: 0 12px; border-bottom: 1px solid var(--border); }
 .chat > #usages-popover > header strong { flex: 1; text-align: right; color: var(--text-muted); font-size: 11.2px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
 .usages-tool.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
-.usages-refresh-glyph { width: 17px; height: 17px; flex: 0 0 17px; display: block; background-color: currentColor; -webkit-mask: url("/icons/refresh.svg") center / contain no-repeat; mask: url("/icons/refresh.svg") center / contain no-repeat; }
 .chat > #usages-popover .usages-popover-body, .chat > #usages-popover .usages-popover-note { padding: 0 8px; }
 .chat > #usages-popover .usages-popover-body { padding-top: 8px; }
-.usages-sidebar-list { display: flex; flex-direction: column; gap: 6px; }
-.usages-provider-tile { --usage-provider-color: var(--accent); display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); color: var(--text-primary); }
-.usages-provider-tile[data-provider="codex"] { --usage-provider-color: #5bbac4; }
-.usages-provider-tile[data-provider="claude-code"] { --usage-provider-color: #db8b70; }
-.usages-provider-tile[data-provider="github-copilot"] { --usage-provider-color: #a970ff; }
-.usages-provider-tile[data-provider="ollama-cloud"] { --usage-provider-color: #9a9a9a; }
-.usages-provider-heading, .usages-provider-title { display: flex; align-items: center; gap: 12px; }
-.usages-provider-title { justify-content: flex-start; min-width: 0; }
-.usages-provider-title > div { min-width: 0; }
-.usages-provider-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex: 0 0 22px; }
-.usages-provider-mask { display: block; width: 20px; height: 20px; background: currentColor; -webkit-mask-size: contain; mask-size: contain; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: center; mask-position: center; }
-.usages-provider-mask-codex { -webkit-mask-image: url("/icons/codex.svg"); mask-image: url("/icons/codex.svg"); }
-.usages-provider-mask-claude-code { -webkit-mask-image: url("/icons/claude-code.svg"); mask-image: url("/icons/claude-code.svg"); }
-.usages-provider-mask-github-copilot { -webkit-mask-image: url("/icons/github-copilot.svg"); mask-image: url("/icons/github-copilot.svg"); }
-.usages-provider-mask-ollama-cloud { -webkit-mask-image: url("/icons/ollama-cloud.svg"); mask-image: url("/icons/ollama-cloud.svg"); }
-.usages-provider-mask-mistral { -webkit-mask-image: url("/icons/mistral.svg"); mask-image: url("/icons/mistral.svg"); }
-.usages-provider-name { margin: 0; overflow: hidden; color: var(--text-primary); font-size: 14px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
-.usages-provider-updated { overflow: hidden; color: var(--text-muted); font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.switcher-tile-profile { padding-top: 8px; border-top: 1px solid var(--border); }
-.switcher-tile-profile:first-of-type { margin-top: 4px; padding-top: 0; border-top: 0; }
-.switcher-tile-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-.switcher-tile-name { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .switcher-expiry-icon { display: inline-flex; align-items: center; margin-left: 2px; color: var(--text-secondary); }
-.switcher-expiry-icon--expired { color: color-mix(in srgb, var(--red) 80%, var(--text-primary)); }
-.switcher-switch-pill { padding: 0 5px; border: 2px solid currentColor; border-radius: 999px; background: transparent; color: var(--accent); font: inherit; font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; }
 .btn.switcher-switch-pill { min-height: 0; height: auto; margin: 0; padding: 0 5px; border: 2px solid currentColor; border-radius: 999px; background: transparent; color: var(--accent); font-size: 10.5px; line-height: 1.45; letter-spacing: .04em; text-transform: uppercase; }
 .btn.switcher-switch-pill:disabled { opacity: .55; }
 .btn.switcher-switch-pill:hover:not(:disabled), .btn.switcher-switch-pill:focus-visible { border-color: var(--accent); background: var(--accent); color: var(--bg-primary); }
 .switcher-switch-pill:hover:not(:disabled), .switcher-switch-pill:focus-visible { border-color: var(--accent); background: var(--accent); color: var(--bg-primary); }
 .switcher-tile-active { padding: 0 5px; border: 1px solid currentColor; border-radius: 999px; color: var(--green-text); font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; }
-.switcher-tile-plan { flex: 0 1 auto; max-width: 40%; margin-left: auto; padding: 1px 6px; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 10.5px; font-weight: 700; text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
 .usages-popover-profile .usage-windows { display: flex; flex-direction: column; gap: 10px; margin-top: 0; }
-.usages-window-row { display: flex; flex-direction: column; gap: 5px; }
-.usages-window-top { color: var(--text-primary); font-size: 13px; font-weight: 800; }
 .usages-popover-profile .usage-track { position: relative; height: 6px; margin: 0; overflow: hidden; border-radius: 999px; background: var(--bg-primary); }
 .usages-popover-profile .usage-fill { position: absolute; inset: 0 auto 0 0; height: 100%; border-radius: inherit; background: var(--usage-provider-color); }
-.usages-pace-tick { position: absolute; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); pointer-events: none; }
-.usages-pace-tick--reserve { background: var(--green-text); }
-.usages-pace-tick--deficit { background: var(--red); }
-.usages-pace-tick--on-track { background: var(--text-muted); opacity: .5; }
-.usages-window-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; color: var(--text-muted); font-size: 11.5px; font-weight: 700; }
-.usages-window-meta strong { color: var(--text-primary); font-weight: 800; }
-.usages-window-meta span { text-align: right; }
-.usages-pace-text { display: flex; align-items: center; gap: 5px; margin-top: -2px; font-size: 11px; font-weight: 700; }
-.usages-pace-text--reserve { color: var(--green-text); }
-.usages-pace-text--deficit { color: color-mix(in srgb, var(--red) 80%, var(--text-primary)); }
-.usages-pace-text--on-track { color: var(--text-muted); }
-.usages-pace-sep { color: inherit; }
-.usages-credits-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--text-secondary); font-size: 12.5px; }
-.usages-error-line { color: color-mix(in srgb, var(--red) 80%, var(--text-primary)); font-size: 11.5px; line-height: 1.35; }
-.usages-credential-alerts { display: grid; gap: 4px; margin: 0 0 6px; padding: 6px 8px; border: 1px solid var(--red); border-radius: 6px; }
-.usages-credential-alert { color: var(--red); font-size: 11.5px; line-height: 1.35; }
-.usages-empty { padding: 16px 10px; color: var(--text-muted); font-size: 12.5px; font-style: italic; text-align: center; }
-.usages-empty-compact { padding: 8px 0; }
 .usages-empty button { margin-top: 10px; font-style: normal; }
-.usages-group-divider { height: 1px; margin: 3px 5px; background: var(--border-hover); }
 .chat.usages-open > .agents-panel { display: none; }
 .chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: 260px; }
 @media (max-width: 700px) {
@@ -1050,33 +983,15 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 @media (hover: hover) { :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock .md-copy { opacity: 0; } :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock:hover .md-copy, :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock:focus-within .md-copy { opacity: 1; } }
 
 /* UI part B: settings use the v1 full-height pane and grouped rows. */
-#settings-dialog { width: min(760px, 96vw); height: 100dvh; max-height: 100dvh; border-radius: 0; }
-#settings-dialog[open] { grid-template-columns: 180px minmax(0, 1fr); }
-#settings-dialog > header { grid-column: 2; grid-row: 1; padding: 14px 20px 12px; background: var(--bg-primary); }
-#settings-dialog h2 { font-size: 12.6px; }
-#settings-dialog nav { grid-column: 1; grid-row: 1 / 3; display: flex; flex-direction: column; gap: 2px; }
-#settings-dialog nav button { min-height: 32px; font-size: 11.5px; padding: 7px 10px; }
-#settings-dialog nav .settings-selected { background: rgba(88,166,255,.1); color: var(--accent); }
-#settings-dialog .settings-content { grid-column: 2; grid-row: 2; min-width: 0; padding: 20px; }
-:is(#settings-dialog, #onboarding-harnesses) .settings-content h3 { font-size: 12.6px; margin: 0 0 12px; }
+:is(#settings-dialog, #onboarding-harnesses) .settings-section h3 { font-size: 12.6px; margin: 0 0 12px; }
 :is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-intro { font-size: 10.5px; }
-:is(#settings-dialog, #onboarding-harnesses) .settings-content :is(input:not([type="checkbox"], [type="range"]), select, textarea) { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; margin: 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: 11.5px var(--font-sans); }
-:is(#settings-dialog, #onboarding-harnesses) .settings-content :is(input, select, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-:is(#settings-dialog, #onboarding-harnesses) .settings-content textarea { min-height: 84px; resize: vertical; }
+:is(#settings-harnesses, #onboarding-harnesses) :is(input:not([type="checkbox"], [type="range"], .settings-text-input), select:not(.settings-select), textarea:not(.settings-text-input)) { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; margin: 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-primary); font: 11.5px var(--font-sans); }
+:is(#settings-dialog, #onboarding-harnesses) .settings-section :is(input, select, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:is(#settings-harnesses, #onboarding-harnesses) textarea:not(.settings-text-input) { min-height: 84px; resize: vertical; }
 #settings-dialog #role-editor { max-width: none; }
-:is(#settings-dialog, #onboarding-harnesses) .settings-content input[type="checkbox"] { width: 18px; height: 18px; min-height: 18px; }
+:is(#settings-dialog, #onboarding-harnesses) .settings-section input[type="checkbox"] { width: 18px; height: 18px; min-height: 18px; }
 /* Settings rows: label + description on the left, the control on the right, in bordered groups. */
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-group { display: flex; flex-direction: column; margin: 0 0 14px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--bg-secondary); }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 52px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-row:last-child { border-bottom: 0; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-row-info { flex: 1 1 auto; min-width: 0; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-label { display: block; margin: 0 0 2px; color: var(--text-primary); font-size: 11.48px; font-weight: 500; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-desc { display: block; color: var(--text-muted); font-size: 10.5px; line-height: 1.45; }
 :is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-row-info .settings-risk { display: block; max-width: none; margin: 3px 0 0; font-size: 10.5px; line-height: 1.45; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-control { flex: 0 1 min(260px, 42%); display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-width: 150px; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-row-toggle .settings-control { flex: 0 0 auto; min-width: 0; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-row-stack { flex-direction: column; align-items: stretch; gap: 8px; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-row-stack .settings-control { flex: 1 1 auto; width: 100%; }
 :is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 /* Settings -> Models is not on the stack layout yet: its action rows keep the spacing they had. */
 #settings-dialog .model-group .settings-actions { margin: -4px 0 14px; }
@@ -1098,15 +1013,7 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 #settings-dialog .quota-decision-list { margin: 6px 0 0; padding-left: 18px; font-size: 10.5px; }
 #settings-dialog .quota-decision { margin: 4px 0; overflow-wrap: anywhere; }
 #settings-dialog .quota-decision span { display: block; }
-[data-theme="high-contrast-dark"] #settings-dialog nav .settings-selected { background: var(--bg-primary); color: var(--text-primary); outline: 2px solid var(--accent); outline-offset: -2px; }
 @media (max-width: 700px) {
-  #settings-dialog { width: 100vw; }
-  #settings-dialog[open] { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); }
-  #settings-dialog > header { grid-column: 1; grid-row: 1; }
-  #settings-dialog nav { grid-column: 1; grid-row: 2; flex-direction: row; }
-  #settings-dialog .settings-content { grid-column: 1; grid-row: 3; }
-  :is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-row { flex-direction: column; align-items: stretch; gap: 8px; }
-  :is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-control { flex: 1 1 auto; justify-content: stretch; }
   :is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-row-toggle { flex-direction: row; align-items: center; }
 }
 
@@ -1212,15 +1119,6 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 @media (hover: none) and (pointer: coarse) {
 }
 
-/* Phone settings: a vertical section list beside the content, like v1, instead of a clipped tab strip. */
-@media (max-width: 700px) {
-  #settings-dialog[open] { grid-template-columns: 112px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  #settings-dialog > header { grid-column: 2; grid-row: 1; }
-  #settings-dialog nav { grid-column: 1; grid-row: 1 / 3; display: flex; flex-direction: column; gap: 2px; overflow-x: hidden; overflow-y: auto; padding: 8px 6px; border-right: 1px solid var(--border); border-bottom: 0; }
-  #settings-dialog nav button { width: 100%; min-height: 40px; padding: 6px 8px; font-size: 11.5px; text-align: left; white-space: normal; overflow-wrap: anywhere; }
-  #settings-dialog .settings-content { grid-column: 2; grid-row: 2; padding: 14px 12px 24px; }
-}
-
 /* Touch devices: the code-block copy button gets its own row above the code instead of sitting on it. */
 @media (hover: none) and (pointer: coarse) {
   :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock { display: flex; flex-direction: column; }
@@ -1245,7 +1143,6 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 /* Seen-by markers sit under every message at its right edge, 14px each (a deliberate change from v1, which right-aligns only the viewer's own). */
 .message-receipts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px; margin-top: 4px; padding: 0 2px 0 0; }
 .receipt-avatar { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; flex: none; width: 14px; height: 14px; padding: 0; overflow: hidden; white-space: nowrap; line-height: 1; letter-spacing: -0.05em; border-radius: 50%; background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border); font-size: 6.5px; font-weight: 600; user-select: none; }
-#settings-dialog nav .settings-tab-pending { visibility: hidden; }
 
 /* Full-width messages (as in v1): no 75% cap and no shrink-wrap; the bubble fills the column. */
 /* The viewer's own messages sit on the right, as in v1: shrink-wrapped, at most 75% wide, the header line (name, #id, time) right-aligned
@@ -1362,39 +1259,20 @@ code.profile-fact-value { font: 400 11px/1.4 var(--font-mono); background: var(-
    another row gives it no highlight of its own. */
 .quick-command { cursor: pointer; }
 .quick-command:not([aria-selected="true"]):hover { background: transparent; }
-/* Settings dialog, ported from v1: a caption over plain nav items, the active item outlined/tinted in the accent, the section name as the
-   content title with a quiet close button, and rounded group cards of label/description/control rows. */
-@media (min-width: 701px) { #settings-dialog { width: min(760px, 96vw); height: 100dvh; max-height: 100dvh; margin: auto; border: 0; border-left: 1px solid var(--border); border-right: 1px solid var(--border); border-radius: 0; box-shadow: 0 0 40px rgba(0, 0, 0, .5); } #settings-dialog nav { padding: 16px 8px; gap: 2px; overflow-y: auto; } #settings-dialog > header { padding: 14px 20px 12px; } #settings-dialog .settings-content:not([hidden]) { padding: 20px; } }
-#settings-dialog::backdrop { background: rgba(0, 0, 0, .5); }
-#settings-dialog .settings-nav-title { padding: 4px 8px 10px; color: var(--text-muted); font-size: 9.8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 /* A later nav group (AGENTS) gets the caption above and the same 14px gap that separates settings groups. */
 #settings-dialog .settings-nav-group-title { margin-top: 14px; }
-#settings-dialog nav button { border: 0; border-radius: 6px; font-size: 11.5px; transition: background .15s, color .15s; }
-#settings-dialog nav button:hover { background: transparent; color: var(--text-primary); outline: 1px dotted var(--accent); outline-offset: -1px; }
-#settings-dialog nav .settings-selected, #settings-dialog nav .settings-selected:hover { background: transparent; color: var(--text-primary); font-weight: 500; outline: 1px solid var(--accent); outline-offset: -1px; }
-#settings-dialog nav button:focus-visible { outline: 1px dotted var(--accent); outline-offset: -1px; }
-#settings-dialog nav .settings-selected:focus-visible { outline: 1px solid var(--accent); }
-[data-theme^="high-contrast"] #settings-dialog nav button { background: transparent; border-color: transparent; }
-[data-theme^="high-contrast"] #settings-dialog nav button:hover { background: transparent; color: var(--text-primary); outline: 1px dotted var(--accent); outline-offset: -1px; }
-[data-theme^="high-contrast"] #settings-dialog nav .settings-selected, [data-theme^="high-contrast"] #settings-dialog nav .settings-selected:hover { background: transparent; color: var(--text-primary); outline: 1px solid var(--accent); outline-offset: -1px; }
-#settings-dialog > header h2 { color: var(--text-primary); font-size: 12.6px; font-weight: 600; }
-#settings-dialog #settings-close { padding: 2px 6px; border: 0; background: none; color: var(--text-muted); font-size: 14px; line-height: 1; }
-#settings-dialog #settings-close:hover { background: var(--bg-hover); color: var(--text-primary); }
-/* One spacing system for every settings page, global and project: a section label, the card with its rows, then the
-   action row. Every container that holds those blocks is a stack: a flex column whose gap is the only space between its
-   children, so no block carries its own outer margin and no margin can collapse, go negative or stay behind when a
-   section is wrapped in an element of its own. A label after other content gets the extra section space on top; the
-   gap between a label and its card is always the plain stack gap. */
+/* Spacing in settings. The tab body is v1's .settings-section: a flex column with a 12px gap, which is the space between its blocks. Inside a
+   page, a sub-block (.settings-subsection, a card, the quota and limit blocks) is a stack of its own: a flex column whose gap is the only space
+   between its children, so no block carries an outer margin and no margin can collapse or go negative. A heading after other content in a
+   sub-block gets the extra section space on top; the gap between a heading and its card is always the plain stack gap. */
 :is(#settings-dialog, #room-project, #onboarding-harnesses) { --settings-gap: 8px; --settings-section-gap: 24px; --settings-card-pad-y: 12px; --settings-card-pad-x: 16px; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) :is(.settings-content:not([hidden]), .settings-section, .settings-card, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool, .usage-limit form, .usage-switcher-controls, .usage-config-controls) { display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: var(--settings-gap); }
+:is(#settings-dialog, #room-project, #onboarding-harnesses) :is(.settings-subsection, .settings-card, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool, .usage-limit form, .usage-limit-default, .usage-switcher-controls, .usage-config-controls) { display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: var(--settings-gap); }
 :is(#settings-dialog, #room-project, #onboarding-harnesses) :is(.scope-control, .usage-limit) { border: 0; padding: 0; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) :is(.settings-content, .settings-section, .settings-card, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool, .usage-limit form, .usage-switcher-controls, .usage-config-controls) > * { flex-shrink: 0; min-width: 0; margin-top: 0; margin-bottom: 0; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) :is(.settings-content, .settings-section, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool) > :is(h3, h4, h5):not(:first-child),
-:is(#settings-dialog, #room-project, #onboarding-harnesses) :is(.settings-content, .settings-section) > :is(.settings-section, .quota-settings, .limit-guard-settings):not(:first-child) { margin-top: calc(var(--settings-section-gap) - var(--settings-gap)); }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) :is(.settings-content, .settings-section, .usage-switcher-controls, .usage-config-controls) > button { align-self: flex-start; }
-:is(#settings-dialog, #onboarding-harnesses) .settings-content :is(h3, .settings-section-label) { color: var(--text-secondary); font-size: 10.5px; font-weight: 600; line-height: 1.4; letter-spacing: .04em; text-transform: uppercase; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-group { min-width: 0; border-radius: 8px; }
-:is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-row { padding: var(--settings-card-pad-y) var(--settings-card-pad-x); background: var(--bg-secondary); }
+:is(#settings-dialog, #room-project, #onboarding-harnesses) :is(.settings-subsection, .settings-card, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool, .usage-limit form, .usage-limit-default, .usage-switcher-controls, .usage-config-controls) > * { flex-shrink: 0; min-width: 0; margin-top: 0; margin-bottom: 0; }
+:is(#settings-dialog, #room-project, #onboarding-harnesses) :is(.settings-subsection, .quota-settings, .limit-guard-settings, .quota-tool, .guard-tool) > :is(h3, h4, h5):not(:first-child),
+:is(#settings-dialog, #room-project, #onboarding-harnesses) :is(.settings-subsection) > :is(.settings-subsection, .quota-settings, .limit-guard-settings):not(:first-child) { margin-top: calc(var(--settings-section-gap) - var(--settings-gap)); }
+:is(#settings-dialog, #room-project, #onboarding-harnesses) :is(.settings-section, .settings-subsection, .usage-switcher-controls, .usage-config-controls) > button { align-self: flex-start; }
+:is(#settings-dialog, #onboarding-harnesses) .settings-section :is(h3, .settings-section-label) { color: var(--text-secondary); font-size: 10.5px; font-weight: 600; line-height: 1.4; letter-spacing: .04em; text-transform: uppercase; }
 /* A range slider looks the same in WebKit, Blink and Gecko: a thin track filled in the accent colour up to the centre of a round
    thumb that travels the full track, with the value beside it. --range-value (0 to 1) is set by the script with the value. */
 .settings-range { display: flex; align-items: center; gap: 10px; width: 100%; }
@@ -1411,9 +1289,6 @@ code.profile-fact-value { font: 400 11px/1.4 var(--font-mono); background: var(-
 :is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-card { padding: var(--settings-card-pad-y) var(--settings-card-pad-x); border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
 :is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-card :is(.scope-control-status, .scope-control-results) { margin: 0; }
 :is(#settings-dialog, #room-project, #onboarding-harnesses) .settings-card :is(p, .error):empty { display: none; }
-@media (max-width: 700px) { #settings-dialog .settings-nav-title { display: none; } #settings-dialog nav button { white-space: nowrap; } #settings-dialog > header { padding: 12px 14px 10px; } #settings-dialog .settings-content:not([hidden]) { padding: 12px; } }
-/* Phones drop the captions, but the AGENTS group keeps its gap: the caption stays as an empty spacer. */
-@media (max-width: 700px) { #settings-dialog .settings-nav-group-title:not([hidden]) { display: block; height: 0; padding: 0; overflow: hidden; visibility: hidden; } }
 
 /* .btn-icon geometry (v1's 30px square is overridden to 28px, with a 16px icon, where v2's own header and toolbar rules need it). */
 button.btn-icon, :is(header, .room-controls) button.btn-icon, #project-open.btn-icon, .chat header button.btn-icon { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; flex: 0 0 28px; width: 28px; height: 28px; min-width: 0; min-height: 0; margin: 0; padding: 0; gap: 0; font-size: 15px; line-height: 1; }
@@ -1894,7 +1769,6 @@ button > .icon-mask { pointer-events: none; }
 /* Touch targets on a tablet are 40px too: the experiment pill and the settings tabs were sized for a mouse above 700px. */
 @media (pointer: coarse) {
   .workspace-bar nav button.ui-variant-toggle { height: 40px; }
-  #settings-dialog nav button { min-height: 40px; }
 }
 
 /* First-run welcome (see web/js/pages/setup/welcome.js): four bands top to bottom. The art takes the first two, the name the third and Continue the
@@ -1956,9 +1830,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .settings-inline-control > input { flex: 1 1 auto; min-width: 0; }
 .settings-inline-control > button { flex: none; }
 /* An empty status or error line takes no room, so the sections below it are spaced evenly. */
-:is(#settings-dialog, #onboarding-harnesses) .settings-content :is(.settings-intro, .error):empty { display: none; }
-/* On a phone the "Settings" caption of the nav is gone, so the title says where you are. */
-@media (max-width: 700px) { #settings-title::before { content: "Settings \00b7  "; color: var(--text-muted); font-weight: 400; } }
+:is(#settings-dialog, #onboarding-harnesses) .settings-section :is(.settings-intro, .error):empty { display: none; }
 /* A room name takes the space first: the project pill shrinks away before the name is cut. */
 .room-row .room-project { padding: 0; margin: 0 4px; }
 .room-row .room-project::before, .room-row .room-project::after { content: ''; display: inline-block; width: 6px; }
@@ -2107,7 +1979,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .prompt-slot { margin: 0 0 14px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
 .prompt-slot-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .prompt-source, .prompt-count { color: var(--text-secondary); font-size: .85em; }
-.prompt-slot textarea { display: block; box-sizing: border-box; width: 100%; margin: 6px 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font: inherit; resize: vertical; }
+.prompt-slot textarea { display: block; box-sizing: border-box; width: 100%; margin: 6px 0; resize: vertical; }
 .prompt-slot .dialog-actions { align-items: center; }
 .prompt-shipped { margin-top: 6px; color: var(--text-secondary); font-size: .9em; }
 .prompt-shipped p { margin: 6px 0 0; white-space: pre-wrap; }
@@ -2187,7 +2059,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 /* The home room's settings carry the Project section (the project's own form), so that dialog is wider. */
 #room-info-dialog.room-info-home { width: min(96vw, 620px); }
 #room-project { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 10px; }
-#room-project .project-settings-body > h3, #room-project .project-settings-body .settings-section > h3 { font-size: 13px; }
+#room-project .project-settings-body > h3, #room-project .project-settings-body .settings-subsection > h3 { font-size: 13px; }
 
 /* The room's title in its settings: the field with a save button beside it, and what became of it right under. In the home room the title is the
    project's name, so the project form's own Name row is not shown a second time. */
@@ -2208,8 +2080,8 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #onboarding-harnesses section.harness-roles { width: auto; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
 .harness-result { margin: 12px 0 0; color: var(--text-primary); font-weight: 600; }
 #onboarding-view section[data-step="harnesses"] { width: min(100%, 760px); max-height: calc(100dvh - 40px); overflow: auto; }
-#onboarding-harnesses section.settings-content { width: auto; padding: 0; margin: 16px 0 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
-#onboarding-harnesses .settings-content h3 { display: none; }
+#onboarding-harnesses section.settings-section { width: auto; padding: 0; margin: 16px 0 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+#onboarding-harnesses .settings-section h3 { display: none; }
 #onboarding-harnesses label { margin: 0; font-weight: 400; }
 #onboarding-harnesses input:not([type="checkbox"], [type="radio"]) { margin-top: 0; }
 #onboarding-harnesses .btn, #onboarding-harnesses .btn-primary { width: auto; margin-top: 0; }
@@ -2224,7 +2096,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 /* The step is taller than a small window (the role defaults sit under the harnesses): Skip and Continue stay in reach at its bottom edge. */
 #onboarding-harnesses .onboarding-actions { position: sticky; bottom: -28px; margin: 16px -28px -28px; padding: 12px 28px 16px; background: var(--bg-secondary); border-top: 1px solid var(--border); z-index: 1; }
 #onboarding-harness-status { margin: 12px 0 0; font-size: 12px; }
-#onboarding-harnesses .settings-content > p.settings-intro:first-of-type, #onboarding-harnesses .machine-activity-heading, #onboarding-harnesses [id$="machine-activity"] { display: none; }
+#onboarding-harnesses .settings-section > p.settings-intro:first-of-type, #onboarding-harnesses .machine-activity-heading, #onboarding-harnesses [id$="machine-activity"] { display: none; }
 /* The glyph of a row's small buttons sits on the button's centre, so the + and the move icon share one axis with the room name (an inline
    glyph in a plain button rides on the text baseline, about 2.5px high). */
 .room-row :is(.add-room, .project-move, .branch, .room-pin, .room-hide) { align-items: center; justify-content: center; }
@@ -2243,8 +2115,8 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .profile-output-status { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .profile-output-status:empty { display: none; }
 /* Settings → Harnesses: the default-model radio is a 16px control, not the full-width field the generic settings rule makes of an input. */
-:is(#settings-dialog, #onboarding-harnesses) .settings-content .harness-model-default input[type="radio"] { flex: none; box-sizing: content-box; width: 16px; min-width: 0; height: 16px; min-height: 0; margin: 0; padding: 0; }
-:is(#settings-dialog, #onboarding-harnesses) .settings-content .harness-role-head-line select { width: auto; min-width: 110px; }
+:is(#settings-dialog, #onboarding-harnesses) .settings-section .harness-model-default input[type="radio"] { flex: none; box-sizing: content-box; width: 16px; min-width: 0; height: 16px; min-height: 0; margin: 0; padding: 0; }
+:is(#settings-dialog, #onboarding-harnesses) .settings-section .harness-role-head-line select { width: auto; min-width: 110px; }
 .harness-role-mode { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: var(--text-muted); font-size: 11px; }
 .harness-role-mode[hidden] { display: none; }
 .harness-role-mode select { margin-left: 0; }

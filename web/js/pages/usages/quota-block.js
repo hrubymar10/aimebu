@@ -68,7 +68,7 @@ function AfterReset({ store, tool, label, draft, stored }) {
         <input type="checkbox" checked=${!!after} data-quota-focus=${`${tool}-after-reset`} onChange=${event => store.change(tool, d => { d.after_reset = event.currentTarget.checked ? afterResetFor(d) : null; }, `${tool}-after-reset`)} />
       <//>
       ${after && html`<${SettingsRow} label="Watched profile" desc="The profile whose weekly usage is watched for a reset." id=${`quota-${tool}-watched`}>
-        <select data-quota-focus=${`${tool}-watched`} value=${after.profile} onChange=${event => store.edit(tool, d => { d.after_reset.profile = event.currentTarget.value; }, { typing: true })}>
+        <select class="settings-select" data-quota-focus=${`${tool}-watched`} value=${after.profile} onChange=${event => store.edit(tool, d => { d.after_reset.profile = event.currentTarget.value; }, { typing: true })}>
           ${watchChoices(after).map(name => html`<option value=${name} key=${name}>${name}</option>`)}
         </select>
       <//>

@@ -58,7 +58,7 @@ async function main() {
     await page.evaluate(async projects => {
       const { PromptSettings } = await import('/js/pages/prompts/page.js');
       window.__page = new PromptSettings(document.querySelector('#settings-dialog'), () => ({ projects, selectedProjectID: '' }));
-      window.__page.section.hidden = false; window.__page.open();
+      window.__page.section.hidden = false; window.__page.section.classList.add('active'); window.__page.open();
     }, projects);
     await page.waitForFunction(() => document.querySelectorAll('#prompt-list .prompt-slot').length === 6);
     return page;
@@ -181,7 +181,7 @@ async function main() {
       await page.evaluate(() => { window.__page.section.hidden = true; });
       await answer(page, put, 204);
       await page.waitForFunction(() => document.querySelector('#settings-prompts [role=status]').textContent === 'Saved “TAIL”.');
-      await page.evaluate(() => { window.__page.section.hidden = false; });
+      await page.evaluate(() => { window.__page.section.hidden = false; window.__page.section.classList.add('active'); });
       await type(page, 'tail', 'REOPENED SAVE');
       await click(page, '.prompt-slot[data-key=tail] .prompt-save');
       const second = await pending(page, 'PUT', '/api/prompts/tail');

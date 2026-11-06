@@ -54,7 +54,7 @@ async function main() {
       const { HarnessSettings } = await import('/js/pages/harnesses/page.js');
       window.__page = new HarnessSettings(dialog);
       window.__page.wanted = wanted;
-      window.__page.section.hidden = false; window.__page.open();
+      window.__page.section.hidden = false; window.__page.section.classList.add('active'); window.__page.open();
     }, wanted);
     await page.waitForFunction(() => document.querySelectorAll('#harnesses-list .machine-harness').length >= 1);
     return page;

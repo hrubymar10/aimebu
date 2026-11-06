@@ -32,16 +32,16 @@ export function SpawnDefaults({ items, mode, options, onChange }) {
       </div>
       ${control}${extra}
     </div>`;
-  return html`<section class="settings-section spawn-defaults" ref=${root}>
+  return html`<section class="settings-subsection spawn-defaults" ref=${root}>
     <h4>Default agents</h4>
     <p class="settings-desc">Used when spawning this role. An empty list leaves the harness and model to the person or lead.</p>
     <div class="settings-group spawn-default-list">
       ${items.length > 1 && row('Pick order', 'Choose in turn or randomly from available agents.', html`
-        <select id=${`${id}-mode`} aria-describedby=${`${id}-mode-desc`} aria-label="Default agent selection mode" value=${mode} onChange=${event => onChange({ items, mode: event.currentTarget.value })}>
+        <select class="settings-select" id=${`${id}-mode`} aria-describedby=${`${id}-mode-desc`} aria-label="Default agent selection mode" value=${mode} onChange=${event => onChange({ items, mode: event.currentTarget.value })}>
           <option value="in_turn">In turn</option><option value="randomly">Randomly</option>
         </select>`, 'mode')}
       ${items.map((item, index) => row(`Default agent ${index + 1}`, 'Harness and model for this choice.', html`
-        <select id=${`${id}-${index}`} aria-describedby=${`${id}-${index}-desc`} aria-label=${`Default agent ${index + 1} harness and model`} value=${keyOf(item)} onChange=${event => {
+        <select class="settings-select" id=${`${id}-${index}`} aria-describedby=${`${id}-${index}-desc`} aria-label=${`Default agent ${index + 1} harness and model`} value=${keyOf(item)} onChange=${event => {
           const choice = options.find(value => keyOf(value) === event.currentTarget.value);
           if (choice) replace(index, { launcher_id: choice.launcher_id, model: choice.model });
         }}>

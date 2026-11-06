@@ -55,10 +55,10 @@ function Form({ store, state }) {
     <p class="settings-desc">The most a project may spend in a day, all its rooms together, before new agent turns stop and you are asked to continue. Every project uses these unless it sets its own in Project settings.</p>
     <${SettingsGroup} label="Default daily limits">
       <${SettingsRow} label="Cost cap ($)" desc="Reported cost per project per day. Blank means no limit." id="default-cost-cap">
-        <input type="number" min="0" step="any" placeholder="No limit" ref=${cost} value=${state.daily_cost_cap ?? ''} />
+        <input class="settings-text-input" type="number" min="0" step="any" placeholder="No limit" ref=${cost} value=${state.daily_cost_cap ?? ''} />
       <//>
       <${SettingsRow} label="Turn cap" desc="Turns per project per day. Blank means no limit." id="default-turn-cap">
-        <input type="number" min="1" step="1" placeholder="No limit" ref=${turns} value=${state.daily_turn_cap ?? ''} />
+        <input class="settings-text-input" type="number" min="1" step="1" placeholder="No limit" ref=${turns} value=${state.daily_turn_cap ?? ''} />
       <//>
     <//>
     <div class="settings-actions"><button type="button" class="btn btn-primary" disabled=${busy} onClick=${save}>Save default limits</button><span class="settings-saved" role="status">${store.saved.value}</span></div>

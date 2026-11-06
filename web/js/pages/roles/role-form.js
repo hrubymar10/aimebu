@@ -25,28 +25,28 @@ export function RoleForm({ hidden, roles, role, form, options, busy, resolved, o
     </div>
     <${SettingsGroup} label="Role definition">
       <${SettingsRow} label="Key" desc=${html`Stable identifier used in <code>@role</code> mentions and team definitions: lowercase letters, digits, <code>_</code> or <code>-</code>, 2–32 characters.`} id="role-key">
-        <input ...${text('role_key')} required pattern="[a-z][a-z0-9_-]{1,31}" readOnly=${!!role} />
+        <input class="settings-text-input" ...${text('role_key')} required pattern="[a-z][a-z0-9_-]{1,31}" readOnly=${!!role} />
       <//>
       <${SettingsRow} label="Name" desc="Display name shown on agent cards and in the spawn dialog." id="role-label">
-        <input ...${text('label')} required maxLength="80" />
+        <input class="settings-text-input" ...${text('label')} required maxLength="80" />
       <//>
       <${SettingsRow} label="Emoji" desc="Small icon shown next to the role on agent cards and messages." id="role-emoji">
-        <input ...${text('emoji')} maxLength="16" />
+        <input class="settings-text-input" ...${text('emoji')} maxLength="16" />
       <//>
       <${SettingsRow} label="Instructions" desc="Prompt text given to every agent that holds this role, on top of the shared room protocol (and after the instructions of the role it extends, if any)." id="role-body" className="settings-row-stack">
-        <textarea ...${text('body')} rows="8"></textarea>
+        <textarea class="settings-text-input settings-textarea" ...${text('body')} rows="8"></textarea>
       <//>
       <${SettingsRow} label="Extends" desc="Adds to another role: agents get that role's instructions first, then these. Leave on None for a complete role. A project role may extend the global role with the same key." id="role-extends">
-        <select name="extends" value=${form.extends} onChange=${event => set('extends', event.currentTarget.value)}>
+        <select class="settings-select" name="extends" value=${form.extends} onChange=${event => set('extends', event.currentTarget.value)}>
           ${extendsOptions(roles, role).map(([value, label]) => html`<option value=${value} key=${value}>${label}</option>`)}
         </select>
       <//>
       <div class="settings-row settings-row-stack" id="role-resolved-row" hidden=${!role || !role.extends}>
         <div class="settings-row-info"><label class="settings-label" for="role-resolved">Effective instructions</label><span class="settings-desc" id="role-resolved-desc">What an agent with this role receives, the parent's text included, as last saved.</span></div>
-        <div class="settings-control"><textarea id="role-resolved" aria-describedby="role-resolved-desc" rows="8" readOnly value=${resolved}></textarea></div>
+        <div class="settings-control"><textarea class="settings-text-input settings-textarea" id="role-resolved" aria-describedby="role-resolved-desc" rows="8" readOnly value=${resolved}></textarea></div>
       </div>
       <${SettingsRow} label="Cardinality" desc="Whether several agents can hold this role at once, or only one. Cannot change while live agents use the role." id="role-cardinality">
-        <select name="cardinality" value=${form.cardinality} onChange=${event => set('cardinality', event.currentTarget.value)}>
+        <select class="settings-select" name="cardinality" value=${form.cardinality} onChange=${event => set('cardinality', event.currentTarget.value)}>
           <option value="multi">Multiple</option><option value="singleton">Singleton</option>
         </select>
       <//>

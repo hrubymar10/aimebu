@@ -61,9 +61,9 @@ export class UsageLimitStore {
 function Mode({ id, label, unit, valueName, ariaLabel, desc, inherited, mode, value, min, step, disabled, onMode, onValue }) {
   return html`<div class="settings-row"><div class="settings-row-info"><label class="settings-label" for=${`${id}-mode`}>${label}</label><span class="settings-desc" id=${`${id}-mode-desc`}>${desc}</span></div>
     <div class="settings-control usage-limit-control">
-      <select id=${`${id}-mode`} name=${unit === 'cost' ? 'cost_mode' : 'turn_mode'} aria-describedby=${`${id}-mode-desc`} value=${mode} disabled=${disabled} onChange=${event => onMode(event.currentTarget.value)}>
+      <select class="settings-select" id=${`${id}-mode`} name=${unit === 'cost' ? 'cost_mode' : 'turn_mode'} aria-describedby=${`${id}-mode-desc`} value=${mode} disabled=${disabled} onChange=${event => onMode(event.currentTarget.value)}>
         <option value="inherit">${inherited}</option><option value="custom">Custom</option><option value="none">No limit</option></select>
-      <input id=${`${id}-cap`} name=${valueName} type="number" min=${min} step=${step} aria-label=${ariaLabel} hidden=${mode !== 'custom'} disabled=${disabled} value=${value} onInput=${event => onValue(event.currentTarget.value)} /></div></div>`;
+      <input class="settings-text-input" id=${`${id}-cap`} name=${valueName} type="number" min=${min} step=${step} aria-label=${ariaLabel} hidden=${mode !== 'custom'} disabled=${disabled} value=${value} onInput=${event => onValue(event.currentTarget.value)} /></div></div>`;
 }
 
 export function UsageLimit({ store }) {

@@ -11,7 +11,7 @@ export function FieldsRow({ label, desc, fieldId, className = '', children }) {
 }
 
 // `rest` carries what a settings row hands its control (the id and the description it is described by).
-export const NumberField = ({ value, label, range, onInput, describedBy, ...rest }) => html`<input type="number" aria-label=${label} aria-describedby=${describedBy}
+export const NumberField = ({ value, label, range, onInput, describedBy, ...rest }) => html`<input class="settings-text-input" type="number" aria-label=${label} aria-describedby=${describedBy}
   min=${String(range[0])} max=${String(range[1])} step="1" value=${boxText(value)} onInput=${event => onInput(numberOf(event.currentTarget.value))} ...${rest} />`;
 
 export const EntryField = ({ caption, children }) => html`<span class="quota-entry-field"><span class="quota-entry-caption" aria-hidden="true">${caption}</span>${children}</span>`;
@@ -27,7 +27,7 @@ export function AddRow({ id, focus, available, label, desc, addLabel, onAdd }) {
   const [chosen, setChosen] = useState('');
   return html`<${FieldsRow} label=${label} desc=${desc} fieldId=${id}>
     <div class="quota-add-controls">
-      <select id=${id} aria-describedby=${`${id}-desc`} data-quota-focus=${focus} disabled=${!available.length} value=${chosen} onChange=${event => setChosen(event.currentTarget.value)}>
+      <select class="settings-select" id=${id} aria-describedby=${`${id}-desc`} data-quota-focus=${focus} disabled=${!available.length} value=${chosen} onChange=${event => setChosen(event.currentTarget.value)}>
         <option value="">${available.length ? 'Choose a profile' : 'No other profiles'}</option>
         ${available.map(name => html`<option value=${name} key=${name}>${name}</option>`)}
       </select>

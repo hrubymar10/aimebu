@@ -12,7 +12,7 @@ export class SettingsShell {
     this.stop = effect(() => {
       const current = this.store.section.value;
       dialog.dataset.section = current; // the Harnesses page is wide: its layouts need the room (see theme-v1.css)
-      for (const [key, element] of Object.entries(sections)) element.hidden = key !== current;
+      for (const [key, element] of Object.entries(sections)) { element.hidden = key !== current; element.classList.toggle('active', key === current); }
     });
   }
 

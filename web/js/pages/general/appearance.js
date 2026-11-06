@@ -7,7 +7,7 @@ export function Appearance({ appearance }) {
     <h3>Appearance</h3>
     <${SettingsGroup} label="Appearance">
       <${SettingsRow} label="Theme" desc="Colour scheme for the web UI. Saved to your account, so it follows you to other devices." id="theme-select">
-        <select value=${appearance.theme.value} onChange=${event => appearance.chooseTheme(event.currentTarget.value)}>
+        <select class="settings-select" value=${appearance.theme.value} onChange=${event => appearance.chooseTheme(event.currentTarget.value)}>
           ${THEMES.map(([value, label]) => html`<option value=${value} key=${value}>${label}</option>`)}
         </select>
       <//>

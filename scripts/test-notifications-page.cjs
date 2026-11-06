@@ -14,7 +14,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
 const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
-<body><dialog id="settings-dialog" open><section id="settings-notifications" class="settings-content"></section></dialog></body></html>`;
+<body><dialog id="settings-dialog" open><section id="settings-notifications" class="settings-section active"></section></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -61,7 +61,7 @@ async function main() {
         get status() { return `Browser permission: ${Notification.permission}.`; } };
       const { NotificationSettings } = await import('/js/pages/notifications/page.js');
       window.__page = new NotificationSettings(document.querySelector('#settings-notifications'), store);
-      window.__page.section.hidden = false;
+      window.__page.section.hidden = false; window.__page.section.classList.add('active');
       if (open) window.__page.open();
     }, { admin, permission, asks, sound, open });
     if (open && auto[SOUNDS]) await page.waitForFunction(() => document.querySelectorAll('#notification-sound option').length > 0);

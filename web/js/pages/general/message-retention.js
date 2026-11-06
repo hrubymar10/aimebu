@@ -42,7 +42,7 @@ export function MessageRetention({ onDirty = () => {} }) {
       <div class="settings-row">
         <div class="settings-row-info"><label class="settings-label" for="message-expiry-seconds">Message expiry (seconds)</label><span class="settings-desc" id="message-expiry-seconds-desc">${DESC}</span></div>
         <div class="settings-control"><div class="settings-inline-control">
-          <input id="message-expiry-seconds" aria-describedby="message-expiry-seconds-desc" type="number" min="0" max=${String(EXPIRY_MAX_SECONDS)} step="1"
+          <input class="settings-text-input" id="message-expiry-seconds" aria-describedby="message-expiry-seconds-desc" type="number" min="0" max=${String(EXPIRY_MAX_SECONDS)} step="1"
             value=${draft ?? String(retention.seconds)} disabled=${!canEdit} onInput=${event => setDraft(event.currentTarget.value)}
             onKeyDown=${event => { if (event.key === 'Enter') { event.preventDefault(); submit(); } }} />
           <button type="button" id="message-expiry-save" class="btn btn-primary" disabled=${!canEdit || saving} onClick=${submit}>Save</button>

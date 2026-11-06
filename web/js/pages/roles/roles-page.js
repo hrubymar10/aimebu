@@ -31,7 +31,7 @@ export function RolesPage({ openToken, onDirty = () => {} }) {
         <div class="settings-row" hidden>
           <div class="settings-row-info"><label class="settings-label" for="roles-list">Role</label><span class="settings-desc" id="roles-list-desc">The role to edit. Choose <em>New role</em> to define another.</span></div>
           <div class="settings-control">
-            <select id="roles-list" aria-describedby="roles-list-desc" data-loaded=${state.loaded.value ? '1' : ''} value=${selected} onChange=${event => roles.pick(event.currentTarget.value)}>
+            <select class="settings-select" id="roles-list" aria-describedby="roles-list-desc" data-loaded=${state.loaded.value ? '1' : ''} value=${selected} onChange=${event => roles.pick(event.currentTarget.value)}>
               <option value="">New role</option>
               ${list.map(item => html`<option value=${item.id} key=${item.id}>${roleOptionLabel(item)}</option>`)}
             </select>

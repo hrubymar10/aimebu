@@ -77,7 +77,7 @@ export function NotificationsPage({ openToken, notifications }) {
       <div class="settings-row">
         <div class="settings-row-info"><label class="settings-label" for="notification-sound">Inbox sound</label><span class="settings-desc" id="notification-sound-desc">The sound that plays for new inbox items. Your choice is saved to your account and follows you to other devices.</span></div>
         <div class="settings-control"><div class="notification-sound-choice">
-          <select id="notification-sound" aria-describedby="notification-sound-desc" value=${notifications.soundID} onChange=${event => { notifications.soundID = event.currentTarget.value; refresh(); }}>
+          <select class="settings-select" id="notification-sound" aria-describedby="notification-sound-desc" value=${notifications.soundID} onChange=${event => { notifications.soundID = event.currentTarget.value; refresh(); }}>
             ${sounds.map(sound => html`<option value=${sound.id} key=${sound.id}>${soundLabel(sound)}</option>`)}
           </select>
           <button type="button" id="notification-sound-preview" class="btn" onClick=${() => notifications.play()}>Preview</button>

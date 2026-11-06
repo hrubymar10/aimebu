@@ -225,9 +225,9 @@ async function main() {
       assert.equal(state.open, true, `Settings toggle did not open dialog; open dialogs: ${state.dialogs.join(', ') || 'none'}`);
       assert.equal(await page.$eval('#settings-general', el => !el.hidden), true, 'Settings opens on General');
       // v1's layout: a SETTINGS caption over plain nav items, the section name as the content title, a quiet close button.
-      assert.deepEqual(await page.evaluate(() => { const nav = document.querySelector('#settings-dialog nav'), caption = nav.querySelector('.settings-nav-title'), selected = nav.querySelector('.settings-selected'), close = document.querySelector('#settings-close'), box = document.querySelector('#settings-dialog').getBoundingClientRect();
-        return { caption: caption.textContent, captionFirst: nav.firstElementChild === caption, title: document.querySelector('#settings-title').textContent, selected: selected.textContent, closeGlyph: close.querySelector('.icon-mask-close') ? 'icon' : close.textContent, closeQuiet: getComputedStyle(close).borderTopWidth === '0px', navWidth: Math.round(nav.getBoundingClientRect().width), fullHeight: Math.abs(box.height - innerHeight) < 1, selectedStyle: [getComputedStyle(selected).backgroundColor, getComputedStyle(selected).outlineStyle, getComputedStyle(selected).outlineWidth] }; }),
-        { caption: 'Settings', captionFirst: true, title: 'General', selected: 'General', closeGlyph: 'icon', closeQuiet: true, navWidth: 180, fullHeight: true, selectedStyle: ['rgba(0, 0, 0, 0)', 'solid', '1px'] }, 'the Settings dialog follows v1');
+      assert.deepEqual(await page.evaluate(async () => { await new Promise(resolve => setTimeout(resolve, 400)); const nav = document.querySelector('#settings-dialog nav'), caption = nav.querySelector('.settings-nav-title'), selected = nav.querySelector('.active'), close = document.querySelector('#settings-close'), box = document.querySelector('#settings-dialog').getBoundingClientRect();
+        return { caption: caption.textContent, captionFirst: nav.firstElementChild === caption, title: document.querySelector('#settings-title').textContent, selected: selected.textContent, closeGlyph: close.querySelector('.icon-mask-close') ? 'icon' : close.textContent, closeQuiet: getComputedStyle(close).borderTopWidth === '0px', navWidth: Math.round(nav.getBoundingClientRect().width), fullHeight: Math.abs(box.height - innerHeight) < 1, selectedTinted: (() => { const probe = document.createElement('i'); probe.style.background = 'var(--accent-dim)'; document.body.append(probe); const tint = getComputedStyle(probe).backgroundColor; probe.remove(); const highContrast = document.documentElement.dataset.theme === 'high-contrast-dark'; return getComputedStyle(selected).backgroundColor === (highContrast ? 'rgba(0, 0, 0, 0)' : tint); })() }; }),
+        { caption: 'Settings', captionFirst: true, title: 'General', selected: 'General', closeGlyph: 'icon', closeQuiet: true, navWidth: 180, fullHeight: true, selectedTinted: true }, 'the Settings dialog follows v1: the selected tab is tinted with --accent-dim (outlined in high contrast)');
       const nav = await settingsNav(page);
       if (nav.items.includes('AGENTS')) { // the owner and admins: both groups, the AGENTS caption a group gap below Macros
         assert.deepEqual(nav.items.filter(item => item !== 'usages' && item !== 'users'), ['SETTINGS', 'general', 'notifications', 'roles', 'prompts', 'macros', 'AGENTS', 'machines', 'harnesses'], 'Settings nav groups');
@@ -672,11 +672,11 @@ async function main() {
         const root = document.querySelector('#settings-general');
         const groups = [...root.querySelectorAll('.settings-group')].filter(group => group.getClientRects().length), gaps = [];
         for (const group of groups) { const heading = group.parentElement.querySelector(':scope > h3') || group.previousElementSibling; const next = groups[groups.indexOf(group) + 1]; if (!next) continue; const nextHeading = next.parentElement.querySelector(':scope > h3'); if (nextHeading) gaps.push(Math.round(nextHeading.getBoundingClientRect().top - group.getBoundingClientRect().bottom)); }
-        return { saveBesideInput: Math.abs((save.top + save.bottom) / 2 - (input.top + input.bottom) / 2) <= 6 && save.left >= input.right - 1, gaps, title: getComputedStyle(document.querySelector('#settings-title'), '::before').content };
+        return { saveBesideInput: Math.abs((save.top + save.bottom) / 2 - (input.top + input.bottom) / 2) <= 6 && save.left >= input.right - 1, gaps, caption: getComputedStyle(document.querySelector('#settings-dialog .settings-nav-title')).display !== 'none' };
       });
       assert.ok(general.saveBesideInput, `${width}px: the expiry Save sits beside its input: ${JSON.stringify(general)}`);
       assert.ok(general.gaps.length >= 3 && Math.max(...general.gaps) - Math.min(...general.gaps) <= 2, `${width}px: the gap before each section is the same: ${JSON.stringify(general.gaps)}`);
-      assert.equal(/Settings/.test(general.title), width <= 700, `${width}px: the phone title says Settings: ${general.title}`);
+      assert.equal(general.caption, true, `${width}px: the nav keeps v1's Settings caption on a phone too`);
     }
     await first.setViewport({ width: 1100, height: 720 });
     // Settings backup (owner): Export downloads valid JSON of the instance's settings, and Import previews before it saves anything.
@@ -1897,16 +1897,17 @@ async function main() {
     await first.select('#theme-select', 'high-contrast-dark');
     assert.equal(await first.evaluate(() => document.documentElement.dataset.theme), 'high-contrast-dark');
     await domClick(first, '#settings-general-tab');
-    await first.waitForFunction(() => document.querySelector('#settings-general-tab')?.classList.contains('settings-selected'));
+    await first.waitForFunction(() => document.querySelector('#settings-general-tab')?.classList.contains('active'));
     await first.waitForFunction(() => getComputedStyle(document.querySelector('#settings-general-tab')).color === 'rgb(255, 255, 255)');
+    await first.waitForFunction(() => /, 0\)$/.test(getComputedStyle(document.querySelector('#settings-general-tab')).backgroundColor)); // v1 fades the tab's tint out in high contrast
     const hcNavContrast = await first.$eval('#settings-general-tab', el => {
       const rgb = value => value.match(/[\d.]+/g).slice(0, 3).map(Number);
       const lum = value => rgb(value).map(v => { v /= 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
-      const style = getComputedStyle(el), a = lum(style.color), b = lum(style.backgroundColor);
+      const style = getComputedStyle(el), behind = getComputedStyle(el.closest('nav')).backgroundColor, a = lum(style.color), b = lum(/, 0\)$/.test(style.backgroundColor) ? behind : style.backgroundColor);
       return { ratio: (Math.max(a, b) + .05) / (Math.min(a, b) + .05), color: style.color, background: style.backgroundColor, classes: el.className, theme: document.documentElement.dataset.theme, dialog: el.closest('dialog')?.id };
     });
     assert.ok(hcNavContrast.ratio >= 7, `selected HC settings tab contrast ${JSON.stringify(hcNavContrast)}`);
-    const settingsSize = await first.$eval('#settings-dialog', el => ({ width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height, nav: el.querySelector('nav').getBoundingClientRect().width }));
+    const settingsSize = await first.$eval('#settings-dialog .settings-pane', el => ({ width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height, nav: el.querySelector('nav').getBoundingClientRect().width }));
     assert.equal(Math.round(settingsSize.width), 760);
     assert.equal(Math.round(settingsSize.height), 720);
     assert.equal(Math.round(settingsSize.nav), 180);
@@ -4110,8 +4111,10 @@ async function main() {
       await settingsPage.setViewport({ width: 1100, height: 720 });
       assert.equal(await settingsPage.$('#settings-welcome, #settings-welcome-play'), null, 'Settings -> General has no Welcome section');
     }
-    const geometry = await settingsPage.evaluate(() => { document.querySelector('#settings-general-tab').click(); const row = document.querySelector('#settings-general .settings-row'), info = row.querySelector('.settings-row-info').getBoundingClientRect(), control = row.querySelector('.settings-control').getBoundingClientRect(); const label = getComputedStyle(row.querySelector('.settings-label')).fontSize, desc = getComputedStyle(row.querySelector('.settings-desc')).fontSize; return { left: info.left < control.left, label, desc, tall: control.height >= 32 }; });
-    assert.deepEqual(geometry, { left: true, label: '11.48px', desc: '10.5px', tall: true }, 'label and description sit left of the control, in the v1 type scale');
+    const geometry = await settingsPage.evaluate(() => { document.querySelector('#settings-general-tab').click(); const row = document.querySelector('#settings-general .settings-row'), info = row.querySelector('.settings-row-info').getBoundingClientRect(), control = row.querySelector('.settings-control').getBoundingClientRect(); const label = getComputedStyle(row.querySelector('.settings-label')).fontSize, desc = getComputedStyle(row.querySelector('.settings-desc')).fontSize; return { left: info.left < control.left, label, desc, tall: control.height >= 28 }; }); // v1's field is 28px tall; phones get 40px (v2-only.css)
+    // v1's own scale: the label is .82rem and the description .75rem (11.48px and 10.5px at v1's 14px root, in step with the root while v2 still has its own).
+    const rem = await settingsPage.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), px = value => `${Math.round(value * 100) / 100}px`;
+    assert.deepEqual(geometry, { left: true, label: px(.82 * rem), desc: px(.75 * rem), tall: true }, 'label and description sit left of the control, in the v1 type scale');
     await domClick(settingsPage, '#settings-usages-tab');
     assert.equal(await settingsPage.$$eval('.usage-provider[data-provider="codex"] .usage-profile', els => els.length), 2);
     assert.equal(await settingsPage.$eval('.usage-provider[data-provider="codex"] .usages-pace-text', el => el.textContent.includes('reserve')), true);

@@ -25,7 +25,7 @@ async function main() {
     await page.reload(); await page.waitForSelector('#app-view:not([hidden])');
     const settle = () => page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
     const nodes = () => page.evaluate(() => document.getElementsByTagName('*').length);
-    const inSections = () => page.evaluate(() => [...document.querySelectorAll('#settings-dialog > section')].reduce((sum, section) => sum + section.getElementsByTagName('*').length, 0));
+    const inSections = () => page.evaluate(() => [...document.querySelectorAll('#settings-dialog .settings-body > section')].reduce((sum, section) => sum + section.getElementsByTagName('*').length, 0));
     const open = async section => { await page.evaluate(name => document.dispatchEvent(new CustomEvent('aimebu:open-settings', { detail: { section: name } })), section); await settle(); };
     const close = async () => { await page.evaluate(() => document.querySelector('#settings-dialog').close()); await settle(); };
 

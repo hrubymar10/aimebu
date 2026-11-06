@@ -7,9 +7,9 @@ import { SettingsBackup } from './settings-backup.js';
 // The sections of Settings -> General, in the order they have always had.
 export function GeneralPage({ store, onDirty }) {
   return html`
-    <div class="settings-section" id="settings-appearance"><${Appearance} appearance=${store} /></div>
-    <div class="settings-section" id="chat-preferences"><${ChatPreferences} store=${store} /></div>
-    <div class="settings-section" id="message-retention"><${MessageRetention} onDirty=${onDirty} /></div>
+    <div class="settings-subsection" id="settings-appearance"><${Appearance} appearance=${store} /></div>
+    <div class="settings-subsection" id="chat-preferences"><${ChatPreferences} store=${store} /></div>
+    <div class="settings-subsection" id="message-retention"><${MessageRetention} onDirty=${onDirty} /></div>
     <${SettingsBackup} store=${store} />
   `;
 }

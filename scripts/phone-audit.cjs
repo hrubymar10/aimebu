@@ -69,8 +69,8 @@ function audit(MIN) {
   const dialog = document.querySelector('#settings-dialog'); dialog.setAttribute('open', '');
   const tabs = dialog.querySelector('nav'); tabs.style.height = ''; 
   const tabButtons = [...tabs.querySelectorAll('button')].filter(button => !button.hidden);
-  const sample = document.createElement('button'); sample.textContent = 'Sample extra tab'; tabs.append(sample);
-  const tabsRect = box(tabs), contentRect = box(dialog.querySelector('.settings-content:not([hidden])') || dialog.querySelector('.settings-content'));
+  const sample = document.createElement('button'); sample.className = 'settings-nav-item'; sample.textContent = 'Sample extra tab'; tabs.append(sample);
+  const tabsRect = box(tabs), contentRect = box(dialog.querySelector('.settings-section.active') || dialog.querySelector('.settings-section'));
   const vertical = new Set([...tabs.querySelectorAll('button')].filter(button => box(button).width).map(button => Math.round(box(button).left))).size === 1;
   if (!vertical) findings.push(`settings: the tab list is not a vertical column (${tabButtons.length + 1} tabs, nav ${Math.round(tabsRect.width)}x${Math.round(tabsRect.height)})`);
   for (const button of tabs.querySelectorAll('button')) { const rect = box(button); if (rect.width && Math.min(rect.width, rect.height) < MIN) findings.push(`settings: tab ${name(button)} is ${Math.round(rect.width)}x${Math.round(rect.height)}`); if (rect.right > tabsRect.right + 1) findings.push(`settings: tab ${name(button)} is clipped by the nav`); }

@@ -57,7 +57,7 @@ async function main() {
       (await import('/js/api.js')).setSession({ csrf_token: 'token', id: me.id, login: me.login, owner: admin, admin });
       const { UsersSettings } = await import('/js/pages/users/page.js');
       window.__page = new UsersSettings(document.querySelector('#settings-dialog'), () => ({ projects, selectedProjectID: selected }));
-      window.__page.section.hidden = false;
+      window.__page.section.hidden = false; window.__page.section.classList.add('active');
       if (open) window.__opened = window.__page.open();
     }, { admin, open, selected, projects, me });
     return page;
@@ -81,7 +81,7 @@ async function main() {
       await ready(page);
       assert.equal(await page.evaluate(() => window.__page.store.tab.value), 'shown');
       assert.deepEqual(await page.evaluate(() => [...document.querySelector('#settings-users').children].map(node => `${node.tagName.toLowerCase()}${node.className ? `.${node.className.split(' ')[0]}` : ''}`)),
-        ['h3', 'p.error', 'div.settings-group', 'form.user-invite-form', 'input', 'p.settings-intro', 'div.user-members', 'div.user-accounts']);
+        ['h3', 'p.error', 'div.settings-group', 'form.user-invite-form', 'input.settings-text-input', 'p.settings-intro', 'div.user-members', 'div.user-accounts']);
       assert.deepEqual(await page.evaluate(() => [document.querySelector('#settings-users p.error').getAttribute('role'), [...document.querySelectorAll('#users-project option')].map(o => [o.value, o.textContent]), document.querySelector('#users-project').value,
         document.querySelector('label[for=users-project]').textContent, document.querySelector('#users-project').getAttribute('aria-describedby'), document.querySelector('#users-invite-role').value, document.querySelector('input[aria-label="Invitation link"]').hidden, document.querySelector('.invite-link-hint').hidden]),
         ['alert', [['p1', 'Alpha'], ['p2', 'Beta'], ['p3', 'Gamma']], 'p1', 'Project', 'users-project-desc', 'viewer', true, true]);

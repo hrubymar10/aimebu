@@ -16,7 +16,7 @@ export function PairDialog({ store, dialog }) {
   const pairing = store.pairing.value;
   return html`<h2 id="machine-pair-title">Add machine</h2>
     <form id="machine-pair-form" hidden=${!!pairing} onSubmit=${event => { event.preventDefault(); store.createPairing(); }}>
-      <label>Machine name<input name="name" maxlength="100" required placeholder="Workstation" ref=${name} value=${store.name.value} onInput=${event => { store.name.value = event.currentTarget.value; }} /></label>
+      <label>Machine name<input class="settings-text-input" name="name" maxlength="100" required placeholder="Workstation" ref=${name} value=${store.name.value} onInput=${event => { store.name.value = event.currentTarget.value; }} /></label>
       <div class="dialog-actions"><button id="machine-pair-cancel" type="button" class="btn" onClick=${() => store.closePairing()}>Cancel</button><button type="submit" class="btn btn-primary" disabled=${store.pairBusy.value}>Create pairing command</button></div>
     </form>
     <div id="machine-pair-result" hidden=${!pairing}>
