@@ -12,7 +12,7 @@ function Reason({ id, className, text, store, host }) {
 // The Spawn dialog's form. The dialog element and its static frame stay in index.html; the adapter shows and closes it.
 export function SpawnForm({ store, host }) {
   const resume = store.resume.value, continuing = resume?.kind === 'claude_session', banner = store.banner.value, machine = store.machine, view = store.worktreeView.value;
-  const room = host.room, tools = toolRows(store.catalog.value), disabled = store.toolsDisabled.value, sessions = store.sessions.value;
+  const room = host.room, disabled = store.toolsDisabled.value, tools = toolRows(store.catalog.value, disabled), sessions = store.sessions.value;
   const sessionsHidden = !!resume || room?.kind === 'dm';
   const swap = sessions.switchTo >= 0 ? store.catalog.value[sessions.switchTo] : null;
   const submit = event => {
@@ -34,9 +34,16 @@ export function SpawnForm({ store, host }) {
     <label class="spawn-worktree-base" hidden=${!store.worktree.value || view.refused}>Base branch or ref (optional)<input name="base_ref" placeholder="Current HEAD" value=${store.baseRef.value} onInput=${event => { store.baseRef.value = event.currentTarget.value; }} /></label>
     <div id="spawn-agent-fields"><div class="spawn-name" hidden=${!!resume && !continuing}><label for="spawn-name">Name</label><div class="spawn-name-row"><input id="spawn-name" name="name" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="21" placeholder="Automatic" aria-describedby="spawn-name-error" value=${store.name.value} onInput=${event => store.typeName(event.currentTarget.value)} /><${IconButton} name="dice" label="Another name" id="spawn-name-dice" disabled=${store.nameBusy.value} onClick=${() => store.fillName()} /></div><p id="spawn-name-error" class="error spawn-name-error" role="alert">${store.nameError.value}</p></div>
       <label>Role<select name="role" value=${store.role.value} onChange=${event => store.pickRole(event.currentTarget.value)}>${store.roles.value.map(role => html`<option key=${role.value} value=${role.value}>${role.label}</option>`)}</select></label>
+      <p id="spawn-writer-hint" class="spawn-tool-reason" role="status" hidden=${!store.writerBlock.value}>${store.writerBlock.value}</p>
       <p id="spawn-home-hint" class="spawn-tool-reason" hidden=${!store.leadHint.value}>The home room is for the lead. Spawn workers into a task room such as general.</p>
       <label>Tool<select name="tool" required value=${store.toolIndex.value < 0 ? '' : String(store.toolIndex.value)} onChange=${event => store.pickTool(event.currentTarget.value)}>${tools.map((row, index) => html`<option key=${row.value} value=${row.value} disabled=${row.disabled || !!disabled?.[index]}>${row.label}</option>`)}</select></label>
       <${Reason} id="spawn-tool-reason" className="spawn-tool-reason" text=${store.reasonText.value} store=${store} host=${host} /><p id="spawn-version" class="spawn-version">${store.version.value}</p>
       <label>Model<select name="model" required value=${store.model.value} onChange=${event => store.pickModel(event.currentTarget.value)}>${store.models.value.map(model => html`<option key=${model.value} value=${model.value} ...${model.note ? { title: model.note } : {}}>${model.label}</option>`)}</select></label></div>
+    <div id="spawn-occupied" class="spawn-occupied" role="alert" hidden=${!store.occupied.value}><p>${store.occupied.value?.message || ''}</p>
+      <div class="spawn-occupied-actions">
+        <button type="button" class="btn" id="spawn-occupied-copy" hidden=${!store.occupied.value?.canCopy} onClick=${() => store.startOnCopy()}>Work on a copy in its own worktree</button>
+        <button type="button" class="btn" id="spawn-occupied-stop" hidden=${!store.occupied.value?.holderId} onClick=${() => store.stopHolderAndStart()}>${`Stop ${store.occupied.value?.holder || 'the writer'} and start`}</button>
+        <button type="button" class="btn" id="spawn-occupied-reader" onClick=${() => store.startAsNonWriter()}>Start as a role that does not write</button>
+      </div></div>
     <div class="dialog-actions"><button type="button" id="spawn-cancel" class="btn" onClick=${() => host.spawnDialog.close()}>Cancel</button><button type="submit" class="btn btn-primary" disabled=${store.submitDisabled.value}>Spawn</button></div></form>`;
 }

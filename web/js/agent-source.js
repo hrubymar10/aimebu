@@ -113,6 +113,7 @@ export class HttpAgentSource {
     const card = await request(`/api/rooms/${roomID}/agents`, {
       method: 'POST', headers: { 'Idempotency-Key': uuid() },
       body: { role_key: params.role, tool: params.tool, variant: params.variant, model: params.model, ...(params.name ? { name: params.name } : {}), ...(params.launcher_id ? { launcher_id: params.launcher_id } : {}), ...(params.provider ? { provider: params.provider } : {}), ...(params.machine_id ? { machine_id: params.machine_id } : {}), ...(params.resume_legacy ? { resume_legacy: params.resume_legacy, ...(params.resume_mode ? { resume_mode: params.resume_mode } : {}), confirm_v1_idle: !!params.confirm_v1_idle } : {}), ...(params.resume_session ? { resume_session: params.resume_session, ...(params.resume_mode ? { resume_mode: params.resume_mode } : {}), confirm_session_closed: !!params.confirm_session_closed, ...(params.new_room ? { new_room: true } : {}) } : {}),
+        ...(params.work_on_copy ? { work_on_copy: true } : {}),
         // The dialog's worktree choice reaches the server; it used to be dropped here, so the checkbox did nothing.
         ...(params.worktree ? { worktree: true, ...(params.base_ref ? { base_ref: params.base_ref } : {}) } : {}) },
     });

@@ -183,9 +183,11 @@ func (tx *Tx) CreateRoom(room Room) (Room, error) {
 		return Room{}, ErrDepthExceeded
 	}
 	var err error
-	room.ID, err = newID("room")
-	if err != nil {
-		return Room{}, err
+	// A room whose ID the caller chose beforehand (see NewRoomID) keeps it: no caller takes an ID from a client.
+	if room.ID == "" {
+		if room.ID, err = newID("room"); err != nil {
+			return Room{}, err
+		}
 	}
 	_, err = tx.tx.ExecContext(tx.ctx, `INSERT INTO room
 		(id, project_id, parent_id, depth, kind, dm_key, title, created_by, created_at)

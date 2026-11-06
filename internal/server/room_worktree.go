@@ -180,6 +180,20 @@ func (s *Server) roomCheckoutPath(ctx context.Context, room store.Room, machine 
 	return path, item2, nil
 }
 
+// existingCheckoutPath is where an agent of the room goes when its own worktree is gone: the room's ready worktree if it has one, else the
+// project folder. It only reads, so it works for a room that is archived and never makes a worktree as a side effect.
+func (s *Server) existingCheckoutPath(ctx context.Context, room store.Room, machine store.Machine) (string, error) {
+	item, exists, err := s.Store.RoomWorktree(ctx, room.ID, machine.ID)
+	if err != nil {
+		return "", err
+	}
+	if exists && item.State == "ready" && item.Path != "" {
+		return item.Path, nil
+	}
+	path, _, err := s.projectCheckoutPath(ctx, room, machine)
+	return path, err
+}
+
 func (s *Server) projectCheckoutPath(ctx context.Context, room store.Room, machine store.Machine) (string, *store.RoomWorktree, error) {
 	path, err := s.selectedMachinePath(ctx, room.ProjectID, machine)
 	return path, nil, err

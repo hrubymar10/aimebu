@@ -561,8 +561,10 @@ func TestAgentRoleSafetyBranches(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := change(worker.ID, "worker", 1); !errors.Is(err, store.ErrWriterOccupied) {
-		t.Fatalf("occupied writer: %v", err)
+	_, err = change(worker.ID, "worker", 1)
+	var held *store.WriterOccupiedError
+	if !errors.Is(err, store.ErrWriterOccupied) || !errors.As(err, &held) || held.HolderID != other.ID || held.HolderSlug != other.Slug || held.Path == "" {
+		t.Fatalf("occupied writer should name its holder: %+v %v", held, err)
 	}
 	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
 		_, err := tx.Exec(`UPDATE checkout SET writer_state='none',writer_agent_id=NULL WHERE id='chk_tools'`)
@@ -577,6 +579,19 @@ func TestAgentRoleSafetyBranches(t *testing.T) {
 	card, err = change(worker.ID, "worker", 2)
 	if err != nil || card.DesiredRev != 2 {
 		t.Fatalf("same role should be a no-op: card=%+v err=%v", card, err)
+	}
+	// A writer's card says who keeps it from starting only while another agent holds the slot.
+	if card, err = f.db.AgentCardByID(t.Context(), worker.ID); err != nil || card.WriterBlock != nil {
+		t.Fatalf("the holder itself is not blocked: %+v %v", card.WriterBlock, err)
+	}
+	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
+		_, err := tx.Exec(`UPDATE checkout SET writer_state='reserved',writer_agent_id=? WHERE id='chk_tools'`, other.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if card, err = f.db.AgentCardByID(t.Context(), worker.ID); err != nil || card.WriterBlock == nil || card.WriterBlock.AgentID != other.ID || card.WriterBlock.Slug != other.Slug || card.WriterBlock.Path == "" || !strings.HasPrefix(card.WriterBlock.Holder, other.Slug+"@") {
+		t.Fatalf("a writer behind another holder names it: %+v %v", card.WriterBlock, err)
 	}
 	if err := f.db.Tx(t.Context(), func(tx *store.Tx) error {
 		_, err := tx.Exec(`INSERT INTO role(id,key,label,body,role_key,cardinality) VALUES ('role_tool_sole','tool-sole','Tool sole','','tool-sole','singleton')`)

@@ -29,6 +29,23 @@ func (c *Client) sessionScanResult(scan protocol.Frame) protocol.Frame {
 	if dir == "" {
 		dir = ccsessions.ConfigDirWith(refs)
 	}
+	if scan.CopyTo != "" {
+		if scan.ScanSessionID == "" || len(scan.ScanFolders) > 0 {
+			result.Code, result.Message = "invalid_request", "name the session to copy, and no folders"
+			return result
+		}
+		if _, err := ccsessions.Copy(dir, scan.ScanSessionID, scan.CopyTo); err != nil {
+			switch {
+			case errors.Is(err, ccsessions.ErrNotFound):
+				result.Code, result.Message = "session_not_found", "this machine has no Claude Code session with that id"
+			case errors.Is(err, ccsessions.ErrUnreadable):
+				result.Code, result.Message = "session_unreadable", "that session's transcript has no readable working folder"
+			default:
+				result.Code, result.Message = "copy_failed", err.Error()
+			}
+		}
+		return result
+	}
 	var found []ccsessions.Session
 	switch {
 	case scan.ScanSessionID != "" && len(scan.ScanFolders) == 0:

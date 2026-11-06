@@ -67,19 +67,27 @@ func (s *Store) AgentProfile(ctx context.Context, roomID, agentID string) (Agent
 	if err := s.db.QueryRowContext(ctx, `SELECT canonical_path FROM checkout WHERE id=?`, checkoutID).Scan(&p.Cwd); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return AgentProfile{}, err
 	}
-	// A room with a ready worktree on the agent's machine is where it actually works.
+	// A second writer's own worktree is where it works; failing that, a room with a ready worktree on the agent's machine is.
 	var wtPath, branch string
-	err = s.db.QueryRowContext(ctx, `SELECT i.canonical_path,w.branch_name FROM room_worktree w
-		JOIN room_worktree_instance i ON i.room_id=w.room_id AND i.machine_id=?
-		WHERE w.room_id=? AND w.state='ready' AND i.state='ready'`, machineID, roomID).Scan(&wtPath, &branch)
-	if err == nil {
-		// Only when that worktree is the agent's own checkout: an agent started elsewhere (a continued v1 session in its old folder)
-		// does not work in the room's worktree.
-		if wtPath == p.Cwd {
-			p.Worktree, p.Branch = true, branch
-		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
+	err = s.db.QueryRowContext(ctx, `SELECT canonical_path,branch_name FROM agent_worktree WHERE agent_id=? AND state='ready'`, agentID).Scan(&wtPath, &branch)
+	if err == nil && wtPath == p.Cwd {
+		p.Worktree, p.Branch = true, branch
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return AgentProfile{}, err
+	}
+	if !p.Worktree {
+		err = s.db.QueryRowContext(ctx, `SELECT i.canonical_path,w.branch_name FROM room_worktree w
+			JOIN room_worktree_instance i ON i.room_id=w.room_id AND i.machine_id=?
+			WHERE w.room_id=? AND w.state='ready' AND i.state='ready'`, machineID, roomID).Scan(&wtPath, &branch)
+		if err == nil {
+			// Only when that worktree is the agent's own checkout: an agent started elsewhere (a continued v1 session in its old folder)
+			// does not work in the room's worktree.
+			if wtPath == p.Cwd {
+				p.Worktree, p.Branch = true, branch
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return AgentProfile{}, err
+		}
 	}
 	for _, query := range []struct {
 		sql  string

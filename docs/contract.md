@@ -280,6 +280,15 @@ Machines and workspace
   canonical_path, base_commit, dirty_base_count, state, reason) — a task
   room's opt-in checkout and each
   machine's independent Git worktree. No row means the project folder.
+- **agent_worktree**(agent_id, room_id, machine_id, name, branch_name,
+  canonical_path, base_ref, base_commit, dirty_base_count,
+  state[ready|preserved|removed]) — the Git worktree a second singleton writer
+  of a room works in, so it never waits for the room's folder. `name` is
+  `<room-id>-<slug>` (flat: the room's own branch `aimebu/<room-id>` already
+  exists, and Git cannot keep a branch under another's name), the directory is
+  `.aimebu/worktrees/<name>` and the branch `aimebu/<name>`. The agent's
+  checkout is the checkout of that path, so the writer slot is its own.
+  Nothing removes one automatically.
 - **machine_launcher**(id, machine_id, tool, name, label, command, args_json,
   env_refs_json, enabled, containerized, agent_server_url?, path_maps_json,
   visible_roots_json, supports_toolbox, preset) — the **harness** a machine
@@ -833,7 +842,7 @@ it never silently reruns a turn with uncertain effects.
 
 ### 4.1 Machine-level frames (machine key)
 - M→S `hello{v, machine_id, journal_id, supervisor_version,
-  supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
+  supports_path_probe?, supports_session_scan?, supports_session_fork?, supports_session_copy?, supports_session_attribution?, supports_launch_path?, supports_worktree?, supports_launchers?, supports_providers?, supports_detect?,
   supports_detect_dir?, supports_agent_logs?, supports_agent_log_size?,
   capabilities[{tool, version, environment, flags}], harnesses[...], agents[{agent_id,
   generation, open_turns[{turn_id, exec, process_alive?, has_answer, answer_rev,
@@ -938,6 +947,11 @@ it never silently reruns a turn with uncertain effects.
   returned and the numbers its `bus_say`/`bus_dm` returned, read from the transcripts' tool
   results. Only those ids leave the machine, never a line of text (advertised by
   `supports_session_attribution`).
+  With `scan_session_id` and `copy_to` (an absolute folder) it instead copies that session, the
+  transcript and its own directory, under the Claude project directory of `copy_to`, so a session
+  forked there is found from that folder; the answer has no `sessions`, and `code` is
+  `session_not_found`, `session_unreadable`, `invalid_request` or `copy_failed` on failure
+  (advertised by `supports_session_copy`: an older supervisor would ignore `copy_to`).
   The supervisor lists the Claude Code sessions of its own machine, from the
   configuration folder of the launcher named by `launcher_id` (that launcher's
   `env_refs` apply: its `CLAUDE_CONFIG_DIR`, else its `HOME`, else the

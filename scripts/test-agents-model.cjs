@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'pages', 'agents', 'model.js'), 'utf8');
 const context = vm.createContext({ Date, Number, Math, JSON, Map, Intl, Object, Array, String });
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { reconcile, stateOf, activityOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, profileRows, outputStatus, outputFailure };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { writerBlockText, reconcile, stateOf, activityOf, switchStatusOf, grantsOf, contextOf, liveOf, actionsOf, profileRows, outputStatus, outputFailure };', context);
 const m = context.api;
 const plain = value => JSON.parse(JSON.stringify(value));
 
@@ -83,6 +83,16 @@ assert.equal(reasons({ desired: 'stopped' })['act-stop'], 'Stop is unavailable: 
 assert.equal(reasons({ desired: 'active', health_flags: [{ code: 'out_of_quota' }] }).reactivate, '', 'a quota-held agent can be reactivated');
 assert.equal(reasons({ desired: 'stopped', role_deleted: true }).reactivate, 'Reactivate is unavailable: its role was deleted.');
 assert.equal(reasons({ desired: 'stopped', boundary_pending: true }).reactivate, 'Reactivate is unavailable: it is waiting for folder or machine approval.');
+const blocked = { slug: 'alice', holder: 'alice@test', path: '/work/test', agent_id: 'agt_a' };
+const off = 'alice@test is the writer of /work/test and worktrees are off for this project — stop it, or give this agent a non-writer role';
+assert.equal(reasons({ desired: 'stopped', writer_blocked_by: blocked })['reactivate'], `Reactivate is unavailable: ${off}.`, 'with worktrees off a writer behind another holder cannot be reactivated');
+assert.equal(reasons({ desired: 'active', writer_blocked_by: blocked }).reactivate, 'Reactivate is unavailable: it is already active.', 'an active agent is not told it is blocked');
+assert.match(plain(m.stateOf({ desired: 'stopped', observed: 'stopped', writer_blocked_by: blocked })).why, /^Cannot start: alice@test is the writer of \/work\/test and worktrees are off/, 'the card says why it will not start');
+const own = { ...blocked, own_worktree: true };
+assert.equal(reasons({ desired: 'stopped', writer_blocked_by: own }).reactivate, '', 'with worktrees on it can be reactivated: it starts in a worktree of its own');
+assert.match(m.actionsOf({ desired: 'stopped', writer_blocked_by: own }).find(action => action.name === 'reactivate').title, /alice@test is the writer of \/work\/test, so it starts in a worktree of its own/);
+assert.equal(plain(m.stateOf({ desired: 'stopped', observed: 'stopped', writer_blocked_by: own })).why, undefined, 'and that is no reason shown on the card');
+assert.equal(plain(m.stateOf({ desired: 'stopped', observed: 'stopped' })).why, undefined);
 assert.equal(reasons({ desired: 'active' }, { lifecycle: 'archived' }).switch, 'Switch is unavailable: reopen the room first.');
 assert.equal(reasons({ desired: 'active', recovery_block: true }).switch, 'Switch is unavailable: resolve the recovery item first.');
 assert.equal(reasons({ desired: 'active', switch: { state: 'draining' } }).switch, 'Switch is unavailable: a switch is already in progress.');

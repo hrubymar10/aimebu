@@ -286,7 +286,7 @@ func (s *Store) DecideBoundary(ctx context.Context, itemID, userID, key, choice 
 						return "", err
 					}
 					if state != "none" && (state != "reserved" || !holder.Valid || holder.String != agentID) {
-						return "", ErrWriterOccupied
+						return "", tx.writerOccupied(checkoutID)
 					}
 					if _, err := tx.Exec(`UPDATE checkout SET writer_agent_id=?,writer_state='reserved' WHERE id=?`, agentID, checkoutID); err != nil {
 						return "", err

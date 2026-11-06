@@ -69,6 +69,7 @@ var doctorCapabilities = []struct {
 	{"supports_detect_dir", "auto-detect cannot run in a chosen folder", func(c *machineConn) bool { return c.supportsDetectDir }},
 	{"supports_session_scan", "Claude Code sessions on this machine cannot be listed for import", func(c *machineConn) bool { return c.supportsSessionScan }},
 	{"supports_session_fork", "a Claude Code session cannot be continued as a copy (fork); only continued in place", func(c *machineConn) bool { return c.supportsSessionFork }},
+	{"supports_session_copy", "a Claude Code session cannot be worked on as a copy in a worktree of its own", func(c *machineConn) bool { return c.supportsSessionCopy }},
 	{"supports_launch_path", "a Claude Code session made under a link to its folder cannot be continued on this machine: its turns are held", func(c *machineConn) bool { return c.supportsLaunchPath }},
 	{"supports_session_attribution", "an imported v1 sender whose messages carry no session cannot be matched to the Claude Code session that sent them; the session v1 kept under its name is offered, checked against its messages", func(c *machineConn) bool { return c.supportsSessionAttribution }},
 	{"supports_providers", "an OpenCode agent on a custom provider cannot run on this machine: its turns are held", func(c *machineConn) bool { return c.supportsProviders }},

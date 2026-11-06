@@ -15,6 +15,72 @@ import (
 )
 
 var ErrWriterOccupied = errors.New("writer_occupied")
+
+// WriterOccupiedError is ErrWriterOccupied with who holds the checkout's writer slot, so a refusal can say which agent to stop. Callers
+// match it with errors.Is(err, ErrWriterOccupied) and read the holder with errors.As.
+type WriterOccupiedError struct {
+	HolderID, HolderSlug, HolderProject, Path string
+}
+
+func (e *WriterOccupiedError) Error() string        { return ErrWriterOccupied.Error() }
+func (e *WriterOccupiedError) Is(target error) bool { return target == ErrWriterOccupied }
+
+// Holder is the holder's full name, slug@project, or "" when the slot is held by nobody known.
+func (e *WriterOccupiedError) Holder() string {
+	if e.HolderSlug == "" {
+		return ""
+	}
+	if e.HolderProject == "" {
+		return e.HolderSlug
+	}
+	return e.HolderSlug + "@" + e.HolderProject
+}
+
+const writerHolderQuery = `SELECT COALESCE(c.writer_agent_id,''),COALESCE(h.slug,''),COALESCE(p.name,''),c.canonical_path
+	FROM checkout c LEFT JOIN agent h ON h.id=c.writer_agent_id LEFT JOIN project p ON p.id=h.project_id WHERE c.id=?`
+
+// writerOccupied is the refusal for a checkout whose writer slot is taken, carrying the holder. A holder that cannot be read still refuses.
+func (tx *Tx) writerOccupied(checkoutID string) error {
+	var e WriterOccupiedError
+	if err := tx.tx.QueryRowContext(tx.ctx, writerHolderQuery, checkoutID).Scan(&e.HolderID, &e.HolderSlug, &e.HolderProject, &e.Path); err != nil {
+		return ErrWriterOccupied
+	}
+	return &e
+}
+
+// WriterBlock says who holds the writer slot of the checkout an agent is placed in, when that agent is a singleton writer that the holder keeps
+// from starting. It is nil when the agent is not a writer, the slot is free, or the agent holds it itself.
+type WriterBlock struct {
+	AgentID string `json:"agent_id"`
+	Slug    string `json:"slug"`
+	Holder  string `json:"holder"`
+	Path    string `json:"path"`
+	// OwnWorktree is true when the project allows worktrees (worktree_mode auto), so starting the agent moves it to a worktree of its own
+	// instead of failing; the folder still has to be the root of a Git repository, which only a start can find out.
+	OwnWorktree bool `json:"own_worktree,omitempty"`
+}
+
+func (s *Store) writerBlock(ctx context.Context, agentID string) (*WriterBlock, error) {
+	var writer bool
+	var state string
+	var e WriterOccupiedError
+	var projectID string
+	err := s.readDB.QueryRowContext(ctx, `SELECT r.cap_singleton_writer,c.writer_state,COALESCE(c.writer_agent_id,''),COALESCE(h.slug,''),COALESCE(p.name,''),c.canonical_path,a.project_id
+		FROM agent a JOIN role r ON r.id=a.role_id JOIN checkout c ON c.id=a.checkout_id LEFT JOIN agent h ON h.id=c.writer_agent_id LEFT JOIN project p ON p.id=h.project_id
+		WHERE a.id=?`, agentID).Scan(&writer, &state, &e.HolderID, &e.HolderSlug, &e.HolderProject, &e.Path, &projectID)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && (!writer || state == "" || state == "none" || e.HolderID == agentID)) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	mode, err := s.ProjectWorktreeMode(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return &WriterBlock{AgentID: e.HolderID, Slug: e.HolderSlug, Holder: e.Holder(), Path: e.Path, OwnWorktree: mode != "off"}, nil
+}
+
 var ErrRoleOccupied = errors.New("role_occupied")
 var ErrSpawnLimit = errors.New("spawn_limit")
 
@@ -47,6 +113,8 @@ type AgentCard struct {
 	Switch           *AgentSwitch        `json:"switch,omitempty"`
 	BoundaryPending  string              `json:"boundary_pending,omitempty"`
 	BoundaryGrants   []BoundaryGrant     `json:"boundary_grants,omitempty"`
+	// WriterBlock is set when this agent is a singleton writer and another agent holds its checkout's writer slot, so it cannot be started.
+	WriterBlock *WriterBlock `json:"writer_blocked_by,omitempty"`
 	// WokenBy is why the turn in progress started, when that was an agent's reply to this one ("reply"); the card tags it so a person can
 	// see an exchange between agents as it happens. Empty when idle or for any other reason.
 	WokenBy string `json:"woken_by,omitempty"`
@@ -100,6 +168,8 @@ type SpawnInput struct {
 	// in a new task room of that title under the project's home room instead of in RoomID.
 	ResumeSession *ResumeSession
 	NewRoomTitle  string
+	// NewRoomID, when set with NewRoomTitle, is the ID the new room is created with (see NewRoomID).
+	NewRoomID string
 }
 
 // ErrHomeLeadOnly is a spawn of a role without the lead capability into a home room whose project keeps it for the lead.
@@ -132,7 +202,7 @@ func (s *Store) SpawnRequestResult(ctx context.Context, actorKind, actorID, key,
 func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 	if in.NewRoomTitle != "" {
 		actor := in.ActorID
-		room, err := tx.roomForSession(in.RoomID, in.NewRoomTitle, actor)
+		room, err := tx.roomForSession(in.RoomID, in.NewRoomTitle, actor, in.NewRoomID)
 		if err != nil {
 			return AgentCard{}, err
 		}
@@ -228,7 +298,7 @@ func (tx *Tx) SpawnAgent(in SpawnInput) (AgentCard, error) {
 		return AgentCard{}, err
 	}
 	if writer && state != "" && state != "none" {
-		return AgentCard{}, ErrWriterOccupied
+		return AgentCard{}, tx.writerOccupied(checkoutID)
 	}
 	// Before the name check: a second start of the same v1 agent finds its name taken by the first one's agent, and must say so as
 	// "already started", not as a name clash. The claim further down stays the arbiter if two starts get past this together.
@@ -528,6 +598,9 @@ func (s *Store) AgentCardsForRoom(ctx context.Context, roomID string) ([]AgentCa
 		if err != nil {
 			return nil, err
 		}
+		if cards[i].WriterBlock, err = s.writerBlock(ctx, cards[i].ID); err != nil {
+			return nil, err
+		}
 		if cards[i].Observed == "in_turn" {
 			if cards[i].WokenBy, err = s.wokenBy(ctx, cards[i].ID); err != nil {
 				return nil, err
@@ -552,6 +625,9 @@ func (s *Store) AgentCardByID(ctx context.Context, id string) (AgentCard, error)
 		c.Switch, err = s.agentSwitch(ctx, id)
 		if err == nil {
 			c.BoundaryGrants, err = s.BoundaryGrants(ctx, id)
+		}
+		if err == nil {
+			c.WriterBlock, err = s.writerBlock(ctx, id)
 		}
 		if err == nil && c.Observed == "in_turn" {
 			c.WokenBy, err = s.wokenBy(ctx, id)
@@ -710,7 +786,7 @@ func (tx *Tx) setAgentDesired(id, actorKind, actorID, desired string, rev int64,
 				return AgentCard{}, err
 			}
 			if state != "none" {
-				return AgentCard{}, ErrWriterOccupied
+				return AgentCard{}, tx.writerOccupied(checkoutID)
 			}
 			if _, err := tx.Exec(`UPDATE checkout SET writer_state='reserved',writer_agent_id=? WHERE id=?`, id, checkoutID); err != nil {
 				return AgentCard{}, err

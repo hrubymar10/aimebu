@@ -2599,3 +2599,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .harness-provider-use { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
 .harness-endpoint-problems { margin: 4px 0; padding-left: 18px; color: var(--text-muted); font-size: 12px; }
 @media (max-width: 700px) { .harness-provider-row .harness-detail-fields { grid-template-columns: minmax(0, 1fr); } }
+.spawn-occupied { display: grid; gap: 8px; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--red); border-radius: 6px; background: var(--bg-secondary); font-size: 13px; }
+.spawn-occupied p { margin: 0; }
+.spawn-occupied-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.spawn-occupied[hidden], .spawn-occupied-actions [hidden] { display: none; }

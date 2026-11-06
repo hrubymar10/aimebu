@@ -1,5 +1,6 @@
 import { html, batch, signal, useLayoutEffect, useRef } from '../../ui.js';
 import { request } from '../../api.js';
+import { confirmDialog, promptDialog } from '../../dialogs.js';
 import { ACTION_LABELS, STATE_LABELS, formatBytes, previewSummary, removedLine, retentionDays } from './model.js';
 
 export class DiskUsage {
@@ -45,6 +46,23 @@ export class DiskUsage {
       if (!this.alive) return;
       this.plan.value = { done: removedLine(result.items, result.bytes) };
       await this.refresh();
+    } catch (failure) { if (this.alive) this.show(failure.message); }
+  }
+
+  // Remove the worktree of a second writer (a room's own is removed from its room's settings). A clean, merged one goes; one that holds work is kept
+  // and says why, and only a typed confirmation removes that. The branch is kept either way.
+  async removeAgentWorktree(tree) {
+    if (!this.alive || !tree.agent_id) return;
+    const path = `/api/agents/${encodeURIComponent(tree.agent_id)}/worktree`;
+    try {
+      if (!(await confirmDialog(`Remove the worktree of ${tree.agent} in ${tree.room.split(' · ')[0]}? Its branch is kept.`, { title: 'Remove worktree', confirm: 'Remove', danger: true }))) return;
+      let result = await this.send(path, { method: 'DELETE', body: {} });
+      if (result.state === 'preserved') {
+        const name = result.name, typed = await promptDialog(`It was kept: ${result.reason}. To remove it anyway, type REMOVE ${name}.`, { title: 'Remove anyway', label: 'Confirmation', required: true, confirm: 'Remove' });
+        if (typed?.trim() !== `REMOVE ${name}`) return;
+        result = await this.send(path, { method: 'DELETE', body: { force: true, confirm: typed.trim() } });
+      }
+      if (this.alive) await this.refresh();
     } catch (failure) { if (this.alive) this.show(failure.message); }
   }
 
@@ -100,7 +118,7 @@ export function DiskSection({ disk }) {
       ${report.machines?.length ? html`<h4>Agent logs on other machines</h4><ul class="health-disk-machines" aria-label="Agent logs on other machines">${report.machines.map(machine => html`<li data-machine=${machine.machine_id}><span>${machine.name || machine.machine_id}</span>
         <span class="health-disk-state">${machine.error || `${machine.agent_log_agents || 0} agent${machine.agent_log_agents === 1 ? '' : 's'}`}</span><span class="health-disk-size">${formatBytes(machine.agent_log_bytes)}</span></li>`)}</ul>` : null}
       ${report.worktrees?.length ? html`<h4>Worktrees</h4><ul class="health-disk-worktrees">${report.worktrees.map(tree => html`<li data-state=${tree.state} title=${`${tree.path}${tree.last_activity ? ` · last change ${new Date(tree.last_activity).toLocaleDateString()}` : ''}`}>
-        <span>${tree.room || tree.room_id}</span><span class="health-disk-state">${`${STATE_LABELS[tree.state] || tree.state}${tree.dirty_files ? ` (${tree.dirty_files} files)` : ''}`}</span><span class="health-disk-size">${formatBytes(tree.bytes)}</span></li>`)}</ul>` : null}
+        <span>${tree.room || tree.room_id}</span><span class="health-disk-state">${`${STATE_LABELS[tree.state] || tree.state}${tree.dirty_files ? ` (${tree.dirty_files} files)` : ''}`}</span><span class="health-disk-size">${formatBytes(tree.bytes)}</span>${tree.agent_id && html`<button type="button" class="btn health-worktree-remove" disabled=${tree.state === 'active'} title=${tree.state === 'active' ? 'An agent still works here: stop it first' : `Remove the worktree of ${tree.agent}`} onClick=${() => disk.removeAgentWorktree(tree)}>Remove</button>`}</li>`)}</ul>` : null}
       <p class="health-disk-foot">${`${formatBytes(report.free_bytes)} free of ${formatBytes(report.volume_bytes)}. ${last}`}</p>
       <${Schedule} disk=${disk} settings=${report.settings} /></details>
     <${Plan} disk=${disk} plan=${plan} /></section>`;

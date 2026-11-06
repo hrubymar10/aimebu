@@ -147,6 +147,14 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if boundary {
+		// An approval starts the agent, which may work in a worktree of its own: it holds that worktree's lock, as any start does, so a removal
+		// cannot take the folder between its check and this start.
+		agentID, idErr := s.Store.BoundaryAgentID(r.Context(), r.PathValue("item"))
+		if idErr != nil {
+			fail(w, idErr)
+			return
+		}
+		defer s.lockOwnWorktree(r.Context(), agentID)()
 		decision, reused, err = s.Store.DecideBoundary(r.Context(), r.PathValue("item"), userID(r), key, req.Choice, req.Rev)
 	} else if kind == "usage_limit" {
 		decision, reused, err = s.Store.DecideUsageLimit(r.Context(), r.PathValue("item"), userID(r), key, req.Choice, req.Rev)
@@ -172,7 +180,7 @@ func (s *Server) decideRecovery(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, store.ErrInvalidTransition):
 			apiError(w, 409, "invalid_transition", "choice is invalid for this recovery item")
 		case errors.Is(err, store.ErrWriterOccupied):
-			apiError(w, 409, "writer_occupied", "another agent holds the checkout writer role")
+			writerOccupied(w, err, "another agent holds the checkout writer role")
 		case errors.Is(err, store.ErrProjectArchived):
 			apiError(w, 409, "project_archived", "this project is archived: only Abandon is possible, and it ends with the agent stopped; reopen the project to continue")
 		default:

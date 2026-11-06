@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -51,6 +52,9 @@ type spawnRequest struct {
 	// ResumeMode is how a Claude Code session is taken over: "continue" appends to the original, "fork" works on a copy (the first turn runs
 	// with --fork-session) and leaves the original as it is. Whoever does not say gets "fork": the safe choice for a caller that cannot ask.
 	ResumeMode string `json:"resume_mode,omitempty"`
+	// WorkOnCopy starts a continued session as a copy in a worktree of its own (a copy of the session is put under that folder's Claude
+	// project directory and forked there) instead of in the folder it was made in, which another writer may hold. It implies resume_mode fork.
+	WorkOnCopy bool `json:"work_on_copy,omitempty"`
 }
 
 const (
@@ -630,6 +634,17 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 		apiError(w, 400, "invalid_request", "new_room, confirm_session_closed and resume_mode belong to resume_session or resume_legacy")
 		return
 	}
+	if req.WorkOnCopy {
+		if req.ResumeSession == "" && req.ResumeLegacy == "" {
+			apiError(w, 400, "invalid_request", "work_on_copy belongs to resume_session or resume_legacy")
+			return
+		}
+		if req.ResumeMode == resumeContinue || req.Worktree {
+			apiError(w, 400, "invalid_request", "working on a copy in a worktree of its own forks the session: use resume_mode fork, and no worktree option")
+			return
+		}
+		req.ResumeMode = resumeFork
+	}
 	key := r.Header.Get("Idempotency-Key")
 	if key == "" || len(key) > 200 {
 		apiError(w, 400, "invalid_request", "Idempotency-Key required (at most 200 characters)")
@@ -844,6 +859,65 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 			return
 		}
 	}
+	slug := req.Name
+	if req.ResumeLegacy != "" {
+		slug = legacy.Slug // the agent keeps its v1 name, whatever the start; its worktree is named by it
+	}
+	var own *store.AgentWorktree
+	var newRoomID string // the ID the new room is created with, when a worktree is named after it
+	spawned := false
+	defer func() { // the worktree's lock is held to here: a failed request cleans up before anyone else can use or remove it
+		if !spawned {
+			s.discardAgentWorktree(r.Context(), own)
+		}
+		own.Done()
+	}()
+	if req.WorkOnCopy && (session != nil || resuming) {
+		// The session is copied to a worktree made for this agent and forked there, so the folder it was made in, and whoever writes in it, is
+		// left alone. The agent's own name names the worktree: a continued v1 agent keeps its v1 name.
+		handle := req.ResumeSession
+		if session == nil {
+			handle = legacy.SessionID
+		}
+		if !machine.supportsSessionCopy {
+			apiError(w, 409, "supervisor_update_needed", "this machine's supervisor predates working on a copy in a worktree of its own; update it, or stop the agent that holds the folder")
+			return
+		}
+		// Copying puts the transcript into this project, so a session made outside the project's folder needs the owner's approval first,
+		// as continuing it where it is does (the boundary check on its own folder); a copy cannot ask, so it is refused.
+		if inside, insideErr := s.Store.ProjectFolderContains(r.Context(), room.ProjectID, machine.id, path); insideErr != nil {
+			fail(w, insideErr)
+			return
+		} else if !inside {
+			apiError(w, 409, "session_outside_folder", "this session was made outside the project folder, so it cannot be copied into the project: continue it where it is (the owner approves that), or start a new agent")
+			return
+		}
+		// An agent that starts in a new room is named after that room, so a later start finds the branch it kept: the room's ID is chosen now.
+		named, baseRef := room, req.BaseRef
+		if req.NewRoom && session != nil {
+			if newRoomID, err = store.NewRoomID(); err != nil {
+				fail(w, err)
+				return
+			}
+			if baseRef == "" {
+				if baseRef, err = s.Store.RoomBaseRef(r.Context(), room.ID); err != nil {
+					fail(w, err)
+					return
+				}
+			}
+			named.ID = newRoomID
+		}
+		var reason string
+		if own, reason = s.agentWorktreeFor(r.Context(), named, machineInfo, &slug, baseRef); own == nil {
+			apiError(w, 409, "worktree_unavailable", "this session cannot be worked on as a copy in a worktree of its own: "+reason)
+			return
+		}
+		if err := s.copyClaudeSession(r.Context(), machine, launcherID, handle, own.Path); err != nil {
+			apiError(w, 409, "session_copy_failed", err.Error())
+			return
+		}
+		path, sessionSpelling = own.Path, ""
+	}
 	if err := s.validateLauncherCheckout(r.Context(), machineInfo, launcherID, path); err != nil {
 		apiError(w, 409, "folder_unverified", err.Error())
 		return
@@ -856,53 +930,85 @@ func (s *Server) spawnAgentRequest(w http.ResponseWriter, r *http.Request, room 
 	agentKey := "aak_" + base64.RawURLEncoding.EncodeToString(secret)
 	keyHashBytes := sha256.Sum256([]byte(agentKey))
 	var card store.AgentCard
-	result, reused, err := s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "spawn", Key: key, Digest: digest}, func(tx *store.Tx) (string, error) {
-		input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: path, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, KeyHash: hex.EncodeToString(keyHashBytes[:])}
-		input.Slug = req.Name
-		input.LaunchPath = sessionSpelling // the agent's turns start here; the checkout itself stays the canonical path
-		if session != nil {
-			input.ResumeHandle = session.ID
-			input.ResumeSession = &store.ResumeSession{ID: session.ID, CWD: path, Title: session.Title, Fork: req.ResumeMode == resumeFork}
-			if req.NewRoom {
-				input.NewRoomTitle = sessionRoomTitle(*session)
-			}
-		}
-		if defaultUsed {
-			input.SpawnNote = "spawned per role default: " + req.Tool + "/" + req.Variant + "/" + req.Model
-		} else if defaultAvailable && actorKind == "agent" {
-			input.SpawnNote = "Different from the role default: " + req.Reason
-		} else if defaultUnavailable {
-			input.SpawnNote = "Role defaults are unavailable; a manual harness and model were used."
-		}
-		if req.ResumeLegacy != "" {
-			input.Slug, input.ResumeLegacyID = legacy.Slug, legacy.AgentID
-			if resuming {
-				input.ResumeHandle = legacy.SessionID
-				if req.ResumeMode == resumeFork {
-					// Worked on as a copy: the first turn forks the v1 session, the original stays as it is.
-					input.ResumeSession = &store.ResumeSession{ID: legacy.SessionID, CWD: path, Title: "", Fork: true}
+	// The spawn runs where the room works (path). A second writer finds that checkout's writer slot taken; it is then spawned again in a
+	// worktree of its own (own), so a worker is never refused for sharing a room. The slot is claimed in the spawn transaction, so two spawns
+	// racing for it cannot both get it: the one that loses takes a worktree.
+	spawn := func(where string, own *store.AgentWorktree) (string, bool, error) {
+		return s.Store.WithRequestKey(r.Context(), store.RequestKey{ActorKind: actorKind, ActorID: actorID, Kind: "spawn", Key: key, Digest: digest}, func(tx *store.Tx) (string, error) {
+			input := store.SpawnInput{RoomID: room.ID, ActorKind: actorKind, ActorID: actorID, MachineID: machine.id, Path: where, RoleKey: req.RoleKey, Tool: req.Tool, Variant: req.Variant, LauncherID: launcherID, Model: req.Model, Provider: req.Provider, KeyHash: hex.EncodeToString(keyHashBytes[:])}
+			input.Slug = slug
+			input.LaunchPath = sessionSpelling // the agent's turns start here; the checkout itself stays the canonical path
+			if session != nil {
+				input.ResumeHandle = session.ID
+				input.ResumeSession = &store.ResumeSession{ID: session.ID, CWD: path, Title: session.Title, Fork: req.ResumeMode == resumeFork}
+				if req.NewRoom {
+					input.NewRoomTitle, input.NewRoomID = sessionRoomTitle(*session), newRoomID
 				}
 			}
-		}
-		created, err := tx.SpawnAgent(input)
-		if err != nil {
-			return "", err
-		}
-		if defaultUsed && selection.Defaults.PickMode == "in_turn" {
-			if err := tx.AdvanceRoleSpawnCursor(room.ProjectID, selection.Defaults.RoleID, selection.Defaults.NextPosition, selection.Steps); err != nil {
+			if defaultUsed {
+				input.SpawnNote = "spawned per role default: " + req.Tool + "/" + req.Variant + "/" + req.Model
+			} else if defaultAvailable && actorKind == "agent" {
+				input.SpawnNote = "Different from the role default: " + req.Reason
+			} else if defaultUnavailable {
+				input.SpawnNote = "Role defaults are unavailable; a manual harness and model were used."
+			}
+			if req.ResumeLegacy != "" {
+				input.Slug, input.ResumeLegacyID = legacy.Slug, legacy.AgentID
+				if resuming {
+					input.ResumeHandle = legacy.SessionID
+					if req.ResumeMode == resumeFork {
+						// Worked on as a copy: the first turn forks the v1 session, the original stays as it is.
+						input.ResumeSession = &store.ResumeSession{ID: legacy.SessionID, CWD: path, Title: "", Fork: true}
+					}
+				}
+			}
+			created, err := tx.SpawnAgent(input)
+			if err != nil {
 				return "", err
 			}
+			if own != nil {
+				own.AgentID = created.ID
+				own.RoomID = created.RoomID // the room the agent is in (a continued session may start in a room of its own), not the one asked
+				if err := tx.RecordAgentWorktree(*own); err != nil {
+					return "", err
+				}
+			}
+			if defaultUsed && selection.Defaults.PickMode == "in_turn" {
+				if err := tx.AdvanceRoleSpawnCursor(room.ProjectID, selection.Defaults.RoleID, selection.Defaults.NextPosition, selection.Steps); err != nil {
+					return "", err
+				}
+			}
+			created.DefaultUsed = defaultUsed
+			if defaultUsed {
+				created.DefaultSelection = &selection.Choice
+			}
+			if worktreeItem != nil && worktreeItem.DirtyBaseCount > 0 {
+				created.WorktreeWarning = fmt.Sprintf("the base has %d uncommitted changes, which are not in the worktree", worktreeItem.DirtyBaseCount)
+			}
+			if own != nil && own.DirtyBase > 0 {
+				created.WorktreeWarning = fmt.Sprintf("the base has %d uncommitted changes, which are not in the worktree", own.DirtyBase)
+			}
+			encoded, err := json.Marshal(created)
+			return string(encoded), err
+		})
+	}
+	result, reused, err := spawn(path, own)
+	if errors.Is(err, store.ErrWriterOccupied) && session == nil && !resuming {
+		made, reason := s.agentWorktreeFor(r.Context(), room, machineInfo, &slug, req.BaseRef)
+		if made != nil {
+			own = made // the deferred clean-up takes it away again if the request does not use it
+			if checkErr := s.validateLauncherCheckout(r.Context(), machineInfo, launcherID, own.Path); checkErr != nil {
+				apiError(w, 409, "folder_unverified", checkErr.Error())
+				return
+			}
+			result, reused, err = spawn(own.Path, own)
+		} else if reason != "" {
+			writerOccupied(w, err, "checkout already has a writer", reason)
+			return
 		}
-		created.DefaultUsed = defaultUsed
-		if defaultUsed {
-			created.DefaultSelection = &selection.Choice
-		}
-		if worktreeItem != nil && worktreeItem.DirtyBaseCount > 0 {
-			created.WorktreeWarning = fmt.Sprintf("the base has %d uncommitted changes, which are not in the worktree", worktreeItem.DirtyBaseCount)
-		}
-		encoded, err := json.Marshal(created)
-		return string(encoded), err
-	})
+	}
+	// A replay of an earlier request with the same key stored that request's result: the worktree made for this one is not recorded.
+	spawned = err == nil && !reused
 	if err != nil {
 		spawnError(w, err)
 		return
@@ -1031,6 +1137,23 @@ func (s *Server) enqueuePendingSpawns(ctx context.Context, machine *machineConn)
 	return nil
 }
 
+// writerOccupied answers a 409 for a taken writer slot. When the holder is known the message names it and the folder, and the body carries
+// writer_agent_id, writer_slug and path so a client can say the same. extra says why the agent could not be given a worktree of its own.
+func writerOccupied(w http.ResponseWriter, err error, fallback string, extra ...string) {
+	var held *store.WriterOccupiedError
+	message := fallback
+	body := map[string]string{"error": "writer_occupied"}
+	if errors.As(err, &held) && held.Holder() != "" {
+		message = fmt.Sprintf("%s is the writer of %s — stop it, or give this agent a non-writer role", held.Holder(), held.Path)
+		body["writer_agent_id"], body["writer_slug"], body["path"] = held.HolderID, held.HolderSlug, held.Path
+	}
+	if len(extra) > 0 && extra[0] != "" {
+		message += " (it cannot get a worktree of its own: " + extra[0] + ")"
+	}
+	body["message"] = message
+	writeJSON(w, 409, body)
+}
+
 func spawnError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrProjectArchived):
@@ -1040,7 +1163,7 @@ func spawnError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrForbidden):
 		apiError(w, 403, "forbidden", "actor is not allowed to manage this agent")
 	case errors.Is(err, store.ErrWriterOccupied):
-		apiError(w, 409, "writer_occupied", "checkout already has a writer")
+		writerOccupied(w, err, "checkout already has a writer")
 	case errors.Is(err, store.ErrHomeLeadOnly):
 		apiError(w, 409, "home_is_lead_only", "this project's home room accepts only lead roles; spawn other agents into a task room such as general, or turn off Home room: lead only in the project settings")
 	case errors.Is(err, store.ErrRoleOccupied):
@@ -1081,6 +1204,10 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	// An agent that works in a worktree of its own is started under that worktree's lock, so a removal cannot take the folder from it
+	// between the check and the start. It is let go before the fallback below, which takes the same lock itself.
+	release := sync.OnceFunc(func() {})
+	defer func() { release() }()
 	if req.Desired == "active" {
 		// Starting is the one control an archived project refuses: say so before the launcher, Docker and remote-folder checks, which
 		// would answer about things that cannot matter. (Stopping and pausing pass, to free an agent.) The store refuses it as well.
@@ -1136,11 +1263,42 @@ func (s *Server) agentControl(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var updated store.AgentCard
+	// The lock is taken here, after the request's own checks and just before the transaction, which is what authorizes the caller: one who
+	// may not start the agent holds it only for as long as that refusal takes.
+	if req.Desired == "active" {
+		release = sync.OnceFunc(s.lockOwnWorktree(r.Context(), id))
+	}
 	err := s.Store.Tx(r.Context(), func(tx *store.Tx) error {
 		var err error
 		updated, err = tx.SetAgentDesired(id, userID(r), req.Desired, req.Rev)
 		return err
 	})
+	release()
+	// A writer that comes back to a folder another writer holds is not refused: it moves to a worktree of its own and starts there. (A
+	// fresh native session starts at every reactivation, so no session needs to follow it to the new folder.)
+	if errors.Is(err, store.ErrWriterOccupied) && req.Desired == "active" {
+		var own *store.AgentWorktree
+		if own, err = s.reactivateInOwnWorktree(w, r, id, err); own == nil {
+			return
+		}
+		defer own.Done() // held through the transaction and, if it fails, the clean-up
+		if checkErr := s.ownWorktreeUsable(r.Context(), id, own); checkErr != nil {
+			s.discardAgentWorktree(r.Context(), own)
+			apiError(w, 409, "folder_unverified", checkErr.Error())
+			return
+		}
+		err = s.Store.Tx(r.Context(), func(tx *store.Tx) error {
+			if err := tx.RecordAgentWorktree(*own); err != nil {
+				return err
+			}
+			var err error
+			updated, err = tx.SetAgentDesired(id, userID(r), req.Desired, req.Rev)
+			return err
+		})
+		if err != nil {
+			s.discardAgentWorktree(r.Context(), own)
+		}
+	}
 	if err != nil {
 		spawnError(w, err)
 		return
@@ -1404,4 +1562,250 @@ func (s *Server) agentProfile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, profile)
+}
+
+// lockOwnWorktree locks the worktree an agent works in, when it has one in use, and returns its release (nothing to release otherwise).
+func (s *Server) lockOwnWorktree(ctx context.Context, agentID string) func() {
+	if own, found, err := s.Store.AgentWorktreeOf(ctx, agentID); err == nil && found && own.State == "ready" {
+		return s.lockAgentWorktree(own.Name)
+	}
+	return func() {}
+}
+
+// lockAgentWorktree takes the lock of one worktree name and returns its release. It is held from making the worktree through the transaction that
+// records it, and by a removal, so the two cannot interleave.
+func (s *Server) lockAgentWorktree(name string) func() {
+	lock, _ := s.checkoutLocks.LoadOrStore(name, &sync.Mutex{})
+	lock.(*sync.Mutex).Lock()
+	return lock.(*sync.Mutex).Unlock
+}
+
+// agentWorktreeFor makes the Git worktree a second writer works in, <project>/.aimebu/worktrees/<room-id>-<slug> on branch aimebu/<room-id>-<slug>,
+// from the room's base ref (the project's current HEAD when the room has none). The slug is the agent's, picked here when it was not named, so
+// the worktree and the agent carry the same name. It returns nil and why when it cannot: the project's worktree mode is off, the folder is not
+// the root of a Git repository, or the supervisor refuses.
+func (s *Server) agentWorktreeFor(ctx context.Context, room store.Room, machine store.Machine, slug *string, baseRef string) (*store.AgentWorktree, string) {
+	return s.agentWorktreeForLocked(ctx, room, machine, slug, baseRef, false)
+}
+
+// agentWorktreeForLocked is agentWorktreeFor for a caller that holds the worktree's lock already (a bulk resume locks the names it needs
+// once, in order): the lock is not taken again, and the worktree it returns has none to release.
+func (s *Server) agentWorktreeForLocked(ctx context.Context, room store.Room, machine store.Machine, slug *string, baseRef string, held bool) (*store.AgentWorktree, string) {
+	mode, err := s.Store.ProjectWorktreeMode(ctx, room.ProjectID)
+	if err != nil {
+		return nil, err.Error()
+	}
+	if mode == "off" {
+		return nil, "the project's worktree mode is off"
+	}
+	root, err := s.selectedMachinePath(ctx, room.ProjectID, machine)
+	if err != nil {
+		return nil, "the project folder is not set on " + machine.Name
+	}
+	if _, err := s.machineWorktree(ctx, machine, root, room.ID, "", "validate", false); err != nil {
+		return nil, err.Error()
+	}
+	if *slug == "" {
+		if *slug, err = s.Store.SuggestAgentSlug(ctx, room.ProjectID, ""); err != nil {
+			return nil, err.Error()
+		}
+	}
+	if baseRef == "" {
+		if baseRef, err = s.Store.RoomBaseRef(ctx, room.ID); err != nil {
+			return nil, err.Error()
+		}
+	}
+	name := store.AgentWorktreeName(room.ID, *slug)
+	unlock := func() {}
+	if !held {
+		unlock = s.lockAgentWorktree(name)
+	}
+	// A worktree that was already there (a retry, one made before) is not ours to take away if the request fails.
+	before, inspectErr := s.machineWorktree(ctx, machine, root, name, baseRef, "inspect", false)
+	fresh := inspectErr == nil && before.State != "ready"
+	result, err := s.machineWorktree(ctx, machine, root, name, baseRef, "ensure", false)
+	if err != nil {
+		unlock()
+		return nil, err.Error()
+	}
+	if held {
+		unlock = nil
+	}
+	return &store.AgentWorktree{Unlock: unlock, Fresh: fresh, ProjectID: room.ProjectID, RoomID: room.ID, MachineID: machine.ID, Name: name, Branch: "aimebu/" + name, Path: result.Path, BaseRef: result.BaseRef, BaseCommit: result.BaseCommit, DirtyBase: result.DirtyBase}, ""
+}
+
+// reactivateInOwnWorktree makes the worktree for an agent that cannot start in its folder because another writer holds it. It returns nil
+// after answering the request itself when it cannot: with the refusal (and why there is no worktree), or with the error that stopped it.
+func (s *Server) reactivateInOwnWorktree(w http.ResponseWriter, r *http.Request, id string, occupied error) (*store.AgentWorktree, error) {
+	card, err := s.Store.AgentCardByID(r.Context(), id)
+	if err != nil {
+		fail(w, err)
+		return nil, err
+	}
+	room, err := s.Store.RoomByID(r.Context(), card.RoomID)
+	if err != nil {
+		fail(w, err)
+		return nil, err
+	}
+	machine, err := s.Store.MachineByID(r.Context(), card.MachineID)
+	if err != nil {
+		fail(w, err)
+		return nil, err
+	}
+	slug := card.Slug
+	own, reason := s.agentWorktreeFor(r.Context(), room, machine, &slug, "")
+	if own == nil {
+		writerOccupied(w, occupied, "checkout already has a writer", reason)
+		return nil, occupied
+	}
+	own.AgentID = id
+	return own, nil
+}
+
+var errSessionCopyUnsupported = errors.New("this machine's supervisor predates copying a Claude Code session; update it")
+
+// copyClaudeSession has the machine put a copy of a Claude Code session under the project directory Claude uses for toCWD, so that
+// the session, forked there, is found from the worktree.
+func (s *Server) copyClaudeSession(ctx context.Context, conn *machineConn, launcherID, sessionID, toCWD string) error {
+	if !conn.supportsSessionCopy {
+		return errSessionCopyUnsupported
+	}
+	_, err := s.requestSessionScan(ctx, conn, protocol.Frame{LauncherID: launcherID, ScanSessionID: sessionID, CopyTo: toCWD}, sessionScanTimeout)
+	return err
+}
+
+// ownWorktreeUsable checks a worktree made for an agent against the agent's launcher before the agent is moved to it, as a start in any
+// other folder is checked, so a launcher whose roots exclude the worktree is refused here and not at start.
+func (s *Server) ownWorktreeUsable(ctx context.Context, agentID string, own *store.AgentWorktree) error {
+	card, err := s.Store.AgentCardByID(ctx, agentID)
+	if err != nil {
+		return err
+	}
+	machine, err := s.Store.MachineByID(ctx, own.MachineID)
+	if err != nil {
+		return err
+	}
+	return s.validateLauncherCheckout(ctx, machine, card.LauncherID, own.Path)
+}
+
+// discardAgentWorktree takes away a worktree that was made for a request which then failed, so it does not stay on disk with no agent and no
+// record. Only one this request made is removed (a clean, new one: nothing is lost); the branch stays, and a later request reuses it.
+func (s *Server) discardAgentWorktree(ctx context.Context, own *store.AgentWorktree) {
+	if own == nil || !own.Fresh {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	projectID := own.ProjectID
+	if projectID == "" {
+		room, err := s.Store.RoomByID(ctx, own.RoomID)
+		if err != nil {
+			return
+		}
+		projectID = room.ProjectID
+	}
+	machine, err := s.Store.MachineByID(ctx, own.MachineID)
+	if err != nil {
+		return
+	}
+	root, err := s.selectedMachinePath(ctx, projectID, machine)
+	if err != nil {
+		return
+	}
+	// The branch is kept, as for every removal, and so is the copy of a Claude Code session made for a request that then failed: a failed
+	// new-room copy can leave an unused branch and a session copy behind. Both are small, and nothing here may delete work.
+	if _, err := s.machineWorktree(ctx, machine, root, own.Name, "", "remove", true); err != nil {
+		log.Printf("agent worktree %s: could not remove it after a failed request: %v", own.Name, err)
+	}
+}
+
+// agentWorktreeRemove (DELETE /api/agents/{id}/worktree) removes the worktree a second writer worked in, by the same rules as a room's: a clean,
+// merged one is removed, one with uncommitted or unmerged work is kept (state "preserved", with why) unless force is sent with the confirmation
+// "REMOVE <name>", and one an agent still uses is refused. The branch is kept either way, and a removed one sends its agent back to the room's checkout.
+func (s *Server) agentWorktreeRemove(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	own, found, err := s.Store.AgentWorktreeOf(r.Context(), id)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if !found {
+		apiError(w, 404, "not_found", "this agent has no worktree of its own")
+		return
+	}
+	room, err := s.Store.RoomByID(r.Context(), own.RoomID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if !s.projectOperator(w, r, room.ProjectID) {
+		return
+	}
+	var req struct {
+		Confirm string `json:"confirm"`
+		Force   bool   `json:"force"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.Force && req.Confirm != "REMOVE "+own.Name {
+		apiError(w, 400, "confirmation_required", "confirm with REMOVE followed by the worktree's name, "+own.Name)
+		return
+	}
+	// The same lock a start holds from making the worktree through recording it: a removal cannot take the folder from an agent that is starting.
+	defer s.lockAgentWorktree(own.Name)()
+	if own, found, err = s.Store.AgentWorktreeOf(r.Context(), id); err != nil {
+		fail(w, err)
+		return
+	} else if !found {
+		apiError(w, 404, "not_found", "this agent has no worktree of its own")
+		return
+	}
+	if own.State == "removed" {
+		writeJSON(w, 200, own)
+		return
+	}
+	inUse, err := s.Store.RoomWorktreeInUse(r.Context(), own.MachineID, own.Path)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if inUse {
+		apiError(w, 409, "worktree_in_use", "an active agent still uses this worktree: stop it first")
+		return
+	}
+	machine, err := s.Store.MachineByID(r.Context(), own.MachineID)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	root, err := s.selectedMachinePath(r.Context(), room.ProjectID, machine)
+	if err != nil {
+		worktreeError(w, err)
+		return
+	}
+	result, err := s.machineWorktree(r.Context(), machine, root, own.Name, own.BaseRef, "remove", req.Force)
+	if err != nil {
+		worktreeError(w, err)
+		return
+	}
+	if result.State == "removed" {
+		// The agent goes back to its room's checkout, so no way of starting it ever goes to the folder that is gone.
+		roomPath, pathErr := s.existingCheckoutPath(r.Context(), room, machine)
+		if pathErr == nil {
+			pathErr = s.Store.DetachAgentWorktree(r.Context(), id, own.MachineID, roomPath)
+		}
+		if errors.Is(pathErr, store.ErrConflict) {
+			apiError(w, 409, "worktree_in_use", "the agent was started while its worktree was being removed; stop it first")
+			return
+		}
+		if pathErr != nil {
+			fail(w, pathErr)
+			return
+		}
+	} else if err := s.Store.SetAgentWorktreeState(r.Context(), id, result.State); err != nil {
+		fail(w, err)
+		return
+	}
+	own.State = result.State
+	writeJSON(w, 200, map[string]any{"agent_id": id, "name": own.Name, "path": own.Path, "branch": own.Branch, "state": result.State, "reason": result.Reason})
 }

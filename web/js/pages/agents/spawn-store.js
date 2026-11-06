@@ -1,9 +1,11 @@
 import { batch, computed, signal } from '../../ui.js';
 import { request } from '../../api.js';
 import { ClaudeSessionPicker } from '../../claude-sessions.js';
-import { chooseModel, hintParts, modelChangeWarning, NEW_ROOM, resumeBanner, resumeToolChoice, sessionEntryState, spawnReason, spawnRequest, startRoomChoices, toolKey, worktreeOption } from '../../spawn-model.js';
+import { chooseModel, hintParts, modelChangeWarning, NEW_ROOM, resumeBanner, resumeToolChoice, sessionEntryState, spawnReason, spawnRequest, startRoomChoices, toolKey, worktreeOption, writerHolder, writerHolderText } from '../../spawn-model.js';
 import { relativeTime } from '../../time.js';
 import { MachineStore } from './machine-store.js';
+
+const HOLDER_STOP_WAIT_MS = 20000, HOLDER_STOP_POLL_MS = 1000;
 
 // The Spawn dialog: one opening at a time. Each opening, catalog read, name read and spawn carries a number and says nothing once a newer
 // one started or the dialog is gone, so an answer meant for an earlier opening fills nothing.
@@ -25,6 +27,9 @@ export class SpawnStore {
     this.roles = signal([]);
     this.role = signal('');
     this.leadHint = signal(false);
+    this.writerRoles = signal(new Set());
+    // The folder a continued session was made in has a writer: what was refused, who holds it, and what was sent, for the three ways on.
+    this.occupied = signal(null);
     this.rolesReady = signal(false);
     this.name = signal('');
     this.nameError = signal('');
@@ -46,6 +51,12 @@ export class SpawnStore {
     this.banner = computed(() => {
       const resume = this.resume.value, option = this.models.value.find(model => model.value === this.model.value);
       return resumeBanner({ resume, mode: this.mode.value, hasRoom: !!this.target.value, toolNote: this.toolNote.value, warning: resume ? modelChangeWarning(resume.model, option) : '', relative: relativeTime });
+    });
+    // A writer role finds the folder's writer slot taken by another agent: the dialog says so, and that the new one starts in a worktree of its own.
+    this.writerBlock = computed(() => {
+      const writerRoles = this.writerRoles.value, agents = [...(this.host.store?.agents.value?.values() || [])];
+      const holder = writerHolder({ writer: !this.resume.value && writerRoles.has(this.role.value), agents, writerRoles, machineID: this.machine.id.value, worktree: this.worktree.value });
+      return holder ? writerHolderText(holder) : '';
     });
     this.submitDisabled = computed(() => !this.rolesReady.value || (!!this.resume.value && !this.target.value) || (!this.resume.value?.resumable && !this.machine.ready) || !this.tool.value?.available || !this.models.value.length);
   }
@@ -117,6 +128,7 @@ export class SpawnStore {
       const roles = leadOnly ? allRoles.filter(role => role.cap_is_lead) : allRoles;
       batch(() => {
         this.leadHint.value = !!leadOnly;
+        this.writerRoles.value = new Set(allRoles.filter(role => role.cap_singleton_writer).map(role => role.role_key));
         this.roles.value = roles.map(role => ({ value: role.role_key, label: `${role.emoji || ''} ${role.label}`.trim() }));
         this.role.value = resume?.role_key && roles.some(role => role.role_key === resume.role_key) ? resume.role_key : roles.some(role => role.role_key === 'worker') ? 'worker' : roles[0]?.role_key || '';
         this.rolesReady.value = true;
@@ -256,13 +268,13 @@ export class SpawnStore {
   }
 
   // The form is read as it stands when it is sent: a field set without an input event still counts.
-  async submit(fields) {
+  async submit(fields, { workOnCopy = false } = {}) {
     const target = this.target.peek();
     if (!this.room || !target) return;
-    this.host.setError('');
+    this.host.setError(''); this.occupied.value = null;
     this.name.value = fields.name; this.baseRef.value = fields.baseRef;
     const resume = this.resume.peek(), mode = fields.mode;
-    const request_ = spawnRequest({ role: this.role.peek(), tool: this.tool.peek(), model: this.model.peek(), typed: fields.name, machineID: this.machine.id.peek(), resume, mode, confirmed: fields.confirmed, worktree: this.worktree.peek(), baseRef: fields.baseRef, target, newRoom: this.startRoom.peek() === NEW_ROOM });
+    const request_ = spawnRequest({ role: this.role.peek(), tool: this.tool.peek(), model: this.model.peek(), typed: fields.name, machineID: this.machine.id.peek(), resume, mode, confirmed: fields.confirmed, worktree: this.worktree.peek(), baseRef: fields.baseRef, target, newRoom: this.startRoom.peek() === NEW_ROOM , workOnCopy });
     if (request_.skip) return;
     if (request_.nameError) { this.nameError.value = request_.nameError; this.host.focusName(); return; }
     if (request_.error) { this.host.setError(request_.error); return; }
@@ -281,17 +293,49 @@ export class SpawnStore {
       if (stale()) return;
       // A refused name is answered under its field and the dialog stays open, with everything else as it was, so another name can be tried.
       if (error.code === 'name_in_use' || error.code === 'invalid_name') { this.nameError.value = error.message; this.host.focusName(); return; }
+      // A folder another agent writes in (a session continued there, or a new agent that could not be given a worktree of its own): the dialog stays
+      // open and offers the ways on instead of closing on an error. A copy is only offered for a session; a new agent already gets a worktree of its own
+      // whenever one can be made, and the refusal says why it could not.
+      if (error.code === 'writer_occupied') { this.occupied.value = { message: error.message, holderId: error.body?.writer_agent_id || '', holder: error.body?.writer_slug || '', canCopy: !!resume?.resumable, fields }; return; }
       this.host.setError(error.message); this.dialog.close();
     }
   }
 
-  resetForm() { batch(() => { this.name.value = ''; this.worktree.value = false; this.baseRef.value = ''; this.mode.value = 'continue'; this.confirmed.value = false; }); }
+  // The ways on from a folder that has a writer (three for a session, two for a new agent). Each sends the request again.
+  async startAsNonWriter() {
+    const held = this.occupied.peek(), writers = this.writerRoles.peek(), other = this.roles.peek().find(role => !writers.has(role.value));
+    if (!held || !other) return;
+    this.role.value = other.value; await this.submit(held.fields);
+  }
+  async stopHolderAndStart() {
+    let held = this.occupied.peek();
+    if (!held?.holderId) return;
+    // The dialog can be closed and opened again for another room while the stop or the waits are out: what follows then is not this opening's.
+    const opening = this.opening, generation = this.host.generation, stale = () => !this.alive || !this.dialog.open || opening !== this.opening || generation !== this.host.generation;
+    try { await this.host.source.control(held.holderId, 'stop'); } catch (error) { if (!stale()) this.host.setError(error.message); return; }
+    // A holder in the middle of a turn keeps its folder until the turn ends: the stop only marks the slot as releasing, so the first request can
+    // meet it again. Ask again every second for a while, then say it is still stopping.
+    const deadline = Date.now() + HOLDER_STOP_WAIT_MS;
+    for (;;) {
+      if (stale()) return;
+      await this.submit(held.fields);
+      if (stale()) return;
+      const next = this.occupied.peek();
+      if (!next?.holderId || next.holderId !== held.holderId) return; // it started, failed another way, or the dialog went on without it
+      if (Date.now() >= deadline) { this.occupied.value = { ...next, message: `${next.holder} is still finishing its turn and holds the folder. Try again in a moment.` }; return; }
+      held = next;
+      await new Promise(resolve => setTimeout(resolve, HOLDER_STOP_POLL_MS));
+    }
+  }
+  async startOnCopy() { const held = this.occupied.peek(); if (held) await this.submit(held.fields, { workOnCopy: true }); }
+
+  resetForm() { batch(() => { this.name.value = ''; this.worktree.value = false; this.baseRef.value = ''; this.mode.value = 'continue'; this.confirmed.value = false; this.occupied.value = null; }); }
 
   // Closing the dialog drops what a start from v1 history had set up.
   // The browser queues the close event after close(): one that arrives once the dialog was opened again belongs to the opening before.
   closed() {
     if (this.dialog.open) return;
-    batch(() => { this.resume.value = null; this.mode.value = 'continue'; this.confirmed.value = false; this.notesOverride.value = ''; });
+    batch(() => { this.resume.value = null; this.mode.value = 'continue'; this.confirmed.value = false; this.notesOverride.value = ''; this.occupied.value = null; });
     this.renderStartRooms();
   }
 

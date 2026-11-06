@@ -137,6 +137,28 @@ for a caller that cannot ask (an API client, the bulk import). The web Spawn
 dialog always sends its choice, and offers `continue` first. An unknown value is
 400 `invalid_request`, and so is a `resume_mode` without `resume_session`.
 
+`work_on_copy: true` (with `resume_session` or `resume_legacy`, and `resume_mode`
+`fork`, which it implies) starts the session as a copy **in a worktree of its own**
+instead of in the folder it was made in, which another writer may hold: the server
+makes the agent's worktree (`<project>/.aimebu/worktrees/<room-id>-<name>`, see
+[cleanup](cleanup.md); the room is the one the agent starts in, the new room with
+`new_room`), has the machine copy the session (the transcript and the
+session's own directory) under the Claude project directory of that folder, and
+the first turn forks the copy there. The original and its folder are untouched, and a
+copy made before is reused. A request that fails after that takes the worktree away
+again but keeps its branch, as every removal does, and leaves the copy of the session:
+a failed copy into a new room can leave an unused branch and a session copy behind, both
+small, and nothing here deletes work. A project with worktrees off, or a folder that is not a
+Git root, answers 409 `worktree_unavailable` with the reason; a session (or the v1 agent's
+session, with `resume_legacy`) made outside the project's folder answers 409
+`session_outside_folder` (a copy would put its transcript into the project, and
+unlike continuing it where it is, a copy has no owner approval to wait for); a supervisor without
+`supports_session_copy` answers 409 `supervisor_update_needed` (it would ignore the
+request and answer as a plain lookup, so the server never asks it). Without
+`work_on_copy`, a session whose folder another agent writes in is refused with
+`writer_occupied`, which the Spawn dialog turns into three choices: start as a role
+that does not write, stop the writer, or work on a copy.
+
 Refusals that protect the transcript (they apply to `continue`; a copy leaves the
 original as it is, so none of them stands in its way):
 

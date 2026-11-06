@@ -111,6 +111,20 @@ async function main() {
     await page.close();
   }
 
+  // A stopped writer whose folder another agent holds: with worktrees off Reactivate is disabled and its hint and the card's note name the holder;
+  // with them on it can be reactivated and says it starts in a worktree of its own.
+  {
+    const page = await mount();
+    const holder = { agent_id: 'a1', slug: 'ada', holder: 'ada@test', path: '/work/test' };
+    await show(page, 'r1', [agent('a2', 'bert', { desired: 'stopped', observed: 'stopped', writer_blocked_by: holder }), agent('a3', 'cleo', { desired: 'stopped', observed: 'stopped', writer_blocked_by: { ...holder, own_worktree: true } })]);
+    const read = id => page.$eval(`[data-agent-id=${id}]`, node => ({ off: node.querySelector('.agent-reactivate').disabled, title: node.querySelector('.agent-reactivate').title, activity: node.querySelector('.agent-activity').textContent }));
+    const why = 'ada@test is the writer of /work/test and worktrees are off for this project — stop it, or give this agent a non-writer role';
+    assert.deepEqual(await read('a2'), { off: true, title: `Reactivate is unavailable: ${why}`, activity: `Cannot start: ${why}.` });
+    const free = await read('a3');
+    assert.deepEqual([free.off, free.title.includes('ada@test is the writer of /work/test, so it starts in a worktree of its own')], [false, true]);
+    await page.close();
+  }
+
   // An idle agent that will not start does not look idle: one that needs a decision and one the limit guard holds show an orange dot, a state
   // that says which, and the reason on the card; an ordinary idle agent stays green.
   {

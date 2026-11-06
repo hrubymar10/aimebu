@@ -190,7 +190,7 @@ func (tx *Tx) SetAgentRoleAsTool(agentID, actorID, roleKey string, rev int64) (A
 		}
 		if newWriter {
 			if state != "none" {
-				return AgentCard{}, ErrWriterOccupied
+				return AgentCard{}, tx.writerOccupied(checkoutID)
 			}
 			if _, err := tx.Exec(`UPDATE checkout SET writer_state='reserved',writer_agent_id=? WHERE id=?`, agentID, checkoutID); err != nil {
 				return AgentCard{}, err

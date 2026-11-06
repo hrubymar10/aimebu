@@ -73,3 +73,7 @@ func (g *idGenerator) next(now func() time.Time) (string, error) {
 	}
 	return string(encoded[:]), nil
 }
+
+// NewRoomID makes the ID a room is created with when it must be known before the room exists: a worktree made for an agent that starts in a
+// new room is named after that room.
+func NewRoomID() (string, error) { return newID("room") }

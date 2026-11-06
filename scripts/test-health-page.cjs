@@ -183,6 +183,20 @@ async function main() {
           foot: '5.00 GB free of 100 GB. No cleanup has removed anything yet.', label: 'Disk usage', settings: [true, '4', '90'] });
       await page.close();
     }
+    // A second writer's worktree is listed under its agent and has a Remove button (off while an agent still works in it); a room's own has none.
+    {
+      const trees = [{ room: 'task', room_id: 'r9', state: 'ready', bytes: 10, path: '/tmp/w/task' },
+        { room: 'task · ada', agent: 'ada', agent_id: 'a1', room_id: 'r9', state: 'ready', bytes: 20, path: '/tmp/w/task-ada' },
+        { room: 'task · bert', agent: 'bert', agent_id: 'a2', room_id: 'r9', state: 'active', bytes: 30, path: '/tmp/w/task-bert' }];
+      const page = await mount({ auto: answerAll({ 'GET /api/disk': disk({ worktrees: trees }) }) });
+      await page.evaluate(() => window.__refreshed);
+      await page.waitForFunction(() => document.querySelector('#health-popover .health-item') || true);
+      await open(page);
+      await page.waitForFunction(() => !document.querySelector('#health-disk').hidden);
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.health-disk-worktrees li')].map(li => { const button = li.querySelector('.health-worktree-remove'); return [li.querySelector('span').textContent, button ? button.disabled : null]; })),
+        [['task', null], ['task · ada', false], ['task · bert', true]]);
+      await page.close();
+    }
     // The disk reads race: the newer answer is drawn even when the older arrives last.
     {
       const page = await mount({ auto: { 'GET /api/health': { agents: [] }, 'GET /api/limit-guard': guard('ok') } });

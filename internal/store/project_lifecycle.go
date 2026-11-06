@@ -258,7 +258,8 @@ func (s *Store) DeleteProject(ctx context.Context, id, name, actor string) error
 				WHERE a.project_id=? AND a.revoked_at IS NULL AND (m.revoked_at IS NULL) AND
 				(a.desired<>'stopped' OR a.observed<>'stopped'))
 			+ (SELECT COUNT(*) FROM room_worktree w JOIN room r ON r.id=w.room_id WHERE r.project_id=? AND w.state<>'removed')
-			+ (SELECT COUNT(*) FROM room_worktree_instance i JOIN room r ON r.id=i.room_id WHERE r.project_id=? AND i.state IN ('ready','preserved'))`, id, id, id).Scan(&busy); err != nil {
+			+ (SELECT COUNT(*) FROM room_worktree_instance i JOIN room r ON r.id=i.room_id WHERE r.project_id=? AND i.state IN ('ready','preserved'))
+			+ (SELECT COUNT(*) FROM agent_worktree g JOIN room r ON r.id=g.room_id WHERE r.project_id=? AND g.state IN ('ready','preserved'))`, id, id, id, id).Scan(&busy); err != nil {
 			return err
 		}
 		if busy > 0 {

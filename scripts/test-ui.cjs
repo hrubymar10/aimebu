@@ -9576,6 +9576,23 @@ print(con.execute("SELECT no FROM message WHERE id='msg_large_00000'").fetchone(
       await domClick(first, '#spawn-cancel');
 
     }
+    // Two workers in one task room both start: the second is not refused, it works in a worktree of its own, a folder other than the first's.
+    {
+      const two = await first.evaluate(async (projectID, firstID, room0) => {
+        const { csrf_token } = await (await fetch('/api/me')).json();
+        const call = async (path, method, body, extra = {}) => { const response = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf_token, ...extra }, body: body ? JSON.stringify(body) : undefined }); const data = await response.json(); if (!response.ok) throw new Error(`${path}: ${response.status} ${JSON.stringify(data)}`); return data; };
+        const base = (await call(`/api/rooms/${room0}/agents`, 'GET')).find(card => card.id === firstID);
+        const home = (await call(`/api/projects/${projectID}/rooms`, 'GET')).find(room => room.kind === 'home');
+        const room = await call(`/api/projects/${projectID}/rooms`, 'POST', { kind: 'task', title: 'Two workers', parent_id: home.id });
+        const spawn = key => call(`/api/rooms/${room.id}/agents`, 'POST', { role_key: base.role_key, tool: base.tool, variant: base.variant, model: base.model, ...(base.launcher_id ? { launcher_id: base.launcher_id } : {}), machine_id: base.machine_id }, { 'Idempotency-Key': `ui-${key}-${Date.now()}` });
+        const one = await spawn('one'), other = await spawn('two');
+        const profile = id => call(`/api/rooms/${room.id}/agents/${id}/profile`, 'GET');
+        return { first: await profile(one.id), second: await profile(other.id), role: base.role_key };
+      }, actualProjectID, realAgentID, roomID);
+      assert.ok(two.first.cwd && two.second.cwd && two.first.cwd !== two.second.cwd, `two workers in one room work in different folders: ${JSON.stringify(two)}`);
+      assert.equal(two.second.worktree, true, 'the second worker works in a worktree');
+      assert.match(two.second.cwd, /\.aimebu\/worktrees\/room_[^/]+-[a-z]/, 'named after its room and the agent');
+    }
     console.log('UI smoke passed: login, rooms, chat, threads, reactions, stable DOM, Markdown/XSS, inbox recovery, mock controls, scope controls, usage limits, real fake-agent spawn/echo/control');
   } finally {
     browserClosing = true;

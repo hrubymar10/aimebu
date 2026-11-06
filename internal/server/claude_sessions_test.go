@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +24,10 @@ type fakeSupervisor struct {
 	mu       sync.Mutex
 	sessions []protocol.SessionCandidate
 	scans    []protocol.Frame
+	// copies are the folders a session was asked to be copied to (CopyTo).
+	copies []string
+	// copyError, when set, answers a copy with that failure.
+	copyError string
 	// unreadable and truncated are what a scan of folders reports besides the sessions.
 	unreadable int
 	truncated  bool
@@ -37,7 +42,7 @@ func (f *fixture) connectSupervisorOn(t *testing.T, machineID string, scans bool
 	t.Helper()
 	fake := &fakeSupervisor{sessions: sessions}
 	machine := &machineConn{id: machineID, sendQueue: make(chan protocol.Frame, 32), done: make(chan struct{}), bound: map[string]int{},
-		supportsSessionScan: scans, supportsSessionFork: true, supportsLaunchPath: true, supportsPathProbe: true,
+		supportsSessionScan: scans, supportsSessionFork: true, supportsSessionCopy: true, supportsLaunchPath: true, supportsPathProbe: true,
 		capabilities: []protocol.CapabilityReport{{Tool: "claude", Environment: adapter.Environment{Variant: "native"}}, {Tool: "codex", Environment: adapter.Environment{Variant: "native"}}}}
 	f.srv.machineMu.Lock()
 	f.srv.machines[machineID] = machine
@@ -63,7 +68,12 @@ func (f *fixture) connectSupervisorOn(t *testing.T, machineID string, scans bool
 				fake.mu.Lock()
 				fake.scans = append(fake.scans, request)
 				reply := protocol.Frame{V: protocol.Version, Type: protocol.SessionScanResult, ReqID: request.ReqID}
-				if request.ScanSessionID != "" {
+				if request.CopyTo != "" {
+					fake.copies = append(fake.copies, request.CopyTo)
+					if fake.copyError != "" {
+						reply.Code, reply.Message = "copy_failed", fake.copyError
+					}
+				} else if request.ScanSessionID != "" {
 					reply.Code, reply.Message = "session_not_found", "none"
 					for _, session := range fake.sessions {
 						if session.ID == request.ScanSessionID {
@@ -652,5 +662,143 @@ func TestSameDirectoryTellsALinkFromADifferentFolder(t *testing.T) {
 		if got := sameDirectory(tc.machine, tc.cwd, tc.canonical); got != tc.want {
 			t.Errorf("%s: sameDirectory = %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+// A continued session whose folder another writer holds can be worked on as a copy in a worktree of its own: the machine copies the session
+// under that worktree's Claude project directory and the agent forks it there. It needs a supervisor that can copy and a project that allows
+// worktrees, and says which is missing.
+func TestSpawnWorksOnACopyOfASessionInAWorktreeOfItsOwn(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	initRepo(t, f.project.Folder)
+	fake := f.connectSupervisor(t, true, candidate(sessionA, f.project.Folder, "Fix the login bug"))
+	status, card := f.spawnSession(t, "copy-1", map[string]any{"resume_session": sessionA, "work_on_copy": true, "resume_mode": "fork", "new_room": true, "name": "carol"})
+	if status != 201 {
+		t.Fatalf("copy in a worktree: %d %v", status, card)
+	}
+	agentID := card["id"].(string)
+	own, found, err := f.db.AgentWorktreeOf(t.Context(), agentID)
+	// The agent starts in a room of its own: its worktree and branch are named after that room, so a later start finds the branch it kept.
+	if err != nil || !found || own.Name != card["room_id"].(string)+"-carol" || own.Branch != "aimebu/"+own.Name || own.State != "ready" {
+		t.Fatalf("worktree %+v found=%v err=%v", own, found, err)
+	}
+	if own.RoomID != card["room_id"] {
+		t.Fatalf("the worktree is recorded under the room the agent is in (%v), not the one asked (%s): %q", card["room_id"], f.room.ID, own.RoomID)
+	}
+	if !strings.HasPrefix(own.Path, filepath.Join(f.project.Folder, ".aimebu", "worktrees")+"/") {
+		t.Fatalf("worktree path %q", own.Path)
+	}
+	fake.mu.Lock()
+	copies := append([]string(nil), fake.copies...)
+	fake.mu.Unlock()
+	if len(copies) != 1 || copies[0] != own.Path {
+		t.Fatalf("the session should be copied to the worktree: %v want %q", copies, own.Path)
+	}
+	if path, err := f.db.AgentCheckoutPath(t.Context(), agentID); err != nil || path != own.Path {
+		t.Fatalf("the agent works in its worktree: %q err=%v", path, err)
+	}
+	if imported, ok, err := f.db.AgentImportedSession(t.Context(), agentID); err != nil || !ok || imported.Mode != "fork" || imported.SessionID != sessionA {
+		t.Fatalf("imported=%+v ok=%v err=%v", imported, ok, err)
+	}
+	// Refusals: not a copy of a session, continuing is not copying, a supervisor that cannot copy, and a project with worktrees off.
+	if status, body := f.spawnSession(t, "copy-plain", map[string]any{"work_on_copy": true}); status != 400 || body["error"] != "invalid_request" {
+		t.Fatalf("work_on_copy without a session: %d %v", status, body)
+	}
+	if status, body := f.spawnSession(t, "copy-continue", map[string]any{"resume_session": sessionA, "work_on_copy": true, "resume_mode": "continue"}); status != 400 || body["error"] != "invalid_request" {
+		t.Fatalf("continue and copy: %d %v", status, body)
+	}
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID].supportsSessionCopy = false
+	f.srv.machineMu.Unlock()
+	if status, body := f.spawnSession(t, "copy-old", map[string]any{"resume_session": sessionA, "work_on_copy": true, "resume_mode": "fork", "new_room": true}); status != 409 || body["error"] != "supervisor_update_needed" {
+		t.Fatalf("old supervisor: %d %v", status, body)
+	}
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID].supportsSessionCopy = true
+	f.srv.machineMu.Unlock()
+	resp := f.request(http.MethodPut, "/api/projects/"+f.project.ID+"/settings", map[string]any{"worktree_mode": "off"}, true)
+	resp.Body.Close()
+	if status, body := f.spawnSession(t, "copy-off", map[string]any{"resume_session": sessionA, "work_on_copy": true, "resume_mode": "fork", "new_room": true, "name": "dave"}); status != 409 || body["error"] != "worktree_unavailable" {
+		t.Fatalf("worktrees off: %d %v", status, body)
+	}
+}
+
+// A worktree made for a request that then fails (here the session copy) is taken away again; one that was already there is left alone.
+func TestFailedCopyRemovesTheWorktreeItMade(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	initRepo(t, f.project.Folder)
+	fake := f.connectSupervisor(t, true, candidate(sessionA, f.project.Folder, "Fix the login bug"))
+	fake.copyError = "disk full"
+	status, body := f.spawnSession(t, "copy-fail", map[string]any{"resume_session": sessionA, "work_on_copy": true, "resume_mode": "fork", "new_room": true, "name": "erin"})
+	if status != 409 || body["error"] != "session_copy_failed" {
+		t.Fatalf("failed copy: %d %v", status, body)
+	}
+	// The agent starts in a room that does not exist yet, so the worktree is named after that room; a failed request must take it away
+	// whatever its name, so each retry does not leave a folder behind (the branch is kept, as for every removal).
+	if entries := agentWorktreeFolders(t, f.project.Folder); len(entries) != 0 {
+		t.Fatalf("the worktree made for the failed request should be gone: %v", entries)
+	}
+}
+
+// A v1 agent continued as a copy is held to the same rule as a picked session: its folder must be inside the project, and nothing is made
+// when it is not.
+func TestLegacyCopyRefusesAFolderOutsideTheProject(t *testing.T) {
+	f := newLegacyFixture(t)
+	initRepo(t, f.project.Folder)
+	f.srv.machineMu.Lock()
+	f.srv.machines[f.machineID].supportsSessionFork = true
+	f.srv.machines[f.machineID].supportsSessionCopy = true
+	f.srv.machineMu.Unlock()
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects", regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(outside, "-"))
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, legacyHandle+".jsonl"), []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.exec(`UPDATE legacy_agent_session SET cwd=? WHERE agent_id='sage@old'`, outside); err != nil {
+		t.Fatal(err)
+	}
+	status, body := f.start(t, "legacy-copy-outside", map[string]any{"resume_legacy": "sage@old", "resume_mode": "fork", "work_on_copy": true, "confirm_v1_idle": true, "provider": "anthropic", "model": "haiku", "tool": "claude", "variant": "native"})
+	if status != 409 || body["error"] != "session_outside_folder" {
+		t.Fatalf("a copy of a v1 agent from outside the project: %d %v", status, body)
+	}
+	if entries := agentWorktreeFolders(t, f.project.Folder); len(entries) != 0 {
+		t.Fatalf("no worktree may be made for a refused copy: %v", entries)
+	}
+}
+
+// Copying a session puts its transcript into the project, so one made outside the project's folder is refused (continuing it where it is
+// asks the owner first; a copy cannot ask), and nothing is made for it: no worktree, no copy.
+func TestWorkOnCopyRefusesASessionFromOutsideTheProject(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed()
+	initRepo(t, f.project.Folder)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := f.connectSupervisor(t, true, candidate(sessionA, outside, "Someone else's work"))
+	status, body := f.spawnSession(t, "copy-outside", map[string]any{"resume_session": sessionA, "work_on_copy": true, "resume_mode": "fork", "new_room": true, "name": "frank"})
+	if status != 409 || body["error"] != "session_outside_folder" {
+		t.Fatalf("a copy of an outside session: %d %v", status, body)
+	}
+	fake.mu.Lock()
+	copies := len(fake.copies)
+	fake.mu.Unlock()
+	if copies != 0 {
+		t.Fatalf("nothing may be copied into the project: %d copies", copies)
+	}
+	if entries := agentWorktreeFolders(t, f.project.Folder); len(entries) != 0 {
+		t.Fatalf("no worktree may be made for a refused copy: %v", entries)
 	}
 }

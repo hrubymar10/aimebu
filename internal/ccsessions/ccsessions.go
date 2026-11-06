@@ -1,5 +1,5 @@
 // Package ccsessions finds the Claude Code sessions a machine already has, so that one of them can be continued as an aimebu agent. It reads
-// only names and a bounded head and tail of each transcript, never a whole one, and it never writes. The one exception is Attribute, which
+// only names and a bounded head and tail of each transcript, never a whole one, and it writes only in Copy. The other exception is Attribute, which
 // streams whole transcripts but keeps only ids (see attribute.go). Claude keeps a session as a JSONL
 // transcript under <config dir>/projects/<working folder, every non-alphanumeric turned into "-">/<session id>.jsonl, and registers each
 // running interactive process in <config dir>/sessions/<pid>.json.

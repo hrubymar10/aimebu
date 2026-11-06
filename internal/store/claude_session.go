@@ -124,7 +124,7 @@ func (tx *Tx) attachClaudeSession(in SpawnInput, agentID string) error {
 
 // roomForSession makes the task room a continued session gets of its own, under the project's home room, in the spawn's transaction: a spawn
 // that fails leaves no room behind.
-func (tx *Tx) roomForSession(anchorRoomID, title, actorID string) (Room, error) {
+func (tx *Tx) roomForSession(anchorRoomID, title, actorID, roomID string) (Room, error) {
 	var projectID, homeID string
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT project_id FROM room WHERE id=?`, anchorRoomID).Scan(&projectID); err != nil {
 		return Room{}, err
@@ -132,7 +132,7 @@ func (tx *Tx) roomForSession(anchorRoomID, title, actorID string) (Room, error) 
 	if err := tx.tx.QueryRowContext(tx.ctx, `SELECT id FROM room WHERE project_id=? AND kind='home'`, projectID).Scan(&homeID); err != nil {
 		return Room{}, err
 	}
-	return tx.CreateRoom(Room{ProjectID: projectID, ParentID: homeID, Kind: "task", Title: title, CreatedBy: actorID})
+	return tx.CreateRoom(Room{ID: roomID, ProjectID: projectID, ParentID: homeID, Kind: "task", Title: title, CreatedBy: actorID})
 }
 
 // AgentForkPending says the agent's next turn forks a Claude Code session: it was started as a copy and its first turn has not yet named the

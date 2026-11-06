@@ -161,6 +161,24 @@ async function main() {
     await free.close(); await page.close();
   }
 
+  // A singleton-writer role finds the room's folder held by another live agent: the dialog says so, and that the new one starts in a worktree of
+  // its own; Spawn stays available. Another role, or a Git worktree for the room, is free of it.
+  {
+    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
+    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles }), withCard: true });
+    await open(page);
+    await page.evaluate(() => window.__opening); await settle(page);
+    const hint = () => page.evaluate(() => ({ text: document.querySelector('#spawn-writer-hint').textContent, hidden: document.querySelector('#spawn-writer-hint').hidden, off: document.querySelector('#spawn-form button[type=submit]').disabled }));
+    const held = await hint();
+    assert.deepEqual([held.hidden, held.off, held.text.startsWith('ada is a writer in this room: if it holds the folder, a new writer starts in a worktree of its own')], [false, false, true], 'a writer role is told the room\'s live writer holds the folder, and can still be spawned');
+    await select(page, 'role', 'lead');
+    assert.equal((await hint()).hidden, true, 'another role is not');
+    await select(page, 'role', 'worker');
+    await page.evaluate(() => { const box = document.querySelector('#spawn-form [name=worktree]'); box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); });
+    assert.equal((await hint()).hidden, true, 'a worktree for the room is a checkout of its own');
+    await page.close();
+  }
+
   // Answers meant for an earlier opening fill nothing: the roles of a dialog that was closed and opened again, a name that arrives after the
   // person typed, and the dice that is answered after the dialog closed.
   {
@@ -257,6 +275,95 @@ async function main() {
     await open(home); await ready(home);
     assert.equal(await home.$eval('#spawn-form .spawn-worktree-option', node => node.hidden), true, 'only a task room offers it');
     await home.close(); await page.close();
+  }
+
+  // A v1 agent whose folder another agent writes in: the refusal keeps the dialog open and offers three ways on, each of which sends the request
+  // again: a copy in a worktree of its own, stopping the writer, or a role that does not write.
+  {
+    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
+    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles }) });
+    const resume = { slug: 'old-bot', legacy_id: 'old-bot', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: false, reason: '' };
+    await open(page, { resume }); await ready(page);
+    const occupied = () => page.evaluate(() => ({ hidden: document.querySelector('#spawn-occupied').hidden, text: document.querySelector('#spawn-occupied p').textContent, stop: document.querySelector('#spawn-occupied-stop').hidden, open: document.querySelector('#spawn-dialog').open }));
+    const refuse = async () => {
+      await page.$eval('#spawn-form button[type=submit]', node => node.click());
+      const sent = await waitRequest(page, 'POST', '/api/rooms/r2/agents');
+      await answer(page, sent, 409, { error: 'writer_occupied', message: 'ada@test is the writer of /work/old — stop it, or give this agent a non-writer role', writer_agent_id: 'a1', writer_slug: 'ada', path: '/work/old' });
+      await settle(page);
+      return sent;
+    };
+    await refuse();
+    assert.deepEqual(await occupied(), { hidden: false, text: 'ada@test is the writer of /work/old — stop it, or give this agent a non-writer role', stop: false, open: true });
+    assert.equal(await page.$eval('#spawn-occupied-stop', node => node.textContent), 'Stop ada and start');
+    await page.$eval('#spawn-occupied-copy', node => node.click());
+    const copy = await waitRequest(page, 'POST', '/api/rooms/r2/agents');
+    assert.deepEqual(await body(page, copy), { role_key: 'worker', tool: 'codex', variant: 'native', model: 'gpt-6-sol', launcher_id: 'l1', machine_id: 'm1', resume_legacy: 'old-bot', resume_mode: 'fork', confirm_v1_idle: false, work_on_copy: true });
+    await answer(page, copy, 200, agent('a2', 'old-bot')); await settle(page);
+    assert.equal((await occupied()).open, false, 'the dialog closes once it started');
+    await open(page, { resume }); await ready(page);
+    await refuse();
+    await page.$eval('#spawn-occupied-reader', node => node.click());
+    const reader = await waitRequest(page, 'POST', '/api/rooms/r2/agents');
+    assert.equal((await body(page, reader)).role_key, 'lead', 'the role that does not write is sent');
+    await page.close();
+  }
+
+  // A new agent (no session) whose folder another agent writes in and that cannot get a worktree of its own: the refusal names the holder inline and
+  // offers stopping it or a role that does not write, but no copy (that is for sessions), instead of closing the dialog on an error.
+  {
+    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
+    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles }) });
+    await open(page); await ready(page);
+    await page.$eval('#spawn-form button[type=submit]', node => node.click());
+    const sent = await waitRequest(page, 'POST', '/api/rooms/r1/agents');
+    await answer(page, sent, 409, { error: 'writer_occupied', message: 'ada@test is the writer of /work/old — stop it, or give this agent a non-writer role (it cannot get a worktree of its own: the project\'s worktree mode is off)', writer_agent_id: 'a1', writer_slug: 'ada', path: '/work/old' });
+    await settle(page);
+    const state = await page.evaluate(() => ({ open: document.querySelector('#spawn-dialog').open, hidden: document.querySelector('#spawn-occupied').hidden, copy: document.querySelector('#spawn-occupied-copy').hidden, stop: document.querySelector('#spawn-occupied-stop').hidden, text: document.querySelector('#spawn-occupied p').textContent }));
+    assert.equal(state.open, true, 'the dialog stays open');
+    assert.equal(state.hidden, false); assert.equal(state.copy, true, 'no copy for a new agent'); assert.equal(state.stop, false);
+    assert.match(state.text, /ada@test is the writer of \/work\/old/);
+    await page.$eval('#spawn-occupied-reader', node => node.click());
+    const reader = await waitRequest(page, 'POST', '/api/rooms/r1/agents');
+    assert.equal((await body(page, reader)).role_key, 'lead', 'the role that does not write is sent');
+    await page.close();
+  }
+
+  // "Stop and start" for a holder in the middle of a turn: the stop only marks its slot as releasing, so the first request meets the writer again.
+  // The dialog asks again until the slot is free, and when it never is, says the holder is still stopping instead of offering the same choices.
+  {
+    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
+    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles, 'POST /api/agents/a1/control': agent('a1', 'ada') }), withCard: true });
+    const resume = { slug: 'old-bot', legacy_id: 'old-bot', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: false, reason: '' };
+    await open(page, { resume }); await ready(page);
+    const occupiedAnswer = { error: 'writer_occupied', message: 'ada@test is the writer of /work/old', writer_agent_id: 'a1', writer_slug: 'ada', path: '/work/old' };
+    await page.$eval('#spawn-form button[type=submit]', node => node.click());
+    await answer(page, await waitRequest(page, 'POST', '/api/rooms/r2/agents'), 409, occupiedAnswer); await settle(page);
+    await page.$eval('#spawn-occupied-stop', node => node.click());
+    const first = await waitRequest(page, 'POST', '/api/rooms/r2/agents');
+    assert.equal(await count(page, 'POST', '/api/agents/a1/control'), 1, 'the holder is stopped first');
+    await answer(page, first, 409, occupiedAnswer);
+    const resent = await waitRequest(page, 'POST', '/api/rooms/r2/agents'); // asked again a second later: the holder's slot was still releasing
+    assert.notEqual(resent, first);
+    await answer(page, resent, 200, agent('a2', 'old-bot')); await settle(page);
+    assert.equal(await page.$eval('#spawn-dialog', node => node.open), false, 'the dialog closes once the retry started the agent');
+    await page.close();
+  }
+
+  // The waiting is the opening's: a dialog closed (and opened for another room) while the holder is still releasing sends nothing more.
+  {
+    const writerRoles = roles.map(role => role.role_key === 'worker' ? { ...role, cap_singleton_writer: true } : role);
+    const page = await mount({ auto: stable({ 'GET /api/roles': writerRoles, 'POST /api/agents/a1/control': agent('a1', 'ada') }), withCard: true });
+    const resume = { slug: 'old-bot', legacy_id: 'old-bot', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: false, reason: '' };
+    await open(page, { resume }); await ready(page);
+    const occupiedAnswer = { error: 'writer_occupied', message: 'ada@test is the writer of /work/old', writer_agent_id: 'a1', writer_slug: 'ada', path: '/work/old' };
+    await page.$eval('#spawn-form button[type=submit]', node => node.click());
+    await answer(page, await waitRequest(page, 'POST', '/api/rooms/r2/agents'), 409, occupiedAnswer); await settle(page);
+    await page.$eval('#spawn-occupied-stop', node => node.click());
+    await answer(page, await waitRequest(page, 'POST', '/api/rooms/r2/agents'), 409, occupiedAnswer); await settle(page);
+    await page.evaluate(() => document.querySelector('#spawn-cancel').click());
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1500)));
+    assert.equal(await count(page, 'POST', '/api/rooms/r2/agents'), 2, 'a closed dialog does not ask again');
+    await page.close();
   }
 
   // Starting a v1 agent: the dialog says what will happen, offers the rooms of the project, has no name field, and will not send until the

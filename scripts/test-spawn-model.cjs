@@ -9,7 +9,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'web', 'js', 'spawn-model.js'), 'utf8');
 const context = {};
 vm.createContext(context);
-vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning, NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, startRoomLabel, resumeBanner, spawnRequest, switchRows, switchStart, switchModel, switchUnchanged, switchReason };', context);
+vm.runInContext(source.replace(/^export /gm, '') + '\nglobalThis.api = { writerHolder, writerHolderText, modelFamily, modelVersion, matchModel, chooseModel, toolKey, sessionEntryState, modelChangeWarning, NEW_ROOM, toolRows, resumeToolChoice, worktreeOption, hintParts, spawnReason, validName, startRoomChoices, startRoomLabel, resumeBanner, spawnRequest, switchRows, switchStart, switchModel, switchUnchanged, switchReason };', context);
 const { modelFamily, modelVersion, matchModel, chooseModel, toolKey, modelChangeWarning } = context.api;
 const plain = value => JSON.parse(JSON.stringify(value)); // plain objects: a vm context has its own Object
 const { switchRows, switchStart, switchModel, switchUnchanged, switchReason } = context.api;
@@ -97,6 +97,10 @@ assert.match(modelChangeWarning('claude-opus-4-5', { value: 'gpt-6-sol', label: 
 assert.deepEqual(plain(toolRows([{ tool: 'codex', label: 'Codex', available: true }, { tool: 'pi', available: false }, { label: 'Vibe', available: false, unavailable_reason: 'no models; see Settings → Harnesses' }, { label: 'Dock', available: false, unavailable_reason: 'not installed' }])),
   [{ value: '0', label: 'Codex', disabled: false }, { value: '1', label: 'pi — unavailable; check Settings → Harnesses', disabled: true }, { value: '2', label: 'Vibe — no models; see Settings → Harnesses', disabled: true }, { value: '3', label: 'Dock — not installed; check Settings → Harnesses', disabled: true }]);
 
+// A session's start: a row the session cannot go through says why in its label (a container with a Claude home of its own, or another tool).
+assert.deepEqual(plain(toolRows([{ tool: 'claude', label: 'Claude Code', available: true }, { tool: 'claude', label: 'Claude Code (Docker)', available: true, containerized: true }, { tool: 'codex', label: 'Codex', available: true }], [false, true, true])),
+  [{ value: '0', label: 'Claude Code', disabled: false }, { value: '1', label: 'Claude Code (Docker) — keeps its own Claude home, so it cannot continue this session', disabled: false }, { value: '2', label: 'Codex — not the tool of this session', disabled: false }]);
+
 // A start from v1 history picks the tool that can continue it and says so when none can.
 const catalog = [{ tool: 'claude', containerized: true, available: true }, { tool: 'codex', available: true }, { tool: 'claude', available: true, launcher_id: 'l2' }];
 assert.deepEqual(plain(resumeToolChoice(catalog, { tool: 'claude', resumable: true })), { index: 2, disabled: [true, true, false], note: '' });
@@ -174,6 +178,10 @@ assert.equal(banner({ ...session, modified_at: '' }).card[2][1], 'unknown');
 const ready = { role: 'worker', tool: { available: true, tool: 'codex', variant: 'native', launcher_id: 'l1', provider: 'p' }, model: 'm', typed: ' nova ', machineID: 'mch', mode: 'continue', target: { kind: 'task' }, worktree: true, baseRef: 'main' };
 assert.deepEqual(plain(spawnRequest(ready)), { params: { role: 'worker', tool: 'codex', variant: 'native', launcher_id: 'l1', model: 'm', provider: 'p', machine_id: 'mch', name: 'nova', worktree: true, base_ref: 'main' } });
 assert.deepEqual(plain(spawnRequest({ ...ready, typed: '', target: { kind: 'home' } })).params.worktree, false);
+// Working on a copy in a worktree of its own: a fork, and the flag; it means nothing for a fresh agent.
+const sessionResume = { kind: 'claude_session', session_id: 'sid', resumable: true, tool: 'codex' };
+assert.deepEqual(plain(spawnRequest({ ...ready, resume: sessionResume, mode: 'continue', workOnCopy: true })).params, { role: 'worker', tool: 'codex', variant: 'native', launcher_id: 'l1', model: 'm', provider: 'p', machine_id: 'mch', name: 'nova', resume_session: 'sid', resume_mode: 'fork', confirm_session_closed: false, new_room: false, work_on_copy: true });
+assert.equal('work_on_copy' in plain(spawnRequest({ ...ready, workOnCopy: true })).params, false);
 assert.equal('name' in spawnRequest({ ...ready, typed: '  ' }).params, false);
 assert.deepEqual([{ ...ready, role: '' }, { ...ready, model: '' }, { ...ready, tool: { available: false } }, { ...ready, tool: null }].map(item => spawnRequest(item).skip), [true, true, true, true]);
 assert.match(spawnRequest({ ...ready, typed: 'A!' }).nameError, /^A name is 3 to 21 characters/);
@@ -212,4 +220,18 @@ assert.equal(switchReason({ tool: { available: true }, modelCount: 1, unchanged:
 assert.equal(switchReason({ tool: { available: true, toolbox: false, toolbox_reason: 'no channel' }, modelCount: 1 }), 'No agent toolbox: no channel.');
 assert.equal(switchReason({ tool: { available: true }, modelCount: 1 }), '');
 
+// A writer role is held back by another live writer of the room on the machine, unless the room gets a worktree of its own.
+const { writerHolder, writerHolderText } = context.api;
+const agents = [{ slug: 'alice', role_key: 'worker', desired: 'active', machine_id: 'm1' }, { slug: 'bob', role_key: 'reviewer', desired: 'active', machine_id: 'm1' }];
+const writerRoles = new Set(['worker']);
+const holder = extra => plain(writerHolder({ writer: true, agents, writerRoles, machineID: 'm1', worktree: false, ...extra }));
+assert.equal(holder().slug, 'alice');
+assert.equal(writerHolder({ writer: false, agents, writerRoles, machineID: 'm1', worktree: false }), null, 'a non-writer role is never held back');
+assert.equal(holder({ worktree: true }), null, 'a worktree is a checkout of its own');
+assert.equal(holder({ machineID: 'm2' }), null, 'another machine is another checkout');
+assert.equal(holder({ agents: [{ ...agents[0], machine_id: '' }] }), null, 'an agent whose machine is unknown is not counted');
+assert.equal(holder({ machineID: '' }), null, 'nor is anyone before a machine is chosen');
+assert.equal(holder({ agents: [{ ...agents[0], desired: 'stopped' }] }), null, 'a stopped writer holds nothing');
+assert.equal(holder({ agents: [agents[1]] }), null, 'a reviewer is not a writer');
+assert.match(writerHolderText(agents[0]), /^alice is a writer in this room: if it holds the folder, a new writer starts in a worktree of its own/);
 console.log('spawn model tests passed');

@@ -408,7 +408,7 @@ func (tx *Tx) moveSwitchCheckout(agentID, projectID, machineID, path string) err
 		return ErrScopeMismatch
 	}
 	if writer && state != "none" {
-		return ErrWriterOccupied
+		return tx.writerOccupied(targetID)
 	}
 	if writer {
 		if _, err := tx.Exec(`UPDATE checkout SET writer_agent_id=NULL,writer_state='none' WHERE id=? AND writer_agent_id=?`, oldCheckout, agentID); err != nil {

@@ -1544,6 +1544,25 @@ CREATE TABLE harness_provider (
   position INTEGER NOT NULL,
   PRIMARY KEY (launcher_id, id)
 );
+`}, {92, `
+-- A second writer in a room gets a Git worktree of its own instead of a refusal: one row per agent that works in one. name is the directory
+-- and branch suffix under .aimebu/worktrees (<room-id>-<slug>), canonical_path where it is on the machine. The agent's checkout points at
+-- that path, so the checkout's writer slot is the agent's own. Cleanup lists these; DELETE /api/agents/{id}/worktree removes one.
+CREATE TABLE agent_worktree (
+  agent_id TEXT PRIMARY KEY REFERENCES agent(id),
+  room_id TEXT NOT NULL REFERENCES room(id),
+  machine_id TEXT NOT NULL REFERENCES machine(id),
+  name TEXT NOT NULL,
+  branch_name TEXT NOT NULL,
+  canonical_path TEXT NOT NULL,
+  base_ref TEXT NOT NULL DEFAULT '',
+  base_commit TEXT NOT NULL DEFAULT '',
+  dirty_base_count INTEGER NOT NULL DEFAULT 0,
+  state TEXT NOT NULL DEFAULT 'ready' CHECK (state IN ('ready','preserved','removed')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX agent_worktree_path ON agent_worktree(machine_id, canonical_path);
 `}}
 
 // Migration 2 normalizes timestamps written with RFC3339Nano in migration 1.

@@ -37,6 +37,11 @@ export function stateOf(agent) {
     return { name: 'needs decision', kind: 'attention', title: agent.last_exit_evidence ? `${why}\n${agent.last_exit_evidence}` : why, since, observed, why };
   }
   if (free && agent.hold) return { name: `held: ${agent.hold.text}`, kind: 'attention', title: agent.hold.detail, since, observed, why: agent.hold.detail };
+  if (agent.writer_blocked_by && agent.desired !== 'active') {
+    if (agent.writer_blocked_by.own_worktree) return { name, kind, title: `${title}\nReactivating: ${writerBlockText(agent.writer_blocked_by)}.`, since, observed };
+    const why = `Cannot start: ${writerBlockText(agent.writer_blocked_by)}.`;
+    return { name, kind, title: `${title}\n${why}`, since, observed, why };
+  }
   return { name, kind, title, since, observed };
 }
 
@@ -74,6 +79,11 @@ export function liveOf(agent) {
   return { at: agent.observed === 'in_turn' ? (agent.activity_at || agent.last_activity_at || '') : '', label: /^tool\b/i.test(agent.activity || '') ? 'tool' : 'working' };
 }
 
+// A singleton writer whose folder another agent holds: with worktrees on it starts in a worktree of its own, with them off it cannot start.
+export const writerBlockText = block => block.own_worktree
+  ? `${block.holder || block.slug} is the writer of ${block.path}, so it starts in a worktree of its own`
+  : `${block.holder || block.slug} is the writer of ${block.path} and worktrees are off for this project — stop it, or give this agent a non-writer role`;
+
 // Every action says what it does; a disabled one says why. `down` is the reason when the controls are unavailable altogether.
 export function actionsOf(agent, { down = '', lifecycle = 'open' } = {}) {
   const quotaFlag = (agent.health_flags || []).some(flag => flag.code === 'out_of_quota');
@@ -83,8 +93,9 @@ export function actionsOf(agent, { down = '', lifecycle = 'open' } = {}) {
     'act-pause': ['Pause: finish the current turn, then accept no new work', down || (agent.desired === 'not_accepting' ? 'it is already paused' : agent.desired === 'stopped' ? 'it is stopped; reactivate it first' : '')],
     'act-stop': ['Stop: interrupt the current turn and accept no new work', down || (agent.desired === 'stopped' ? 'it is already stopped' : '')],
     switch: ['Switch: change this agent\'s tool, model or machine', down || (lifecycle && lifecycle !== 'open' ? 'reopen the room first' : agent.recovery_block ? 'resolve the recovery item first' : agent.desired === 'stopped' ? 'reactivate it first' : agent.boundary_pending ? 'it is waiting for folder or machine approval' : handoff && handoff.state !== 'failed' ? 'a switch is already in progress' : '')],
-    reactivate: ['Reactivate: accept new work again', down || (agent.boundary_pending ? 'it is waiting for folder or machine approval' : agent.role_deleted ? 'its role was deleted' : agent.desired === 'active' && !quotaFlag ? 'it is already active' : '')],
+    reactivate: ['Reactivate: accept new work again', down || (agent.boundary_pending ? 'it is waiting for folder or machine approval' : agent.role_deleted ? 'its role was deleted' : agent.writer_blocked_by && !agent.writer_blocked_by.own_worktree && agent.desired !== 'active' ? writerBlockText(agent.writer_blocked_by) : agent.desired === 'active' && !quotaFlag ? 'it is already active' : '')],
   };
+  if (agent.writer_blocked_by?.own_worktree && agent.desired !== 'active' && !reasons.reactivate[1]) reasons.reactivate[0] += `; ${writerBlockText(agent.writer_blocked_by)}`;
   const labels = { message: 'Message', 'act-pause': 'Pause', 'act-stop': 'Stop', reactivate: 'Reactivate', switch: 'Switch' };
   return Object.entries(reasons).map(([name, [what, why]]) => ({ name, label: labels[name], title: why ? `${labels[name]} is unavailable: ${why}` : what, disabled: !!why, hint: why ? `${labels[name]} is unavailable: ${why}.` : '' }));
 }

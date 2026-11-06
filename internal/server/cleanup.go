@@ -81,7 +81,7 @@ func (s *Server) inspectWorktrees(ctx context.Context) ([]worktreeFacts, error) 
 			out = append(out, facts)
 			continue
 		}
-		result, err := s.machineWorktree(ctx, machine, root, item.RoomID, item.BaseRef, "inspect", false)
+		result, err := s.machineWorktree(ctx, machine, root, item.Name, item.BaseRef, "inspect", false)
 		if err != nil {
 			facts.Error = err.Error()
 			out = append(out, facts)
@@ -337,6 +337,8 @@ type diskProject struct {
 type diskWorktree struct {
 	RoomID       string `json:"room_id"`
 	Room         string `json:"room"`
+	Agent        string `json:"agent,omitempty"`
+	AgentID      string `json:"agent_id,omitempty"`
 	ProjectID    string `json:"project_id"`
 	Path         string `json:"path"`
 	Bytes        int64  `json:"bytes"`
@@ -491,7 +493,10 @@ func (s *Server) buildDiskReport(ctx context.Context) (*diskReport, error) {
 	}
 	orphanAfter := time.Duration(settings.OrphanDays) * 24 * time.Hour
 	for _, f := range facts {
-		item := diskWorktree{RoomID: f.RoomID, Room: f.RoomTitle, ProjectID: f.ProjectID, Path: f.Path, Bytes: f.SizeBytes, Error: f.Error}
+		item := diskWorktree{RoomID: f.RoomID, Room: f.RoomTitle, Agent: f.AgentSlug, AgentID: f.AgentID, ProjectID: f.ProjectID, Path: f.Path, Bytes: f.SizeBytes, Error: f.Error}
+		if f.AgentSlug != "" {
+			item.Room = f.RoomTitle + " · " + f.AgentSlug // a second writer's worktree is named after the agent as well as its room
+		}
 		if f.Error == "" {
 			item.State, item.DirtyFiles = worktreeState(f, orphanAfter, now), f.DirtyFiles
 			if !f.LastActivity.IsZero() {

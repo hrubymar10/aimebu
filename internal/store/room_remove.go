@@ -50,6 +50,15 @@ func (s *Store) RemoveRoom(ctx context.Context, id string) error {
 		if worktree > 0 {
 			return ErrRoomNotRemovable
 		}
+		// A second writer's worktree is on disk and may hold work: removing the room would delete its record (and so its place in Health) and
+		// leave the folder behind. It has to be removed first.
+		var agentTrees int
+		if err := tx.tx.QueryRowContext(tx.ctx, `SELECT COUNT(*) FROM agent_worktree WHERE room_id=? AND state<>'removed'`, id).Scan(&agentTrees); err != nil {
+			return err
+		}
+		if agentTrees > 0 {
+			return ErrRoomNotRemovable
+		}
 		rows, err := tx.tx.QueryContext(tx.ctx, `SELECT path FROM attachment WHERE room_id=? OR message_id IN (SELECT id FROM message WHERE room_id=?)`, id, id)
 		if err != nil {
 			return err

@@ -290,16 +290,28 @@ type RoomWorktreeInstance struct {
 	BaseCommit  string
 	DirtyBase   int
 	InUse       bool
+	// AgentSlug is set for a worktree that belongs to one agent (a second writer's) rather than to the room; Name is the directory under
+	// .aimebu/worktrees either way (the room's ID, or <room-id>-<slug>).
+	AgentSlug string
+	AgentID   string
+	Name      string
 }
 
-// ReadyWorktrees lists every worktree that exists, for rooms open or closed.
+// ReadyWorktrees lists every worktree that exists, for rooms open or closed: each room's own, and the ones second writers work in.
 func (s *Store) ReadyWorktrees(ctx context.Context) ([]RoomWorktreeInstance, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT w.room_id,r.title,r.lifecycle,r.project_id,p.name,i.machine_id,i.canonical_path,w.base_ref,i.base_commit,i.dirty_base_count,
 		EXISTS(SELECT 1 FROM agent a JOIN checkout c ON c.id=a.checkout_id WHERE a.machine_id=i.machine_id AND c.canonical_path=i.canonical_path
-			AND a.revoked_at IS NULL AND (a.desired!='stopped' OR a.observed!='stopped'))
+			AND a.revoked_at IS NULL AND (a.desired!='stopped' OR a.observed!='stopped')),'',w.room_id,''
 		FROM room_worktree w JOIN room r ON r.id=w.room_id JOIN project p ON p.id=r.project_id
 		JOIN room_worktree_instance i ON i.room_id=w.room_id
-		WHERE i.state IN ('ready','preserved') AND i.canonical_path!='' ORDER BY p.name,w.room_id,i.machine_id`)
+		WHERE i.state IN ('ready','preserved') AND i.canonical_path!=''
+		UNION ALL
+		SELECT g.room_id,r.title,r.lifecycle,r.project_id,p.name,g.machine_id,g.canonical_path,g.base_ref,g.base_commit,g.dirty_base_count,
+		EXISTS(SELECT 1 FROM agent a JOIN checkout c ON c.id=a.checkout_id WHERE a.machine_id=g.machine_id AND c.canonical_path=g.canonical_path
+			AND a.revoked_at IS NULL AND (a.desired!='stopped' OR a.observed!='stopped')),ag.slug,g.name,ag.id
+		FROM agent_worktree g JOIN agent ag ON ag.id=g.agent_id JOIN room r ON r.id=g.room_id JOIN project p ON p.id=r.project_id
+		WHERE g.state IN ('ready','preserved') AND g.canonical_path!=''
+		ORDER BY 5,1,6,12`)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +319,7 @@ func (s *Store) ReadyWorktrees(ctx context.Context) ([]RoomWorktreeInstance, err
 	var out []RoomWorktreeInstance
 	for rows.Next() {
 		var item RoomWorktreeInstance
-		if err := rows.Scan(&item.RoomID, &item.RoomTitle, &item.Lifecycle, &item.ProjectID, &item.ProjectName, &item.MachineID, &item.Path, &item.BaseRef, &item.BaseCommit, &item.DirtyBase, &item.InUse); err != nil {
+		if err := rows.Scan(&item.RoomID, &item.RoomTitle, &item.Lifecycle, &item.ProjectID, &item.ProjectName, &item.MachineID, &item.Path, &item.BaseRef, &item.BaseCommit, &item.DirtyBase, &item.InUse, &item.AgentSlug, &item.Name, &item.AgentID); err != nil {
 			return nil, err
 		}
 		out = append(out, item)

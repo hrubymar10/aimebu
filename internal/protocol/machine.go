@@ -59,6 +59,9 @@ type Frame struct {
 	SupportsPathProbe   bool   `json:"supports_path_probe,omitempty"`
 	SupportsSessionScan bool   `json:"supports_session_scan,omitempty"`
 	SupportsSessionFork bool   `json:"supports_session_fork,omitempty"`
+	// SupportsSessionCopy says the supervisor copies a Claude Code session to another folder's project directory when a session_scan names
+	// ScanSessionID and CopyTo. One that does not would ignore CopyTo and answer as a plain lookup, so the server never asks it.
+	SupportsSessionCopy bool `json:"supports_session_copy,omitempty"`
 	// SupportsSessionAttribution says the supervisor answers a session scan that asks for attribution (ScanAttribution).
 	SupportsSessionAttribution bool                 `json:"supports_session_attribution,omitempty"`
 	SupportsLaunchPath         bool                 `json:"supports_launch_path,omitempty"`
@@ -137,6 +140,9 @@ type Frame struct {
 	// wherever it worked) asks a machine for its Claude Code sessions; the answer lists them in Sessions.
 	ScanFolders   []string `json:"scan_folders,omitempty"`
 	ScanSessionID string   `json:"scan_session_id,omitempty"`
+	// CopyTo, with ScanSessionID, copies that session (the transcript and its own directory) under the project directory Claude uses for this
+	// absolute folder, so a session continued as a copy can run there; the answer carries no Sessions.
+	CopyTo string `json:"copy_to,omitempty"`
 	// ScanAttribution asks, for the sessions of ScanFolders written at or after ScanSince (RFC 3339, empty for all), which agent each
 	// registered as and which message numbers it sent (only ids are returned, never text), for the sessions of ScanAgent when it is set.
 	ScanAttribution bool                 `json:"scan_attribution,omitempty"`

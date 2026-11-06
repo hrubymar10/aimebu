@@ -86,12 +86,14 @@ export const NEW_ROOM = '__new__';
 
 const HARNESSES = 'Settings → Harnesses';
 
-// One row of the tool list: the entry's index as its value, and for an unavailable one why, with where to look.
-export function toolRows(catalog) {
+// One row of the tool list: the entry's index as its value, and for an unavailable one why, with where to look. `unfit` (resumeToolChoice's
+// `disabled`) marks the rows a session cannot be continued through; such a row says why too, never a silent grey.
+export function toolRows(catalog, unfit) {
   return (catalog || []).map((tool, index) => {
     const detail = tool.unavailable_reason || 'unavailable';
     const help = detail.includes(HARNESSES) ? detail : `${detail}; check ${HARNESSES}`;
-    return { value: String(index), label: `${tool.label || tool.tool}${tool.available ? '' : ` — ${help}`}`, disabled: !tool.available };
+    const why = tool.available ? (unfit?.[index] ? (tool.containerized && !tool.shares_claude_home ? 'keeps its own Claude home, so it cannot continue this session' : 'not the tool of this session') : '') : help;
+    return { value: String(index), label: `${tool.label || tool.tool}${why ? ` — ${why}` : ''}`, disabled: !tool.available };
   });
 }
 
@@ -116,6 +118,15 @@ export function worktreeOption({ roomKind, resumable, check }) {
   const refused = check?.ok === false;
   return { hidden: roomKind !== 'task' || !!resumable, disabled: refused, refused, note: refused ? `No worktree here: ${check.reason || 'the project folder cannot have one.'}` : '' };
 }
+
+// A guess for the Spawn dialog's hint only (the server decides): a live singleton writer of this room on the chosen machine, whose folder is
+// presumably the one a new writer would share. Another folder (a resumed session, a worktree of its own) is not known here, so nothing hangs on this.
+// A Git worktree ticked for the room is a checkout of its own. Returns that agent's card, or null.
+export function writerHolder({ writer, agents, writerRoles, machineID, worktree }) {
+  if (!writer || worktree || !machineID) return null;
+  return (agents || []).find(agent => writerRoles.has(agent.role_key) && agent.desired !== 'stopped' && agent.machine_id === machineID) || null;
+}
+export const writerHolderText = agent => `${agent.slug} is a writer in this room: if it holds the folder, a new writer starts in a worktree of its own (a Git repository with worktrees on); otherwise the server says why it cannot`;
 
 // A hint that names Settings → Harnesses makes that name a button that opens it, so an empty machine says where to go. Only an owner or admin
 // can add or change a harness, so anyone else gets plain words (the link would only end in a refusal).
@@ -198,8 +209,8 @@ export function resumeBanner({ resume, mode, hasRoom, toolNote, warning, relativ
 }
 
 // The request a Spawn sends, or the reason it must not be sent. Nothing is sent without a role, a tool that is available and a model.
-export function spawnRequest({ role, tool, model, typed, machineID, resume, mode, confirmed, worktree, baseRef, target, newRoom }) {
-  const continuing = resume?.kind === 'claude_session', fork = mode === 'fork';
+export function spawnRequest({ role, tool, model, typed, machineID, resume, mode, confirmed, worktree, baseRef, target, newRoom, workOnCopy }) {
+  const continuing = resume?.kind === 'claude_session', copy = !!workOnCopy && !!resume?.resumable, fork = mode === 'fork' || copy;
   if (!role || !tool?.available || !model) return { skip: true };
   // A v1 agent keeps its own name, so the field does not count then.
   const name = resume && !continuing ? '' : typed.trim();
@@ -211,7 +222,8 @@ export function spawnRequest({ role, tool, model, typed, machineID, resume, mode
   const worktreeChoice = target?.kind !== 'task' || !worktree ? { worktree: false, base_ref: '' } : { worktree: true, base_ref: baseRef };
   return { params: { role, tool: tool.tool, variant: tool.variant, launcher_id: tool.launcher_id, model, provider: tool.provider, machine_id: machineID, ...(name ? { name } : {}), ...(resume?.resumable ? {} : worktreeChoice),
     ...(resume && !continuing ? { resume_legacy: resume.legacy_id, ...(resume.resumable ? { resume_mode: legacyFork ? 'fork' : 'continue' } : {}), confirm_v1_idle: !legacyFork && !!confirmed } : {}),
-    ...(continuing ? { resume_session: resume.session_id, resume_mode: fork ? 'fork' : 'continue', confirm_session_closed: !fork && !!confirmed, new_room: !!newRoom } : {}) } };
+    ...(continuing ? { resume_session: resume.session_id, resume_mode: fork ? 'fork' : 'continue', confirm_session_closed: !fork && !!confirmed, new_room: !!newRoom } : {}),
+    ...(copy ? { work_on_copy: true } : {}) } };
 }
 
 // The Switch dialog's tool rows: the entry's index as its value, and for an unavailable one why.

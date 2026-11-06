@@ -33,6 +33,28 @@ explicit worktree request is the person's choice and does change it.
 
 The lead's home room always uses the project folder.
 
+**A second writer gets a worktree of its own.** A room's checkout has one
+writer slot (a role with the *singleton writer* capability, such as Worker). When
+a worker is spawned or reactivated into a room whose checkout already has a
+writer, it is not refused: it works in
+`<project>/.aimebu/worktrees/<room-id>-<agent-slug>` on branch
+`aimebu/<room-id>-<agent-slug>` (flat, because the room's own branch
+`aimebu/<room-id>` already exists and Git cannot keep a branch under another's
+name), made from the room's base ref, or the project's HEAD when the room has
+none. The first writer keeps the room's checkout, and reviewers and other
+non-writers stay on it. With `worktree_mode: off`, or a folder that is not the
+root of a Git repository, the refusal stays and says who holds the folder and
+why there is no worktree. These worktrees are listed in Health under the
+agent's name (`<room> · <agent>`), count toward the project's disk use, block
+deleting the room and the project, and are **never removed automatically**. A
+person removes one from Health (its Remove button) or with
+`DELETE /api/agents/{agent}/worktree`: a clean, merged one goes, one with
+uncommitted or unmerged work is kept and says why unless `force` is sent with the
+confirmation `REMOVE <name>`, and one whose agent is running is refused (409
+`worktree_in_use`). The branch is kept, and the agent goes back to its room's
+folder: starting it takes that folder's writer slot, or, if another writer holds
+it, makes the worktree again.
+
 **Worktrees are never removed automatically.** Health lists each one with its
 size and state (*in use*, *uncommitted work*, *merged*, *room closed,
 unmerged*, *idle*, *ready*) so you can see what is worth removing, and removing
