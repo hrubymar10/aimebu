@@ -34,6 +34,7 @@ import { offerHarnessSetup, anyHarnessConfigured, HARNESS_SKIP_PREFERENCE } from
 import { DiskUsage } from './pages/health/disk.js';
 import { showBuildVersion } from './build-version.js';
 import { UpdateBar } from './update-bar.js';
+import { ColumnResize } from './column-resize.js';
 import { NotificationBanner, BANNER_DISMISSED_PREFERENCE } from './notification-banner.js';
 
 
@@ -298,6 +299,7 @@ const onboarding = new Onboarding({ create: createFirstProject, spawn: () => age
 importWizard.dialog.addEventListener('close', () => { if (!appView.hidden && sidebar.projects.size === 0 && !onboarding.open) onboarding.show(); });
 const usagesPopover = new UsagesPopover(settings.source, () => settings.open('usages'));
 new TopbarMenu();
+new ColumnResize();
 new RoomMenu();
 const knowledge = new KnowledgePanel(() => ({ projects: [...sidebar.projects.values()], selectedProjectID: chat.room?.project_id }), () => chat.room);
 chat.openProjectMemory = projectID => knowledge.openProjectFacts(projectID);

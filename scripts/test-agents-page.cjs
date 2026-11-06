@@ -323,7 +323,7 @@ async function main() {
       expanded: [...document.querySelectorAll('[data-agent-id]')].map(card => [card.dataset.agentId, card.classList.contains('expanded'), card.querySelector('.agent-expand').getAttribute('aria-expanded'), card.querySelector('.agent-expand').getAttribute('aria-label')]),
       facts: [...document.querySelectorAll('[data-agent-id=a1] .profile-fact')].map(row => [row.querySelector('.profile-fact-label').textContent, row.querySelector('.profile-fact-value').textContent]) }));
     const closed = await state();
-    assert.deepEqual([closed.title, closed.closeHidden, closed.open], ['Room members', true, false]);
+    assert.deepEqual([closed.title, closed.closeHidden, closed.open], ['Members', true, false]);
     assert.deepEqual(closed.facts, []);
     await page.$eval('[data-agent-id=a1] .agent-expand', node => node.click());
     const profile = await waitRequest(page, 'GET', '/api/rooms/r1/agents/a1/profile');
@@ -340,7 +340,7 @@ async function main() {
     assert.deepEqual(full.facts.find(fact => fact[0] === 'Last 24 h'), ['Last 24 h', '3 turns · $0.42']);
     assert.equal(await page.$eval('[data-agent-id=a1] .profile-copy', node => node.getAttribute('aria-label')), 'Copy resume');
     await page.$eval('#agent-profile-close', node => node.click());
-    assert.deepEqual((await state()).title, 'Room members');
+    assert.deepEqual((await state()).title, 'Members');
     assert.equal(await page.evaluate(() => document.activeElement === document.querySelector('[data-agent-id=a1] .agent-expand')), true, 'closing returns the focus to the card');
     // The same button closes it again; a click on the card outside its buttons opens it.
     await page.$eval('[data-agent-id=a2]', node => node.click());
@@ -357,7 +357,7 @@ async function main() {
     // The agent leaving the room closes it.
     await page.$eval('[data-agent-id=a2] .agent-expand', node => node.click());
     await refresh(page, 'r1', [agent('a1', 'ada')]);
-    assert.deepEqual([(await state()).title, (await state()).open], ['Room members', false]);
+    assert.deepEqual([(await state()).title, (await state()).open], ['Members', false]);
     await page.close();
   }
 
@@ -389,7 +389,7 @@ async function main() {
     const open = await page.evaluate(() => window.__requests.findLastIndex(request => request.path === '/api/rooms/r1/agents/a1/profile'));
     await page.evaluate(room => window.__panel.setRoomFacts(room), room('r2'));
     await answer(page, open, 200, { cwd: '/other-room' }); await settle(page);
-    assert.deepEqual([(await page.$$('.profile-fact')).length, await page.$eval('#agents-panel header h2', node => node.textContent)], [0, 'Room members']);
+    assert.deepEqual([(await page.$$('.profile-fact')).length, await page.$eval('#agents-panel header h2', node => node.textContent)], [0, 'Members']);
     await page.close();
   }
 
@@ -575,6 +575,25 @@ async function main() {
     await page.evaluate(() => { const panel = window.__panel; panel.destroy(); panel.source.changed(); });
     await settle(page);
     assert.equal(await page.evaluate(() => window.__requests.length), base, 'a destroyed panel does not read again');
+    await page.close();
+  }
+
+  // The members column keeps its header row (the collapse button, the title, Spawn) where it is: only the people and the cards under it scroll.
+  {
+    const page = await mount();
+    await page.setViewport({ width: 1280, height: 600 });
+    await show(page, 'r1', Array.from({ length: 24 }, (_, i) => agent(`a${i}`, `agent${i}`)));
+    const geometry = () => page.evaluate(() => {
+      const panel = document.querySelector('#agents-panel'), scroller = document.querySelector('.agents-scroll'), top = selector => Math.round(document.querySelector(selector).getBoundingClientRect().top);
+      return { header: top('#agents-panel > header'), spawn: top('#spawn-open'), scroller: top('.agents-scroll'), scrolls: scroller.scrollHeight > scroller.clientHeight + 1, panelScrolls: panel.scrollHeight > panel.clientHeight + 1, scrollTop: scroller.scrollTop, overflow: getComputedStyle(panel).overflowY };
+    });
+    const before = await geometry();
+    assert.deepEqual([before.scrolls, before.panelScrolls, before.overflow], [true, false, 'hidden'], 'the cards are taller than the column and are what scrolls');
+    await page.$eval('.agents-scroll', node => { node.scrollTop = 500; }); await settle(page);
+    const after = await geometry();
+    assert.ok(after.scrollTop > 200, `the list scrolled: ${after.scrollTop}`);
+    assert.deepEqual([after.header, after.spawn, after.scroller, after.panelScrolls], [before.header, before.spawn, before.scroller, false], 'the header row stayed where it was while the list scrolled');
+    assert.equal(await page.$eval('#agents-panel header h2', node => node.textContent), 'Members', 'the column is titled Members');
     await page.close();
   }
 

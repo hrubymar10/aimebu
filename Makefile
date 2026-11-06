@@ -97,6 +97,7 @@ test-ui: ## Check web/v1.css against v1, run Chromium smoke against a scratch se
 	node scripts/test-icons.cjs
 	node scripts/test-emoji-page.cjs
 	node scripts/test-events-page.cjs
+	node scripts/test-columns-page.cjs
 	node scripts/test-settings-release-page.cjs
 	node scripts/test-signin-page.cjs
 	node scripts/test-setup-page.cjs

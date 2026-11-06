@@ -42,7 +42,7 @@ export class AgentsPanel {
     this.panelTitle = this.panel.querySelector('header h2');
     this.stopPanel = effect(() => {
       const open = !!this.store.profileId.value;
-      this.panel.classList.toggle('profile-open', open); this.panelTitle.textContent = open ? 'Agent profile' : 'Room members'; this.profileClose.hidden = !open;
+      this.panel.classList.toggle('profile-open', open); this.panelTitle.textContent = open ? 'Agent profile' : 'Members'; this.profileClose.hidden = !open;
     });
     this.onKey = event => { if (event.key === 'Escape' && this.store.profileId.peek() && !document.querySelector('dialog[open]')) { event.preventDefault(); this.closeProfile(); } };
     document.addEventListener('keydown', this.onKey);
@@ -119,7 +119,7 @@ export class AgentsPanel {
   control(id, action) { return this.store.control(id, action); }
   openSpawn(options) { return this.spawn.open(options); }
   openSwitch(id) { return this.switch.open(id); }
-  openProfile(id) { if (this.store.openProfile(id)) { this.panel.scrollTop = 0; this.list.scrollTop = 0; } }
+  openProfile(id) { if (this.store.openProfile(id)) { this.panel.scrollTop = 0; this.list.scrollTop = 0; if (this.list.parentElement) this.list.parentElement.scrollTop = 0; } }
   closeProfile() {
     const id = this.store.closeProfile();
     if (id) this.list.querySelector(`[data-agent-id="${CSS.escape(id)}"] .agent-expand`)?.focus();

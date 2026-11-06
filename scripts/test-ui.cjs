@@ -5216,7 +5216,7 @@ async function main() {
     for (const label of ['Status', 'Presence', 'Runtime', 'Role', 'Agent ID']) assert.ok(factLabels.includes(label), `the profile lacks ${label}: ${factLabels}`);
     assert.equal(await agentPage.$eval('[data-agent-id="agt_mock_worker"] .profile-fact-value code, [data-agent-id="agt_mock_worker"] code.profile-fact-value', el => el.textContent), 'agt_mock_worker', 'ids are monospace');
     await domClick(agentPage, '#agent-profile-close');
-    assert.deepEqual(await agentPage.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, list: getComputedStyle(document.querySelector('[data-agent-id="agt_mock_worker"]')).display !== 'none', closeShown: !document.querySelector('#agent-profile-close').hidden })), { title: 'Room members', list: true, closeShown: false }, 'the close button brings the members back');
+    assert.deepEqual(await agentPage.evaluate(() => ({ title: document.querySelector('#agents-panel header h2').textContent, list: getComputedStyle(document.querySelector('[data-agent-id="agt_mock_worker"]')).display !== 'none', closeShown: !document.querySelector('#agent-profile-close').hidden })), { title: 'Members', list: true, closeShown: false }, 'the close button brings the members back');
     await domClick(agentPage, '[data-agent-id="agt_mock_worker"] .agent-name');
     await agentPage.keyboard.press('Escape');
     assert.equal(await agentPage.$eval('#agents-panel', el => el.classList.contains('profile-open')), false, 'Escape closes the profile');
@@ -5698,7 +5698,7 @@ async function main() {
       assert.equal(human.glyph, false, 'a human card no longer uses the person emoji');
       assert.ok(human.off <= 1, `the person icon and the name share a centre line: ${human.off}`);
     }
-    assert.equal(await first.$eval('#agents-panel h2', el => el.textContent), 'Room members');
+    assert.equal(await first.$eval('#agents-panel h2', el => el.textContent), 'Members');
     await first.evaluate(() => { window.fetch = window.__originalFetch; });
     const realAgentID = await first.$eval('.agent-card[data-agent-id]', el => el.dataset.agentId);
     const realAgentName = await first.$eval('.agent-card[data-agent-id] .agent-name', el => el.textContent);

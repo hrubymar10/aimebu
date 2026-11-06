@@ -50,7 +50,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   :is(.send-bar, .send-bar *, .send-bar *::before, .send-bar *::after, .topbar-left, .topbar-left *, .topbar-left *::before, .topbar-left *::after) { margin: 0; padding: 0; box-sizing: border-box; }
 }
 
-.app { grid-template-columns: 240px minmax(0, 1fr); background: var(--bg-primary); }
+.app { grid-template-columns: var(--rooms-w, 240px) minmax(0, 1fr); background: var(--bg-primary); }
 .topbar button { padding: 5px 10px; font-size: 12px; }
 #app-view[aria-busy="true"] > :not(.topbar):not(#startup-status),
 #app-view[aria-busy="true"] .topbar button:not(#logout) { opacity: .55; }
@@ -201,7 +201,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .thread-panel form { background: var(--bg-secondary); border-color: var(--border); }
 .thread-panel textarea { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
 
-.agents-panel { top: 51px; width: 260px; background: var(--bg-secondary); border-color: var(--border); }
+.agents-panel { top: 51px; width: var(--agents-w, 260px); background: var(--bg-secondary); border-color: var(--border); }
 .agents-panel header { min-height: 43px; border-bottom: 1px solid var(--border); }
 .agents-panel h2 { color: var(--text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
 .agents-panel header button { padding: 4px 8px; }
@@ -231,7 +231,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-context-track { flex: 1; height: 5px; overflow: hidden; border-radius: 3px; background: var(--border); }
 .agent-context-fill { display: block; height: 100%; background: var(--accent); }
 .agent-context-value { min-width: 27px; text-align: right; font-variant-numeric: tabular-nums; }
-.chat > .messages, .chat > .send-bar { margin-right: 260px; }
+.chat > .messages, .chat > .send-bar { margin-right: var(--agents-w, 260px); }
 
 .inbox-view { background: var(--bg-primary); }
 .inbox-view > header { background: var(--bg-secondary); border-color: var(--border); }
@@ -433,7 +433,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .chat > header { flex: 0 0 auto; }
   .chat > .messages { flex: 1 1 auto; min-height: 0; }
   .chat > .send-bar { order: 3; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
-  .app.chat-open .sidebar { display: block; position: absolute; z-index: 7; top: 54px; bottom: 0; left: 0; width: min(84vw, 320px); height: auto; transform: translateX(-105%); visibility: hidden; pointer-events: none; box-shadow: 12px 0 30px var(--overlay-shadow); transition: transform .18s ease, visibility .18s; }
+  .app.chat-open .sidebar { display: flex; position: absolute; z-index: 7; top: 54px; bottom: 0; left: 0; width: min(84vw, 320px); height: auto; transform: translateX(-105%); visibility: hidden; pointer-events: none; box-shadow: 12px 0 30px var(--overlay-shadow); transition: transform .18s ease, visibility .18s; }
   .app.chat-open.rooms-open .sidebar { transform: translateX(0); visibility: visible; pointer-events: auto; }
   .app.rooms-open #rooms-scrim { display: block; position: absolute; z-index: 6; inset: 54px 0 0; width: 100%; padding: 0; border: 0; border-radius: 0; background: var(--scrim); }
   .agents-panel { display: flex; z-index: 4; top: 0; right: 0; bottom: 0; width: min(86vw, 340px); transform: translateX(105%); visibility: hidden; pointer-events: none; box-shadow: -12px 0 30px var(--overlay-shadow); transition: transform .18s ease, visibility .18s; }
@@ -517,7 +517,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .chat #agents-toggle { flex: 0 0 auto; height: 30px; }
 .thread-panel { top: 43px; }
 @media (min-width: 701px) {
-  .chat > header { margin-right: 260px; }
+  .chat > header { margin-right: var(--agents-w, 260px); }
   .chat.agents-collapsed > header { margin-right: 0; }
   .chat > header #agents-toggle { position: absolute; top: 7px; right: 8px; z-index: 3; }
   .agents-panel { top: 0; }
@@ -713,7 +713,7 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 }
 
 /* Usages replace the right column (v1): the panel takes the members column's place. */
-.chat > #usages-popover { display: none; position: absolute; top: 0; right: 0; bottom: 0; width: 260px; max-height: none; z-index: 5; margin: 0; border: 0; border-left: 1px solid var(--border); border-radius: 0; box-shadow: none; background: var(--bg-secondary); overflow: auto; }
+.chat > #usages-popover { display: none; position: absolute; top: 0; right: 0; bottom: 0; width: var(--agents-w, 260px); max-height: none; z-index: 5; margin: 0; border: 0; border-left: 1px solid var(--border); border-radius: 0; box-shadow: none; background: var(--bg-secondary); overflow: auto; }
 .chat.usages-open > #usages-popover { display: block; padding: 0 0 10px; }
 .chat > #usages-popover > header { display: flex; align-items: center; gap: 6px; height: 43px; padding: 0 12px; border-bottom: 1px solid var(--border); }
 .chat > #usages-popover > header strong { flex: 1; text-align: right; color: var(--text-muted); font-size: 11.2px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
@@ -731,7 +731,7 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .usages-popover-profile .usage-fill { position: absolute; inset: 0 auto 0 0; height: 100%; border-radius: inherit; background: var(--usage-provider-color); }
 .usages-empty button { margin-top: 10px; font-style: normal; }
 .chat.usages-open > .agents-panel { display: none; }
-.chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: 260px; }
+.chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: var(--agents-w, 260px); }
 @media (max-width: 700px) {
   .chat > #usages-popover { top: 43px; width: min(86vw, 340px); box-shadow: -12px 0 30px var(--overlay-shadow); }
   .chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: 0; }
@@ -916,7 +916,7 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
   .app.rooms-collapsed .chat > header > #edge-rooms-expand, .chat.agents-collapsed > header > #edge-agents-expand { display: inline-flex; }
   .chat > header > #edge-agents-expand { margin-left: auto; }
   .chat.usages-open.agents-collapsed > .agents-panel { display: none; }
-  .chat.usages-open.agents-collapsed > .messages, .chat.usages-open.agents-collapsed > .send-bar { margin-right: 260px; }
+  .chat.usages-open.agents-collapsed > .messages, .chat.usages-open.agents-collapsed > .send-bar { margin-right: var(--agents-w, 260px); }
 }
 /* Room list (layouts A and B): the box on top, rows without always-visible actions, a chip for the project in the flat list. */
 .room-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; padding: 0; border: 0; }
@@ -1733,8 +1733,8 @@ dialog:focus, dialog:focus-visible { outline: none; }
   .chat:has(> .thread-panel:not([hidden])) > .agents-panel { display: none; }
 }
 @media (min-width: 1280px) {
-  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > .thread-panel { right: 260px; }
-  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > :is(#messages, .send-bar) { margin-right: min(680px, 100%); }
+  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > .thread-panel { right: var(--agents-w, 260px); }
+  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > :is(#messages, .send-bar) { margin-right: min(calc(var(--agents-w, 260px) + 420px), 100%); }
 }
 
 /* The shared question / confirmation / notice dialog (dialogs.js). */
@@ -1901,3 +1901,26 @@ dialog:focus, dialog:focus-visible { outline: none; }
 
 /* The bar that asks for a reload after the server was replaced by another build (update-bar.js). */
 .update-bar { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 12px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); color: var(--text-primary); font-size: 13px; }
+
+/* Fixed column headers: the rooms column and the members column keep their header row (and the rooms filter) where it is, and only the list under
+   it scrolls (v1: a non-scrolling header, a list that is the scroller). */
+.sidebar { display: flex; flex-direction: column; overflow: hidden; }
+.sidebar > header { flex: 0 0 auto; }
+.sidebar > #projects { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0 -8px; padding: 0 8px; }
+/* The gaps around the filter are padding, not margin: a stuck box keeps its padding but not its margin, so it would shift when it sticks. */
+.sidebar form.room-filter { position: sticky; top: 0; z-index: 2; margin: 0; padding: 8px 0 10px; background: var(--bg-secondary); }
+.agents-panel { overflow: hidden; }
+.agents-panel > header { flex: 0 0 auto; }
+.agents-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.agents-scroll > #agents-list { flex: none; overflow: visible; }
+
+/* The drag handles between the side columns and the chat (column-resize.js). The line is a hairline until it is hovered, focused or dragged; the hit area is wider. */
+.col-resizer { z-index: 6; width: 8px; cursor: col-resize; touch-action: none; background: linear-gradient(to right, transparent 3px, var(--border) 3px, var(--border) 4px, transparent 4px); }
+.col-resizer[hidden] { display: none; }
+.col-resizer:is(:hover, :focus-visible, .dragging) { background: linear-gradient(to right, transparent 2px, var(--accent) 2px, var(--accent) 5px, transparent 5px); }
+.col-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.col-resizer-rooms { grid-column: 1; grid-row: 2; justify-self: end; margin-right: -4px; position: relative; }
+.col-resizer-agents { position: absolute; top: 0; bottom: 0; right: calc(var(--agents-w, 260px) - 4px); }
+.chat.usages-open > .col-resizer-agents, .chat.agents-collapsed > .col-resizer-agents { display: none; }
+html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-select: none !important; }
+@media (max-width: 700px) { .col-resizer { display: none; } }

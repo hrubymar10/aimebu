@@ -1161,6 +1161,33 @@ async function main() {
     }
   }
 
+  // The rooms column keeps its header row and the filter where they are: only the list under them scrolls (the column itself does not).
+  {
+    const many = Array.from({ length: 60 }, (_, i) => project(`prj_p${i}`, `Project ${i}`));
+    const extra = { 'GET /api/projects': many, ...Object.fromEntries(many.map((item, i) => [`GET /api/projects/${item.id}/rooms`, [room(`rm_p${i}`, item.id, `Project ${i}`, { kind: 'home' })]])) };
+    const page = await mount({ auto: answerAll(extra) });
+    await page.setViewport({ width: 1280, height: 600 });
+    const geometry = () => page.evaluate(() => {
+      const side = document.querySelector('.sidebar'), list = document.querySelector('#projects'), top = selector => Math.round(document.querySelector(selector).getBoundingClientRect().top);
+      return { header: top('.sidebar > header'), filter: top('.room-filter'), list: top('#projects'), listScrolls: list.scrollHeight > list.clientHeight + 1, columnScrolls: side.scrollHeight > side.clientHeight + 1, scrollTop: list.scrollTop, overflow: getComputedStyle(side).overflowY };
+    });
+    const before = await geometry();
+    assert.deepEqual([before.listScrolls, before.columnScrolls, before.overflow], [true, false, 'hidden'], 'the list is longer than the column and is what scrolls');
+    await page.$eval('#projects', node => { node.scrollTop = 700; }); await settle(page);
+    const after = await geometry();
+    assert.ok(after.scrollTop > 300, `the list scrolled: ${after.scrollTop}`);
+    assert.deepEqual([after.header, after.filter, after.list, after.columnScrolls], [before.header, before.filter, before.list, false], 'the header and the filter stayed where they were while the list scrolled');
+    // the phone's drawer is the same column: the header and the filter hold there too
+    await page.setViewport({ width: 390, height: 700 });
+    await page.evaluate(() => { document.querySelector('.app').classList.add('chat-open', 'rooms-open'); }); await settle(page);
+    await page.$eval('#projects', node => { node.scrollTop = 0; }); await settle(page);
+    const phone = await geometry();
+    await page.$eval('#projects', node => { node.scrollTop = 700; }); await settle(page);
+    const phoneAfter = await geometry();
+    assert.deepEqual([phone.listScrolls, phoneAfter.scrollTop > 300, phoneAfter.header, phoneAfter.filter], [true, true, phone.header, phone.filter], 'the phone drawer keeps its header and filter too');
+    await page.close();
+  }
+
   await browser.close(); server.close();
   assert.deepEqual(errors, []);
   console.log('sidebar page: ok');
