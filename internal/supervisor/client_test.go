@@ -50,7 +50,7 @@ func TestRunOnceCancellationDoesNotWaitForCloseHandshake(t *testing.T) {
 	go func() { done <- client.RunOnce(ctx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-time.After(waitGuard):
 		t.Fatal("supervisor did not connect")
 	}
 	cancel()
@@ -60,6 +60,11 @@ func TestRunOnceCancellationDoesNotWaitForCloseHandshake(t *testing.T) {
 		t.Fatal("canceled supervisor waited for WebSocket close handshake")
 	}
 }
+
+// waitGuard is how long a test waits for a state that stays once it is reached (a connection made, an ack sent, a run stopped). It only stops a
+// test that would otherwise hang for good: none of them depends on how soon the state arrives, so a loaded machine makes them slower, not red.
+// The one wait that is itself the property (a close that must not wait for the peer's handshake) keeps its own short limit.
+const waitGuard = 30 * time.Second
 
 func TestStopAcceptingAndDrainJournalsInterruptedTurn(t *testing.T) {
 	ctx := context.Background()
@@ -186,7 +191,7 @@ func TestStopControlAckWaitsForProcessExit(t *testing.T) {
 	go func() { finished <- client.RunOnce(ctx) }()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-time.After(waitGuard):
 		t.Fatal("supervisor did not connect")
 	}
 	select {
@@ -201,13 +206,13 @@ func TestStopControlAckWaitsForProcessExit(t *testing.T) {
 		if frame.Type != protocol.Ack || frame.Level != "control" || frame.Ref != "3" {
 			t.Fatalf("first frame after process exit: %+v", frame)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(waitGuard):
 		t.Fatal("stop ack did not follow process exit")
 	}
 	cancel()
 	select {
 	case <-finished:
-	case <-time.After(3 * time.Second):
+	case <-time.After(waitGuard):
 		t.Fatal("supervisor did not stop")
 	}
 }
