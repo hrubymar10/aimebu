@@ -45,7 +45,7 @@ export class OnboardingStore {
     this.stopWatching();
     const ticket = this.ticket;
     this.mode = mode; this.harnessNote = '';
-    this.set(() => { this.open.value = true; this.step.value = 'harnesses'; this.continueDisabled.value = true; this.harnessStatus.value = HARNESS_MISSING; });
+    this.set(() => { this.open.value = true; this.step.value = 'harnesses'; this.continueDisabled.value = true; this.harnessStatus.value = HARNESS_MISSING; this.focusOn('harnesses'); });
     await this.harnesses.open();
     if (!this.current(ticket)) return;
     await this.checkHarness();
@@ -88,7 +88,7 @@ export class OnboardingStore {
       // Whether Continue added harnesses or one was already ready (set up by hand, or reported by the poll), what there is is shown, with its models and
       // the role defaults, before the step is left: going on at once, or closing, looks like a failure.
       clearInterval(this.watch); this.watch = null;
-      this.set(() => { this.step.value = 'result'; this.harnessStatus.value = ''; this.continueDisabled.value = false; });
+      this.set(() => { this.step.value = 'result'; this.harnessStatus.value = ''; this.continueDisabled.value = false; this.focusOn('harnesses'); });
       this.harnesses.showResult?.(true);
       proceed = true;
       return;
@@ -120,7 +120,7 @@ export class OnboardingStore {
     // Skipping the step is remembered by the app (on the person's account), so it is not offered again until a harness exists.
     if (!ready) { try { await this.onSkip(this.mode); } catch { /* the offer may come back on the next sign-in */ } if (!this.current(ticket)) return; }
     if (this.mode === 'harness-only') { this.close(); return; }
-    this.set(() => { this.step.value = 'how'; });
+    this.set(() => { this.step.value = 'how'; this.focusOn('done'); }); // until offerSpawn knows which button leads, focus stays on one that is there
     await this.offerSpawn(ready, ticket);
   }
 
@@ -146,7 +146,7 @@ export class OnboardingStore {
       let ready = true; try { ready = await this.harnessReady(); } catch { ready = true; }
       if (!this.current(ticket)) return;
       if (!ready && this.canSetUp()) await this.showHarnesses('first');
-      else { this.set(() => { this.step.value = 'how'; }); await this.offerSpawn(ready, ticket); }
+      else { this.set(() => { this.step.value = 'how'; this.focusOn('done'); }); await this.offerSpawn(ready, ticket); }
     } catch (error) { if (this.current(ticket)) this.set(() => { this.error.value = error.message; }); }
     finally { if (this.current(ticket)) this.set(() => { this.creating.value = false; }); }
   }

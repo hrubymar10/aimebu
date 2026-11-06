@@ -47,6 +47,7 @@ async function main() {
     await page.$eval('#onboarding-form', form => form.requestSubmit());
     await page.waitForSelector('[data-step="harnesses"]:not([hidden])');
     assert.equal(creates.length, 1, 'one submit creates one project');
+    assert.equal(await page.evaluate(() => document.activeElement?.matches('#onboarding-harnesses h1')), true, 'the button that went on is gone: focus moves to the step heading, not to the page');
     assert.deepEqual(await page.evaluate(() => [document.querySelector('#onboarding-harness-status').textContent, document.querySelector('#onboarding-harnesses-continue').disabled]), [MISSING, true], 'the harness step says what is missing');
     const projects = await owner('/api/projects'); assert.ok(JSON.stringify(projects.body).includes('First Project'), 'the project exists on the server');
     // Skip asks first; cancelling stays; confirming goes to the last step, which says there is no harness
@@ -65,6 +66,8 @@ async function main() {
     // "Set up a harness first" goes back to the harness step; Escape closes the onboarding
     await page.click('#onboarding-setup-harness');
     await page.waitForSelector('[data-step="harnesses"]:not([hidden])');
+    // The clicked button hides itself: focus must already be on the step, so Escape, sent at once, reaches the onboarding.
+    assert.equal(await page.evaluate(() => document.activeElement?.matches('#onboarding-harnesses h1')), true, 'focus follows the person to the harness step');
     await page.keyboard.press('Escape');
     assert.equal((await shown(page)).root, false, 'Escape closes it');
     // a reload after the skip is an ordinary visit
@@ -196,8 +199,10 @@ async function main() {
       await make({ canSetUp: false }); await fill(); await settle();
       await answer('create', 0, 'resolve'); await settle(); await answer('ready', 0, 'resolve', false); await settle();
       assert.equal((await view()).calls.ready, 2, 'with nothing ready the last step asks again');
-      await run('late.step.destroy()'); await answer('ready', 1, 'resolve', false); await settle();
-      assert.deepEqual(await run('return [late.step.store.how.value.noteHidden, late.step.store.focus.value.target !== \'done\']'), [true, true], 'the last step answered after destroy draws and focuses nothing');
+      await run('late.step.destroy()');
+      const focusedBefore = await run('return late.step.store.focus.value.n');
+      await answer('ready', 1, 'resolve', false); await settle();
+      assert.deepEqual(await run('return [late.step.store.how.value.noteHidden, late.step.store.focus.value.n]'), [true, focusedBefore], 'the last step answered after destroy draws and focuses nothing');
 
       // the readiness poll answered after the step was left: no ready report, no status
       for (const [name, change] of Object.entries({ close: supersede.close, destroy: supersede.destroy })) {

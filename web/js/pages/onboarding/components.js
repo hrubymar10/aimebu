@@ -22,7 +22,7 @@ function ProjectStep({ store }) {
 function HarnessesStep({ store }) {
   const step = store.step.value, result = step === 'result';
   return html`<section data-step="harnesses" id="onboarding-harnesses" data-phase=${result ? 'result' : 'setup'} hidden=${step !== 'harnesses' && !result}>
-    <h1>${result ? 'Your harnesses are ready' : 'Set up a harness'}</h1>
+    <h1 tabindex="-1">${result ? 'Your harnesses are ready' : 'Set up a harness'}</h1>
     ${!result && html`<p>A harness is the coding tool (Claude Code, Codex, Pi, OpenCode, Mistral Vibe) your agents run on. Auto-detect what is installed on this machine, or add one by hand, and give it at least one model.</p>`}
     ${result && html`<p>Here is what was added and the models found for it. Set the role defaults below if you like, then continue.</p>`}
     <div id="onboarding-harnesses-host"></div>
@@ -44,7 +44,8 @@ function HowStep({ store }) {
   </section>`;
 }
 
-const FOCUS = { name: '[name=name]', folder: '[name=folder]', spawn: '#onboarding-spawn', setup: '#onboarding-setup-harness', done: '#onboarding-done' };
+// `harnesses` is the heading of the Harnesses step (it is focusable, not a control): a button that took the person there hides itself, so focus has to go somewhere that stays.
+const FOCUS = { name: '[name=name]', folder: '[name=folder]', spawn: '#onboarding-spawn', setup: '#onboarding-setup-harness', done: '#onboarding-done', harnesses: '#onboarding-harnesses h1' };
 
 export function OnboardingPage({ store, root }) {
   const focus = store.focus.value;
