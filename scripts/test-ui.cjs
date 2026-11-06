@@ -2804,6 +2804,8 @@ async function main() {
       });
       await domClick(first, '#room-info');
       await first.waitForFunction(() => document.querySelector('#room-usage .usage-popover-rows dd'));
+      // The Range row's label and its hint are two lines, not one run of text ("RangeToday is the server's local day.").
+      assert.equal(await first.$eval('#room-usage .settings-row', row => { const label = row.querySelector('.settings-label').getBoundingClientRect(), hint = row.querySelector('.settings-desc').getBoundingClientRect(); return hint.top >= label.bottom - 1; }), true, 'the Range label and its hint do not run together');
       const readUsage = () => first.$eval('#room-usage', el => ({ rows: [...el.querySelectorAll('.usage-popover-rows dt')].map((dt, i) => [dt.textContent, el.querySelectorAll('.usage-popover-rows dd')[i].textContent]), groups: [...el.querySelectorAll('.usage-summary-groups li')].map(li => li.textContent), notes: [...el.querySelectorAll('.usage-popover-note')].map(note => note.textContent), range: el.querySelector('select').value, title: el.querySelector('h3').textContent }));
       const today = await readUsage();
       assert.deepEqual(today.rows, [['Turns', '3'], ['Input', '2,200'], ['Output', '40'], ['Cache read', '9,000'], ['Cache written', '\u2014'], ['Cost (estimate)', '$1.50']]);

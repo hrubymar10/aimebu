@@ -49,7 +49,6 @@ export class MessageDebug {
     this.dialog.append(head, this.status, this.body);
     document.body.append(this.dialog);
     close.onclick = () => this.dialog.close();
-    this.dialog.addEventListener('click', event => { if (event.target === this.dialog) this.dialog.close(); });
     this.copy.onclick = async () => { try { await navigator.clipboard.writeText(this.json || ''); this.copy.textContent = 'Copied'; } catch { this.copy.textContent = 'Copy failed'; } setTimeout(() => { this.copy.textContent = 'Copy JSON'; }, 1500); };
     this.ticket = 0;
   }

@@ -53,6 +53,8 @@ layer would beat every other `!important` one), `#back`, and the colours of `.bt
   Harnesses page (and its onboarding copy) still has its own field rules.
 - Usages: the provider tile, window rows, pace ticks, credits row, empty and error lines and the switcher tile use v1's rules as written (v2's px copies
   of them are deleted); the popover's own layout (`#usages-popover`, `.usages-open`) and the sparklines stay v2's.
+- Colours: v2's own areas (inbox, schedules, agents and thread panels, health, knowledge, the room lists) name v1's tokens directly. The `--legacy-*`
+  tokens that stood between them and v1's palette (90 of them, remapped per theme) are gone; the computed styles of the style snapshot are unchanged.
 - v2-only features keep their own rules: threads, the emoji picker, inbox, machines, harnesses, health, import, spawn, schedules, users and
   login, project settings, onboarding.
 

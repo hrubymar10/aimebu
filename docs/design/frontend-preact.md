@@ -195,6 +195,9 @@ Every migrated page follows the same lifecycle, so the settings shell (and later
   nothing; an invitation for the chosen project and role, with the local-address hint; a person who is not an admin seeing only the
   projects they own; two access checks answered out of order; and a destroy while a read or an invite is held sending nothing more) and
   `scripts/test-users-model.cjs` (the pure rules, in `make test-web`).
+- **Dialogs** share one modal look (v1's modal pane, in `web/v2-only.css`) and one dismissal rule (`web/js/backdrop-close.js`): a click on the backdrop
+  of a modal dialog (a press and a release both on the dialog element, outside its content or its `.settings-pane`) dismisses it like Escape, by
+  sending the same cancelable `cancel` event, so a `cancel` listener can veto it. `make test-ui` runs `scripts/test-backdrop-page.cjs` for it.
 - `make test-ui` also runs `scripts/test-machines-page.cjs` (Settings → Machines and its pairing dialog with requests held or answered by
   rule: the blocks in order and "Loading machines…" until the list answers; the cards with their status and icon actions; an admin who
   is not the owner seeing the pairing, approve and revoke controls off with the reason, and a 403 hiding Add machine; approve writing

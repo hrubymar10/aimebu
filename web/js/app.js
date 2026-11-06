@@ -1,4 +1,5 @@
 import './dialog-focus.js';
+import './backdrop-close.js';
 import { request, setSession, clearSession, currentUser, rights } from './api.js';
 import { Sidebar } from './pages/sidebar/page.js';
 import { Chat } from './chat.js';

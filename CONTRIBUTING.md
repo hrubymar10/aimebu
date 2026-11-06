@@ -228,7 +228,7 @@ the import map, so each module has exactly one URL.
 - Styles load in this order, and a later file wins over an earlier one:
   `web/v1.css` (v1's stylesheet as it is, in a cascade layer, written by
   `node scripts/sync-v1-css.cjs`; never edit it by hand, and
-  `--check` fails when it drifts from v1), `web/style.css` (the original base
+  `--check` fails when it drifts from v1, and also when v1 cannot be found: put it at `../aimebu` or set `AIMEBU_V1_CSS`; `make test-ui` runs it first), `web/style.css` (the original base
   stylesheet; small and legacy, being deleted area by area),
   `web/theme-v1.css` (colour variables, themes through `data-theme` on
   `<html>`, and the layout of areas that have not moved to v1's rules yet) and

@@ -66,7 +66,8 @@ test-web: ## Run the browser-free web unit tests (vm over the module source), in
 	*) echo "make test-web: WEB_TEST_RUNNER must be docker or local, not '$(WEB_TEST_RUNNER)'" >&2; exit 1 ;; \
 	esac
 
-test-ui: ## Run Chromium smoke against a scratch server, then the Preact page tests
+test-ui: ## Check web/v1.css against v1, run Chromium smoke against a scratch server, then the Preact page tests
+	node scripts/sync-v1-css.cjs --check
 	node scripts/test-ui.cjs
 	node scripts/test-harness-page.cjs
 	node scripts/test-prompts-page.cjs
@@ -101,6 +102,7 @@ test-ui: ## Run Chromium smoke against a scratch server, then the Preact page te
 	node scripts/test-setup-page.cjs
 	node scripts/test-onboarding-page.cjs
 	node scripts/test-topbar-page.cjs
+	node scripts/test-backdrop-page.cjs
 
 dev: ## Run the server with live reload
 	go tool air -c .air.toml

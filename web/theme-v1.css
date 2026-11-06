@@ -1,97 +1,6 @@
 /* V1 palette and panel treatment, adapted to the v2 room and inbox DOM. */
 :root {
   color-scheme: dark;
-  /* Legacy colour tokens used by style.css; the theme blocks below remap them. */
-  --legacy-text-white: white;
-  --legacy-bg-white: white;
-  --legacy-text-17252a: #17252a;
-  --legacy-bg-f3f5f3: #f3f5f3;
-  --legacy-bg-235c58: #235c58;
-  --legacy-border-48a89d: #48a89d;
-  --legacy-text-ad3030: #ad3030;
-  --legacy-border-dce3df: #dce3df;
-  --legacy-shadow-17332c14: #17332c14;
-  --legacy-border-cbd6d0: #cbd6d0;
-  --legacy-bg-e9efeb: #e9efeb;
-  --legacy-border-d3dfd8: #d3dfd8;
-  --legacy-text-5a7068: #5a7068;
-  --legacy-bg-d0e2d9: #d0e2d9;
-  --legacy-bg-d9e7df: #d9e7df;
-  --legacy-border-c6d6cd: #c6d6cd;
-  --legacy-bg-128779: #128779;
-  --legacy-bg-fff: #fff;
-  --legacy-border-e1e8e3: #e1e8e3;
-  --legacy-text-638076: #638076;
-  --legacy-border-edf1ed: #edf1ed;
-  --legacy-text-82948c: #82948c;
-  --legacy-bg-e9f4ee: #e9f4ee;
-  --legacy-text-285f4a: #285f4a;
-  --legacy-bg-c4e7d4: #c4e7d4;
-  --legacy-border-93baaa: #93baaa;
-  --legacy-text-657d71: #657d71;
-  --legacy-bg-edf6f0: #edf6f0;
-  --legacy-bg-f1f4f2: #f1f4f2;
-  --legacy-border-8eb8a7: #8eb8a7;
-  --legacy-text-536d61: #536d61;
-  --legacy-text-156f78: #156f78;
-  --legacy-bg-192b2d: #192b2d;
-  --legacy-text-e9f1ec: #e9f1ec;
-  --legacy-bg-365553: #365553;
-  --legacy-border-cadad0: #cadad0;
-  --legacy-bg-eaf2ed: #eaf2ed;
-  --legacy-text-235c58: #235c58;
-  --legacy-bg-101815: #101815;
-  --legacy-bg-000b: #000b;
-  --legacy-shadow-1b30241a: #1b30241a;
-  --legacy-border-e4ece5: #e4ece5;
-  --legacy-bg-163b38: #163b38;
-  --legacy-text-fff: #fff;
-  --legacy-bg-f4d783: #f4d783;
-  --legacy-text-223631: #223631;
-  --legacy-bg-f5f7f4: #f5f7f4;
-  --legacy-border-dce7dd: #dce7dd;
-  --legacy-text-61776b: #61776b;
-  --legacy-text-648071: #648071;
-  --legacy-border-dce6dd: #dce6dd;
-  --legacy-shadow-203a2810: #203a2810;
-  --legacy-text-237a68: #237a68;
-  --legacy-text-236b65: #236b65;
-  --legacy-text-667c6f: #667c6f;
-  --legacy-bg-f7faf7: #f7faf7;
-  --legacy-border-dce6dc: #dce6dc;
-  --legacy-text-738478: #738478;
-  --legacy-border-dae5dc: #dae5dc;
-  --legacy-text-286c59: #286c59;
-  --legacy-text-6f8276: #6f8276;
-  --legacy-text-60776a: #60776a;
-  --legacy-text-a05f0c: #a05f0c;
-  --legacy-border-edf1ec: #edf1ec;
-  --legacy-border-ccdad0: #ccdad0;
-  --legacy-shadow-0c291d44: #0c291d44;
-  --legacy-bg-0b251e99: #0b251e99;
-  --legacy-border-bbcec2: #bbcec2;
-  --legacy-text-53665c: #53665c;
-  --legacy-text-8b651e: #8b651e;
-  --legacy-text-396e5e: #396e5e;
-  --legacy-bg-e7f2eb: #e7f2eb;
-  --legacy-border-e5ebe6: #e5ebe6;
-  --legacy-bg-f7f9f7: #f7f9f7;
-  --legacy-text-738077: #738077;
-  --legacy-text-64746b: #64746b;
-  --legacy-text-f4d783: #f4d783;
-  --legacy-text-243b31: #243b31;
-  --legacy-border-cbd9ce: #cbd9ce;
-  --legacy-shadow-0b251e33: #0b251e33;
-  --legacy-text-925300: #925300;
-  --legacy-bg-fff0cf: #fff0cf;
-  --legacy-text-855006: #855006;
-  --legacy-border-ead19b: #ead19b;
-  --legacy-bg-fce3dd: #fce3dd;
-  --legacy-text-9c3c28: #9c3c28;
-  --legacy-border-ecb8ac: #ecb8ac;
-  --legacy-border-49615a: #49615a;
-  --legacy-border-51675b: #51675b;
-  --legacy-border-526458: #526458;
   /* Tokens v1 does not have (its palette, with its hover and dim colours, comes from v1.css). */
   --button-text: #ffffff; --overlay-shadow: #0005; --warning: #d5a14a; --red-halo: #f8514929; --green-halo: #3fb95029; --scrim: #000a; --scrim-strong: #000b; --scrim-soft: #0009; --usage-codex: #5bbac4; --usage-claude: #db8b70; --usage-copilot: #a970ff; --usage-ollama: #9a9a9a;
 }
@@ -127,7 +36,7 @@ button:disabled { opacity: .5; cursor: default; }
    `[hidden]` and the !important rules: an !important declaration in a lower layer would beat every other !important one. */
 [hidden] { display: none !important; }
 .room-schedules[hidden], .room-schedules [hidden] { display: none !important; }
-.health-item { display: block; width: 100%; text-align: left; color: var(--legacy-text-243b31) !important; padding: 8px !important; white-space: normal !important; }
+.health-item { display: block; width: 100%; text-align: left; color: var(--text-secondary) !important; padding: 8px !important; white-space: normal !important; }
 #back { display: none; }
 @media (max-width: 700px) { #back { display: block; } }
 /* The primary and danger buttons keep the theme's text colours: v1's .btn-primary is white on every green and its .btn-danger a fixed red. */
@@ -194,9 +103,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-chat-offer .room-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 11.9px; }
 .direct-rooms { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 8px; }
 .direct-rooms h3 { margin: 4px 8px 8px; color: var(--text-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
-/* Shared dialog chrome: border, surface and text colour. Per-dialog rules add size, padding and radius. */
-.dialog-card { border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); }
-.dialog-card-primary { background: var(--bg-primary); }
 .reopen-room { padding: 3px 5px; color: var(--accent); font-size: 10px; }
 .room-state { padding: 1px 4px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted); font-size: 9px; }
 .add-room:disabled { opacity: .25; }
@@ -221,9 +127,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .room-controls { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .room-controls button:disabled { opacity: .4; }
 #room-archive { width: auto; padding: 0 7px; font-size: 11px; }
-#room-info-dialog, #room-export-dialog { width: min(90vw, 420px); max-height: 90dvh; overflow: auto; padding: 20px; border-radius: 9px; }
-#room-info-dialog::backdrop, #room-export-dialog::backdrop { background: var(--scrim); }
-#room-info-dialog h2, #room-export-dialog h2 { margin: 0 0 14px; font-size: 17px; }
+#room-info-dialog, #room-export-dialog { width: min(90vw, 420px); max-height: 90dvh; overflow: auto; }
 .scope-control { border-top: 1px solid var(--border); margin: 16px 0; padding-top: 14px; }
 .scope-control h3, .scope-control h4 { margin: 0 0 8px; font-size: 14px; }
 .scope-control-status, .scope-control-results { color: var(--text-secondary); font-size: 13px; margin: 8px 0; overflow-wrap: anywhere; }
@@ -352,8 +256,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .inbox-pending, .inbox-card .inbox-retry-warning { color: var(--orange); }
 .inbox-jump { color: var(--accent); }
 .inbox-answer textarea { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
-#spawn-dialog { background: var(--bg-secondary); border-color: var(--border); color: var(--text-primary); box-shadow: 0 20px 60px var(--overlay-shadow); }
-#spawn-dialog::backdrop { background: var(--scrim); }
 #spawn-dialog input, #spawn-dialog select { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
 #role-editor { max-width: 660px; }
 #role-editor { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
@@ -475,9 +377,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .machine-activity-item { padding: 9px 0; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 11px; }
 .machine-activity-item strong { color: var(--text-primary); margin-right: 8px; }
 .machine-activity-item p { margin: 4px 0 0; overflow-wrap: anywhere; }
-#switch-dialog { width: min(90vw, 380px); padding: 24px; border-radius: 14px; box-shadow: 0 20px 60px var(--overlay-shadow); }
-#switch-dialog::backdrop { background: var(--scrim); }
-#switch-dialog h2 { margin: 0 0 12px; }
+#switch-dialog { width: min(90vw, 380px); }
 #switch-dialog label { display: block; margin: 12px 0; font-weight: 600; }
 #switch-dialog select { display: block; width: 100%; padding: 8px; margin-top: 4px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-primary); color: var(--text-primary); }
 .machine-folder { padding: 10px; margin: 8px 0; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-primary); }
@@ -495,8 +395,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .machine-card small, .machine-status { color: var(--text-secondary); font-size: 12px; }
 .machine-card-actions { margin-top: 7px; }
 .machine-card-actions button { padding: 5px 9px; font-size: 12px; }
-#machine-pair-dialog { width: min(92vw, 520px); padding: 22px; border-radius: 12px; }
-#machine-pair-dialog::backdrop { background: var(--scrim); }
+#machine-pair-dialog { width: min(92vw, 520px); }
 #machine-pair-dialog label { display: block; margin: 10px 0; }
 #machine-pair-dialog input { display: block; width: 100%; padding: 8px; margin-top: 5px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); }
 #machine-pair-command { display: block; padding: 11px; overflow-wrap: anywhere; user-select: all; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); }
@@ -600,98 +499,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 
 /* The named palettes (light, red, blue, green and the two high-contrast ones) are v1's, from v1.css. */
 
-:is(:root:not([data-theme]),[data-theme="light"],[data-theme="red-dark"],[data-theme="red-light"],[data-theme="blue-dark"],[data-theme="blue-light"],[data-theme="green-dark"],[data-theme="green-light"],[data-theme="high-contrast-dark"],[data-theme="high-contrast-light"]) {
-  --legacy-text-white: var(--text-primary);
-  --legacy-bg-white: var(--bg-secondary);
-  --legacy-text-17252a: var(--text-secondary);
-  --legacy-bg-f3f5f3: var(--bg-tertiary);
-  --legacy-bg-235c58: var(--bg-tertiary);
-  --legacy-border-48a89d: var(--border);
-  --legacy-text-ad3030: var(--text-secondary);
-  --legacy-border-dce3df: var(--border);
-  --legacy-shadow-17332c14: var(--overlay-shadow);
-  --legacy-border-cbd6d0: var(--border);
-  --legacy-bg-e9efeb: var(--bg-tertiary);
-  --legacy-border-d3dfd8: var(--border);
-  --legacy-text-5a7068: var(--text-secondary);
-  --legacy-bg-d0e2d9: var(--bg-tertiary);
-  --legacy-bg-d9e7df: var(--bg-tertiary);
-  --legacy-border-c6d6cd: var(--border);
-  --legacy-bg-128779: var(--bg-tertiary);
-  --legacy-bg-fff: var(--bg-secondary);
-  --legacy-border-e1e8e3: var(--border);
-  --legacy-text-638076: var(--text-secondary);
-  --legacy-border-edf1ed: var(--border);
-  --legacy-text-82948c: var(--text-secondary);
-  --legacy-bg-e9f4ee: var(--bg-tertiary);
-  --legacy-text-285f4a: var(--text-secondary);
-  --legacy-bg-c4e7d4: var(--bg-tertiary);
-  --legacy-border-93baaa: var(--border);
-  --legacy-text-657d71: var(--text-secondary);
-  --legacy-bg-edf6f0: var(--bg-tertiary);
-  --legacy-bg-f1f4f2: var(--bg-tertiary);
-  --legacy-border-8eb8a7: var(--border);
-  --legacy-text-536d61: var(--text-secondary);
-  --legacy-text-156f78: var(--text-secondary);
-  --legacy-bg-192b2d: var(--bg-tertiary);
-  --legacy-text-e9f1ec: var(--text-secondary);
-  --legacy-bg-365553: var(--bg-tertiary);
-  --legacy-border-cadad0: var(--border);
-  --legacy-bg-eaf2ed: var(--bg-tertiary);
-  --legacy-text-235c58: var(--text-secondary);
-  --legacy-bg-101815: var(--bg-tertiary);
-  --legacy-bg-000b: var(--scrim-strong);
-  --legacy-shadow-1b30241a: var(--overlay-shadow);
-  --legacy-border-e4ece5: var(--border);
-  --legacy-bg-163b38: var(--bg-tertiary);
-  --legacy-text-fff: var(--text-primary);
-  --legacy-bg-f4d783: var(--bg-tertiary);
-  --legacy-text-223631: var(--text-secondary);
-  --legacy-bg-f5f7f4: var(--bg-tertiary);
-  --legacy-border-dce7dd: var(--border);
-  --legacy-text-61776b: var(--text-secondary);
-  --legacy-text-648071: var(--text-secondary);
-  --legacy-border-dce6dd: var(--border);
-  --legacy-shadow-203a2810: var(--overlay-shadow);
-  --legacy-text-237a68: var(--text-secondary);
-  --legacy-text-236b65: var(--text-secondary);
-  --legacy-text-667c6f: var(--text-secondary);
-  --legacy-bg-f7faf7: var(--bg-tertiary);
-  --legacy-border-dce6dc: var(--border);
-  --legacy-text-738478: var(--text-secondary);
-  --legacy-border-dae5dc: var(--border);
-  --legacy-text-286c59: var(--text-secondary);
-  --legacy-text-6f8276: var(--text-secondary);
-  --legacy-text-60776a: var(--text-secondary);
-  --legacy-text-a05f0c: var(--text-secondary);
-  --legacy-border-edf1ec: var(--border);
-  --legacy-border-ccdad0: var(--border);
-  --legacy-shadow-0c291d44: var(--overlay-shadow);
-  --legacy-bg-0b251e99: var(--scrim);
-  --legacy-border-bbcec2: var(--border);
-  --legacy-text-53665c: var(--text-secondary);
-  --legacy-text-8b651e: var(--text-secondary);
-  --legacy-text-396e5e: var(--text-secondary);
-  --legacy-bg-e7f2eb: var(--bg-tertiary);
-  --legacy-border-e5ebe6: var(--border);
-  --legacy-bg-f7f9f7: var(--bg-tertiary);
-  --legacy-text-738077: var(--text-secondary);
-  --legacy-text-64746b: var(--text-secondary);
-  --legacy-text-f4d783: var(--text-secondary);
-  --legacy-text-243b31: var(--text-secondary);
-  --legacy-border-cbd9ce: var(--border);
-  --legacy-shadow-0b251e33: var(--overlay-shadow);
-  --legacy-text-925300: var(--text-secondary);
-  --legacy-bg-fff0cf: var(--bg-tertiary);
-  --legacy-text-855006: var(--text-secondary);
-  --legacy-border-ead19b: var(--border);
-  --legacy-bg-fce3dd: var(--bg-tertiary);
-  --legacy-text-9c3c28: var(--text-secondary);
-  --legacy-border-ecb8ac: var(--border);
-  --legacy-border-49615a: var(--border);
-  --legacy-border-51675b: var(--border);
-  --legacy-border-526458: var(--border);
-}
 
 [data-theme$="light"] { color-scheme: light; --button-text: #ffffff; --overlay-shadow: #0002; }
 [data-theme$="dark"] { color-scheme: dark; --button-text: #ffffff; --overlay-shadow: #0008; }
@@ -772,11 +579,10 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .room-controls button, .room-controls button:not(#room-archive):not(#task-notes-toggle) { min-width: 40px; height: 40px; }
   .room-controls button:not(#room-archive):not(#task-notes-toggle) { width: 40px; }
 }
-#project-dialog { width: min(90vw, 420px); max-height: 90dvh; padding: 0; border-radius: 6px; }
-#project-dialog::backdrop { background: var(--scrim); }
+#project-dialog { width: min(90vw, 420px); max-height: 90dvh; padding: 0; }
 .sidebar #project-form { margin: 0; padding: 20px; border: 0; }
 .sidebar #project-dialog header { min-height: 0; margin: 0 0 16px; padding: 0; border: 0; }
-#project-dialog h2 { margin: 0; color: var(--text-primary); font-size: 12.6px; }
+#project-dialog h2 { margin: 0; }
 #project-dialog label { display: block; margin: 12px 0; color: var(--text-secondary); font-size: 12px; }
 #project-dialog input { margin-top: 5px; }
 #project-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
@@ -806,9 +612,7 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .answer-controls > .open-questions-open { display: inline-flex; align-items: center; gap: 8px; min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-primary); font: 700 11.8px var(--font-sans); }
 .answer-controls > .open-questions-open:hover:not(:disabled), .answer-controls > .open-questions-open:focus-visible:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
 .answer-error { width: 100%; color: var(--red); margin: 3px 0; }
-.answer-dialog { width: min(600px, calc(100vw - 24px)); max-height: min(85vh, 760px); overflow: auto; border-radius: 12px; padding: 20px; }
-.answer-dialog::backdrop { background: #0009; }
-.answer-dialog h2 { margin: 0 0 14px; }
+.answer-dialog { width: min(600px, calc(100vw - 24px)); max-height: min(85vh, 760px); overflow: auto; }
 .answer-dialog fieldset { display: grid; gap: 8px; margin: 0 0 15px; border: 1px solid var(--border); border-radius: 8px; }
 .answer-dialog legend { font-weight: 700; }
 .answer-dialog fieldset label { display: block; }
@@ -816,9 +620,9 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .answer-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .open-questions-count { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 18px; margin-left: 4px; border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); font-size: 10.9px; }
 /* The Open Questions dialog as v1 draws it: a titled header band, small square step buttons with a dot once answered, plain options, a footer bar. */
-.open-questions-dialog { width: min(560px, calc(100vw - 32px)); padding: 0; border-radius: 10px; }
+.open-questions-dialog { width: min(560px, calc(100vw - 32px)); padding: 0; }
 .open-questions-dialog > form { padding: 16px 18px 0; }
-.open-questions-dialog h2 { margin: 0; font: 700 15.7px var(--font-sans); }
+.open-questions-dialog h2 { margin: 0; }
 .open-questions-subtitle { margin: 3px -18px 14px; padding: 0 18px 14px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 12px; }
 .open-questions-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
 .open-questions-step { min-width: 30px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-secondary); color: var(--text-secondary); font: 700 11.5px var(--font-sans); }
@@ -876,8 +680,7 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .invite-entry .invite-switch, #login-form .invite-back { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
 .invite-dialog form { display: grid; gap: 10px; }
 .invite-dialog label { display: grid; gap: 4px; }
-.invite-dialog { width: min(440px, calc(100vw - 24px)); border-radius: 10px; padding: 20px; }
-.invite-dialog::backdrop { background: #0009; }
+.invite-dialog { width: min(440px, calc(100vw - 24px)); }
 /* Mentions as v1 draws them; a mention of the viewer is the amber highlight. */
 .mention { border-radius: 3px; font-weight: 500; }
 .mention.mention-self { color: #111827; background: #e3a008; box-shadow: inset 0 0 0 1px rgba(17, 24, 39, .22); }
@@ -1018,16 +821,12 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 }
 
 /* UI part B: spawn, inbox, and shared dialog details. */
-#spawn-dialog { border-radius: 6px; padding: 20px; background: var(--bg-primary); }
-#spawn-dialog h2 { font-size: 12.6px; margin-bottom: 12px; }
 pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .inbox-card .inbox-kind-error { color: var(--red); }
 .inbox-preview { border-left: 2px solid var(--border); padding-left: 10px; }
 .room-item-attention { display: none; }
 .inbox-card .inbox-jump { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 8px; }
-.import-v1-dialog { width: min(900px, 96vw); max-height: calc(100dvh - 24px); padding: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-primary); color: var(--text-primary); }
-.import-v1-dialog::backdrop { background: rgba(0, 0, 0, .65); }
-.import-v1-dialog h2 { margin: 0 0 10px; }
+.import-v1-dialog { width: min(900px, 96vw); max-height: calc(100dvh - 24px); }
 .import-v1-dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
 .import-v1-dialog > * { flex: 0 0 auto; }
 /* The title, progress and status stay on top and the actions and Skip stay at the bottom; only the content between them scrolls. */
@@ -1067,8 +866,7 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .import-v1-content [aria-invalid=true] { border-color: var(--red); }
 .import-skip-zone { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
 .import-skip-zone:empty { display: none; }
-.import-skip-confirm { max-width: min(460px, 92vw); padding: 20px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); color: var(--text-primary); }
-.import-skip-confirm::backdrop { background: rgba(0, 0, 0, .55); }
+.import-skip-confirm { max-width: min(460px, 92vw); }
 .btn-link { border: 0; background: none; color: var(--accent); text-decoration: underline; padding: 0 4px; }
 .import-v1-content fieldset { border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; padding: 10px 14px; }
 .import-v1-content label { display: block; margin: 8px 0; }
@@ -1080,8 +878,6 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 #macros-list .snippet-text p { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Shared card-dialog chrome: one radius, padding, and title size for every modal card. */
-:is(#spawn-dialog, #switch-dialog, #room-export-dialog, #room-info-dialog, #machine-pair-dialog, #knowledge-dialog, .answer-dialog, .invite-dialog, .import-v1-dialog) { padding: 20px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); }
-:is(#spawn-dialog, #switch-dialog, #room-export-dialog, #room-info-dialog, #machine-pair-dialog, #knowledge-dialog, .answer-dialog, .invite-dialog, .import-v1-dialog) h2 { margin: 0 0 12px; font-size: 12.6px; }
 .room-item-attention { flex: 0 0 auto; margin-right: 3px; font-size: 11px; }
 .room-item-attention[hidden] { display: none; }
 /* The disabled bell of a room that is quiet for the person: level Nothing, or a mute that is running. */
@@ -2019,10 +1815,9 @@ dialog:focus, dialog:focus-visible { outline: none; }
 }
 
 /* The shared question / confirmation / notice dialog (dialogs.js). */
-.app-dialog { width: min(440px, calc(100vw - 24px)); padding: 20px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); color: var(--text-primary); }
-.app-dialog::backdrop { background: var(--scrim); }
+.app-dialog { width: min(440px, calc(100vw - 24px)); }
 .app-dialog form { display: grid; gap: 12px; }
-.app-dialog h2 { margin: 0; font-size: 14px; }
+.app-dialog h2 { margin: 0; }
 .app-dialog-message { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
 .app-dialog-fields { display: grid; gap: 12px; }
 .app-dialog-field { display: grid; gap: 4px; font-size: 12px; }

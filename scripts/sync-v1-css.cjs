@@ -2,6 +2,9 @@
 // leaderboard). This script writes it, or with --check says whether the committed file is what it would write.
 //   node scripts/sync-v1-css.cjs [path/to/v1/style.css]          write web/v1.css
 //   node scripts/sync-v1-css.cjs --check [path/to/v1/style.css]  exit 1 when web/v1.css differs
+// v1's stylesheet is found, in order, at the path given, $AIMEBU_V1_CSS, ../aimebu/frontend/style.css next to this repo, and the same next to the
+// main checkout when this is a Git worktree of it. When none exists the script stops with exit 2 and says where it looked: --check never passes by
+// skipping.
 // --final is the end state: no cascade layer, and v1's reset and html/body rules included.
 // A rule is dropped when every selector of it names a removed feature; in a selector list only the removed selectors go. Nothing else is edited.
 'use strict';
@@ -11,7 +14,26 @@ const path = require('node:path');
 
 const args = process.argv.slice(2);
 const check = args.includes('--check');
-const source = args.find(arg => !arg.startsWith('--')) || path.join(os.homedir(), 'xcode', 'aimebu', 'frontend', 'style.css');
+const V1_CSS = path.join('aimebu', 'frontend', 'style.css');
+// The root of the main checkout of this repo (a worktree's own root is not next to v1), or '' outside Git.
+function mainCheckoutRoot() {
+  try {
+    const common = require('node:child_process').execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: __dirname, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return common ? path.dirname(common) : '';
+  } catch { return ''; }
+}
+function findV1Css() {
+  const asked = args.find(arg => !arg.startsWith('--'));
+  // A path that was asked for by name (argument or variable) and is missing is the person's mistake: it is not quietly replaced by another v1.
+  const named = asked || process.env.AIMEBU_V1_CSS;
+  const candidates = named ? [named] : [path.join(__dirname, '..', '..', V1_CSS), ...(mainCheckoutRoot() ? [path.join(mainCheckoutRoot(), '..', V1_CSS)] : [])];
+  const found = candidates.find(candidate => fs.existsSync(candidate));
+  if (found) return found;
+  console.error(`sync-v1-css: v1's style.css was not found. Looked at:\n${candidates.map(candidate => `  ${path.resolve(candidate)}`).join('\n')}\n` +
+    'Check out v1 next to this repo as ../aimebu, set AIMEBU_V1_CSS to its frontend/style.css, or pass the path as an argument.');
+  process.exit(2);
+}
+const source = findV1Css();
 const target = path.join(__dirname, '..', 'web', 'v1.css');
 const REMOVED = /fleet|leaderboard/;
 // While v2 still has areas that rely on the browser's default margins and its own page layout, v1's universal reset and its html/body rules (a flex

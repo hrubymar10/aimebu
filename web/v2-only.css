@@ -88,3 +88,10 @@ label > :is(.settings-text-input, .settings-select) { display: block; margin-top
 @media (max-width: 700px), (pointer: coarse) { .settings-text-input, .settings-select { min-height: 40px; } .settings-textarea { min-height: 84px; } }
 /* v1 sets no weight on an inactive tab: a <button> would take the browser's. The active tab is 500 in v1's own rule. */
 .settings-nav-item { font-weight: 400; }
+
+/* One modal pattern. Every <dialog> but Settings (which wears v1's full-height pane) looks like v1's modal pane (.open-questions-modal-pane): the primary
+   surface, a border, v1's large radius and shadow, a scrim of .56 behind it, and a title in v1's modal title type (the padding is v2's 20px, which every dialog had). A dialog's own rules give it a
+   width and its content a layout; a dialog that lays out its own header and body sets its padding to 0. The selectors are :where() so that any dialog's own rule wins. The image lightbox and the message inspector lay out their own header and body, with their own chrome in style.css, and are left out. */
+:where(dialog:not(.settings-modal, .image-lightbox, .message-debug-dialog)) { padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-primary); color: var(--text-primary); box-shadow: 0 18px 56px rgba(0, 0, 0, 0.48); }
+:where(dialog:not(.settings-modal, .image-lightbox, .message-debug-dialog))::backdrop { background: rgba(0, 0, 0, 0.56); }
+:where(dialog:not(.settings-modal, .image-lightbox, .message-debug-dialog)) :where(h2) { margin: 0 0 12px; color: var(--text-primary); font: 700 0.98rem var(--font-sans); }
