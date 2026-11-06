@@ -376,6 +376,19 @@ async function openRoom(room, messageID, { listed = false } = {}) {
   if (!current()) return false;
   return true;
 }
+// Brings the open room up to date in place (see Chat.syncInPlace). False when it cannot be read any more, which the caller answers by opening it
+// the ordinary way.
+// Resolves 'synced', 'gone' (the room cannot be read any more: open it the ordinary way, which says so) or 'stale' (the session it began in ended
+// meanwhile: nothing more is done for it).
+async function syncOpenRoom(room, generation = sessionGeneration) {
+  chat.setRoomFacts(room); agents.setRoomFacts(room); inbox.setRoom(room); knowledge.setRoom(room);
+  try { await Promise.all([chat.syncInPlace(), agents.refresh()]); } catch (error) {
+    if (generation !== sessionGeneration) return 'stale';
+    if ([403, 404].includes(error?.status)) return 'gone';
+    throw error;
+  }
+  return generation === sessionGeneration ? 'synced' : 'stale';
+}
 async function snapshot(generation = sessionGeneration, cursor = request('/api/events/cursor')) {
   // Take the cursor before the HTTP snapshots. Events committed while those
   // reads run are caught by the socket; its replay is coalesced on ready.
@@ -394,7 +407,12 @@ async function snapshot(generation = sessionGeneration, cursor = request('/api/e
     const open = chat.room;
     const home = open && !sidebar.rooms.has(open.id) ? [...sidebar.rooms.values()].find(room => room.project_id === open.project_id && room.kind === 'home') : null;
     const selected = home || sidebar.rooms.get(chat.room?.id || roomInAddress()) || sidebar.rooms.get(remembered);
-    if (selected) await selectRoom(selected, undefined, { listed: true });
+    // A room that is open and still listed is brought up to date where it is, not opened again: opening it again throws away the reader's place,
+    // the history they loaded and the thread they have open. If it can no longer be read (removed, or taken away), the reopen below says so.
+    const synced = selected && chat.room?.id === selected.id && !home ? await syncOpenRoom(selected, generation) : '';
+    if (synced === 'stale') return null;
+    if (synced === 'synced') { /* done */ }
+    else if (selected) await selectRoom(selected, undefined, { listed: true });
     else {
       const first = [...sidebar.rooms.values()][0];
       if (first) await selectRoom(first, undefined, { listed: true });

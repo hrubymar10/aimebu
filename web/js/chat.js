@@ -450,6 +450,7 @@ export class Chat {
   }
   exportRoom(format) { return this.panel.exportRoom(format); }
   refreshMessages() { return this.store.refresh(); }
+  syncInPlace() { return this.store.syncInPlace(); }
   threadLatestHidden() { return this.threadLatestButton.hidden; }
   hideThreadLatest() { this.threadLatestButton.hidden = true; }
   announce(message) { this.announcer.arrival({ id: message.id, mine: message.author_kind === 'user' && message.author_id === currentUser, from: this.authorName(message), body: message.body, room: this.room.title }); }

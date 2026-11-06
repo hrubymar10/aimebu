@@ -66,7 +66,8 @@ export class ChatStore {
     await this.refresh();
   }
 
-  async refresh() {
+  // `quiet`: the messages are a catch-up after a gap, taken in without announcing each one to a screen reader.
+  async refresh({ quiet = false } = {}) {
     if (!this.alive || !this.host.room || this.initialLoading) return;
     const id = this.host.room.id, generation = this.openGeneration;
     for (;;) {
@@ -75,10 +76,10 @@ export class ChatStore {
       for (const message of messages) {
         const route = liveRoute(message, { hasMoreOlder: this.hasMoreOlder, oldestSeq: this.oldestSeq, contextMode: this.contextMode, known: this.messages.has(message.id), missed: this.missedIDs.has(message.id), ...this.threadState(message) });
         if (route === 'new-reply') this.markNewThreadReply(message);
-        else if (route === 'add') { const known = this.messages.has(message.id); this.add(message); if (!known && liveArrival(message, this) && !this.announcedIDs?.has(message.id)) this.host.announce(message); }
+        else if (route === 'add') { const known = this.messages.has(message.id); this.add(message); if (!known && !quiet && liveArrival(message, this) && !this.announcedIDs?.has(message.id)) this.host.announce(message); }
         else if (route === 'missed') {
           this.missedIDs.add(message.id); this.host.updateLatestLabel();
-          if (!this.initialLoading && message.author_kind !== 'system') this.host.announce(message);
+          if (!this.initialLoading && !quiet && message.author_kind !== 'system') this.host.announce(message);
         }
       }
       if (messages.length) this.newestSeq = messages.at(-1).seq;
@@ -86,6 +87,30 @@ export class ChatStore {
       // The project refresh for the same event ran before this render and could only mark up to the previous newest message.
       if (messages.length && !this.contextMode && !this.catchingUp) this.host.onLatest?.(this.host.room);
       if (messages.length < this.pageSize) return;
+    }
+  }
+
+  // Brings the open room up to date after a gap (a reconnect) and keeps where the reader is: the history that is loaded, the scroll position and
+  // the open thread stay as they are, and nothing is opened again. New messages come in as they would live. What is on screen is read again for
+  // its reactions and thread counts, which have no message of their own to catch up on: the rendered span, from its oldest message, page by page.
+  async syncInPlace() {
+    if (!this.alive || !this.host.room || this.initialLoading) return;
+    const generation = this.openGeneration, id = this.host.room.id;
+    await this.refresh({ quiet: true });
+    if (generation !== this.openGeneration) return;
+    let after = Infinity;
+    for (const message of this.messages.values()) after = Math.min(after, message.seq);
+    after = Number.isFinite(after) ? after - 1 : 0;
+    for (let page = 0; page < 12; page++) {
+      const messages = await request(`/api/rooms/${id}/messages?after=${after}&limit=${this.pageSize}`);
+      if (generation !== this.openGeneration) return;
+      for (const message of messages) {
+        if (!this.messages.has(message.id)) continue; // new ones came with the refresh; a gap in what is on screen stays a gap
+        this.add(message); // a known message takes only its thread count here
+        if (Array.isArray(message.reactions) && JSON.stringify(message.reactions) !== JSON.stringify(this.reactions.get(message.id))) this.showReactions(message.id, message.reactions);
+      }
+      if (messages.length < this.pageSize) break;
+      after = messages.at(-1).seq;
     }
   }
 

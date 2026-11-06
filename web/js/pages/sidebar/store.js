@@ -53,7 +53,7 @@ export class SidebarStore {
     for (const controller of this.roomRequests) controller.abort();
     this.roomRequests.clear();
     for (const cache of [this.projects, this.rooms, this.health, this.folds, this.archiveFilter, this.archiveHits, this.archiveTimers, this.archiveRequests, this.listSeqs]) cache.clear();
-    this.joinable = []; this.agentChatProject = ''; this.loadedUser = null; this.dragging = null;
+    this.joinable = []; this.agentChatProject = ''; this.chatSeq = null; this.loadedUser = null; this.dragging = null;
     this.holdFolds = true;
     batch(() => { this.active.value = ''; this.filter.value = ''; this.shown.value = false; this.collapsible.value = new Set(); this.seenHealth.clear(); this.version.value++; });
   }
@@ -71,6 +71,11 @@ export class SidebarStore {
   // room created in between is not removed by the older, shorter list.
   listTicket(projectID) { const state = this.listSeqs.get(projectID) || { issued: 0, applied: 0 }; state.issued++; this.listSeqs.set(projectID, state); return state.issued; }
   listCurrent(projectID, ticket) { const state = this.listSeqs.get(projectID); if (!state || ticket < state.applied) return false; state.applied = ticket; return true; }
+
+  // The same for the chats between agents: a read that started before a newer one was applied is dropped. A join or a leave is followed by a read of
+  // this list, and two of them can finish out of order; the older answer, which does not name a chat that was just joined, must not remove it.
+  chatTicket() { this.chatSeq = this.chatSeq || { issued: 0, applied: 0 }; return ++this.chatSeq.issued; }
+  chatCurrent(ticket) { if (ticket < this.chatSeq.applied) return false; this.chatSeq.applied = ticket; return true; }
 
   // A project's list names the rooms it has: a cached room of the project that the list no longer names was removed (or taken away).
   dropUnlisted(projectID, list) {
@@ -101,10 +106,11 @@ export class SidebarStore {
   async load() {
     const generation = this.generation;
     const resync = this.loadedUser === currentUser;
-    let projects, chats = null;
+    let projects, chats = null, chatsTicket = 0;
     const projectRooms = [];
     try {
       // The chats between agents belong to no project, so they come from their own list (a failure there leaves the project rooms usable).
+      chatsTicket = this.chatTicket();
       const chatsRequest = this.roomRequest('/api/agent-dms').catch(() => null);
       projects = await this.roomRequest('/api/projects');
       if (!this.owns(generation)) return [];
@@ -129,7 +135,7 @@ export class SidebarStore {
     for (const id of new Set([...this.projects.keys(), ...[...this.rooms.values()].map(room => room.project_id)])) {
       if (!listed.has(id) && !this.isAgentChatProject(id)) this.forgetProject(id);
     }
-    this.applyAgentChats(chats);
+    if (this.chatCurrent(chatsTicket)) this.applyAgentChats(chats);
     this.loadedUser = currentUser;
     batch(() => { this.sort.value = loadSort(); this.manual.value = loadManual(); this.touch(); });
     void resync;
@@ -148,10 +154,10 @@ export class SidebarStore {
   }
 
   async refreshAgentChats() {
-    const generation = this.generation;
+    const generation = this.generation, ticket = this.chatTicket();
     let data;
     try { data = await this.roomRequest('/api/agent-dms'); } catch (error) { if (!this.owns(generation)) return; throw error; }
-    if (!this.owns(generation)) return;
+    if (!this.owns(generation) || !this.chatCurrent(ticket)) return;
     this.applyAgentChats(data); this.touch();
   }
 

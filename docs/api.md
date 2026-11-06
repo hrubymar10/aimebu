@@ -781,9 +781,16 @@ posted in a thread keeps the answer in that thread.
 `AIMEBU2_PUBLIC_URL` origin) and a valid session.
 The web UI reads the authenticated `/api/events/cursor` before its HTTP
 snapshots, then opens the stream after that `seq`. Events committed during
-the snapshot are caught without scanning older history. The client
-coalesces replay frames into one silent snapshot refresh on `ready`, so
-historical inbox items do not trigger a chime or browser notification.
+the snapshot are caught without scanning older history. What the client does
+with the replay before `ready` depends on the connection. One opened straight
+after a snapshot (the first of a page load, and the one after
+`snapshot_required`) replays only what was committed since that snapshot's
+cursor, up to 100 events, and the client applies those like live events, in
+order. Any other connection (after a drop, when anything may have been missed)
+and a replay of more than 100 events are coalesced into one silent snapshot
+refresh on `ready`, so historical inbox items do not trigger a chime or
+browser notification, and the open room is brought up to date where it is
+rather than opened again.
 `message_created` carries `message_id`, `author_kind`, `author_id` and `targets` (the ids of the members the message addresses, an empty list when none), so a client can decide whether the message is worth a sound or a notification, by the room's `notify` level and `muted_until`, without fetching it.
 If that refresh fails, reconnect replays from the last processed `seq`
 until a snapshot succeeds. After a disconnect it resumes from the last

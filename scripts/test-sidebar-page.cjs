@@ -420,6 +420,20 @@ async function main() {
     await answer(page, held, 200, {}); await settle(page);
     assert.deepEqual([await count(page, 'GET', '/api/agent-dms'), await calls(page)], [1, []], 'a reset takes the answer of a join: no read, nothing opened');
     await page.close();
+    // two reads of the chats between agents finish out of order (a join, then a leave and a join again): the older answer is dropped, so a chat that
+    // was just joined is not taken out of the list by a read that started before it was
+    page = await mount();
+    const joined = { ...chats(), rooms: [...chats().rooms, room('rm_join', 'prj_agentdm', 'bert & cleo', { kind: 'dm', agent_chat: true })], joinable: [] };
+    await hold(page, 'GET /api/agent-dms');
+    await page.evaluate(() => { window.__older = window.__sidebar.refreshAgentChats(); });
+    const older = await waitRequest(page, 'GET', '/api/agent-dms');
+    await page.evaluate(() => { window.__newer = window.__sidebar.refreshAgentChats(); });
+    await page.waitForFunction(() => window.__requests.filter(request => request.method === 'GET' && request.path === '/api/agent-dms' && !request.answered).length === 2);
+    const newer = await page.evaluate(() => window.__requests.findLastIndex(request => request.method === 'GET' && request.path === '/api/agent-dms' && !request.answered));
+    await answer(page, newer, 200, joined); await page.evaluate(() => window.__newer); await settle(page);
+    await answer(page, older, 200, chats()); await page.evaluate(() => window.__older); await settle(page);
+    assert.deepEqual(await page.evaluate(() => [window.__sidebar.rooms.has('rm_join'), window.__sidebar.joinable.length]), [true, 0], 'an older read of the chats does not take back a chat that a newer one listed');
+    await page.close();
     // create
     page = await mount();
     // The + of a project's row makes a room, as the ☰ menu's New room does (the second case below).

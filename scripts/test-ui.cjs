@@ -416,14 +416,19 @@ async function main() {
       };
       try {
         stream.start();
-        sockets[0].emit({ type: 'event', event: { seq: 8 } });
-        sockets[0].emit({ type: 'ready', seq: 8 });
+        // The first connection comes up with nothing to replay, then drops: what the next one replays can be anything, so it takes a snapshot.
+        sockets[0].emit({ type: 'ready', seq: 5 });
+        await until(() => stream.ready);
+        sockets[0].close();
         await until(() => sockets.length === 2);
-        const retryAfter = new URL(sockets[1].url).searchParams.get('after');
         sockets[1].emit({ type: 'event', event: { seq: 8 } });
         sockets[1].emit({ type: 'ready', seq: 8 });
-        await until(() => stream.ready);
-        sockets[1].emit({ type: 'event', event: { seq: 13 } });
+        await until(() => sockets.length === 3);
+        const retryAfter = new URL(sockets[2].url).searchParams.get('after');
+        sockets[2].emit({ type: 'event', event: { seq: 8 } });
+        sockets[2].emit({ type: 'ready', seq: 8 });
+        await until(() => stream.ready && stream.seq === 12);
+        sockets[2].emit({ type: 'event', event: { seq: 13 } });
         await until(() => live === 1);
         return { retryAfter, snapshots, seq: stream.seq };
       } finally { stream.stop(); window.WebSocket = original; }
@@ -6393,6 +6398,7 @@ async function main() {
       await domClick(first, '.agent-chat-offers .agent-chat-join');
       await first.waitForFunction(() => document.querySelector('#room-icon')?.textContent === '⇄' && !document.querySelector('.agent-chat-offers'), {}, {});
       const chatID = await first.evaluate(() => location.hash.slice(1));
+      await first.waitForSelector(`[data-room-id="${chatID}"] .room-name`); // listed before the faults go in: they fail the reads that would list it
       await first.evaluate(id => {
         const real = window.fetch; window.__fetchBeforeFault = real;
         const fail = status => Promise.resolve(new Response(JSON.stringify({ error: 'fault', message: 'faked by the smoke' }), { status, headers: { 'Content-Type': 'application/json' } }));

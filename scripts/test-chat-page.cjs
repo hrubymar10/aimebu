@@ -234,6 +234,41 @@ async function main() {
     await page.close();
   }
 
+  // A reconnect keeps the reader's place (syncInPlace): scrolled up with the older pages loaded and a thread open, what happened meanwhile (a new
+  // message, a new thread reply, a changed reaction) comes in without the room being opened again, the list moving or the thread closing.
+  {
+    const page = await mount({ openPage: 100 });
+    await page.evaluate(() => {
+      const list = window.__data.rooms.rm_a.messages;
+      for (const [i, id] of ['rm_a_t1', 'rm_a_t2'].entries()) list.push({ id, seq: 131 + i, no: 131 + i, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: `reply ${i + 1}`, created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: 'rm_a_m120' });
+    });
+    await openRoom(page, 'rm_a'); await opened(page); await settle(page);
+    await page.evaluate(() => { const list = document.querySelector('#messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 0; });
+    await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1'); await settle(page);
+    await page.evaluate(() => { window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120')); }); await page.evaluate(() => window.__open); await settle(page);
+    const place = () => page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_a_m50]'); return { top: Math.round(row.getBoundingClientRect().top), scrollTop: Math.round(document.querySelector('#messages').scrollTop), thread: window.__chat.threadRoot?.id || null, threadShown: !document.querySelector('#thread-panel').hidden, rows: document.querySelectorAll('#messages > article.message').length }; });
+    const before = await place();
+    assert.deepEqual([before.thread, before.threadShown, before.rows], ['rm_a_m120', true, 130], 'scrolled up with every older page loaded and a thread open');
+    await page.evaluate(() => {
+      const list = window.__data.rooms.rm_a.messages;
+      list.push({ id: 'rm_a_m134', seq: 133, no: 133, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'while the socket was down', created_at: '2026-01-10T12:05:00Z', reply_to: '', thread_root: '' });
+      list.push({ id: 'rm_a_t3', seq: 134, no: 134, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'a reply while away', created_at: '2026-01-10T12:06:00Z', reply_to: '', thread_root: 'rm_a_m120' });
+      list.find(message => message.id === 'rm_a_m60').reactions = [{ emoji: '🎉', member_kind: 'user', member_id: 'usr_ann', member_name: 'ann' }];
+    });
+    const opens = await count(page, 'GET', 'rooms/rm_a/messages\\?limit=');
+    await page.evaluate(() => { window.__sync = window.__chat.syncInPlace(); }); await page.evaluate(() => window.__sync); await settle(page);
+    const after = await place();
+    assert.deepEqual([after.top, after.scrollTop, after.thread, after.threadShown], [before.top, before.scrollTop, 'rm_a_m120', true], 'the reader stays where they were, with the thread open');
+    assert.equal(after.rows, 131, 'the message that arrived meanwhile is on the list');
+    assert.equal(await page.evaluate(() => window.__chat.messages.has('rm_a_t3')), true, 'and the reply to the open thread is known');
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('[data-message-id=rm_a_m60] .reaction-pill')].map(node => [node.textContent, node.title, node.getAttribute('aria-pressed'), node.dataset.emoji])), [['🎉 1', 'ann', 'false', '🎉']], 'a reaction that changed meanwhile is shown');
+    assert.equal(await count(page, 'GET', 'rooms/rm_a/messages\\?limit='), opens, 'the room was not opened again');
+    // nothing changed: the same call changes nothing
+    await page.evaluate(() => { window.__sync = window.__chat.syncInPlace(); }); await page.evaluate(() => window.__sync); await settle(page);
+    assert.deepEqual(await place(), after, 'a catch-up with nothing new leaves the view alone');
+    await page.close();
+  }
+
   // Older messages: reaching the top asks for the page before the oldest row (50 at a time), puts it above without moving what the reader looks at, and
   // knows when there is no more.
   {

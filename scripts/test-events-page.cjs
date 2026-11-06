@@ -94,6 +94,44 @@ async function main() {
           sockets[0].emit({ type: 'ready', seq: 0, version: 'v2' }); await second.stream.pending;
           out.baselineSame = calm.length; second.stream.stop();
         }
+        // 5c. The catch-up of a connection opened straight after a snapshot is applied as live events; any other connection's takes a snapshot.
+        {
+          const run = async (label, setup) => {
+            const applied = [], snapshots = [];
+            sockets.length = 0;
+            const stream = new EventStream(event => { applied.push(event.seq); }, async () => { snapshots.push(1); return 100; }, () => {}, 0);
+            await setup({ stream, applied, snapshots });
+            stream.stop();
+            return { applied, snapshots: snapshots.length, seq: stream.seq };
+          };
+          // the first connection: three events and ready: applied in order, no snapshot
+          out.liveReplay = await run('first', async ({ stream }) => {
+            stream.start();
+            for (const seq of [3, 4, 5]) sockets[0].emit({ type: 'event', event: { seq } });
+            sockets[0].emit({ type: 'ready', seq: 5 }); await stream.pending;
+          });
+          // more than a few: taken as a gap, a snapshot is read instead
+          out.liveReplayGap = await run('gap', async ({ stream }) => {
+            stream.start();
+            for (let seq = 1; seq <= 101; seq++) sockets[0].emit({ type: 'event', event: { seq } });
+            sockets[0].emit({ type: 'ready', seq: 101 }); await stream.pending;
+          });
+          // a reconnect after a drop: a snapshot, never replayed event by event
+          out.reconnectReplay = await run('reconnect', async ({ stream }) => {
+            stream.start();
+            sockets[0].emit({ type: 'ready', seq: 0 }); await stream.pending;
+            sockets[0].close(); await sleep(400);
+            sockets[1].emit({ type: 'event', event: { seq: 1 } }); sockets[1].emit({ type: 'event', event: { seq: 2 } });
+            sockets[1].emit({ type: 'ready', seq: 2 }); await stream.pending;
+          });
+          // after snapshot_required the next connection starts from a new snapshot, so its catch-up is live again
+          out.afterSnapshotRequired = await run('required', async ({ stream }) => {
+            stream.start();
+            sockets[0].emit({ type: 'snapshot_required' }); await stream.pending; await sleep(50);
+            sockets[1].emit({ type: 'event', event: { seq: 101 } }); sockets[1].emit({ type: 'event', event: { seq: 102 } });
+            sockets[1].emit({ type: 'ready', seq: 102 }); await stream.pending;
+          });
+        }
       } finally { window.WebSocket = original; }
       // 6. The update bar: it asks, a click reloads, and a hidden page with nothing typed reloads by itself.
       {
@@ -120,6 +158,10 @@ async function main() {
     assert.deepEqual(result.wokenFresh, { sockets: 2 }, 'a socket that spoke a moment ago is kept when the page wakes');
     assert.deepEqual(result.baselineOlder, [['v2', 'v1']], 'a page older than the server says so on its first ready');
     assert.equal(result.baselineSame, 0, 'a page of the same build as the server says nothing');
+    assert.deepEqual(result.liveReplay, { applied: [3, 4, 5], snapshots: 0, seq: 5 }, 'the catch-up of the first connection is applied as live events, in order');
+    assert.deepEqual(result.liveReplayGap, { applied: [], snapshots: 1, seq: 101 }, 'a catch-up of more than 100 events is a gap and takes a snapshot');
+    assert.deepEqual(result.reconnectReplay, { applied: [], snapshots: 1, seq: 100 }, 'a reconnect after a drop takes a snapshot, not a replay');
+    assert.deepEqual(result.afterSnapshotRequired, { applied: [101, 102], snapshots: 1, seq: 102 }, 'the connection after a snapshot replays live again');
     assert.equal(result.sameBuild, 0, 'the same build after a reconnect is not news');
     assert.deepEqual(result.newBuild, [['v2', 'v1']], 'a different build is reported once, against the one the page started with');
     assert.deepEqual(result.bar, { text: 'aimebu was updated. Reload to use the new version.Reload', role: 'alert', reloadsWhileVisible: 0, afterClick: 1, hiddenWithDraft: 1, hiddenClean: 2 }, 'the update bar asks, reloads on a click, and reloads a hidden page only when nothing typed would be lost');
