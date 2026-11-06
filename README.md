@@ -270,7 +270,7 @@ turn's latest activity or usage event with that threshold.
 
 Open `http://127.0.0.1:9897/` for the embedded web UI. It currently supports
 owner sign-in, projects and nested task rooms, chat, replies, reactions, and
-live updates. Text in a message keeps to about 80 characters per line on a wide screen (code, tables and plans use the whole bubble; a phone uses the full width). Message bodies render a safe Markdown subset, including GFM
+live updates. Message text fills the whole bubble on every screen (there is no line-length cap). Message bodies render a safe Markdown subset, including GFM
 tables with column alignment, inline formatting in cells, and horizontal
 scrolling for wide tables, bare-URL autolinks, `#42` message links,
 indented code, `~~strikethrough~~`, `<u>underline</u>` (the only HTML tag recognised; any other angle bracket stays text), and `mailto:` links (also `[text](address "title")`, which carries the title, addresses with spaces, which are encoded, and `<https://…>`; only http, https and mailto links are ever live). Lists nest by indentation (bulleted and numbered, mixed), `- [ ]` and `- [x]` items show a disabled checkbox, and `---` is a horizontal rule. A fence that never closes is shown as typed, with the rest read as Markdown. Code blocks have a
@@ -321,9 +321,11 @@ human shows a 🔔. A chart icon beside an agent message's `#42` opens a popover
 (tokens, cost labelled when it uses the dated [model price list](docs/pricing.md),
 model, and its place among the turn's messages, such as "2 of 3"); these are the turn's figures, not
 per-message ones, and an unreported figure shows as a dash, never zero. The `#42` number is the message's own number, one sequence across every room (as in v1, where an imported message keeps its v1 number); it copies itself, a `#42` in text links to that message (opening its room when it is elsewhere), and an agent may name a message by it. Hovering or focusing a
-message shows its actions as one compact toolbar that overlays and reserves no space and covers no text: at the right end of the sender line
-for someone else's message, beside the bubble (to its left) for your own. The one exception is a chat column under 420px, where nothing fits
-beside either: the sender line then leaves 22px below it and the toolbar sits in that room over the bubble's top edge. On a touch screen a tap on a message shows it under the message: react (+, which opens a row of 👍 🆗 ✅ 👀 🙏 🎉), find another reaction (opens the emoji picker), reply (↩), reply in a thread, copy text and copy link. A message with
+message shows its actions as one compact toolbar that overlays and reserves no space and covers no text: at the bubble's top-right corner, over
+its top edge, for someone else's message and for your own alike (it extends to the left when the bubble is narrower than the toolbar). Someone
+else's sender line is at the left, clear of it; your own is right-aligned over that corner, so it leaves 22px below it and the toolbar sits in
+that room. A chat column under 420px does the same for everyone's message. On a touch tablet your own messages keep the toolbar beside the
+bubble, to its left, and on a phone it is part of the bubble's flow. On a touch screen a tap on a message shows it under the message: react (+, which opens a row of 👍 🆗 ✅ 👀 🙏 🎉), find another reaction (opens the emoji picker), reply (↩), reply in a thread, copy text and copy link. A message with
 thread replies shows an "N replies" chip. Arrow keys, Home and End move through the buttons. System messages
 appear as compact inline notices. UI experiments run behind an A/B/C pill (up to A–E, one letter per option label) in the top bar (`web/js/ui-variant.js`): an
 experiment registers a name and labels for its options, the pill then reads "UI A | B | C … — TESTING: <name>" with the chosen option

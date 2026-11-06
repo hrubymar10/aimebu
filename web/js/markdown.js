@@ -23,6 +23,7 @@ function bareURL(source, i) {
   try { const url = new URL(value); if (['http:', 'https:'].includes(url.protocol) && url.host) return { value, href: url.href }; } catch {}
   return null;
 }
+const wordChar = char => char !== undefined && /[\p{L}\p{N}]/u.test(char);
 function appendInline(parent, source, depth = 0, inLink = false) {
   if (depth > 12) { parent.append(text(source)); return; }
   let i = 0;
@@ -74,8 +75,15 @@ function appendInline(parent, source, depth = 0, inLink = false) {
       if (end > i + 3) { const underline = document.createElement('u'); appendInline(underline, source.slice(i + 3, end), depth + 1, inLink); parent.append(underline); i = end + 4; continue; }
     }
     const marker = ['***', '___', '**', '__', '~~', '*', '_'].find(m => source.startsWith(m, i));
+    // CommonMark: an underscore run flanked by letters or digits on both sides (snake_case_names) opens and closes nothing; `*` stays intraword.
+    if (marker && marker[0] === '_' && wordChar(source[i - 1])) { // the whole run is literal, or its tail would open emphasis
+      let run = i; while (source[run] === '_') run++;
+      parent.append(text(source.slice(i, run))); i = run; continue;
+    }
     if (marker) {
-      const end = source.indexOf(marker, i + marker.length);
+      let end = source.indexOf(marker, i + marker.length);
+      // An underscore closer is skipped when a word character follows it, or when its run goes on into another underscore (as the opener's does).
+      while (marker[0] === '_' && end > i + marker.length && (wordChar(source[end + marker.length]) || source[end + marker.length] === '_' || (marker.length === 1 && source[end - 1] === '_'))) end = source.indexOf(marker, end + 1);
       if (end > i + marker.length) {
         const content = source.slice(i + marker.length, end);
         if (marker.length === 3) { const strong = document.createElement('strong'); const em = document.createElement('em'); appendInline(em, content, depth + 1, inLink); strong.append(em); parent.append(strong); }

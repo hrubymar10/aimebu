@@ -111,6 +111,20 @@ globalThis.document = { createElement: tag => new Element(tag), createTextNode: 
   assert.equal(html('<https://x.test/a> and [b](https://y.test/)'), '<p><a href="https://x.test/a">https://x.test/a</a> and <a href="https://y.test/">b</a></p>');
   assert.equal(html('go to https://x.test/a.'), '<p>go to <a href="https://x.test/a">https://x.test/a</a>.</p>', 'trailing punctuation stays outside a bare link');
 
+  // Underscores inside a word never open or close emphasis (CommonMark); asterisks keep the intraword behaviour.
+  assert.equal(html('attachment_get, close_room, create_room'), '<p>attachment_get, close_room, create_room</p>');
+  assert.equal(html('a_b_c'), '<p>a_b_c</p>');
+  assert.equal(html('_em_ and _em_.'), '<p><em>em</em> and <em>em</em>.</p>');
+  assert.equal(html('foo_bar_ baz'), '<p>foo_bar_ baz</p>');
+  assert.equal(html('__strong__ x'), '<p><strong>strong</strong> x</p>');
+  assert.equal(html('snake__case__name'), '<p>snake__case__name</p>');
+  assert.equal(html('_a_b_'), '<p><em>a_b</em></p>', 'an underscore inside emphasised text stays literal');
+  assert.equal(html('- use snake_case_names here'), '<ul><li>use snake_case_names here</li></ul>');
+  assert.equal(html('[snake_case_link](https://x.test/)'), '<p><a href="https://x.test/">snake_case_link</a></p>');
+  assert.equal(html('_foo__bar_'), '<p><em>foo__bar</em></p>', 'a closer whose run goes on into another underscore does not close');
+  assert.equal(html('__a___b__'), '<p><strong>a___b</strong></p>');
+  assert.equal(html('a*b*c'), '<p>a<em>b</em>c</p>');
+
   // [end group d]
   // What was already better in v2 stays so.
   assert.equal(html('~~gone~~ <u>under</u>'), '<p><del>gone</del> <u>under</u></p>');

@@ -2279,10 +2279,10 @@ async function main() {
     assert.equal(await first.$eval('.message:first-child .message-actions', el => getComputedStyle(el).opacity), '0', 'the message actions stay out of the way until the message is hovered or focused');
     await first.hover('.message:first-child');
     await first.waitForFunction(() => getComputedStyle(document.querySelector('.message:first-child .message-actions')).opacity === '1');
-    assert.deepEqual(await first.evaluate(() => { const bubble = document.querySelector('.message:first-child .message-bubble').getBoundingClientRect(), bar = document.querySelector('.message:first-child .message-actions').getBoundingClientRect(); const items = [...document.querySelector('.message:first-child .message-meta').children].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect()); const clear = items.every(meta => bar.right <= meta.left || bar.left >= meta.right || bar.bottom <= meta.top || bar.top >= meta.bottom); const text = document.querySelector('.message:first-child .message-body').getBoundingClientRect(); const clearOfText = bar.right <= text.left || bar.left >= text.right || bar.bottom <= text.top || bar.top >= text.bottom; const beside = bar.right <= bubble.left + 1, corner = bar.right <= bubble.right && bubble.right - bar.right < 12 && bar.top < bubble.top + 4 && bubble.top - bar.top < 24; return { onTheBubble: beside || corner, clearOfTheText: clearOfText, clearOfTheSenderLine: clear, buttons: document.querySelectorAll('.message:first-child .message-actions > .message-action').length }; }), { onTheBubble: true, clearOfTheText: true, clearOfTheSenderLine: true, buttons: 6 }, 'the toolbar (react, more reactions, reply, thread, copy, link) sits at the right end of the sender line over the bubble corner (or beside the bubble when it is the viewer\'s own) and covers neither the message text nor the sender, the number or the time');
+    assert.deepEqual(await first.evaluate(() => { const bubble = document.querySelector('.message:first-child .message-bubble').getBoundingClientRect(), bar = document.querySelector('.message:first-child .message-actions').getBoundingClientRect(); const items = [...document.querySelector('.message:first-child .message-meta').children].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect()); const clear = items.every(meta => bar.right <= meta.left || bar.left >= meta.right || bar.bottom <= meta.top || bar.top >= meta.bottom); const text = document.querySelector('.message:first-child .message-body').getBoundingClientRect(); const clearOfText = bar.right <= text.left || bar.left >= text.right || bar.bottom <= text.top || bar.top >= text.bottom; const beside = bar.right <= bubble.left + 1, corner = bar.right <= bubble.right && bubble.right - bar.right < 12 && bar.top < bubble.top + 4 && bubble.top - bar.top < 24; return { onTheBubble: corner, clearOfTheText: clearOfText, clearOfTheSenderLine: clear, buttons: document.querySelectorAll('.message:first-child .message-actions > .message-action').length }; }), { onTheBubble: true, clearOfTheText: true, clearOfTheSenderLine: true, buttons: 6 }, 'the toolbar (react, more reactions, reply, thread, copy, link) sits at the right end of the sender line over the bubble corner, whoever sent the message, and covers neither the message text nor the sender, the number or the time');
     // v1 parity of the message frame: the bubble sits right under the sender line (the hover toolbar reserves no space), and the sender's
     // name is plain text until it is hovered or focused.
-    assert.deepEqual(await first.evaluate(() => { const meta = document.querySelector('.message:first-child .message-meta').getBoundingClientRect(), bubble = document.querySelector('.message:first-child .message-bubble').getBoundingClientRect(), author = document.querySelector('.message:first-child .message-author'); return { gap: Math.round(bubble.top - meta.bottom), underline: getComputedStyle(author).textDecorationLine }; }), { gap: 2, underline: 'none' }, 'the bubble is 2px under the sender line and the sender name has no permanent underline');
+    assert.deepEqual(await first.evaluate(() => { const meta = document.querySelector('.message:first-child .message-meta').getBoundingClientRect(), bubble = document.querySelector('.message:first-child .message-bubble').getBoundingClientRect(), author = document.querySelector('.message:first-child .message-author'); return { gap: Math.round(bubble.top - meta.bottom), own: document.querySelector('.message:first-child').classList.contains('self'), underline: getComputedStyle(author).textDecorationLine }; }), { gap: 22, own: true, underline: 'none' }, 'the bubble is under the sender line (22px for the viewer\'s own message, whose line leaves room for the toolbar; 2px for anyone else\'s) and the sender name has no permanent underline');
     // The shared in-app dialog (the page's own flows have it answered for them above): focus, Escape, Enter, validation, one at a time.
     {
       const page = second;
@@ -2330,7 +2330,7 @@ async function main() {
       assert.equal(html, 'thanks 🙏 and :nope_not_real: at 10:30:15 <code>:pray:</code> <a href="#">:pray:</a>', 'shortcodes in message text become emoji outside code and links');
     }
     // No experiment is running: the pill stays hidden.
-    // The message width is final: text keeps to about 80 characters, and code, tables and plans use the whole bubble.
+    // Message width: text, code, tables and plans all use the whole bubble (no line-length cap).
     {
       assert.deepEqual(await first.$$eval('.workspace-bar .ui-variant-toggle', nodes => nodes.map(el => el.hidden)), [true], 'with no experiment running the pill is hidden');
       assert.equal(await first.evaluate(() => [...document.documentElement.getAttributeNames()].some(name => name.startsWith('data-ui-'))), false, 'and no experiment option is set');
@@ -2343,8 +2343,8 @@ async function main() {
         const out = { p: cs('p'), ul: cs('ul'), quote: cs('blockquote'), code: cs('.md-codeblock'), table: cs('.md-table-wrap, table'), wide: matchMedia('(min-width: 701px)').matches };
         host.remove(); return out;
       });
-      assert.ok(widths.wide && parseFloat(widths.p) > 300 && widths.p === widths.ul && widths.p === widths.quote, `text is held to a measure: ${JSON.stringify(widths)}`);
-      assert.ok(widths.code !== widths.p && widths.table !== widths.p, `code and tables are not held to it: ${JSON.stringify(widths)}`);
+      assert.ok(widths.wide && widths.p === 'none' && widths.ul === 'none' && widths.quote === 'none', `text is not held to a measure: ${JSON.stringify(widths)}`);
+      assert.ok(widths.code === '100%' && widths.table === '100%', `code and tables use the bubble's width: ${JSON.stringify(widths)}`);
     }
     // The A/B/C pill is the experiment framework: hidden with no experiment, otherwise it names the test and cycles the options.
     const pill = await first.evaluate(async () => {
@@ -2563,15 +2563,19 @@ async function main() {
     {
       await post('Narrow column check. ' + 'This is a long message of my own that wraps across lines. '.repeat(8));
       await first.waitForFunction(() => [...document.querySelectorAll('.message.self .message-body')].some(el => el.textContent.startsWith('Narrow column check.')));
+      // A short own message too: its bubble is narrower than the toolbar, which then extends to the left of it.
+      await post('ok');
+      await first.waitForFunction(() => [...document.querySelectorAll('.message.self .message-body')].some(el => el.textContent === 'ok'));
       await first.evaluate(() => {
         const own = [...document.querySelectorAll('.message.self')].find(item => item.querySelector('.message-body').textContent.startsWith('Narrow column check.'));
         own.dataset.narrowCheck = 'own';
         const other = own.cloneNode(true); other.classList.remove('self'); other.dataset.narrowCheck = 'other'; // someone else's message, laid out by the same rules
         own.after(other);
+        [...document.querySelectorAll('.message.self')].find(item => item.querySelector('.message-body').textContent === 'ok').dataset.narrowCheck = 'short';
       });
-      for (const width of [800, 1100]) {
+      for (const width of [800, 1100, 1500]) {
         await first.setViewport({ width, height: 720 });
-        for (const kind of ['own', 'other']) {
+        for (const kind of ['own', 'other', 'short']) {
           const message = `[data-narrow-check=${kind}]`;
           await first.evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), message);
           await first.hover(`${message} .message-bubble`);
@@ -2580,13 +2584,34 @@ async function main() {
             const box = node => node.getBoundingClientRect(), hit = (a, b) => !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
             const list = box(document.querySelector('#messages')), root = document.querySelector(selector), bubble = box(root.querySelector('.message-bubble')), bar = box(root.querySelector('.message-actions')), text = box(root.querySelector('.message-body'));
             const items = [...root.querySelector('.message-meta').children].filter(node => node.getClientRects().length).map(box);
-            return { readable: bubble.width >= Math.min(0.6 * list.width, 200), insideList: bubble.right <= list.right + 1 && bar.left >= list.left - 1 && bar.right <= list.right + 1, clearOfText: !hit(bar, text), clearOfSenderLine: !items.some(item => hit(bar, item)), list: Math.round(list.width), bubble: Math.round(bubble.width) };
+            return { readable: bubble.width >= Math.min(0.6 * list.width, 200) || root.querySelector('.message-body').textContent === 'ok', insideList: bubble.right <= list.right + 1 && bar.left >= list.left - 1 && bar.right <= list.right + 1, clearOfText: !hit(bar, text), clearOfSenderLine: !items.some(item => hit(bar, item)), overlapsTopEdge: bar.top < bubble.top && bar.bottom > bubble.top, atTopRightCorner: Math.abs(bar.right - (bubble.right - 6)) < 2, list: Math.round(list.width), bubble: Math.round(bubble.width) };
           }, message);
-          assert.deepEqual([geometry.readable, geometry.insideList, geometry.clearOfText, geometry.clearOfSenderLine], [true, true, true, true], `${kind} message at ${width}px: ${JSON.stringify(geometry)}`);
+          assert.deepEqual([geometry.readable, geometry.insideList, geometry.clearOfText, geometry.clearOfSenderLine, geometry.overlapsTopEdge, geometry.atTopRightCorner], [true, true, true, true, true, true], `${kind} message at ${width}px (the toolbar overlaps the bubble's top edge at its top-right corner, for an own message as for someone else's): ${JSON.stringify(geometry)}`);
         }
       }
+      // The same on a touch tablet (hover: none, a coarse pointer, 701px or wider), whose 46px-tall toolbar appears on a selected message: in a column
+      // this narrow it has no free space beside an own bubble, so it sits wholly above the bubble, for an own message as for someone else's, inside the list.
+      {
+        const session = await first.createCDPSession();
+        await first.setViewport({ width: 800, height: 720 });
+        await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+        assert.equal(await first.evaluate(() => matchMedia('(hover: none) and (pointer: coarse) and (min-width: 701px)').matches), true, 'the page is a touch tablet');
+        for (const kind of ['own', 'other', 'short']) {
+          const message = `[data-narrow-check=${kind}]`;
+          await first.evaluate(selector => { document.querySelectorAll('.actions-open').forEach(node => node.classList.remove('actions-open')); const node = document.querySelector(selector); node.classList.add('actions-open'); node.scrollIntoView({ block: 'center' }); }, message);
+          const geometry = await first.evaluate(selector => {
+            const box = node => node.getBoundingClientRect(), root = document.querySelector(selector);
+            const list = box(document.querySelector('#messages')), bubble = box(root.querySelector('.message-bubble')), bar = box(root.querySelector('.message-actions'));
+            return { column: Math.round(list.width), insideList: bar.left >= list.left - 1 && bar.right <= list.right + 1 && bubble.right <= list.right + 1, aboveBubble: bar.bottom <= bubble.top + 1, share: Math.round(100 * bubble.width / list.width) };
+          }, message);
+          assert.ok(geometry.column < 420 && geometry.insideList && geometry.aboveBubble && (kind === 'other' || geometry.share <= 75), `${kind} message on a touch tablet in a narrow column: ${JSON.stringify(geometry)}`);
+        }
+        await first.evaluate(() => document.querySelectorAll('.actions-open').forEach(node => node.classList.remove('actions-open')));
+        await session.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+        await session.detach();
+      }
       await first.setViewport({ width: 1100, height: 720 });
-      await first.evaluate(() => { document.querySelector('[data-narrow-check=other]').remove(); delete document.querySelector('[data-narrow-check=own]').dataset.narrowCheck; });
+      await first.evaluate(() => { document.querySelector('[data-narrow-check=other]').remove(); delete document.querySelector('[data-narrow-check=own]').dataset.narrowCheck; delete document.querySelector('[data-narrow-check=short]').dataset.narrowCheck; });
     }
     const markdown = '## Heading\n\n**bold** *italic* `inline`\n\n- one\n- two\n\n> quoted\n\n| Left | Right |\n| :--- | ---: |\n| cell | **value** |\n\n[Safe](https://example.com/path) [Bad](javascript:alert(1))\n\n```js\nconst n = 1;\n```';
     await post(markdown);

@@ -1549,7 +1549,7 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 /* The viewer's own messages sit on the right, as in v1: shrink-wrapped, at most 75% wide, the header line (name, #id, time) right-aligned
    over a green-bordered bubble. Everyone else's stay full width on the left. */
 .message.self { align-self: flex-end; width: fit-content; max-width: 75%; }
-/* Overridden on non-touch screens by the clamp near the message toolbar rules below; it still caps own messages on touch screens. */
+/* A touch tablet narrows it further, to leave room for the toolbar beside the bubble (see the message toolbar rules below). */
 @media (max-width: 700px) { .message.self { max-width: 94%; } }
 .message.self .message-meta { justify-content: flex-end; padding-left: 0; padding-right: 2px; }
 .message.self .message-meta strong { color: var(--green-text); }
@@ -1737,32 +1737,41 @@ button.icon-btn[aria-pressed="true"] { border-color: var(--accent); color: var(-
 .sidebar form.room-filter { margin: 8px 0 10px; padding: 0; border: 0; }
 /* Message actions: one compact toolbar of framed icon buttons, revealed by hover or focus and shown by a tap on touch screens (chosen over
    two other looks in the A/B/C trial). It overlays and reserves no space, so the bubble sits right under the sender line, and it covers no
-   text. Someone else's message is full width: the toolbar sits at the right end of its sender line (the line's own items are at the left),
-   level with that line and reaching only the bubble's padding. The viewer's own message is shrink-wrapped, so in a wide column a toolbar over it
-   would cover its text: it sits beside the bubble, in the free space to its left (own messages stop short of it, see below). */
+   text. It sits at the bubble's top-right corner over its top edge, level with the sender line and reaching only the bubble's padding, for
+   someone else's message and for the viewer's own alike; when the bubble is narrower than the toolbar the toolbar extends to its left. Someone
+   else's sender line is at the left, clear of it. The viewer's own is right-aligned over that same corner, so it gets room below it and the
+   toolbar sits in that room (see below). */
 .message-actions { position: absolute; top: -20px; right: 6px; z-index: 2; display: flex; align-items: center; gap: 4px; margin: 0; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); box-shadow: 0 2px 8px var(--overlay-shadow); opacity: 0; pointer-events: none; transition: opacity .12s; }
 .message:hover .message-actions, .message:focus-within .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
-/* The toolbar of the viewer's own message sits beside the bubble, in the free space to its left: it is about 165px wide, so an own
-   message stops short of that (but never narrower than 60% of the column, so it stays readable in a narrow one). In a column too narrow
-   for the toolbar to sit beside the sender line or the bubble (under 420px: a half-width window with panels or a thread open) there is
-   no free place for it next to anything, so there, and only there, the sender line gets room below it and the toolbar sits in that room,
-   over the bubble's top edge, covering neither the sender line nor the text. */
-.message.self .message-actions { top: 0; right: calc(100% + 6px); }
-@media not ((hover: none) and (pointer: coarse) and (max-width: 700px)) { .message.self { max-width: clamp(60%, calc(100% - 200px), 75%); } }
+/* The viewer's own sender line is right-aligned, over the very corner the toolbar occupies, so that line gets room below it (22px) and the toolbar
+   sits in that room, over the bubble's top edge: it covers neither the sender line nor the text. A narrow column does the same for everyone's
+   message (below). A phone's toolbar is in the bubble's flow and needs none. */
+@media not ((hover: none) and (pointer: coarse) and (max-width: 700px)) { .message.self:not(.system-notice) > .message-meta { margin-bottom: 22px; } }
 /* A touch tablet's toolbar is 46px tall: sitting over the bubble's top edge it would cover the first line, so it sits wholly above the bubble,
    and a selected message takes the room it needs there (an own message has its toolbar beside it and needs none). */
 @media (hover: none) and (pointer: coarse) and (min-width: 701px) {
   .message:not(.self) .message-actions { top: -48px; }
   .message.actions-open:not(.self):not(.system-notice) { margin-top: 34px; }
 }
-/* A touch tablet's buttons are 40px, so its toolbar is wider and an own message stops shorter. */
-@media (hover: none) and (pointer: coarse) and (min-width: 701px) { .message.self { max-width: clamp(60%, calc(100% - 290px), 75%); } }
+/* ... and its own messages keep the toolbar beside the bubble, in the free space to its left (about 250px wide here: buttons are 40px), so an own
+   message stops short of it, though never narrower than 60% of the column. */
+@media (hover: none) and (pointer: coarse) and (min-width: 701px) {
+  .message.self { max-width: clamp(60%, calc(100% - 290px), 75%); }
+  .message.self .message-actions { top: 0; right: calc(100% + 6px); }
+  .message.self:not(.system-notice) > .message-meta { margin-bottom: 3px; }
+}
 #messages { container-type: inline-size; }
 @container (max-width: 420px) {
   @media not ((hover: none) and (pointer: coarse) and (max-width: 700px)) {
-    .message.self { max-width: 75%; }
     .message:not(.system-notice) > .message-meta { margin-bottom: 22px; }
-    .message-actions, .message.self .message-actions { top: -20px; right: 6px; left: auto; }
+  }
+  /* A touch tablet's column this narrow has no free space beside an own bubble either: it is treated like anyone's message, the toolbar wholly
+     above the bubble (the same selectors and weights as the tablet rules above, which this comes after). */
+  @media (hover: none) and (pointer: coarse) and (min-width: 701px) {
+    .message.self { max-width: 75%; }
+    .message.self .message-actions { top: -48px; right: 6px; }
+    .message.self:not(.system-notice) > .message-meta { margin-bottom: 22px; }
+    .message.actions-open.self:not(.system-notice) { margin-top: 34px; }
   }
 }
 .message-actions .message-action { width: 22px; height: 22px; flex: 0 0 22px; border-radius: 6px; background: transparent; border-color: transparent; }
@@ -2303,11 +2312,6 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .role-card-close .icon-mask { width: 16px; height: 16px; }
 
 
-/* Message width: text in a message keeps to about 80 characters (a readable measure); code, tables and plans use the whole bubble.
-   Phones always use the full width. (This was the "message width" experiment's option D, chosen by the owner.) */
-@media (min-width: 701px) {
-  .message-body > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-width: 80ch; }
-}
 /* With two experiments the two pills share a phone's top bar: tighter letters. */
 @media (max-width: 700px) {
   .workspace-bar nav button.ui-variant-toggle { gap: 1px; padding: 0 4px; font-size: 11px; }
