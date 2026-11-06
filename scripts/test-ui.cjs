@@ -4654,7 +4654,7 @@ async function main() {
       await agentPage.waitForFunction(() => [...document.querySelectorAll('article.message:last-of-type .reaction-pill')].some(pill => pill.textContent === '🚀 1'));
       // Picker from the composer button: Escape, keyboard navigation, tone persistence.
       await agentPage.click('#emoji-button'); await agentPage.waitForSelector('.emoji-picker .emoji-cell');
-      assert.equal(await agentPage.$$eval('.emoji-cell', cells => cells.length > 1800), true, 'the whole database is in the grid');
+      assert.equal(await agentPage.$$eval('.emoji-cell', cells => cells.length > 20 && cells.length < 250), true, 'only the rows in view are in the grid (test-emoji-page.cjs reaches all of them)');
       await agentPage.keyboard.press('Escape');
       assert.equal(await agentPage.$('.emoji-picker'), null, 'Escape closes the picker'); assert.equal(await agentPage.evaluate(() => document.activeElement?.id), 'emoji-button', 'focus returns to the button');
       await agentPage.click('#emoji-button'); await agentPage.waitForSelector('.emoji-picker .emoji-cell');

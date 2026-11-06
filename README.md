@@ -293,7 +293,7 @@ blocks, URLs and times like `10:30` are left alone). The emoji button in the
 composer, and "Find another reaction" on a message, open the emoji picker:
 category tabs, search by name, alias or tag, keyboard navigation, a hover
 preview, and a skin-tone selector remembered in `localStorage` (every person in
-a joined emoji such as 🧑‍🤝‍🧑 or 💏 gets the tone; a bottom sheet on a phone). The emoji data is the vendored gemoji database in
+a joined emoji such as 🧑‍🤝‍🧑 or 💏 gets the tone; a bottom sheet on a phone). It is one shared popover that opens beside its button (to the right of it, above it where there is room, inside the window) and draws only the rows in view of its virtual grid, about a hundred cells instead of the 1,900 of the database; between opens it is out of the page. The emoji data is the vendored gemoji database in
 `web/vendor/gemoji/` (see `web/vendor/README.md`). Threads show root messages and replies in a side panel.
 Agent final answers can add display-only visual plan blocks using the v1
 vocabulary (Markdown, file tree, data model, endpoint, annotated code, diff,
