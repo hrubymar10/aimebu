@@ -111,7 +111,12 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if a.variant() == "native" && a.RuntimeRoot == "" {
 		return nil, errors.New("Codex runtime root required")
 	}
-	runtimeDir, err := a.prepareRuntime(spec)
+	// The person's own MCP servers, read once for the turn: the tables for the private config and the variables to pass go together.
+	var own userMCP
+	if a.variant() == "native" && spec.Mode == adapter.ModeNormal {
+		own = readUserMCP(a.AuthPath)
+	}
+	runtimeDir, err := a.prepareRuntime(spec, own)
 	if err != nil {
 		return nil, err
 	}
@@ -130,6 +135,11 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 			return nil, err
 		}
 		config := "mcp_servers.aimebu_docker={url=" + strconv.Quote(endpoint) + ",http_headers={Authorization=" + strconv.Quote(header) + "}}"
+		// The person's own remote servers, as overrides of their own (the container's config.toml is ignored, see below), then aimebu's own two
+		// entries, last, so nothing before them can replace either.
+		for _, override := range userDockerOverrides() {
+			args = append(args, "-c", override)
+		}
 		args = append(args, "-c", `mcp_servers.aimebu={command="true",enabled=false}`, "-c", config)
 	}
 	if spec.Mode == adapter.ModeNormal {
@@ -164,7 +174,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if a.variant() == "docker" {
 		cmd.Env = append(childEnv(""), "CODEX_LAUNCH_FLAGS=")
 	} else {
-		cmd.Env = childEnv(runtimeDir)
+		cmd.Env = childEnv(runtimeDir, own.envVars...) // what the person's own MCP servers ask Codex to hand them
 	}
 	cmd.Env = adapter.LauncherEnv(cmd.Env, spec.LauncherEnvRefs)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -226,21 +236,26 @@ func turnInput(spec adapter.TurnSpec) ([]byte, error) {
 	return []byte(promptFor(spec) + string(data)), nil
 }
 
-func childEnv(runtimeDir string) []string {
+func childEnv(runtimeDir string, extra ...string) []string {
+	extra = adapter.UserEnvNames(extra)
 	allowed := map[string]bool{"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "LANG": true,
 		"LC_ALL": true, "LC_CTYPE": true, "TERM": true, "TMPDIR": true, "OPENAI_API_KEY": true,
 		"OPENAI_BASE_URL": true, "HTTPS_PROXY": true, "HTTP_PROXY": true, "NO_PROXY": true,
 		"SSL_CERT_FILE": true, "SSL_CERT_DIR": true,
 		"DOCKER_HOST": true, "DOCKER_CONTEXT": true, "DOCKER_TLS_VERIFY": true, "DOCKER_CERT_PATH": true}
-	out := []string{}
-	if runtimeDir != "" {
-		out = append(out, "CODEX_HOME="+runtimeDir)
+	for _, name := range extra {
+		allowed[name] = true
 	}
+	out := []string{}
 	for _, item := range os.Environ() {
 		key, _, ok := strings.Cut(item, "=")
 		if ok && allowed[key] {
 			out = append(out, item)
 		}
+	}
+	// The adapter's own value is written last, so nothing before it can replace it.
+	if runtimeDir != "" {
+		out = append(out, "CODEX_HOME="+runtimeDir)
 	}
 	return out
 }
@@ -249,7 +264,7 @@ var responseSchema = []byte(`{"type":"object","additionalProperties":false,"requ
 
 var diagnosticSchema = []byte(`{"type":"object","additionalProperties":false,"required":["messages","reconciliation"],"properties":{"messages":{"type":"array","maxItems":0,"items":{"type":"object","additionalProperties":false,"required":["room","body"],"properties":{"room":{"type":"string"},"body":{"type":"string"}}}},"reconciliation":{"type":"object","additionalProperties":false,"required":["status","findings"],"properties":{"status":{"type":"string","enum":["clean","uncertain"]},"findings":{"type":"array","items":{"type":"string"}}}}}}`)
 
-func (a *Adapter) prepareRuntime(spec adapter.TurnSpec) (string, error) {
+func (a *Adapter) prepareRuntime(spec adapter.TurnSpec, own userMCP) (string, error) {
 	hash := sha256.Sum256([]byte(spec.Agent.ID))
 	root := a.RuntimeRoot
 	if a.variant() == "docker" {
@@ -291,6 +306,10 @@ func (a *Adapter) prepareRuntime(spec adapter.TurnSpec) (string, error) {
 	config, err := codexConfig(spec)
 	if err != nil {
 		return "", err
+	}
+	if own.tables != "" {
+		// The person's own MCP servers, next to aimebu's entry, which is the only one under that name (see user_mcp.go).
+		config = append(config, []byte("\n# the person's own MCP servers, copied from their Codex config\n"+own.tables)...)
 	}
 	if err := writePrivate(filepath.Join(dir, "config.toml"), config); err != nil {
 		return "", err

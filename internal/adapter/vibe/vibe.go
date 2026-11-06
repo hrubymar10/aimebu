@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -146,7 +147,14 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	if err := os.Chmod(runtimeDir, 0700); err != nil {
 		return nil, err
 	}
-	providerEnv, err := seedHome(home, a.userHome())
+	scope := mcpNone
+	if spec.Mode == adapter.ModeNormal {
+		scope = mcpAll
+		if docker {
+			scope = mcpRemote
+		}
+	}
+	providerEnv, err := seedHome(home, a.userHome(), scope)
 	if err != nil {
 		return nil, err
 	}
@@ -300,12 +308,52 @@ func (a *Adapter) userHome() string {
 // seedHome makes the private home an agent runs in: a config.toml with the person's models and providers (the only parts of their config an
 // agent needs, so that a model they listed resolves) under settings that keep Vibe quiet, and their .env linked in so its key still
 // authenticates. The .env is never opened here. It returns the names of the environment variables the providers read their key from.
-func seedHome(home, userHome string) ([]string, error) {
+// mcpScope says which of the person's own MCP servers a turn carries: none (a read-only turn), every one (a native turn), or the remote ones (a
+// container, which has none of the host's commands).
+type mcpScope int
+
+const (
+	mcpNone mcpScope = iota
+	mcpAll
+	mcpRemote
+)
+
+func seedHome(home, userHome string, scope mcpScope) ([]string, error) {
 	var blocks []vibeconfig.Block
 	if userHome != "" {
 		var err error
 		if blocks, err = vibeconfig.Read(filepath.Join(userHome, "config.toml")); err != nil {
 			return nil, fmt.Errorf("read the Vibe config: %w", err)
+		}
+	}
+	// The person's own MCP servers go along (a read-only turn never connects to any: it names the tools it may use). aimebu's own entry reaches
+	// the turn through VIBE_MCP_SERVERS and replaces a server of that name from any file, so a v1 bus of that name is dropped here.
+	blocks = vibeconfig.WithoutMCPServer(blocks, "aimebu")
+	// Nor the entry that is aimebu's own bus of v1 under another name (it runs the aimebu binary, or points at v1's port).
+	var kept []vibeconfig.Block
+	for _, block := range blocks {
+		if block.Kind == "mcp_servers" {
+			name := block.Fields["name"]
+			if name == "" {
+				name = block.Alias
+			}
+			if adapter.LooksLikeV1Bus(name, strings.Join(block.Lines, "\n")) {
+				log.Printf("vibe: the MCP server %q is not carried: it is aimebu's own bus of v1", name)
+				continue
+			}
+		}
+		kept = append(kept, block)
+	}
+	blocks = kept
+	switch scope {
+	case mcpNone:
+		blocks = vibeconfig.WithoutMCPServers(blocks)
+	case mcpRemote:
+		// A container has none of the host's commands: it keeps the servers that connect over the network.
+		var dropped []string
+		blocks, dropped = vibeconfig.WithOnlyRemoteMCPServers(blocks)
+		for _, name := range dropped {
+			log.Printf("vibe: the MCP server %q is not carried to the container: a command on the host is not in the container", name)
 		}
 	}
 	config := "# Written by aimebu for this agent before every turn. Edit your own Vibe config instead.\n" +
@@ -328,7 +376,7 @@ func seedHome(home, userHome string) ([]string, error) {
 			}
 		}
 	}
-	return vibeconfig.ProviderEnv(blocks), nil
+	return append(vibeconfig.ProviderEnv(blocks), adapter.UserEnvNames(vibeconfig.MCPEnv(blocks))...), nil
 }
 
 func writeFileAtomic(path string, data []byte) error {

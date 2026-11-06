@@ -154,6 +154,9 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		args = append(args, "--strict-mcp-config", "--tools", "Read", "--disallowedTools", "Bash,Edit,Write", "--permission-mode", "dontAsk")
 	} else {
 		if spec.Mode == adapter.ModeNormal {
+			// Not strict: the person's own MCP servers and connectors stay available to the agent, as in their terminal. The --mcp-config entry
+			// is named aimebu like a v1 bus the person may have configured, and it takes precedence over a same-named server of any scope
+			// (user, project, local), so that bus never reaches a v2 agent.
 			if a.variant() == "docker" {
 				endpoint, header, err := adapter.DockerMCPAt(spec.AgentToolsConfigPath, spec.Agent.ID, spec.AgentServerURL)
 				if err != nil {
@@ -163,12 +166,12 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 				if err != nil {
 					return nil, err
 				}
-				args = append(args, "--mcp-config", string(config), "--strict-mcp-config")
+				args = append(args, "--mcp-config", string(config))
 			} else {
 				if spec.AgentToolsConfigPath == "" {
 					return nil, fmt.Errorf("normal turn requires agent tools config")
 				}
-				args = append(args, "--mcp-config", spec.AgentToolsConfigPath, "--strict-mcp-config")
+				args = append(args, "--mcp-config", spec.AgentToolsConfigPath)
 			}
 		}
 		if len(spec.AllowedTools) > 0 {

@@ -227,10 +227,10 @@ approval in the Inbox. Nothing of what was said in a session is copied anywhere.
 ## What continues, and what does not
 
 The first turn resumes the transcript, so the agent has the whole earlier
-conversation. It is **not** the same as the terminal: aimebu turns run with a
-strict private MCP configuration, so MCP servers and hooks from the user's own
-project or home configuration are not loaded, the same as for any aimebu Claude
-agent. Continuing appends to the original transcript and cannot be undone. Do not
+conversation. It is **not** quite the same as the terminal: aimebu turns get the
+aimebu MCP server through `--mcp-config` (it wins over a server of the same name
+in any of the user's scopes), and the user's other MCP servers and connectors stay
+available, as for any aimebu Claude agent. Continuing appends to the original transcript and cannot be undone. Do not
 open the session in a terminal again while its agent is active; the agent's
 profile shows the resume command, and `aimebu sessions` lists it. A copy keeps the
 original as it was, at the cost of a second transcript.

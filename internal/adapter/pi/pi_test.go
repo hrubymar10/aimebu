@@ -142,7 +142,8 @@ func TestNativeMCPAndDockerIsolation(t *testing.T) {
 				if string(envDir) == "" {
 					t.Fatal("native Pi config directory was not isolated")
 				}
-				if strings.Contains(string(args), "--mcp-config") || !strings.Contains(string(args), "mcp__aimebu__*") {
+				// No mcp__ entry in the allowlist: Pi then keeps every MCP tool, aimebu's and the person's own.
+				if strings.Contains(string(args), "--mcp-config") || strings.Contains(string(args), "mcp__") || !strings.Contains(string(args), "--tools\n") {
 					t.Fatalf("native toolbox args=%q", args)
 				}
 				sum := sha256.Sum256([]byte("agt_test"))

@@ -1,7 +1,7 @@
-// Package vibeconfig reads the two kinds of table of a Mistral Vibe config.toml that aimebu needs, the models and the providers they
-// belong to, without a TOML library. Vibe has no command that lists its models, so the supervisor offers the ones the person's config
-// defines, and the Vibe adapter copies those tables into the private home each agent runs in (the rest of the person's config, their MCP
-// servers, hooks and skills among it, never reaches an agent).
+// Package vibeconfig reads the kinds of table of a Mistral Vibe config.toml that aimebu needs, the models and the providers they
+// belong to and the MCP servers, without a TOML library. Vibe has no command that lists its models, so the supervisor offers the ones the
+// person's config defines, and the Vibe adapter copies those tables into the private home each agent runs in (the rest of the person's
+// config, their hooks and skills among it, never reaches an agent).
 //
 // The reader is line-based and deliberately small: it understands `[[models]]` / `[[providers]]` arrays of tables and the
 // `[models.alias]` alias-map form, with their sub-tables, comments, and values spread over several lines; it reads only single-line
@@ -13,11 +13,13 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/hrubymar10/aimebu/internal/adapter"
 )
 
 // Block is one table of the file, kept as written: its header, every line up to the next table, and the sub-tables that follow it.
 type Block struct {
-	Kind   string            // "models" or "providers"
+	Kind   string            // "models", "providers" or "mcp_servers"
 	Alias  string            // the alias of a [models.alias] table; empty for an entry of a [[models]] array
 	Lines  []string          // the raw lines, header first
 	Fields map[string]string // the table's own single-line scalar values, unquoted
@@ -82,7 +84,7 @@ func Parse(text string) []Block {
 			end = headers[n+1].index
 		}
 		kind := ""
-		if len(h.path) > 0 && (h.path[0] == "models" || h.path[0] == "providers") {
+		if len(h.path) > 0 && (h.path[0] == "models" || h.path[0] == "providers" || h.path[0] == "mcp_servers") {
 			kind = h.path[0]
 		}
 		switch {
@@ -167,6 +169,69 @@ func ProviderEnv(blocks []Block) []string {
 	seen := map[string]bool{}
 	for _, block := range blocks {
 		if name := block.Fields["api_key_env_var"]; block.Kind == "providers" && envName.MatchString(name) && !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// WithoutMCPServer drops the MCP server entries called name, and keeps every other block.
+func WithoutMCPServer(blocks []Block, name string) []Block {
+	var out []Block
+	for _, block := range blocks {
+		if block.Kind == "mcp_servers" && (block.Fields["name"] == name || block.Alias == name) {
+			continue
+		}
+		out = append(out, block)
+	}
+	return out
+}
+
+// WithoutMCPServers drops every MCP server entry.
+func WithoutMCPServers(blocks []Block) []Block {
+	var out []Block
+	for _, block := range blocks {
+		if block.Kind != "mcp_servers" {
+			out = append(out, block)
+		}
+	}
+	return out
+}
+
+// WithOnlyRemoteMCPServers keeps the MCP server entries that connect over the network (a streamable-http, http or sse transport with a url)
+// and drops the ones that run a command, with the names of the dropped ones.
+func WithOnlyRemoteMCPServers(blocks []Block) (kept []Block, dropped []string) {
+	for _, block := range blocks {
+		if block.Kind == "mcp_servers" {
+			remote := false
+			switch block.Fields["transport"] {
+			case "http", "streamable-http", "sse":
+				remote = block.Fields["url"] != ""
+				if _, unsafe := adapter.UnsafeContainerURL(block.Fields["url"]); unsafe {
+					remote = false
+				}
+			}
+			if !remote {
+				name := block.Fields["name"]
+				if name == "" {
+					name = block.Alias
+				}
+				dropped = append(dropped, name)
+				continue
+			}
+		}
+		kept = append(kept, block)
+	}
+	return kept, dropped
+}
+
+// MCPEnv names the environment variables the MCP servers read a token from (`api_key_env`), so only those reach an agent.
+func MCPEnv(blocks []Block) []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, block := range blocks {
+		if name := block.Fields["api_key_env"]; block.Kind == "mcp_servers" && envName.MatchString(name) && !seen[name] {
 			seen[name] = true
 			names = append(names, name)
 		}

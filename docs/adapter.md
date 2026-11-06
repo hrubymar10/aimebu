@@ -173,8 +173,11 @@ The catalog probes `claude --version` at supervisor startup and advertises it
 only when the executable is available. CLI version is discovery data, not a
 model choice: the server's spawn catalog separately bounds Claude models to
 the owner-editable list (default `haiku`, `sonnet`, and `opus`). Normal turns receive the private MCP config
-with strict config enforcement; diagnostic turns use the narrow read-only
-tool flags. Its capability report advertises schema, compaction,
+through `--mcp-config` and are not strict: the person's own MCP servers and connectors
+(user, project and local scope, claude.ai) stay available to the agent, as in their
+terminal. The aimebu entry takes precedence over a server of the same name in any
+scope, so a v1 bus the person has configured under that name never reaches a v2
+agent. Diagnostic turns pass `--strict-mcp-config` with the narrow read-only tool flags. Its capability report advertises schema, compaction,
 context-window, cost, and confirmed-cancel support; it does not claim
 verified no-action or read-only modes. The normal test suite uses a scripted
 `claude` binary.
@@ -198,7 +201,48 @@ model, missing input/output, or inconsistent token shares leave cost unknown.
 
 Its private per-agent `CODEX_HOME` holds the structured-output schema and a
 translated MCP config. Only the private config contains the agent key; the
-inherited process environment excludes `AIMEBU2_*`. Normal turns use the
+inherited process environment excludes `AIMEBU2_*`. A native normal turn also
+carries the person's own MCP servers: the `[mcp_servers.<name>]` tables (and their
+sub-tables) of the `config.toml` next to their `auth.json` are copied into the private
+config, and the environment variables those servers name (`env_vars`,
+`bearer_token_env_var`, `env_http_headers`) pass through. A server called `aimebu`
+is not copied (nor any server that is aimebu's own bus of v1 under another name: one
+whose command is the aimebu binary with an `mcp` argument, or that points at v1's port
+with an `/mcp` path; a server that only mentions aimebu, such as a filesystem server in
+an aimebu checkout, is kept), so a v1 bus
+never reaches an agent: aimebu's own entry is the only one under that name (a merge
+would mix the two, since Codex merges same-named tables). Names in any spelling of
+quoting are read, and a copy whose tables are not well formed is left out with a line
+in the supervisor's log, so a person's config cannot break a turn. Only the table form is read, not an `mcp_servers` inline table; the rest of
+the person's config (model, profile, approvals) still does not apply.
+
+The same rules hold for every harness that carries a person's own servers (Codex,
+OpenCode, Pi and Vibe: normal turns only, a read-only turn gets none). A Docker turn
+carries the person's remote (HTTP or SSE) servers only, because a command on the host is
+not in the container (each one left out is logged with that reason): Codex passes each as
+a `-c mcp_servers.<name>=…` override and keeps `--ignore-user-config`, with aimebu's own two entries
+last. The Codex path fails closed: a server table is carried only when every line of it is a
+`url`, `enabled = true`, one of the two timeouts, a comment or blank (its own header, read with
+whitespace and quoting normalised, included). Any other line (a dotted key, a header, tools or
+variables sub-table, an unknown key) leaves the whole server out with a log line, never carried in
+a weaker form: that covers a server that is switched off (it would be switched on), tool lists,
+`required`, and a token variable or headers (a literal header is a credential, and the override sits
+on a command line that any process of the host can read; Codex also has no way to hand the container
+a variable). For every harness, a url the container cannot use as written is left out: the host
+itself in any spelling (`localhost`, loopback or unspecified addresses, numeric forms), user name and
+password in the url, or a query string (a likely token); and for Codex a server whose
+name is not a plain word (Codex reads a quoted `-c` key with its quotes) or is `aimebu_docker`; OpenCode puts them
+in the inline config and forwards the `{env:NAME}` variables by name like the provider keys;
+Vibe writes them into the private home, with their `api_key_env` variables forwarded; Pi
+Docker has no MCP channel at all (`--no-mcp`), so it carries none. A variable a server names is passed to the harness, except one that would
+undo the isolation: the tool's own homes and config locations, `AIMEBU*`,
+`CLAUDE*`, `XDG_*`, `HOME` and `PATH`, `SSH_AUTH_SOCK` and `GIT_*`, and what injects code
+(`LD_*`, `DYLD_*`, `NODE_OPTIONS` and `NODE_PATH`, the interpreters' own option and path
+variables, `JAVA_TOOL_OPTIONS`). The adapter's own values are written last. A config that cannot be
+read is left out and logged by path, never by content. A variable or a token a
+server names is readable by the agent itself, not only by the server: it reaches
+the harness process, and so its shell tool, and an OpenCode header token sits in
+`OPENCODE_CONFIG_CONTENT`. Carry only what an agent may see. Normal turns use the
 approved action-enabled CLI mode; correction and diagnostic turns request
 read-only sandboxing and omit the toolbox. Container sandbox verification
 failed during the spike, so Codex does not claim `readonly_verified` or
@@ -241,9 +285,13 @@ plain `rate limit`) routes into the provider-limit gate.
 
 Normal native turns allow the built-in action tools and aimebu MCP tools over
 HTTP. Their MCP config is a private 0600 file under the supervisor's Pi
-runtime root, isolated with `PI_CODING_AGENT_DIR`. The installed Ollama Cloud
-provider extension is loaded explicitly for the bounded model without loading
-other user packages. Correction and diagnostic turns
+runtime root, isolated with `PI_CODING_AGENT_DIR`. The `mcpServers` of the
+person's own global `mcp.json` are copied into it next to aimebu's entry (a server
+called `aimebu` is not copied, so a v1 bus never reaches an agent), the `${NAME}`
+variables they name pass through, and the tool allowlist names `codemode` for them
+and no `mcp__` entry, so Pi keeps every MCP tool. The project's `.pi/mcp.json` is not
+carried over. The installed Ollama Cloud provider extension is loaded explicitly for
+the bounded model without loading other user packages. Correction and diagnostic turns
 allow only `read,grep,find,ls`, disable MCP, and do not load project context
 files or skills. Pi 1.1.0 has no response-schema flag; the server validates
 the raw candidate. The verified no-action tool list enables one correction
@@ -291,7 +339,11 @@ the provider-limit gate.
 Normal turns run with `--auto` (permissions not explicitly denied are
 approved, like the Claude and Codex bypass modes) and get the aimebu MCP
 toolbox over HTTP through an inline `OPENCODE_CONFIG_CONTENT` with the agent's
-private bearer. Correction and diagnostic turns drop `--auto` and the MCP and
+private bearer. A native turn also carries the `mcp` entries of the person's own global
+`opencode.jsonc` / `opencode.json` there (comments allowed; an entry that reads a
+`{file:…}` is left out, and the `{env:NAME}` variables the others name pass through); an
+entry called `aimebu` is not copied, since OpenCode deep-merges same-named entries and a
+v1 bus would leave keys behind. Project config stays off. Correction and diagnostic turns drop `--auto` and the MCP and
 deny `bash`, `edit`, `webfetch`, and `external_directory`, which removes those
 tools from the model's tool list. Isolation: the user's data directory is kept
 so OpenCode finds its own `auth.json` (aimebu never reads or copies it), but
@@ -429,11 +481,13 @@ only the cumulative cost is reported.
 Isolation: every agent runs with its own `VIBE_HOME` and session directory
 (`VIBE_SESSION_LOGGING__SAVE_DIR`) under the supervisor's `vibe` runtime root. Before every turn the
 adapter writes that home's `config.toml` with the person's `[[models]]` and `[[providers]]` tables
-copied from their own config (`$VIBE_HOME` or `~/.vibe`; nothing else of it, so their MCP servers,
-hooks, skills and agents never reach an agent) under settings that turn off telemetry, update
+and (for a native turn) `[[mcp_servers]]` tables copied from their own config (`$VIBE_HOME` or `~/.vibe`;
+a container gets no server of the person's, only aimebu's endpoint; nothing else of it, so their hooks, skills and agents never reach an agent; a server called `aimebu` is dropped, and
+aimebu's own entry comes through `VIBE_MCP_SERVERS`, which Vibe layers above the user and project
+files and which replaces a same-named entry) under settings that turn off telemetry, update
 checks, auto-update, notifications and connectors, and links the person's `.env` into it (it is never
 opened by aimebu). Only a bounded environment passes: `MISTRAL_API_KEY` and the key variables the copied
-providers name. Normal turns run with `--trust --yolo` and get the aimebu toolbox through `VIBE_MCP_SERVERS`,
+providers and MCP servers (`api_key_env`) name. Normal turns run with `--trust --yolo` and get the aimebu toolbox through `VIBE_MCP_SERVERS`,
 whose `api_key_env` names a variable that carries the agent's private bearer: the bearer is in neither
 argv nor a file. `--trust` (this invocation only; nothing is saved to `trusted_folders.toml`) makes Vibe
 load the checkout's own configuration, a `.vibe` or `.agents` folder and `AGENTS.md`, the way the other
@@ -517,8 +571,8 @@ Codex's response schema is written below the mirrored checkout, while its
 credentials stay in the container's configured Codex home. Codex Docker turns
 pass `exec --ignore-user-config`, retaining those credentials while skipping
 the mounted user's `config.toml` and its MCP servers. The only MCP configured
-for a normal turn is aimebu's HTTP endpoint. Claude Docker passes
-`--strict-mcp-config` for the same MCP isolation. On a failed Codex turn, the
+for a normal turn is aimebu's HTTP endpoint. Claude Docker is not strict
+(see above): whatever MCP servers the container's Claude configuration has stay available next to aimebu's. On a failed Codex turn, the
 last stdout `error` or `turn.failed` event is included with the stderr tail in
 recovery evidence after redaction. Docker capabilities
 do not claim confirmed cancellation until container-session teardown can be

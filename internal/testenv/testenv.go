@@ -18,7 +18,7 @@ import (
 )
 
 // Variables names every environment variable a command takes a home or a data directory from.
-var Variables = []string{"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "VIBE_HOME", "AIMEBU_CONFIG_DIR", "AIMEBU2_CONFIG_DIR"}
+var Variables = []string{"HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "VIBE_HOME", "AIMEBU_CONFIG_DIR", "AIMEBU2_CONFIG_DIR", "XDG_CONFIG_HOME", "PI_CODING_AGENT_DIR", "OPENCODE_CONFIG"}
 
 // Isolate points HOME and the tool and server data directories at a new temporary root, so every default that starts at the home directory
 // lands there, and returns the root and the function that removes it. Go's own caches stay where they were: a test that runs the go tool
@@ -45,6 +45,9 @@ func Isolate() (root string, cleanup func()) {
 		"CODEX_HOME":                filepath.Join(root, ".codex"),
 		"CLAUDE_CONFIG_DIR":         filepath.Join(root, ".claude"),
 		"VIBE_HOME":                 filepath.Join(root, ".vibe"),
+		"XDG_CONFIG_HOME":           filepath.Join(root, ".config"),
+		"PI_CODING_AGENT_DIR":       filepath.Join(root, ".pi", "agent"),
+		"OPENCODE_CONFIG":           filepath.Join(root, ".config", "opencode", "opencode.json"),
 		"AIMEBU_CONFIG_DIR":         filepath.Join(root, ".aimebu"),
 		"AIMEBU2_CONFIG_DIR":        filepath.Join(root, ".aimebu2"),
 		"AIMEBU2_DEV_SKIP_V1_PROBE": "1",

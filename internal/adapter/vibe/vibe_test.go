@@ -269,13 +269,13 @@ func TestArgsEnvironmentAndIsolation(t *testing.T) {
 	}
 }
 
-// The private home holds the person's models and providers (so a model they listed resolves) and nothing else of their config; their .env
-// is linked, never read.
-func TestSeedHomeCopiesOnlyModelsAndProviders(t *testing.T) {
+// The private home holds the person's models and providers (so a model they listed resolves) and their own MCP servers, but not a server of
+// aimebu's name (a v1 bus; aimebu's own entry comes through the environment) and nothing else of their config; their .env is linked, never read.
+func TestSeedHomeCopiesModelsProvidersAndTheirOwnMCPServers(t *testing.T) {
 	root := t.TempDir()
 	path, _ := script(t, root, "cat "+fixture(t, "ok.jsonl")+"\n")
 	a, userHome := adapterFor(t, root, path)
-	config := "active_model = \"custom\"\nenable_telemetry = true\n\n[[models]]\nname = \"m-custom\"\nalias = \"custom\"\nprovider = \"acme\"\n\n[[providers]]\nname = \"acme\"\napi_key_env_var = \"ACME_API_KEY\"\n\n[[mcp_servers]]\nname = \"grafana\"\ntransport = \"stdio\"\ncommand = \"uvx\"\n\n[hooks]\nsecret_hook = \"rm -rf\"\n"
+	config := "active_model = \"custom\"\nenable_telemetry = true\n\n[[models]]\nname = \"m-custom\"\nalias = \"custom\"\nprovider = \"acme\"\n\n[[providers]]\nname = \"acme\"\napi_key_env_var = \"ACME_API_KEY\"\n\n[[mcp_servers]]\nname = \"grafana\"\ntransport = \"stdio\"\ncommand = \"uvx\"\n\n[[mcp_servers]]\nname = \"aimebu\"\ntransport = \"streamable-http\"\nurl = \"http://v1.example/mcp\"\n\n[hooks]\nsecret_hook = \"rm -rf\"\n"
 	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -298,12 +298,12 @@ func TestSeedHomeCopiesOnlyModelsAndProviders(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	for _, want := range []string{"enable_telemetry = false", "enable_update_checks = false", "enable_connectors = false", `alias = "custom"`, `name = "acme"`} {
+	for _, want := range []string{"enable_telemetry = false", "enable_update_checks = false", "enable_connectors = false", `alias = "custom"`, `name = "acme"`, `name = "grafana"`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("private config misses %q:\n%s", want, got)
 		}
 	}
-	for _, leaked := range []string{"grafana", "secret_hook", "active_model", "enable_telemetry = true"} {
+	for _, leaked := range []string{"secret_hook", "active_model", "enable_telemetry = true", "v1.example", `name = "aimebu"`} {
 		if strings.Contains(got, leaked) {
 			t.Fatalf("%q from the person's config reached the private one:\n%s", leaked, got)
 		}
@@ -869,4 +869,79 @@ func TestRecordedShapes(t *testing.T) {
 			t.Fatalf("exit=%+v err=%v", exit, err)
 		}
 	})
+}
+
+// A container has none of the host's commands: it gets the person's remote MCP servers (with their key variable), not the ones that run a command.
+func TestSeedHomeKeepsOnlyTheRemoteMCPServersForAContainer(t *testing.T) {
+	userHome, home := t.TempDir(), t.TempDir()
+	config := "[[models]]\nname = \"m\"\nalias = \"custom\"\nprovider = \"acme\"\n\n[[mcp_servers]]\nname = \"grafana\"\ntransport = \"stdio\"\ncommand = \"uvx\"\napi_key_env = \"GRAFANA_KEY\"\n\n[[mcp_servers]]\nname = \"docs\"\ntransport = \"streamable-http\"\nurl = \"https://docs.example/mcp\"\napi_key_env = \"DOCS_KEY\"\n"
+	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	env, err := seedHome(home, userHome, mcpRemote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(home, "config.toml"))
+	if strings.Contains(string(data), "grafana") || !strings.Contains(string(data), `name = "docs"`) || !strings.Contains(string(data), `alias = "custom"`) {
+		t.Fatalf("the remote server stays, the command goes:\n%s", data)
+	}
+	if joined := strings.Join(env, ","); strings.Contains(joined, "GRAFANA_KEY") || !strings.Contains(joined, "DOCS_KEY") {
+		t.Fatalf("only the kept server's variable: %v", env)
+	}
+	env, err = seedHome(home, userHome, mcpAll)
+	data, _ = os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil || !strings.Contains(string(data), "grafana") || !strings.Contains(strings.Join(env, ","), "GRAFANA_KEY") {
+		t.Fatalf("a native turn carries both: %v\n%s\n%v", err, data, env)
+	}
+	env, err = seedHome(home, userHome, mcpNone)
+	data, _ = os.ReadFile(filepath.Join(home, "config.toml"))
+	if err != nil || strings.Contains(string(data), "docs.example") || strings.Contains(strings.Join(env, ","), "DOCS_KEY") {
+		t.Fatalf("a read-only turn carries none: %v\n%s\n%v", err, data, env)
+	}
+}
+
+// An entry that is aimebu's own bus of v1 is dropped whatever it is called; a read-only turn gets none of the person's servers.
+func TestSeedHomeDropsAV1BusUnderAnotherName(t *testing.T) {
+	userHome, home := t.TempDir(), t.TempDir()
+	config := "[[mcp_servers]]\nname = \"bus\"\ntransport = \"stdio\"\ncommand = \"/usr/local/bin/aimebu\"\nargs = [\"mcp\"]\n\n[[mcp_servers]]\nname = \"v1port\"\ntransport = \"streamable-http\"\nurl = \"http://localhost:9997/mcp\"\n\n[[mcp_servers]]\nname = \"AIMEBU\"\nurl = \"http://upper\"\n\n[[mcp_servers]]\nname = \"docs\"\ntransport = \"streamable-http\"\nurl = \"https://docs.example/mcp\"\napi_key_env = \"VIBE_HOME\"\n"
+	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	env, err := seedHome(home, userHome, mcpAll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(home, "config.toml"))
+	got := string(data)
+	if strings.Contains(got, "9997") || strings.Contains(got, "usr/local/bin/aimebu") || strings.Contains(got, "http://upper") || !strings.Contains(got, `name = "docs"`) {
+		t.Fatalf("only the person's own server:\n%s", got)
+	}
+	if strings.Contains(strings.Join(env, ","), "VIBE_HOME") {
+		t.Fatalf("a name that would point Vibe at the person's home is not passed: %v", env)
+	}
+}
+
+func TestAReadOnlyTurnGetsNoneOfThePersonsMCPServers(t *testing.T) {
+	root := t.TempDir()
+	path, _ := script(t, root, "cat "+fixture(t, "ok.jsonl")+"\n")
+	a, userHome := adapterFor(t, root, path)
+	config := "[[models]]\nname = \"m-custom\"\nalias = \"custom\"\nprovider = \"acme\"\n\n[[mcp_servers]]\nname = \"grafana\"\ntransport = \"stdio\"\ncommand = \"uvx\"\napi_key_env = \"GRAFANA_KEY\"\n"
+	if err := os.WriteFile(filepath.Join(userHome, "config.toml"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	turnSpec := spec(t, t.TempDir())
+	turnSpec.Agent.Model = "custom"
+	turnSpec.Mode = adapter.ModeDiagnostic
+	turn, err := a.Start(context.Background(), turnSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exit, err := drain(t, turn); err != nil || !exit.TerminalEvent {
+		t.Fatalf("exit=%+v err=%v", exit, err)
+	}
+	data, err := os.ReadFile(filepath.Join(runtimeDirOf(root, "agt_test"), "home", "config.toml"))
+	if err != nil || strings.Contains(string(data), "grafana") || !strings.Contains(string(data), `alias = "custom"`) {
+		t.Fatalf("a read-only turn keeps the models and none of the MCP servers: %v\n%s", err, data)
+	}
 }

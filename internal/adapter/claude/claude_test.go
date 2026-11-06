@@ -45,10 +45,60 @@ func TestDockerLauncherReceivesInlineMCPAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"--resume\nsession-1", "--mcp-config\n", "--strict-mcp-config\n", "host.docker.internal:9897/api/agent/mcp", "Bearer aak_secret"} {
+	for _, want := range []string{"--resume\nsession-1", "--mcp-config\n", "host.docker.internal:9897/api/agent/mcp", "Bearer aak_secret"} {
 		if !strings.Contains(string(args), want) {
 			t.Fatalf("missing %q in %q", want, args)
 		}
+	}
+}
+
+// A normal turn leaves the person's own MCP servers and connectors available (no --strict-mcp-config), whatever the variant; only a diagnostic
+// turn, which must touch nothing, is strict. The aimebu entry is passed with --mcp-config either way.
+func TestOnlyADiagnosticTurnIsStrictAboutMCP(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		variant string
+		mode    adapter.Mode
+		strict  bool
+	}{
+		{"native normal", "native", adapter.ModeNormal, false},
+		{"docker normal", "docker", adapter.ModeNormal, false},
+		{"native diagnostic", "native", adapter.ModeDiagnostic, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			config := filepath.Join(root, "private.json")
+			if err := os.WriteFile(config, []byte(`{"mcpServers":{"aimebu":{"env":{"AIMEBU2_URL":"http://127.0.0.1:9897","AIMEBU2_AGENT_ID":"agt_test","AIMEBU2_AGENT_KEY":"aak_secret"}}}}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "claude")
+			argsPath := filepath.Join(root, "args")
+			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"session-1\"}' '{\"type\":\"result\",\"result\":\"{\\\"messages\\\":[]}\"}'\n"
+			if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			a := &Adapter{Command: path, Variant: tc.variant, AllowNative: true}
+			spec := adapter.TurnSpec{TurnID: "strict", Agent: adapter.AgentSpec{ID: "agt_test", Tool: "claude", Variant: tc.variant, Model: "haiku"}, CheckoutPath: root, Mode: tc.mode, AgentToolsConfigPath: config, NativeSessionHandle: "session-1", NotesJSON: json.RawMessage(`[]`)}
+			turn, err := a.Start(context.Background(), spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range turn.Events() {
+			}
+			if _, err := turn.Wait(); err != nil {
+				t.Fatal(err)
+			}
+			args, err := os.ReadFile(argsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(args), "--strict-mcp-config\n"); got != tc.strict {
+				t.Fatalf("strict MCP = %v, want %v:\n%s", got, tc.strict, args)
+			}
+			if tc.mode == adapter.ModeNormal && !strings.Contains(string(args), "--mcp-config\n") {
+				t.Fatalf("a normal turn must pass the aimebu entry with --mcp-config:\n%s", args)
+			}
+		})
 	}
 }
 

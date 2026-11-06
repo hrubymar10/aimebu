@@ -147,6 +147,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		}
 	}
 	normal := spec.Mode == adapter.ModeNormal
+	var ownEnv []string // variables the person's own MCP servers read, passed through to a native turn
 	config := map[string]any{
 		"$schema":    "https://opencode.ai/config.json",
 		"autoupdate": false,
@@ -162,8 +163,19 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		if err != nil {
 			return nil, err
 		}
-		config["mcp"] = map[string]any{"aimebu": map[string]any{
-			"type": "remote", "url": endpoint, "headers": map[string]string{"Authorization": authorization}, "enabled": true}}
+		servers := map[string]any{}
+		// The person's own servers (see user_mcp.go); a container gets the remote ones only, since a command on the host is not in it.
+		entries, envVars := userMCPEntries(userConfigDir(), "aimebu")
+		if docker {
+			entries, envVars = remoteOnly(entries)
+		}
+		for name, entry := range entries {
+			servers[name] = entry
+		}
+		ownEnv = envVars
+		servers["aimebu"] = map[string]any{
+			"type": "remote", "url": endpoint, "headers": map[string]string{"Authorization": authorization}, "enabled": true}
+		config["mcp"] = servers
 	} else {
 		// Diagnostic and correction turns may read but never act: the tools
 		// that act are denied, which removes them from the model's tool list.
@@ -200,7 +212,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	// stdin to the message and otherwise waits for it forever.
 	cmd.Stdin = bytes.NewReader(input)
 	if docker {
-		env, forwarded := dockerEnv(filepath.Join(visibleRuntime, "config"), filepath.Join(visibleRuntime, "opencode.db"), string(configJSON), providerKeys, spec.LauncherEnvRefs)
+		env, forwarded := dockerEnv(filepath.Join(visibleRuntime, "config"), filepath.Join(visibleRuntime, "opencode.db"), string(configJSON), append(providerKeys[:len(providerKeys):len(providerKeys)], ownEnv...), spec.LauncherEnvRefs)
 		// An older launcher would run the harness without any of this: refuse it here, before the turn starts, not after a spawn that looked fine.
 		probe, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err := adapter.RequireDockerFeature(probe, "OpenCode", command, spec.LauncherArgs, spec.CheckoutPath, env, adapter.FeatureForwardEnv)
@@ -210,7 +222,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 		}
 		cmd.Env = adapter.LauncherEnv(env, launcherRefs(spec.LauncherEnvRefs, forwarded))
 	} else {
-		cmd.Env = adapter.LauncherEnv(childEnv(configHome, filepath.Join(runtimeDir, "opencode.db"), string(configJSON), providerKeys), spec.LauncherEnvRefs)
+		cmd.Env = adapter.LauncherEnv(childEnv(configHome, filepath.Join(runtimeDir, "opencode.db"), string(configJSON), append(providerKeys[:len(providerKeys):len(providerKeys)], ownEnv...)), spec.LauncherEnvRefs)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()

@@ -218,7 +218,7 @@ func TestResumeRawCandidateAndPrivateConfig(t *testing.T) {
 	// A diagnostic rewrites the private config without any MCP server.
 	spec.Mode = adapter.ModeDiagnostic
 	spec.AgentToolsConfigPath = ""
-	if _, err := a.prepareRuntime(spec); err != nil {
+	if _, err := a.prepareRuntime(spec, userMCP{}); err != nil {
 		t.Fatal(err)
 	}
 	stored, err = os.ReadFile(filepath.Join(runtimeDir, "config.toml"))

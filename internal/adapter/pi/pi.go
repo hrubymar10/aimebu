@@ -110,6 +110,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	args := []string{"-p", "--mode", "json", "--model", spec.Agent.Model, "--session-id", spec.NativeSessionHandle,
 		"--session-dir", visibleSessionDir, "--no-context-files", "--no-skills", "--no-approve"}
 	var agentDir string
+	var ownEnv []string // variables the person's own MCP servers read, passed through to a native turn
 	if spec.Mode == adapter.ModeNormal {
 		tools := []string{"read", "bash", "edit", "write", "grep", "find", "ls"}
 		if a.variant() == "docker" {
@@ -130,8 +131,19 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 			if err != nil {
 				return nil, err
 			}
-			config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"aimebu": map[string]any{
-				"url": endpoint, "headers": map[string]string{"Authorization": authorization}, "exposure": "direct"}}})
+			// The person's own servers (see user_mcp.go), then aimebu's entry, which replaces one of that name.
+			servers := map[string]any{}
+			own, envVars := userMCPServers(userAgentDir(), "aimebu")
+			for name, entry := range own {
+				servers[name] = entry
+			}
+			ownEnv = envVars
+			if len(own) > 0 {
+				// A server of the person's is exposed through Pi's codemode tool unless its entry says otherwise, and the allowlist must name it.
+				tools = append(tools, "codemode")
+			}
+			servers["aimebu"] = map[string]any{"url": endpoint, "headers": map[string]string{"Authorization": authorization}, "exposure": "direct"}
+			config, err := json.Marshal(map[string]any{"mcpServers": servers})
 			if err != nil {
 				return nil, err
 			}
@@ -141,11 +153,11 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 			}
 			// The bounded Ollama Cloud model is supplied by the user's installed
 			// provider extension. Load only that extension into this private Pi
-			// agent directory; do not import the user's other packages or MCPs.
+			// agent directory; do not import the user's other packages.
 			if extension := ollamaCloudExtension(); extension != "" {
 				args = append(args, "--extension", extension)
 			}
-			tools = append(tools, "mcp__aimebu__*")
+			// No mcp__ entry in the allowlist: Pi then keeps every MCP tool, aimebu's and the person's own.
 		}
 		args = append(args, "--tools", strings.Join(tools, ","))
 	} else {
@@ -160,7 +172,7 @@ func (a *Adapter) Start(ctx context.Context, spec adapter.TurnSpec) (adapter.Tur
 	// of argv, where Linux caps each argument at 128 KiB.
 	cmd.Stdin = bytes.NewReader(input)
 	cmd.Dir = spec.CheckoutPath
-	cmd.Env = childEnv(agentDir)
+	cmd.Env = childEnv(agentDir, ownEnv...)
 	if a.variant() == "docker" {
 		cmd.Env = append(cmd.Env, "PI_LAUNCH_FLAGS=")
 	}
@@ -261,20 +273,25 @@ func turnInput(spec adapter.TurnSpec) ([]byte, error) {
 	return []byte(promptFor(spec) + string(input)), nil
 }
 
-func childEnv(agentDir string) []string {
+func childEnv(agentDir string, extra ...string) []string {
+	extra = adapter.UserEnvNames(extra)
 	allowed := map[string]bool{"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "LANG": true,
 		"LC_ALL": true, "LC_CTYPE": true, "TERM": true, "TMPDIR": true, "OLLAMA_API_KEY": true,
 		"HTTPS_PROXY": true, "HTTP_PROXY": true, "NO_PROXY": true, "SSL_CERT_FILE": true, "SSL_CERT_DIR": true,
 		"DOCKER_HOST": true, "DOCKER_CONTEXT": true, "DOCKER_TLS_VERIFY": true, "DOCKER_CERT_PATH": true}
-	out := []string{}
-	if agentDir != "" {
-		out = append(out, "PI_CODING_AGENT_DIR="+agentDir)
+	for _, name := range extra {
+		allowed[name] = true
 	}
+	out := []string{}
 	for _, item := range os.Environ() {
 		key, _, ok := strings.Cut(item, "=")
 		if ok && allowed[key] {
 			out = append(out, item)
 		}
+	}
+	// The adapter's own value is written last, so nothing before it can replace it.
+	if agentDir != "" {
+		out = append(out, "PI_CODING_AGENT_DIR="+agentDir)
 	}
 	return out
 }
