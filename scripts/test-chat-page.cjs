@@ -136,7 +136,7 @@ async function main() {
   const serve = (page, index) => page.evaluate(index => { const request = window.__requests[index]; const answer = window.__respond(request.method, request.path, request.body); request.answer(answer.status, answer.body); }, index);
   const count = (page, method, re) => page.evaluate((method, re) => window.__requests.filter(request => request.method === method && new RegExp(re).test(request.path)).length, method, re);
   const calls = page => page.evaluate(() => window.__calls.splice(0));
-  const ids = page => page.$$eval('#messages > article.message[data-message-id]', nodes => nodes.map(node => node.dataset.messageId));
+  const ids = page => page.$$eval('#messages > article.chat-msg[data-message-id]', nodes => nodes.map(node => node.dataset.messageId));
   const openRoom = (page, id, extra = {}) => page.evaluate((room, id) => { window.__opening = window.__chat.open(room); return null; }, { id, project_id: 'prj_a', title: id, kind: 'task', lifecycle: 'open', member_count: 2, ...extra }, id);
   const opened = page => page.evaluate(() => window.__opening);
 
@@ -145,7 +145,7 @@ async function main() {
   {
     const page = await mount();
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    const state = await page.evaluate(() => { const list = document.querySelector('#messages'); return { first: list.firstElementChild.dataset.messageId, last: list.lastElementChild.dataset.messageId, rows: list.querySelectorAll(':scope > article.message').length, atBottom: list.scrollHeight - list.scrollTop - list.clientHeight < 2, hasOlder: list.dataset.hasOlder, empty: list.dataset.empty, title: document.querySelector('#room-title').textContent }; });
+    const state = await page.evaluate(() => { const list = document.querySelector('#messages'); return { first: list.firstElementChild.dataset.messageId, last: list.lastElementChild.dataset.messageId, rows: list.querySelectorAll(':scope > article.chat-msg').length, atBottom: list.scrollHeight - list.scrollTop - list.clientHeight < 2, hasOlder: list.dataset.hasOlder, empty: list.dataset.empty, title: document.querySelector('#room-title').textContent }; });
     assert.deepEqual(state, { first: 'rm_a_m31', last: 'rm_a_m130', rows: 100, atBottom: true, hasOlder: 'true', empty: 'false', title: 'rm_a' });
     assert.deepEqual(await calls(page), [['latest', 'rm_a']]);
     assert.equal(await count(page, 'GET', 'messages\\?limit=100'), 1);
@@ -180,8 +180,8 @@ async function main() {
   {
     const page = await mount();
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.hover('[data-message-id=rm_a_m120] .message-bubble'); // the row's toolbar is made when it is reached
-    await page.evaluate(() => { document.querySelector('#composer textarea[name=body]').value = 'half a thought'; document.querySelector('[data-message-id=rm_a_m120] .message-action')?.focus(); window.__focus = document.activeElement; });
+    await page.hover('[data-message-id=rm_a_m130] .chat-msg-bubble'); // the row's toolbar is made when it is reached
+    await page.evaluate(() => { document.querySelector('#composer textarea[name=body]').value = 'half a thought'; document.querySelector('[data-message-id=rm_a_m130] .message-action')?.focus(); window.__focus = document.activeElement; });
     await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_m131', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'live one', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); });
     await settle(page);
     assert.deepEqual(await page.evaluate(() => { const list = document.querySelector('#messages'); return [list.lastElementChild.dataset.messageId, list.scrollHeight - list.scrollTop - list.clientHeight < 2, document.activeElement === window.__focus, document.querySelector('#composer textarea[name=body]').value]; }), ['rm_a_m131', true, true, 'half a thought']);
@@ -246,7 +246,7 @@ async function main() {
     await page.evaluate(() => { const list = document.querySelector('#messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 0; });
     await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1'); await settle(page);
     await page.evaluate(() => { window.__open = window.__chat.openThread(window.__chat.messages.get('rm_a_m120')); }); await page.evaluate(() => window.__open); await settle(page);
-    const place = () => page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_a_m50]'); return { top: Math.round(row.getBoundingClientRect().top), scrollTop: Math.round(document.querySelector('#messages').scrollTop), thread: window.__chat.threadRoot?.id || null, threadShown: !document.querySelector('#thread-panel').hidden, rows: document.querySelectorAll('#messages > article.message').length }; });
+    const place = () => page.evaluate(() => { const row = document.querySelector('[data-message-id=rm_a_m50]'); return { top: Math.round(row.getBoundingClientRect().top), scrollTop: Math.round(document.querySelector('#messages').scrollTop), thread: window.__chat.threadRoot?.id || null, threadShown: !document.querySelector('#thread-panel').hidden, rows: document.querySelectorAll('#messages > article.chat-msg').length }; });
     const before = await place();
     assert.deepEqual([before.thread, before.threadShown, before.rows], ['rm_a_m120', true, 130], 'scrolled up with every older page loaded and a thread open');
     await page.evaluate(() => {
@@ -277,7 +277,7 @@ async function main() {
     await page.evaluate(() => { window.__anchor = document.querySelector('[data-message-id=rm_a_m35]'); window.__list = document.querySelector('#messages'); window.__list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); window.__list.scrollTop = 0; window.__before = window.__anchor.getBoundingClientRect().top; });
     await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1');
     await settle(page);
-    assert.deepEqual(await page.evaluate(() => [window.__data.rooms.rm_a.messages.length, document.querySelectorAll('#messages > article.message').length, document.querySelector('#messages').dataset.hasOlder, Math.abs(window.__anchor.getBoundingClientRect().top - window.__before) < 3]), [130, 130, 'false', true], 'all 130 rows, nothing more behind');
+    assert.deepEqual(await page.evaluate(() => [window.__data.rooms.rm_a.messages.length, document.querySelectorAll('#messages > article.chat-msg').length, document.querySelector('#messages').dataset.hasOlder, Math.abs(window.__anchor.getBoundingClientRect().top - window.__before) < 3]), [130, 130, 'false', true], 'all 130 rows, nothing more behind');
     assert.equal(await count(page, 'GET', 'messages\\?before=31&limit=50'), 1);
     await page.close();
   }
@@ -287,7 +287,7 @@ async function main() {
   {
     const page = await mount({ openPage: 0 });
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    const state = await page.evaluate(() => { const list = document.querySelector('#messages'); return { first: list.firstElementChild.dataset.messageId, last: list.lastElementChild.dataset.messageId, rows: list.querySelectorAll(':scope > article.message').length, atBottom: list.scrollHeight - list.scrollTop - list.clientHeight < 3, hasOlder: list.dataset.hasOlder }; });
+    const state = await page.evaluate(() => { const list = document.querySelector('#messages'); return { first: list.firstElementChild.dataset.messageId, last: list.lastElementChild.dataset.messageId, rows: list.querySelectorAll(':scope > article.chat-msg').length, atBottom: list.scrollHeight - list.scrollTop - list.clientHeight < 3, hasOlder: list.dataset.hasOlder }; });
     assert.deepEqual(state, { first: 'rm_a_m91', last: 'rm_a_m130', rows: 40, atBottom: true, hasOlder: 'true' });
     assert.equal(await count(page, 'GET', 'messages\\?limit=40'), 1);
     await page.evaluate(() => { window.__anchor = document.querySelector('[data-message-id=rm_a_m95]'); window.__list = document.querySelector('#messages'); window.__list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); window.__list.scrollTop = 0; window.__before = window.__anchor.getBoundingClientRect().top; });
@@ -298,7 +298,7 @@ async function main() {
     await page.evaluate(() => { window.__list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); window.__list.scrollTop = 0; });
     await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1');
     await settle(page);
-    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#messages > article.message').length, document.querySelector('#messages').dataset.hasOlder]), [130, 'false'], 'all 130 rows, nothing more behind');
+    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#messages > article.chat-msg').length, document.querySelector('#messages').dataset.hasOlder]), [130, 'false'], 'all 130 rows, nothing more behind');
     await page.close();
   }
 
@@ -325,7 +325,7 @@ async function main() {
     await calls(page);
     await page.evaluate(() => window.__chat.jumpToMessage('rm_a_m10'));
     await settle(page);
-    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#messages > article.message').length, document.querySelector('#messages > article.message').dataset.messageId, document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, window.__chat.contextMode, document.querySelector('#messages').dataset.hasOlder, document.querySelector('[data-message-id=rm_a_m10] .message-bubble').classList.contains('message-flash') || document.querySelector('[data-message-id=rm_a_m10]').classList.contains('message-flash')]), [100, 'rm_a_m1', false, true, 'true', true]);
+    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#messages > article.chat-msg').length, document.querySelector('#messages > article.chat-msg').dataset.messageId, document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, window.__chat.contextMode, document.querySelector('#messages').dataset.hasOlder, document.querySelector('[data-message-id=rm_a_m10] .chat-msg-bubble').classList.contains('message-flash') || document.querySelector('[data-message-id=rm_a_m10]').classList.contains('message-flash')]), [100, 'rm_a_m1', false, true, 'true', true]);
     assert.deepEqual(await calls(page), [], 'a window is not the latest view: nothing is marked read');
     await page.evaluate(() => { const list = document.querySelector('#messages'); list.scrollTop = list.scrollHeight; });
     await page.waitForFunction(() => window.__chat.contextMode === false, { timeout: 5000 });
@@ -359,7 +359,7 @@ async function main() {
     if (how === 'open') await openRoom(page, 'rm_b'); else { await page.evaluate(() => window.__chat.reset()); await openRoom(page, 'rm_b'); }
     await opened(page); await settle(page); await calls(page);
     await serve(page, held); await page.evaluate(() => window.__jumping); await settle(page);
-    assert.deepEqual(await page.evaluate(() => [window.__chat.contextMode, document.querySelectorAll('#messages > article.message').length, document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, document.querySelector('#chat-error').textContent]), [false, 5, true, ''], `${how}: a late jump leaves the new room alone`);
+    assert.deepEqual(await page.evaluate(() => [window.__chat.contextMode, document.querySelectorAll('#messages > article.chat-msg').length, document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden, document.querySelector('#chat-error').textContent]), [false, 5, true, ''], `${how}: a late jump leaves the new room alone`);
     await page.close();
   }
 
@@ -427,7 +427,7 @@ async function main() {
   const posts = page => page.evaluate(() => window.__requests.filter(request => request.method === 'POST' && /\/messages$/.test(request.path)).map(request => request.body));
   const file = (page, name, size = 5) => page.evaluate((name, size) => new File(['x'.repeat(size)], name, { type: 'text/plain' }) && null, name, size);
   const addFile = (page, name = 'a.txt', size = 5) => page.evaluate((name, size) => { window.__adding = window.__chat.addFiles([new File(['x'.repeat(size)], name, { type: 'text/plain' })]); }, name, size);
-  const pending = page => page.evaluate(() => [...document.querySelectorAll('#pending-attachments .pending-image')].map(node => node.textContent.trim()).concat(document.querySelector('#pending-attachments > span:last-child:not(.pending-image)')?.textContent ? [document.querySelector('#pending-attachments > span:last-child').textContent] : []));
+  const pending = page => page.evaluate(() => [...document.querySelectorAll('#pending-attachments .attachment-pending-item')].map(node => node.querySelector('.attachment-pending-name, .attachment-pending-status').textContent.trim()));
 
   // Sending: the text goes to the open room and the draft empties, the reply chip goes, the message is drawn at the bottom; a failure keeps the draft and
   // says why in the composer.
@@ -769,8 +769,8 @@ async function main() {
     assert.deepEqual([await count(page, 'DELETE', '/api/messages/rm_a_m130/reactions/'), await pills(page, 'rm_a_m130')], [1, [['👍 1', 'ann', 'false', '👍'], ['🎉 1', 'zed', 'false', '🎉']]], 'my own pill removes my reaction');
     await page.$eval('[data-message-id=rm_a_m130] .reaction-pill[data-emoji="🎉"]', node => node.click()); await settle(page);
     assert.deepEqual([await count(page, 'PUT', '/api/messages/rm_a_m130/reactions/'), (await pills(page, 'rm_a_m130')).at(-1)], [1, ['🎉 2', 'zed, me', 'true', '🎉']], 'someone else\'s pill adds mine');
-    await page.$eval('[data-message-id=rm_a_m130] .message-bubble', node => node.scrollIntoView());
-    await page.hover('[data-message-id=rm_a_m130] .message-bubble'); // a row's toolbar is made when the row is reached
+    await page.$eval('[data-message-id=rm_a_m130] .chat-msg-bubble', node => node.scrollIntoView());
+    await page.hover('[data-message-id=rm_a_m130] .chat-msg-bubble'); // a row's toolbar is made when the row is reached
     await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m130] .message-action[aria-haspopup]').click());
     await page.$eval('[data-message-id=rm_a_m130] .quick-reaction[data-emoji="✅"]', node => node.click()); await settle(page);
     assert.deepEqual((await pills(page, 'rm_a_m130')).map(pill => pill[3]), ['👍', '🎉', '✅'], 'a quick reaction from the message actions');
@@ -857,7 +857,7 @@ async function main() {
     const page = await mount({ plain: true });
     await page.evaluate(() => { for (const [seq, body] of [[121, 'mine one'], [124, 'mine two'], [127, 'mine two'], [129, 'mine three']]) Object.assign(window.__data.rooms.rm_a.messages[seq - 1], { author_id: 'usr_me', author_name: 'me', body }); });
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.hover('[data-message-id=rm_a_m120] .message-bubble');
+    await page.hover('[data-message-id=rm_a_m120] .chat-msg-bubble');
     await page.evaluate(() => { const bar = document.querySelector('[data-message-id=rm_a_m120] .message-actions'); window.__buttons = [...bar.querySelectorAll('button')].filter(button => !button.closest('[hidden]')).map(button => button.getAttribute('aria-label')); bar.querySelector('button').focus(); });
     const focused = () => page.evaluate(() => document.activeElement.getAttribute('aria-label'));
     const labels = await page.evaluate(() => window.__buttons);
@@ -899,7 +899,7 @@ async function main() {
     await settle(page);
     assert.deepEqual(await page.evaluate(() => { const draft = document.querySelector('#composer textarea[name=body]'); return [document.activeElement === draft, draft.value, draft.selectionStart, window.__chat.threadDraft.value, !!document.querySelector('[data-message-id=rm_a_live]')]; }), [true, 'main draft', 0, 'thread draft', true]);
     await page.evaluate(() => { const list = document.querySelector('#messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 0; });
-    await page.hover('[data-message-id=rm_a_m40] .message-bubble'); // the row's toolbar is made when it is reached
+    await page.hover('[data-message-id=rm_a_m40] .chat-msg-bubble'); // the row's toolbar is made when it is reached
     await page.evaluate(() => document.querySelector('[data-message-id=rm_a_m40] .message-action').focus());
     await page.evaluate(() => { window.__focus = document.activeElement; });
     await page.waitForFunction(() => document.querySelector('#messages > article:first-child')?.dataset.messageId === 'rm_a_m1'); await settle(page);
@@ -1128,7 +1128,7 @@ async function main() {
     const page = await mount();
     await page.evaluate(() => { window.__data.rooms.rm_a.messages[119].attachments = [{ id: 'att_i', name: 'pic.png', mime: 'image/png', url: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=', width: 0, height: 0 }]; });
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    const grow = (page, id, height) => page.evaluate((id, height) => { const body = document.querySelector(`[data-message-id=${id}] .message-body`); const filler = document.createElement('div'); filler.className = 'late-growth'; filler.style.height = `${height}px`; body.append(filler); }, id, height);
+    const grow = (page, id, height) => page.evaluate((id, height) => { const body = document.querySelector(`[data-message-id=${id}] .chat-msg-body`); const filler = document.createElement('div'); filler.className = 'late-growth'; filler.style.height = `${height}px`; body.append(filler); }, id, height);
     await grow(page, 'rm_a_m120', 400); await settle(page); await settle(page);
     assert.equal(await page.evaluate(() => { const list = document.querySelector('#messages'); return list.scrollHeight - list.scrollTop - list.clientHeight < 3; }), true, 'a list at the bottom stays pinned when a row above grows');
     await page.evaluate(() => { const list = document.querySelector('#messages'); list.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); list.scrollTop = 1500; window.__before = document.querySelector('[data-message-id=rm_a_m60]').getBoundingClientRect().top; window.__top = list.scrollTop; });
@@ -1146,13 +1146,13 @@ async function main() {
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
     await page.evaluate(() => { const messages = window.__data.rooms.rm_a.messages; messages.push({ id: 'rm_a_m131', seq: 131, no: 131, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'one more', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: '' }); return window.__chat.refreshMessages(); });
     await settle(page);
-    assert.deepEqual(await page.evaluate(() => { const rows = [...document.querySelectorAll('#messages > article.message')]; return [rows.length, rows[0].dataset.messageId, rows.at(-1).dataset.messageId, document.querySelector('#messages').dataset.hasOlder, window.__chat.contextMode]; }), [60, 'rm_a_m72', 'rm_a_m131', 'true', false], 'the live end keeps its cap');
+    assert.deepEqual(await page.evaluate(() => { const rows = [...document.querySelectorAll('#messages > article.chat-msg')]; return [rows.length, rows[0].dataset.messageId, rows.at(-1).dataset.messageId, document.querySelector('#messages').dataset.hasOlder, window.__chat.contextMode]; }), [60, 'rm_a_m72', 'rm_a_m131', 'true', false], 'the live end keeps its cap');
     await page.close();
     const history = await mount({ setup: 'window.__renderCap = 60; window.__liveCap = 60;' });
     await openRoom(history, 'rm_a'); await opened(history); await settle(history);
     await history.evaluate(() => { { const reader = document.querySelector('#messages'); reader.dispatchEvent(new WheelEvent('wheel', { bubbles: true })); reader.scrollTop = 0; } });
     await history.waitForFunction(() => window.__chat.contextMode === true, { timeout: 5000 }); await settle(history);
-    assert.deepEqual(await history.evaluate(() => { const rows = [...document.querySelectorAll('#messages > article.message')]; return [rows.length, rows[0].dataset.messageId, document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden]; }), [60, 'rm_a_m1', false], 'paging back past the cap drops the newest rows and shows a window');
+    assert.deepEqual(await history.evaluate(() => { const rows = [...document.querySelectorAll('#messages > article.chat-msg')]; return [rows.length, rows[0].dataset.messageId, document.querySelector('.back-to-latest:not(.thread-latest):not(.thread-new)').hidden]; }), [60, 'rm_a_m1', false], 'paging back past the cap drops the newest rows and shows a window');
     await history.close();
   }
 
@@ -1388,7 +1388,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('#thread-messages > article.thread-entry').length === 4); await settle(page);
     const own = names => page.evaluate(names => names.map(name => Object.hasOwn(window.__chat, name)), names);
     assert.deepEqual(await own(['rows', 'threadEntries', 'threadEntryIDs', 'threadNewReplyIDs', 'quotes', 'expiry', 'messages', 'threadCounts']), Array(8).fill(false), 'the chat keeps no state of its own for the lists');
-    const shown = () => page.evaluate(() => { const store = window.__chat.store; return [store.rows.map(row => row.id).join() === [...document.querySelectorAll('#messages > article.message')].map(node => node.dataset.messageId).join(), store.threadEntries.map(row => row.id).join() === [...document.querySelectorAll('#thread-messages > article')].map(node => node.dataset.messageId).join(), store.rows.length, store.threadEntries.length]; });
+    const shown = () => page.evaluate(() => { const store = window.__chat.store; return [store.rows.map(row => row.id).join() === [...document.querySelectorAll('#messages > article.chat-msg')].map(node => node.dataset.messageId).join(), store.threadEntries.map(row => row.id).join() === [...document.querySelectorAll('#thread-messages > article')].map(node => node.dataset.messageId).join(), store.rows.length, store.threadEntries.length]; });
     assert.deepEqual(await shown(), [true, true, 100, 4], 'the page shows what the store holds');
     // computing a row's view writes nothing, and the page's effects change no store state: the transitions are the store's
     const probe = await page.evaluate(() => {
@@ -1416,34 +1416,34 @@ async function main() {
   if (ROWS) {
     const page = await mount();
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    const built = () => page.evaluate(() => [...document.querySelectorAll('#messages .message-actions')].filter(bar => bar.dataset.built).map(bar => bar.closest('.message').dataset.messageId));
-    const rowsNow = await page.evaluate(() => document.querySelectorAll('#messages > article.message[data-message-id]').length);
+    const built = () => page.evaluate(() => [...document.querySelectorAll('#messages .message-actions')].filter(bar => bar.dataset.built).map(bar => bar.closest('.chat-msg').dataset.messageId));
+    const rowsNow = await page.evaluate(() => document.querySelectorAll('#messages > article.chat-msg[data-message-id]').length);
     assert.deepEqual([rowsNow > 5, await built(), await page.evaluate(() => document.querySelectorAll('#messages .message-actions button:not(.message-actions-wake)').length)], [true, [], 0], 'no row has a toolbar before it is reached');
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#messages .message-actions')).width), '1px', 'and an unmade toolbar is not drawn, only its hidden "Message actions" button is left');
-    await page.hover('#messages [data-message-id=rm_a_m120] .message-bubble');
+    await page.hover('#messages [data-message-id=rm_a_m120] .chat-msg-bubble');
     assert.deepEqual(await built(), ['rm_a_m120'], 'a hovered row makes its toolbar');
     assert.equal(await page.evaluate(() => document.querySelectorAll('[data-message-id=rm_a_m120] .message-actions > button').length), 6, 'with its six buttons');
-    for (const id of ['rm_a_m121', 'rm_a_m122', 'rm_a_m123', 'rm_a_m124']) await page.hover(`#messages [data-message-id=${id}] .message-bubble`);
+    for (const id of ['rm_a_m121', 'rm_a_m122', 'rm_a_m123', 'rm_a_m124']) await page.hover(`#messages [data-message-id=${id}] .chat-msg-bubble`);
     const live = await built();
     assert.equal(live.length <= 3 && live.includes('rm_a_m124') && !live.includes('rm_a_m120'), true, `only the last three rows reached keep a toolbar: ${live}`);
     // The keyboard reaches a row's toolbar too: focus lands on something in the row, the toolbar is made, and the next Tab is its first button.
     await page.mouse.move(2, 2);
-    await page.evaluate(() => document.querySelector('#messages [data-message-id=rm_a_m125] .message-number').focus());
+    await page.evaluate(() => document.querySelector('#messages [data-message-id=rm_a_m125] .chat-msg-id').focus());
     assert.equal((await built()).includes('rm_a_m125'), true, 'focus in a row makes its toolbar');
     await page.keyboard.press('Tab'); await page.keyboard.press('Tab');
-    const reached = await page.evaluate(() => document.activeElement.closest('.message-actions')?.closest('.message')?.dataset.messageId || '');
+    const reached = await page.evaluate(() => document.activeElement.closest('.message-actions')?.closest('.chat-msg')?.dataset.messageId || '');
     assert.equal(reached, 'rm_a_m125', 'and Tab goes on into it');
     // Shift+Tab from the row below lands in the row's toolbar (its last button), not before an empty one.
     await page.evaluate(() => document.activeElement.blur());
     await page.mouse.move(2, 2);
-    await page.evaluate(() => { document.querySelector('#messages [data-message-id=rm_a_m129] .message-number').focus(); });
+    await page.evaluate(() => { document.querySelector('#messages [data-message-id=rm_a_m129] .chat-msg-id').focus(); });
     const before = 'rm_a_m128';
     await page.keyboard.down('Shift'); await page.keyboard.press('Tab'); await page.keyboard.up('Shift');
-    const back = await page.evaluate(() => ({ row: document.activeElement.closest('.message')?.dataset.messageId, inBar: !!document.activeElement.closest('.message-actions'), last: document.activeElement === document.activeElement.closest('.message-actions')?.querySelector(':scope > button:last-of-type') }));
+    const back = await page.evaluate(() => ({ row: document.activeElement.closest('.chat-msg')?.dataset.messageId, inBar: !!document.activeElement.closest('.message-actions'), last: document.activeElement === document.activeElement.closest('.message-actions')?.querySelector(':scope > button:last-of-type') }));
     assert.deepEqual([back.row, back.inBar, back.last], [before, true, true], `reverse Tab from the next row enters the toolbar at its last button: ${JSON.stringify(back)}`);
     // A row that holds the focus keeps its toolbar however many others are reached.
-    await page.evaluate(() => document.querySelector('#messages [data-message-id=rm_a_m125] .message-number').focus());
-    for (const id of ['rm_a_m126', 'rm_a_m127', 'rm_a_m128', 'rm_a_m129']) await page.evaluate(id => document.querySelector(`#messages [data-message-id=${id}] .message-bubble`).dispatchEvent(new PointerEvent('pointerover', { bubbles: true })), id);
+    await page.evaluate(() => document.querySelector('#messages [data-message-id=rm_a_m125] .chat-msg-id').focus());
+    for (const id of ['rm_a_m126', 'rm_a_m127', 'rm_a_m128', 'rm_a_m129']) await page.evaluate(id => document.querySelector(`#messages [data-message-id=${id}] .chat-msg-bubble`).dispatchEvent(new PointerEvent('pointerover', { bubbles: true })), id);
     assert.equal((await built()).includes('rm_a_m125'), true, 'a focused row keeps its toolbar');
     await page.close();
   }
@@ -1452,11 +1452,11 @@ async function main() {
     const page = await mount();
     await addReplies(page, 3);
     await openRoom(page, 'rm_a'); await opened(page); await settle(page);
-    await page.hover('#messages [data-message-id=rm_a_m120] .message-bubble'); // its toolbar is made when the row is reached
+    await page.hover('#messages [data-message-id=rm_a_m120] .chat-msg-bubble'); // its toolbar is made when the row is reached
     const state = () => page.evaluate(() => {
-      const rows = [...document.querySelectorAll('#messages > article.message[data-message-id]')];
+      const rows = [...document.querySelectorAll('#messages > article.chat-msg[data-message-id]')];
       const root = document.querySelector('#messages [data-message-id=rm_a_m120]');
-      return { expired: rows.filter(node => node.classList.contains('message-expired')).length, marks: document.querySelectorAll('#messages .message-expired-mark').length,
+      return { expired: rows.filter(node => node.classList.contains('chat-msg-expired')).length, marks: document.querySelectorAll('#messages .chat-msg-expired-icon').length,
         boundary: rows.filter(node => node.classList.contains('expiry-boundary')).map(node => node.dataset.seq), labels: document.querySelectorAll('#messages .expiry-label').length,
         chip: root.querySelector(':scope > .thread-chip').textContent, action: root.querySelector('.thread-action').title, toolbar: root.querySelector('.message-actions').getAttribute('aria-label') };
     });
@@ -1470,7 +1470,7 @@ async function main() {
     const marked = await state();
     assert.deepEqual([marked.expired, marked.marks, marked.boundary, marked.labels], [30, 30, ['61'], 1], 'the old rows carry the hourglass and the first newer one the boundary');
     await page.evaluate(async () => { const { retention } = await import('/js/retention.js'); retention.seconds = 0; window.__chat.store.syncExpiry(); });
-    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#messages .message-expired').length, document.querySelectorAll('#messages .expiry-boundary').length, document.querySelectorAll('#messages .message-expired-mark, #messages .expiry-label').length]), [0, 0, 0], 'and they leave when expiry is turned off');
+    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#messages .chat-msg-expired').length, document.querySelectorAll('#messages .expiry-boundary').length, document.querySelectorAll('#messages .chat-msg-expired-icon, #messages .expiry-label').length]), [0, 0, 0], 'and they leave when expiry is turned off');
     await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_t9', seq: 998, no: 998, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'one more', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: 'rm_a_m120' }); return window.__chat.refreshMessages(); });
     await settle(page);
     const grown = await state();
@@ -1505,7 +1505,7 @@ async function main() {
       await page.evaluate(() => { window.__data.rooms.rm_a.messages.push({ id: 'rm_a_t4', seq: 999, no: 999, room_id: 'rm_a', author_kind: 'user', author_id: 'usr_ann', author_name: 'ann', body: 'live reply', created_at: '2026-01-10T12:00:00Z', reply_to: '', thread_root: 'rm_a_m120' }); });
       assert.equal(await delta(() => window.__chat.refreshMessages()), 1, 'a live reply draws one row');
       await page.evaluate(() => { const chat = window.__chat; chat.threadEntries = chat.threadEntries.map(message => message.id === 'rm_a_t3' ? { ...message, body: 'a **bold** b' } : message); chat.threadUpdate(); });
-      const bold = () => page.evaluate(() => !!document.querySelector('#thread-messages [data-message-id=rm_a_t3] .message-body strong'));
+      const bold = () => page.evaluate(() => !!document.querySelector('#thread-messages [data-message-id=rm_a_t3] .chat-msg-body strong'));
       assert.equal(await bold(), true, 'rendered Markdown');
       assert.equal(await delta(() => window.__chat.setRaw(true)), 5, 'the Markdown mode draws every row');
       assert.equal(await bold(), false, 'and shows the raw text');
@@ -1529,10 +1529,10 @@ async function main() {
       assert.match(await page.evaluate(() => document.querySelector('#thread-messages [data-message-id=rm_a_t2] .msg-sender-icon').getAttribute('src')), /codex/, 'with the new harness icon');
       // a changed record draws its row, one field at a time
       const fields = [
-        ['no', { no: 4242 }, () => document.querySelector('#thread-messages [data-message-id=rm_a_t3] .message-number').textContent === '#4242'],
-        ['body', { body: 'changed words' }, () => document.querySelector('#thread-messages [data-message-id=rm_a_t3] .message-body').textContent.includes('changed words')],
+        ['no', { no: 4242 }, () => document.querySelector('#thread-messages [data-message-id=rm_a_t3] .chat-msg-id').textContent === '#4242'],
+        ['body', { body: 'changed words' }, () => document.querySelector('#thread-messages [data-message-id=rm_a_t3] .chat-msg-body').textContent.includes('changed words')],
         ['created_at', { created_at: '2020-02-02T02:02:02Z' }, () => document.querySelector('#thread-messages [data-message-id=rm_a_t3] time').dateTime === '2020-02-02T02:02:02Z'],
-        ['needs_attention', { needs_attention: true }, () => !!document.querySelector('#thread-messages [data-message-id=rm_a_t3] .message-attention') && document.querySelector('#thread-messages [data-message-id=rm_a_t3]').classList.contains('needs-attention')],
+        ['needs_attention', { needs_attention: true }, () => !!document.querySelector('#thread-messages [data-message-id=rm_a_t3] .chat-msg-attention-icon') && document.querySelector('#thread-messages [data-message-id=rm_a_t3]').classList.contains('needs-attention')],
         ['usage', { usage: { input_tokens: 5, output_tokens: 6 } }, () => !!document.querySelector('#thread-messages [data-message-id=rm_a_t3] .chat-msg-usage-toggle')],
         ['visual_plan', { visual_plan: [{ type: 'markdown', title: 'Plan', data: { markdown: 'Plan **text**' } }] }, () => !!document.querySelector('#thread-messages [data-message-id=rm_a_t3] .visual-plan .visual-plan-block')],
         ['proposed_answers', { proposed_answers: ['Proceed', 'Hold'] }, () => [...document.querySelectorAll('#thread-messages [data-message-id=rm_a_t3] .answer-history button')].map(button => button.textContent).join() === 'Proceed,Hold'],
@@ -1922,7 +1922,7 @@ async function main() {
       await serve(page, await waitRequest(page, 'POST', '/attachments$')); await page.evaluate(() => window.__adding); await settle(page);
       await page.evaluate(() => { window.__holds.length = 0; });
       await hold(page, 'DELETE', '/attachments/att_1$');
-      await page.$eval('#pending-attachments .pending-image button', node => node.click());
+      await page.$eval('#pending-attachments .attachment-pending-item button', node => node.click());
       const held = await waitRequest(page, 'DELETE', '/attachments/att_1$');
       await page.evaluate(() => { window.__holds.length = 0; window.__redrawn = 0; window.__said = 0; const chat = window.__chat, pending = chat.renderPending, say = chat.say; chat.renderPending = function (...args) { window.__redrawn++; return pending.apply(this, args); }; chat.say = function (...args) { window.__said++; return say.apply(this, args); }; });
       if (how !== 'failed here') { await openRoom(page, 'rm_b'); await opened(page); await settle(page); await page.evaluate(() => { window.__redrawn = 0; window.__said = 0; }); }

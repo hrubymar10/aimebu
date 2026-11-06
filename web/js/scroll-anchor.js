@@ -2,7 +2,7 @@
 // (lazy images, Mermaid diagrams, attachments, panel/composer resizes).
 // A list scrolled to the bottom stays pinned to it; a list scrolled up keeps
 // the first visible message at the same offset. Ported from v1's scroll anchor;
-// v2 renders messages incrementally, so every `.message` is observed on its own
+// v2 renders messages incrementally, so every `.chat-msg` is observed on its own
 // instead of rebuilding the list.
 const BOTTOM_THRESHOLD = 50;
 // A scroll event within this long of the reader's last input (or of the scroll event that continued it: a wheel's or a finger's momentum)
@@ -29,7 +29,7 @@ const trace = (list, ev, info) => {
 };
 
 export class ScrollAnchor {
-  constructor(list, itemSelector = '.message') {
+  constructor(list, itemSelector = '.chat-msg') {
     this.list = list; this.itemSelector = itemSelector;
     this.pinned = true; this.anchorEl = null; this.visibleOffset = 0; this.distanceFromBottom = 0;
     // Where the list was when pinned/anchor state was last recorded. A scroll event that reports this

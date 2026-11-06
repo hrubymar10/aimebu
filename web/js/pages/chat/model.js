@@ -28,7 +28,7 @@ export function groupReactions(entries, me) {
   return [...grouped].map(([emoji, members]) => ({ emoji, count: members.length, title: members.map(member => member.member_name || member.member_id).join(', '), pressed: members.some(member => member.member_id === me) }));
 }
 
-export const articleClass = (message, me) => (message.author_kind === 'system' ? 'message system-notice' : message.author_kind === 'user' && message.author_id === me ? 'message self' : 'message');
+export const articleClass = (message, me) => (message.author_kind === 'system' ? 'chat-msg chat-msg-system' : message.author_kind === 'user' && message.author_id === me ? 'chat-msg self' : 'chat-msg');
 
 export const liveArrival = (message, { initialLoading, contextMode }) => !initialLoading && !contextMode && !message.thread_root && message.author_kind !== 'system';
 

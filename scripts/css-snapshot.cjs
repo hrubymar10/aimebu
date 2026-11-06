@@ -20,11 +20,11 @@ const FIXTURE = async () => {
   const make = (tag, className, text, parent) => { const node = document.createElement(tag); if (className) node.className = className; if (text) node.textContent = text; if (parent) parent.append(node); return node; };
   const list = document.querySelector('#messages');
   const message = (extra = '', body = '') => {
-    const article = make('article', `message ${extra}`.trim(), '', list); article.dataset.fixture = extra || 'plain';
-    const meta = make('div', 'message-meta', '', article); make('strong', 'message-author', 'ada', meta); make('time', '', '12:01', meta); make('button', 'message-number quiet', '#7', meta);
-    const bubble = make('div', 'message-bubble', '', article);
+    const article = make('article', `chat-msg ${extra}`.trim(), '', list); article.dataset.fixture = extra || 'plain';
+    const meta = make('div', 'chat-msg-header', '', article); make('strong', 'chat-msg-from-name', 'ada', meta); make('time', '', '12:01', meta); make('button', 'chat-msg-id quiet', '#7', meta);
+    const bubble = make('div', 'chat-msg-bubble', '', article);
     make('button', 'row-btn quote', '↪ #3 bert', bubble);
-    const content = make('div', 'message-body', '', bubble);
+    const content = make('div', 'chat-msg-body', '', bubble);
     content.append(renderMarkdown(body || '## Title\n\nSome **bold** and *italic* text with `code` and https://example.test and #7 and @ada\n\n> quote\n\n- one\n- two\n\n| A | B |\n| :- | -: |\n| 1 | 2 |\n\n```js\nconst x = 1;\n```\n\n~~gone~~'));
     highlightMentions(content, new MentionIndex([{ slug: 'ada', role_key: 'worker', tool: 'codex', model: 'm' }], 'p'));
     const plan = renderVisualPlan({ visual_plan: [{ type: 'markdown', title: 'Plan', data: { markdown: 'Plan **text**' } }, { type: 'checklist', data: { items: [{ text: 'a', checked: true }, { text: 'b' }] } }, { type: 'file-tree', data: { root: { name: 'src', type: 'dir', children: [{ name: 'a.js', type: 'file', note: 'entry' }] } } }] });
@@ -35,7 +35,7 @@ const FIXTURE = async () => {
     return article;
   };
   message(); message('self'); message('needs-attention');
-  const system = make('article', 'message system-notice', '', list); const row = make('div', 'system-row', '', system); make('span', 'message-body', 'ada joined', row); make('time', '', '12:00', row);
+  const system = make('article', 'chat-msg chat-msg-system', '', list); const row = make('div', 'chat-msg-system-row', '', system); make('span', 'chat-msg-body', 'ada joined', row); make('time', '', '12:00', row);
   const agents = document.querySelector('#agents-panel') || document.querySelector('.agents-panel');
   if (agents) {
     const card = make('article', 'agent-card', '', agents); const title = make('div', 'agent-title', '', card); const identity = make('span', 'agent-identity', '', title);
@@ -61,9 +61,9 @@ const TARGETS = [
   'body', '.workspace-bar', '.workspace-brand strong', '#rooms-toggle', '#usages-toggle', '#settings-toggle', '#health-toggle', '.badge',
   '.sidebar', '.room-row', '.room-row .room-name', '.room-health',
   '.chat header', '#messages', '#composer', '#composer textarea', '#composer button[type=submit]', '.quick-commands[data-fixture=quick]', '.quick-command', '.quick-command[aria-selected=true]',
-  '.message[data-fixture=plain]', '.message[data-fixture=self]', '.message.needs-attention', '.system-notice', '.system-row', '.message-meta', '.message-author', '.message-meta time', 'button.message-number',
-  '.message-bubble', '.quote', '.message-body', '.message-body h2', '.message-body p', '.message-body code', '.message-body a', '.message-body a.msg-ref', '.message-body .mention', '.message-body blockquote', '.message-body ul', '.message-body del',
-  '.message-body table', '.message-body th', '.message-body td', '.md-codeblock', '.md-codeblock pre', '.md-copy', '.message-actions', '.message-actions button', '.quick-reaction', '.reaction-pill',
+  '.chat-msg[data-fixture=plain]', '.chat-msg[data-fixture=self]', '.chat-msg.needs-attention', '.chat-msg-system', '.chat-msg-system-row', '.chat-msg-header', '.chat-msg-from-name', '.chat-msg-header time', 'button.chat-msg-id',
+  '.chat-msg-bubble', '.quote', '.chat-msg-body', '.chat-msg-body h2', '.chat-msg-body p', '.chat-msg-body code', '.chat-msg-body a', '.chat-msg-body a.msg-ref', '.chat-msg-body .mention', '.chat-msg-body blockquote', '.chat-msg-body ul', '.chat-msg-body del',
+  '.chat-msg-body table', '.chat-msg-body th', '.chat-msg-body td', '.md-codeblock', '.md-codeblock pre', '.md-copy', '.message-actions', '.message-actions button', '.quick-reaction', '.reaction-pill',
   '.visual-plan', '.visual-plan-block', '.visual-plan-block-header', '.visual-plan-block-type', '.visual-plan-block-title', '.visual-plan-block-body', '.visual-plan-check-row', '.visual-plan-file-tree',
   '.agents-panel', '.agent-card', '.agent-name', '.agent-role', '.agent-state', '.agent-actions button',
   '#health-popover', '#usages-popover', '#usages-popover > header', '#usages-popover button', '.usages-popover-provider-name', '.usages-popover-profile', '.usages-popover-profile.is-active', '.usages-popover-profile-name', '.usage-profile-active',

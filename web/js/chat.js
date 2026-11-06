@@ -56,7 +56,7 @@ export class Chat {
       // A history window pages forward again when its bottom is reached (only then is scrollHeight read on scroll).
       if (this.contextMode && this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 80) this.loadNewer();
     });
-    this.scrollAnchor = new ScrollAnchor(this.list, '.message, .answer-row');
+    this.scrollAnchor = new ScrollAnchor(this.list, '.chat-msg, .answer-row');
     this.list.addEventListener('keydown', event => this.moveActionFocus(event));
     this.chip = document.querySelector('#reply-chip'); this.chipText = this.chip.querySelector('#reply-chip-jump'); this.chipText.onclick = () => { if (this.reply) this.jumpToMessage(this.reply.id); }; this.error = document.querySelector('#chat-error'); this.nodes = new Map();
     this.pendingNode = document.querySelector('#pending-attachments'); this.pendingNode.replaceChildren(); this.pendingView = mountPreactPage(this.pendingNode, props => html`<${PendingAttachments} ...${props} />`, { onError: error => console.error('pending attachments failed', error) }); this.attachmentInput = document.querySelector('#attachment-input');
@@ -64,9 +64,10 @@ export class Chat {
     this.draft.addEventListener('input', () => this.resizeDraft());
     document.addEventListener('click', event => { const ref = event.target.closest?.('a.msg-ref'); if (!ref || event.defaultPrevented || event.button) return; event.preventDefault(); this.jumpToMessage(Number(ref.dataset.no)); });
     this.draft.addEventListener('paste', event => { const files = [...event.clipboardData?.files || []]; if (files.length) { event.preventDefault(); this.addFiles(files); } });
-    this.form.addEventListener('dragover', event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); this.form.classList.add('drag-attachment'); } });
-    this.form.addEventListener('dragleave', event => { if (!this.form.contains(event.relatedTarget)) this.form.classList.remove('drag-attachment'); });
-    this.form.addEventListener('drop', event => { this.form.classList.remove('drag-attachment'); if (event.dataTransfer?.files.length) { event.preventDefault(); this.addFiles([...event.dataTransfer.files]); } });
+    this.sendBar = this.form.closest('.send-bar');
+    this.sendBar.addEventListener('dragover', event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); this.sendBar.classList.add('drag-attachment'); } });
+    this.sendBar.addEventListener('dragleave', event => { if (!this.sendBar.contains(event.relatedTarget)) this.sendBar.classList.remove('drag-attachment'); });
+    this.sendBar.addEventListener('drop', event => { this.sendBar.classList.remove('drag-attachment'); if (event.dataTransfer?.files.length) { event.preventDefault(); this.addFiles([...event.dataTransfer.files]); } });
     setInterval(() => refreshRelativeTimes(this.list), 30000);
     this.lightbox = document.querySelector('#image-lightbox'); document.querySelector('#image-lightbox-close').onclick = () => this.lightbox.close();
     this.lightbox.onclick = event => { if (event.target === this.lightbox) this.lightbox.close(); };
@@ -125,7 +126,7 @@ export class Chat {
   }
   pageDrawn() {
     this.list.scrollTop = this.list.scrollHeight;
-    this.list.dataset.empty = String(!this.list.querySelector('article.message:not(.system-notice)')); // notices alone leave it empty
+    this.list.dataset.empty = String(!this.list.querySelector('article.chat-msg:not(.chat-msg-system)')); // notices alone leave it empty
   }
   showNewest() { this.list.dataset.hasOlder = String(this.hasMoreOlder); this.list.scrollTop = this.list.scrollHeight; this.scrollAnchor?.update(); }
   // How far the read mark may go (0 while a room is still loading). At the latest view the list is contiguous to the live
@@ -134,7 +135,7 @@ export class Chat {
   // never a thread reply, which an open thread panel can hold far past the window's end.
   newestShownSeq() {
     const lastRowSeq = () => {
-      for (let node = this.list.lastElementChild; node; node = node.previousElementSibling) if (node.matches('article.message[data-message-id]')) return Number(node.dataset.seq) || 0;
+      for (let node = this.list.lastElementChild; node; node = node.previousElementSibling) if (node.matches('article.chat-msg[data-message-id]')) return Number(node.dataset.seq) || 0;
       return 0;
     };
     return shownSeq({ initialLoading: this.initialLoading, contextMode: this.contextMode, catchingUp: this.catchingUp, newestSeq: this.newestSeq, lastRowSeq });
@@ -198,7 +199,7 @@ export class Chat {
   // the list (rows, listeners, records) for as long as the tab lived. __liveCap is a test hook; otherwise a lowered
   // __renderCap lowers it too, so the live cap never exceeds the history cap.
   liveCap() { return window.__liveCap || Math.min(300, this.renderCap()); }
-  renderedRows() { return [...this.list.children].filter(node => node.matches?.('article.message[data-message-id]')); }
+  renderedRows() { return [...this.list.children].filter(node => node.matches?.('article.chat-msg[data-message-id]')); }
   loadNewer() { return this.store.loadNewer(); }
   leaveWindow() { return this.store.leaveWindow(); }
   setSpawnOpener(openSpawn) { this.spawnCallback = openSpawn; }
@@ -218,7 +219,7 @@ export class Chat {
   }
   wakeActions(event, container) {
     const target = event.target;
-    const row = target.closest?.('article.message'); if (!row || !container.contains(row)) return;
+    const row = target.closest?.('article.chat-msg'); if (!row || !container.contains(row)) return;
     const bar = row.querySelector('.message-actions'); if (!bar || bar.dataset.built) return;
     const message = this.entryMessage(row.dataset.messageId); if (!message) return;
     wakeMessageActions(this, bar, message);
@@ -234,7 +235,7 @@ export class Chat {
   enterActions(event, bar) {
     if (event.type === 'pointerover' || event.type === 'pointerdown') return;
     if (!event.target.classList?.contains('message-actions-wake')) return;
-    const buttons = bar.querySelectorAll(':scope > button'), row = bar.closest('.message');
+    const buttons = bar.querySelectorAll(':scope > button'), row = bar.closest('.chat-msg');
     const below = event.relatedTarget && row && !!(row.compareDocumentPosition(event.relatedTarget) & Node.DOCUMENT_POSITION_FOLLOWING) && !row.contains(event.relatedTarget);
     const to = below ? buttons[buttons.length - 1] : buttons[0];
     // The focus is still moving to the button this toolbar replaced, so it is moved on afterwards.
@@ -243,14 +244,14 @@ export class Chat {
   // The row controls of the message list and the thread panel, delegated: the control's row names the message.
   onMessageClick(event) {
     if (event.target.classList?.contains('message-actions-wake')) { this.wakeActions(event, event.currentTarget); return; }
-    const control = event.target.closest?.('button, strong.message-author, span.mention[role=button]');
+    const control = event.target.closest?.('button, strong.chat-msg-from-name, span.mention[role=button]');
     if (!control || !event.currentTarget.contains(control)) return;
     const holder = control.closest('[data-message-id]'); if (!holder || !event.currentTarget.contains(holder)) return;
     const message = this.entryMessage(holder.dataset.messageId); if (!message) return;
     const is = name => control.classList.contains(name);
-    if (is('message-author')) { if (control.getAttribute('role') === 'button') this.openSender(message); return; }
+    if (is('chat-msg-from-name')) { if (control.getAttribute('role') === 'button') this.openSender(message); return; }
     if (is('mention')) { this.openMention(control.textContent); return; }
-    if (is('message-number')) this.copyNumber(control, message);
+    if (is('chat-msg-id')) this.copyNumber(control, message);
     else if (is('chat-msg-debug-toggle')) this.debugCallback?.(message);
     else if (is('chat-msg-usage-toggle')) toggleMessageUsage(control, message.usage);
     else if (is('quote')) this.jumpToMessage(message.reply_to);
@@ -262,7 +263,7 @@ export class Chat {
   // A departed or historical sender's name is a role=button: Enter and Space open its profile like a click.
   onAuthorKey(event) {
     if (event.key !== 'Enter' && event.key !== ' ') return;
-    const author = event.target.closest?.('strong.message-author[role=button], span.mention[role=button]');
+    const author = event.target.closest?.('strong.chat-msg-from-name[role=button], span.mention[role=button]');
     if (!author) return;
     const holder = author.closest('[data-message-id]'), message = holder && this.entryMessage(holder.dataset.messageId);
     if (!message) return;
@@ -331,11 +332,11 @@ export class Chat {
     spawn.disabled = !open || room.kind === 'dm' || viewer;
     this.spawnTitle ||= spawn.title;
     spawn.title = viewer ? 'Viewers cannot spawn agents' : this.spawnTitle;
-    const note = this.viewerNote ||= (() => { const node = document.createElement('p'); node.className = 'composer-note'; node.id = 'composer-viewer-note'; node.setAttribute('role', 'note'); this.form.before(node); return node; })();
+    const note = this.viewerNote ||= (() => { const node = document.createElement('p'); node.className = 'system-room-notice'; node.id = 'composer-viewer-note'; node.setAttribute('role', 'note'); this.form.before(node); return node; })();
     note.hidden = !(open && viewer && (room.kind !== 'dm' || agentChat));
     note.textContent = agentChat ? 'You can read this chat. Writing here takes the owner or operator role in one of the agents\' projects.' : 'You can read this room as a viewer. Only owners and operators of the project can write here or run agents.';
     // An archived project is read-only for everyone; the composer says why and where to undo it.
-    const archivedNote = this.archivedNote ||= (() => { const node = document.createElement('p'); node.className = 'composer-note'; node.id = 'composer-archived-note'; node.setAttribute('role', 'note'); this.form.before(node); return node; })();
+    const archivedNote = this.archivedNote ||= (() => { const node = document.createElement('p'); node.className = 'system-room-notice'; node.id = 'composer-archived-note'; node.setAttribute('role', 'note'); this.form.before(node); return node; })();
     archivedNote.hidden = !archivedProject;
     archivedNote.textContent = 'This project is archived and read-only. The owner or an admin can reopen it in the project\'s home-room settings.';
   }
@@ -392,7 +393,7 @@ export class Chat {
   beginWindow() { this.olderStatus.hidden = true; this.list.dataset.hasOlder = 'false'; }
   showWindow() { this.list.dataset.hasOlder = String(this.hasMoreOlder); this.latestButton.hidden = false; }
   showReply(message) { const entry = this.threadList.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`); entry?.scrollIntoView({ block: 'center' }); this.flash(entry); }
-  showRow(message) { const row = this.nodes.get(message.id); row?.scrollIntoView({ block: 'center' }); this.scrollAnchor?.update(); this.flash(row?.querySelector('.message-bubble') || row); }
+  showRow(message) { const row = this.nodes.get(message.id); row?.scrollIntoView({ block: 'center' }); this.scrollAnchor?.update(); this.flash(row?.querySelector('.chat-msg-bubble') || row); }
   renderBody(element, message) { element.replaceChildren(); if (this.raw) element.append(renderRaw(message.body)); else { element.append(renderMarkdown(message.body)); highlightMentions(element, this.mentionIndex); expandShortcodes(element); } if (message.attachments?.length) this.renderAttachments(element, message.attachments); }
   renderAttachments(element, attachments) {
     const strip = document.createElement('div'); strip.className = 'message-images';

@@ -40,7 +40,7 @@ async function main() {
     const list = '#messages';
     const quiet = () => page.evaluate(() => new Promise(resolve => {
       const el = document.querySelector('#messages'); let last = '', stable = 0;
-      const tick = () => { const now = [el.scrollTop, el.scrollHeight, el.querySelectorAll('.message').length].join(); stable = now === last ? stable + 1 : 0; last = now; if (stable >= 20) resolve(true); else requestAnimationFrame(tick); };
+      const tick = () => { const now = [el.scrollTop, el.scrollHeight, el.querySelectorAll('.chat-msg').length].join(); stable = now === last ? stable + 1 : 0; last = now; if (stable >= 20) resolve(true); else requestAnimationFrame(tick); };
       requestAnimationFrame(tick);
     }));
     const distance = () => page.$eval(list, el => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
@@ -48,7 +48,7 @@ async function main() {
       await page.waitForSelector(`[data-room-id="${id}"] .room-name`);
       await page.evaluate(id => document.querySelector(`[data-room-id="${id}"] .room-name`).click(), id);
       await page.waitForFunction(title => document.querySelector('#room-title')?.textContent === title, {}, title);
-      await page.waitForFunction(() => document.querySelectorAll('#messages .message').length >= 40);
+      await page.waitForFunction(() => document.querySelectorAll('#messages .chat-msg').length >= 40);
       await quiet();
     };
     for (let round = 0; round < 3; round++) {
@@ -60,7 +60,7 @@ async function main() {
     await open(second.id, 'Scroll second');
     const append = async text => {
       assert.equal((await call(`/api/rooms/${second.id}/messages`, 'POST', { body: `${text}\n\n\`\`\`js\nlet a = 1;\nlet b = 2;\n\`\`\`\n\n![late](/icons/logo-light.png?live=${encodeURIComponent(text)})\n` })).status, 201);
-      await page.waitForFunction(text => [...document.querySelectorAll('.message-body')].some(el => el.textContent.startsWith(text)), {}, text);
+      await page.waitForFunction(text => [...document.querySelectorAll('.chat-msg-body')].some(el => el.textContent.startsWith(text)), {}, text);
       await quiet();
     };
     await append('Pinned live message');

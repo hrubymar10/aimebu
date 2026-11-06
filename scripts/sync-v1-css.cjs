@@ -88,7 +88,11 @@ const header = `/* v1's stylesheet, as it is. Source: aimebu/frontend/style.css,
 // In a cascade layer, so that every unlayered v2 rule still wins over it: v1 applies only where v2 sets nothing, and an area moves over when its
 // v2 rules are deleted. The layer comes off when the last v2 rule that overrode v1 is gone (--final).
 const layered = !final;
-const next = header + (layered ? `@layer v1 {\n${filtered}\n}\n` : filtered);
+// The layer order is declared first: v2's base styles (v2-base: legacy style.css and the generic element and button look), then the v1-reset (v1's
+// `* { margin: 0; padding: 0; box-sizing: border-box }`, applied in theme-v1.css only inside the areas that have moved over), then v1's own rules.
+// A later layer beats an earlier one whatever the selectors, so v1's class rules always win over v2's base, and every unlayered v2 rule wins over all.
+const order = '@layer v2-base, v1-reset, v1;\n\n';
+const next = header + (layered ? `${order}@layer v1 {\n${filtered}\n}\n` : filtered);
 if (check) {
   const have = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
   if (have !== next) { console.error('web/v1.css is not what scripts/sync-v1-css.cjs writes from v1 (run it without --check)'); process.exit(1); }

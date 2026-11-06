@@ -90,7 +90,7 @@ export class ComposerFormatting {
     // Where the toolbar and the link row go depends on the layout (see place()). The attach and emoji buttons of the message
     // composer are the form's own children, which the layouts move and put back.
     this.form = textarea.form || null;
-    this.slots = this.form ? [...this.form.querySelectorAll(':scope > .attachment-slot, :scope > #emoji-button')] : [];
+    this.slots = this.form ? [...this.form.querySelectorAll(':scope > .attachment-picker-btn, :scope > #emoji-button')] : [];
     // The buttons scroll inside their own strip when the field is narrow, so they never run under the "Aa" at the toolbar's end.
     this.tools = document.createElement('div'); this.tools.className = 'composer-tools'; this.toolbar.append(this.tools);
     this.buttons = new Map();
@@ -125,7 +125,7 @@ export class ComposerFormatting {
     if (this.toggle.parentNode !== home) { const focused = document.activeElement === this.toggle; home.append(this.toggle); if (focused) this.toggle.focus(); }
     if (!this.slots.length) return;
     if (this.rich && !compact.matches) this.toolbar.prepend(...this.slots);
-    else { const anchor = this.form.querySelector(':scope > .pending-attachments') || this.field; for (const slot of this.slots) this.form.insertBefore(slot, anchor); }
+    else { for (const slot of this.slots) this.form.insertBefore(slot, this.field); }
   }
   apply() {
     this.place();

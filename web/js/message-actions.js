@@ -72,7 +72,7 @@ function clearSelectedMessage() { selectedMessage?.classList.remove('actions-ope
 document.addEventListener('click', event => {
   if (!matchMedia('(hover: none)').matches) return;
   if (selectedMessage && !selectedMessage.isConnected) selectedMessage = null;
-  const message = event.target.closest?.('.message:not(.system-notice)');
+  const message = event.target.closest?.('.chat-msg:not(.chat-msg-system)');
   if (!message) { clearSelectedMessage(); return; }
   if (event.target.closest(TAPPABLE)) { if (message !== selectedMessage) clearSelectedMessage(); return; }
   if (getSelection()?.toString()) return;
@@ -118,9 +118,10 @@ export function wakeMessageActions(chat, bar, message) {
 // Returns whether the toolbar was released: one that holds the focus, the pointer, a tapped selection or an open pop-up is kept.
 export function releaseMessageActions(bar) {
   if (!bar || !bar.dataset.built) return true;
-  const row = bar.closest('.message');
+  const row = bar.closest('.chat-msg');
   if (row && (row.matches(':hover, :focus-within, .actions-open') || bar.querySelector('[aria-expanded="true"]'))) return false;
   bar.replaceChildren(); delete bar.dataset.built;
+  placeholderMessageActions(bar); // a released toolbar is an unmade one again, so the keyboard can still find it
   return true;
 }
 

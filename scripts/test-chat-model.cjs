@@ -33,7 +33,7 @@ assert.deepEqual(plain(api.groupReactions([{ emoji: '👍', member_id: 'u1', mem
   { emoji: '👍', count: 2, title: 'ann, me', pressed: true }, { emoji: '🎉', count: 1, title: 'a1', pressed: false }]);
 assert.deepEqual(plain(api.groupReactions([], 'me')), []);
 
-assert.deepEqual([{ author_kind: 'system' }, { author_kind: 'user', author_id: 'me' }, { author_kind: 'user', author_id: 'x' }, { author_kind: 'agent', author_id: 'me' }].map(message => api.articleClass(message, 'me')), ['message system-notice', 'message self', 'message', 'message']);
+assert.deepEqual([{ author_kind: 'system' }, { author_kind: 'user', author_id: 'me' }, { author_kind: 'user', author_id: 'x' }, { author_kind: 'agent', author_id: 'me' }].map(message => api.articleClass(message, 'me')), ['chat-msg chat-msg-system', 'chat-msg self', 'chat-msg', 'chat-msg']);
 assert.deepEqual([{}, { thread_root: 'r' }, { author_kind: 'system' }].map(message => api.liveArrival(message, { initialLoading: false, contextMode: false })), [true, false, false]);
 assert.deepEqual([[true, false], [false, true]].map(([initialLoading, contextMode]) => api.liveArrival({}, { initialLoading, contextMode })), [false, false]);
 

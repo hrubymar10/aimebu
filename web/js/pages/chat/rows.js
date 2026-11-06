@@ -34,18 +34,18 @@ function Stamp({ createdAt }) {
   return html`<time ref=${root} />`;
 }
 
-const ExpiredMark = () => html`<span class="message-expired-mark" title="Older than the expiry window: AI room chatter this old is not delivered to agents. Still shown here." role="img" aria-label="Expired from AI context" dangerouslySetInnerHTML=${{ __html: EXPIRED_HOURGLASS }} />`;
+const ExpiredMark = () => html`<span class="chat-msg-expired-icon" title="Older than the expiry window: AI room chatter this old is not delivered to agents. Still shown here." role="img" aria-label="Expired from AI context" dangerouslySetInnerHTML=${{ __html: EXPIRED_HOURGLASS }} />`;
 
 // The header line of a message, in the list and in the thread panel alike: sender, (bell), #number, bug, time.
 export function MessageMeta({ message, view }) {
   const author = view.author;
-  return html`<div class="message-meta"><span class="message-author-wrap">
+  return html`<div class="chat-msg-header"><span class="chat-msg-from">
     ${message.author_kind !== 'system' && html`<${Presence} identity=${author.identity} />`}
-    <strong class=${author.link ? 'message-author message-author-link' : 'message-author'} data-sender-kind=${author.kind} tabindex=${author.link ? 0 : undefined} role=${author.link ? 'button' : undefined} title=${author.link ? author.title : undefined}>${author.name}</strong>
+    <strong class=${author.link ? 'chat-msg-from-name agent-profile-link' : 'chat-msg-from-name'} data-sender-kind=${author.kind} tabindex=${author.link ? 0 : undefined} role=${author.link ? 'button' : undefined} title=${author.link ? author.title : undefined}>${author.name}</strong>
     <span class="message-role" title=${author.roleTitle} hidden=${!author.roleEmoji}>${author.roleEmoji}</span>
   </span>
-  ${message.needs_attention && html`<span class="message-attention" title="Needs human attention" aria-label="Needs human attention">🔔</span>`}
-  <button type="button" class="row-btn quiet-glyph message-number" title="Click to copy">${`#${message.no}`}</button>
+  ${message.needs_attention && html`<span class="chat-msg-attention-icon" title="Needs human attention" aria-label="Needs human attention">🔔</span>`}
+  <button type="button" class="row-btn quiet-glyph chat-msg-id" title="Click to copy">${`#${message.no}`}</button>
   ${usageButton(view, message)}
   <button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button>
   ${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /></div>`;
@@ -54,7 +54,7 @@ export function MessageMeta({ message, view }) {
 export function Body({ message, view, host }) {
   const root = useRef(null);
   useLayoutEffect(() => { host.renderBody(root.current, message); }, [message, view.bodyKey]);
-  return html`<div class="message-body" ref=${root} />`;
+  return html`<div class="chat-msg-body" ref=${root} />`;
 }
 
 export function Plan({ message }) {
@@ -112,23 +112,23 @@ function NoticeBody({ message, view, host }) {
     if (marked.current) host.highlight(root.current);
     marked.current = true;
   }, [view.mentionKey]);
-  return html`<span class="message-body" ref=${root} />`;
+  return html`<span class="chat-msg-body" ref=${root} />`;
 }
 
 function SystemRow({ message, view, host, classes, register }) {
   return html`<article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
-    <div class="system-row"><${NoticeBody} message=${message} view=${view} host=${host} />${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>
+    <div class="chat-msg-system-row"><${NoticeBody} message=${message} view=${view} host=${host} />${view.expired && html`<${ExpiredMark} />`}<${Stamp} createdAt=${message.created_at} /><button type="button" class="row-btn quiet-glyph chat-msg-debug-toggle" title="Open debug inspector" aria-label="Open debug inspector"><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button></div>
     <${Plan} message=${message} />
   </article>`;
 }
 
 export function MessageRow({ message, view, host }) {
   const register = useCallback(element => host.registerNode(message.id, element), [message.id]);
-  const classes = [view.articleClass, view.needsAttention ? 'needs-attention' : '', view.expired ? 'message-expired' : '', view.boundary ? 'expiry-boundary' : ''].filter(Boolean).join(' ');
+  const classes = [view.articleClass, view.needsAttention ? 'needs-attention' : '', view.expired ? 'chat-msg-expired' : '', view.boundary ? 'expiry-boundary' : ''].filter(Boolean).join(' ');
   return html`<${Row} kind="main" message=${message} view=${view} host=${host}>${() => message.author_kind === 'system' ? html`<${SystemRow} message=${message} view=${view} host=${host} classes=${classes} register=${register} />` : html`<${Fragment}><article class=${classes} data-message-id=${message.id} data-seq=${String(message.seq)} data-no=${String(message.no)} ref=${register}>
     ${view.boundary && html`<span class="expiry-label">Older AI chatter won't reach agents automatically</span>`}
     <${MessageMeta} message=${message} view=${view} />
-    <div class="message-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /></div>
+    <div class="chat-msg-bubble">${view.quote && html`<${Quote} quote=${view.quote} />`}<${Body} message=${message} view=${view} host=${host} /><${Plan} message=${message} /><${Actions} message=${message} host=${host} label=${view.threadLabel} /><${Pills} pills=${view.pills} /></div>
     ${!view.chip.hidden && html`<button type="button" class="row-btn thread-chip" title="Open thread" aria-label=${view.chip.label}>${view.chip.text}</button>`}
   </article><${AnswerSlot} message=${message} view=${view} host=${host} listed=${/\bself\b/.test(view.articleClass || '') ? ' answer-row answer-row-self' : ' answer-row'} /><//>`}<//>`;
 }

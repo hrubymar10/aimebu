@@ -1,6 +1,8 @@
 /* v1's stylesheet, as it is. Source: aimebu/frontend/style.css, without the fleets and leaderboard rules v2 does not have,
    and for now without its universal reset, its html/body rules and the rules of classes v2 still styles itself (TRANSITIONAL and v1-css-hold.json).
    Written by scripts/sync-v1-css.cjs; do not edit it by hand: a fix belongs in v1, then `node scripts/sync-v1-css.cjs` brings it in. */
+@layer v2-base, v1-reset, v1;
+
 @layer v1 {
 /* ── Reset & Base ─────────────────────────────────────────────── */
 
@@ -1650,12 +1652,39 @@
   color: #fff;
 }
 
+.chat-msg.self {
+  align-self: flex-end;
+}
+
+.chat-msg.self .chat-msg-header {
+  justify-content: flex-end;
+  padding-right: 2px;
+  padding-left: 0;
+}
+
+.chat-msg.self .chat-msg-from {
+  color: var(--green-text);
+}
+
+.chat-msg.self .chat-msg-bubble {
+  background: var(--bg-tertiary);
+  border-color: var(--green);
+}
+
+.chat-msg.self .chat-msg-bubble:hover {
+  border-color: var(--green-text);
+}
+
 .proposed-answers {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 6px;
   max-width: 100%;
+}
+
+.chat-msg.self .proposed-answers {
+  justify-content: flex-end;
 }
 
 .open-questions-trigger {
@@ -1882,6 +1911,10 @@
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   transition: background var(--transition);
+}
+
+.send-bar.drag-attachment {
+  background: var(--accent-dim);
 }
 
 .attachment-pending-list {
@@ -2291,6 +2324,11 @@
   margin-top: 4px;
   padding-left: 2px;
   flex-wrap: wrap;
+}
+.chat-msg.self .chat-msg-receipts {
+  justify-content: flex-end;
+  padding-left: 0;
+  padding-right: 2px;
 }
 
 .meta-key {
@@ -4727,6 +4765,11 @@
 }
 
 /* ── Needs human attention ──────────────────────────────────────── */
+
+.chat-msg.needs-attention .chat-msg-bubble {
+  border-left: 3px solid #e3a008;
+  background: rgba(227, 160, 8, 0.06);
+}
 
 .chat-msg-attention-icon {
   font-size: 0.72rem;

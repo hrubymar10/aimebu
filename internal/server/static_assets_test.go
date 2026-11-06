@@ -35,7 +35,7 @@ func TestStaticAssetsUseContentVersionAndRevalidateHTML(t *testing.T) {
 		t.Fatal("index has no versioned stylesheet")
 	}
 	version := match[1]
-	for _, path := range []string{"/theme-v1.css", "/js/app.js"} {
+	for _, path := range []string{"/v1.css", "/theme-v1.css", "/v2-only.css", "/js/app.js"} {
 		if !strings.Contains(html, path+"?v="+version+`"`) {
 			t.Fatalf("index does not version %s", path)
 		}

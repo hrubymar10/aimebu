@@ -225,11 +225,23 @@ the import map, so each module has exactly one URL.
   belongs to Preact or to hand-written code, never both. A Preact page keeps
   the ids, classes and text the page it replaced had, so `test-ui` and the
   stylesheet keep working.
-- `web/style.css`: the original base stylesheet; it is small and mostly legacy.
-  `web/theme-v1.css`: the stylesheet that matters, which carries the colour
-  variables (themes switch through `data-theme` on `<html>`) and nearly all of
-  the layout. Put new styles in `theme-v1.css`, using its variables rather than
-  fixed colours, so every theme keeps working.
+- Styles load in this order, and a later file wins over an earlier one:
+  `web/v1.css` (v1's stylesheet as it is, in a cascade layer, written by
+  `node scripts/sync-v1-css.cjs`; never edit it by hand, and
+  `--check` fails when it drifts from v1), `web/style.css` (the original base
+  stylesheet; small and legacy, being deleted area by area),
+  `web/theme-v1.css` (colour variables, themes through `data-theme` on
+  `<html>`, and the layout of areas that have not moved to v1's rules yet) and
+  `web/v2-only.css` (things v1 never had: floating message toolbar, own
+  messages at 75%, the rich composer, and so on, written from v1's tokens and
+  patterns). The rule for a class v1 also has is v1's: name v2's markup the
+  way v1 does (`docs/design/css-v1-class-map.md` lists every rename) rather
+  than restyle it. Put a new style in `v2-only.css` when v1 has nothing like
+  it, using variables rather than fixed colours so every theme keeps working.
+  `scripts/v1-css-hold.json` lists classes whose v1 rules are held back until
+  their area has moved. Contrast against WCAG AA is a printed report in
+  `test-ui` (v1's palette is the owner's choice), and `node
+  scripts/a11y-audit.cjs --strict` still enforces it.
 - `web/icons/`: SVG icons plus the app and favicon images. An icon is drawn
   through a CSS mask in the current text colour: add the file, add an
   `.icon-mask-<name>` rule next to the others in `theme-v1.css`, and use it

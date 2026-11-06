@@ -24,3 +24,31 @@
 .visual-plan-block-body h3 { font-size: 1.1em; }
 .visual-plan-block-body :is(ul, ol) { margin: 6px 0; padding-left: 22px; }
 .visual-plan-block-body blockquote { margin: 8px 0; padding: 3px 10px; border-left: 3px solid var(--border); white-space: pre-wrap; }
+
+/* Messages. v1 gives every bubble 75% of the column; here other people's messages are full width and only the viewer's own sit at 75% on the right. */
+.chat-msg { align-self: stretch; width: auto; max-width: none; animation: none; }
+.chat-msg.self { align-self: flex-end; width: fit-content; max-width: 75%; }
+@media (max-width: 700px) { .chat-msg.self { max-width: 94%; } }
+.chat-msg-system { align-self: center; width: auto; max-width: 100%; }
+/* The #number is a button here (it copies the number); v1's is a span. */
+button.chat-msg-id { border: 0; background: none; }
+.chat-msg-id.copied { color: var(--green-text); }
+
+/* Composer. v1's send bar, form, input, send button, reply bar and pending-file list apply as they are; this is what v2 adds. */
+.send-bar .error { margin: 6px 0 0; }
+/* v1 hides its pending-file list with a class when it is empty; here the list is always there. */
+.attachment-pending-list:empty { display: none; }
+.send-form { position: relative; flex-wrap: wrap; } /* the macro, mention and emoji pickers open from the form */
+.send-form .msg-input { min-width: 0; min-height: 38px; max-height: 180px; overflow-y: auto; } /* the draft is sized by script, and measured while it can be hidden */
+@media (max-width: 700px), (pointer: coarse) { .btn-send { width: 40px; height: 40px; } }
+
+/* Plain buttons keep a fixed background (the owner's call; v1 draws .btn and .btn-icon transparent and fills them on hover): a hover or a focus only
+   lights the border and the text up. The variants (.btn-primary, .btn-danger) keep their own colours. Written with :where(), so that
+   any other rule of v2's (a transparent switch, a link-looking button) still wins over it, while v1's layer does not. */
+:where(:is(.btn, .btn-icon):not(.btn-primary, .btn-danger)) { background: var(--bg-tertiary); }
+:where(:is(.btn, .btn-icon):not(.btn-primary, .btn-danger):is(:hover:not(:disabled), :focus-visible)) { background: var(--bg-tertiary); border-color: var(--text-primary); color: var(--text-primary); }
+
+/* v1 transitions every property of .btn and .btn-icon (`all`), so a width or margin set by a media query or a script slides in over 150ms and anything that
+   measures the button right after sees the old size (the room-menu and top-bar placement do). Only the colours move here, as in v2's base. */
+:where(.btn, .btn-icon) { transition: background .15s, border-color .15s, color .15s; }
+

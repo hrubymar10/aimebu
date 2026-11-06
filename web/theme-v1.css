@@ -98,6 +98,9 @@
 
 html { font-size: 14px; }
 body { background: var(--bg-primary); color: var(--text-primary); font: 14px/1.5 var(--font-sans); }
+/* The generic element and button look is v2's base, below v1: v1's class rules (.btn, .btn-icon, .msg-input...) win over it, and what v1 does not set
+   (a background, a hover, a focus ring) still comes from here. */
+@layer v2-base {
 button, input, textarea, select { font: inherit; }
 /* Buttons. v1's .btn, .btn-sm, .btn-icon, .btn-primary and .btn-danger are in v1.css (a cascade layer under this file). TRANSITIONAL: v2's one button
    system below still styles every <button> (v1 styles only those classes, and leaves a plain .btn without a background, a hover or a focus ring), and
@@ -109,12 +112,7 @@ button, input, textarea, select { font: inherit; }
    its place supplies the layout. Any other button falls back to the .btn look, but none should: the audits check it. */
 button:not(.row-btn) { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 12px; font-weight: 500; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
 button:not(.row-btn):hover:not(:disabled), button:not(.row-btn):focus-visible { color: var(--text-primary); border-color: var(--text-primary); background: var(--bg-tertiary); filter: none; }
-button.btn-primary { background: var(--green); border-color: var(--green); color: var(--button-text); }
-button.btn-primary:hover:not(:disabled), button.btn-primary:focus-visible { background: var(--green-hover); border-color: var(--text-primary); color: var(--button-text); }
-button.btn-danger { background: var(--bg-primary); border-color: var(--red); color: var(--red); }
-button.btn-danger:hover:not(:disabled), button.btn-danger:focus-visible { background: var(--red); border-color: var(--red); color: var(--bg-primary); }
 button:disabled { opacity: .5; cursor: default; }
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .row-btn { padding: 6px 14px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 500; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
 .row-btn:hover:not(:disabled), .row-btn:focus-visible { background: var(--bg-hover); border-color: var(--border-hover); color: var(--text-primary); }
 .error { color: var(--red); }
@@ -122,6 +120,26 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+}
+/* v1's reset (* { margin: 0; padding: 0; box-sizing: border-box }), applied only inside the areas that have moved to v1's classes: their rules were written
+   for it, and v2's base (the layer above) gives buttons and inputs a padding and a font they would otherwise inherit. An area is added when it moves over. */
+/* Not in the layer, because v1 has a rule of the same weight or heavier for each of these and a layered rule loses to it: what must stay v2's.
+   `[hidden]` and the !important rules: an !important declaration in a lower layer would beat every other !important one. */
+[hidden] { display: none !important; }
+.room-schedules[hidden], .room-schedules [hidden] { display: none !important; }
+.health-item { display: block; width: 100%; text-align: left; color: var(--legacy-text-243b31) !important; padding: 8px !important; white-space: normal !important; }
+#back { display: none; }
+@media (max-width: 700px) { #back { display: block; } }
+/* The primary and danger buttons keep the theme's text colours: v1's .btn-primary is white on every green and its .btn-danger a fixed red. */
+button.btn-primary { background: var(--green); border-color: var(--green); color: var(--button-text); }
+button.btn-primary:hover:not(:disabled), button.btn-primary:focus-visible { background: var(--green-hover); border-color: var(--text-primary); color: var(--button-text); }
+button.btn-danger { background: var(--bg-primary); border-color: var(--red); color: var(--red); }
+button.btn-danger:hover:not(:disabled), button.btn-danger:focus-visible { background: var(--red); border-color: var(--red); color: var(--bg-primary); }
+/* Not in the layer: v1 sets `outline: none` on .btn and .msg-input and has no focus ring; a visible one is a v2 requirement (checked by the audits). */
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@layer v1-reset {
+  :is(.send-bar, .send-bar *, .send-bar *::before, .send-bar *::after) { margin: 0; padding: 0; box-sizing: border-box; }
+}
 
 .app { grid-template-columns: 240px minmax(0, 1fr); background: var(--bg-primary); }
 .workspace-bar { min-height: 49px; gap: 16px; padding: 9px 16px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); }
@@ -266,47 +284,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* ScrollAnchor (js/scroll-anchor.js) keeps the list pinned or anchored itself; the browser's own scroll
    anchoring would move scrollTop at the same time and be mistaken for the reader scrolling away. */
 .messages { overflow-anchor: none; }
-.message { align-self: flex-start; width: fit-content; max-width: 75%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
-.message:hover { border-color: var(--border-hover); }
-.message.self { align-self: flex-end; background: var(--bg-tertiary); border-color: var(--green); }
-.message.self:hover { border-color: var(--green-text); }
-.message-meta { gap: 8px; margin-bottom: 3px; }
-.message-meta strong { color: var(--accent); font-size: 10.5px; }
-.message.self .message-meta strong { color: var(--green-text); }
-.message-meta time { color: var(--text-muted); font-size: 9.1px; }
-.message-number { color: var(--text-muted); font: 8.7px var(--font-mono); }
 .message-role { padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 9px; }
-.message-body { margin: 4px 0; color: var(--text-primary); font: 11.2px/1.55 var(--font-mono); overflow-wrap: anywhere; }
 .reaction-pill { background: var(--bg-tertiary); border-color: var(--border); color: var(--text-secondary); }
 .reaction-pill[aria-pressed=true] { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 .quote { border-color: var(--border-hover); color: var(--text-muted); font-size: 11px; }
-.system-notice { align-self: center; width: auto; max-width: 100%; margin: 2px 0; padding: 3px 6px; border: 0; background: transparent; color: var(--text-muted); text-align: center; font-style: italic; }
-.system-notice:hover { border-color: transparent; }
-.system-notice .message-meta { justify-content: center; }
-.system-notice .message-meta strong, .system-notice .message-body { color: var(--text-muted); font: italic 10px/1.5 var(--font-sans); }
-.system-notice .message-body { margin: 0; }
-.message-body > :first-child { margin-top: 0; }
-.message-body > :last-child { margin-bottom: 0; }
+.chat-msg-body > :first-child { margin-top: 0; }
+.chat-msg-body > :last-child { margin-bottom: 0; }
 
-.message-body code { background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); }
-.message-body blockquote { border-color: var(--border-hover); color: var(--text-secondary); }
-.message-body a { color: var(--accent); }
+.chat-msg-body code { background: var(--bg-tertiary); color: var(--text-primary); font-family: var(--font-mono); }
+.chat-msg-body blockquote { border-color: var(--border-hover); color: var(--text-secondary); }
+.chat-msg-body a { color: var(--accent); }
 .md-codeblock { background: var(--bg-primary); border: 1px solid var(--border); color: var(--text-primary); }
 .md-copy { background: var(--bg-tertiary); border-color: var(--border); color: var(--text-secondary); }
 .md-table-wrap th, .md-table-wrap td { border-color: var(--border); }
 .md-table-wrap th { background: var(--bg-tertiary); }
 
-#composer { gap: 8px; padding: 12px 16px; background: var(--bg-secondary); border-color: var(--border); }
-#composer textarea { min-height: 38px; padding: 9px 12px; background: var(--bg-primary); border-color: var(--border); border-radius: 8px; color: var(--text-primary); font-size: 12px; }
-#composer textarea:focus { border-color: var(--accent); }
-#composer button { min-height: 38px; }
-.attachment-slot { display: inline-grid; place-items: center; flex: 0 0 30px; align-self: end; height: 38px; color: var(--text-muted); opacity: .55; }
-#composer button[aria-label="Send"] { display: inline-grid; place-items: center; width: 39px; min-width: 39px; padding: 0; }
-/* The reply chip as v1 draws it: a compact bordered bar, the quote cut with an ellipsis, the close button in line at its end. */
-.reply-chip { align-items: center; gap: 8px; margin: 0 0 6px 12px; padding: 5px 6px 5px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); color: var(--text-primary); font-size: 12px; }
-.reply-chip .btn-icon { flex: 0 0 auto; width: 22px; height: 22px; }
-/* The text of the chip is a button that jumps to the message being answered; it keeps the chip's look and shortens with an ellipsis. */
-.reply-chip-jump { flex: 1 1 auto; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; color: inherit; font: inherit; }
 .thread-panel { background: var(--bg-primary); border-color: var(--border); box-shadow: -12px 0 24px var(--overlay-shadow); }
 .thread-panel header { background: var(--bg-secondary); border-color: var(--border); }
 .thread-panel h2 { font-size: 14px; }
@@ -345,7 +337,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-context-track { flex: 1; height: 5px; overflow: hidden; border-radius: 3px; background: var(--border); }
 .agent-context-fill { display: block; height: 100%; background: var(--accent); }
 .agent-context-value { min-width: 27px; text-align: right; font-variant-numeric: tabular-nums; }
-.chat > .messages, .chat > #composer, .chat > .reply-chip, .chat > .error { margin-right: 260px; }
+.chat > .messages, .chat > .send-bar { margin-right: 260px; }
 
 .inbox-view { background: var(--bg-primary); }
 .inbox-view > header { background: var(--bg-secondary); border-color: var(--border); }
@@ -571,9 +563,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .chat { overflow: hidden; }
   .chat > header { flex: 0 0 auto; }
   .chat > .messages { flex: 1 1 auto; min-height: 0; }
-  .chat > .error { order: 2; flex: 0 0 auto; }
-  .chat > .error:empty { display: none; }
-  .chat > #composer { order: 3; flex: 0 0 auto; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  .chat > .send-bar { order: 3; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
   .app.chat-open .sidebar { display: block; position: absolute; z-index: 7; top: 54px; bottom: 0; left: 0; width: min(84vw, 320px); height: auto; transform: translateX(-105%); visibility: hidden; pointer-events: none; box-shadow: 12px 0 30px var(--overlay-shadow); transition: transform .18s ease, visibility .18s; }
   .app.chat-open.rooms-open .sidebar { transform: translateX(0); visibility: visible; pointer-events: auto; }
   .app.rooms-open #rooms-scrim { display: block; position: absolute; z-index: 6; inset: 54px 0 0; width: 100%; padding: 0; border: 0; border-radius: 0; background: var(--scrim); }
@@ -582,15 +572,13 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .chat.agents-open #agents-scrim { display: block; position: absolute; z-index: 3; inset: 0; width: 100%; padding: 0; border: 0; border-radius: 0; background: var(--scrim-soft); }
   #agents-close { display: inline-flex; margin-left: auto; padding: 2px 7px; font-size: 20px; }
   .agents-panel header { gap: 8px; }
-  .chat > .messages, .chat > #composer, .chat > .reply-chip, .chat > .error { margin-right: 0; }
+  .chat > .messages, .chat > .send-bar { margin-right: 0; }
   .messages { padding: 12px 10px; }
-  .message { max-width: 94%; }
-  .system-notice { max-width: 100%; }
+  .chat-msg-system { max-width: 100%; }
   .chat > header { padding: 8px 10px; }
   .chat > header { gap: 5px; }
   .room-controls { gap: 0; }
   .room-controls button { width: 24px; font-size: 12px; }
-  #composer { padding: 10px; }
   #settings-dialog { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
   #settings-dialog[open] { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); }
   #settings-dialog nav { display: flex; overflow-x: auto; gap: 4px; padding: 7px 12px; border-right: 0; border-bottom: 1px solid var(--border); }
@@ -608,9 +596,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   #agents-close { display: inline-flex; padding: 2px 7px; font-size: 17px; }
   .chat.agents-collapsed .agents-panel { display: none; }
   .chat.agents-collapsed > .messages,
-  .chat.agents-collapsed > #composer,
-  .chat.agents-collapsed > .reply-chip,
-  .chat.agents-collapsed > .error { margin-right: 0; }
+  .chat.agents-collapsed > .send-bar { margin-right: 0; }
 }
 @media (max-width: 360px) {
   .workspace-brand img { display: none; }
@@ -622,7 +608,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .snippet-text p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .snippet-actions-row { display: flex; gap: 6px; flex-shrink: 0; }
 .snippet-actions-row button { font-size: 11px; }
-#composer { position: relative; }
 .quick-commands { position: absolute; bottom: calc(100% + 6px); left: 20px; z-index: 5; min-width: 260px; max-width: min(480px, 80vw); max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-primary); box-shadow: 0 12px 40px var(--overlay-shadow); }
 .quick-commands[hidden] { display: none; }
 .quick-command { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 8px 12px; text-align: left; background: transparent; border: 0; border-radius: 0; color: var(--text-primary); }
@@ -744,7 +729,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 [data-theme="high-contrast-dark"] .room-row.active .room-name { color: var(--text-primary); }
 [data-theme="high-contrast-dark"] .room-row .room-name, [data-theme="high-contrast-dark"] .room-row .room-name:hover { background: transparent; border: 0; color: var(--text-primary); }
 [data-theme="high-contrast-dark"] .room-row:hover { outline: 1px dotted var(--accent); outline-offset: -1px; }
-[data-theme="high-contrast-dark"] .message.self, [data-theme="high-contrast-dark"] .message.self:hover { border-color: var(--border); }
 [data-theme="high-contrast-dark"] .agent-state { background: var(--bg-primary); border-color: var(--state-color); }
 [data-theme="high-contrast-dark"] #settings-dialog nav .settings-selected { background: var(--bg-primary); color: var(--text-primary); outline: 1px solid var(--accent); }
 [data-theme="high-contrast-dark"] .reaction-pill[aria-pressed=true] { background: var(--bg-primary); }
@@ -832,12 +816,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 [data-theme="high-contrast-dark"] .room-row .branch, [data-theme="high-contrast-dark"] .room-row .add-room { border: 0; background: transparent; }
 html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var(--text-primary); }
 .messages { gap: 2px; }
-.message, .message.self { display: flex; flex-direction: column; align-self: flex-start; width: fit-content; max-width: 75%; padding: 0; border: 0; background: transparent; }
-.message-meta { align-items: center; gap: 8px; margin-bottom: 2px; padding-left: 2px; }
-.message-author-wrap { display: inline-flex; align-items: center; gap: 6px; }
-.message-meta strong, .message.self .message-meta strong { color: var(--accent); font-size: 10.5px; }
 .message-role { padding: 0; border: 0; background: transparent; font-size: 13.3px; line-height: 1; }
-.message-bubble { position: relative; min-width: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
 .answer-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-width: 100%; }
 /* A proposed answer, as v1 draws it: a compact button that wraps long text. */
 .proposed-answer-btn { min-height: 28px; max-width: 100%; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-tertiary); color: var(--text-primary); padding: 4px 9px; font: 600 11.5px var(--font-sans); line-height: 1.2; white-space: normal; overflow-wrap: anywhere; cursor: pointer; transition: border-color .15s, background .15s; }
@@ -922,20 +901,11 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 /* Mentions as v1 draws them; a mention of the viewer is the amber highlight. */
 .mention { border-radius: 3px; font-weight: 500; }
 .mention.mention-self { color: #111827; background: #e3a008; box-shadow: inset 0 0 0 1px rgba(17, 24, 39, .22); }
-.message-bubble:hover { border-color: var(--border-hover); }
-.message.self .message-bubble { background: var(--bg-tertiary); border-color: var(--green-text); }
-.message-body { margin: 0; }
 .reaction-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }
 .reaction-pills:empty { display: none; }
 .reaction-pill { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-width: 22px; height: 22px; min-height: 0; padding: 0 6px; border-radius: 999px; background: var(--bg-tertiary); border: 1px solid var(--border); font: 11.5px var(--font-sans); line-height: 1; } /* v1's size: 22px tall, a 6px side padding */
 .quote { display: block; max-width: 100%; margin: 0 0 6px; padding: 2px 0 2px 8px; border: 0; border-left: 2px solid var(--border-hover); border-radius: 0; background: transparent; color: var(--accent); font: 12.6px var(--font-mono); overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .quote:hover { border-left-color: var(--accent); }
-.system-notice { align-self: center; min-height: 26px; padding: 4px 0; font: italic 9.8px/1.4 var(--font-sans); }
-.system-row { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-.system-notice .message-body { color: var(--text-muted); font: inherit; }
-.system-row time { color: var(--text-muted); white-space: nowrap; }
-[data-theme="high-contrast-dark"] .message-meta strong { color: #f38518; }
-[data-theme="high-contrast-dark"] .message.self .message-bubble { border-color: var(--border); }
 .agent-card { position: relative; padding: 7px 8px; }
 .agent-title { display: flex; align-items: center; gap: 5px; min-width: 0; }
 .agent-role { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1052,36 +1022,32 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .usages-empty button { margin-top: 10px; font-style: normal; }
 .usages-group-divider { height: 1px; margin: 3px 5px; background: var(--border-hover); }
 .chat.usages-open > .agents-panel { display: none; }
-.chat.usages-open > .messages, .chat.usages-open > #composer, .chat.usages-open > .reply-chip, .chat.usages-open > .error { margin-right: 260px; }
+.chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: 260px; }
 @media (max-width: 700px) {
   .chat > #usages-popover { top: 43px; width: min(86vw, 340px); box-shadow: -12px 0 30px var(--overlay-shadow); }
-  .chat.usages-open > .messages, .chat.usages-open > #composer, .chat.usages-open > .reply-chip, .chat.usages-open > .error { margin-right: 0; }
+  .chat.usages-open > .messages, .chat.usages-open > .send-bar { margin-right: 0; }
 }
-#composer { align-items: flex-end; gap: 6px; }
-#composer textarea { height: 39px; min-height: 39px; max-height: 180px; padding: 9px 12px; font-size: 11.9px; line-height: 19px; overflow-y: auto; }
-#composer .attachment-slot { flex: 0 0 34px; width: 34px; height: 38px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); color: var(--text-secondary); opacity: 1; cursor: pointer; }
-[data-theme="high-contrast-dark"] #composer .attachment-slot { border-color: var(--border); color: var(--text-primary); }
 .error:empty { display: none; }
 [data-theme="high-contrast-dark"] .agent-card button:disabled { opacity: .5; border-style: dashed; color: #d6d6d6; }
 [data-theme="high-contrast-dark"] :is(input,textarea,select) { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border); }
 [data-theme="high-contrast-dark"] :is(.room-health, .health-flag) { background: var(--bg-primary); color: var(--text-primary); border-color: var(--border); }
-[data-theme="high-contrast-dark"] .message-body :is(code,th,td) { color: var(--text-primary); }
+[data-theme="high-contrast-dark"] .chat-msg-body :is(code,th,td) { color: var(--text-primary); }
 [data-theme="high-contrast-dark"] .md-codeblock { border: 1px solid var(--border); }
 #settings-general label { display: block; margin: 14px 0 5px; color: var(--text-secondary); }
 #theme-select { width: min(100%, 280px); padding: 8px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; }
 
 /* UI part B: message tables and code blocks. */
-.message-body { min-width: 0; }
-.message-body .md-table-wrap { max-width: 100%; overflow-x: auto; }
-.message-body .md-table-wrap table { width: max-content; min-width: 0; }
-.message-body .md-table-wrap .md-align-left { text-align: left; }
-.message-body .md-table-wrap .md-align-center { text-align: center; }
-.message-body .md-table-wrap .md-align-right { text-align: right; }
-:is(.message-body, .visual-plan-block-body) .md-codeblock { width: 100%; max-width: 100%; background: transparent; border: 0; overflow: visible; }
-:is(.message-body, .visual-plan-block-body) .md-codeblock pre { width: 100%; max-width: 100%; padding: 8px 34px 8px 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; overflow-x: auto; }
-:is(.message-body, .visual-plan-block-body) .md-codeblock pre code { display: block; background: none; padding: 0; white-space: pre; }
-:is(.message-body, .visual-plan-block-body) .md-codeblock .md-copy { top: 5px; right: 5px; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; overflow: hidden; font-size: 0; border: 1px solid var(--border); color: var(--text-primary); }
-@media (hover: hover) { :is(.message-body, .visual-plan-block-body) .md-codeblock .md-copy { opacity: 0; } :is(.message-body, .visual-plan-block-body) .md-codeblock:hover .md-copy, :is(.message-body, .visual-plan-block-body) .md-codeblock:focus-within .md-copy { opacity: 1; } }
+.chat-msg-body { min-width: 0; }
+.chat-msg-body .md-table-wrap { max-width: 100%; overflow-x: auto; }
+.chat-msg-body .md-table-wrap table { width: max-content; min-width: 0; }
+.chat-msg-body .md-table-wrap .md-align-left { text-align: left; }
+.chat-msg-body .md-table-wrap .md-align-center { text-align: center; }
+.chat-msg-body .md-table-wrap .md-align-right { text-align: right; }
+:is(.chat-msg-body, .visual-plan-block-body) .md-codeblock { width: 100%; max-width: 100%; background: transparent; border: 0; overflow: visible; }
+:is(.chat-msg-body, .visual-plan-block-body) .md-codeblock pre { width: 100%; max-width: 100%; padding: 8px 34px 8px 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; overflow-x: auto; }
+:is(.chat-msg-body, .visual-plan-block-body) .md-codeblock pre code { display: block; background: none; padding: 0; white-space: pre; }
+:is(.chat-msg-body, .visual-plan-block-body) .md-codeblock .md-copy { top: 5px; right: 5px; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; overflow: hidden; font-size: 0; border: 1px solid var(--border); color: var(--text-primary); }
+@media (hover: hover) { :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock .md-copy { opacity: 0; } :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock:hover .md-copy, :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock:focus-within .md-copy { opacity: 1; } }
 
 /* UI part B: settings use the v1 full-height pane and grouped rows. */
 #settings-dialog { width: min(760px, 96vw); height: 100dvh; max-height: 100dvh; border-radius: 0; }
@@ -1257,8 +1223,8 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 
 /* Touch devices: the code-block copy button gets its own row above the code instead of sitting on it. */
 @media (hover: none) and (pointer: coarse) {
-  :is(.message-body, .visual-plan-block-body) .md-codeblock { display: flex; flex-direction: column; }
-  :is(.message-body, .visual-plan-block-body) .md-codeblock .md-copy { position: static; align-self: flex-end; order: -1; width: 40px; height: 40px; margin: 0 0 4px; opacity: 1; }
+  :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock { display: flex; flex-direction: column; }
+  :is(.chat-msg-body, .visual-plan-block-body) .md-codeblock .md-copy { position: static; align-self: flex-end; order: -1; width: 40px; height: 40px; margin: 0 0 4px; opacity: 1; }
 }
 
 /* Touch dialogs: every control is a 40px target. Checkboxes and radios are sized through their label row. */
@@ -1282,17 +1248,9 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 #settings-dialog nav .settings-tab-pending { visibility: hidden; }
 
 /* Full-width messages (as in v1): no 75% cap and no shrink-wrap; the bubble fills the column. */
-.message, .message.self { align-self: stretch; width: auto; max-width: none; }
-@media (max-width: 700px) { .message, .message.self { max-width: none; } }
 /* The viewer's own messages sit on the right, as in v1: shrink-wrapped, at most 75% wide, the header line (name, #id, time) right-aligned
    over a green-bordered bubble. Everyone else's stay full width on the left. */
-.message.self { align-self: flex-end; width: fit-content; max-width: 75%; }
 /* A touch tablet narrows it further, to leave room for the toolbar beside the bubble (see the message toolbar rules below). */
-@media (max-width: 700px) { .message.self { max-width: 94%; } }
-.message.self .message-meta { justify-content: flex-end; padding-left: 0; padding-right: 2px; }
-.message.self .message-meta strong { color: var(--green-text); }
-.message.self .message-bubble { border-color: var(--green); }
-.message.self .message-bubble:hover { border-color: var(--green-text); }
 /* Edge toggles (as in v1): a 22px outlined square with a thin chevron inside each column's header. A collapsed column
    shrinks to a 34px strip that keeps only its header and toggle, so the toggle never disappears. Phones use drawers. */
 .edge-toggle { display: none; }
@@ -1306,7 +1264,7 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
   .app.rooms-collapsed .chat > header > #edge-rooms-expand, .chat.agents-collapsed > header > #edge-agents-expand { display: inline-flex; }
   .chat > header > #edge-agents-expand { margin-left: auto; }
   .chat.usages-open.agents-collapsed > .agents-panel { display: none; }
-  .chat.usages-open.agents-collapsed > .messages, .chat.usages-open.agents-collapsed > #composer, .chat.usages-open.agents-collapsed > .reply-chip, .chat.usages-open.agents-collapsed > .error { margin-right: 260px; }
+  .chat.usages-open.agents-collapsed > .messages, .chat.usages-open.agents-collapsed > .send-bar { margin-right: 260px; }
 }
 /* Room list (layouts A and B): the box on top, rows without always-visible actions, a chip for the project in the flat list. */
 .room-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; padding: 0; border: 0; }
@@ -1355,11 +1313,10 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
 .room-view-actions button { border: 1px solid var(--border); }
 /* Message expiry: expired messages stay readable (the chat shows everything); they are dimmed, carry an
    hourglass, and one divider marks where AI context begins. */
-/* Not dimmed: opacity would drop the text below the contrast floor. A dashed outline and the hourglass say it. */
-.message-expired:not(.system-notice) { border-style: dashed; }
-.message-expired.system-notice .system-row { font-style: italic; }
-.message-expired-mark { display: inline-flex; margin-right: 4px; color: var(--text-muted); line-height: 1; cursor: help; }
-.message-expired-mark svg { display: block; width: 11px; height: 11px; }
+/* An expired message is dimmed, as in v1 (.chat-msg-expired); a system notice that has expired is also set in italics. */
+.chat-msg-expired.chat-msg-system .chat-msg-system-row { font-style: italic; }
+.chat-msg-expired-icon { display: inline-flex; margin-right: 4px; color: var(--text-muted); line-height: 1; cursor: help; }
+.chat-msg-expired-icon svg { display: block; width: 11px; height: 11px; }
 .expiry-boundary { position: relative; }
 /* Out of flow, in the gap above the first newer message, so adding or removing it moves nothing; a rule runs on from the words. */
 .expiry-boundary > .expiry-label { position: absolute; left: 0; bottom: 100%; z-index: 1; display: flex; align-items: center; gap: 8px; min-width: min(300px, 70cqw); white-space: nowrap; pointer-events: none; color: var(--text-secondary); font: 10.5px/10px var(--font-sans); }
@@ -1480,38 +1437,38 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
    else's sender line is at the left, clear of it. The viewer's own is right-aligned over that same corner, so it gets room below it and the
    toolbar sits in that room (see below). */
 .message-actions { position: absolute; top: -20px; right: 6px; z-index: 2; display: flex; align-items: center; gap: 4px; margin: 0; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); box-shadow: 0 2px 8px var(--overlay-shadow); opacity: 0; pointer-events: none; transition: opacity .12s; }
-.message:hover .message-actions, .message:focus-within .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
+.chat-msg:hover .message-actions, .chat-msg:focus-within .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
 /* A toolbar that has not been made yet (it is made when its row is reached, see message-actions.js) is not drawn. */
 .message-actions:not([data-built]) { position: absolute !important; display: block !important; width: 1px !important; height: 1px !important; margin: 0 !important; padding: 0 !important; border: 0 !important; overflow: hidden !important; clip-path: inset(50%) !important; opacity: 0 !important; pointer-events: none !important; box-shadow: none !important; }
 /* The viewer's own sender line is right-aligned, over the very corner the toolbar occupies, so that line gets room below it (22px) and the toolbar
    sits in that room, over the bubble's top edge: it covers neither the sender line nor the text. A narrow column does the same for everyone's
    message (below). A phone's toolbar is in the bubble's flow and needs none. */
-@media not ((hover: none) and (pointer: coarse) and (max-width: 700px)) { .message.self:not(.system-notice) > .message-meta { margin-bottom: 22px; } }
+@media not ((hover: none) and (pointer: coarse) and (max-width: 700px)) { .chat-msg.self:not(.chat-msg-system) > .chat-msg-header { margin-bottom: 22px; } }
 /* A touch tablet's toolbar is 46px tall: sitting over the bubble's top edge it would cover the first line, so it sits wholly above the bubble,
    and a selected message takes the room it needs there (an own message has its toolbar beside it and needs none). */
 @media (hover: none) and (pointer: coarse) and (min-width: 701px) {
-  .message:not(.self) .message-actions { top: -48px; }
-  .message.actions-open:not(.self):not(.system-notice) { margin-top: 34px; }
+  .chat-msg:not(.self) .message-actions { top: -48px; }
+  .chat-msg.actions-open:not(.self):not(.chat-msg-system) { margin-top: 34px; }
 }
 /* ... and its own messages keep the toolbar beside the bubble, in the free space to its left (about 250px wide here: buttons are 40px), so an own
    message stops short of it, though never narrower than 60% of the column. */
 @media (hover: none) and (pointer: coarse) and (min-width: 701px) {
-  .message.self { max-width: clamp(60%, calc(100% - 290px), 75%); }
-  .message.self .message-actions { top: 0; right: calc(100% + 6px); }
-  .message.self:not(.system-notice) > .message-meta { margin-bottom: 3px; }
+  .chat-msg.self { max-width: clamp(60%, calc(100% - 290px), 75%); }
+  .chat-msg.self .message-actions { top: 0; right: calc(100% + 6px); }
+  .chat-msg.self:not(.chat-msg-system) > .chat-msg-header { margin-bottom: 3px; }
 }
 #messages { container-type: inline-size; }
 @container (max-width: 420px) {
   @media not ((hover: none) and (pointer: coarse) and (max-width: 700px)) {
-    .message:not(.system-notice) > .message-meta { margin-bottom: 22px; }
+    .chat-msg:not(.chat-msg-system) > .chat-msg-header { margin-bottom: 22px; }
   }
   /* A touch tablet's column this narrow has no free space beside an own bubble either: it is treated like anyone's message, the toolbar wholly
      above the bubble (the same selectors and weights as the tablet rules above, which this comes after). */
   @media (hover: none) and (pointer: coarse) and (min-width: 701px) {
-    .message.self { max-width: 75%; }
-    .message.self .message-actions { top: -48px; right: 6px; }
-    .message.self:not(.system-notice) > .message-meta { margin-bottom: 22px; }
-    .message.actions-open.self:not(.system-notice) { margin-top: 34px; }
+    .chat-msg.self { max-width: 75%; }
+    .chat-msg.self .message-actions { top: -48px; right: 6px; }
+    .chat-msg.self:not(.chat-msg-system) > .chat-msg-header { margin-bottom: 22px; }
+    .chat-msg.actions-open.self:not(.chat-msg-system) { margin-top: 34px; }
   }
 }
 .message-actions .message-action { width: 22px; height: 22px; flex: 0 0 22px; border-radius: 6px; background: transparent; border-color: transparent; }
@@ -1525,16 +1482,16 @@ button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(-
 /* On a touch screen the actions are not always there: a tap on a message selects it (.actions-open, see message-actions.js) and they
    appear at its top-right corner, as in v1. A tap leaves :hover stuck on the message, so hover must not show them here. */
 @media (hover: none) and (pointer: coarse) {
-  .message:hover .message-actions { opacity: 0; pointer-events: none; }
-  .message.actions-open .message-actions, .message:has(:focus-visible) .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
+  .chat-msg:hover .message-actions { opacity: 0; pointer-events: none; }
+  .chat-msg.actions-open .message-actions, .chat-msg:has(:focus-visible) .message-actions, .message-actions:has([aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
   .message-actions .message-action { width: 40px; height: 40px; flex-basis: 40px; }
   .message-reaction-row .quick-reaction { width: 40px; height: 40px; }
 }
 /* On a phone the toolbar goes under the text, in the bubble's flow, so it covers neither the message nor its sender line; it takes room only
    while a message is selected. A tablet (701px and wider) keeps the desktop and v1 place: the top right of the message, over its edge. */
 @media (hover: none) and (pointer: coarse) and (max-width: 700px) {
-  .message-actions, .message.self .message-actions { position: relative; top: auto; right: auto; left: auto; display: none; width: fit-content; margin: 8px 0 0 auto; }
-  .message.actions-open .message-actions, .message:has(:focus-visible) .message-actions, .message-actions:has([aria-expanded="true"]) { display: flex; }
+  .message-actions, .chat-msg.self .message-actions { position: relative; top: auto; right: auto; left: auto; display: none; width: fit-content; margin: 8px 0 0 auto; }
+  .chat-msg.actions-open .message-actions, .chat-msg:has(:focus-visible) .message-actions, .message-actions:has([aria-expanded="true"]) { display: flex; }
 }
 
 /* The A/B/C experiment switch in the top bar (hidden unless an experiment is active). */
@@ -1665,7 +1622,7 @@ html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-de
 /* While the thread panel is open on a desktop-width window, the message column ends where the panel begins, so a message is
    never wrapped and then cut off under the panel. (A phone's panel covers the whole screen.) */
 @media (min-width: 701px) {
-  .chat:has(> .thread-panel:not([hidden])) > :is(#messages, #reply-chip, #composer, #chat-error, #pending-attachments) { margin-right: min(420px, 100%); }
+  .chat:has(> .thread-panel:not([hidden])) > :is(#messages, .send-bar) { margin-right: min(420px, 100%); }
 }
 
 /* Emoji: the ":" suggester rows and the picker. */
@@ -1673,7 +1630,6 @@ html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-de
 .emoji-commands .emoji-glyph { font: normal 16px/1 var(--font-sans); }
 .emoji-commands .emoji-code { font-style: normal; }
 .emoji-commands mark { background: transparent; color: var(--text-primary); font-weight: 700; text-decoration: underline; }
-.composer-emoji { flex: 0 0 34px; width: 34px; height: 38px; padding: 0; display: inline-grid; place-items: center; align-self: end; color: var(--text-secondary); }
 .emoji-picker-scrim { display: none; }
 .emoji-picker { --emoji-cell: 34px; --emoji-heading: 28px; position: fixed; z-index: 60; display: flex; flex-direction: column; width: 340px; height: 380px; max-height: calc(100dvh - 16px); border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); color: var(--text-primary); box-shadow: 0 12px 40px var(--overlay-shadow); overflow: hidden; }
 .emoji-search { flex: 0 0 auto; margin: 8px 8px 4px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; }
@@ -1761,11 +1717,11 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 
 /* The composer: the toolbar is a full-width row over the input; attach and emoji are its first items, quiet like the format buttons,
    and the bottom row is the input and send. The thread composer has no attach or emoji, so for it the toolbar is the same row. */
-.composer-toolbar > .attachment-slot, .composer-toolbar > #emoji-button { flex: none; width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 0; display: inline-grid; place-items: center; border-color: transparent; background: transparent; box-shadow: none; color: var(--text-muted); }
-#composer .composer-toolbar > .attachment-slot, #composer .composer-toolbar > #emoji-button { width: 26px; height: 26px; min-height: 26px; flex: none; border-color: transparent; background: transparent; border-radius: 6px; }
-[data-theme="high-contrast-dark"] #composer .composer-toolbar > .attachment-slot { border-color: transparent; }
-.composer-toolbar > .attachment-slot svg, .composer-toolbar > #emoji-button svg { width: 15px; height: 15px; }
-.composer-toolbar > .attachment-slot:hover, .composer-toolbar > #emoji-button:hover:not(:disabled), .composer-toolbar > #emoji-button:focus-visible { color: var(--text-primary); background: var(--bg-tertiary); }
+.composer-toolbar > .attachment-picker-btn, .composer-toolbar > #emoji-button { flex: none; width: 26px; min-width: 26px; height: 26px; min-height: 26px; padding: 0; display: inline-grid; place-items: center; border-color: transparent; background: transparent; box-shadow: none; color: var(--text-muted); }
+#composer .composer-toolbar > .attachment-picker-btn, #composer .composer-toolbar > #emoji-button { width: 26px; height: 26px; min-height: 26px; flex: none; border-color: transparent; background: transparent; border-radius: 6px; }
+[data-theme="high-contrast-dark"] #composer .composer-toolbar > .attachment-picker-btn { border-color: transparent; }
+.composer-toolbar > .attachment-picker-btn svg, .composer-toolbar > #emoji-button svg { width: 15px; height: 15px; }
+.composer-toolbar > .attachment-picker-btn:hover, .composer-toolbar > #emoji-button:hover:not(:disabled), .composer-toolbar > #emoji-button:focus-visible { color: var(--text-primary); background: var(--bg-tertiary); }
 .composer-field > .composer-toolbar { order: 0; flex: none; padding: 3px 40px 3px 6px; border-bottom: 1px solid var(--border); }
 .composer-field > .composer-link { order: 0; flex: none; padding: 4px 6px; border-bottom: 1px solid var(--border); }
 
@@ -1794,19 +1750,19 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .hl-hunk { color: var(--accent); background: var(--accent-dim); }
 .hl-file { color: var(--text-primary); font-weight: 700; }
 .hl-meta { color: var(--text-secondary); }
-/* Send (main and thread composer) is v1's: a filled green 38px square with a white paper plane and no outline. The plane's ink
+/* Send in the thread composer (the main composer uses v1's .btn-send) is v1's: a filled green 38px square with a white paper plane and no outline. The plane's ink
    sits up and to the right of its box (centroid 13.8, 10.1 in a 24 box), so the glyph is nudged back by about a pixel to look
    centred. Hover is the lighter green with a matching border; disabled (uploads in flight) is half opacity. */
-#composer button[type=submit].btn-primary, #thread-composer button.btn-primary { display: inline-grid; place-items: center; flex: 0 0 38px; width: 38px; min-width: 38px; height: 38px; min-height: 38px; padding: 0; border-radius: 8px; }
-:is(#composer button[type=submit], #thread-composer button, #spawn-open).btn-primary:hover:not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
-:is(#composer button[type=submit], #thread-composer button, #spawn-open).btn-primary:disabled { opacity: .5; cursor: not-allowed; }
-:is(#composer button[type=submit], #thread-composer button).btn-primary svg { transform: translate(-.8px, .8px); }
+#thread-composer button.btn-primary { display: inline-grid; place-items: center; flex: 0 0 38px; width: 38px; min-width: 38px; height: 38px; min-height: 38px; padding: 0; border-radius: 8px; }
+:is(#thread-composer button, #spawn-open, .btn-send).btn-primary:hover:not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
+:is(#thread-composer button, #spawn-open, .btn-send).btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+:is(#thread-composer button).btn-primary svg { transform: translate(-.8px, .8px); }
 /* The high-contrast themes restyle every .btn/.btn-icon as an outlined box on the page colour; Send stays green there, as in v1
    (dark green fill, white glyph; the bright green with a dark glyph on hover). */
-[data-theme^="high-contrast"] :is(#composer button[type=submit], #thread-composer button, #spawn-open).btn-primary { background: var(--green); border-color: var(--green); color: var(--button-text); }
-[data-theme^="high-contrast"] :is(#composer button[type=submit], #thread-composer button, #spawn-open).btn-primary:hover:not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
-[data-theme="high-contrast-dark"] :is(#composer button[type=submit], #thread-composer button, #spawn-open).btn-primary:hover:not(:disabled) { color: var(--bg-primary); }
-@media (max-width: 700px), (pointer: coarse) { #composer button[type=submit].btn-primary, #thread-composer button.btn-primary { flex-basis: 40px; width: 40px; min-width: 40px; height: 40px; min-height: 40px; } }
+[data-theme^="high-contrast"] :is(#thread-composer button, #spawn-open, .btn-send).btn-primary { background: var(--green); border-color: var(--green); color: var(--button-text); }
+[data-theme^="high-contrast"] :is(#thread-composer button, #spawn-open, .btn-send).btn-primary:hover:not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
+[data-theme="high-contrast-dark"] :is(#thread-composer button, #spawn-open, .btn-send).btn-primary:hover:not(:disabled) { color: var(--bg-primary); }
+@media (max-width: 700px), (pointer: coarse) { #thread-composer button.btn-primary { flex-basis: 40px; width: 40px; min-width: 40px; height: 40px; min-height: 40px; } }
 
 /* Navbar: every control is an icon button of one size (28px like the other header icon buttons, 40px on touch and narrow screens) with a tooltip and an accessible name,
    never text; the bar is v1's height (53px, 49px up to 480px wide); the Inbox and Health counts are a small pill in the button's
@@ -1848,10 +1804,10 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .chat:has(> .thread-panel:not([hidden])) > .composer-notice { margin-right: min(420px, 100%); }
 
 /* Markdown lists, task items and rules (web/js/markdown.js), in messages and in plan blocks. */
-:is(.message-body, .visual-plan-block-body) li > :is(ul, ol) { margin: 2px 0; }
-:is(.message-body, .visual-plan-block-body) li.md-task { list-style: none; }
-:is(.message-body, .visual-plan-block-body) li.md-task > input { margin: 0 6px 0 -20px; vertical-align: middle; }
-:is(.message-body, .visual-plan-block-body) hr { margin: 10px 0; border: 0; border-top: 1px solid var(--border); }
+:is(.chat-msg-body, .visual-plan-block-body) li > :is(ul, ol) { margin: 2px 0; }
+:is(.chat-msg-body, .visual-plan-block-body) li.md-task { list-style: none; }
+:is(.chat-msg-body, .visual-plan-block-body) li.md-task > input { margin: 0 6px 0 -20px; vertical-align: middle; }
+:is(.chat-msg-body, .visual-plan-block-body) hr { margin: 10px 0; border: 0; border-top: 1px solid var(--border); }
 
 /* A question that was open and is now answered (web/js/chat.js): a quiet, disabled "Answered" under the message. */
 .answer-done { margin-top: 6px; }
@@ -1985,8 +1941,8 @@ button > .icon-mask { pointer-events: none; }
 .backup-issue { margin: 0 0 0 26px; font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
 
 /* A sender with no live record: its name opens a read-only profile. */
-.message-author.message-author-link { cursor: pointer; text-underline-offset: 3px; }
-.message-author.message-author-link:hover, .message-author.message-author-link:focus-visible { text-decoration: underline; }
+.chat-msg-from-name.agent-profile-link { cursor: pointer; text-underline-offset: 3px; }
+.chat-msg-from-name.agent-profile-link:hover, .chat-msg-from-name.agent-profile-link:focus-visible { text-decoration: underline; }
 .sender-profile { max-width: min(440px, 94vw); }
 .sender-profile-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .sender-profile-header h2 { margin: 0; font-size: 16px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
@@ -2031,7 +1987,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .message-images .image-thumb img { display: block; border-radius: 0; }
 .message-images .image-item figcaption { width: 0; min-width: 100%; overflow: hidden; color: var(--text-muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
 /* A code block in the thread panel stays inside it: the block scrolls, the panel does not. */
-.thread-entry .message-body { min-width: 0; max-width: 100%; }
+.thread-entry .chat-msg-body { min-width: 0; max-width: 100%; }
 .thread-entry .md-codeblock, .thread-entry .md-codeblock pre { min-width: 0; max-width: 100%; box-sizing: border-box; }
 
 /* While the bottom tab bar (Rooms | Chat | Agents) is shown, the header's expand buttons for the two side panels would only repeat it. */
@@ -2094,8 +2050,8 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .chat-empty[hidden] { display: none; }
 .chat-empty h2 { margin: 0; color: var(--text-primary); }
 .chat-empty p { margin: 0; max-width: 36ch; color: var(--text-secondary); }
-.app.no-room .chat > header .room-heading, .app.no-room .chat > header .room-controls, .app.no-room #messages, .app.no-room #composer,
-.app.no-room #reply-chip, .app.no-room #live-announcer, .app.no-room #agents-panel, .app.no-room #thread-panel { display: none; }
+.app.no-room .chat > header .room-heading, .app.no-room .chat > header .room-controls, .app.no-room #messages, .app.no-room .send-bar,
+.app.no-room #live-announcer, .app.no-room #agents-panel, .app.no-room #thread-panel { display: none; }
 .app:not(.no-room) .chat-empty { display: none; }
 
 /* Onboarding: "Create your first project", then "How aimebu works". */
@@ -2179,7 +2135,6 @@ dialog:focus, dialog:focus-visible { outline: none; }
 .sender-profile-start { display: grid; gap: 8px; margin-top: 12px; justify-items: start; }
 .sender-profile-start .sender-profile-note { margin: 0; }
 
-.composer-note { margin: 0; padding: 6px 14px; font-size: 12px; color: var(--text-secondary); border-top: 1px solid var(--border); background: var(--bg-secondary); }
 
 /* The thread panel never lies over the members column. A wide window docks it beside the column; a narrower one lets it take the
    column's place for as long as it is open (the column is back when the thread is closed). */
@@ -2188,7 +2143,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 }
 @media (min-width: 1280px) {
   .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > .thread-panel { right: 260px; }
-  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > :is(#messages, #reply-chip, #composer, #chat-error, #pending-attachments, .composer-notice) { margin-right: min(680px, 100%); }
+  .chat:has(> .thread-panel:not([hidden])):not(.agents-collapsed) > :is(#messages, .send-bar) { margin-right: min(680px, 100%); }
 }
 
 /* The shared question / confirmation / notice dialog (dialogs.js). */

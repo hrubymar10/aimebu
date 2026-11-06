@@ -60,11 +60,11 @@ const FIXTURE = async () => {
   const make = (tag, className, text, parent) => { const node = document.createElement(tag); if (className) node.className = className; if (text) node.textContent = text; if (parent) parent.append(node); return node; };
   const list = document.querySelector('#messages');
   const message = (extra = '', body = '') => {
-    const article = make('article', `message ${extra}`.trim(), '', list); article.dataset.fixture = extra || 'plain';
-    const meta = make('div', 'message-meta', '', article); make('strong', 'message-author', 'ada', meta); make('time', '', '12:01', meta); make('button', 'row-btn quiet-glyph message-number', '#7', meta);
-    const bubble = make('div', 'message-bubble', '', article);
+    const article = make('article', `chat-msg ${extra}`.trim(), '', list); article.dataset.fixture = extra || 'plain';
+    const meta = make('div', 'chat-msg-header', '', article); make('strong', 'chat-msg-from-name', 'ada', meta); make('time', '', '12:01', meta); make('button', 'row-btn quiet-glyph chat-msg-id', '#7', meta);
+    const bubble = make('div', 'chat-msg-bubble', '', article);
     make('button', 'row-btn quote', '↪ #3 bert', bubble);
-    const content = make('div', 'message-body', '', bubble);
+    const content = make('div', 'chat-msg-body', '', bubble);
     content.append(renderMarkdown(body || '## Title\n\nSome **bold** and *italic* text with `code` and https://example.test and #7 and @ada\n\n> quote\n\n- one\n- two\n\n| A | B |\n| :- | -: |\n| 1 | 2 |\n\n```js\nconst x = 1;\n```\n\n~~gone~~'));
     highlightMentions(content, new MentionIndex([{ slug: 'ada', role_key: 'worker', tool: 'codex', model: 'm' }], 'p'));
     const plan = renderVisualPlan({ visual_plan: [{ type: 'markdown', title: 'Plan', data: { markdown: 'Plan **text**' } }, { type: 'checklist', data: { items: [{ text: 'a', checked: true }, { text: 'b' }] } }, { type: 'file-tree', data: { root: { name: 'src', type: 'dir', children: [{ name: 'a.js', type: 'file', note: 'entry' }] } } }] });
@@ -85,10 +85,10 @@ const FIXTURE = async () => {
   // Highlighted code and a diff, from the real renderer; the audits wait for the lazy highlight.js load.
   const codeFixture = message('code-fixture', '```go\npackage main\n\n// greet says hello\nfunc greet(name string) string { return \"hi \" + name + \" 42\" }\n```\n\n```diff\ndiff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1,3 +1,3 @@\n package main\n-var x = 1\n+var x = 2\n```\n\n```html\n<div class=\"a\">x</div>\n```');
   for (let i = 0; i < 100 && !codeFixture.querySelector('.hljs-keyword'); i++) await new Promise(resolve => setTimeout(resolve, 50));
-  expiredFixture.classList.add('message-expired');
-  { const { EXPIRED_HOURGLASS } = await import('/js/usage-expiry.js'); const mark = make('span', 'message-expired-mark', '', expiredFixture.querySelector('.message-meta') || expiredFixture); mark.innerHTML = EXPIRED_HOURGLASS; mark.setAttribute('role', 'img'); mark.setAttribute('aria-label', 'Expired from AI context'); }
+  expiredFixture.classList.add('chat-msg-expired');
+  { const { EXPIRED_HOURGLASS } = await import('/js/usage-expiry.js'); const mark = make('span', 'chat-msg-expired-icon', '', expiredFixture.querySelector('.chat-msg-header') || expiredFixture); mark.innerHTML = EXPIRED_HOURGLASS; mark.setAttribute('role', 'img'); mark.setAttribute('aria-label', 'Expired from AI context'); }
   boundaryFixture.classList.add('expiry-boundary'); boundaryFixture.prepend(make('span', 'expiry-label', "Older AI chatter won't reach agents automatically"));
-  const system = make('article', 'message system-notice', '', list); const row = make('div', 'system-row', '', system); make('span', 'message-body', 'ada joined', row); make('time', '', '12:00', row);
+  const system = make('article', 'chat-msg chat-msg-system', '', list); const row = make('div', 'chat-msg-system-row', '', system); make('span', 'chat-msg-body', 'ada joined', row); make('time', '', '12:00', row);
   const agents = document.querySelector('#agents-panel') || document.querySelector('.agents-panel');
   if (agents) {
     const humans = document.querySelector('#agents-humans') || agents;
