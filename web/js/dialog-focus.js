@@ -5,7 +5,7 @@ const showModal = HTMLDialogElement.prototype.showModal;
 HTMLDialogElement.prototype.showModal = function showModalWithoutRing(...args) {
   const result = showModal.apply(this, args);
   const active = document.activeElement;
-  if (active && active !== this && this.contains(active) && active.matches('button.icon-btn')) {
+  if (active && active !== this && this.contains(active) && active.matches('button.btn-icon')) {
     if (!this.hasAttribute('tabindex')) this.tabIndex = -1;
     this.focus({ preventScroll: true });
   }

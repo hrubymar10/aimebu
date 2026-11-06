@@ -15,7 +15,7 @@ function AnswerIsland({ item, store, pending }) {
 
 function Raw({ item, pending }) {
   const [open, setOpen] = useState(false);
-  return html`<div class="inbox-raw-holder"><button type="button" class="icon-btn quiet-glyph chat-msg-debug-toggle inbox-raw-toggle" title="Open debug inspector" aria-label="Show the raw record of this item" aria-expanded=${String(open)} disabled=${pending} onClick=${() => setOpen(!open)}><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button>
+  return html`<div class="inbox-raw-holder"><button type="button" class="btn-icon quiet-glyph chat-msg-debug-toggle inbox-raw-toggle" title="Open debug inspector" aria-label="Show the raw record of this item" aria-expanded=${String(open)} disabled=${pending} onClick=${() => setOpen(!open)}><span class="icon-mask icon-mask-bug" aria-hidden="true"></span></button>
     <pre class="inbox-raw" hidden=${!open}>${JSON.stringify(item, null, 2)}</pre></div>`;
 }
 
@@ -57,7 +57,7 @@ function Card({ item, store, rooms, onJump, openUsages }) {
 export function InboxPage({ store, onJump }) {
   const openUsages = store.openUsages.value, items = store.items.value, resolved = resolvedItems(items).length;
   return html`<header><div><h1>Inbox</h1><p>Questions, approvals, and agent recovery</p></div>
-    <button type="button" class="icon-btn inbox-dismiss-resolved" hidden=${!resolved} disabled=${store.bulkBusy.value} aria-label=${bulkLabel(resolved)} title=${`${bulkLabel(resolved)}: the delivery failures of archived rooms`} onClick=${() => store.dismissResolved()}><span class="icon-mask icon-mask-archive" aria-hidden="true"></span><span class="inbox-dismiss-count">${String(resolved)}</span></button></header>
+    <button type="button" class="btn-icon inbox-dismiss-resolved" hidden=${!resolved} disabled=${store.bulkBusy.value} aria-label=${bulkLabel(resolved)} title=${`${bulkLabel(resolved)}: the delivery failures of archived rooms`} onClick=${() => store.dismissResolved()}><span class="icon-mask icon-mask-archive" aria-hidden="true"></span><span class="inbox-dismiss-count">${String(resolved)}</span></button></header>
     <div id="inbox-list" class="inbox-list">${items && (items.length ? groupItems(items).map(group => html`<section class="inbox-group" key=${group.key}><h2>${groupTitle(group.items[0], store.projects, store.rooms)}</h2>
       ${group.items.map(item => html`<${Card} key=${cardKey(item)} item=${item} store=${store} rooms=${store.rooms} onJump=${onJump} openUsages=${openUsages} />`)}</section>`) : html`<p class="inbox-empty">All caught up</p>`)}</div>
     <p id="inbox-error" class="error" role="alert">${store.error.value}</p>`;

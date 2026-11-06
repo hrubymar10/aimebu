@@ -57,7 +57,7 @@ func prepareWebAssets(files fs.FS) (webAssets, error) {
 		return webAssets{}, fmt.Errorf("embedded index.html is missing")
 	}
 	page := string(index)
-	for _, path := range []string{"/style.css", "/theme-v1.css", "/js/app.js"} {
+	for _, path := range []string{"/v1.css", "/style.css", "/theme-v1.css", "/js/app.js"} {
 		page = strings.ReplaceAll(page, path+`"`, path+"?v="+version+`"`)
 	}
 	page = importMap.ReplaceAllStringFunc(page, func(block string) string {

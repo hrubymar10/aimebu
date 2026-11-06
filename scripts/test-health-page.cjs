@@ -14,7 +14,7 @@ const root = path.join(__dirname, '..', 'web');
 const HEALTH = fs.existsSync(path.join(root, 'js', 'pages', 'health', 'page.js')) ? '/js/pages/health/page.js' : '/js/health.js';
 const DISK = fs.existsSync(path.join(root, 'js', 'pages', 'health', 'disk.js')) ? '/js/pages/health/disk.js' : '/js/disk-usage.js';
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
 <body><main id="app-view"><button id="health-toggle" type="button" title="All agents healthy" aria-label="Health"><span id="health-count" hidden>0</span></button>
 <div id="health-popover" class="health-popover popover-panel" hidden><p>All agents healthy</p></div></main></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };

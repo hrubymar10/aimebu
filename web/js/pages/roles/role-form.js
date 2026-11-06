@@ -58,7 +58,7 @@ export function RoleForm({ hidden, roles, role, form, options, busy, resolved, o
     <div class="dialog-actions">
       <button type="submit" class="btn btn-primary" disabled=${busy}>Save role</button>
       <button id="role-cancel" type="button" class="btn" title="Close the editor without saving" onClick=${onCancel}>Cancel</button>
-      <button id="role-reset" type="button" class="icon-btn" disabled=${busy || !role || !role.builtin} title="Reset to default — restore this built-in role’s original name, instructions and settings" aria-label="Reset to default" onClick=${onReset}><span class="icon-mask icon-mask-refresh" aria-hidden="true"></span></button>
+      <button id="role-reset" type="button" class="btn-icon" disabled=${busy || !role || !role.builtin} title="Reset to default — restore this built-in role’s original name, instructions and settings" aria-label="Reset to default" onClick=${onReset}><span class="icon-mask icon-mask-refresh" aria-hidden="true"></span></button>
       <button id="role-delete" type="button" class="btn btn-danger" disabled=${busy || !role || role.builtin} onClick=${onDelete}>Delete</button>
     </div>
   </form>`;

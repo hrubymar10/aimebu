@@ -59,8 +59,8 @@ export class Schedules {
       const info = document.createElement('span');
       const next = new Date(item.next_run_at).toLocaleString();
       info.textContent = `${item.body} → ${item.target_lead ? 'room lead' : item.target_agent_id} · ${item.kind} · ${item.timezone} · ${item.enabled ? `next ${next} (your time)` : 'paused'}${item.last_outcome ? ` · last ${item.last_outcome}${item.last_reason ? `: ${item.last_reason}` : ''}` : ''}`;
-      const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'icon-btn'; setGlyph(toggle, item.enabled ? 'pause' : 'play', item.enabled ? 'Pause' : 'Resume'); toggle.dataset.action = 'toggle'; toggle.dataset.id = item.id; toggle.disabled = this.closed && !item.enabled;
-      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'icon-btn btn-danger'; setGlyph(remove, 'trash', 'Delete'); remove.dataset.action = 'delete'; remove.dataset.id = item.id;
+      const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'btn-icon'; setGlyph(toggle, item.enabled ? 'pause' : 'play', item.enabled ? 'Pause' : 'Resume'); toggle.dataset.action = 'toggle'; toggle.dataset.id = item.id; toggle.disabled = this.closed && !item.enabled;
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn-icon btn-danger'; setGlyph(remove, 'trash', 'Delete'); remove.dataset.action = 'delete'; remove.dataset.id = item.id;
       row.append(info,toggle,remove); this.list.append(row);
     }
   }

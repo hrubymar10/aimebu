@@ -15,7 +15,7 @@ const KNOWLEDGE = fs.existsSync(path.join(root, 'js', 'pages', 'knowledge', 'pag
 const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(indexHtml)[0];
 const dialog = /<dialog id="knowledge-dialog".*?<\/dialog>/s.exec(indexHtml)[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
 <body><button id="knowledge-toggle" type="button">Memory</button><button id="task-notes-toggle" type="button" hidden>Notes</button>${dialog}</body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {

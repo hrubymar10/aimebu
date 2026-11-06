@@ -74,7 +74,7 @@ const keep = 200;
 export class SystemEvents {
   constructor(names) {
     this.names = names; this.events = []; this.kinds = new Set(); this.unread = 0; this.ticket = 0;
-    this.toggle = node('button', 'icon-btn'); this.toggle.id = 'system-events-toggle'; this.toggle.type = 'button';
+    this.toggle = node('button', 'btn-icon'); this.toggle.id = 'system-events-toggle'; this.toggle.type = 'button';
     this.toggle.title = 'System events'; this.toggle.setAttribute('aria-label', 'System events'); this.toggle.setAttribute('aria-haspopup', 'dialog'); this.toggle.setAttribute('aria-expanded', 'false');
     this.toggle.innerHTML = '<svg width="14" height="18" viewBox="0 0 400 512" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="25" stroke-linecap="round" stroke-linejoin="round" d="M222,240l92,248 -180-126 108-53m-84,0 108,53-180,126 92-248M80,318a172,172 0 1,1 240,0M130,266a100,100 0 1,1 140,0M199,144a50,50 0 1,0 2,0"/></svg>';
     this.badge = node('span', 'badge'); this.badge.id = 'system-events-count'; this.badge.hidden = true; this.toggle.append(this.badge);

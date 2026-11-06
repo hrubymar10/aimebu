@@ -1,24 +1,6 @@
 /* V1 palette and panel treatment, adapted to the v2 room and inbox DOM. */
 :root {
   color-scheme: dark;
-  --bg-primary: #0d1117;
-  --bg-secondary: #161b22;
-  --bg-tertiary: #1c2128;
-  --bg-hover: #1f262e;
-  --border: #30363d;
-  --border-hover: #484f58;
-  --text-primary: #c9d1d9;
-  --text-secondary: #8b949e;
-  --text-muted: #90969f;
-  --accent: #58a6ff;
-  --accent-dim: rgba(88, 166, 255, .1);
-  --green: #238636;
-  --green-text: #42ba53;
-  --red: #f85149;
-  --orange: #d29a23;
-  --purple: #b48cff;
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "SFMono-Regular", "Cascadia Code", "Fira Code", Consolas, Menlo, monospace;
   /* Legacy colour tokens used by style.css; the theme blocks below remap them. */
   --legacy-text-white: white;
   --legacy-bg-white: white;
@@ -110,14 +92,18 @@
   --legacy-border-49615a: #49615a;
   --legacy-border-51675b: #51675b;
   --legacy-border-526458: #526458;
-  /* Interaction tokens. */
-  --accent-hover: #79c0ff; --green-hover: #2ea043; --button-text: #ffffff; --overlay-shadow: #0005; --warning: #d5a14a; --red-halo: #f8514929; --green-halo: #3fb95029; --scrim: #000a; --scrim-strong: #000b; --scrim-soft: #0009; --usage-codex: #5bbac4; --usage-claude: #db8b70; --usage-copilot: #a970ff; --usage-ollama: #9a9a9a;
+  /* Tokens v1 does not have (its palette, with its hover and dim colours, comes from v1.css). */
+  --button-text: #ffffff; --overlay-shadow: #0005; --warning: #d5a14a; --red-halo: #f8514929; --green-halo: #3fb95029; --scrim: #000a; --scrim-strong: #000b; --scrim-soft: #0009; --usage-codex: #5bbac4; --usage-claude: #db8b70; --usage-copilot: #a970ff; --usage-ollama: #9a9a9a;
 }
 
 html { font-size: 14px; }
 body { background: var(--bg-primary); color: var(--text-primary); font: 14px/1.5 var(--font-sans); }
 button, input, textarea, select { font: inherit; }
-/* One button system. .btn is a text button, .icon-btn a square for an icon; both are outlined and share one hover (the border and the
+/* Buttons. v1's .btn, .btn-sm, .btn-icon, .btn-primary and .btn-danger are in v1.css (a cascade layer under this file). TRANSITIONAL: v2's one button
+   system below still styles every <button> (v1 styles only those classes, and leaves a plain .btn without a background, a hover or a focus ring), and
+   most v2 areas depend on it. It goes area by area as they move to v1's rules; the fixes v1 needs (a real background, hover, focus ring) then go in
+   v2-only.css. */
+/* One button system. .btn is a text button, .btn-icon a square for an icon; both are outlined and share one hover (the border and the
    icon or text go to the primary text colour, the fill stays), one focus ring and one disabled look. .btn-primary and .btn-danger are
    the only variants. .row-btn is a button that is a row, tab or chip inside a list, nav or message; it is quiet until hovered and
    its place supplies the layout. Any other button falls back to the .btn look, but none should: the audits check it. */
@@ -318,7 +304,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 #composer button[aria-label="Send"] { display: inline-grid; place-items: center; width: 39px; min-width: 39px; padding: 0; }
 /* The reply chip as v1 draws it: a compact bordered bar, the quote cut with an ellipsis, the close button in line at its end. */
 .reply-chip { align-items: center; gap: 8px; margin: 0 0 6px 12px; padding: 5px 6px 5px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-tertiary); color: var(--text-primary); font-size: 12px; }
-.reply-chip .icon-btn { flex: 0 0 auto; width: 22px; height: 22px; }
+.reply-chip .btn-icon { flex: 0 0 auto; width: 22px; height: 22px; }
 /* The text of the chip is a button that jumps to the message being answered; it keeps the chip's look and shortens with an ellipsis. */
 .reply-chip-jump { flex: 1 1 auto; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; color: inherit; font: inherit; }
 .thread-panel { background: var(--bg-primary); border-color: var(--border); box-shadow: -12px 0 24px var(--overlay-shadow); }
@@ -442,7 +428,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .harness-model-row, .harness-model-add { grid-template-columns: minmax(0, 1fr); }
 }
 /* An icon button in a row with a text button is as tall as it (32px), so the pair lines up; icon buttons alone stay 28px. */
-:has(> .btn) > .icon-btn:not(.edge-toggle) { width: 32px; height: 32px; }
+:has(> .btn) > .btn-icon:not(.edge-toggle) { width: 32px; height: 32px; }
 /* Settings → Harnesses: a list of harnesses beside the chosen one. */
 .harness-models .settings-desc:empty, .harness-detect-models:empty { display: none; }
 @media (min-width: 701px) {
@@ -579,7 +565,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
   .workspace-bar #settings-toggle { font-size: 15px; line-height: 1; }
   .workspace-brand img { width: 19px; height: 19px; }
   #build-version { display: none; }
-  .workspace-bar .icon-btn { width: 25px; height: 27px; padding: 0; }
+  .workspace-bar .btn-icon { width: 25px; height: 27px; padding: 0; }
   .connection-dot { margin: 0 2px; }
   .sidebar, .chat, .inbox-view { height: calc(100dvh - 54px); }
   .chat { overflow: hidden; }
@@ -645,242 +631,7 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 .quick-command[aria-selected="true"] { background: var(--accent-dim); }
 .quick-command-builtin strong { color: var(--accent); }
 
-/* Exact v2 dark defaults for colors inherited from the original component CSS. */
-
-/* Named palettes ported from v1. Dark continues to use the v2 defaults above. */
-[data-theme="light"] {
-  --bg-primary: #f6f8fa;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #f0f2f5;
-  --bg-hover: #eaedf1;
-  --border: #d0d7de;
-  --border-hover: #b6bcc2;
-  --text-primary: #1f2328;
-  --text-secondary: #57606a;
-  --text-muted: #5e656c;
-  --accent: #0861c9;
-  --accent-hover: #0860ca;
-  --accent-dim: rgba(9, 105, 218, 0.1);
-  --accent-border: rgba(9, 105, 218, 0.2);
-  --green: #1a7f37;
-  --green-hover: #196f30;
-  --green-text: #15642b;
-  --red: #d1242f;
-  --red-bg: #cf222e;
-  --red-dim: rgba(209, 36, 47, 0.1);
-  --orange: #7d5300;
-  --purple: #8250df;
-  --purple-dim: rgba(130, 80, 223, 0.1);
-  --purple-border: rgba(130, 80, 223, 0.2);
-}
-
-[data-theme="red-dark"] {
-  --bg-primary: #1a0d0d;
-  --bg-secondary: #2a1414;
-  --bg-tertiary: #331818;
-  --bg-hover: #3d1c1c;
-  --border: #5a2828;
-  --border-hover: #7a3838;
-  --text-primary: #f0d6d6;
-  --text-secondary: #c9a0a0;
-  --text-muted: #b68a8a;
-  --accent: #ff5e5e;
-  --accent-hover: #ff7777;
-  --accent-dim: rgba(255, 85, 85, 0.12);
-  --accent-border: rgba(255, 85, 85, 0.25);
-  --green: #38a060;
-  --green-hover: #45b06d;
-  --green-text: #4dc575;
-  --red: #ff8080;
-  --red-bg: #d04040;
-  --red-dim: rgba(255, 128, 128, 0.14);
-  --orange: #e6a040;
-  --purple: #d9a4ff;
-  --purple-dim: rgba(217, 164, 255, 0.12);
-  --purple-border: rgba(217, 164, 255, 0.22);
-}
-
-[data-theme="red-light"] {
-  --bg-primary: #faf0f0;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #f5e8e8;
-  --bg-hover: #efdcdc;
-  --border: #e0c0c0;
-  --border-hover: #c89999;
-  --text-primary: #1f1818;
-  --text-secondary: #5a4a4a;
-  --text-muted: #715959;
-  --accent: #b82029;
-  --accent-hover: #b91c25;
-  --accent-dim: rgba(209, 36, 47, 0.10);
-  --accent-border: rgba(209, 36, 47, 0.22);
-  --green: #1a7f37;
-  --green-hover: #196f30;
-  --green-text: #14612a;
-  --red: #a8141d;
-  --red-bg: #b91c25;
-  --red-dim: rgba(168, 20, 29, 0.12);
-  --orange: #754e00;
-  --purple: #8250df;
-  --purple-dim: rgba(130, 80, 223, 0.10);
-  --purple-border: rgba(130, 80, 223, 0.22);
-}
-
-[data-theme="blue-dark"] {
-  --bg-primary: #0d121f;
-  --bg-secondary: #141a2a;
-  --bg-tertiary: #181f33;
-  --bg-hover: #1c2540;
-  --border: #2b3a5c;
-  --border-hover: #3d527d;
-  --text-primary: #d6e0f0;
-  --text-secondary: #a0b0c9;
-  --text-muted: #8b97ae;
-  --accent: #5599ff;
-  --accent-hover: #77adff;
-  --accent-dim: rgba(85, 153, 255, 0.12);
-  --accent-border: rgba(85, 153, 255, 0.25);
-  --green: #4dc575;
-  --green-hover: #5fd585;
-  --green-text: #5fd585;
-  --red: #ff6060;
-  --red-bg: #c93838;
-  --red-dim: rgba(255, 96, 96, 0.14);
-  --orange: #e6a040;
-  --purple: #b48cff;
-  --purple-dim: rgba(180, 140, 255, 0.12);
-  --purple-border: rgba(180, 140, 255, 0.22);
-}
-
-[data-theme="blue-light"] {
-  --bg-primary: #f0f5fa;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #e8eef5;
-  --bg-hover: #dce5f0;
-  --border: #c0d0e0;
-  --border-hover: #9bb0c9;
-  --text-primary: #181c24;
-  --text-secondary: #4a5468;
-  --text-muted: #566374;
-  --accent: #085ec3;
-  --accent-hover: #0860ca;
-  --accent-dim: rgba(9, 105, 218, 0.10);
-  --accent-border: rgba(9, 105, 218, 0.22);
-  --green: #1a7f37;
-  --green-hover: #196f30;
-  --green-text: #14622b;
-  --red: #d1242f;
-  --red-bg: #cf222e;
-  --red-dim: rgba(209, 36, 47, 0.10);
-  --orange: #7a5100;
-  --purple: #8250df;
-  --purple-dim: rgba(130, 80, 223, 0.10);
-  --purple-border: rgba(130, 80, 223, 0.22);
-}
-
-[data-theme="green-dark"] {
-  --bg-primary: #0d1a13;
-  --bg-secondary: #14241c;
-  --bg-tertiary: #182d22;
-  --bg-hover: #1c3829;
-  --border: #2b5a40;
-  --border-hover: #3d7d57;
-  --text-primary: #d6f0db;
-  --text-secondary: #a0c9a8;
-  --text-muted: #8daa98;
-  --accent: #4dc575;
-  --accent-hover: #5fd585;
-  --accent-dim: rgba(77, 197, 117, 0.12);
-  --accent-border: rgba(77, 197, 117, 0.25);
-  --green: #80f0a0;
-  --green-hover: #95f5b3;
-  --green-text: #80f0a0;
-  --red: #ff6060;
-  --red-bg: #c93838;
-  --red-dim: rgba(255, 96, 96, 0.14);
-  --orange: #e9aa55;
-  --purple: #b48cff;
-  --purple-dim: rgba(180, 140, 255, 0.12);
-  --purple-border: rgba(180, 140, 255, 0.22);
-}
-
-[data-theme="green-light"] {
-  --bg-primary: #f0faf3;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #e6f4eb;
-  --bg-hover: #d8ecdf;
-  --border: #c0d8c8;
-  --border-hover: #9bc0a8;
-  --text-primary: #181f1a;
-  --text-secondary: #4a5a4f;
-  --text-muted: #556957;
-  --accent: #187332;
-  --accent-hover: #196f30;
-  --accent-dim: rgba(26, 127, 55, 0.10);
-  --accent-border: rgba(26, 127, 55, 0.22);
-  --green: #19873c;
-  --green-hover: #187533;
-  --green-text: #13652e;
-  --red: #d1242f;
-  --red-bg: #cf222e;
-  --red-dim: rgba(209, 36, 47, 0.10);
-  --orange: #7e5400;
-  --purple: #8250df;
-  --purple-dim: rgba(130, 80, 223, 0.10);
-  --purple-border: rgba(130, 80, 223, 0.22);
-}
-
-[data-theme="high-contrast-dark"] {
-  --bg-primary: #000000;
-  --bg-secondary: #000000;
-  --bg-tertiary: #0a0a0a;
-  --bg-hover: #1a1a1a;
-  --border: #6fc3df;
-  --border-hover: #ffffff;
-  --text-primary: #ffffff;
-  --text-secondary: #ffffff;
-  --text-muted: #d6d6d6;
-  --accent: #f38518;
-  --accent-hover: #ffaa44;
-  --accent-dim: rgba(243, 133, 24, 0.18);
-  --accent-border: rgba(243, 133, 24, 0.6);
-  --green: #10500e;
-  --green-hover: #30f22c;
-  --green-text: #30f22c;
-  --red: #ff0000;
-  --red-bg: #b5200d;
-  --red-dim: rgba(255, 0, 0, 0.18);
-  --orange: #ffd370;
-  --purple: #ee82ee;
-  --purple-dim: rgba(238, 130, 238, 0.18);
-  --purple-border: rgba(238, 130, 238, 0.5);
-}
-
-[data-theme="high-contrast-light"] {
-  --bg-primary: #ffffff;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #f5f5f5;
-  --bg-hover: #e8e8e8;
-  --border: #0f4a85;
-  --border-hover: #292929;
-  --text-primary: #292929;
-  --text-secondary: #292929;
-  --text-muted: #4a4a4a;
-  --accent: #0f4a85;
-  --accent-hover: #06335c;
-  --accent-dim: rgba(15, 74, 133, 0.15);
-  --accent-border: rgba(15, 74, 133, 0.6);
-  --green: #006400;
-  --green-hover: #008000;
-  --green-text: #005e00;
-  --red: #b5200d;
-  --red-bg: #b5200d;
-  --red-dim: rgba(181, 32, 13, 0.15);
-  --orange: #7e3f00;
-  --purple: #6c1d8c;
-  --purple-dim: rgba(108, 29, 140, 0.15);
-  --purple-border: rgba(108, 29, 140, 0.6);
-}
+/* The named palettes (light, red, blue, green and the two high-contrast ones) are v1's, from v1.css. */
 
 :is(:root:not([data-theme]),[data-theme="light"],[data-theme="red-dark"],[data-theme="red-light"],[data-theme="blue-dark"],[data-theme="blue-light"],[data-theme="green-dark"],[data-theme="green-light"],[data-theme="high-contrast-dark"],[data-theme="high-contrast-light"]) {
   --legacy-text-white: var(--text-primary);
@@ -978,7 +729,6 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 [data-theme$="light"] { color-scheme: light; --button-text: #ffffff; --overlay-shadow: #0002; }
 [data-theme$="dark"] { color-scheme: dark; --button-text: #ffffff; --overlay-shadow: #0008; }
 [data-theme="high-contrast-dark"] { --button-text: #ffffff; --overlay-shadow: #fff4; }
-[data-theme="high-contrast-dark"] { --red: #ff6b6b; }
 [data-theme="high-contrast-light"] { --button-text: #ffffff; }
 :is([data-theme="high-contrast-dark"], [data-theme="high-contrast-light"]) #build-version { opacity: 1; }
 [data-theme="green-dark"] { --button-text: #0d1a13; }
@@ -987,8 +737,8 @@ button.harness-master-item[aria-selected="true"] { border-color: var(--accent); 
 [data-theme] :is(.room-health, .health-flag) { background: var(--accent-dim); color: var(--orange); border-color: var(--border); }
 [data-theme] :is(.health-machine_offline, .health-recovery_waiting) { background: var(--red-dim); color: var(--red); }
 [data-theme="high-contrast-dark"] button.btn-primary:hover { color: var(--bg-primary); }
-[data-theme="high-contrast-dark"] :is(.btn, .icon-btn, .row-btn), [data-theme="high-contrast-dark"] #settings-dialog nav button { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
-[data-theme="high-contrast-dark"] :is(.btn, .icon-btn, .row-btn):hover, [data-theme="high-contrast-dark"] #settings-dialog nav button:hover { background: var(--bg-hover); color: var(--text-primary); }
+[data-theme="high-contrast-dark"] :is(.btn, .btn-icon, .row-btn), [data-theme="high-contrast-dark"] #settings-dialog nav button { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); }
+[data-theme="high-contrast-dark"] :is(.btn, .btn-icon, .row-btn):hover, [data-theme="high-contrast-dark"] #settings-dialog nav button:hover { background: var(--bg-hover); color: var(--text-primary); }
 [data-theme="high-contrast-dark"] button:disabled { opacity: 1; background: var(--bg-primary); border-color: var(--border); color: var(--text-muted); }
 [data-theme="high-contrast-dark"] .sidebar .room-row.active { background: var(--bg-primary); outline: 1px solid var(--accent); outline-offset: -1px; }
 [data-theme="high-contrast-dark"] .room-row.active .room-name { color: var(--text-primary); }
@@ -1215,7 +965,7 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 .agent-emoji:empty { display: none; }
 .agent-quick { position: absolute; top: 3px; right: 4px; display: flex; gap: 2px; padding: 0 0 0 14px; background: linear-gradient(90deg, transparent, var(--bg-tertiary) 14px); opacity: 0; pointer-events: none; }
 .agent-card:hover .agent-quick, .agent-card:focus-within .agent-quick, .agent-card.expanded .agent-quick { opacity: 1; pointer-events: auto; }
-.agent-quick .icon-btn, .agent-quick .agent-expand { flex: 0 0 22px; width: 22px; height: 22px; min-height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
+.agent-quick .btn-icon, .agent-quick .agent-expand { flex: 0 0 22px; width: 22px; height: 22px; min-height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; }
 .presence-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
 .presence-dot[data-state="idle"], .presence-dot[data-state="working"] { background: var(--green-text); }
 .presence-dot[data-state="paused"] { background: var(--orange); opacity: .6; }
@@ -1232,7 +982,7 @@ html[data-theme="high-contrast-dark"] .sidebar .room-row .room-name { color: var
 @media (hover: none) and (pointer: coarse) {
   .agent-card .agent-title { flex-wrap: wrap; }
   .agent-quick { position: static; opacity: 1; pointer-events: auto; flex: 1 0 100%; justify-content: flex-end; padding: 0; background: none; }
-  .agent-quick .icon-btn, .agent-quick .agent-expand { flex-basis: 34px; width: 34px; height: 34px; min-height: 34px; }
+  .agent-quick .btn-icon, .agent-quick .agent-expand { flex-basis: 34px; width: 34px; height: 34px; min-height: 34px; }
   .agent-card .agent-actions { margin-top: 5px; }
 }
 
@@ -1472,10 +1222,10 @@ pre.inbox-diagnostic { overflow-x: auto; max-width: 100%; }
   .workspace-bar { height: 56px; min-height: 56px; padding: 0 8px; gap: 6px; }
   .workspace-bar > .workspace-brand { flex: 0 0 auto; }
   .workspace-bar nav { flex: 1 1 auto; justify-content: flex-end; gap: 2px; overflow: visible; }
-  .app > .workspace-bar nav .icon-btn.topbar-tucked { display: none; }
+  .app > .workspace-bar nav .btn-icon.topbar-tucked { display: none; }
   .workspace-bar.topbar-has-overflow #more-toggle { display: inline-grid; }
-  .workspace-bar nav button, .workspace-bar .icon-btn { flex: 0 0 auto; min-width: 40px; height: 40px; min-height: 40px; padding: 0 8px; font-size: 11px; white-space: nowrap; }
-  .workspace-bar .icon-btn { width: 40px; padding: 0; }
+  .workspace-bar nav button, .workspace-bar .btn-icon { flex: 0 0 auto; min-width: 40px; height: 40px; min-height: 40px; padding: 0 8px; font-size: 11px; white-space: nowrap; }
+  .workspace-bar .btn-icon { width: 40px; padding: 0; }
   .workspace-bar #logout { margin-left: 2px; }
   .workspace-bar .badge { white-space: nowrap; }
   .workspace-bar #connection, .workspace-bar .connection-dot { flex: 0 0 auto; }
@@ -1708,15 +1458,15 @@ code.profile-fact-value { font: 400 11px/1.4 var(--font-mono); background: var(-
 /* Phones drop the captions, but the AGENTS group keeps its gap: the caption stays as an empty spacer. */
 @media (max-width: 700px) { #settings-dialog .settings-nav-group-title:not([hidden]) { display: block; height: 0; padding: 0; overflow: hidden; visibility: hidden; } }
 
-/* .icon-btn geometry (its colours, hover and focus come from the shared button system): a 28px square with a 16px icon. */
-button.icon-btn, :is(header, .room-controls) button.icon-btn, #project-open.icon-btn, .chat header button.icon-btn { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; flex: 0 0 28px; width: 28px; height: 28px; min-width: 0; min-height: 0; margin: 0; padding: 0; gap: 0; font-size: 15px; line-height: 1; }
-button.icon-btn[hidden], :is(header, .room-controls) button.icon-btn[hidden] { display: none; }
-button.icon-btn svg { display: block; width: 16px; height: 16px; flex: 0 0 auto; }
-button.icon-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
-@media (max-width: 700px), (pointer: coarse) { button.icon-btn, :is(header, .room-controls) button.icon-btn, #project-open.icon-btn, .chat header button.icon-btn { flex-basis: 40px; width: 40px; height: 40px; } }
+/* .btn-icon geometry (v1's 30px square is overridden to 28px, with a 16px icon, where v2's own header and toolbar rules need it). */
+button.btn-icon, :is(header, .room-controls) button.btn-icon, #project-open.btn-icon, .chat header button.btn-icon { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; flex: 0 0 28px; width: 28px; height: 28px; min-width: 0; min-height: 0; margin: 0; padding: 0; gap: 0; font-size: 15px; line-height: 1; }
+button.btn-icon[hidden], :is(header, .room-controls) button.btn-icon[hidden] { display: none; }
+button.btn-icon svg { display: block; width: 16px; height: 16px; flex: 0 0 auto; }
+button.btn-icon[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+@media (max-width: 700px), (pointer: coarse) { button.btn-icon, :is(header, .room-controls) button.btn-icon, #project-open.btn-icon, .chat header button.btn-icon { flex-basis: 40px; width: 40px; height: 40px; } }
 /* The column toggles exist on desktop only (phones use drawers); the expand buttons show only while their column is collapsed. */
-@media (max-width: 700px) { button.icon-btn.edge-toggle { display: none; } }
-@media (min-width: 701px) { .chat > header > button.icon-btn.edge-expand { display: none; } .app.rooms-collapsed .chat > header > button.icon-btn#edge-rooms-expand, .chat.agents-collapsed > header > button.icon-btn#edge-agents-expand { display: inline-flex; } }
+@media (max-width: 700px) { button.btn-icon.edge-toggle { display: none; } }
+@media (min-width: 701px) { .chat > header > button.btn-icon.edge-expand { display: none; } .app.rooms-collapsed .chat > header > button.btn-icon#edge-rooms-expand, .chat.agents-collapsed > header > button.btn-icon#edge-agents-expand { display: inline-flex; } }
 
 /* Rooms header: the title takes the slack and the two buttons sit together at the right with a 6px gap (no space reserved for a
    floating toggle), and the filter box starts right under the header. */
@@ -1906,7 +1656,7 @@ html:not([data-debug-inspector="on"]) button.inbox-raw-toggle, html:not([data-de
 /* .quiet-glyph is the one class for a #number or bug icon that reads as quiet text or an icon, as in v1: no box or outline of its
    own, only a colour change on hover (keyboard focus keeps a ring). It is wherever such a glyph renders: message headers, system
    notices, thread entries and inbox cards. Other row buttons keep their hover box. */
-/* The high-contrast themes restyle every .btn/.icon-btn/.row-btn as an outlined box with a [data-theme] selector of the same weight as a
+/* The high-contrast themes restyle every .btn/.btn-icon/.row-btn as an outlined box with a [data-theme] selector of the same weight as a
    plain .quiet-glyph rule, so the rules here carry [data-theme] too and have no border at all. */
 .quiet-glyph, [data-theme] .quiet-glyph { border-width: 0; border-color: transparent; background: transparent; box-shadow: none; }
 .quiet-glyph:hover:not(:disabled), [data-theme] .quiet-glyph:hover:not(:disabled) { border-color: transparent; background: transparent; color: var(--accent); }
@@ -1987,7 +1737,7 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .composer-link[hidden] { display: none; }
 .composer-link .composer-link-input { flex: 1 1 140px; min-width: 0; height: 26px; min-height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); font-size: 12px; }
 .composer-link .composer-link-input:focus { border-color: var(--accent); outline: none; }
-.composer-link button.icon-btn, #composer .composer-link button.icon-btn { width: max-content; min-width: 26px; flex: none; height: 26px; min-height: 26px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
+.composer-link button.btn-icon, #composer .composer-link button.btn-icon { width: max-content; min-width: 26px; flex: none; height: 26px; min-height: 26px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
 .composer-link .composer-link-error { flex: 1 1 100%; margin: 0; font-size: 11px; }
 .composer-link .composer-link-error:empty { display: none; }
 #composer .composer-field:not(.composer-rich) textarea, #thread-panel .composer-field:not(.composer-rich) textarea { padding-right: 44px; }
@@ -2051,7 +1801,7 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 :is(#composer button[type=submit], #thread-composer button, #spawn-open).btn-primary:hover:not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
 :is(#composer button[type=submit], #thread-composer button, #spawn-open).btn-primary:disabled { opacity: .5; cursor: not-allowed; }
 :is(#composer button[type=submit], #thread-composer button).btn-primary svg { transform: translate(-.8px, .8px); }
-/* The high-contrast themes restyle every .btn/.icon-btn as an outlined box on the page colour; Send stays green there, as in v1
+/* The high-contrast themes restyle every .btn/.btn-icon as an outlined box on the page colour; Send stays green there, as in v1
    (dark green fill, white glyph; the bright green with a dark glyph on hover). */
 [data-theme^="high-contrast"] :is(#composer button[type=submit], #thread-composer button, #spawn-open).btn-primary { background: var(--green); border-color: var(--green); color: var(--button-text); }
 [data-theme^="high-contrast"] :is(#composer button[type=submit], #thread-composer button, #spawn-open).btn-primary:hover:not(:disabled) { background: var(--green-hover); border-color: var(--green-hover); }
@@ -2069,8 +1819,8 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-spawn { -webkit-mask-image: url("/icons/spawn.svg"); mask-image: url("/icons/spawn.svg"); }
 .app > .workspace-bar { height: 53px; min-height: 53px; box-sizing: border-box; }
 .app > .workspace-bar nav { gap: 6px; }
-.app > .workspace-bar nav .icon-btn { position: relative; display: inline-grid; place-items: center; flex: 0 0 30px; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 0; border: 1px solid var(--border); background: transparent; }
-.app > .workspace-bar nav .icon-btn:hover:not(:disabled), .app > .workspace-bar nav .icon-btn:focus-visible { border-color: var(--text-primary); background: var(--bg-tertiary); color: var(--text-primary); }
+.app > .workspace-bar nav .btn-icon { position: relative; display: inline-grid; place-items: center; flex: 0 0 30px; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 0; border: 1px solid var(--border); background: transparent; }
+.app > .workspace-bar nav .btn-icon:hover:not(:disabled), .app > .workspace-bar nav .btn-icon:focus-visible { border-color: var(--text-primary); background: var(--bg-tertiary); color: var(--text-primary); }
 .workspace-bar nav .icon-mask { width: 17px; height: 17px; }
 .workspace-bar nav .badge { position: absolute; top: 0; right: 0; min-width: 15px; height: 15px; margin: 0; padding: 0 3px; border-radius: 8px; font-size: 9px; line-height: 15px; text-align: center; pointer-events: none; }
 .workspace-bar nav .badge[hidden] { display: none; }
@@ -2078,7 +1828,7 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 /* Spawn is the owner's exception to the icon-only rule: the green Send look, a glyph and the word. */
 #spawn-open { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; min-height: 28px; padding: 0 12px; border-radius: 8px; font-weight: 600; }
 @media (max-width: 700px), (pointer: coarse) {
-  .app > .workspace-bar nav .icon-btn { flex-basis: 40px; width: 40px; min-width: 40px; height: 40px; min-height: 40px; }
+  .app > .workspace-bar nav .btn-icon { flex-basis: 40px; width: 40px; min-width: 40px; height: 40px; min-height: 40px; }
   #spawn-open { height: 40px; min-height: 40px; }
 }
 @media (max-width: 700px) { :root { --bar-h: 53px; } }
@@ -2090,7 +1840,7 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .notification-banner[hidden] { display: none; }
 .notification-banner > .icon-mask { flex: 0 0 auto; width: 16px; height: 16px; color: var(--text-muted); }
 .notification-banner-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.notification-banner .icon-btn { flex: 0 0 auto; }
+.notification-banner .btn-icon { flex: 0 0 auto; }
 .composer-notice { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .composer-notice[hidden] { display: none; }
 .composer-notice-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
@@ -2158,14 +1908,14 @@ button.composer-aa[aria-pressed="true"]:hover, button.composer-aa[aria-pressed="
 .icon-mask-message { -webkit-mask-image: url("/icons/message.svg"); mask-image: url("/icons/message.svg"); }
 .icon-mask-bell { -webkit-mask-image: url("/icons/bell.svg"); mask-image: url("/icons/bell.svg"); }
 .icon-mask-bell-disabled { -webkit-mask-image: url("/icons/bell-disabled.svg"); mask-image: url("/icons/bell-disabled.svg"); }
-.back-to-latest.icon-btn { position: relative; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; margin-left: 10px; }
+.back-to-latest.btn-icon { position: relative; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; margin-left: 10px; }
 .back-to-latest .badge { position: absolute; top: -6px; right: -6px; min-width: 15px; height: 15px; margin: 0; padding: 0 3px; border-radius: 8px; font-size: 9px; line-height: 15px; text-align: center; pointer-events: none; }
 /* "Dismiss all resolved" is an archive icon with the count beside it, so it is wider than the 28px square. */
-button.icon-btn.inbox-dismiss-resolved { width: auto; min-width: 28px; gap: 6px; padding: 0 8px; flex-basis: auto; }
+button.btn-icon.inbox-dismiss-resolved { width: auto; min-width: 28px; gap: 6px; padding: 0 8px; flex-basis: auto; }
 .inbox-dismiss-count { font-size: 12px; font-variant-numeric: tabular-nums; }
-.icon-btn.inbox-jump, .profile-copy.icon-btn { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; }
-.agent-act.icon-btn { display: inline-grid; place-items: center; width: 28px; height: 28px; min-height: 28px; padding: 0; }
-.agent-actions .icon-btn .icon-mask { width: 15px; height: 15px; }
+.btn-icon.inbox-jump, .profile-copy.btn-icon { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; }
+.agent-act.btn-icon { display: inline-grid; place-items: center; width: 28px; height: 28px; min-height: 28px; padding: 0; }
+.agent-actions .btn-icon .icon-mask { width: 15px; height: 15px; }
 /* A glyph inside a button never takes the pointer: the click, hover and hit test belong to the button. */
 button > .icon-mask { pointer-events: none; }
 /* Macros pane: search and bulk actions above the list, and the paste-and-preview import below them. */
@@ -2475,7 +2225,7 @@ dialog:focus, dialog:focus-visible { outline: none; }
 #spawn-dialog .spawn-name { display: grid; gap: 4px; margin: 12px 0; }
 #spawn-dialog .spawn-name > label { margin: 0; }
 #spawn-dialog .spawn-name-row { display: flex; gap: 6px; align-items: stretch; }
-#spawn-dialog .spawn-name-row .icon-btn { flex: 0 0 auto; align-self: stretch; box-sizing: border-box; width: 40px; height: auto; min-height: 0; padding: 0; }
+#spawn-dialog .spawn-name-row .btn-icon { flex: 0 0 auto; align-self: stretch; box-sizing: border-box; width: 40px; height: auto; min-height: 0; padding: 0; }
 #spawn-dialog .spawn-name-row input { flex: 1 1 auto; min-width: 0; margin: 0; }
 #spawn-dialog .spawn-name-error { margin: 0; font-size: 12px; }
 #spawn-dialog .spawn-name-error:empty { display: none; }

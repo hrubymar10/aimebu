@@ -45,7 +45,7 @@ function audit(MIN) {
   // The experiment pill (a testing aid, shown here with its long label) must not be squashed or clipped, and every icon button keeps its size.
   { const pill = document.querySelector('#ui-variant-toggle'), was = pill.hidden; pill.hidden = false; pill.querySelector('.ui-variant-testing').textContent = 'TESTING: composer layout';
     if (pill.scrollWidth > pill.clientWidth + 1) findings.push(`top bar: the experiment pill is clipped at ${vw}px (${pill.scrollWidth} > ${pill.clientWidth})`);
-    const sizes = new Set([...nav.querySelectorAll('.icon-btn')].filter(button => box(button).width).map(button => `${Math.round(box(button).width)}x${Math.round(box(button).height)}`)); if (sizes.size > 1) findings.push(`top bar: the icon buttons differ in size at ${vw}px: ${[...sizes].join(' ')}`);
+    const sizes = new Set([...nav.querySelectorAll('.btn-icon')].filter(button => box(button).width).map(button => `${Math.round(box(button).width)}x${Math.round(box(button).height)}`)); if (sizes.size > 1) findings.push(`top bar: the icon buttons differ in size at ${vw}px: ${[...sizes].join(' ')}`);
     pill.hidden = was; }
   if (box(bar).right > vw + 1 || document.documentElement.scrollWidth > vw + 1) findings.push(`top bar: page is ${document.documentElement.scrollWidth}px wide in a ${vw}px viewport`);
   // Every control must be reachable: inside the viewport, or reachable by scrolling the bar.

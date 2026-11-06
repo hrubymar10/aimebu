@@ -76,8 +76,8 @@ export class ComposerFormatting {
     this.linkInput = document.createElement('input'); this.linkInput.type = 'text'; this.linkInput.className = 'composer-link-input'; this.linkInput.placeholder = 'https://'; this.linkInput.setAttribute('aria-label', 'Link address'); this.linkInput.autocomplete = 'off'; this.linkInput.spellcheck = false;
     this.linkError = document.createElement('span'); this.linkError.className = 'composer-link-error error'; this.linkError.setAttribute('role', 'alert');
     const apply = document.createElement('button'); apply.type = 'button'; apply.addEventListener('click', () => this.applyLink());
-    apply.className = 'icon-btn composer-link-apply'; setGlyph(apply, 'link', 'Add link');
-    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'icon-btn composer-link-cancel'; setGlyph(cancel, 'close', 'Cancel link'); cancel.addEventListener('click', () => this.closeLink());
+    apply.className = 'btn-icon composer-link-apply'; setGlyph(apply, 'link', 'Add link');
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'btn-icon composer-link-cancel'; setGlyph(cancel, 'close', 'Cancel link'); cancel.addEventListener('click', () => this.closeLink());
     this.linkForm.append(this.linkInput, apply, cancel, this.linkError);
     // Enter applies and Escape cancels. This row sits inside the composer's own form, so Enter must not submit the message, and
     // neither key reaches the page's own Enter and Escape handling.
@@ -95,7 +95,7 @@ export class ComposerFormatting {
     this.tools = document.createElement('div'); this.tools.className = 'composer-tools'; this.toolbar.append(this.tools);
     this.buttons = new Map();
     for (const command of COMMANDS) {
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'icon-btn composer-format'; button.dataset.format = command.id;
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'btn-icon composer-format'; button.dataset.format = command.id;
       button.setAttribute('aria-label', command.label); button.title = `${command.label} (${shortcutLabel(command.keys)})`; button.setAttribute('aria-pressed', 'false');
       if (command.icon) button.innerHTML = ICONS[command.icon]; else { button.textContent = command.glyph; button.classList.add(`composer-glyph-${command.id}`); }
       button.tabIndex = -1;
@@ -107,7 +107,7 @@ export class ComposerFormatting {
     this.buttons.values().next().value.tabIndex = 0;
     this.toolbar.addEventListener('keydown', event => this.toolbarKeys(event));
     // Slack's "Aa": formatting on or off.
-    this.toggle = document.createElement('button'); this.toggle.type = 'button'; this.toggle.className = 'icon-btn composer-aa'; this.toggle.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14h-5"/><path d="M16 16v-3.5a2.5 2.5 0 0 1 5 0V16"/><path d="M4.5 13h6"/><path d="m3 16 4.5-9 4.5 9"/></svg>';
+    this.toggle = document.createElement('button'); this.toggle.type = 'button'; this.toggle.className = 'btn-icon composer-aa'; this.toggle.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14h-5"/><path d="M16 16v-3.5a2.5 2.5 0 0 1 5 0V16"/><path d="M4.5 13h6"/><path d="m3 16 4.5-9 4.5 9"/></svg>';
     this.toggle.addEventListener('mousedown', event => event.preventDefault());
     this.toggle.addEventListener('click', () => ComposerFormatting.setRich(!this.rich));
     this.field.append(this.toggle);

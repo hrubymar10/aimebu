@@ -13,7 +13,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
 <body><button id="system-events-toggle" hidden>bell</button><dialog id="settings-dialog" open><section id="settings-general" class="settings-content"></section></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {

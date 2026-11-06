@@ -12,7 +12,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
 const sections = ['general', 'usages', 'notifications', 'roles', 'users', 'prompts', 'macros', 'machines', 'harnesses'];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
 <body><dialog id="settings-dialog" aria-label="Settings" open><header></header><nav aria-label="Settings sections"></nav>${sections.map(key => `<section id="settings-${key}" class="settings-content"></section>`).join('')}</dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
@@ -57,7 +57,7 @@ async function main() {
           users: [users.classList.contains('settings-tab-pending'), users.getAttribute('aria-hidden'), users.tabIndex], group: [nav.querySelector('#settings-agents-title').textContent, nav.querySelector('#settings-agents-title').className],
           close: [close.className, close.title, close.getAttribute('aria-label'), !!close.querySelector('.icon-mask-close')], sections: sections().map(([key, hidden]) => `${key}${hidden ? '!' : ''}`), dataset: document.querySelector('#settings-dialog').dataset.section };
         function sections() { return [...document.querySelectorAll('#settings-dialog > section')].map(node => [node.id.replace('settings-', ''), node.hidden]); }
-      }), { caption: ['Settings', 'true'], title: 'General', current: ['settings-general-tab'], users: [true, 'true', -1], group: ['Agents', 'settings-nav-title settings-nav-group-title'], close: ['icon-btn', 'Close settings', 'Close settings', true],
+      }), { caption: ['Settings', 'true'], title: 'General', current: ['settings-general-tab'], users: [true, 'true', -1], group: ['Agents', 'settings-nav-title settings-nav-group-title'], close: ['btn-icon', 'Close settings', 'Close settings', true],
         sections: ['general', 'usages!', 'notifications!', 'roles!', 'users!', 'prompts!', 'macros!', 'machines!', 'harnesses!'], dataset: 'general' });
       await page.$eval('#settings-close', el => el.click());
       assert.equal(await page.evaluate(() => window.__closed), 1);

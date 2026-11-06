@@ -30,7 +30,7 @@ export class MessageDebug {
     this.dialog = node('dialog', 'message-debug-dialog'); this.dialog.id = 'message-debug-dialog'; this.dialog.setAttribute('aria-labelledby', 'message-debug-title');
     const head = node('header'); this.title = node('h2', '', 'Message'); this.title.id = 'message-debug-title';
     this.copy = node('button', 'btn', 'Copy JSON'); this.copy.type = 'button';
-    const close = node('button', 'icon-btn'); close.type = 'button'; setGlyph(close, 'close', 'Close message inspector'); close.id = 'message-debug-close';
+    const close = node('button', 'btn-icon'); close.type = 'button'; setGlyph(close, 'close', 'Close message inspector'); close.id = 'message-debug-close';
     // v1's inspector walks the room with previous and next; the message actions the bubble leaves out in style A live here too.
     this.prev = node('button', 'row-btn message-debug-nav'); this.prev.type = 'button'; setGlyph(this.prev, 'left', 'Previous message');
     this.next = node('button', 'row-btn message-debug-nav'); this.next.type = 'button'; setGlyph(this.next, 'right', 'Next message');

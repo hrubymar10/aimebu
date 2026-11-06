@@ -10,7 +10,7 @@ export class Notice {
   constructor(after, id) {
     this.node = document.createElement('div'); this.node.className = 'composer-notice error'; this.node.id = id; this.node.setAttribute('role', 'alert'); this.node.hidden = true;
     this.text = document.createElement('span'); this.text.className = 'composer-notice-text';
-    this.close = document.createElement('button'); this.close.type = 'button'; this.close.className = 'icon-btn composer-notice-close'; setGlyph(this.close, 'close', 'Dismiss message');
+    this.close = document.createElement('button'); this.close.type = 'button'; this.close.className = 'btn-icon composer-notice-close'; setGlyph(this.close, 'close', 'Dismiss message');
     this.close.addEventListener('click', () => this.clear());
     this.node.append(this.text, this.close);
     after.after(this.node);

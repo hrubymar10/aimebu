@@ -18,7 +18,7 @@ function Glyph({ name }) {
 }
 
 function QuickButton({ className, label, icon, ...rest }) {
-  return html`<button type="button" class=${`icon-btn ${className}`} title=${label} aria-label=${label} ...${rest}><${Glyph} name=${icon} /></button>`;
+  return html`<button type="button" class=${`btn-icon ${className}`} title=${label} aria-label=${label} ...${rest}><${Glyph} name=${icon} /></button>`;
 }
 
 // Read here, so a tick of the clock renders these two texts and nothing else of the card.
@@ -106,7 +106,7 @@ export class AgentCard extends Component {
       <${LiveChip} store=${api.store} live=${live} />
       <${IconButton} name="health" label="Recovery needed" className="agent-recovery" hidden=${!agent.recovery_block} onClick=${() => api.onRecovery(agent)} />
       <div class="agent-profile-facts">${expanded && html`<${Profile} agent=${agent} profile=${profile} output=${output} readOutput=${readOutput} store=${api.store} />`}</div>
-      <div class="agent-actions">${actions.map(action => html`<button key=${action.name} type="button" class=${`icon-btn ${action.name === 'act-stop' ? 'icon-btn-danger ' : ''}agent-act agent-${action.name}`} disabled=${action.disabled} title=${action.title} aria-label=${action.label} aria-describedby=${action.disabled ? `agent-hint-${agent.id}-${action.name}` : null}
+      <div class="agent-actions">${actions.map(action => html`<button key=${action.name} type="button" class=${`btn-icon ${action.name === 'act-stop' ? 'icon-btn-danger ' : ''}agent-act agent-${action.name}`} disabled=${action.disabled} title=${action.title} aria-label=${action.label} aria-describedby=${action.disabled ? `agent-hint-${agent.id}-${action.name}` : null}
         onClick=${() => ({ message: () => api.onPrivate(agent), 'act-pause': () => api.store.control(agent.id, 'pause'), 'act-stop': () => api.store.control(agent.id, 'stop'), switch: () => api.openSwitch(agent.id), reactivate: () => api.store.control(agent.id, 'reactivate') })[action.name]()}><span class=${`icon-mask icon-mask-${{ message: 'message', 'act-pause': 'pause', 'act-stop': 'stop', switch: 'switch', reactivate: 'play' }[action.name]}`} aria-hidden="true"></span></button>`)}</div>
       <div class="agent-action-hints">${actions.map(action => html`<small key=${action.name} class="agent-action-hint" id=${`agent-hint-${agent.id}-${action.name}`} hidden=${!action.hint}>${action.hint}</small>`)}</div></article>`;
   }

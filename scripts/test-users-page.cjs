@@ -11,7 +11,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
 <body><dialog id="settings-dialog" open><nav></nav></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
@@ -97,7 +97,7 @@ async function main() {
         { login: 'amy', off: '', badge: 'Admin', toggle: true, buttons: ['Reset link', 'Deactivate'], select: null },
         { login: 'off', off: 'Deactivated', badge: null, toggle: null, buttons: [], select: null }], 'an account is listed once; the owner is never deactivated and a deactivated account has no actions');
       assert.deepEqual(await page.$$eval('#settings-users h4', nodes => nodes.map(node => node.textContent)), ['Project members', 'Accounts']);
-      assert.deepEqual(await page.$eval('#settings-users .user-members .icon-btn', el => [el.title, el.querySelector('.icon-mask-trash') !== null, el.classList.contains('btn-danger')]), ['Remove owner from this project', true, true]);
+      assert.deepEqual(await page.$eval('#settings-users .user-members .btn-icon', el => [el.title, el.querySelector('.icon-mask-trash') !== null, el.classList.contains('btn-danger')]), ['Remove owner from this project', true, true]);
       await page.close();
     }
     // Choosing another project reads its members; a role change and a removal write, then read the lists again.
@@ -114,7 +114,7 @@ async function main() {
       await page.waitForFunction(before => window.__requests.some(request => request.method === 'PUT') && window.__requests.filter(request => request.method === 'GET').length >= before + 2, {}, readsBefore);
       assert.deepEqual((await calls(page, 'PUT'))[0], ['/api/projects/p1/members/usr_bob', { role: 'operator' }]);
       const offRow = await rowOf(page, '.user-members', 'off');
-      await offRow.$eval('.icon-btn', el => el.click());
+      await offRow.$eval('.btn-icon', el => el.click());
       assert.ok((await page.$eval('#app-dialog', el => el.textContent)).includes('Remove off from this project?'));
       await confirmOk(page);
       await page.waitForFunction(() => window.__requests.some(request => request.method === 'DELETE'));

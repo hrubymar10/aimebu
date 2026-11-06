@@ -11,7 +11,7 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 
 const root = path.join(__dirname, '..', 'web');
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
 <body><dialog id="settings-dialog" open><section id="settings-machines" class="settings-content"></section></dialog>
 <dialog id="machine-pair-dialog" class="dialog-card" aria-labelledby="machine-pair-title"></dialog></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
@@ -87,11 +87,11 @@ async function main() {
       await cards(page);
       const read = page.$$eval('#machines-list .machine-card', cards => cards.map(card => ({ id: card.dataset.machineId, title: card.querySelector('strong').textContent, status: card.querySelector('.machine-status').textContent, detail: card.querySelector('small').textContent.replace(/Last seen .+/, 'Last seen X'),
         actions: [...card.querySelectorAll('.machine-card-actions button')].map(b => [b.getAttribute('aria-label'), b.title, b.disabled, b.className, b.querySelector('.icon-mask')?.className.replace('icon-mask ', ''), b.textContent]) })));
-      const icon = (label, glyph, cls = 'icon-btn') => [label, label, false, cls, `icon-mask-${glyph}`, ''];
+      const icon = (label, glyph, cls = 'btn-icon') => [label, label, false, cls, `icon-mask-${glyph}`, ''];
       assert.deepEqual(await read, [
-        { id: 'mch_host', title: 'This computer · Host', status: 'Connected', detail: 'Supervisor 1.2', actions: [icon('Stop all agents on this machine', 'stop', 'icon-btn machine-stop-all')] },
+        { id: 'mch_host', title: 'This computer · Host', status: 'Connected', detail: 'Supervisor 1.2', actions: [icon('Stop all agents on this machine', 'stop', 'btn-icon machine-stop-all')] },
         { id: 'mch_new', title: 'Laptop', status: 'Pending approval', detail: '', actions: [icon('Approve', 'check'), icon('Revoke', 'key-off')] },
-        { id: 'mch_away', title: 'Box', status: 'Offline', detail: 'Last seen X', actions: [icon('Revoke', 'key-off'), icon('Stop all agents on this machine', 'stop', 'icon-btn machine-stop-all')] },
+        { id: 'mch_away', title: 'Box', status: 'Offline', detail: 'Last seen X', actions: [icon('Revoke', 'key-off'), icon('Stop all agents on this machine', 'stop', 'btn-icon machine-stop-all')] },
         { id: 'mch_old', title: 'Old', status: 'Revoked', detail: '', actions: [] }]);
       assert.deepEqual(await page.$eval('#machine-refresh', el => [el.getAttribute('aria-label'), el.title, !!el.querySelector('.icon-mask-refresh'), el.textContent]), ['Refresh', 'Refresh', true, '']);
       await page.close();

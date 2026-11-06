@@ -40,7 +40,7 @@ const FIXTURE = async () => {
   if (agents) {
     const card = make('article', 'agent-card', '', agents); const title = make('div', 'agent-title', '', card); const identity = make('span', 'agent-identity', '', title);
     make('strong', 'agent-name', 'Ada', identity); make('span', 'agent-role', 'worker', title); make('small', 'agent-meta', 'codex · m', card); make('div', 'agent-state', 'Active · Idle', card);
-    const actions = make('div', 'agent-actions', '', card); make('button', 'icon-btn btn-danger agent-stop', 'Stop', actions);
+    const actions = make('div', 'agent-actions', '', card); make('button', 'btn-icon btn-danger agent-stop', 'Stop', actions);
   }
   const sidebar = document.querySelector('.sidebar');
   const group = make('div', 'room-group', '', sidebar); const roomRow = make('div', 'room-row active', '', group); make('button', 'room-name', 'general', roomRow); make('span', 'room-health', '⚠ 2', roomRow);

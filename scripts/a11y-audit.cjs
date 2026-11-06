@@ -61,12 +61,12 @@ function auditSurface({ root, show, dialog, exclude }) {
     if (!name) names.push({ element: where, weak: weak ? `title/placeholder only: "${element.title || element.placeholder}"` : '' });
   }
 
-  // 1b. one button system: every button is a .btn, an .icon-btn or a .row-btn (with .btn-primary / .btn-danger as the only variants)
+  // 1b. one button system: every button is a .btn, an .btn-icon or a .row-btn (with .btn-primary / .btn-danger as the only variants)
   const unclassed = [];
   for (const element of rootEl.querySelectorAll('button')) {
     if (!within(element)) continue;
     // A theme tile is a radio drawn as a preview of its theme (the first-run picker), not one of the three button kinds.
-    if (!element.matches('.btn, .icon-btn, .row-btn, .theme-tile[role="radio"]')) unclassed.push(`${label(element)} "${text(element).slice(0, 24)}"`);
+    if (!element.matches('.btn, .btn-icon, .row-btn, .theme-tile[role="radio"]')) unclassed.push(`${label(element)} "${text(element).slice(0, 24)}"`);
   }
 
   // 2. contrast
@@ -150,7 +150,7 @@ function auditSurface({ root, show, dialog, exclude }) {
   }
   console.log(`== Controls without an accessible name (${names.size})`); for (const item of names.keys()) console.log('  ' + item);
   console.log(`== Focusable controls with no visible focus ring (${focus.size})`); for (const item of focus.keys()) console.log('  ' + item);
-  console.log(`== Buttons that are none of .btn, .icon-btn, .row-btn (${unclassed.size})`); for (const item of unclassed.keys()) console.log('  ' + item);
+  console.log(`== Buttons that are none of .btn, .btn-icon, .row-btn (${unclassed.size})`); for (const item of unclassed.keys()) console.log('  ' + item);
   for (const [context, bucket] of Object.entries(contrast)) {
     const items = [...bucket.entries()].sort((a, b) => a[1].ratio - b[1].ratio);
     console.log(`== Contrast failures ${context}: ${items.length}`);

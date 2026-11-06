@@ -13,6 +13,6 @@ export function setGlyph(button, name, label) {
 // A row action (move up or down, remove, delete) as an icon button: the label is its tooltip and accessible name.
 export function iconButton(name, label, { danger = false, className = '' } = {}) {
   const button = document.createElement('button'); button.type = 'button';
-  button.className = ['icon-btn', danger ? 'btn-danger' : '', className].filter(Boolean).join(' ');
+  button.className = ['btn-icon', danger ? 'btn-danger' : '', className].filter(Boolean).join(' ');
   return setGlyph(button, name, label);
 }

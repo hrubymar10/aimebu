@@ -1,0 +1,26 @@
+/* Things v1 never had. Written with v1's tokens and patterns; loads after v1.css. */
+
+/* Visual plans: Mermaid diagrams, the folder marker, the prototype tabs, and Markdown inside a block */
+.visual-plan { min-width: 0; }
+.visual-plan-block-body { overflow-x: auto; }
+.visual-plan-block-body code { font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace); }
+.visual-plan .mermaid { text-align: center; overflow-x: auto; max-width: 100%; }
+.visual-plan .mermaid svg { max-width: 100%; }
+.visual-plan-render-error { display: block; margin-bottom: 6px; }
+.visual-plan-file-node.dir { font-weight: 700; }
+.visual-plan-file-node.dir::before { content: '▾'; }
+.visual-plan-prototype-screen + .visual-plan-prototype-screen { margin-top: 10px; }
+.visual-plan-prototype-screen strong { display: block; margin-bottom: 4px; }
+.visual-plan-prototype-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.visual-plan-prototype-tab { font-size: 11px; padding: 4px 7px; background: var(--accent-dim); color: var(--accent); }
+.visual-plan-prototype-tab[aria-pressed=true] { outline: 2px solid currentColor; }
+.visual-plan-prototype .visual-plan-canvas-node:is(button) { font-size: 12px; text-align: left; }
+.visual-plan-prototype-button { background: var(--accent) !important; color: var(--accent-text, #fff) !important; }
+.visual-plan-prototype-input { background: var(--bg-tertiary) !important; opacity: .8; }
+.visual-plan-block-body p { margin: 6px 0; white-space: pre-wrap; }
+.visual-plan-block-body :is(h1, h2, h3, h4) { margin: 10px 0 5px; line-height: 1.25; }
+.visual-plan-block-body h1 { font-size: 1.35em; }
+.visual-plan-block-body h2 { font-size: 1.2em; }
+.visual-plan-block-body h3 { font-size: 1.1em; }
+.visual-plan-block-body :is(ul, ol) { margin: 6px 0; padding-left: 22px; }
+.visual-plan-block-body blockquote { margin: 8px 0; padding: 3px 10px; border-left: 3px solid var(--border); white-space: pre-wrap; }

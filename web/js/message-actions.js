@@ -2,7 +2,7 @@ import { copyText } from './markdown.js';
 import { openEmojiPicker } from './emoji-picker.js';
 
 // What a message offers: one compact toolbar of icon buttons (react, reply, reply in a thread, copy the text, copy the link),
-// chosen over two other looks in the A/B/C trial. Every control is a framed .icon-btn with a tooltip and an accessible name;
+// chosen over two other looks in the A/B/C trial. Every control is a framed .btn-icon with a tooltip and an accessible name;
 // hovering or focusing the message reveals them (always visible on touch screens).
 export const QUICK_REACTIONS = ['👍', '🆗', '✅', '👀', '🙏', '🎉'];
 
@@ -25,7 +25,7 @@ function icon(name) {
 }
 
 function iconButton(name, label, className = '') {
-  const button = document.createElement('button'); button.type = 'button'; button.className = `icon-btn message-action ${className}`.trim();
+  const button = document.createElement('button'); button.type = 'button'; button.className = `btn-icon message-action ${className}`.trim();
   button.title = label; button.setAttribute('aria-label', label); button.append(icon(name));
   return button;
 }

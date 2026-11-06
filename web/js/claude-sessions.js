@@ -104,7 +104,7 @@ export class ClaudeSessionPicker {
     const flags = node('span', 'cc-session-flags');
     const sessionFlagList = sessionFlags(session);
     for (const [text, kind] of sessionFlagList) flags.append(node('span', `cc-session-flag cc-session-flag-${kind}`, text));
-    const pick = node('button', 'icon-btn cc-session-pick'); pick.type = 'button';
+    const pick = node('button', 'btn-icon cc-session-pick'); pick.type = 'button';
     setGlyph(pick, 'play', session.agent ? `Continued by ${session.agent.slug}: work on a copy of this session` : 'Continue this session or work on a copy');
     pick.onclick = () => { this.dialog.close(); this.onPick?.({ ...session, machine_id: this.machineID, launcher_id: this.launcherID }); };
     row.append(main, flags, pick);

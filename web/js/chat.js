@@ -48,7 +48,7 @@ export class Chat {
     // Older pages load by themselves when the list is scrolled (or keyboard-scrolled: Home, PageUp) to the top; this only says so while it fetches.
     this.olderStatus = document.createElement('div'); this.olderStatus.className = 'older-status'; this.olderStatus.setAttribute('role', 'status'); this.olderStatus.textContent = 'Loading older messages…'; this.olderStatus.hidden = true;
     this.list.before(this.olderStatus);
-    this.latestButton = document.createElement('button'); this.latestButton.type = 'button'; this.latestButton.className = 'icon-btn back-to-latest'; setLatest(this.latestButton, 'Back to latest'); this.latestButton.hidden = true;
+    this.latestButton = document.createElement('button'); this.latestButton.type = 'button'; this.latestButton.className = 'btn-icon back-to-latest'; setLatest(this.latestButton, 'Back to latest'); this.latestButton.hidden = true;
     this.latestButton.onclick = () => this.open(this.room);
     this.title.parentElement.append(this.latestButton);
     this.list.addEventListener('scroll', () => {
@@ -72,9 +72,9 @@ export class Chat {
     this.lightbox.onclick = event => { if (event.target === this.lightbox) this.lightbox.close(); };
     this.agents = new Map(); this.threadPanel = document.querySelector('#thread-panel'); this.threadTitle = this.threadPanel.querySelector('h2'); this.threadList = document.querySelector('#thread-messages'); this.threadForm = document.querySelector('#thread-composer'); this.threadDraft = this.threadForm.elements.body; this.threadFormatting = new ComposerFormatting(this.threadDraft);
     this.threadOlderStatus = document.createElement('div'); this.threadOlderStatus.className = 'older-status thread-older'; this.threadOlderStatus.setAttribute('role', 'status'); this.threadOlderStatus.textContent = 'Loading older replies…'; this.threadOlderStatus.hidden = true;
-    this.threadLatestButton = document.createElement('button'); this.threadLatestButton.type = 'button'; this.threadLatestButton.className = 'icon-btn back-to-latest thread-latest'; setLatest(this.threadLatestButton, 'Latest replies'); this.threadLatestButton.hidden = true;
+    this.threadLatestButton = document.createElement('button'); this.threadLatestButton.type = 'button'; this.threadLatestButton.className = 'btn-icon back-to-latest thread-latest'; setLatest(this.threadLatestButton, 'Latest replies'); this.threadLatestButton.hidden = true;
     this.threadLatestButton.onclick = () => { if (this.threadRoot) this.openThread(this.threadRoot); };
-    this.threadNewButton = document.createElement('button'); this.threadNewButton.type = 'button'; this.threadNewButton.className = 'icon-btn back-to-latest thread-new'; setLatest(this.threadNewButton, 'New replies'); this.threadNewButton.hidden = true;
+    this.threadNewButton = document.createElement('button'); this.threadNewButton.type = 'button'; this.threadNewButton.className = 'btn-icon back-to-latest thread-new'; setLatest(this.threadNewButton, 'New replies'); this.threadNewButton.hidden = true;
     this.threadNewButton.onclick = () => { if (this.threadRoot) this.openThread(this.threadRoot); };
     this.threadList.before(this.threadOlderStatus, this.threadLatestButton, this.threadNewButton);
     this.threadList.addEventListener('scroll', () => { if (this.threadList.scrollTop < 80) this.loadOlderThread(); });

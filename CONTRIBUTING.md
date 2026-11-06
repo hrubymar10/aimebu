@@ -268,7 +268,7 @@ the import map, so each module has exactly one URL.
 - **Accessibility.** Every control has an accessible name, every focusable
   element a visible focus ring, and text keeps its contrast in every theme;
   `node scripts/a11y-audit.cjs` checks all three, and also that every button
-uses one of the shared classes (`.btn`, `.icon-btn`, `.row-btn`).
+uses one of the shared classes (`.btn`, `.btn-icon`, `.row-btn`).
 - **Plain words for users.** Say "Not responding", not an internal state name,
   and never show raw JSON.
 - **Experiments.** A/B questions run behind the top-bar pill in

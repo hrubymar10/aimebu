@@ -161,8 +161,8 @@ async function main() {
     assert.deepEqual((await state()).defaults.reviewer, ['opus'], 'two quick clicks cancel out');
     assert.equal(await page.$eval(box('haiku', 'Reviewer', 'Haiku'), el => el.checked), false);
     assert.deepEqual(await page.$$eval('#settings-harnesses .error', errors => errors.map(error => error.textContent).filter(Boolean)), [], 'no error after quick changes');
-    // One button system: every button on the page is a .btn, an .icon-btn or a .row-btn.
-    assert.deepEqual(await page.$$eval('#settings-harnesses button', buttons => buttons.filter(button => !button.matches('.btn, .icon-btn, .row-btn')).map(button => button.className)), [], 'every button belongs to the button system');
+    // One button system: every button on the page is a .btn, an .btn-icon or a .row-btn.
+    assert.deepEqual(await page.$$eval('#settings-harnesses button', buttons => buttons.filter(button => !button.matches('.btn, .btn-icon, .row-btn')).map(button => button.className)), [], 'every button belongs to the button system');
 
     // Model editing: the label, the note and the default are edited in place and saved as a whole.
     const claudeRow = () => page.evaluate(async (machine, id) => (await (await fetch(`/api/machines/${machine}/launchers`)).json()).launchers.find(item => item.config.id === id), seed.machine, seed.claude.id);

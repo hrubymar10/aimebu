@@ -13,8 +13,8 @@ try { puppeteer = require('puppeteer-core'); } catch { puppeteer = require('/usr
 const root = path.join(__dirname, '..', 'web');
 const INBOX = fs.existsSync(path.join(root, 'js', 'pages', 'inbox', 'page.js')) ? '/js/pages/inbox/page.js' : '/js/inbox.js';
 const importMap = /<script type="importmap">.*?<\/script>/s.exec(fs.readFileSync(path.join(root, 'index.html'), 'utf8'))[0];
-const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
-<body><main id="app-view" class="app"><header class="workspace-bar"><button id="inbox-toggle" class="icon-btn" type="button" title="Inbox" aria-label="Inbox"><span id="inbox-count" class="badge" hidden>0</span></button></header>
+const fixture = `<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/v1.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme-v1.css">${importMap}</head>
+<body><main id="app-view" class="app"><header class="workspace-bar"><button id="inbox-toggle" class="btn-icon" type="button" title="Inbox" aria-label="Inbox"><span id="inbox-count" class="badge" hidden>0</span></button></header>
 <aside class="sidebar"></aside><section class="chat"></section>
 <section id="inbox-view" class="inbox-view" hidden><header><div><h1>Inbox</h1><p>Questions, approvals, and agent recovery</p></div></header><div id="inbox-list" class="inbox-list"></div><p id="inbox-error" class="error" role="alert"></p></section></main></body></html>`;
 const types = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
@@ -252,7 +252,7 @@ async function main() {
       const page = await mount({ list: [...failures, items()[11]] });
       await waitList(page);
       assert.deepEqual(await page.evaluate(() => { const b = document.querySelector('.inbox-dismiss-resolved'); return [b.hidden, b.title, b.querySelector('.inbox-dismiss-count').textContent, b.getAttribute('aria-label')]; }), [false, 'Dismiss all resolved (2): the delivery failures of archived rooms', '2', 'Dismiss all resolved (2)']);
-      await page.$eval('[data-inbox-id=d3] .icon-btn:not(.inbox-raw-toggle):not(.inbox-jump)', el => el.click());
+      await page.$eval('[data-inbox-id=d3] .btn-icon:not(.inbox-raw-toggle):not(.inbox-jump)', el => el.click());
       await page.waitForFunction(() => !document.querySelector('[data-inbox-id=d3]'));
       assert.deepEqual(await page.evaluate(() => window.__calls.find(call => call[0] === 'dismiss').slice(1, 3)), ['d3', 1]);
       await page.$eval('.inbox-dismiss-resolved', el => el.click());
@@ -309,7 +309,7 @@ async function main() {
     }
     // A write begun before the list is reset (sign-out) does not bring the Inbox back when it finishes, and a bulk dismissal stops where it was.
     {
-      for (const [name, id, press] of [['answer', 'q2', '[data-inbox-id=q2] .btn'], ['decision', 'rec1', '[data-inbox-id=rec1] .inbox-decisions .btn'], ['dismiss', 'del1', '[data-inbox-id=del1] .icon-btn:not(.inbox-raw-toggle):not(.inbox-jump)']]) {
+      for (const [name, id, press] of [['answer', 'q2', '[data-inbox-id=q2] .btn'], ['decision', 'rec1', '[data-inbox-id=rec1] .inbox-decisions .btn'], ['dismiss', 'del1', '[data-inbox-id=del1] .btn-icon:not(.inbox-raw-toggle):not(.inbox-jump)']]) {
         const page = await mount({ held: [name] });
         await waitList(page);
         await page.$eval(press, el => el.click());
