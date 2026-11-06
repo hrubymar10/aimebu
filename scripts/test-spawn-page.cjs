@@ -72,7 +72,7 @@ async function main() {
       window.__panel.showRoom = target => { window.__calls.push(['showRoom', target.id]); };
       window.__panel.showRoomByID = async (project, id) => { window.__calls.push(['showRoomByID', project, id]); };
       window.__panel.projectName = () => 'Alpha';
-      window.__panel.projectRooms = () => [{ id: 'r1', kind: 'task', lifecycle: 'open', title: 'one', depth: 1 }, { id: 'r2', kind: 'task', lifecycle: 'open', title: 'general', depth: 0 }, { id: 'r3', kind: 'task', lifecycle: 'archived', title: 'old', depth: 1 }];
+      window.__panel.projectRooms = () => [{ id: 'r1', kind: 'task', lifecycle: 'open', title: 'one', depth: 1 }, { id: 'r2', kind: 'task', lifecycle: 'open', title: 'general', depth: 0 }, { id: 'r3', kind: 'task', lifecycle: 'closed', title: 'old', depth: 1 }, { id: 'r4', kind: 'task', lifecycle: 'closing', title: 'busy', depth: 1 }];
       if (withCard) await window.__panel.setRoom(current); else window.__panel.setRoomFacts(current);
     }, { module: PANEL, admin, current, withCard });
     return page;
@@ -364,6 +364,62 @@ async function main() {
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1500)));
     assert.equal(await count(page, 'POST', '/api/rooms/r2/agents'), 2, 'a closed dialog does not ask again');
     await page.close();
+  }
+
+  // An imported agent is started where its v1 history is: in that room when it is open, and otherwise the dialog says where the history is, and an
+  // archived room is offered as "Reopen … and start there", which reopens it (the room menu's call) before the start is sent.
+  {
+    const base = { slug: 'old-bot', legacy_id: 'old-bot', tool: 'codex', model: 'gpt-6-sol', resumable: true, cwd: '/work/old', v1_active: false, reason: '' };
+    const startIn = page => page.evaluate(() => { const f = document.querySelector('#spawn-form').elements.start_room; return { value: f.value, options: [...f.options].map(o => o.textContent), notes: document.querySelector('#spawn-resume-notes').textContent }; });
+    const openRoom = await mount();
+    await open(openRoom, { resume: { ...base, history_room: { id: 'r1', title: 'one', kind: 'task', lifecycle: 'open' } } }); await ready(openRoom);
+    let state = await startIn(openRoom);
+    assert.equal(state.value, 'r1', 'the open room that holds the history is where the start goes');
+    assert.match(state.notes, /Its v1 history is in "Alpha › one"\./);
+    await openRoom.close();
+    // History in "general" itself: the same rule picks it, and the default room is general either way.
+    const inGeneral = await mount();
+    await open(inGeneral, { resume: { ...base, history_room: { id: 'r2', title: 'general', kind: 'task', lifecycle: 'open' } } }); await ready(inGeneral);
+    state = await startIn(inGeneral);
+    assert.equal(state.value, 'r2', 'history in general starts the agent in general');
+    assert.match(state.notes, /Its v1 history is in "Alpha › general"\./);
+    await inGeneral.close();
+    const closing = await mount();
+    await open(closing, { resume: { ...base, history_room: { id: 'r4', title: 'busy', kind: 'task', lifecycle: 'closing' } } }); await ready(closing);
+    state = await startIn(closing);
+    assert.ok(!state.options.some(label => label.startsWith('Reopen')), 'a room that is closing cannot be reopened yet');
+    assert.match(state.notes, /changing state/);
+    await closing.close();
+    const home = await mount();
+    await open(home, { resume: { ...base, history_room: { id: 'h1', title: 'Alpha', kind: 'home', lifecycle: 'open' } } }); await ready(home);
+    state = await startIn(home);
+    assert.equal(state.value, 'r2', 'a home room is not offered: general stays the default');
+    assert.match(state.notes, /project's home room, which only a lead role can start in/);
+    await home.close();
+    const archived = await mount();
+    await open(archived, { resume: { ...base, history_room: { id: 'r3', title: 'old', kind: 'task', lifecycle: 'closed' } } }); await ready(archived);
+    state = await startIn(archived);
+    assert.equal(state.value, 'r2', 'an archived history room is offered, never chosen for the person');
+    assert.ok(state.options.includes('Reopen Alpha › old and start there'), `the reopen choice is offered: ${state.options}`);
+    assert.match(state.notes, /an archived room: pick "Reopen … and start there"/);
+    await archived.evaluate(() => { const f = document.querySelector('#spawn-form').elements.start_room; f.value = 'reopen:r3'; f.dispatchEvent(new Event('change', { bubbles: true })); });
+    await archived.$eval('#spawn-resume-confirm', node => node.click()).catch(() => {});
+    await archived.$eval('#spawn-form button[type=submit]', node => node.click());
+    const reopen = await waitRequest(archived, 'POST', '/api/rooms/r3/reopen');
+    assert.deepEqual(await body(archived, reopen), { lifecycle_rev: 0 }, 'the room is reopened first, the way the room menu does it');
+    assert.equal(await count(archived, 'POST', '/api/rooms/r3/agents'), 0, 'nothing is started until the room is open');
+    await answer(archived, reopen, 200, { id: 'r3', project_id: 'p1', kind: 'task', title: 'old', lifecycle: 'open' });
+    const spawn = await waitRequest(archived, 'POST', '/api/rooms/r3/agents');
+    assert.equal((await body(archived, spawn)).resume_legacy, 'old-bot');
+    // A start that fails after the reopen (a writer holds the folder) leaves the dialog open on the room itself: the way on goes there, with no second
+    // reopen (the server would refuse it with the revision of the archived room), and the reopen choice is gone.
+    await answer(archived, spawn, 409, { error: 'writer_occupied', message: 'ada@test is the writer of /work/old', writer_agent_id: 'a1', writer_slug: 'ada', path: '/work/old' }); await settle(archived);
+    const after = await archived.evaluate(() => { const f = document.querySelector('#spawn-form').elements.start_room; return { value: f.value, options: [...f.options].map(o => o.value) }; });
+    assert.deepEqual([after.value, after.options.some(value => value.startsWith('reopen:'))], ['r3', false], 'the choice is the reopened room, and the reopen option is gone');
+    await archived.$eval('#spawn-occupied-reader', node => node.click());
+    await waitRequest(archived, 'POST', '/api/rooms/r3/agents');
+    assert.equal(await count(archived, 'POST', '/api/rooms/r3/reopen'), 1, 'a retry does not reopen the room again');
+    await archived.close();
   }
 
   // Starting a v1 agent: the dialog says what will happen, offers the rooms of the project, has no name field, and will not send until the

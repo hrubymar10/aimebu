@@ -1,8 +1,14 @@
 package store
 
 import (
+	"context"
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
+	"github.com/hrubymar10/aimebu/internal/sqliteutil"
 )
 
 func TestResolveV1RolesKeepsParentLinks(t *testing.T) {
@@ -75,5 +81,96 @@ func TestResolveV1RolesKeepsParentLinks(t *testing.T) {
 	}
 	if r := got2["ok-child"]; r.Extends != "ok-parent" || r.Body != "oc" {
 		t.Errorf("a child of a parent that will be imported keeps its link: %+v", r)
+	}
+}
+
+// v1 vacates an agent's roles when it deregisters and a backup is taken after the agents left, so the roles are rebuilt from the room's system
+// messages: the last assignment holds, a person's "role cleared" removes it, and the deregistration's "vacated" notice does not.
+func TestV1RolesAreRebuiltFromSystemMessages(t *testing.T) {
+	t.Parallel()
+	system := func(id int64, room, body string) v1ImportMessage {
+		return v1ImportMessage{ID: id, RoomID: room, From: "_system", FromKind: "system", Body: body}
+	}
+	got := v1RolesFromSystemMessages([]v1ImportMessage{
+		// out of order on purpose: the replay follows the message numbers
+		system(9, "r1", `role "worker" vacated: owen@test deregistered`),
+		system(2, "r1", "owen@test was assigned as worker"),
+		system(3, "r1", "alice@test was assigned as worker"),
+		system(4, "r1", "alice@test was assigned as reviewer"),
+		system(5, "r1", "bob@test was assigned as leader"),
+		system(6, "r1", "bob@test role cleared"),
+		system(7, "r2", "owen@test was assigned as leader"),
+		{ID: 8, RoomID: "r1", From: "owen@test", FromKind: "ai", Body: "carol@test was assigned as leader"},
+		system(10, "r1", "Role changed to something else"),
+		// a backup without a kind: the author _system is enough
+		{ID: 11, RoomID: "r3", From: "_system", Body: "dora@test was assigned as reviewer"},
+		// a person who types the same words is not v1
+		{ID: 12, RoomID: "r3", From: "mallory", FromKind: "human", Body: "eve@test was assigned as leader"},
+	})
+	want := map[string]map[string]string{"r1": {"owen@test": "worker", "alice@test": "reviewer"}, "r2": {"owen@test": "leader"}, "r3": {"dora@test": "reviewer"}}
+	if len(got) != len(want) {
+		t.Fatalf("rooms: %v want %v", got, want)
+	}
+	for room, roles := range want {
+		if len(got[room]) != len(roles) {
+			t.Fatalf("room %s: %v want %v", room, got[room], roles)
+		}
+		for agent, role := range roles {
+			if got[room][agent] != role {
+				t.Errorf("%s in %s: %q want %q", agent, room, got[room][agent], role)
+			}
+		}
+	}
+}
+
+// A backup taken after the agents deregistered has no roles in its rooms: the import still suggests the role the agent last had, from the
+// room's system messages, when it is started in v2.
+func TestV1ImportSuggestsTheRoleFromTheSystemMessagesOfADeregisteredAgent(t *testing.T) {
+	t.Parallel()
+	source, mapping := v1Fixture(t)
+	db, err := sql.Open("sqlite", sqliteutil.DSN(filepath.Join(source, "server", "aimebu.sqlite"), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v1Room string
+	if err := db.QueryRow(`SELECT id FROM rooms LIMIT 1`).Scan(&v1Room); err != nil {
+		t.Fatal(err)
+	}
+	system := func(id int, body string) string {
+		raw, _ := json.Marshal(map[string]any{"id": id, "room_id": v1Room, "from": "_system", "from_kind": "system", "body": body, "created_at": "2026-10-02T09:00:00Z"})
+		return string(raw)
+	}
+	for _, query := range []struct {
+		sql  string
+		args []any
+	}{
+		{`UPDATE rooms SET data=json_set(data,'$.roles',json('{}'))`, nil},
+		{`CREATE TABLE agent_sessions(full_id TEXT PRIMARY KEY,data TEXT NOT NULL)`, nil},
+		{`INSERT INTO agent_sessions VALUES ('bot@repo','{"full_id":"bot@repo","harness":"claude-code","project":"repo","cwd":"/work/repo","harness_session_id":"sess-1"}')`, nil},
+		{`INSERT INTO messages(id,room_id,data) VALUES (?,?,?)`, []any{900001, v1Room, system(900001, "bot@repo was assigned as reviewer")}},
+		{`INSERT INTO messages(id,room_id,data) VALUES (?,?,?)`, []any{900002, v1Room, system(900002, `role "reviewer" vacated: bot@repo deregistered`)}},
+	} {
+		if _, err := db.Exec(query.sql, query.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, _ := testStore(t, Options{})
+	if _, err := s.db.Exec("INSERT INTO user(id,login,pw_hash,pw_params,created_at) VALUES ('usr_owner','owner','hash','{}',?)", timestamp()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ImportV1(context.Background(), source, mapping, false); err != nil {
+		t.Fatal(err)
+	}
+	var projectID string
+	if err := s.db.QueryRow(`SELECT project_id FROM room WHERE id IN (SELECT room_id FROM message WHERE author_id='bot@repo') LIMIT 1`).Scan(&projectID); err != nil {
+		// the fixture's messages are not from bot@repo: take any imported project
+		if err := s.db.QueryRow(`SELECT id FROM project LIMIT 1`).Scan(&projectID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start, err := s.LegacyStart(t.Context(), projectID, "bot@repo")
+	if err != nil || start.RoleKey != "reviewer" {
+		t.Fatalf("the role the agent last had is suggested: %+v %v", start, err)
 	}
 }

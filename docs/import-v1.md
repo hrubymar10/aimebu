@@ -334,7 +334,11 @@ for an agent that wrote in the room being viewed. The preview counts them
 (`agent_sessions`) and a row that is not valid JSON is skipped. v1's resume
 command is not imported: it ran against v1 and would mislead in v2. The roles v1 gave
 each agent in its rooms (the `roles` map of a v1 room) are kept as well
-(`legacy_agent_role`), to suggest a role when the agent is started in v2.
+(`legacy_agent_role`), to suggest a role when the agent is started in v2. v1 vacates an agent's
+roles when it deregisters, and a backup is taken after the agents left, so the roles are also rebuilt from the system
+messages v1 wrote in each room, in message order: the last "`<agent>` was assigned as `<role>`" holds, a person's
+"`<agent>` role cleared" removes it, and the deregistration's `role "<role>" vacated` notice is ignored. A role in the room's
+own record wins.
 
 ### Start as v2 agent
 
@@ -344,7 +348,12 @@ automatic. The button opens the Spawn dialog for the old name (the
 v1 slug, if it is free in the project and fits the agent-name rule; otherwise
 the start is refused; the dialog has no Name field because the agent keeps it), the tool and model v1 ran, and the role v1 gave the
 agent most often, if v2 has it (otherwise worker). The dialog has a **Start in**
-picker listing the project's open task rooms, each named by where it sits (`project › room`, with the rooms it is nested under in between), `general` by default: the agent
+picker listing the project's open task rooms, each named by where it sits (`project › room`, with the rooms it is nested under in between): the room that holds most of the
+agent's imported messages (`history_room` in the profile's start info) when that is an open task
+room, otherwise `general`. The dialog says where the history is in every case. When it is an
+archived room the picker also offers "Reopen … and start there", which reopens it (the room
+menu's reopen) and then starts the agent in it; when it is the project's home room, which
+only a lead role can start in, it only says so. The agent
 is started in the room picked there, not necessarily the room whose profile was
 opened. The lookup is **per project**: an agent that wrote in any room of the
 project can be started, so a worker whose v1 history is only in a home room

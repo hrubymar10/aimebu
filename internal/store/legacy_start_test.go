@@ -458,3 +458,48 @@ func TestLegacyStartOffersTheSessionOfTheSendersLatestMessage(t *testing.T) {
 		t.Fatalf("after the newer message: %+v %v", again, err)
 	}
 }
+
+// An imported agent is started where its history is: the room of the project with most of its messages (a private chat excluded, the newest
+// one winning a tie), which is named with its kind and state so the dialog can start there, or say why it cannot.
+func TestLegacyStartNamesTheRoomThatHoldsTheHistory(t *testing.T) {
+	s, project, room := legacyStartFixture(t)
+	ctx := t.Context()
+	start, err := s.LegacyStart(ctx, project.ID, "sage@old")
+	if err != nil || start.HistoryRoom.ID != room.ID || start.HistoryRoom.Kind == "" || start.HistoryRoom.Lifecycle != "open" {
+		t.Fatalf("one message in one room: %+v %v", start.HistoryRoom, err)
+	}
+	var other Room
+	if err := s.Tx(ctx, func(tx *Tx) error {
+		var err error
+		other, err = tx.CreateRoom(Room{ProjectID: project.ID, ParentID: room.ID, Kind: "task", Title: "archive", CreatedBy: "usr_start"})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(id string, seq int, roomID string) {
+		t.Helper()
+		if _, err := s.db.Exec(`INSERT INTO message(id,seq,room_id,author_kind,author_id,body,targets_json,created_at) VALUES (?,?,?,'agent','sage@old','more v1','[]','2026-10-02T09:00:00.000000000Z')`, id, seq, roomID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("msg_h1", 910001, other.ID)
+	insert("msg_h2", 910002, other.ID)
+	if _, err := s.db.Exec(`UPDATE room SET lifecycle='closed' WHERE id=?`, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	start, err = s.LegacyStart(ctx, project.ID, "sage@old")
+	if err != nil || start.HistoryRoom.ID != other.ID || start.HistoryRoom.Title != "archive" || start.HistoryRoom.Lifecycle != "closed" {
+		t.Fatalf("the room with most messages, archived: %+v %v", start.HistoryRoom, err)
+	}
+	info := start.StartInfo(time.Now(), "")
+	if info.HistoryRoom == nil || info.HistoryRoom.ID != other.ID {
+		t.Fatalf("the dialog is told: %+v", info.HistoryRoom)
+	}
+	// A tie goes to the room with the newest message, and a private chat never counts.
+	insert("msg_h3", 910003, room.ID)
+	insert("msg_h4", 910004, room.ID)
+	start, err = s.LegacyStart(ctx, project.ID, "sage@old")
+	if err != nil || start.HistoryRoom.ID != room.ID {
+		t.Fatalf("a tie goes to the newest: %+v %v", start.HistoryRoom, err)
+	}
+}

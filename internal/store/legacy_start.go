@@ -32,6 +32,17 @@ type LegacyStart struct {
 	// or that a transcript scan found it holding that message; otherwise it is the latest session v1 kept under the name, checked as far as
 	// the messages allow.
 	Exact bool `json:"exact,omitempty"`
+	// HistoryRoom is the room of the project that holds most of the agent's imported messages (the newest one when two hold as many): where its
+	// v1 history is, which is not always the room a start would default to. Empty when the agent has no message in a task or home room.
+	HistoryRoom HistoryRoom `json:"-"`
+}
+
+// HistoryRoom is a room of the project that holds an imported agent's history.
+type HistoryRoom struct {
+	ID        string `json:"id,omitempty"`
+	Title     string `json:"title,omitempty"`
+	Kind      string `json:"kind,omitempty"`      // "task" or "home"
+	Lifecycle string `json:"lifecycle,omitempty"` // "open", or "closed" when the room was archived
 }
 
 // ResumableTool maps a v1 harness name to the v2 tool that can continue its session, or "" when none can. Only Claude Code can: it keeps
@@ -119,6 +130,14 @@ func (s *Store) LegacyStart(ctx context.Context, projectID, agentID string) (Leg
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return LegacyStart{}, err
 		}
+	}
+	// Where the agent's history is: the room of the project with most of its messages, a private chat excluded.
+	err = s.db.QueryRowContext(ctx, `SELECT r.id,r.title,r.kind,r.lifecycle FROM message m JOIN room r ON r.id=m.room_id
+		WHERE m.author_kind='agent' AND m.author_id=? AND r.project_id=? AND r.kind IN ('task','home')
+		GROUP BY r.id ORDER BY COUNT(*) DESC, MAX(m.seq) DESC LIMIT 1`, agentID, projectID).
+		Scan(&out.HistoryRoom.ID, &out.HistoryRoom.Title, &out.HistoryRoom.Kind, &out.HistoryRoom.Lifecycle)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return LegacyStart{}, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT role_key,COUNT(*) FROM legacy_agent_role WHERE agent_id=? GROUP BY role_key`, agentID)
 	if err != nil {
@@ -324,12 +343,18 @@ type LegacyStartInfo struct {
 	OutsideFolder  bool   `json:"outside_folder,omitempty"`
 	StartedAgentID string `json:"started_agent_id,omitempty"`
 	StartedSlug    string `json:"started_agent_slug,omitempty"`
+	// HistoryRoom is where the agent's imported messages are, so the dialog can start it there (or say why it cannot).
+	HistoryRoom *HistoryRoom `json:"history_room,omitempty"`
 }
 
 // StartInfo describes the legacy agent for the start dialog; projectFolder is the project's folder on the machine it would start on,
 // to say whether the old working folder lies outside it.
 func (l LegacyStart) StartInfo(now time.Time, projectFolder string) LegacyStartInfo {
 	info := LegacyStartInfo{Slug: l.Slug, Tool: l.Tool, Model: l.Model, RoleKey: l.RoleKey, CWD: l.CWD, StartedAgentID: l.StartedID, StartedSlug: l.StartedSlg}
+	if l.HistoryRoom.ID != "" {
+		history := l.HistoryRoom
+		info.HistoryRoom = &history
+	}
 	switch {
 	case l.Mismatch != "":
 		info.Tool = ToolForHarness(l.Harness)

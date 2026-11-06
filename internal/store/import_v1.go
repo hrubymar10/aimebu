@@ -106,9 +106,13 @@ func v1MemoryCapError(scope, key string, cap int, wizard bool) error {
 // typing "bob joined" is untouched, and v1's other system lines (role assignments) are kept.
 var v1PresenceLine = regexp.MustCompile(`^(\S+ (joined|left|was kicked|reconnected|deregistered|pruned after stale timeout|pruned \(stale\)|registered \(.*\)|added memory \S+ \[\w+\]|updated memory \[\w+\]|removed memory \[\w+\])|role ".*" vacated: \S+ deregistered|memory feed (enabled|disabled|reset to default))$`)
 
+// isV1SystemAuthor says whether v1 wrote the message as itself: kind "system", or its author _system or system on a backup that has no kind.
+func isV1SystemAuthor(message v1ImportMessage) bool {
+	return message.FromKind == "system" || message.From == "_system" || message.From == "system"
+}
+
 func isV1PresenceLine(message v1ImportMessage) bool {
-	system := message.FromKind == "system" || message.From == "_system" || message.From == "system"
-	return system && v1PresenceLine.MatchString(strings.TrimSpace(message.Body))
+	return isV1SystemAuthor(message) && v1PresenceLine.MatchString(strings.TrimSpace(message.Body))
 }
 
 func skippedV1HumanInRoom(data *v1ImportData, mapping V1ImportMap, room v1ImportRoom) bool {

@@ -3010,7 +3010,7 @@ async function main() {
       });
       if (modelPick) assert.equal(modelPick.kept, modelPick.picked, 'a rebuilt model list keeps what the person picked');
       await first.waitForFunction(() => document.querySelector('#spawn-form [name=role]').value === 'reviewer', {}, {});
-      assert.deepEqual(await first.evaluate(() => ({ shown: !document.querySelector('#spawn-start-in').hidden, value: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent })), { shown: true, value: 'UI smoke › general' }, 'a start from v1 history says which room it starts in (project › room), general by default');
+      assert.deepEqual(await first.evaluate(() => ({ shown: !document.querySelector('#spawn-start-in').hidden, value: document.querySelector('#spawn-start-room').selectedOptions[0]?.textContent })), { shown: true, value: 'UI smoke › Nested task' }, 'a start from v1 history says which room it starts in (project › room), the room that holds the agent v1 history (the nested task room the fixture message was seeded into)');
       // Which entry the dialog picks: a continued claude session takes the native claude entry even when a Docker one sorts first (and leaves
       // other tools and containers unselectable), and a fresh start only preselects the v1 tool without locking the others.
       assert.deepEqual(await first.evaluate(async () => {

@@ -1,7 +1,7 @@
 import { batch, computed, signal } from '../../ui.js';
 import { request } from '../../api.js';
 import { ClaudeSessionPicker } from '../../claude-sessions.js';
-import { chooseModel, hintParts, modelChangeWarning, NEW_ROOM, resumeBanner, resumeToolChoice, sessionEntryState, spawnReason, spawnRequest, startRoomChoices, toolKey, worktreeOption, writerHolder, writerHolderText } from '../../spawn-model.js';
+import { chooseModel, hintParts, historyNote, modelChangeWarning, NEW_ROOM, REOPEN_PREFIX, resumeBanner, resumeToolChoice, sessionEntryState, spawnReason, spawnRequest, startRoomChoices, toolKey, worktreeOption, writerHolder, writerHolderText } from '../../spawn-model.js';
 import { relativeTime } from '../../time.js';
 import { MachineStore } from './machine-store.js';
 
@@ -36,6 +36,7 @@ export class SpawnStore {
     this.nameBusy = signal(false);
     this.startRoom = signal('');
     this.startOptions = signal([]);
+    this.historyNote = signal('');
     this.worktree = signal(false);
     this.baseRef = signal('');
     this.roomTick = signal(0);
@@ -50,7 +51,7 @@ export class SpawnStore {
     this.version = computed(() => this.tool.value?.cli_version ? `CLI version ${this.tool.value.cli_version}` : '');
     this.banner = computed(() => {
       const resume = this.resume.value, option = this.models.value.find(model => model.value === this.model.value);
-      return resumeBanner({ resume, mode: this.mode.value, hasRoom: !!this.target.value, toolNote: this.toolNote.value, warning: resume ? modelChangeWarning(resume.model, option) : '', relative: relativeTime });
+      return resumeBanner({ resume, mode: this.mode.value, hasRoom: !!this.target.value, toolNote: this.toolNote.value, warning: resume ? modelChangeWarning(resume.model, option) : '', relative: relativeTime, history: this.historyNote.value });
     });
     // A writer role finds the folder's writer slot taken by another agent: the dialog says so, and that the new one starts in a worktree of its own.
     this.writerBlock = computed(() => {
@@ -84,14 +85,29 @@ export class SpawnStore {
     this.opening++; this.catalogRequestID++; this.nameRequestID++; this.defaultPreviewToken++; this.pickToken++; this.machine.cancel();
   }
 
+  // After a reopen the choice is the plain, open room: the option that reopened it is gone, and the room is the one the request goes to.
+  useReopenedRoom(room) {
+    const opened = { ...room, lifecycle: 'open', lifecycle_rev: (room.lifecycle_rev || 0) + 1 };
+    this.startRooms.delete(REOPEN_PREFIX + room.id);
+    this.startRooms.set(room.id, opened);
+    batch(() => {
+      this.startOptions.value = this.startOptions.value.map(option => option.value === REOPEN_PREFIX + room.id ? { value: room.id, label: option.label.replace(/^Reopen /, '').replace(/ and start there$/, '') } : option);
+      this.startRoom.value = room.id;
+      this.historyNote.value = '';
+    });
+    this.roomTick.value++;
+  }
+
   renderStartRooms() {
     const resume = this.resume.peek(), room = this.room;
     this.startRooms = new Map();
-    if (!resume || !room) { batch(() => { this.startOptions.value = []; this.startRoom.value = ''; }); return; }
+    if (!resume || !room) { batch(() => { this.startOptions.value = []; this.startRoom.value = ''; this.historyNote.value = ''; }); return; }
     const rooms = this.host.projectRooms?.(room.project_id) || [];
     const choices = startRoomChoices(rooms, resume, room.id, this.host.projectName?.(room.project_id) || '');
     for (const item of rooms) if (item.kind === 'task' && item.lifecycle === 'open') this.startRooms.set(item.id, item);
-    batch(() => { this.startOptions.value = choices.options; this.startRoom.value = choices.value; });
+    // The archived room that holds the agent's history, offered as "Reopen … and start there": it is reopened when the start is sent.
+    for (const option of choices.options) if (option.value.startsWith(REOPEN_PREFIX)) { const archived = rooms.find(item => item.id === option.value.slice(REOPEN_PREFIX.length)); if (archived) this.startRooms.set(option.value, archived); }
+    batch(() => { this.startOptions.value = choices.options; this.startRoom.value = choices.value; this.historyNote.value = historyNote(resume, rooms, this.host.projectName?.(room.project_id) || ''); });
   }
 
   // openSpawn({ resume }) opens the dialog to start an agent from imported v1 history: the name is the old one, the tool and model are
@@ -283,6 +299,14 @@ export class SpawnStore {
     const opening = this.opening, generation = this.host.generation, stale = () => !this.alive || !this.dialog.open || opening !== this.opening || generation !== this.host.generation;
     const continuing = resume?.kind === 'claude_session';
     try {
+      // The archived room that holds the agent's v1 history is put back first (the same call as the room menu's Reopen), then the agent starts in it.
+      if (this.startRoom.peek().startsWith(REOPEN_PREFIX)) {
+        await request(`/api/rooms/${target.id}/reopen`, { method: 'POST', body: { lifecycle_rev: target.lifecycle_rev || 0 } });
+        if (stale()) return;
+        // The room is open now: a retry after a failed start (a name in use, a writer in the folder) goes to the room itself, not through another reopen
+        // with the revision of the archived one, which the server would refuse.
+        this.useReopenedRoom(target);
+      }
       const card = await this.host.source.spawn(target.id, request_.params);
       if (stale()) return;
       this.dialog.close(); this.resetForm();

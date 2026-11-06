@@ -83,6 +83,8 @@ export function modelChangeWarning(sessionModel, chosen) {
 
 // The "Start in" value that asks for a room of its own, for a continued Claude Code session.
 export const NEW_ROOM = '__new__';
+// The value of the "Start in" choice that reopens an archived room (the one with the agent's v1 history) and starts the agent there.
+export const REOPEN_PREFIX = 'reopen:';
 
 const HARNESSES = 'Settings → Harnesses';
 
@@ -167,14 +169,31 @@ export function startRoomChoices(rooms, resume, currentRoomID, projectName = '')
   const options = open.map(room => ({ value: room.id, label: startRoomLabel(room, rooms, projectName) }));
   const continuing = resume.kind === 'claude_session';
   if (continuing) options.unshift({ value: NEW_ROOM, label: 'A new room for this session' });
-  // general is the project's shared task room; otherwise the open room if it is one, else the first.
-  const preferred = open.filter(room => room.title === 'general').sort((a, b) => a.depth - b.depth)[0] || open.find(room => room.id === currentRoomID) || open[0];
+  // An agent started from v1 history goes where that history is, when that is an open task room; otherwise general is the project's shared
+  // task room; otherwise the open room if it is one, else the first.
+  const history = !continuing && resume.history_room ? rooms.find(room => room.id === resume.history_room.id) : null;
+  const historyOpen = history && history.kind === 'task' && history.lifecycle === 'open' ? history : null;
+  // The room that holds the history is archived: offered, never chosen for the person.
+  if (history && history.kind === 'task' && history.lifecycle === 'closed') options.push({ value: REOPEN_PREFIX + history.id, label: `Reopen ${startRoomLabel(history, rooms, projectName)} and start there` });
+  const preferred = historyOpen || open.filter(room => room.title === 'general').sort((a, b) => a.depth - b.depth)[0] || open.find(room => room.id === currentRoomID) || open[0];
   return { options, value: continuing ? NEW_ROOM : preferred?.id || options[0]?.value || '' };
+}
+
+// Where an imported agent's v1 history is, said under the dialog: the room that holds it, and what that means for starting there.
+export function historyNote(resume, rooms, projectName = '') {
+  const info = resume?.history_room;
+  if (!info || resume.kind === 'claude_session') return '';
+  const room = rooms.find(item => item.id === info.id) || info;
+  const where = `"${startRoomLabel(room, rooms, projectName)}"`;
+  if (room.kind === 'home') return `Its v1 history is in ${where}, the project's home room, which only a lead role can start in: start a lead there from the room itself, or start this agent in a task room.`;
+  if (room.lifecycle === 'closed') return `Its v1 history is in ${where}, an archived room: pick "Reopen … and start there" under Start in to put it back in that room.`;
+  if (room.lifecycle !== 'open') return `Its v1 history is in ${where}, which is changing state: start there once it has settled.`;
+  return `Its v1 history is in ${where}.`;
 }
 
 // The banner of the start-from-v1 dialog: what is being started, where it will work, and what to confirm. `mode` is the continue/copy choice,
 // `hasRoom` whether the start has a task room to go to, `warning` the note about another model, `relative` writes a time.
-export function resumeBanner({ resume, mode, hasRoom, toolNote, warning, relative }) {
+export function resumeBanner({ resume, mode, hasRoom, toolNote, warning, relative, history = '' }) {
   const empty = { hidden: true, title: 'Spawn', text: '', card: null, notes: '', choosing: false, held: false, forking: false, confirmHidden: true, confirmText: ' v1 is not running this session any more' };
   if (!resume) return empty;
   const continuing = resume.kind === 'claude_session';
@@ -205,6 +224,7 @@ export function resumeBanner({ resume, mode, hasRoom, toolNote, warning, relativ
   if (resume.resumable && resume.outside_folder) lines.push(`It works in ${resume.cwd}, outside the project folder, so the owner must approve it in the Inbox before it starts.`);
   if (resume.v1_active && !forking) lines.push('v1 saw this agent a moment ago and may still be using the session. Stop it in v1 first: two processes on one session corrupt it.');
   if (resume.resumable) lines.push(toolNote, warning);
+  lines.push(history);
   return { hidden: false, title, choosing, held: false, forking, confirmHidden, confirmText, card: null, text, notes: lines.filter(Boolean).join(' ') };
 }
 
